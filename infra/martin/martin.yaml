@@ -1,0 +1,24 @@
+listen_addresses: 0.0.0.0:3000
+
+postgres:
+  connection_string: ${DATABASE_URL}
+  pool_size: 20
+  default_srid: 4326
+  auto_publish:
+    tables:
+      from_schemas: [public, geo]
+      id_columns: [id]
+    functions:
+      from_schemas: [public, geo]
+
+pmtiles:
+  paths: [/pmtiles/]
+
+mbtiles:
+  paths: [/mbtiles/]
+
+sprites:
+  paths: [/sprites/]
+
+fonts:
+  paths: [/fonts/]

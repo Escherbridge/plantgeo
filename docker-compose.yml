@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # PostGIS + TimescaleDB Database
+  # ============================================
+  postgis:
+    image: timescale/timescaledb-ha:pg16
+    environment:
+      POSTGRES_DB: plantgeo
+      POSTGRES_USER: geo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-geopass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgis_data:/home/postgres/pgdata/data
+      - ./infra/db/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geo -d plantgeo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================
+  # Martin Tile Server (Rust)
+  # ============================================
+  martin:
+    image: ghcr.io/maplibre/martin:latest
+    command: --config /config/martin.yaml
+    environment:
+      DATABASE_URL: postgresql://geo:${POSTGRES_PASSWORD:-geopass}@postgis/plantgeo
+    ports:
+      - "3100:3000"
+    volumes:
+      - ./infra/martin:/config
+      - ./data/mbtiles:/mbtiles
+      - ./data/pmtiles:/pmtiles
+      - ./data/sprites:/sprites
+      - ./data/fonts:/fonts
+    depends_on:
+      postgis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================
+  # Valhalla Routing Engine
+  # ============================================
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    ports:
+      - "8002:8002"
+    volumes:
+      - valhalla_data:/custom_files
+    environment:
+      - tile_urls=${VALHALLA_PBF_URL:-https://download.geofabrik.de/north-america/us/california-latest.osm.pbf}
+      - use_tiles_ignore_pbf=True
+      - build_elevation=True
+      - build_admins=True
+      - build_time_zones=True
+      - serve_tiles=True
+      - force_rebuild=False
+    restart: unless-stopped
+
+  # ============================================
+  # Photon Geocoder
+  # ============================================
+  photon:
+    image: komoot/photon:latest
+    ports:
+      - "2322:2322"
+    volumes:
+      - photon_data:/photon/photon_data
+    environment:
+      - JAVA_OPTS=-Xmx2g
+    restart: unless-stopped
+
+  # ============================================
+  # Redis Cache + Pub/Sub
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================
+  # Nginx Reverse Proxy + Tile Cache
+  # ============================================
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx_cache:/var/cache/nginx
+    depends_on:
+      - martin
+      - valhalla
+      - photon
+    restart: unless-stopped
+
+volumes:
+  postgis_data:
+  valhalla_data:
+  photon_data:
+  redis_data:
+  nginx_cache:
