@@ -22,6 +22,7 @@
     "routing:serve": "docker compose up valhalla -d"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
     "@auth/drizzle-adapter": "^1.11.1",
     "@deck.gl/core": "^9.1.0",
     "@deck.gl/geo-layers": "^9.1.0",

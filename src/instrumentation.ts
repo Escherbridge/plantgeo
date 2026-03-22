@@ -6,5 +6,6 @@ export async function register() {
     await import("@/lib/server/jobs/water-refresh");
     await import("@/lib/server/jobs/alert-dispatcher");
     await import("@/lib/server/jobs/email-digest");
+    await import("@/lib/server/jobs/conversation-cleanup");
   }
 }

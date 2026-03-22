@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-03-22T04:27:41.016Z",
+  "updatedAt": "2026-03-22T05:07:23.285Z",
   "missions": [
     {
       "id": "session:fc5903df-23a7-4029-b5e0-a0453a35b82c:none",
@@ -305,15 +305,15 @@
       "name": "none",
       "objective": "Session mission",
       "createdAt": "2026-03-21T21:32:36.411Z",
-      "updatedAt": "2026-03-22T04:27:41.016Z",
+      "updatedAt": "2026-03-22T05:07:23.285Z",
       "status": "done",
-      "workerCount": 22,
+      "workerCount": 24,
       "taskCounts": {
-        "total": 22,
+        "total": 24,
         "pending": 0,
         "blocked": 0,
         "inProgress": 0,
-        "completed": 22,
+        "completed": 24,
         "failed": 0
       },
       "agents": [
@@ -536,33 +536,29 @@
           "latestUpdate": "completed",
           "completedSummary": null,
           "updatedAt": "2026-03-22T04:27:41.016Z"
+        },
+        {
+          "name": "executor:a4c50d8",
+          "role": "executor",
+          "ownership": "a4c50d8d0ff95705d",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-03-22T05:07:23.285Z"
+        },
+        {
+          "name": "executor:a1ebce1",
+          "role": "executor",
+          "ownership": "a1ebce119e393719e",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-03-22T05:06:58.695Z"
         }
       ],
       "timeline": [
-        {
-          "id": "session-start:a6db56df5b47f3062:2026-03-22T04:17:22.809Z",
-          "at": "2026-03-22T04:17:22.809Z",
-          "kind": "update",
-          "agent": "executor:a6db56d",
-          "detail": "started executor:a6db56d",
-          "sourceKey": "session-start:a6db56df5b47f3062"
-        },
-        {
-          "id": "session-stop:a6db56df5b47f3062:2026-03-22T04:22:46.759Z",
-          "at": "2026-03-22T04:22:46.759Z",
-          "kind": "completion",
-          "agent": "executor:a6db56d",
-          "detail": "completed",
-          "sourceKey": "session-stop:a6db56df5b47f3062"
-        },
-        {
-          "id": "session-start:acc2747e8c96621b7:2026-03-22T04:24:00.907Z",
-          "at": "2026-03-22T04:24:00.907Z",
-          "kind": "update",
-          "agent": "conductor:spec-builder:acc2747",
-          "detail": "started conductor:spec-builder:acc2747",
-          "sourceKey": "session-start:acc2747e8c96621b7"
-        },
         {
           "id": "session-stop:acc2747e8c96621b7:2026-03-22T04:27:41.016Z",
           "at": "2026-03-22T04:27:41.016Z",
@@ -570,6 +566,38 @@
           "agent": "conductor:spec-builder:acc2747",
           "detail": "completed",
           "sourceKey": "session-stop:acc2747e8c96621b7"
+        },
+        {
+          "id": "session-start:a4c50d8d0ff95705d:2026-03-22T05:00:29.786Z",
+          "at": "2026-03-22T05:00:29.786Z",
+          "kind": "update",
+          "agent": "executor:a4c50d8",
+          "detail": "started executor:a4c50d8",
+          "sourceKey": "session-start:a4c50d8d0ff95705d"
+        },
+        {
+          "id": "session-start:a1ebce119e393719e:2026-03-22T05:02:08.119Z",
+          "at": "2026-03-22T05:02:08.119Z",
+          "kind": "update",
+          "agent": "executor:a1ebce1",
+          "detail": "started executor:a1ebce1",
+          "sourceKey": "session-start:a1ebce119e393719e"
+        },
+        {
+          "id": "session-stop:a1ebce119e393719e:2026-03-22T05:06:58.695Z",
+          "at": "2026-03-22T05:06:58.695Z",
+          "kind": "completion",
+          "agent": "executor:a1ebce1",
+          "detail": "completed",
+          "sourceKey": "session-stop:a1ebce119e393719e"
+        },
+        {
+          "id": "session-stop:a4c50d8d0ff95705d:2026-03-22T05:07:23.285Z",
+          "at": "2026-03-22T05:07:23.285Z",
+          "kind": "completion",
+          "agent": "executor:a4c50d8",
+          "detail": "completed",
+          "sourceKey": "session-stop:a4c50d8d0ff95705d"
         }
       ]
     }

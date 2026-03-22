@@ -5,7 +5,7 @@
 ### 1.1 Install Anthropic SDK
 - [ ] Add `@anthropic-ai/sdk` to `package.json` dependencies
 - [ ] Add `ANTHROPIC_API_KEY` to `.env.example` with a placeholder comment
-- [ ] Add `ANTHROPIC_MODEL` to `.env.example` defaulting to `claude-3-5-haiku-20241022`
+- [ ] Add `ANTHROPIC_MODEL` to `.env.example` defaulting to `claude-haiku-4-5-20251001`
 
 ### 1.2 Create `src/lib/server/services/regional-context.ts`
 - [ ] Define `RegionalContextPayload` interface with typed fields for all six data sources
@@ -45,9 +45,10 @@
 - [ ] Construct `ReadableStream<Uint8Array>` using `TextEncoder` (same pattern as `/api/stream/[layerId]/route.ts`):
   - Send `event: context\ndata: ${JSON.stringify({ cacheHit, dataFreshness })}\n\n` immediately
   - Forward each text delta chunk as `event: delta\ndata: ${JSON.stringify({ text: chunk })}\n\n`
-  - On stream completion, parse the accumulated text as `RegionalIntelligenceResponse` JSON (Claude is instructed to return valid JSON)
+  - Use Claude `tool_use` with a `regional_intelligence_report` tool definition matching `RegionalIntelligenceResponse` schema — Claude returns structured JSON via tool call, not free-text
+  - On stream completion, extract `tool_use` block input as the parsed `RegionalIntelligenceResponse`
   - Send `event: done\ndata: ${JSON.stringify(parsedResponse)}\n\n`
-  - On parse failure, send `event: error\ndata: ${JSON.stringify({ message: "Response parse failed" })}\n\n`
+  - On tool_use parse failure, send `event: error\ndata: ${JSON.stringify({ message: "Response parse failed" })}\n\n`
 - [ ] Wire `request.signal` to an `AbortController` passed to `streamRegionalIntelligence` so client disconnects cancel the Anthropic stream
 - [ ] Return `Response` with headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`, `Connection: keep-alive`, `X-Accel-Buffering: no`
 
@@ -134,7 +135,36 @@
 - [ ] In `DataFreshnessFooter`, colour-code each source: green if within 1 hour, yellow if within 24 hours, red if older or unavailable
 - [ ] Show a warning banner at the top of the panel if more than 2 sources are unavailable
 
-## Phase 6: Rate Limiting + Redis Caching + Cost Optimisation
+## Phase 6: Chat Persistence + Profile Page
+
+### 6.1 Add DB schema for conversation threads
+- [ ] Add `aiConversations` and `aiMessages` tables to `src/lib/server/db/schema.ts`
+- [ ] Run `npm run db:generate` and `npm run db:migrate` to create the migration
+- [ ] Add indexes: `(userId, geohash)` on `aiConversations`, `(conversationId, createdAt)` on `aiMessages`
+
+### 6.2 Update regional-intelligence route to persist messages
+- [ ] On map click, query for existing conversation by `userId + geohash` (within 30 days)
+- [ ] If found, load prior messages and prepend as conversation history
+- [ ] If not found, create new `aiConversation` row with auto-generated title from first response headline
+- [ ] After each user message: insert `aiMessages` row with `role: 'user'`
+- [ ] After each assistant response completes: insert `aiMessages` row with `role: 'assistant'`, `structuredResponse`, `tokenCount`
+- [ ] Increment `messageCount` and update `updatedAt` on the conversation
+
+### 6.3 Create conversations profile page
+- [ ] Create `src/app/dashboard/conversations/page.tsx` — server component
+- [ ] List conversations sorted by `updatedAt` DESC, grouped by date
+- [ ] Each row shows: title, location coordinates, message count, last updated time
+- [ ] Mini-map component showing location pins for all conversations
+- [ ] Click a conversation → opens `/dashboard/conversations/[id]` detail page
+- [ ] Detail page shows full message history with structured response cards
+- [ ] "Open on Map" button that navigates to the map centered on the conversation's lat/lon and opens the AI panel
+
+### 6.4 Auto-cleanup job
+- [ ] Add cleanup cron job in `src/lib/server/jobs/` — deletes `ai_conversations` where `updated_at < NOW() - INTERVAL '30 days'`
+- [ ] Register in `src/instrumentation.ts`
+- [ ] Cascade delete handles `ai_messages` cleanup automatically
+
+## Phase 7: Rate Limiting + Redis Caching + Cost Optimisation
 
 ### 6.1 tRPC router for non-streaming metadata
 - [ ] Create `src/lib/server/trpc/routers/regional-intelligence.ts`:
@@ -152,7 +182,7 @@
   ```
   # Anthropic AI (Track 31 — AI Regional Intelligence)
   ANTHROPIC_API_KEY=sk-ant-...
-  ANTHROPIC_MODEL=claude-3-5-haiku-20241022
+  ANTHROPIC_MODEL=claude-haiku-4-5-20251001
   ```
 
 ## File Manifest
@@ -170,6 +200,10 @@
 | `src/lib/server/trpc/routers/regional-intelligence.ts` | Create |
 | `src/lib/server/trpc/router.ts` | Edit — register new router |
 | `src/lib/server/services/vegetation.ts` | Edit — add `getNDVIAtPoint` (Phase 5) |
+| `src/lib/server/db/schema.ts` | Edit — add `aiConversations` + `aiMessages` tables |
+| `src/app/dashboard/conversations/page.tsx` | Create — conversations list profile page |
+| `src/app/dashboard/conversations/[id]/page.tsx` | Create — conversation detail page |
+| `src/lib/server/jobs/conversation-cleanup.ts` | Create — 30-day retention cleanup job |
 | Main map component | Edit — add onClick handler |
 
 ## Dependencies

@@ -333,3 +333,33 @@ export const environmentalAlerts = pgTable("environmental_alerts", {
   isRead: boolean("is_read").default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
+
+// ============================================
+// AI Regional Intelligence (public schema)
+// ============================================
+
+export const aiConversations = pgTable("ai_conversations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  geohash: varchar("geohash", { length: 12 }).notNull(),
+  lat: doublePrecision("lat").notNull(),
+  lon: doublePrecision("lon").notNull(),
+  title: varchar("title", { length: 255 }).notNull().default("New Analysis"),
+  messageCount: integer("message_count").default(0).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const aiMessages = pgTable("ai_messages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  conversationId: uuid("conversation_id")
+    .notNull()
+    .references(() => aiConversations.id, { onDelete: "cascade" }),
+  role: varchar("role", { length: 10 }).notNull(),
+  content: text("content").notNull(),
+  structuredResponse: jsonb("structured_response"),
+  tokenCount: integer("token_count"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});

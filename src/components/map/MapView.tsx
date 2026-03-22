@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import dynamic from "next/dynamic";
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import { useMapStore } from "@/stores/map-store";
@@ -14,6 +15,13 @@ import { CommandPalette } from "@/components/search/CommandPalette";
 import { AlertBell } from "@/components/ui/AlertBell";
 import PanelManager from "./PanelManager";
 import LayerManager from "./LayerManager";
+import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
+import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
+
+const RegionalIntelligencePanel = dynamic(
+  () => import("@/components/panels/RegionalIntelligencePanel"),
+  { ssr: false }
+);
 
 export default function MapView() {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -33,6 +41,8 @@ export default function MapView() {
   } = useMapStore();
 
   const prevStyleRef = useRef(currentStyle);
+  const { isOpen: isAIOpen } = useRegionalIntelligenceStore();
+  const { queryLocation } = useRegionalIntelligence();
 
   const initMap = useCallback(() => {
     if (mapRef.current || !mapContainer.current) return;
@@ -84,6 +94,15 @@ export default function MapView() {
         bearing: m.getBearing(),
         pitch: m.getPitch(),
       });
+    });
+
+    m.on("click", (e) => {
+      // Only trigger when no map feature was clicked
+      const features = m.queryRenderedFeatures(e.point);
+      if (features && features.length > 0) return;
+      const { lat, lng } = e.lngLat;
+      useRegionalIntelligenceStore.getState().openPanel(lat, lng);
+      queryLocation(lat, lng);
     });
 
     const canvas = m.getCanvas();
@@ -190,6 +209,7 @@ export default function MapView() {
             </div>
             <PanelManager />
             <LayerManager />
+            {isAIOpen && <RegionalIntelligencePanel />}
           </>
         )}
       </div>

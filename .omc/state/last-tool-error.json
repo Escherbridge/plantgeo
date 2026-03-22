@@ -1,0 +1,7 @@
+{
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/home/jade/projects/plantgeo/src/app/dashboard/conversations\"}",
+  "error": "File does not exist. Note: your current working directory is /home/jade/projects/plantgeo.",
+  "timestamp": "2026-03-22T05:02:47.402Z",
+  "retry_count": 1
+}

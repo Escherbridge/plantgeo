@@ -22,10 +22,10 @@ PlantGeo has built rich environmental data pipelines across 10 sprints — fire 
 
 - This track does not implement a vector database or semantic search over historical data
 - This track does not add new environmental data sources beyond what exists in Sprints 1–10
-- This track does not implement NDVI point-value queries (deferred to Phase 5; tile URLs are used as descriptive metadata only)
+- This track implements NDVI point-value queries via NASA GIBS WMS GetFeatureInfo in Phase 5
 - This track does not support anonymous (unauthenticated) AI queries
-- This track does not persist chat history to the database (session-only, store in Zustand)
-- This track does not implement Claude function calling / tool use; the model receives read-only context
+- This track persists chat history as per-location threads in PostgreSQL with 30-day retention and auto-cleanup
+- This track uses Claude tool_use for structured output (RegionalIntelligenceResponse schema) rather than free-text JSON parsing
 
 ## User Stories
 
@@ -33,6 +33,8 @@ PlantGeo has built rich environmental data pipelines across 10 sprints — fire 
 - As a restoration planner, I want to ask follow-up questions about a location's history and recommended interventions, so that I can refine my project plans
 - As a community organizer, I want to understand what environmental conditions exist at a specific location, so that I can communicate urgency to stakeholders
 - As a PlantGeo team member, I want AI-generated intervention recommendations linked to the existing strategy scoring engine, so that the AI output stays consistent with our data
+- As a returning user, I want to see my past AI conversations organized by location on my profile page, so that I can reference prior analyses without re-querying
+- As a land manager revisiting a location, I want the AI panel to show my previous conversation thread for that area, so that I can continue where I left off
 
 ## Acceptance Criteria
 
@@ -110,12 +112,12 @@ Estimated assembled context per location:
 | **Total initial query** | **~1,320–1,520 tokens** |
 | **Total with follow-ups (up to 5 turns)** | **~2,500 tokens** |
 
-This stays comfortably within claude-3-5-haiku-20241022 context limits and keeps per-query cost low (~$0.003–0.006 per initial query at Haiku pricing).
+This stays comfortably within claude-haiku-4-5-20251001 context limits and keeps per-query cost low (~$0.003–0.006 per initial query at Haiku pricing).
 
 ## Technical Considerations
 
 ### Claude Model Selection
-Use `claude-3-5-haiku-20241022` for the initial implementation. The low token budget and structured output requirements make Haiku the appropriate cost/performance balance. The model ID should be configurable via `ANTHROPIC_MODEL` environment variable to allow future upgrades without code changes.
+Use `claude-haiku-4-5-20251001` for the initial implementation. The low token budget and structured output requirements make Haiku the appropriate cost/performance balance. The model ID should be configurable via `ANTHROPIC_MODEL` environment variable to allow future upgrades without code changes.
 
 ### Streaming Architecture
 The `/api/ai/regional-intelligence` route uses Node.js `ReadableStream` + `TextEncoder` (identical pattern to `/api/stream/[layerId]/route.ts`). The Anthropic SDK's `stream()` method returns an async iterable; each chunk is forwarded as an SSE `data:` event. A final `event: done` carries the complete parsed `RegionalIntelligenceResponse` JSON for the client to store in the Zustand store.
@@ -137,15 +139,47 @@ The endpoint requires a valid session (via existing `src/lib/server/auth.ts`). T
 - If all data sources fail, the endpoint returns HTTP 503 rather than sending an uninformed AI response
 - Anthropic API errors (rate limits, service unavailable) are forwarded as SSE `event: error` events so the UI can display a user-friendly message
 
+### Chat Persistence Schema
+New database tables for per-location conversation threads:
+
+```typescript
+// In src/lib/server/db/schema.ts
+export const aiConversations = pgTable('ai_conversations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  geohash: varchar('geohash', { length: 12 }).notNull(),
+  lat: doublePrecision('lat').notNull(),
+  lon: doublePrecision('lon').notNull(),
+  title: varchar('title', { length: 255 }).notNull(), // auto-generated from first response headline
+  messageCount: integer('message_count').default(0).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const aiMessages = pgTable('ai_messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  conversationId: uuid('conversation_id').notNull().references(() => aiConversations.id, { onDelete: 'cascade' }),
+  role: varchar('role', { length: 10 }).notNull(), // 'user' | 'assistant'
+  content: text('content').notNull(),
+  structuredResponse: jsonb('structured_response'), // RegionalIntelligenceResponse or null
+  tokenCount: integer('token_count'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+```
+
+- On map click, look up existing conversation by `userId + geohash`; reopen if found within 30 days, else create new
+- A BullMQ job or cron deletes conversations older than 30 days (`DELETE FROM ai_conversations WHERE updated_at < NOW() - INTERVAL '30 days'`)
+- Profile page at `/dashboard/conversations` shows list sorted by `updatedAt` with mini-map pins
+
 ### Dependencies
 - `@anthropic-ai/sdk` — not yet installed; must be added to `package.json`
 - All other data services already exist in `src/lib/server/services/`
 - Redis client already available via existing pattern in `location-context` route
-- No new database tables required
+- Two new database tables: `ai_conversations`, `ai_messages`
 
 ## Open Questions
 
 - [ ] Should the panel support saving/exporting the AI report as PDF (similar to Track 30 analytics export)? Deferred — not in scope for Track 31.
 - [ ] Should `interventionRecommendations[].suppliersAvailable` query the PlantCommerce API (Track 28) in real time? Initial implementation uses a static boolean based on whether the strategy type has any active suppliers in the DB; live PlantCommerce query is a Phase 5 enhancement.
 - [ ] What is the preferred UX for the panel when the user clicks a new location while a stream is still in progress — cancel and restart, or queue? Decision: cancel and restart (abort the in-flight `AbortController`, clear the store, start fresh).
-- [ ] Should follow-up conversation history be stored in the database for analytics? Not in scope for Track 31; session-only via Zustand.
+- [x] Should follow-up conversation history be stored in the database? **Yes** — per-location threads in PostgreSQL with 30-day retention, profile page at `/dashboard/conversations`.
