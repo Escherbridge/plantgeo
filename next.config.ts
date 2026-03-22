@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Required for Docker/Railway deployment — produces a self-contained server
+  // in .next/standalone that the Dockerfile copies into the runtime image.
+  output: "standalone",
   experimental: {
     serverActions: {
       bodySizeLimit: "10mb",

@@ -7,6 +7,7 @@ import { useMap } from "@/lib/map/map-context";
 import { MapPopup, MapPopupBody } from "@/components/ui/map-popup";
 import { cn } from "@/lib/utils";
 import type { NormalizedGeocodingResult } from "@/lib/server/services/geocoding";
+import { useRoutingStore } from "@/stores/routing-store";
 
 interface PopupState {
   x: number;
@@ -154,7 +155,7 @@ export function ReverseGeocode() {
 
   const handleDirections = useCallback(() => {
     if (!popup) return;
-    console.log("Directions to:", popup.lat, popup.lon);
+    useRoutingStore.getState().setDestination({ lat: popup.lat, lon: popup.lon, label: `${popup.lat.toFixed(4)}, ${popup.lon.toFixed(4)}` });
   }, [popup]);
 
   if (!popup) return null;

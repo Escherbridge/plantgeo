@@ -1,0 +1,343 @@
+// PlantGeo Database Schema (DBML)
+// Generated from src/lib/server/db/schema.ts
+// Visualize at https://dbdiagram.io
+
+// ============================================
+// Auth Tables (public schema)
+// ============================================
+
+Table users {
+  id uuid [pk, default: `gen_random_uuid()`]
+  name text
+  email text [unique, not null]
+  password_hash text
+  platform_role varchar(20) [default: 'contributor'] // 'admin' | 'contributor' | 'viewer'
+  verified boolean [default: false]
+  created_at timestamptz [default: `now()`]
+}
+
+Table sessions {
+  session_token text [pk]
+  user_id uuid [not null, ref: > users.id]
+  expires timestamptz [not null]
+}
+
+Table accounts {
+  user_id uuid [not null, ref: > users.id]
+  type text [not null]
+  provider text [not null]
+  provider_account_id text [not null]
+  refresh_token text
+  access_token text
+  expires_at integer
+  token_type text
+  scope text
+  id_token text
+  session_state text
+
+  indexes {
+    (provider, provider_account_id) [pk]
+  }
+}
+
+Table verification_tokens {
+  identifier text [not null]
+  token text [not null]
+  expires timestamptz [not null]
+
+  indexes {
+    (identifier, token) [pk]
+  }
+}
+
+// ============================================
+// Teams Tables (public schema)
+// ============================================
+
+Table teams {
+  id uuid [pk, default: `gen_random_uuid()`]
+  name text [not null]
+  slug varchar(100) [unique]
+  description text
+  org_type varchar(50)
+  specialties jsonb [note: 'string[]']
+  website text
+  service_area jsonb [note: 'GeoJSON polygon or bbox']
+  is_verified boolean [default: false]
+  verified_at timestamptz
+  created_by uuid [ref: > users.id]
+  created_at timestamptz [default: `now()`]
+}
+
+Table team_members {
+  team_id uuid [not null, ref: > teams.id]
+  user_id uuid [not null, ref: > users.id]
+  team_role varchar(20) [default: 'member'] // 'admin' | 'member'
+  joined_at timestamptz [default: `now()`]
+
+  indexes {
+    (team_id, user_id) [pk]
+  }
+}
+
+// ============================================
+// API Keys (public schema)
+// ============================================
+
+Table api_keys {
+  id uuid [pk, default: `gen_random_uuid()`]
+  key_hash text [not null, note: 'SHA-256 hash, never plaintext']
+  user_id uuid [ref: > users.id]
+  team_id uuid [ref: > teams.id]
+  name text
+  permissions jsonb [default: '[]']
+  rate_limit integer [default: 1000]
+  last_used timestamptz
+}
+
+// ============================================
+// Geo Schema
+// ============================================
+
+Table geo.layers {
+  id uuid [pk, default: `gen_random_uuid()`]
+  name varchar(100) [unique, not null]
+  type varchar(50) [not null, default: 'vector'] // 'vector' | 'raster' | 'heatmap'
+  description text
+  style jsonb [default: '{}', note: 'MapLibre style spec']
+  is_public boolean [default: false]
+  min_zoom integer [default: 0]
+  max_zoom integer [default: 22]
+  team_id uuid
+  sort_order integer [default: 0]
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+}
+
+Table geo.features {
+  id uuid [pk, default: `gen_random_uuid()`]
+  layer_id uuid [not null, ref: > geo.layers.id]
+  properties jsonb [not null, default: '{}']
+  status varchar(20) [default: 'published'] // 'published' | 'draft' | 'review'
+  review_note text
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+
+  note: 'geom geometry(GEOMETRY,4326) column added via migration'
+}
+
+Table geo.fire_detections {
+  id uuid [pk, default: `gen_random_uuid()`]
+  detected_at timestamptz [not null]
+  confidence varchar(20) // 'low' | 'nominal' | 'high'
+  brightness real
+  frp real [note: 'Fire Radiative Power (MW)']
+  satellite varchar(50) // 'VIIRS' | 'MODIS'
+  created_at timestamptz [default: `now()`]
+
+  note: 'geom geometry(POINT,4326) column added via migration. Source: NASA FIRMS'
+}
+
+Table geo.poi {
+  id uuid [pk, default: `gen_random_uuid()`]
+  name text [not null]
+  category varchar(50) // 'restaurant' | 'park' | 'hospital' | etc
+  subcategory varchar(50)
+  address text
+  phone varchar(30)
+  website text
+  hours jsonb [default: '{}']
+  tags jsonb [default: '{}']
+  osm_id integer
+  created_at timestamptz [default: `now()`]
+
+  note: 'geom geometry(POINT,4326) column + GIST index added via migration'
+}
+
+// ============================================
+// Tracking Schema (TimescaleDB hypertable)
+// ============================================
+
+Table tracking.positions {
+  time timestamptz [not null]
+  asset_id uuid [not null]
+  heading double
+  speed double
+  altitude double
+  metadata jsonb [default: '{}']
+
+  note: 'TimescaleDB hypertable partitioned by time. geom geometry(POINT,4326) added via migration'
+}
+
+Table tracking.assets {
+  id uuid [pk, default: `gen_random_uuid()`]
+  name varchar(100) [not null]
+  type varchar(50) [default: 'vehicle'] // 'vehicle' | 'person' | 'drone' | 'sensor'
+  status varchar(20) [default: 'offline'] // 'online' | 'offline' | 'idle'
+  metadata jsonb [default: '{}']
+  created_at timestamptz [default: `now()`]
+}
+
+Table tracking.geofences {
+  id uuid [pk, default: `gen_random_uuid()`]
+  name varchar(100) [not null]
+  geometry jsonb [not null, note: 'GeoJSON Polygon']
+  alert_on_enter boolean [default: true]
+  alert_on_exit boolean [default: true]
+  created_at timestamptz [default: `now()`]
+}
+
+Table tracking.alerts {
+  id uuid [pk, default: `gen_random_uuid()`]
+  asset_id uuid
+  geofence_id uuid
+  type varchar(50) [not null] // 'enter' | 'exit' | 'speed' | 'idle'
+  message text [not null]
+  acknowledged boolean [default: false]
+  metadata jsonb [default: '{}']
+  created_at timestamptz [default: `now()`]
+}
+
+// ============================================
+// Water Scarcity (public schema)
+// ============================================
+
+Table water_gauges {
+  id uuid [pk, default: `gen_random_uuid()`]
+  site_no varchar(20) [unique, not null, note: 'USGS site number']
+  site_name text
+  lat double [not null]
+  lon double [not null]
+  flow_cfs double [note: 'Streamflow in cubic feet per second']
+  percentile integer [note: 'Flow percentile vs historical (0-100)']
+  trend varchar(20) // 'rising' | 'stable' | 'declining' | 'critical'
+  condition varchar(30) // 'normal' | 'watch' | 'warning' | 'critical' | 'unknown'
+  updated_at timestamptz [default: `now()`]
+}
+
+Table drought_data {
+  id uuid [pk, default: `gen_random_uuid()`]
+  week_date varchar(20) [unique, not null, note: 'USDM week identifier']
+  geojson jsonb [not null, note: 'US Drought Monitor GeoJSON']
+  fetched_at timestamptz [default: `now()`]
+}
+
+// ============================================
+// Community Strategy Requests (public schema)
+// ============================================
+
+Table strategy_requests {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [ref: > users.id]
+  team_id uuid [ref: > teams.id]
+  strategy_type varchar(50) [not null] // 'keyline' | 'silvopasture' | 'reforestation' | 'biochar' | 'water_harvesting' | 'cover_cropping'
+  title text [not null]
+  description text
+  lat double [not null]
+  lon double [not null]
+  status varchar(20) [default: 'open'] // 'open' | 'in_progress' | 'completed'
+  vote_count integer [default: 0]
+  created_at timestamptz [default: `now()`]
+}
+
+Table request_votes {
+  request_id uuid [not null, ref: > strategy_requests.id]
+  user_id uuid [not null, ref: > users.id]
+  created_at timestamptz [default: `now()`]
+
+  indexes {
+    (request_id, user_id) [pk]
+  }
+}
+
+Table priority_zones {
+  id uuid [pk, default: `gen_random_uuid()`]
+  strategy_type varchar(50) [not null]
+  request_count integer [not null]
+  total_votes integer [not null]
+  centroid_lat double
+  centroid_lon double
+  geojson jsonb [note: 'ConvexHull polygon from DBSCAN clustering']
+  computed_at timestamptz [default: `now()`]
+}
+
+// ============================================
+// Soil Health (public schema)
+// ============================================
+
+Table soil_grid_cache {
+  id uuid [pk, default: `gen_random_uuid()`]
+  lat double [not null]
+  lon double [not null]
+  ph double [note: 'Soil pH (0-14)']
+  organic_carbon double [note: 'g/kg']
+  nitrogen double [note: 'g/kg']
+  bulk_density double [note: 'kg/dm3']
+  cec double [note: 'cmol(c)/kg Cation Exchange Capacity']
+  cached_at timestamptz [default: `now()`]
+}
+
+// ============================================
+// Environmental Alert System (public schema)
+// ============================================
+
+Table watched_locations {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  name text [not null]
+  lat double [not null]
+  lon double [not null]
+  radius_km integer [default: 50]
+  created_at timestamptz [default: `now()`]
+}
+
+Table alert_subscriptions {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  watched_location_id uuid [ref: > watched_locations.id]
+  alert_type varchar(50) [not null] // 'fire_proximity' | 'drought_escalation' | 'streamflow_critical' | 'priority_zone_created'
+  threshold jsonb [note: 'Type-specific threshold config']
+  email_enabled boolean [default: true]
+  in_app_enabled boolean [default: true]
+  created_at timestamptz [default: `now()`]
+}
+
+Table environmental_alerts {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  alert_type varchar(50) [not null]
+  severity varchar(20) [not null] // 'info' | 'warning' | 'critical'
+  title text [not null]
+  body text
+  metadata jsonb [note: 'location, fire name, watchedLocationId, etc.']
+  is_read boolean [default: false]
+  created_at timestamptz [default: `now()`]
+}
+
+// ============================================
+// AI Regional Intelligence (public schema)
+// ============================================
+
+Table ai_conversations {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  geohash varchar(12) [not null, note: 'Precision-5 geohash (~5km cell)']
+  lat double [not null]
+  lon double [not null]
+  title varchar(255) [not null, default: 'New Analysis']
+  message_count integer [not null, default: 0]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  note: '30-day retention with auto-cleanup cron job'
+}
+
+Table ai_messages {
+  id uuid [pk, default: `gen_random_uuid()`]
+  conversation_id uuid [not null, ref: > ai_conversations.id]
+  role varchar(10) [not null] // 'user' | 'assistant'
+  content text [not null]
+  structured_response jsonb [note: 'RegionalIntelligenceResponse JSON when role=assistant']
+  token_count integer
+  created_at timestamptz [not null, default: `now()`]
+}

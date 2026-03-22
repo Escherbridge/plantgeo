@@ -201,6 +201,7 @@ export async function assembleRegionalContext(
     strategyResult,
     soilResult,
     droughtResult,
+    gaugeResult,
     mtbsResult,
     carbonResult,
   ].every((r) => r.status === 'rejected');

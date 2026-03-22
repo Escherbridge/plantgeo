@@ -19,7 +19,7 @@ const requestSchema = z.object({
     .array(
       z.object({
         role: z.enum(['user', 'assistant']),
-        content: z.string(),
+        content: z.string().max(5000),
       })
     )
     .max(10)
@@ -191,11 +191,11 @@ export async function POST(request: NextRequest) {
         }
       } catch (err) {
         if (!abortController.signal.aborted) {
-          const message =
-            err instanceof Error ? err.message : 'Stream error';
+          const internalMsg = err instanceof Error ? err.message : 'Unknown error';
+          console.error('[AI Stream Error]', internalMsg);
           controller.enqueue(
             encoder.encode(
-              `event: error\ndata: ${JSON.stringify({ message })}\n\n`
+              `event: error\ndata: ${JSON.stringify({ message: 'An error occurred processing your request.' })}\n\n`
             )
           );
         }

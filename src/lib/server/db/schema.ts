@@ -124,7 +124,7 @@ export const layers = geoSchema.table("layers", {
   isPublic: boolean("is_public").default(false),
   minZoom: integer("min_zoom").default(0),
   maxZoom: integer("max_zoom").default(22),
-  teamId: uuid("team_id"),
+  teamId: uuid("team_id").references(() => teams.id),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),

@@ -162,51 +162,51 @@
   "hotPaths": [
     {
       "path": "PLAYBOOK.md",
-      "accessCount": 124,
-      "lastAccessed": 1774190068989,
+      "accessCount": 123,
+      "lastAccessed": 1774190036731,
       "type": "file"
     },
     {
       "path": "",
-      "accessCount": 104,
-      "lastAccessed": 1774192329486,
+      "accessCount": 87,
+      "lastAccessed": 1774153069026,
       "type": "directory"
     },
     {
       "path": "src/lib/server/db/schema.ts",
-      "accessCount": 59,
-      "lastAccessed": 1774193626151,
+      "accessCount": 53,
+      "lastAccessed": 1774155886455,
       "type": "file"
     },
     {
       "path": "src/lib/server/trpc/router.ts",
-      "accessCount": 48,
-      "lastAccessed": 1774192305246,
+      "accessCount": 46,
+      "lastAccessed": 1774155949022,
       "type": "file"
     },
     {
-      "path": "src",
-      "accessCount": 42,
-      "lastAccessed": 1774192325455,
-      "type": "directory"
-    },
-    {
       "path": "src/lib/server/trpc/init.ts",
-      "accessCount": 27,
-      "lastAccessed": 1774192312608,
+      "accessCount": 25,
+      "lastAccessed": 1774155989528,
       "type": "file"
     },
     {
       "path": "src/components/map/MapView.tsx",
-      "accessCount": 19,
-      "lastAccessed": 1774190187295,
+      "accessCount": 18,
+      "lastAccessed": 1774155872704,
       "type": "file"
     },
     {
       "path": "package.json",
-      "accessCount": 19,
-      "lastAccessed": 1774192317420,
+      "accessCount": 17,
+      "lastAccessed": 1774153153356,
       "type": "file"
+    },
+    {
+      "path": "src",
+      "accessCount": 15,
+      "lastAccessed": 1774152870035,
+      "type": "directory"
     },
     {
       "path": "src/lib/server/trpc/routers/layers.ts",

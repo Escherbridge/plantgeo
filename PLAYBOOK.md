@@ -37,17 +37,17 @@
 | 8A | Track 21 — Wildfire Enhancement (LANDFIRE, fire behavior) | ✅ Done |
 | 8B | Track 22 — Water Scarcity (USGS streamflow, drought, watersheds) | ✅ Done |
 | 8C | Track 23 — Vegetation & Land Cover (NDVI, NLCD, reforestation zones) | ✅ Done |
-| Post-Sprint 8 | Build Fix | ⬜ Pending |
+| Post-Sprint 8 | Build Fix | ✅ Done |
 | 9A | Track 24 — Soil Health & Carbon Potential (SoilGrids, SSURGO) | ✅ Done |
 | 9B | Track 25 — Community Strategy Requests (map pins, voting, priority zones) | ✅ Done |
 | 9C | Track 26 — Strategy Cards & Recommendations Engine | ✅ Done |
-| Post-Sprint 9 | Build Fix | ⬜ Pending |
+| Post-Sprint 9 | Build Fix | ✅ Done |
 | 10A | Track 27 — Team Organization Pages (service areas, specialties) | ✅ Done |
 | 10B | Track 28 — PlantCommerce Integration API (suppliers, context API) | ✅ Done |
 | 10C | Track 29 — Environmental Alert System (fire, drought, streamflow alerts) | ✅ Done |
 | 10D | Track 30 — Environmental Analytics Dashboard (trends, priority metrics) | ✅ Done |
 | Post-Sprint 10 | Build Fix | ✅ Done |
-| 11A | Track 31 — AI Regional Intelligence (map-click RAG agent, Claude streaming) | ⬜ Pending |
+| 11A | Track 31 — AI Regional Intelligence (map-click RAG agent, Claude streaming) | ✅ Done |
 
 ## Plugin Strategy
 

@@ -1,12 +1,17 @@
 node_modules
+.next
 .git
 .claude
 conductor
+.omc
 data
+docs
 .env
 .env.local
+.env.example
 .env.*.local
 .env.production
+.env.staging
 *.log
 .next/cache
 .github

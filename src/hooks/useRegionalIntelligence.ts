@@ -126,6 +126,7 @@ export function useRegionalIntelligence() {
         updateLastMessage({ isStreaming: false });
       } finally {
         setLoading(false);
+        setAbortController(null);
       }
     },
     []

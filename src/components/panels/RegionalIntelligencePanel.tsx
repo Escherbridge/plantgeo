@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, MapPin, Send, AlertTriangle, Loader2, ChevronDown } from 'lucide-react';
 import { useRegionalIntelligenceStore, type ChatMessage } from '@/stores/regional-intelligence-store';
+import { useRegionalIntelligence } from '@/hooks/useRegionalIntelligence';
 import type { RegionalIntelligenceResponse } from '@/lib/server/services/ai-prompt';
 
 // ---------------------------------------------------------------------------
@@ -218,124 +219,13 @@ export default function RegionalIntelligencePanel() {
 
   if (!isOpen || !selectedLocation) return null;
 
+  const { sendFollowUp } = useRegionalIntelligence();
+
   const handleSend = async () => {
     const q = input.trim();
     if (!q || isLoading) return;
     setInput('');
-
-    const store = useRegionalIntelligenceStore.getState();
-    store.addMessage({ id: crypto.randomUUID(), role: 'user', content: q });
-    store.addMessage({
-      id: crypto.randomUUID(),
-      role: 'assistant',
-      content: '',
-      isStreaming: true,
-    });
-    store.setLoading(true);
-    store.setError(null);
-
-    const controller = new AbortController();
-    store.setAbortController(controller);
-
-    const history = store.messages
-      .filter((m) => !m.isStreaming)
-      .map((m) => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.parsedResponse
-          ? JSON.stringify(m.parsedResponse)
-          : m.content,
-      }));
-
-    try {
-      const response = await fetch('/api/ai/regional-intelligence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lat: selectedLocation.lat,
-          lon: selectedLocation.lon,
-          question: q,
-          history,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const err = await response
-          .json()
-          .catch(() => ({ error: 'Request failed' }));
-        throw new Error(
-          (err as { error?: string }).error ?? `HTTP ${response.status}`
-        );
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response body');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let eventType = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            eventType = line.slice(7);
-          } else if (line.startsWith('data: ')) {
-            try {
-              const parsed = JSON.parse(line.slice(6)) as Record<
-                string,
-                unknown
-              >;
-              const s = useRegionalIntelligenceStore.getState();
-              const last = s.messages[s.messages.length - 1];
-
-              if (eventType === 'delta' && typeof parsed.text === 'string') {
-                s.updateLastMessage({
-                  content: (last?.content ?? '') + parsed.text,
-                });
-              } else if (eventType === 'done') {
-                s.updateLastMessage({
-                  isStreaming: false,
-                  parsedResponse: parsed as unknown as RegionalIntelligenceResponse,
-                });
-              } else if (eventType === 'error') {
-                s.setError(
-                  typeof parsed.message === 'string'
-                    ? parsed.message
-                    : 'Unknown error'
-                );
-                s.updateLastMessage({ isStreaming: false });
-              } else if (eventType === 'context') {
-                const freshness = parsed.dataFreshness;
-                if (
-                  freshness &&
-                  typeof freshness === 'object' &&
-                  !Array.isArray(freshness)
-                ) {
-                  s.setDataFreshness(
-                    freshness as Record<string, string>
-                  );
-                }
-              }
-            } catch {
-              // skip malformed SSE data
-            }
-          }
-        }
-      }
-    } catch (err) {
-      if (err instanceof Error && err.name !== 'AbortError') {
-        store.setError(err.message);
-        store.updateLastMessage({ isStreaming: false });
-      }
-    } finally {
-      store.setLoading(false);
-    }
+    await sendFollowUp(q);
   };
 
   return (
