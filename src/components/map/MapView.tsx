@@ -11,6 +11,9 @@ import MapControls from "./MapControls";
 import SearchBar from "@/components/search/SearchBar";
 import { ReverseGeocode } from "@/components/search/ReverseGeocode";
 import { CommandPalette } from "@/components/search/CommandPalette";
+import { AlertBell } from "@/components/ui/AlertBell";
+import PanelManager from "./PanelManager";
+import LayerManager from "./LayerManager";
 
 export default function MapView() {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -182,6 +185,11 @@ export default function MapView() {
             <SearchBar />
             <ReverseGeocode />
             <CommandPalette />
+            <div className="absolute right-12 top-3 z-10">
+              <AlertBell />
+            </div>
+            <PanelManager />
+            <LayerManager />
           </>
         )}
       </div>

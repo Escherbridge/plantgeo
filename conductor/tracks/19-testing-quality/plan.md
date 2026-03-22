@@ -1,20 +1,20 @@
 # Track 19: Testing & Quality - Implementation Plan
 
 ## Phase 1: Setup
-- [ ] Configure Vitest with TypeScript
+- [x] Configure Vitest with TypeScript
 - [ ] Configure Playwright
 - [ ] Set up ESLint for Next.js
 - [ ] Add pre-commit hooks
 
 ## Phase 2: Unit Tests
-- [ ] Test map-store actions
-- [ ] Test routing service
-- [ ] Test geocoding service
-- [ ] Test GeoJSON utilities
+- [x] Test map-store actions
+- [x] Test routing service
+- [x] Test geocoding service
+- [x] Test GeoJSON utilities
 
 ## Phase 3: Integration Tests
-- [ ] Test tRPC routers with test DB
-- [ ] Test API endpoints
+- [x] Test tRPC routers with test DB
+- [x] Test API endpoints
 - [ ] Test Redis operations
 - [ ] Test PostGIS spatial queries
 

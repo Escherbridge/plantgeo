@@ -4,6 +4,51 @@
 > Run type-check + tests only at the end of each sprint.
 > Developer reviews and commits manually afterward.
 
+## Progress
+
+| Sprint | Track | Status |
+|--------|-------|--------|
+| 1A | Track 15 — UI Design System | ✅ Done |
+| 1B | Track 01 — Core Map Engine | ✅ Done |
+| Post-Sprint 1 | Build Fix | ✅ Done |
+| 2A | Track 05 — Geocoding & Search | ✅ Done |
+| 2B | Track 02 — Vector Tile Pipeline | ✅ Done |
+| Post-Sprint 2 | Build Fix | ✅ Done |
+| 3A | Track 07 — Layer Management | ✅ Done |
+| 3B | Track 04 — Routing & Navigation | ✅ Done |
+| 3C | Track 03 — deck.gl Visualization | ✅ Done |
+| Post-Sprint 3 | Build Fix | ✅ Done |
+| 4A | Track 06 — Real-Time Streaming | ✅ Done |
+| 4B | Track 08 — Three.js 3D Objects | ✅ Done |
+| 4C | Track 09 — Drawing & Measurement | ✅ Done |
+| Post-Sprint 4 | Build Fix | ✅ Done |
+| 5A | Track 10 — Wildfire Prevention | ✅ Done |
+| 5B | Track 14 — Fleet Tracking | ✅ Done |
+| 5C | Track 13 — Analytics Dashboard | ✅ Done |
+| Post-Sprint 5 | Build Fix | ✅ Done |
+| 6A | Track 12 — Auth & Teams (shared platform, self-organizing teams) | ✅ Done |
+| 6B | Track 19 — Testing & Quality | ✅ Done |
+| 6C | Track 18 — Railway Deployment | ✅ Done |
+| Post-Sprint 6 | Build Fix | ✅ Done |
+| 7A | Track 16 — Street-Level Imagery | ✅ Done |
+| 7D | Track 11 — Offline & PWA | ✅ Done |
+| 7C | Track 20 — Embed & API | ✅ Done |
+| 7+ | Tracks 17, 20 — Platform (plugins, etc.) | ✅ Done |
+| 8A | Track 21 — Wildfire Enhancement (LANDFIRE, fire behavior) | ✅ Done |
+| 8B | Track 22 — Water Scarcity (USGS streamflow, drought, watersheds) | ✅ Done |
+| 8C | Track 23 — Vegetation & Land Cover (NDVI, NLCD, reforestation zones) | ✅ Done |
+| Post-Sprint 8 | Build Fix | ⬜ Pending |
+| 9A | Track 24 — Soil Health & Carbon Potential (SoilGrids, SSURGO) | ✅ Done |
+| 9B | Track 25 — Community Strategy Requests (map pins, voting, priority zones) | ✅ Done |
+| 9C | Track 26 — Strategy Cards & Recommendations Engine | ✅ Done |
+| Post-Sprint 9 | Build Fix | ⬜ Pending |
+| 10A | Track 27 — Team Organization Pages (service areas, specialties) | ✅ Done |
+| 10B | Track 28 — PlantCommerce Integration API (suppliers, context API) | ✅ Done |
+| 10C | Track 29 — Environmental Alert System (fire, drought, streamflow alerts) | ✅ Done |
+| 10D | Track 30 — Environmental Analytics Dashboard (trends, priority metrics) | ✅ Done |
+| Post-Sprint 10 | Build Fix | ✅ Done |
+| 11A | Track 31 — AI Regional Intelligence (map-click RAG agent, Claude streaming) | ⬜ Pending |
+
 ## Plugin Strategy
 
 | Plugin | When to Use |
@@ -29,6 +74,8 @@ RULES:
 - Use `"use client"` only on components that need browser APIs (map, interactive UI).
 - Dynamic import MapLibre/deck.gl components with `ssr: false`.
 - Follow the existing patterns in the codebase (Zustand stores, Drizzle schema, tRPC routers).
+- As you complete each task in the conductor plan.md, mark it done: change `- [ ]` to `- [x]`.
+- Update the PLAYBOOK.md progress table: change `⬜ Pending` to `✅ Done` for the current track when all phases are complete.
 ```
 
 ---
@@ -894,12 +941,14 @@ Fix all TypeScript and build errors after implementing Tracks 10, 14, and 13. Ru
 
 ## SPRINT 6: Enterprise (Tracks 12 + 18 + 19)
 
-### Prompt 6A — Auth & Multi-Tenancy (Track 12)
+### Prompt 6A — Auth & Teams (Track 12)
 
 **Plugin:** `/ultrapilot`
 
+> **Vision:** PlantGeo is a shared public platform (not on-prem/isolated). Anyone can create a team and self-organize. Enterprises use the same hosted instance. Use `team_id` (not `org_id`) for scoping — all tenants share the same tables.
+
 ```
-Implement Auth & Multi-Tenancy (Track 12) — NextAuth.js, RBAC, organizations, API keys.
+Implement Auth & Teams (Track 12) — NextAuth.js, RBAC, self-organizing teams, contribution validation, API keys.
 
 Read conductor/tracks/12-auth-multitenancy/spec.md and conductor/tracks/12-auth-multitenancy/plan.md.
 
@@ -909,45 +958,60 @@ EXISTING CODE:
 - src/components/ui/ — design system
 - package.json — check if next-auth is installed, if not note it needs adding
 
+PLATFORM MODEL:
+- Public (unauthenticated): read-only access to public layers and map
+- Verified contributor: sign up, submit observations, draw zones, annotate
+- Expert: validate/publish contributions, manage authoritative layers
+- Admin: platform-wide management
+- Teams: any user can create a team, invite members, scope data to team
+- Team roles: owner | member | viewer (within a team)
+- No tenant isolation — all data in shared tables scoped by team_id
+
 IMPLEMENT ALL 6 PHASES:
 
 Phase 1 — NextAuth Setup:
 - Install note: needs `next-auth@5` (NextAuth v5/Auth.js)
-- Create src/app/api/auth/[...nextauth]/route.ts — NextAuth config with credentials provider (email/password) and placeholder OAuth (Google, GitHub — just config structure, actual keys from env)
-- Add auth tables to schema.ts: users (id, name, email, password_hash, role, orgId), sessions, accounts, verification_tokens — following NextAuth Drizzle adapter pattern
+- Create src/app/api/auth/[...nextauth]/route.ts — NextAuth config with credentials provider (email/password) and placeholder OAuth (Google, GitHub)
+- Add auth tables to schema.ts: users (id, name, email, password_hash, platform_role, verified, created_at), sessions, accounts, verification_tokens
+- platform_role enum: 'public' | 'contributor' | 'expert' | 'admin'
 - Create src/lib/server/auth.ts — getServerSession helper, hash/verify password utilities
 
 Phase 2 — RBAC:
-- Define roles: admin, editor, viewer, api_user
-- Create permissions matrix: admin=all, editor=CRUD layers+features, viewer=read only, api_user=API access only
-- Add role checks to tRPC context: create protectedProcedure and adminProcedure
-- Create src/middleware.ts — Next.js middleware protecting /dashboard, /api/trpc (except public procedures)
+- Platform roles: admin=all, expert=validate+publish layers, contributor=create own data, public=read only
+- Add role checks to tRPC context: create protectedProcedure, contributorProcedure, expertProcedure, adminProcedure
+- Create src/middleware.ts — protect /dashboard and authenticated API routes
 
-Phase 3 — Multi-Tenancy:
-- Add organizations table to schema.ts: id, name, slug, plan, settings
-- Add orgId to layers, features tables (scope all queries by org)
-- Create src/components/auth/OrgSwitcher.tsx — dropdown to switch between user's organizations
-- Create src/lib/server/trpc/routers/org.ts — org CRUD, invite member, remove member
+Phase 3 — Teams:
+- Add teams table: id, name, slug, description, created_by, created_at
+- Add team_members table: team_id, user_id, team_role ('owner'|'member'|'viewer'), joined_at
+- Add team_id (nullable) to layers, features, drawings tables — null means public/personal
+- Create src/lib/server/trpc/routers/teams.ts — create team, invite member, remove member, list my teams, update team_role
+- Create src/components/teams/TeamSwitcher.tsx — dropdown to switch active team context
+- Create src/components/teams/TeamPanel.tsx — manage members, roles, team settings
 
-Phase 4 — API Security:
-- Add api_keys table to schema.ts: id, key_hash, orgId, name, permissions, rate_limit, last_used
-- Create API key auth middleware for /api/v1/* routes
-- Rate limiting: track requests per key per minute in Redis, return 429 when exceeded
+Phase 4 — Contribution Validation:
+- Add status field to features/layers: 'draft' | 'pending_review' | 'published' | 'rejected'
+- Contributors submit observations as 'pending_review'
+- Experts can publish or reject with a note
+- Create src/lib/server/trpc/routers/contributions.ts — submit, review, publish, reject procedures
+- Create src/components/panels/ContributionQueue.tsx — expert view of pending submissions with approve/reject actions
 
-Phase 5 — User Management:
+Phase 5 — User Management & API Keys:
 - Create src/components/auth/LoginForm.tsx — email/password login, OAuth buttons, register link
-- Create src/components/auth/RegisterForm.tsx — registration form
-- Create src/components/panels/UserPanel.tsx — user settings: profile, password change, org management
-- Audit logging: add audit_logs table, log significant actions (layer create/delete, user invite, etc.)
+- Create src/components/auth/RegisterForm.tsx — registration with email verification flow
+- Create src/components/panels/UserPanel.tsx — profile, password change, my teams, my contributions
+- Add api_keys table: id, key_hash, user_id, team_id, name, permissions, rate_limit, last_used
+- API key auth for /api/v1/* routes, rate limiting via Redis
 
 Phase 6 — Integration:
-- Update ALL existing tRPC routers to use protectedProcedure where appropriate
-- Scope layer queries by orgId
-- Add auth state to a Zustand store: src/stores/auth-store.ts
+- Update ALL existing tRPC routers to use appropriate procedure guards
+- Scope layer/feature queries by team_id where team context is active, else show public data
+- Add auth + active team state to src/stores/auth-store.ts
 
 RULES:
 - Write code only. Do NOT run `npm run build`, `npm run dev`, `tsc`, or any test commands.
 - Do NOT create git commits.
+- Do NOT implement org isolation, custom domains, or on-prem config — this is a shared platform.
 - Use `"use client"` only on form components.
 - Follow existing patterns.
 - Note any packages that need installing (next-auth, @auth/drizzle-adapter, bcryptjs) as comments at the top of the first file you create.
@@ -1221,6 +1285,341 @@ Final pass: fix ALL TypeScript and build errors across the entire codebase. Run 
 
 ---
 
+---
+
+## SPRINT 8: Environmental Data Layers (Tracks 21 + 22 + 23)
+
+### Prompt 8A — Wildfire Enhancement (Track 21)
+
+**Plugin:** `/ultrapilot`
+
+```
+Implement the Wildfire Enhancement layer (Track 21) — LANDFIRE fuel models, advanced fire behavior scoring, NBR burn recovery, enhanced fire risk choropleth.
+
+Read conductor/tracks/21-wildfire-enhancement/spec.md and conductor/tracks/21-wildfire-enhancement/plan.md.
+
+EXISTING CODE:
+- src/lib/server/services/wildfire.ts — existing fire data service
+- src/lib/server/trpc/routers/wildfire.ts — existing wildfire router
+- src/components/map/layers/ — existing map layers
+
+IMPLEMENT ALL PHASES per the plan:
+- Phase 1: LANDFIRE fuel model WMS integration + vegetation weights update
+- Phase 2: Fire behavior index (fire weather + LANDFIRE + slope)
+- Phase 3: NBR burn recovery tile overlay
+- Phase 4: Enhanced FireRiskLayer with 5-class choropleth + property toggles
+- Phase 5: FireDashboard panel with fire behavior gauge and NBR toggle
+
+RULES:
+- Write code only. Do NOT run any commands.
+- Do NOT create git commits.
+- Follow existing patterns in src/lib/server/services/ and src/components/map/layers/.
+- As you complete each task in the plan, mark it done: change `- [ ]` to `- [x]`.
+```
+
+### Prompt 8B — Water Scarcity (Track 22)
+
+**Plugin:** `/ultrapilot`
+
+```
+Implement the Water Scarcity layer (Track 22) — USGS NWIS streamflow, US Drought Monitor, HydroSHEDS watersheds, groundwater, composite water scarcity score.
+
+Read conductor/tracks/22-water-scarcity/spec.md and conductor/tracks/22-water-scarcity/plan.md.
+
+EXISTING CODE:
+- src/lib/server/db/schema.ts — Drizzle schema (add new tables here)
+- src/lib/server/trpc/router.ts — app router (register new routers here)
+- src/lib/server/trpc/routers/ — existing routers for reference pattern
+
+IMPLEMENT ALL PHASES per the plan:
+- Phase 1: USGS NWIS streamflow service + waterGauges cache table + getStreamflow tRPC
+- Phase 2: USDM drought GeoJSON fetch + droughtData table + DroughtLayer component
+- Phase 3: HydroSHEDS watershed loading into PostGIS + getWatersheds tRPC
+- Phase 4: Groundwater well data from NWIS
+- Phase 5: Composite water scarcity score choropleth + WaterPanel
+- Phase 6: BullMQ cron for 15-min NWIS refresh
+
+RULES:
+- Write code only. Do NOT run any commands.
+- Do NOT create git commits.
+- Install bullmq if not present in package.json.
+- As you complete each task in the plan, mark it done: change `- [ ]` to `- [x]`.
+```
+
+### Prompt 8C — Vegetation & Land Cover (Track 23)
+
+**Plugin:** `/ultrapilot`
+
+```
+Implement the Vegetation & Land Cover layer (Track 23) — Copernicus NDVI tile overlay, NLCD land cover, land use change detection, reforestation opportunity zones, NDWI.
+
+Read conductor/tracks/23-vegetation-land-cover/spec.md and conductor/tracks/23-vegetation-land-cover/plan.md.
+
+EXISTING CODE:
+- src/lib/map/sources.ts — map tile sources (add NDVI, NLCD sources here)
+- src/lib/server/trpc/routers/environmental.ts — environmental router (add procedures here)
+- src/components/map/layers/ — existing layers for pattern reference
+
+IMPLEMENT ALL PHASES per the plan:
+- Phase 1: NDVI tile overlay from Copernicus + month slider UI
+- Phase 2: NBR burn recovery tile (integrates with Track 21)
+- Phase 3: NLCD WMS layer + class filter checkboxes
+- Phase 4: Land use change detection layer + year range selector
+- Phase 5: Reforestation opportunity zones via getReforestationZones tRPC + PostGIS caching
+- Phase 6: NDWI toggle + VegetationPanel with stats and charts
+
+RULES:
+- Write code only. Do NOT run any commands.
+- Do NOT create git commits.
+- As you complete each task in the plan, mark it done: change `- [ ]` to `- [x]`.
+```
+
+### Post-Sprint 8 — Build Fix
+
+**Plugin:** `/build-fix`
+
+```
+Fix all TypeScript and lint errors introduced by Sprint 8 (Tracks 21, 22, 23). Run `node_modules/.bin/tsc --noEmit` and fix all errors. Then run `npx next lint` and fix lint errors. Do NOT run the dev server or build.
+```
+
+---
+
+## SPRINT 9: Soil Health + Community System + Strategy Cards (Tracks 24 + 25 + 26)
+
+### Prompt 9A — Soil Health & Carbon Potential (Track 24)
+
+**Plugin:** `/ultrapilot`
+
+```
+Implement the Soil Health & Carbon Potential layer (Track 24) — SoilGrids REST API, USDA Web Soil Survey, erosion risk (USLE), carbon sequestration potential, intervention suitability scores.
+
+Read conductor/tracks/24-soil-health/spec.md and conductor/tracks/24-soil-health/plan.md.
+
+EXISTING CODE:
+- src/lib/server/db/schema.ts — add soilGridCache table here
+- src/lib/server/trpc/routers/environmental.ts — add soil procedures here
+- src/lib/server/services/ — add soilgrids.ts and usda-soil.ts here
+
+IMPLEMENT ALL PHASES per the plan:
+- Phase 1: SoilGrids v2 REST API client + soilGridCache table + getSoilProperties tRPC + Redis cache (TTL 7 days)
+- Phase 2: USDA SDM REST client for SSURGO polygons + getSoilSurvey tRPC
+- Phase 3: SoilLayer choropleth (circle markers, property selector dropdown)
+- Phase 4: USLE K-factor + erosion risk calculation + ErosionLayer component
+- Phase 5: Carbon sequestration potential formula + CarbonPotentialLayer
+- Phase 6: Intervention suitability scoring + SoilPanel
+
+RULES:
+- Write code only. Do NOT run any commands.
+- Do NOT create git commits.
+- SoilGrids rate limit: 2 req/sec — always check Redis cache before fetching.
+- Export `getInterventionSuitability(lat, lon)` for use by Track 26.
+- As you complete each task in the plan, mark it done: change `- [ ]` to `- [x]`.
+```
+
+### Prompt 9B — Community Strategy Requests (Track 25)
+
+**Plugin:** `/ultrapilot`
+
+```
+Implement the Community Strategy Request System (Track 25) — map-pinned strategy requests, voting, PostGIS DBSCAN clustering into Priority Zone polygons, BullMQ nightly refresh.
+
+Read conductor/tracks/25-community-strategy-requests/spec.md and conductor/tracks/25-community-strategy-requests/plan.md.
+
+EXISTING CODE:
+- src/lib/server/db/schema.ts — add strategyRequests, requestVotes, priorityZones tables
+- src/lib/server/trpc/router.ts — register communityRouter here
+- src/lib/server/jobs/ — add priority-zone-refresh.ts here
+- src/instrumentation.ts — register BullMQ jobs here (create if not exists)
+
+IMPLEMENT ALL PHASES per the plan:
+- Phase 1: DB schema (strategyRequests, requestVotes, priorityZones tables)
+- Phase 2: community tRPC router (submitRequest, voteOnRequest, getRequests, getPriorityZones)
+- Phase 3: Priority zone service using PostGIS ST_ClusterDBSCAN + ST_ConvexHull
+- Phase 4: BullMQ nightly job for zone recomputation
+- Phase 5: StrategyRequestLayer (colored pins by strategy type) + PriorityZoneLayer (fill polygons)
+- Phase 6: RequestSubmitModal (map right-click) + CommunityPanel (list + detail + "Why here?")
+
+RULES:
+- Write code only. Do NOT run any commands.
+- Do NOT create git commits.
+- Use PostGIS ST_ClusterDBSCAN(geom, eps:=5000, minpoints:=3) for clustering.
+- As you complete each task in the plan, mark it done: change `- [ ]` to `- [x]`.
+```
+
+### Prompt 9C — Strategy Cards & Recommendations Engine (Track 26)
+
+**Plugin:** `/ultrapilot`
+
+```
+Implement the Strategy Cards & Recommendations Engine (Track 26) — location-aware strategy scoring, ranked cards UI, PlantCommerce supplier integration, community priority zone badges.
+
+Read conductor/tracks/26-strategy-cards/spec.md and conductor/tracks/26-strategy-cards/plan.md.
+
+EXISTING CODE:
+- src/lib/server/services/ — add strategy-scoring.ts and plantcommerce-api.ts here
+- src/lib/server/trpc/router.ts — register strategyRouter here
+- src/components/panels/ — add StrategyPanel.tsx and StrategyCard.tsx here
+
+IMPLEMENT ALL PHASES per the plan:
+- Phase 1: Scoring engine — weighted composite per strategy (keyline, silvopasture, reforestation, biochar, water harvesting, cover cropping)
+- Phase 2: PlantCommerce API client with timeout + graceful fallback + Redis cache
+- Phase 3: strategy tRPC router (getStrategyRecommendations, getStrategySuppliers)
+- Phase 4: Strategy content markdown files in content/strategies/
+- Phase 5: StrategyCard + StrategyPanel with radar chart comparison view (Recharts)
+- Phase 6: Priority zone community demand badge integration
+
+RULES:
+- Write code only. Do NOT run any commands.
+- Do NOT create git commits.
+- PLANTCOMMERCE_API_URL must come from env var — graceful fallback if absent.
+- As you complete each task in the plan, mark it done: change `- [ ]` to `- [x]`.
+```
+
+### Post-Sprint 9 — Build Fix
+
+**Plugin:** `/build-fix`
+
+```
+Fix all TypeScript and lint errors introduced by Sprint 9 (Tracks 24, 25, 26). Run `node_modules/.bin/tsc --noEmit` and fix all errors. Then run `npx next lint` and fix lint errors. Do NOT run the dev server or build.
+```
+
+---
+
+## SPRINT 10: Teams + Integration + Alerts + Analytics (Tracks 27 + 28 + 29 + 30)
+
+### Prompt 10A — Team Organization Pages (Track 27)
+
+**Plugin:** `/ultrapilot`
+
+```
+Implement Team Organization Pages (Track 27) — team profiles with service area polygons, specialty tags, map layer, team dashboard with priority zone integration.
+
+Read conductor/tracks/27-team-organization-pages/spec.md and conductor/tracks/27-team-organization-pages/plan.md.
+
+EXISTING CODE:
+- src/lib/server/db/schema.ts — add teams and teamMembers tables (may already have partial schema from Track 12)
+- src/lib/server/trpc/routers/teams.ts — extend existing teams router
+- src/components/panels/ — add TeamProfilePanel.tsx and TeamDashboard.tsx
+
+IMPLEMENT ALL PHASES per the plan:
+- Phase 1: DB schema (teams with serviceArea geometry, teamMembers)
+- Phase 2: Extend teams tRPC router (createTeam, updateTeam, getTeamsInBbox, getTeamProfile, getTeamDashboard)
+- Phase 3: ServiceAreaDrawTool component for polygon creation
+- Phase 4: TeamLayer — fill polygons colored by orgType with hover tooltips
+- Phase 5: TeamProfilePanel (public) + TeamDashboard (authenticated)
+- Phase 6: Admin verification mutation + verified badge display
+
+RULES:
+- Write code only. Do NOT run any commands.
+- Do NOT create git commits.
+- Use PostGIS ST_Intersects for priority zone queries within service areas.
+- As you complete each task in the plan, mark it done: change `- [ ]` to `- [x]`.
+```
+
+### Prompt 10B — PlantCommerce Integration API (Track 28)
+
+**Plugin:** `/ultrapilot`
+
+```
+Implement the PlantCommerce Integration API (Track 28) — API key auth, location context endpoint, teams discovery endpoint, priority zone webhook.
+
+Read conductor/tracks/28-plantcommerce-integration/spec.md and conductor/tracks/28-plantcommerce-integration/plan.md.
+
+EXISTING CODE:
+- src/app/api/v1/ — existing v1 API routes (extend here)
+- src/lib/server/db/schema.ts — add apiKeys table
+- src/lib/server/services/plantcommerce-api.ts — already created in Track 26 (extend here)
+
+IMPLEMENT ALL PHASES per the plan:
+- Phase 1: apiKeys DB table
+- Phase 2: API auth middleware (validateApiKey + Redis sliding window rate limit)
+- Phase 3: GET /api/v1/location-context route (fire risk, drought, soil, vegetation, priority zones)
+- Phase 4: GET /api/v1/teams route (location + strategy type → teams)
+- Phase 5: Extend plantcommerce-api.ts with retry logic and geohash caching
+- Phase 6: Priority zone webhook BullMQ job with HMAC-SHA256 signature
+- Phase 7: Admin API key management routes
+
+RULES:
+- Write code only. Do NOT run any commands.
+- Do NOT create git commits.
+- All producer endpoints require X-Api-Key header validation.
+- Redis key pattern for rate limiting: ratelimit:{keyId}:{minuteTimestamp}
+- As you complete each task in the plan, mark it done: change `- [ ]` to `- [x]`.
+```
+
+### Prompt 10C — Environmental Alert System (Track 29)
+
+**Plugin:** `/ultrapilot`
+
+```
+Implement the Environmental Alert System (Track 29) — watched locations, alert subscriptions, threshold-based alert generation via BullMQ, in-app alert feed, email notifications.
+
+Read conductor/tracks/29-environmental-alerts/spec.md and conductor/tracks/29-environmental-alerts/plan.md.
+
+EXISTING CODE:
+- src/lib/server/db/schema.ts — add watchedLocations, alertSubscriptions, alerts tables
+- src/lib/server/trpc/router.ts — register alertsRouter here
+- src/lib/server/jobs/ — add alert-dispatcher.ts and email-digest.ts here
+- src/app/api/sse/ — existing SSE infrastructure (extend for alert events)
+
+IMPLEMENT ALL PHASES per the plan:
+- Phase 1: DB schema (watchedLocations, alertSubscriptions, alerts)
+- Phase 2: Alert engine service — threshold checks for fire proximity, streamflow, drought escalation, priority zones
+- Phase 3: Alert dispatcher BullMQ job triggered by data refresh jobs
+- Phase 4: Email service (Resend or SendGrid via EMAIL_PROVIDER env var)
+- Phase 5: alerts tRPC router (getAlerts, markRead, addWatchedLocation, updateSubscription, getUnreadCount)
+- Phase 6: AlertBell nav component + AlertPanel feed UI
+
+RULES:
+- Write code only. Do NOT run any commands.
+- Do NOT create git commits.
+- Deduplication: skip alert if same type+recipient exists within past 24 hours.
+- EMAIL_PROVIDER, RESEND_API_KEY, SENDGRID_API_KEY come from env vars.
+- As you complete each task in the plan, mark it done: change `- [ ]` to `- [x]`.
+```
+
+### Prompt 10D — Environmental Analytics Dashboard (Track 30)
+
+**Plugin:** `/ultrapilot`
+
+```
+Implement the Environmental Analytics Dashboard (Track 30) — regional risk summaries, TimescaleDB trend charts, priority subregion metrics, strategy demand heatmap, PDF/CSV export.
+
+Read conductor/tracks/30-environmental-analytics/spec.md and conductor/tracks/30-environmental-analytics/plan.md.
+
+EXISTING CODE:
+- src/lib/server/trpc/routers/analytics.ts — existing analytics router (extend here)
+- src/lib/server/db/ — add analytics.ts queries file
+- src/components/panels/ — add AnalyticsDashboard.tsx
+- src/components/charts/ — add TrendChart.tsx, RiskSummaryWidget.tsx, PriorityTable.tsx
+
+IMPLEMENT ALL PHASES per the plan:
+- Phase 1: TimescaleDB continuous aggregates for fire, water, NDVI metrics
+- Phase 2: Analytics DB queries (regional risk summary, trend data, priority subregions, demand density)
+- Phase 3: Extend analytics tRPC router with new procedures + Redis caching (TTL 5 min)
+- Phase 4: Recharts chart components (install recharts if needed)
+- Phase 5: AnalyticsDashboard panel with 3 tabs (Overview / Trends / Demand)
+- Phase 6: DemandHeatmapLayer using MapLibre heatmap layer type
+- Phase 7: PDF export via @react-pdf/renderer + CSV export + export buttons
+
+RULES:
+- Write code only. Do NOT run any commands.
+- Do NOT create git commits.
+- Install recharts and @react-pdf/renderer if not in package.json.
+- Viewport change triggers debounced (500ms) analytics refetch.
+- As you complete each task in the plan, mark it done: change `- [ ]` to `- [x]`.
+```
+
+### Post-Sprint 10 — Final Build Fix
+
+**Plugin:** `/build-fix`
+
+```
+Final pass: fix ALL TypeScript and build errors across the entire codebase after Sprints 8-10. Run `node_modules/.bin/tsc --noEmit` and fix everything. Then run `npx next lint` and fix lint errors. This is the final cleanup before developer review and deployment.
+```
+
+---
+
 ## FINAL VALIDATION
 
 ### Final Type Check + Test Run
@@ -1254,6 +1653,9 @@ Review the entire PlantGeo codebase for: security vulnerabilities (especially in
 | 5 | 10 + 14 + 13 | `/ultrapilot` x2 + `/ecomode` | Parallel |
 | 6 | 12 + 19 + 18 | `/ultrapilot` x2 + `/ecomode` | Parallel |
 | 7 | 16 + 17 + 20 + 11 | `/ecomode` x4 | Parallel |
+| 8 | 21 + 22 + 23 | `/ultrapilot` x3 | Parallel |
+| 9 | 24 + 25 + 26 | `/ultrapilot` x3 | Parallel |
+| 10 | 27 + 28 + 29 + 30 | `/ultrapilot` x4 | Parallel |
 | End | — | `/build-fix` then `/code-review` | Sequential |
 
 ### Between-Sprint Workflow
@@ -1262,3 +1664,84 @@ Review the entire PlantGeo codebase for: security vulnerabilities (especially in
 3. Manually verify: `npm run type-check && npm run lint`
 4. Review changes, stage, and commit at your discretion
 5. Proceed to next sprint
+
+---
+
+## SPRINT 11: AI Regional Intelligence (Track 31)
+
+### Prompt 11A — AI Regional Intelligence (Track 31)
+
+**Plugin:** `/ultrapilot`
+
+```
+Implement the AI Regional Intelligence feature (Track 31) — a map-click AI agent that fetches all regional environmental data in parallel, assembles structured context, and streams a Claude-powered intelligence report via SSE.
+
+Read the full spec at conductor/tracks/31-ai-regional-intelligence/spec.md and plan at conductor/tracks/31-ai-regional-intelligence/plan.md.
+
+EXISTING CODE TO REUSE:
+- src/app/api/stream/[layerId]/route.ts — SSE streaming pattern (ReadableStream + TextEncoder + heartbeat)
+- src/app/api/v1/location-context/route.ts — Redis caching pattern (geohash key, 15-min TTL, Promise.allSettled)
+- src/lib/server/services/strategy-scoring.ts — getStrategyRecommendations(lat, lon)
+- src/lib/server/services/fire-risk.ts — calculateFireRisk()
+- src/lib/server/services/soilgrids.ts — getSoilProperties()
+- src/lib/server/services/drought.ts — getDroughtClassification()
+- src/lib/server/services/usgs-water.ts — getStreamflowGauges()
+- src/lib/server/services/mtbs.ts — getMTBSPerimeters()
+- src/lib/server/services/carbon-potential.ts — getInterventionSuitability()
+- src/lib/server/auth.ts — session authentication
+- src/stores/layer-store.ts — Zustand store pattern (create + devtools)
+
+IMPLEMENT ALL 6 PHASES in order:
+
+Phase 1 — Claude API setup + regional-context.ts + ai-prompt.ts:
+- Add @anthropic-ai/sdk to package.json
+- Add ANTHROPIC_API_KEY and ANTHROPIC_MODEL to .env.example
+- Create src/lib/server/services/regional-context.ts (parallel fetch, Redis cache, geohash-5 key)
+- Create src/lib/server/services/ai-prompt.ts (system prompt, buildUserMessage, streamRegionalIntelligence)
+
+Phase 2 — Streaming SSE endpoint:
+- Create src/app/api/ai/regional-intelligence/route.ts
+- POST handler: auth check, rate limit (20/hr sliding window per userId), assembleRegionalContext, stream Claude response
+- SSE events: context (cache info), delta (token chunks), done (parsed RegionalIntelligenceResponse JSON), error
+- Wire AbortController to request.signal
+
+Phase 3 — Zustand store + hook + map click:
+- Create src/stores/regional-intelligence-store.ts (isOpen, selectedLocation, messages, isLoading, error, abortController)
+- Create src/hooks/useRegionalIntelligence.ts (queryLocation, sendFollowUp, SSE reader loop)
+- Add onClick handler to main MapLibre map component → openPanel + queryLocation
+
+Phase 4 — RegionalIntelligencePanel UI:
+- Create src/components/panels/RegionalIntelligencePanel.tsx ("use client")
+- Slide-in right panel: header with coords + close, streaming message list, RiskSummaryCard, HistoricalEventsList, ActionableItemsList, InterventionRecommendationsList, DataFreshnessFooter
+- Follow-up input bar (disabled while loading), auto-scroll, streaming cursor, error state with retry
+
+Phase 5 — NDVI point value:
+- Add getNDVIAtPoint(lat, lon, year, month) to src/lib/server/services/vegetation.ts
+- NASA GIBS WMS GetFeatureInfo, Redis cache 86400s TTL
+- Integrate into assembleRegionalContext
+
+Phase 6 — tRPC router + cost safeguards:
+- Create src/lib/server/trpc/routers/regional-intelligence.ts (getLocationPreview, getRateLimitStatus)
+- Register in src/lib/server/trpc/router.ts
+- Add MAX_HISTORY_TURNS=5 and MAX_CONTEXT_TOKENS_ESTIMATE=2500 guards in ai-prompt.ts
+- Add server-side logging: userId, lat, lon, estimatedTokens, cacheHit
+
+RULES:
+- Write code only. Do NOT run `npm run build`, `npm run dev`, `tsc`, or any test commands.
+- Do NOT create git commits.
+- Do NOT add comments, docstrings, or JSDoc unless the logic is genuinely non-obvious.
+- Do NOT add error handling beyond what the spec requires.
+- Prefer editing existing files over creating new ones when possible.
+- Use `"use client"` only on components that need browser APIs (map, interactive UI).
+- Follow the existing patterns in the codebase (Zustand stores, Drizzle schema, tRPC routers).
+- As you complete each task in the conductor plan.md, mark it done: change `- [ ]` to `- [x]`.
+- Update the PLAYBOOK.md progress table: change `⬜ Pending` to `✅ Done` for the current track when all phases are complete.
+```
+
+### Post-Sprint 11 — Build Fix
+
+**Plugin:** `/build-fix`
+
+```
+Fix ALL TypeScript and build errors introduced in Sprint 11 (Track 31 — AI Regional Intelligence). Run `node_modules/.bin/tsc --noEmit` and fix everything. Then run `npx next lint` and fix lint errors. Pay special attention to: the new @anthropic-ai/sdk imports, the RegionalIntelligenceResponse type usage across the SSE route and Zustand store, and any missing "use client" directives on the new panel component.
+```

@@ -1,0 +1,465 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1774105502416,
+  "projectRoot": "/home/jade/projects/plantgeo",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "next",
+        "version": "15.2.0",
+        "category": "fullstack"
+      },
+      {
+        "name": "react",
+        "version": "19.0.0",
+        "category": "frontend"
+      },
+      {
+        "name": "react-dom",
+        "version": "19.0.0",
+        "category": "frontend"
+      },
+      {
+        "name": "vitest",
+        "version": "3.0.0",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": null,
+    "lintCommand": "npm run lint",
+    "devCommand": "npm run dev",
+    "scripts": {
+      "dev": "next dev --turbopack",
+      "build": "next build",
+      "start": "next start",
+      "lint": "next lint",
+      "type-check": "tsc --noEmit",
+      "db:generate": "drizzle-kit generate",
+      "db:migrate": "drizzle-kit migrate",
+      "db:studio": "drizzle-kit studio",
+      "docker:up": "docker compose up -d",
+      "docker:down": "docker compose down",
+      "docker:logs": "docker compose logs -f",
+      "tiles:serve": "docker compose up martin -d",
+      "routing:serve": "docker compose up valhalla -d"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": "type-based"
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "scripts",
+      "src"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "conductor": {
+      "path": "conductor",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1774105502400,
+      "keyFiles": [
+        "product.md",
+        "techstack.md"
+      ]
+    },
+    "infra": {
+      "path": "infra",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1774105502401,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 2,
+      "lastAccessed": 1774105502408,
+      "keyFiles": [
+        "import-osm.sh",
+        "setup-pmtiles.sh"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 0,
+      "lastAccessed": 1774105502409,
+      "keyFiles": []
+    },
+    "src/app": {
+      "path": "src/app",
+      "purpose": "Application code",
+      "fileCount": 2,
+      "lastAccessed": 1774105502410,
+      "keyFiles": [
+        "layout.tsx",
+        "page.tsx"
+      ]
+    },
+    "src/components": {
+      "path": "src/components",
+      "purpose": "UI components",
+      "fileCount": 0,
+      "lastAccessed": 1774105502410,
+      "keyFiles": []
+    },
+    "src/lib": {
+      "path": "src/lib",
+      "purpose": "Library code",
+      "fileCount": 2,
+      "lastAccessed": 1774105502410,
+      "keyFiles": [
+        "providers.tsx",
+        "utils.ts"
+      ]
+    },
+    "src/types": {
+      "path": "src/types",
+      "purpose": "Type definitions",
+      "fileCount": 2,
+      "lastAccessed": 1774105502410,
+      "keyFiles": [
+        "index.ts",
+        "map.ts"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "PLAYBOOK.md",
+      "accessCount": 121,
+      "lastAccessed": 1774153638581,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 87,
+      "lastAccessed": 1774153069026,
+      "type": "directory"
+    },
+    {
+      "path": "src/lib/server/db/schema.ts",
+      "accessCount": 51,
+      "lastAccessed": 1774152868413,
+      "type": "file"
+    },
+    {
+      "path": "src/lib/server/trpc/router.ts",
+      "accessCount": 44,
+      "lastAccessed": 1774152828311,
+      "type": "file"
+    },
+    {
+      "path": "src/lib/server/trpc/init.ts",
+      "accessCount": 24,
+      "lastAccessed": 1774152891966,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 17,
+      "lastAccessed": 1774153153356,
+      "type": "file"
+    },
+    {
+      "path": "src",
+      "accessCount": 15,
+      "lastAccessed": 1774152870035,
+      "type": "directory"
+    },
+    {
+      "path": "src/lib/server/trpc/routers/layers.ts",
+      "accessCount": 12,
+      "lastAccessed": 1774129383762,
+      "type": "file"
+    },
+    {
+      "path": "src/lib/trpc/client.ts",
+      "accessCount": 12,
+      "lastAccessed": 1774152828717,
+      "type": "file"
+    },
+    {
+      "path": "src/components/map/MapView.tsx",
+      "accessCount": 12,
+      "lastAccessed": 1774153268319,
+      "type": "file"
+    },
+    {
+      "path": "src/stores/map-store.ts",
+      "accessCount": 10,
+      "lastAccessed": 1774109709328,
+      "type": "file"
+    },
+    {
+      "path": "src/lib/map/sources.ts",
+      "accessCount": 8,
+      "lastAccessed": 1774128951076,
+      "type": "file"
+    },
+    {
+      "path": "src/lib/server/services/geocoding.ts",
+      "accessCount": 6,
+      "lastAccessed": 1774109447314,
+      "type": "file"
+    },
+    {
+      "path": "src/stores/layer-store.ts",
+      "accessCount": 5,
+      "lastAccessed": 1774153461416,
+      "type": "file"
+    },
+    {
+      "path": "conductor/tracks/12-auth-multitenancy/plan.md",
+      "accessCount": 4,
+      "lastAccessed": 1774108351938,
+      "type": "file"
+    },
+    {
+      "path": "src/lib/server/db/index.ts",
+      "accessCount": 4,
+      "lastAccessed": 1774109448661,
+      "type": "file"
+    },
+    {
+      "path": "conductor/tracks/12-auth-multitenancy/spec.md",
+      "accessCount": 4,
+      "lastAccessed": 1774126729183,
+      "type": "file"
+    },
+    {
+      "path": "conductor/setup_state.json",
+      "accessCount": 3,
+      "lastAccessed": 1774106773894,
+      "type": "file"
+    },
+    {
+      "path": "conductor/tracks/02-vector-tile-pipeline/plan.md",
+      "accessCount": 3,
+      "lastAccessed": 1774107426507,
+      "type": "file"
+    },
+    {
+      "path": "conductor/tracks/07-layer-management/plan.md",
+      "accessCount": 3,
+      "lastAccessed": 1774107848409,
+      "type": "file"
+    },
+    {
+      "path": "src/components/panels/LayerPanel.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1774109416374,
+      "type": "file"
+    },
+    {
+      "path": "src/components/ui/sheet.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1774110037026,
+      "type": "file"
+    },
+    {
+      "path": "src/components/ui/floating-toolbar.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1774110048095,
+      "type": "file"
+    },
+    {
+      "path": "conductor/tracks/07-layer-management/spec.md",
+      "accessCount": 3,
+      "lastAccessed": 1774126723020,
+      "type": "file"
+    },
+    {
+      "path": "src/lib/server/services/layers.ts",
+      "accessCount": 3,
+      "lastAccessed": 1774126741767,
+      "type": "file"
+    },
+    {
+      "path": "conductor/tracks/README.md",
+      "accessCount": 3,
+      "lastAccessed": 1774126754214,
+      "type": "file"
+    },
+    {
+      "path": "src/components/ui/slider.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1774129996753,
+      "type": "file"
+    },
+    {
+      "path": "src/lib/providers.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774107677693,
+      "type": "file"
+    },
+    {
+      "path": "src/components/panels/LayerItem.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774107855142,
+      "type": "file"
+    },
+    {
+      "path": "scripts/setup-pmtiles.sh",
+      "accessCount": 2,
+      "lastAccessed": 1774108094384,
+      "type": "file"
+    },
+    {
+      "path": "src/components/ui/dialog.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1774108105772,
+      "type": "file"
+    },
+    {
+      "path": "src/lib/map/styles.ts",
+      "accessCount": 2,
+      "lastAccessed": 1774109443782,
+      "type": "file"
+    },
+    {
+      "path": "infra/martin/martin.yaml",
+      "accessCount": 2,
+      "lastAccessed": 1774126706462,
+      "type": "file"
+    },
+    {
+      "path": "infra/db/init/02-tile-functions.sql",
+      "accessCount": 2,
+      "lastAccessed": 1774126709318,
+      "type": "file"
+    },
+    {
+      "path": "conductor/product.md",
+      "accessCount": 2,
+      "lastAccessed": 1774126769736,
+      "type": "file"
+    },
+    {
+      "path": "src/components/ui/command.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1774105702458,
+      "type": "file"
+    },
+    {
+      "path": "conductor/techstack.md",
+      "accessCount": 1,
+      "lastAccessed": 1774106431284,
+      "type": "file"
+    },
+    {
+      "path": "conductor/product-guidelines.md",
+      "accessCount": 1,
+      "lastAccessed": 1774106561480,
+      "type": "file"
+    },
+    {
+      "path": "src/lib/map/layers.ts",
+      "accessCount": 1,
+      "lastAccessed": 1774107220620,
+      "type": "file"
+    },
+    {
+      "path": "infra/nginx/nginx.conf",
+      "accessCount": 1,
+      "lastAccessed": 1774107221305,
+      "type": "file"
+    },
+    {
+      "path": "infra/db/init/03-osm-tables.sql",
+      "accessCount": 1,
+      "lastAccessed": 1774107236911,
+      "type": "file"
+    },
+    {
+      "path": "scripts/import-osm.sh",
+      "accessCount": 1,
+      "lastAccessed": 1774107254000,
+      "type": "file"
+    },
+    {
+      "path": "src/components/ui/button.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1774107548552,
+      "type": "file"
+    },
+    {
+      "path": "src/app/api/trpc/[trpc]/route.ts",
+      "accessCount": 1,
+      "lastAccessed": 1774107667715,
+      "type": "file"
+    },
+    {
+      "path": "src/lib/map/layer-styles.ts",
+      "accessCount": 1,
+      "lastAccessed": 1774107720481,
+      "type": "file"
+    },
+    {
+      "path": "src/components/panels/LayerStyler.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1774107732493,
+      "type": "file"
+    },
+    {
+      "path": "src/components/panels/LayerUpload.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1774107768876,
+      "type": "file"
+    },
+    {
+      "path": "src/components/panels/LayerFilter.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1774107795289,
+      "type": "file"
+    },
+    {
+      "path": "src/components/map/Legend.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1774107821031,
+      "type": "file"
+    },
+    {
+      "path": "conductor/tracks/04-routing-navigation/spec.md",
+      "accessCount": 1,
+      "lastAccessed": 1774107931045,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

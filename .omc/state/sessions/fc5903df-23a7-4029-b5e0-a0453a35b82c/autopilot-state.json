@@ -1,0 +1,9 @@
+{
+  "active": true,
+  "started_at": "2026-03-21T15:30:01.112Z",
+  "original_prompt": "<ide_opened_file>The user opened the file /home/jade/projects/plantgeo/PLAYBOOK.md in the IDE. This may or may not be related to the current task.</ide_opened_file>\ncan you use /autopilot to work through the play book for me as a first pass working through all the conductor tracks and using the relevant skill invocations as you go",
+  "session_id": "fc5903df-23a7-4029-b5e0-a0453a35b82c",
+  "project_path": "/home/jade/projects/plantgeo",
+  "reinforcement_count": 0,
+  "last_checked_at": "2026-03-21T15:30:01.112Z"
+}

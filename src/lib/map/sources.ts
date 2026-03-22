@@ -39,6 +39,50 @@ export function getSources(
       attribution: "&copy; Esri, Maxar, Earthstar Geographics",
       maxzoom: 19,
     },
+    "landfire-evt": {
+      type: "raster",
+      tiles: [
+        "https://www.landfire.gov/arcgis/rest/services/Landfire/US_200/MapServer/export?bbox={bbox-epsg-3857}&bboxSR=3857&size=256,256&format=png&f=image",
+      ],
+      tileSize: 256,
+      attribution: "&copy; LANDFIRE, USDA/DOI",
+      minzoom: 8,
+    },
+    "nbr-recovery": {
+      type: "raster",
+      tiles: [
+        "https://tiles.arcgis.com/tiles/P3ePLMYs2RVChkJx/arcgis/rest/services/NatureServe_LandscapeIntegrity/MapServer/tile/{z}/{y}/{x}",
+      ],
+      tileSize: 256,
+      attribution: "&copy; NatureServe",
+    },
+    "ndvi-overlay": {
+      type: "raster",
+      // Tiles URL is updated dynamically by VegetationLayer via map.getSource().setTiles()
+      tiles: [""],
+      tileSize: 256,
+      attribution: "NASA GIBS / Copernicus",
+    },
+    "ndwi-overlay": {
+      type: "raster",
+      tiles: [""],
+      tileSize: 256,
+      attribution: "NASA GIBS",
+    },
+    "nlcd-wms": {
+      type: "raster",
+      tiles: [
+        "https://www.mrlc.gov/geoserver/mrlc_display/NLCD_2021_Land_Cover_L48/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=NLCD_2021_Land_Cover_L48&FORMAT=image/png&TRANSPARENT=true&VERSION=1.3.0&CRS=EPSG:3857&BBOX={bbox-epsg-3857}&WIDTH=256&HEIGHT=256",
+      ],
+      tileSize: 256,
+    },
+    "nlcd-change": {
+      type: "raster",
+      tiles: [
+        "https://www.mrlc.gov/geoserver/mrlc_change/nlcd_2019_2021_change_l48/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=nlcd_2019_2021_change_l48&FORMAT=image/png&TRANSPARENT=true&VERSION=1.3.0&CRS=EPSG:3857&BBOX={bbox-epsg-3857}&WIDTH=256&HEIGHT=256",
+      ],
+      tileSize: 256,
+    },
   };
 }
 
