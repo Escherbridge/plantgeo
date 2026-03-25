@@ -2,7 +2,7 @@
 
 ## Overview
 
-Scaffold a standalone Python microservice (`agri-data-service`) that serves as the regenerative agriculture data warehouse and API layer for PlantGeo. This service exposes environmental context data, regenerative strategy definitions, and species information via a FastAPI REST API, with PostGIS spatial queries served through Martin tile server for map integration.
+Scaffold a standalone Python microservice (`agri-data-service`) that serves as the regenerative agriculture data warehouse and API layer for PlantGeo. This service exposes environmental context data, regenerative strategy definitions, and species information via a Sanic REST API, with PostGIS spatial queries served through Martin tile server for map integration.
 
 ## Background
 
@@ -13,25 +13,28 @@ The service will be consumed by PlantGeo's Next.js frontend via REST and by Mart
 ## Functional Requirements
 
 ### FR-1: Python Project Initialization
-**Description:** Initialize a Python 3.12 project with pyproject.toml, dependency management, and development tooling.
+**Description:** Initialize a Python 3.12 project with pyproject.toml, uv for dependency management, and development tooling.
 **Acceptance Criteria:**
-- pyproject.toml defines project metadata, dependencies (FastAPI, SQLAlchemy 2.0, GeoAlchemy2, asyncpg, alembic, pydantic, redis, celery), and dev dependencies (pytest, pytest-asyncio, httpx, ruff, mypy)
+- pyproject.toml defines project metadata, dependencies (sanic, sanic-ext, SQLAlchemy 2.0, GeoAlchemy2, asyncpg, alembic, pydantic v2, redis[hiredis], celery), and dev dependencies (pytest, pytest-asyncio, pytest-sanic, httpx, ruff, mypy)
+- **uv** used for package/dependency management (10-100x faster than pip); `uv.lock` committed to repo
 - Project uses `src/agri_data_service/` layout
 - Ruff configured for linting/formatting
 - mypy configured with strict mode for the package
 - Makefile or justfile with common commands (dev, test, lint, migrate)
 **Priority:** P0
 
-### FR-2: FastAPI Application Skeleton
-**Description:** Create the FastAPI application with router structure, middleware, health check, and OpenAPI docs.
+### FR-2: Sanic Application Skeleton
+**Description:** Create the Sanic application with blueprint structure, middleware, health check, and OpenAPI docs.
 **Acceptance Criteria:**
-- FastAPI app factory with lifespan handler managing DB connection pool and Redis connection
-- Router modules: locations, strategies, species, health
-- CORS middleware configured for PlantGeo origin
-- `/health` endpoint returns `{"status": "ok", "db": true, "redis": true}` with actual connectivity checks
-- `/docs` serves Swagger UI; `/redoc` serves ReDoc
-- Structured JSON logging with request ID propagation
+- Sanic app factory (`create_app()` returning `Sanic("agri-data-service")`) with `sanic-ext` `Extend` for OpenAPI, validation, and dependency injection
+- `@app.before_server_start` listener initializes DB connection pool and Redis connection; `@app.after_server_stop` listener tears them down
+- Blueprint modules: `locations_bp`, `strategies_bp`, `species_bp`, `health_bp` — registered via `app.blueprint()` with `/api/v1` url prefix
+- CORS configured via sanic-ext CORS configuration (allowed origins for PlantGeo)
+- `/health` endpoint (`@health_bp.get("/health")`) returns `sanic.response.json({"status": "ok", "db": true, "redis": true})` with actual connectivity checks
+- `/docs` serves OpenAPI/Swagger UI via sanic-ext (auto-generated from Pydantic models)
+- Structured JSON logging (structlog) with `@app.middleware("request")` for request ID injection and propagation
 - Pydantic settings class loading from environment variables with `.env` file support
+- Run via `sanic agri_data_service.app:create_app --factory` (or `sanic agri_data_service.app:create_app --factory --dev` for development)
 **Priority:** P0
 
 ### FR-3: Docker Compose Development Environment
@@ -40,7 +43,7 @@ The service will be consumed by PlantGeo's Next.js frontend via REST and by Mart
 - PostgreSQL 16 with PostGIS 3.4 and pgvector extensions enabled via init script
 - Redis 7 service
 - Martin v1.4 tile server configured to read from PostGIS
-- Application service with hot reload (volume mount + uvicorn --reload)
+- Application service with hot reload (volume mount + `sanic agri_data_service.app:create_app --factory --dev` for auto-reload)
 - Named volumes for data persistence across restarts
 - `.env.example` with all required environment variables documented
 - Services use a shared Docker network
@@ -98,7 +101,9 @@ The service will be consumed by PlantGeo's Next.js frontend via REST and by Mart
 - `GET /api/v1/species/{id}` returns species detail with companion relationships
 - All endpoints return proper HTTP status codes (201, 200, 404, 422)
 - All list endpoints support pagination with `limit`, `offset`, `total` in response
-- Response schemas defined as Pydantic v2 models
+- Response schemas defined as Pydantic v2 models (sanic-ext validates and serializes natively)
+- Dependency injection for DB sessions and Redis connections via sanic-ext `@inject` decorator
+- Routes use `@bp.get("/path")` / `@bp.post("/path")` blueprint pattern
 **Priority:** P1
 
 ### FR-8: Martin Tile Server Configuration
@@ -121,15 +126,16 @@ The service will be consumed by PlantGeo's Next.js frontend via REST and by Mart
 
 ### NFR-2: Testing
 - pytest with pytest-asyncio for async test support
-- httpx AsyncClient for API integration tests
+- pytest-sanic for Sanic test client in unit/integration tests
+- httpx for async integration tests
 - Test database created/destroyed per test session (not per test)
 - Factory Boy or manual factories for test data
 - Target: >80% code coverage on all modules
 
 ### NFR-3: Security
-- Input validation via Pydantic on all endpoints
+- Input validation via Pydantic on all endpoints (sanic-ext validates request bodies/params automatically)
 - SQL injection prevention via SQLAlchemy parameterized queries
-- Rate limiting middleware (100 req/min per IP)
+- Rate limiting via Sanic built-in or sanic-limiter (100 req/min per IP)
 - No secrets in code; all configuration via environment variables
 
 ### NFR-4: Observability
@@ -163,7 +169,11 @@ The service will be consumed by PlantGeo's Next.js frontend via REST and by Mart
 - GeoAlchemy2 for spatial column types and spatial queries
 - pgvector extension for embedding storage (knowledge_chunks table)
 - Pydantic v2 with `model_config = ConfigDict(from_attributes=True)` for ORM serialization
-- FastAPI dependency injection for database sessions and Redis connections
+- sanic-ext dependency injection (`@inject`) for database sessions and Redis connections — register dependencies via `app.ext.add_dependency()`
+- Sanic blueprints for route modularity (replace FastAPI's APIRouter pattern)
+- Sanic listeners (`@app.before_server_start`, `@app.after_server_stop`) for async resource lifecycle (connection pools, Redis)
+- Sanic middleware (`@app.middleware("request")` / `@app.middleware("response")`) for cross-cutting concerns (request ID, logging, timing)
+- sanic-ext auto-generates OpenAPI docs from Pydantic models at `/docs`
 - Alembic must handle GeoAlchemy2 and pgvector column types in autogenerate
 
 ## Out of Scope
@@ -176,6 +186,6 @@ The service will be consumed by PlantGeo's Next.js frontend via REST and by Mart
 
 ## Open Questions
 
-1. Should the agri-data-service repo live inside the PlantGeo monorepo or as a truly separate repository? (Decision: separate repo, connected via REST + tiles)
+1. Should the agri-data-service repo live inside the PlantGeo monorepo or as a truly separate repository? **Decision: monorepo under `services/` directory.** The agri-data-service lives at `services/agri-data-service/` within the PlantGeo monorepo, sharing Docker Compose infrastructure and CI pipelines while maintaining its own pyproject.toml and independent deployment.
 2. Should we use Alembic data migrations or a separate seed script for strategy data? (Leaning toward a seed CLI command for flexibility)
 3. What embedding model dimension should we target for knowledge_chunks? (1536 for OpenAI ada-002 compatibility, can be changed later)

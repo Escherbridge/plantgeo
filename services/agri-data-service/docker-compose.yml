@@ -1,0 +1,77 @@
+# Agri Data Service — local development stack
+# Run: docker compose up -d
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: agri_data
+      POSTGRES_USER: plantgeo
+      POSTGRES_PASSWORD: plantgeo
+    ports:
+      - "5433:5432"
+    volumes:
+      - agri_pgdata:/var/lib/postgresql/data
+      - ./infra/db/init-extensions.sql:/docker-entrypoint-initdb.d/01-extensions.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plantgeo -d agri_data"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  martin:
+    image: ghcr.io/maplibre/martin:v0.14
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://plantgeo:plantgeo@db:5432/agri_data
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./infra/martin/config.yaml:/config.yaml
+    command: ["--config", "/config.yaml"]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://plantgeo:plantgeo@db:5432/agri_data
+      DATABASE_URL_SYNC: postgresql://plantgeo:plantgeo@db:5432/agri_data
+      REDIS_URL: redis://redis:6379/0
+      SANIC_DEBUG: "true"
+      CORS_ORIGINS: "http://localhost:3000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+    command: ["uv", "run", "sanic", "agri_data_service.app:create_app", "--factory", "--dev", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  agri_pgdata:

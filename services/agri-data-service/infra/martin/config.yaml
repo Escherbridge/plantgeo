@@ -1,0 +1,23 @@
+# Martin tile server configuration
+# Connects to PostGIS and serves MVT tiles
+
+# Sources are auto-discovered from PostGIS tables with geometry columns
+# Explicit sources can be defined below for custom queries
+
+postgres:
+  connection_string: ${DATABASE_URL}
+
+  # Auto-discover tables with geometry columns
+  auto_publish:
+    tables:
+      from: public
+
+  # Custom function sources for joined queries
+  # (uncomment when tables are populated)
+  # functions:
+  #   soil_layer:
+  #     schema: public
+  #     function: soil_tiles
+  #   climate_layer:
+  #     schema: public
+  #     function: climate_tiles

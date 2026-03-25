@@ -3,26 +3,15 @@
 import { useEffect, useRef } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { trpc } from "@/lib/trpc/client";
+import { DEMO_DEMAND_POINTS } from "@/lib/map/demo-data";
 
 const DEMO_HEATMAP_DATA: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
-  features: [
-    // Los Angeles cluster
-    { type: "Feature", geometry: { type: "Point", coordinates: [-118.24, 34.05] }, properties: { voteCount: 10 } },
-    { type: "Feature", geometry: { type: "Point", coordinates: [-118.29, 34.02] }, properties: { voteCount: 8 } },
-    { type: "Feature", geometry: { type: "Point", coordinates: [-118.18, 34.08] }, properties: { voteCount: 7 } },
-    // San Francisco cluster
-    { type: "Feature", geometry: { type: "Point", coordinates: [-122.42, 37.77] }, properties: { voteCount: 9 } },
-    { type: "Feature", geometry: { type: "Point", coordinates: [-122.45, 37.74] }, properties: { voteCount: 6 } },
-    { type: "Feature", geometry: { type: "Point", coordinates: [-122.39, 37.80] }, properties: { voteCount: 5 } },
-    // Sacramento
-    { type: "Feature", geometry: { type: "Point", coordinates: [-121.49, 38.58] }, properties: { voteCount: 7 } },
-    { type: "Feature", geometry: { type: "Point", coordinates: [-121.52, 38.55] }, properties: { voteCount: 4 } },
-    // San Diego cluster
-    { type: "Feature", geometry: { type: "Point", coordinates: [-117.16, 32.72] }, properties: { voteCount: 8 } },
-    { type: "Feature", geometry: { type: "Point", coordinates: [-117.19, 32.68] }, properties: { voteCount: 5 } },
-    { type: "Feature", geometry: { type: "Point", coordinates: [-117.12, 32.75] }, properties: { voteCount: 3 } },
-  ],
+  features: DEMO_DEMAND_POINTS.map((p) => ({
+    type: "Feature" as const,
+    geometry: { type: "Point" as const, coordinates: [p.lon, p.lat] },
+    properties: { voteCount: Math.round(p.weight * 10) },
+  })),
 };
 
 const SOURCE_ID = "demand-heatmap-source";

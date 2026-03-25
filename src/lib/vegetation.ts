@@ -42,8 +42,10 @@ export function getNDVITileUrl(
 ): string {
   const mm = String(month).padStart(2, "0");
   const dateStr = `${year}-${mm}-01`;
+  // NASA GIBS has no direct NDVI anomaly product; use EVI as a complementary index
+  // that highlights different vegetation stress patterns than standard NDVI.
   const layer = mode === "anomaly"
-    ? "MODIS_Terra_L3_NDVI_Monthly"
+    ? "MODIS_Terra_L3_EVI_Monthly"
     : "MODIS_Terra_L3_NDVI_Monthly";
 
   return (

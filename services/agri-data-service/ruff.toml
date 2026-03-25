@@ -1,0 +1,9 @@
+target-version = "py312"
+line-length = 120
+
+[lint]
+select = ["E", "F", "I", "N", "W", "UP", "ANN", "B", "A", "COM", "C4", "DTZ", "ISC", "PIE", "PT", "RSE", "RET", "SIM", "TID", "TCH", "ARG", "ERA", "PL", "PERF", "RUF"]
+ignore = ["ANN101", "ANN102", "ANN401", "COM812", "ISC001"]
+
+[lint.isort]
+known-first-party = ["agri_data_service"]

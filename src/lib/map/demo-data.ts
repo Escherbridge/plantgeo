@@ -308,3 +308,38 @@ export const DEMO_DEMAND_POINTS: DemandPoint[] = [
   // Walla Walla
   { lat: 46.0646, lon: -118.3430, weight: 0.30 },
 ];
+
+/** Shape for a simulated fire detection point. */
+export interface FirePoint {
+  lat: number;
+  lon: number;
+  /** Brightness temperature (Kelvin) — higher = more intense. Typical range 300-500K. */
+  brightness: number;
+  /** Confidence percentage 0-100 */
+  confidence: number;
+  /** Detection source */
+  satellite: "VIIRS" | "MODIS";
+  /** ISO timestamp */
+  detectedAt: string;
+}
+
+/**
+ * Demo fire detection points scattered across Washington wildfire-prone areas
+ * for use with the FireLayer scatter visualization.
+ */
+export const DEMO_FIRE_POINTS: FirePoint[] = [
+  // Eastern Washington dry pine — active complex
+  { lat: 47.85, lon: -120.65, brightness: 450, confidence: 95, satellite: "VIIRS", detectedAt: new Date().toISOString() },
+  { lat: 47.82, lon: -120.60, brightness: 420, confidence: 88, satellite: "VIIRS", detectedAt: new Date().toISOString() },
+  { lat: 47.88, lon: -120.68, brightness: 380, confidence: 72, satellite: "MODIS", detectedAt: new Date().toISOString() },
+  // Okanogan highlands
+  { lat: 48.35, lon: -119.75, brightness: 410, confidence: 90, satellite: "VIIRS", detectedAt: new Date().toISOString() },
+  { lat: 48.32, lon: -119.70, brightness: 350, confidence: 65, satellite: "MODIS", detectedAt: new Date().toISOString() },
+  // Yakima area — small grassfire
+  { lat: 46.55, lon: -120.45, brightness: 340, confidence: 55, satellite: "VIIRS", detectedAt: new Date().toISOString() },
+  // Blue Mountains (SE Washington)
+  { lat: 46.15, lon: -117.85, brightness: 470, confidence: 97, satellite: "VIIRS", detectedAt: new Date().toISOString() },
+  { lat: 46.18, lon: -117.80, brightness: 390, confidence: 78, satellite: "MODIS", detectedAt: new Date().toISOString() },
+  // North Cascades
+  { lat: 48.70, lon: -121.20, brightness: 360, confidence: 60, satellite: "VIIRS", detectedAt: new Date().toISOString() },
+];

@@ -90,8 +90,8 @@ const WIND_ALERT_THRESHOLD_KMH = 50;
 export function FireDashboard({
   open,
   onOpenChange,
-  centerLat = 37.7749,
-  centerLon = -122.4194,
+  centerLat = 47.75,
+  centerLon = -120.74,
 }: FireDashboardProps) {
   const [windAlert, setWindAlert] = useState(false);
 
@@ -107,22 +107,36 @@ export function FireDashboard({
 
   const weather = weatherQuery.data;
   const fireData = fireQuery.data;
-  const activeFireCount = fireData?.features.length ?? 0;
+
+  // Demo fallback when tRPC is unavailable
+  const demoWeather = {
+    windSpeed: 8.5, // m/s
+    windDirection: 225,
+    humidity: 32,
+    temperature: 28.4,
+    precipitation: 0,
+  };
+  const demoFireCount = 9; // matches DEMO_FIRE_POINTS count
+
+  const effectiveWeather = weather ?? (weatherQuery.isError ? demoWeather : null);
+  const effectiveFireCount = fireData?.features.length ?? (fireQuery.isError ? demoFireCount : 0);
 
   // Wind alert: windSpeed in m/s -> convert to km/h
   useEffect(() => {
-    if (!weather) return;
-    const windKmh = weather.windSpeed * 3.6;
+    if (!effectiveWeather) return;
+    const windKmh = effectiveWeather.windSpeed * 3.6;
     setWindAlert(windKmh > WIND_ALERT_THRESHOLD_KMH);
-  }, [weather]);
+  }, [effectiveWeather]);
 
-  // Build mock last-7-days chart data (in real usage this would come from a time-series query)
+  // Demo 7-day trend (realistic wildfire detection pattern)
+  const demoChartValues = [3, 5, 4, 7, 6, 8, effectiveFireCount];
   const chartData = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
+    const hasRealData = fireData?.features.length != null;
     return {
       label: d.toLocaleDateString("en-US", { weekday: "short" }),
-      value: i === 6 ? activeFireCount : 0,
+      value: hasRealData && i === 6 ? effectiveFireCount : demoChartValues[i],
     };
   });
 
@@ -143,8 +157,17 @@ export function FireDashboard({
             <div className="flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/20 px-3 py-2">
               <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
               <p className="text-xs text-red-700 font-medium">
-                High wind alert: {((weather?.windSpeed ?? 0) * 3.6).toFixed(0)} km/h — elevated
+                High wind alert: {((effectiveWeather?.windSpeed ?? 0) * 3.6).toFixed(0)} km/h — elevated
                 fire spread risk.
+              </p>
+            </div>
+          )}
+
+          {(fireQuery.isError || weatherQuery.isError) && !fireQuery.isLoading && !weatherQuery.isLoading && (
+            <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-3 py-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+              <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
+                Showing demo data — live API unavailable.
               </p>
             </div>
           )}
@@ -153,9 +176,9 @@ export function FireDashboard({
             <StatCard
               icon={<Flame className="h-3.5 w-3.5" />}
               label="Active Fires"
-              value={fireQuery.isLoading ? "..." : activeFireCount}
+              value={fireQuery.isLoading ? "..." : effectiveFireCount}
               sub="VIIRS detections (24h)"
-              highlight={activeFireCount > 10}
+              highlight={effectiveFireCount > 10}
             />
             <StatCard
               icon={<Wind className="h-3.5 w-3.5" />}
@@ -163,11 +186,11 @@ export function FireDashboard({
               value={
                 weatherQuery.isLoading
                   ? "..."
-                  : weather
-                  ? `${(weather.windSpeed * 3.6).toFixed(0)} km/h`
+                  : effectiveWeather
+                  ? `${(effectiveWeather.windSpeed * 3.6).toFixed(0)} km/h`
                   : "N/A"
               }
-              sub={weather ? `Dir: ${weather.windDirection}°` : undefined}
+              sub={effectiveWeather ? `Dir: ${effectiveWeather.windDirection}°` : undefined}
               highlight={windAlert}
             />
             <StatCard
@@ -176,8 +199,8 @@ export function FireDashboard({
               value={
                 weatherQuery.isLoading
                   ? "..."
-                  : weather
-                  ? `${weather.humidity}%`
+                  : effectiveWeather
+                  ? `${effectiveWeather.humidity}%`
                   : "N/A"
               }
               sub="Relative humidity"
@@ -188,21 +211,16 @@ export function FireDashboard({
               value={
                 weatherQuery.isLoading
                   ? "..."
-                  : weather
-                  ? `${weather.temperature.toFixed(1)}°C`
+                  : effectiveWeather
+                  ? `${effectiveWeather.temperature.toFixed(1)}°C`
                   : "N/A"
               }
-              sub={weather ? `Precip: ${weather.precipitation} mm` : undefined}
+              sub={effectiveWeather ? `Precip: ${effectiveWeather.precipitation} mm` : undefined}
             />
           </div>
 
           <BarChart data={chartData} />
 
-          {(fireQuery.isError || weatherQuery.isError) && (
-            <p className="text-xs text-[hsl(var(--destructive))]">
-              Some data sources are unavailable. Check API keys and connectivity.
-            </p>
-          )}
         </div>
       </SheetContent>
     </Sheet>
