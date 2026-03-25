@@ -58,7 +58,7 @@ export default function MapView() {
       bearing: viewport.bearing,
       pitch: is3DEnabled ? 60 : 0,
       maxPitch: 85,
-      canvasContextAttributes: { antialias: true },
+      canvasContextAttributes: { antialias: false, failIfMajorPerformanceCaveat: false },
     });
 
     mapRef.current = m;
@@ -105,22 +105,40 @@ export default function MapView() {
       queryLocation(lat, lng);
     });
 
-    const canvas = m.getCanvas();
-    canvas.addEventListener("webglcontextlost", (e) => {
-      e.preventDefault();
-      setWebglError(true);
-    });
-    canvas.addEventListener("webglcontextrestored", () => {
-      setWebglError(false);
-    });
-
     setMapInstance(m);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     initMap();
+
+    // Track WebGL context loss — but only while this map instance is active.
+    // React 19 dev mode double-invokes effects, so cleanup destroys the map
+    // and fires webglcontextlost. We must ignore that event.
+    let contextLostTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+
+    const canvas = mapRef.current?.getCanvas();
+    const onContextLost = (e: Event) => {
+      e.preventDefault();
+      if (disposed) return; // map was intentionally removed
+      contextLostTimer = setTimeout(() => {
+        if (!disposed) setWebglError(true);
+      }, 3000);
+    };
+    const onContextRestored = () => {
+      if (contextLostTimer) clearTimeout(contextLostTimer);
+      setWebglError(false);
+    };
+
+    canvas?.addEventListener("webglcontextlost", onContextLost);
+    canvas?.addEventListener("webglcontextrestored", onContextRestored);
+
     return () => {
+      disposed = true;
+      if (contextLostTimer) clearTimeout(contextLostTimer);
+      canvas?.removeEventListener("webglcontextlost", onContextLost);
+      canvas?.removeEventListener("webglcontextrestored", onContextRestored);
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
@@ -184,6 +202,12 @@ export default function MapView() {
           <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
             Try refreshing the page
           </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-3 px-4 py-2 rounded-lg bg-[hsl(var(--destructive))] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+          >
+            Reload Page
+          </button>
         </div>
       </div>
     );

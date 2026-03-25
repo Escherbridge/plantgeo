@@ -26,9 +26,9 @@ interface MapState {
 }
 
 const DEFAULT_VIEWPORT: Viewport = {
-  longitude: -119.4179,
-  latitude: 36.7783,
-  zoom: 6,
+  longitude: -120.7401,
+  latitude: 47.7511,
+  zoom: 7,
   bearing: 0,
   pitch: 0,
 };
@@ -36,13 +36,13 @@ const DEFAULT_VIEWPORT: Viewport = {
 export const useMapStore = create<MapState>()(
   devtools((set) => ({
     viewport: { ...DEFAULT_VIEWPORT },
-    activeLayers: ["fire-perimeters", "sensors"],
+    activeLayers: [],
     selectedFeatureId: null,
-    is3DEnabled: true,
+    is3DEnabled: false,
     isGlobeView: false,
     terrainExaggeration: 1.5,
     currentStyle: "dark",
-    isTerrainEnabled: true,
+    isTerrainEnabled: false,
 
     setViewport: (v) =>
       set((s) => ({ viewport: { ...s.viewport, ...v } })),

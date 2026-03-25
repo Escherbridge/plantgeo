@@ -1,30 +1,30 @@
 "use client";
 
-import { useState } from "react";
 import { Layers, Wind, Leaf } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc/client";
-import { SOIL_COLOR_RAMPS, type SoilProperty } from "@/components/map/layers/SoilLayer";
+import { type SoilProperty, SOIL_PROPERTY_LABELS } from "@/components/map/layers/SoilLayer";
+import { useSoilStore } from "@/stores/soil-store";
 import { EROSION_COLORS, type ErosionClass } from "@/lib/server/services/usle";
 import { CARBON_COLORS, classifyCarbonPotential, type CarbonClass } from "@/components/map/layers/CarbonPotentialLayer";
+import { LayerToggle } from "@/components/ui/layer-toggle";
 import type { InterventionType } from "@/lib/server/services/carbon-potential";
 
 interface SoilPanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Currently selected soil property for the map layer */
-  activeProperty?: SoilProperty;
-  onPropertyChange?: (prop: SoilProperty) => void;
   /** Point to query for soil + intervention suitability */
   queryPoint?: { lat: number; lon: number } | null;
 }
 
 const SOIL_PROPERTY_OPTIONS: { value: SoilProperty; label: string }[] = [
-  { value: "ph", label: "pH" },
-  { value: "organicCarbon", label: "Organic Carbon" },
+  { value: "phh2o", label: "pH" },
+  { value: "soc", label: "Organic Carbon" },
+  { value: "clay", label: "Clay Content" },
+  { value: "sand", label: "Sand Content" },
   { value: "nitrogen", label: "Nitrogen" },
-  { value: "bulkDensity", label: "Bulk Density" },
+  { value: "bdod", label: "Bulk Density" },
   { value: "cec", label: "CEC" },
 ];
 
@@ -90,11 +90,9 @@ function SuitabilityBar({ score }: { score: number }) {
 export function SoilPanel({
   open,
   onOpenChange,
-  activeProperty = "organicCarbon",
-  onPropertyChange,
   queryPoint,
 }: SoilPanelProps) {
-  const [selectedProperty, setSelectedProperty] = useState<SoilProperty>(activeProperty);
+  const { property: selectedProperty, setProperty } = useSoilStore();
 
   const soilQuery = trpc.environmental.getSoilProperties.useQuery(
     { lat: queryPoint?.lat ?? 0, lon: queryPoint?.lon ?? 0 },
@@ -107,13 +105,11 @@ export function SoilPanel({
   );
 
   function handlePropertyChange(prop: SoilProperty) {
-    setSelectedProperty(prop);
-    onPropertyChange?.(prop);
+    setProperty(prop);
   }
 
   const soil = soilQuery.data;
   const suitability = suitabilityQuery.data;
-  const ramp = SOIL_COLOR_RAMPS[selectedProperty];
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -124,6 +120,8 @@ export function SoilPanel({
             Soil Health & Carbon
           </SheetTitle>
         </SheetHeader>
+
+        <LayerToggle layerId="soil" label="Soil Properties" />
 
         <div className="mt-4 overflow-y-auto max-h-[calc(100vh-8rem)]">
           <Tabs defaultValue="properties">
@@ -163,16 +161,15 @@ export function SoilPanel({
                 </div>
               </div>
 
-              {/* Color legend */}
+              {/* Active property info */}
               <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
-                  {SOIL_PROPERTY_OPTIONS.find((o) => o.value === selectedProperty)?.label} Legend
+                <p className="text-xs font-semibold mb-1 text-[hsl(var(--foreground))]">
+                  {SOIL_PROPERTY_LABELS[selectedProperty]}
                 </p>
-                <div className="flex flex-col gap-1">
-                  {ramp.map((stop) => (
-                    <ColorLegendRow key={stop.color} color={stop.color} label={stop.label} />
-                  ))}
-                </div>
+                <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
+                  Live WMS raster from SoilGrids (ISRIC). Showing 0-5 cm depth mean values globally.
+                  Colors are rendered server-side by the WMS service.
+                </p>
               </div>
 
               {/* Queried point data */}

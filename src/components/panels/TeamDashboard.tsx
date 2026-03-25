@@ -228,7 +228,7 @@ export function TeamDashboard({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-[420px] sm:w-[480px] overflow-y-auto">
+      <SheetContent side="right" className="w-[420px] sm:w-[480px] overflow-y-auto" onOpenChange={onOpenChange}>
         <SheetHeader className="mb-4">
           <SheetTitle>
             {dashboard?.team.name ?? "Team Dashboard"}

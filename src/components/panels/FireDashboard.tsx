@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Flame, Wind, AlertTriangle, MapPin } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
+import { LayerToggle } from "@/components/ui/layer-toggle";
 
 interface StatCardProps {
   icon: React.ReactNode;
@@ -134,6 +135,8 @@ export function FireDashboard({
             Fire Dashboard
           </SheetTitle>
         </SheetHeader>
+
+        <LayerToggle layerId="fire" label="Fire Risk" />
 
         <div className="flex flex-col gap-4 mt-4 overflow-y-auto max-h-[calc(100vh-8rem)]">
           {windAlert && (

@@ -4,6 +4,27 @@ import { useEffect, useRef } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { trpc } from "@/lib/trpc/client";
 
+const DEMO_HEATMAP_DATA: GeoJSON.FeatureCollection = {
+  type: "FeatureCollection",
+  features: [
+    // Los Angeles cluster
+    { type: "Feature", geometry: { type: "Point", coordinates: [-118.24, 34.05] }, properties: { voteCount: 10 } },
+    { type: "Feature", geometry: { type: "Point", coordinates: [-118.29, 34.02] }, properties: { voteCount: 8 } },
+    { type: "Feature", geometry: { type: "Point", coordinates: [-118.18, 34.08] }, properties: { voteCount: 7 } },
+    // San Francisco cluster
+    { type: "Feature", geometry: { type: "Point", coordinates: [-122.42, 37.77] }, properties: { voteCount: 9 } },
+    { type: "Feature", geometry: { type: "Point", coordinates: [-122.45, 37.74] }, properties: { voteCount: 6 } },
+    { type: "Feature", geometry: { type: "Point", coordinates: [-122.39, 37.80] }, properties: { voteCount: 5 } },
+    // Sacramento
+    { type: "Feature", geometry: { type: "Point", coordinates: [-121.49, 38.58] }, properties: { voteCount: 7 } },
+    { type: "Feature", geometry: { type: "Point", coordinates: [-121.52, 38.55] }, properties: { voteCount: 4 } },
+    // San Diego cluster
+    { type: "Feature", geometry: { type: "Point", coordinates: [-117.16, 32.72] }, properties: { voteCount: 8 } },
+    { type: "Feature", geometry: { type: "Point", coordinates: [-117.19, 32.68] }, properties: { voteCount: 5 } },
+    { type: "Feature", geometry: { type: "Point", coordinates: [-117.12, 32.75] }, properties: { voteCount: 3 } },
+  ],
+};
+
 const SOURCE_ID = "demand-heatmap-source";
 const LAYER_ID = "demand-heatmap-layer";
 
@@ -87,39 +108,37 @@ export function DemandHeatmapLayer({ map, bbox, visible }: DemandHeatmapLayerPro
     if (map.isStyleLoaded()) {
       addLayer();
     } else {
-      map.once("load", addLayer);
+      map.once("styledata", addLayer);
     }
 
     return () => {
-      // Cleanup on unmount or visibility off
-      if (!visible && map.isStyleLoaded()) {
-        if (map.getLayer(LAYER_ID)) map.removeLayer(LAYER_ID);
-        if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
-        addedRef.current = false;
-      }
-    };
-  }, [map, visible]);
-
-  // Remove layer when hidden
-  useEffect(() => {
-    if (!map || !map.isStyleLoaded()) return;
-    if (!visible) {
+      if (!map || !map.isStyleLoaded()) return;
       if (map.getLayer(LAYER_ID)) map.removeLayer(LAYER_ID);
       if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
       addedRef.current = false;
-    }
+    };
   }, [map, visible]);
 
-  // Update source data when query resolves
+  // Update source data when query resolves, falling back to demo data on error or empty result
   useEffect(() => {
-    if (!map || !demandQuery.data || !map.isStyleLoaded()) return;
+    if (!map || !map.isStyleLoaded()) return;
+
+    const hasRealData =
+      !demandQuery.isError &&
+      demandQuery.data != null &&
+      (demandQuery.data as GeoJSON.FeatureCollection).features?.length > 0;
+
+    const payload: GeoJSON.FeatureCollection = hasRealData
+      ? (demandQuery.data as GeoJSON.FeatureCollection)
+      : DEMO_HEATMAP_DATA;
+
     const source = map.getSource(SOURCE_ID);
     if (source && source.type === "geojson") {
       (source as ReturnType<MapLibreMap["getSource"]> & { setData: (data: GeoJSON.FeatureCollection) => void }).setData(
-        demandQuery.data
+        payload
       );
     }
-  }, [map, demandQuery.data]);
+  }, [map, demandQuery.data, demandQuery.isError]);
 
   // This component renders nothing itself — it's a map side-effect component
   return null;

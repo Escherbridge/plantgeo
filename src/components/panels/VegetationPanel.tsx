@@ -6,8 +6,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Slider } from "@/components/ui/slider";
 import { trpc } from "@/lib/trpc/client";
-import { NDVI_COLOR_RAMP, NDWI_COLOR_RAMP } from "@/lib/server/services/vegetation";
+import { NDVI_COLOR_RAMP, NDWI_COLOR_RAMP } from "@/lib/vegetation";
 import { NLCD_CATEGORY_CLASSES, NLCD_CLASSES, type NLCDCategory } from "@/lib/server/services/nlcd";
+import { useVegetationStore } from "@/stores/vegetation-store";
+import { LayerToggle } from "@/components/ui/layer-toggle";
 import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
 import type { LandCoverMode } from "@/components/map/layers/LandCoverLayer";
 
@@ -32,7 +34,8 @@ interface VegetationPanelProps {
   onEnabledCategoriesChange?: (cats: NLCDCategory[]) => void;
 }
 
-const CURRENT_YEAR = new Date().getFullYear();
+// GIBS NDVI monthly composites have ~2 month processing delay
+const MAX_YEAR = new Date().getFullYear() - 1;
 const MIN_YEAR = 2000;
 
 function ColorLegendRow({ color, label }: { color: string; label: string }) {
@@ -56,10 +59,11 @@ export function VegetationPanel({
   onLandCoverModeChange,
   onEnabledCategoriesChange,
 }: VegetationPanelProps) {
-  const [year, setYear] = useState(CURRENT_YEAR);
-  const [month, setMonth] = useState(new Date().getMonth() + 1);
-  const [anomalyMode, setAnomalyMode] = useState(false);
-  const [showNDWI, setShowNDWI] = useState(false);
+  const vegStore = useVegetationStore();
+  const year = vegStore.year;
+  const month = vegStore.month;
+  const anomalyMode = vegStore.ndviMode === "anomaly";
+  const showNDWI = vegStore.showNDWI;
   const [landCoverMode, setLandCoverMode] = useState<LandCoverMode>("2021");
   const [enabledCategories, setEnabledCategories] = useState<NLCDCategory[]>([...ALL_CATEGORIES]);
 
@@ -80,24 +84,25 @@ export function VegetationPanel({
   ).length;
 
   function handleYearChange(val: number) {
-    setYear(val);
+    vegStore.setYear(val);
     onYearChange?.(val);
   }
 
   function handleMonthChange(val: number) {
-    setMonth(val);
+    vegStore.setMonth(val);
     onMonthChange?.(val);
   }
 
   function handleAnomalyToggle() {
     const next = !anomalyMode;
-    setAnomalyMode(next);
+    vegStore.setNDVIMode(next ? "anomaly" : "absolute");
     onNDVIModeChange?.(next ? "anomaly" : "absolute");
   }
 
   function handleNDWIToggle() {
     const next = !showNDWI;
-    setShowNDWI(next);
+    vegStore.setShowNDWI(next);
+    vegStore.setMode(next ? "ndwi" : "ndvi");
     onShowNDWIChange?.(next);
     if (next) onVegetationModeChange?.("ndwi");
     else onVegetationModeChange?.("ndvi");
@@ -126,6 +131,8 @@ export function VegetationPanel({
           </SheetTitle>
         </SheetHeader>
 
+        <LayerToggle layerId="vegetation" label="Vegetation (NDVI)" />
+
         <div className="mt-4 overflow-y-auto max-h-[calc(100vh-8rem)]">
           <Tabs defaultValue="ndvi">
             <TabsList className="w-full">
@@ -152,7 +159,7 @@ export function VegetationPanel({
                 </div>
                 <Slider
                   min={MIN_YEAR}
-                  max={CURRENT_YEAR}
+                  max={MAX_YEAR}
                   step={1}
                   value={year}
                   onValueChange={handleYearChange}

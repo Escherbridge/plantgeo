@@ -5,6 +5,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc/client";
 import { DROUGHT_LEGEND } from "@/components/map/layers/DroughtLayer";
+import { LayerToggle } from "@/components/ui/layer-toggle";
+import { DEMO_WATER_GAUGES, DEMO_DROUGHT_GEOJSON } from "@/lib/map/demo-data";
 
 interface WaterPanelProps {
   open: boolean;
@@ -61,7 +63,8 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
     { enabled: open && !!bbox }
   );
 
-  const gauges = streamflowQuery.data ?? [];
+  // Fall back to demo data when tRPC queries fail or return empty
+  const gauges = streamflowQuery.data ?? (streamflowQuery.isError ? DEMO_WATER_GAUGES : []);
   const watersheds = watershedQuery.data?.features ?? [];
 
   // Summary counts per condition
@@ -70,8 +73,8 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
     return acc;
   }, {});
 
-  // Dominant drought class from the GeoJSON features
-  const droughtFeatures = droughtQuery.data?.features ?? [];
+  // Dominant drought class from the GeoJSON features (fall back to demo data on error)
+  const droughtFeatures = droughtQuery.data?.features ?? (droughtQuery.isError ? DEMO_DROUGHT_GEOJSON.features : []);
   const dmCounts: Record<number, number> = {};
   for (const f of droughtFeatures) {
     const dm = (f.properties as Record<string, unknown>)?.DM as number | undefined;
@@ -93,6 +96,11 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
             Water Scarcity
           </SheetTitle>
         </SheetHeader>
+
+        <div className="flex flex-col gap-1.5 mt-2">
+          <LayerToggle layerId="water" label="Water Gauges" />
+          <LayerToggle layerId="drought" label="Drought Monitor" />
+        </div>
 
         <div className="mt-4 overflow-y-auto max-h-[calc(100vh-8rem)]">
           <Tabs defaultValue="streamflow">
@@ -126,8 +134,8 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
               )}
 
               {streamflowQuery.isError && (
-                <p className="text-xs text-red-500">
-                  Failed to load streamflow data. USGS NWIS may be unavailable.
+                <p className="text-xs text-amber-500">
+                  Live USGS data unavailable. Showing demo gauge data.
                 </p>
               )}
 
@@ -218,8 +226,8 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
               )}
 
               {droughtQuery.isError && (
-                <p className="text-xs text-red-500">
-                  Failed to load drought data. The USDM API may be unavailable.
+                <p className="text-xs text-amber-500">
+                  Live USDM data unavailable. Showing demo drought data.
                 </p>
               )}
 

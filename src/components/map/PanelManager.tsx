@@ -68,16 +68,58 @@ const PANEL_BUTTONS: { id: PanelId; icon: React.ReactNode; label: string }[] = [
   { id: "analytics", icon: <BarChart3 className="h-4 w-4" />, label: "Analytics" },
 ];
 
+const PANEL_LAYER_MAP: Record<PanelId, string[]> = {
+  fire:       ["fire"],
+  water:      ["water", "drought"],
+  vegetation: ["vegetation"],
+  soil:       ["soil"],
+  community:  ["demand-heatmap"],
+  strategy:   [],
+  analytics:  [],
+  team:       [],
+};
+
 export default function PanelManager() {
   const [openPanel, setOpenPanel] = useState<PanelId | null>(null);
-  const { viewport } = useMapStore();
+  const viewport = useMapStore((s) => s.viewport);
 
   function toggle(id: PanelId) {
-    setOpenPanel((prev) => (prev === id ? null : id));
+    const opening = openPanel === id ? null : id;
+
+    // Deactivate ALL data layers first (mutual exclusion)
+    const store = useMapStore.getState();
+    const allLayerIds = Object.values(PANEL_LAYER_MAP).flat();
+    for (const layerId of allLayerIds) {
+      if (store.activeLayers.includes(layerId)) {
+        store.toggleLayer(layerId);
+      }
+    }
+
+    // Then activate the new panel's layers
+    if (opening) {
+      const freshStore = useMapStore.getState();
+      for (const layerId of PANEL_LAYER_MAP[opening]) {
+        if (!freshStore.activeLayers.includes(layerId)) {
+          freshStore.toggleLayer(layerId);
+        }
+      }
+    }
+
+    setOpenPanel(opening);
   }
 
   function handleOpenChange(id: PanelId, open: boolean) {
-    if (!open && openPanel === id) setOpenPanel(null);
+    if (!open && openPanel === id) {
+      // Deactivate ALL data layers (mutual exclusion)
+      const store = useMapStore.getState();
+      const allLayerIds = Object.values(PANEL_LAYER_MAP).flat();
+      for (const layerId of allLayerIds) {
+        if (store.activeLayers.includes(layerId)) {
+          store.toggleLayer(layerId);
+        }
+      }
+      setOpenPanel(null);
+    }
   }
 
   // Compute bbox string from current viewport for panels that need it

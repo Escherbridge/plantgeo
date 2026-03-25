@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { useMap } from "@/lib/map/map-context";
 import { useMapStore } from "@/stores/map-store";
+import { useVegetationStore } from "@/stores/vegetation-store";
+import { useSoilStore } from "@/stores/soil-store";
+import { DEMO_DROUGHT_GEOJSON, DEMO_WATER_GAUGES, DEMO_GROUNDWATER_WELLS } from "@/lib/map/demo-data";
 
-const LandFireLayer = dynamic(
-  () => import("@/components/map/layers/LandFireLayer").then((m) => ({ default: m.LandFireLayer })),
+const FireLayer = dynamic(
+  () => import("@/components/map/layers/FireLayer").then((m) => ({ default: m.FireLayer })),
   { ssr: false }
 );
 const WaterLayer = dynamic(
@@ -32,16 +35,19 @@ const DemandHeatmapLayer = dynamic(
 
 export default function LayerManager() {
   const map = useMap();
-  const { viewport } = useMapStore();
+  const { viewport, activeLayers } = useMapStore();
+  const vegState = useVegetationStore();
+  const soilState = useSoilStore();
 
-  // Layers with a `visible` prop get boolean state; others are always mounted
-  const [showLandFire, setShowLandFire] = useState(false);
-  const [showDemandHeatmap, setShowDemandHeatmap] = useState(false);
-
-  // Suppress unused-variable warnings — these setters are available for
-  // future wiring (e.g. from PanelManager or a toolbar).
-  void setShowLandFire;
-  void setShowDemandHeatmap;
+  // Live drought data with fallback to demo
+  const [droughtGeoJSON, setDroughtGeoJSON] = useState(DEMO_DROUGHT_GEOJSON);
+  useEffect(() => {
+    if (!activeLayers.includes("drought")) return;
+    fetch("https://droughtmonitor.unl.edu/data/json/usdm_current.json")
+      .then((r) => r.json())
+      .then((data) => setDroughtGeoJSON(data))
+      .catch(() => {}); // keep demo data on error
+  }, [activeLayers]);
 
   // Compute bbox string from viewport for DemandHeatmapLayer
   const zoom = viewport.zoom ?? 8;
@@ -59,12 +65,26 @@ export default function LayerManager() {
 
   return (
     <>
-      <LandFireLayer map={map} visible={showLandFire} />
-      <WaterLayer map={map} />
-      <DroughtLayer map={map} geojson={null} />
-      <VegetationLayer map={map} />
-      <SoilLayer map={map} />
-      <DemandHeatmapLayer map={map} bbox={bbox} visible={showDemandHeatmap} />
+      <FireLayer map={map} visible={activeLayers.includes("fire")} />
+      <WaterLayer map={map} gauges={DEMO_WATER_GAUGES} wells={DEMO_GROUNDWATER_WELLS} visible={activeLayers.includes("water")} />
+      <DroughtLayer map={map} geojson={droughtGeoJSON} visible={activeLayers.includes("drought")} />
+      <VegetationLayer
+        map={map}
+        visible={activeLayers.includes("vegetation")}
+        mode={vegState.mode}
+        year={vegState.year}
+        month={vegState.month}
+        ndviMode={vegState.ndviMode}
+        showNDWI={vegState.showNDWI}
+        opacity={vegState.opacity}
+      />
+      <SoilLayer
+        map={map}
+        visible={activeLayers.includes("soil")}
+        property={soilState.property}
+        opacity={soilState.opacity}
+      />
+      <DemandHeatmapLayer map={map} bbox={bbox} visible={activeLayers.includes("demand-heatmap")} />
     </>
   );
 }

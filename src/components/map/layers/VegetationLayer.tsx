@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, RasterTileSource } from "maplibre-gl";
-import { getNDVITileUrl, getNDWITileUrl, NDVI_COLOR_RAMP, NDWI_COLOR_RAMP } from "@/lib/server/services/vegetation";
+import { getNDVITileUrl, getNDWITileUrl, NDVI_COLOR_RAMP, NDWI_COLOR_RAMP } from "@/lib/vegetation";
+import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 
 export type VegetationMode = "ndvi" | "ndwi" | "nbr";
 
@@ -14,6 +15,7 @@ interface VegetationLayerProps {
   ndviMode?: "absolute" | "anomaly";
   showNDWI?: boolean;
   opacity?: number;
+  visible?: boolean;
 }
 
 const NDVI_LAYER_ID = "ndvi-overlay-layer";
@@ -61,132 +63,132 @@ export function VegetationLayer({
   ndviMode = "absolute",
   showNDWI = false,
   opacity = 0.75,
+  visible = true,
 }: VegetationLayerProps) {
-  const addedRef = useRef<Set<string>>(new Set());
+  // Keep latest prop values in refs so the style.load handler always uses current values
+  const propsRef = useRef({ mode, year, month, ndviMode, showNDWI, opacity, visible });
+  propsRef.current = { mode, year, month, ndviMode, showNDWI, opacity, visible };
 
-  // Add or update NDVI raster layer
-  useEffect(() => {
-    if (!map) return;
+  const addAllLayers = useCallback((m: MapLibreMap) => {
+    const { mode, year, month, ndviMode, showNDWI, opacity } = propsRef.current;
+    const beforeId = getFirstSymbolLayer(m);
 
-    const tileUrl = getNDVITileUrl(year, month, ndviMode);
-
-    function addNDVILayer() {
-      if (!map) return;
-
-      if (map.getSource("ndvi-overlay")) {
-        (map.getSource("ndvi-overlay") as RasterTileSource).setTiles([tileUrl]);
-        if (map.getLayer(NDVI_LAYER_ID)) {
-          map.setPaintProperty(NDVI_LAYER_ID, "raster-opacity", mode === "ndvi" ? opacity : 0);
-        }
-        return;
-      }
-
-      map.addSource("ndvi-overlay", {
+    // --- NDVI ---
+    if (!m.getSource("ndvi-overlay")) {
+      m.addSource("ndvi-overlay", {
         type: "raster",
-        tiles: [tileUrl],
+        tiles: [getNDVITileUrl(year, month, ndviMode)],
         tileSize: 256,
         attribution: "NASA GIBS / Copernicus",
       });
-
-      map.addLayer({
+    }
+    if (!m.getLayer(NDVI_LAYER_ID)) {
+      m.addLayer({
         id: NDVI_LAYER_ID,
         type: "raster",
         source: "ndvi-overlay",
-        paint: {
-          "raster-opacity": mode === "ndvi" ? opacity : 0,
-        },
-      });
-
-      addedRef.current.add(NDVI_LAYER_ID);
+        paint: { "raster-opacity": mode === "ndvi" ? opacity : 0 },
+      }, beforeId);
     }
 
-    if (map.isStyleLoaded()) {
-      addNDVILayer();
-    } else {
-      map.once("styledata", addNDVILayer);
-    }
-
-    return () => {
-      if (!map || !map.isStyleLoaded()) return;
-      if (map.getLayer(NDVI_LAYER_ID)) map.removeLayer(NDVI_LAYER_ID);
-      if (map.getSource("ndvi-overlay")) map.removeSource("ndvi-overlay");
-      addedRef.current.delete(NDVI_LAYER_ID);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map]);
-
-  // Update NDVI tile URL when year/month/ndviMode changes
-  useEffect(() => {
-    if (!map || !map.isStyleLoaded()) return;
-    const source = map.getSource("ndvi-overlay") as RasterTileSource | undefined;
-    if (!source) return;
-    source.setTiles([getNDVITileUrl(year, month, ndviMode)]);
-    if (map.getLayer(NDVI_LAYER_ID)) {
-      map.setPaintProperty(NDVI_LAYER_ID, "raster-opacity", mode === "ndvi" ? opacity : 0);
-    }
-  }, [map, year, month, ndviMode, mode, opacity]);
-
-  // NDWI layer
-  useEffect(() => {
-    if (!map) return;
-
-    const ndwiUrl = getNDWITileUrl(year, month);
-
-    function addNDWILayer() {
-      if (!map) return;
-
-      if (map.getSource("ndwi-overlay")) {
-        (map.getSource("ndwi-overlay") as RasterTileSource).setTiles([ndwiUrl]);
-        if (map.getLayer(NDWI_LAYER_ID)) {
-          map.setPaintProperty(
-            NDWI_LAYER_ID,
-            "raster-opacity",
-            showNDWI && mode === "ndwi" ? opacity : 0
-          );
-        }
-        return;
-      }
-
-      map.addSource("ndwi-overlay", {
+    // --- NDWI ---
+    if (!m.getSource("ndwi-overlay")) {
+      m.addSource("ndwi-overlay", {
         type: "raster",
-        tiles: [ndwiUrl],
+        tiles: [getNDWITileUrl(year, month)],
         tileSize: 256,
         attribution: "NASA GIBS",
       });
-
-      map.addLayer({
+    }
+    if (!m.getLayer(NDWI_LAYER_ID)) {
+      m.addLayer({
         id: NDWI_LAYER_ID,
         type: "raster",
         source: "ndwi-overlay",
-        paint: {
-          "raster-opacity": showNDWI && mode === "ndwi" ? opacity : 0,
-        },
+        paint: { "raster-opacity": showNDWI && mode === "ndwi" ? opacity : 0 },
+      }, beforeId);
+    }
+
+    // --- NBR ---
+    if (!m.getSource("nbr-recovery")) {
+      m.addSource("nbr-recovery", {
+        type: "raster",
+        tiles: [
+          "https://tiles.arcgis.com/tiles/P3ePLMYs2RVChkJx/arcgis/rest/services/NatureServe_LandscapeIntegrity/MapServer/tile/{z}/{y}/{x}",
+        ],
+        tileSize: 256,
       });
+    }
+    if (!m.getLayer(NBR_LAYER_ID)) {
+      m.addLayer({
+        id: NBR_LAYER_ID,
+        type: "raster",
+        source: "nbr-recovery",
+        paint: { "raster-opacity": mode === "nbr" ? opacity : 0 },
+      }, beforeId);
+    }
+  }, []);
 
-      addedRef.current.add(NDWI_LAYER_ID);
+  const removeAllLayers = useCallback((m: MapLibreMap) => {
+    safeRemoveLayerAndSource(m, [NDVI_LAYER_ID], "ndvi-overlay");
+    safeRemoveLayerAndSource(m, [NDWI_LAYER_ID], "ndwi-overlay");
+    safeRemoveLayerAndSource(m, [NBR_LAYER_ID], "nbr-recovery");
+  }, []);
+
+  // Main effect: add/remove layers and listen for style changes
+  useEffect(() => {
+    if (!map) return;
+
+    if (!visible) {
+      removeAllLayers(map);
+      return;
     }
 
+    // Handler that re-adds all layers after a style change
+    const onStyleLoad = () => {
+      if (!propsRef.current.visible) return;
+      addAllLayers(map);
+    };
+
+    // Add layers now if style is ready, otherwise wait for first load
     if (map.isStyleLoaded()) {
-      addNDWILayer();
+      addAllLayers(map);
     } else {
-      map.once("styledata", addNDWILayer);
+      map.once("style.load", () => addAllLayers(map));
     }
+
+    // Persist layers across future style changes
+    map.on("style.load", onStyleLoad);
 
     return () => {
-      if (!map || !map.isStyleLoaded()) return;
-      if (map.getLayer(NDWI_LAYER_ID)) map.removeLayer(NDWI_LAYER_ID);
-      if (map.getSource("ndwi-overlay")) map.removeSource("ndwi-overlay");
-      addedRef.current.delete(NDWI_LAYER_ID);
+      map.off("style.load", onStyleLoad);
+      removeAllLayers(map);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map]);
+  }, [map, visible, addAllLayers, removeAllLayers]);
 
-  // Update NDWI visibility
+  // Update tile URLs and opacity when year/month/mode/opacity change
   useEffect(() => {
-    if (!map || !map.isStyleLoaded()) return;
-    const source = map.getSource("ndwi-overlay") as RasterTileSource | undefined;
-    if (!source) return;
-    source.setTiles([getNDWITileUrl(year, month)]);
+    if (!map || !visible) return;
+    try {
+      if (!map.getStyle()) return;
+    } catch {
+      return;
+    }
+
+    // NDVI tile URL + opacity
+    const ndviSource = map.getSource("ndvi-overlay") as RasterTileSource | undefined;
+    if (ndviSource) {
+      ndviSource.setTiles([getNDVITileUrl(year, month, ndviMode)]);
+    }
+    if (map.getLayer(NDVI_LAYER_ID)) {
+      map.setPaintProperty(NDVI_LAYER_ID, "raster-opacity", mode === "ndvi" ? opacity : 0);
+    }
+
+    // NDWI tile URL + opacity
+    const ndwiSource = map.getSource("ndwi-overlay") as RasterTileSource | undefined;
+    if (ndwiSource) {
+      ndwiSource.setTiles([getNDWITileUrl(year, month)]);
+    }
     if (map.getLayer(NDWI_LAYER_ID)) {
       map.setPaintProperty(
         NDWI_LAYER_ID,
@@ -194,63 +196,12 @@ export function VegetationLayer({
         showNDWI && mode === "ndwi" ? opacity : 0
       );
     }
-  }, [map, year, month, showNDWI, mode, opacity]);
 
-  // NBR layer
-  useEffect(() => {
-    if (!map) return;
-
-    function addNBRLayer() {
-      if (!map) return;
-      if (map.getSource("nbr-recovery")) {
-        if (map.getLayer(NBR_LAYER_ID)) {
-          map.setPaintProperty(NBR_LAYER_ID, "raster-opacity", mode === "nbr" ? opacity : 0);
-        }
-        return;
-      }
-
-      map.addSource("nbr-recovery", {
-        type: "raster",
-        tiles: [
-          "https://tiles.arcgis.com/tiles/P3ePLMYs2RVChkJx/arcgis/rest/services/NatureServe_LandscapeIntegrity/MapServer/tile/{z}/{y}/{x}",
-        ],
-        tileSize: 256,
-      });
-
-      map.addLayer({
-        id: NBR_LAYER_ID,
-        type: "raster",
-        source: "nbr-recovery",
-        paint: {
-          "raster-opacity": mode === "nbr" ? opacity : 0,
-        },
-      });
-
-      addedRef.current.add(NBR_LAYER_ID);
-    }
-
-    if (map.isStyleLoaded()) {
-      addNBRLayer();
-    } else {
-      map.once("styledata", addNBRLayer);
-    }
-
-    return () => {
-      if (!map || !map.isStyleLoaded()) return;
-      if (map.getLayer(NBR_LAYER_ID)) map.removeLayer(NBR_LAYER_ID);
-      if (map.getSource("nbr-recovery")) map.removeSource("nbr-recovery");
-      addedRef.current.delete(NBR_LAYER_ID);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map]);
-
-  // Update NBR visibility
-  useEffect(() => {
-    if (!map || !map.isStyleLoaded()) return;
+    // NBR opacity (tile URL is static)
     if (map.getLayer(NBR_LAYER_ID)) {
       map.setPaintProperty(NBR_LAYER_ID, "raster-opacity", mode === "nbr" ? opacity : 0);
     }
-  }, [map, mode, opacity]);
+  }, [map, year, month, ndviMode, mode, showNDWI, opacity, visible]);
 
   return null;
 }

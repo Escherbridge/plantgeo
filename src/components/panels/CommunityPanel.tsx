@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { trpc } from "@/lib/trpc/client";
 import { RequestSubmitModal } from "@/components/panels/RequestSubmitModal";
+import { LayerToggle } from "@/components/ui/layer-toggle";
 
 const STRATEGY_TYPES = [
   { value: "", label: "All Types" },
@@ -81,10 +82,12 @@ export function CommunityPanel({
   return (
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="right" className="w-[380px] sm:w-[420px] overflow-y-auto">
+        <SheetContent side="right" className="w-[380px] sm:w-[420px] overflow-y-auto" onOpenChange={onOpenChange}>
           <SheetHeader className="mb-4">
             <SheetTitle>Community Strategy Requests</SheetTitle>
           </SheetHeader>
+
+          <LayerToggle layerId="demand-heatmap" label="Demand Heatmap" />
 
           {/* Filter + Submit */}
           <div className="flex gap-2 mb-4">

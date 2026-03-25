@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
+import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 
-/** USDM drought category color mapping (DM property 0–4 plus none). */
+/** USDM drought category color mapping (DM property 0-4 plus none). */
 export const DROUGHT_COLORS: Record<string, string> = {
   none: "transparent",
   D0: "#ffff00",
@@ -27,29 +28,32 @@ interface DroughtLayerProps {
   map: MapLibreMap | null;
   geojson: GeoJSON.FeatureCollection | null;
   opacity?: number;
+  visible?: boolean;
 }
 
 /**
  * Renders USDM drought GeoJSON as a fill-color choropleth using MapLibre GL JS.
- * The USDM GeoJSON features carry a numeric `DM` property (0=D0 … 4=D4).
+ * The USDM GeoJSON features carry a numeric `DM` property (0=D0 ... 4=D4).
  */
-export function DroughtLayer({ map, geojson, opacity = 0.6 }: DroughtLayerProps) {
-  useEffect(() => {
-    if (!map || !geojson) return;
+export function DroughtLayer({ map, geojson, opacity = 0.6, visible = true }: DroughtLayerProps) {
+  const propsRef = useRef({ geojson, opacity, visible });
+  propsRef.current = { geojson, opacity, visible };
 
-    function addLayers() {
-      if (!map || !geojson) return;
+  const addLayers = useCallback((m: MapLibreMap) => {
+    const { geojson, opacity } = propsRef.current;
+    if (!geojson) return;
 
-      if (map.getSource("drought-monitor")) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (map.getSource("drought-monitor") as any).setData(geojson);
-        return;
-      }
+    const beforeId = getFirstSymbolLayer(m);
 
-      map.addSource("drought-monitor", { type: "geojson", data: geojson });
+    if (!m.getSource("drought-monitor")) {
+      m.addSource("drought-monitor", { type: "geojson", data: geojson });
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (m.getSource("drought-monitor") as any).setData(geojson);
+    }
 
-      // Fill layer — DM 0–4 mapped to USDM colors
-      map.addLayer({
+    if (!m.getLayer("drought-fill")) {
+      m.addLayer({
         id: "drought-fill",
         type: "fill",
         source: "drought-monitor",
@@ -66,10 +70,11 @@ export function DroughtLayer({ map, geojson, opacity = 0.6 }: DroughtLayerProps)
           ],
           "fill-opacity": opacity,
         },
-      });
+      }, beforeId);
+    }
 
-      // Stroke layer
-      map.addLayer({
+    if (!m.getLayer("drought-outline")) {
+      m.addLayer({
         id: "drought-outline",
         type: "line",
         source: "drought-monitor",
@@ -87,31 +92,50 @@ export function DroughtLayer({ map, geojson, opacity = 0.6 }: DroughtLayerProps)
           "line-width": 0.5,
           "line-opacity": 0.8,
         },
-      });
+      }, beforeId);
     }
+  }, []);
+
+  const removeLayers = useCallback((m: MapLibreMap) => {
+    safeRemoveLayerAndSource(m, ["drought-fill", "drought-outline"], "drought-monitor");
+  }, []);
+
+  // Main effect: add/remove and persist across style changes
+  useEffect(() => {
+    if (!map) return;
+
+    if (!visible || !geojson) {
+      removeLayers(map);
+      return;
+    }
+
+    const onStyleLoad = () => {
+      if (!propsRef.current.visible || !propsRef.current.geojson) return;
+      addLayers(map);
+    };
 
     if (map.isStyleLoaded()) {
-      addLayers();
+      addLayers(map);
     } else {
-      map.once("styledata", addLayers);
+      map.once("style.load", () => addLayers(map));
     }
 
+    map.on("style.load", onStyleLoad);
+
     return () => {
-      if (!map || !map.isStyleLoaded()) return;
-      if (map.getLayer("drought-fill")) map.removeLayer("drought-fill");
-      if (map.getLayer("drought-outline")) map.removeLayer("drought-outline");
-      if (map.getSource("drought-monitor")) map.removeSource("drought-monitor");
+      map.off("style.load", onStyleLoad);
+      removeLayers(map);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, geojson]);
+  }, [map, geojson, visible, addLayers, removeLayers]);
 
   // Update opacity without rebuilding layers
   useEffect(() => {
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map || !visible) return;
+    try { if (!map.getStyle()) return; } catch { return; }
     if (map.getLayer("drought-fill")) {
       map.setPaintProperty("drought-fill", "fill-opacity", opacity);
     }
-  }, [map, opacity]);
+  }, [map, opacity, visible]);
 
   return null;
 }

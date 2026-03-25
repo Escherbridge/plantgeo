@@ -62,7 +62,7 @@ export function TeamProfilePanel({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-[380px] sm:w-[420px] overflow-y-auto">
+      <SheetContent side="right" className="w-[380px] sm:w-[420px] overflow-y-auto" onOpenChange={onOpenChange}>
         <SheetHeader className="mb-4">
           <SheetTitle>Team Profile</SheetTitle>
         </SheetHeader>

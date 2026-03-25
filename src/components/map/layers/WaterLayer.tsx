@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, Popup } from "maplibre-gl";
 import type { WaterGauge, GroundwaterWell } from "@/lib/server/services/usgs-water";
+import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 
 function escapeHtml(val: unknown): string {
   return String(val ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -18,10 +19,10 @@ const CONDITION_COLORS: Record<string, string> = {
 };
 
 const TREND_ARROW: Record<string, string> = {
-  rising: "↑",
-  stable: "→",
-  declining: "↓",
-  critical: "↓↓",
+  rising: "\u2191",
+  stable: "\u2192",
+  declining: "\u2193",
+  critical: "\u2193\u2193",
 };
 
 interface WaterLayerProps {
@@ -31,6 +32,52 @@ interface WaterLayerProps {
   watershedsGeoJSON?: GeoJSON.FeatureCollection | null;
   onGaugeClick?: (gauge: WaterGauge) => void;
   onWellClick?: (well: GroundwaterWell) => void;
+  visible?: boolean;
+}
+
+function buildGaugeGeoJSON(gauges: WaterGauge[]): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: gauges.map((g) => ({
+      type: "Feature" as const,
+      geometry: { type: "Point" as const, coordinates: [g.lon, g.lat] },
+      properties: {
+        siteNo: g.siteNo,
+        siteName: g.siteName,
+        flowCfs: g.flowCfs,
+        percentile: g.percentile,
+        condition: g.condition,
+        trend: g.trend ?? "stable",
+        color: CONDITION_COLORS[g.condition] ?? CONDITION_COLORS.unknown,
+        updatedAt: g.updatedAt,
+      },
+    })),
+  };
+}
+
+function buildWellGeoJSON(wells: GroundwaterWell[]): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: wells.map((w) => ({
+      type: "Feature" as const,
+      geometry: { type: "Point" as const, coordinates: [w.lon, w.lat] },
+      properties: {
+        siteNo: w.siteNo,
+        siteName: w.siteName,
+        depthFt: w.depthFt,
+        trend: w.trend,
+        color:
+          w.trend === "rising"
+            ? "#2196f3"
+            : w.trend === "stable"
+              ? "#4caf50"
+              : w.trend === "declining"
+                ? "#ff9800"
+                : "#f44336",
+        updatedAt: w.updatedAt,
+      },
+    })),
+  };
 }
 
 export function WaterLayer({
@@ -40,43 +87,28 @@ export function WaterLayer({
   watershedsGeoJSON,
   onGaugeClick,
   onWellClick,
+  visible = true,
 }: WaterLayerProps) {
   const popupRef = useRef<Popup | null>(null);
 
-  // Streamflow gauge markers
-  useEffect(() => {
-    if (!map) return;
+  // Keep latest data in refs for use inside style.load handler
+  const dataRef = useRef({ gauges, wells, watershedsGeoJSON, visible });
+  dataRef.current = { gauges, wells, watershedsGeoJSON, visible };
 
-    const gaugeGeoJSON: GeoJSON.FeatureCollection = {
-      type: "FeatureCollection",
-      features: gauges.map((g) => ({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [g.lon, g.lat] },
-        properties: {
-          siteNo: g.siteNo,
-          siteName: g.siteName,
-          flowCfs: g.flowCfs,
-          percentile: g.percentile,
-          condition: g.condition,
-          trend: g.trend ?? "stable",
-          color: CONDITION_COLORS[g.condition] ?? CONDITION_COLORS.unknown,
-          updatedAt: g.updatedAt,
-        },
-      })),
-    };
+  const addAllLayers = useCallback((m: MapLibreMap) => {
+    const { gauges, wells, watershedsGeoJSON } = dataRef.current;
+    const beforeId = getFirstSymbolLayer(m);
 
-    function addGaugeLayers() {
-      if (!map) return;
-
-      if (map.getSource("water-gauges")) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (map.getSource("water-gauges") as any).setData(gaugeGeoJSON);
-        return;
-      }
-
-      map.addSource("water-gauges", { type: "geojson", data: gaugeGeoJSON });
-
-      map.addLayer({
+    // --- Gauge circles ---
+    const gaugeData = buildGaugeGeoJSON(gauges);
+    if (!m.getSource("water-gauges")) {
+      m.addSource("water-gauges", { type: "geojson", data: gaugeData });
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (m.getSource("water-gauges") as any).setData(gaugeData);
+    }
+    if (!m.getLayer("water-gauges-circle")) {
+      m.addLayer({
         id: "water-gauges-circle",
         type: "circle",
         source: "water-gauges",
@@ -87,53 +119,130 @@ export function WaterLayer({
           "circle-stroke-color": "#ffffff",
           "circle-opacity": 0.9,
         },
-      });
+      }, beforeId);
     }
+
+    // --- Well circles ---
+    const wellData = buildWellGeoJSON(wells);
+    if (!m.getSource("groundwater-wells")) {
+      m.addSource("groundwater-wells", { type: "geojson", data: wellData });
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (m.getSource("groundwater-wells") as any).setData(wellData);
+    }
+    if (!m.getLayer("groundwater-wells-circle")) {
+      m.addLayer({
+        id: "groundwater-wells-circle",
+        type: "circle",
+        source: "groundwater-wells",
+        paint: {
+          "circle-radius": 5,
+          "circle-color": ["get", "color"],
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "#ffffff",
+          "circle-opacity": 0.85,
+        },
+      }, beforeId);
+    }
+
+    // --- Watershed polygons ---
+    if (watershedsGeoJSON) {
+      if (!m.getSource("watersheds")) {
+        m.addSource("watersheds", { type: "geojson", data: watershedsGeoJSON });
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (m.getSource("watersheds") as any).setData(watershedsGeoJSON);
+      }
+      if (!m.getLayer("watersheds-fill")) {
+        m.addLayer({
+          id: "watersheds-fill",
+          type: "fill",
+          source: "watersheds",
+          paint: { "fill-color": "#1565c0", "fill-opacity": 0.05 },
+        }, beforeId);
+      }
+      if (!m.getLayer("watersheds-outline")) {
+        m.addLayer({
+          id: "watersheds-outline",
+          type: "line",
+          source: "watersheds",
+          paint: { "line-color": "#1565c0", "line-width": 1, "line-opacity": 0.6 },
+        }, beforeId);
+      }
+    }
+  }, []);
+
+  const removeAllLayers = useCallback((m: MapLibreMap) => {
+    safeRemoveLayerAndSource(m, ["water-gauges-circle"], "water-gauges");
+    safeRemoveLayerAndSource(m, ["groundwater-wells-circle"], "groundwater-wells");
+    safeRemoveLayerAndSource(m, ["watersheds-fill", "watersheds-outline"], "watersheds");
+  }, []);
+
+  // Main effect: add/remove layers and persist across style changes
+  useEffect(() => {
+    if (!map) return;
+
+    if (!visible) {
+      removeAllLayers(map);
+      return;
+    }
+
+    const onStyleLoad = () => {
+      if (!dataRef.current.visible) return;
+      addAllLayers(map);
+    };
 
     if (map.isStyleLoaded()) {
-      addGaugeLayers();
+      addAllLayers(map);
     } else {
-      map.once("styledata", addGaugeLayers);
+      map.once("style.load", () => addAllLayers(map));
     }
 
+    // Persist layers across future style changes
+    map.on("style.load", onStyleLoad);
+
     return () => {
-      if (!map || !map.isStyleLoaded()) return;
-      if (map.getLayer("water-gauges-circle")) map.removeLayer("water-gauges-circle");
-      if (map.getSource("water-gauges")) map.removeSource("water-gauges");
+      map.off("style.load", onStyleLoad);
+      removeAllLayers(map);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map]);
+  }, [map, visible, addAllLayers, removeAllLayers]);
 
   // Update gauge data when gauges prop changes
   useEffect(() => {
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map || !visible) return;
+    try { if (!map.getStyle()) return; } catch { return; }
     const source = map.getSource("water-gauges") as
       | { setData: (d: GeoJSON.FeatureCollection) => void }
       | undefined;
     if (!source) return;
+    source.setData(buildGaugeGeoJSON(gauges));
+  }, [map, gauges, visible]);
 
-    source.setData({
-      type: "FeatureCollection",
-      features: gauges.map((g) => ({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [g.lon, g.lat] },
-        properties: {
-          siteNo: g.siteNo,
-          siteName: g.siteName,
-          flowCfs: g.flowCfs,
-          percentile: g.percentile,
-          condition: g.condition,
-          trend: g.trend ?? "stable",
-          color: CONDITION_COLORS[g.condition] ?? CONDITION_COLORS.unknown,
-          updatedAt: g.updatedAt,
-        },
-      })),
-    });
-  }, [map, gauges]);
+  // Update well data when wells prop changes
+  useEffect(() => {
+    if (!map || !visible) return;
+    try { if (!map.getStyle()) return; } catch { return; }
+    const source = map.getSource("groundwater-wells") as
+      | { setData: (d: GeoJSON.FeatureCollection) => void }
+      | undefined;
+    if (!source) return;
+    source.setData(buildWellGeoJSON(wells));
+  }, [map, wells, visible]);
+
+  // Update watershed data when prop changes
+  useEffect(() => {
+    if (!map || !visible || !watershedsGeoJSON) return;
+    try { if (!map.getStyle()) return; } catch { return; }
+    const source = map.getSource("watersheds") as
+      | { setData: (d: GeoJSON.FeatureCollection) => void }
+      | undefined;
+    if (!source) return;
+    source.setData(watershedsGeoJSON);
+  }, [map, watershedsGeoJSON, visible]);
 
   // Gauge click popup
   useEffect(() => {
-    if (!map) return;
+    if (!map || !visible) return;
 
     function handleGaugeClick(
       e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }
@@ -150,7 +259,7 @@ export function WaterLayer({
       // Fallback inline popup
       import("maplibre-gl").then(({ Popup }) => {
         if (popupRef.current) popupRef.current.remove();
-        const trendSymbol = TREND_ARROW[props.trend as string] ?? "→";
+        const trendSymbol = TREND_ARROW[props.trend as string] ?? "\u2192";
         const condColor = CONDITION_COLORS[props.condition as string] ?? "#9e9e9e";
         const html = `
           <div style="font-size:12px;min-width:180px">
@@ -174,109 +283,11 @@ export function WaterLayer({
     return () => {
       map.off("click", "water-gauges-circle", handleGaugeClick);
     };
-  }, [map, gauges, onGaugeClick]);
-
-  // Groundwater well markers
-  useEffect(() => {
-    if (!map) return;
-
-    const wellGeoJSON: GeoJSON.FeatureCollection = {
-      type: "FeatureCollection",
-      features: wells.map((w) => ({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [w.lon, w.lat] },
-        properties: {
-          siteNo: w.siteNo,
-          siteName: w.siteName,
-          depthFt: w.depthFt,
-          trend: w.trend,
-          color:
-            w.trend === "rising"
-              ? "#2196f3"
-              : w.trend === "stable"
-                ? "#4caf50"
-                : w.trend === "declining"
-                  ? "#ff9800"
-                  : "#f44336",
-          updatedAt: w.updatedAt,
-        },
-      })),
-    };
-
-    function addWellLayers() {
-      if (!map) return;
-
-      if (map.getSource("groundwater-wells")) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (map.getSource("groundwater-wells") as any).setData(wellGeoJSON);
-        return;
-      }
-
-      map.addSource("groundwater-wells", { type: "geojson", data: wellGeoJSON });
-
-      map.addLayer({
-        id: "groundwater-wells-circle",
-        type: "circle",
-        source: "groundwater-wells",
-        paint: {
-          "circle-radius": 5,
-          "circle-color": ["get", "color"],
-          "circle-stroke-width": 1,
-          "circle-stroke-color": "#ffffff",
-          "circle-opacity": 0.85,
-        },
-      });
-    }
-
-    if (map.isStyleLoaded()) {
-      addWellLayers();
-    } else {
-      map.once("styledata", addWellLayers);
-    }
-
-    return () => {
-      if (!map || !map.isStyleLoaded()) return;
-      if (map.getLayer("groundwater-wells-circle")) map.removeLayer("groundwater-wells-circle");
-      if (map.getSource("groundwater-wells")) map.removeSource("groundwater-wells");
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map]);
-
-  // Update wells data
-  useEffect(() => {
-    if (!map || !map.isStyleLoaded()) return;
-    const source = map.getSource("groundwater-wells") as
-      | { setData: (d: GeoJSON.FeatureCollection) => void }
-      | undefined;
-    if (!source) return;
-
-    source.setData({
-      type: "FeatureCollection",
-      features: wells.map((w) => ({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [w.lon, w.lat] },
-        properties: {
-          siteNo: w.siteNo,
-          siteName: w.siteName,
-          depthFt: w.depthFt,
-          trend: w.trend,
-          color:
-            w.trend === "rising"
-              ? "#2196f3"
-              : w.trend === "stable"
-                ? "#4caf50"
-                : w.trend === "declining"
-                  ? "#ff9800"
-                  : "#f44336",
-          updatedAt: w.updatedAt,
-        },
-      })),
-    });
-  }, [map, wells]);
+  }, [map, gauges, onGaugeClick, visible]);
 
   // Well click popup
   useEffect(() => {
-    if (!map) return;
+    if (!map || !visible) return;
 
     function handleWellClick(
       e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }
@@ -292,7 +303,7 @@ export function WaterLayer({
 
       import("maplibre-gl").then(({ Popup }) => {
         if (popupRef.current) popupRef.current.remove();
-        const trendSymbol = TREND_ARROW[props.trend as string] ?? "→";
+        const trendSymbol = TREND_ARROW[props.trend as string] ?? "\u2192";
         const html = `
           <div style="font-size:12px;min-width:160px">
             <strong style="display:block;margin-bottom:4px">${escapeHtml(props.siteName ?? "Groundwater Well")}</strong>
@@ -312,59 +323,7 @@ export function WaterLayer({
     return () => {
       map.off("click", "groundwater-wells-circle", handleWellClick);
     };
-  }, [map, wells, onWellClick]);
-
-  // Watershed polygon outlines
-  useEffect(() => {
-    if (!map || !watershedsGeoJSON) return;
-
-    function addWatershedLayers() {
-      if (!map || !watershedsGeoJSON) return;
-
-      if (map.getSource("watersheds")) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (map.getSource("watersheds") as any).setData(watershedsGeoJSON);
-        return;
-      }
-
-      map.addSource("watersheds", { type: "geojson", data: watershedsGeoJSON });
-
-      map.addLayer({
-        id: "watersheds-fill",
-        type: "fill",
-        source: "watersheds",
-        paint: {
-          "fill-color": "#1565c0",
-          "fill-opacity": 0.05,
-        },
-      });
-
-      map.addLayer({
-        id: "watersheds-outline",
-        type: "line",
-        source: "watersheds",
-        paint: {
-          "line-color": "#1565c0",
-          "line-width": 1,
-          "line-opacity": 0.6,
-        },
-      });
-    }
-
-    if (map.isStyleLoaded()) {
-      addWatershedLayers();
-    } else {
-      map.once("styledata", addWatershedLayers);
-    }
-
-    return () => {
-      if (!map || !map.isStyleLoaded()) return;
-      if (map.getLayer("watersheds-fill")) map.removeLayer("watersheds-fill");
-      if (map.getLayer("watersheds-outline")) map.removeLayer("watersheds-outline");
-      if (map.getSource("watersheds")) map.removeSource("watersheds");
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, watershedsGeoJSON]);
+  }, [map, wells, onWellClick, visible]);
 
   return null;
 }
