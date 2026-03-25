@@ -15,11 +15,11 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "docker:up": "docker compose up -d",
-    "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f",
-    "tiles:serve": "docker compose up martin -d",
-    "routing:serve": "docker compose up valhalla -d"
+    "docker:up": "podman compose up -d",
+    "docker:down": "podman compose down",
+    "docker:logs": "podman compose logs -f",
+    "tiles:serve": "podman compose up martin -d",
+    "routing:serve": "podman compose up valhalla -d"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
@@ -34,7 +34,6 @@
     "@trpc/client": "^11.0.0",
     "@trpc/react-query": "^11.0.0",
     "@trpc/server": "^11.0.0",
-    "@types/bcryptjs": "^3.0.0",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.0.0",
     "class-variance-authority": "^0.7.1",
@@ -50,7 +49,6 @@
     "postgres": "^3.4.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-map-gl": "^7.1.8",
     "superjson": "^2.2.2",
     "tailwind-merge": "^3.0.0",
     "tailwindcss": "^4.0.0",

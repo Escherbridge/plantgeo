@@ -4,21 +4,23 @@ const TERRAIN_URL =
   process.env.NEXT_PUBLIC_TERRAIN_URL ||
   "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
 
-const PMTILES_BASE_URL =
-  process.env.NEXT_PUBLIC_PMTILES_URL ||
-  "pmtiles://https://build.protomaps.com/20240801T000000Z.pmtiles";
+const PROTOMAPS_TILES_URL =
+  process.env.NEXT_PUBLIC_PROTOMAPS_TILES_URL ||
+  "https://api.protomaps.com/tiles/v4/{z}/{x}/{y}.mvt";
 
 const SATELLITE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
 export function getSources(
   martinUrl: string,
-  pmtilesUrl: string = PMTILES_BASE_URL
+  tilesUrl: string = PROTOMAPS_TILES_URL
 ): Record<string, SourceSpecification> {
   return {
     protomaps: {
       type: "vector",
-      url: pmtilesUrl,
+      tiles: [tilesUrl],
+      maxzoom: 15,
+      attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>',
     },
     "martin-dynamic": {
       type: "vector",
@@ -95,5 +97,7 @@ export const terrainSource: SourceSpecification = {
 
 export const pmtilesSource: SourceSpecification = {
   type: "vector",
-  url: PMTILES_BASE_URL,
+  tiles: [PROTOMAPS_TILES_URL],
+  maxzoom: 15,
+  attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>',
 };

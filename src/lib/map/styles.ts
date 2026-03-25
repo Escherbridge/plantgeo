@@ -61,7 +61,7 @@ export const darkStyle: StyleSpecification = {
     protomaps: pmtilesSource,
     "terrain-dem": terrainSource,
   },
-  terrain: { source: "terrain-dem", exaggeration: 1.5 },
+  // terrain enabled on-demand via MapView controls
   layers: [
     {
       id: "background",
@@ -161,7 +161,7 @@ export const lightStyle: StyleSpecification = {
     protomaps: pmtilesSource,
     "terrain-dem": terrainSource,
   },
-  terrain: { source: "terrain-dem", exaggeration: 1.5 },
+  // terrain enabled on-demand via MapView controls
   layers: [
     {
       id: "background",
@@ -276,7 +276,7 @@ export const satelliteStyle: StyleSpecification = {
     "terrain-dem": terrainSource,
     protomaps: pmtilesSource,
   },
-  terrain: { source: "terrain-dem", exaggeration: 1.5 },
+  // terrain enabled on-demand via MapView controls
   layers: [
     {
       id: "satellite-base",
