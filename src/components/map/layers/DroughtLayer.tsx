@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import type { Map as MapLibreMap } from "maplibre-gl";
+import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 
 /** USDM drought category color mapping (DM property 0-4 plus none). */
@@ -48,8 +48,7 @@ export function DroughtLayer({ map, geojson, opacity = 0.6, visible = true }: Dr
     if (!m.getSource("drought-monitor")) {
       m.addSource("drought-monitor", { type: "geojson", data: geojson });
     } else {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (m.getSource("drought-monitor") as any).setData(geojson);
+      (m.getSource("drought-monitor") as GeoJSONSource).setData(geojson);
     }
 
     if (!m.getLayer("drought-fill")) {

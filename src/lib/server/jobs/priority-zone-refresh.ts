@@ -19,30 +19,29 @@ function getRedisConnection() {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let queue: any | null = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let worker: any | null = null;
+import type { Queue as BullQueue, Worker as BullWorker } from "bullmq";
+
+let queue: BullQueue | null = null;
+let worker: BullWorker | null = null;
 
 export async function startJobs(): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let Queue: any | undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let Worker: any | undefined;
+  let bullmq: typeof import("bullmq") | undefined;
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    ({ Queue, Worker } = require("bullmq"));
+    bullmq = require("bullmq");
   } catch {
     // bullmq not installed — skip job registration
     return;
   }
 
+  if (!bullmq) return;
+
   const connection = getRedisConnection();
 
-  queue = new Queue(QUEUE_NAME, { connection });
+  queue = new bullmq.Queue(QUEUE_NAME, { connection });
 
-  // Remove any existing repeatable jobs and register fresh
+  // Remove existing repeatable jobs and register fresh
   const repeatableJobs = await queue.getRepeatableJobs();
   for (const job of repeatableJobs) {
     await queue.removeRepeatableByKey(job.key);
@@ -57,7 +56,7 @@ export async function startJobs(): Promise<void> {
     }
   );
 
-  worker = new Worker(
+  worker = new bullmq.Worker(
     QUEUE_NAME,
     async () => {
       await recomputePriorityZones();

@@ -16,7 +16,7 @@ This document summarizes key rules and best practices from the Google TypeScript
 - **Type Assertions:** **Avoid type assertions (`x as SomeType`) and non-nullability assertions (`y!`)**. If you must use them, provide a clear justification.
 
 ## 2. Disallowed Features
-- **`any` Type:** **Avoid `any`**. Prefer `unknown` or a more specific type.
+- **`any` Type:** **`any` is strictly forbidden.** Never use `any` in type annotations, type assertions (`as any`), or generic parameters (`<any>`). Always use a specific type, `unknown`, or a narrowed generic instead. When working with dynamic imports or untyped libraries, declare a proper interface or use `unknown` and narrow. Suppress-comments (`eslint-disable @typescript-eslint/no-explicit-any`) are not acceptable.
 - **Wrapper Objects:** Do not instantiate `String`, `Boolean`, or `Number` wrapper classes.
 - **Automatic Semicolon Insertion (ASI):** Do not rely on it. **Explicitly end all statements with a semicolon.**
 - **`const enum`:** Do not use `const enum`. Use plain `enum` instead.

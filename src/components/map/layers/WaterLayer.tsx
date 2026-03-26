@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import type { Map as MapLibreMap, Popup } from "maplibre-gl";
+import type { Map as MapLibreMap, Popup, GeoJSONSource } from "maplibre-gl";
 import type { WaterGauge, GroundwaterWell } from "@/lib/server/services/usgs-water";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 
@@ -104,8 +104,7 @@ export function WaterLayer({
     if (!m.getSource("water-gauges")) {
       m.addSource("water-gauges", { type: "geojson", data: gaugeData });
     } else {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (m.getSource("water-gauges") as any).setData(gaugeData);
+      (m.getSource("water-gauges") as GeoJSONSource).setData(gaugeData);
     }
     if (!m.getLayer("water-gauges-circle")) {
       m.addLayer({
@@ -127,8 +126,7 @@ export function WaterLayer({
     if (!m.getSource("groundwater-wells")) {
       m.addSource("groundwater-wells", { type: "geojson", data: wellData });
     } else {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (m.getSource("groundwater-wells") as any).setData(wellData);
+      (m.getSource("groundwater-wells") as GeoJSONSource).setData(wellData);
     }
     if (!m.getLayer("groundwater-wells-circle")) {
       m.addLayer({
@@ -150,8 +148,7 @@ export function WaterLayer({
       if (!m.getSource("watersheds")) {
         m.addSource("watersheds", { type: "geojson", data: watershedsGeoJSON });
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (m.getSource("watersheds") as any).setData(watershedsGeoJSON);
+        (m.getSource("watersheds") as GeoJSONSource).setData(watershedsGeoJSON);
       }
       if (!m.getLayer("watersheds-fill")) {
         m.addLayer({

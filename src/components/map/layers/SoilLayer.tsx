@@ -149,7 +149,7 @@ export function SoilLayer({
           source: SOIL_CIRCLE_SOURCE_ID,
           paint: {
             "circle-radius": 8,
-            "circle-color": getCircleColorExpr(property) as any,
+            "circle-color": getCircleColorExpr(property),
             "circle-stroke-width": 2,
             "circle-stroke-color": "#ffffff",
             "circle-opacity": opacity,
@@ -216,7 +216,7 @@ export function SoilLayer({
 
     // Update circle color expression + opacity
     if (map.getLayer(SOIL_CIRCLE_LAYER_ID)) {
-      map.setPaintProperty(SOIL_CIRCLE_LAYER_ID, "circle-color", getCircleColorExpr(property) as any);
+      map.setPaintProperty(SOIL_CIRCLE_LAYER_ID, "circle-color", getCircleColorExpr(property));
       map.setPaintProperty(SOIL_CIRCLE_LAYER_ID, "circle-opacity", opacity);
     }
   }, [map, property, opacity, visible]);

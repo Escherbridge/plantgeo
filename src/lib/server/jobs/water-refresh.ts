@@ -59,20 +59,16 @@ export async function runWaterRefreshJob(): Promise<{ upserted: number }> {
 
 if (typeof window === "undefined") {
   // Lazy-require so the build succeeds even when bullmq is not yet installed.
-  // Run: npm install bullmq
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let Worker: any | undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let Queue: any | undefined;
+  let bullmq: typeof import("bullmq") | undefined;
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    ({ Worker, Queue } = require("bullmq"));
+    bullmq = require("bullmq");
   } catch {
     // bullmq not installed — skip worker registration
   }
 
-  if (Worker && Queue) {
+  if (bullmq) {
     const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
     const connection = { host: "localhost", port: 6379 } as { host: string; port: number };
 
@@ -88,7 +84,7 @@ if (typeof window === "undefined") {
     const QUEUE_NAME = "water-refresh";
 
     // Ensure a repeating job exists (every 15 minutes)
-    const queue = new Queue(QUEUE_NAME, { connection });
+    const queue = new bullmq.Queue(QUEUE_NAME, { connection });
     queue
       .upsertJobScheduler("water-refresh-15min", { every: 15 * 60 * 1000 }, { name: "refresh" })
       .catch(() => {
@@ -96,7 +92,7 @@ if (typeof window === "undefined") {
       });
 
     // Worker processes jobs
-    new Worker(
+    new bullmq.Worker(
       QUEUE_NAME,
       async () => {
         return runWaterRefreshJob();

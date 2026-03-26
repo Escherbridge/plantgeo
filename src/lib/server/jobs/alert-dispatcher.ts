@@ -155,19 +155,16 @@ export async function runAlertDispatcher(): Promise<{ dispatched: number }> {
 // ---------------------------------------------------------------------------
 
 if (typeof window === "undefined") {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let Worker: any | undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let Queue: any | undefined;
+  let bullmq: typeof import("bullmq") | undefined;
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    ({ Worker, Queue } = require("bullmq"));
+    bullmq = require("bullmq");
   } catch {
     // bullmq not installed — skip
   }
 
-  if (Worker && Queue) {
+  if (bullmq) {
     const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
     const connection = { host: "localhost", port: 6379 } as { host: string; port: number };
 
@@ -180,7 +177,7 @@ if (typeof window === "undefined") {
     }
 
     const QUEUE_NAME = "alert-dispatcher";
-    const queue = new Queue(QUEUE_NAME, { connection });
+    const queue = new bullmq.Queue(QUEUE_NAME, { connection });
 
     // Every 30 minutes
     queue
@@ -189,7 +186,7 @@ if (typeof window === "undefined") {
         // Non-fatal — Redis may not be available during build
       });
 
-    new Worker(
+    new bullmq.Worker(
       QUEUE_NAME,
       async () => {
         return runAlertDispatcher();
