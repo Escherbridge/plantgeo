@@ -5,6 +5,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Flame, Wind, AlertTriangle, MapPin } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
 import { LayerToggle } from "@/components/ui/layer-toggle";
+import { useFireData } from "@/hooks/useFireData";
 
 interface StatCardProps {
   icon: React.ReactNode;
@@ -95,10 +96,7 @@ export function FireDashboard({
 }: FireDashboardProps) {
   const [windAlert, setWindAlert] = useState(false);
 
-  const fireQuery = trpc.wildfire.getFireDetections.useQuery(
-    { dayRange: 1 },
-    { enabled: open, refetchInterval: 300_000 }
-  );
+  const fireData = useFireData(open);
 
   const weatherQuery = trpc.wildfire.getWeatherForPoint.useQuery(
     { lat: centerLat, lon: centerLon },
@@ -106,7 +104,6 @@ export function FireDashboard({
   );
 
   const weather = weatherQuery.data;
-  const fireData = fireQuery.data;
 
   // Demo fallback when tRPC is unavailable
   const demoWeather = {
@@ -116,10 +113,9 @@ export function FireDashboard({
     temperature: 28.4,
     precipitation: 0,
   };
-  const demoFireCount = 9; // matches DEMO_FIRE_POINTS count
 
   const effectiveWeather = weather ?? (weatherQuery.isError ? demoWeather : null);
-  const effectiveFireCount = fireData?.features.length ?? (fireQuery.isError ? demoFireCount : 0);
+  const effectiveFireCount = fireData.count;
 
   // Wind alert: windSpeed in m/s -> convert to km/h
   useEffect(() => {
@@ -133,10 +129,9 @@ export function FireDashboard({
   const chartData = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
-    const hasRealData = fireData?.features.length != null;
     return {
       label: d.toLocaleDateString("en-US", { weekday: "short" }),
-      value: hasRealData && i === 6 ? effectiveFireCount : demoChartValues[i],
+      value: !fireData.isDemo && i === 6 ? effectiveFireCount : demoChartValues[i],
     };
   });
 
@@ -163,7 +158,7 @@ export function FireDashboard({
             </div>
           )}
 
-          {(fireQuery.isError || weatherQuery.isError) && !fireQuery.isLoading && !weatherQuery.isLoading && (
+          {fireData.isDemo && !fireData.isLoading && (
             <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-3 py-2">
               <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
               <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
@@ -176,8 +171,8 @@ export function FireDashboard({
             <StatCard
               icon={<Flame className="h-3.5 w-3.5" />}
               label="Active Fires"
-              value={fireQuery.isLoading ? "..." : effectiveFireCount}
-              sub="VIIRS detections (24h)"
+              value={fireData.isLoading ? "..." : effectiveFireCount}
+              sub={fireData.isDemo ? "Demo detections" : "NIFC active wildfires"}
               highlight={effectiveFireCount > 10}
             />
             <StatCard

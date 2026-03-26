@@ -7,6 +7,7 @@ import { useMapStore } from "@/stores/map-store";
 import { useVegetationStore } from "@/stores/vegetation-store";
 import { useSoilStore } from "@/stores/soil-store";
 import { DEMO_DROUGHT_GEOJSON, DEMO_WATER_GAUGES, DEMO_GROUNDWATER_WELLS } from "@/lib/map/demo-data";
+import { useFireData } from "@/hooks/useFireData";
 
 const FireLayer = dynamic(
   () => import("@/components/map/layers/FireLayer").then((m) => ({ default: m.FireLayer })),
@@ -38,6 +39,7 @@ export default function LayerManager() {
   const { viewport, activeLayers } = useMapStore();
   const vegState = useVegetationStore();
   const soilState = useSoilStore();
+  const fireData = useFireData(activeLayers.includes("fire"));
 
   // Live drought data with fallback to demo
   const [droughtGeoJSON, setDroughtGeoJSON] = useState(DEMO_DROUGHT_GEOJSON);
@@ -65,7 +67,7 @@ export default function LayerManager() {
 
   return (
     <>
-      <FireLayer map={map} visible={activeLayers.includes("fire")} />
+      <FireLayer map={map} visible={activeLayers.includes("fire")} geojson={fireData.data} />
       <WaterLayer map={map} gauges={DEMO_WATER_GAUGES} wells={DEMO_GROUNDWATER_WELLS} visible={activeLayers.includes("water")} />
       <DroughtLayer map={map} geojson={droughtGeoJSON} visible={activeLayers.includes("drought")} />
       <VegetationLayer
