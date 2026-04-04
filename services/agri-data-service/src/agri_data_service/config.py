@@ -1,5 +1,6 @@
 """Application configuration via Pydantic settings."""
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +11,13 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "postgresql+asyncpg://plantgeo:plantgeo@localhost:5432/agri_data"
+
+    @field_validator("database_url")
+    def fix_database_url_schema(cls, v: str) -> str:
+        if v and v.startswith("postgresql://"):
+            return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return v
+        
     database_url_sync: str = "postgresql://plantgeo:plantgeo@localhost:5432/agri_data"
     db_pool_min: int = 10
     db_pool_max: int = 20
