@@ -1,5 +1,13 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { probeRedis } = await import("@/lib/server/redis");
+    const redisOk = await probeRedis();
+
+    if (!redisOk) {
+      console.warn("[instrumentation] Redis not reachable — background jobs disabled");
+      return;
+    }
+
     const { startJobs } = await import("@/lib/server/jobs/priority-zone-refresh");
     await startJobs();
 

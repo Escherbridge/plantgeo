@@ -17,6 +17,7 @@ import PanelManager from "./PanelManager";
 import LayerManager from "./LayerManager";
 import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
 import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
+import { AgentInteraction } from "./AgentInteraction";
 
 const RegionalIntelligencePanel = dynamic(
   () => import("@/components/panels/RegionalIntelligencePanel"),
@@ -29,6 +30,7 @@ export default function MapView() {
   const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [webglError, setWebglError] = useState(false);
+  const [agentCoords, setAgentCoords] = useState<[number, number] | null>(null);
 
   const {
     viewport,
@@ -103,6 +105,12 @@ export default function MapView() {
       const { lat, lng } = e.lngLat;
       useRegionalIntelligenceStore.getState().openPanel(lat, lng);
       queryLocation(lat, lng);
+    });
+
+    m.on("contextmenu", (e) => {
+      e.preventDefault();
+      const { lat, lng } = e.lngLat;
+      setAgentCoords([lng, lat]);
     });
 
     setMapInstance(m);
@@ -234,6 +242,12 @@ export default function MapView() {
             <PanelManager />
             <LayerManager />
             {isAIOpen && <RegionalIntelligencePanel />}
+            {agentCoords && (
+              <AgentInteraction 
+                coordinates={agentCoords} 
+                onClose={() => setAgentCoords(null)} 
+              />
+            )}
           </>
         )}
       </div>

@@ -2,32 +2,40 @@ import Redis from "ioredis";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
+function createResilientRedis(): Redis {
+  const instance = new Redis(REDIS_URL, {
+    maxRetriesPerRequest: 1,
+    lazyConnect: true,
+    retryStrategy(times) {
+      if (times > 3) return null; // stop retrying
+      return Math.min(times * 200, 2000);
+    },
+  });
+  instance.on("error", () => {
+    // Suppress — connection failures are non-fatal for realtime
+  });
+  instance.connect().catch(() => {
+    // Redis offline — realtime features disabled
+  });
+  return instance;
+}
+
 // Dedicated subscriber instance (cannot be reused for pub after subscribe)
 let subscriber: Redis | null = null;
 
 function getSubscriber(): Redis {
   if (!subscriber) {
-    subscriber = new Redis(REDIS_URL, {
-      maxRetriesPerRequest: 3,
-      retryStrategy(times) {
-        return Math.min(times * 50, 2000);
-      },
-    });
+    subscriber = createResilientRedis();
   }
   return subscriber;
 }
 
-// Publisher instance (shared, imported from redis.ts pattern)
+// Publisher instance
 let publisher: Redis | null = null;
 
 function getPublisher(): Redis {
   if (!publisher) {
-    publisher = new Redis(REDIS_URL, {
-      maxRetriesPerRequest: 3,
-      retryStrategy(times) {
-        return Math.min(times * 50, 2000);
-      },
-    });
+    publisher = createResilientRedis();
   }
   return publisher;
 }
@@ -40,8 +48,12 @@ const subscriptions = new Map<string, Set<(data: unknown) => void>>();
  * Channels: layer:{layerId}, tracking:{assetId}, alerts:global
  */
 export async function publish(channel: string, data: unknown): Promise<void> {
-  const pub = getPublisher();
-  await pub.publish(channel, JSON.stringify(data));
+  try {
+    const pub = getPublisher();
+    await pub.publish(channel, JSON.stringify(data));
+  } catch {
+    // Redis offline — skip publish
+  }
 }
 
 /**
@@ -52,30 +64,34 @@ export async function subscribe(
   channel: string,
   callback: (data: unknown) => void
 ): Promise<void> {
-  const sub = getSubscriber();
+  try {
+    const sub = getSubscriber();
 
-  if (!subscriptions.has(channel)) {
-    subscriptions.set(channel, new Set());
-    await sub.subscribe(channel);
+    if (!subscriptions.has(channel)) {
+      subscriptions.set(channel, new Set());
+      await sub.subscribe(channel);
+    }
+
+    subscriptions.get(channel)!.add(callback);
+
+    // Set up message handler once
+    sub.removeAllListeners("message");
+    sub.on("message", (ch: string, message: string) => {
+      const callbacks = subscriptions.get(ch);
+      if (!callbacks) return;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(message);
+      } catch {
+        parsed = message;
+      }
+      for (const cb of callbacks) {
+        cb(parsed);
+      }
+    });
+  } catch {
+    // Redis offline — subscription not established
   }
-
-  subscriptions.get(channel)!.add(callback);
-
-  // Set up message handler once
-  sub.removeAllListeners("message");
-  sub.on("message", (ch: string, message: string) => {
-    const callbacks = subscriptions.get(ch);
-    if (!callbacks) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(message);
-    } catch {
-      parsed = message;
-    }
-    for (const cb of callbacks) {
-      cb(parsed);
-    }
-  });
 }
 
 /**
@@ -86,9 +102,7 @@ export async function unsubscribe(
   channel: string,
   callback?: (data: unknown) => void
 ): Promise<void> {
-  const sub = getSubscriber();
   const callbacks = subscriptions.get(channel);
-
   if (!callbacks) return;
 
   if (callback) {
@@ -99,6 +113,11 @@ export async function unsubscribe(
 
   if (callbacks.size === 0) {
     subscriptions.delete(channel);
-    await sub.unsubscribe(channel);
+    try {
+      const sub = getSubscriber();
+      await sub.unsubscribe(channel);
+    } catch {
+      // Redis offline
+    }
   }
 }

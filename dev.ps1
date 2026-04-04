@@ -1,7 +1,18 @@
 Write-Host "===================================" -ForegroundColor Cyan
-Write-Host "  PlantGeo — Local Dev Environment" -ForegroundColor Cyan
+Write-Host "  PlantGeo - Local Dev Environment" -ForegroundColor Cyan
 Write-Host "===================================" -ForegroundColor Cyan
 Write-Host ""
+
+# Kill any existing process on port 3001
+$existing = Get-NetTCPConnection -LocalPort 3001 -ErrorAction SilentlyContinue
+if ($existing) {
+    $procIds = $existing.OwningProcess | Sort-Object -Unique
+    foreach ($procId in $procIds) {
+        Write-Host "  Killing existing process on port 3001 (PID: $procId)..." -ForegroundColor Yellow
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 1
+}
 
 # Check prerequisites
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -25,7 +36,7 @@ if ($composeCmd) {
     Start-Sleep -Seconds 5
 } else {
     Write-Host "[1/3] Skipping infrastructure (no Docker/Podman found)" -ForegroundColor Yellow
-    Write-Host "  The app will run with demo data only"
+    Write-Host "  The app will run with demo data only (Redis/PostGIS features disabled)"
 }
 
 # Install dependencies if needed
@@ -39,7 +50,7 @@ if (-not (Test-Path "node_modules")) {
 # Start Next.js dev server
 Write-Host "[3/3] Starting Next.js dev server..." -ForegroundColor Yellow
 Write-Host ""
-Write-Host "  App:       http://localhost:3000" -ForegroundColor Green
+Write-Host "  App:       http://localhost:3001" -ForegroundColor Green
 Write-Host "  PostGIS:   localhost:5432" -ForegroundColor Green
 Write-Host "  Redis:     localhost:6379" -ForegroundColor Green
 Write-Host ""

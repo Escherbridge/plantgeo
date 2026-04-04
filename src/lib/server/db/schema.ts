@@ -363,3 +363,75 @@ export const aiMessages = pgTable("ai_messages", {
   tokenCount: integer("token_count"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// ============================================
+// Historical Data Service (geo schema)
+// Note: geom geometry(POINT,4326) column to be added via migration
+// ============================================
+
+export const historicalFireData = geoSchema.table("historical_fire_data", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  date_bucket: timestamp("date_bucket", { withTimezone: true }).notNull(),
+  lat: doublePrecision("lat").notNull(),
+  lon: doublePrecision("lon").notNull(),
+  fire_risk_score: doublePrecision("fire_risk_score"),
+  detected_anomalies: integer("detected_anomalies").default(0),
+  metadata: jsonb("metadata").default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const historicalWaterDrought = geoSchema.table("historical_water_drought", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  date_bucket: timestamp("date_bucket", { withTimezone: true }).notNull(),
+  lat: doublePrecision("lat").notNull(),
+  lon: doublePrecision("lon").notNull(),
+  water_scarcity_index: doublePrecision("water_scarcity_index"),
+  streamflow_cfs: doublePrecision("streamflow_cfs"),
+  metadata: jsonb("metadata").default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const historicalVegetation = geoSchema.table("historical_vegetation", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  date_bucket: timestamp("date_bucket", { withTimezone: true }).notNull(),
+  lat: doublePrecision("lat").notNull(),
+  lon: doublePrecision("lon").notNull(),
+  ndvi_value: doublePrecision("ndvi_value"),
+  ecological_health_index: doublePrecision("ecological_health_index"),
+  metadata: jsonb("metadata").default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+// ============================================
+// Agent Knowledge Bases (public schema)
+// ============================================
+
+export const agriculturalSolutions = pgTable("agricultural_solutions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 100 }).notNull().unique(), // e.g., 'Hydroponics', 'Silvopasture'
+  description: text("description"),
+  suitability_rules: jsonb("suitability_rules").default({}), // Rules matching environment to this solution
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const openPlantData = pgTable("open_plant_data", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  scientific_name: varchar("scientific_name", { length: 200 }).notNull(),
+  common_name: varchar("common_name", { length: 200 }),
+  solution_id: uuid("solution_id").references(() => agriculturalSolutions.id),
+  climate_requirements: jsonb("climate_requirements").default({}),
+  water_requirements: jsonb("water_requirements").default({}),
+  soil_requirements: jsonb("soil_requirements").default({}),
+  metadata: jsonb("metadata").default({}), // Sourced from USDA etc.
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const openToolingData = pgTable("open_tooling_data", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar("name", { length: 200 }).notNull(),
+  solution_id: uuid("solution_id").references(() => agriculturalSolutions.id),
+  category: varchar("category", { length: 100 }), // e.g., 'Irrigation', 'Structures'
+  specifications: jsonb("specifications").default({}),
+  metadata: jsonb("metadata").default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
