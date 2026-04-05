@@ -11,7 +11,7 @@ from agri_data_service.routes import health_bp, locations_bp, species_bp, strate
 logger = structlog.get_logger()
 
 
-def create_app() -> Sanic:
+def create_app(args=None) -> Sanic:
     """Create and configure the Sanic application."""
     app = Sanic("agri-data-service")
 
@@ -68,9 +68,10 @@ def create_app() -> Sanic:
         response.headers["X-Request-ID"] = request.ctx.request_id  # type: ignore[attr-defined]
 
     # --- Register blueprints ---
+    from sanic import Blueprint
+
+    api_v1 = Blueprint.group(locations_bp, strategies_bp, species_bp, url_prefix="/api/v1")
+    app.blueprint(api_v1)
     app.blueprint(health_bp)
-    app.blueprint(locations_bp, url_prefix="/api/v1")
-    app.blueprint(strategies_bp, url_prefix="/api/v1")
-    app.blueprint(species_bp, url_prefix="/api/v1")
 
     return app
