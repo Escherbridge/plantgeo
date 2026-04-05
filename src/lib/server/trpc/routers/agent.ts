@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { generateRecommendation } from "../services/agent-engine";
+import { generateRecommendation } from "@/lib/server/services/agent-engine";
 // In a real implementation this would import the tRPC router and procedure builders:
 // import { router, publicProcedure } from "../init";
 
