@@ -11,6 +11,11 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "10mb",
     },
   },
+  turbopack: {
+    resolveAlias: {
+      "maplibre-gl$": "maplibre-gl/dist/maplibre-gl",
+    },
+  },
   // Required for maplibre-gl WebGL rendering — alias only the bare specifier
   // so CSS imports like "maplibre-gl/dist/maplibre-gl.css" are not rewritten.
   webpack: (config) => {
