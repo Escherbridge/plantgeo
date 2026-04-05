@@ -236,9 +236,6 @@ export default function MapView() {
             <SearchBar />
             <ReverseGeocode />
             <CommandPalette />
-            <div className="absolute right-12 top-3 z-10">
-              <AlertBell />
-            </div>
             <PanelManager />
             <LayerManager />
             {isAIOpen && <RegionalIntelligencePanel />}

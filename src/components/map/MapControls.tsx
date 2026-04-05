@@ -11,6 +11,7 @@ import {
 import TerrainControl from "./TerrainControl";
 import GlobeToggle from "./GlobeToggle";
 import StyleSwitcher from "./StyleSwitcher";
+import { AlertBell } from "@/components/ui/AlertBell";
 
 export default function MapControls() {
   const {
@@ -64,6 +65,8 @@ export default function MapControls() {
         <TerrainControl />
         <div className="h-6 w-px bg-[hsl(var(--border))]" />
         <GlobeToggle />
+        <div className="h-6 w-px bg-[hsl(var(--border))]" />
+        <AlertBell />
         <div className="h-6 w-px bg-[hsl(var(--border))]" />
         <Button
           variant={is3DEnabled ? "default" : "ghost"}
