@@ -8,9 +8,13 @@ build/
 *.egg
 .mypy_cache/
 .ruff_cache/
+.uv-cache/
+.uv-tools/
+.uv-python/
 .pytest_cache/
 .coverage
 htmlcov/
 .env
 .venv/
 venv/
+.agri-local-runs/
