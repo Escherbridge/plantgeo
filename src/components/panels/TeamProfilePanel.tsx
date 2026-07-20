@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { trpc } from "@/lib/trpc/client";
 
@@ -35,26 +34,17 @@ interface TeamProfilePanelProps {
   teamId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Whether the current user is authenticated (for Join Team button) */
-  isAuthenticated?: boolean;
 }
 
 export function TeamProfilePanel({
   teamId,
   open,
   onOpenChange,
-  isAuthenticated,
 }: TeamProfilePanelProps) {
-  const [joinRequested, setJoinRequested] = useState(false);
-
   const { data: profile, isLoading } = trpc.teams.getTeamProfile.useQuery(
     { id: teamId! },
     { enabled: open && !!teamId }
   );
-
-  const inviteMutation = trpc.teams.inviteMember.useMutation({
-    onSuccess: () => setJoinRequested(true),
-  });
 
   const specialties = Array.isArray(profile?.specialties)
     ? (profile.specialties as string[])
@@ -75,7 +65,7 @@ export function TeamProfilePanel({
 
         {!isLoading && !profile && (
           <p className="text-sm text-[hsl(var(--muted-foreground))] text-center py-8">
-            Team not found.
+            Sign in and ask a workspace owner for access.
           </p>
         )}
 
@@ -208,13 +198,13 @@ export function TeamProfilePanel({
                   Members
                 </p>
                 <div className="flex flex-col gap-1.5">
-                  {profile.members.slice(0, 5).map((m) => (
+                  {profile.members.slice(0, 5).map((m, index) => (
                     <div
-                      key={m.userId}
+                      key={`${m.name ?? "member"}-${m.teamRole ?? "member"}-${index}`}
                       className="flex items-center justify-between text-sm"
                     >
                       <span className="text-[hsl(var(--foreground))] truncate">
-                        {m.name ?? m.email ?? "Unknown"}
+                        {m.name ?? "Community member"}
                       </span>
                       <span className="text-[10px] text-[hsl(var(--muted-foreground))] capitalize ml-2 flex-shrink-0">
                         {m.teamRole}
@@ -230,35 +220,14 @@ export function TeamProfilePanel({
               </div>
             )}
 
-            {/* Join / Request services */}
-            <div className="flex gap-2 pt-2">
-              {isAuthenticated && !joinRequested && (
-                <button
-                  onClick={() => {
-                    // In a real app we'd use the current user's id.
-                    // Here we show the UI affordance; actual invite goes via inviteMember.
-                    setJoinRequested(true);
-                  }}
-                  disabled={inviteMutation.isPending}
-                  className="flex-1 px-3 py-2 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-                >
-                  Join Team
-                </button>
-              )}
-              {joinRequested && (
-                <p className="text-sm text-green-500 py-2">
-                  Request sent!
-                </p>
-              )}
-              <a
-                href={profile.website ?? "#"}
-                target={profile.website ? "_blank" : undefined}
-                rel="noopener noreferrer"
-                className="flex-1 px-3 py-2 rounded-lg border border-[hsl(var(--border))] text-[hsl(var(--foreground))] text-sm font-medium hover:bg-[hsl(var(--muted))] transition-colors text-center"
-              >
-                Request Services
-              </a>
-            </div>
+            <p
+              role="status"
+              className="rounded-lg border border-dashed border-[hsl(var(--border))] p-3 text-xs text-[hsl(var(--muted-foreground))]"
+            >
+              This private partner workspace is visible only to current
+              members. Ask a workspace owner to add your verified account
+              when the audited invitation flow is available.
+            </p>
           </div>
         )}
       </SheetContent>

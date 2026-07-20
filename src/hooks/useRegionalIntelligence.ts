@@ -2,13 +2,50 @@
 
 import { useCallback } from 'react';
 import { useRegionalIntelligenceStore } from '@/stores/regional-intelligence-store';
-import type { ConversationTurn, RegionalIntelligenceResponse } from '@/lib/server/services/ai-prompt';
+import type {
+  ConversationTurn,
+  RegionalIntelligenceResponse,
+} from '@/lib/regional-intelligence';
+import type { LocationPrecision } from '@/stores/regional-intelligence-store';
+
+class RegionalIntelligenceRequestError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean
+  ) {
+    super(message);
+    this.name = 'RegionalIntelligenceRequestError';
+  }
+}
+
+function isRegionalIntelligenceResponse(
+  value: unknown
+): value is RegionalIntelligenceResponse {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  const riskSummary = record.riskSummary;
+  return (
+    typeof riskSummary === 'object' &&
+    riskSummary !== null &&
+    ['low', 'moderate', 'high', 'critical'].includes(
+      (riskSummary as { level?: unknown }).level as string
+    ) &&
+    Array.isArray(record.historicalEvents) &&
+    Array.isArray(record.actionableItems) &&
+    Array.isArray(record.interventionRecommendations)
+  );
+}
 
 export function useRegionalIntelligence() {
   const store = useRegionalIntelligenceStore();
 
   const queryLocation = useCallback(
-    async (lat: number, lon: number, question?: string) => {
+    async (
+      lat: number,
+      lon: number,
+      question?: string,
+      precision: LocationPrecision = 'approximate'
+    ) => {
       const {
         setLoading,
         setError,
@@ -16,13 +53,17 @@ export function useRegionalIntelligence() {
         updateLastMessage,
         setDataFreshness,
         setAbortController,
-        messages,
+        setAnalysisCancelled,
       } = useRegionalIntelligenceStore.getState();
 
       const controller = new AbortController();
       setAbortController(controller);
       setLoading(true);
       setError(null);
+      setAnalysisCancelled(false);
+
+      const isCurrentRequest = () =>
+        useRegionalIntelligenceStore.getState().abortController === controller;
 
       // Add user message
       const userMsg = question ?? 'Analyze this location';
@@ -36,8 +77,11 @@ export function useRegionalIntelligence() {
         isStreaming: true,
       });
 
-      // Build history from messages before the two we just added
-      const history: ConversationTurn[] = messages
+      // Build history from the current request state, excluding the two messages above.
+      const history: ConversationTurn[] = useRegionalIntelligenceStore
+        .getState()
+        .messages
+        .slice(0, -2)
         .filter((m) => !m.isStreaming)
         .map((m) => ({
           role: m.role,
@@ -49,16 +93,33 @@ export function useRegionalIntelligence() {
       try {
         const response = await fetch('/api/ai/regional-intelligence', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat, lon, question, history }),
+          headers: {
+            Accept: 'text/event-stream',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            lat,
+            lon,
+            question,
+            history,
+            locationConsent: { precision, confirmed: true },
+          }),
           signal: controller.signal,
         });
 
         if (!response.ok) {
-          const err = await response
+          const err = (await response
             .json()
-            .catch(() => ({ error: 'Request failed' })) as { error?: string };
-          throw new Error(err.error ?? `HTTP ${response.status}`);
+            .catch(() => ({ error: 'Request failed' }))) as {
+            error?: string;
+            retryable?: boolean;
+          };
+          throw new RegionalIntelligenceRequestError(
+            err.error ?? `HTTP ${response.status}`,
+            typeof err.retryable === 'boolean'
+              ? err.retryable
+              : response.status === 429 || response.status >= 500
+          );
         }
 
         const reader = response.body?.getReader();
@@ -70,6 +131,7 @@ export function useRegionalIntelligence() {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          if (!isCurrentRequest()) return;
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
@@ -86,32 +148,51 @@ export function useRegionalIntelligence() {
 
                 switch (eventType) {
                   case 'context':
-                    setDataFreshness(
-                      (parsed.dataFreshness as Record<string, string>) ?? {}
-                    );
+                    if (isCurrentRequest()) {
+                      setDataFreshness(
+                        (parsed.dataFreshness as Record<string, string>) ?? {}
+                      );
+                    }
                     break;
                   case 'delta': {
                     if (parsed.text) {
                       const current =
                         useRegionalIntelligenceStore.getState().messages;
                       const last = current[current.length - 1];
-                      updateLastMessage({
-                        content: ((last?.content ?? '') + parsed.text) as string,
-                      });
+                      if (isCurrentRequest()) {
+                        updateLastMessage({
+                          content: ((last?.content ?? '') + parsed.text) as string,
+                        });
+                      }
                     }
                     break;
                   }
                   case 'done':
-                    updateLastMessage({
-                      isStreaming: false,
-                      parsedResponse: parsed as unknown as RegionalIntelligenceResponse,
-                    });
+                    if (isCurrentRequest()) {
+                      if (isRegionalIntelligenceResponse(parsed)) {
+                        updateLastMessage({
+                          isStreaming: false,
+                          parsedResponse: parsed,
+                        });
+                      } else {
+                        updateLastMessage({
+                          isStreaming: false,
+                          content:
+                            typeof parsed.text === 'string'
+                              ? parsed.text
+                              : undefined,
+                        });
+                      }
+                    }
                     break;
                   case 'error':
-                    setError(
-                      (parsed.message as string | undefined) ?? 'Unknown error'
-                    );
-                    updateLastMessage({ isStreaming: false });
+                    if (isCurrentRequest()) {
+                      setError(
+                        (parsed.message as string | undefined) ?? 'Unknown error',
+                        parsed.retryable === true
+                      );
+                      updateLastMessage({ isStreaming: false });
+                    }
                     break;
                 }
               } catch {
@@ -122,11 +203,20 @@ export function useRegionalIntelligence() {
         }
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return;
-        setError(err instanceof Error ? err.message : 'Unknown error');
-        updateLastMessage({ isStreaming: false });
+        if (isCurrentRequest()) {
+          setError(
+            err instanceof Error ? err.message : 'Unknown error',
+            err instanceof RegionalIntelligenceRequestError
+              ? err.retryable
+              : true
+          );
+          updateLastMessage({ isStreaming: false });
+        }
       } finally {
-        setLoading(false);
-        setAbortController(null);
+        if (isCurrentRequest()) {
+          setLoading(false);
+          setAbortController(null);
+        }
       }
     },
     []
@@ -136,14 +226,35 @@ export function useRegionalIntelligence() {
     async (question: string) => {
       const { selectedLocation } = useRegionalIntelligenceStore.getState();
       if (!selectedLocation) return;
-      await queryLocation(selectedLocation.lat, selectedLocation.lon, question);
+      await queryLocation(
+        selectedLocation.lat,
+        selectedLocation.lon,
+        question,
+        selectedLocation.precision
+      );
     },
     [queryLocation]
   );
+
+  const retryLastRequest = useCallback(async () => {
+    const state = useRegionalIntelligenceStore.getState();
+    const location = state.selectedLocation;
+    const question = [...state.messages]
+      .reverse()
+      .find((message) => message.role === "user")?.content;
+    if (!location) return;
+    await queryLocation(
+      location.lat,
+      location.lon,
+      question === "Analyze this location" ? undefined : question,
+      location.precision
+    );
+  }, [queryLocation]);
 
   return {
     ...store,
     queryLocation,
     sendFollowUp,
+    retryLastRequest,
   };
 }

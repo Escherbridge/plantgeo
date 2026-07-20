@@ -1,19 +1,24 @@
 import { z } from "zod";
-import { router, publicProcedure } from "@/lib/server/trpc/init";
+import { TRPCError } from "@trpc/server";
+import { protectedProcedure, publicProcedure, router } from "@/lib/server/trpc/init";
 import {
   getFeatureCountByLayer,
   getRecentActivity,
   getSystemStats,
 } from "@/lib/server/services/analytics";
 import { layers } from "@/lib/server/db/schema";
-import { eq } from "drizzle-orm";
 import {
-  getRegionalRiskSummary,
-  getTrendData,
-  getPrioritySubregions,
-  getDemandDensity,
+  type PrioritySubregion,
+  type RegionalRiskSummary,
+  type TrendPoint,
 } from "@/lib/server/db/analytics";
-import { getCachedGeoJSON, cacheGeoJSON } from "@/lib/server/redis";
+
+function unpublishedAggregate<T>(name: string): T {
+  throw new TRPCError({
+    code: "PRECONDITION_FAILED",
+    message: `${name} is unavailable until a versioned warehouse aggregate is published`,
+  });
+}
 
 export const analyticsRouter = router({
   featureCounts: publicProcedure.query(async ({ ctx }) => {
@@ -43,27 +48,12 @@ export const analyticsRouter = router({
     return getSystemStats(ctx.db);
   }),
 
-  /**
-   * Aggregated risk summary for the current map viewport (bbox).
-   * Redis cached for 5 minutes keyed by bbox string.
-   */
+  /** Reserved contract for a published regional-risk aggregate. */
   getRegionalRiskSummary: publicProcedure
-    .input(z.object({ bbox: z.string() }))
-    .query(async ({ ctx, input }) => {
-      const cacheKey = `analytics:risk:${input.bbox}`;
-      const cached = await getCachedGeoJSON<Awaited<ReturnType<typeof getRegionalRiskSummary>>>(
-        cacheKey
-      ).catch(() => null);
-      if (cached) return cached;
+    .input(z.object({ bbox: z.string().max(100) }))
+    .query(() => unpublishedAggregate<RegionalRiskSummary>("Regional risk summary")),
 
-      const result = await getRegionalRiskSummary(input.bbox, ctx.db);
-      await cacheGeoJSON(cacheKey, result, 300).catch(() => null);
-      return result;
-    }),
-
-  /**
-   * Time-series trend data for the given metric and date range.
-   */
+  /** Reserved contract for published environmental time series. */
   getTrendData: publicProcedure
     .input(
       z.object({
@@ -72,33 +62,19 @@ export const analyticsRouter = router({
         days: z.number().int().min(1).max(365).default(30),
       })
     )
-    .query(async ({ ctx, input }) => {
-      return getTrendData(input.bbox, input.metric, input.days, ctx.db);
-    }),
+    .query(() => unpublishedAggregate<TrendPoint[]>("Environmental trend series")),
 
-  /**
-   * Top 5 highest-priority subregions for the current viewport.
-   */
+  /** Reserved contract for an approved priority-ranking release. */
   getPrioritySubregions: publicProcedure
     .input(z.object({ bbox: z.string() }))
-    .query(async ({ ctx, input }) => {
-      return getPrioritySubregions(input.bbox, ctx.db);
-    }),
+    .query(() => unpublishedAggregate<PrioritySubregion[]>("Priority-subregion ranking")),
 
-  /**
-   * Community strategy request density as GeoJSON for heatmap rendering.
-   */
-  getDemandDensity: publicProcedure
-    .input(z.object({ bbox: z.string() }))
-    .query(async ({ ctx, input }) => {
-      const cacheKey = `analytics:demand:${input.bbox}`;
-      const cached = await getCachedGeoJSON<GeoJSON.FeatureCollection>(cacheKey).catch(
-        () => null
-      );
-      if (cached) return cached;
-
-      const result = await getDemandDensity(input.bbox, ctx.db);
-      await cacheGeoJSON(cacheKey, result, 300).catch(() => null);
-      return result;
-    }),
+  /** Reserved contract for privacy-reviewed partner opportunity waypoints. */
+  getDemandDensity: protectedProcedure
+    .input(z.object({ bbox: z.string().max(100) }))
+    .query(() =>
+      unpublishedAggregate<GeoJSON.FeatureCollection>(
+        "Partner opportunity waypoint density"
+      )
+    ),
 });

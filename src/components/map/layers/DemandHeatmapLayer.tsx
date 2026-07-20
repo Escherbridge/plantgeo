@@ -2,17 +2,10 @@
 
 import { useEffect, useRef } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { trpc } from "@/lib/trpc/client";
-import { DEMO_DEMAND_POINTS } from "@/lib/map/demo-data";
-
-const DEMO_HEATMAP_DATA: GeoJSON.FeatureCollection = {
-  type: "FeatureCollection",
-  features: DEMO_DEMAND_POINTS.map((p) => ({
-    type: "Feature" as const,
-    geometry: { type: "Point" as const, coordinates: [p.lon, p.lat] },
-    properties: { voteCount: Math.round(p.weight * 10) },
-  })),
-};
+import {
+  type ActionNetworkFilters,
+  useActionNetworkFeatures,
+} from "@/hooks/useActionNetworkFeatures";
 
 const SOURCE_ID = "demand-heatmap-source";
 const LAYER_ID = "demand-heatmap-layer";
@@ -20,28 +13,48 @@ const LAYER_ID = "demand-heatmap-layer";
 interface DemandHeatmapLayerProps {
   map: MapLibreMap | null;
   bbox: string;
+  zoom: number;
   visible: boolean;
+  filters?: ActionNetworkFilters;
 }
 
-export function DemandHeatmapLayer({ map, bbox, visible }: DemandHeatmapLayerProps) {
+export function DemandHeatmapLayer({
+  map,
+  bbox,
+  zoom,
+  visible,
+  filters,
+}: DemandHeatmapLayerProps) {
   const addedRef = useRef(false);
-
-  const demandQuery = trpc.analytics.getDemandDensity.useQuery(
-    { bbox },
-    { enabled: visible && !!map }
+  const actionNetwork = useActionNetworkFeatures(
+    bbox,
+    zoom,
+    visible && !!map,
+    filters
   );
+  const actionNetworkDataRef = useRef(actionNetwork.data);
 
-  // Add source and layer once map is ready
+  useEffect(() => {
+    actionNetworkDataRef.current = actionNetwork.data;
+  }, [actionNetwork.data]);
+
   useEffect(() => {
     if (!map || !visible) return;
 
     const addLayer = () => {
-      if (addedRef.current) return;
+      if (!map.isStyleLoaded()) return;
+      if (
+        addedRef.current &&
+        map.getSource(SOURCE_ID) &&
+        map.getLayer(LAYER_ID)
+      ) {
+        return;
+      }
 
       if (!map.getSource(SOURCE_ID)) {
         map.addSource(SOURCE_ID, {
           type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
+          data: actionNetworkDataRef.current,
         });
       }
 
@@ -51,49 +64,59 @@ export function DemandHeatmapLayer({ map, bbox, visible }: DemandHeatmapLayerPro
           type: "heatmap",
           source: SOURCE_ID,
           paint: {
-            // Weight by voteCount: 0→0, 10→1
+            // Weight by voteCount: 0 to 0, 10 to 1.
             "heatmap-weight": [
               "interpolate",
               ["linear"],
               ["get", "voteCount"],
-              0, 0,
-              10, 1,
+              0,
+              0,
+              10,
+              1,
             ],
-            // Intensity increases with zoom
             "heatmap-intensity": [
               "interpolate",
               ["linear"],
               ["zoom"],
-              0, 1,
-              9, 3,
+              0,
+              1,
+              9,
+              3,
             ],
-            // Emerald gradient: transparent → yellow → dark green
             "heatmap-color": [
               "interpolate",
               ["linear"],
               ["heatmap-density"],
-              0,   "rgba(0,0,0,0)",
-              0.2, "rgba(134,239,172,0.4)",   // green-300
-              0.4, "rgba(74,222,128,0.6)",    // green-400
-              0.6, "rgba(234,179,8,0.75)",    // yellow-500
-              0.8, "rgba(22,163,74,0.85)",    // green-600
-              1,   "rgba(20,83,45,1)",        // green-900
+              0,
+              "rgba(0,0,0,0)",
+              0.2,
+              "rgba(134,239,172,0.4)",
+              0.4,
+              "rgba(74,222,128,0.6)",
+              0.6,
+              "rgba(234,179,8,0.75)",
+              0.8,
+              "rgba(22,163,74,0.85)",
+              1,
+              "rgba(20,83,45,1)",
             ],
-            // Radius increases with zoom
             "heatmap-radius": [
               "interpolate",
               ["linear"],
               ["zoom"],
-              0, 2,
-              9, 20,
+              0,
+              2,
+              9,
+              20,
             ],
             "heatmap-opacity": 0.85,
           },
         });
-        addedRef.current = true;
       }
+      addedRef.current = Boolean(map.getLayer(LAYER_ID));
     };
 
+    map.on("style.load", addLayer);
     if (map.isStyleLoaded()) {
       addLayer();
     } else {
@@ -101,34 +124,57 @@ export function DemandHeatmapLayer({ map, bbox, visible }: DemandHeatmapLayerPro
     }
 
     return () => {
-      if (!map || !map.isStyleLoaded()) return;
-      if (map.getLayer(LAYER_ID)) map.removeLayer(LAYER_ID);
-      if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
+      map.off("style.load", addLayer);
+      map.off("styledata", addLayer);
+      if (map.isStyleLoaded()) {
+        if (map.getLayer(LAYER_ID)) map.removeLayer(LAYER_ID);
+        if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
+      }
       addedRef.current = false;
     };
   }, [map, visible]);
 
-  // Update source data when query resolves, falling back to demo data on error or empty result
+  // The worker returns a bounded, viewport-specific collection.
   useEffect(() => {
     if (!map || !map.isStyleLoaded()) return;
 
-    const hasRealData =
-      !demandQuery.isError &&
-      demandQuery.data != null &&
-      (demandQuery.data as GeoJSON.FeatureCollection).features?.length > 0;
-
-    const payload: GeoJSON.FeatureCollection = hasRealData
-      ? (demandQuery.data as GeoJSON.FeatureCollection)
-      : DEMO_HEATMAP_DATA;
-
     const source = map.getSource(SOURCE_ID);
     if (source && source.type === "geojson") {
-      (source as ReturnType<MapLibreMap["getSource"]> & { setData: (data: GeoJSON.FeatureCollection) => void }).setData(
-        payload
-      );
+      const geoJsonSource = source as ReturnType<
+        MapLibreMap["getSource"]
+      > & {
+        setData: (nextData: GeoJSON.FeatureCollection) => void;
+      };
+      geoJsonSource.setData(actionNetwork.data);
     }
-  }, [map, demandQuery.data, demandQuery.isError]);
+  }, [actionNetwork.data, map]);
 
-  // This component renders nothing itself — it's a map side-effect component
-  return null;
+  const status = actionNetwork.isLoading
+    ? "Loading action-network data."
+    : actionNetwork.error?.code === "ACTION_NETWORK_INACTIVE"
+      ? "Action-network waypoints are inactive until a reviewed warehouse publication is available. No points are displayed."
+      : actionNetwork.error
+      ? "Action-network data is unavailable. No points are displayed."
+      : actionNetwork.metadata
+        ? `Action-network data loaded: ${actionNetwork.metadata.featureCount} visible point groups. Freshness: ${actionNetwork.metadata.sourceFreshness ?? "unknown"}.`
+        : "Action-network data is inactive.";
+
+  return (
+    <div
+      className={actionNetwork.error ? "absolute bottom-4 left-4 z-40 max-w-sm rounded border border-amber-400 bg-amber-50 p-3 text-sm text-amber-950 shadow dark:bg-amber-950 dark:text-amber-50" : "sr-only"}
+      role={actionNetwork.error ? "status" : undefined}
+      aria-live="polite"
+    >
+      <p>{status}</p>
+      {actionNetwork.error?.retryable && (
+        <button
+          type="button"
+          onClick={actionNetwork.retry}
+          className="mt-2 min-h-11 rounded px-2 text-sm font-medium underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700"
+        >
+          Retry action-network data
+        </button>
+      )}
+    </div>
+  );
 }

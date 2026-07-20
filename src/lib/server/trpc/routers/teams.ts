@@ -1,13 +1,19 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { eq, and, sql } from "drizzle-orm";
 import {
   router,
-  publicProcedure,
   protectedProcedure,
   contributorProcedure,
   adminProcedure,
 } from "@/lib/server/trpc/init";
-import { teams, teamMembers, users, priorityZones } from "@/lib/server/db/schema";
+import { teams, teamMembers, users } from "@/lib/server/db/schema";
+import {
+  canInviteTeamRole,
+  identityFromSession,
+  isPlatformAdmin,
+  wouldRemoveLastOwner,
+} from "@/lib/server/security/access-control";
 
 const orgTypeSchema = z.enum([
   "nonprofit",
@@ -16,6 +22,12 @@ const orgTypeSchema = z.enum([
   "individual",
   "government",
 ]);
+
+const PARTNER_DIRECTORY_UNAVAILABLE_MESSAGE =
+  "Partner discovery is unavailable until verified organizations and access rules are published";
+
+const OPPORTUNITY_WAYPOINTS_UNAVAILABLE_MESSAGE =
+  "Opportunity waypoints are inactive until a reviewed, workspace-scoped warehouse publication is available";
 
 export const teamsRouter = router({
   // ─── Existing procedures (preserved) ──────────────────────────────────
@@ -35,7 +47,7 @@ export const teamsRouter = router({
       z.object({
         teamId: z.string().uuid(),
         userId: z.string().uuid(),
-        teamRole: z.enum(["owner", "member", "viewer"]).default("member"),
+        teamRole: z.enum(["member", "viewer"]).default("member"),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -50,8 +62,14 @@ export const teamsRouter = router({
           )
         )
         .limit(1);
-      if (!callerMembership || !["owner", "member"].includes(callerMembership.teamRole ?? "")) {
-        throw new Error("Not authorized to invite members");
+      if (
+        !isPlatformAdmin(identityFromSession(ctx.session)) &&
+        !canInviteTeamRole(callerMembership?.teamRole, input.teamRole)
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Not authorized to delegate this team role",
+        });
       }
       const [member] = await ctx.db
         .insert(teamMembers)
@@ -68,27 +86,63 @@ export const teamsRouter = router({
     .input(z.object({ teamId: z.string().uuid(), userId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       const callerId = (ctx.session.user as { id: string }).id;
-      const [callerMembership] = await ctx.db
-        .select()
-        .from(teamMembers)
-        .where(
-          and(
-            eq(teamMembers.teamId, input.teamId),
-            eq(teamMembers.userId, callerId)
-          )
-        )
-        .limit(1);
-      if (!callerMembership || callerMembership.teamRole !== "owner") {
-        throw new Error("Not authorized to remove members");
-      }
-      await ctx.db
-        .delete(teamMembers)
-        .where(
-          and(
-            eq(teamMembers.teamId, input.teamId),
-            eq(teamMembers.userId, input.userId)
-          )
+      const platformAdmin = isPlatformAdmin(identityFromSession(ctx.session));
+      await ctx.db.transaction(async (transaction) => {
+        await transaction.execute(
+          sql`SELECT 1 FROM ${teams} WHERE ${teams.id} = ${input.teamId} FOR UPDATE`
         );
+        const [callerMembership] = await transaction
+          .select({ role: teamMembers.teamRole })
+          .from(teamMembers)
+          .where(
+            and(
+              eq(teamMembers.teamId, input.teamId),
+              eq(teamMembers.userId, callerId)
+            )
+          )
+          .limit(1);
+        if (!platformAdmin && callerMembership?.role !== "owner") {
+          throw new TRPCError({ code: "FORBIDDEN" });
+        }
+
+        const [target] = await transaction
+          .select({ role: teamMembers.teamRole })
+          .from(teamMembers)
+          .where(
+            and(
+              eq(teamMembers.teamId, input.teamId),
+              eq(teamMembers.userId, input.userId)
+            )
+          )
+          .limit(1);
+        if (!target) throw new TRPCError({ code: "NOT_FOUND" });
+        if (target.role === "owner") {
+          const [owners] = await transaction
+            .select({ count: sql<number>`COUNT(*)::int` })
+            .from(teamMembers)
+            .where(
+              and(
+                eq(teamMembers.teamId, input.teamId),
+                eq(teamMembers.teamRole, "owner")
+              )
+            );
+          if (wouldRemoveLastOwner(target.role, null, owners?.count ?? 0)) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "A team must retain at least one owner",
+            });
+          }
+        }
+
+        await transaction
+          .delete(teamMembers)
+          .where(
+            and(
+              eq(teamMembers.teamId, input.teamId),
+              eq(teamMembers.userId, input.userId)
+            )
+          );
+      });
       return { success: true };
     }),
 
@@ -102,30 +156,72 @@ export const teamsRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const callerId = (ctx.session.user as { id: string }).id;
-      const [callerMembership] = await ctx.db
-        .select()
-        .from(teamMembers)
-        .where(
-          and(
-            eq(teamMembers.teamId, input.teamId),
-            eq(teamMembers.userId, callerId)
+      const platformAdmin = isPlatformAdmin(identityFromSession(ctx.session));
+      return ctx.db.transaction(async (transaction) => {
+        await transaction.execute(
+          sql`SELECT 1 FROM ${teams} WHERE ${teams.id} = ${input.teamId} FOR UPDATE`
+        );
+        const [callerMembership] = await transaction
+          .select({ role: teamMembers.teamRole })
+          .from(teamMembers)
+          .where(
+            and(
+              eq(teamMembers.teamId, input.teamId),
+              eq(teamMembers.userId, callerId)
+            )
           )
-        )
-        .limit(1);
-      if (!callerMembership || callerMembership.teamRole !== "owner") {
-        throw new Error("Not authorized to update roles");
-      }
-      const [updated] = await ctx.db
-        .update(teamMembers)
-        .set({ teamRole: input.teamRole })
-        .where(
-          and(
-            eq(teamMembers.teamId, input.teamId),
-            eq(teamMembers.userId, input.userId)
+          .limit(1);
+        if (!platformAdmin && callerMembership?.role !== "owner") {
+          throw new TRPCError({ code: "FORBIDDEN" });
+        }
+
+        const [target] = await transaction
+          .select({ role: teamMembers.teamRole })
+          .from(teamMembers)
+          .where(
+            and(
+              eq(teamMembers.teamId, input.teamId),
+              eq(teamMembers.userId, input.userId)
+            )
           )
-        )
-        .returning();
-      return updated;
+          .limit(1);
+        if (!target) throw new TRPCError({ code: "NOT_FOUND" });
+        if (target.role === "owner" && input.teamRole !== "owner") {
+          const [owners] = await transaction
+            .select({ count: sql<number>`COUNT(*)::int` })
+            .from(teamMembers)
+            .where(
+              and(
+                eq(teamMembers.teamId, input.teamId),
+                eq(teamMembers.teamRole, "owner")
+              )
+            );
+          if (
+            wouldRemoveLastOwner(
+              target.role,
+              input.teamRole,
+              owners?.count ?? 0
+            )
+          ) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "A team must retain at least one owner",
+            });
+          }
+        }
+
+        const [updated] = await transaction
+          .update(teamMembers)
+          .set({ teamRole: input.teamRole })
+          .where(
+            and(
+              eq(teamMembers.teamId, input.teamId),
+              eq(teamMembers.userId, input.userId)
+            )
+          )
+          .returning();
+        return updated;
+      });
     }),
 
   // ─── New procedures ────────────────────────────────────────────────────
@@ -203,19 +299,34 @@ export const teamsRouter = router({
       return updated;
     }),
 
-  getTeamsInBbox: publicProcedure
+  getTeamsInBbox: protectedProcedure
     .input(z.object({ bbox: z.string() }))
-    .query(async ({ ctx, input }) => {
-      // bbox format: "minLon,minLat,maxLon,maxLat"
-      const parts = input.bbox.split(",").map(Number);
-      if (parts.length !== 4 || parts.some(isNaN)) {
-        throw new Error("Invalid bbox format. Expected: minLon,minLat,maxLon,maxLat");
-      }
-      const [minLon, minLat, maxLon, maxLat] = parts;
+    .query(() => {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: PARTNER_DIRECTORY_UNAVAILABLE_MESSAGE,
+      });
+    }),
 
-      // Return all teams that have a serviceArea set, then filter client-side
-      // (PostGIS ST_Intersects requires geometry type; we store as jsonb)
-      const rows = await ctx.db
+  getTeamProfile: protectedProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const userId = (ctx.session.user as { id: string }).id;
+      const [membership] = await ctx.db
+        .select({ teamId: teamMembers.teamId })
+        .from(teamMembers)
+        .where(
+          and(
+            eq(teamMembers.teamId, input.id),
+            eq(teamMembers.userId, userId)
+          )
+        )
+        .limit(1);
+      if (!membership) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Not a team member" });
+      }
+
+      const [team] = await ctx.db
         .select({
           id: teams.id,
           name: teams.name,
@@ -227,46 +338,7 @@ export const teamsRouter = router({
           serviceArea: teams.serviceArea,
           isVerified: teams.isVerified,
           createdAt: teams.createdAt,
-          memberCount: sql<number>`(
-            SELECT COUNT(*)::int FROM team_members tm WHERE tm.team_id = ${teams.id}
-          )`,
         })
-        .from(teams)
-        .where(sql`${teams.serviceArea} IS NOT NULL`);
-
-      // Client-side bbox filter using centroid of bounding box stored in serviceArea
-      return rows.filter((team) => {
-        if (!team.serviceArea) return false;
-        try {
-          const geojson = team.serviceArea as {
-            type: string;
-            coordinates?: number[][][];
-            bbox?: number[];
-          };
-          // Try to use bbox field if present
-          if (geojson.bbox && geojson.bbox.length === 4) {
-            const [gMinLon, gMinLat, gMaxLon, gMaxLat] = geojson.bbox;
-            return !(gMaxLon < minLon || gMinLon > maxLon || gMaxLat < minLat || gMinLat > maxLat);
-          }
-          // For Polygon, compute rough centroid from first ring
-          if (geojson.type === "Polygon" && geojson.coordinates?.[0]) {
-            const ring = geojson.coordinates[0];
-            const centLon = ring.reduce((s, c) => s + c[0], 0) / ring.length;
-            const centLat = ring.reduce((s, c) => s + c[1], 0) / ring.length;
-            return centLon >= minLon && centLon <= maxLon && centLat >= minLat && centLat <= maxLat;
-          }
-          return true;
-        } catch {
-          return true;
-        }
-      });
-    }),
-
-  getTeamProfile: publicProcedure
-    .input(z.object({ id: z.string().uuid() }))
-    .query(async ({ ctx, input }) => {
-      const [team] = await ctx.db
-        .select()
         .from(teams)
         .where(eq(teams.id, input.id))
         .limit(1);
@@ -274,11 +346,8 @@ export const teamsRouter = router({
 
       const members = await ctx.db
         .select({
-          userId: teamMembers.userId,
           teamRole: teamMembers.teamRole,
-          joinedAt: teamMembers.joinedAt,
           name: users.name,
-          email: users.email,
         })
         .from(teamMembers)
         .innerJoin(users, eq(teamMembers.userId, users.id))
@@ -305,7 +374,18 @@ export const teamsRouter = router({
       if (!membership) throw new Error("Not a member of this team");
 
       const [team] = await ctx.db
-        .select()
+        .select({
+          id: teams.id,
+          name: teams.name,
+          slug: teams.slug,
+          description: teams.description,
+          orgType: teams.orgType,
+          specialties: teams.specialties,
+          website: teams.website,
+          serviceArea: teams.serviceArea,
+          isVerified: teams.isVerified,
+          createdAt: teams.createdAt,
+        })
         .from(teams)
         .where(eq(teams.id, input.teamId))
         .limit(1);
@@ -313,28 +393,28 @@ export const teamsRouter = router({
 
       const members = await ctx.db
         .select({
-          userId: teamMembers.userId,
           teamRole: teamMembers.teamRole,
-          joinedAt: teamMembers.joinedAt,
           name: users.name,
-          email: users.email,
         })
         .from(teamMembers)
         .innerJoin(users, eq(teamMembers.userId, users.id))
         .where(eq(teamMembers.teamId, input.teamId));
 
-      // Fetch priority zones — filter to those within service area bbox if present
-      let zones: (typeof priorityZones.$inferSelect)[] = [];
-      if (team.serviceArea) {
-        zones = await ctx.db.select().from(priorityZones).limit(50);
-        // Further client-side filter can be applied by the consumer
-      }
-
+      // Opportunity waypoints stay inactive until reviewed publication is available.
       return {
         team,
         members,
         memberRole: membership.teamRole,
-        priorityZones: zones,
+        priorityZones: [] as Array<{
+          id: string;
+          strategyType: string;
+          requestCount: number;
+          totalVotes: number;
+        }>,
+        opportunityWaypoints: {
+          state: "inactive" as const,
+          message: OPPORTUNITY_WAYPOINTS_UNAVAILABLE_MESSAGE,
+        },
       };
     }),
 

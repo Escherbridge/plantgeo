@@ -2,6 +2,10 @@ import { z } from 'zod';
 import { protectedProcedure, router } from '../init';
 import { aiConversations, aiMessages } from '@/lib/server/db/schema';
 import { eq, and, desc, asc } from 'drizzle-orm';
+import {
+  REGIONAL_INTELLIGENCE_ENTITLEMENT_MESSAGE,
+  REGIONAL_INTELLIGENCE_SERVING_STATE,
+} from '@/lib/server/security/regional-intelligence-access';
 
 export const regionalIntelligenceRouter = router({
   getConversations: protectedProcedure
@@ -41,22 +45,13 @@ export const regionalIntelligenceRouter = router({
       return { ...conv, messages };
     }),
 
-  getRateLimitStatus: protectedProcedure.query(async ({ ctx }) => {
-    try {
-      const { getRedis } = await import('@/lib/server/redis');
-      const redis = getRedis();
-      const userId = (ctx.session!.user as { id: string }).id;
-      const key = `ai-ratelimit:${userId}`;
-      const now = Date.now();
-      await redis.zremrangebyscore(key, 0, now - 3_600_000);
-      const count = await redis.zcard(key);
-      return {
-        remaining: Math.max(0, 20 - count),
-        resetAt:
-          count >= 20 ? new Date(now + 3_600_000).toISOString() : null,
-      };
-    } catch {
-      return { remaining: 20, resetAt: null };
-    }
+  getRateLimitStatus: protectedProcedure.query(async () => {
+    return {
+      state: REGIONAL_INTELLIGENCE_SERVING_STATE,
+      entitlementRequired: true,
+      message: REGIONAL_INTELLIGENCE_ENTITLEMENT_MESSAGE,
+      remaining: 0,
+      resetAt: null,
+    };
   }),
 });

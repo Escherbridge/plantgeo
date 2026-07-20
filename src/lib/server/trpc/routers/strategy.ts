@@ -1,14 +1,22 @@
 import { z } from "zod";
-import { router, publicProcedure } from "@/lib/server/trpc/init";
-import { getStrategyRecommendations } from "@/lib/server/services/strategy-scoring";
-import { getStrategySuppliers } from "@/lib/server/services/plantcommerce-api";
+import { TRPCError } from "@trpc/server";
+import { protectedProcedure, router } from "@/lib/server/trpc/init";
+import {
+  getStrategyRecommendations,
+  StrategyEvidenceUnavailableError,
+} from "@/lib/server/services/strategy-scoring";
+
+function supplierDirectoryUnavailable(): never {
+  throw new TRPCError({
+    code: "PRECONDITION_FAILED",
+    message:
+      "Partner supplier matching is inactive until reviewed directory data, entitlement, and outbound-location consent are available",
+  });
+}
 
 export const strategyRouter = router({
-  /**
-   * Get ranked strategy recommendations for a lat/lon location.
-   * Fetches environmental indicators and scores all 6 strategy types.
-   */
-  getStrategyRecommendations: publicProcedure
+  /** Return recommendations only when validated evidence is published. */
+  getStrategyRecommendations: protectedProcedure
     .input(
       z.object({
         lat: z.number().min(-90).max(90),
@@ -16,14 +24,22 @@ export const strategyRouter = router({
       })
     )
     .query(async ({ input }) => {
-      return getStrategyRecommendations(input.lat, input.lon);
+      try {
+        return await getStrategyRecommendations(input.lat, input.lon);
+      } catch (error) {
+        if (error instanceof StrategyEvidenceUnavailableError) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: error.message,
+            cause: error,
+          });
+        }
+        throw error;
+      }
     }),
 
-  /**
-   * Get PlantCommerce suppliers for a strategy type at a location.
-   * Returns empty array when PlantCommerce API is not configured.
-   */
-  getStrategySuppliers: publicProcedure
+  /** Keeps raw coordinates inside PlantGeo until a reviewed partner contract exists. */
+  getStrategySuppliers: protectedProcedure
     .input(
       z.object({
         strategyId: z.string(),
@@ -31,7 +47,5 @@ export const strategyRouter = router({
         lon: z.number().min(-180).max(180),
       })
     )
-    .query(async ({ input }) => {
-      return getStrategySuppliers(input.strategyId, input.lat, input.lon);
-    }),
+    .query(() => supplierDirectoryUnavailable()),
 });

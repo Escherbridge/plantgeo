@@ -5,6 +5,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { trpc } from "@/lib/trpc/client";
 import { RequestSubmitModal } from "@/components/panels/RequestSubmitModal";
 import { LayerToggle } from "@/components/ui/layer-toggle";
+import { useAuthStore } from "@/stores/auth-store";
 
 const STRATEGY_TYPES = [
   { value: "", label: "All Types" },
@@ -62,19 +63,32 @@ export function CommunityPanel({
 }: CommunityPanelProps) {
   const [strategyFilter, setStrategyFilter] = useState("");
   const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const { activeTeamId } = useAuthStore();
+  const { data: memberships } = trpc.teams.listMyTeams.useQuery(undefined, {
+    enabled: open,
+  });
+  const activeMembership = memberships?.find(
+    ({ team }) => team.id === activeTeamId
+  );
+  const activeTeam = activeMembership?.team;
+  const canSubmitToActiveTeam =
+    !activeTeamId ||
+    activeMembership?.role === "owner" ||
+    activeMembership?.role === "member";
 
-  const { data: requests, refetch } = trpc.community.getRequests.useQuery(
+  const {
+    data: requests,
+    error: requestsError,
+    refetch,
+  } = trpc.community.getRequests.useQuery(
     {
       bbox,
       strategyType: strategyFilter || undefined,
+      teamId: activeTeamId ?? undefined,
       limit: 50,
     },
     { enabled: open }
   );
-
-  const voteMutation = trpc.community.voteOnRequest.useMutation({
-    onSuccess: () => refetch(),
-  });
 
   const submitLat = mapCenter?.lat ?? 0;
   const submitLon = mapCenter?.lon ?? 0;
@@ -84,7 +98,11 @@ export function CommunityPanel({
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent side="right" className="w-[380px] sm:w-[420px] overflow-y-auto" onOpenChange={onOpenChange}>
           <SheetHeader className="mb-4">
-            <SheetTitle>Community Strategy Requests</SheetTitle>
+            <SheetTitle>
+              {activeTeamId
+                ? `${activeTeam?.name ?? "Partner workspace"} strategy requests`
+                : "Your strategy requests"}
+            </SheetTitle>
           </SheetHeader>
 
           <LayerToggle layerId="demand-heatmap" label="Demand Heatmap" />
@@ -104,17 +122,47 @@ export function CommunityPanel({
             </select>
             <button
               onClick={() => setShowSubmitModal(true)}
-              className="px-3 py-2 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-sm font-medium hover:opacity-90 transition-opacity whitespace-nowrap"
+              disabled={!canSubmitToActiveTeam}
+              title={
+                canSubmitToActiveTeam
+                  ? undefined
+                  : "Only a workspace owner or member can submit a shared request"
+              }
+              className="px-3 py-2 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-sm font-medium hover:opacity-90 transition-opacity whitespace-nowrap disabled:opacity-50"
             >
               + Submit
             </button>
           </div>
 
-          {/* Request list */}
-          <div className="flex flex-col gap-2">
-            {!requests || requests.length === 0 ? (
+          <p className="mb-3 text-xs text-[hsl(var(--muted-foreground))]">
+            {activeTeamId
+              ? `Requests are shared only with authenticated members of ${
+                  activeTeam?.name ?? "the selected partner workspace"
+                }.`
+              : "Requests are private to your account."}{" "}
+            Submitting one does not publish its location or create a public
+            waypoint.
+          </p>
+
+          {activeTeamId && !canSubmitToActiveTeam && (
+            <p role="status" className="mb-3 text-xs text-[hsl(var(--muted-foreground))]">
+              You can view this workspace, but only an owner or member can
+              submit a shared request.
+            </p>
+          )}
+
+            {/* Request list */}
+            <div className="flex flex-col gap-2">
+            {requestsError ? (
+              <p role="alert" className="text-sm text-[hsl(var(--muted-foreground))] text-center py-8">
+                Sign in and select a workspace you belong to before viewing
+                strategy requests.
+              </p>
+            ) : !requests || requests.length === 0 ? (
               <p className="text-sm text-[hsl(var(--muted-foreground))] text-center py-8">
-                No strategy requests found in this area.
+                {activeTeamId
+                  ? "No strategy requests from this partner workspace are in this area."
+                  : "No private strategy requests are in this area."}
               </p>
             ) : (
               requests.map((req) => {
@@ -158,24 +206,10 @@ export function CommunityPanel({
                         )}
                       </div>
 
-                      {/* Vote button */}
-                      <button
-                        onClick={() => voteMutation.mutate({ requestId: req.id })}
-                        disabled={voteMutation.isPending}
-                        className="flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg border border-[hsl(var(--border))] hover:bg-[hsl(var(--muted))] transition-colors min-w-[44px] disabled:opacity-50"
-                        title="Vote for this request"
-                      >
-                        <svg className="w-3.5 h-3.5 text-[hsl(var(--muted-foreground))]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                        </svg>
-                        <span className="text-xs font-bold text-[hsl(var(--foreground))]">
-                          {req.voteCount ?? 0}
-                        </span>
-                      </button>
                     </div>
 
                     <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                      {req.lat.toFixed(4)}, {req.lon.toFixed(4)}
+                      Private location
                       {req.createdAt && (
                         <> &middot; {new Date(req.createdAt).toLocaleDateString()}</>
                       )}
@@ -192,6 +226,8 @@ export function CommunityPanel({
         <RequestSubmitModal
           lat={submitLat}
           lon={submitLon}
+          teamId={activeTeamId ?? undefined}
+          workspaceName={activeTeam?.name}
           onClose={() => setShowSubmitModal(false)}
           onSuccess={() => refetch()}
         />

@@ -1,5 +1,8 @@
 // npm install bullmq
-import { recomputePriorityZones } from "@/lib/server/services/priority-zones";
+import {
+  PRIORITY_ZONE_RECOMPUTATION_STATE,
+  recomputePriorityZones,
+} from "@/lib/server/services/priority-zones";
 
 const QUEUE_NAME = "priority-zone-refresh";
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
@@ -25,6 +28,11 @@ let queue: BullQueue | null = null;
 let worker: BullWorker | null = null;
 
 export async function startJobs(): Promise<void> {
+  if (PRIORITY_ZONE_RECOMPUTATION_STATE === "inactive") {
+    console.info("[priority-zone-refresh] disabled pending reviewed publication");
+    return;
+  }
+
   let bullmq: typeof import("bullmq") | undefined;
 
   try {

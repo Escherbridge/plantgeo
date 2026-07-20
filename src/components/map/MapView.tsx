@@ -46,6 +46,26 @@ export default function MapView() {
   const { isOpen: isAIOpen } = useRegionalIntelligenceStore();
   const { queryLocation } = useRegionalIntelligence();
 
+  const handleCloseAgentInteraction = useCallback(() => {
+    setAgentCoords(null);
+  }, []);
+
+  const handleAnalyzeLocation = useCallback((precision: "approximate" | "exact") => {
+    if (!agentCoords) return;
+
+    const [lon, lat] = agentCoords;
+    const coordinateDigits = precision === "approximate" ? 2 : 6;
+    const requestedLat = Number(lat.toFixed(coordinateDigits));
+    const requestedLon = Number(lon.toFixed(coordinateDigits));
+    useRegionalIntelligenceStore.getState().openPanel(
+      requestedLat,
+      requestedLon,
+      precision
+    );
+    setAgentCoords(null);
+    void queryLocation(requestedLat, requestedLon, undefined, precision);
+  }, [agentCoords, queryLocation]);
+
   const initMap = useCallback(() => {
     if (mapRef.current || !mapContainer.current) return;
 
@@ -99,12 +119,11 @@ export default function MapView() {
     });
 
     m.on("click", (e) => {
-      // Only trigger when no map feature was clicked
+      // Do not send coordinates to the analysis service until the user confirms.
       const features = m.queryRenderedFeatures(e.point);
       if (features && features.length > 0) return;
       const { lat, lng } = e.lngLat;
-      useRegionalIntelligenceStore.getState().openPanel(lat, lng);
-      queryLocation(lat, lng);
+      setAgentCoords([lng, lat]);
     });
 
     m.on("contextmenu", (e) => {
@@ -240,9 +259,10 @@ export default function MapView() {
             <LayerManager />
             {isAIOpen && <RegionalIntelligencePanel />}
             {agentCoords && (
-              <AgentInteraction 
-                coordinates={agentCoords} 
-                onClose={() => setAgentCoords(null)} 
+              <AgentInteraction
+                coordinates={agentCoords}
+                onAnalyze={handleAnalyzeLocation}
+                onClose={handleCloseAgentInteraction}
               />
             )}
           </>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { trpc } from "@/lib/trpc/client";
 import { ServiceAreaDrawTool } from "@/components/tools/ServiceAreaDrawTool";
@@ -204,21 +204,6 @@ export function TeamDashboard({
     { enabled: open && !!teamId }
   );
 
-  const inviteMutation = trpc.teams.inviteMember.useMutation({
-    onSuccess: () => refetch(),
-  });
-
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteError, setInviteError] = useState<string | null>(null);
-
-  const handleInvite = (e: React.FormEvent) => {
-    e.preventDefault();
-    setInviteError(null);
-    // In a full implementation, look up userId by email via a separate procedure.
-    // For now, the UI shows the field; actual lookup requires a users.findByEmail endpoint.
-    setInviteError("Email invite lookup not yet implemented — use user ID directly.");
-  };
-
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
     { id: "members", label: "Members" },
@@ -278,10 +263,12 @@ export function TeamDashboard({
                     <p className="text-xs text-[hsl(var(--muted-foreground))]">Members</p>
                   </div>
                   <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 text-center">
-                    <p className="text-2xl font-bold text-[hsl(var(--foreground))]">
-                      {dashboard.priorityZones.length}
+                    <p className="text-sm font-bold text-[hsl(var(--muted-foreground))]">
+                      Inactive
                     </p>
-                    <p className="text-xs text-[hsl(var(--muted-foreground))]">Priority Zones</p>
+                    <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                      Opportunity waypoints
+                    </p>
                   </div>
                 </div>
 
@@ -333,16 +320,19 @@ export function TeamDashboard({
                   </div>
                 )}
 
-                {dashboard.priorityZones.length === 0 && dashboard.team.serviceArea && (
-                  <p className="text-sm text-[hsl(var(--muted-foreground))] text-center py-4">
-                    No priority zones found in your service area yet.
+                {dashboard.team.serviceArea && (
+                  <p
+                    role="status"
+                    className="text-sm text-[hsl(var(--muted-foreground))] text-center py-4"
+                  >
+                    {dashboard.opportunityWaypoints.message}
                   </p>
                 )}
 
                 {!dashboard.team.serviceArea && (
                   <div className="rounded-lg border border-dashed border-[hsl(var(--border))] p-4 text-center">
                     <p className="text-sm text-[hsl(var(--muted-foreground))]">
-                      Define a service area to see community priority zones.
+                      Define a service area to prepare your private partner workspace.
                     </p>
                     <button
                       onClick={() => setActiveTab("service-area")}
@@ -359,17 +349,14 @@ export function TeamDashboard({
             {activeTab === "members" && (
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-2">
-                  {dashboard.members.map((m) => (
+                  {dashboard.members.map((m, index) => (
                     <div
-                      key={m.userId}
+                      key={`${m.name ?? "member"}-${m.teamRole ?? "unknown"}-${index}`}
                       className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 flex items-center justify-between"
                     >
                       <div>
                         <p className="text-sm font-medium text-[hsl(var(--foreground))]">
-                          {m.name ?? "Unknown"}
-                        </p>
-                        <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                          {m.email}
+                          {m.name ?? "Unnamed member"}
                         </p>
                       </div>
                       <span className="text-xs capitalize text-[hsl(var(--muted-foreground))] border border-[hsl(var(--border))] px-2 py-0.5 rounded-full">
@@ -379,34 +366,15 @@ export function TeamDashboard({
                   ))}
                 </div>
 
-                {/* Invite by email */}
+                {/* Member invitations remain unavailable until an audited identity lookup exists. */}
                 {dashboard.memberRole === "owner" && (
-                  <form onSubmit={handleInvite} className="flex flex-col gap-2 pt-2 border-t border-[hsl(var(--border))]">
-                    <p className="text-xs font-semibold text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
-                      Invite Member
-                    </p>
-                    {inviteError && (
-                      <p className="text-xs text-red-500 bg-red-500/10 rounded px-2 py-1">
-                        {inviteError}
-                      </p>
-                    )}
-                    <div className="flex gap-2">
-                      <input
-                        type="email"
-                        value={inviteEmail}
-                        onChange={(e) => setInviteEmail(e.target.value)}
-                        placeholder="member@example.com"
-                        className="flex-1 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
-                      />
-                      <button
-                        type="submit"
-                        disabled={!inviteEmail.trim() || inviteMutation.isPending}
-                        className="px-3 py-2 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-                      >
-                        Invite
-                      </button>
-                    </div>
-                  </form>
+                  <p
+                    role="status"
+                    className="rounded-lg border border-dashed border-[hsl(var(--border))] px-3 py-2 text-xs text-[hsl(var(--muted-foreground))]"
+                  >
+                    Member invitations are unavailable until the platform has an
+                    audited identity lookup and invitation flow.
+                  </p>
                 )}
               </div>
             )}

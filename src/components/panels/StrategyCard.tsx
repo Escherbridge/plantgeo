@@ -12,8 +12,7 @@ import {
   ExternalLink,
   Users,
 } from "lucide-react";
-import type { StrategyScore } from "@/lib/server/services/strategy-scoring";
-import type { Supplier } from "@/lib/server/services/plantcommerce-api";
+import type { StrategyScore, Supplier } from "@/lib/strategy-contracts";
 
 // ── Score colour helpers ─────────────────────────────────────────────────────
 
@@ -86,7 +85,17 @@ function FactorBars({ factors }: FactorBarsProps) {
 
 // ── Supplier row ─────────────────────────────────────────────────────────────
 
-function SupplierRow({ supplier }: { supplier: Supplier }) {
+export function SupplierRow({ supplier }: { supplier: Supplier }) {
+  let supplierUrl: string | null = null;
+  if (supplier.url) {
+    try {
+      const parsed = new URL(supplier.url);
+      if (parsed.protocol === "https:") supplierUrl = parsed.toString();
+    } catch {
+      supplierUrl = null;
+    }
+  }
+
   return (
     <div className="flex items-start justify-between gap-2 py-1.5 border-t border-[hsl(var(--border))] first:border-0">
       <div className="flex flex-col gap-0.5 min-w-0">
@@ -113,12 +122,12 @@ function SupplierRow({ supplier }: { supplier: Supplier }) {
           </span>
         </div>
       </div>
-      {supplier.url && (
+      {supplierUrl && (
         <a
-          href={supplier.url}
+          href={supplierUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="shrink-0 flex items-center gap-1 text-[10px] text-[hsl(var(--primary))] hover:underline"
+          className="min-h-11 shrink-0 flex items-center gap-1 px-2 text-[10px] text-[hsl(var(--primary))] hover:underline"
         >
           View
           <ExternalLink className="h-2.5 w-2.5" />
@@ -132,22 +141,16 @@ function SupplierRow({ supplier }: { supplier: Supplier }) {
 
 export interface StrategyCardProps {
   strategy: StrategyScore;
-  suppliers: Supplier[];
-  suppliersLoading: boolean;
   communityDemandCount?: number;
   selected: boolean;
   onCompareToggle: (strategyId: string) => void;
-  onViewSuppliers: (strategyId: string) => void;
 }
 
 export function StrategyCard({
   strategy,
-  suppliers,
-  suppliersLoading,
   communityDemandCount,
   selected,
   onCompareToggle,
-  onViewSuppliers,
 }: StrategyCardProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -261,35 +264,20 @@ export function StrategyCard({
           <div className="mt-2 pt-2 border-t border-[hsl(var(--border))]">
             <div className="flex items-center justify-between mb-1">
               <span className="text-xs font-semibold text-[hsl(var(--foreground))]">
-                Suppliers
+                Partner supplier directory
               </span>
-              <button
-                onClick={() => onViewSuppliers(strategy.strategyId)}
-                className="text-[10px] text-[hsl(var(--primary))] hover:underline"
+              <span
+                role="status"
+                className="px-2 text-[10px] text-[hsl(var(--muted-foreground))]"
               >
-                Load suppliers
-              </button>
+                Inactive
+              </span>
             </div>
+            <p className="mb-1 text-[10px] text-[hsl(var(--muted-foreground))]">
+              Supplier matching is unavailable until a reviewed partner directory,
+              account entitlement, and explicit outbound-location consent exist.
+            </p>
 
-            {suppliersLoading && (
-              <p className="text-[11px] text-[hsl(var(--muted-foreground))]">
-                Loading…
-              </p>
-            )}
-
-            {!suppliersLoading && suppliers.length === 0 && (
-              <p className="text-[11px] text-[hsl(var(--muted-foreground))]">
-                No suppliers available for this strategy in your region.
-              </p>
-            )}
-
-            {!suppliersLoading && suppliers.length > 0 && (
-              <div className="flex flex-col">
-                {suppliers.map((s) => (
-                  <SupplierRow key={s.id} supplier={s} />
-                ))}
-              </div>
-            )}
           </div>
         </>
       )}

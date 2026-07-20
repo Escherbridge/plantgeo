@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
 import { MapPin, BarChart3, X } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { trpc } from "@/lib/trpc/client";
 import { StrategyCard } from "@/components/panels/StrategyCard";
-import type { StrategyScore } from "@/lib/server/services/strategy-scoring";
-import type { Supplier } from "@/lib/server/services/plantcommerce-api";
+import type { StrategyScore } from "@/lib/strategy-contracts";
 
 // ── Radar chart ───────────────────────────────────────────────────────────────
 
@@ -151,15 +150,6 @@ export function StrategyPanel({
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [compareMode, setCompareMode] = useState(false);
   /** Map of strategyId → supplier array (loaded on demand) */
-  const [supplierMap, setSupplierMap] = useState<Record<string, Supplier[]>>({});
-  const [loadingSuppliers, setLoadingSuppliers] = useState<Record<string, boolean>>({});
-  /** strategyId being queried for suppliers (drives the tRPC query) */
-  const [supplierQuery, setSupplierQuery] = useState<{
-    strategyId: string;
-    lat: number;
-    lon: number;
-  } | null>(null);
-
   const hasLocation = lat !== undefined && lon !== undefined;
 
   // ── Recommendations query ──────────────────────────────────────────────────
@@ -172,45 +162,8 @@ export function StrategyPanel({
   // ── Priority zones query ───────────────────────────────────────────────────
   // Fetch all priority zones once (no strategyType filter — we filter client-side)
 
-  const zonesQuery = trpc.community.getPriorityZones.useQuery(
-    {},
-    { enabled: open, staleTime: 120_000 }
-  );
-
   // Build a map of strategyType → totalVotes for quick badge lookup
-  const communityDemandByStrategy = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const zone of zonesQuery.data ?? []) {
-      const st = (zone as { strategyType?: string }).strategyType;
-      const votes = (zone as { totalVotes?: number }).totalVotes ?? 0;
-      if (st) {
-        map[st] = (map[st] ?? 0) + votes;
-      }
-    }
-    return map;
-  }, [zonesQuery.data]);
-
   // ── Supplier tRPC query (driven by supplierQuery state) ───────────────────
-
-  const suppliersResult = trpc.strategy.getStrategySuppliers.useQuery(
-    supplierQuery ?? { strategyId: "", lat: 0, lon: 0 },
-    {
-      enabled: supplierQuery !== null,
-      staleTime: 3_600_000,
-    }
-  );
-
-  // When suppliersResult resolves, push into supplierMap
-  useMemo(() => {
-    if (suppliersResult.data && supplierQuery) {
-      setSupplierMap((prev) => ({
-        ...prev,
-        [supplierQuery.strategyId]: suppliersResult.data,
-      }));
-      setLoadingSuppliers((prev) => ({ ...prev, [supplierQuery.strategyId]: false }));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [suppliersResult.data]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -222,13 +175,11 @@ export function StrategyPanel({
     });
   }
 
-  function handleViewSuppliers(strategyId: string) {
-    if (!hasLocation || supplierMap[strategyId] !== undefined) return;
-    setLoadingSuppliers((prev) => ({ ...prev, [strategyId]: true }));
-    setSupplierQuery({ strategyId, lat: lat!, lon: lon! });
-  }
-
   const strategies = recsQuery.data ?? [];
+  const recommendationsUnavailable =
+    recsQuery.error?.data?.code === "PRECONDITION_FAILED";
+  const authenticationRequired = recsQuery.error?.data?.code === "UNAUTHORIZED";
+  const publicWaypointsUnavailable = true;
 
   const compareStrategies = useMemo(
     () => strategies.filter((s) => compareIds.includes(s.strategyId)),
@@ -278,7 +229,18 @@ export function StrategyPanel({
           {/* Error state */}
           {recsQuery.isError && (
             <p className="text-xs text-[hsl(var(--destructive))]">
-              Failed to load recommendations. Check connectivity.
+              {recommendationsUnavailable
+                ? "Recommendations are unavailable until validated evidence is published."
+                : authenticationRequired
+                ? "Sign in with your PlantGeo account to view strategy data."
+                : "Recommendations could not be loaded."}
+            </p>
+          )}
+
+          {publicWaypointsUnavailable && (
+            <p className="text-xs text-[hsl(var(--muted-foreground))]">
+              Opportunity waypoint data is inactive until a reviewed,
+              access-controlled warehouse publication is available.
             </p>
           )}
 
@@ -327,12 +289,8 @@ export function StrategyPanel({
             <StrategyCard
               key={strategy.strategyId}
               strategy={strategy}
-              suppliers={supplierMap[strategy.strategyId] ?? []}
-              suppliersLoading={loadingSuppliers[strategy.strategyId] ?? false}
-              communityDemandCount={communityDemandByStrategy[strategy.strategyId]}
               selected={compareIds.includes(strategy.strategyId)}
               onCompareToggle={handleCompareToggle}
-              onViewSuppliers={handleViewSuppliers}
             />
           ))}
 

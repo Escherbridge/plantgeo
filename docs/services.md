@@ -694,27 +694,17 @@ Current weather and forecast data.
 
 ## Integration Services
 
-### plantcommerce-api.ts
+### plantcommerce-api.ts (inactive)
 
-Integration with PlantCommerce ecosystem.
+The partner supplier directory is deliberately disabled. PlantGeo does not
+forward selected coordinates, priority zones, or opportunity data to an
+external commerce service while the system lacks a reviewed directory release,
+explicit outbound-location consent, and paid account or partner entitlement.
 
-**Key Functions:**
-- `getPrioritySuggestionsForArea(bbox: string): Promise<Suggestion[]>`
-- `reportStrategyOutcomes(strategyId, outcomes): Promise<void>`
-
-**Purpose:** Connect PlantGeo analysis with PlantCommerce commerce platform.
-
-**External API:** PlantCommerce API
-- Endpoint: `PLANTCOMMERCE_API_URL`
-- Auth: HMAC-SHA256 signature with `PLANTCOMMERCE_WEBHOOK_SECRET`
-
-**Data exchanged:**
-- Regional priority zones
-- Strategy recommendations
-- Planting opportunities
-- Outcome metrics
-
-**Webhook:** Receives priority zone updates
+**Current behavior:** `getStrategySuppliers` fails closed; legacy priority-zone
+webhooks send nothing. A future integration needs a private partner contract,
+durable audit/usage controls, and a reviewed publication boundary before it
+may make an outbound request.
 
 ---
 

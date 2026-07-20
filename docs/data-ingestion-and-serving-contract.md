@@ -102,9 +102,21 @@ MapLibre already performs tile parsing and placement in its own workers. PlantGe
 2. The worker fetches a same-origin PlantGeo endpoint, validates the versioned response, filters/clusters/ranks features, and returns compact render data.
 3. Typed arrays and binary buffers are transferred rather than cloned when payload size justifies it.
 4. The main thread owns React state and MapLibre/deck.gl mutations. It ignores responses whose request ID or revision is stale.
-5. Panning, filter changes, or unmount abort in-flight work. Worker failure degrades to a bounded server-aggregated response, not an unbounded main-thread calculation.
+5. Panning, filter changes, or unmount abort in-flight work. Worker failure reports an explicit unavailable state; it must not substitute raw community records, a browser aggregate, or a synthetic waypoint response.
 
-The action-network worker now performs same-origin bounded fetch, schema/version validation, cancellation, viewport clustering, stale-response suppression, and structured error reporting. The main-thread fallback is also byte- and feature-bounded. Typed-array transfer remains a measured follow-up once profiling shows that JSON parse/clone overhead is material. Do not introduce `SharedArrayBuffer` until a measured need justifies the required cross-origin isolation policy.
+The action-network worker now performs same-origin bounded fetch, schema/version validation, cancellation, viewport clustering, stale-response suppression, and structured error reporting. It currently reports `inactive`: no reviewed partner-scoped opportunity-waypoint publication exists, and raw community requests are not a waypoint substitute. Typed-array transfer remains a measured follow-up once profiling shows that JSON parse/clone overhead is material. Do not introduce `SharedArrayBuffer` until a measured need justifies the required cross-origin isolation policy.
+
+## Location and freshness boundaries
+
+Raw community strategy requests are private to either the submitting account or one explicitly authorized partner workspace. Submission requires an explicit acknowledgment that the exact selected location is retained; a shared request can be created only by a current workspace editor, and only current workspace members can read or vote on it. Personal requests cannot receive workspace votes. No browser or public API may read raw records, their stable user/team identifiers, or their exact geometry. A future partner-facing surface must read only the reviewed, generalized, access-safe waypoint publication described in the predictive-intelligence contract.
+
+Legacy `priority_zones` aggregation, location-context output, priority-zone alerts, and priority-zone webhooks are inactive. A partner workspace service area is not evidence publication authority. The next partner-facing waypoint path must be a reviewed, versioned, workspace-scoped read model with an actual spatial predicate; it may not reuse global raw aggregates or send centroids/bounds to an arbitrary webhook.
+
+Regional analysis is currently `inactive` rather than allowing an environment toggle to serve unproven recommendations. It defaults to a two-decimal coordinate and requires a confirmed precision choice on every request; the server rounds an approximate request before context assembly. It may become runnable only after a warehouse-backed response contract carries validated source release/revision, spatial resolution, uncertainty, expiry, and any applicable model run. It also requires a real paid-account or partner entitlement with durable, atomic user/team usage reservation before any context or model work; an environment flag or an in-memory allowance alone is never sufficient. Location-dependent regional context is not shared through a rounded Redis cache: a cache may be reintroduced only when its contents and key cannot reuse one caller's location-specific facts or exact point for another caller.
+
+Supplier matching is inactive. Exact location may not be forwarded to a supplier or commerce service until the caller has an entitlement and explicitly confirms the outbound precision under a reviewed partner-directory contract. No fallback supplier results, affiliate labels, or external lookup are presented while that contract is absent.
+
+Every regional evidence source has an explicit maximum age. A timestamp older than that source's limit is `stale`, not available evidence; an invalid/future timestamp is `unavailable`; and a validated-release placeholder remains `pending`. The API rejects claims citing stale, pending, or unavailable evidence, and the UI never renders those states as fresh.
 
 ## Enforcement and operating gates
 
