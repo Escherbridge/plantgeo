@@ -11,25 +11,30 @@ import os
 import shutil
 import tempfile
 import uuid
+from contextlib import suppress
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agri_data_service.execution.contracts import (
     SHA256_PATTERN,
     canonical_json_bytes,
-    is_sensitive_field_name,
-    reject_sensitive_fields,
     reject_credential_url,
+    reject_sensitive_fields,
     validate_phase_one_geojson_payload,
 )
 
-PROMOTION_ARCHIVE_SCHEMA_VERSION = 1
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+PROMOTION_ARCHIVE_SCHEMA_VERSION: Literal[1] = 1
 PROMOTION_NAMESPACE = uuid.UUID("c61eb4a1-f009-5d72-9e74-6f17a5614d3d")
 REQUIRED_EXTENSION_NAMES = frozenset({"postgis", "timescaledb", "vector", "pgcrypto"})
+MAX_INSTALLED_EXTENSION_VERSION_LENGTH = 255
+SHA256_HEX_LENGTH = 64
 ARCHIVE_FILE_NAMES = {
     "data_sources": "data-sources.json",
     "source_releases": "source-releases.json",
@@ -42,9 +47,7 @@ MAX_ARCHIVE_RECORDS = 10_000
 MAX_INLINE_ARTIFACT_BYTES = 5_000_000
 MAX_TOTAL_INLINE_ARTIFACT_BYTES = 100_000_000
 MAX_METADATA_ARCHIVE_FILE_BYTES = 10_000_000
-MAX_ARTIFACTS_ARCHIVE_FILE_BYTES = (
-    4 * ((MAX_TOTAL_INLINE_ARTIFACT_BYTES + 2) // 3) + MAX_METADATA_ARCHIVE_FILE_BYTES
-)
+MAX_ARTIFACTS_ARCHIVE_FILE_BYTES = 4 * ((MAX_TOTAL_INLINE_ARTIFACT_BYTES + 2) // 3) + MAX_METADATA_ARCHIVE_FILE_BYTES
 MAX_MANIFEST_BYTES = 1_000_000
 
 
@@ -78,7 +81,9 @@ class PromotionSourceMetadata(PromotionModel):
         if set(value) != REQUIRED_EXTENSION_NAMES:
             raise ValueError("extension_versions must contain exactly the required extension names")
         if any(
-            not isinstance(version, str) or not version.strip() or len(version.strip()) > 255
+            not isinstance(version, str)
+            or not version.strip()
+            or len(version.strip()) > MAX_INSTALLED_EXTENSION_VERSION_LENGTH
             for version in value.values()
         ):
             raise ValueError("extension_versions must contain nonblank installed versions of at most 255 characters")
@@ -128,7 +133,7 @@ class DataSourceRecord(PromotionModel):
         return _require_aware_utc(value) if value is not None else None
 
     @model_validator(mode="after")
-    def require_approved_review_evidence(self) -> "DataSourceRecord":
+    def require_approved_review_evidence(self) -> DataSourceRecord:
         if self.review_state == "approved" and (self.reviewed_at is None or not self.reviewed_by):
             raise ValueError("approved data sources require reviewer evidence")
         return self
@@ -175,7 +180,7 @@ class SourceReleaseRecord(PromotionModel):
         return value
 
     @model_validator(mode="after")
-    def require_ordered_observation_window(self) -> "SourceReleaseRecord":
+    def require_ordered_observation_window(self) -> SourceReleaseRecord:
         if self.observed_from is not None and self.observed_to is not None and self.observed_to < self.observed_from:
             raise ValueError("observed_to must not precede observed_from")
         return self
@@ -225,7 +230,7 @@ class ArtifactRecord(PromotionModel):
         return _require_aware_utc(value)
 
     @model_validator(mode="after")
-    def verify_content_receipt(self) -> "ArtifactRecord":
+    def verify_content_receipt(self) -> ArtifactRecord:
         content = decode_artifact_content(self)
         if self.storage_class == "database_inline" and content is None:
             raise ValueError("database_inline artifacts require content_base64")
@@ -280,7 +285,7 @@ class PromotionArchive(PromotionModel):
     release_set_items: list[ReleaseSetItemRecord] = Field(min_length=1, max_length=MAX_ARCHIVE_RECORDS)
 
     @model_validator(mode="after")
-    def validate_v1_lineage_closure(self) -> "PromotionArchive":  # noqa: C901, PLR0912
+    def validate_v1_lineage_closure(self) -> PromotionArchive:  # noqa: PLR0912, PLR0915
         total_records = sum(
             len(rows)
             for rows in (
@@ -294,28 +299,47 @@ class PromotionArchive(PromotionModel):
         if total_records > MAX_ARCHIVE_RECORDS:
             raise ValueError("promotion archive exceeds the phase-one record limit")
 
-        data_sources_by_id = _index_unique(self.data_sources, lambda item: item.id, "data source id")
-        data_sources_by_key = _index_unique(self.data_sources, lambda item: item.key, "data source key")
+        data_sources_by_id: dict[uuid.UUID, DataSourceRecord] = _index_unique(
+            self.data_sources,
+            lambda item: item.id,
+            "data source id",
+        )
+        data_sources_by_key: dict[str, DataSourceRecord] = _index_unique(
+            self.data_sources,
+            lambda item: item.key,
+            "data source key",
+        )
         if len(data_sources_by_id) != len(data_sources_by_key):
             raise ValueError("data sources must have one unique id and key")
 
-        releases_by_id = _index_unique(self.source_releases, lambda item: item.id, "source release id")
+        releases_by_id: dict[uuid.UUID, SourceReleaseRecord] = _index_unique(
+            self.source_releases,
+            lambda item: item.id,
+            "source release id",
+        )
         for release in self.source_releases:
             if release.data_source_id not in data_sources_by_id:
                 raise ValueError("source release references a data source outside the archive")
             if release.supersedes_release_id is not None and release.supersedes_release_id not in releases_by_id:
                 raise ValueError("source release supersession must be closed inside the archive")
 
-        release_sets_by_id = _index_unique(self.release_sets, lambda item: item.id, "release set id")
-        release_sets_by_key = _index_unique(self.release_sets, lambda item: item.logical_key, "release set logical key")
-        release_sets_by_checksum = _index_unique(
+        release_sets_by_id: dict[uuid.UUID, ReleaseSetRecord] = _index_unique(
+            self.release_sets,
+            lambda item: item.id,
+            "release set id",
+        )
+        release_sets_by_key: dict[str, ReleaseSetRecord] = _index_unique(
+            self.release_sets,
+            lambda item: item.logical_key,
+            "release set logical key",
+        )
+        release_sets_by_checksum: dict[str, ReleaseSetRecord] = _index_unique(
             self.release_sets,
             lambda item: item.manifest_checksum,
             "release set manifest checksum",
         )
-        if (
-            len(release_sets_by_id) != len(release_sets_by_key)
-            or len(release_sets_by_id) != len(release_sets_by_checksum)
+        if len(release_sets_by_id) != len(release_sets_by_key) or len(release_sets_by_id) != len(
+            release_sets_by_checksum
         ):
             raise ValueError("release sets must have one unique id, logical key, and manifest checksum")
 
@@ -339,8 +363,12 @@ class PromotionArchive(PromotionModel):
         if required_data_sources != set(data_sources_by_id):
             raise ValueError("archive contains a data source outside the selected lineage closure")
 
-        artifacts_by_id = _index_unique(self.artifacts, lambda item: item.id, "artifact id")
-        artifacts_by_identity = _index_unique(
+        artifacts_by_id: dict[uuid.UUID, ArtifactRecord] = _index_unique(
+            self.artifacts,
+            lambda item: item.id,
+            "artifact id",
+        )
+        artifacts_by_identity: dict[tuple[str, str], ArtifactRecord] = _index_unique(
             self.artifacts,
             lambda item: (item.uri, item.checksum_sha256),
             "artifact uri and checksum",
@@ -369,16 +397,16 @@ class PromotionArchive(PromotionModel):
             expected_manifest = _phase_one_release_manifest(data_source, source_release)
             if release_set.manifest_checksum != expected_manifest:
                 raise ValueError("release set manifest does not bind its phase-one source release")
-            artifact = source_artifact_by_release.get(source_release.id)
-            if artifact is None:
+            source_artifact = source_artifact_by_release.get(source_release.id)
+            if source_artifact is None:
                 raise ValueError("selected source release is missing its source GeoJSON artifact")
-            _validate_phase_one_source_artifact(artifact, data_source, source_release)
+            _validate_phase_one_source_artifact(source_artifact, data_source, source_release)
 
         for release in self.source_releases:
-            artifact = source_artifact_by_release.get(release.id)
-            if artifact is None:
+            source_artifact = source_artifact_by_release.get(release.id)
+            if source_artifact is None:
                 raise ValueError("source release closure is missing its source GeoJSON artifact")
-            _validate_phase_one_source_artifact(artifact, data_sources_by_id[release.data_source_id], release)
+            _validate_phase_one_source_artifact(source_artifact, data_sources_by_id[release.data_source_id], release)
 
         self.data_sources = sorted(self.data_sources, key=lambda item: item.key)
         self.source_releases = _ordered_source_releases(self.source_releases)
@@ -416,7 +444,7 @@ class PromotionManifest(PromotionModel):
         return value
 
     @model_validator(mode="after")
-    def verify_manifest_shape(self) -> "PromotionManifest":
+    def verify_manifest_shape(self) -> PromotionManifest:
         if self.bundle_id != uuid.uuid5(PROMOTION_NAMESPACE, self.content_checksum):
             raise ValueError("bundle_id does not bind the archive content checksum")
         if set(self.row_counts) != set(ARCHIVE_FILE_NAMES):
@@ -470,7 +498,7 @@ class ExistingReleaseSet(PromotionModel):
         return _require_aware_utc(value) if value is not None else None
 
     @model_validator(mode="after")
-    def validate_state_times(self) -> "ExistingReleaseSet":
+    def validate_state_times(self) -> ExistingReleaseSet:
         if self.state == "draft" and (self.validated_at is not None or self.published_at is not None):
             raise ValueError("draft release sets cannot have finalization timestamps")
         if self.state in {"validated", "published"} and self.validated_at is None:
@@ -490,7 +518,7 @@ class PromotionTargetSnapshot(PromotionModel):
     release_set_items: list[ReleaseSetItemRecord] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def require_unique_target_identities(self) -> "PromotionTargetSnapshot":
+    def require_unique_target_identities(self) -> PromotionTargetSnapshot:
         _index_unique(self.data_sources, lambda item: item.id, "target data source id")
         _index_unique(self.data_sources, lambda item: item.key, "target data source key")
         _index_unique(self.source_releases, lambda item: item.id, "target source release id")
@@ -537,7 +565,7 @@ class RestoreStep(PromotionModel):
     source_release_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
-    def require_exact_step_identity(self) -> "RestoreStep":
+    def require_exact_step_identity(self) -> RestoreStep:
         base_steps = {
             RestoreStepKind.ENSURE_DATA_SOURCE,
             RestoreStepKind.ENSURE_SOURCE_RELEASE,
@@ -554,9 +582,10 @@ class RestoreStep(PromotionModel):
         elif self.kind in draft_steps:
             if self.release_set_id is None or self.record_id is not None or self.source_release_id is not None:
                 raise ValueError("release-set transition steps require only a release-set id")
-        elif self.kind == RestoreStepKind.ADD_RELEASE_SET_MEMBERSHIP:
-            if self.release_set_id is None or self.source_release_id is None or self.record_id is not None:
-                raise ValueError("membership steps require release-set and source-release ids")
+        elif self.kind == RestoreStepKind.ADD_RELEASE_SET_MEMBERSHIP and (
+            self.release_set_id is None or self.source_release_id is None or self.record_id is not None
+        ):
+            raise ValueError("membership steps require release-set and source-release ids")
         return self
 
 
@@ -568,7 +597,7 @@ class SemanticRestorePlan(PromotionModel):
     steps: list[RestoreStep]
 
     @model_validator(mode="after")
-    def require_draft_before_membership_and_validation(self) -> "SemanticRestorePlan":
+    def require_draft_before_membership_and_validation(self) -> SemanticRestorePlan:
         phase_by_release_set: dict[uuid.UUID, Literal["draft", "validated"]] = {}
         for step in self.steps:
             if step.kind in {
@@ -733,116 +762,152 @@ def plan_semantic_restore(
     target = target or PromotionTargetSnapshot()
     steps: list[RestoreStep] = []
 
-    target_data_sources_by_id = _index_unique(target.data_sources, lambda item: item.id, "target data source id")
-    target_data_sources_by_key = _index_unique(target.data_sources, lambda item: item.key, "target data source key")
-    for record in normalized.data_sources:
+    target_data_sources_by_id: dict[uuid.UUID, DataSourceRecord] = _index_unique(
+        target.data_sources,
+        lambda item: item.id,
+        "target data source id",
+    )
+    target_data_sources_by_key: dict[str, DataSourceRecord] = _index_unique(
+        target.data_sources,
+        lambda item: item.key,
+        "target data source key",
+    )
+    steps.extend(
+        RestoreStep(kind=RestoreStepKind.ENSURE_DATA_SOURCE, record_id=data_source_record.id)
+        for data_source_record in normalized.data_sources
         if not _target_record_matches(
-            record,
-            target_data_sources_by_id.get(record.id),
-            target_data_sources_by_key.get(record.key),
+            data_source_record,
+            target_data_sources_by_id.get(data_source_record.id),
+            target_data_sources_by_key.get(data_source_record.key),
             "data source",
-        ):
-            steps.append(RestoreStep(kind=RestoreStepKind.ENSURE_DATA_SOURCE, record_id=record.id))
+        )
+    )
 
-    target_releases_by_id = _index_unique(target.source_releases, lambda item: item.id, "target source release id")
-    target_releases_by_identity = _index_unique(
+    target_releases_by_id: dict[uuid.UUID, SourceReleaseRecord] = _index_unique(
+        target.source_releases,
+        lambda item: item.id,
+        "target source release id",
+    )
+    target_releases_by_identity: dict[tuple[uuid.UUID, str, str], SourceReleaseRecord] = _index_unique(
         target.source_releases,
         lambda item: (item.data_source_id, item.source_version, item.payload_checksum),
         "target source release identity",
     )
-    for record in normalized.source_releases:
-        identity = (record.data_source_id, record.source_version, record.payload_checksum)
+    steps.extend(
+        RestoreStep(kind=RestoreStepKind.ENSURE_SOURCE_RELEASE, record_id=source_release_record.id)
+        for source_release_record in normalized.source_releases
         if not _target_record_matches(
-            record,
-            target_releases_by_id.get(record.id),
-            target_releases_by_identity.get(identity),
+            source_release_record,
+            target_releases_by_id.get(source_release_record.id),
+            target_releases_by_identity.get(
+                (
+                    source_release_record.data_source_id,
+                    source_release_record.source_version,
+                    source_release_record.payload_checksum,
+                )
+            ),
             "source release",
-        ):
-            steps.append(RestoreStep(kind=RestoreStepKind.ENSURE_SOURCE_RELEASE, record_id=record.id))
+        )
+    )
 
-    target_artifacts_by_id = _index_unique(target.artifacts, lambda item: item.id, "target artifact id")
-    target_artifacts_by_identity = _index_unique(
+    target_artifacts_by_id: dict[uuid.UUID, ArtifactRecord] = _index_unique(
+        target.artifacts,
+        lambda item: item.id,
+        "target artifact id",
+    )
+    target_artifacts_by_identity: dict[tuple[str, str], ArtifactRecord] = _index_unique(
         target.artifacts,
         lambda item: (item.uri, item.checksum_sha256),
         "target artifact identity",
     )
-    for record in normalized.artifacts:
-        identity = (record.uri, record.checksum_sha256)
+    steps.extend(
+        RestoreStep(kind=RestoreStepKind.ENSURE_ARTIFACT, record_id=artifact_record.id)
+        for artifact_record in normalized.artifacts
         if not _target_record_matches(
-            record,
-            target_artifacts_by_id.get(record.id),
-            target_artifacts_by_identity.get(identity),
+            artifact_record,
+            target_artifacts_by_id.get(artifact_record.id),
+            target_artifacts_by_identity.get((artifact_record.uri, artifact_record.checksum_sha256)),
             "artifact",
-        ):
-            steps.append(RestoreStep(kind=RestoreStepKind.ENSURE_ARTIFACT, record_id=record.id))
+        )
+    )
 
-    target_sets_by_id = _index_unique(target.release_sets, lambda item: item.id, "target release set id")
-    target_sets_by_key = _index_unique(
+    target_sets_by_id: dict[uuid.UUID, ExistingReleaseSet] = _index_unique(
+        target.release_sets,
+        lambda item: item.id,
+        "target release set id",
+    )
+    target_sets_by_key: dict[str, ExistingReleaseSet] = _index_unique(
         target.release_sets,
         lambda item: item.logical_key,
         "target release set logical key",
     )
-    target_sets_by_manifest = _index_unique(
+    target_sets_by_manifest: dict[str, ExistingReleaseSet] = _index_unique(
         target.release_sets,
         lambda item: item.manifest_checksum,
         "target release set manifest checksum",
     )
     target_items_by_set: dict[uuid.UUID, dict[tuple[uuid.UUID, uuid.UUID], ReleaseSetItemRecord]] = {}
-    for item in target.release_set_items:
-        target_items_by_set.setdefault(item.release_set_id, {})[(item.release_set_id, item.source_release_id)] = item
+    for target_release_set_item in target.release_set_items:
+        target_items_by_set.setdefault(target_release_set_item.release_set_id, {})[
+            (target_release_set_item.release_set_id, target_release_set_item.source_release_id)
+        ] = target_release_set_item
     archive_items_by_set: dict[uuid.UUID, list[ReleaseSetItemRecord]] = {}
-    for item in normalized.release_set_items:
-        archive_items_by_set.setdefault(item.release_set_id, []).append(item)
+    for archive_release_set_item in normalized.release_set_items:
+        archive_items_by_set.setdefault(archive_release_set_item.release_set_id, []).append(archive_release_set_item)
 
-    for record in normalized.release_sets:
-        existing = _target_release_set_match(
-            record,
-            target_sets_by_id.get(record.id),
-            target_sets_by_key.get(record.logical_key),
-            target_sets_by_manifest.get(record.manifest_checksum),
+    for release_set_record in normalized.release_sets:
+        existing_release_set = _target_release_set_match(
+            release_set_record,
+            target_sets_by_id.get(release_set_record.id),
+            target_sets_by_key.get(release_set_record.logical_key),
+            target_sets_by_manifest.get(release_set_record.manifest_checksum),
         )
-        expected_items = {
-            (item.release_set_id, item.source_release_id): item for item in archive_items_by_set[record.id]
+        expected_release_set_items = {
+            (item.release_set_id, item.source_release_id): item for item in archive_items_by_set[release_set_record.id]
         }
-        if existing is None:
+        if existing_release_set is None:
             steps.append(
-                RestoreStep(kind=RestoreStepKind.CREATE_RELEASE_SET_DRAFT, release_set_id=record.id)
+                RestoreStep(kind=RestoreStepKind.CREATE_RELEASE_SET_DRAFT, release_set_id=release_set_record.id)
             )
-            for item in expected_items.values():
-                steps.append(
-                    RestoreStep(
-                        kind=RestoreStepKind.ADD_RELEASE_SET_MEMBERSHIP,
-                        release_set_id=item.release_set_id,
-                        source_release_id=item.source_release_id,
-                    )
+            steps.extend(
+                RestoreStep(
+                    kind=RestoreStepKind.ADD_RELEASE_SET_MEMBERSHIP,
+                    release_set_id=release_set_item.release_set_id,
+                    source_release_id=release_set_item.source_release_id,
                 )
-            steps.append(RestoreStep(kind=RestoreStepKind.VALIDATE_RELEASE_SET, release_set_id=record.id))
+                for release_set_item in expected_release_set_items.values()
+            )
+            steps.append(RestoreStep(kind=RestoreStepKind.VALIDATE_RELEASE_SET, release_set_id=release_set_record.id))
             continue
 
-        if existing.state == "validated":
-            if existing.validated_at != record.validated_at:
+        if existing_release_set.state == "validated":
+            if existing_release_set.validated_at != release_set_record.validated_at:
                 raise PromotionError("validated target release set has different validation evidence")
             _require_exact_membership(
-                expected_items,
-                target_items_by_set.get(record.id, {}),
-                release_set_id=record.id,
+                expected_release_set_items,
+                target_items_by_set.get(release_set_record.id, {}),
+                release_set_id=release_set_record.id,
             )
             continue
-        if existing.state != "draft":
+        if existing_release_set.state != "draft":
             raise PromotionError("v1 refuses published or retired release sets during semantic restore")
-        steps.append(RestoreStep(kind=RestoreStepKind.RESUME_RELEASE_SET_DRAFT, release_set_id=record.id))
-        existing_items = target_items_by_set.get(record.id, {})
-        _require_membership_subset(expected_items, existing_items, release_set_id=record.id)
-        for key, item in expected_items.items():
-            if key not in existing_items:
+        steps.append(RestoreStep(kind=RestoreStepKind.RESUME_RELEASE_SET_DRAFT, release_set_id=release_set_record.id))
+        existing_release_set_items = target_items_by_set.get(release_set_record.id, {})
+        _require_membership_subset(
+            expected_release_set_items,
+            existing_release_set_items,
+            release_set_id=release_set_record.id,
+        )
+        for item_key, release_set_item in expected_release_set_items.items():
+            if item_key not in existing_release_set_items:
                 steps.append(
                     RestoreStep(
                         kind=RestoreStepKind.ADD_RELEASE_SET_MEMBERSHIP,
-                        release_set_id=item.release_set_id,
-                        source_release_id=item.source_release_id,
+                        release_set_id=release_set_item.release_set_id,
+                        source_release_id=release_set_item.source_release_id,
                     )
                 )
-        steps.append(RestoreStep(kind=RestoreStepKind.VALIDATE_RELEASE_SET, release_set_id=record.id))
+        steps.append(RestoreStep(kind=RestoreStepKind.VALIDATE_RELEASE_SET, release_set_id=release_set_record.id))
 
     return SemanticRestorePlan(
         archive_content_checksum=promotion_content_checksum(normalized),
@@ -949,7 +1014,7 @@ def _require_membership_subset(
         raise PromotionError(f"draft target release set {release_set_id} contains conflicting membership")
 
 
-def _index_unique[T, K](records: list[T], key: Any, label: str) -> dict[K, T]:
+def _index_unique[T, K](records: list[T], key: Callable[[T], K], label: str) -> dict[K, T]:
     indexed: dict[K, T] = {}
     for record in records:
         record_key = key(record)
@@ -1025,9 +1090,7 @@ def _validate_phase_one_source_artifact(
     data_source: DataSourceRecord,
     release: SourceReleaseRecord,
 ) -> None:
-    expected_uri = (
-        f"warehouse://source-releases/{data_source.key}/{release.source_version}/{release.payload_checksum}"
-    )
+    expected_uri = f"warehouse://source-releases/{data_source.key}/{release.source_version}/{release.payload_checksum}"
     content = decode_artifact_content(artifact)
     if (
         artifact.kind != "source_geojson"
@@ -1091,7 +1154,7 @@ def _decode_inline_content(value: str) -> bytes:
 
 
 def _is_sha256(value: str) -> bool:
-    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+    return len(value) == SHA256_HEX_LENGTH and all(character in "0123456789abcdef" for character in value)
 
 
 def _write_private_file(path: Path, content: bytes) -> None:
@@ -1099,11 +1162,9 @@ def _write_private_file(path: Path, content: bytes) -> None:
         file.write(content)
         file.flush()
         os.fsync(file.fileno())
-    try:
+    with suppress(OSError):
         path.chmod(0o600)
-    except OSError:
         # Windows ACL policy remains operator controlled; no broader mode is requested here.
-        pass
 
 
 def _read_bounded_file(path: Path, max_bytes: int) -> bytes:

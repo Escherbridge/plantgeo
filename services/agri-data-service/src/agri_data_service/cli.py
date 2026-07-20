@@ -28,6 +28,7 @@ from agri_data_service.execution.contracts import ExpectedOutput
 from agri_data_service.execution.local_store import LocalRunStore
 from agri_data_service.execution.publisher import BoundedPublisher, PublicationError
 from agri_data_service.execution.source_ingestion import (
+    SOURCE_INGESTION_CHECKPOINT_SCHEMA_VERSION,
     SourceIngestionCheckpoint,
     SourceIngestionPlan,
     checkpoint_path,
@@ -391,7 +392,7 @@ async def _source_ingest(plan_path: Path, payload_path: Path) -> None:
         existing = load_checkpoint(path) if path.exists() else None
         if existing is not None:
             if (
-                existing.schema_version != 2
+                existing.schema_version != SOURCE_INGESTION_CHECKPOINT_SCHEMA_VERSION
                 or existing.plan_checksum != plan_checksum
                 or existing.release_set_manifest_checksum != release_manifest_checksum
             ):

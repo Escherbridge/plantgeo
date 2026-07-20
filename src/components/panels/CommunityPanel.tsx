@@ -17,6 +17,8 @@ const STRATEGY_TYPES = [
   { value: "cover_cropping", label: "Cover Cropping" },
 ] as const;
 
+type StrategyFilter = (typeof STRATEGY_TYPES)[number]["value"];
+
 const STRATEGY_COLORS: Record<string, string> = {
   keyline: "#2196f3",
   silvopasture: "#4caf50",
@@ -61,7 +63,7 @@ export function CommunityPanel({
   mapCenter,
   bbox,
 }: CommunityPanelProps) {
-  const [strategyFilter, setStrategyFilter] = useState("");
+  const [strategyFilter, setStrategyFilter] = useState<StrategyFilter>("");
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const { activeTeamId } = useAuthStore();
   const { data: memberships } = trpc.teams.listMyTeams.useQuery(undefined, {
@@ -83,7 +85,7 @@ export function CommunityPanel({
   } = trpc.community.getRequests.useQuery(
     {
       bbox,
-      strategyType: strategyFilter || undefined,
+      strategyType: strategyFilter === "" ? undefined : strategyFilter,
       teamId: activeTeamId ?? undefined,
       limit: 50,
     },
@@ -111,7 +113,9 @@ export function CommunityPanel({
           <div className="flex gap-2 mb-4">
             <select
               value={strategyFilter}
-              onChange={(e) => setStrategyFilter(e.target.value)}
+              onChange={(e) =>
+                setStrategyFilter(e.target.value as StrategyFilter)
+              }
               className="flex-1 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
             >
               {STRATEGY_TYPES.map((s) => (

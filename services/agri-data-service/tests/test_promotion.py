@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from agri_data_service.execution.contracts import canonical_json_bytes
 from agri_data_service.execution import promotion
+from agri_data_service.execution.contracts import canonical_json_bytes
 from agri_data_service.execution.promotion import (
     ARCHIVE_FILE_NAMES,
+    MAX_ARTIFACTS_ARCHIVE_FILE_BYTES,
+    MAX_TOTAL_INLINE_ARTIFACT_BYTES,
     ArtifactRecord,
     DataSourceRecord,
     ExistingReleaseSet,
-    MAX_ARTIFACTS_ARCHIVE_FILE_BYTES,
-    MAX_TOTAL_INLINE_ARTIFACT_BYTES,
     PromotionArchive,
     PromotionError,
     PromotionSourceMetadata,
@@ -223,16 +223,14 @@ def test_artifact_file_limit_covers_base64_expansion_and_writer_refuses_overflow
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     max_base64_bytes = 4 * ((MAX_TOTAL_INLINE_ARTIFACT_BYTES + 2) // 3)
-    assert MAX_ARTIFACTS_ARCHIVE_FILE_BYTES >= max_base64_bytes
+    assert max_base64_bytes <= MAX_ARTIFACTS_ARCHIVE_FILE_BYTES
 
     monkeypatch.setattr(promotion, "MAX_ARTIFACTS_ARCHIVE_FILE_BYTES", 1)
     with pytest.raises(PromotionError, match="exceeds its bounded size"):
         write_promotion_archive(tmp_path / "too-large-for-reader", _archive(), created_at=_timestamp())
 
 
-def test_writer_refuses_a_manifest_larger_than_its_reader_cap(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_writer_refuses_a_manifest_larger_than_its_reader_cap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(promotion, "MAX_MANIFEST_BYTES", 1)
 
     with pytest.raises(PromotionError, match="manifest exceeds its bounded size"):

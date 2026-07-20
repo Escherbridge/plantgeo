@@ -310,7 +310,10 @@ def test_source_ingestion_commands_expose_inactive_status_without_starting_work(
     assert "no model, forecast, or waypoint outputs" in status.output
 
 
-def test_source_ingest_fails_closed_without_a_dedicated_loader_target(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_source_ingest_fails_closed_without_a_dedicated_loader_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     plan_path = tmp_path / "plan.json"
     payload_path = tmp_path / "payload.geojson"
     plan_path.write_text("{}", encoding="utf-8")
@@ -332,7 +335,5 @@ def test_source_ingest_fails_closed_without_a_dedicated_loader_target(monkeypatc
         (ReleaseSetState.PUBLISHED, True),
     ],
 )
-def test_source_ingestion_idempotency_requires_a_finalized_release_set(
-    state: ReleaseSetState, expected: bool
-) -> None:
+def test_source_ingestion_idempotency_requires_a_finalized_release_set(state: ReleaseSetState, expected: bool) -> None:
     assert is_finalized_release_set_state(state) is expected

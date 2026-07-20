@@ -14,6 +14,12 @@ interface ActionNetworkFilters {
   minimumFeatureCount?: number;
 }
 
+interface ActionNetworkError {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
 interface LoadRequest {
   version: typeof WORKER_PROTOCOL_VERSION;
   id: number;

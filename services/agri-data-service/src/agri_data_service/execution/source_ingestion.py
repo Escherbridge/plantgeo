@@ -29,6 +29,8 @@ from agri_data_service.models.provenance import (
     SourceReviewState,
 )
 
+SOURCE_INGESTION_CHECKPOINT_SCHEMA_VERSION: Literal[2] = 2
+
 if TYPE_CHECKING:
     import uuid
     from pathlib import Path
@@ -98,7 +100,7 @@ class SourceReleasePlan(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def observation_window_must_be_ordered(self) -> "SourceReleasePlan":
+    def observation_window_must_be_ordered(self) -> SourceReleasePlan:
         if self.observed_from is not None and self.observed_to is not None and self.observed_to < self.observed_from:
             raise ValueError("observed_to must not precede observed_from")
         return self
@@ -128,7 +130,7 @@ class SourceIngestionCheckpoint(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1, 2] = 2
+    schema_version: Literal[1, 2] = SOURCE_INGESTION_CHECKPOINT_SCHEMA_VERSION
     state: Literal["validated", "published", "blocked"]
     source_key: str
     source_version: str
@@ -150,8 +152,8 @@ class SourceIngestionCheckpoint(BaseModel):
         return value.astimezone(UTC)
 
     @model_validator(mode="after")
-    def checkpoint_must_bind_its_identity(self) -> "SourceIngestionCheckpoint":
-        if self.schema_version == 2 and (
+    def checkpoint_must_bind_its_identity(self) -> SourceIngestionCheckpoint:
+        if self.schema_version == SOURCE_INGESTION_CHECKPOINT_SCHEMA_VERSION and (
             self.plan_checksum is None or self.release_set_manifest_checksum is None
         ):
             raise ValueError("schema version 2 checkpoints require plan and release-set checksums")
@@ -220,7 +222,7 @@ def source_ingestion_plan_checksum(plan: SourceIngestionPlan) -> str:
     return hashlib.sha256(canonical_json_bytes(plan.model_dump(mode="json"))).hexdigest()
 
 
-async def publish_source_release(
+async def publish_source_release(  # noqa: PLR0912, PLR0915
     session: AsyncSession,
     plan: SourceIngestionPlan,
     payload: bytes,
@@ -229,9 +231,7 @@ async def publish_source_release(
     """Idempotently persist governed provenance, the raw release, and a validated release set."""
     payload_checksum = hashlib.sha256(payload).hexdigest()
     await _acquire_source_ingestion_locks(session, plan, payload_checksum)
-    source = (
-        await session.execute(select(DataSource).where(DataSource.key == plan.source.key))
-    ).scalar_one_or_none()
+    source = (await session.execute(select(DataSource).where(DataSource.key == plan.source.key))).scalar_one_or_none()
     idempotent = source is not None
     if source is None:
         source = DataSource(
@@ -273,8 +273,7 @@ async def publish_source_release(
 
     release = (
         await session.execute(
-            select(SourceRelease)
-            .where(
+            select(SourceRelease).where(
                 SourceRelease.data_source_id == source.id,
                 SourceRelease.source_version == plan.release.source_version,
                 SourceRelease.payload_checksum == payload_checksum,
@@ -351,16 +350,19 @@ async def publish_source_release(
 
     manifest_checksum = release_set_manifest(plan, payload_checksum)
     release_sets = (
-        await session.execute(
-            select(ReleaseSet)
-            .where(
-                or_(
-                    ReleaseSet.logical_key == plan.release_set_key,
-                    ReleaseSet.manifest_checksum == manifest_checksum,
+        (
+            await session.execute(
+                select(ReleaseSet).where(
+                    or_(
+                        ReleaseSet.logical_key == plan.release_set_key,
+                        ReleaseSet.manifest_checksum == manifest_checksum,
+                    )
                 )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if len(release_sets) > 1:
         raise ValueError("release set key and manifest checksum identify different existing release sets")
     release_set = release_sets[0] if release_sets else None
