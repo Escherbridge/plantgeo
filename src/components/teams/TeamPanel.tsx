@@ -7,7 +7,7 @@ import { useAuthStore } from "@/stores/auth-store";
 export function TeamPanel() {
   const { activeTeamId } = useAuthStore();
   const [inviteUserId, setInviteUserId] = useState("");
-  const [inviteRole, setInviteRole] = useState<"owner" | "member" | "viewer">("member");
+  const [inviteRole, setInviteRole] = useState<"member" | "viewer">("member");
   const utils = trpc.useUtils();
 
   const { data: myTeams } = trpc.teams.listMyTeams.useQuery();
@@ -49,12 +49,11 @@ export function TeamPanel() {
           />
           <select
             value={inviteRole}
-            onChange={(e) => setInviteRole(e.target.value as "owner" | "member" | "viewer")}
+            onChange={(e) => setInviteRole(e.target.value as "member" | "viewer")}
             className="rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1.5 text-sm text-zinc-100"
           >
             <option value="viewer">Viewer</option>
             <option value="member">Member</option>
-            <option value="owner">Owner</option>
           </select>
           <button
             onClick={() =>

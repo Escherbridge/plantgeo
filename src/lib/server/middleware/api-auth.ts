@@ -3,6 +3,7 @@ import { db } from "@/lib/server/db";
 import { apiKeys } from "@/lib/server/db/schema";
 import { eq } from "drizzle-orm";
 import Redis from "ioredis";
+import { NextResponse } from "next/server";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
@@ -20,14 +21,26 @@ function getRedis(): Redis {
   return redis;
 }
 
-export interface ApiKeyValidationResult {
-  valid: boolean;
-  keyId?: string;
+type ApiKeyPrincipal = {
+  keyId: string;
   userId?: string;
   teamId?: string;
-  rateLimit?: number;
-  error?: string;
-}
+  permissions: string[];
+  rateLimit: number;
+};
+
+export type ApiKeyValidationResult =
+  | ({ valid: true } & ApiKeyPrincipal)
+  | { valid: false; error: string };
+
+export type ApiKeyAuthorizationResult =
+  | ({ valid: true } & ApiKeyPrincipal)
+  | {
+      valid: false;
+      status: 401 | 403 | 429;
+      error: string;
+      retryAfter?: number;
+    };
 
 /**
  * Validate an API key from the X-Api-Key (or x-api-key) request header.
@@ -51,6 +64,7 @@ export async function validateApiKey(
       id: apiKeys.id,
       userId: apiKeys.userId,
       teamId: apiKeys.teamId,
+      permissions: apiKeys.permissions,
       rateLimit: apiKeys.rateLimit,
     })
     .from(apiKeys)
@@ -61,15 +75,61 @@ export async function validateApiKey(
     return { valid: false, error: "Invalid API key" };
   }
 
-  const { id, userId, teamId, rateLimit } = record[0];
+  const { id, userId, teamId, permissions, rateLimit } = record[0];
 
   return {
     valid: true,
     keyId: id,
     userId: userId ?? undefined,
     teamId: teamId ?? undefined,
+    permissions: Array.isArray(permissions)
+      ? permissions.filter((permission): permission is string => typeof permission === "string")
+      : [],
     rateLimit: rateLimit ?? 100,
   };
+}
+
+/** Enforces a v1 API-key permission and its per-key rate limit. */
+export async function authorizeApiRequest(
+  request: Request,
+  requiredPermission: string
+): Promise<ApiKeyAuthorizationResult> {
+  const result = await validateApiKey(request);
+  if (!result.valid) {
+    return { valid: false, status: 401, error: result.error };
+  }
+  if (!result.permissions.includes(requiredPermission)) {
+    return {
+      valid: false,
+      status: 403,
+      error: "API key does not have permission for this endpoint",
+    };
+  }
+
+  const rateLimit = await checkRateLimit(result.keyId, result.rateLimit);
+  if (rateLimit.limited) {
+    return {
+      valid: false,
+      status: 429,
+      error: "Rate limit exceeded",
+      retryAfter: rateLimit.retryAfter,
+    };
+  }
+
+  return result;
+}
+
+/** Serializes a v1 API-key authorization failure without leaking key details. */
+export function apiKeyAuthorizationErrorResponse(
+  result: Extract<ApiKeyAuthorizationResult, { valid: false }>
+): NextResponse {
+  return NextResponse.json(
+    { error: result.status === 401 ? "Invalid or missing API key" : result.error },
+    {
+      status: result.status,
+      headers: result.retryAfter ? { "Retry-After": String(result.retryAfter) } : {},
+    }
+  );
 }
 
 /**

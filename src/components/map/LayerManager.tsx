@@ -86,7 +86,12 @@ export default function LayerManager() {
         property={soilState.property}
         opacity={soilState.opacity}
       />
-      <DemandHeatmapLayer map={map} bbox={bbox} visible={activeLayers.includes("demand-heatmap")} />
+      <DemandHeatmapLayer
+        map={map}
+        bbox={bbox}
+        zoom={zoom}
+        visible={activeLayers.includes("demand-heatmap")}
+      />
     </>
   );
 }
