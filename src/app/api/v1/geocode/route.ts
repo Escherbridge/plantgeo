@@ -1,51 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/server/db";
-import { apiKeys } from "@/lib/server/db/schema";
-import { verifyPassword } from "@/lib/server/auth";
+import {
+  apiKeyAuthorizationErrorResponse,
+  authorizeApiRequest,
+} from "@/lib/server/middleware/api-auth";
+import {
+  ForwardGeocodeQuerySchema,
+  forwardGeocode,
+} from "@/lib/server/services/geocoding";
+import {
+  PRIVATE_EPHEMERAL_HEADERS,
+  providerFailureResponse,
+} from "@/lib/server/http/provider-response";
 
-async function validateApiKey(request: NextRequest) {
-  const key = request.headers.get("x-api-key");
-  if (!key) return null;
-
-  const allKeys = await db
-    .select({ id: apiKeys.id, keyHash: apiKeys.keyHash, rateLimit: apiKeys.rateLimit })
-    .from(apiKeys);
-
-  for (const record of allKeys) {
-    const valid = await verifyPassword(key, record.keyHash);
-    if (valid) return record;
-  }
-  return null;
-}
+export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const keyRecord = await validateApiKey(request);
-  if (!keyRecord) {
-    return NextResponse.json({ error: "Invalid or missing API key" }, { status: 401 });
+  const authResult = await authorizeApiRequest(request, "read:geocode");
+  if (!authResult.valid) return apiKeyAuthorizationErrorResponse(authResult);
+
+  const parsed = ForwardGeocodeQuerySchema.safeParse(
+    Object.fromEntries(request.nextUrl.searchParams.entries())
+  );
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid geocoding query", details: parsed.error.flatten() },
+      { status: 400, headers: PRIVATE_EPHEMERAL_HEADERS }
+    );
   }
-
-  const params = request.nextUrl.searchParams;
-  const query = params.get("q");
-  if (!query) {
-    return NextResponse.json({ error: "Missing required parameter: q" }, { status: 400 });
-  }
-
-  const limit = Math.min(Number(params.get("limit") || "5"), 50);
-  const photonUrl = process.env.PHOTON_URL || "http://localhost:2322";
-
-  const upstreamUrl = new URL(`${photonUrl}/api`);
-  upstreamUrl.searchParams.set("q", query);
-  upstreamUrl.searchParams.set("limit", String(limit));
-  upstreamUrl.searchParams.set("lang", "en");
 
   try {
-    const upstream = await fetch(upstreamUrl.toString());
-    if (!upstream.ok) {
-      return NextResponse.json({ error: "Geocoding service error" }, { status: upstream.status });
-    }
-    const data = await upstream.json();
-    return NextResponse.json(data);
-  } catch {
-    return NextResponse.json({ error: "Geocoding service unavailable" }, { status: 502 });
+    const { q, ...options } = parsed.data;
+    const data = await forwardGeocode(q, { ...options, lang: options.lang ?? "en" });
+    return NextResponse.json(data, { headers: PRIVATE_EPHEMERAL_HEADERS });
+  } catch (error) {
+    return providerFailureResponse(error, "Geocoding service");
   }
 }

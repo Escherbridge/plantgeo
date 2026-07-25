@@ -2,7 +2,13 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, RasterTileSource } from "maplibre-gl";
-import { getNDVITileUrl, getNDWITileUrl, NDVI_COLOR_RAMP, NDWI_COLOR_RAMP } from "@/lib/vegetation";
+import {
+  getEnvironmentalTileTemplate,
+  getNDVITileUrl,
+  getNDWITileUrl,
+  NDVI_COLOR_RAMP,
+  NDWI_COLOR_RAMP,
+} from "@/lib/vegetation";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 
 export type VegetationMode = "ndvi" | "ndwi" | "nbr";
@@ -72,12 +78,19 @@ export function VegetationLayer({
   const addAllLayers = useCallback((m: MapLibreMap) => {
     const { mode, year, month, ndviMode, showNDWI, opacity } = propsRef.current;
     const beforeId = getFirstSymbolLayer(m);
+    const ndviTileUrl = getNDVITileUrl(year, month, ndviMode);
+    const ndwiTileUrl = getNDWITileUrl(year, month);
+    const nbrTileUrl = getEnvironmentalTileTemplate(
+      "vegetation/nbr/latest/{z}/{x}/{y}.png"
+    );
+
+    if (!ndviTileUrl || !ndwiTileUrl || !nbrTileUrl) return;
 
     // --- NDVI ---
     if (!m.getSource("ndvi-overlay")) {
       m.addSource("ndvi-overlay", {
         type: "raster",
-        tiles: [getNDVITileUrl(year, month, ndviMode)],
+        tiles: [ndviTileUrl],
         tileSize: 256,
         attribution: "NASA GIBS / Copernicus",
       });
@@ -95,7 +108,7 @@ export function VegetationLayer({
     if (!m.getSource("ndwi-overlay")) {
       m.addSource("ndwi-overlay", {
         type: "raster",
-        tiles: [getNDWITileUrl(year, month)],
+        tiles: [ndwiTileUrl],
         tileSize: 256,
         attribution: "NASA GIBS",
       });
@@ -113,9 +126,7 @@ export function VegetationLayer({
     if (!m.getSource("nbr-recovery")) {
       m.addSource("nbr-recovery", {
         type: "raster",
-        tiles: [
-          "https://tiles.arcgis.com/tiles/P3ePLMYs2RVChkJx/arcgis/rest/services/NatureServe_LandscapeIntegrity/MapServer/tile/{z}/{y}/{x}",
-        ],
+        tiles: [nbrTileUrl],
         tileSize: 256,
       });
     }
@@ -177,8 +188,9 @@ export function VegetationLayer({
 
     // NDVI tile URL + opacity
     const ndviSource = map.getSource("ndvi-overlay") as RasterTileSource | undefined;
-    if (ndviSource) {
-      ndviSource.setTiles([getNDVITileUrl(year, month, ndviMode)]);
+    const ndviTileUrl = getNDVITileUrl(year, month, ndviMode);
+    if (ndviSource && ndviTileUrl) {
+      ndviSource.setTiles([ndviTileUrl]);
     }
     if (map.getLayer(NDVI_LAYER_ID)) {
       map.setPaintProperty(NDVI_LAYER_ID, "raster-opacity", mode === "ndvi" ? opacity : 0);
@@ -186,8 +198,9 @@ export function VegetationLayer({
 
     // NDWI tile URL + opacity
     const ndwiSource = map.getSource("ndwi-overlay") as RasterTileSource | undefined;
-    if (ndwiSource) {
-      ndwiSource.setTiles([getNDWITileUrl(year, month)]);
+    const ndwiTileUrl = getNDWITileUrl(year, month);
+    if (ndwiSource && ndwiTileUrl) {
+      ndwiSource.setTiles([ndwiTileUrl]);
     }
     if (map.getLayer(NDWI_LAYER_ID)) {
       map.setPaintProperty(

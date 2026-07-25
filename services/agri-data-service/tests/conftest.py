@@ -2,10 +2,10 @@
 
 import pytest
 
+from agri_data_service.app import AgriApp, create_app
+
 
 @pytest.fixture
-def app():
+def app() -> AgriApp:
     """Create a test Sanic application."""
-    from agri_data_service.app import create_app
-
     return create_app()

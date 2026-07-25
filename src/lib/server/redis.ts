@@ -1,4 +1,4 @@
-import Redis from "ioredis";
+import Redis, { type RedisOptions } from "ioredis";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
@@ -83,20 +83,35 @@ export async function getCachedGeoJSON<T>(key: string): Promise<T | null> {
   }
 }
 
-/**
- * Parse REDIS_URL into host/port for BullMQ connection config.
- * Returns null if Redis is known to be unavailable.
- */
-export function getRedisConnection(): { host: string; port: number } | null {
-  const connection = { host: "localhost", port: 6379 };
-  try {
-    const url = new URL(REDIS_URL);
-    connection.host = url.hostname;
-    connection.port = parseInt(url.port || "6379", 10);
-  } catch {
-    // keep defaults
+/** Preserves authentication, database, and TLS settings for BullMQ. */
+export function parseRedisConnectionOptions(redisUrl: string): RedisOptions {
+  const url = new URL(redisUrl);
+  if (url.protocol !== "redis:" && url.protocol !== "rediss:") {
+    throw new Error("REDIS_URL must use redis:// or rediss://");
   }
-  return connection;
+  if (!url.hostname) throw new Error("REDIS_URL must include a hostname");
+
+  const databaseText = url.pathname.replace(/^\//, "");
+  const database = databaseText === "" ? undefined : Number(databaseText);
+  if (
+    database !== undefined &&
+    (!Number.isInteger(database) || database < 0)
+  ) {
+    throw new Error("REDIS_URL database must be a non-negative integer");
+  }
+
+  return {
+    host: url.hostname,
+    port: Number(url.port || "6379"),
+    username: url.username ? decodeURIComponent(url.username) : undefined,
+    password: url.password ? decodeURIComponent(url.password) : undefined,
+    db: database,
+    tls: url.protocol === "rediss:" ? { servername: url.hostname } : undefined,
+  };
+}
+
+export function getRedisConnection(): RedisOptions {
+  return parseRedisConnectionOptions(REDIS_URL);
 }
 
 /**

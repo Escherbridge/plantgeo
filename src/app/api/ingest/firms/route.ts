@@ -1,38 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { ingestFeatures } from "@/lib/server/services/ingest";
 import { publish } from "@/lib/server/services/realtime";
+import {
+  parseBoundedJson,
+  authorizeIngressRequest,
+} from "@/lib/server/security/ingress";
+import { parseNullableGeometryFeatureCollection } from "@/lib/server/security/geojson";
+import {
+  isFreshObservation,
+  parseFirmsObservationTime,
+} from "@/lib/server/services/environmental-time";
 
 export const runtime = "nodejs";
 
-const GeometrySchema = z.object({
-  type: z.string(),
-  coordinates: z.unknown(),
-});
-
-const FeatureSchema = z.object({
-  type: z.literal("Feature"),
-  id: z.union([z.string(), z.number()]).optional(),
-  geometry: GeometrySchema.nullable(),
-  properties: z.record(z.unknown()).nullable(),
-});
-
-const FeatureCollectionSchema = z.object({
-  type: z.literal("FeatureCollection"),
-  features: z.array(FeatureSchema),
-});
-
-const FIRMS_LAYER_ID = process.env.FIRMS_LAYER_ID ?? "fire-detections-layer";
+const FIRMS_LAYER_ID = process.env.FIRMS_LAYER_ID ?? "fire-detections";
 
 export async function POST(request: NextRequest) {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  const authorization = authorizeIngressRequest(request);
+  if (!authorization.authorized) {
+    return NextResponse.json(
+      { error: authorization.error },
+      { status: authorization.status }
+    );
   }
 
-  const parsed = FeatureCollectionSchema.safeParse(body);
+  const jsonBody = await parseBoundedJson(request);
+  if (!jsonBody.ok) {
+    return NextResponse.json({ error: jsonBody.error }, { status: jsonBody.status });
+  }
+
+  const parsed = parseNullableGeometryFeatureCollection(jsonBody.data);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
@@ -41,26 +38,55 @@ export async function POST(request: NextRequest) {
   }
 
   const { features } = parsed.data;
+  if (features.some((feature) => feature.id === undefined)) {
+    return NextResponse.json(
+      { error: "Every FIRMS feature requires a stable source feature id" },
+      { status: 422 }
+    );
+  }
+  const normalized: Array<{
+    feature: (typeof features)[number];
+    properties: Record<string, unknown>;
+    observedAt: string;
+  }> = [];
+  for (const feature of features) {
+    const properties = feature.properties ?? {};
+    const observedAt = parseFirmsObservationTime(properties);
+    if (!observedAt || !isFreshObservation(observedAt, 10 * 24 * 60 * 60 * 1_000)) {
+      return NextResponse.json(
+        {
+          error:
+            "Every FIRMS feature requires a valid recent observedAt or acqDate/acqTime",
+        },
+        { status: 422 }
+      );
+    }
+    normalized.push({ feature, properties, observedAt });
+  }
 
-  await ingestFeatures(
-    features.map((feature) => ({
-      layerId: FIRMS_LAYER_ID,
-      featureId:
-        feature.id !== undefined ? String(feature.id) : undefined,
-      properties: {
-        ...(feature.properties ?? {}),
-        geometry: feature.geometry,
-      },
-      channel: "layer:fire-detections",
-    }))
+  const createdCount = await ingestFeatures(
+    normalized.map((item) => {
+      const { feature, properties, observedAt } = item;
+      return {
+        layerId: FIRMS_LAYER_ID,
+        featureId: String(feature.id),
+        properties: {
+          ...properties,
+          observedAt,
+          geometry: feature.geometry,
+        },
+        channel: "layer:fire-detections",
+      };
+    })
   );
 
-  // Publish global alert so SSE subscribers receive the update
-  await publish("alerts:global", {
-    type: "fire-detections",
-    count: features.length,
-    timestamp: new Date().toISOString(),
-  });
+  if (createdCount > 0) {
+    await publish("alerts:global", {
+      type: "fire-detections",
+      count: createdCount,
+      timestamp: new Date().toISOString(),
+    });
+  }
 
-  return NextResponse.json({ ok: true, count: features.length }, { status: 201 });
+  return NextResponse.json({ ok: true, count: createdCount }, { status: 201 });
 }

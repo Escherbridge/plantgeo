@@ -1,4 +1,22 @@
+---
+type: track-index
+---
+
 # Conductor Tracks
+
+## [~] Track: North American Intervention Evidence Data [north_america_intervention_data_20260723]
+Ingest maximum useful free/open wildfire, drought, watershed, agriculture, and
+regulatory evidence with explicit native support and licence gates. Prove the
+architecture with an open-data Boise city/named-property vertical slice while
+keeping forecasts, strategies, recommendations, Railway, and schedules untouched.
+
+## [~] Track: Forecast Validation and Railway Predeploy [forecasting_predeploy_20260722]
+Validate a governed metric forecast against pinned local history, persist immutable
+forecast-versus-actual hindcasts as future ML signals, and rehearse the future
+Railway database path without deploying or mutating Railway. The first candidate
+was correctly rejected; the current continuation adds a generic date-spined,
+30-day Monte Carlo iteration and actual-reconciliation loop that remains
+evaluation-only.
 
 ## [ ] Track: Map Layer Data Visualization [map_layer_data_viz_20260324]
 Get all PlantGeo map layers rendering with real or demo data over Washington State.

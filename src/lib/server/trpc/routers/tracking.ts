@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { router, publicProcedure, contributorProcedure } from "@/lib/server/trpc/init";
-import { assets, geofences, alerts, positions } from "@/lib/server/db/schema";
-import { eq, desc, and, between } from "drizzle-orm";
+import { adminProcedure, router } from "@/lib/server/trpc/init";
+import { alerts, assets, geofences } from "@/lib/server/db/schema";
+import { desc, eq } from "drizzle-orm";
 import { getRouteHistory } from "@/lib/server/services/tracking";
 
 const assetCreateSchema = z.object({
@@ -26,11 +26,11 @@ const geofenceCreateSchema = z.object({
 });
 
 export const trackingRouter = router({
-  listAssets: publicProcedure.query(async ({ ctx }) => {
+  listAssets: adminProcedure.query(async ({ ctx }) => {
     return ctx.db.select().from(assets).orderBy(assets.name);
   }),
 
-  getAsset: publicProcedure
+  getAsset: adminProcedure
     .input(z.object({ id: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
       const result = await ctx.db
@@ -40,14 +40,14 @@ export const trackingRouter = router({
       return result[0] ?? null;
     }),
 
-  createAsset: contributorProcedure
+  createAsset: adminProcedure
     .input(assetCreateSchema)
     .mutation(async ({ ctx, input }) => {
       const result = await ctx.db.insert(assets).values(input).returning();
       return result[0];
     }),
 
-  updateAsset: contributorProcedure
+  updateAsset: adminProcedure
     .input(assetUpdateSchema)
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
@@ -59,7 +59,7 @@ export const trackingRouter = router({
       return result[0];
     }),
 
-  getRouteHistory: publicProcedure
+  getRouteHistory: adminProcedure
     .input(
       z.object({
         assetId: z.string().uuid(),
@@ -76,11 +76,11 @@ export const trackingRouter = router({
       );
     }),
 
-  listGeofences: publicProcedure.query(async ({ ctx }) => {
+  listGeofences: adminProcedure.query(async ({ ctx }) => {
     return ctx.db.select().from(geofences).orderBy(geofences.name);
   }),
 
-  createGeofence: contributorProcedure
+  createGeofence: adminProcedure
     .input(geofenceCreateSchema)
     .mutation(async ({ ctx, input }) => {
       const result = await ctx.db
@@ -95,14 +95,14 @@ export const trackingRouter = router({
       return result[0];
     }),
 
-  deleteGeofence: contributorProcedure
+  deleteGeofence: adminProcedure
     .input(z.object({ id: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       await ctx.db.delete(geofences).where(eq(geofences.id, input.id));
       return { success: true };
     }),
 
-  getAlerts: publicProcedure.query(async ({ ctx }) => {
+  getAlerts: adminProcedure.query(async ({ ctx }) => {
     return ctx.db
       .select()
       .from(alerts)
@@ -110,7 +110,7 @@ export const trackingRouter = router({
       .limit(100);
   }),
 
-  acknowledgeAlert: contributorProcedure
+  acknowledgeAlert: adminProcedure
     .input(z.object({ id: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       const result = await ctx.db

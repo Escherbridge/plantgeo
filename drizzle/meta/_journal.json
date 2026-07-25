@@ -8,6 +8,27 @@
       "when": 1774325395686,
       "tag": "0000_narrow_tony_stark",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784502580637,
+      "tag": "0001_handy_riptide",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784540194166,
+      "tag": "0002_alert_runtime_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784541266725,
+      "tag": "0003_right_cable",
+      "breakpoints": true
     }
   ]
 }

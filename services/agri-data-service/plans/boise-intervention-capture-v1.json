@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "pilot_key": "boise-hillside-hollow-20260723",
+  "user_agent": "PlantGeo-open-data-pilot/0.1 (local research capture)",
+  "timeout_seconds": 120,
+  "max_attempts": 3,
+  "min_interval_seconds": 1.0,
+  "sources": [
+    {
+      "key": "census-tigerweb-boise-2025",
+      "source_kind": "administrative_boundary",
+      "url": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Places_CouSub_ConCity_SubMCD/MapServer/4/query?where=STATE%3D%2716%27%20AND%20PLACE%3D%2708830%27&outFields=STATE%2CPLACE%2CGEOID%2CBASENAME%2CNAME%2CLSADC%2CFUNCSTAT%2CAREALAND%2CAREAWATER%2CCENTLAT%2CCENTLON&returnGeometry=true&outSR=4326&f=geojson",
+      "allowed_host": "tigerweb.geo.census.gov",
+      "output_file": "census-tigerweb-boise-2025.geojson",
+      "expected_media_type": "application/geo+json",
+      "expected_sha256": "0025169cd38411e915edbb3f03e89f41a6ba7c471f19f807a55e6850107da96c",
+      "expected_feature_count": 1,
+      "expected_geometry_types": [
+        "MultiPolygon"
+      ],
+      "feature_key_property": "GEOID",
+      "expected_feature_keys": [
+        "1608830"
+      ],
+      "provider": "U.S. Census Bureau",
+      "provider_version": "TIGERweb Incorporated Places, January 1 2025 vintage",
+      "metadata_url": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Places_CouSub_ConCity_SubMCD/MapServer/4",
+      "licence_name": "United States Government work; public domain",
+      "licence_url": "https://www2.census.gov/geo/pdfs/maps-data/data/tiger/tgrshp2025/TGRSHP2025_TechDoc_Ch1.pdf",
+      "citation": "U.S. Census Bureau, TIGERweb Incorporated Places, Boise City (GEOID 1608830), 2025 vintage",
+      "redistribution_status": "allowed",
+      "spatial_support_kind": "native_polygon",
+      "native_resolution_m": null,
+      "native_scale_denominator": null,
+      "maximum_inference_scale": "city"
+    },
+    {
+      "key": "osm-hillside-to-hollow-20260723",
+      "source_kind": "property",
+      "url": "https://nominatim.openstreetmap.org/search?q=Hillside%20to%20Hollow%20Reserve%2C%20Boise%2C%20Idaho&format=geojson&polygon_geojson=1&addressdetails=0&limit=5",
+      "allowed_host": "nominatim.openstreetmap.org",
+      "output_file": "osm-hillside-to-hollow-20260723.geojson",
+      "expected_media_type": "application/geo+json",
+      "expected_sha256": "7552170d903f8f6313c79d20c186f1c192cd4db5bc3865c99919f8458fa789b3",
+      "expected_feature_count": 1,
+      "expected_geometry_types": [
+        "Polygon"
+      ],
+      "feature_key_property": "osm_id",
+      "expected_feature_keys": [
+        "674700373"
+      ],
+      "provider": "OpenStreetMap contributors via Nominatim",
+      "provider_version": "OSM way 674700373 v19 at 2025-04-09T18:53:39Z",
+      "metadata_url": "https://www.openstreetmap.org/way/674700373",
+      "licence_name": "Open Data Commons Open Database License 1.0",
+      "licence_url": "https://www.openstreetmap.org/copyright",
+      "citation": "OpenStreetMap contributors, Hillside to Hollow Reserve way 674700373",
+      "redistribution_status": "allowed",
+      "spatial_support_kind": "native_polygon",
+      "native_resolution_m": null,
+      "native_scale_denominator": null,
+      "maximum_inference_scale": "neighborhood",
+      "reference_capture": {
+        "url": "https://api.openstreetmap.org/api/0.6/way/674700373/19.json",
+        "allowed_host": "api.openstreetmap.org",
+        "output_file": "osm-way-674700373-v19-reference.json",
+        "expected_media_type": "application/json",
+        "expected_sha256": "b8f3e0e9a7312bdbcf796156a4257eebe1daec8f6880e7c5ead3de0552ca13e0",
+        "expected_json_values": {
+          "elements.0.type": "way",
+          "elements.0.id": 674700373,
+          "elements.0.version": 19,
+          "elements.0.timestamp": "2025-04-09T18:53:39Z",
+          "elements.0.changeset": 164738779,
+          "elements.0.tags.name": "Hillside to Hollow Reserve"
+        }
+      }
+    },
+    {
+      "key": "usfs-wui-2020-hillside-hollow",
+      "source_kind": "wui",
+      "url": "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_WUI_2010_01/MapServer/0/query?where=wuiflag2020%3D1&geometry=-116.2291822%2C43.6412367%2C-116.2039405%2C43.6615111&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=objectid%2Cblk20%2Cstate%2Cveg2019pc%2Chu2020%2Chuden2020%2Cwuiflag2020%2Cwuiclass2020&returnGeometry=true&outSR=4326&f=geojson&orderByFields=objectid",
+      "allowed_host": "apps.fs.usda.gov",
+      "output_file": "usfs-wui-2020-hillside-hollow.geojson",
+      "expected_media_type": "application/geo+json",
+      "expected_sha256": "b3a198baeb277b65735381240e9919be317978b6bb6a8ff75ac88ce24ae212da",
+      "expected_feature_count": 5,
+      "expected_geometry_types": [
+        "Polygon"
+      ],
+      "feature_key_property": "objectid",
+      "expected_feature_keys": [
+        "2205499",
+        "2206298",
+        "2206299",
+        "2206300",
+        "2208684"
+      ],
+      "provider": "USDA Forest Service",
+      "provider_version": "Conterminous United States WUI, 2020 classification",
+      "metadata_url": "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_WUI_2010_01/MapServer/0",
+      "licence_name": "United States Government work; public use",
+      "licence_url": "https://doi.org/10.2737/RDS-2015-0012-4",
+      "citation": "Radeloff et al., Wildland-Urban Interface 1990-2020, USDA Forest Service Research Data Archive",
+      "redistribution_status": "allowed",
+      "spatial_support_kind": "area_aggregate",
+      "native_resolution_m": null,
+      "native_scale_denominator": null,
+      "maximum_inference_scale": "neighborhood"
+    }
+  ]
+}

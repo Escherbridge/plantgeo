@@ -1,0 +1,7 @@
+{
+  "id": "forecasting_predeploy_20260722",
+  "description": "Governed local metric forecasting, persisted hindcast signals, and Railway predeploy rehearsal",
+  "type": "infrastructure",
+  "created_at": "2026-07-22T00:00:00Z",
+  "status": "in_progress"
+}

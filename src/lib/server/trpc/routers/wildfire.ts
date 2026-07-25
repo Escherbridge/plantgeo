@@ -1,13 +1,16 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { router, publicProcedure, contributorProcedure } from "@/lib/server/trpc/init";
 import { features, layers } from "@/lib/server/db/schema";
-import { eq, and, sql } from "drizzle-orm";
-import { fetchActiveFiresNASA } from "@/lib/server/services/nasa-firms";
-import { calculateFireRisk } from "@/lib/server/services/fire-risk";
-import { getCurrentWeather } from "@/lib/server/services/weather";
-import { getLandFireEVT } from "@/lib/server/services/landfire";
-import { calculateFullFWI } from "@/lib/server/services/fire-weather-index";
-import { getMTBSPerimeters } from "@/lib/server/services/mtbs";
+import { eq, and } from "drizzle-orm";
+import { getPublishedFireDetections } from "@/lib/server/services/environmental-read-model";
+
+function unpublishedRisk(): never {
+  throw new TRPCError({
+    code: "PRECONDITION_FAILED",
+    message: "Validated warehouse-backed wildfire risk output is not published",
+  });
+}
 
 export const wildfireRouter = router({
   /**
@@ -22,7 +25,7 @@ export const wildfireRouter = router({
       })
     )
     .query(async ({ input }) => {
-      return fetchActiveFiresNASA(input.bbox, input.dayRange);
+      return getPublishedFireDetections(input.bbox, input.dayRange);
     }),
 
   /**
@@ -40,27 +43,7 @@ export const wildfireRouter = router({
         lon: z.number().min(-180).max(180).optional(),
       })
     )
-    .query(async ({ input }) => {
-      const score = calculateFireRisk(input);
-
-      if (input.lat !== undefined && input.lon !== undefined) {
-        const weather = await getCurrentWeather(input.lat, input.lon);
-        const now = new Date();
-        const fwiComponents = calculateFullFWI(
-          {
-            temp: weather.temperature,
-            rh: weather.humidity,
-            wind: weather.windSpeed,
-            rain: weather.precipitation,
-            month: now.getMonth() + 1,
-          },
-          { ffmc: 85, dmc: 6, dc: 15 }
-        );
-        return { score, fwiComponents };
-      }
-
-      return { score };
-    }),
+    .query(() => unpublishedRisk()),
 
   getFireRiskForPoint: publicProcedure
     .input(
@@ -69,51 +52,7 @@ export const wildfireRouter = router({
         lon: z.number().min(-180).max(180),
       })
     )
-    .query(async ({ input }) => {
-      const [weather, evt] = await Promise.all([
-        getCurrentWeather(input.lat, input.lon),
-        getLandFireEVT(input.lat, input.lon),
-      ]);
-
-      const now = new Date();
-      const fwiComponents = calculateFullFWI(
-        {
-          temp: weather.temperature,
-          rh: weather.humidity,
-          wind: weather.windSpeed,
-          rain: weather.precipitation,
-          month: now.getMonth() + 1,
-        },
-        { ffmc: 85, dmc: 6, dc: 15 }
-      );
-
-      const score = calculateFireRisk({
-        vegetationType: "mixed_forest",
-        slope: 15,
-        aspect: 180,
-        humidity: weather.humidity,
-        windSpeed: weather.windSpeed,
-        fuelLoadFactor: evt.fuelParams.fuelLoadFactor,
-      });
-
-      const fwiNormalized = Math.min(100, (fwiComponents.fwi / 50) * 100);
-      const compositeScore = Math.round(score * 0.6 + fwiNormalized * 0.4);
-
-      const confidence =
-        evt.evtCode > 0
-          ? fwiComponents.fwi > 30
-            ? "high"
-            : "medium"
-          : "low";
-
-      return {
-        score: compositeScore,
-        fwiComponents,
-        fuelType: evt.evtName,
-        evtCode: evt.evtCode,
-        confidence,
-      };
-    }),
+    .query(() => unpublishedRisk()),
 
   getMTBSPerimeters: publicProcedure
     .input(
@@ -123,9 +62,7 @@ export const wildfireRouter = router({
         yearTo: z.number().int().max(2100).optional(),
       })
     )
-    .query(async ({ input }) => {
-      return getMTBSPerimeters(input.bbox, input.yearFrom, input.yearTo);
-    }),
+    .query(() => unpublishedRisk()),
 
   /**
    * Get intervention features from the interventions layer.
@@ -215,7 +152,5 @@ export const wildfireRouter = router({
         lon: z.number().min(-180).max(180),
       })
     )
-    .query(async ({ input }) => {
-      return getCurrentWeather(input.lat, input.lon);
-    }),
+    .query(() => unpublishedRisk()),
 });

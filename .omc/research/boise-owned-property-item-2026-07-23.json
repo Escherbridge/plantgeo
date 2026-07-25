@@ -1,0 +1,72 @@
+{
+  "id": "5d822d3901f046d88fc86a5a2db16635",
+  "owner": "Boise_GIS",
+  "ownerId": "948d7b789056783e902ca8a7b7a8ace7",
+  "orgId": "WHM6qC35aMtyAAlN",
+  "created": 1713807491000,
+  "modified": 1784489199000,
+  "guid": null,
+  "name": "BoiseOwnedProperty",
+  "title": "Boise Owned Property",
+  "type": "Feature Service",
+  "typeKeywords": [
+    "ArcGIS API for JavaScript",
+    "ArcGIS Server",
+    "Data",
+    "Feature Access",
+    "Feature Service",
+    "Metadata",
+    "Service",
+    "Singlelayer",
+    "Hosted Service"
+  ],
+  "description": "<div style='text-align:Left;font-size:12pt'><div><div><p><span>This is a polygon data set representing parcels owned by the City of Boise as recorded in the Ada County, Boise County, or Canyon County parcel databases. The data for Ada County is derived from a periodic search of the Ada County Assessor\u2019s parcel database for property that has ownership recorded as Boise City. Data for other counties is extracted when legal documents/deeds are received by Boise City GIS staff. The data is a snapshot of the City of Boise parcel ownership current to the last periodic update. The dataset is maintained by City of Boise GIS with input from the city\u2019s departments to identify the department which owns or manages each parcel.  <\/span><\/p><\/div><\/div><\/div>",
+  "tags": [
+    "boise",
+    "property",
+    "AutomatedUpdates"
+  ],
+  "snippet": "Parcels owned by the City of Boise.",
+  "thumbnail": "thumbnail/BoiseOwnedProperty.jpg",
+  "documentation": null,
+  "extent": [
+    [
+      -116.3,
+      43.7
+    ],
+    [
+      -116.1,
+      43.5
+    ]
+  ],
+  "categories": [],
+  "spatialReference": "NAD_1983_Transverse_Mercator",
+  "accessInformation": "City of Boise",
+  "classification": null,
+  "licenseInfo": "<div style='text-align:Left;'><p><span>Every effort is made to keep data accurate and current as possible. However, the presence of errors or out of date information is unavoidable. Neither the City of Boise nor any of its officials and employees makes any warranty of any kind for this information, express or implied, including but not limited to any warranties of merchantability or fitness for a particular purpose, nor shall the distribution of this information constitute any warranty. The information on this web site will change over time without notice. The City of Boise and its officials and employees assume no responsibility or legal liability for the accuracy, completeness, reliability, timeliness, or usefulness of any information available on this web site nor do they represent that the use of any information will not infringe privately owned rights.<\/span><\/p><\/div>",
+  "culture": "en-us",
+  "properties": null,
+  "advancedSettings": null,
+  "url": "https://services1.arcgis.com/WHM6qC35aMtyAAlN/arcgis/rest/services/BoiseOwnedProperty/FeatureServer",
+  "proxyFilter": null,
+  "access": "public",
+  "size": 1048576,
+  "subInfo": 0,
+  "appCategories": [],
+  "industries": [],
+  "languages": [],
+  "largeThumbnail": null,
+  "banner": null,
+  "screenshots": [],
+  "listed": false,
+  "commentsEnabled": false,
+  "numComments": 0,
+  "numRatings": 0,
+  "avgRating": 0,
+  "numViews": 114090,
+  "scoreCompleteness": 95,
+  "groupDesignations": null,
+  "apiToken1ExpirationDate": -1,
+  "apiToken2ExpirationDate": -1,
+  "lastViewed": 1784804400000
+}

@@ -1,8 +1,7 @@
-import { sql } from "drizzle-orm";
+import { and, count, eq, gte, sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as schema from "@/lib/server/db/schema";
 import { features, layers } from "@/lib/server/db/schema";
-import { count, gte } from "drizzle-orm";
 
 type Db = PostgresJsDatabase<typeof schema>;
 
@@ -13,6 +12,8 @@ export async function getFeatureCountByLayer(db: Db) {
       count: count(),
     })
     .from(features)
+    .innerJoin(layers, eq(features.layerId, layers.id))
+    .where(and(eq(layers.isPublic, true), eq(features.status, "published")))
     .groupBy(features.layerId);
   return result;
 }
@@ -24,10 +25,17 @@ export async function getFeatureDensity(
   const result = await db.execute(
     sql`SELECT COUNT(*) AS count
         FROM geo.features f
-        WHERE ST_Within(
-          (f.properties->>'geometry')::geometry,
-          ST_MakeEnvelope(${bbox.minLng}, ${bbox.minLat}, ${bbox.maxLng}, ${bbox.maxLat}, 4326)
-        )`
+        INNER JOIN geo.layers l ON l.id = f.layer_id
+        WHERE l.is_public IS TRUE
+          AND f.status = 'published'
+          AND f.geom IS NOT NULL
+          AND f.geom && ST_MakeEnvelope(
+            ${bbox.minLng}, ${bbox.minLat}, ${bbox.maxLng}, ${bbox.maxLat}, 4326
+          )
+          AND ST_Intersects(
+            f.geom,
+            ST_MakeEnvelope(${bbox.minLng}, ${bbox.minLat}, ${bbox.maxLng}, ${bbox.maxLat}, 4326)
+          )`
   );
   const rows = (result as unknown as { rows: { count: string }[] }).rows ?? result as unknown as { count: string }[];
   return Number(rows[0]?.count ?? 0);
@@ -41,19 +49,30 @@ export async function getRecentActivity(db: Db, hours = 24) {
       count: count(),
     })
     .from(features)
-    .where(gte(features.createdAt, since))
+    .innerJoin(layers, eq(features.layerId, layers.id))
+    .where(
+      and(
+        gte(features.createdAt, since),
+        eq(layers.isPublic, true),
+        eq(features.status, "published")
+      )
+    )
     .groupBy(features.layerId);
   return result;
 }
 
 export async function getSystemStats(db: Db) {
   const [layerResult, featureResult] = await Promise.all([
-    db.select({ count: count() }).from(layers),
-    db.select({ count: count() }).from(features),
+    db.select({ count: count() }).from(layers).where(eq(layers.isPublic, true)),
+    db
+      .select({ count: count() })
+      .from(features)
+      .innerJoin(layers, eq(features.layerId, layers.id))
+      .where(and(eq(layers.isPublic, true), eq(features.status, "published"))),
   ]);
   return {
     layerCount: layerResult[0]?.count ?? 0,
     featureCount: featureResult[0]?.count ?? 0,
-    activeStreams: 0,
+    activeStreams: null,
   };
 }

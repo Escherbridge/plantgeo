@@ -1,166 +1,147 @@
-"""Seed data for 10 regenerative agriculture strategies."""
+"""Definition-only, source-backed draft conservation-practice seeds."""
 
-from agri_data_service.models.strategy import ImpactLevel, LaborIntensity, WaterRequirement
+from dataclasses import dataclass
+from typing import Any
+
+from agri_data_service.models.strategy import StrategyReviewState
+
+UNSUPPORTED_PRESCRIPTIVE_FIELDS: dict[str, Any] = {
+    "min_precip_mm": None,
+    "max_precip_mm": None,
+    "min_temp_c": None,
+    "max_temp_c": None,
+    "suitable_soil_types": None,
+    "suitable_drainage": None,
+    "max_slope_pct": None,
+    "min_organic_matter_pct": None,
+    "water_requirement": None,
+    "labor_intensity": None,
+    "time_to_yield_years": None,
+    "carbon_seq_potential": None,
+    "biodiversity_impact": None,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _StrategyDefinition:
+    name: str
+    slug: str
+    category: str
+    practice_code: str
+    description: str
+    evidence_citation: str
+    evidence_source_url: str
+    limitations: str
+
+
+def _definition_seed(definition: _StrategyDefinition) -> dict[str, Any]:
+    return {
+        "name": definition.name,
+        "slug": definition.slug,
+        "category": definition.category,
+        "authority": "USDA-NRCS",
+        "practice_code": definition.practice_code,
+        "description": definition.description,
+        "evidence_citation": definition.evidence_citation,
+        "evidence_source_url": definition.evidence_source_url,
+        "jurisdiction": "US",
+        "limitations": definition.limitations,
+        "review_state": StrategyReviewState.DRAFT,
+        "reviewed_at": None,
+        "reviewed_by": None,
+        **UNSUPPORTED_PRESCRIPTIVE_FIELDS,
+    }
+
 
 STRATEGY_SEEDS = [
-    {
-        "name": "Silvopasture",
-        "slug": "silvopasture",
-        "category": "agroforestry",
-        "description": "Intentional integration of trees, forage, and livestock on the same land unit to create productive, ecologically sound systems.",
-        "min_precip_mm": 600, "max_precip_mm": 1500,
-        "min_temp_c": 5, "max_temp_c": 25,
-        "suitable_soil_types": ["loam", "clay_loam", "sandy_loam", "silt_loam"],
-        "suitable_drainage": ["well_drained", "moderately_well_drained"],
-        "max_slope_pct": 30, "min_organic_matter_pct": 1.5,
-        "water_requirement": WaterRequirement.MEDIUM,
-        "labor_intensity": LaborIntensity.MEDIUM,
-        "time_to_yield_years": 3,
-        "carbon_seq_potential": ImpactLevel.VERY_HIGH,
-        "biodiversity_impact": ImpactLevel.HIGH,
-    },
-    {
-        "name": "Agroforestry",
-        "slug": "agroforestry",
-        "category": "agroforestry",
-        "description": "Land use management combining trees or shrubs with crops and/or livestock in a spatially and temporally deliberate arrangement.",
-        "min_precip_mm": 500, "max_precip_mm": 2000,
-        "min_temp_c": 0, "max_temp_c": 30,
-        "suitable_soil_types": ["loam", "clay_loam", "sandy_loam", "silt_loam", "clay"],
-        "suitable_drainage": ["well_drained", "moderately_well_drained", "somewhat_poorly_drained"],
-        "max_slope_pct": 40, "min_organic_matter_pct": 1.0,
-        "water_requirement": WaterRequirement.MEDIUM,
-        "labor_intensity": LaborIntensity.HIGH,
-        "time_to_yield_years": 4,
-        "carbon_seq_potential": ImpactLevel.VERY_HIGH,
-        "biodiversity_impact": ImpactLevel.VERY_HIGH,
-    },
-    {
-        "name": "Hydroponics",
-        "slug": "hydroponics",
-        "category": "controlled_environment",
-        "description": "Soilless plant cultivation using mineral nutrient solutions in water, suitable for controlled indoor environments.",
-        "min_precip_mm": None, "max_precip_mm": None,
-        "min_temp_c": 15, "max_temp_c": 30,
-        "suitable_soil_types": None,
-        "suitable_drainage": None,
-        "max_slope_pct": None, "min_organic_matter_pct": None,
-        "water_requirement": WaterRequirement.LOW,
-        "labor_intensity": LaborIntensity.HIGH,
-        "time_to_yield_years": 0.25,
-        "carbon_seq_potential": ImpactLevel.LOW,
-        "biodiversity_impact": ImpactLevel.LOW,
-    },
-    {
-        "name": "Aquaponics",
-        "slug": "aquaponics",
-        "category": "controlled_environment",
-        "description": "Symbiotic system combining aquaculture with hydroponics where fish waste provides nutrients for plant growth.",
-        "min_precip_mm": None, "max_precip_mm": None,
-        "min_temp_c": 18, "max_temp_c": 28,
-        "suitable_soil_types": None,
-        "suitable_drainage": None,
-        "max_slope_pct": None, "min_organic_matter_pct": None,
-        "water_requirement": WaterRequirement.LOW,
-        "labor_intensity": LaborIntensity.HIGH,
-        "time_to_yield_years": 0.5,
-        "carbon_seq_potential": ImpactLevel.LOW,
-        "biodiversity_impact": ImpactLevel.MEDIUM,
-    },
-    {
-        "name": "Cover Cropping",
-        "slug": "cover-cropping",
-        "category": "soil_health",
-        "description": "Planting non-cash crops to cover soil between production seasons, improving soil health, preventing erosion, and building organic matter.",
-        "min_precip_mm": 300, "max_precip_mm": 2000,
-        "min_temp_c": -5, "max_temp_c": 35,
-        "suitable_soil_types": ["loam", "clay_loam", "sandy_loam", "silt_loam", "sand", "clay"],
-        "suitable_drainage": ["well_drained", "moderately_well_drained", "somewhat_poorly_drained"],
-        "max_slope_pct": 20, "min_organic_matter_pct": 0.5,
-        "water_requirement": WaterRequirement.LOW,
-        "labor_intensity": LaborIntensity.LOW,
-        "time_to_yield_years": 0.5,
-        "carbon_seq_potential": ImpactLevel.MEDIUM,
-        "biodiversity_impact": ImpactLevel.MEDIUM,
-    },
-    {
-        "name": "Keyline Design",
-        "slug": "keyline-design",
-        "category": "water_management",
-        "description": "Landscape-scale water harvesting system using contour plowing patterns to distribute water from valleys to ridges, building soil depth.",
-        "min_precip_mm": 250, "max_precip_mm": 1200,
-        "min_temp_c": -10, "max_temp_c": 35,
-        "suitable_soil_types": ["loam", "clay_loam", "sandy_loam", "silt_loam"],
-        "suitable_drainage": ["well_drained", "moderately_well_drained"],
-        "max_slope_pct": 15, "min_organic_matter_pct": 0.5,
-        "water_requirement": WaterRequirement.LOW,
-        "labor_intensity": LaborIntensity.MEDIUM,
-        "time_to_yield_years": 1,
-        "carbon_seq_potential": ImpactLevel.HIGH,
-        "biodiversity_impact": ImpactLevel.MEDIUM,
-    },
-    {
-        "name": "Biochar Application",
-        "slug": "biochar-application",
-        "category": "soil_amendment",
-        "description": "Application of pyrolyzed biomass to soil for long-term carbon sequestration, improved water retention, and enhanced microbial activity.",
-        "min_precip_mm": 200, "max_precip_mm": 2500,
-        "min_temp_c": -15, "max_temp_c": 40,
-        "suitable_soil_types": ["loam", "clay_loam", "sandy_loam", "silt_loam", "sand", "clay"],
-        "suitable_drainage": ["well_drained", "moderately_well_drained", "somewhat_poorly_drained", "poorly_drained"],
-        "max_slope_pct": 25, "min_organic_matter_pct": 0.0,
-        "water_requirement": WaterRequirement.LOW,
-        "labor_intensity": LaborIntensity.LOW,
-        "time_to_yield_years": 0.5,
-        "carbon_seq_potential": ImpactLevel.VERY_HIGH,
-        "biodiversity_impact": ImpactLevel.MEDIUM,
-    },
-    {
-        "name": "Contour Farming",
-        "slug": "contour-farming",
-        "category": "erosion_control",
-        "description": "Farming along the natural contours of slopes to reduce water runoff, prevent soil erosion, and improve water infiltration.",
-        "min_precip_mm": 300, "max_precip_mm": 1500,
-        "min_temp_c": -5, "max_temp_c": 35,
-        "suitable_soil_types": ["loam", "clay_loam", "sandy_loam", "silt_loam"],
-        "suitable_drainage": ["well_drained", "moderately_well_drained"],
-        "max_slope_pct": 20, "min_organic_matter_pct": 1.0,
-        "water_requirement": WaterRequirement.MEDIUM,
-        "labor_intensity": LaborIntensity.MEDIUM,
-        "time_to_yield_years": 1,
-        "carbon_seq_potential": ImpactLevel.MEDIUM,
-        "biodiversity_impact": ImpactLevel.LOW,
-    },
-    {
-        "name": "Managed Grazing",
-        "slug": "managed-grazing",
-        "category": "livestock",
-        "description": "Rotational or adaptive multi-paddock grazing that mimics natural herbivore patterns to improve pasture health and soil carbon.",
-        "min_precip_mm": 400, "max_precip_mm": 1800,
-        "min_temp_c": -10, "max_temp_c": 30,
-        "suitable_soil_types": ["loam", "clay_loam", "sandy_loam", "silt_loam"],
-        "suitable_drainage": ["well_drained", "moderately_well_drained"],
-        "max_slope_pct": 35, "min_organic_matter_pct": 1.5,
-        "water_requirement": WaterRequirement.MEDIUM,
-        "labor_intensity": LaborIntensity.MEDIUM,
-        "time_to_yield_years": 1,
-        "carbon_seq_potential": ImpactLevel.HIGH,
-        "biodiversity_impact": ImpactLevel.HIGH,
-    },
-    {
-        "name": "Permaculture Food Forest",
-        "slug": "permaculture-food-forest",
-        "category": "agroforestry",
-        "description": "Multi-layered perennial food production system mimicking natural forest structure with canopy, understory, shrub, herb, ground cover, vine, and root layers.",
-        "min_precip_mm": 600, "max_precip_mm": 2500,
-        "min_temp_c": 0, "max_temp_c": 30,
-        "suitable_soil_types": ["loam", "clay_loam", "sandy_loam", "silt_loam"],
-        "suitable_drainage": ["well_drained", "moderately_well_drained"],
-        "max_slope_pct": 25, "min_organic_matter_pct": 2.0,
-        "water_requirement": WaterRequirement.HIGH,
-        "labor_intensity": LaborIntensity.HIGH,
-        "time_to_yield_years": 5,
-        "carbon_seq_potential": ImpactLevel.VERY_HIGH,
-        "biodiversity_impact": ImpactLevel.VERY_HIGH,
-    },
+    _definition_seed(
+        _StrategyDefinition(
+            name="Cover Crop (NRCS 340)",
+            slug="cover-crop-340",
+            category="agriculture",
+            practice_code="340",
+            description=(
+                "Temporary vegetative cover of grasses, legumes, or forbs established for conservation purposes."
+            ),
+            evidence_citation=(
+                "USDA NRCS Conservation Practice Standard 340, Cover Crop; exact current "
+                "version remains pending source capture."
+            ),
+            evidence_source_url=(
+                "https://www.nrcs.usda.gov/resources/guides-and-instructions/conservation-practice-standards"
+            ),
+            limitations=(
+                "Definition only. No species, planting date or rate, termination, fertilizer, "
+                "grazing, yield, water-use, climate, soil, or slope recommendation. Resolve the "
+                "current state Field Office Technical Guide and local guidance before design."
+            ),
+        ),
+    ),
+    _definition_seed(
+        _StrategyDefinition(
+            name="Alley Cropping (NRCS 311)",
+            slug="alley-cropping-311",
+            category="agroforestry",
+            practice_code="311",
+            description=("Crops or forage grown in alleys between deliberately arranged rows of trees or shrubs."),
+            evidence_citation=(
+                "USDA NRCS Conservation Practice Standard 311, Alley Cropping; exact current "
+                "version remains pending source capture."
+            ),
+            evidence_source_url=(
+                "https://www.nrcs.usda.gov/conservation-basics/land/forests/agroforestry-systems/alley-cropping"
+            ),
+            limitations=(
+                "Definition only. No layout, spacing, species, irrigation, yield, fire-behavior, "
+                "or site-suitability recommendation. Require the current state Field Office "
+                "Technical Guide and qualified local design."
+            ),
+        ),
+    ),
+    _definition_seed(
+        _StrategyDefinition(
+            name="Tree/Shrub Establishment (NRCS 612)",
+            slug="tree-shrub-establishment-612",
+            category="reforestation",
+            practice_code="612",
+            description=(
+                "Establishment of adapted woody vegetation through planting, seeding, cuttings, "
+                "or planned natural regeneration."
+            ),
+            evidence_citation=("USDA NRCS, Tree/Shrub Establishment, Conservation Practice Standard 612, May 2016."),
+            evidence_source_url=(
+                "https://www.nrcs.usda.gov/sites/default/files/2022-10/Tree-Shrub-Establishment-612-CPS-May-2016.pdf"
+            ),
+            limitations=(
+                "Definition only; practice 612 is broader than reforestation and the captured "
+                "standard is dated. No species, provenance, seed-zone, stock type, timing, "
+                "spacing, survival, or impact claim. Verify current national and state guidance."
+            ),
+        ),
+    ),
+    _definition_seed(
+        _StrategyDefinition(
+            name="Silvopasture (NRCS 381)",
+            slug="silvopasture-381",
+            category="silvopasture",
+            practice_code="381",
+            description=(
+                "Deliberate establishment or management of trees and forage on the same "
+                "land unit as an integrated system."
+            ),
+            evidence_citation=(
+                "USDA NRCS Conservation Practice Standard 381, Silvopasture; exact current "
+                "version remains pending source capture."
+            ),
+            evidence_source_url=(
+                "https://www.nrcs.usda.gov/resources/guides-and-instructions/"
+                "silvopasture-ac-381-conservation-practice-standard"
+            ),
+            limitations=(
+                "Definition only. No stocking, species, density, rotation, climate, soil, water, "
+                "labor, yield, carbon, biodiversity, or fire-risk rating. Require the current "
+                "state Field Office Technical Guide and qualified design."
+            ),
+        ),
+    ),
 ]

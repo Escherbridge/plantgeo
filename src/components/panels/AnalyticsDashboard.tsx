@@ -1,7 +1,7 @@
 "use client";
 // npm install recharts @react-pdf/renderer
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   Flame,
@@ -13,6 +13,7 @@ import {
   MapPin,
   Download,
   FileText,
+  AlertTriangle,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
 import { TrendChart } from "@/components/charts/TrendChart";
@@ -25,16 +26,6 @@ import { exportCSV, exportPDF } from "@/lib/export/analytics-export";
 type MetricKey = "fire" | "drought" | "ndvi" | "water";
 type DayRange = 7 | 30 | 90;
 type Tab = "overview" | "trends" | "demand";
-
-const STRATEGY_TYPES = [
-  { key: "all", label: "All" },
-  { key: "keyline", label: "Keyline" },
-  { key: "silvopasture", label: "Silvopasture" },
-  { key: "reforestation", label: "Reforestation" },
-  { key: "biochar", label: "Biochar" },
-  { key: "water_harvesting", label: "Water Harvesting" },
-  { key: "cover_cropping", label: "Cover Cropping" },
-];
 
 const METRIC_OPTIONS: { key: MetricKey; label: string; color: string; unit: string }[] = [
   { key: "fire", label: "Fire Detections", color: "#ef4444", unit: "detections" },
@@ -99,6 +90,15 @@ function DemandBarChart({ data }: { data: StrategyCount[] }) {
   );
 }
 
+function EvidenceUnavailable({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-dashed border-[hsl(var(--border))] p-3 text-xs text-[hsl(var(--muted-foreground))]">
+      <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+      <p>{children}</p>
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function AnalyticsDashboard({
@@ -111,7 +111,6 @@ export function AnalyticsDashboard({
   const [tab, setTab] = useState<Tab>("overview");
   const [metric, setMetric] = useState<MetricKey>("fire");
   const [dayRange, setDayRange] = useState<DayRange>(30);
-  const [strategyFilter, setStrategyFilter] = useState("all");
   const [demandHeatmap, setDemandHeatmap] = useState(false);
   const [debouncedBbox, setDebouncedBbox] = useState(bbox);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -150,22 +149,22 @@ export function AnalyticsDashboard({
   );
 
   const risk = riskQuery.data;
-  const priorities = priorityQuery.data ?? [];
-  const trendData = trendQuery.data ?? [];
+  const priorities = useMemo(() => priorityQuery.data ?? [], [priorityQuery.data]);
+  const trendData = useMemo(() => trendQuery.data ?? [], [trendQuery.data]);
 
-  // Aggregate demand by strategy type
-  const demandFeatures = demandQuery.data?.features ?? [];
-  const strategyCounts: StrategyCount[] = (() => {
-    const map = new Map<string, number>();
-    for (const f of demandFeatures) {
-      const st = (f.properties as { strategyType?: string })?.strategyType ?? "unknown";
-      if (strategyFilter !== "all" && st !== strategyFilter) continue;
-      map.set(st, (map.get(st) ?? 0) + 1);
-    }
-    return Array.from(map.entries())
-      .map(([strategyType, count]) => ({ strategyType, count }))
-      .sort((a, b) => b.count - a.count);
-  })();
+  // The published heatmap currently carries total request counts, not a by-strategy cube.
+  const strategyCounts = useMemo<StrategyCount[]>(() => {
+    const publishedRequestCount = (demandQuery.data?.features ?? []).reduce(
+      (total, feature) => {
+        const value = Number(feature.properties?.featureCount);
+        return Number.isFinite(value) && value > 0 ? total + value : total;
+      },
+      0
+    );
+    return publishedRequestCount
+      ? [{ strategyType: "All published requests", count: publishedRequestCount }]
+      : [];
+  }, [demandQuery.data]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -257,8 +256,14 @@ export function AnalyticsDashboard({
                 </p>
               )}
 
+              {riskQuery.isError && (
+                <EvidenceUnavailable>
+                  Regional risk metrics are unavailable until a versioned warehouse aggregate is published.
+                </EvidenceUnavailable>
+              )}
+
               {/* 2×2 risk widgets */}
-              <div className="grid grid-cols-2 gap-2">
+              {risk && <div className="grid grid-cols-2 gap-2">
                 <RiskSummaryWidget
                   label="Fire Risk"
                   value={risk ? `${risk.fireRiskAvg}%` : "—"}
@@ -329,7 +334,7 @@ export function AnalyticsDashboard({
                   }
                   icon={<Leaf className="h-3.5 w-3.5" />}
                 />
-              </div>
+              </div>}
 
               {/* Priority table */}
               <div className="flex flex-col gap-2">
@@ -337,7 +342,11 @@ export function AnalyticsDashboard({
                   <TrendingUp className="h-3.5 w-3.5 text-orange-500" />
                   Priority Subregions
                 </h3>
-                {priorityQuery.isLoading ? (
+                {priorityQuery.isError ? (
+                  <EvidenceUnavailable>
+                    Priority rankings are unavailable until an approved scoring release is published.
+                  </EvidenceUnavailable>
+                ) : priorityQuery.isLoading ? (
                   <p className="text-xs text-[hsl(var(--muted-foreground))]">Loading…</p>
                 ) : (
                   <PriorityTable data={priorities} onFlyTo={onFlyTo} />
@@ -394,7 +403,11 @@ export function AnalyticsDashboard({
                 ))}
               </div>
 
-              {trendQuery.isLoading ? (
+              {trendQuery.isError ? (
+                <EvidenceUnavailable>
+                  This trend is unavailable until a versioned warehouse time series is published.
+                </EvidenceUnavailable>
+              ) : trendQuery.isLoading ? (
                 <p className="text-xs text-[hsl(var(--muted-foreground))]">Loading trend data…</p>
               ) : (
                 <TrendChart
@@ -410,29 +423,16 @@ export function AnalyticsDashboard({
           {/* ── DEMAND TAB ───────────────────────────────────────────────────── */}
           {tab === "demand" && (
             <>
-              {/* Strategy filter chips */}
-              <div className="flex flex-wrap gap-1">
-                {STRATEGY_TYPES.map((s) => (
-                  <button
-                    key={s.key}
-                    onClick={() => setStrategyFilter(s.key)}
-                    className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                      strategyFilter === s.key
-                        ? "bg-emerald-500 text-white"
-                        : "bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--accent))]"
-                    }`}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-
               {/* Demand bar chart */}
               <div className="flex flex-col gap-2">
                 <h3 className="text-xs font-semibold text-[hsl(var(--foreground))]">
-                  Requests by Strategy Type
+                  Published Community Requests
                 </h3>
-                {demandQuery.isLoading ? (
+                {demandQuery.isError ? (
+                  <EvidenceUnavailable>
+                    Published community-request density could not be loaded.
+                  </EvidenceUnavailable>
+                ) : demandQuery.isLoading ? (
                   <p className="text-xs text-[hsl(var(--muted-foreground))]">Loading…</p>
                 ) : (
                   <DemandBarChart data={strategyCounts} />

@@ -1,18 +1,22 @@
-// Assembles all regional environmental data for a given lat/lon.
-// Uses geohash-precision-5 Redis caching with 15-min TTL.
-
-import { getRedis } from '@/lib/server/redis';
-import { getStrategyRecommendations, type StrategyScore } from '@/lib/server/services/strategy-scoring';
-import { getSoilProperties, type SoilProperties } from '@/lib/server/services/soilgrids';
-import { getDroughtClassification } from '@/lib/server/services/drought';
-import { getStreamflowGauges, type WaterGauge } from '@/lib/server/services/usgs-water';
-import { getMTBSPerimeters } from '@/lib/server/services/mtbs';
-import { getInterventionSuitability, type InterventionSuitability } from '@/lib/server/services/carbon-potential';
-
-// Simple geohash approximation (precision 5 ≈ 5km box)
-function geohash5(lat: number, lon: number): string {
-  return `${lat.toFixed(2)}_${lon.toFixed(2)}`;
-}
+import type { SoilProperties } from "@/lib/server/services/soilgrids";
+import {
+  getStrategyRecommendations,
+  type StrategyScore,
+} from "@/lib/server/services/strategy-scoring";
+import {
+  getPublishedDroughtClassification,
+  getPublishedStreamflowGauges,
+} from "@/lib/server/services/environmental-read-model";
+import {
+  getInterventionSuitability,
+  type InterventionSuitability,
+} from "@/lib/server/services/carbon-potential";
+import type { WaterGauge } from "@/lib/server/services/usgs-water";
+import { droughtLevelAtPoint } from "@/lib/server/services/alert-engine";
+import {
+  isRegionalEvidenceSource,
+  regionalEvidenceFreshnessState,
+} from "@/lib/regional-intelligence";
 
 export interface RegionalContextPayload {
   location: { lat: number; lon: number; geohash: string };
@@ -32,180 +36,103 @@ export interface RegionalContextResult {
   cacheHit: boolean;
 }
 
-function extractDroughtClass(
-  geojson: GeoJSON.FeatureCollection,
-  lat: number,
-  lon: number
+function droughtClassAtPoint(
+  collection: GeoJSON.FeatureCollection,
+  latitude: number,
+  longitude: number
 ): string | null {
-  const DM_LABELS: Record<number, string> = {
-    0: 'D0 (Abnormally Dry)',
-    1: 'D1 (Moderate Drought)',
-    2: 'D2 (Severe Drought)',
-    3: 'D3 (Extreme Drought)',
-    4: 'D4 (Exceptional Drought)',
-  };
-
-  let maxDm = -1;
-  for (const feature of geojson.features) {
-    const dm =
-      typeof feature.properties?.DM === 'number' ? feature.properties.DM : -1;
-    if (dm <= maxDm) continue;
-    const geom = feature.geometry;
-    if (!geom) continue;
-    const rings: number[][][] =
-      geom.type === 'Polygon'
-        ? (geom as GeoJSON.Polygon).coordinates
-        : geom.type === 'MultiPolygon'
-        ? (geom as GeoJSON.MultiPolygon).coordinates.flat()
-        : [];
-    for (const ring of rings) {
-      let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
-      for (const [rLon, rLat] of ring) {
-        if (rLon < minLon) minLon = rLon;
-        if (rLon > maxLon) maxLon = rLon;
-        if (rLat < minLat) minLat = rLat;
-        if (rLat > maxLat) maxLat = rLat;
-      }
-      if (lon >= minLon && lon <= maxLon && lat >= minLat && lat <= maxLat) {
-        maxDm = dm;
-        break;
-      }
-    }
-  }
-
-  return maxDm >= 0 ? (DM_LABELS[maxDm] ?? `D${maxDm}`) : null;
+  const labels = [
+    "D0 (Abnormally Dry)",
+    "D1 (Moderate Drought)",
+    "D2 (Severe Drought)",
+    "D3 (Extreme Drought)",
+    "D4 (Exceptional Drought)",
+  ];
+  const highest = droughtLevelAtPoint(collection, latitude, longitude);
+  return highest !== null ? labels[highest] ?? `D${highest}` : null;
 }
 
-function nearestGauge(gauges: WaterGauge[], lat: number, lon: number): WaterGauge | null {
-  if (gauges.length === 0) return null;
+function nearestGauge(
+  gauges: WaterGauge[],
+  latitude: number,
+  longitude: number
+): WaterGauge | null {
   let nearest: WaterGauge | null = null;
-  let minDist = Infinity;
-  for (const g of gauges) {
-    const d = Math.hypot(g.lat - lat, g.lon - lon);
-    if (d < minDist) {
-      minDist = d;
-      nearest = g;
+  let distance = Number.POSITIVE_INFINITY;
+  for (const gauge of gauges) {
+    const candidate = Math.hypot(gauge.lat - latitude, gauge.lon - longitude);
+    if (candidate < distance) {
+      nearest = gauge;
+      distance = candidate;
     }
   }
-  return minDist <= 2 ? nearest : null;
+  return distance <= 0.5 ? nearest : null;
 }
 
+/** Assembles only accepted database publications for the AI evidence boundary. */
 export async function assembleRegionalContext(
   lat: number,
   lon: number
 ): Promise<RegionalContextResult> {
-  const gh = geohash5(lat, lon);
-  const cacheKey = `ai-context:${gh}`;
-
-  const redis = getRedis();
-  try {
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      const parsed = JSON.parse(cached) as {
-        payload: RegionalContextPayload;
-        dataFreshness: Record<string, string>;
-      };
-      return { ...parsed, cacheHit: true };
-    }
-  } catch {
-    // cache miss — proceed to fetch
-  }
-
-  const bbox = `${lon - 0.25},${lat - 0.25},${lon + 0.25},${lat + 0.25}`;
-  const now = new Date().toISOString();
-  const dataFreshness: Record<string, string> = {};
-
-  // Fetch all sources in parallel
-  const [
-    strategyResult,
-    soilResult,
-    droughtResult,
-    gaugeResult,
-    mtbsResult,
-    carbonResult,
-  ] = await Promise.allSettled([
+  const bbox = `${Math.max(-180, lon - 0.25)},${Math.max(
+    -90,
+    lat - 0.25
+  )},${Math.min(180, lon + 0.25)},${Math.min(90, lat + 0.25)}`;
+  const [strategy, drought, gauges, carbon] = await Promise.allSettled([
     getStrategyRecommendations(lat, lon),
-    getSoilProperties(lat, lon),
-    getDroughtClassification(),
-    getStreamflowGauges(bbox),
-    getMTBSPerimeters(bbox, new Date().getFullYear() - 30),
+    getPublishedDroughtClassification(),
+    getPublishedStreamflowGauges(bbox),
     getInterventionSuitability(lat, lon),
   ]);
 
-  // Record data freshness
-  dataFreshness.strategyRecommendations =
-    strategyResult.status === 'fulfilled' ? now : 'unavailable';
-  dataFreshness.soilProperties =
-    soilResult.status === 'fulfilled' ? now : 'unavailable';
-  dataFreshness.drought =
-    droughtResult.status === 'fulfilled' ? now : 'unavailable';
-  dataFreshness.streamflow =
-    gaugeResult.status === 'fulfilled' ? now : 'unavailable';
-  dataFreshness.mtbsPerimeters =
-    mtbsResult.status === 'fulfilled' ? now : 'unavailable';
-  dataFreshness.carbonPotential =
-    carbonResult.status === 'fulfilled' ? now : 'unavailable';
+  const droughtValue = drought.status === "fulfilled" ? drought.value : null;
+  const gaugeValues = gauges.status === "fulfilled" ? gauges.value : [];
+  const carbonValue = carbon.status === "fulfilled" ? carbon.value : null;
+  const strategyValues = strategy.status === "fulfilled" ? strategy.value : [];
+  const dataFreshness: Record<string, string> = {
+    strategyRecommendations:
+      strategyValues.length > 0 ? "published_revision_required" : "unavailable",
+    soilProperties: "unavailable",
+    drought:
+      droughtValue?.availability === "published" && droughtValue.observedAt
+        ? droughtValue.observedAt
+        : "unavailable",
+    streamflow:
+      gaugeValues
+        .map((gauge) => gauge.updatedAt)
+        .filter((value) => Number.isFinite(Date.parse(value)))
+        .sort()
+        .at(-1) ?? "unavailable",
+    mtbsPerimeters: "unavailable",
+    carbonPotential:
+      carbonValue?.availability === "published" ? "published_revision_required" : "unavailable",
+  };
 
-  // Build waterScarcity from drought + gauge results
-  let waterScarcity: RegionalContextPayload['waterScarcity'] = null;
-  if (
-    droughtResult.status === 'fulfilled' ||
-    gaugeResult.status === 'fulfilled'
-  ) {
-    const droughtClass =
-      droughtResult.status === 'fulfilled'
-        ? extractDroughtClass(droughtResult.value, lat, lon)
-        : null;
-    const gauge =
-      gaugeResult.status === 'fulfilled'
-        ? nearestGauge(gaugeResult.value, lat, lon)
-        : null;
-    waterScarcity = { droughtClass, nearestGauge: gauge };
-  }
-
-  // Build MTBS summary
-  let mtbsPerimeters: RegionalContextPayload['mtbsPerimeters'] = null;
-  if (mtbsResult.status === 'fulfilled') {
-    mtbsPerimeters = {
-      fires: mtbsResult.value.features,
-      totalCount: mtbsResult.value.features.length,
-    };
+  const hasPublishedEvidence = Object.entries(dataFreshness).some(
+    ([source, freshness]) =>
+      isRegionalEvidenceSource(source) &&
+      regionalEvidenceFreshnessState(source, freshness) === "available"
+  );
+  if (!hasPublishedEvidence) {
+    throw new Error("No versioned regional evidence is published");
   }
 
   const payload: RegionalContextPayload = {
-    location: { lat, lon, geohash: gh },
-    strategyRecommendations:
-      strategyResult.status === 'fulfilled' ? strategyResult.value : null,
-    soilProperties:
-      soilResult.status === 'fulfilled' ? soilResult.value : null,
-    waterScarcity,
-    mtbsPerimeters,
+    location: { lat, lon, geohash: `${lat.toFixed(2)}_${lon.toFixed(2)}` },
+    strategyRecommendations: strategyValues.length > 0 ? strategyValues : null,
+    soilProperties: null,
+    waterScarcity:
+      droughtValue?.availability === "published" || gaugeValues.length > 0
+        ? {
+            droughtClass: droughtValue
+              ? droughtClassAtPoint(droughtValue, lat, lon)
+              : null,
+            nearestGauge: nearestGauge(gaugeValues, lat, lon),
+          }
+        : null,
+    mtbsPerimeters: null,
     carbonPotential:
-      carbonResult.status === 'fulfilled' ? carbonResult.value : null,
+      carbonValue?.availability === "published" ? carbonValue : null,
   };
-
-  // Cache result
-  try {
-    await redis.set(
-      cacheKey,
-      JSON.stringify({ payload, dataFreshness }),
-      'EX',
-      900
-    );
-  } catch {
-    // cache write failure is non-fatal
-  }
-
-  // Fail only if ALL sources failed
-  const allFailed = [
-    strategyResult,
-    soilResult,
-    droughtResult,
-    gaugeResult,
-    mtbsResult,
-    carbonResult,
-  ].every((r) => r.status === 'rejected');
-  if (allFailed) throw new Error('All data sources failed');
-
   return { payload, dataFreshness, cacheHit: false };
 }

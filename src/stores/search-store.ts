@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { devtools, persist } from "zustand/middleware";
-import type { NormalizedGeocodingResult } from "@/lib/server/services/geocoding";
+import type { NormalizedGeocodingResult } from "@/lib/geocoding";
 
 interface SearchState {
   query: string;

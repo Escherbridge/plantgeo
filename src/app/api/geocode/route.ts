@@ -1,17 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
-import { forwardGeocode, normalizeResults } from "@/lib/server/services/geocoding";
+import {
+  ForwardGeocodeQuerySchema,
+  forwardGeocode,
+  normalizeResults,
+} from "@/lib/server/services/geocoding";
+import { enforcePublicProviderRateLimit } from "@/lib/server/security/public-provider-rate-limit";
+import {
+  PRIVATE_EPHEMERAL_HEADERS,
+  providerFailureResponse,
+  publicRateLimitFailureResponse,
+} from "@/lib/server/http/provider-response";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const params = request.nextUrl.searchParams;
-  const q = params.get("q");
-  if (!q) return NextResponse.json({ results: [] });
+  const parsed = ForwardGeocodeQuerySchema.safeParse(
+    Object.fromEntries(request.nextUrl.searchParams.entries())
+  );
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid geocoding query", details: parsed.error.flatten() },
+      { status: 400, headers: PRIVATE_EPHEMERAL_HEADERS }
+    );
+  }
 
-  const result = await forwardGeocode(q, {
-    limit: Number(params.get("limit")) || 5,
-    lang: params.get("lang") || undefined,
-    lat: params.has("lat") ? Number(params.get("lat")) : undefined,
-    lon: params.has("lon") ? Number(params.get("lon")) : undefined,
-  });
+  const rateLimit = await enforcePublicProviderRateLimit(request, "geocode", 30);
+  if (!rateLimit.allowed) return publicRateLimitFailureResponse(rateLimit);
 
-  return NextResponse.json({ results: normalizeResults(result) });
+  try {
+    const { q, ...options } = parsed.data;
+    const result = await forwardGeocode(q, options);
+    return NextResponse.json(
+      { results: normalizeResults(result) },
+      { headers: PRIVATE_EPHEMERAL_HEADERS }
+    );
+  } catch (error) {
+    return providerFailureResponse(error, "Geocoding service");
+  }
 }

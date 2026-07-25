@@ -1,23 +1,54 @@
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { sql } from "drizzle-orm";
-import { positions } from "@/lib/server/db/schema";
+import { eq, sql } from "drizzle-orm";
+import { db } from "@/lib/server/db";
+import { assets, positions } from "@/lib/server/db/schema";
 
-export async function storePosition(
-  db: PostgresJsDatabase,
-  assetId: string,
-  lat: number,
-  lon: number,
-  heading?: number,
-  speed?: number,
-  altitude?: number
-): Promise<void> {
-  await db.insert(positions).values({
-    time: new Date(),
-    assetId,
-    heading: heading ?? null,
-    speed: speed ?? null,
-    altitude: altitude ?? null,
-    metadata: { lat, lon },
+export interface TrackingPositionInput {
+  assetId: string;
+  lat: number;
+  lon: number;
+  heading?: number;
+  speed?: number;
+  altitude?: number;
+  producerTimestamp: Date;
+}
+
+export class UnknownTrackingAssetError extends Error {}
+export class DuplicateTrackingPositionError extends Error {}
+
+/** Verify the asset and durably insert one idempotent position in one transaction. */
+export async function persistVerifiedPosition(
+  input: TrackingPositionInput
+): Promise<{ producerTimestamp: Date; receivedAt: Date }> {
+  const receivedAt = new Date();
+  return db.transaction(async (transaction) => {
+    const asset = await transaction
+      .select({ id: assets.id })
+      .from(assets)
+      .where(eq(assets.id, input.assetId))
+      .limit(1);
+    if (!asset[0]) throw new UnknownTrackingAssetError("Tracking asset does not exist");
+
+    const inserted = await transaction
+      .insert(positions)
+      .values({
+        time: input.producerTimestamp,
+        assetId: input.assetId,
+        heading: input.heading ?? null,
+        speed: input.speed ?? null,
+        altitude: input.altitude ?? null,
+        metadata: {
+          lat: input.lat,
+          lon: input.lon,
+          receivedAt: receivedAt.toISOString(),
+        },
+      })
+      .onConflictDoNothing({ target: [positions.assetId, positions.time] })
+      .returning({ time: positions.time });
+    if (!inserted[0]) {
+      throw new DuplicateTrackingPositionError("Tracking position already exists");
+    }
+    return { producerTimestamp: inserted[0].time, receivedAt };
   });
 }
 

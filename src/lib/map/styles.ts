@@ -1,6 +1,6 @@
 import type { StyleSpecification } from "maplibre-gl";
 import type { MapStyle } from "@/types/map";
-import { terrainSource, pmtilesSource } from "./sources";
+import { martinDynamicSource, terrainSource, pmtilesSource } from "./sources";
 import { buildings3dLayer } from "./layers";
 
 export type { MapStyle };
@@ -59,6 +59,7 @@ export const darkStyle: StyleSpecification = {
   sprite: "https://protomaps.github.io/basemaps-assets/sprites/v4/dark",
   sources: {
     protomaps: pmtilesSource,
+    "martin-dynamic": martinDynamicSource,
     "terrain-dem": terrainSource,
   },
   // terrain enabled on-demand via MapView controls
@@ -159,6 +160,7 @@ export const lightStyle: StyleSpecification = {
   sprite: "https://protomaps.github.io/basemaps-assets/sprites/v4/light",
   sources: {
     protomaps: pmtilesSource,
+    "martin-dynamic": martinDynamicSource,
     "terrain-dem": terrainSource,
   },
   // terrain enabled on-demand via MapView controls
@@ -275,6 +277,7 @@ export const satelliteStyle: StyleSpecification = {
     },
     "terrain-dem": terrainSource,
     protomaps: pmtilesSource,
+    "martin-dynamic": martinDynamicSource,
   },
   // terrain enabled on-demand via MapView controls
   layers: [

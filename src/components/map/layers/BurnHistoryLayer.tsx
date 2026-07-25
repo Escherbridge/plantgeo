@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import type { MTBSFireProperties } from "@/lib/server/services/mtbs";
+import type { MTBSFireProperties } from "@/lib/environmental/wildfire";
 
 interface BurnHistoryLayerProps {
   map: MapLibreMap | null;

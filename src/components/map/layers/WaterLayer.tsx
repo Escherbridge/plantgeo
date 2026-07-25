@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, Popup, GeoJSONSource } from "maplibre-gl";
-import type { WaterGauge, GroundwaterWell } from "@/lib/server/services/usgs-water";
+import type { GroundwaterWell, WaterGauge } from "@/lib/environmental/water";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 
 function escapeHtml(val: unknown): string {

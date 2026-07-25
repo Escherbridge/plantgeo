@@ -13,7 +13,7 @@ Complete documentation of the PostgreSQL + PostGIS database schema used in Plant
 
 ```bash
 # Local development
-psql postgresql://geo:geopass@localhost:5432/plantgeo
+psql "postgresql://geo:<your-postgres-password>@localhost:5432/plantgeo"
 
 # Railway production
 psql "$DATABASE_URL"
@@ -660,10 +660,10 @@ CREATE INDEX "teams_slug_idx" ON "teams"("slug");
 
 ```bash
 # Backup entire database
-pg_dump postgresql://geo:geopass@localhost:5432/plantgeo > backup.sql
+pg_dump "postgresql://geo:<your-postgres-password>@localhost:5432/plantgeo" > backup.sql
 
 # Restore
-psql postgresql://geo:geopass@localhost:5432/plantgeo < backup.sql
+psql "postgresql://geo:<your-postgres-password>@localhost:5432/plantgeo" < backup.sql
 
 # Backup single table
 pg_dump -t geo.fire_detections postgresql://... > fires.sql

@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHash, randomBytes } from "crypto";
+import { timingSafeEqual } from "crypto";
 import { db } from "@/lib/server/db";
-import { apiKeys } from "@/lib/server/db/schema";
-import { eq } from "drizzle-orm";
+import { apiKeys, teamMembers } from "@/lib/server/db/schema";
+import { and, eq } from "drizzle-orm";
 import { getServerSession } from "@/lib/server/auth";
+import {
+  adminApiKeyIssuanceSchema,
+  generateApiKey,
+  hashApiKey,
+} from "@/lib/server/api-keys";
 
 /**
  * Verify the request is from an authenticated admin.
@@ -16,7 +21,11 @@ async function requireAdmin(request: NextRequest): Promise<boolean> {
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.slice(7);
     const adminToken = process.env.ADMIN_API_TOKEN;
-    if (adminToken && token === adminToken) {
+    if (
+      adminToken &&
+      token.length === adminToken.length &&
+      timingSafeEqual(Buffer.from(token), Buffer.from(adminToken))
+    ) {
       return true;
     }
   }
@@ -50,41 +59,56 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  let body: {
-    name?: string;
-    permissions?: string[];
-    rateLimit?: number;
-    userId?: string;
-    teamId?: string;
-  };
+  let body: unknown;
 
   try {
-    body = (await request.json()) as typeof body;
+    body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const name = body.name?.trim();
-  if (!name) {
+  const parsed = adminApiKeyIssuanceSchema.safeParse(body);
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: "Missing required field: name" },
+      { error: "Invalid API key configuration", details: parsed.error.flatten() },
       { status: 400 }
     );
   }
 
-  // Generate a cryptographically random 32-byte key, hex-encoded (64 chars)
-  const rawKey = randomBytes(32).toString("hex");
-  const keyHash = createHash("sha256").update(rawKey).digest("hex");
+  const { name, permissions, rateLimit, userId, teamId } = parsed.data;
+  if (teamId) {
+    if (!userId) {
+      return NextResponse.json(
+        { error: "A team-scoped API key must be assigned to a team member" },
+        { status: 400 }
+      );
+    }
+
+    const membership = await db
+      .select({ teamId: teamMembers.teamId })
+      .from(teamMembers)
+      .where(and(eq(teamMembers.teamId, teamId), eq(teamMembers.userId, userId)))
+      .limit(1);
+    if (membership.length === 0) {
+      return NextResponse.json(
+        { error: "The API key owner is not a member of the selected team" },
+        { status: 400 }
+      );
+    }
+  }
+
+  const rawKey = generateApiKey();
+  const keyHash = hashApiKey(rawKey);
 
   const [record] = await db
     .insert(apiKeys)
     .values({
       keyHash,
       name,
-      permissions: body.permissions ?? ["read:context", "read:teams"],
-      rateLimit: body.rateLimit ?? 100,
-      userId: body.userId ?? null,
-      teamId: body.teamId ?? null,
+      permissions,
+      rateLimit,
+      userId: userId ?? null,
+      teamId: teamId ?? null,
     })
     .returning({
       id: apiKeys.id,

@@ -21,6 +21,41 @@ interface UseLiveLayerOptions {
   flashDurationMs?: number;
 }
 
+const MAX_LIVE_FEATURES = 5_000;
+const MAX_FEATURES_PER_EVENT = 500;
+
+/** Returns the publisher-assigned identity required for stream replacement semantics. */
+export function getStableFeatureId(feature: Feature): string | null {
+  const propertyId = (feature.properties as Record<string, unknown> | null)?.id;
+  const candidate = feature.id ?? propertyId;
+  if (typeof candidate === "number") {
+    return Number.isFinite(candidate) ? String(candidate) : null;
+  }
+  if (typeof candidate === "string") {
+    const normalized = candidate.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+  return null;
+}
+
+/** Upserts one feature while retaining only the most recent bounded set. */
+export function upsertBoundedFeature(
+  features: Map<string, Feature>,
+  feature: Feature,
+  maximum = MAX_LIVE_FEATURES
+): boolean {
+  const id = getStableFeatureId(feature);
+  if (id === null || maximum < 1) return false;
+  features.delete(id);
+  features.set(id, feature);
+  while (features.size > maximum) {
+    const oldestId = features.keys().next().value as string | undefined;
+    if (oldestId === undefined) break;
+    features.delete(oldestId);
+  }
+  return true;
+}
+
 /**
  * Connects to the SSE stream for a layer, applies incoming GeoJSON features
  * to the MapLibre source via setData(), and triggers a brief flash animation
@@ -41,6 +76,7 @@ export function useLiveLayer({
   // Accumulate features received over the stream
   const featuresRef = useRef<Map<string, Feature>>(new Map());
   const flashTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const updateFrameRef = useRef<number | null>(null);
 
   const applyFlash = useCallback(() => {
     if (!map || !flashPaintProperty) return;
@@ -63,31 +99,31 @@ export function useLiveLayer({
     (data: unknown) => {
       if (!map) return;
 
+      let changed = false;
       const feature = data as Feature;
       if (feature?.type === "Feature") {
-        const id = String(
-          feature.id ?? (feature.properties as Record<string, unknown>)?.id ?? Math.random()
-        );
-        featuresRef.current.set(id, feature);
-      } else if ((data as FeatureCollection)?.type === "FeatureCollection") {
+        changed = upsertBoundedFeature(featuresRef.current, feature);
+      } else if (
+        (data as FeatureCollection)?.type === "FeatureCollection" &&
+        Array.isArray((data as FeatureCollection).features)
+      ) {
         const fc = data as FeatureCollection;
-        for (const f of fc.features) {
-          const id = String(
-            f.id ?? (f.properties as Record<string, unknown>)?.id ?? Math.random()
-          );
-          featuresRef.current.set(id, f);
+        for (const f of fc.features.slice(0, MAX_FEATURES_PER_EVENT)) {
+          changed = upsertBoundedFeature(featuresRef.current, f) || changed;
         }
       }
 
-      const source = map.getSource(layerId) as GeoJSONSource | undefined;
-      if (source) {
-        const featureCollection: FeatureCollection = {
+      if (!changed || updateFrameRef.current !== null) return;
+      updateFrameRef.current = window.requestAnimationFrame(() => {
+        updateFrameRef.current = null;
+        const source = map.getSource(layerId) as GeoJSONSource | undefined;
+        if (!source) return;
+        source.setData({
           type: "FeatureCollection",
           features: Array.from(featuresRef.current.values()),
-        };
-        source.setData(featureCollection);
+        });
         applyFlash();
-      }
+      });
     },
     [map, layerId, applyFlash]
   );
@@ -98,7 +134,7 @@ export function useLiveLayer({
 
   // Register connection state in realtime store
   useEffect(() => {
-    addConnection(layerId, connectionState);
+    addConnection(layerId, "connecting");
     return () => {
       removeConnection(layerId);
     };
@@ -108,10 +144,29 @@ export function useLiveLayer({
     updateConnection(layerId, connectionState);
   }, [layerId, connectionState, updateConnection]);
 
-  // Cleanup flash timer on unmount
+  useEffect(() => {
+    const featureStore = featuresRef.current;
+    if (updateFrameRef.current !== null) {
+      window.cancelAnimationFrame(updateFrameRef.current);
+      updateFrameRef.current = null;
+    }
+    featureStore.clear();
+    return () => {
+      if (updateFrameRef.current !== null) {
+        window.cancelAnimationFrame(updateFrameRef.current);
+        updateFrameRef.current = null;
+      }
+      featureStore.clear();
+    };
+  }, [map, layerId]);
+
   useEffect(() => {
     return () => {
       clearTimeout(flashTimerRef.current);
+      if (updateFrameRef.current !== null) {
+        window.cancelAnimationFrame(updateFrameRef.current);
+        updateFrameRef.current = null;
+      }
     };
   }, []);
 

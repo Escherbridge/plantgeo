@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
-import type { CarbonPotential } from "@/lib/server/services/carbon-potential";
+import type { CarbonPotential } from "@/lib/environmental/intervention";
 
 export type CarbonClass = "very_low" | "low" | "medium" | "high" | "very_high";
 

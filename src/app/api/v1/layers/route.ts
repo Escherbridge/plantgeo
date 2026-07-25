@@ -1,31 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/server/db";
-import { apiKeys, layers } from "@/lib/server/db/schema";
-import { eq } from "drizzle-orm";
-import { verifyPassword } from "@/lib/server/auth";
-
-async function validateApiKey(request: NextRequest) {
-  const key = request.headers.get("x-api-key");
-  if (!key) return null;
-
-  const allKeys = await db
-    .select({ id: apiKeys.id, keyHash: apiKeys.keyHash, rateLimit: apiKeys.rateLimit })
-    .from(apiKeys);
-
-  for (const record of allKeys) {
-    const valid = await verifyPassword(key, record.keyHash);
-    if (valid) return record;
-  }
-  return null;
-}
+import { layers } from "@/lib/server/db/schema";
+import {
+  apiKeyAuthorizationErrorResponse,
+  authorizeApiRequest,
+} from "@/lib/server/middleware/api-auth";
+import { layerVisibilityCondition } from "@/lib/server/security/layer-access";
 
 export async function GET(request: NextRequest) {
-  const keyRecord = await validateApiKey(request);
-  if (!keyRecord) {
-    return NextResponse.json({ error: "Invalid or missing API key" }, { status: 401 });
+  const authResult = await authorizeApiRequest(request, "read:layers");
+  if (!authResult.valid) {
+    return apiKeyAuthorizationErrorResponse(authResult);
   }
 
-  const publicLayers = await db
+  const visibleLayers = await db
     .select({
       id: layers.id,
       name: layers.name,
@@ -33,7 +21,12 @@ export async function GET(request: NextRequest) {
       description: layers.description,
     })
     .from(layers)
-    .where(eq(layers.isPublic, true));
+    .where(
+      layerVisibilityCondition({
+        userId: authResult.userId,
+        teamId: authResult.teamId,
+      })
+    );
 
-  return NextResponse.json(publicLayers);
+  return NextResponse.json(visibleLayers);
 }

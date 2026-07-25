@@ -1,24 +1,37 @@
-listen_addresses: 0.0.0.0:3000
+# yaml-language-server: $schema=https://raw.githubusercontent.com/maplibre/martin/martin-v1.10.1/schemas/config.json
+# Public dynamic tiles are intentionally limited to the vetted geo functions.
+
+listen_addresses: "0.0.0.0:${PORT:-3000}"
+on_invalid: abort
+
+cors:
+  max_age: 86400
+  origin:
+    - "${TILE_CORS_ORIGIN:-http://localhost:3001}"
+
+cache:
+  size_mb: ${MARTIN_CACHE_SIZE_MB:-128}
+  tile_size_mb: 64
+  tile_expiry: 5m
+  maxzoom: 14
 
 postgres:
   connection_string: ${DATABASE_URL}
-  pool_size: 20
+  pool_size: ${MARTIN_POOL_SIZE:-8}
   default_srid: 4326
-  auto_publish:
-    tables:
-      from_schemas: [public, geo]
-      id_columns: [id]
-    functions:
-      from_schemas: [public, geo]
-
-pmtiles:
-  paths: [/pmtiles/]
-
-mbtiles:
-  paths: [/mbtiles/]
-
-sprites:
-  paths: [/sprites/]
-
-fonts:
-  paths: [/fonts/]
+  auto_bounds: skip
+  max_feature_count: 10000
+  auto_publish: false
+  functions:
+    geo.fire_risk_tiles:
+      schema: geo
+      function: fire_risk_tiles
+    geo.sensor_tiles:
+      schema: geo
+      function: sensor_tiles
+    geo.intervention_tiles:
+      schema: geo
+      function: intervention_tiles
+    geo.building_tiles:
+      schema: geo
+      function: building_tiles

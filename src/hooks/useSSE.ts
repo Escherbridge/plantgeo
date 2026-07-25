@@ -21,18 +21,13 @@ export function useSSE(url: string, options?: UseSSEOptions): UseSSEResult {
     useState<ConnectionState>("connecting");
 
   const esRef = useRef<EventSource | null>(null);
-  const lastEventIdRef = useRef<string>("");
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const onMessageRef = useRef(options?.onMessage);
   onMessageRef.current = options?.onMessage;
 
   const connect = useCallback(() => {
-    const urlWithId = lastEventIdRef.current
-      ? `${url}${url.includes("?") ? "&" : "?"}_lastId=${lastEventIdRef.current}`
-      : url;
-
-    const es = new EventSource(urlWithId);
+    const es = new EventSource(url);
     esRef.current = es;
     setConnectionState("connecting");
 
@@ -42,9 +37,6 @@ export function useSSE(url: string, options?: UseSSEOptions): UseSSEResult {
     };
 
     es.addEventListener("feature", (event: MessageEvent) => {
-      if (event.lastEventId) {
-        lastEventIdRef.current = event.lastEventId;
-      }
       let parsed: unknown;
       try {
         parsed = JSON.parse(event.data as string);
@@ -56,9 +48,6 @@ export function useSSE(url: string, options?: UseSSEOptions): UseSSEResult {
     });
 
     es.onmessage = (event: MessageEvent) => {
-      if (event.lastEventId) {
-        lastEventIdRef.current = event.lastEventId;
-      }
       let parsed: unknown;
       try {
         parsed = JSON.parse(event.data as string);
@@ -70,6 +59,7 @@ export function useSSE(url: string, options?: UseSSEOptions): UseSSEResult {
     };
 
     es.onerror = () => {
+      if (esRef.current !== es) return;
       es.close();
       esRef.current = null;
       setConnectionState("closed");

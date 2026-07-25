@@ -1,37 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getImages } from "@/lib/server/services/mapillary";
+import { getImages, MapillaryBboxQuerySchema } from "@/lib/server/services/mapillary";
+import { enforcePublicProviderRateLimit } from "@/lib/server/security/public-provider-rate-limit";
+import {
+  PRIVATE_EPHEMERAL_HEADERS,
+  providerFailureResponse,
+  publicRateLimitFailureResponse,
+} from "@/lib/server/http/provider-response";
+
+export const dynamic = "force-dynamic";
+
+const LEGACY_HEADERS = { ...PRIVATE_EPHEMERAL_HEADERS, Deprecation: "true" } as const;
 
 export async function GET(request: NextRequest) {
-  const params = request.nextUrl.searchParams;
-
-  const west = params.get("west");
-  const south = params.get("south");
-  const east = params.get("east");
-  const north = params.get("north");
-
-  if (!west || !south || !east || !north) {
+  const parsed = MapillaryBboxQuerySchema.safeParse(
+    Object.fromEntries(request.nextUrl.searchParams.entries())
+  );
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: "Missing required bbox params: west, south, east, north" },
-      { status: 400 }
+      { error: "Invalid imagery query", details: parsed.error.flatten() },
+      { status: 400, headers: LEGACY_HEADERS }
     );
   }
 
-  const bbox = {
-    west: Number(west),
-    south: Number(south),
-    east: Number(east),
-    north: Number(north),
-  };
+  const rateLimit = await enforcePublicProviderRateLimit(request, "imagery-search", 30);
+  if (!rateLimit.allowed) return publicRateLimitFailureResponse(rateLimit);
 
-  if ([bbox.west, bbox.south, bbox.east, bbox.north].some(isNaN)) {
-    return NextResponse.json(
-      { error: "bbox params must be valid numbers" },
-      { status: 400 }
-    );
+  try {
+    const { limit, ...bbox } = parsed.data;
+    const featureCollection = await getImages(bbox, limit);
+    return NextResponse.json(featureCollection, { headers: LEGACY_HEADERS });
+  } catch (error) {
+    return providerFailureResponse(error, "Imagery service");
   }
-
-  const limit = params.has("limit") ? Number(params.get("limit")) : 100;
-
-  const featureCollection = await getImages(bbox, limit);
-  return NextResponse.json(featureCollection);
 }

@@ -1,0 +1,31 @@
+# Normalize repository text and working trees to LF across platforms.
+* text=auto eol=lf
+
+# Repository metadata and Unix entrypoints stay LF on every platform.
+.gitattributes text eol=lf
+.gitignore text eol=lf
+.dockerignore text eol=lf
+*.sh text eol=lf
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf
+Makefile text eol=lf
+
+# Windows-native entrypoints
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary geospatial, media, font, and archive artifacts
+*.mbtiles binary
+*.pmtiles binary
+*.pbf binary
+*.parquet binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+*.gz binary

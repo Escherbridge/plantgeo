@@ -359,18 +359,18 @@ ON geo.fire_detections USING GIST(geom);
 
 ### MVT (Dynamic Tiles)
 
-- **Server**: Martin v1.4 (Rust)
+- **Server**: Martin v1.10.1 (Rust)
 - **Source**: PostgreSQL + PostGIS
 - **Format**: Mapbox Vector Tiles (MVT)
-- **Caching**: Redis (tile cache)
-- **URL**: `NEXT_PUBLIC_MAP_STYLE_URL` (Martin style.json)
+- **Caching**: Martin in-memory tile cache, plus CDN caching at the public tile domain
+- **URL**: `NEXT_PUBLIC_DYNAMIC_TILES_URL` (public Martin TileJSON origin)
 
 ### Tile Rendering Pipeline
 
 ```
 Client requests zoom level
   │
-  ├→ Martin checks Redis cache
+  ├→ Martin checks its bounded in-process cache
   │   └→ Hit: return cached tile
   │   └→ Miss: continue
   │
@@ -378,7 +378,7 @@ Client requests zoom level
   │   └→ Use spatial indexes to find features in tile bounds
   │   └→ Convert to GeoJSON then MVT
   │
-  ├→ Store in Redis with TTL
+  ├→ Store in Martin's in-process cache with TTL
   │
   └→ Send to client as binary MVT tile
 ```
@@ -499,50 +499,34 @@ Response:
 
 ## Deployment Architecture (Railway)
 
-### Services
+PlantGeo occupies an exact service allowlist inside the shared Railway project
+`6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`. `Aevani-Postgress` belongs to the
+parent affiliate/UGC platform and is never a PlantGeo database target.
 
-| Service | Role | Port |
-|---------|------|------|
-| Next.js App | API server + SSR | 3000 |
-| PostgreSQL | Primary database | 5432 |
-| Redis | Cache + pub/sub | 6379 |
-| Martin | Tile server | 3100 |
-| Valhalla | Routing engine | 8002 |
+| Service | Role | State/gate |
+| --- | --- | --- |
+| `plantgeo-main` | Next.js API, SSR, and client assets | Running; `/api/health` is liveness and `/api/ready` checks auth configuration plus PostgreSQL/Redis for rollout. |
+| `plantgeo-dataservice` | Python API and bounded local-output publication | Running; Alembic owns only `agri`; `/health` is liveness and `/ready` gates the required revision/extensions/tables. |
+| `plantgeo-Redis` | Cache, pub/sub, non-durable wake-ups | Running; not a job ledger. |
+| `Plantgeo` | Legacy PostgreSQL 18.3 application target | Running; not geospatial-extension-ready at the last audit. |
+| `plantgeo-spatiotemporal-db` | Replacement TimescaleDB/PostGIS candidate | Provisioned; extensions and migrations remain unverified, so no cutover is complete. |
+| `plantgeo-martin` | Private dynamic vector-tile service | Stopped/crashed pending the replacement-database gate. |
 
-### Multi-Service Setup
+Forecasting, inference, training, bulk ETL, and long preaggregations execute on
+the operator machine. The local runner stores checksummed resumable manifests
+and publishes only validation-passing bounded artifacts to the Python API.
+There is no Railway forecast/training worker in phase one.
 
-```
-Railway Project
-  ├→ Service: next-app
-  │   ├→ Build: Dockerfile
-  │   ├→ Environment: All .env variables
-  │   ├→ Port: 3000
-  │   └→ Health check: /api/health
-  │
-  ├→ Service: postgres
-  │   ├→ Image: postgres:16
-  │   ├→ Volume: persistent storage
-  │   └→ DATABASE_URL exposed to app
-  │
-  ├→ Service: redis
-  │   ├→ Image: redis:7
-  │   └→ REDIS_URL exposed to app
-  │
-  ├→ Service: martin
-  │   ├→ Build: Custom Dockerfile
-  │   ├→ DATABASE_URL: shared with app
-  │   └→ MARTIN_URL exposed to app
-  │
-  └→ Service: valhalla
-      ├→ Image: valhalla/valhalla:latest
-      └→ VALHALLA_URL exposed to app
-```
+Railway reference variables connect runtime services over private networking.
+Public `NEXT_PUBLIC_*` URLs are embedded at build time and may contain only
+browser-reachable reviewed origins; a private Railway hostname or credential
+must never cross into the client bundle.
 
-### Environment Propagation
-
-```
-Railway Variables → Dockerfile ENV → app /env.local → process.env
-```
+Martin remains private until PostGIS/TimescaleDB/pgvector/pgcrypto catalogs,
+least-privilege roles, both migration histories, `/health`, `/catalog`, and an
+allowlisted MVT response pass. Valhalla and Photon are deferred services, not
+assumed members of the production topology. See [Railway Operations](./deployment.md)
+for the cutover and deploy gates.
 
 ## Error Handling
 
@@ -623,7 +607,7 @@ const { data, error, isLoading } = useQuery(
 curl http://localhost:3000/api/health
 
 # Database
-psql postgresql://geo:geopass@localhost:5432/plantgeo -c "SELECT 1"
+psql "postgresql://geo:<your-postgres-password>@localhost:5432/plantgeo" -c "SELECT 1"
 
 # Redis
 redis-cli ping

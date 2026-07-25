@@ -1,804 +1,242 @@
-# Environment Variables Reference
+# Environment Variables
+
+`.env.example` and `services/agri-data-service/.env.example` are the executable
+templates. This document explains ownership and production policy; it does not
+contain usable credentials.
+
+Never commit `.env`, `.env.local`, `.env.production`, Railway-resolved values,
+or local publication tokens. A variable prefixed with `NEXT_PUBLIC_` is embedded
+in the browser bundle and must be treated as public.
+
+## Web application
+
+### Required runtime dependencies
+
+| Variable | Scope | Policy |
+| --- | --- | --- |
+| `DATABASE_URL` | server | PlantGeo PostgreSQL DSN. Production currently references `${{Plantgeo.DATABASE_URL}}`; change only during the reviewed replacement cutover. |
+| `REDIS_URL` | server | `${{plantgeo-Redis.REDIS_URL}}` in Railway. Cache/pub-sub only, never the durable job ledger. |
+| `NEXTAUTH_SECRET` | server | Unique high-entropy production secret. Rotating it invalidates sessions. |
+| `NEXTAUTH_URL` | server | Canonical application origin, `http://localhost:3001` in development. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | server | Optional pair; configure both or omit the provider. |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | server | Optional pair; configure both or omit the provider. |
+
+Use separate least-privilege database identities for the web application,
+Python publisher, migration workflow, and Martin. Runtime services must not use
+the database owner.
+
+### Public map configuration
+
+| Variable | Policy |
+| --- | --- |
+| `NEXT_PUBLIC_PMTILES_URL` | Public, immutable basemap PMTiles URL with HTTP Range support. Mirror to a reviewed R2/CDN origin for production. |
+| `NEXT_PUBLIC_TERRAIN_URL` | Optional reviewed terrain URL template containing `{z}`, `{x}`, and `{y}`. |
+| `NEXT_PUBLIC_DYNAMIC_TILES_URL` | Public/custom HTTPS Martin origin. Leave unset until Martin passes its database, role, catalog, tile, CORS, and rate-limit gates. |
+| `NEXT_PUBLIC_APP_URL` | Public canonical origin used in links and email, `http://localhost:3001` in development. |
+
+Never place a credential, provider token, `localhost` production value, or
+`*.railway.internal` hostname in a public variable. Environmental tile layers
+remain disabled until a server-issued database publication catalog supplies an
+immutable approved URL, release, and checksum. Next.js compiles public
+values during image build, so changing a Railway runtime value without rebuilding
+does not update the client.
+
+### Internal services
+
+| Variable | Scope | Current status |
+| --- | --- | --- |
+| `MARTIN_URL` | server | Private Martin URL. Keep unset in production until `plantgeo-martin` is activated. |
+| `TILE_CORS_ORIGIN` | Martin | Exact web origin; CORS is not authentication. |
+| `VALHALLA_URL` | server | Optional/deferred routing service; absence must produce an unavailable response. |
+| `VALHALLA_PBF_URL` | operator | Optional graph-build input, not a web runtime setting. Pin the release/checksum before use. |
+| `PHOTON_URL` | server | Optional/deferred geocoder. Production should use an owned or contractually approved service, not an undocumented public instance. |
+
+### Ingestion and provider credentials
+
+| Variable | Policy |
+| --- | --- |
+| `INGEST_SECRET` | Dedicated bearer secret for authenticated ingestion routes. Required in production for those routes. |
+| `CRON_SECRET` | Dedicated bearer secret for the bounded cron ingress route. It does not enable a forecast/training worker. |
+| `INGEST_BBOX` | Required for scheduled FIRMS/water acquisition; `west,south,east,north`, capped by code. Start with one reviewed region. |
+| `NASA_FIRMS_KEY` | Server-only; required only when running the FIRMS acquisition path. |
+| `MAPILLARY_ACCESS_TOKEN` | Server-only imagery proxy token. Mapillary remains a licensed imagery exception, not a warehouse bypass. |
+| `FIRES_LAYER_ID` | Existing layer name/UUID for submitted fire perimeters; default `fire-perimeters`. |
+| `FIRMS_LAYER_ID` | Existing layer name/UUID for persisted detections; default `fire-detections`. |
+| `SENSORS_LAYER_ID` | Existing layer name/UUID for sensor writes; default `sensors`. |
+| `WATER_GAUGES_LAYER_ID` | Existing layer name/UUID for gauge observations; default `water-gauges`. |
+| `WEATHER_LAYER_ID` | Existing layer name/UUID for weather observations; default `weather-observations`. |
+
+Layer references must exist before ingestion. A missing key, source, or layer
+must fail closed and preserve the last valid publication; it must not generate a
+sample observation.
+
+### AI, email, commerce, and administration
+
+| Variable | Policy |
+| --- | --- |
+| `REGIONAL_INTELLIGENCE_ENABLED` | Defaults false. Keep false until all context is publication-backed and model/evidence review passes. |
+| `REGIONAL_INTELLIGENCE_MAX_CONCURRENT_PER_REPLICA` | Optional bounded AI concurrency; defaults to `2` and is capped at `16` per replica. |
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Server-only and relevant only when regional intelligence is enabled. Pin a supported model deliberately. |
+| `EMAIL_PROVIDER` | Optional `resend` or `sendgrid`; absence keeps delivery disabled. |
+| `EMAIL_FROM` | Verified sender identity. |
+| `RESEND_API_KEY`, `SENDGRID_API_KEY` | Server-only provider credential; configure only the selected provider. |
+| `PLANTCOMMERCE_API_URL` | Optional server-only Aevani supplier endpoint. Use HTTPS or an explicit `.railway.internal` HTTP host; responses and outbound affiliate links are schema/size/scheme checked. Do not confuse it with the Aevani database. |
+| `PLANTCOMMERCE_WEBHOOK_URL`, `PLANTCOMMERCE_WEBHOOK_SECRET` | Optional signed outbound webhook configuration. |
+| `ADMIN_API_TOKEN` | Dedicated admin-route bearer token. Never reuse an ingestion or publication token. |
+| `ALLOW_LEGACY_BCRYPT_API_KEYS` | Temporary one-way API-key migration gate; default false and disable after reissue/upgrade. |
 
-Complete reference for all environment variables used in PlantGeo, organized by service and deployment environment.
+### Legacy worker quarantine
 
-## Overview
-
-PlantGeo uses environment variables for:
-- Service configuration (database, cache, tile servers)
-- API credentials (external services)
-- Authentication secrets
-- Feature flags and tuning parameters
-
-**Safety Rule:** Never commit `.env.local` or `.env.production` files. Use `.env.example` as template.
-
-## Database & Cache
-
-### DATABASE_URL
-
-PostgreSQL connection string.
-
-```
-# Format
-postgresql://[user]:[password]@[host]:[port]/[database]
-
-# Local development
-DATABASE_URL=postgresql://geo:geopass@localhost:5432/plantgeo
-
-# Railway production
-DATABASE_URL=postgresql://postgres:PASSWORD@postgres.PROJECT.railway.internal:5432/railway
-
-# With SSL
-DATABASE_URL=postgresql://user:pass@host:5432/db?sslmode=require
-
-# With connection pooling
-DATABASE_URL=postgresql://user:pass@host:5432/db?sslmode=require&pool=10
-```
-
-**Required:** Yes (all environments)
-**Type:** String
-**How to get:**
-- Local: Set in docker-compose
-- Railway: Auto-generated, shown in Variables tab
-
----
-
-### POSTGRES_PASSWORD
-
-PostgreSQL superuser password (local Docker only).
-
-```
-POSTGRES_PASSWORD=geopass
-```
-
-**Required:** Yes (development only)
-**Type:** String
-**How to get:** Generate random password, store in docker-compose.yml
-
----
-
-### REDIS_URL
-
-Redis connection string for caching and pub/sub.
-
-```
-# Format
-redis://[user]:[password]@[host]:[port]/[db]
-
-# Local development
-REDIS_URL=redis://localhost:6379
-
-# Railway production
-REDIS_URL=redis://redis.PROJECT.railway.internal:6379
-
-# With authentication
-REDIS_URL=redis://user:password@host:6379
-```
-
-**Required:** Yes (all environments)
-**Type:** String
-**How to get:**
-- Local: Redis runs in Docker
-- Railway: Auto-generated, shown in Redis service variables
-
----
-
-## Map Tile Serving
-
-### MARTIN_URL
-
-URL of Martin tile server (Rust MVT server).
-
-```
-# Local development
-MARTIN_URL=http://localhost:3100
-
-# Railway production
-MARTIN_URL=http://martin.PROJECT.railway.internal:3100
-```
-
-**Required:** Yes (server-side only)
-**Type:** String
-**Usage:** Fetching dynamic tiles from PostGIS
-
----
-
-### NEXT_PUBLIC_MAP_STYLE_URL
-
-Public URL of Martin style.json for MapLibre GL JS.
-
-```
-# Local development
-NEXT_PUBLIC_MAP_STYLE_URL=http://localhost:3100/style.json
-
-# Railway production
-NEXT_PUBLIC_MAP_STYLE_URL=http://martin.PROJECT.railway.internal:3100/style.json
-
-# Via proxy
-NEXT_PUBLIC_MAP_STYLE_URL=https://tiles.plantgeo.app/style.json
-```
-
-**Required:** Yes (client and server)
-**Type:** String (URL)
-**Note:** Prefix `NEXT_PUBLIC_` makes it available in browser
-
----
-
-### NEXT_PUBLIC_PMTILES_URL
-
-Public URL of PMTiles basemap archive (Cloudflare R2).
-
-```
-# Cloudflare R2
-NEXT_PUBLIC_PMTILES_URL=https://plantgeo-tiles.r2.dev/basemap.pmtiles
-
-# Custom domain (via Workers)
-NEXT_PUBLIC_PMTILES_URL=https://tiles.plantgeo.app/basemap.pmtiles
-
-# Local development (if self-hosting)
-NEXT_PUBLIC_PMTILES_URL=http://localhost:3100/pmtiles/basemap.pmtiles
-```
-
-**Required:** Yes (client only)
-**Type:** String (URL)
-**How to get:**
-1. Upload to Cloudflare R2
-2. Get public URL from R2 bucket settings
-3. Or create Cloudflare Worker proxy
-
----
-
-### NEXT_PUBLIC_TERRAIN_URL
-
-URL of terrain/elevation tiles (DEM - Digital Elevation Model).
-
-```
-# AWS S3 (Terrarium format)
-NEXT_PUBLIC_TERRAIN_URL=https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
-
-# Alternative: Nextzen elevation tiles
-NEXT_PUBLIC_TERRAIN_URL=https://tile.nextzen.org/tileset/elevation/v1/512/{z}/{x}/{y}.png?api_key=YOUR_KEY
-
-# Local Martin server
-NEXT_PUBLIC_TERRAIN_URL=http://localhost:3100/data/terrain/{z}/{x}/{y}.png
-```
-
-**Required:** No (optional, enables 3D terrain)
-**Type:** String (URL with placeholders `{z}`, `{x}`, `{y}`)
-**Note:** Terrarium format: RGB pixels encode elevation as -32768 + ((R*256 + G + B/256))
-
----
-
-## Routing
-
-### VALHALLA_URL
-
-URL of Valhalla routing engine.
-
-```
-# Local development
-VALHALLA_URL=http://localhost:8002
-
-# Railway production
-VALHALLA_URL=http://valhalla.PROJECT.railway.internal:8002
-```
-
-**Required:** Yes (server-side only)
-**Type:** String
-**Usage:** Route calculations, isochrones, distance matrices
-
----
-
-### VALHALLA_PBF_URL
-
-OpenStreetMap PBF data source for Valhalla (used on initial setup).
-
-```
-# Geofabrik regional extracts
-VALHALLA_PBF_URL=https://download.geofabrik.de/north-america/us/california-latest.osm.pbf
-
-# Planet
-VALHALLA_PBF_URL=https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf
-
-# Artisanal Builds
-VALHALLA_PBF_URL=https://builds.valhalla.mapzen.com/valhalla_tiles.tar
-```
-
-**Required:** Only on first Valhalla setup
-**Type:** String (HTTP URL to .osm.pbf or .tar)
-**How to get:** List at https://download.geofabrik.de/
-
----
-
-## Geocoding
-
-### PHOTON_URL
-
-URL of Photon geocoding server (Nominatim wrapper).
-
-```
-# Local development
-PHOTON_URL=http://localhost:2322
-
-# Public instance
-PHOTON_URL=https://photon.komoot.io
-```
-
-**Required:** Yes (server-side only)
-**Type:** String
-**Note:** Photon is built on Nominatim data (OpenStreetMap)
-
----
-
-## Cloud Storage (Cloudflare R2)
-
-### R2_BUCKET
-
-R2 bucket name for storing PMTiles and user uploads.
-
-```
-R2_BUCKET=plantgeo-tiles
-```
-
-**Required:** Yes (server-side, for uploads)
-**Type:** String
-**How to get:**
-1. Go to Cloudflare Dashboard → R2
-2. Create bucket
-3. Copy bucket name
-
----
-
-### R2_ENDPOINT
-
-R2 API endpoint (S3-compatible).
-
-```
-# Format
-https://<ACCOUNT_ID>.r2.cloudflarestorage.com
-
-# Example
-R2_ENDPOINT=https://abc123def456.r2.cloudflarestorage.com
-```
-
-**Required:** Yes (server-side, for uploads)
-**Type:** String
-**How to get:**
-1. Cloudflare Dashboard → R2 → API Tokens
-2. Copy "S3 API Endpoint"
-3. Or construct from Account ID
-
----
-
-### R2_ACCESS_KEY_ID
-
-R2 API access key ID (like AWS Access Key).
-
-```
-R2_ACCESS_KEY_ID=abc123def456ghi789
-```
-
-**Required:** Yes (server-side, for uploads)
-**Type:** String
-**How to get:**
-1. Cloudflare Dashboard → R2 → API Tokens
-2. Create API Token
-3. Copy Access Key ID (shown only once)
-
----
-
-### R2_SECRET_ACCESS_KEY
-
-R2 API secret key (like AWS Secret Access Key).
-
-```
-R2_SECRET_ACCESS_KEY=very_secret_key_abc123_do_not_share
-```
-
-**Required:** Yes (server-side, for uploads)
-**Type:** String
-**Security:** Never commit, rotate periodically
-**How to get:** Cloudflare Dashboard → R2 → API Tokens
-
----
-
-## Authentication (NextAuth.js)
-
-### NEXTAUTH_SECRET
-
-NextAuth.js session encryption secret.
-
-```bash
-# Generate using OpenSSL
-openssl rand -base64 32
-# Output: AbCdEfGhIjKlMnOpQrStUvWxYz1234567890ABCD=
-
-# Or with Node
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-```
-
-```
-NEXTAUTH_SECRET=AbCdEfGhIjKlMnOpQrStUvWxYz1234567890ABCD=
-```
-
-**Required:** Yes (all environments)
-**Type:** String (base64-encoded)
-**Security:** Never share, regenerate on security incidents
-**Note:** Must be ≥32 bytes when decoded
-
----
-
-### NEXTAUTH_URL
-
-NextAuth.js callback URL (where app is hosted).
-
-```
-# Local development
-NEXTAUTH_URL=http://localhost:3000
-
-# Production
-NEXTAUTH_URL=https://plantgeo.example.com
-
-# Railway
-NEXTAUTH_URL=https://plantgeo-production.up.railway.app
-```
-
-**Required:** Yes (all environments)
-**Type:** String (HTTP/HTTPS URL)
-**Must match:** OAuth provider redirect URI configuration
-
----
-
-## OAuth Providers
-
-### Google OAuth
-
-```
-GOOGLE_CLIENT_ID=123456789-abc.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-AbCdEfGhIjKlMnOpQr
-```
-
-**Required:** Optional (for Google login)
-**How to get:**
-1. Go to https://console.cloud.google.com
-2. Create project
-3. Enable Google+ API
-4. Create OAuth 2.0 credential (Web application)
-5. Add redirect URI: `{NEXTAUTH_URL}/api/auth/callback/google`
-6. Copy Client ID and Secret
-
----
-
-### GitHub OAuth
-
-```
-GITHUB_CLIENT_ID=Iv1.abc123def456
-GITHUB_CLIENT_SECRET=abcdef1234567890fedcba0987654321
-```
-
-**Required:** Optional (for GitHub login)
-**How to get:**
-1. Go to GitHub Settings → Developer settings → OAuth Apps
-2. New OAuth App
-3. Authorization callback URL: `{NEXTAUTH_URL}/api/auth/callback/github`
-4. Copy Client ID and Secret
-
----
-
-## External APIs
-
-### NASA FIRMS
-
-```
-NASA_FIRMS_KEY=abc123def456ghi789jkl
-```
-
-**Required:** Yes (for fire detections)
-**Type:** String (API key)
-**How to get:**
-1. Go to https://earthdata.nasa.gov/
-2. Login or create account
-3. FIRMS → Request Data Access
-4. Generate API token
-5. Copy key
-
-**Rate limit:** 1 request/minute
-
----
-
-### Mapillary Imagery
-
-```
-MAPILLARY_ACCESS_TOKEN=MLY|123456|abc123def456
-```
-
-**Required:** Optional (for street view imagery)
-**Type:** String (API token)
-**How to get:**
-1. Go to https://www.mapillary.com/developer
-2. Create application
-3. Generate access token
-4. Copy token
-
----
-
-### Anthropic Claude API
-
-```
-ANTHROPIC_API_KEY=sk-ant-v1-abc123def456...
-ANTHROPIC_MODEL=claude-haiku-4-5-20251001
-```
-
-**Required:** Yes (for AI regional intelligence)
-**Type:** String
-**How to get:**
-1. Go to https://console.anthropic.com
-2. Create API key
-3. Copy key
-4. Choose model from available options
-
-**Models available:**
-- `claude-haiku-4-5-20251001` (fastest, cheapest)
-- `claude-opus-4-1` (most capable)
-- Latest versions at https://docs.anthropic.com/claude/reference/models-overview
-
----
-
-### Additional Weather/NOAA APIs
-
-```
-# OpenWeatherMap (alternative to NOAA)
-OPENWEATHER_API_KEY=abc123def456
-
-# NOAA (public, no key needed for basic access)
-# Built into services, no env var required
-```
-
-**Required:** No (NOAA is public)
-**How to get:** OpenWeatherMap signup at https://openweathermap.org/api
-
----
-
-## PlantCommerce Integration
-
-### PLANTCOMMERCE_API_URL
-
-Base URL of PlantCommerce API.
-
-```
-PLANTCOMMERCE_API_URL=https://plantcommerce.example.com
-```
-
-**Required:** Optional (only if using PlantCommerce integration)
-**Type:** String (HTTPS URL)
-
----
-
-### PLANTCOMMERCE_WEBHOOK_SECRET
-
-HMAC-SHA256 secret for verifying webhook signatures from PlantCommerce.
-
-```bash
-# Generate using OpenSSL
-openssl rand -32 | base64
-```
-
-```
-PLANTCOMMERCE_WEBHOOK_SECRET=abc123def456ghi789jkl...
-```
-
-**Required:** Optional (only if using PlantCommerce webhooks)
-**Type:** String (base64-encoded)
-**Security:** Share with PlantCommerce team for webhook configuration
-
----
-
-### PLANTCOMMERCE_WEBHOOK_URL
-
-Public URL where PlantCommerce sends webhooks.
-
-```
-PLANTCOMMERCE_WEBHOOK_URL=https://plantgeo.example.com/api/webhooks/plantcommerce
-```
-
-**Required:** Optional
-**Type:** String (HTTPS URL)
-**Note:** Tell PlantCommerce team this URL
-
----
-
-## Admin & Internal
-
-### ADMIN_API_TOKEN
-
-Token for admin-only API endpoints.
-
-```bash
-# Generate using OpenSSL
-openssl rand -32 | base64
-```
-
-```
-ADMIN_API_TOKEN=abc123def456ghi789jkl...
-```
-
-**Required:** Yes (server-side, for admin endpoints)
-**Type:** String (base64-encoded)
-**Security:** Very sensitive, never expose in logs
-
----
-
-## Next.js Configuration
-
-### NEXT_TELEMETRY_DISABLED
-
-Disable Next.js telemetry (for privacy).
-
+```dotenv
+ENABLE_LEGACY_BULLMQ_JOBS=false
+SERVICE_ROLE=web
 ```
-NEXT_TELEMETRY_DISABLED=1
-```
-
-**Required:** No
-**Type:** Boolean (1 or 0)
-**Default:** 0 (telemetry enabled)
 
----
+Both values are deliberate. Legacy import-time workers must not start inside a
+web replica. Redis-backed job modules are not production-approved durable
+execution and there is no Railway training/forecast worker in phase one.
 
-### NODE_ENV
+## R2/operator upload settings
 
-Node.js environment.
+These values belong only in the operator/CI context that uploads immutable
+artifacts; the browser does not need them:
 
-```
-# Development
-NODE_ENV=development
-
-# Production
-NODE_ENV=production
-```
-
-**Required:** Yes
-**Type:** Enum: "development" | "production" | "test"
-**Set by:** Railway or docker-compose automatically
-
----
+| Variable | Purpose |
+| --- | --- |
+| `R2_BUCKET` | Target bucket name. |
+| `R2_ENDPOINT` | Account-specific S3-compatible endpoint. |
+| `R2_ACCESS_KEY_ID` | Least-privilege write identity. |
+| `R2_SECRET_ACCESS_KEY` | Secret for that identity. |
 
-## Feature Flags
+Prefer separate read/public and write identities. Record object checksum,
+source/model version, license, and publication metadata in PostgreSQL.
 
-### FEATURE_FLAGS_* (Optional)
+## Python data service and local runner
 
-Enable/disable experimental features.
+Local compatibility uses the shared async SQLAlchemy URL below. This profile
+mounts the legacy combined surface and deliberately cannot pass rollout
+readiness:
 
+```dotenv
+SERVICE_PROFILE=combined_local
+DATABASE_URL=postgresql+asyncpg://geo:<password>@localhost:5432/plantgeo
+DB_POOL_MIN=2
+DB_POOL_MAX=5
+SANIC_HOST=0.0.0.0
+SANIC_PORT=8000
+SANIC_DEBUG=true
+CORS_ORIGINS=http://localhost:3001
 ```
-# Example: enable wildfire enhancements
-FEATURE_WILDFIRE_ANALYSIS=true
 
-# Example: enable AI regional intelligence
-FEATURE_AI_INTELLIGENCE=true
+Production runs two separately configured instances from the same image. The
+private receiver/writer mounts only the authenticated publication and historical
+promotion receivers:
 
-# Example: beta community features
-FEATURE_BETA_COMMUNITY=false
+```dotenv
+SERVICE_PROFILE=receiver_writer
+RECEIVER_WRITER_DATABASE_URL=postgresql+asyncpg://<receiver-writer>:<password>@<private-host>:5432/plantgeo
+LOCAL_PUBLICATION_RECEIVER_ENABLED=true
+LOCAL_PUBLISH_TOKEN=<dedicated strong token>
+LOCAL_PUBLISH_ACTOR=plantgeo-local-forecast-publisher
 ```
-
-**Required:** No
-**Type:** Boolean
-**Usage:** Check in code: `if (process.env.FEATURE_X === 'true')`
-
----
-
-## Tuning Parameters
-
-### CACHE_TTL_*
 
-Redis cache time-to-live in seconds.
+The published reader mounts only the typed forecast read route and receives no
+receiver credentials:
 
+```dotenv
+SERVICE_PROFILE=published_reader
+PUBLISHED_READER_DATABASE_URL=postgresql+asyncpg://<published-reader>:<password>@<private-host>:5432/plantgeo
 ```
-# Fire detections cache (30 min)
-CACHE_TTL_FIRE=1800
 
-# Weather data cache (1 hour)
-CACHE_TTL_WEATHER=3600
+The two DSNs must authenticate different least-privilege login roles. Neither
+production profile accepts `DATABASE_URL` as a fallback. Disable debug in
+production. An explicitly approved migration process uses the separate
+synchronous administrative identity below; the Alembic environment reads this
+value directly and does not fall back to any runtime DSN:
 
-# Layer data cache (24 hours)
-CACHE_TTL_LAYERS=86400
+```dotenv
+DATABASE_URL_SYNC=postgresql+psycopg2://<migration-role>:<password>@<host>/<database>
 ```
 
-**Required:** No
-**Type:** Integer (seconds)
-**Default:** Service-specific defaults used if not set
+Do not inject `DATABASE_URL_SYNC` into the long-lived API service.
 
----
+Phase-one compute policy is fail-closed:
 
-### BACKGROUND_JOB_INTERVAL_*
-
-Milliseconds between background job runs.
-
-```
-# Alert dispatcher (5 minutes)
-BACKGROUND_JOB_INTERVAL_ALERTS=300000
-
-# Water refresh (1 hour)
-BACKGROUND_JOB_INTERVAL_WATER=3600000
-
-# Priority zone refresh (24 hours)
-BACKGROUND_JOB_INTERVAL_PRIORITY_ZONES=86400000
+```dotenv
+EXECUTION_BACKEND=local
+CELERY_DISPATCH_ENABLED=false
+CLOUD_TRAINING_ENABLED=false
+LOCAL_EXECUTION_ROOT=.agri-local-runs
 ```
-
-**Required:** No
-**Type:** Integer (milliseconds)
-
----
-
-### RATE_LIMIT_*
 
-Rate limiting configuration.
+The 30-day Monte Carlo iteration commands require an explicit loopback-only
+evaluation writer. It never falls back to the API DSN and may target a named
+`plantgeo*` disposable clone:
 
+```dotenv
+FORECAST_ITERATION_DATABASE_URL=postgresql+asyncpg://plantgeo_local_developer:<password>@127.0.0.1:5442/plantgeo_forecast_test
 ```
-# API requests per hour per key
-RATE_LIMIT_API_DEFAULT=1000
 
-# Geocoding per hour
-RATE_LIMIT_GEOCODE=5000
+Iteration rows are evaluation/ML-signal evidence only. This credential does not
+authorize a forecast publication, a Railway mutation, or a scheduled job.
 
-# Routing per hour
-RATE_LIMIT_ROUTING=1000
-```
+The operator machine sets the URL and shared credential:
 
-**Required:** No
-**Type:** Integer
-**Default:** 1000 per hour
-
----
-
-## Environment-Specific Templates
-
-### Local Development (.env.local)
-
-```bash
-# Database
-DATABASE_URL=postgresql://geo:geopass@localhost:5432/plantgeo
-POSTGRES_PASSWORD=geopass
-
-# Cache
-REDIS_URL=redis://localhost:6379
-
-# Tile & Routing
-MARTIN_URL=http://localhost:3100
-NEXT_PUBLIC_MAP_STYLE_URL=http://localhost:3100/style.json
-VALHALLA_URL=http://localhost:8002
-PHOTON_URL=http://localhost:2322
-
-# Tiles
-NEXT_PUBLIC_PMTILES_URL=http://localhost:3100/pmtiles/basemap.pmtiles
-NEXT_PUBLIC_TERRAIN_URL=https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
-
-# Auth
-NEXTAUTH_SECRET=dev-secret-not-secure
-NEXTAUTH_URL=http://localhost:3000
-
-# OAuth (optional)
-# GOOGLE_CLIENT_ID=
-# GOOGLE_CLIENT_SECRET=
-# GITHUB_CLIENT_ID=
-# GITHUB_CLIENT_SECRET=
-
-# External APIs
-# NASA_FIRMS_KEY=
-# MAPILLARY_ACCESS_TOKEN=
-# ANTHROPIC_API_KEY=
-
-# R2 (optional for uploads)
-# R2_BUCKET=
-# R2_ENDPOINT=
-# R2_ACCESS_KEY_ID=
-# R2_SECRET_ACCESS_KEY=
+```dotenv
+LOCAL_PUBLISH_API_URL=https://<data-service-domain>/api/v1/local-execution
+LOCAL_PUBLISH_TOKEN=<dedicated strong token>
 ```
-
-### Railway Production (.env.production)
 
-Set via Railway Dashboard → Variables tab:
+The receiver/writer service receives the same token, explicitly enables the
+receiver, and binds the credential to a server-controlled audit identity. It
+does not receive the client API URL:
 
+```dotenv
+LOCAL_PUBLICATION_RECEIVER_ENABLED=true
+LOCAL_PUBLISH_TOKEN=<same dedicated strong token>
+LOCAL_PUBLISH_ACTOR=plantgeo-local-forecast-publisher
 ```
-# Auto-generated by Railway
-DATABASE_URL=postgresql://postgres:PASSWORD@postgres.PROJECT.railway.internal:5432/railway
-REDIS_URL=redis://redis.PROJECT.railway.internal:6379
-
-# Internal URLs
-MARTIN_URL=http://martin.PROJECT.railway.internal:3100
-VALHALLA_URL=http://valhalla.PROJECT.railway.internal:8002
-PHOTON_URL=http://photon.PROJECT.railway.internal:2322
-
-# Public URLs
-NEXT_PUBLIC_MAP_STYLE_URL=https://tiles.plantgeo.app/style.json
-NEXT_PUBLIC_PMTILES_URL=https://plantgeo-tiles.r2.dev/basemap.pmtiles
-NEXT_PUBLIC_TERRAIN_URL=https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
-
-# Auth
-NEXTAUTH_SECRET=(your-generated-secret)
-NEXTAUTH_URL=https://plantgeo.example.com
-
-# OAuth
-GOOGLE_CLIENT_ID=(your-id)
-GOOGLE_CLIENT_SECRET=(your-secret)
-GITHUB_CLIENT_ID=(your-id)
-GITHUB_CLIENT_SECRET=(your-secret)
-
-# External APIs
-NASA_FIRMS_KEY=(your-key)
-MAPILLARY_ACCESS_TOKEN=(your-token)
-ANTHROPIC_API_KEY=(your-key)
-
-# Cloudflare R2
-R2_BUCKET=plantgeo-tiles
-R2_ENDPOINT=https://account-id.r2.cloudflarestorage.com
-R2_ACCESS_KEY_ID=(your-key)
-R2_SECRET_ACCESS_KEY=(your-secret)
-
-# PlantCommerce (if integrated)
-PLANTCOMMERCE_API_URL=https://plantcommerce.example.com
-PLANTCOMMERCE_WEBHOOK_SECRET=(your-secret)
-
-# Admin
-ADMIN_API_TOKEN=(your-token)
-
-# Tuning
-NODE_ENV=production
-NEXT_TELEMETRY_DISABLED=1
-```
-
-## Validation & Testing
 
-### Validate Environment
+The workstation cannot supply or override the actor. Non-loopback publication
+requires HTTPS. The token must contain at least 32 diverse non-whitespace
+characters and must not appear in manifests or logs. `/ready` reports only
+boolean checks; it never returns the token, actor, DSN, role name, or database
+host.
 
-```bash
-# Create validation script
-cat > scripts/validate-env.js << 'EOF'
-const required = [
-  'DATABASE_URL',
-  'REDIS_URL',
-  'MARTIN_URL',
-  'VALHALLA_URL',
-  'NEXTAUTH_SECRET',
-  'NEXTAUTH_URL',
-];
+Bounded defaults:
 
-const missing = required.filter(key => !process.env[key]);
-
-if (missing.length > 0) {
-  console.error('Missing required env vars:', missing);
-  process.exit(1);
-}
-
-console.log('✓ All required env vars present');
-EOF
-
-node scripts/validate-env.js
+```dotenv
+LOCAL_PUBLISH_MAX_ARTIFACT_BYTES=5000000
+LOCAL_PUBLISH_MAX_MANIFEST_BYTES=512000
+LOCAL_PUBLISH_MAX_VALIDATION_BYTES=256000
+LOCAL_PUBLISH_MAX_OUTPUTS=256
+LOCAL_PUBLISH_MAX_RUN_ARTIFACT_BYTES=100000000
+LOCAL_PUBLISH_MAX_RUN_VALIDATION_BYTES=10000000
+LOCAL_PUBLISH_REQUEST_OVERHEAD_BYTES=64000
+LOCAL_PUBLISH_RETRY_ATTEMPTS=5
+LOCAL_PUBLISH_RETRY_BASE_SECONDS=0.5
 ```
-
-### Test Connections
 
-```bash
-# Test database
-psql $DATABASE_URL -c "SELECT 1"
+Raising any limit requires request-memory, database-size, transaction-duration,
+and abuse testing. Large artifacts should move to immutable object storage with
+a checksum-addressed database reference rather than being forced through inline
+publication.
 
-# Test Redis
-redis-cli -u $REDIS_URL ping
+## Railway policy
 
-# Test Martin
-curl $MARTIN_URL/health
+Production private references use exact service names. The web application
+continues to use its existing database reference, while the two data-service
+profiles receive separately sealed least-privilege DSNs:
 
-# Test Valhalla
-curl $VALHALLA_URL/status
+```dotenv
+DATABASE_URL=${{Plantgeo.DATABASE_URL}}
+REDIS_URL=${{plantgeo-Redis.REDIS_URL}}
+MARTIN_URL=http://${{plantgeo-martin.RAILWAY_PRIVATE_DOMAIN}}:3000
+RECEIVER_WRITER_DATABASE_URL=<sealed receiver/writer DSN>
+PUBLISHED_READER_DATABASE_URL=<sealed published-reader DSN>
 ```
 
-## Security Checklist
-
-- [ ] `.env.local` in `.gitignore`
-- [ ] No secrets in code or logs
-- [ ] NEXTAUTH_SECRET ≥32 bytes
-- [ ] OAuth secrets kept private
-- [ ] API keys rotated regularly
-- [ ] HTTPS enforced in production
-- [ ] Rate limiting configured
-- [ ] Admin token secure and unique
-- [ ] R2 credentials scoped to least privilege
-- [ ] Database passwords strong and unique
+The first reference remains on `Plantgeo` until the replacement cutover is
+approved. Never reference `${{Aevani-Postgress.DATABASE_URL}}`. Do not print a
+resolved reference in CI. See [Railway Operations](./deployment.md) for the full
+service allowlist and cutover gate.

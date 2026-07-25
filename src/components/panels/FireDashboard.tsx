@@ -1,9 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Flame, Wind, AlertTriangle, MapPin } from "lucide-react";
-import { trpc } from "@/lib/trpc/client";
 import { LayerToggle } from "@/components/ui/layer-toggle";
 import { useFireData } from "@/hooks/useFireData";
 
@@ -40,100 +38,20 @@ function StatCard({ icon, label, value, sub, highlight }: StatCardProps) {
   );
 }
 
-// Simple SVG bar chart — no external library
-interface BarChartProps {
-  data: { label: string; value: number }[];
-}
-
-function BarChart({ data }: BarChartProps) {
-  const max = Math.max(...data.map((d) => d.value), 1);
-  const BAR_HEIGHT = 80;
-
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-xs font-medium text-[hsl(var(--muted-foreground))]">
-        Fire detections — last 7 days
-      </p>
-      <div className="flex items-end gap-1 h-24">
-        {data.map((d, i) => {
-          const barH = Math.round((d.value / max) * BAR_HEIGHT);
-          return (
-            <div key={i} className="flex flex-col items-center gap-1 flex-1">
-              <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                {d.value}
-              </span>
-              <div
-                className="w-full rounded-t bg-orange-500 transition-all"
-                style={{ height: barH }}
-                title={`${d.label}: ${d.value}`}
-              />
-              <span className="text-[10px] text-[hsl(var(--muted-foreground))] truncate w-full text-center">
-                {d.label}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 interface FireDashboardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Center of current map view for weather fetch */
+  /** Map center reserved for future published weather observations. */
   centerLat?: number;
   centerLon?: number;
 }
 
-const WIND_ALERT_THRESHOLD_KMH = 50;
-
 export function FireDashboard({
   open,
   onOpenChange,
-  centerLat = 47.75,
-  centerLon = -120.74,
 }: FireDashboardProps) {
-  const [windAlert, setWindAlert] = useState(false);
-
   const fireData = useFireData(open);
-
-  const weatherQuery = trpc.wildfire.getWeatherForPoint.useQuery(
-    { lat: centerLat, lon: centerLon },
-    { enabled: open, refetchInterval: 600_000 }
-  );
-
-  const weather = weatherQuery.data;
-
-  // Demo fallback when tRPC is unavailable
-  const demoWeather = {
-    windSpeed: 8.5, // m/s
-    windDirection: 225,
-    humidity: 32,
-    temperature: 28.4,
-    precipitation: 0,
-  };
-
-  const effectiveWeather = weather ?? (weatherQuery.isError ? demoWeather : null);
   const effectiveFireCount = fireData.count;
-
-  // Wind alert: windSpeed in m/s -> convert to km/h
-  useEffect(() => {
-    if (!effectiveWeather) return;
-    const windKmh = effectiveWeather.windSpeed * 3.6;
-    setWindAlert(windKmh > WIND_ALERT_THRESHOLD_KMH);
-  }, [effectiveWeather]);
-
-  // Demo 7-day trend (realistic wildfire detection pattern)
-  const demoChartValues = [3, 5, 4, 7, 6, 8, effectiveFireCount];
-  const chartData = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (6 - i));
-    return {
-      label: d.toLocaleDateString("en-US", { weekday: "short" }),
-      value: !fireData.isDemo && i === 6 ? effectiveFireCount : demoChartValues[i],
-    };
-  });
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -145,76 +63,55 @@ export function FireDashboard({
           </SheetTitle>
         </SheetHeader>
 
-        <LayerToggle layerId="fire" label="Fire Risk" />
+        <LayerToggle layerId="fire" label="Fire Detections" />
 
         <div className="flex flex-col gap-4 mt-4 overflow-y-auto max-h-[calc(100vh-8rem)]">
-          {windAlert && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/20 px-3 py-2">
-              <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
-              <p className="text-xs text-red-700 font-medium">
-                High wind alert: {((effectiveWeather?.windSpeed ?? 0) * 3.6).toFixed(0)} km/h — elevated
-                fire spread risk.
-              </p>
-            </div>
-          )}
-
-          {fireData.isDemo && !fireData.isLoading && (
+          {fireData.error && !fireData.isLoading && (
             <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-3 py-2">
               <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
               <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
-                Showing demo data — live API unavailable.
+                Published fire detections could not be refreshed. Previously loaded data may be stale.
               </p>
             </div>
           )}
+
+          <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-3 py-2">
+            <AlertTriangle aria-hidden="true" className="h-4 w-4 text-amber-600 shrink-0" />
+            <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
+              Published weather observations are unavailable for this location. No fallback reading is shown.
+            </p>
+          </div>
 
           <div className="grid grid-cols-2 gap-2">
             <StatCard
               icon={<Flame className="h-3.5 w-3.5" />}
-              label="Active Fires"
+              label="Fire Detections"
               value={fireData.isLoading ? "..." : effectiveFireCount}
-              sub={fireData.isDemo ? "Demo detections" : "NIFC active wildfires"}
-              highlight={effectiveFireCount > 10}
+              sub="Published FIRMS detections, last 24h"
             />
             <StatCard
               icon={<Wind className="h-3.5 w-3.5" />}
               label="Wind Speed"
-              value={
-                weatherQuery.isLoading
-                  ? "..."
-                  : effectiveWeather
-                  ? `${(effectiveWeather.windSpeed * 3.6).toFixed(0)} km/h`
-                  : "N/A"
-              }
-              sub={effectiveWeather ? `Dir: ${effectiveWeather.windDirection}°` : undefined}
-              highlight={windAlert}
+              value="N/A"
+              sub="No published observation"
             />
             <StatCard
               icon={<MapPin className="h-3.5 w-3.5" />}
               label="Humidity"
-              value={
-                weatherQuery.isLoading
-                  ? "..."
-                  : effectiveWeather
-                  ? `${effectiveWeather.humidity}%`
-                  : "N/A"
-              }
-              sub="Relative humidity"
+              value="N/A"
+              sub="No published observation"
             />
             <StatCard
               icon={<Flame className="h-3.5 w-3.5" />}
               label="Temperature"
-              value={
-                weatherQuery.isLoading
-                  ? "..."
-                  : effectiveWeather
-                  ? `${effectiveWeather.temperature.toFixed(1)}°C`
-                  : "N/A"
-              }
-              sub={effectiveWeather ? `Precip: ${effectiveWeather.precipitation} mm` : undefined}
+              value="N/A"
+              sub="No published observation"
             />
           </div>
 
-          <BarChart data={chartData} />
+          <div className="rounded-lg border border-dashed border-[hsl(var(--border))] p-3 text-xs text-[hsl(var(--muted-foreground))]">
+            Seven-day fire history will appear after a versioned warehouse aggregate is published.
+          </div>
 
         </div>
       </SheetContent>

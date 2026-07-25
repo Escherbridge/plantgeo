@@ -6,8 +6,12 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Slider } from "@/components/ui/slider";
 import { trpc } from "@/lib/trpc/client";
-import { NDVI_COLOR_RAMP, NDWI_COLOR_RAMP } from "@/lib/vegetation";
-import { NLCD_CATEGORY_CLASSES, NLCD_CLASSES, type NLCDCategory } from "@/lib/server/services/nlcd";
+import {
+  ENVIRONMENTAL_TILES_CONFIGURED,
+  NDVI_COLOR_RAMP,
+  NDWI_COLOR_RAMP,
+} from "@/lib/vegetation";
+import { NLCD_CATEGORY_CLASSES, NLCD_CLASSES, type NLCDCategory } from "@/lib/environmental/nlcd";
 import { useVegetationStore } from "@/stores/vegetation-store";
 import { LayerToggle } from "@/components/ui/layer-toggle";
 import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
@@ -73,6 +77,8 @@ export function VegetationPanel({
   );
 
   const zones = zonesQuery.data?.features ?? [];
+  const zonesUnavailable = zonesQuery.data?.availability === "unavailable";
+  const zonesFailed = zonesQuery.isError;
   const highCount = zones.filter(
     (f) => (f.properties as Record<string, unknown>).suitability === "High"
   ).length;
@@ -152,6 +158,12 @@ export function VegetationPanel({
 
             {/* NDVI Tab */}
             <TabsContent value="ndvi" className="flex flex-col gap-4 mt-4">
+              {!ENVIRONMENTAL_TILES_CONFIGURED && (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                  Vegetation tiles are paused until a versioned first-party
+                  warehouse release is published.
+                </p>
+              )}
               <div className="flex flex-col gap-2">
                 <div className="flex justify-between text-xs text-[hsl(var(--muted-foreground))]">
                   <span>Year</span>
@@ -299,8 +311,23 @@ export function VegetationPanel({
                 </p>
               )}
 
-              {!zonesQuery.isLoading && zones.length > 0 && (
-                <>
+              {!zonesQuery.isLoading && zonesUnavailable && (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                  Opportunity zones are unavailable until a validated model output is published.
+                </p>
+              )}
+
+              {!zonesQuery.isLoading && zonesFailed && (
+                <p className="text-xs text-[hsl(var(--destructive))]">
+                  Opportunity-zone data could not be loaded.
+                </p>
+              )}
+
+              {!zonesQuery.isLoading &&
+                !zonesUnavailable &&
+                !zonesFailed &&
+                zones.length > 0 && (
+                  <>
                   <div className="grid grid-cols-3 gap-2">
                     <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 text-center">
                       <span
@@ -352,14 +379,18 @@ export function VegetationPanel({
                     Zones derived from degraded NLCD classes (shrub, grassland, pasture) within
                     current map view. Click a zone on the map to see detailed suitability factors.
                   </p>
-                </>
-              )}
+                  </>
+                )}
 
-              {!zonesQuery.isLoading && zones.length === 0 && bbox && (
-                <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                  No reforestation opportunity zones found in the current view.
-                </p>
-              )}
+              {!zonesQuery.isLoading &&
+                !zonesUnavailable &&
+                !zonesFailed &&
+                zones.length === 0 &&
+                bbox && (
+                  <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                    No reforestation opportunity zones found in the current view.
+                  </p>
+                )}
             </TabsContent>
           </Tabs>
         </div>

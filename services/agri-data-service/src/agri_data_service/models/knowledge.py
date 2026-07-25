@@ -22,12 +22,10 @@ class KnowledgeChunk(Base, UUIDMixin):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding = mapped_column(Vector(1536), nullable=True)
     strategy_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("strategies.id"), nullable=True, index=True
+        UUID(as_uuid=True), ForeignKey("agri.strategies.id"), nullable=True, index=True
     )
-    metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    metadata_json: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index(

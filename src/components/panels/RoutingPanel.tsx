@@ -11,7 +11,7 @@ import { WaypointInput } from "@/components/routing/WaypointInput";
 import { ModeSelector } from "@/components/routing/ModeSelector";
 import { DirectionsList } from "@/components/routing/DirectionsList";
 import { RouteSummary } from "@/components/routing/RouteSummary";
-import type { NormalizedGeocodingResult } from "@/lib/server/services/geocoding";
+import type { NormalizedGeocodingResult } from "@/lib/geocoding";
 
 const COSTING_MAP = {
   car: "auto",

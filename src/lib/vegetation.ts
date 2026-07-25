@@ -9,6 +9,13 @@ export interface NDVIColorStop {
   label: string;
 }
 
+// Activation requires a database-backed, immutable publication catalog.
+export const ENVIRONMENTAL_TILES_CONFIGURED = false;
+
+export function getEnvironmentalTileTemplate(_path: string): string {
+  return "";
+}
+
 /** NDVI color ramp: -1 (water/bare) → 0 (sparse) → 1 (dense healthy vegetation) */
 export const NDVI_COLOR_RAMP: NDVIColorStop[] = [
   { value: -0.2, color: "#d73027", label: "Water / Bare soil" },
@@ -33,7 +40,7 @@ export const NDWI_COLOR_RAMP: NDVIColorStop[] = [
 ];
 
 /**
- * Returns NASA GIBS MODIS Terra NDVI monthly composite tile URL (WMS format).
+ * Returns the first-party published NDVI tile template, or an empty string.
  */
 export function getNDVITileUrl(
   year: number,
@@ -41,46 +48,20 @@ export function getNDVITileUrl(
   mode: "absolute" | "anomaly" = "absolute"
 ): string {
   const mm = String(month).padStart(2, "0");
-  const dateStr = `${year}-${mm}-01`;
-  // NASA GIBS has no direct NDVI anomaly product; use EVI as a complementary index
-  // that highlights different vegetation stress patterns than standard NDVI.
-  const layer = mode === "anomaly"
-    ? "MODIS_Terra_L3_EVI_Monthly"
-    : "MODIS_Terra_L3_NDVI_Monthly";
-
-  return (
-    "https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?" +
-    "SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap" +
-    `&LAYERS=${layer}` +
-    "&FORMAT=image/png&TRANSPARENT=true" +
-    "&SRS=EPSG:3857&WIDTH=256&HEIGHT=256" +
-    `&BBOX={bbox-epsg-3857}` +
-    `&TIME=${dateStr}`
-  );
+  return getEnvironmentalTileTemplate(`vegetation/ndvi/${mode}/${year}/${mm}/{z}/{x}/{y}.png`);
 }
 
 /**
- * Returns NASA GIBS MODIS EVI monthly composite tile URL as a water stress proxy (WMS format).
- * Note: GIBS does not expose a direct NDWI layer; EVI is used as a proxy for water stress.
+ * Returns the first-party published NDWI tile template, or an empty string.
  */
 export function getNDWITileUrl(year: number, month: number): string {
   const mm = String(month).padStart(2, "0");
-  const dateStr = `${year}-${mm}-01`;
-  return (
-    "https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?" +
-    "SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap" +
-    "&LAYERS=MODIS_Terra_L3_EVI_Monthly" +
-    "&FORMAT=image/png&TRANSPARENT=true" +
-    "&SRS=EPSG:3857&WIDTH=256&HEIGHT=256" +
-    `&BBOX={bbox-epsg-3857}` +
-    `&TIME=${dateStr}`
-  );
+  return getEnvironmentalTileTemplate(`vegetation/ndwi/${year}/${mm}/{z}/{x}/{y}.png`);
 }
 
 /**
- * Copernicus Global Land Service NDVI 300m tile URL (requires Copernicus auth token).
+ * Compatibility alias for the first-party published NDVI tile template.
  */
 export function getCopernicusNDVITileUrl(year: number, month: number): string {
-  const mm = String(month).padStart(2, "0");
-  return `https://land.copernicus.eu/global/sites/cgls.vito.be/files/products/CGLOPS1_MAP_NDVI300m-V2_Globe_${year}_${mm}_decade1/{z}/{x}/{y}.png`;
+  return getNDVITileUrl(year, month, "absolute");
 }

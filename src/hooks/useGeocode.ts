@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useDebounce } from "./useDebounce";
-import type { NormalizedGeocodingResult } from "@/lib/server/services/geocoding";
+import { readGeocodingResults, type NormalizedGeocodingResult } from "@/lib/geocoding";
 
 interface UseGeocodeOptions {
   lat?: number;
@@ -11,12 +11,17 @@ export function useGeocode(query: string, options?: UseGeocodeOptions) {
   const [results, setResults] = useState<NormalizedGeocodingResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const debouncedQuery = useDebounce(query, 300);
 
   useEffect(() => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     if (debouncedQuery.length < 2) {
       setResults([]);
+      setError(null);
+      setIsLoading(false);
       return;
     }
 
@@ -37,14 +42,15 @@ export function useGeocode(query: string, options?: UseGeocodeOptions) {
         const res = await fetch(`/api/geocode?${params}`, {
           signal: controller.signal,
         });
-        if (!res.ok) throw new Error(`Geocode request failed: ${res.status}`);
-        const data = (await res.json()) as { results: NormalizedGeocodingResult[] };
-        setResults(data.results);
+        const nextResults = await readGeocodingResults(res);
+        if (controller.signal.aborted || requestId !== requestIdRef.current) return;
+        setResults(nextResults);
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") return;
+        if (controller.signal.aborted || requestId !== requestIdRef.current) return;
         setError(err instanceof Error ? err.message : "Unknown error");
       } finally {
-        setIsLoading(false);
+        if (requestId === requestIdRef.current) setIsLoading(false);
       }
     };
 

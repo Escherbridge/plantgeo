@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { useImageryStore } from "@/stores/imagery-store";
-import type { MapillaryImage } from "@/lib/server/services/mapillary";
+import type { MapillaryImage } from "@/lib/mapillary";
 
 const PanoViewer = dynamic(() => import("./PanoViewer").then((m) => m.PanoViewer), {
   ssr: false,

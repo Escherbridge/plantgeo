@@ -6,10 +6,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc/client";
 import { type SoilProperty, SOIL_PROPERTY_LABELS } from "@/components/map/layers/SoilLayer";
 import { useSoilStore } from "@/stores/soil-store";
-import { EROSION_COLORS, type ErosionClass } from "@/lib/server/services/usle";
+import { EROSION_COLORS, type ErosionClass } from "@/lib/environmental/erosion";
 import { CARBON_COLORS, classifyCarbonPotential, type CarbonClass } from "@/components/map/layers/CarbonPotentialLayer";
 import { LayerToggle } from "@/components/ui/layer-toggle";
-import type { InterventionType } from "@/lib/server/services/carbon-potential";
+import type { InterventionType } from "@/lib/environmental/intervention";
+import { ENVIRONMENTAL_TILES_CONFIGURED } from "@/lib/vegetation";
 
 interface SoilPanelProps {
   open: boolean;
@@ -110,6 +111,7 @@ export function SoilPanel({
 
   const soil = soilQuery.data;
   const suitability = suitabilityQuery.data;
+  const suitabilityAvailable = suitability?.availability === "published";
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -167,8 +169,9 @@ export function SoilPanel({
                   {SOIL_PROPERTY_LABELS[selectedProperty]}
                 </p>
                 <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
-                  Live WMS raster from SoilGrids (ISRIC). Showing 0-5 cm depth mean values globally.
-                  Colors are rendered server-side by the WMS service.
+                  {ENVIRONMENTAL_TILES_CONFIGURED
+                    ? "Versioned, first-party 0-5 cm mean tiles are configured."
+                    : "Soil tiles are paused until a versioned warehouse release is published."}
                 </p>
               </div>
 
@@ -236,7 +239,7 @@ export function SoilPanel({
                 </p>
               </div>
 
-              {suitability && (
+              {suitabilityAvailable && suitability.erosionClass && suitability.erosionRisk !== null && (
                 <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 flex flex-col gap-1">
                   <p className="text-xs font-semibold text-[hsl(var(--foreground))]">
                     Point Erosion Risk
@@ -288,13 +291,27 @@ export function SoilPanel({
                 </p>
               )}
 
-              {suitability && (
+              {suitability?.availability === "unavailable" && (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                  Intervention effects are unavailable until a validated,
+                  evidence-linked model release is published.
+                </p>
+              )}
+
+              {queryPoint && soilQuery.isError && (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                  Point soil properties are unavailable until a validated
+                  warehouse release is published.
+                </p>
+              )}
+
+              {suitabilityAvailable && (
                 <>
                   <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 flex flex-col gap-2">
                     <p className="text-xs font-semibold text-[hsl(var(--foreground))]">
                       Intervention Suitability &amp; Carbon Potential
                     </p>
-                    {(Object.entries(suitability.interventions) as [InterventionType, (typeof suitability.interventions)[InterventionType]][]).map(
+                    {(Object.entries(suitability.interventions) as [InterventionType, NonNullable<(typeof suitability.interventions)[InterventionType]>][]).map(
                       ([type, data]) => {
                         const carbonClass = classifyCarbonPotential(
                           data.carbonPotential.potentialGain

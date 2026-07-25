@@ -1,37 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { ingestFeatures } from "@/lib/server/services/ingest";
+import {
+  parseBoundedJson,
+  authorizeIngressRequest,
+} from "@/lib/server/security/ingress";
+import { parseFeatureCollection } from "@/lib/server/security/geojson";
 
 export const runtime = "nodejs";
 
-const GeometrySchema = z.object({
-  type: z.string(),
-  coordinates: z.unknown(),
-});
-
-const FeatureSchema = z.object({
-  type: z.literal("Feature"),
-  id: z.union([z.string(), z.number()]).optional(),
-  geometry: GeometrySchema,
-  properties: z.record(z.unknown()).nullable(),
-});
-
-const FeatureCollectionSchema = z.object({
-  type: z.literal("FeatureCollection"),
-  features: z.array(FeatureSchema),
-});
-
-const FIRES_LAYER_ID = process.env.FIRES_LAYER_ID ?? "fire-perimeters-layer";
+const FIRES_LAYER_ID = process.env.FIRES_LAYER_ID ?? "fire-perimeters";
 
 export async function POST(request: NextRequest) {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  const authorization = authorizeIngressRequest(request);
+  if (!authorization.authorized) {
+    return NextResponse.json(
+      { error: authorization.error },
+      { status: authorization.status }
+    );
   }
 
-  const parsed = FeatureCollectionSchema.safeParse(body);
+  const jsonBody = await parseBoundedJson(request);
+  if (!jsonBody.ok) {
+    return NextResponse.json({ error: jsonBody.error }, { status: jsonBody.status });
+  }
+
+  const parsed = parseFeatureCollection(jsonBody.data);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
@@ -40,12 +33,17 @@ export async function POST(request: NextRequest) {
   }
 
   const { features } = parsed.data;
+  if (features.some((feature) => feature.id === undefined)) {
+    return NextResponse.json(
+      { error: "Every fire perimeter requires a stable source feature id" },
+      { status: 422 }
+    );
+  }
 
-  await ingestFeatures(
+  const createdCount = await ingestFeatures(
     features.map((feature) => ({
       layerId: FIRES_LAYER_ID,
-      featureId:
-        feature.id !== undefined ? String(feature.id) : undefined,
+      featureId: String(feature.id),
       properties: {
         ...(feature.properties ?? {}),
         geometry: feature.geometry,
@@ -54,5 +52,5 @@ export async function POST(request: NextRequest) {
     }))
   );
 
-  return NextResponse.json({ ok: true, count: features.length }, { status: 201 });
+  return NextResponse.json({ ok: true, count: createdCount }, { status: 201 });
 }

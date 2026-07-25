@@ -1,19 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState } from "react";
 import { useSSE } from "@/hooks/useSSE";
 
 interface MetricState {
-  activeFires: number;
-  sensorAlerts: number;
-  fleetActive: number;
-  totalLayers: number;
+  activeFires: number | null;
+  sensorAlerts: number | null;
+  fleetActive: number | null;
+  totalLayers: number | null;
 }
 
-type Status = "green" | "yellow" | "red";
+type Status = "neutral" | "green" | "yellow" | "red";
 
 function statusDot(status: Status) {
   const colors: Record<Status, string> = {
+    neutral: "bg-zinc-400",
     green: "bg-emerald-500",
     yellow: "bg-yellow-400",
     red: "bg-red-500",
@@ -26,36 +27,15 @@ function statusDot(status: Status) {
   );
 }
 
-function getFireStatus(count: number): Status {
-  if (count === 0) return "green";
-  if (count < 10) return "yellow";
-  return "red";
-}
-
-function getAlertStatus(count: number): Status {
-  if (count === 0) return "green";
-  if (count < 5) return "yellow";
-  return "red";
-}
-
-function getFleetStatus(count: number): Status {
-  if (count > 20) return "green";
-  if (count > 5) return "yellow";
-  return "red";
-}
-
 export function MetricsBar() {
   const [metrics, setMetrics] = useState<MetricState>({
-    activeFires: 0,
-    sensorAlerts: 0,
-    fleetActive: 0,
-    totalLayers: 0,
+    activeFires: null,
+    sensorAlerts: null,
+    fleetActive: null,
+    totalLayers: null,
   });
 
-  const { data, connectionState } = useSSE("/api/stream/alerts:global");
-
-  useEffect(() => {
-    if (!data) return;
+  const handleMetricMessage = useCallback((data: unknown) => {
     const msg = data as Record<string, unknown>;
     setMetrics((prev) => {
       const next = { ...prev };
@@ -65,34 +45,38 @@ export function MetricsBar() {
       if (typeof msg.totalLayers === "number") next.totalLayers = msg.totalLayers;
       return next;
     });
-  }, [data]);
+  }, []);
+
+  const { connectionState } = useSSE("/api/stream/alerts:global", {
+    onMessage: handleMetricMessage,
+  });
 
   const items: Array<{
     label: string;
-    value: number;
+    value: number | null;
     unit?: string;
     status: Status;
   }> = [
     {
       label: "Active Fires",
       value: metrics.activeFires,
-      status: getFireStatus(metrics.activeFires),
+      status: "neutral",
     },
     {
       label: "Sensor Alerts",
       value: metrics.sensorAlerts,
-      status: getAlertStatus(metrics.sensorAlerts),
+      status: "neutral",
     },
     {
       label: "Fleet Active",
       value: metrics.fleetActive,
       unit: "vehicles",
-      status: getFleetStatus(metrics.fleetActive),
+      status: "neutral",
     },
     {
       label: "Total Layers",
       value: metrics.totalLayers,
-      status: "green",
+      status: "neutral",
     },
   ];
 
@@ -122,8 +106,8 @@ export function MetricsBar() {
               {item.label}
             </span>
             <span className="text-sm font-semibold text-[hsl(var(--foreground))] leading-tight">
-              {item.value.toLocaleString()}
-              {item.unit && (
+              {item.value === null ? "—" : item.value.toLocaleString()}
+              {item.unit && item.value !== null && (
                 <span className="text-xs font-normal text-[hsl(var(--muted-foreground))] ml-1">
                   {item.unit}
                 </span>

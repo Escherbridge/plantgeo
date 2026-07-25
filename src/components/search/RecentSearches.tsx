@@ -4,7 +4,10 @@ import { Home, Navigation, Building, Globe, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSearchStore } from "@/stores/search-store";
 import { useMap } from "@/lib/map/map-context";
-import type { NormalizedGeocodingResult, ResultType } from "@/lib/server/services/geocoding";
+import type {
+  GeocodingResultType as ResultType,
+  NormalizedGeocodingResult,
+} from "@/lib/geocoding";
 
 const ZOOM_BY_TYPE: Record<ResultType, number> = {
   house: 17,

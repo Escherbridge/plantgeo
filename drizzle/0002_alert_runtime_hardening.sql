@@ -1,0 +1,2 @@
+ALTER TABLE "environmental_alerts" ADD COLUMN "dedupe_key" varchar(160);--> statement-breakpoint
+ALTER TABLE "environmental_alerts" ADD CONSTRAINT "environmental_alerts_dedupe_key_unique" UNIQUE("dedupe_key");

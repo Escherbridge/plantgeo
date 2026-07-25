@@ -1,0 +1,32 @@
+# Version control and local configuration
+.git
+.gitignore
+.env
+.env.*
+
+# Python environments, caches, builds, and test output
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+.eggs
+build
+dist
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage*
+htmlcov
+
+# Development-only files and runtime output
+tests
+*.log
+logs
+*.pid
+.cache
+.agri-local-runs
+tmp
+docker-compose.yml
+Makefile

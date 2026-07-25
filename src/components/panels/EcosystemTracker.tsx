@@ -4,7 +4,6 @@ import { useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Leaf } from "lucide-react";
-import { trpc } from "@/lib/trpc/client";
 
 type ActionType =
   | "reforestation"
@@ -42,11 +41,6 @@ const DEFAULT_FORM: EcosystemFormState = {
 
 export function EcosystemTracker({ open, onOpenChange }: EcosystemTrackerProps) {
   const [form, setForm] = useState<EcosystemFormState>(DEFAULT_FORM);
-  const [submitState, setSubmitState] = useState<"idle" | "submitting" | "success" | "error">(
-    "idle"
-  );
-
-  const createLayer = trpc.layers.create.useMutation();
 
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -54,62 +48,9 @@ export function EcosystemTracker({ open, onOpenChange }: EcosystemTrackerProps) 
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitState("submitting");
-
-    try {
-      // Ensure an ecosystem layer exists (idempotent via name unique constraint)
-      let layerId: string | undefined;
-      try {
-        const layer = await createLayer.mutateAsync({
-          name: "ecosystem-actions",
-          type: "vector",
-          description: "Ecosystem restoration and wildfire prevention actions",
-          isPublic: true,
-        });
-        layerId = layer?.id;
-      } catch {
-        // Layer likely already exists; fall through to ingest
-      }
-
-      // POST to ingest endpoint with ecosystem feature data
-      const payload = {
-        type: "FeatureCollection",
-        features: [
-          {
-            type: "Feature",
-            geometry: null,
-            properties: {
-              actionType: form.type,
-              description: form.description,
-              date: form.date,
-              area: form.area ? parseFloat(form.area) : null,
-              treeCount: form.treeCount ? parseInt(form.treeCount, 10) : null,
-              layer: "ecosystem-actions",
-              layerId,
-            },
-          },
-        ],
-      };
-
-      const res = await fetch("/api/ingest/firms", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        throw new Error(`Ingest failed: ${res.status}`);
-      }
-
-      setSubmitState("success");
-      setForm(DEFAULT_FORM);
-      setTimeout(() => setSubmitState("idle"), 3000);
-    } catch {
-      setSubmitState("error");
-      setTimeout(() => setSubmitState("idle"), 3000);
-    }
+    // Spatial observations must be location-linked and moderated before publication.
   }
 
   return (
@@ -123,6 +64,12 @@ export function EcosystemTracker({ open, onOpenChange }: EcosystemTrackerProps) 
         </SheetHeader>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4 mt-4">
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-[hsl(var(--foreground))]">
+            Reporting is paused until this panel is connected to a selected map location
+            and the moderated contribution workflow. This prevents unverified actions
+            from being published as operational data.
+          </div>
+          <fieldset disabled className="contents opacity-60">
           <div className="flex flex-col gap-1">
             <label
               htmlFor="type"
@@ -225,24 +172,14 @@ export function EcosystemTracker({ open, onOpenChange }: EcosystemTrackerProps) 
             </div>
           </div>
 
-          {submitState === "success" && (
-            <p className="text-sm text-green-600 font-medium">
-              Action logged successfully.
-            </p>
-          )}
-          {submitState === "error" && (
-            <p className="text-sm text-[hsl(var(--destructive))]">
-              Failed to log action. Please try again.
-            </p>
-          )}
-
           <Button
             type="submit"
-            disabled={submitState === "submitting"}
+            disabled
             className="bg-green-600 hover:bg-green-700 text-white"
           >
-            {submitState === "submitting" ? "Logging..." : "Log Action"}
+            Location-linked reporting required
           </Button>
+          </fieldset>
         </form>
       </SheetContent>
     </Sheet>

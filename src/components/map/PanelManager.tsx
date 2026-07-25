@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useMapStore } from "@/stores/map-store";
 import { usePanelStore, usePanelHasActiveLayers, type PanelId } from "@/stores/panel-store";
+import { viewportBbox } from "@/lib/map/viewport-bbox";
 
 const FireDashboard = dynamic(
   () => import("@/components/panels/FireDashboard").then((m) => ({ default: m.FireDashboard })),
@@ -95,17 +96,8 @@ export default function PanelManager() {
     }
   }
 
-  // Compute bbox string from current viewport for panels that need it
   const zoom = viewport.zoom ?? 8;
-  const degPerPixel = 360 / Math.pow(2, zoom + 8);
-  const halfW = degPerPixel * 512;
-  const halfH = degPerPixel * 256;
-  const bbox = [
-    (viewport.longitude - halfW).toFixed(4),
-    (viewport.latitude - halfH).toFixed(4),
-    (viewport.longitude + halfW).toFixed(4),
-    (viewport.latitude + halfH).toFixed(4),
-  ].join(",");
+  const bbox = viewportBbox(viewport.longitude, viewport.latitude, zoom);
 
   const mapCenter = { lat: viewport.latitude, lon: viewport.longitude };
 
@@ -128,12 +120,12 @@ export default function PanelManager() {
       <WaterPanel
         open={openPanel === "water"}
         onOpenChange={(o) => handleOpenChange("water", o)}
-        bbox={bbox}
+        bbox={bbox ?? undefined}
       />
       <VegetationPanel
         open={openPanel === "vegetation"}
         onOpenChange={(o) => handleOpenChange("vegetation", o)}
-        bbox={bbox}
+        bbox={bbox ?? undefined}
       />
       <SoilPanel
         open={openPanel === "soil"}
@@ -143,7 +135,7 @@ export default function PanelManager() {
         open={openPanel === "community"}
         onOpenChange={(o) => handleOpenChange("community", o)}
         mapCenter={mapCenter}
-        bbox={bbox}
+        bbox={bbox ?? undefined}
       />
       <StrategyPanel
         open={openPanel === "strategy"}
@@ -159,7 +151,7 @@ export default function PanelManager() {
       <AnalyticsDashboard
         open={openPanel === "analytics"}
         onOpenChange={(o) => handleOpenChange("analytics", o)}
-        bbox={bbox}
+        bbox={bbox ?? undefined}
       />
     </>
   );

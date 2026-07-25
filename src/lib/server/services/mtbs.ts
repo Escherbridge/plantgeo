@@ -1,20 +1,13 @@
 import { cacheGeoJSON, getCachedGeoJSON } from "@/lib/server/redis";
+import type {
+  BurnSeverityClass,
+  MTBSFireProperties,
+} from "@/lib/environmental/wildfire";
 
-export type BurnSeverityClass =
-  | "unburned"
-  | "low"
-  | "moderate"
-  | "high"
-  | "increased_greenness";
-
-export interface MTBSFireProperties {
-  fireName: string;
-  fireYear: number;
-  acres: number;
-  severityClass: BurnSeverityClass;
-  ignitionDate: string;
-  fireId: string;
-}
+export type {
+  BurnSeverityClass,
+  MTBSFireProperties,
+} from "@/lib/environmental/wildfire";
 
 const SEVERITY_MAP: Record<number, BurnSeverityClass> = {
   1: "unburned",

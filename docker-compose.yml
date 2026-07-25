@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ============================================
   # PostGIS + TimescaleDB Database
@@ -9,9 +7,9 @@ services:
     environment:
       POSTGRES_DB: plantgeo
       POSTGRES_USER: geo
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-geopass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgis_data:/home/postgres/pgdata/data
       - ./infra/db/init:/docker-entrypoint-initdb.d
@@ -28,7 +26,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     command: >
       redis-server
       --maxmemory 512mb
@@ -44,24 +42,26 @@ services:
     restart: unless-stopped
 
   # ============================================
-  # Optional services — uncomment when needed
+  # Tile service (static PMTiles are served from R2/CDN in production)
   # ============================================
 
-  # martin:
-  #   image: ghcr.io/maplibre/martin:latest
-  #   command: --config /config/martin.yaml
-  #   environment:
-  #     DATABASE_URL: postgresql://geo:${POSTGRES_PASSWORD:-geopass}@postgis/plantgeo
-  #   ports:
-  #     - "3100:3000"
-  #   volumes:
-  #     - ./infra/martin:/config
-  #     - ./data/mbtiles:/mbtiles
-  #     - ./data/pmtiles:/pmtiles
-  #   depends_on:
-  #     postgis:
-  #       condition: service_healthy
-  #   restart: unless-stopped
+  martin:
+    build:
+      context: .
+      dockerfile: Dockerfile.martin
+    image: plantgeo-martin:1.10.1
+    environment:
+      DATABASE_URL: postgresql://geo:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgis:5432/plantgeo
+      PORT: 3000
+      TILE_CORS_ORIGIN: ${TILE_CORS_ORIGIN:-http://localhost:3001}
+      MARTIN_CACHE_SIZE_MB: ${MARTIN_CACHE_SIZE_MB:-128}
+      MARTIN_POOL_SIZE: ${MARTIN_POOL_SIZE:-8}
+    ports:
+      - "127.0.0.1:3100:3000"
+    depends_on:
+      postgis:
+        condition: service_healthy
+    restart: unless-stopped
 
   # valhalla:
   #   image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest

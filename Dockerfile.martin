@@ -1,0 +1,7 @@
+FROM ghcr.io/maplibre/martin:1.10.1
+
+COPY infra/martin/martin.yaml /etc/martin/martin.yaml
+
+EXPOSE 3000
+
+CMD ["--config", "/etc/martin/martin.yaml"]

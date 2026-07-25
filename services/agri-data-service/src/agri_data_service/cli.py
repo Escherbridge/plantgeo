@@ -5,26 +5,101 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 from contextlib import suppress
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import click
+import httpx
 import structlog
 from alembic.config import Config
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 
 from agri_data_service.config import settings
-from agri_data_service.db.engine import async_session, engine, local_source_loader_session
+from agri_data_service.db.engine import (
+    async_session,
+    combined_local_engine,
+    forecast_iteration_session,
+    forecast_mv_refresh_session,
+    local_source_loader_session,
+)
 from agri_data_service.db.maintenance import (
     MaintenanceBusyError,
     maintain_job_event_partitions,
 )
 from agri_data_service.execution.contracts import ExpectedOutput
+from agri_data_service.execution.historical_backfill import (
+    HistoricalNasaBackfillPlan,
+    HistoricalNasaCheckpoint,
+    HistoricalNasaFinalization,
+    cache_historical_nasa_result,
+    fetch_nasa_power_daily,
+    historical_nasa_checkpoint_path,
+    historical_nasa_plan_checksum,
+    initialize_historical_nasa_checkpoint,
+    load_cached_historical_nasa_result,
+    load_historical_nasa_checkpoint,
+    rebind_historical_nasa_checkpoint_for_finalization,
+    record_historical_nasa_result,
+    write_historical_nasa_checkpoint,
+    write_historical_nasa_release_plan,
+)
+from agri_data_service.execution.historical_era5 import (
+    HistoricalEra5Checkpoint,
+    HistoricalEra5Finalization,
+    HistoricalEra5LandBackfillPlan,
+    cache_historical_era5_result,
+    fetch_era5_land_monthly,
+    historical_era5_checkpoint_path,
+    historical_era5_plan_checksum,
+    historical_era5_release_manifest,
+    initialize_historical_era5_checkpoint,
+    load_cached_historical_era5_result,
+    load_historical_era5_checkpoint,
+    rebind_historical_era5_checkpoint_for_finalization,
+    record_historical_era5_result,
+    write_historical_era5_checkpoint,
+    write_historical_era5_release_plan,
+)
+from agri_data_service.execution.historical_era5_parquet import (
+    historical_era5_parquet_root,
+    materialize_historical_era5_parquet,
+)
+from agri_data_service.execution.historical_export import (
+    HistoricalPromotionUploader,
+    LocalHistoricalPromotionExporter,
+    load_historical_promotion_spool,
+)
+from agri_data_service.execution.historical_parquet import (
+    historical_nasa_parquet_root,
+    materialize_historical_nasa_parquet,
+)
+from agri_data_service.execution.historical_usdm import (
+    HistoricalUsdmBackfillPlan,
+    HistoricalUsdmCheckpoint,
+    HistoricalUsdmFinalization,
+    fetch_usdm_shapefile,
+    historical_usdm_checkpoint_path,
+    historical_usdm_plan_checksum,
+    initialize_historical_usdm_checkpoint,
+    load_historical_usdm_checkpoint,
+    rebind_historical_usdm_checkpoint_for_finalization,
+    record_historical_usdm_result,
+    write_historical_usdm_checkpoint,
+)
+from agri_data_service.execution.historical_writer import (
+    finalize_era5_release_set,
+    finalize_nasa_release_set,
+    finalize_usdm_release_set,
+    persist_era5_land_month,
+    persist_nasa_power_cell,
+    persist_usdm_shapefile,
+)
 from agri_data_service.execution.local_store import LocalRunStore
 from agri_data_service.execution.publisher import BoundedPublisher, PublicationError
 from agri_data_service.execution.source_ingestion import (
@@ -117,6 +192,432 @@ def db_upgrade(revision: str) -> None:
     command.upgrade(_alembic_config(), revision)
 
 
+@cli.command("forecast-refresh-ml-daily")
+def forecast_refresh_ml_daily() -> None:
+    """Explicitly refresh the reviewed ML daily serving materialization."""
+    try:
+        row_count = asyncio.run(_forecast_refresh_ml_daily())
+    except (SQLAlchemyError, ValueError) as exc:
+        reason = (
+            f"forecast materialized-view refresh failed ({exc.__class__.__name__})"
+            if isinstance(exc, SQLAlchemyError)
+            else str(exc)
+        )
+        raise click.ClickException(reason) from exc
+    click.echo(json.dumps({"state": "refreshed", "row_count": row_count}, sort_keys=True))
+
+
+async def _forecast_refresh_ml_daily() -> int:
+    database_url = settings.require_forecast_mv_refresh_database_url()
+    async with forecast_mv_refresh_session(database_url) as session, session.begin():
+        eligibility = await session.execute(
+            text(
+                """
+                SELECT
+                    role.rolcanlogin
+                    AND NOT role.rolinherit
+                    AND NOT role.rolsuper
+                    AND NOT role.rolcreatedb
+                    AND NOT role.rolcreaterole
+                    AND NOT role.rolreplication
+                    AND NOT role.rolbypassrls
+                    AND EXISTS (
+                        SELECT 1
+                        FROM pg_auth_members AS membership
+                        INNER JOIN pg_roles AS capability
+                            ON capability.oid = membership.roleid
+                        WHERE membership.member = role.oid
+                          AND capability.rolname = 'plantgeo_forecast_mv_refresher'
+                          AND NOT membership.admin_option
+                          AND NOT membership.inherit_option
+                          AND membership.set_option
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM pg_auth_members AS membership
+                        INNER JOIN pg_roles AS capability
+                            ON capability.oid = membership.roleid
+                        WHERE membership.member = role.oid
+                          AND capability.rolname <> 'plantgeo_forecast_mv_refresher'
+                    )
+                    AND NOT has_database_privilege(
+                        current_user,
+                        current_database(),
+                        'CREATE'
+                    )
+                    AND NOT pg_has_role(
+                        current_user,
+                        (SELECT database.datdba FROM pg_database AS database
+                         WHERE database.datname = current_database()),
+                        'MEMBER'
+                    )
+                    AND NOT pg_has_role(
+                        current_user,
+                        (SELECT namespace.nspowner FROM pg_namespace AS namespace
+                         WHERE namespace.nspname = 'agri'),
+                        'MEMBER'
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM pg_class AS class
+                        INNER JOIN pg_namespace AS namespace
+                            ON namespace.oid = class.relnamespace
+                        WHERE namespace.nspname = 'agri'
+                          AND pg_has_role(current_user, class.relowner, 'MEMBER')
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM pg_proc AS procedure
+                        INNER JOIN pg_namespace AS namespace
+                            ON namespace.oid = procedure.pronamespace
+                        WHERE namespace.nspname = 'agri'
+                          AND pg_has_role(current_user, procedure.proowner, 'MEMBER')
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM pg_class AS class
+                        INNER JOIN pg_namespace AS namespace
+                            ON namespace.oid = class.relnamespace
+                        CROSS JOIN LATERAL aclexplode(
+                            coalesce(
+                                class.relacl,
+                                acldefault(
+                                    CASE WHEN class.relkind = 'S' THEN 'S'::"char" ELSE 'r'::"char" END,
+                                    class.relowner
+                                )
+                            )
+                        ) AS access
+                        WHERE namespace.nspname = 'agri'
+                          AND access.grantee = role.oid
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM pg_proc AS procedure
+                        INNER JOIN pg_namespace AS namespace
+                            ON namespace.oid = procedure.pronamespace
+                        CROSS JOIN LATERAL aclexplode(
+                            coalesce(
+                                procedure.proacl,
+                                acldefault('f', procedure.proowner)
+                            )
+                        ) AS access
+                        WHERE namespace.nspname = 'agri'
+                          AND access.grantee = role.oid
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM pg_attribute AS attribute
+                        INNER JOIN pg_class AS class
+                            ON class.oid = attribute.attrelid
+                        INNER JOIN pg_namespace AS namespace
+                            ON namespace.oid = class.relnamespace
+                        CROSS JOIN LATERAL aclexplode(attribute.attacl) AS access
+                        WHERE namespace.nspname = 'agri'
+                          AND attribute.attnum > 0
+                          AND NOT attribute.attisdropped
+                          AND access.grantee = role.oid
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM pg_namespace AS namespace
+                        CROSS JOIN LATERAL aclexplode(
+                            coalesce(
+                                namespace.nspacl,
+                                acldefault('n', namespace.nspowner)
+                            )
+                        ) AS access
+                        WHERE namespace.nspname = 'agri'
+                          AND access.grantee = role.oid
+                    )
+                FROM pg_roles AS role
+                WHERE role.rolname = current_user
+                """
+            )
+        )
+        if eligibility.scalar_one_or_none() is not True:
+            raise ValueError(
+                "forecast MV refresh requires a dedicated NOINHERIT, non-elevated, non-owner "
+                "operator login whose only role membership is plantgeo_forecast_mv_refresher"
+            )
+        await session.execute(text("SET LOCAL ROLE plantgeo_forecast_mv_refresher"))
+        await session.execute(text("SELECT agri.refresh_forecast_ml_daily_serving()"))
+        result = await session.execute(text("SELECT count(*) FROM agri.mv_forecast_ml_daily_serving"))
+        return int(result.scalar_one())
+
+
+def _forecast_cli_timestamp(value: str, option_name: str) -> datetime:
+    """Parse one timezone-aware ISO-8601 CLI timestamp and normalize it to UTC."""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise click.BadParameter("must be an ISO-8601 timestamp", param_hint=option_name) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise click.BadParameter("must include a UTC offset", param_hint=option_name)
+    return parsed.astimezone(UTC)
+
+
+@cli.command("forecast-run-iteration")
+@click.option("--iteration-key", required=True, help="Stable idempotency key for this immutable evaluation.")
+@click.option("--series-id", type=click.UUID, required=True)
+@click.option("--release-set-id", type=click.UUID, required=True)
+@click.option("--as-of-time", required=True, help="Timezone-aware governed data-availability boundary.")
+@click.option("--cutoff-time", required=True, help="UTC day start that ends the training history.")
+@click.option("--history-start", help="Optional UTC day start; defaults to the first governed observation.")
+@click.option("--horizon-days", type=click.IntRange(1, 366), default=30, show_default=True)
+@click.option("--simulation-count", type=click.IntRange(100, 10_000), default=1000, show_default=True)
+@click.option("--seed", type=click.IntRange(-(2**63), 2**63 - 1), default=0, show_default=True)
+@click.option(
+    "--gap-policy",
+    type=click.Choice(["strict", "locf"], case_sensitive=True),
+    default="strict",
+    show_default=True,
+)
+@click.option("--lower-bound", type=float)
+@click.option("--upper-bound", type=float)
+def forecast_run_iteration(  # noqa: PLR0913
+    iteration_key: str,
+    series_id: uuid.UUID,
+    release_set_id: uuid.UUID,
+    as_of_time: str,
+    cutoff_time: str,
+    history_start: str | None,
+    horizon_days: int,
+    simulation_count: int,
+    seed: int,
+    gap_policy: str,
+    lower_bound: float | None,
+    upper_bound: float | None,
+) -> None:
+    """Persist one deterministic evaluation-only daily bootstrap iteration."""
+    if any(bound is not None and not math.isfinite(bound) for bound in (lower_bound, upper_bound)):
+        raise click.BadParameter("must be finite", param_hint="lower-bound/upper-bound")
+    if lower_bound is not None and upper_bound is not None and lower_bound > upper_bound:
+        raise click.BadParameter("must not exceed upper-bound", param_hint="lower-bound")
+    try:
+        summary = asyncio.run(
+            _forecast_run_iteration(
+                iteration_key=iteration_key,
+                series_id=series_id,
+                release_set_id=release_set_id,
+                as_of_time=_forecast_cli_timestamp(as_of_time, "as-of-time"),
+                cutoff_time=_forecast_cli_timestamp(cutoff_time, "cutoff-time"),
+                history_start=(
+                    _forecast_cli_timestamp(history_start, "history-start") if history_start is not None else None
+                ),
+                horizon_days=horizon_days,
+                simulation_count=simulation_count,
+                seed=seed,
+                gap_policy=gap_policy,
+                lower_bound=lower_bound,
+                upper_bound=upper_bound,
+            )
+        )
+    except (SQLAlchemyError, ValueError) as exc:
+        reason = (
+            f"forecast iteration failed ({exc.__class__.__name__})" if isinstance(exc, SQLAlchemyError) else str(exc)
+        )
+        raise click.ClickException(reason) from exc
+    click.echo(json.dumps(summary, sort_keys=True))
+
+
+async def _forecast_run_iteration(  # noqa: PLR0913
+    *,
+    iteration_key: str,
+    series_id: uuid.UUID,
+    release_set_id: uuid.UUID,
+    as_of_time: datetime,
+    cutoff_time: datetime,
+    history_start: datetime | None,
+    horizon_days: int,
+    simulation_count: int,
+    seed: int,
+    gap_policy: str,
+    lower_bound: float | None,
+    upper_bound: float | None,
+) -> dict[str, Any]:
+    database_url = settings.require_forecast_iteration_database_url()
+    parameters = {
+        "iteration_key": iteration_key,
+        "series_id": series_id,
+        "release_set_id": release_set_id,
+        "as_of_time": as_of_time,
+        "cutoff_time": cutoff_time,
+        "history_start": history_start,
+        "horizon_days": horizon_days,
+        "simulation_count": simulation_count,
+        "seed": seed,
+        "gap_policy": gap_policy,
+        "lower_bound": lower_bound,
+        "upper_bound": upper_bound,
+    }
+    async with forecast_iteration_session(database_url) as session, session.begin():
+        await session.execute(text("SET LOCAL statement_timeout = '120s'"))
+        call_result = await session.execute(
+            text(
+                """
+                CALL agri.materialize_forecast_iteration(
+                    CAST(NULL AS uuid),
+                    CAST(:iteration_key AS varchar),
+                    CAST(:series_id AS uuid),
+                    CAST(:release_set_id AS uuid),
+                    CAST(:as_of_time AS timestamptz),
+                    CAST(:cutoff_time AS timestamptz),
+                    CAST(:history_start AS timestamptz),
+                    :horizon_days,
+                    :simulation_count,
+                    :seed,
+                    CAST(:gap_policy AS varchar),
+                    CAST(:lower_bound AS double precision),
+                    CAST(:upper_bound AS double precision)
+                )
+                """
+            ),
+            parameters,
+        )
+        iteration_id = call_result.scalar_one()
+        summary_result = await session.execute(
+            text(
+                """
+                SELECT
+                    iteration.id,
+                    iteration.iteration_key,
+                    iteration.status,
+                    iteration.method,
+                    iteration.purpose,
+                    iteration.availability_mode,
+                    iteration.series_id,
+                    iteration.release_set_id,
+                    iteration.cutoff_time,
+                    iteration.horizon_days,
+                    iteration.simulation_count,
+                    iteration.simulation_seed,
+                    iteration.gap_policy,
+                    iteration.training_day_count,
+                    iteration.increment_count,
+                    iteration.receipt_checksum,
+                    iteration.recorded_at,
+                    count(value.id)::integer AS value_count
+                FROM agri.forecast_iteration AS iteration
+                INNER JOIN agri.forecast_iteration_value AS value
+                    ON value.iteration_id = iteration.id
+                WHERE iteration.id = :iteration_id
+                GROUP BY iteration.id
+                """
+            ),
+            {"iteration_id": iteration_id},
+        )
+        row = summary_result.mappings().one()
+    return {
+        "availability_mode": row["availability_mode"],
+        "cutoff_time": row["cutoff_time"].isoformat(),
+        "gap_policy": row["gap_policy"],
+        "horizon_days": row["horizon_days"],
+        "increment_count": row["increment_count"],
+        "iteration_id": str(row["id"]),
+        "iteration_key": row["iteration_key"],
+        "method": row["method"],
+        "purpose": row["purpose"],
+        "receipt_checksum": row["receipt_checksum"],
+        "recorded_at": row["recorded_at"].isoformat(),
+        "release_set_id": str(row["release_set_id"]),
+        "series_id": str(row["series_id"]),
+        "simulation_count": row["simulation_count"],
+        "simulation_seed": row["simulation_seed"],
+        "state": row["status"],
+        "training_day_count": row["training_day_count"],
+        "value_count": row["value_count"],
+    }
+
+
+@cli.command("forecast-reconcile-actuals")
+@click.option("--iteration-id", type=click.UUID, required=True)
+@click.option(
+    "--actual-release-set-id",
+    type=click.UUID,
+    required=True,
+    help="Validated release set containing the later actual observations.",
+)
+@click.option("--as-of-time", required=True, help="Timezone-aware actual-availability boundary.")
+def forecast_reconcile_actuals(
+    iteration_id: uuid.UUID,
+    actual_release_set_id: uuid.UUID,
+    as_of_time: str,
+) -> None:
+    """Append governed actuals and outcome signals to one forecast iteration."""
+    try:
+        result = asyncio.run(
+            _forecast_reconcile_actuals(
+                iteration_id=iteration_id,
+                actual_release_set_id=actual_release_set_id,
+                as_of_time=_forecast_cli_timestamp(as_of_time, "as-of-time"),
+            )
+        )
+    except (SQLAlchemyError, ValueError) as exc:
+        reason = (
+            f"forecast actual reconciliation failed ({exc.__class__.__name__})"
+            if isinstance(exc, SQLAlchemyError)
+            else str(exc)
+        )
+        raise click.ClickException(reason) from exc
+    click.echo(json.dumps(result, sort_keys=True))
+
+
+async def _forecast_reconcile_actuals(
+    *,
+    iteration_id: uuid.UUID,
+    actual_release_set_id: uuid.UUID,
+    as_of_time: datetime,
+) -> dict[str, Any]:
+    database_url = settings.require_forecast_iteration_database_url()
+    async with forecast_iteration_session(database_url) as session, session.begin():
+        await session.execute(text("SET LOCAL statement_timeout = '120s'"))
+        call_result = await session.execute(
+            text(
+                """
+                CALL agri.reconcile_forecast_iteration_actuals(
+                    0,
+                    CAST(:iteration_id AS uuid),
+                    CAST(:actual_release_set_id AS uuid),
+                    CAST(:as_of_time AS timestamptz)
+                )
+                """
+            ),
+            {
+                "iteration_id": iteration_id,
+                "actual_release_set_id": actual_release_set_id,
+                "as_of_time": as_of_time,
+            },
+        )
+        inserted_count = int(call_result.scalar_one())
+        result = await session.execute(
+            text(
+                """
+                SELECT
+                    count(*)::integer AS forecast_value_count,
+                    count(outcome.actual_checksum)::integer AS actual_count,
+                    avg(outcome.absolute_error) AS mean_absolute_error,
+                    avg(
+                        CASE WHEN outcome.interval_covered THEN 1.0 ELSE 0.0 END
+                    ) AS interval_coverage
+                FROM agri.v_forecast_iteration_outcome AS outcome
+                WHERE outcome.iteration_id = :iteration_id
+                """
+            ),
+            {"iteration_id": iteration_id},
+        )
+        row = result.mappings().one()
+    return {
+        "actual_count": row["actual_count"],
+        "actual_release_set_id": str(actual_release_set_id),
+        "as_of_time": as_of_time.isoformat(),
+        "inserted_count": inserted_count,
+        "interval_coverage": (float(row["interval_coverage"]) if row["interval_coverage"] is not None else None),
+        "iteration_id": str(iteration_id),
+        "mean_absolute_error": (float(row["mean_absolute_error"]) if row["mean_absolute_error"] is not None else None),
+        "forecast_value_count": row["forecast_value_count"],
+    }
+
+
 @cli.command("job-logs-maintain")
 @click.option(
     "--retention-days",
@@ -137,7 +638,7 @@ def job_logs_maintain(retention_days: int, future_days: int) -> None:
 
 async def _job_logs_maintain(retention_days: int, future_days: int) -> None:
     try:
-        async with engine.begin() as connection:
+        async with combined_local_engine().begin() as connection:
             result = await maintain_job_event_partitions(
                 connection,
                 now=datetime.now().astimezone(),
@@ -470,6 +971,550 @@ def source_ingest_status(checkpoint: Path) -> None:
     click.echo(value.model_dump_json(indent=2))
 
 
+@cli.command("historical-nasa-backfill")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_nasa_backfill(plan: Path) -> None:
+    """Locally fetch, validate, and persist one reviewed NASA POWER backfill."""
+    asyncio.run(_historical_nasa_backfill(plan))
+
+
+async def _historical_nasa_backfill(plan_path: Path) -> None:
+    try:
+        loader_database_url = settings.require_local_source_loader_database_url()
+        plan = HistoricalNasaBackfillPlan.model_validate_json(plan_path.read_bytes())
+        checkpoint_path_value = historical_nasa_checkpoint_path(settings.local_execution_root, plan)
+        checkpoint = (
+            load_historical_nasa_checkpoint(checkpoint_path_value)
+            if checkpoint_path_value.exists()
+            else initialize_historical_nasa_checkpoint(plan)
+        )
+        if checkpoint.plan_checksum != historical_nasa_plan_checksum(plan):
+            raise ValueError("historical checkpoint does not bind the reviewed plan")
+        if checkpoint.state == "blocked" and {receipt.cell_key for receipt in checkpoint.receipts} == {
+            cell.cell_key for cell in plan.nasa.cells
+        }:
+            checkpoint = checkpoint.model_copy(
+                update={"state": "validated", "updated_at": datetime.now().astimezone(), "reason": None}
+            )
+        write_historical_nasa_checkpoint(checkpoint_path_value, checkpoint)
+        completed_cells = {receipt.cell_key for receipt in checkpoint.receipts}
+        for cell in plan.nasa.cells:
+            if cell.cell_key in completed_cells:
+                continue
+            result = load_cached_historical_nasa_result(settings.local_execution_root, plan, cell)
+            if result is None:
+                result = await fetch_nasa_power_daily(plan.nasa, cell)
+                cache_historical_nasa_result(settings.local_execution_root, plan, result)
+            async with local_source_loader_session(loader_database_url) as session, session.begin():
+                await persist_nasa_power_cell(session, plan=plan, result=result)
+            checkpoint = record_historical_nasa_result(plan, checkpoint, result)
+            write_historical_nasa_checkpoint(checkpoint_path_value, checkpoint)
+            completed_cells.add(cell.cell_key)
+        if checkpoint.state != "validated":
+            raise ValueError("historical backfill did not produce complete source-cell coverage")
+        release_set = None
+        if all(receipt.retrieved_at <= plan.release_set_as_of for receipt in checkpoint.receipts):
+            async with local_source_loader_session(loader_database_url) as session, session.begin():
+                release_set = await finalize_nasa_release_set(session, plan=plan, checkpoint=checkpoint)
+    except (OSError, SQLAlchemyError, ValueError, httpx.HTTPError) as exc:
+        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
+            _write_historical_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
+        reason = _historical_nasa_failure_reason(exc)
+        raise click.ClickException(reason) from exc
+    click.echo(
+        json.dumps(
+            {
+                "checkpoint": str(checkpoint_path_value),
+                "state": checkpoint.state,
+                "source_cell_count": len(checkpoint.receipts),
+                "release_set_id": None if release_set is None else str(release_set.release_set_id),
+                "release_set_manifest_checksum": None if release_set is None else release_set.manifest_checksum,
+                "release_set_idempotent": None if release_set is None else release_set.idempotent,
+                "finalization_required": release_set is None,
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("historical-nasa-status")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_nasa_status(plan: Path) -> None:
+    """Read the durable local NASA historical checkpoint without network or database access."""
+    try:
+        value = HistoricalNasaBackfillPlan.model_validate_json(plan.read_bytes())
+        path = historical_nasa_checkpoint_path(settings.local_execution_root, value)
+        checkpoint = load_historical_nasa_checkpoint(path)
+        if checkpoint.plan_checksum != historical_nasa_plan_checksum(value):
+            raise ValueError("historical checkpoint does not bind the reviewed plan")
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(checkpoint.model_dump_json(indent=2))
+
+
+@cli.command("historical-nasa-materialize-parquet")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_nasa_materialize_parquet(plan: Path) -> None:
+    """Build one local daily-partitioned Parquet lake from complete cached NASA receipts."""
+    try:
+        value = HistoricalNasaBackfillPlan.model_validate_json(plan.read_bytes())
+        checkpoint_path_value = historical_nasa_checkpoint_path(settings.local_execution_root, value)
+        checkpoint = load_historical_nasa_checkpoint(checkpoint_path_value)
+        manifest = materialize_historical_nasa_parquet(settings.local_execution_root, value, checkpoint)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(_historical_nasa_failure_reason(exc)) from exc
+    click.echo(
+        json.dumps(
+            {
+                "dataset_root": str(historical_nasa_parquet_root(settings.local_execution_root, value)),
+                **manifest.model_dump(mode="json"),
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("historical-nasa-finalize")
+@click.option("--source-plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+@click.option("--finalization", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+@click.option("--output-plan", type=click.Path(path_type=Path, dir_okay=False), required=True)
+def historical_nasa_finalize(source_plan: Path, finalization: Path, output_plan: Path) -> None:
+    """Finalize completed NASA POWER receipts under a later governed as-of time."""
+    asyncio.run(_historical_nasa_finalize(source_plan, finalization, output_plan))
+
+
+async def _historical_nasa_finalize(
+    source_plan_path: Path,
+    finalization_path: Path,
+    output_plan_path: Path,
+) -> None:
+    try:
+        loader_database_url = settings.require_local_source_loader_database_url()
+        source_plan = HistoricalNasaBackfillPlan.model_validate_json(source_plan_path.read_bytes())
+        finalization = HistoricalNasaFinalization.model_validate_json(finalization_path.read_bytes())
+        source_checkpoint_path = historical_nasa_checkpoint_path(settings.local_execution_root, source_plan)
+        source_checkpoint = load_historical_nasa_checkpoint(source_checkpoint_path)
+        release_plan, checkpoint = rebind_historical_nasa_checkpoint_for_finalization(
+            source_plan,
+            finalization,
+            source_checkpoint,
+            updated_at=datetime.now(UTC),
+        )
+        checkpoint_path_value = historical_nasa_checkpoint_path(settings.local_execution_root, release_plan)
+        write_historical_nasa_checkpoint(checkpoint_path_value, checkpoint)
+        async with local_source_loader_session(loader_database_url) as session, session.begin():
+            release_set = await finalize_nasa_release_set(session, plan=release_plan, checkpoint=checkpoint)
+        write_historical_nasa_release_plan(output_plan_path, release_plan)
+    except (OSError, SQLAlchemyError, ValueError) as exc:
+        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
+            _write_historical_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
+        raise click.ClickException(_historical_nasa_failure_reason(exc)) from exc
+    click.echo(
+        json.dumps(
+            {
+                "source_checkpoint": str(source_checkpoint_path),
+                "checkpoint": str(checkpoint_path_value),
+                "release_plan": str(output_plan_path),
+                "state": checkpoint.state,
+                "source_cell_count": len(checkpoint.receipts),
+                "release_set_key": release_plan.release_set_key,
+                "release_set_id": str(release_set.release_set_id),
+                "release_set_manifest_checksum": release_set.manifest_checksum,
+                "release_set_idempotent": release_set.idempotent,
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("historical-era5-backfill")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_era5_backfill(plan: Path) -> None:
+    """Fetch, validate, and cache one reviewed ERA5-Land historical source plan."""
+    asyncio.run(_historical_era5_backfill(plan))
+
+
+async def _historical_era5_backfill(plan_path: Path) -> None:
+    try:
+        plan = HistoricalEra5LandBackfillPlan.model_validate_json(plan_path.read_bytes())
+        checkpoint_path_value = historical_era5_checkpoint_path(settings.local_execution_root, plan)
+        checkpoint = (
+            load_historical_era5_checkpoint(checkpoint_path_value)
+            if checkpoint_path_value.exists()
+            else initialize_historical_era5_checkpoint(plan)
+        )
+        if checkpoint.plan_checksum != historical_era5_plan_checksum(plan):
+            raise ValueError("ERA5 checkpoint does not bind the reviewed plan")
+        expected_period_keys = {period.key for period in plan.periods}
+        if (
+            checkpoint.state == "blocked"
+            and {receipt.period_key for receipt in checkpoint.receipts} == expected_period_keys
+        ):
+            checkpoint = checkpoint.model_copy(
+                update={"state": "validated", "updated_at": datetime.now(UTC), "reason": None}
+            )
+        write_historical_era5_checkpoint(checkpoint_path_value, checkpoint)
+        completed_period_keys = {receipt.period_key for receipt in checkpoint.receipts}
+        for period in plan.periods:
+            if period.key in completed_period_keys:
+                continue
+            result = load_cached_historical_era5_result(
+                settings.local_execution_root,
+                plan,
+                period,
+                cache_plan_checksum=checkpoint.raw_cache_plan_checksum,
+            )
+            if result is None:
+                result = await fetch_era5_land_monthly(plan, period)
+                cache_historical_era5_result(settings.local_execution_root, plan, result)
+            checkpoint = record_historical_era5_result(plan, checkpoint, result)
+            write_historical_era5_checkpoint(checkpoint_path_value, checkpoint)
+            completed_period_keys.add(period.key)
+        if checkpoint.state != "validated":
+            raise ValueError("ERA5 backfill did not produce complete monthly source coverage")
+    except Exception as exc:
+        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
+            _write_historical_era5_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
+        raise click.ClickException(_historical_era5_failure_reason(exc)) from exc
+    click.echo(
+        json.dumps(
+            {
+                "checkpoint": str(checkpoint_path_value),
+                "state": checkpoint.state,
+                "source_month_count": len(checkpoint.receipts),
+                "release_receipt_manifest_checksum": historical_era5_release_manifest(plan, checkpoint),
+                "next_steps": ["historical-era5-persist", "historical-era5-materialize-parquet"],
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("historical-era5-persist")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_era5_persist(plan: Path) -> None:
+    """Persist one complete cache-backed ERA5-Land source plan into the local warehouse."""
+    asyncio.run(_historical_era5_persist(plan))
+
+
+async def _historical_era5_persist(plan_path: Path) -> None:
+    try:
+        loader_database_url = settings.require_local_source_loader_database_url()
+        plan = HistoricalEra5LandBackfillPlan.model_validate_json(plan_path.read_bytes())
+        checkpoint_path_value = historical_era5_checkpoint_path(settings.local_execution_root, plan)
+        checkpoint = load_historical_era5_checkpoint(checkpoint_path_value)
+        if checkpoint.plan_checksum != historical_era5_plan_checksum(plan) or checkpoint.state != "validated":
+            raise ValueError("ERA5 persistence requires a complete validated matching checkpoint")
+        for period in plan.periods:
+            result = load_cached_historical_era5_result(
+                settings.local_execution_root,
+                plan,
+                period,
+                cache_plan_checksum=checkpoint.raw_cache_plan_checksum,
+            )
+            if result is None:
+                raise ValueError("ERA5 persistence requires every validated local raw archive")
+            async with local_source_loader_session(loader_database_url) as session, session.begin():
+                await persist_era5_land_month(session, plan=plan, result=result)
+        release_set = None
+        if all(receipt.retrieved_at <= plan.release_set_as_of for receipt in checkpoint.receipts):
+            async with local_source_loader_session(loader_database_url) as session, session.begin():
+                release_set = await finalize_era5_release_set(session, plan=plan, checkpoint=checkpoint)
+    except (OSError, SQLAlchemyError, ValueError) as exc:
+        raise click.ClickException(_historical_era5_failure_reason(exc)) from exc
+    click.echo(
+        json.dumps(
+            {
+                "checkpoint": str(checkpoint_path_value),
+                "state": checkpoint.state,
+                "source_month_count": len(checkpoint.receipts),
+                "release_set_id": None if release_set is None else str(release_set.release_set_id),
+                "release_set_manifest_checksum": None if release_set is None else release_set.manifest_checksum,
+                "release_set_idempotent": None if release_set is None else release_set.idempotent,
+                "finalization_required": release_set is None,
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("historical-era5-materialize-parquet")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_era5_materialize_parquet(plan: Path) -> None:
+    """Build the local daily-partitioned ERA5 Parquet lake from cached source receipts."""
+    try:
+        value = HistoricalEra5LandBackfillPlan.model_validate_json(plan.read_bytes())
+        checkpoint_path_value = historical_era5_checkpoint_path(settings.local_execution_root, value)
+        checkpoint = load_historical_era5_checkpoint(checkpoint_path_value)
+        manifest = materialize_historical_era5_parquet(settings.local_execution_root, value, checkpoint)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(_historical_era5_failure_reason(exc)) from exc
+    click.echo(
+        json.dumps(
+            {
+                "dataset_root": str(historical_era5_parquet_root(settings.local_execution_root, value)),
+                **manifest.model_dump(mode="json"),
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("historical-era5-finalize")
+@click.option("--source-plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+@click.option("--finalization", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+@click.option("--output-plan", type=click.Path(path_type=Path, dir_okay=False), required=True)
+def historical_era5_finalize(source_plan: Path, finalization: Path, output_plan: Path) -> None:
+    """Finalize cache-backed ERA5 monthly receipts under a later governed as-of time."""
+    asyncio.run(_historical_era5_finalize(source_plan, finalization, output_plan))
+
+
+async def _historical_era5_finalize(
+    source_plan_path: Path,
+    finalization_path: Path,
+    output_plan_path: Path,
+) -> None:
+    try:
+        loader_database_url = settings.require_local_source_loader_database_url()
+        source_plan = HistoricalEra5LandBackfillPlan.model_validate_json(source_plan_path.read_bytes())
+        finalization = HistoricalEra5Finalization.model_validate_json(finalization_path.read_bytes())
+        source_checkpoint_path = historical_era5_checkpoint_path(settings.local_execution_root, source_plan)
+        source_checkpoint = load_historical_era5_checkpoint(source_checkpoint_path)
+        release_plan, checkpoint = rebind_historical_era5_checkpoint_for_finalization(
+            source_plan,
+            finalization,
+            source_checkpoint,
+            updated_at=datetime.now(UTC),
+        )
+        checkpoint_path_value = historical_era5_checkpoint_path(settings.local_execution_root, release_plan)
+        write_historical_era5_checkpoint(checkpoint_path_value, checkpoint)
+        write_historical_era5_release_plan(output_plan_path, release_plan)
+        for period in release_plan.periods:
+            result = load_cached_historical_era5_result(
+                settings.local_execution_root,
+                release_plan,
+                period,
+                cache_plan_checksum=checkpoint.raw_cache_plan_checksum,
+            )
+            if result is None:
+                raise ValueError("ERA5 finalization requires every validated local raw archive")
+            async with local_source_loader_session(loader_database_url) as session, session.begin():
+                await persist_era5_land_month(session, plan=release_plan, result=result)
+        async with local_source_loader_session(loader_database_url) as session, session.begin():
+            release_set = await finalize_era5_release_set(session, plan=release_plan, checkpoint=checkpoint)
+    except (OSError, SQLAlchemyError, ValueError) as exc:
+        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
+            _write_historical_era5_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
+        raise click.ClickException(_historical_era5_failure_reason(exc)) from exc
+    click.echo(
+        json.dumps(
+            {
+                "source_checkpoint": str(source_checkpoint_path),
+                "checkpoint": str(checkpoint_path_value),
+                "release_plan": str(output_plan_path),
+                "state": checkpoint.state,
+                "source_month_count": len(checkpoint.receipts),
+                "release_set_key": release_plan.release_set_key,
+                "release_set_id": str(release_set.release_set_id),
+                "release_set_manifest_checksum": release_set.manifest_checksum,
+                "release_set_idempotent": release_set.idempotent,
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("historical-usdm-backfill")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_usdm_backfill(plan: Path) -> None:
+    """Locally fetch, validate, persist, and finalize one reviewed USDM four-year backfill."""
+    asyncio.run(_historical_usdm_backfill(plan))
+
+
+async def _historical_usdm_backfill(plan_path: Path) -> None:
+    try:
+        loader_database_url = settings.require_local_source_loader_database_url()
+        plan = HistoricalUsdmBackfillPlan.model_validate_json(plan_path.read_bytes())
+        checkpoint_path_value = historical_usdm_checkpoint_path(settings.local_execution_root, plan)
+        checkpoint = (
+            load_historical_usdm_checkpoint(checkpoint_path_value)
+            if checkpoint_path_value.exists()
+            else initialize_historical_usdm_checkpoint(plan)
+        )
+        if checkpoint.plan_checksum != historical_usdm_plan_checksum(plan):
+            raise ValueError("historical USDM checkpoint does not bind the reviewed plan")
+        if checkpoint.state == "blocked" and {receipt.issue_date for receipt in checkpoint.receipts} == set(
+            plan.issue_dates
+        ):
+            checkpoint = checkpoint.model_copy(
+                update={"state": "validated", "updated_at": datetime.now().astimezone(), "reason": None}
+            )
+        write_historical_usdm_checkpoint(checkpoint_path_value, checkpoint)
+        completed_dates = {receipt.issue_date for receipt in checkpoint.receipts}
+        for issue_date in plan.issue_dates:
+            if issue_date in completed_dates:
+                continue
+            result = await fetch_usdm_shapefile(plan, issue_date)
+            async with local_source_loader_session(loader_database_url) as session, session.begin():
+                await persist_usdm_shapefile(session, plan=plan, result=result)
+            checkpoint = record_historical_usdm_result(plan, checkpoint, result)
+            write_historical_usdm_checkpoint(checkpoint_path_value, checkpoint)
+            completed_dates.add(issue_date)
+        if checkpoint.state != "validated":
+            raise ValueError("historical USDM backfill did not produce complete weekly coverage")
+        async with local_source_loader_session(loader_database_url) as session, session.begin():
+            release_set = await finalize_usdm_release_set(session, plan=plan, checkpoint=checkpoint)
+    except (OSError, SQLAlchemyError, ValueError, httpx.HTTPError) as exc:
+        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
+            _write_historical_usdm_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
+        raise click.ClickException(_historical_usdm_failure_reason(exc)) from exc
+    click.echo(
+        json.dumps(
+            {
+                "checkpoint": str(checkpoint_path_value),
+                "state": checkpoint.state,
+                "weekly_source_release_count": len(checkpoint.receipts),
+                "release_set_id": str(release_set.release_set_id),
+                "release_set_manifest_checksum": release_set.manifest_checksum,
+                "release_set_idempotent": release_set.idempotent,
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("historical-usdm-finalize")
+@click.option("--source-plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+@click.option("--finalization", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_usdm_finalize(source_plan: Path, finalization: Path) -> None:
+    """Finalize completed USDM source receipts under a later governed as-of time."""
+    asyncio.run(_historical_usdm_finalize(source_plan, finalization))
+
+
+async def _historical_usdm_finalize(source_plan_path: Path, finalization_path: Path) -> None:
+    try:
+        loader_database_url = settings.require_local_source_loader_database_url()
+        source_plan = HistoricalUsdmBackfillPlan.model_validate_json(source_plan_path.read_bytes())
+        finalization = HistoricalUsdmFinalization.model_validate_json(finalization_path.read_bytes())
+        source_checkpoint_path = historical_usdm_checkpoint_path(settings.local_execution_root, source_plan)
+        source_checkpoint = load_historical_usdm_checkpoint(source_checkpoint_path)
+        release_plan, checkpoint = rebind_historical_usdm_checkpoint_for_finalization(
+            source_plan,
+            finalization,
+            source_checkpoint,
+            updated_at=datetime.now(UTC),
+        )
+        checkpoint_path_value = historical_usdm_checkpoint_path(settings.local_execution_root, release_plan)
+        write_historical_usdm_checkpoint(checkpoint_path_value, checkpoint)
+        async with local_source_loader_session(loader_database_url) as session, session.begin():
+            release_set = await finalize_usdm_release_set(session, plan=release_plan, checkpoint=checkpoint)
+    except (OSError, SQLAlchemyError, ValueError) as exc:
+        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
+            _write_historical_usdm_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
+        raise click.ClickException(_historical_usdm_failure_reason(exc)) from exc
+    click.echo(
+        json.dumps(
+            {
+                "source_checkpoint": str(source_checkpoint_path),
+                "checkpoint": str(checkpoint_path_value),
+                "state": checkpoint.state,
+                "weekly_source_release_count": len(checkpoint.receipts),
+                "release_set_key": release_plan.release_set_key,
+                "release_set_id": str(release_set.release_set_id),
+                "release_set_manifest_checksum": release_set.manifest_checksum,
+                "release_set_idempotent": release_set.idempotent,
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("historical-usdm-status")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_usdm_status(plan: Path) -> None:
+    """Read the durable local USDM checkpoint without network or warehouse access."""
+    try:
+        value = HistoricalUsdmBackfillPlan.model_validate_json(plan.read_bytes())
+        path = historical_usdm_checkpoint_path(settings.local_execution_root, value)
+        checkpoint = load_historical_usdm_checkpoint(path)
+        if checkpoint.plan_checksum != historical_usdm_plan_checksum(value):
+            raise ValueError("historical USDM checkpoint does not bind the reviewed plan")
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(checkpoint.model_dump_json(indent=2))
+
+
+@cli.command("historical-promotion-spool")
+@click.option("--release-set-key", required=True)
+@click.option("--minimum-target-revision", default="20260720_0004", show_default=True)
+def historical_promotion_spool(release_set_key: str, minimum_target_revision: str) -> None:
+    """Stream one complete local root into a resumable typed-promotion spool."""
+    asyncio.run(_historical_promotion_spool(release_set_key, minimum_target_revision))
+
+
+async def _historical_promotion_spool(release_set_key: str, minimum_target_revision: str) -> None:
+    try:
+        loader_database_url = settings.require_local_source_loader_database_url()
+        exporter = LocalHistoricalPromotionExporter(
+            spool_root=settings.local_execution_root,
+            minimum_target_revision=minimum_target_revision,
+            max_chunk_bytes=settings.historical_promotion_max_chunk_bytes,
+        )
+        async with local_source_loader_session(loader_database_url) as session:
+            spool = await exporter.spool(session, release_set_key=release_set_key)
+    except (OSError, SQLAlchemyError, ValueError) as exc:
+        raise click.ClickException(_historical_promotion_failure_reason(exc)) from exc
+    click.echo(
+        json.dumps(
+            {
+                "spool_directory": str(spool.directory),
+                "manifest_checksum": spool.manifest.manifest_checksum,
+                "record_count": spool.manifest.total_record_count,
+                "chunk_count": len(spool.manifest.chunks),
+                "artifact_count": len(spool.artifacts),
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("historical-promotion-upload")
+@click.option("--spool-directory", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True)
+def historical_promotion_upload(spool_directory: Path) -> None:
+    """Resume a spooled promotion through the configured private Railway receiver."""
+    asyncio.run(_historical_promotion_upload(spool_directory))
+
+
+async def _historical_promotion_upload(spool_directory: Path) -> None:
+    try:
+        loader_database_url = settings.require_local_source_loader_database_url()
+        api_url, token = settings.require_historical_promotion_client()
+        spool = load_historical_promotion_spool(spool_directory)
+        uploader = HistoricalPromotionUploader(
+            api_url=api_url,
+            token=token,
+            retry_attempts=settings.historical_promotion_retry_attempts,
+            retry_base_seconds=settings.historical_promotion_retry_base_seconds,
+        )
+        exporter = LocalHistoricalPromotionExporter(spool_root=settings.local_execution_root)
+        async with local_source_loader_session(loader_database_url) as session:
+            checkpoint = await exporter.upload(session, spool=spool, uploader=uploader)
+    except (OSError, SQLAlchemyError, ValueError) as exc:
+        raise click.ClickException(_historical_promotion_failure_reason(exc)) from exc
+    click.echo(
+        json.dumps(
+            {
+                "state": checkpoint.state,
+                "manifest_checksum": checkpoint.manifest_checksum,
+                "bundle_id": str(checkpoint.bundle_id) if checkpoint.bundle_id else None,
+                "next_chunk_sequence": checkpoint.next_chunk_sequence,
+                "uploaded_artifact_count": len(checkpoint.uploaded_artifact_tokens),
+            },
+            indent=2,
+        )
+    )
+
+
 @cli.command("pipeline-status")
 @click.option(
     "--checkpoint",
@@ -523,6 +1568,97 @@ def _source_ingestion_failure_reason(exc: Exception) -> str:
     """Keep database connection details out of durable checkpoints and CLI output."""
     if isinstance(exc, SQLAlchemyError):
         return f"warehouse operation failed ({exc.__class__.__name__})"
+    return str(exc)
+
+
+def _write_historical_blocked_checkpoint(
+    path: Path,
+    checkpoint: HistoricalNasaCheckpoint,
+    exc: Exception,
+) -> None:
+    """Record a redacted retry boundary after a historical local operation fails."""
+    with suppress(OSError):
+        write_historical_nasa_checkpoint(
+            path,
+            checkpoint.model_copy(
+                update={
+                    "state": "blocked",
+                    "updated_at": datetime.now().astimezone(),
+                    "reason": _historical_nasa_failure_reason(exc),
+                }
+            ),
+        )
+
+
+def _write_historical_usdm_blocked_checkpoint(
+    path: Path,
+    checkpoint: HistoricalUsdmCheckpoint,
+    exc: Exception,
+) -> None:
+    """Record a redacted retry boundary after a USDM local operation fails."""
+    with suppress(OSError):
+        write_historical_usdm_checkpoint(
+            path,
+            checkpoint.model_copy(
+                update={
+                    "state": "blocked",
+                    "updated_at": datetime.now().astimezone(),
+                    "reason": _historical_usdm_failure_reason(exc),
+                }
+            ),
+        )
+
+
+def _write_historical_era5_blocked_checkpoint(
+    path: Path,
+    checkpoint: HistoricalEra5Checkpoint,
+    exc: Exception,
+) -> None:
+    """Record a redacted retry boundary after a local ERA5 acquisition failure."""
+    with suppress(OSError):
+        write_historical_era5_checkpoint(
+            path,
+            checkpoint.model_copy(
+                update={
+                    "state": "blocked",
+                    "updated_at": datetime.now(UTC),
+                    "reason": _historical_era5_failure_reason(exc),
+                }
+            ),
+        )
+
+
+def _historical_nasa_failure_reason(exc: Exception) -> str:
+    """Avoid persisting database or HTTP details in historical checkpoints."""
+    if isinstance(exc, SQLAlchemyError):
+        return f"historical warehouse operation failed ({exc.__class__.__name__})"
+    if isinstance(exc, httpx.HTTPError):
+        return f"NASA POWER request failed ({exc.__class__.__name__})"
+    return str(exc)
+
+
+def _historical_usdm_failure_reason(exc: Exception) -> str:
+    """Avoid persisting database and HTTP details in USDM checkpoints."""
+    if isinstance(exc, SQLAlchemyError):
+        return f"historical warehouse operation failed ({exc.__class__.__name__})"
+    if isinstance(exc, httpx.HTTPError):
+        return f"USDM request failed ({exc.__class__.__name__})"
+    return str(exc)
+
+
+def _historical_era5_failure_reason(exc: Exception) -> str:
+    """Keep CDS credentials and provider details out of ERA5 checkpoint failures."""
+    if isinstance(exc, ValueError):
+        return str(exc)
+    return f"ERA5-Land operation failed ({exc.__class__.__name__})"
+
+
+def _historical_promotion_failure_reason(exc: Exception) -> str:
+    """Keep receiver URLs, tokens, and database details out of CLI failures."""
+    if isinstance(exc, SQLAlchemyError):
+        return f"historical promotion warehouse operation failed ({exc.__class__.__name__})"
+    if isinstance(exc, httpx.HTTPError):
+        return f"historical promotion request failed ({exc.__class__.__name__})"
     return str(exc)
 
 

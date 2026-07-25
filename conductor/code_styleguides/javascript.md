@@ -1,51 +1,86 @@
-# Google JavaScript Style Guide Summary
+---
+type: code-styleguide
+---
 
-This document summarizes key rules and best practices from the Google JavaScript Style Guide.
+# PlantGeo JavaScript Standard
 
-## 1. Source File Basics
-- **File Naming:** All lowercase, with underscores (`_`) or dashes (`-`). Extension must be `.js`.
-- **File Encoding:** UTF-8.
-- **Whitespace:** Use only ASCII horizontal spaces (0x20). Tabs are forbidden for indentation.
+PlantGeo is TypeScript-first. New application logic belongs in `.ts` or
+`.tsx`; plain JavaScript is reserved for tool configuration, narrowly scoped
+runtime glue, migrations/import helpers that cannot use TypeScript, and vendor
+interoperability. This document applies to every `.js`, `.mjs`, and `.cjs`
+file in the repository.
 
-## 2. Source File Structure
-- New files should be ES modules (`import`/`export`).
-- **Exports:** Use named exports (`export {MyClass};`). **Do not use default exports.**
-- **Imports:** Do not use line-wrapped imports. The `.js` extension in import paths is mandatory.
+## Scope and modules
 
-## 3. Formatting
-- **Braces:** Required for all control structures (`if`, `for`, `while`, etc.), even single-line blocks. Use K&R style ("Egyptian brackets").
-- **Indentation:** +2 spaces for each new block.
-- **Semicolons:** Every statement must be terminated with a semicolon.
-- **Column Limit:** 80 characters.
-- **Line-wrapping:** Indent continuation lines at least +4 spaces.
-- **Whitespace:** Use single blank lines between methods. No trailing whitespace.
+- Do not add JavaScript when TypeScript can run in that context. Do not add a
+  second implementation merely to bypass type checking.
+- Use ESM for new files. Use CommonJS only when the invoked tool requires it,
+  and isolate that compatibility boundary in one file with a short reason.
+- Use named exports for reusable modules; default exports are permitted only
+  where a framework or tool convention requires one. Do not create barrel
+  files that eagerly execute imports or pull runtime-only dependencies into
+  build configuration.
+- File names are `kebab-case`. Keep a script's input, output, and operational
+  contract obvious from its file name and `--help`/usage text.
 
-## 4. Language Features
-- **Variable Declarations:** Use `const` by default, `let` if reassignment is needed. **`var` is forbidden.**
-- **Array Literals:** Use trailing commas. Do not use the `Array` constructor.
-- **Object Literals:** Use trailing commas and shorthand properties. Do not use the `Object` constructor.
-- **Classes:** Do not use JavaScript getter/setter properties (`get name()`). Provide ordinary methods instead.
-- **Functions:** Prefer arrow functions for nested functions to preserve `this` context.
-- **String Literals:** Use single quotes (`'`). Use template literals (`` ` ``) for multi-line strings or complex interpolation.
-- **Control Structures:** Prefer `for-of` loops. `for-in` loops should only be used on dict-style objects.
-- **`this`:** Only use `this` in class constructors, methods, or in arrow functions defined within them.
-- **Equality Checks:** Always use identity operators (`===` / `!==`).
+## Safe language use
 
-## 5. Disallowed Features
-- `with` keyword.
-- `eval()` or `Function(...string)`.
-- Automatic Semicolon Insertion.
-- Modifying builtin objects (`Array.prototype.foo = ...`).
+- Use `const` by default and `let` only for reassignment. `var`, `eval`, the
+  `Function` constructor, prototype mutation, and dynamic module paths derived
+  from input are forbidden.
+- Use `===` and `!==`, braces for every control branch, trailing commas in
+  multiline literals, and `async`/`await` rather than detached promise chains.
+  Handle rejected promises at their boundary.
+- Parse all CLI, environment, file, network, queue, and child-process data as
+  untrusted. Validate shape, range, and size before use; do not rely on truthy
+  coercion for booleans or numbers.
+- Avoid shell strings and `shell: true`. When a child process is essential,
+  pass an executable plus a fixed argument array, constrain paths to the
+  intended workspace/temp directory, capture a bounded amount of output, and
+  fail with actionable diagnostics.
+- Never include credentials, Railway private hostnames, database URLs, exact
+  sensitive locations, or raw AI prompts in output. Read secrets only from the
+  documented environment variables and fail with the variable name—not its
+  value—when required configuration is missing.
 
-## 6. Naming
-- **Classes:** `UpperCamelCase`.
-- **Methods & Functions:** `lowerCamelCase`.
-- **Constants:** `CONSTANT_CASE` (all uppercase with underscores).
-- **Non-constant Fields & Variables:** `lowerCamelCase`.
+## Operational scripts and data jobs
 
-## 7. JSDoc
-- JSDoc is used on all classes, fields, and methods.
-- Use `@param`, `@return`, `@override`, `@deprecated`.
-- Type annotations are enclosed in braces (e.g., `/** @param {string} userName */`).
+- Scripts that modify data must be explicit about target environment, database,
+  or file collection; default to dry-run and require an affirmative `--apply`
+  (or documented equivalent) for mutations. Print counts and a request/job ID,
+  not raw records.
+- Make ingestion and backfill scripts idempotent. Require a stable source ID
+  or deduplication key, bound batches and concurrency, use transactions where
+  appropriate, and make retries safe.
+- Treat downloaded geospatial data as hostile: cap file and feature counts,
+  validate geometry and coordinate order, normalize to the domain schema, and
+  retain source URL, license/attribution, observed time, and import version.
+- External calls need timeouts, bounded retries with backoff and jitter, and
+  `Retry-After` handling. Do not create infinite loops or unbounded
+  `Promise.all` fan-out; give long work a cancellation path and progress logs.
+- Railway instances are disposable and may run concurrently. Do not depend on
+  local disk, process memory, or one instance owning a scheduled job for
+  correctness. Persist coordination in the supported database/queue/cache and
+  make job ownership explicit.
 
-*Source: [Google JavaScript Style Guide](https://google.github.io/styleguide/jsguide.html)*
+## Browser and worker glue
+
+- A browser-only JavaScript module must be loaded from a client boundary. It
+  cannot import server-only services or expose secrets through a public
+  variable.
+- Workers communicate through versioned, discriminated plain-data messages.
+  Include request IDs and cancellation, validate messages on receipt, transfer
+  large buffers where possible, and keep DOM, React, map, and credential access
+  on the main thread/server respectively.
+- Do not use JS to silently replace a TypeScript map layer. A layer must still
+  observe the map data budget, viewport/zoom scope, cleanup, provenance, and
+  accessibility requirements in the TypeScript and HTML/CSS standards.
+
+## Quality gate
+
+- Keep JavaScript small enough to review without inference. Add tests for data
+  parsing, dry-run/apply branching, idempotency, and failure cleanup where a
+  script changes data or deployment behavior.
+- Run the command in its safe/no-op mode before documenting it. A script that
+  deploys, migrates, imports, or deletes must document prerequisites, rollback
+  or recovery, and its exact target.

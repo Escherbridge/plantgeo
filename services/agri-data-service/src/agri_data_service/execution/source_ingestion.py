@@ -30,6 +30,7 @@ from agri_data_service.models.provenance import (
 )
 
 SOURCE_INGESTION_CHECKPOINT_SCHEMA_VERSION: Literal[2] = 2
+SOURCE_INGESTION_TRANSFORM_VERSION = "source-native"
 
 if TYPE_CHECKING:
     import uuid
@@ -277,6 +278,7 @@ async def publish_source_release(  # noqa: PLR0912, PLR0915
                 SourceRelease.data_source_id == source.id,
                 SourceRelease.source_version == plan.release.source_version,
                 SourceRelease.payload_checksum == payload_checksum,
+                SourceRelease.transform_version == SOURCE_INGESTION_TRANSFORM_VERSION,
             )
         )
     ).scalar_one_or_none()
@@ -291,6 +293,7 @@ async def publish_source_release(  # noqa: PLR0912, PLR0915
             payload_checksum=payload_checksum,
             payload_bytes=len(payload),
             schema_version=plan.release.schema_version,
+            transform_version=SOURCE_INGESTION_TRANSFORM_VERSION,
             license_snapshot=plan.source.license_name,
             query_parameters=plan.release.query_parameters,
             quality_summary=quality_summary,

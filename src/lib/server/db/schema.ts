@@ -11,10 +11,26 @@ import {
   doublePrecision,
   real,
   primaryKey,
+  customType,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const geoSchema = pgSchema("geo");
 export const trackingSchema = pgSchema("tracking");
+
+// Database triggers maintain spatial columns from validated application data.
+const spatialGeometry = customType<{ data: string; driverData: string }>({
+  dataType: () => "geometry(GEOMETRY,4326)",
+});
+
+const spatialPoint = customType<{ data: string; driverData: string }>({
+  dataType: () => "geometry(POINT,4326)",
+});
+
+const spatialGeographyPoint = customType<{ data: string; driverData: string }>({
+  dataType: () => "geography(POINT,4326)",
+});
 
 // ============================================
 // Auth Tables (public schema)
@@ -24,6 +40,8 @@ export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name"),
   email: text("email").unique().notNull(),
+  emailVerified: timestamp("email_verified", { withTimezone: true }),
+  image: text("image"),
   passwordHash: text("password_hash"),
   platformRole: varchar("platform_role", { length: 20 }).default("contributor"),
   verified: boolean("verified").default(false),
@@ -100,16 +118,20 @@ export const teamMembers = pgTable("team_members", {
 // API Keys Table (public schema)
 // ============================================
 
-export const apiKeys = pgTable("api_keys", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  keyHash: text("key_hash").notNull(),
-  userId: uuid("user_id").references(() => users.id),
-  teamId: uuid("team_id").references(() => teams.id),
-  name: text("name"),
-  permissions: jsonb("permissions").default([]),
-  rateLimit: integer("rate_limit").default(1000),
-  lastUsed: timestamp("last_used", { withTimezone: true }),
-});
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    keyHash: text("key_hash").notNull(),
+    userId: uuid("user_id").references(() => users.id),
+    teamId: uuid("team_id").references(() => teams.id),
+    name: text("name"),
+    permissions: jsonb("permissions").default([]),
+    rateLimit: integer("rate_limit").default(1000),
+    lastUsed: timestamp("last_used", { withTimezone: true }),
+  },
+  (table) => [uniqueIndex("api_keys_key_hash_unique").on(table.keyHash)]
+);
 
 // ============================================
 // Geo Schema
@@ -130,17 +152,26 @@ export const layers = geoSchema.table("layers", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
 
-export const features = geoSchema.table("features", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  layerId: uuid("layer_id")
-    .notNull()
-    .references(() => layers.id, { onDelete: "cascade" }),
-  properties: jsonb("properties").notNull().default({}),
-  status: varchar("status", { length: 20 }).default("published"),
-  reviewNote: text("review_note"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-});
+export const features = geoSchema.table(
+  "features",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    layerId: uuid("layer_id")
+      .notNull()
+      .references(() => layers.id, { onDelete: "cascade" }),
+    geom: spatialGeometry("geom"),
+    properties: jsonb("properties").notNull().default({}),
+    status: varchar("status", { length: 20 }).default("published"),
+    reviewNote: text("review_note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("features_layer_external_id_unique")
+      .on(table.layerId, sql`(${table.properties} ->> 'id')`)
+      .where(sql`${table.properties} ? 'id'`),
+  ]
+);
 
 // ============================================
 // Fire Detections (geo schema)
@@ -150,6 +181,7 @@ export const features = geoSchema.table("features", {
 export const fireDetections = geoSchema.table("fire_detections", {
   id: uuid("id").defaultRandom().primaryKey(),
   detectedAt: timestamp("detected_at", { withTimezone: true }).notNull(),
+  geom: spatialPoint("geom"),
   confidence: varchar("confidence", { length: 20 }),
   brightness: real("brightness"),
   frp: real("frp"),
@@ -161,15 +193,6 @@ export const fireDetections = geoSchema.table("fire_detections", {
 // Tracking Schema
 // ============================================
 
-export const positions = trackingSchema.table("positions", {
-  time: timestamp("time", { withTimezone: true }).notNull(),
-  assetId: uuid("asset_id").notNull(),
-  heading: doublePrecision("heading"),
-  speed: doublePrecision("speed"),
-  altitude: doublePrecision("altitude"),
-  metadata: jsonb("metadata").default({}),
-});
-
 export const assets = trackingSchema.table("assets", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: varchar("name", { length: 100 }).notNull(),
@@ -178,6 +201,24 @@ export const assets = trackingSchema.table("assets", {
   metadata: jsonb("metadata").default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
+
+export const positions = trackingSchema.table(
+  "positions",
+  {
+    time: timestamp("time", { withTimezone: true }).notNull(),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    geom: spatialGeographyPoint("geom"),
+    heading: doublePrecision("heading"),
+    speed: doublePrecision("speed"),
+    altitude: doublePrecision("altitude"),
+    metadata: jsonb("metadata").default({}),
+  },
+  (table) => [
+    uniqueIndex("positions_asset_time_unique").on(table.assetId, table.time),
+  ]
+);
 
 export const geofences = trackingSchema.table("geofences", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -209,6 +250,7 @@ export const alerts = trackingSchema.table("alerts", {
 export const poi = geoSchema.table("poi", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
+  geom: spatialPoint("geom"),
   category: varchar("category", { length: 50 }),
   subcategory: varchar("subcategory", { length: 50 }),
   address: text("address"),
@@ -325,6 +367,7 @@ export const alertSubscriptions = pgTable("alert_subscriptions", {
 export const environmentalAlerts = pgTable("environmental_alerts", {
   id: uuid("id").defaultRandom().primaryKey(),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  dedupeKey: varchar("dedupe_key", { length: 160 }).unique(),
   alertType: varchar("alert_type", { length: 50 }).notNull(),
   severity: varchar("severity", { length: 20 }).notNull(), // 'info'|'warning'|'critical'
   title: text("title").notNull(),
@@ -374,6 +417,7 @@ export const historicalFireData = geoSchema.table("historical_fire_data", {
   date_bucket: timestamp("date_bucket", { withTimezone: true }).notNull(),
   lat: doublePrecision("lat").notNull(),
   lon: doublePrecision("lon").notNull(),
+  geom: spatialPoint("geom"),
   fire_risk_score: doublePrecision("fire_risk_score"),
   detected_anomalies: integer("detected_anomalies").default(0),
   metadata: jsonb("metadata").default({}),
@@ -385,6 +429,7 @@ export const historicalWaterDrought = geoSchema.table("historical_water_drought"
   date_bucket: timestamp("date_bucket", { withTimezone: true }).notNull(),
   lat: doublePrecision("lat").notNull(),
   lon: doublePrecision("lon").notNull(),
+  geom: spatialPoint("geom"),
   water_scarcity_index: doublePrecision("water_scarcity_index"),
   streamflow_cfs: doublePrecision("streamflow_cfs"),
   metadata: jsonb("metadata").default({}),
@@ -396,6 +441,7 @@ export const historicalVegetation = geoSchema.table("historical_vegetation", {
   date_bucket: timestamp("date_bucket", { withTimezone: true }).notNull(),
   lat: doublePrecision("lat").notNull(),
   lon: doublePrecision("lon").notNull(),
+  geom: spatialPoint("geom"),
   ndvi_value: doublePrecision("ndvi_value"),
   ecological_health_index: doublePrecision("ecological_health_index"),
   metadata: jsonb("metadata").default({}),

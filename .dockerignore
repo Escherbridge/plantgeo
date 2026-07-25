@@ -1,19 +1,61 @@
+# Version control, local tools, and project-only material
+.git
+.github
+.agents
+.claude
+.mpg
+.omc
+conductor
+docs
+
+# Secrets and environment variants
+.env
+.env.*
+**/.env
+**/.env.*
+
+# JavaScript dependencies, builds, and tests
 node_modules
 .next
-.git
-.claude
-conductor
-.omc
-data
-docs
-.env
-.env.local
-.env.example
-.env.*.local
-.env.production
-.env.staging
+out
+dist
+build
+coverage
+*.tsbuildinfo
+
+# Python environments, caches, and tests
+.venv
+venv
+**/.venv
+**/venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage*
+**/htmlcov
+
+# Logs and runtime state
 *.log
-.next/cache
-.github
-infra
+**/*.log
+logs
+**/logs
+*.pid
+*.pid.lock
+.cache
+**/.cache
+tmp
+temp
+
+# Local data and service volumes
+data
+docker-data
+valhalla-tiles
+photon-data
+martin-data
+
+# Root image does not need development scripts or unrelated infrastructure
+infra/*
+!infra/martin/
+!infra/martin/martin.yaml
 scripts

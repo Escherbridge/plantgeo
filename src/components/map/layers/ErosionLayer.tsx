@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
-import { EROSION_COLORS, type ErosionClass } from "@/lib/server/services/usle";
+import { EROSION_COLORS, type ErosionClass } from "@/lib/environmental/erosion";
 
 interface ErosionFeatureProperties {
   erosionClass: ErosionClass;

@@ -1,7 +1,19 @@
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { router, publicProcedure, contributorProcedure } from "@/lib/server/trpc/init";
-import { layers } from "@/lib/server/db/schema";
-import { eq, or, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import {
+  contributorProcedure,
+  publicProcedure,
+  router,
+  type Context,
+} from "@/lib/server/trpc/init";
+import { layers, teamMembers } from "@/lib/server/db/schema";
+import {
+  identityFromSession,
+  isPlatformAdmin,
+  isTeamEditorRole,
+} from "@/lib/server/security/access-control";
+import { layerVisibilityCondition } from "@/lib/server/security/layer-access";
 
 const layerCreateSchema = z.object({
   name: z.string().min(1).max(100),
@@ -19,58 +31,201 @@ const layerUpdateSchema = layerCreateSchema.partial().extend({
   id: z.string().uuid(),
 });
 
+function requireUserId(ctx: Context): string {
+  const identity = identityFromSession(ctx.session);
+  if (!identity.userId) {
+    throw new TRPCError({ code: "UNAUTHORIZED" });
+  }
+  return identity.userId;
+}
+
+async function getTeamRole(
+  ctx: Context,
+  teamId: string,
+  userId: string
+): Promise<string | null> {
+  const [membership] = await ctx.db
+    .select({ role: teamMembers.teamRole })
+    .from(teamMembers)
+    .where(
+      and(eq(teamMembers.teamId, teamId), eq(teamMembers.userId, userId))
+    )
+    .limit(1);
+  return membership?.role ?? null;
+}
+
+async function assertCanMutateLayer(ctx: Context, id: string) {
+  const [layer] = await ctx.db
+    .select({ id: layers.id, teamId: layers.teamId })
+    .from(layers)
+    .where(eq(layers.id, id))
+    .limit(1);
+  if (!layer) throw new TRPCError({ code: "NOT_FOUND" });
+
+  const identity = identityFromSession(ctx.session);
+  if (isPlatformAdmin(identity)) return layer;
+  if (!layer.teamId) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Only administrators may mutate global layers",
+    });
+  }
+
+  const role = await getTeamRole(ctx, layer.teamId, requireUserId(ctx));
+  if (!isTeamEditorRole(role)) {
+    throw new TRPCError({ code: "FORBIDDEN" });
+  }
+  return layer;
+}
+
+async function assertCanCreateInTeam(ctx: Context, teamId?: string) {
+  const identity = identityFromSession(ctx.session);
+  if (isPlatformAdmin(identity)) return;
+  if (!teamId) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Contributor layers must belong to a team",
+    });
+  }
+  const role = await getTeamRole(ctx, teamId, requireUserId(ctx));
+  if (!isTeamEditorRole(role)) {
+    throw new TRPCError({ code: "FORBIDDEN" });
+  }
+}
+
+async function assertCanSetLayerVisibility(ctx: Context, teamId?: string | null) {
+  const identity = identityFromSession(ctx.session);
+  if (isPlatformAdmin(identity)) return;
+  if (!teamId) throw new TRPCError({ code: "FORBIDDEN" });
+  const role = await getTeamRole(ctx, teamId, requireUserId(ctx));
+  if (role !== "owner") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Only team owners may change layer visibility",
+    });
+  }
+}
+
 export const layersRouter = router({
   list: publicProcedure
     .input(z.object({ teamId: z.string().uuid().optional() }).optional())
     .query(async ({ ctx, input }) => {
-      if (input?.teamId) {
-        return ctx.db
-          .select()
-          .from(layers)
-          .where(or(eq(layers.teamId, input.teamId), isNull(layers.teamId)));
-      }
-      return ctx.db.select().from(layers).where(isNull(layers.teamId));
+      const scope = input?.teamId
+        ? or(eq(layers.teamId, input.teamId), isNull(layers.teamId))
+        : isNull(layers.teamId);
+      return ctx.db
+        .select()
+        .from(layers)
+        .where(
+          and(scope, layerVisibilityCondition(identityFromSession(ctx.session)))
+        );
     }),
 
   getById: publicProcedure
     .input(z.object({ id: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      const result = await ctx.db
+      const [layer] = await ctx.db
         .select()
         .from(layers)
-        .where(eq(layers.id, input.id));
-      return result[0] ?? null;
+        .where(
+          and(
+            eq(layers.id, input.id),
+            layerVisibilityCondition(identityFromSession(ctx.session))
+          )
+        )
+        .limit(1);
+      return layer ?? null;
     }),
 
   create: contributorProcedure
     .input(layerCreateSchema)
     .mutation(async ({ ctx, input }) => {
-      const result = await ctx.db.insert(layers).values(input).returning();
-      return result[0];
+      await assertCanCreateInTeam(ctx, input.teamId);
+      if (input.isPublic === true) {
+        await assertCanSetLayerVisibility(ctx, input.teamId);
+      }
+      const [layer] = await ctx.db.insert(layers).values(input).returning();
+      return layer;
     }),
 
   update: contributorProcedure
     .input(layerUpdateSchema)
     .mutation(async ({ ctx, input }) => {
+      const existing = await assertCanMutateLayer(ctx, input.id);
+      if (input.teamId && input.teamId !== existing.teamId) {
+        await assertCanSetLayerVisibility(ctx, existing.teamId);
+        await assertCanSetLayerVisibility(ctx, input.teamId);
+      }
+      if (input.isPublic !== undefined) {
+        await assertCanSetLayerVisibility(
+          ctx,
+          input.teamId ?? existing.teamId
+        );
+      }
       const { id, ...data } = input;
-      const result = await ctx.db
+      const [layer] = await ctx.db
         .update(layers)
         .set({ ...data, updatedAt: new Date() })
         .where(eq(layers.id, id))
         .returning();
-      return result[0];
+      return layer;
     }),
 
   delete: contributorProcedure
     .input(z.object({ id: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
+      await assertCanMutateLayer(ctx, input.id);
       await ctx.db.delete(layers).where(eq(layers.id, input.id));
       return { success: true };
     }),
 
   reorder: contributorProcedure
-    .input(z.object({ ids: z.array(z.string().uuid()) }))
+    .input(
+      z.object({
+        ids: z
+          .array(z.string().uuid())
+          .min(1)
+          .max(100)
+          .refine((ids) => new Set(ids).size === ids.length, {
+            message: "Layer IDs must be unique",
+          }),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
+      const identity = identityFromSession(ctx.session);
+      const rows = await ctx.db
+        .select({ id: layers.id, teamId: layers.teamId })
+        .from(layers)
+        .where(inArray(layers.id, input.ids));
+      if (rows.length !== input.ids.length) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+
+      if (!isPlatformAdmin(identity)) {
+        const userId = requireUserId(ctx);
+        const teamIds = [...new Set(rows.map((row) => row.teamId))];
+        if (teamIds.some((teamId) => teamId === null)) {
+          throw new TRPCError({ code: "FORBIDDEN" });
+        }
+        const memberships = await ctx.db
+          .select({ teamId: teamMembers.teamId, role: teamMembers.teamRole })
+          .from(teamMembers)
+          .where(
+            and(
+              eq(teamMembers.userId, userId),
+              inArray(teamMembers.teamId, teamIds as string[])
+            )
+          );
+        const editableTeams = new Set(
+          memberships
+            .filter((membership) => isTeamEditorRole(membership.role))
+            .map((membership) => membership.teamId)
+        );
+        if (teamIds.some((teamId) => !teamId || !editableTeams.has(teamId))) {
+          throw new TRPCError({ code: "FORBIDDEN" });
+        }
+      }
+
       await Promise.all(
         input.ids.map((id, index) =>
           ctx.db

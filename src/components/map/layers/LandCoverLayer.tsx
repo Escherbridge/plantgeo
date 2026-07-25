@@ -6,7 +6,8 @@ import {
   NLCD_CLASSES,
   NLCD_CATEGORY_CLASSES,
   type NLCDCategory,
-} from "@/lib/server/services/nlcd";
+} from "@/lib/environmental/nlcd";
+import { getEnvironmentalTileTemplate } from "@/lib/vegetation";
 
 export type LandCoverMode = "2021" | "change";
 
@@ -20,17 +21,9 @@ interface LandCoverLayerProps {
 const NLCD_LAYER_ID = "nlcd-wms-layer";
 const NLCD_CHANGE_LAYER_ID = "nlcd-change-layer";
 
-const NLCD_2021_WMS_BASE =
-  "https://www.mrlc.gov/geoserver/mrlc_display/NLCD_2021_Land_Cover_L48/wms";
-
-const NLCD_CHANGE_WMS_BASE =
-  "https://www.mrlc.gov/geoserver/mrlc_change/nlcd_2019_2021_change_l48/wms";
-
-function buildWMSUrl(base: string, layerName: string): string {
-  return (
-    `${base}?SERVICE=WMS&REQUEST=GetMap` +
-    `&LAYERS=${layerName}&FORMAT=image/png&TRANSPARENT=true` +
-    `&VERSION=1.3.0&CRS=EPSG:3857&BBOX={bbox-epsg-3857}&WIDTH=256&HEIGHT=256`
+function getLandCoverTileUrl(mode: LandCoverMode): string {
+  return getEnvironmentalTileTemplate(
+    `land-cover/nlcd-${mode}/{z}/{x}/{y}.png`
   );
 }
 
@@ -46,7 +39,8 @@ export function LandCoverLayer({
   useEffect(() => {
     if (!map) return;
 
-    const tileUrl = buildWMSUrl(NLCD_2021_WMS_BASE, "NLCD_2021_Land_Cover_L48");
+    const tileUrl = getLandCoverTileUrl("2021");
+    if (!tileUrl) return;
 
     function addNLCDLayer() {
       if (!map) return;
@@ -99,7 +93,8 @@ export function LandCoverLayer({
   useEffect(() => {
     if (!map) return;
 
-    const tileUrl = buildWMSUrl(NLCD_CHANGE_WMS_BASE, "nlcd_2019_2021_change_l48");
+    const tileUrl = getLandCoverTileUrl("change");
+    if (!tileUrl) return;
 
     function addChangeLayer() {
       if (!map) return;

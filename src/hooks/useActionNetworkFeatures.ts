@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { canonicalViewportBbox } from "@/lib/map/viewport-bbox";
 
 const MAX_FEATURES = 2_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -173,35 +174,6 @@ function buildEndpoint(
   return `/api/v1/action-network?${params.toString()}`;
 }
 
-function normalizeViewportBbox(value: string): string {
-  const coordinates = value.split(",").map(Number);
-  if (
-    coordinates.length !== 4 ||
-    coordinates.some((coordinate) => !Number.isFinite(coordinate))
-  ) {
-    return value;
-  }
-
-  let [west, south, east, north] = coordinates;
-  if (east <= west || north <= south) return value;
-  south = Math.max(-90, south);
-  north = Math.min(90, north);
-  const longitudeSpan = east - west;
-
-  if (!Number.isFinite(longitudeSpan) || longitudeSpan >= 360) {
-    west = -180;
-    east = 180;
-  } else {
-    west = ((((west + 180) % 360) + 360) % 360) - 180;
-    east = west + longitudeSpan;
-    if (east > 180) east -= 360;
-  }
-
-  return [west, south, east, north]
-    .map((coordinate) => String(Number(coordinate.toFixed(6))))
-    .join(",");
-}
-
 function validFilter(value: number | undefined, minimum: number) {
   return value !== undefined &&
     Number.isInteger(value) &&
@@ -258,7 +230,7 @@ function isWorkerResponse(value: unknown): value is WorkerResponse {
 
 /** Loads the bounded access-controlled waypoint response off the UI thread. */
 export function useActionNetworkFeatures(
-  bbox: string,
+  bbox: string | null,
   zoom: number,
   enabled: boolean,
   filters?: ActionNetworkFilters
@@ -359,10 +331,10 @@ export function useActionNetworkFeatures(
 
   const minimumVotes = validFilter(filters?.minimumVotes, 0);
   const minimumFeatureCount = validFilter(filters?.minimumFeatureCount, 1);
-  const normalizedBbox = normalizeViewportBbox(bbox);
+  const normalizedBbox = bbox ? canonicalViewportBbox(bbox) : null;
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || !normalizedBbox) {
       const id = requestIdRef.current + 1;
       requestIdRef.current = id;
       queueMicrotask(() => {

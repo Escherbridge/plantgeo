@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
-import type { MapillaryImage } from "@/lib/server/services/mapillary";
+import type { MapillaryImage } from "@/lib/mapillary";
 
 interface ImageryState {
   isStreetViewEnabled: boolean;

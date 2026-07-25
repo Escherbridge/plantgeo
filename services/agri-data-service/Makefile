@@ -1,27 +1,33 @@
-.PHONY: dev test lint format migrate seed install
+.PHONY: dev test lint format migrate migration-status seed local-status maintain-job-logs install
 
 install:
-	uv sync --all-extras
+	uv sync --locked --all-extras
 
 dev:
-	sanic agri_data_service.app:create_app --factory --dev --host 0.0.0.0 --port 8000
+	uv run sanic agri_data_service.app:create_app --factory --dev --host 0.0.0.0 --port 8000
 
 test:
-	pytest --cov=agri_data_service --cov-report=term-missing -v
+	uv run pytest --cov=agri_data_service --cov-report=term-missing -v
 
 lint:
-	ruff check src/ tests/
-	mypy src/
+	uv run ruff check src/ tests/
+	uv run mypy src/
 
 format:
-	ruff format src/ tests/
-	ruff check --fix src/ tests/
+	uv run ruff format src/ tests/
+	uv run ruff check --fix src/ tests/
 
 migrate:
-	alembic upgrade head
+	uv run agri-cli db-upgrade head
+
+migration-status:
+	uv run agri-cli db-status
 
 seed:
-	agri-cli seed
+	uv run agri-cli seed
 
-reset-db:
-	agri-cli reset-db
+local-status:
+	@uv run agri-cli local --help
+
+maintain-job-logs:
+	uv run agri-cli job-logs-maintain --retention-days 30 --future-days 7

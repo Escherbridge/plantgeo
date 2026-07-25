@@ -354,6 +354,17 @@ def test_restore_plan_can_resume_a_draft_only_through_membership_then_validation
     ]
 
 
+def test_target_snapshot_keeps_transform_versions_as_distinct_release_identities() -> None:
+    archive = _archive()
+    native = archive.source_releases[0]
+    transformed = native.model_copy(update={"id": uuid.uuid4(), "transform_version": "historical-v1"})
+
+    snapshot = PromotionTargetSnapshot(source_releases=[native, transformed])
+
+    expected_release_count = 2
+    assert len(snapshot.source_releases) == expected_release_count
+
+
 def test_restore_refuses_blind_pg_restore_and_conflicting_validated_release_set() -> None:
     archive = _archive()
 

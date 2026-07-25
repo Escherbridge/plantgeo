@@ -1,0 +1,78 @@
+{
+  "id": "88701cdd140e413684fbedf4e40f9332",
+  "owner": "Boise_GIS",
+  "ownerId": "948d7b789056783e902ca8a7b7a8ace7",
+  "orgId": "WHM6qC35aMtyAAlN",
+  "created": 1539800222000,
+  "modified": 1783152223000,
+  "guid": null,
+  "name": "WildlandUrbanInterface",
+  "title": "Wildland-Urban Interface (WUI) ",
+  "type": "Feature Service",
+  "typeKeywords": [
+    "ArcGIS Server",
+    "Data",
+    "Feature Access",
+    "Feature Service",
+    "Metadata",
+    "Service",
+    "Singlelayer",
+    "Hosted Service"
+  ],
+  "description": "<DIV STYLE=\"text-align:Left;font-size:12pt\"><DIV><P><SPAN>This is a polygon data set depicting the areas designated by the City of Boise as Wildland-Urban Interface (WUI). WUI is defined as the area where structures and other human development meet or intermingle with undeveloped wildland. These areas have an increased likelihood that wildfires will threaten structures and people. The purpose of the dataset is to define areas with higher wildfire risk and subject those areas to increased FIREWISE standards for development.<\/SPAN><\/P><P><SPAN /><\/P><P><SPAN>As a result of the Oregon Trail Heights fire in the late summer of 2008, the City Council passed <\/SPAN><A href=\"https://www.cityofboise.org/city_clerk/033010/o-7-10.pdf\" STYLE=\"text-decoration:underline;\"><SPAN>Ordinance # 0-7A-10 <\/SPAN><\/A><SPAN>adopting the new regulations for the WUI into the City\u2019s fire code in early 2010. The ordinance establishes a range of responses including new fire code standards for construction, fuels mitigation and education in WUI areas. <\/SPAN><\/P><P><SPAN /><\/P><\/DIV><\/DIV>",
+  "tags": [
+    "planning and development services",
+    "wildfire",
+    "WUI",
+    "land use",
+    "AutomatedUpdates"
+  ],
+  "snippet": "The areas designated by the City of Boise as Wildland-Urban Interface (WUI).",
+  "thumbnail": "thumbnail/WildlandUrbanInterface.jpg",
+  "documentation": null,
+  "extent": [
+    [
+      -116.3,
+      43.7
+    ],
+    [
+      -116.1,
+      43.5
+    ]
+  ],
+  "categories": [
+    "/Categories/Finance and Administration",
+    "/Categories/Planning and Development Services",
+    "/Categories/Parks and Recreation/Wildfire Mitigation"
+  ],
+  "spatialReference": "102100",
+  "accessInformation": "City of Boise",
+  "classification": null,
+  "licenseInfo": "<DIV STYLE=\"text-align:Left;font-size:12pt\"><P><SPAN>Every effort is made to keep data accurate and current as possible. However, the presence of errors or out of date information is unavoidable. Neither the City of Boise nor any of its officials and employees makes any warranty of any kind for this information, express or implied, including but not limited to any warranties of merchantability or fitness for a particular purpose, nor shall the distribution of this information constitute any warranty. The information on this web site will change over time without notice. The City of Boise and its officials and employees assume no responsibility or legal liability for the accuracy, completeness, reliability, timeliness, or usefulness of any information available on this web site nor do they represent that the use of any information will not infringe privately owned rights.<\/SPAN><\/P><\/DIV>",
+  "culture": "en-us",
+  "properties": null,
+  "advancedSettings": null,
+  "url": "https://services1.arcgis.com/WHM6qC35aMtyAAlN/arcgis/rest/services/WildlandUrbanInterface/FeatureServer",
+  "proxyFilter": null,
+  "access": "public",
+  "size": 114688,
+  "subInfo": 0,
+  "appCategories": [],
+  "industries": [],
+  "languages": [],
+  "largeThumbnail": null,
+  "banner": null,
+  "screenshots": [],
+  "listed": false,
+  "commentsEnabled": false,
+  "numComments": 0,
+  "numRatings": 0,
+  "avgRating": 0,
+  "numViews": 93040,
+  "contentStatus": "public_authoritative",
+  "scoreCompleteness": 100,
+  "groupDesignations": null,
+  "apiToken1ExpirationDate": -1,
+  "apiToken2ExpirationDate": -1,
+  "lastViewed": 1784804400000
+}

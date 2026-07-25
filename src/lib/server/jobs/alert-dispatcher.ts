@@ -1,6 +1,5 @@
 // BullMQ job: evaluate alert thresholds for all watched locations every 30 minutes.
-// Register in Next.js instrumentation hook (instrumentation.ts):
-//   import "@/lib/server/jobs/alert-dispatcher";
+// Started explicitly by the gated legacy worker role in instrumentation.ts.
 
 import { db } from "@/lib/server/db";
 import {
@@ -9,7 +8,7 @@ import {
   environmentalAlerts,
   users,
 } from "@/lib/server/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import {
   checkFireProximityAlerts,
   checkDroughtAlerts,
@@ -18,8 +17,23 @@ import {
 } from "@/lib/server/services/alert-engine";
 import { sendAlertEmail } from "@/lib/server/services/email";
 import { publish } from "@/lib/server/services/realtime";
+import { getRedisConnection } from "@/lib/server/redis";
+import type { Queue, Worker } from "bullmq";
 
 type CheckedAlert = Awaited<ReturnType<typeof checkFireProximityAlerts>>[number];
+
+let dispatcherQueue: Queue | null = null;
+let dispatcherWorker: Worker | null = null;
+
+/** Produces the database-enforced identity for one UTC cooldown day. */
+export function buildAlertDedupeKey(
+  userId: string,
+  alertType: string,
+  locationId: string,
+  now = new Date()
+): string {
+  return `${userId}:${alertType}:${locationId}:${now.toISOString().slice(0, 10)}`;
+}
 
 /**
  * Run all alert checks for a single watched location + subscription pair.
@@ -76,7 +90,12 @@ export async function runAlertDispatcher(): Promise<{ dispatched: number }> {
     .from(alertSubscriptions)
     .innerJoin(watchedLocations, eq(alertSubscriptions.watchedLocationId, watchedLocations.id))
     .innerJoin(users, eq(watchedLocations.userId, users.id))
-    .where(eq(alertSubscriptions.inAppEnabled, true));
+    .where(
+      or(
+        eq(alertSubscriptions.inAppEnabled, true),
+        eq(alertSubscriptions.emailEnabled, true)
+      )
+    );
 
   let dispatched = 0;
 
@@ -104,8 +123,13 @@ export async function runAlertDispatcher(): Promise<{ dispatched: number }> {
     }
 
     for (const alert of newAlerts) {
-      // Persist to DB
-      let inserted;
+      const watchedLocationId = alert.metadata.watchedLocationId;
+      if (typeof watchedLocationId !== "string") {
+        console.error("[alert-dispatcher] Alert is missing its watched-location identity");
+        continue;
+      }
+
+      let inserted: typeof environmentalAlerts.$inferSelect | undefined;
       try {
         [inserted] = await db
           .insert(environmentalAlerts)
@@ -116,28 +140,38 @@ export async function runAlertDispatcher(): Promise<{ dispatched: number }> {
             title: alert.title,
             body: alert.body,
             metadata: alert.metadata,
+            dedupeKey: buildAlertDedupeKey(
+              alert.userId,
+              alert.alertType,
+              watchedLocationId
+            ),
             isRead: false,
           })
+          .onConflictDoNothing({ target: environmentalAlerts.dedupeKey })
           .returning();
       } catch (err) {
         console.error("[alert-dispatcher] Failed to insert alert:", err);
         continue;
       }
 
+      if (!inserted) continue;
+
       dispatched += 1;
 
       // Publish to Redis pub/sub for real-time SSE delivery
-      try {
-        await publish(`alerts:${alert.userId}`, {
-          event: "alert:new",
-          alert: inserted,
-        });
-      } catch {
-        // Non-fatal — SSE delivery is best-effort
+      if (row.inAppEnabled) {
+        try {
+          await publish(`alerts:${alert.userId}`, {
+            event: "alert:new",
+            alert: inserted,
+          });
+        } catch {
+          // Realtime delivery is best-effort; the durable row remains available.
+        }
       }
 
-      // Send immediate email for high-severity alerts if emailEnabled
-      if (row.emailEnabled && (alert.severity === "critical" || alert.severity === "warning")) {
+      // Each enabled subscription channel receives the durable alert.
+      if (row.emailEnabled) {
         try {
           await sendAlertEmail(row.userEmail, inserted);
         } catch (err) {
@@ -150,48 +184,30 @@ export async function runAlertDispatcher(): Promise<{ dispatched: number }> {
   return { dispatched };
 }
 
-// ---------------------------------------------------------------------------
-// BullMQ worker registration — server-side only
-// ---------------------------------------------------------------------------
+/** Starts only when the explicitly gated legacy worker role calls it. */
+export async function startAlertDispatcherWorker(): Promise<void> {
+  if (dispatcherQueue || dispatcherWorker) return;
 
-if (typeof window === "undefined") {
-  let bullmq: typeof import("bullmq") | undefined;
+  const bullmq = await import("bullmq");
+  const connection = getRedisConnection();
+  const queue = new bullmq.Queue("alert-dispatcher", { connection });
+  await queue.upsertJobScheduler(
+    "alert-dispatcher-30min",
+    { every: 30 * 60 * 1000 },
+    { name: "dispatch" }
+  );
+  const worker = new bullmq.Worker(
+    "alert-dispatcher",
+    () => runAlertDispatcher(),
+    { connection }
+  );
+  dispatcherQueue = queue;
+  dispatcherWorker = worker;
+}
 
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    bullmq = require("bullmq");
-  } catch {
-    // bullmq not installed — skip
-  }
-
-  if (bullmq) {
-    const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
-    const connection = { host: "localhost", port: 6379 } as { host: string; port: number };
-
-    try {
-      const url = new URL(REDIS_URL);
-      connection.host = url.hostname;
-      connection.port = parseInt(url.port || "6379", 10);
-    } catch {
-      // keep defaults
-    }
-
-    const QUEUE_NAME = "alert-dispatcher";
-    const queue = new bullmq.Queue(QUEUE_NAME, { connection });
-
-    // Every 30 minutes
-    queue
-      .upsertJobScheduler("alert-dispatcher-30min", { every: 30 * 60 * 1000 }, { name: "dispatch" })
-      .catch(() => {
-        // Non-fatal — Redis may not be available during build
-      });
-
-    new bullmq.Worker(
-      QUEUE_NAME,
-      async () => {
-        return runAlertDispatcher();
-      },
-      { connection }
-    );
-  }
+export async function stopAlertDispatcherWorker(): Promise<void> {
+  await dispatcherWorker?.close();
+  await dispatcherQueue?.close();
+  dispatcherWorker = null;
+  dispatcherQueue = null;
 }

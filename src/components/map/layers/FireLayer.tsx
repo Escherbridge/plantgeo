@@ -3,12 +3,15 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, Popup } from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
-import { DEMO_FIRE_POINTS } from "@/lib/map/demo-data";
 
-// --- Source & layer IDs ---
-const FIRE_DEMO_SOURCE = "fire-demo-source";
-const FIRE_DEMO_CIRCLES = "fire-demo-circles";
-const FIRE_DEMO_OUTLINES = "fire-demo-outlines";
+const EMPTY_FIRE_DATA: GeoJSON.FeatureCollection = {
+  type: "FeatureCollection",
+  features: [],
+};
+
+const FIRE_SOURCE = "published-fire-source";
+const FIRE_CIRCLES = "published-fire-circles";
+const FIRE_OUTLINES = "published-fire-outlines";
 
 function escapeHtml(val: unknown): string {
   return String(val ?? "")
@@ -23,7 +26,7 @@ interface FireLayerProps {
   map: MapLibreMap | null;
   visible?: boolean;
   opacity?: number;
-  /** Fire GeoJSON data — real NIFC data or demo fallback. */
+  /** Verified fire GeoJSON. Missing data renders an empty layer. */
   geojson?: GeoJSON.FeatureCollection;
 }
 
@@ -35,40 +38,27 @@ export function FireLayer({
 }: FireLayerProps) {
   const popupRef = useRef<Popup | null>(null);
 
-  // Build fallback demo data when no geojson prop is provided
-  const fireData: GeoJSON.FeatureCollection = geojson ?? {
-    type: "FeatureCollection",
-    features: DEMO_FIRE_POINTS.map((pt) => ({
-      type: "Feature" as const,
-      geometry: { type: "Point" as const, coordinates: [pt.lon, pt.lat] },
-      properties: {
-        IncidentName: `Demo Fire (${pt.satellite})`,
-        IncidentSize: null,
-        brightness: pt.brightness,
-        confidence: pt.confidence,
-        satellite: pt.satellite,
-      },
-    })),
-  };
+  const fireData = geojson ?? EMPTY_FIRE_DATA;
 
   // Keep latest props in refs so style.load handler uses current values
   const propsRef = useRef({ visible, opacity, fireData });
-  propsRef.current = { visible, opacity, fireData };
+  useEffect(() => {
+    propsRef.current = { visible, opacity, fireData };
+  }, [visible, opacity, fireData]);
 
   const addAllLayers = useCallback((m: MapLibreMap) => {
     const { opacity, fireData } = propsRef.current;
     const beforeId = getFirstSymbolLayer(m);
 
-    // --- Fire circles ---
-    if (!m.getSource(FIRE_DEMO_SOURCE)) {
-      m.addSource(FIRE_DEMO_SOURCE, { type: "geojson", data: fireData });
+    if (!m.getSource(FIRE_SOURCE)) {
+      m.addSource(FIRE_SOURCE, { type: "geojson", data: fireData });
     }
-    if (!m.getLayer(FIRE_DEMO_CIRCLES)) {
+    if (!m.getLayer(FIRE_CIRCLES)) {
       m.addLayer(
         {
-          id: FIRE_DEMO_CIRCLES,
+          id: FIRE_CIRCLES,
           type: "circle",
-          source: FIRE_DEMO_SOURCE,
+          source: FIRE_SOURCE,
           paint: {
             "circle-color": [
               "case",
@@ -80,7 +70,7 @@ export function FireLayer({
                 50, "#f97316",   // orange = 50%
                 100, "#22c55e",  // green = 100%
               ],
-              // Demo data: color by brightness
+              // Warehouse FIRMS detections: color by brightness.
               [
                 "interpolate", ["linear"], ["coalesce", ["get", "brightness"], 350],
                 300, "#fbbf24",
@@ -101,7 +91,7 @@ export function FireLayer({
                 10000, 14,
                 100000, 20,
               ],
-              // Demo data: size by confidence
+              // Warehouse FIRMS detections: size by confidence.
               [
                 "interpolate", ["linear"],
                 ["coalesce", ["get", "confidence"], 50],
@@ -117,12 +107,12 @@ export function FireLayer({
         beforeId,
       );
     }
-    if (!m.getLayer(FIRE_DEMO_OUTLINES)) {
+    if (!m.getLayer(FIRE_OUTLINES)) {
       m.addLayer(
         {
-          id: FIRE_DEMO_OUTLINES,
+          id: FIRE_OUTLINES,
           type: "circle",
-          source: FIRE_DEMO_SOURCE,
+          source: FIRE_SOURCE,
           paint: {
             "circle-radius": [
               "case",
@@ -158,8 +148,8 @@ export function FireLayer({
   const removeAllLayers = useCallback((m: MapLibreMap) => {
     safeRemoveLayerAndSource(
       m,
-      [FIRE_DEMO_CIRCLES, FIRE_DEMO_OUTLINES],
-      FIRE_DEMO_SOURCE,
+      [FIRE_CIRCLES, FIRE_OUTLINES],
+      FIRE_SOURCE,
     );
   }, []);
 
@@ -201,7 +191,7 @@ export function FireLayer({
       return;
     }
 
-    const source = map.getSource(FIRE_DEMO_SOURCE);
+    const source = map.getSource(FIRE_SOURCE);
     if (source && "setData" in source) {
       (source as maplibregl.GeoJSONSource).setData(fireData);
     }
@@ -216,11 +206,11 @@ export function FireLayer({
       return;
     }
 
-    if (map.getLayer(FIRE_DEMO_CIRCLES)) {
-      map.setPaintProperty(FIRE_DEMO_CIRCLES, "circle-opacity", opacity);
+    if (map.getLayer(FIRE_CIRCLES)) {
+      map.setPaintProperty(FIRE_CIRCLES, "circle-opacity", opacity);
     }
-    if (map.getLayer(FIRE_DEMO_OUTLINES)) {
-      map.setPaintProperty(FIRE_DEMO_OUTLINES, "circle-stroke-opacity", opacity);
+    if (map.getLayer(FIRE_OUTLINES)) {
+      map.setPaintProperty(FIRE_OUTLINES, "circle-stroke-opacity", opacity);
     }
   }, [map, opacity, visible]);
 
@@ -262,9 +252,9 @@ export function FireLayer({
       });
     }
 
-    map.on("click", FIRE_DEMO_CIRCLES, handleFireClick);
+    map.on("click", FIRE_CIRCLES, handleFireClick);
     return () => {
-      map.off("click", FIRE_DEMO_CIRCLES, handleFireClick);
+      map.off("click", FIRE_CIRCLES, handleFireClick);
     };
   }, [map, visible]);
 

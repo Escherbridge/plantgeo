@@ -2,7 +2,7 @@
 
 import { Clock, Route, AlertTriangle } from "lucide-react";
 import { useRoutingStore } from "@/stores/routing-store";
-import type { DecodedRoute } from "@/lib/server/services/routing";
+import type { DecodedRoute } from "@/lib/routing";
 import { cn } from "@/lib/utils";
 
 function formatDuration(seconds: number): string {

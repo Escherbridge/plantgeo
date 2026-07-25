@@ -1,63 +1,110 @@
 import { NextRequest, NextResponse } from "next/server";
-import { publish } from "@/lib/server/services/realtime";
+import { publishRequired } from "@/lib/server/services/realtime";
+import {
+  parseBoundedJson,
+  authorizeTrackingIngressRequest,
+} from "@/lib/server/security/ingress";
+import { TrackingPositionUpdateSchema } from "@/lib/server/security/geojson";
+import {
+  DuplicateTrackingPositionError,
+  persistVerifiedPosition,
+  UnknownTrackingAssetError,
+} from "@/lib/server/services/tracking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-interface PositionUpdate {
-  assetId: string;
-  lat: number;
-  lon: number;
-  heading?: number;
-  speed?: number;
-  altitude?: number;
-  timestamp: string;
-}
+const RESPONSE_HEADERS = { "Cache-Control": "no-store" } as const;
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1_000;
+const MAX_POSITION_AGE_MS = 24 * 60 * 60 * 1_000;
 
-/**
- * WebSocket upgrade handler for vehicle/asset tracking.
- *
- * Next.js App Router does not natively support WebSocket upgrades via route
- * handlers, so this endpoint accepts POST requests carrying position updates
- * as a fallback transport, while a custom server (e.g. ws library) handles
- * true WebSocket upgrades at the infrastructure layer.
- *
- * Each message is validated and broadcast to the Redis tracking channel so
- * all connected SSE/WS consumers receive the update.
- */
 export async function POST(request: NextRequest) {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
-
-  const update = body as Partial<PositionUpdate>;
-
-  if (
-    typeof update.assetId !== "string" ||
-    typeof update.lat !== "number" ||
-    typeof update.lon !== "number" ||
-    typeof update.timestamp !== "string"
-  ) {
+  const authorization = authorizeTrackingIngressRequest(request);
+  if (!authorization.authorized) {
     return NextResponse.json(
-      { error: "Missing required fields: assetId, lat, lon, timestamp" },
-      { status: 400 }
+      { error: authorization.error },
+      { status: authorization.status, headers: RESPONSE_HEADERS }
     );
   }
 
-  const channel = `tracking:${update.assetId}`;
+  const jsonBody = await parseBoundedJson(request, 16 * 1024);
+  if (!jsonBody.ok) {
+    return NextResponse.json(
+      { error: jsonBody.error },
+      { status: jsonBody.status, headers: RESPONSE_HEADERS }
+    );
+  }
 
-  await publish(channel, {
+  const parsed = TrackingPositionUpdateSchema.safeParse(jsonBody.data);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Validation failed", details: parsed.error.flatten() },
+      { status: 422, headers: RESPONSE_HEADERS }
+    );
+  }
+
+  const update = parsed.data;
+  const producerTimestamp = new Date(update.timestamp);
+  const ageMs = Date.now() - producerTimestamp.getTime();
+  if (ageMs < -MAX_CLOCK_SKEW_MS || ageMs > MAX_POSITION_AGE_MS) {
+    return NextResponse.json(
+      { error: "Producer timestamp is outside the accepted tracking window" },
+      { status: 422, headers: RESPONSE_HEADERS }
+    );
+  }
+
+  let persisted: { producerTimestamp: Date; receivedAt: Date };
+  try {
+    persisted = await persistVerifiedPosition({
+      assetId: update.assetId,
+      lat: update.lat,
+      lon: update.lon,
+      heading: update.heading,
+      speed: update.speed,
+      altitude: update.altitude,
+      producerTimestamp,
+    });
+  } catch (error) {
+    if (error instanceof UnknownTrackingAssetError) {
+      return NextResponse.json(
+        { error: "Tracking asset was not found" },
+        { status: 404, headers: RESPONSE_HEADERS }
+      );
+    }
+    if (error instanceof DuplicateTrackingPositionError) {
+      return NextResponse.json(
+        { error: "Tracking position was already accepted" },
+        { status: 409, headers: RESPONSE_HEADERS }
+      );
+    }
+    return NextResponse.json(
+      { error: "Tracking position could not be persisted" },
+      { status: 503, headers: { ...RESPONSE_HEADERS, "Retry-After": "10" } }
+    );
+  }
+
+  const event = {
     assetId: update.assetId,
     lat: update.lat,
     lon: update.lon,
     heading: update.heading ?? null,
     speed: update.speed ?? null,
     altitude: update.altitude ?? null,
-    timestamp: update.timestamp,
-  });
+    producerTimestamp: persisted.producerTimestamp.toISOString(),
+    receivedAt: persisted.receivedAt.toISOString(),
+  };
 
-  return NextResponse.json({ ok: true });
+  try {
+    await publishRequired(`tracking:${update.assetId}`, event);
+  } catch {
+    return NextResponse.json(
+      { ok: true, persisted: true, broadcast: false, ...event },
+      { status: 202, headers: RESPONSE_HEADERS }
+    );
+  }
+
+  return NextResponse.json(
+    { ok: true, persisted: true, broadcast: true, ...event },
+    { status: 201, headers: RESPONSE_HEADERS }
+  );
 }

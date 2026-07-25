@@ -45,7 +45,7 @@ export function SpatialStats() {
         <div className="rounded-lg bg-[hsl(var(--muted))] px-3 py-2 flex flex-col gap-0.5">
           <span className="text-xs text-[hsl(var(--muted-foreground))]">Streams</span>
           <span className="text-xl font-bold text-[hsl(var(--foreground))]">
-            {systemStats?.activeStreams ?? 0}
+            {systemStats?.activeStreams ?? "—"}
           </span>
         </div>
       </div>

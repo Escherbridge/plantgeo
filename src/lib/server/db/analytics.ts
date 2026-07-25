@@ -238,18 +238,8 @@ export async function getTrendData(
     });
   }
 
-  // ndvi: return mock monthly NDVI anomaly values
-  const points: TrendPoint[] = [];
-  const numMonths = Math.ceil(days / 30);
-  for (let i = numMonths - 1; i >= 0; i--) {
-    const d = new Date();
-    d.setMonth(d.getMonth() - i);
-    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-    // Placeholder values oscillating around 0 to simulate anomaly
-    const value = Math.round((Math.sin((i / numMonths) * Math.PI * 2) * 0.15 - 0.05) * 100) / 100;
-    points.push({ date, value });
-  }
-  return points;
+  // Fail closed until warehouse-backed NDVI observations are published.
+  return [];
 }
 
 // ============================================================
@@ -310,22 +300,41 @@ export async function getPrioritySubregions(
 // Query: Demand Density GeoJSON
 // ============================================================
 
+export interface DemandDensityCollection extends GeoJSON.FeatureCollection {
+  observedAt: string | null;
+}
+
 export async function getDemandDensity(
   bbox: string,
   db: DB
-): Promise<GeoJSON.FeatureCollection> {
+): Promise<DemandDensityCollection> {
   const parts = bbox.split(",").map(Number);
   if (parts.length !== 4 || parts.some(isNaN)) {
-    return { type: "FeatureCollection", features: [] };
+    return { type: "FeatureCollection", features: [], observedAt: null };
   }
   const [west, south, east, north] = parts;
+  if (
+    west < -180 || west > 180 || east < -180 || east > 180 ||
+    south < -90 || south > 90 || north < -90 || north > 90 ||
+    west >= east || south >= north
+  ) {
+    return { type: "FeatureCollection", features: [], observedAt: null };
+  }
+
+  // Bound the result before it crosses the database/network/worker boundary.
+  // The worker can perform a further zoom-aware transform for the current map.
+  const cellSize = Math.max((Math.max(east - west, north - south) / 128), 0.01);
+  const latCell = sql`floor(${strategyRequests.lat} / ${cellSize})`;
+  const lonCell = sql`floor(${strategyRequests.lon} / ${cellSize})`;
+  const weightedVotes = sql<number>`coalesce(sum(${strategyRequests.voteCount}), 0)`;
 
   const result = await db
     .select({
-      lat: strategyRequests.lat,
-      lon: strategyRequests.lon,
-      voteCount: strategyRequests.voteCount,
-      strategyType: strategyRequests.strategyType,
+      lat: sql<number>`avg(${strategyRequests.lat})`,
+      lon: sql<number>`avg(${strategyRequests.lon})`,
+      voteCount: weightedVotes,
+      featureCount: sql<number>`count(*)`,
+      observedAt: max(strategyRequests.createdAt),
     })
     .from(strategyRequests)
     .where(
@@ -335,7 +344,10 @@ export async function getDemandDensity(
         gte(strategyRequests.lon, west),
         lte(strategyRequests.lon, east)
       )
-    );
+    )
+    .groupBy(latCell, lonCell)
+    .orderBy(sql`${weightedVotes} DESC`)
+    .limit(2_000);
 
   const featureList: GeoJSON.Feature[] = result.map((r) => ({
     type: "Feature" as const,
@@ -344,10 +356,16 @@ export async function getDemandDensity(
       coordinates: [r.lon, r.lat],
     },
     properties: {
-      voteCount: r.voteCount ?? 0,
-      strategyType: r.strategyType,
+      voteCount: Number(r.voteCount ?? 0),
+      featureCount: Number(r.featureCount ?? 0),
     },
   }));
 
-  return { type: "FeatureCollection", features: featureList };
+  const observedAt = result.reduce<string | null>((latest, row) => {
+    if (!row.observedAt) return latest;
+    const candidate = new Date(row.observedAt).toISOString();
+    return !latest || candidate > latest ? candidate : latest;
+  }, null);
+
+  return { type: "FeatureCollection", features: featureList, observedAt };
 }

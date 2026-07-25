@@ -1,45 +1,94 @@
 import { z } from "zod";
+import type {
+  GeocodingResultType,
+  NormalizedGeocodingResult,
+} from "@/lib/geocoding";
+import {
+  fetchBoundedJson,
+  providerUrl,
+  UpstreamPayloadError,
+} from "@/lib/server/http/bounded-upstream";
 
-const PHOTON_URL = process.env.PHOTON_URL || "http://localhost:2322";
+const MAX_GEOCODING_RESPONSE_BYTES = 512 * 1024;
+const GEOCODING_TIMEOUT_MS = 5_000;
 
 const PhotonPropertiesSchema = z
   .object({
-    name: z.string().optional(),
-    street: z.string().optional(),
-    housenumber: z.string().optional(),
-    postcode: z.string().optional(),
-    city: z.string().optional(),
-    state: z.string().optional(),
-    country: z.string().optional(),
-    osm_key: z.string().optional(),
-    osm_value: z.string().optional(),
+    name: z.string().max(500).optional(),
+    street: z.string().max(500).optional(),
+    housenumber: z.string().max(100).optional(),
+    postcode: z.string().max(100).optional(),
+    city: z.string().max(500).optional(),
+    state: z.string().max(500).optional(),
+    country: z.string().max(500).optional(),
+    osm_key: z.string().max(100).optional(),
+    osm_value: z.string().max(100).optional(),
   })
-  .passthrough();
+  .strip();
 
-const PhotonFeatureSchema = z.object({
-  type: z.literal("Feature"),
-  geometry: z.object({
-    type: z.literal("Point"),
-    coordinates: z.tuple([z.number(), z.number()]),
-  }),
-  properties: PhotonPropertiesSchema,
-});
+const PhotonFeatureSchema = z
+  .object({
+    type: z.literal("Feature"),
+    geometry: z
+      .object({
+        type: z.literal("Point"),
+        coordinates: z.tuple([
+          z.number().finite().min(-180).max(180),
+          z.number().finite().min(-90).max(90),
+        ]),
+      })
+      .strict(),
+    properties: PhotonPropertiesSchema,
+  })
+  .strip();
 
-const PhotonResponseSchema = z.object({
-  type: z.literal("FeatureCollection"),
-  features: z.array(PhotonFeatureSchema),
-});
+const PhotonResponseSchema = z
+  .object({
+    type: z.literal("FeatureCollection"),
+    features: z.array(PhotonFeatureSchema).max(20),
+  })
+  .strip();
+
+const OptionalCoordinateParameters = {
+  lat: z.coerce.number().finite().min(-90).max(90).optional(),
+  lon: z.coerce.number().finite().min(-180).max(180).optional(),
+};
+
+export const ForwardGeocodeQuerySchema = z
+  .object({
+    q: z.string().trim().min(2).max(200),
+    limit: z.coerce.number().int().min(1).max(10).default(5),
+    lang: z.string().trim().regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/).optional(),
+    ...OptionalCoordinateParameters,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if ((value.lat === undefined) !== (value.lon === undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "lat and lon must be provided together",
+      });
+    }
+  });
+
+export const ReverseGeocodeQuerySchema = z
+  .object({
+    lat: z.coerce.number().finite().min(-90).max(90),
+    lon: z.coerce.number().finite().min(-180).max(180),
+    limit: z.coerce.number().int().min(1).max(5).default(1),
+    radius: z.coerce.number().finite().positive().max(50).optional(),
+    lang: z.string().trim().regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/).optional(),
+  })
+  .strict();
 
 export type GeocodingResult = z.infer<typeof PhotonResponseSchema>;
-export type ResultType = "house" | "street" | "city" | "state" | "country" | "other";
+export type ResultType = GeocodingResultType;
+export type { NormalizedGeocodingResult } from "@/lib/geocoding";
 
-export interface NormalizedGeocodingResult {
-  id: string;
-  type: ResultType;
-  name: string;
-  displayName: string;
-  coordinates: [number, number];
-  properties: Record<string, string | undefined>;
+function endpoint(path: "/api" | "/reverse"): URL {
+  const url = providerUrl("PHOTON_URL", "http://localhost:2322");
+  url.pathname = `${url.pathname.replace(/\/$/, "")}${path}`;
+  return url;
 }
 
 function normalizeResultType(properties: z.infer<typeof PhotonPropertiesSchema>): ResultType {
@@ -65,16 +114,13 @@ function normalizeResultType(properties: z.infer<typeof PhotonPropertiesSchema>)
 
 function formatDisplayName(properties: z.infer<typeof PhotonPropertiesSchema>): string {
   const parts: string[] = [];
-
   if (properties.name) parts.push(properties.name);
 
   const streetPart = [properties.street, properties.housenumber].filter(Boolean).join(" ");
   if (streetPart && streetPart !== properties.name) parts.push(streetPart);
-
   if (properties.city && properties.city !== properties.name) parts.push(properties.city);
   if (properties.state && properties.state !== properties.name) parts.push(properties.state);
   if (properties.country && properties.country !== properties.name) parts.push(properties.country);
-
   return parts.join(", ") || "Unknown location";
 }
 
@@ -85,8 +131,18 @@ export function normalizeResults(result: GeocodingResult): NormalizedGeocodingRe
     name: feature.properties.name || feature.properties.street || "Unknown",
     displayName: formatDisplayName(feature.properties),
     coordinates: feature.geometry.coordinates,
-    properties: feature.properties as Record<string, string | undefined>,
+    properties: feature.properties,
   }));
+}
+
+async function requestPhoton(url: URL): Promise<GeocodingResult> {
+  const data = await fetchBoundedJson(url, { method: "GET" }, {
+    maxBytes: MAX_GEOCODING_RESPONSE_BYTES,
+    timeoutMs: GEOCODING_TIMEOUT_MS,
+  });
+  const parsed = PhotonResponseSchema.safeParse(data);
+  if (!parsed.success) throw new UpstreamPayloadError("Photon returned an invalid response");
+  return parsed.data;
 }
 
 export async function forwardGeocode(
@@ -96,28 +152,18 @@ export async function forwardGeocode(
     lang?: string;
     lat?: number;
     lon?: number;
-    bbox?: [number, number, number, number];
   }
 ): Promise<GeocodingResult> {
-  const params = new URLSearchParams({ q: query });
-
-  if (options?.limit) params.set("limit", String(options.limit));
-  if (options?.lang) params.set("lang", options.lang);
-  if (options?.lat) params.set("lat", String(options.lat));
-  if (options?.lon) params.set("lon", String(options.lon));
-  if (options?.bbox) {
-    const [w, s, e, n] = options.bbox;
-    params.set("bbox", `${w},${s},${e},${n}`);
+  const validated = ForwardGeocodeQuerySchema.parse({ q: query, ...options });
+  const url = endpoint("/api");
+  url.searchParams.set("q", validated.q);
+  url.searchParams.set("limit", String(validated.limit));
+  if (validated.lang) url.searchParams.set("lang", validated.lang);
+  if (validated.lat !== undefined && validated.lon !== undefined) {
+    url.searchParams.set("lat", String(validated.lat));
+    url.searchParams.set("lon", String(validated.lon));
   }
-
-  const response = await fetch(`${PHOTON_URL}/api?${params}`);
-
-  if (!response.ok) {
-    throw new Error(`Geocoding failed: ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  return PhotonResponseSchema.parse(data);
+  return requestPhoton(url);
 }
 
 export async function reverseGeocode(
@@ -125,21 +171,12 @@ export async function reverseGeocode(
   lon: number,
   options?: { radius?: number; limit?: number; lang?: string }
 ): Promise<GeocodingResult> {
-  const params = new URLSearchParams({
-    lat: String(lat),
-    lon: String(lon),
-  });
-
-  if (options?.radius) params.set("radius", String(options.radius));
-  if (options?.limit) params.set("limit", String(options.limit));
-  if (options?.lang) params.set("lang", options.lang);
-
-  const response = await fetch(`${PHOTON_URL}/reverse?${params}`);
-
-  if (!response.ok) {
-    throw new Error(`Reverse geocoding failed: ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  return PhotonResponseSchema.parse(data);
+  const validated = ReverseGeocodeQuerySchema.parse({ lat, lon, ...options });
+  const url = endpoint("/reverse");
+  url.searchParams.set("lat", String(validated.lat));
+  url.searchParams.set("lon", String(validated.lon));
+  url.searchParams.set("limit", String(validated.limit));
+  if (validated.radius !== undefined) url.searchParams.set("radius", String(validated.radius));
+  if (validated.lang) url.searchParams.set("lang", validated.lang);
+  return requestPhoton(url);
 }

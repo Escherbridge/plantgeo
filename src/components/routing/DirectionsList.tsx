@@ -10,7 +10,7 @@ import {
   Flag,
   Navigation,
 } from "lucide-react";
-import type { Maneuver } from "@/lib/server/services/routing";
+import type { Maneuver } from "@/lib/routing";
 
 const MANEUVER_ICONS: Record<number, React.ReactNode> = {
   0: <Navigation className="h-4 w-4" />,

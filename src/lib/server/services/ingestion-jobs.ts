@@ -1,93 +1,203 @@
-import { db } from "@/lib/server/db";
-import { 
-  historicalFireData, 
-  historicalWaterDrought, 
-  historicalVegetation,
-  openPlantData,
-  openToolingData
-} from "@/lib/server/db/schema";
+import type { IngestFeatureInput } from "@/lib/server/services/ingest";
+import { ingestFeatures } from "@/lib/server/services/ingest";
 import { fetchActiveFiresNASA } from "./nasa-firms";
-// If these are not exported perfectly, we mock the calls or assume they exist
-// since this is the pipeline scaffold.
+import { getStreamflowGauges } from "./usgs-water";
+import {
+  isFreshObservation,
+  parseFirmsObservationTime,
+} from "./environmental-time";
 
-/**
- * Run daily cron job to fetch NASA FIRMS data and store directly into our local historical table.
- */
-export async function runFireIngestionJob(bbox?: string, dayRange: number = 1): Promise<void> {
-  const fireFeatureCollection = await fetchActiveFiresNASA(bbox, dayRange);
-  const dateBucket = new Date(); // bucket is today's snapshot
-  
-  if (!fireFeatureCollection.features.length) return;
+const FIRMS_LAYER_ID = process.env.FIRMS_LAYER_ID ?? "fire-detections";
+const WATER_GAUGES_LAYER_ID =
+  process.env.WATER_GAUGES_LAYER_ID ?? "water-gauges";
+const MAX_SOURCE_RECORDS = 5_000;
 
-  const records = fireFeatureCollection.features.map((f) => ({
-    date_bucket: dateBucket,
-    lat: f.geometry.coordinates[1],
-    lon: f.geometry.coordinates[0],
-    fire_risk_score: f.properties.frp, // Example mapping FRP to risk scope or raw metadata
-    detected_anomalies: 1, // single anomaly per point
-    metadata: f.properties,
+export type IngestionJobStatus = "ingested" | "skipped" | "failed";
+
+export interface IngestionJobResult {
+  source: "nasa-firms" | "usgs-streamflow" | "ndvi";
+  status: IngestionJobStatus;
+  recordsSeen: number;
+  recordsWritten: number;
+  truncated?: boolean;
+  reason?: string;
+}
+
+function resolveBoundedBbox(override?: string): string | null {
+  const value = override?.trim() || process.env.INGEST_BBOX?.trim();
+  if (!value) return null;
+
+  const parts = value.split(",").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part))) {
+    throw new Error("INGEST_BBOX must be west,south,east,north");
+  }
+
+  const [west, south, east, north] = parts;
+  if (
+    west < -180 ||
+    east > 180 ||
+    south < -90 ||
+    north > 90 ||
+    west >= east ||
+    south >= north ||
+    east - west > 30 ||
+    north - south > 20
+  ) {
+    throw new Error("INGEST_BBOX is outside the bounded ingestion policy");
+  }
+
+  return parts.join(",");
+}
+
+async function ingestInBatches(inputs: IngestFeatureInput[]): Promise<number> {
+  return ingestFeatures(inputs);
+}
+
+function firmsObservationId(
+  properties: {
+    satellite: string;
+    acqDate: string;
+    acqTime: string;
+  },
+  coordinates: number[]
+): string {
+  return [
+    properties.satellite,
+    properties.acqDate,
+    properties.acqTime,
+    coordinates[1]?.toFixed(4),
+    coordinates[0]?.toFixed(4),
+  ].join(":");
+}
+
+/** Fetches bounded FIRMS observations and writes idempotent source events. */
+export async function runFireIngestionJob(
+  bbox?: string,
+  dayRange = 1
+): Promise<IngestionJobResult> {
+  const area = resolveBoundedBbox(bbox);
+  if (!area) {
+    return {
+      source: "nasa-firms",
+      status: "skipped",
+      recordsSeen: 0,
+      recordsWritten: 0,
+      reason: "INGEST_BBOX is not configured",
+    };
+  }
+
+  const collection = await fetchActiveFiresNASA(area, dayRange);
+  const selected = collection.features.slice(0, MAX_SOURCE_RECORDS);
+  const maxObservationAgeMs =
+    Math.min(10, Math.max(1, dayRange)) * 24 * 60 * 60 * 1_000;
+  const records: IngestFeatureInput[] = selected.flatMap((feature) => {
+    const observedAt = parseFirmsObservationTime(feature.properties);
+    if (!observedAt || !isFreshObservation(observedAt, maxObservationAgeMs)) {
+      return [];
+    }
+    return [
+      {
+        layerId: FIRMS_LAYER_ID,
+        featureId: firmsObservationId(
+          feature.properties,
+          feature.geometry.coordinates
+        ),
+        properties: {
+          ...feature.properties,
+          observedAt,
+          source: "NASA FIRMS",
+          geometry: feature.geometry,
+        },
+        channel: "layer:fire-detections",
+      },
+    ];
+  });
+
+  return {
+    source: "nasa-firms",
+    status: "ingested",
+    recordsSeen: collection.features.length,
+    recordsWritten: await ingestInBatches(records),
+    truncated: collection.features.length > selected.length,
+  };
+}
+
+/** Fetches bounded USGS gauges and writes timestamped source observations. */
+export async function runWaterDroughtIngestionJob(
+  bbox?: string
+): Promise<IngestionJobResult> {
+  const area = resolveBoundedBbox(bbox);
+  if (!area) {
+    return {
+      source: "usgs-streamflow",
+      status: "skipped",
+      recordsSeen: 0,
+      recordsWritten: 0,
+      reason: "INGEST_BBOX is not configured",
+    };
+  }
+
+  const gauges = await getStreamflowGauges(area);
+  const selected = gauges.slice(0, MAX_SOURCE_RECORDS);
+  const records: IngestFeatureInput[] = selected.map((gauge) => ({
+    layerId: WATER_GAUGES_LAYER_ID,
+    featureId: `${gauge.siteNo}:${gauge.updatedAt}`,
+    properties: {
+      ...gauge,
+      source: "USGS NWIS",
+      geometry: {
+        type: "Point",
+        coordinates: [gauge.lon, gauge.lat],
+      },
+    },
+    channel: "layer:water-gauges",
   }));
 
-  // Batch insert to our historical schemas
-  await db.insert(historicalFireData).values(records).onConflictDoNothing();
+  return {
+    source: "usgs-streamflow",
+    status: "ingested",
+    recordsSeen: gauges.length,
+    recordsWritten: await ingestInBatches(records),
+    truncated: gauges.length > selected.length,
+  };
 }
 
-/**
- * Scaffolding for USGS/NOAA water ingestion that stores trends in historical table.
- */
-export async function runWaterDroughtIngestionJob(): Promise<void> {
-  // We would import fetchUSGSData(). For now, this is a scaffolded implementation
-  // mapping to the historicalWaterDrought tables.
-  const dateBucket = new Date();
-  
-  // Fake payload based on common structures for demonstration
-  const records = [
-    {
-      date_bucket: dateBucket,
-      lat: 37.7749,
-      lon: -122.4194,
-      water_scarcity_index: 0.85,
-      streamflow_cfs: 110.5,
-      metadata: { source: "usgs", stationId: "1234" }
-    }
+/** Refuses to publish NDVI until a versioned warehouse adapter exists. */
+export async function runVegetationIngestionJob(): Promise<IngestionJobResult> {
+  return {
+    source: "ndvi",
+    status: "skipped",
+    recordsSeen: 0,
+    recordsWritten: 0,
+    reason: "No versioned warehouse-backed NDVI adapter is configured",
+  };
+}
+
+/** Runs independent sources without allowing one failure to erase other progress. */
+export async function runAllIngestionJobs(): Promise<IngestionJobResult[]> {
+  const jobs: Array<{
+    source: IngestionJobResult["source"];
+    run: () => Promise<IngestionJobResult>;
+  }> = [
+    { source: "nasa-firms", run: () => runFireIngestionJob() },
+    { source: "usgs-streamflow", run: () => runWaterDroughtIngestionJob() },
+    { source: "ndvi", run: runVegetationIngestionJob },
   ];
 
-  await db.insert(historicalWaterDrought).values(records).onConflictDoNothing();
-}
-
-/**
- * Scaffolding for Vegetation / NDVI ingestion (e.g. from Sentinel-2 or LANDFIRE).
- */
-export async function runVegetationIngestionJob(): Promise<void> {
-  const dateBucket = new Date();
-  const records = [
-    {
-      date_bucket: dateBucket,
-      lat: 37.7749,
-      lon: -122.4194,
-      ndvi_value: 0.65,
-      ecological_health_index: 70,
-      metadata: { source: "Sentinel-2" }
-    }
-  ];
-  await db.insert(historicalVegetation).values(records).onConflictDoNothing();
-}
-
-/**
- * Helper to seed local agricultural baseline solutions.
- */
-export async function seedOpenAgricultureData(): Promise<void> {
-   // Implementation would load USDA/PLANTS datasets into `openPlantData` locally
-   // and specific structures into `openToolingData`.
-}
-
-/**
- * Main cron entrypoint. 
- */
-export async function runAllIngestionJobs(): Promise<void> {
-  await Promise.all([
-    runFireIngestionJob(),
-    runWaterDroughtIngestionJob(),
-    runVegetationIngestionJob()
-  ]);
+  return Promise.all(
+    jobs.map(async ({ source, run }) => {
+      try {
+        return await run();
+      } catch (error) {
+        return {
+          source,
+          status: "failed" as const,
+          recordsSeen: 0,
+          recordsWritten: 0,
+          reason:
+            error instanceof Error ? error.message : "Unknown ingestion failure",
+        };
+      }
+    })
+  );
 }

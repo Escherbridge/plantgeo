@@ -6,7 +6,7 @@ import { Copy, Navigation } from "lucide-react";
 import { useMap } from "@/lib/map/map-context";
 import { MapPopup, MapPopupBody } from "@/components/ui/map-popup";
 import { cn } from "@/lib/utils";
-import type { NormalizedGeocodingResult } from "@/lib/server/services/geocoding";
+import { readGeocodingResults } from "@/lib/geocoding";
 import { useRoutingStore } from "@/stores/routing-store";
 
 interface PopupState {
@@ -23,10 +23,12 @@ export function ReverseGeocode() {
   const [popup, setPopup] = useState<PopupState | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const popupCoordsRef = useRef<{ lat: number; lon: number } | null>(null);
+  const geocodeRequestIdRef = useRef(0);
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const touchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const closePopup = useCallback(() => {
+    geocodeRequestIdRef.current += 1;
     setPopup(null);
     popupCoordsRef.current = null;
     markerRef.current?.remove();
@@ -35,6 +37,8 @@ export function ReverseGeocode() {
 
   const openPopup = useCallback(
     async (lat: number, lon: number, mapInstance: maplibregl.Map) => {
+      const requestId = geocodeRequestIdRef.current + 1;
+      geocodeRequestIdRef.current = requestId;
       const point = mapInstance.project([lon, lat]);
 
       markerRef.current?.remove();
@@ -48,12 +52,13 @@ export function ReverseGeocode() {
 
       try {
         const res = await fetch(`/api/geocode/reverse?lat=${lat}&lon=${lon}`);
-        const data: { results: NormalizedGeocodingResult[] } = await res.json();
-        const address = data.results[0]?.displayName ?? null;
+        const address = (await readGeocodingResults(res))[0]?.displayName ?? null;
+        if (requestId !== geocodeRequestIdRef.current) return;
         setPopup((prev) =>
           prev ? { ...prev, address, loading: false } : null
         );
       } catch {
+        if (requestId !== geocodeRequestIdRef.current) return;
         setPopup((prev) =>
           prev ? { ...prev, address: null, loading: false } : null
         );
@@ -128,6 +133,7 @@ export function ReverseGeocode() {
       map.off("touchmove", handleTouchMove);
       window.removeEventListener("keydown", handleKeyDown);
       if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
+      geocodeRequestIdRef.current += 1;
       markerRef.current?.remove();
       markerRef.current = null;
     };

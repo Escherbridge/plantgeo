@@ -1,25 +1,36 @@
-import { defineConfig } from 'vitest/config'
-import path from 'path'
+import { fileURLToPath } from "node:url";
+import { defineConfig } from "vitest/config";
+
+const repoRoot = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
+  root: repoRoot,
   test: {
-    environment: 'jsdom',
+    environment: "jsdom",
     globals: true,
-    setupFiles: ['./src/test/setup.ts'],
+    setupFiles: ["./src/test/setup.ts"],
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    exclude: [
+      "node_modules/**",
+      ".next/**",
+      "**/.venv/**",
+      "**/.uv-cache/**",
+      "**/coverage/**",
+    ],
     coverage: {
-      provider: 'v8',
+      provider: "v8",
       thresholds: {
         lines: 60,
         functions: 60,
       },
     },
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
-})
+});

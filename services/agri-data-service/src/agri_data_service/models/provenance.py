@@ -111,6 +111,7 @@ class SourceRelease(Base, UUIDMixin):
     payload_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     payload_bytes: Mapped[int | None] = mapped_column(BigInteger)
     schema_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    transform_version: Mapped[str] = mapped_column(String(100), nullable=False, server_default=text("'source-native'"))
     license_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
     query_parameters: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     quality_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
@@ -127,7 +128,13 @@ class SourceRelease(Base, UUIDMixin):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("data_source_id", "source_version", "payload_checksum", name="uq_source_release_identity"),
+        UniqueConstraint(
+            "data_source_id",
+            "source_version",
+            "payload_checksum",
+            "transform_version",
+            name="uq_source_release_identity",
+        ),
         CheckConstraint("payload_bytes IS NULL OR payload_bytes >= 0", name="nonnegative_payload_bytes"),
         CheckConstraint(
             "observed_to IS NULL OR observed_from IS NULL OR observed_to >= observed_from",
@@ -170,6 +177,10 @@ class Artifact(Base, UUIDMixin):
         CheckConstraint(
             "storage_class <> 'database_inline' OR content_bytes IS NOT NULL",
             name="inline_artifact_has_content",
+        ),
+        CheckConstraint(
+            "content_bytes IS NULL OR encode(public.digest(content_bytes, 'sha256'), 'hex') = checksum_sha256",
+            name="inline_artifact_checksum_matches",
         ),
     )
 

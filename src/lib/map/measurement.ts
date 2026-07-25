@@ -44,7 +44,7 @@ export function bearing(a: [number, number], b: [number, number]): number {
 export function formatDistance(meters: number, unit: "metric" | "imperial"): string {
   if (unit === "imperial") {
     const feet = meters * 3.28084;
-    if (feet < 5280) return `${feet.toFixed(0)} ft`;
+    if (meters < 1609) return `${feet.toFixed(0)} ft`;
     return `${(feet / 5280).toFixed(2)} mi`;
   }
   if (meters < 1000) return `${meters.toFixed(0)} m`;

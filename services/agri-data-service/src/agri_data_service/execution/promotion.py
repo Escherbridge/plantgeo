@@ -152,6 +152,7 @@ class SourceReleaseRecord(PromotionModel):
     payload_checksum: str = Field(pattern=SHA256_PATTERN)
     payload_bytes: int = Field(ge=0)
     schema_version: str = Field(min_length=1, max_length=100)
+    transform_version: str = Field(default="source-native", min_length=1, max_length=100)
     license_snapshot: str = Field(min_length=1, max_length=10_000)
     query_parameters: dict[str, Any] = Field(default_factory=dict)
     quality_summary: dict[str, Any] = Field(default_factory=dict)
@@ -524,7 +525,12 @@ class PromotionTargetSnapshot(PromotionModel):
         _index_unique(self.source_releases, lambda item: item.id, "target source release id")
         _index_unique(
             self.source_releases,
-            lambda item: (item.data_source_id, item.source_version, item.payload_checksum),
+            lambda item: (
+                item.data_source_id,
+                item.source_version,
+                item.payload_checksum,
+                item.transform_version,
+            ),
             "target source release identity",
         )
         _index_unique(self.artifacts, lambda item: item.id, "target artifact id")
@@ -788,9 +794,14 @@ def plan_semantic_restore(
         lambda item: item.id,
         "target source release id",
     )
-    target_releases_by_identity: dict[tuple[uuid.UUID, str, str], SourceReleaseRecord] = _index_unique(
+    target_releases_by_identity: dict[tuple[uuid.UUID, str, str, str], SourceReleaseRecord] = _index_unique(
         target.source_releases,
-        lambda item: (item.data_source_id, item.source_version, item.payload_checksum),
+        lambda item: (
+            item.data_source_id,
+            item.source_version,
+            item.payload_checksum,
+            item.transform_version,
+        ),
         "target source release identity",
     )
     steps.extend(
@@ -804,6 +815,7 @@ def plan_semantic_restore(
                     source_release_record.data_source_id,
                     source_release_record.source_version,
                     source_release_record.payload_checksum,
+                    source_release_record.transform_version,
                 )
             ),
             "source release",

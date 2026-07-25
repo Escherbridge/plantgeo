@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "source_plan_checksum": "10a6ca25ecaeee749b34400dd4b25551e4ea601447825fc6b50e9fec37d7fbd0",
+  "release_set_key": "usdm-national-20220714-20260714-asof-20260721",
+  "release_set_as_of": "2026-07-21T01:20:00Z",
+  "description": "Four-year national USDM source release set. Native D0-D4 polygons only; normal conditions and absent severity classes are not inferred. This controlled finalization advances the as-of time to include the completed local source-receipt evidence for the immutable reviewed replay."
+}

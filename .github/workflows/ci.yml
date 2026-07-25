@@ -6,9 +6,12 @@ on:
       - main
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  ci:
-    name: Build & Check
+  web:
+    name: Web checks
     runs-on: ubuntu-latest
 
     steps:
@@ -18,27 +21,174 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22.16.0"
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Type check
-        run: npx tsc --noEmit
-
       - name: Lint
-        run: |
-          if node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts.lint ? 0 : 1)"; then
-            npm run lint
-          else
-            echo "No lint script found, skipping."
-          fi
+        run: npm run lint
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Enforce browser data boundary
+        run: npm run check:data-boundary
 
       - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_PMTILES_URL: https://build.protomaps.com/20240801T000000Z.pmtiles
+          NEXT_PUBLIC_TERRAIN_URL: https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
+          NEXT_PUBLIC_DYNAMIC_TILES_URL: http://localhost:3100
+
+  data-service:
+    name: Python data-service checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/agri-data-service
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.12"
+
+      - name: Install pinned uv
+        run: python -m pip install uv==0.11.29
+
+      - name: Install locked dependencies
+        run: uv sync --locked --all-extras
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type check
+        run: uv run mypy src
+
+      - name: Test
+        run: uv run pytest
+
+  forecast-postgresql:
+    name: PostgreSQL 16 forecast rehearsal
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/agri-data-service
+    services:
+      postgres:
+        image: timescale/timescaledb-ha@sha256:9965a1682187e30d36a24e303b77f1b265ff7458b383eb3304dd1d8d65edb3fc
+        env:
+          POSTGRES_DB: plantgeo_forecast_test_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: forecast-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d plantgeo_forecast_test_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
+      FORECAST_TEST_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.12"
+
+      - name: Install pinned uv
+        run: python -m pip install uv==0.11.29
+
+      - name: Install locked dependencies
+        run: uv sync --locked --all-extras
+
+      - name: Enable reviewed forecast extensions
+        shell: bash
         run: |
-          if node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts.test ? 0 : 1)"; then
-            npm test
-          else
-            echo "No test script found, skipping."
-          fi
+          docker exec -i "${{ job.services.postgres.id }}" \
+            psql --set ON_ERROR_STOP=1 --username postgres --dbname plantgeo_forecast_test_ci <<'SQL'
+          DO $preflight$
+          BEGIN
+              IF current_setting('server_version_num')::integer / 10000 <> 16 THEN
+                  RAISE EXCEPTION 'forecast CI requires PostgreSQL 16';
+              END IF;
+          END
+          $preflight$;
+          CREATE EXTENSION IF NOT EXISTS postgis;
+          CREATE EXTENSION IF NOT EXISTS timescaledb;
+          CREATE EXTENSION IF NOT EXISTS vector;
+          CREATE EXTENSION IF NOT EXISTS pgcrypto;
+          SELECT extname, extversion
+          FROM pg_extension
+          WHERE extname IN ('postgis', 'timescaledb', 'vector', 'pgcrypto')
+          ORDER BY extname;
+          SQL
+
+      - name: Migrate disposable database through 0008
+        run: uv run alembic upgrade 20260722_0008
+
+      - name: Run forecast PostgreSQL contract
+        run: uv run pytest tests/test_forecasting_postgresql.py -q
+
+      - name: Create v1 upgrade rehearsal database
+        working-directory: .
+        run: >-
+          docker exec "${{ job.services.postgres.id }}"
+          createdb --username postgres plantgeo_forecast_test_upgrade_ci
+
+      - name: Enable extensions for v1 upgrade rehearsal
+        shell: bash
+        run: |
+          docker exec -i "${{ job.services.postgres.id }}" \
+            psql --set ON_ERROR_STOP=1 --username postgres \
+            --dbname plantgeo_forecast_test_upgrade_ci <<'SQL'
+          CREATE EXTENSION IF NOT EXISTS postgis;
+          CREATE EXTENSION IF NOT EXISTS timescaledb;
+          CREATE EXTENSION IF NOT EXISTS vector;
+          CREATE EXTENSION IF NOT EXISTS pgcrypto;
+          SQL
+
+      - name: Seed structural finalized v1 row at 0007
+        env:
+          DATABASE_URL_SYNC: postgresql+psycopg2://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_upgrade_ci
+          FORECAST_V1_UPGRADE_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_upgrade_ci
+          FORECAST_V1_UPGRADE_PHASE: seed
+        run: |
+          uv run alembic upgrade 20260722_0007
+          uv run pytest tests/test_forecasting_v1_upgrade_postgresql.py -q
+
+      - name: Prove v1 checksum row survives 0008
+        env:
+          DATABASE_URL_SYNC: postgresql+psycopg2://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_upgrade_ci
+          FORECAST_V1_UPGRADE_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_upgrade_ci
+          FORECAST_V1_UPGRADE_PHASE: verify
+        run: |
+          uv run alembic upgrade 20260722_0008
+          uv run pytest tests/test_forecasting_v1_upgrade_postgresql.py -q
+
+      - name: Drop disposable forecast databases
+        if: always()
+        continue-on-error: true
+        working-directory: .
+        run: |
+          docker exec "${{ job.services.postgres.id }}" \
+            dropdb --force --if-exists --username postgres plantgeo_forecast_test_upgrade_ci
+          docker exec "${{ job.services.postgres.id }}" \
+            dropdb --force --if-exists --username postgres plantgeo_forecast_test_ci

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
-import type { DecodedRoute } from "@/lib/server/services/routing";
+import type { DecodedRoute } from "@/lib/routing";
 
 export type TransportMode = "car" | "bike" | "pedestrian" | "truck";
 

@@ -1,4 +1,7 @@
 import type { SoilProperties } from "@/lib/server/services/soilgrids";
+import type { ErosionClass } from "@/lib/environmental/erosion";
+
+export { EROSION_COLORS, type ErosionClass } from "@/lib/environmental/erosion";
 
 /** C-factors by land cover type (dimensionless, 0–1) */
 const C_FACTORS: Record<string, number> = {
@@ -74,13 +77,6 @@ export function calculateErosionRisk(
   return Math.round(Math.min(100, Math.max(0, score)));
 }
 
-export type ErosionClass =
-  | "very_low"
-  | "low"
-  | "moderate"
-  | "high"
-  | "very_high";
-
 /** Classify erosion risk score into 5-class rating */
 export function classifyErosionRisk(score: number): ErosionClass {
   if (score < 10) return "very_low";
@@ -89,12 +85,3 @@ export function classifyErosionRisk(score: number): ErosionClass {
   if (score < 75) return "high";
   return "very_high";
 }
-
-/** Color for each erosion risk class */
-export const EROSION_COLORS: Record<ErosionClass, string> = {
-  very_low: "#4caf50",
-  low: "#8bc34a",
-  moderate: "#ff9800",
-  high: "#f44336",
-  very_high: "#9c27b0",
-};

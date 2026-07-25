@@ -23,11 +23,12 @@ const mockPhotonResponse = {
 describe('forwardGeocode', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(mockPhotonResponse),
-      statusText: 'OK',
-    })
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      new Response(JSON.stringify(mockPhotonResponse), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
   })
 
   it('calls Photon API with the query parameter', async () => {
@@ -36,8 +37,8 @@ describe('forwardGeocode', () => {
     await forwardGeocode('london')
 
     expect(globalThis.fetch).toHaveBeenCalledOnce()
-    const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
-    expect(url).toContain('q=london')
+    const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as URL
+    expect(url.toString()).toContain('q=london')
   })
 
   it('returns a FeatureCollection with features', async () => {
@@ -58,14 +59,28 @@ describe('forwardGeocode', () => {
   })
 
   it('throws on non-ok response', async () => {
-    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: false,
-      statusText: 'Service Unavailable',
-    })
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      new Response('', { status: 503 })
+    )
 
     const { forwardGeocode } = await import('@/lib/server/services/geocoding')
 
-    await expect(forwardGeocode('london')).rejects.toThrow('Geocoding failed')
+    await expect(forwardGeocode('london')).rejects.toThrow('status 503')
+  })
+
+  it('rejects a provider response beyond the feature schema cap', async () => {
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ...mockPhotonResponse,
+          features: Array.from({ length: 21 }, () => mockPhotonResponse.features[0]),
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    )
+    const { forwardGeocode } = await import('@/lib/server/services/geocoding')
+
+    await expect(forwardGeocode('london')).rejects.toThrow('invalid response')
   })
 })
 

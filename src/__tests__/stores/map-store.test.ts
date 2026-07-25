@@ -7,9 +7,9 @@ describe('useMapStore', () => {
     // Reset store to initial state before each test
     useMapStore.setState({
       viewport: {
-        longitude: -119.4179,
-        latitude: 36.7783,
-        zoom: 6,
+        longitude: -120.7401,
+        latitude: 47.7511,
+        zoom: 7,
         bearing: 0,
         pitch: 0,
       },
@@ -25,9 +25,9 @@ describe('useMapStore', () => {
 
   it('has correct initial state', () => {
     const { result } = renderHook(() => useMapStore())
-    expect(result.current.viewport.longitude).toBe(-119.4179)
-    expect(result.current.viewport.latitude).toBe(36.7783)
-    expect(result.current.viewport.zoom).toBe(6)
+    expect(result.current.viewport.longitude).toBe(-120.7401)
+    expect(result.current.viewport.latitude).toBe(47.7511)
+    expect(result.current.viewport.zoom).toBe(7)
     expect(result.current.is3DEnabled).toBe(true)
     expect(result.current.isGlobeView).toBe(false)
     expect(result.current.terrainExaggeration).toBe(1.5)
@@ -55,8 +55,8 @@ describe('useMapStore', () => {
     })
 
     expect(result.current.viewport.zoom).toBe(10)
-    expect(result.current.viewport.longitude).toBe(-119.4179)
-    expect(result.current.viewport.latitude).toBe(36.7783)
+    expect(result.current.viewport.longitude).toBe(-120.7401)
+    expect(result.current.viewport.latitude).toBe(47.7511)
   })
 
   it('toggle3D changes is3DEnabled', () => {
@@ -142,9 +142,9 @@ describe('useMapStore', () => {
       result.current.resetView()
     })
 
-    expect(result.current.viewport.longitude).toBe(-119.4179)
-    expect(result.current.viewport.latitude).toBe(36.7783)
-    expect(result.current.viewport.zoom).toBe(6)
+    expect(result.current.viewport.longitude).toBe(-120.7401)
+    expect(result.current.viewport.latitude).toBe(47.7511)
+    expect(result.current.viewport.zoom).toBe(7)
     expect(result.current.isGlobeView).toBe(false)
     expect(result.current.is3DEnabled).toBe(true)
   })

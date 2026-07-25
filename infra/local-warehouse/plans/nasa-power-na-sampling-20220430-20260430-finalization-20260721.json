@@ -1,0 +1,7 @@
+{
+  "description": "Finalize the completed cache-first North America NASA POWER replay after its persisted receipts advanced beyond the acquisition plan as-of time. This changes only the governed release-set identity and never re-requests or rewrites source content.",
+  "release_set_as_of": "2026-07-21T20:00:00Z",
+  "release_set_key": "nasa-power-na-sampling-20220430-20260430-asof-20260721",
+  "schema_version": 1,
+  "source_plan_checksum": "5d6b050bf3294986e2732f76ae9eb97513fe0e2dfef5619f825ace10e6f9d591"
+}

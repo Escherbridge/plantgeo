@@ -1,13 +1,18 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { useMap } from "@/lib/map/map-context";
 import { useMapStore } from "@/stores/map-store";
 import { useVegetationStore } from "@/stores/vegetation-store";
 import { useSoilStore } from "@/stores/soil-store";
-import { DEMO_DROUGHT_GEOJSON, DEMO_WATER_GAUGES, DEMO_GROUNDWATER_WELLS } from "@/lib/map/demo-data";
 import { useFireData } from "@/hooks/useFireData";
+import { trpc } from "@/lib/trpc/client";
+import { viewportBbox } from "@/lib/map/viewport-bbox";
+
+const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
+  type: "FeatureCollection",
+  features: [],
+};
 
 const FireLayer = dynamic(
   () => import("@/components/map/layers/FireLayer").then((m) => ({ default: m.FireLayer })),
@@ -41,34 +46,35 @@ export default function LayerManager() {
   const soilState = useSoilStore();
   const fireData = useFireData(activeLayers.includes("fire"));
 
-  // Live drought data with fallback to demo
-  const [droughtGeoJSON, setDroughtGeoJSON] = useState(DEMO_DROUGHT_GEOJSON);
-  useEffect(() => {
-    if (!activeLayers.includes("drought")) return;
-    fetch("https://droughtmonitor.unl.edu/data/json/usdm_current.json")
-      .then((r) => r.json())
-      .then((data) => setDroughtGeoJSON(data))
-      .catch(() => {}); // keep demo data on error
-  }, [activeLayers]);
-
-  // Compute bbox string from viewport for DemandHeatmapLayer
   const zoom = viewport.zoom ?? 8;
-  const degPerPixel = 360 / Math.pow(2, zoom + 8);
-  const halfW = degPerPixel * 512;
-  const halfH = degPerPixel * 256;
-  const bbox = [
-    (viewport.longitude - halfW).toFixed(4),
-    (viewport.latitude - halfH).toFixed(4),
-    (viewport.longitude + halfW).toFixed(4),
-    (viewport.latitude + halfH).toFixed(4),
-  ].join(",");
+  const bbox = viewportBbox(viewport.longitude, viewport.latitude, zoom);
+
+  const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(
+    undefined,
+    { enabled: activeLayers.includes("drought") }
+  );
+  const droughtGeoJSON = droughtQuery.data ?? EMPTY_FEATURE_COLLECTION;
+  const waterEnabled = activeLayers.includes("water");
+  const streamflowQuery = trpc.environmental.getStreamflow.useQuery(
+    { bbox: bbox ?? "-180,-90,180,90" },
+    { enabled: waterEnabled && bbox !== null, staleTime: 15 * 60 * 1000 }
+  );
+  const groundwaterQuery = trpc.environmental.getGroundwater.useQuery(
+    { bbox: bbox ?? "-180,-90,180,90" },
+    { enabled: waterEnabled && bbox !== null, staleTime: 60 * 60 * 1000 }
+  );
 
   if (!map) return null;
 
   return (
     <>
       <FireLayer map={map} visible={activeLayers.includes("fire")} geojson={fireData.data} />
-      <WaterLayer map={map} gauges={DEMO_WATER_GAUGES} wells={DEMO_GROUNDWATER_WELLS} visible={activeLayers.includes("water")} />
+      <WaterLayer
+        map={map}
+        gauges={streamflowQuery.data ?? []}
+        wells={groundwaterQuery.data ?? []}
+        visible={waterEnabled}
+      />
       <DroughtLayer map={map} geojson={droughtGeoJSON} visible={activeLayers.includes("drought")} />
       <VegetationLayer
         map={map}
@@ -86,7 +92,12 @@ export default function LayerManager() {
         property={soilState.property}
         opacity={soilState.opacity}
       />
-      <DemandHeatmapLayer map={map} bbox={bbox} visible={activeLayers.includes("demand-heatmap")} />
+      <DemandHeatmapLayer
+        map={map}
+        bbox={bbox}
+        zoom={zoom}
+        visible={activeLayers.includes("demand-heatmap") && bbox !== null}
+      />
     </>
   );
 }

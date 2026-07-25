@@ -1,712 +1,491 @@
-# Railway Deployment Guide
+# PlantGeo Railway Operations Guide
 
-Complete guide to deploying PlantGeo on Railway.app with multi-service setup.
+This guide describes the existing PlantGeo production boundary in Railway. It is
+an operations runbook, not a clean-room tutorial. Do not run `railway init`, add
+generic database templates, or infer ownership from the shared project name.
 
-## Prerequisites
+## Production boundary
 
-### Accounts & Credentials
+Railway project ID: `6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`
 
-1. **Railway Account** — Sign up at https://railway.app
-2. **Cloudflare Account** — For R2 storage (PMTiles tiles)
-3. **GitHub Account** — For repository connection
-4. **API Keys** — NASA FIRMS, Mapillary, OpenWeatherMap, Anthropic Claude
+The Railway dashboard calls the containing project `Aevani`, but service names
+define the security boundary:
 
-### Environment Preparation
+| Service | PlantGeo responsibility | Current gate |
+| --- | --- | --- |
+| `plantgeo-main` | Next.js application | Running; the production workflow targets only this service. |
+| `plantgeo-dataservice` | Bounded Python API and publication receiver | Running; Alembic owns only the `agri` schema. |
+| `plantgeo-Redis` | Cache, pub/sub, and non-durable wake-up transport | Running; never use it as the durable job ledger. |
+| `Plantgeo` | Legacy PlantGeo PostgreSQL 18.3 database | Running, but the last audit found no required geospatial/time-series extensions. |
+| `plantgeo-spatiotemporal-db` | Replacement database candidate using the TimescaleDB HA PostgreSQL 18 image | Running; extensions, roles, and migrations are not yet verified. It is not the production target yet. |
+| `plantgeo-martin` | Private vector-tile service | Provisioned but stopped/crashed. Its initial target lacked PostGIS; the sealed database reference now points to the replacement candidate for a reviewed redeploy. |
+| `Aevani-Postgress` | Parent affiliate/UGC/monetization data | Out of scope. Never query, migrate, reset, grant, or reference it from PlantGeo. |
 
-```bash
-# 1. Clone repository
-git clone https://github.com/plantgeo/plantgeo.git
-cd plantgeo
+Automation and operator scripts must use the exact PlantGeo allowlist above and
+must reject `Aevani-Postgress`. Use Railway reference variables rather than
+copying resolved public proxy credentials between services.
 
-# 2. Create .env.local with all secrets
-cp .env.example .env.local
-# Fill in all API keys and credentials
+## Phase-one compute boundary
 
-# 3. Test locally
-npm run docker:up
-npm run db:migrate
-npm run dev
+Training, 30-day Monte Carlo forecasts, inference, and long preaggregations run
+on the operator-controlled machine. They do not run in a Railway web replica,
+cron service, Celery worker, or forecast worker.
 
-# Verify at http://localhost:3000
+The local runner:
+
+1. creates a deterministic run identity from the job version, schedule,
+   immutable release-set checksum, model/recipe version, partitions, shards,
+   and expected output coverage;
+2. records checksummed shard checkpoints so interrupted work can resume on the
+   next invocation;
+3. binds each output report to exact bytes, then validates the complete frozen
+   output and coverage set with a run-level report;
+4. uploads bounded artifacts through the authenticated data-service API; and
+5. advances an immutable database publication pointer only after the complete
+   artifact set is revalidated in one transaction.
+
+Publication is at-least-once and idempotent. Local manifests are authoritative
+before publication; PostgreSQL lineage and publication pointers are
+authoritative afterward. A computer that is powered off cannot run forecasts or
+raise proactive alerts, so unattended operation eventually needs a dedicated
+operator host or an explicitly budgeted external monitor.
+
+Operational acquisition endpoints may perform bounded, authenticated provider
+fetches only when they validate and persist the result before display. The
+target state moves long-running acquisition and backfills into the local runner;
+browser code never calls environmental providers directly.
+
+See [Predictive Environmental Intelligence](./predictive-environmental-intelligence-spec.md)
+and [Data Ingestion and Serving Contract](./data-ingestion-and-serving-contract.md).
+
+## Local forecast workflow
+
+Use the locked Python environment from `services/agri-data-service`:
+
+```powershell
+uv sync --locked --all-extras
+
+@'
+{
+  "partitions": ["colorado-west"],
+  "expected_shards": ["colorado-west"],
+  "expected_outputs": [
+    {
+      "output_key": "danger-forecast-colorado-west",
+      "kind": "danger_forecast",
+      "covered_shards": ["colorado-west"],
+      "covered_partitions": ["colorado-west"]
+    }
+  ]
+}
+'@ | Set-Content -Encoding utf8 .\run-plan.json
+
+$run = uv run agri-cli local init `
+  --job-name danger-forecast `
+  --job-version 1 `
+  --scheduled-for 2026-07-20T00:00:00-06:00 `
+  --release-set-id <release-set-uuid> `
+  --release-set-manifest-checksum <64-character-lowercase-sha256> `
+  --model-version <model-version> `
+  --run-plan .\run-plan.json | ConvertFrom-Json
+
+$runId = $run.run_id
+$runDirectory = $run.run_directory
+New-Item -ItemType Directory -Force `
+  "$runDirectory\artifacts", "$runDirectory\validation" | Out-Null
+
+uv run agri-cli local status $runId
 ```
 
-## Railway Project Setup
+The run plan accepts exactly `partitions`, `expected_shards`, and
+`expected_outputs`; output entries accept exactly `output_key`, `kind`,
+`covered_shards`, and `covered_partitions`. Arrays must be non-empty, sorted,
+and unique, and the outputs together must cover every declared shard and
+partition. The command returns the deterministic `run_id` and its run directory.
+Algorithms should checkpoint after bounded shards and reuse the verified cursor
+after interruption:
 
-### 1. Create Project
+```powershell
+uv run agri-cli local checkpoint $runId `
+  --shard-key colorado-west `
+  --cursor-file .\cursor.json `
+  --progress 0.25
 
-```bash
-# Install Railway CLI
-npm install -g @railway/cli
-
-# Login to Railway
-railway login
-
-# Create new project
-railway init
-# Select: Create a new project
-# Name: plantgeo
+uv run agri-cli local resume $runId --shard-key colorado-west
 ```
 
-Or via web: https://railway.app/dashboard
+Every artifact and validation report must be a file beneath the returned run
+directory. An output validation report is strict JSON with no extra fields and
+this version-2 shape:
 
-### 2. Add Services
-
-#### Service 1: PostgreSQL Database
-
-```bash
-railway add
-# Select: PostgreSQL
-# Accept defaults
-```
-
-**Configuration:**
-- Version: 16 (latest)
-- Persistent volume: enabled
-- Backup: daily
-
-Railway automatically creates:
-- Database: `railway`
-- User: `postgres`
-- Password: random (stored as `DATABASE_URL`)
-
-#### Service 2: Redis
-
-```bash
-railway add
-# Select: Redis
-# Accept defaults
-```
-
-**Configuration:**
-- Version: 7
-- Persistent volume: enabled
-- `REDIS_URL` automatically set
-
-#### Service 3: Next.js App
-
-```bash
-railway add
-# Select: GitHub
-# Select repository: plantgeo
-```
-
-**Configuration in railway.json:**
 ```json
 {
-  "build": {
-    "builder": "DOCKERFILE",
-    "dockerfilePath": "Dockerfile"
-  },
-  "deploy": {
-    "startCommand": "node server.js",
-    "healthcheckPath": "/api/health",
-    "healthcheckTimeout": 30,
-    "restartPolicyType": "ON_FAILURE"
-  }
-}
-```
-
-#### Service 4: Martin (Tile Server)
-
-Create Dockerfile.martin:
-
-```dockerfile
-FROM ghcr.io/maplibre/martin:v1.4
-
-# Copy PostgreSQL connection info
-ENV DATABASE_URL=$DATABASE_URL
-
-# Expose port
-EXPOSE 3100
-
-# Start Martin
-CMD ["martin"]
-```
-
-Deploy via Railway CLI:
-
-```bash
-railway service create
-# Name: martin
-# Select: Custom Dockerfile
-# Path: Dockerfile.martin
-```
-
-#### Service 5: Valhalla (Routing)
-
-```bash
-railway service create
-# Name: valhalla
-# Select: Docker Image
-# Image: ghcr.io/valhalla/valhalla:latest
-# Port: 8002
-```
-
-## Environment Variables
-
-### Set All Variables in Railway
-
-Go to each service → Variables tab and add:
-
-#### PostgreSQL Service
-
-```
-POSTGRES_PASSWORD=<random-generated>
-DATABASE_URL=postgresql://postgres:<password>@<host>:5432/railway
-```
-
-#### Redis Service
-
-```
-REDIS_URL=redis://<host>:6379
-```
-
-#### Next.js App Service
-
-```
-# Database & Cache
-DATABASE_URL=postgresql://postgres:<password>@postgres.<project>.railway.internal:5432/railway
-REDIS_URL=redis://redis.<project>.railway.internal:6379
-
-# Tile & Routing
-MARTIN_URL=http://martin.<project>.railway.internal:3100
-VALHALLA_URL=http://valhalla.<project>.railway.internal:8002
-PHOTON_URL=http://photon.<project>.railway.internal:2322
-
-# Cloudflare R2 (Storage for PMTiles)
-R2_BUCKET=plantgeo-tiles
-R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
-R2_ACCESS_KEY_ID=<access-key>
-R2_SECRET_ACCESS_KEY=<secret-key>
-
-# Public URLs
-NEXT_PUBLIC_PMTILES_URL=https://<r2-domain>/basemap.pmtiles
-NEXT_PUBLIC_MAP_STYLE_URL=http://martin.<project>.railway.internal:3100/style.json
-
-# Authentication
-NEXTAUTH_SECRET=<openssl rand -base64 32>
-NEXTAUTH_URL=https://<your-railway-domain>.railway.app
-
-# OAuth Providers
-GOOGLE_CLIENT_ID=<google-oauth-id>
-GOOGLE_CLIENT_SECRET=<google-oauth-secret>
-GITHUB_CLIENT_ID=<github-oauth-id>
-GITHUB_CLIENT_SECRET=<github-oauth-secret>
-
-# External APIs
-NASA_FIRMS_KEY=<api-key>
-MAPILLARY_ACCESS_TOKEN=<token>
-ANTHROPIC_API_KEY=sk-ant-<key>
-
-# PlantCommerce Integration
-PLANTCOMMERCE_API_URL=https://plantcommerce.example.com
-PLANTCOMMERCE_WEBHOOK_SECRET=<hmac-secret>
-
-# Admin Token
-ADMIN_API_TOKEN=<random-token>
-```
-
-#### Martin Service
-
-```
-DATABASE_URL=postgresql://postgres:<password>@postgres.<project>.railway.internal:5432/railway
-MARTIN_PORT=3100
-```
-
-#### Valhalla Service
-
-```
-# Valhalla doesn't require environment vars
-# but mount PBF data volume (see below)
-```
-
-## Service Networking
-
-Railway services in same project communicate via internal DNS:
-
-```
-postgres.<project>.railway.internal:5432
-redis.<project>.railway.internal:6379
-martin.<project>.railway.internal:3100
-valhalla.<project>.railway.internal:8002
-```
-
-**Example connection string:**
-```
-postgresql://postgres:password@postgres.plantgeo.railway.internal:5432/railway
-```
-
-## Database Setup
-
-### Run Migrations
-
-After deploying Next.js service, run migrations:
-
-```bash
-# Connect to Railway project
-railway shell
-
-# Run migrations
-npm run db:migrate
-
-# Verify
-psql $DATABASE_URL -c "SELECT table_name FROM information_schema.tables WHERE table_schema='public';"
-```
-
-### Initialize PostGIS Extensions
-
-```bash
-railway connect
-# or
-psql $DATABASE_URL
-```
-
-```sql
--- Create extensions
-CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE EXTENSION IF NOT EXISTS timescaledb;
-
--- Verify
-SELECT version();  -- Shows PostGIS version
-```
-
-### Seed Initial Data
-
-```bash
-# Create global layers
-npm run seed:layers
-
-# Create admin user
-npm run seed:admin-user
-```
-
-## Health Checks & Monitoring
-
-### Configure Health Checks
-
-Railway automatically hits `/api/health` (from railway.json):
-
-```typescript
-// src/app/api/health/route.ts
-export async function GET() {
-  try {
-    // Check database
-    await db.select().from(users).limit(1);
-
-    // Check Redis
-    await redis.ping();
-
-    return Response.json({
-      status: 'ok',
-      services: {
-        db: 'ok',
-        redis: 'ok',
-        timestamp: new Date().toISOString(),
-      },
-    });
-  } catch (error) {
-    return Response.json(
-      { status: 'error', message: error.message },
-      { status: 500 }
-    );
-  }
-}
-```
-
-### Monitoring Dashboard
-
-Railway provides:
-- **Logs** — Real-time service logs
-- **Metrics** — CPU, memory, request count
-- **Deployments** — History and rollback
-- **Alerts** — On service failure
-
-Access via Railway Dashboard → Project → Service
-
-## Build & Deployment Pipeline
-
-### Docker Build Process
-
-```dockerfile
-# Dockerfile (src/app already optimized Next.js)
-FROM node:22-alpine AS base
-
-FROM base AS deps
-RUN apk add --no-cache libc6-compat
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
-
-FROM base AS build
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
-
-FROM base AS runtime
-WORKDIR /app
-ENV NODE_ENV=production
-
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
-COPY --from=build /app/public ./public
-COPY --from=build --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
-EXPOSE 3000
-ENV PORT=3000
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD wget -qO- http://localhost:3000/api/health || exit 1
-
-CMD ["node", "server.js"]
-```
-
-### Deployment Steps
-
-1. **Push to GitHub**
-   ```bash
-   git push origin main
-   ```
-
-2. **Railway auto-deploys**
-   - Builds Docker image
-   - Runs migrations
-   - Starts service
-   - Health checks pass → service live
-
-3. **Verify deployment**
-   ```bash
-   railway logs
-   railway env
-   ```
-
-## Scaling & Performance
-
-### Horizontal Scaling
-
-**Next.js Service:**
-- Set replicas: 2-3 for high traffic
-- Railway load balances across replicas
-- Sticky sessions: via Redis store
-
-**Database:**
-- PostgreSQL vertical scaling only (upgrade plan)
-- Use read replicas for analytics queries
-- Connection pooling: PgBouncer
-
-### Vertical Scaling
-
-Upgrade Railway plan to increase:
-- CPU cores
-- Memory per service
-- Storage for database
-
-### Optimization
-
-```typescript
-// 1. Enable response compression
-app.use(compression());
-
-// 2. Use Redis caching aggressively
-const cached = await redis.get(key);
-if (!cached) {
-  const data = await fetchExpensiveData();
-  await redis.setex(key, 3600, JSON.stringify(data));
-}
-
-// 3. Batch database queries
-const [users, teams] = await Promise.all([
-  db.select().from(users),
-  db.select().from(teams),
-]);
-
-// 4. Use connection pooling
-DATABASE_URL=postgresql://...?sslmode=require&pool=10
-```
-
-## Cloudflare R2 Setup
-
-### Create R2 Bucket
-
-1. Go to Cloudflare Dashboard → R2
-2. Click "Create bucket"
-3. Name: `plantgeo-tiles`
-4. Region: wnam (default)
-
-### Generate API Token
-
-1. Settings → API Tokens
-2. Create token with R2 permissions
-3. Copy:
-   - `R2_ACCESS_KEY_ID`
-   - `R2_SECRET_ACCESS_KEY`
-
-### Upload PMTiles
-
-```bash
-# Install rclone
-brew install rclone
-
-# Configure R2
-rclone config create r2 s3 \
-  provider Cloudflare \
-  access_key_id $R2_ACCESS_KEY_ID \
-  secret_access_key $R2_SECRET_ACCESS_KEY \
-  endpoint $R2_ENDPOINT \
-  region auto
-
-# Upload basemap
-rclone copy basemap.pmtiles r2:plantgeo-tiles/
-```
-
-### Public URL
-
-Enable public read access:
-
-```
-https://<bucket>.r2.dev/<file>
-# Example: https://plantgeo-tiles.r2.dev/basemap.pmtiles
-```
-
-## CI/CD Automation
-
-### GitHub Actions Workflow
-
-Create `.github/workflows/deploy.yml`:
-
-```yaml
-name: Deploy to Railway
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Deploy
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: |
-          railway up --detach
-          railway run npm run db:migrate
-
-      - name: Health check
-        run: |
-          sleep 30
-          curl -f https://${{ secrets.RAILWAY_DOMAIN }}/api/health
-```
-
-### Pre-deployment Checks
-
-```bash
-# Lint code
-npm run lint
-
-# Run tests
-npm run test
-
-# Build locally
-npm run build
-
-# Check bundle size
-npm run build -- --analyze
-```
-
-## Troubleshooting
-
-### Service Won't Start
-
-```bash
-# View logs
-railway logs
-
-# Common issues:
-# - Missing env var: check Variables tab
-# - Migration failed: run manually
-# - Health check timeout: increase in railway.json
-```
-
-### Database Connection Error
-
-```bash
-# Verify connection string
-echo $DATABASE_URL
-
-# Test connection
-psql $DATABASE_URL -c "SELECT 1"
-
-# Check firewall rules (Railway allows all internal)
-```
-
-### OutOfMemory Error
-
-```bash
-# Check memory usage
-railway env
-# Look for memory in metrics
-
-# Increase service memory
-railway service
-# Select service → Change plan
-```
-
-### High Latency
-
-```bash
-# Check region
-railway env
-# Deploy closer service if available
-
-# Enable caching
-# Increase Redis TTLs
-# Use CDN for static assets
-```
-
-## Backup & Disaster Recovery
-
-### PostgreSQL Backups
-
-Railway creates daily backups automatically:
-- **Retention:** 7 days (Pro plan)
-- **Access:** Railway Dashboard → Backups
-- **Restore:** Click backup → Restore
-
-Manual backup:
-```bash
-pg_dump $DATABASE_URL > plantgeo-backup.sql
-```
-
-### Restore from Backup
-
-```bash
-# Download backup file
-railway run psql $DATABASE_URL < plantgeo-backup.sql
-```
-
-### Redis Persistence
-
-Enabled by default:
-- **RDB snapshots:** Hourly
-- **AOF logs:** Real-time
-- **Retention:** Matches backup retention
-
-## Rollback & Versioning
-
-### Rollback Deployment
-
-Railway keeps last 10 deployments:
-
-```bash
-railway env
-# Shows current deployment
-
-railway deployments ls
-# Lists all deployments
-
-railway deployments rollback <deployment-id>
-```
-
-### Semantic Versioning
-
-Tag releases:
-
-```bash
-git tag -a v1.0.0 -m "First production release"
-git push origin v1.0.0
-
-# Railway can auto-deploy tags
-```
-
-## Security Best Practices
-
-### Network Security
-
-```
-✓ All internal traffic encrypted
-✓ Public domains via HTTPS only
-✓ Database isolated (no public IP)
-✓ API keys in environment variables (not code)
-```
-
-### Secret Management
-
-```bash
-# Store secrets in Railway Variables
-# Never commit .env files
-echo ".env.local" >> .gitignore
-
-# Rotate API keys regularly
-# Use separate keys per environment
-```
-
-### Authentication
-
-```typescript
-// NextAuth.js configuration
-export const authOptions: NextAuthOptions = {
-  providers: [
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
+  "schema_version": 2,
+  "status": "passed",
+  "output_key": "danger-forecast-colorado-west",
+  "artifact_sha256": "<64-character-lowercase-sha256>",
+  "artifact_size_bytes": 12345,
+  "artifact_row_count": 500,
+  "run_plan_checksum": "<run-plan-sha256-from-manifest>",
+  "release_set_manifest_checksum": "<release-set-manifest-sha256>",
+  "validator": "danger-forecast-validator-v1",
+  "validated_at": "2026-07-20T08:00:00Z",
+  "checks": [
+    {
+      "name": "forecast-schema",
+      "status": "passed",
+      "summary": "Required columns, types, bounds, and uniqueness passed."
+    }
   ],
-  callbacks: {
-    async signIn({ user, account }) {
-      // Add custom logic
-      return true;
-    },
-  },
-};
+  "metrics": {"row_count": 500}
+}
 ```
 
-### Rate Limiting
+The validator must calculate these bindings from the final stable bytes; the
+example placeholders are not accepted. Registering an output verifies the
+artifact checksum, byte size, optional row count, frozen run-plan checksum, and
+release-set checksum, but it does not validate the whole run:
 
-```typescript
-// Implement rate limiting middleware
-import rateLimit from 'express-rate-limit';
-
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: 'Too many requests from this IP',
-});
-
-app.use('/api/', limiter);
+```powershell
+uv run agri-cli local register-output $runId `
+  --output-key danger-forecast-colorado-west `
+  --kind danger_forecast `
+  --artifact "$runDirectory\artifacts\danger-forecast-colorado-west.parquet" `
+  --validation-report "$runDirectory\validation\danger-forecast-colorado-west.json" `
+  --media-type application/vnd.apache.parquet `
+  --row-count 500
 ```
 
-## Production Checklist
+After every declared shard has a 100% checkpoint and every expected output is
+registered, the algorithm writes a strict version-2 run validation report under
+`$runDirectory\validation`. It binds `run_id`, `logical_run_key`,
+`run_plan_checksum`, `release_set_id`, `release_set_manifest_checksum`, and the
+canonical `output_manifest_checksum`, plus the same `status`, `validator`,
+`validated_at`, non-empty `checks`, and optional scalar `metrics` fields shown
+above:
 
-- [ ] All environment variables set
-- [ ] Database migrations completed
-- [ ] PostGIS extensions installed
-- [ ] Redis persistence enabled
-- [ ] Cloudflare R2 configured and tiles uploaded
-- [ ] NextAuth.js secrets generated
-- [ ] OAuth providers configured
-- [ ] External API keys obtained
-- [ ] Health checks passing
-- [ ] Monitoring/alerting configured
-- [ ] Backup strategy documented
-- [ ] SSL/HTTPS enforced
-- [ ] CORS configured appropriately
-- [ ] Rate limiting enabled
-- [ ] Logging aggregation set up
-- [ ] Load testing completed
-- [ ] Runbooks created for common issues
+```json
+{
+  "schema_version": 2,
+  "status": "passed",
+  "run_id": "<run-uuid>",
+  "logical_run_key": "local:v2:<64-character-lowercase-sha256>",
+  "run_plan_checksum": "<run-plan-sha256-from-manifest>",
+  "release_set_id": "<release-set-uuid>",
+  "release_set_manifest_checksum": "<release-set-manifest-sha256>",
+  "output_manifest_checksum": "<canonical-output-manifest-sha256>",
+  "validator": "danger-forecast-run-validator-v1",
+  "validated_at": "2026-07-20T08:05:00Z",
+  "checks": [
+    {
+      "name": "complete-run-coverage",
+      "status": "passed",
+      "summary": "Every planned shard, partition, and output is complete."
+    }
+  ],
+  "metrics": {"output_count": 1}
+}
+```
 
-## Support
+Finalization re-hashes all evidence and refuses incomplete coverage:
 
-- **Railway Docs:** https://docs.railway.app
-- **PlantGeo Issues:** https://github.com/plantgeo/plantgeo/issues
-- **Community:** Discord/Slack channels
+```powershell
+uv run agri-cli local finalize $runId `
+  --run-validation-report "$runDirectory\validation\run.json"
+```
+
+Only then publish the frozen set:
+
+```powershell
+
+$env:LOCAL_PUBLISH_API_URL = "https://<data-service-domain>/api/v1/local-execution"
+$env:LOCAL_PUBLISH_TOKEN = "<strong-dedicated-token>"
+
+uv run agri-cli local publish $runId `
+  --product danger_forecast_artifacts `
+  --scope-key colorado-west
+```
+
+Do not put `LOCAL_PUBLISH_TOKEN` in a manifest, command history, source file, or
+browser variable. The server derives `published_by` from
+`LOCAL_PUBLISH_ACTOR`; the client cannot supply it. Keep `.agri-local-runs/` on
+reliable local storage and include it in the operator backup plan; it is
+intentionally ignored by Git and Docker.
+
+## Database replacement gate
+
+`plantgeo-spatiotemporal-db` replaces `Plantgeo`; it is not intended to remain a
+second steady-state analytics database. Both are billable only during a bounded
+copy, verification, and rollback-observation window.
+
+Do not cut over until every item below has evidence:
+
+1. Confirm the target service is exactly `plantgeo-spatiotemporal-db` and the
+   source is exactly `Plantgeo`.
+2. Take a restorable backup of `Plantgeo` and perform a restore drill.
+3. Use read-only catalog queries to verify PostgreSQL, PostGIS, TimescaleDB,
+   pgvector, and pgcrypto on the target. An image label is not proof that an
+   extension is installed in the database.
+4. Create least-privilege application, data-service publication, and Martin
+   roles. Do not use the database owner at runtime.
+5. Run Drizzle and Alembic against a disposable database with the same image and
+   extension set. Drizzle owns `public`, `geo`, and `tracking`; Alembic owns
+   `agri`.
+6. Copy data and compare counts, stable checksums, spatial validity, indexes,
+   revisions, and representative read/write queries.
+7. Prove `/api/ready`, the data publication contract, Martin `/health` and
+   `/catalog`, and an allowlisted MVT request.
+8. Freeze writes briefly, apply the final delta, and switch all PlantGeo
+   references together. Record the revision and timestamp.
+9. Observe errors, latency, publication age, tiles, and rollback signals for the
+   agreed window. Roll all references back together if any gate fails.
+10. After explicit approval, retain the backup but stop/remove `Plantgeo` so
+    duplicate compute and storage charges do not persist.
+
+Do not run database migrations in long-lived service start commands. The
+current Next.js runtime image intentionally lacks migration tooling. Production
+migration needs a reviewed administrative workflow with the exact artifacts,
+target-service guard, backup evidence, and a human approval gate.
+
+## Service configuration
+
+### `plantgeo-main`
+
+- Repository root: `/`
+- Dockerfile: `/Dockerfile`
+- Config-as-code: `/railway.json`
+- Liveness: `GET /api/health`
+- Rollout readiness: `GET /api/ready` (auth configuration plus bounded PostgreSQL and Redis probes)
+- Runtime port: Railway-provided `PORT`, default `3000`
+
+Minimum private references:
+
+```dotenv
+DATABASE_URL=${{Plantgeo.DATABASE_URL}}
+REDIS_URL=${{plantgeo-Redis.REDIS_URL}}
+MARTIN_URL=http://${{plantgeo-martin.RAILWAY_PRIVATE_DOMAIN}}:3000
+```
+
+`DATABASE_URL` remains on `Plantgeo` until the replacement gate passes. Public
+map values are embedded during the Next.js build and therefore must be final
+before enabling a production deployment:
+
+```dotenv
+NEXT_PUBLIC_PMTILES_URL=https://<first-party-r2-or-cdn>/basemap.pmtiles
+NEXT_PUBLIC_TERRAIN_URL=https://<reviewed-terrain-origin>/{z}/{x}/{y}.png
+NEXT_PUBLIC_DYNAMIC_TILES_URL=https://<martin-public-or-custom-domain>
+```
+
+Never place a `*.railway.internal` hostname or a credential in `NEXT_PUBLIC_*`.
+Keep the dynamic-tile variable unset until Martin is verified. Environmental
+raster tiles remain disabled until a database-backed publication catalog—not an
+environment variable—provides the immutable URL, release, and checksum. The UI
+must render a clear unavailable state rather than inventing data.
+
+Server-only credentials include database/Redis URLs, ingestion secrets, provider
+tokens, OAuth secrets, and `MAPILLARY_ACCESS_TOKEN`. Provider credentials must
+never be exposed as `NEXT_PUBLIC_*`.
+
+### Data-service receiver and published-reader instances
+
+- Repository root: `/services/agri-data-service`
+- Dockerfile: `/services/agri-data-service/Dockerfile`
+- Config-as-code: `/services/agri-data-service/railway.json`
+- Liveness: `GET /health`
+- Rollout readiness: `GET /ready` (profile-specific identity, exact Alembic
+  revision `20260723_0010`, all four required extensions, route-touched
+  objects, and the exact least-privilege runtime and forecast-role grants)
+- Runtime port: Railway-provided `PORT`
+
+Deploy the same image as two separately configured service instances. The
+private receiver/writer instance mounts only the local-publication and
+historical-promotion receivers:
+
+```dotenv
+SERVICE_PROFILE=receiver_writer
+RECEIVER_WRITER_DATABASE_URL=<async least-privilege receiver/writer DSN>
+EXECUTION_BACKEND=local
+CELERY_DISPATCH_ENABLED=false
+CLOUD_TRAINING_ENABLED=false
+LOCAL_PUBLICATION_RECEIVER_ENABLED=true
+LOCAL_PUBLISH_TOKEN=<strong dedicated secret>
+LOCAL_PUBLISH_ACTOR=plantgeo-local-forecast-publisher
+```
+
+The published-reader instance mounts only the typed published forecast route:
+
+```dotenv
+SERVICE_PROFILE=published_reader
+PUBLISHED_READER_DATABASE_URL=<async least-privilege published-reader DSN>
+EXECUTION_BACKEND=local
+CELERY_DISPATCH_ENABLED=false
+CLOUD_TRAINING_ENABLED=false
+```
+
+The DSNs must authenticate different login roles. Do not configure
+`DATABASE_URL` as a production data-service fallback, and do not inject receiver
+tokens or actors into the published reader. `SERVICE_PROFILE=combined_local` is
+development compatibility only and always fails rollout readiness.
+
+The publication token must differ from application admin and ingestion secrets.
+The actor is a server-controlled audit identity bound to that credential; the
+workstation cannot choose it. `DATABASE_URL_SYNC` belongs only in an approved,
+short-lived Alembic migration context and must use a synchronous PostgreSQL
+driver. Do not inject the migration DSN into either long-lived data-service
+container.
+
+Each runtime login must have only `CONNECT`; `USAGE` (not `CREATE`) on `public`
+and `agri`; `SELECT` on `public.alembic_version`; and the exact route-specific
+grants audited by `/ready`. The receiver login must not inherit the published
+reader capability or read the serving views. It requires `USAGE, SELECT` only on
+`agri.signal_observation_id_seq` and
+`agri.drought_polygon_snapshot_id_seq`; every other `agri` sequence is denied.
+The reader login must inherit only `plantgeo_forecast_reader` and must have no
+writer, publisher, refresher, table write, or sequence privilege. Both profiles
+are audited over every `agri` relation, sequence, and function, including
+column-only grants, memberships, and ownership paths. Neither login may own
+database objects, hold grant options, or have `SUPERUSER`, `CREATEDB`,
+`CREATEROLE`, `REPLICATION`, or `BYPASSRLS`. Revoke prior broad grants before
+applying the reviewed matrices.
+
+Set request and aggregate size limits explicitly; the defaults in
+`.env.example` are conservative starting points, not load-test evidence.
+
+### `plantgeo-martin`
+
+- Dockerfile: `/Dockerfile.martin` (Martin `1.10.1`)
+- Config-as-code: `/infra/railway/martin.railway.json`
+- Runtime config: `/infra/martin/martin.yaml`
+- Health: `GET /health`
+- Port: `3000`
+
+Keep Martin private and stopped until the database gate passes. Then configure:
+
+```dotenv
+DATABASE_URL=<sealed DSN for the Martin-only target role>
+PORT=3000
+TILE_CORS_ORIGIN=https://plantgeo-main-production.up.railway.app
+MARTIN_CACHE_SIZE_MB=128
+MARTIN_POOL_SIZE=8
+```
+
+The configuration disables automatic table and function publication and
+allowlists only migration-owned MVT functions. Before creating a public domain,
+grant the Martin role only database connect, `geo` schema usage, and execute on
+those functions; place the public endpoint behind CDN/WAF rate limits. CORS is
+not authentication. Static PMTiles belong in R2/CDN, not the Martin container.
+
+### Deferred services
+
+Valhalla and Photon are not part of the currently provisioned PlantGeo
+allowlist. Add them only after a capacity, image-digest, data-volume, licensing,
+privacy, and operating-cost review. Never deploy a floating `:latest` image.
+
+## Deployment workflow
+
+The GitHub workflow `.github/workflows/deploy.yml`:
+
+- runs only after the `CI` workflow succeeds on `main`;
+- checks out the exact verified commit;
+- pins Railway CLI `5.27.0`;
+- targets project `6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`, environment
+  `production`, and service `plantgeo-main`; and
+- remains disabled unless repository variable
+  `RAILWAY_PRODUCTION_DEPLOY_ENABLED` equals `true`.
+
+Keep the kill switch false until the database, migrations, public build-time
+URLs, and tile service pass their gates. The workflow intentionally does not
+deploy the data service, redeploy Martin, run migrations, or provision services.
+
+For an explicitly approved manual web deployment of a verified revision:
+
+```powershell
+npx --yes @railway/cli@5.27.0 up `
+  --project 6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990 `
+  --environment production `
+  --service plantgeo-main `
+  --ci
+```
+
+Before any manual command, inspect `railway status --json` and stop if the
+project, environment, or service is not the expected exact value.
+
+## Observability and durability
+
+- Railway logs are the live troubleshooting stream; application logs must be
+  structured and must redact credentials, provider payloads, and precise private
+  locations.
+- Retain 30 days of redacted job events in partitioned PostgreSQL tables. A
+  local control-plane task must create upcoming partitions and remove expired
+  ones. Run `uv run agri-cli job-logs-maintain --retention-days 30
+  --future-days 7` after migration and at least daily from the operator machine.
+  The command takes a nonblocking transaction fence before any table lock,
+  reports `maintenance busy` instead of waiting behind another invocation,
+  drains matching rows from the default partition before attachment, and
+  reports any rows still in the default. Treat a nonzero remainder, repeated
+  busy result, or command failure as an alert; the default partition is loss
+  protection, not the normal steady state.
+- Alert on web/data-service readiness, database saturation, Redis failures,
+  Martin health after activation, oldest successful source publication, oldest
+  model publication, repeated local-publication rejection, and forecast
+  staleness.
+- Keep prediction lineage and model metadata longer than operational logs; a
+  30-day debugging window is not a scientific audit-retention policy.
+- Redis is never the sole copy of a durable task, cursor, artifact, or
+  publication state.
+
+## Cost controls
+
+Phase one provisions no Railway forecast/training worker, so its Railway compute
+line is `$0`. Railway charges the higher of the Pro subscription minimum or
+resource usage; volumes are billed on actual stored bytes, not configured
+capacity. The most recent snapshot showed roughly 1.1 GB in `Plantgeo`, 1.9 GB
+in `plantgeo-Redis`, and only a few MB in the replacement database. Measure again
+before cutover.
+
+Planning envelopes, including temporary database overlap and R2 storage/egress,
+are maintained in the
+[production cost envelope](./predictive-environmental-intelligence-spec.md#production-cost-envelope).
+Current estimates are approximately `$27–35/month` at a lightly used idle floor,
+about `$45/month` for a lean regional deployment, and about `$152/month` for the
+base scenario. They are budgets, not vendor quotes; actual resident memory,
+vCPU, storage, egress, and retention determine the bill.
+
+## Backup, rollback, and incident rules
+
+- Verify backup availability and a restore before database migration. Never
+  assume a plan includes a particular schedule or retention period without
+  checking the live Railway configuration.
+- Record the source/target service IDs, schema revisions, data checksums, and
+  reference-variable changes for every cutover.
+- Roll back application, data-service, and Martin database references as one
+  unit; a partial rollback can corrupt publication lineage or expose mixed data.
+- Keep releases content-addressed and retain the previous valid publication so
+  upstream or model failures degrade to an explicit stale state.
+- Never print resolved Railway variables, connection strings, API tokens, or
+  local publication tokens into CI or support logs.
+
+## Production-readiness checklist
+
+- [ ] `plantgeo-spatiotemporal-db` extensions and roles verified read-only.
+- [ ] Disposable Drizzle and Alembic migration rehearsal passes.
+- [ ] Restorable `Plantgeo` backup and rollback drill recorded.
+- [ ] Data copy checksums, spatial validity, and representative queries pass.
+- [ ] Local runner resumes a checksummed shard after interruption.
+- [ ] Invalid/incomplete outputs cannot advance publication pointers.
+- [ ] Thirty-day job-event partition maintenance and alerting are operational.
+- [ ] Martin least-privilege role, `/health`, `/catalog`, MVT, CORS, and rate
+      limits pass before a public domain is created.
+- [ ] Production browser build contains no localhost, placeholder, private
+      Railway hostname, provider credential, or unapproved provider URL.
+- [ ] `/api/health` and `/api/ready` have distinct liveness/readiness behavior.
+- [ ] CI passes at the exact revision and the production deploy kill switch is
+      enabled only for the reviewed release window.
+- [ ] Old `Plantgeo` is stopped/removed after the observation window and explicit
+      approval.
+
+Railway references: [pricing](https://docs.railway.com/pricing/plans),
+[private networking](https://docs.railway.com/private-networking),
+[volumes](https://docs.railway.com/volumes/reference),
+[logs](https://docs.railway.com/observability/logs), and
+[`railway up`](https://docs.railway.com/cli/up).

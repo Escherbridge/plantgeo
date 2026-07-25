@@ -33,8 +33,18 @@ GRANT SELECT, INSERT ON TABLE
     agri.source_release,
     agri.artifact,
     agri.release_set,
-    agri.release_set_item
+    agri.release_set_item,
+    agri.spatial_cell,
+    agri.cell_source_crosswalk,
+    agri.signal_observation,
+    agri.signal_coverage_audit,
+    agri.source_coverage_audit,
+    agri.drought_polygon_snapshot
 TO plantgeo_loader;
 GRANT UPDATE (state, validated_at) ON TABLE agri.release_set TO plantgeo_loader;
+GRANT USAGE, SELECT ON SEQUENCE
+    agri.signal_observation_id_seq,
+    agri.drought_polygon_snapshot_id_seq
+TO plantgeo_loader;
 
 COMMIT;

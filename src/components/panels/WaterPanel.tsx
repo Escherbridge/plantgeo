@@ -6,7 +6,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc/client";
 import { DROUGHT_LEGEND } from "@/components/map/layers/DroughtLayer";
 import { LayerToggle } from "@/components/ui/layer-toggle";
-import { DEMO_WATER_GAUGES, DEMO_DROUGHT_GEOJSON } from "@/lib/map/demo-data";
 
 interface WaterPanelProps {
   open: boolean;
@@ -63,9 +62,11 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
     { enabled: open && !!bbox }
   );
 
-  // Fall back to demo data when tRPC queries fail or return empty
-  const gauges = streamflowQuery.data ?? (streamflowQuery.isError ? DEMO_WATER_GAUGES : []);
+  const gauges = streamflowQuery.data ?? [];
   const watersheds = watershedQuery.data?.features ?? [];
+  const droughtUnavailable = droughtQuery.data?.availability === "unavailable";
+  const watershedsUnavailable =
+    watershedQuery.data?.availability === "unavailable";
 
   // Summary counts per condition
   const conditionCounts = gauges.reduce<Record<string, number>>((acc, g) => {
@@ -73,8 +74,7 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
     return acc;
   }, {});
 
-  // Dominant drought class from the GeoJSON features (fall back to demo data on error)
-  const droughtFeatures = droughtQuery.data?.features ?? (droughtQuery.isError ? DEMO_DROUGHT_GEOJSON.features : []);
+  const droughtFeatures = droughtQuery.data?.features ?? [];
   const dmCounts: Record<number, number> = {};
   for (const f of droughtFeatures) {
     const dm = (f.properties as Record<string, unknown>)?.DM as number | undefined;
@@ -92,7 +92,7 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
       <SheetContent side="right" onOpenChange={onOpenChange}>
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
-            <Droplets className="h-5 w-5 text-blue-500" />
+            <Droplets aria-hidden="true" className="h-5 w-5 text-blue-500" />
             Water Scarcity
           </SheetTitle>
         </SheetHeader>
@@ -122,7 +122,11 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
             {/* Streamflow tab */}
             <TabsContent value="streamflow" className="flex flex-col gap-4 mt-4">
               {!bbox && (
-                <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className="text-xs text-[hsl(var(--muted-foreground))]"
+                >
                   Pan/zoom the map to load USGS streamflow gauges for the current view.
                 </p>
               )}
@@ -134,8 +138,8 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
               )}
 
               {streamflowQuery.isError && (
-                <p className="text-xs text-amber-500">
-                  Live USGS data unavailable. Showing demo gauge data.
+                <p className="text-xs text-red-500" role="alert">
+                  Verified USGS gauge data is temporarily unavailable. No synthetic readings are shown.
                 </p>
               )}
 
@@ -212,7 +216,8 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
 
               {!streamflowQuery.isLoading && gauges.length === 0 && bbox && !streamflowQuery.isError && (
                 <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                  No active USGS streamflow gauges found in the current view.
+                  No recent verified USGS streamflow observations are available
+                  in the current view.
                 </p>
               )}
             </TabsContent>
@@ -220,14 +225,18 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
             {/* Drought tab */}
             <TabsContent value="drought" className="flex flex-col gap-4 mt-4">
               {droughtQuery.isLoading && (
-                <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className="text-xs text-[hsl(var(--muted-foreground))]"
+                >
                   Loading US Drought Monitor data…
                 </p>
               )}
 
               {droughtQuery.isError && (
-                <p className="text-xs text-amber-500">
-                  Live USDM data unavailable. Showing demo drought data.
+                <p className="text-xs text-red-500" role="alert">
+                  Verified drought data is temporarily unavailable. No synthetic classifications are shown.
                 </p>
               )}
 
@@ -285,9 +294,10 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
                 </>
               )}
 
-              {!droughtQuery.isLoading && droughtFeatures.length === 0 && !droughtQuery.isError && (
-                <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                  No drought data available at this time.
+              {!droughtQuery.isLoading && droughtUnavailable && !droughtQuery.isError && (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                  Drought classifications are paused until a recent warehouse
+                  release is exposed through a bounded viewport or tile contract.
                 </p>
               )}
             </TabsContent>
@@ -307,8 +317,9 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
               )}
 
               {watershedQuery.isError && (
-                <p className="text-xs text-red-500">
-                  Failed to load watershed data. USGS NHD may be unavailable.
+                <p className="text-xs text-red-500" role="alert">
+                  Published watershed data could not be loaded. No provider or
+                  synthetic fallback is shown.
                 </p>
               )}
 
@@ -356,9 +367,10 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
                 </>
               )}
 
-              {!watershedQuery.isLoading && watersheds.length === 0 && bbox && !watershedQuery.isError && (
-                <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                  No watershed boundaries found in the current view.
+              {!watershedQuery.isLoading && watershedsUnavailable && bbox && !watershedQuery.isError && (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                  Watershed boundaries are unavailable until a validated
+                  warehouse release is published.
                 </p>
               )}
             </TabsContent>

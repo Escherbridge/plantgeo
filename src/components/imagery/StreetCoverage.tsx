@@ -5,8 +5,6 @@ import type maplibregl from "maplibre-gl";
 import { useMap } from "@/lib/map/map-context";
 import { useImageryStore } from "@/stores/imagery-store";
 
-const ACCESS_TOKEN = process.env.NEXT_PUBLIC_MAPILLARY_ACCESS_TOKEN || "";
-
 const SOURCE_ID = "mapillary-coverage";
 const LAYER_ID = "mapillary-sequences";
 
@@ -22,7 +20,7 @@ export function StreetCoverage() {
         map.addSource(SOURCE_ID, {
           type: "vector",
           tiles: [
-            `https://tiles.mapillary.com/maps/vtp/mly1_public/2/{z}/{x}/{y}?access_token=${ACCESS_TOKEN}`,
+            "/api/v1/imagery/mapillary/{z}/{x}/{y}",
           ],
           minzoom: 6,
           maxzoom: 14,

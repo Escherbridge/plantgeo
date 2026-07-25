@@ -1,14 +1,8 @@
 import { getServerSession as nextAuthGetServerSession } from "next-auth";
-import bcrypt from "bcryptjs";
+import { authOptions } from "@/lib/server/auth-options";
 
 export async function getServerSession() {
-  return nextAuthGetServerSession();
+  return nextAuthGetServerSession(authOptions);
 }
 
-export async function hashPassword(plain: string): Promise<string> {
-  return bcrypt.hash(plain, 12);
-}
-
-export async function verifyPassword(plain: string, hash: string): Promise<boolean> {
-  return bcrypt.compare(plain, hash);
-}
+export { hashPassword, verifyPassword } from "@/lib/server/password";

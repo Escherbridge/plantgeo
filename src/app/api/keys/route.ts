@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "@/lib/server/auth";
 import { db } from "@/lib/server/db";
-import { apiKeys } from "@/lib/server/db/schema";
-import { eq } from "drizzle-orm";
-import crypto from "crypto";
-import { hashPassword } from "@/lib/server/auth";
+import { apiKeys, teamMembers } from "@/lib/server/db/schema";
+import { and, eq } from "drizzle-orm";
+import {
+  generateApiKey,
+  hashApiKey,
+  personalApiKeyIssuanceSchema,
+} from "@/lib/server/api-keys";
 
 export async function GET() {
   const session = await getServerSession();
@@ -32,16 +35,39 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId = (session.user as { id: string }).id;
-  const body = await request.json();
-  const { name, teamId, permissions, rateLimit } = body as {
-    name?: string;
-    teamId?: string;
-    permissions?: string[];
-    rateLimit?: number;
-  };
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
 
-  const rawKey = `pg_${crypto.randomBytes(32).toString("hex")}`;
-  const keyHash = await hashPassword(rawKey);
+  const parsed = personalApiKeyIssuanceSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid API key configuration", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+
+  const { name, teamId, permissions, rateLimit } = parsed.data;
+  if (teamId) {
+    const membership = await db
+      .select({ teamId: teamMembers.teamId })
+      .from(teamMembers)
+      .where(and(eq(teamMembers.teamId, teamId), eq(teamMembers.userId, userId)))
+      .limit(1);
+
+    if (membership.length === 0) {
+      return NextResponse.json(
+        { error: "You must be a member of a team before assigning it to an API key" },
+        { status: 403 }
+      );
+    }
+  }
+
+  const rawKey = generateApiKey();
+  const keyHash = hashApiKey(rawKey);
 
   const [key] = await db
     .insert(apiKeys)
@@ -49,9 +75,9 @@ export async function POST(request: Request) {
       keyHash,
       userId,
       teamId: teamId ?? null,
-      name: name ?? null,
-      permissions: permissions ?? [],
-      rateLimit: rateLimit ?? 1000,
+      name,
+      permissions,
+      rateLimit,
     })
     .returning({ id: apiKeys.id, name: apiKeys.name });
 

@@ -1,253 +1,127 @@
 # PlantGeo Documentation
 
-Welcome to PlantGeo, an enterprise-grade open-source 3D geospatial mapping platform. This documentation covers all aspects of the system architecture, deployment, and development.
+PlantGeo is an open-source geospatial action-network platform for publishing,
+exploring, and coordinating evidence-backed environmental work. The repository
+contains a Next.js/MapLibre application, PostGIS-backed operational APIs, a
+Martin vector-tile boundary, and a Python/Alembic foundation for governed
+environmental data and locally executed predictive workflows.
 
-## Quick Start
+## Operational status
 
-### Clone and Install
+The platform is in a hardening and data-foundation phase, not feature-complete
+production. Current environmental read paths either return persisted facts or
+an explicit unavailable state. They do not silently substitute demonstrations,
+coordinate heuristics, or model-like scores. The action-network worker pipeline
+is present, but its serving endpoint is intentionally inactive until reviewed,
+access-safe opportunity waypoints are published.
 
-```bash
-git clone https://github.com/plantgeo/plantgeo.git
-cd plantgeo
+Partner collaboration is account and workspace based: raw requests stay within
+the submitting account or an explicitly authorized team. Legacy priority-zone
+aggregation, external supplier matching, and regional AI remain inactive. The
+AI path will require a real paid-account or partner entitlement with durable
+usage reservation before any model call is enabled.
+
+The following remain gated:
+
+- the replacement Railway database must be verified for PostGIS, TimescaleDB,
+  pgvector, pgcrypto, roles, and migrations before cutover;
+- Martin remains private/stopped until that database gate passes;
+- no danger, intervention-effect, amendment, or waypoint model has been trained
+  or promoted;
+- locally published model artifacts remain non-serving until a typed loader and
+  product-specific validation gate promotes them; and
+- Valhalla and Photon are deferred rather than assumed to be running.
+
+## Local development
+
+Requirements: Node.js 22, npm, Podman/Docker Compose, Python 3.12, and `uv`.
+
+```powershell
+Copy-Item .env.example .env.local
+# Set POSTGRES_PASSWORD and other local-only values.
+
 npm install
-```
-
-### Configure Environment
-
-```bash
-cp .env.example .env.local
-# Edit .env.local with your local values
-```
-
-### Start Infrastructure
-
-```bash
 npm run docker:up
 npm run db:migrate
-```
-
-### Run Development Server
-
-```bash
 npm run dev
 ```
 
-The application will be available at `http://localhost:3000`.
+The development server listens on `http://localhost:3001`. The production
+container defaults to port `3000` and honors Railway's `PORT` variable.
 
-## Project Overview
+For the Python data service:
 
-PlantGeo is an open-source alternative to Google Maps Platform, providing:
-
-- **3D Mapping**: Globe rendering, terrain, and fill-extrusion using MapLibre GL JS v5
-- **Data Visualization**: 30+ visualization layers via deck.gl v9 (scatter, heatmaps, trips, paths)
-- **Routing**: Multi-modal routing, isochrones, and distance matrices via Valhalla
-- **Geocoding**: Address autocomplete and reverse geocoding via Photon
-- **Real-Time Data**: SSE for alerts, WebSocket for tracking and live data
-- **Geospatial Queries**: PostGIS 3.4 with TimescaleDB for time-series data
-- **AI Intelligence**: Regional context and environmental analysis via Claude API
-- **Team Collaboration**: Multi-tenant with role-based access control
-
-## Documentation Index
-
-### Core Documentation
-
-- **[Architecture Diagrams](./diagrams.md)** — Mermaid diagrams of all data flows, ERDs, and system architecture
-- **[Architecture](./architecture.md)** — System architecture, data flows, real-time systems, AI pipeline
-- **[API Reference](./api-reference.md)** — Complete tRPC router and REST API documentation
-- **[Services](./services.md)** — All backend services (fire, water, vegetation, soil, etc.)
-- **[Database](./database.md)** — PostgreSQL schema, tables, relationships, PostGIS columns
-- **[Database Schema (DBML)](./schema.dbml)** — DBML file for [dbdiagram.io](https://dbdiagram.io) visualization
-- **[Components](./components.md)** — Frontend components (map, panels, layers), stores, hooks
-
-### Deployment & Operations
-
-- **[Deployment](./deployment.md)** — Railway deployment, multi-service setup, scaling, monitoring
-- **[Environment Variables](./env-vars.md)** — Complete reference with defaults and how to obtain keys
-
-### Tech Stack Summary
-
-| Layer | Technology | Version |
-|-------|-----------|---------|
-| Frontend | Next.js (App Router) | 15 |
-| Rendering | React + MapLibre GL JS | 19 / 5.x |
-| 3D Visualization | Three.js + deck.gl | - / 9.x |
-| Routing | Valhalla | 1.x |
-| Geocoding | Photon (Nominatim) | - |
-| Tile Serving | Martin (Rust + PostGIS) | 1.4 |
-| Tile Format | PMTiles | v3 |
-| Database | PostgreSQL + PostGIS + TimescaleDB | 16 / 3.4 / - |
-| ORM | Drizzle ORM | - |
-| API | tRPC | 11 |
-| State Management | Zustand (global) + Jotai (per-layer) | - / - |
-| Caching | Redis | 7 |
-| Styling | Tailwind CSS | 4 |
-| Deployment | Railway Pro | - |
-| Object Storage | Cloudflare R2 | - |
-| AI | Anthropic Claude API | - |
-
-## Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     CLIENT (Browser)                         │
-│ ┌──────────────────────────────────────────────────────────┐ │
-│ │ React 19 + MapLibre GL JS v5 (globe, terrain)           │ │
-│ │ deck.gl v9 (30+ layers: scatter, heatmap, trips, etc)  │ │
-│ │ Three.js (custom 3D objects)                            │ │
-│ │ Zustand stores (layer, routing, tracking, etc)         │ │
-│ └──────────────────────────────────────────────────────────┘ │
-└────────┬────────────────────────────────────────────┬────────┘
-         │ tRPC / REST API / WebSocket / SSE          │
-         │                                             │
-┌────────▼─────────────────────────────────────────────▼──────┐
-│                   Next.js 15 (Server)                        │
-│ ┌───────────────────────────────────────────────────────┐   │
-│ │ tRPC Routers                                          │   │
-│ │ • layers, routing, teams, contributions              │   │
-│ │ • wildfire, analytics, tracking                      │   │
-│ │ • environmental, strategy, alerts                    │   │
-│ │ • places, visualization, community                   │   │
-│ │ • regional-intelligence                             │   │
-│ └───────────────────────────────────────────────────────┘   │
-│ ┌───────────────────────────────────────────────────────┐   │
-│ │ REST API Routes (/api/v1, /api/stream, etc)          │   │
-│ │ • Geocoding, reverse geocoding                       │   │
-│ │ • SSE streams for alerts                             │   │
-│ │ • Ingest endpoints (FIRMS, sensors, weather)        │   │
-│ │ • Data export endpoints                              │   │
-│ └───────────────────────────────────────────────────────┘   │
-│ ┌───────────────────────────────────────────────────────┐   │
-│ │ Backend Services (30+)                               │   │
-│ │ • Fire: nasa-firms, landfire, mtbs, fire-weather    │   │
-│ │ • Water: usgs-water, hydrosheds, drought            │   │
-│ │ • Vegetation: vegetation, nlcd, biomass             │   │
-│ │ • Soil: soilgrids, usda-soil, usle                  │   │
-│ │ • Analytics: carbon-potential, strategy-scoring     │   │
-│ │ • Alerts: alert-engine, geofence, email             │   │
-│ │ • Real-time: tracking, realtime, ai-prompt          │   │
-│ └───────────────────────────────────────────────────────┘   │
-└────────┬────────────────────────────┬──────────────────┬─────┘
-         │                            │                  │
-    ┌────▼──────────┐  ┌─────────────▼─────────────┐  ┌─▼────────────────┐
-    │  PostgreSQL   │  │   External APIs           │  │  Cloudflare R2   │
-    │  16 + PostGIS │  │ • NASA FIRMS              │  │  (PMTiles)       │
-    │  + TimescaleDB│  │ • Nominatim/Photon       │  │                  │
-    │               │  │ • Valhalla               │  │  Martin (tiles)  │
-    │  Martin v1.4  │  │ • NOAA Weather           │  │  Redis Cache     │
-    │  (tile server)│  │ • PlantCommerce API      │  │  Cloudflare CDN  │
-    └───────────────┘  │ • Anthropic Claude       │  └──────────────────┘
-                       │ • Mapillary              │
-                       │ • USGS, NOAA, etc       │
-                       └──────────────────────────┘
+```powershell
+Set-Location services/agri-data-service
+Copy-Item .env.example .env
+uv sync --locked --all-extras
+uv run agri-cli db-status
+uv run sanic agri_data_service.app:create_app --factory --dev --port 8000
 ```
 
-## Key Features by Track
+Do not point local reset/migration experiments at Railway. The Python service
+does not provide a destructive database-reset command.
 
-| Feature | Status | Docs |
-|---------|--------|------|
-| Vector Tile Pipeline | Active | Track 02 |
-| Routing & Navigation | Active | Track 04 |
-| Real-Time Data Streaming | Active | Track 06 |
-| Layer Management | Active | Track 07 |
-| 3D Objects (Three.js) | Active | Track 08 |
-| Drawing & Measurement | Active | Track 09 |
-| Offline & PWA | Active | Track 11 |
-| Authentication & Multi-Tenancy | Active | Track 12 |
-| Analytics Dashboard | Active | Track 13 |
-| Fleet Tracking | Active | Track 14 |
-| Street View Imagery | Active | Track 16 |
-| Railway Deployment | Active | Track 18 |
-| Testing & Quality | Active | Track 19 |
-| Embed API | Active | Track 20 |
-| Wildfire Enhancement | In Progress | Track 21 |
-| Water Scarcity | In Progress | Track 22 |
-| Vegetation & Land Cover | In Progress | Track 23 |
-| Soil Health | In Progress | Track 24 |
-| Community Strategy Requests | In Progress | Track 25 |
-| Strategy Cards | In Progress | Track 26 |
-| Team Organization Pages | In Progress | Track 27 |
-| PlantCommerce Integration | In Progress | Track 28 |
-| Environmental Alerts | In Progress | Track 29 |
-| Environmental Analytics | In Progress | Track 30 |
-| AI Regional Intelligence | In Progress | Track 31 |
+## Documentation index
 
-## Getting Help
+- [Architecture](./architecture.md) — major runtime boundaries and data flows.
+- [Data ingestion and serving contract](./data-ingestion-and-serving-contract.md)
+  — warehouse-first custody, exceptions, and browser boundaries.
+- [Historical ingestion runbook](./historical-backfill-runbook.md) — local
+  four-year backfill, validation, Railway promotion, and recurring-run gates.
+- [Predictive environmental intelligence](./predictive-environmental-intelligence-spec.md)
+  — three decision products, local execution, durable publication, waypoints,
+  safety gates, and cost estimates.
+- [SQL-first forecasting framework](./sql-forecasting-framework.md) — typed,
+  release-pinned metric forecasts, quality gates, immutable receipts, and the
+  serving boundary distinct from generic artifact-only publication.
+- [North America intervention pilot report](./reports/north-america-intervention-pilot-2026-07-23.md)
+  — Boise open-data capture, PostGIS evidence, forecast evaluation, validation,
+  costs, confidence limits, and the selective upstream path.
+- [Ecological knowledge source register](./ecological-knowledge-source-register.md)
+  — evidence tiers and governed sources for strategies, amendments, plants,
+  seeds, and companion claims.
+- [Railway operations](./deployment.md) — exact shared-project allowlist,
+  replacement-database cutover, Martin gate, and deploy kill switch.
+- [Environment variables](./env-vars.md) — server/client separation and
+  production configuration.
+- [Database](./database.md) and [DBML](./schema.dbml) — schema ownership and
+  existing relational model.
+- [API reference](./api-reference.md), [services](./services.md), and
+  [components](./components.md) — legacy surface inventories; verify each entry
+  against current code before treating it as an operational promise.
 
-### Repository Structure
+## Current stack
 
-```
-plantgeo/
-├── docs/                          # This documentation
-├── src/
-│   ├── app/                       # Next.js App Router
-│   │   ├── api/                   # REST API routes
-│   │   ├── dashboard/             # Analytics dashboard
-│   │   ├── docs/                  # Documentation UI
-│   │   ├── embed/                 # Embed API
-│   │   └── ...pages
-│   ├── components/
-│   │   ├── map/                   # Map components & layers
-│   │   ├── panels/                # UI panels (layer, routing, etc)
-│   │   └── ui/                    # Shared UI components
-│   ├── hooks/                     # Custom React hooks
-│   ├── stores/                    # Zustand state stores
-│   ├── lib/
-│   │   ├── map/                   # Map utilities (drawing, measurement)
-│   │   ├── server/
-│   │   │   ├── trpc/              # tRPC routers & init
-│   │   │   ├── services/          # 30+ backend services
-│   │   │   ├── db/                # Drizzle schema & migrations
-│   │   │   ├── jobs/              # Background jobs
-│   │   │   ├── middleware/        # Auth & API key middleware
-│   │   │   └── auth.ts            # NextAuth.js config
-│   │   ├── offline/               # PWA & offline sync
-│   │   └── export/                # Data export formats
-│   ├── styles/                    # Global styles
-│   └── middleware.ts              # Next.js middleware
-├── infra/
-│   └── railway/                   # Railway deployment configs
-├── conductor/                     # Task planning & tracking
-├── Dockerfile                     # Multi-stage build
-├── railway.json                   # Railway.app config
-├── package.json                   # Dependencies
-└── .env.example                   # Environment template
+| Boundary | Technology |
+| --- | --- |
+| Web | Next.js 16 App Router, React 19, TypeScript |
+| Map | MapLibre GL JS 5, deck.gl 9, Three.js |
+| Operational data | PostgreSQL; target PostGIS/TimescaleDB capabilities remain cutover-gated |
+| Application schema | Drizzle ORM |
+| Environmental/ML schema | SQLAlchemy + Alembic (`agri` only) |
+| Tile serving | Martin 1.10.1 with allowlisted MVT functions; not yet production-active |
+| Cache/events | Redis 7 for cache/pub-sub, never durable job state |
+| Predictive compute | Local Python runner with durable manifests/checkpoints |
+| Deployment | Railway Pro serving plane + Cloudflare R2/CDN artifacts |
+
+## Verification commands
+
+Run the integrated checks after completing a batch of changes:
+
+```powershell
+npm run lint
+npm run type-check
+npm run check:data-boundary
+npm test
+npm run build
+
+Set-Location services/agri-data-service
+uv sync --locked --all-extras
+uv run ruff check .
+uv run mypy src
+uv run pytest
 ```
 
-### Common Commands
-
-```bash
-# Development
-npm run dev              # Start dev server
-npm run build            # Build for production
-npm run start            # Start production server
-
-# Database
-npm run db:generate     # Generate Drizzle migrations
-npm run db:migrate      # Run pending migrations
-npm run db:push         # Push schema changes (sync mode)
-
-# Docker
-npm run docker:up       # Start all services (PostgreSQL, Redis, Martin, Valhalla)
-npm run docker:down     # Stop all services
-
-# Testing
-npm run test            # Run tests
-npm run test:watch      # Watch mode
-npm run lint            # Lint code
-```
-
-## Monitoring & Observability
-
-- **Health Check**: GET `/api/health` returns service status
-- **Logs**: Docker logs available via `docker logs <container>`
-- **Database**: Connect to PostgreSQL for query inspection
-- **Redis**: Use `redis-cli` to inspect cache and pub/sub
-- **API Metrics**: tRPC middleware logs all RPC calls with timing
-
-## Contributing
-
-See the project's CLAUDE.md for architecture conventions and guidelines.
-
-## License
-
-PlantGeo is open-source. See LICENSE for details.
+Production deployment is separately gated. A successful local/CI build does not
+authorize database migration, Martin publication, or Railway cutover.

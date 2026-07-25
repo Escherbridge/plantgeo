@@ -6,7 +6,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc/client";
 import { WaypointInput } from "@/components/routing/WaypointInput";
-import type { NormalizedGeocodingResult } from "@/lib/server/services/geocoding";
+import type { NormalizedGeocodingResult } from "@/lib/geocoding";
 
 const TIME_INTERVALS = [5, 10, 15, 30, 60] as const;
 

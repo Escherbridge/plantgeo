@@ -12,7 +12,7 @@ const LAYER_ID = "demand-heatmap-layer";
 
 interface DemandHeatmapLayerProps {
   map: MapLibreMap | null;
-  bbox: string;
+  bbox: string | null;
   zoom: number;
   visible: boolean;
   filters?: ActionNetworkFilters;
@@ -29,7 +29,7 @@ export function DemandHeatmapLayer({
   const actionNetwork = useActionNetworkFeatures(
     bbox,
     zoom,
-    visible && !!map,
+    visible && !!map && bbox !== null,
     filters
   );
   const actionNetworkDataRef = useRef(actionNetwork.data);
