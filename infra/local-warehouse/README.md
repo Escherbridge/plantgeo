@@ -1,6 +1,6 @@
 # Dedicated local PlantGeo warehouse
 
-This is separate from the native PostgreSQL service at `127.0.0.1:5433` and
+This is separate from the native PostgreSQL service at `127.0.0.1:5432` and
 from every other application database. It uses the PostgreSQL 16 Timescale HA
 image family already supported by this repository, a dedicated named volume,
 and loopback-only port `5442`. Its semantic lineage bundles record the source
@@ -12,10 +12,23 @@ preflight, including the planned PostgreSQL 18 Railway target.
 ```powershell
 Copy-Item infra/local-warehouse/.env.example infra/local-warehouse/.env
 # Edit infra/local-warehouse/.env locally with a unique password.
-podman compose --env-file infra/local-warehouse/.env -f infra/local-warehouse/compose.yaml build
-podman compose --env-file infra/local-warehouse/.env -f infra/local-warehouse/compose.yaml up -d
-podman compose --env-file infra/local-warehouse/.env -f infra/local-warehouse/compose.yaml ps
+podman --connection podman-machine-default-root compose --project-name plantgeo-warehouse --env-file infra/local-warehouse/.env -f infra/local-warehouse/compose.yaml build
+podman --connection podman-machine-default-root compose --project-name plantgeo-warehouse --env-file infra/local-warehouse/.env -f infra/local-warehouse/compose.yaml up -d
+podman --connection podman-machine-default-root compose --project-name plantgeo-warehouse --env-file infra/local-warehouse/.env -f infra/local-warehouse/compose.yaml ps
 ```
+
+For ordinary development startup after the warehouse already exists, use the
+safe launcher. It starts the retained container and waits for PostgreSQL; it
+refuses to create a new blank warehouse unless that is explicitly requested:
+
+```powershell
+powershell.exe -NoProfile -File infra/local-warehouse/start-dw-dev.ps1
+powershell.exe -NoProfile -File infra/local-warehouse/start-dw-dev.ps1 -OpenPsql
+```
+
+For an intentional first-time setup only, create the ignored `.env` as above
+and add `-CreateIfMissing`. The launcher prints a session-read-only owner DSN and points to
+the reviewed warehouse inspection queries.
 
 The derived image retains the upstream extension packages but removes its
 automatic TimescaleDB/toolkit creation and host-sized tuning scripts. It does
@@ -24,7 +37,7 @@ not install or enable any PostgreSQL extension.
 ## Persistence, checkpoints, and recovery
 
 `plantgeo_warehouse_pgdata` is a named Podman volume, so ordinary
-`podman compose ... down` preserves the database. Do not use `down -v` and do
+`podman --connection podman-machine-default-root compose --project-name plantgeo-warehouse ... down` preserves the database. Do not use `down -v` and do
 not remove that named volume unless a verified external backup exists.
 
 Use PowerShell to write an independent, compressed restore point after
