@@ -1,0 +1,67 @@
+{
+  "schema_version": "public_source_curation_receipt_v1",
+  "status": "accepted_evaluation_only",
+  "source_key": "kaggle_ghisaconus_mirror",
+  "role": "crop_spectrum_classification_benchmark",
+  "causal_role": "none",
+  "dataset_url": "https://www.kaggle.com/datasets/billbasener/hyperspectral-library-of-agricultural-crops-usgs",
+  "api_metadata_url": "https://www.kaggle.com/api/v1/datasets/view/billbasener/hyperspectral-library-of-agricultural-crops-usgs",
+  "release": {
+    "dataset_ref": "billbasener/hyperspectral-library-of-agricultural-crops-usgs",
+    "version": 1,
+    "listed_title": "Hyperspectral Library of Agricultural Crops (USGS)",
+    "listed_license": "U.S. Government Works",
+    "listed_terms_url": "https://www.kaggle.com/terms",
+    "terms_note": "The Kaggle listing identifies the dataset as U.S. Government Works. This evaluation-only intake records that listing and the Kaggle terms link; it does not treat a separate legal review as an acquisition blocker.",
+    "listed_upstream_lineage": "USGS GHISA / GHISACONUS Version 1; NASA/USGS user guide linked in the source register",
+    "listed_updated_at": "2022-01-17T15:46:28.527Z",
+    "metadata_retrieved_at": "2026-07-26T13:49:09Z",
+    "metadata_local_path": "C:\\tmp\\plantgeo-kaggle-ghisaconus-metadata.json",
+    "metadata_sha256": "42480207bdeed7b40753637f4b24b07d44232ba4ed6f8455fabdecd4c1b6b220"
+  },
+  "payload": {
+    "archive_local_path": "C:\\tmp\\plantgeo-kaggle-ghisaconus-v1.zip",
+    "archive_bytes": 5225446,
+    "archive_sha256": "3bb701ab61eb2069c09ae7cc9cb66fbd0995165f127478af2b6afb9d406abac0",
+    "archive_retrieved_at": "2026-07-26T13:49:30Z",
+    "member_name": "GHISACONUS_2008_001_speclib.csv",
+    "csv_local_path": "C:\\tmp\\plantgeo-kaggle-ghisaconus-v1\\GHISACONUS_2008_001_speclib.csv",
+    "csv_bytes": 11540638,
+    "csv_sha256": "e2f5a21b24fac00e930520ba959ab54cc8a3f8c56368f8e0a1868bbf3e3377d5"
+  },
+  "support": {
+    "geography": "CONUS; 7 agroecological zones",
+    "years": [2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015],
+    "spatial_extent_wgs84": {
+      "latitude_min": 31.6660015,
+      "latitude_max": 45.724274,
+      "longitude_min": -121.7570114,
+      "longitude_max": -88.0856323
+    },
+    "unit_of_analysis": "one hyperspectral signature row associated with a source image, crop, growth stage, AEZ, and coordinates",
+    "permitted_inference_scale": "crop-spectrum classification benchmark only; never property management, yield, water-use, or intervention-effect inference"
+  },
+  "schema_profile": {
+    "row_count": 6988,
+    "column_count": 142,
+    "spectral_column_count": 131,
+    "metadata_columns": ["UniqueID", "Country", "AEZ", "Image", "Month", "Year", "jd", "long", "lat", "Crop", "Stage"],
+    "unique_id_count": 6988,
+    "source_image_count": 99,
+    "crop_counts": {"corn": 2622, "cotton": 823, "rice": 116, "soybean": 2086, "winter_wheat": 1341},
+    "stage_counts": {"Critical": 1926, "Early_Mid": 1227, "Emerge_VEarly": 1297, "Harvest": 226, "Late": 1075, "Mature_Senesc": 1237},
+    "aez_counts": {"2": 58, "5": 1032, "6": 1122, "7": 181, "8": 512, "9": 1763, "10": 2320},
+    "missing_metadata_cells": 0,
+    "missing_spectral_cells": 0
+  },
+  "quality_decision": {
+    "synthetic_data_detected": false,
+    "accepted_for_evaluation": true,
+    "training_split_requirement": "group by Image; do not randomly split signature rows from the same source image across folds",
+    "known_limitations": [
+      "The class distribution is imbalanced, notably rice (116 rows).",
+      "Kaggle is the distribution source; upstream lineage is recorded but not independently reproduced in this demo intake.",
+      "This is a historical crop-spectrum classification benchmark, not restoration, management, utility, yield, or causal-effect evidence."
+    ]
+  }
+}
