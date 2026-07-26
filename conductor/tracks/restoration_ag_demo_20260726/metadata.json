@@ -8,6 +8,6 @@
     "north_america_intervention_data_20260723",
     "seasonal_forecast_feedback_20260726"
   ],
-  "dependency_mode": "The informed_by tracks are non-blocking context; this track may remain in read-only discovery until its own source-register and authorized-AOI gate is satisfied.",
-  "activation_gate": "Sessions A-C are read-only and may proceed; acquisition or implementation requires the reviewed source register and an authorized demo AOI."
+  "dependency_mode": "The informed_by tracks are non-blocking context. A public offline benchmark may proceed from an accepted source receipt; a map, property, or operational-goal vertical additionally requires its own authorized AOI and target contract.",
+  "activation_gate": "Sessions A-C may begin the public GHISACONUS offline benchmark from its accepted receipt. Any map, property, or operational-goal acquisition remains gated on an authorized demo AOI and target contract."
 }

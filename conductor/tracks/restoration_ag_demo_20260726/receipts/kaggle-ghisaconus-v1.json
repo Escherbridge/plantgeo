@@ -63,5 +63,17 @@
       "Kaggle is the distribution source; upstream lineage is recorded but not independently reproduced in this demo intake.",
       "This is a historical crop-spectrum classification benchmark, not restoration, management, utility, yield, or causal-effect evidence."
     ]
+  },
+  "warehouse_retention": {
+    "retained_at": "2026-07-26T14:20:00Z",
+    "data_source_key": "kaggle-ghisaconus-mirror",
+    "source_release_id": "e586c7b8-daa7-4c43-88e9-a37237b3a7a8",
+    "release_set_id": "b7cca256-b2f1-4b9d-9fb5-e15a37eb99c7",
+    "release_set_manifest_checksum": "535fa6a2f412b627e735689d756b2ce29f9e288f9e790611719b0868d9920f0b",
+    "retained_artifacts": {
+      "source_csv": "e2f5a21b24fac00e930520ba959ab54cc8a3f8c56368f8e0a1868bbf3e3377d5",
+      "source_archive": "3bb701ab61eb2069c09ae7cc9cb66fbd0995165f127478af2b6afb9d406abac0",
+      "source_metadata": "42480207bdeed7b40753637f4b24b07d44232ba4ed6f8455fabdecd4c1b6b220"
+    }
   }
 }
