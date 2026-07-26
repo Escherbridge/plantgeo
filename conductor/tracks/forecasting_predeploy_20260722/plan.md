@@ -4,6 +4,18 @@ type: plan
 
 # Forecast validation and Railway predeploy plan
 
+## Current state — reviewed 2026-07-26
+
+This plan records historical implementation evidence through the original
+forecasting revisions. The current local governance head is `20260725_0013`.
+Forecast candidates remain evaluation-only and unpublished; production remains
+blocked on a verified PostgreSQL 18 backup/restore and extension-parity drill.
+Strategy-selection governance and the label-source abstention are recorded in
+[`strategy_selection_governance_20260726`](../strategy_selection_governance_20260726/).
+Seasonal candidate work continues only through the evaluation-only
+[`seasonal_forecast_feedback_20260726`](../seasonal_forecast_feedback_20260726/)
+track.
+
 ## Completed local evidence
 
 - [x] Review migration `20260722_0005`, ORM parity, tests, and SQL framework docs.

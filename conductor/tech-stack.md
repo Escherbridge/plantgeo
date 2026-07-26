@@ -1,9 +1,13 @@
-# PlantGeo Technical Stack
+---
+type: technical-context
+---
+
+# PlantGeo technical context
 
 ## Frontend
 | Technology | Version | Purpose |
 |-----------|---------|---------|
-| Next.js | 15.2+ | App Router, SSR, API routes |
+| Next.js | 16.2+ | App Router, SSR, API routes |
 | React | 19.0+ | UI framework |
 | TypeScript | 5.7+ | Type safety |
 | MapLibre GL JS | 5.2+ | 3D map rendering (globe, terrain, buildings) |
@@ -26,6 +30,14 @@
 | Zod | 3.24+ | Schema validation |
 | postgres.js | 3.4+ | PostgreSQL driver |
 
+## Governed data service
+| Technology | Version | Purpose |
+|-----------|---------|---------|
+| Python | 3.12+ | Local data and evaluation runtime |
+| Sanic + sanic-ext | 24.6+ / 23.12+ | Governed service boundary |
+| SQLAlchemy + Alembic | 2.0+ / 1.13+ | `agri` schema and migration governance |
+| asyncpg + GeoAlchemy2 + pgvector | 0.29+ / 0.15+ / 0.3+ | PostgreSQL, spatial, and vector access |
+
 ## Infrastructure
 | Technology | Version | Purpose |
 |-----------|---------|---------|
@@ -43,7 +55,7 @@
 | Service | Purpose |
 |---------|---------|
 | Cloudflare R2 | PMTiles basemap hosting (CDN) |
-| Railway Pro | Production deployment |
+| Railway Pro | Conditional serving-plane deployment; see release governance |
 | AWS Terrain Tiles | Elevation data (Terrarium encoding) |
 | Geofabrik | OSM PBF data downloads |
 

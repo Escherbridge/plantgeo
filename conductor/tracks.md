@@ -2,38 +2,30 @@
 type: track-index
 ---
 
-# Conductor Tracks
+# PlantGeo current work registry
 
-## [~] Track: North American Intervention Evidence Data [north_america_intervention_data_20260723]
-Ingest maximum useful free/open wildfire, drought, watershed, agriculture, and
-regulatory evidence with explicit native support and licence gates. Prove the
-architecture with an open-data Boise city/named-property vertical slice while
-keeping forecasts, strategies, recommendations, Railway, and schedules untouched.
+This is the only current Conductor track registry. Status uses the vocabulary in
+[`README.md`](./README.md); implementation details and evidence stay in the
+linked authority.
 
-## [~] Track: Forecast Validation and Railway Predeploy [forecasting_predeploy_20260722]
-Validate a governed metric forecast against pinned local history, persist immutable
-forecast-versus-actual hindcasts as future ML signals, and rehearse the future
-Railway database path without deploying or mutating Railway. The first candidate
-was correctly rejected; the current continuation adds a generic date-spined,
-30-day Monte Carlo iteration and actual-reconciliation loop that remains
-evaluation-only.
+| Status | Track | Authoritative scope | Next gate |
+| --- | --- | --- | --- |
+| blocked | [Release certification](./release-governance.md) | Production release policy and exact gates | PostgreSQL 18 restore/extension proof, certified data release, reviewed exact SHA, separate authorization |
+| blocked | [Forecast validation and Railway predeploy](./tracks/forecasting_predeploy_20260722/) | Local, governed metric-forecast evaluation and Railway rehearsal | Independent PostgreSQL 18 restore/parity proof; no Railway mutation |
+| active | [Seasonal forecast and residual feedback](./tracks/seasonal_forecast_feedback_20260726/) | Evaluation-only seasonal candidates and time-honest residual-feedback design | Phase 0 read-only DSN or frozen checksummed export |
+| planned | [North American intervention evidence](./tracks/north_america_intervention_data_20260723/) | Licence- and resolution-aware evidence expansion | Per-source adapter, coverage, and licence gate |
+| blocked | [Strategy-selection governance](./tracks/strategy_selection_governance_20260726/) | Research-only strategy label, training, and selection lineage | Governed intervention/control outcome mapping and released labels |
 
-## [ ] Track: Seasonal Forecast and Residual Feedback [seasonal_forecast_feedback_20260726]
-Evaluate seasonal and lag-aware candidates against frozen rolling-origin
-baselines; persist time-honest residual-feedback signals through an additive,
-acyclic, checksummed forecast plane; and expose only validated, availability-
-aware outputs to ML experiments. This track cannot publish a forecast, create a
-strategy efficacy claim, or mutate Railway.
+## Historical backlog
 
-## [ ] Track: Map Layer Data Visualization [map_layer_data_viz_20260324]
-Get all PlantGeo map layers rendering with real or demo data over Washington State.
-Layers: Vegetation/NDVI, Water, Drought, Soil, Fire.
+The remaining numbered tracks and the older service/RAG plans are retained under
+[`tracks/`](./tracks/) as product-history and discovery material. They are not
+approved execution plans, release authorities, or evidence of an implemented
+feature. In particular, legacy Track 18 does not authorize deploy-on-merge or
+migration-on-deploy, and legacy strategy-card/RAG plans do not authorize ranked
+strategy recommendations or efficacy claims.
 
-## [ ] Track: Agri Data Service Scaffold [agri_data_service_scaffold_20260324]
-Scaffold the agri-data-service Python repo with FastAPI, SQLAlchemy, PostGIS, pgvector, and core schema. Docker Compose dev environment, 10 SQLAlchemy models, Alembic migrations, seed data for 10 regenerative strategies, core CRUD API, Martin tile server config.
-
-## [ ] Track: Data Ingestion Pipeline [data_ingestion_pipeline_20260324]
-Build Celery workers to ingest data from SSURGO, PRISM, USGS, USDA PLANTS, GBIF, and SoilGrids into the data warehouse. Includes beat scheduler, per-source workers, and a data quality layer with unit normalization and confidence scoring. Depends on: agri_data_service_scaffold_20260324.
-
-## [ ] Track: RAG Recommendation Engine [rag_recommendation_engine_20260324]
-Build the RAG pipeline and suitability scoring engine for AI-driven regenerative strategy recommendations. Knowledge base ingestion, chunking + embedding, SQL-based strategy scoring, species recommendations with companion planting, LLM synthesis endpoint, PlantGeo tRPC integration. Depends on: agri_data_service_scaffold_20260324, data_ingestion_pipeline_20260324.
+Use [`tracks/README.md`](./tracks/README.md) only to navigate that retained
+catalogue. Promote a historical item by creating a governed track with current
+constraints and adding it to this registry; do not reactivate it by checking
+boxes in the historical plan.

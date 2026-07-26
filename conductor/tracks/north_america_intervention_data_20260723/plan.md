@@ -4,6 +4,15 @@ type: implementation-plan
 
 # Implementation plan
 
+## Current state — reviewed 2026-07-26
+
+The completed phases below are historical pilot evidence. Their references to a
+warehouse at revision `0007` describe that pilot snapshot, not the current local
+schema head (`20260725_0013`). Further expansion is planned only after each
+source adapter passes its specific licence, coverage, resolution, and release
+lineage gate; it cannot authorize a forecast, strategy recommendation, Railway
+mutation, or schedule.
+
 ## Phase 0 — preserve and baseline
 
 - [x] Read root and applicable database/model/execution/warehouse instructions.

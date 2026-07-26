@@ -1,7 +1,15 @@
-# PlantGeo - Product Requirements Document
+---
+type: product-context
+---
+
+# PlantGeo product context
 
 ## Vision
-An enterprise-grade open-source 3D geospatial mapping platform that provides full feature parity with Google Maps Platform, built on open-source technologies (MapLibre, PostGIS, Valhalla, Pelias/Photon), deployed on Railway Pro with Cloudflare R2 for tile distribution.
+
+PlantGeo is an open-source geospatial action-network platform for exploring and
+coordinating evidence-backed environmental work. Google Maps feature parity is a
+long-term product direction, not a claim of present completeness or a release
+commitment.
 
 ## Target Users
 - Wildfire prevention teams needing real-time geospatial intelligence
@@ -30,8 +38,15 @@ An enterprise-grade open-source 3D geospatial mapping platform that provides ful
 - Tailwind CSS v4
 - Railway Pro (deployment)
 
-## Deployment Target
-Railway Pro plan (~$240-400/month):
+## Deployment direction
+
+Railway Pro and Cloudflare R2 are intended serving-plane components, subject to
+the release gates in [`release-governance.md`](./release-governance.md). The
+current product is in hardening and data-foundation work; it does not currently
+promise a deployed forecast, automated intervention recommendation, or strategy
+efficacy claim.
+
+Historical capacity assumptions (not a current procurement or deployment plan):
 - Next.js app: 2 GB RAM
 - Martin: 2 GB RAM
 - PostGIS + TimescaleDB: 8 GB RAM, 250 GB volume

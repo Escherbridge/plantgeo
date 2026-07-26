@@ -3,5 +3,6 @@
   "description": "Governed local metric forecasting, persisted hindcast signals, and Railway predeploy rehearsal",
   "type": "infrastructure",
   "created_at": "2026-07-22T00:00:00Z",
-  "status": "in_progress"
+  "status": "blocked",
+  "blocker": "Production PostgreSQL 18 backup/restore and extension-parity proof is not yet available."
 }
