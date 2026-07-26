@@ -1,0 +1,46 @@
+{
+  "source": {
+    "key": "nasa-power-daily",
+    "name": "NASA POWER Daily",
+    "owner": "NASA POWER",
+    "purpose": "Boise, Idaho Trekker Rim parcel (Ada County R0541500060, City of Boise Parks & Rec, 5.232 acres) point-sampling baseline for wind-speed intervention planning.",
+    "license_name": "NASA POWER data policy",
+    "citation": "NASA POWER daily point API",
+    "base_url": "https://power.larc.nasa.gov/api/temporal/daily/point",
+    "license_url": "https://power.larc.nasa.gov/docs/services/api/temporal/daily/",
+    "retention_days": null,
+    "reviewed_at": "2026-07-25T00:00:00Z",
+    "reviewed_by": "local-data-operator"
+  },
+  "nasa": {
+    "schema_version": "nasa-power-daily-v1",
+    "window": {
+      "start_date": "2022-07-23",
+      "end_date": "2026-07-23"
+    },
+    "cells": [
+      {
+        "cell_key": "boise-local:trekker-rim:p43.556:m116.132",
+        "latitude": 43.55595,
+        "longitude": -116.131577
+      }
+    ],
+    "parameters": [
+      "PRECTOTCORR",
+      "RH2M",
+      "T2M",
+      "T2MDEW",
+      "T2M_MAX",
+      "T2M_MIN",
+      "WS2M"
+    ],
+    "time_standard": "UTC",
+    "grid_name": "nasa-power-0.5-degree",
+    "grid_resolution_m": 55660,
+    "cell_half_span_degrees": 0.25
+  },
+  "transform_version": "nasa-power-point-sample-normalization-v2",
+  "release_set_key": "nasa-power-boise-trekker-rim-20220723-20260723-acquisition",
+  "release_set_as_of": "2026-07-25T00:00:00Z",
+  "description": "Four-year single-cell point-sampling baseline for the Trekker Rim parcel (Ada County parcel R0541500060, City of Boise Parks & Rec, 5.232 acres; centroid 43.55595N, -116.131577E), Boise, Idaho. Supersedes the stale na-sample:1deg:p040.00:m105.00 Denver-point evidence for this entity; the 1-degree North America lattice has no sample cell covering this centroid (it falls in the p043/p044 gap), so this plan defines one explicit boise-local NASA POWER 0.5-degree grid cell. ALLSKY_SFC_SW_DWN is excluded: the satellite-derived radiation product carries a multi-month processing lag (empirically complete only through 2026-04-30) and the plan's all-or-nothing coverage gate would otherwise reject the entire window; the seven retained parameters were empirically complete through 2026-07-23 at authoring. Sampling areas support regional coverage accounting only and must not be represented as native pixels, field, or acre observations."
+}

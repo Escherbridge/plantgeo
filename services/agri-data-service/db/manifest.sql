@@ -16,6 +16,7 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/sequences/signal_observation_id_seq.sql
 
 -- ==== core objects (pg_dump dependency order) ====
+\i agri/functions/drought_class_daily_series.sql
 \i agri/functions/enforce_derived_evidence_run.sql
 \i agri/functions/enforce_forecast_hindcast_finalization_policy.sql
 \i agri/functions/enforce_forecast_hindcast_insert_contract.sql
@@ -36,6 +37,7 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/functions/forecast_hindcast_receipt_checksum.sql
 \i agri/functions/forecast_hindcast_signal_timeseries.sql
 \i agri/functions/forecast_hindcast_value_checksum.sql
+\i agri/functions/forecast_iteration_evaluation.sql
 \i agri/functions/forecast_iteration_receipt_checksum.sql
 \i agri/functions/forecast_iteration_signal_timeseries.sql
 \i agri/functions/forecast_iteration_value_checksum.sql

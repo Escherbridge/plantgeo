@@ -138,6 +138,18 @@ def test_source_loader_requires_an_explicit_isolated_local_compose_target() -> N
         ).require_local_source_loader_database_url()
 
 
+def test_source_loader_accepts_plantgeo_prefixed_disposable_databases() -> None:
+    target = "postgresql+asyncpg://plantgeo_loader:password@127.0.0.1:5442/plantgeo_boise_completion_20260725"
+    assert _settings(local_source_loader_database_url=target).require_local_source_loader_database_url() == target
+
+    with pytest.raises(ValueError, match=r"127\.0\.0\.1:5442/plantgeo"):
+        _settings(
+            local_source_loader_database_url=(
+                "postgresql+asyncpg://plantgeo_loader:password@127.0.0.1:5442/plantgeography"
+            )
+        ).require_local_source_loader_database_url()
+
+
 def test_forecast_mv_refresh_requires_its_separate_capability_role() -> None:
     target = "postgresql+asyncpg://forecast_refresh_operator:password@forecast-db.internal:5432/plantgeo"
 

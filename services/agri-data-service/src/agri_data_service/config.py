@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     receiver_writer_database_url: str | None = None
     published_reader_database_url: str | None = None
     # Never default this to DATABASE_URL: source ingestion has a separate local-only custody target.
+    # Accepts plantgeo_-prefixed disposable databases too, mirroring the iteration guard below.
     local_source_loader_database_url: str | None = None
     # Operator-only refreshes use a separate capability role and never inherit the API DSN.
     forecast_mv_refresh_database_url: str | None = None
@@ -146,14 +147,19 @@ class Settings(BaseSettings):
             port = parsed.port
         except ValueError as exc:
             raise ValueError("LOCAL_SOURCE_LOADER_DATABASE_URL has an invalid port") from exc
+        database_name = parsed.path.removeprefix("/")
         if (
             parsed.scheme != "postgresql+asyncpg"
             or parsed.hostname != _LOCAL_SOURCE_LOADER_HOST
             or port != _LOCAL_SOURCE_LOADER_PORT
-            or parsed.path != f"/{_LOCAL_SOURCE_LOADER_DATABASE}"
+            or not (
+                database_name == _LOCAL_SOURCE_LOADER_DATABASE
+                or database_name.startswith(f"{_LOCAL_SOURCE_LOADER_DATABASE}_")
+            )
         ):
             raise ValueError(
-                "LOCAL_SOURCE_LOADER_DATABASE_URL must target postgresql+asyncpg://127.0.0.1:5442/plantgeo"
+                "LOCAL_SOURCE_LOADER_DATABASE_URL must target postgresql+asyncpg://127.0.0.1:5442/plantgeo "
+                "or a plantgeo_-prefixed disposable database"
             )
         if parsed.username == "plantgeo_owner":
             raise ValueError("LOCAL_SOURCE_LOADER_DATABASE_URL must not use the plantgeo_owner bootstrap role")
@@ -212,12 +218,12 @@ class Settings(BaseSettings):
             parsed.scheme != "postgresql+asyncpg"
             or parsed.hostname != _LOCAL_FORECAST_ITERATION_HOST
             or port != _LOCAL_FORECAST_ITERATION_PORT
-            or not database_name.startswith("plantgeo")
+            or not (database_name == "plantgeo" or database_name.startswith("plantgeo_"))
             or parsed.query
             or parsed.fragment
         ):
             raise ValueError(
-                "FORECAST_ITERATION_DATABASE_URL must target postgresql+asyncpg://127.0.0.1:5442/plantgeo*"
+                "FORECAST_ITERATION_DATABASE_URL must target postgresql+asyncpg://127.0.0.1:5442/plantgeo or plantgeo_*"
             )
         if unquote(parsed.username or "") != _LOCAL_FORECAST_ITERATION_ROLE:
             raise ValueError("FORECAST_ITERATION_DATABASE_URL must authenticate as plantgeo_local_developer")
