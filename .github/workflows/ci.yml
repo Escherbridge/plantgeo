@@ -13,10 +13,13 @@ jobs:
   web:
     name: Web checks
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -46,9 +49,22 @@ jobs:
           NEXT_PUBLIC_TERRAIN_URL: https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
           NEXT_PUBLIC_DYNAMIC_TILES_URL: http://localhost:3100
 
+      - name: Exercise production public-URL gate
+        run: >-
+          docker build --target build
+          --build-arg RAILWAY_ENVIRONMENT_NAME=production
+          --build-arg NEXT_PUBLIC_PMTILES_URL=https://tiles.plantgeo.example/basemap.pmtiles
+          --build-arg NEXT_PUBLIC_TERRAIN_URL=https://terrain.plantgeo.example/tiles/{z}/{x}/{y}.png
+          --build-arg NEXT_PUBLIC_DYNAMIC_TILES_URL=https://martin.plantgeo.example
+          --build-arg PLANTGEO_PMTILES_ALLOWED_HOST=tiles.plantgeo.example
+          --build-arg PLANTGEO_TERRAIN_ALLOWED_HOST=terrain.plantgeo.example
+          --build-arg PLANTGEO_DYNAMIC_TILES_ALLOWED_HOST=martin.plantgeo.example
+          .
+
   data-service:
     name: Python data-service checks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: services/agri-data-service
@@ -56,6 +72,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -69,7 +87,7 @@ jobs:
         run: uv sync --locked --all-extras
 
       - name: Format check
-        run: uv run ruff format --check .
+        run: uv run ruff format --check src tests
 
       - name: Lint
         run: uv run ruff check .
@@ -80,9 +98,10 @@ jobs:
       - name: Test
         run: uv run pytest
 
-  forecast-postgresql:
-    name: PostgreSQL 16 forecast rehearsal
+  postgresql-governance:
+    name: PostgreSQL 16 governance rehearsal
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: services/agri-data-service
@@ -103,10 +122,14 @@ jobs:
     env:
       DATABASE_URL_SYNC: postgresql+psycopg2://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
       FORECAST_TEST_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
+      INTERVENTION_PARENT_GUARD_TEST_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
+      SCHEMA_PARITY_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -146,6 +169,55 @@ jobs:
 
       - name: Run forecast PostgreSQL contract
         run: uv run pytest tests/test_forecasting_postgresql.py -q
+
+      - name: Migrate contract database to current head
+        run: uv run alembic upgrade head
+
+      - name: Create current-head signal-evaluation database
+        working-directory: .
+        run: >-
+          docker exec "${{ job.services.postgres.id }}"
+          createdb --username postgres plantgeo_signal_eval_test_ci
+
+      - name: Enable extensions for signal-evaluation database
+        shell: bash
+        run: |
+          docker exec -i "${{ job.services.postgres.id }}" \
+            psql --set ON_ERROR_STOP=1 --username postgres \
+            --dbname plantgeo_signal_eval_test_ci <<'SQL'
+          CREATE EXTENSION IF NOT EXISTS postgis;
+          CREATE EXTENSION IF NOT EXISTS timescaledb;
+          CREATE EXTENSION IF NOT EXISTS vector;
+          CREATE EXTENSION IF NOT EXISTS pgcrypto;
+          SQL
+
+      - name: Migrate signal-evaluation database to current head
+        env:
+          DATABASE_URL_SYNC: postgresql+psycopg2://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_signal_eval_test_ci
+        run: uv run alembic upgrade head
+
+      - name: Provide pinned PostgreSQL 16 schema-dump tooling
+        env:
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/plantgeo-pg16-bin"
+          printf '#!/usr/bin/env bash\nexec docker exec %q pg_dump "$@"\n' "$POSTGRES_SERVICE_ID" \
+            > "$RUNNER_TEMP/plantgeo-pg16-bin/pg_dump"
+          chmod +x "$RUNNER_TEMP/plantgeo-pg16-bin/pg_dump"
+          echo "PGBIN=$RUNNER_TEMP/plantgeo-pg16-bin" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/plantgeo-pg16-bin/pg_dump" --version | grep -E 'PostgreSQL 16([. ]|$)'
+
+      - name: Run governed PostgreSQL contracts
+        env:
+          FORECAST_ITERATION_TEST_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
+          SIGNAL_EVAL_TEST_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_signal_eval_test_ci
+        run: >-
+          uv run pytest
+          tests/test_forecast_iteration_postgresql.py
+          tests/test_signal_evaluation_postgresql.py
+          tests/test_intervention_parent_guard_postgresql.py
+          tests/test_declarative_schema_parity.py
+          -q
 
       - name: Create v1 upgrade rehearsal database
         working-directory: .
@@ -190,5 +262,7 @@ jobs:
         run: |
           docker exec "${{ job.services.postgres.id }}" \
             dropdb --force --if-exists --username postgres plantgeo_forecast_test_upgrade_ci
+          docker exec "${{ job.services.postgres.id }}" \
+            dropdb --force --if-exists --username postgres plantgeo_signal_eval_test_ci
           docker exec "${{ job.services.postgres.id }}" \
             dropdb --force --if-exists --username postgres plantgeo_forecast_test_ci

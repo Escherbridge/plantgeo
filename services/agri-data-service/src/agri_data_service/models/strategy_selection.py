@@ -191,8 +191,7 @@ class StrategyLabelEpisode(Base, UUIDMixin):
 
     __table_args__ = (
         CheckConstraint(
-            "(arm_kind = 'treatment' AND strategy_id IS NOT NULL) "
-            "OR (arm_kind = 'control' AND strategy_id IS NULL)",
+            "(arm_kind = 'treatment' AND strategy_id IS NOT NULL) OR (arm_kind = 'control' AND strategy_id IS NULL)",
             name="arm_strategy",
         ),
         CheckConstraint(
@@ -306,12 +305,8 @@ class StrategySelectionReceipt(Base, UUIDMixin):
     applicability_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     applicability_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     data_cutoff: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    execution_mode: Mapped[str] = mapped_column(
-        String(24), nullable=False, server_default=text("'evaluation_only'")
-    )
-    claim_tier: Mapped[str] = mapped_column(
-        String(32), nullable=False, server_default=text("'feasibility_candidate'")
-    )
+    execution_mode: Mapped[str] = mapped_column(String(24), nullable=False, server_default=text("'evaluation_only'"))
+    claim_tier: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'feasibility_candidate'"))
     decision_state: Mapped[str] = mapped_column(String(24), nullable=False)
     abstention_reason: Mapped[str | None] = mapped_column(Text)
     candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -346,8 +341,7 @@ class StrategySelectionReceipt(Base, UUIDMixin):
         ),
         CheckConstraint("status IN ('staging', 'finalized')", name="status"),
         CheckConstraint(
-            "status <> 'finalized' OR "
-            "(receipt_checksum ~ '^[0-9a-f]{64}$' AND finalized_at IS NOT NULL)",
+            "status <> 'finalized' OR (receipt_checksum ~ '^[0-9a-f]{64}$' AND finalized_at IS NOT NULL)",
             name="finalized_evidence",
         ),
         Index("ix_strategy_selection_receipt_subject_issue", "analysis_subject_id", text("issue_time DESC")),
@@ -362,9 +356,7 @@ class StrategySelectionCandidate(Base, UUIDMixin):
     selection_receipt_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("agri.strategy_selection_receipt.id"), nullable=False
     )
-    strategy_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("agri.strategies.id"), nullable=False
-    )
+    strategy_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("agri.strategies.id"), nullable=False)
     strategy_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     strategy_snapshot_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     eligibility_state: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -383,9 +375,7 @@ class StrategySelectionCandidate(Base, UUIDMixin):
     conservative_score: Mapped[float | None] = mapped_column(Float)
     rank: Mapped[int | None] = mapped_column(Integer)
     evidence_tier: Mapped[str] = mapped_column(String(32), nullable=False)
-    score_components: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
-    )
+    score_components: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     candidate_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
@@ -429,13 +419,11 @@ class StrategySelectionCandidate(Base, UUIDMixin):
             name="evidence_tier",
         ),
         CheckConstraint(
-            "jsonb_typeof(strategy_snapshot) = 'object' "
-            "AND jsonb_typeof(score_components) = 'object'",
+            "jsonb_typeof(strategy_snapshot) = 'object' AND jsonb_typeof(score_components) = 'object'",
             name="json_contracts",
         ),
         CheckConstraint(
-            "strategy_snapshot_checksum ~ '^[0-9a-f]{64}$' "
-            "AND candidate_checksum ~ '^[0-9a-f]{64}$'",
+            "strategy_snapshot_checksum ~ '^[0-9a-f]{64}$' AND candidate_checksum ~ '^[0-9a-f]{64}$'",
             name="checksums",
         ),
         Index("ix_strategy_selection_candidate_receipt_score", "selection_receipt_id", text("rank ASC")),

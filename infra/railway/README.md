@@ -131,9 +131,10 @@ time, and operator/change record. The target service name must be exactly
   available and installed versions of `postgis`, `timescaledb`, `vector`, and
   `pgcrypto`. A package being present in an image is not an installed extension.
 - Compare the PG18 versions and behavior with the pinned PostgreSQL 16 image in
-  the [`forecast-postgresql` CI job](../../.github/workflows/ci.yml). The CI job
-  migrates a disposable database through `20260722_0008` and executes the real
-  PostgreSQL forecast function/receipt/publication test, but it is not PG18
+  the [`postgresql-governance` CI job](../../.github/workflows/ci.yml). The CI
+  job exercises the historical forecast contract at `20260722_0008`, then
+  migrates the same disposable database through the current head and proves the
+  constrained-loader and declarative-schema contracts. It is not PG18
   production evidence.
 - If any extension is unavailable, incompatible, or requires a restart, stop.
   An approved operator must install extensions before migration; neither a
@@ -167,28 +168,31 @@ ORDER BY available.name;
 - Keep the pre-migration backup and restored rehearsal database until the
   production observation window closes.
 
-### 3. Guard and rehearse migrations through `20260722_0008`
+### 3. Guard and rehearse migrations through `20260725_0013`
 
-- Require the integrated CI checks plus the PostgreSQL 16 forecast rehearsal to
-  pass at the exact commit proposed for production.
+- Require the integrated CI checks plus the PostgreSQL 16 governance rehearsal
+  to pass at the exact commit proposed for production.
 - Run Drizzle and Alembic against the restored PG18 rehearsal database using a
-  short-lived migration identity. Confirm Alembic is at the reviewed predecessor
-  `20260720_0004` before applying the reviewed `0005` through `0008` chain, or
-  at either reviewed intermediate before applying only its successors, or at
-  `20260722_0008` for an idempotent no-op; any other revision is a stop
-  condition.
-- After rehearsal, assert the single Alembic head is `20260722_0008`, readiness
-  expects `20260722_0008`, all four extensions remain installed, and the
+  short-lived migration identity. Accept only the reviewed linear predecessors
+  `20260720_0004`, `20260722_0005`, `20260722_0006`, `20260722_0007`,
+  `20260722_0008`, `20260723_0009`, `20260723_0010`, `20260725_0011`, or
+  `20260725_0012`, then apply their strict successors in order through
+  `20260725_0013`. An already-current `20260725_0013` database may only be an
+  idempotent no-op; any other starting revision is a stop condition.
+- After rehearsal, assert the single Alembic head is `20260725_0013`, readiness
+  expects `20260725_0013`, all four extensions remain installed, the
   representative forecast PostgreSQL contract passes with
   `FORECAST_TEST_DATABASE_URL` pointed only at a disposable database named
-  `plantgeo_forecast_test*`.
+  `plantgeo_forecast_test*`, and the constrained-loader and declarative-schema
+  contracts pass against that head.
 - Capture migration SQL/logs, elapsed time, lock observations, and before/after
   schema fingerprints. Set bounded lock and statement timeouts and stop on the
   first error. Never run migrations from a long-lived service start command.
 - A future Railway pre-deploy job is allowed only after its image contains the
-  pinned migration tool, locked dependencies, and migration files, uses an
-  isolated migration DSN, and preserves the same revision guard. The current
-  Next.js runtime image does not satisfy that requirement.
+  pinned migration tool, locked dependencies, migration files, and the
+  declarative `db/` objects loaded by those migrations; it must use an isolated
+  migration DSN and preserve the same revision guard. The current Next.js
+  runtime image does not satisfy that requirement.
 
 ### 4. Install and audit least-privilege forecast roles
 

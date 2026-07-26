@@ -129,7 +129,7 @@ def test_receiver_readiness_requires_exact_historical_identity_sequences() -> No
         "vector",
         "pgcrypto",
     }
-    assert health_route.EXPECTED_ALEMBIC_REVISION == "20260723_0010"
+    assert health_route.EXPECTED_ALEMBIC_REVISION == "20260725_0013"
 
 
 def test_readiness_contract_enforces_separate_forecast_capabilities() -> None:

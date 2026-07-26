@@ -20,18 +20,41 @@ ARG RAILWAY_ENVIRONMENT_NAME
 ARG NEXT_PUBLIC_PMTILES_URL
 ARG NEXT_PUBLIC_TERRAIN_URL
 ARG NEXT_PUBLIC_DYNAMIC_TILES_URL
+ARG PLANTGEO_PMTILES_ALLOWED_HOST
+ARG PLANTGEO_TERRAIN_ALLOWED_HOST
+ARG PLANTGEO_DYNAMIC_TILES_ALLOWED_HOST
 ENV NEXT_PUBLIC_PMTILES_URL=${NEXT_PUBLIC_PMTILES_URL}
 ENV NEXT_PUBLIC_TERRAIN_URL=${NEXT_PUBLIC_TERRAIN_URL}
 ENV NEXT_PUBLIC_DYNAMIC_TILES_URL=${NEXT_PUBLIC_DYNAMIC_TILES_URL}
+ENV PLANTGEO_PMTILES_ALLOWED_HOST=${PLANTGEO_PMTILES_ALLOWED_HOST}
+ENV PLANTGEO_TERRAIN_ALLOWED_HOST=${PLANTGEO_TERRAIN_ALLOWED_HOST}
+ENV PLANTGEO_DYNAMIC_TILES_ALLOWED_HOST=${PLANTGEO_DYNAMIC_TILES_ALLOWED_HOST}
 
-# Production builds must not silently compile local or placeholder tile origins.
+# Production builds must reject placeholders, private origins, and credential-bearing public URLs.
 RUN if [ "${RAILWAY_ENVIRONMENT_NAME:-}" = "production" ]; then \
-      case "${NEXT_PUBLIC_PMTILES_URL:-}" in \
-        ""|*"<"*|*"your-"*|*"build.protomaps.com"*) echo "NEXT_PUBLIC_PMTILES_URL must be a PlantGeo-controlled production URL" >&2; exit 1 ;; \
-      esac; \
-      case "${NEXT_PUBLIC_DYNAMIC_TILES_URL:-}" in \
-        ""|*"localhost"*|*"railway.internal"*) echo "NEXT_PUBLIC_DYNAMIC_TILES_URL must be Martin's public HTTPS origin" >&2; exit 1 ;; \
-      esac; \
+      node -e 'const checks = [ \
+        ["NEXT_PUBLIC_PMTILES_URL", process.env.NEXT_PUBLIC_PMTILES_URL, false, false, process.env.PLANTGEO_PMTILES_ALLOWED_HOST], \
+        ["NEXT_PUBLIC_TERRAIN_URL", process.env.NEXT_PUBLIC_TERRAIN_URL, true, false, process.env.PLANTGEO_TERRAIN_ALLOWED_HOST], \
+        ["NEXT_PUBLIC_DYNAMIC_TILES_URL", process.env.NEXT_PUBLIC_DYNAMIC_TILES_URL, false, true, process.env.PLANTGEO_DYNAMIC_TILES_ALLOWED_HOST], \
+      ]; \
+      const net = require("node:net"); \
+      for (const [name, value, requiresTemplate, requiresOrigin, allowedHost] of checks) { \
+        if (!value || value.includes("<") || value.includes("your-") || value.includes("build.protomaps.com")) { \
+          throw new Error(`${name} must be a reviewed production URL`); \
+        } \
+        let parsed; \
+        try { parsed = new URL(value); } catch { throw new Error(`${name} must be an absolute URL`); } \
+        const hostname = parsed.hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1"); \
+        if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash || net.isIP(hostname) || hostname !== allowedHost?.toLowerCase()) { \
+          throw new Error(`${name} must be a credential-free HTTPS URL at its reviewed host`); \
+        } \
+        if (requiresTemplate && !["{z}", "{x}", "{y}"].every((token) => decodeURIComponent(parsed.pathname).includes(token))) { \
+          throw new Error(`${name} must contain {z}, {x}, and {y} path placeholders`); \
+        } \
+        if (requiresOrigin && parsed.pathname !== "/") { \
+          throw new Error(`${name} must be a Martin public origin without a path`); \
+        } \
+      }'; \
     fi
 RUN npm run build
 

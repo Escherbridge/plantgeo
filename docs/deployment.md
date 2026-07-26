@@ -274,9 +274,16 @@ before enabling a production deployment:
 NEXT_PUBLIC_PMTILES_URL=https://<first-party-r2-or-cdn>/basemap.pmtiles
 NEXT_PUBLIC_TERRAIN_URL=https://<reviewed-terrain-origin>/{z}/{x}/{y}.png
 NEXT_PUBLIC_DYNAMIC_TILES_URL=https://<martin-public-or-custom-domain>
+PLANTGEO_PMTILES_ALLOWED_HOST=<first-party-r2-or-cdn-host>
+PLANTGEO_TERRAIN_ALLOWED_HOST=<reviewed-terrain-host>
+PLANTGEO_DYNAMIC_TILES_ALLOWED_HOST=<martin-public-or-custom-domain-host>
 ```
 
 Never place a `*.railway.internal` hostname or a credential in `NEXT_PUBLIC_*`.
+The three `PLANTGEO_*_ALLOWED_HOST` build variables must contain the exact
+lowercase hostname for their corresponding public URL; the production image
+rejects a URL with a different host, IP literal, credentials, query, or
+fragment. Keep these variables server-side rather than `NEXT_PUBLIC_*`.
 Keep the dynamic-tile variable unset until Martin is verified. Environmental
 raster tiles remain disabled until a database-backed publication catalog—not an
 environment variable—provides the immutable URL, release, and checksum. The UI
@@ -293,7 +300,7 @@ never be exposed as `NEXT_PUBLIC_*`.
 - Config-as-code: `/services/agri-data-service/railway.json`
 - Liveness: `GET /health`
 - Rollout readiness: `GET /ready` (profile-specific identity, exact Alembic
-  revision `20260723_0010`, all four required extensions, route-touched
+  revision `20260725_0013`, all four required extensions, route-touched
   objects, and the exact least-privilege runtime and forecast-role grants)
 - Runtime port: Railway-provided `PORT`
 
@@ -391,11 +398,15 @@ The GitHub workflow `.github/workflows/deploy.yml`:
 - targets project `6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`, environment
   `production`, and service `plantgeo-main`; and
 - remains disabled unless repository variable
-  `RAILWAY_PRODUCTION_DEPLOY_ENABLED` equals `true`.
+  `RAILWAY_PRODUCTION_DEPLOY_ENABLED` equals `true` and repository variable
+  `RAILWAY_PRODUCTION_DATA_CERTIFIED_SHA` exactly equals the verified commit
+  SHA.
 
-Keep the kill switch false until the database, migrations, public build-time
-URLs, and tile service pass their gates. The workflow intentionally does not
-deploy the data service, redeploy Martin, run migrations, or provision services.
+Keep both gates false until the database, migrations, public build-time URLs,
+tile service, and the data-release evidence pass their gates. Set the data
+certification SHA only to the reviewed release commit and clear it again after
+the deployment window. The workflow intentionally does not deploy the data
+service, redeploy Martin, run migrations, or provision services.
 
 For an explicitly approved manual web deployment of a verified revision:
 

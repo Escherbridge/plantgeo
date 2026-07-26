@@ -148,9 +148,7 @@ def test_loader_finalizes_without_intervention_table_grants() -> None:  # noqa: 
 
             cursor.execute("GRANT USAGE ON SCHEMA agri TO plantgeo_loader")
             cursor.execute("GRANT SELECT ON agri.release_set TO plantgeo_loader")
-            cursor.execute(
-                "GRANT UPDATE (state, validated_at) ON agri.release_set TO plantgeo_loader"
-            )
+            cursor.execute("GRANT UPDATE (state, validated_at) ON agri.release_set TO plantgeo_loader")
             for table_name in INTERVENTION_TABLES:
                 cursor.execute(f"REVOKE ALL PRIVILEGES ON TABLE agri.{table_name} FROM plantgeo_loader")
 

@@ -104,6 +104,7 @@ class StrategyLabelBundle:
     feature_names: tuple[str, ...]
     episodes: tuple[StrategyEpisode, ...]
 
+
 @dataclass(frozen=True)
 class SelectionPolicy:
     """Overrideable causal-support gates; defaults are deliberately strict."""
@@ -303,9 +304,7 @@ def _nonempty_string(value: object, field: str) -> str:
 
 def _sha256_string(value: object, field: str) -> str:
     parsed = _nonempty_string(value, field)
-    if len(parsed) != _SHA256_HEX_LENGTH or any(
-        character not in "0123456789abcdef" for character in parsed
-    ):
+    if len(parsed) != _SHA256_HEX_LENGTH or any(character not in "0123456789abcdef" for character in parsed):
         raise ValueError(f"{field} must be a lowercase SHA-256 checksum")
     return parsed
 
@@ -446,10 +445,7 @@ def _propensity_predict(model: _LinearFit, features: NDArray[np.float64]) -> NDA
 
 
 def _folds(episodes: list[StrategyEpisode]) -> list[tuple[NDArray[np.int64], NDArray[np.int64]]]:
-    cohort_origins = {
-        episode.cohort: episode.assigned_at
-        for episode in episodes
-    }
+    cohort_origins = {episode.cohort: episode.assigned_at for episode in episodes}
     cohorts = sorted(cohort_origins, key=lambda cohort: (cohort_origins[cohort], cohort))
     blocks = sorted({episode.spatial_block for episode in episodes})
     result: list[tuple[NDArray[np.int64], NDArray[np.int64]]] = []
@@ -497,12 +493,8 @@ def _weighted_smd(
         control = ~treated
         treated_mean = float(np.average(features[treated, column], weights=weights[treated]))
         control_mean = float(np.average(features[control, column], weights=weights[control]))
-        treated_var = float(
-            np.average((features[treated, column] - treated_mean) ** 2, weights=weights[treated])
-        )
-        control_var = float(
-            np.average((features[control, column] - control_mean) ** 2, weights=weights[control])
-        )
+        treated_var = float(np.average((features[treated, column] - treated_mean) ** 2, weights=weights[treated]))
+        control_var = float(np.average((features[control, column] - control_mean) ** 2, weights=weights[control]))
         pooled = math.sqrt(max((treated_var + control_var) / 2, _EPSILON))
         maxima.append(abs(treated_mean - control_mean) / pooled)
     return max(maxima, default=0.0)
@@ -520,12 +512,7 @@ def _cluster_standard_error(values: NDArray[np.float64], clusters: list[str]) ->
         [np.sum(np.asarray(group, dtype=np.float64) - centered_mean) for group in by_cluster.values()],
         dtype=np.float64,
     )
-    variance = (
-        cluster_count
-        / (cluster_count - 1)
-        * float(np.sum(cluster_scores**2))
-        / len(values) ** 2
-    )
+    variance = cluster_count / (cluster_count - 1) * float(np.sum(cluster_scores**2)) / len(values) ** 2
     return math.sqrt(max(variance, 0.0))
 
 
@@ -537,8 +524,7 @@ def _cluster_effects(
     for value, cluster in zip(values.tolist(), clusters, strict=True):
         by_cluster.setdefault(cluster, []).append(value)
     return tuple(
-        ClusterEffect(cluster=cluster, effect=float(np.mean(by_cluster[cluster])))
-        for cluster in sorted(by_cluster)
+        ClusterEffect(cluster=cluster, effect=float(np.mean(by_cluster[cluster]))) for cluster in sorted(by_cluster)
     )
 
 
@@ -576,8 +562,7 @@ def _matched_did(
         if not eligible:
             continue
         distances = [
-            float(np.linalg.norm(features[int(treated_index)] - features[control_index]))
-            for control_index in eligible
+            float(np.linalg.norm(features[int(treated_index)] - features[control_index])) for control_index in eligible
         ]
         control_index = eligible[int(np.argmin(distances))]
         differences.append(float(target[int(treated_index)] - target[control_index]))
@@ -625,9 +610,7 @@ def _cross_fitted_predictions(
                 "control_outcome": control_model.payload(),
                 "propensity": propensity_model.payload(),
                 "training_episode_ids": [episodes[int(index)].episode_id for index in train],
-                "test_assignment_origin": min(
-                    episodes[int(index)].assigned_at for index in test
-                ).isoformat(),
+                "test_assignment_origin": min(episodes[int(index)].assigned_at for index in test).isoformat(),
                 "test_episode_ids": [episodes[int(index)].episode_id for index in test],
                 "treated_outcome": treated_model.payload(),
             }
@@ -659,9 +642,7 @@ def _train_one_strategy(  # noqa: PLR0912, PLR0915
     policy: SelectionPolicy,
 ) -> StrategyModelResult:
     episodes = [
-        episode
-        for episode in bundle.episodes
-        if episode.arm == "control" or episode.strategy_id == strategy_id
+        episode for episode in bundle.episodes if episode.arm == "control" or episode.strategy_id == strategy_id
     ]
     features = np.asarray([episode.features for episode in episodes], dtype=np.float64)
     benefit_sign = 1.0 if bundle.outcome.benefit_direction == "increase" else -1.0
@@ -819,9 +800,7 @@ def _selection_contrast(
     policy: SelectionPolicy,
 ) -> SelectionContrast:
     best_effects = {item.cluster: item.effect for item in best.oof_cluster_effects}
-    comparator_effects = {
-        item.cluster: item.effect for item in comparator.oof_cluster_effects
-    }
+    comparator_effects = {item.cluster: item.effect for item in comparator.oof_cluster_effects}
     paired_clusters = sorted(best_effects.keys() & comparator_effects.keys())
     differences = np.asarray(
         [best_effects[cluster] - comparator_effects[cluster] for cluster in paired_clusters],
@@ -860,9 +839,7 @@ def train_strategy_models(
 ) -> StrategyTrainingArtifact:
     """Train comparable effect estimators and rank only when every gate passes."""
     active_policy = policy or SelectionPolicy()
-    strategy_ids = sorted(
-        {episode.strategy_id for episode in bundle.episodes if episode.strategy_id is not None}
-    )
+    strategy_ids = sorted({episode.strategy_id for episode in bundle.episodes if episode.strategy_id is not None})
     if not strategy_ids:
         return StrategyTrainingArtifact(
             schema_version="strategy_training_artifact_v1",
@@ -899,10 +876,7 @@ def train_strategy_models(
             reasons.append("paired_strategy_contrast_not_positive")
     if reasons:
         reasons.extend(
-            reason
-            for result in results
-            if result.state == "abstained"
-            for reason in result.abstention_reasons
+            reason for result in results if result.state == "abstained" for reason in result.abstention_reasons
         )
         return StrategyTrainingArtifact(
             schema_version="strategy_training_artifact_v1",

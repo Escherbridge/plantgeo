@@ -182,9 +182,7 @@ def test_label_bundle_rejects_outcomes_after_as_of_and_mixed_cohort_times(
     future_outcome_payload = _synthetic_payload()
     future_outcome_payload["as_of_time"] = "2022-01-16T00:00:00+00:00"
     with pytest.raises(ValueError, match="available no later than as_of_time"):
-        load_strategy_label_bundle(
-            _write_payload(tmp_path / "future-outcome.json", future_outcome_payload)
-        )
+        load_strategy_label_bundle(_write_payload(tmp_path / "future-outcome.json", future_outcome_payload))
 
     mixed_cohort_payload = _synthetic_payload()
     mixed_episodes = mixed_cohort_payload["episodes"]
@@ -193,9 +191,7 @@ def test_label_bundle_rejects_outcomes_after_as_of_and_mixed_cohort_times(
     assert isinstance(later_episode, dict)
     later_episode["cohort"] = "cohort-0"
     with pytest.raises(ValueError, match="one assignment time"):
-        load_strategy_label_bundle(
-            _write_payload(tmp_path / "mixed-cohort.json", mixed_cohort_payload)
-        )
+        load_strategy_label_bundle(_write_payload(tmp_path / "mixed-cohort.json", mixed_cohort_payload))
 
 
 def test_expanding_folds_exclude_outcomes_unavailable_at_test_origin(
@@ -219,20 +215,14 @@ def test_expanding_folds_exclude_outcomes_unavailable_at_test_origin(
         april_folds = [
             fold
             for fold in folds
-            if isinstance(fold, dict)
-            and fold["test_assignment_origin"] == "2022-04-15T00:00:00+00:00"
+            if isinstance(fold, dict) and fold["test_assignment_origin"] == "2022-04-15T00:00:00+00:00"
         ]
         assert april_folds
-        assert all(
-            delayed_episode_id not in fold["training_episode_ids"]
-            for fold in april_folds
-        )
+        assert all(delayed_episode_id not in fold["training_episode_ids"] for fold in april_folds)
 
 
 def test_default_policy_abstains_when_support_is_insufficient(tmp_path: Path) -> None:
-    bundle = load_strategy_label_bundle(
-        _write_payload(tmp_path / "labels.json", _synthetic_payload())
-    )
+    bundle = load_strategy_label_bundle(_write_payload(tmp_path / "labels.json", _synthetic_payload()))
     artifact = train_strategy_models(bundle)
 
     assert artifact.decision_state == "abstained"
@@ -289,9 +279,7 @@ def test_label_bundle_checksum_binds_exact_trimmed_utf8_json(tmp_path: Path) -> 
 def test_relaxed_synthetic_benchmark_runs_all_estimators_and_ranks_stronger_strategy(
     tmp_path: Path,
 ) -> None:
-    bundle = load_strategy_label_bundle(
-        _write_payload(tmp_path / "labels.json", _synthetic_payload())
-    )
+    bundle = load_strategy_label_bundle(_write_payload(tmp_path / "labels.json", _synthetic_payload()))
     artifact = train_strategy_models(bundle, policy=_relaxed_policy())
 
     assert artifact.decision_state == "ranked"
@@ -303,10 +291,7 @@ def test_relaxed_synthetic_benchmark_runs_all_estimators_and_ranks_stronger_stra
     assert artifact.selection_contrast is not None
     assert artifact.selection_contrast.best_strategy_id == "strategy-strong"
     assert artifact.selection_contrast.comparator_strategy_id == "strategy-weak"
-    assert (
-        artifact.selection_contrast.paired_cluster_count
-        >= RELAXED_MIN_PAIRED_CLUSTERS
-    )
+    assert artifact.selection_contrast.paired_cluster_count >= RELAXED_MIN_PAIRED_CLUSTERS
     assert artifact.selection_contrast.interval_low is not None
     assert artifact.selection_contrast.interval_low > 0
     assert artifact.selection_contrast.passed is True

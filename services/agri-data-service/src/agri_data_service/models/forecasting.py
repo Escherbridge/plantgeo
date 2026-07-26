@@ -208,9 +208,7 @@ class ForecastFeatureSnapshot(Base, UUIDMixin):
 
     snapshot_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     job_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("agri.job_run.id"), nullable=False)
-    job_output_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("agri.job_output.id")
-    )
+    job_output_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("agri.job_output.id"))
     release_set_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("agri.release_set.id"), nullable=False
     )

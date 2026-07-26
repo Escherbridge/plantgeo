@@ -175,9 +175,7 @@ class StrategyLabelSourceMappingManifest(_MappingModel):
         if any(marker in identity for marker in _BOISE_FORECAST_MARKERS) or (
             "boise" in identity and "actual" in identity
         ):
-            raise ValueError(
-                "Boise forecast actuals are forecast-error labels, not intervention-effect outcomes"
-            )
+            raise ValueError("Boise forecast actuals are forecast-error labels, not intervention-effect outcomes")
         feature_names = [
             covariate.feature_name
             for covariate in self.covariates

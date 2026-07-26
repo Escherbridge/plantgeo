@@ -167,12 +167,8 @@ def test_receipt_finalization_is_cutoff_honest_and_effect_disabled() -> None:
 
 
 def test_training_validation_binds_artifact_output_to_label_receipt() -> None:
-    validator = (FUNCTION_ROOT / "validate_forecast_training_run.sql").read_text(
-        encoding="utf-8"
-    )
-    receipt = (FUNCTION_ROOT / "strategy_selection_receipt_checksum.sql").read_text(
-        encoding="utf-8"
-    )
+    validator = (FUNCTION_ROOT / "validate_forecast_training_run.sql").read_text(encoding="utf-8")
+    receipt = (FUNCTION_ROOT / "strategy_selection_receipt_checksum.sql").read_text(encoding="utf-8")
 
     for contract in (
         "strategy_label_release_checksum(label_release.id)",
@@ -213,9 +209,7 @@ def test_review_and_child_writes_are_state_and_server_checksum_gated() -> None:
 
 def test_validated_label_export_matches_the_strict_trainer_bundle() -> None:
     export = (FUNCTION_ROOT / "export_strategy_label_bundle.sql").read_text(encoding="utf-8")
-    checksum = (FUNCTION_ROOT / "strategy_label_bundle_checksum.sql").read_text(
-        encoding="utf-8"
-    )
+    checksum = (FUNCTION_ROOT / "strategy_label_bundle_checksum.sql").read_text(encoding="utf-8")
 
     for contract in (
         "'schema_version', 'strategy_labels_v1'",
