@@ -18,6 +18,13 @@ was correctly rejected; the current continuation adds a generic date-spined,
 30-day Monte Carlo iteration and actual-reconciliation loop that remains
 evaluation-only.
 
+## [ ] Track: Seasonal Forecast and Residual Feedback [seasonal_forecast_feedback_20260726]
+Evaluate seasonal and lag-aware candidates against frozen rolling-origin
+baselines; persist time-honest residual-feedback signals through an additive,
+acyclic, checksummed forecast plane; and expose only validated, availability-
+aware outputs to ML experiments. This track cannot publish a forecast, create a
+strategy efficacy claim, or mutate Railway.
+
 ## [ ] Track: Map Layer Data Visualization [map_layer_data_viz_20260324]
 Get all PlantGeo map layers rendering with real or demo data over Washington State.
 Layers: Vegetation/NDVI, Water, Drought, Soil, Fire.

@@ -51,3 +51,10 @@ type: plan
 - [ ] Do not schedule materialized-view refresh or forecast execution yet.
 - [ ] Do not promote strategy recommendations or populate `strategy_selection`.
 - [ ] Do not delete the named warehouse volume, raw receipt cache, historical Parquet lake, or older backups while pruning task context.
+
+## Follow-on track
+
+Seasonal candidates and time-honest residual-feedback signals are planned in
+[`seasonal_forecast_feedback_20260726`](../seasonal_forecast_feedback_20260726/).
+They remain evaluation-only and start only after a read-only data-quality audit
+establishes enough independent scored origins for a frozen final holdout.
