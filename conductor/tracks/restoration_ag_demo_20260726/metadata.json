@@ -1,0 +1,12 @@
+{
+  "id": "restoration_ag_demo_20260726",
+  "description": "Evaluation-only, goal-specific predictive demo for restoration-agriculture evidence and operational signals",
+  "type": "product-governance",
+  "created_at": "2026-07-26T00:00:00Z",
+  "status": "active",
+  "informed_by": [
+    "north_america_intervention_data_20260723",
+    "seasonal_forecast_feedback_20260726"
+  ],
+  "activation_gate": "Sessions A-C are read-only and may proceed; acquisition or implementation requires the reviewed source register and an authorized demo AOI."
+}

@@ -13,6 +13,7 @@ linked authority.
 | blocked | [Release certification](./release-governance.md) | Production release policy and exact gates | PostgreSQL 18 restore/extension proof, certified data release, reviewed exact SHA, separate authorization |
 | blocked | [Forecast validation and Railway predeploy](./tracks/forecasting_predeploy_20260722/) | Local, governed metric-forecast evaluation and Railway rehearsal | Independent PostgreSQL 18 restore/parity proof; no Railway mutation |
 | active | [Seasonal forecast and residual feedback](./tracks/seasonal_forecast_feedback_20260726/) | Evaluation-only seasonal candidates and time-honest residual-feedback design | Phase 0 read-only DSN or frozen checksummed export |
+| active | [Restoration Agriculture demo](./tracks/restoration_ag_demo_20260726/) | Goal-specific, evaluation-only predictive demo and evidence-gap UX | Source register, authorized demo AOI, and frozen validation-ready export |
 | planned | [North American intervention evidence](./tracks/north_america_intervention_data_20260723/) | Licence- and resolution-aware evidence expansion | Per-source adapter, coverage, and licence gate |
 | blocked | [Strategy-selection governance](./tracks/strategy_selection_governance_20260726/) | Research-only strategy label, training, and selection lineage | Governed intervention/control outcome mapping and released labels |
 
