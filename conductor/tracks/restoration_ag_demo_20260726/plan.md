@@ -8,7 +8,7 @@ type: implementation-plan
 
 | Session | Deliverable | Gate |
 | --- | --- | --- |
-| A — data steward | Source register, source-of-source provenance, terms-version/derivative-use review, and data-quality acceptance checklist | No bulk capture or Kaggle use before approval; utility data needs documented authorization/consent |
+| A — data steward | [Source register](./source-register.md), source-of-source provenance, terms-version/derivative-use review, and data-quality acceptance checklist | Kaggle mirrors remain quarantined until original-source, license, version, schema, and checksum checks pass; utility data needs documented authorization/consent |
 | B — data architect | Additive mapping, lineage/availability DAG, privacy boundary, and first vertical-slice contract | No migration or database write before design review |
 | C — evaluation/product | Separate targets, baselines, folds, metrics, abstention rules, and safe goal-selector UX | No strategy-efficacy wording |
 
@@ -48,9 +48,11 @@ Stop this track at the first point all of the following are true:
 - The isolated local stack starts from documented configuration, applies a
   fresh schema successfully, and passes browser QA for the goal-selector and
   abstention states.
-- Every candidate source has a versioned terms/provenance/checksum record;
-  utility data additionally has documented authorization and an approved AOI
-  boundary. Unsupported sources remain out of the import plane.
+- Every candidate source has a source-register decision and a versioned terms
+  snapshot; every accepted artifact release has provenance and a payload
+  checksum. Utility data additionally has documented authorization and an
+  approved AOI boundary. Blocked or unsupported sources remain out of the
+  import plane.
 - Each eligible goal has time-honest train/validation/final-holdout evidence,
   quality and seasonal-coverage gates, a baseline comparison, and a durable
   abstention result when those gates fail.

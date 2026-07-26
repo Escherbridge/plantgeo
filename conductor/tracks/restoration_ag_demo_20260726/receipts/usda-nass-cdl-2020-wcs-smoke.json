@@ -1,0 +1,58 @@
+{
+  "schema_version": "public_source_curation_receipt_v1",
+  "status": "quarantined",
+  "source_key": "usda_nass_cdl_2020_wcs_smoke",
+  "role": "crop_land_cover_label_smoke_artifact",
+  "causal_role": "none",
+  "producer_url": "https://www.nass.usda.gov/Research_and_Science/Cropland/",
+  "distributor_url": "https://nassgeodata.gmu.edu/CropScapeService/wms_cdlall.cgi",
+  "release_id": "cdl_2020_wcs_bounded_sample",
+  "retrieved_at": "2026-07-26T13:44:27Z",
+  "payload": {
+    "local_path": "C:\\tmp\\plantgeo-cdl-2020-wcs-sample.tif",
+    "media_type": "image/tiff",
+    "bytes": 413050,
+    "sha256": "d383b20395fc5bbdfac7d48f179576a3e0837188e004c9f2ab74eecda498e2b0"
+  },
+  "request": {
+    "service": "WCS",
+    "version": "1.0.0",
+    "operation": "GetCoverage",
+    "coverage": "cdl_2020",
+    "crs": "EPSG:5070",
+    "bbox": [310785, 2145855, 330045, 2165115],
+    "requested_resolution_meters": 30,
+    "expected_cells": [642, 642],
+    "url": "https://nassgeodata.gmu.edu/CropScapeService/wms_cdlall.cgi?SERVICE=wcs&VERSION=1.0.0&REQUEST=GetCoverage&COVERAGE=cdl_2020&CRS=epsg:5070&BBOX=310785,2145855,330045,2165115&RESX=30&RESY=30&FORMAT=gtiff"
+  },
+  "native_support": {
+    "statement": "Request-derived 30 m CDL grid. A local TIFF reader verified 642 × 642 indexed cells; geospatial tags, nodata, and class values remain unverified.",
+    "permitted_inference_scale": "bounded raster cells only; never field-management, meter, yield, or intervention-effect inference"
+  },
+  "lineage_evidence": {
+    "developer_guide_url": "https://nassgeodata.gmu.edu/CropScape/devhelp/cdlwms.html",
+    "developer_guide_retrieved_at": "2026-07-26T13:44:54Z",
+    "developer_guide_local_path": "C:\\tmp\\plantgeo-cdl-wcs-guide-20260726.html",
+    "developer_guide_sha256": "9c9e06d2efd271a78bf13d77198f581c1f08e424223f166ca514e8d2eb5a1540",
+    "terms_snapshot": null
+  },
+  "availability": {
+    "observed_period": "2020 growing season",
+    "producer_publication_time": null,
+    "local_availability_time": "2026-07-26T13:44:27Z"
+  },
+  "quality": {
+    "source_response_received": true,
+    "checksum_verified_locally": true,
+    "raster_dimensions_verified": [642, 642],
+    "raster_pixel_format_verified": "8bpp indexed",
+    "geospatial_schema_profiled": false,
+    "terms_snapshotted": false,
+    "accepted_for_modeling": false
+  },
+  "blocking_requirements": [
+    "Capture a release-specific metadata and terms snapshot with checksum.",
+    "Profile the GeoTIFF with a trusted geospatial raster reader and record band, CRS, nodata, class values, and statistics.",
+    "Define a time-honest predictive target and independently sourced covariates before using any model."
+  ]
+}
