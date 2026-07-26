@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/maplibre/martin/martin-v1.10.1/schemas/config.json
+# yaml-language-server schema: https://raw.githubusercontent.com/maplibre/martin/martin-v1.10.1/schemas/config.json
 # Public dynamic tiles are intentionally limited to the vetted geo functions.
 
 listen_addresses: "0.0.0.0:${PORT:-3000}"

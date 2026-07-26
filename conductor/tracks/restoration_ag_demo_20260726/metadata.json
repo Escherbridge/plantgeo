@@ -8,5 +8,6 @@
     "north_america_intervention_data_20260723",
     "seasonal_forecast_feedback_20260726"
   ],
+  "dependency_mode": "The informed_by tracks are non-blocking context; this track may remain in read-only discovery until its own source-register and authorized-AOI gate is satisfied.",
   "activation_gate": "Sessions A-C are read-only and may proceed; acquisition or implementation requires the reviewed source register and an authorized demo AOI."
 }

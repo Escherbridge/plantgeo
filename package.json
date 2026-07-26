@@ -49,6 +49,7 @@
     "next-auth": "^4.24.13",
     "pmtiles": "^4.2.0",
     "postgres": "^3.4.5",
+    "preact": "10.11.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "superjson": "^2.2.2",

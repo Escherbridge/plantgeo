@@ -16,9 +16,11 @@ type: implementation-plan
 
 - Reconcile A–C into a single source-to-signal mapping.
 - Select one authorized demo AOI with boundary provenance and purpose-limited
-  privacy controls, and one initial target. The preferred first
-  target is a water-use forecast/anomaly with 24 or more months of appropriately
-  cadenced readings; otherwise stop with a data-coverage demo and abstention.
+  privacy controls, then map the shared evidence plane to separately governed
+  goal models: water, energy, vegetation, soil, yield/cost, biodiversity, and
+  scenario exploration. A goal is eligible only when its historical records
+  meet its pre-registered cadence, coverage, and availability requirements;
+  otherwise the UI must show the evidence gap and abstain.
 - Pre-register source releases, data availability, folds, seasonal coverage,
   final holdout, quality thresholds, and user-facing limitations.
 
@@ -38,3 +40,29 @@ type: implementation-plan
 - Run the integrated project checks once after the implementation batch.
 - Record an explicit demo/abstain decision. A demo never upgrades into a
   production release or causal recommendation without separate authorization.
+
+## Local-validation stopping point and Railway handoff
+
+Stop this track at the first point all of the following are true:
+
+- The isolated local stack starts from documented configuration, applies a
+  fresh schema successfully, and passes browser QA for the goal-selector and
+  abstention states.
+- Every candidate source has a versioned terms/provenance/checksum record;
+  utility data additionally has documented authorization and an approved AOI
+  boundary. Unsupported sources remain out of the import plane.
+- Each eligible goal has time-honest train/validation/final-holdout evidence,
+  quality and seasonal-coverage gates, a baseline comparison, and a durable
+  abstention result when those gates fail.
+- Strategy selection runs only when real intervention/control outcome labels
+  can be bound into the governed label plane. Forecast residuals, utility
+  readings, and remote-sensing values alone are predictive targets, not
+  treatment-effect labels.
+- A local handoff manifest identifies the exact image revision, migrations,
+  source releases, checksums, artifacts, required environment values, and
+  browser/stack evidence. It contains no production data movement.
+
+Only after this stop point may a separately authorized Railway release review
+decide whether to deploy the approved artifacts. Deployment, publication,
+materialization, and causal-effect finalization are deliberately separate
+operations.

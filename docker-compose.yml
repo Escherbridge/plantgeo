@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: geo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - postgis_data:/home/postgres/pgdata/data
       - ./infra/db/init:/docker-entrypoint-initdb.d
@@ -26,7 +26,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     command: >
       redis-server
       --maxmemory 512mb
@@ -57,7 +57,7 @@ services:
       MARTIN_CACHE_SIZE_MB: ${MARTIN_CACHE_SIZE_MB:-128}
       MARTIN_POOL_SIZE: ${MARTIN_POOL_SIZE:-8}
     ports:
-      - "127.0.0.1:3100:3000"
+      - "127.0.0.1:${MARTIN_HOST_PORT:-3100}:3000"
     depends_on:
       postgis:
         condition: service_healthy
