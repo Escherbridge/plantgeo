@@ -208,6 +208,9 @@ class ForecastFeatureSnapshot(Base, UUIDMixin):
 
     snapshot_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     job_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("agri.job_run.id"), nullable=False)
+    job_output_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agri.job_output.id")
+    )
     release_set_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("agri.release_set.id"), nullable=False
     )
@@ -282,6 +285,10 @@ class ForecastTrainingRun(Base, UUIDMixin):
     feature_snapshot_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("agri.forecast_feature_snapshot.id"), nullable=False
     )
+    strategy_label_release_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agri.strategy_label_release.id")
+    )
+    strategy_label_checksum: Mapped[str | None] = mapped_column(String(64))
     execution_mode: Mapped[str] = mapped_column(String(24), nullable=False, server_default=text("'local'"))
     status: Mapped[str] = mapped_column(String(24), nullable=False, server_default=text("'gated'"))
     input_release_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -310,6 +317,12 @@ class ForecastTrainingRun(Base, UUIDMixin):
             "status <> 'validated' OR (completed_at IS NOT NULL AND validated_at IS NOT NULL "
             "AND model_checksum ~ '^[0-9a-f]{64}$' AND validation_checksum ~ '^[0-9a-f]{64}$')",
             name="validated_evidence",
+        ),
+        CheckConstraint(
+            "(strategy_label_release_id IS NULL AND strategy_label_checksum IS NULL) "
+            "OR (strategy_label_release_id IS NOT NULL "
+            "AND strategy_label_checksum ~ '^[0-9a-f]{64}$')",
+            name="strategy_label_binding",
         ),
     )
 

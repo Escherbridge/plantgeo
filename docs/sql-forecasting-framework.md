@@ -171,11 +171,43 @@ rather than changing prior evidence.
 Nothing in the iteration plane joins `forecast_publication_item`, advances a
 publication pointer, schedules a job, or creates a strategy/recommendation.
 
+### Refresh, regeneration, and publication
+
+These are deliberately separate operations:
+
+- `forecast_timeseries_contract`, `forecast_rolling_stats`,
+  `forecast_linear_*`, and `forecast_daily_bootstrap` compute pinned,
+  as-of-honest values on demand.
+- `materialize_forecast_iteration` creates a new immutable evaluation-only
+  iteration when an operator chooses a newer release/cutoff; it never rewrites
+  an earlier iteration.
+- `reconcile_forecast_iteration_actuals` binds later actuals, while
+  `v_forecast_iteration_outcome`, `forecast_iteration_evaluation`, and
+  `forecast_iteration_signal_timeseries` expose the scored evidence on demand.
+- `publish_forecast_publication` is the separate governed promotion step.
+  `v_forecast_series_serving` exposes only published receipts.
+- `refresh_forecast_ml_daily_serving` explicitly refreshes the published ML
+  materialized view. Source ingestion does not silently refresh, retrain, or
+  publish a model.
+
 ## Strategy-selection boundary
 
-The intended ML task is not merely value extrapolation: it will select or rank a governed `agri.strategies` candidate for a projected problem area using the historical entity-state and feature snapshot that produced the forecast. A future selection receipt must therefore bind the published problem forecast receipt, entity-state checksum, feature snapshot, validated local training receipt, strategy version/evidence, issue and applicability times, and selection-policy checksum. Until intervention/outcome labels and evaluation gates are reviewed, outputs may be labeled only as `feasibility_candidate`; they are not causal effect estimates, prescriptions, or permission to act.
+The intended ML task is not merely value extrapolation: it selects or ranks a
+governed `agri.strategies` candidate for a projected problem area using the
+historical entity-state and feature snapshot that produced the forecast. The
+selection receipt binds the problem forecast or evaluation iteration, feature
+snapshot, validated local training receipt, strategy version/evidence, issue
+and applicability times, label release, and selection-policy checksum. The
+normalization, estimator ladder, hard gates, and abstention rules are defined
+in [strategy-selection-training.md](strategy-selection-training.md).
 
-Before implementing model execution, run a focused requirements interview covering the unit of decision, problem/strategy taxonomy, historical state window, target label and counterfactual, negative examples, spatial transfer rules, rank/abstention policy, evaluation metrics, human review, and what evidence permits promotion from feasibility to an effect claim. This migration deliberately creates no strategy-selection rows.
+Label tables and model execution do not by themselves authorize an effect
+claim. Until the label release and causal policy pass independent review,
+outputs may be labeled only as `feasibility_candidate`. They are not causal effect estimates,
+prescriptions, or permission to act.
+The focused requirements interview is retained in the versioned label,
+outcome, counterfactual, spatial-transfer, evaluation, review, and abstention
+contracts described in [strategy-selection-training.md](strategy-selection-training.md).
 
 ## PostgreSQL implementation plan
 

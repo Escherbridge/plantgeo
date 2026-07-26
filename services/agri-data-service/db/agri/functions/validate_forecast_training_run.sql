@@ -14,6 +14,8 @@ CREATE FUNCTION agri.validate_forecast_training_run(p_training_run_id uuid, p_mo
             job agri.job_run;
             output agri.job_output;
             model_artifact agri.artifact;
+            label_release agri.strategy_label_release;
+            label_bundle_checksum varchar;
         BEGIN
             IF p_model_checksum !~ '^[0-9a-f]{64}$'
                OR p_validation_checksum !~ '^[0-9a-f]{64}$' THEN
@@ -33,6 +35,34 @@ CREATE FUNCTION agri.validate_forecast_training_run(p_training_run_id uuid, p_mo
             SELECT * INTO model_artifact FROM agri.artifact WHERE id = model.artifact_id;
             IF model.model_kind <> 'ml' THEN
                 RAISE EXCEPTION 'only ML models have local training runs';
+            END IF;
+            IF model.model_purpose = 'strategy_selection' THEN
+                SELECT * INTO label_release
+                  FROM agri.strategy_label_release
+                 WHERE id = training.strategy_label_release_id;
+                IF training.strategy_label_release_id IS NULL
+                   OR label_release.status <> 'validated'
+                   OR label_release.receipt_checksum IS DISTINCT FROM
+                        agri.strategy_label_release_checksum(label_release.id)
+                   OR training.strategy_label_checksum IS DISTINCT FROM
+                        label_release.receipt_checksum
+                   OR label_release.release_set_id <> snapshot.release_set_id
+                   OR snapshot.job_output_id IS NULL
+                   OR output.metadata_json ->> 'strategy_label_checksum' IS DISTINCT FROM
+                        label_release.receipt_checksum THEN
+                    RAISE EXCEPTION 'strategy-selection training requires a validated label release and feature artifact';
+                END IF;
+                label_bundle_checksum :=
+                    agri.strategy_label_bundle_checksum(label_release.id);
+                IF output.metadata_json ->> 'label_bundle_checksum' IS DISTINCT FROM
+                        label_bundle_checksum THEN
+                    RAISE EXCEPTION 'strategy-selection training label bundle checksum mismatch';
+                END IF;
+            ELSIF training.strategy_label_release_id IS NOT NULL
+               OR training.strategy_label_checksum IS NOT NULL
+               OR output.metadata_json ? 'strategy_label_checksum'
+               OR output.metadata_json ? 'label_bundle_checksum' THEN
+                RAISE EXCEPTION 'metric-forecast training cannot bind a strategy label release';
             END IF;
             IF snapshot.status <> 'validated'
                OR snapshot.input_release_checksum <> training.input_release_checksum

@@ -20,6 +20,7 @@ CREATE TABLE agri.forecast_feature_snapshot (
     validation_metrics jsonb DEFAULT '{}'::jsonb NOT NULL,
     validated_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    job_output_id uuid,
     CONSTRAINT ck_forecast_feature_snapshot_checksums CHECK ((((input_release_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((feature_code_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((feature_checksum)::text ~ '^[0-9a-f]{64}$'::text))),
     CONSTRAINT ck_forecast_feature_snapshot_ordered_window CHECK ((training_window_end >= training_window_start)),
     CONSTRAINT ck_forecast_feature_snapshot_positive_rows CHECK ((row_count > 0)),

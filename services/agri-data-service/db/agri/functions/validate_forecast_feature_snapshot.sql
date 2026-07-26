@@ -11,6 +11,8 @@ CREATE FUNCTION agri.validate_forecast_feature_snapshot(p_snapshot_id uuid) RETU
             snapshot agri.forecast_feature_snapshot;
             pinned_release agri.release_set;
             feature_job agri.job_run;
+            feature_output agri.job_output;
+            feature_artifact agri.artifact;
         BEGIN
             SELECT * INTO snapshot
               FROM agri.forecast_feature_snapshot
@@ -39,6 +41,23 @@ CREATE FUNCTION agri.validate_forecast_feature_snapshot(p_snapshot_id uuid) RETU
             IF feature_job.status <> 'succeeded'
                OR feature_job.release_set_id <> snapshot.release_set_id THEN
                 RAISE EXCEPTION 'feature snapshot job lineage is not complete';
+            END IF;
+            IF snapshot.job_output_id IS NOT NULL THEN
+                SELECT * INTO feature_output
+                  FROM agri.job_output
+                 WHERE id = snapshot.job_output_id;
+                SELECT * INTO feature_artifact
+                  FROM agri.artifact
+                 WHERE id = feature_output.artifact_id;
+                IF feature_output.job_run_id <> snapshot.job_run_id
+                   OR feature_output.state NOT IN ('validated', 'published')
+                   OR feature_output.checksum_sha256 <> snapshot.feature_checksum
+                   OR feature_output.row_count IS NULL
+                   OR feature_output.row_count <> snapshot.row_count
+                   OR feature_output.artifact_id IS NULL
+                   OR feature_artifact.checksum_sha256 <> snapshot.feature_checksum THEN
+                    RAISE EXCEPTION 'feature snapshot artifact output lineage mismatch';
+                END IF;
             END IF;
 
             IF snapshot.status = 'draft' THEN

@@ -203,6 +203,11 @@ This is a causal/uplift problem, not a multiclass “best strategy” classifier
 
 **Output:** one record per strategy with expected effect, confidence interval, support/overlap score, outcome definition, evidence tier and no-effect/insufficient-evidence state.
 
+The implemented training and promotion contract, including the matched DiD,
+cross-fitted AIPW, doubly robust learner, sensitivity model, and mandatory
+abstention gates, is specified in
+[strategy-selection-training.md](strategy-selection-training.md).
+
 ### 3. Plant-system and soil-amendment recommender
 
 The v1 product is a versioned rules/constraint engine, not an ML rate recommender. It intersects crop/system profiles with local climate, water, pH, texture, organic matter, CEC, salinity and documented soil-test values. It returns eligible plants, constraints, companion relationships with evidence grades, and amendment eligibility. It does not infer nutrient deficiency or application rate from a modeled soil map alone. An amendment rule must identify the lab method, units, product contaminants/salts where relevant, jurisdiction/standard version, and a human agronomy review state.

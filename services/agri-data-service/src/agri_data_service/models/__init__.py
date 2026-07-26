@@ -76,6 +76,14 @@ from agri_data_service.models.provenance import (
 )
 from agri_data_service.models.species import CompanionRelationship, Species
 from agri_data_service.models.strategy import Strategy
+from agri_data_service.models.strategy_selection import (
+    StrategyLabelEpisode,
+    StrategyLabelRelease,
+    StrategyOutcomeDefinition,
+    StrategySelectionCandidate,
+    StrategySelectionPolicy,
+    StrategySelectionReceipt,
+)
 
 __all__ = [
     "AnalysisSubject",
@@ -139,6 +147,12 @@ __all__ = [
     "SpatialCell",
     "Species",
     "Strategy",
+    "StrategyLabelEpisode",
+    "StrategyLabelRelease",
+    "StrategyOutcomeDefinition",
+    "StrategySelectionCandidate",
+    "StrategySelectionPolicy",
+    "StrategySelectionReceipt",
     "TopographyProfile",
     "WaterProfile",
 ]

@@ -1,0 +1,72 @@
+{
+  "schema_version": "strategy_label_source_mapping_v1",
+  "source": {
+    "name": null,
+    "source_kind": null,
+    "locator": null,
+    "release_id": null,
+    "release_checksum_sha256": null,
+    "lineage_uri": null
+  },
+  "outcome_definition": {
+    "definition_key_field": null,
+    "definition_version_field": null,
+    "metric_name_field": null,
+    "metric_unit_field": null,
+    "benefit_direction_field": null,
+    "smallest_meaningful_effect_field": null,
+    "baseline_window_field": null,
+    "outcome_window_field": null,
+    "aggregation_method_field": null,
+    "transform_method_field": null,
+    "eligibility_policy_field": null
+  },
+  "treatment_control": {
+    "arm_field": null,
+    "treatment_strategy_id_field": null,
+    "treatment_strategy_version_field": null,
+    "eligible_control_field": null,
+    "eligibility_risk_set_field": null,
+    "strategy_taxonomy_release_field": null,
+    "strategy_taxonomy_checksum_field": null
+  },
+  "label_release": {
+    "release_set_id_field": null,
+    "as_of_time_field": null,
+    "spatial_block_scheme_field": null
+  },
+  "episode": {
+    "episode_key_field": null,
+    "subject_id_field": null,
+    "cohort_field": null,
+    "assigned_at_field": null,
+    "intervention_start_field": null,
+    "intervention_end_field": null,
+    "baseline_start_field": null,
+    "baseline_end_field": null,
+    "outcome_start_field": null,
+    "outcome_end_field": null,
+    "assignment_mechanism_field": null,
+    "known_assignment_probability_field": null,
+    "spatial_block_field": null,
+    "covariates_available_at_field": null,
+    "data_available_at_field": null
+  },
+  "evidence": {
+    "baseline_evidence_id_field": null,
+    "baseline_value_field": null,
+    "baseline_source_release_id_field": null,
+    "baseline_evidence_checksum_field": null,
+    "baseline_observed_from_field": null,
+    "baseline_observed_to_field": null,
+    "baseline_available_at_field": null,
+    "outcome_evidence_id_field": null,
+    "outcome_value_field": null,
+    "outcome_source_release_id_field": null,
+    "outcome_evidence_checksum_field": null,
+    "outcome_observed_from_field": null,
+    "outcome_observed_to_field": null,
+    "outcome_available_at_field": null
+  },
+  "covariates": []
+}

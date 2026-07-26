@@ -105,6 +105,71 @@ def test_cli_exposes_explicit_unscheduled_forecast_commands() -> None:
     assert "--as-of-time" in reconcile_help.output
 
 
+def test_cli_exposes_local_evaluation_only_strategy_training() -> None:
+    result = CliRunner().invoke(cli, ["strategy-train", "--help"])
+
+    assert result.exit_code == 0
+    assert "--label-bundle" in result.output
+    assert "--output-artifact" in result.output
+    assert "evaluation-only" in result.output
+    assert "publish" not in result.output.lower()
+
+
+def test_strategy_train_writes_canonical_artifact_and_reports_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    label_bundle = tmp_path / "labels.json"
+    label_bundle.write_text("{}", encoding="utf-8")
+    output_artifact = tmp_path / "nested" / "strategy-model.json"
+    bundle = object()
+
+    class Artifact:
+        checksum = "a" * 64
+        decision_state = "ranked"
+        label_bundle_checksum = "b" * 64
+        label_checksum = "c" * 64
+        selected_strategy_id = "cover-crop"
+
+        @staticmethod
+        def to_json() -> str:
+            return '{"decision_state":"ranked","schema_version":"strategy_training_artifact_v1"}'
+
+    def load(path: Path) -> object:
+        assert path == label_bundle
+        return bundle
+
+    def train(value: object) -> Artifact:
+        assert value is bundle
+        return Artifact()
+
+    monkeypatch.setattr(cli_module, "load_strategy_label_bundle", load)
+    monkeypatch.setattr(cli_module, "train_strategy_models", train)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "strategy-train",
+            "--label-bundle",
+            str(label_bundle),
+            "--output-artifact",
+            str(output_artifact),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output_artifact.read_text(encoding="utf-8") == Artifact.to_json()
+    assert not list(output_artifact.parent.glob("*.tmp"))
+    assert json.loads(result.output) == {
+        "artifact_checksum": "a" * 64,
+        "decision_state": "ranked",
+        "label_bundle_checksum": "b" * 64,
+        "output_artifact": str(output_artifact),
+        "selected_strategy_id": "cover-crop",
+        "strategy_label_checksum": "c" * 64,
+    }
+
+
 def test_forecast_mv_refresh_command_reports_materialized_row_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

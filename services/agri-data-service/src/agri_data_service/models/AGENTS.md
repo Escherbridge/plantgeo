@@ -35,3 +35,23 @@ inputs. Corrected governed inputs produce a new release set and iteration so
 the previous evaluation remains auditable.
 
 `geospatial.py` is an append-only evidence foundation, not a recommendation plane. City, parcel, and property identities are immutable versions of stable keys; normalized features retain exact source-release/artifact lineage; and typed facts, derived features, and known gaps retain explicit support, resolution, inference-scale, nullable confidence, method-version, and relational input lineage. Model-derived inputs reference an immutable plane-specific validated run receipt with plan/code/output digests, never the generic job ledger. Every evidence row is explicitly not life-safety validated.
+
+`strategy_selection.py` separates governed treatment/control labels from model
+outputs. A label episode binds one subject, explicit treatment or control arm,
+cohort and assignment time, ordered assignment-time covariates, raw
+baseline/outcome evidence, availability times, and spatial block inside a
+checksum-finalized label release. The release pins the exact feature-name
+order, and the outcome definition pins the smallest meaningful effect.
+Selection receipts reuse forecast model, feature-snapshot, and local-training
+lineage, then bind either an evaluation-only iteration or a published forecast
+receipt. The exported bundle carries the finalized label-release checksum;
+the model artifact, job-output metadata, training row, and selection digest
+must repeat it so a model trained on one release cannot be rebound to another.
+
+Definitions and policies enter as drafts and receive server-computed checksums
+only on their immutable review transition. Episodes and candidates can be
+inserted only while their parent is staging. Revision `0013` can finalize
+evaluation/feasibility outputs but intentionally rejects every
+`effect_candidate`; a future revision must add cluster-bootstrap,
+placebo/negative-control, and positive best-vs-second lower-bound evidence
+before opening that state.

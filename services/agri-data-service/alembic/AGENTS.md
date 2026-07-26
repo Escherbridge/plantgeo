@@ -56,3 +56,30 @@ per iteration value; corrected governed inputs require a new release set and
 iteration. P10, p50, and p90 are empirical bootstrap path quantiles, not
 calibrated confidence or life-safety bounds; v1 assumes exchangeable daily
 increments and does not model seasonality or autocorrelation.
+
+`20260725_0012` keeps the constrained source loader from needing read grants on
+the intervention plane merely to finalize a release set. The existing
+intervention-parent freeze logic now runs under the dedicated
+`plantgeo_intervention_guard_owner` NOLOGIN role with only its required reads,
+an `id`-only release-set lock capability, and a fixed `pg_catalog, agri` search
+path. The role has no memberships or schema-create capability after ownership
+transfer; direct execution and public schema creation remain revoked.
+
+`20260725_0013` adds the first strategy-selection contract. It is forward-only
+because treatment/control labels, candidate scores, abstentions, and selection
+receipts are audit evidence. Its two additions to pre-existing forecasting
+tables are nullable so historical metric-forecast rows remain valid;
+strategy-selection training alone requires a finalized label release and a
+checksummed feature artifact output. The model artifact output metadata and
+training receipt must repeat the finalized label-release checksum; output
+metadata must also repeat PostgreSQL's checksum of the exact
+`strategy_labels_v1` export text. Selection finalization and its digest verify
+that binding. Reviewed outcome and policy
+checksums are computed by PostgreSQL, while insert triggers require
+draft/staging parents before append-only label episodes or candidates are
+accepted. The validated label export reproduces the strict
+`strategy_labels_v1` feature order, assignment-time covariates, cohorts, raw
+values, availability timestamps, and release checksum.
+This revision refuses effect-tier finalization; a later additive revision must
+persist cluster-bootstrap, placebo, negative-control, and positive
+best-vs-second lower-bound evidence before enabling it.

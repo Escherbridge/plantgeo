@@ -150,6 +150,22 @@ def test_source_loader_accepts_plantgeo_prefixed_disposable_databases() -> None:
         ).require_local_source_loader_database_url()
 
 
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "?host=database.internal&port=5432",
+        "#host=database.internal&port=5432",
+    ],
+)
+def test_source_loader_rejects_query_strings_and_fragments(suffix: str) -> None:
+    with pytest.raises(ValueError, match=r"127\.0\.0\.1:5442/plantgeo"):
+        _settings(
+            local_source_loader_database_url=(
+                "postgresql+asyncpg://plantgeo_loader:password@127.0.0.1:5442/plantgeo" + suffix
+            )
+        ).require_local_source_loader_database_url()
+
+
 def test_forecast_mv_refresh_requires_its_separate_capability_role() -> None:
     target = "postgresql+asyncpg://forecast_refresh_operator:password@forecast-db.internal:5432/plantgeo"
 

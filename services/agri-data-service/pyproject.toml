@@ -29,6 +29,7 @@ dependencies = [
     "h5py>=3.13,<4",
     "h5netcdf>=1.6,<2",
     "xarray>=2025.1,<2027",
+    "numpy>=2,<3",
 ]
 
 [project.optional-dependencies]

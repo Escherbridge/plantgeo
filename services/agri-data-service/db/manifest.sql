@@ -26,11 +26,16 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/functions/enforce_normalized_feature_artifact_release.sql
 \i agri/functions/enforce_release_set_freeze.sql
 \i agri/functions/enforce_release_set_membership_draft.sql
+\i agri/functions/export_strategy_label_bundle.sql
 \i agri/tables/forecast_hindcast_run.sql
 \i agri/functions/finalize_forecast_hindcast_run.sql
 \i agri/functions/forecast_quantiles_valid.sql
 \i agri/tables/forecast_receipt.sql
 \i agri/functions/finalize_forecast_receipt.sql
+\i agri/tables/strategy_label_release.sql
+\i agri/functions/finalize_strategy_label_release.sql
+\i agri/tables/strategy_selection_receipt.sql
+\i agri/functions/finalize_strategy_selection_receipt.sql
 \i agri/functions/forecast_aligned_daily_series.sql
 \i agri/functions/forecast_daily_bootstrap.sql
 \i agri/functions/forecast_date_spine.sql
@@ -62,6 +67,10 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/functions/guard_forecast_receipt_change.sql
 \i agri/functions/guard_forecast_terminal_lineage.sql
 \i agri/functions/guard_forecast_value_write.sql
+\i agri/functions/guard_strategy_child_insert.sql
+\i agri/functions/guard_strategy_label_release_change.sql
+\i agri/functions/guard_strategy_review_change.sql
+\i agri/functions/guard_strategy_selection_receipt_change.sql
 \i agri/procedures/materialize_forecast_iteration.sql
 \i agri/functions/prevent_forecast_entity_state_overlap.sql
 \i agri/functions/protect_intervention_evidence_parents.sql
@@ -79,6 +88,16 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/functions/reject_geospatial_evidence_mutation.sql
 \i agri/functions/require_initial_forecast_state.sql
 \i agri/functions/require_intervention_evidence_lineage.sql
+\i agri/functions/require_strategy_initial_state.sql
+\i agri/functions/strategy_label_bundle_checksum.sql
+\i agri/functions/strategy_label_episode_checksum.sql
+\i agri/functions/strategy_label_release_checksum.sql
+\i agri/tables/strategy_outcome_definition.sql
+\i agri/functions/strategy_outcome_definition_checksum.sql
+\i agri/functions/strategy_selection_candidate_checksum.sql
+\i agri/tables/strategy_selection_policy.sql
+\i agri/functions/strategy_selection_policy_checksum.sql
+\i agri/functions/strategy_selection_receipt_checksum.sql
 \i agri/functions/v_signal_timeseries_contract.sql
 \i agri/tables/forecast_feature_snapshot.sql
 \i agri/functions/validate_forecast_feature_snapshot.sql
@@ -149,6 +168,8 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/tables/spatial_cell.sql
 \i agri/tables/species.sql
 \i agri/tables/strategies.sql
+\i agri/tables/strategy_label_episode.sql
+\i agri/tables/strategy_selection_candidate.sql
 \i agri/tables/topography_profiles.sql
 \i agri/views/v_forecast_hindcast_outcome.sql
 \i agri/views/v_forecast_iteration_outcome.sql
@@ -162,6 +183,8 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/foreign_keys/climate_profiles.sql
 \i agri/foreign_keys/companion_relationships.sql
 \i agri/foreign_keys/drought_polygon_snapshot.sql
+\i agri/foreign_keys/forecast_feature_snapshot.sql
+\i agri/foreign_keys/forecast_training_run.sql
 \i agri/foreign_keys/historical_promotion_artifact_receipt.sql
 \i agri/foreign_keys/historical_promotion_bundle.sql
 \i agri/foreign_keys/historical_promotion_chunk_receipt.sql
@@ -189,11 +212,14 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/foreign_keys/source_coverage_audit.sql
 \i agri/foreign_keys/source_release.sql
 \i agri/foreign_keys/spatial_cell.sql
+\i agri/foreign_keys/strategy_label_episode.sql
+\i agri/foreign_keys/strategy_label_release.sql
+\i agri/foreign_keys/strategy_selection_candidate.sql
+\i agri/foreign_keys/strategy_selection_receipt.sql
 \i agri/foreign_keys/topography_profiles.sql
 \i agri/foreign_keys/water_profiles.sql
 \i agri/foreign_keys/forecast_backtest_metric.sql
 \i agri/foreign_keys/forecast_entity_state.sql
-\i agri/foreign_keys/forecast_feature_snapshot.sql
 \i agri/foreign_keys/forecast_hindcast_run.sql
 \i agri/foreign_keys/forecast_hindcast_value.sql
 \i agri/foreign_keys/forecast_iteration_actual.sql
@@ -207,7 +233,6 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/foreign_keys/forecast_receipt.sql
 \i agri/foreign_keys/forecast_run.sql
 \i agri/foreign_keys/forecast_series.sql
-\i agri/foreign_keys/forecast_training_run.sql
 \i agri/foreign_keys/forecast_value.sql
 
 -- ==== partitions ====
@@ -238,6 +263,12 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/triggers/forecast_run.sql
 \i agri/triggers/forecast_training_run.sql
 \i agri/triggers/forecast_value.sql
+\i agri/triggers/strategy_label_episode.sql
+\i agri/triggers/strategy_label_release.sql
+\i agri/triggers/strategy_outcome_definition.sql
+\i agri/triggers/strategy_selection_candidate.sql
+\i agri/triggers/strategy_selection_policy.sql
+\i agri/triggers/strategy_selection_receipt.sql
 \i agri/triggers/analysis_subject.sql
 \i agri/triggers/artifact.sql
 \i agri/triggers/intervention_evidence_input.sql

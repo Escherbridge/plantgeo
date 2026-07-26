@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+import tempfile
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -114,6 +115,13 @@ from agri_data_service.execution.source_ingestion import (
     source_ingestion_plan_checksum,
     write_checkpoint,
 )
+from agri_data_service.execution.strategy_label_mapping import (
+    preflight_strategy_label_source_mapping,
+)
+from agri_data_service.execution.strategy_selection import (
+    load_strategy_label_bundle,
+    train_strategy_models,
+)
 from agri_data_service.models.strategy import Strategy
 from agri_data_service.seed.strategies import STRATEGY_SEEDS
 from alembic import command
@@ -147,6 +155,83 @@ async def _seed() -> None:
         await session.commit()
 
     click.echo(f"Seeded {len(STRATEGY_SEEDS)} draft strategies for evidence review.")
+
+
+@cli.command("strategy-label-map-preflight")
+@click.option(
+    "--mapping-manifest",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False, readable=True),
+    required=True,
+)
+@click.pass_context
+def strategy_label_map_preflight(context: click.Context, mapping_manifest: Path) -> None:
+    """Validate a declared external intervention-label source mapping."""
+    try:
+        result = preflight_strategy_label_source_mapping(mapping_manifest)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(result.to_json())
+    if not result.ready:
+        context.exit(2)
+
+
+@cli.command("strategy-train")
+@click.option(
+    "--label-bundle",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False, readable=True),
+    required=True,
+)
+@click.option(
+    "--output-artifact",
+    type=click.Path(path_type=Path, dir_okay=False),
+    required=True,
+)
+def strategy_train(label_bundle: Path, output_artifact: Path) -> None:
+    """Train the local evaluation-only strategy benchmark."""
+    try:
+        bundle = load_strategy_label_bundle(label_bundle)
+        artifact = train_strategy_models(bundle)
+        _write_strategy_artifact_atomic(output_artifact, artifact.to_json())
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        json.dumps(
+            {
+                "artifact_checksum": artifact.checksum,
+                "decision_state": artifact.decision_state,
+                "label_bundle_checksum": artifact.label_bundle_checksum,
+                "output_artifact": str(output_artifact),
+                "selected_strategy_id": artifact.selected_strategy_id,
+                "strategy_label_checksum": artifact.label_checksum,
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def _write_strategy_artifact_atomic(path: Path, payload: str) -> None:
+    """Publish one canonical model artifact atomically within its target directory."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            delete=False,
+            dir=path.parent,
+            encoding="utf-8",
+            newline="\n",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(payload)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_path, path)
+    except Exception:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def _strategy_seed_statement(data: dict[str, Any]) -> Any:

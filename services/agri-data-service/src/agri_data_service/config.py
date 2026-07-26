@@ -156,6 +156,8 @@ class Settings(BaseSettings):
                 database_name == _LOCAL_SOURCE_LOADER_DATABASE
                 or database_name.startswith(f"{_LOCAL_SOURCE_LOADER_DATABASE}_")
             )
+            or parsed.query
+            or parsed.fragment
         ):
             raise ValueError(
                 "LOCAL_SOURCE_LOADER_DATABASE_URL must target postgresql+asyncpg://127.0.0.1:5442/plantgeo "

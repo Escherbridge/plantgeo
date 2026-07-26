@@ -20,8 +20,8 @@ checksums and the immutability contract).
 
 What this tree adds:
 
-1. **Legibility & review** — the SQL surface (144 programmable objects + 63
-   tables) is readable and diffable as real `.sql`, not Python heredocs.
+1. **Legibility & review** — the complete programmable-object surface and all
+   69 tables are readable and diffable as real `.sql`, not Python heredocs.
 2. **A parity guarantee** — an automated test proves the tree is exactly what
    the migrations produce (see *Parity guarantee*).
 3. **Forward-load** — the mechanism for the *next* change, so files and applied
@@ -90,9 +90,9 @@ reference not-yet-created objects, matching pg_dump.
   committed tree.
 
 Proven separately at build time: applying `manifest.sql` to an empty database
-rebuilds an object inventory identical to the migration-built database
-(63 tables · 4 views · 1 matview · 66 functions · 2 procedures · 70 triggers ·
-485 constraints · 181 indexes) with zero dependency errors.
+rebuilds an object inventory identical to the migration-built database; the
+parity test derives the current per-object counts instead of pinning a stale
+inventory in this guide.
 
 > Note: rebuilding from the tree and re-dumping shows cosmetic differences in a
 > few `CHECK` expressions (`= ANY((ARRAY[...])::text[])` vs
@@ -117,6 +117,39 @@ head`, captures the DDL, rewrites `db/agri/**` + `manifest.sql`, and drops the
 disposable database. `pg_dump` output is stable within a major version; the
 parity test pins the comparison to the same toolchain and normalises only the
 version banner.
+
+## Strategy-selection evidence
+
+Revision `20260725_0013` introduces an append-only treatment/control label and
+selection-receipt plane. Raw intervention facts remain in
+`intervention_evidence_input`; a `strategy_label_episode` may call rows a
+baseline and outcome only by binding them to an approved outcome definition,
+explicit arm, subject, availability cutoff, and finalized label-release
+checksum. Selection candidates are immutable before receipt finalization.
+Only the finalizers may move a label release from `staging` to `validated` or a
+selection receipt from `staging` to `finalized`.
+
+`feasibility_candidate` and `effect_candidate` are distinct database states,
+but revision `0013` deliberately refuses every `effect_candidate`
+finalization. A later migration may open that path only after it persists and
+verifies cluster-bootstrap uncertainty, placebo and negative-control tests,
+and a strictly positive held-out lower confidence bound for
+`best - second_best`. Until then, evaluation and feasibility receipts may be
+finalized; an effect request must remain staging or be replaced by a durable
+abstention.
+
+Validated labels are reproducible trainer inputs, not merely normalized
+targets. The release pins the ordered feature-name schema and the outcome's
+smallest meaningful effect. Every episode pins its cohort, assignment time,
+assignment-time covariate vector and checksum, covariate availability, raw
+baseline/outcome evidence, and data availability. The private
+`export_strategy_label_bundle` function emits exactly `strategy_labels_v1`,
+ordered by episode key, only after the release and server-computed outcome
+checksum validate. The export includes the finalized label-release checksum;
+`strategy_label_bundle_checksum` hashes the exact JSONB export text without a
+self-referential field. The trainer hashes the exact UTF-8 JSON text after
+removing only surrounding file whitespace. Strategy model output metadata
+must repeat both checksums, and the training row repeats the release checksum.
 
 ## Forward-load workflow
 

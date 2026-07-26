@@ -5,7 +5,8 @@
 -- db/tools/regenerate.py; the schema-parity test guards drift.
 
 CREATE FUNCTION agri.protect_intervention_evidence_parents() RETURNS trigger
-    LANGUAGE plpgsql
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'agri'
     AS $$
         DECLARE
             is_referenced boolean := false;

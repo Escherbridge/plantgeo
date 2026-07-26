@@ -42,3 +42,26 @@ analysis receipt hashes the exact executed SQL and bind parameters, input
 feature checksums, PostGIS version, output schema, disclosed rounding rules,
 and the conservative year-end convention used for the WUI vintage minimum-age
 lower bound.
+
+`strategy_selection.py` is a database-free, evaluation-only causal benchmark
+for a strict external intervention-label bundle. It compares matched
+difference-in-differences, cross-fitted AIPW, a doubly robust ridge learner,
+and an arm-specific ridge sensitivity model on expanding-time,
+held-out-spatial-block folds. The canonical JSON artifact contains
+coefficients, diagnostics, and both the finalized label-release checksum and
+exact trimmed UTF-8 bundle-text checksum rather than executable pickle bytes.
+PostgreSQL recomputes the digest from the authoritative JSONB export before
+training validation. Hard support, availability, overlap, balance, agreement,
+and conservative-effect
+gates produce an explicit abstention; this module never publishes a forecast
+or recommendation.
+
+`strategy_label_mapping.py` is the database-free custody preflight before any
+external intervention rows may be normalized. Its versioned manifest permits
+only direct source-field references and requires the named source release,
+outcome definition, treatment/control risk set, subject and assignment
+windows, spatial block, raw evidence lineage, and time-honest covariates. An
+incomplete manifest reports every missing path and has no checksum; only a
+complete canonical mapping receives a SHA-256 digest. The module deliberately
+has no row transform or database path, and rejects Boise forecast actuals
+because forecast-error labels cannot establish intervention effects.

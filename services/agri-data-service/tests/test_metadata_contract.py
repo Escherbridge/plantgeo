@@ -182,6 +182,82 @@ def test_forecast_ml_and_preaggregate_metadata_remain_explicitly_gated() -> None
     assert {"job_output_id", "release_set_id", "scope_key"} <= set(publication.c.keys())
 
 
+def test_strategy_selection_metadata_binds_labels_models_and_abstention() -> None:
+    expected = {
+        "strategy_outcome_definition",
+        "strategy_label_release",
+        "strategy_label_episode",
+        "strategy_selection_policy",
+        "strategy_selection_receipt",
+        "strategy_selection_candidate",
+    }
+    actual = {table.name for table in Base.metadata.tables.values()}
+    assert expected <= actual
+
+    feature = Base.metadata.tables["agri.forecast_feature_snapshot"]
+    training = Base.metadata.tables["agri.forecast_training_run"]
+    assert "job_output_id" in feature.c
+    assert "agri.job_output.id" in {key.target_fullname for key in feature.c.job_output_id.foreign_keys}
+    assert "strategy_label_release_id" in training.c
+    assert "strategy_label_checksum" in training.c
+    assert "agri.strategy_label_release.id" in {
+        key.target_fullname for key in training.c.strategy_label_release_id.foreign_keys
+    }
+
+    episode = Base.metadata.tables["agri.strategy_label_episode"]
+    assert {
+        "label_release_id",
+        "analysis_subject_id",
+        "strategy_id",
+        "cohort_key",
+        "assigned_at",
+        "baseline_evidence_input_id",
+        "outcome_evidence_input_id",
+        "spatial_block_key",
+        "covariate_snapshot",
+        "covariate_checksum",
+        "covariates_available_at",
+        "episode_checksum",
+    } <= set(episode.c.keys())
+    episode_checks = _check_sql("strategy_label_episode")
+    assert any("arm_kind = 'treatment'" in check and "arm_kind = 'control'" in check for check in episode_checks)
+
+    receipt = Base.metadata.tables["agri.strategy_selection_receipt"]
+    assert {
+        "forecast_receipt_id",
+        "forecast_iteration_id",
+        "feature_snapshot_id",
+        "training_run_id",
+        "selection_policy_id",
+        "claim_tier",
+        "decision_state",
+        "abstention_reason",
+    } <= set(receipt.c.keys())
+    receipt_checks = _check_sql("strategy_selection_receipt")
+    assert any("decision_state = 'abstained'" in check for check in receipt_checks)
+    assert any("effect_candidate" in check and "publishable" in check for check in receipt_checks)
+
+    policy = Base.metadata.tables["agri.strategy_selection_policy"]
+    assert {
+        "min_treated_per_strategy",
+        "min_control_count",
+        "min_spatial_blocks",
+        "min_effective_sample_size",
+        "min_overlap_score",
+        "max_weighted_smd",
+        "min_coverage_fraction",
+        "min_conservative_value_gain",
+        "max_model_disagreement",
+        "max_ood_score",
+        "allow_effect_claims",
+    } <= set(policy.c.keys())
+
+    outcome = Base.metadata.tables["agri.strategy_outcome_definition"]
+    assert "smallest_meaningful_effect" in outcome.c
+    label = Base.metadata.tables["agri.strategy_label_release"]
+    assert {"feature_schema", "feature_schema_checksum"} <= set(label.c.keys())
+
+
 def test_logical_runs_and_shards_have_idempotency_keys() -> None:
     run = Base.metadata.tables["agri.job_run"]
     shard = Base.metadata.tables["agri.job_work_item"]

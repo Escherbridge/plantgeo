@@ -4,6 +4,10 @@
 -- (see db/AGENTS.md, 'Forward-load workflow'). Regenerate with
 -- db/tools/regenerate.py; the schema-parity test guards drift.
 
+-- FK CONSTRAINT: forecast_training_run fk_forecast_training_run_strategy_label_release_id_stra_4f7c
+ALTER TABLE ONLY agri.forecast_training_run
+    ADD CONSTRAINT fk_forecast_training_run_strategy_label_release_id_stra_4f7c FOREIGN KEY (strategy_label_release_id) REFERENCES agri.strategy_label_release(id);
+
 -- FK CONSTRAINT: forecast_training_run forecast_training_run_feature_snapshot_id_fkey
 ALTER TABLE ONLY agri.forecast_training_run
     ADD CONSTRAINT forecast_training_run_feature_snapshot_id_fkey FOREIGN KEY (feature_snapshot_id) REFERENCES agri.forecast_feature_snapshot(id);
