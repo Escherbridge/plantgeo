@@ -52,12 +52,16 @@ export function buildings3dLayer(
   };
 }
 
+// Layers below are hidden by default and revealed via the "fire-perimeters"/
+// "sensors"/"interventions"/"building-footprints" activeLayers toggles (see
+// STYLE_LAYER_TOGGLE_MAP, synced in LayerManager).
 export const firePerimetersLayer: LayerSpecification = {
   id: "fire-perimeters",
   type: "fill",
   source: MARTIN_SOURCE,
   "source-layer": "fire_risk",
   minzoom: 4,
+  layout: { visibility: "none" },
   paint: {
     "fill-color": [
       "match",
@@ -80,6 +84,7 @@ export const firePerimetersOutlineLayer: LayerSpecification = {
   source: MARTIN_SOURCE,
   "source-layer": "fire_risk",
   minzoom: 4,
+  layout: { visibility: "none" },
   paint: {
     "line-color": "#dc2626",
     "line-width": 2,
@@ -92,6 +97,7 @@ export const sensorsLayer: LayerSpecification = {
   source: MARTIN_SOURCE,
   "source-layer": "sensors",
   minzoom: 8,
+  layout: { visibility: "none" },
   paint: {
     "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 3, 16, 8],
     "circle-color": [
@@ -116,6 +122,7 @@ export const interventionsLayer: LayerSpecification = {
   source: MARTIN_SOURCE,
   "source-layer": "interventions",
   minzoom: 6,
+  layout: { visibility: "none" },
   paint: {
     "fill-color": [
       "match",
@@ -138,10 +145,28 @@ export const interventionsOutlineLayer: LayerSpecification = {
   source: MARTIN_SOURCE,
   "source-layer": "interventions",
   minzoom: 6,
+  layout: { visibility: "none" },
   paint: {
     "line-color": "#4b5563",
     "line-width": 1,
     "line-dasharray": [2, 1],
+  },
+};
+
+// Martin-served 3D building footprints (geo.building_tiles) — separate dataset
+// from the always-on protomaps "buildings" basemap layer above.
+export const buildingFootprintsLayer: FillExtrusionLayerSpecification = {
+  id: "building-footprints",
+  type: "fill-extrusion",
+  source: MARTIN_SOURCE,
+  "source-layer": "geo.building_tiles",
+  minzoom: 13,
+  layout: { visibility: "none" },
+  paint: {
+    "fill-extrusion-height": ["coalesce", ["get", "height"], 8],
+    "fill-extrusion-base": ["coalesce", ["get", "min_height"], 0],
+    "fill-extrusion-color": "#8b5cf6",
+    "fill-extrusion-opacity": 0.75,
   },
 };
 
@@ -176,7 +201,20 @@ export function getLayers(): LayerSpecification[] {
     sensorsLayer,
     interventionsLayer,
     interventionsOutlineLayer,
+    buildingFootprintsLayer,
     roadsLayer,
     waterwaysLayer,
   ];
 }
+
+/**
+ * Maps an activeLayers toggle id to the concrete style layer ids it controls.
+ * Synced against map-store's activeLayers in LayerManager via setLayoutProperty,
+ * since these are static style layers (not React-mounted components).
+ */
+export const STYLE_LAYER_TOGGLE_MAP: Record<string, string[]> = {
+  "fire-perimeters": ["fire-perimeters", "fire-perimeters-outline"],
+  sensors: ["sensors"],
+  interventions: ["interventions", "interventions-outline"],
+  "building-footprints": ["building-footprints"],
+};

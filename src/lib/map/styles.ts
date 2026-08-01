@@ -1,7 +1,7 @@
 import type { StyleSpecification } from "maplibre-gl";
 import type { MapStyle } from "@/types/map";
 import { martinDynamicSource, terrainSource, pmtilesSource } from "./sources";
-import { buildings3dLayer } from "./layers";
+import { buildings3dLayer, getLayers } from "./layers";
 
 export type { MapStyle };
 
@@ -134,6 +134,8 @@ export const darkStyle: StyleSpecification = {
     },
     hillshadeLayer,
     buildings3dLayer("#334155", "#10b981"),
+    // Martin dynamic-source layers (fire/sensors/interventions/buildings/roads/waterways) — below labels.
+    ...getLayers(),
     {
       id: "places-label",
       type: "symbol",
@@ -242,6 +244,8 @@ export const lightStyle: StyleSpecification = {
       },
     },
     buildings3dLayer("#94a3b8", "#059669"),
+    // Martin dynamic-source layers (fire/sensors/interventions/buildings/roads/waterways) — below labels.
+    ...getLayers(),
     {
       id: "places-label",
       type: "symbol",
@@ -290,6 +294,8 @@ export const satelliteStyle: StyleSpecification = {
     },
     hillshadeLayer,
     buildings3dLayer("#64748b", "#06b6d4"),
+    // Martin dynamic-source layers (fire/sensors/interventions/buildings/roads/waterways) — below labels.
+    ...getLayers(),
     {
       id: "places-label",
       type: "symbol",

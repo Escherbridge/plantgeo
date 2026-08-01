@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { Box } from "lucide-react";
+import { Box, Building2 } from "lucide-react";
 import { useMapStore } from "@/stores/map-store";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +21,10 @@ export default function MapControls() {
     toggleGlobe,
     setCurrentStyle,
     resetView,
+    activeLayers,
+    toggleLayer,
   } = useMapStore();
+  const buildingFootprintsEnabled = activeLayers.includes("building-footprints");
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -75,6 +78,14 @@ export default function MapControls() {
           title="Toggle 3D"
         >
           <Box />
+        </Button>
+        <Button
+          variant={buildingFootprintsEnabled ? "default" : "ghost"}
+          size="icon"
+          onClick={() => toggleLayer("building-footprints")}
+          title="Toggle 3D building footprints"
+        >
+          <Building2 />
         </Button>
       </div>
     </FloatingToolbar>

@@ -21,6 +21,7 @@ const DYNAMIC_TILE_SOURCE_IDS = [
   "geo.fire_risk_tiles",
   "geo.sensor_tiles",
   "geo.intervention_tiles",
+  "geo.building_tiles",
 ] as const;
 
 const SATELLITE_URL =

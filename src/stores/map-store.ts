@@ -36,7 +36,7 @@ const DEFAULT_VIEWPORT: Viewport = {
 export const useMapStore = create<MapState>()(
   devtools((set) => ({
     viewport: { ...DEFAULT_VIEWPORT },
-    activeLayers: [],
+    activeLayers: ["fire", "water", "weather"], // demo-friendly defaults
     selectedFeatureId: null,
     is3DEnabled: false,
     isGlobeView: false,

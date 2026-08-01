@@ -100,6 +100,7 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
         <div className="flex flex-col gap-1.5 mt-2">
           <LayerToggle layerId="water" label="Water Gauges" />
           <LayerToggle layerId="drought" label="Drought Monitor" />
+          <LayerToggle layerId="weather" label="Wind & Weather" />
         </div>
 
         <div className="mt-4 overflow-y-auto max-h-[calc(100vh-8rem)]">

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import dynamic from "next/dynamic";
 import { useMap } from "@/lib/map/map-context";
 import { useMapStore } from "@/stores/map-store";
@@ -8,6 +9,8 @@ import { useSoilStore } from "@/stores/soil-store";
 import { useFireData } from "@/hooks/useFireData";
 import { trpc } from "@/lib/trpc/client";
 import { viewportBbox } from "@/lib/map/viewport-bbox";
+import { STYLE_LAYER_TOGGLE_MAP } from "@/lib/map/layers";
+import type { WindPoint } from "@/components/map/layers/WeatherLayer";
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -38,6 +41,10 @@ const DemandHeatmapLayer = dynamic(
   () => import("@/components/map/layers/DemandHeatmapLayer").then((m) => ({ default: m.DemandHeatmapLayer })),
   { ssr: false }
 );
+const WeatherLayer = dynamic(
+  () => import("@/components/map/layers/WeatherLayer").then((m) => ({ default: m.WeatherLayer })),
+  { ssr: false }
+);
 
 export default function LayerManager() {
   const map = useMap();
@@ -63,6 +70,47 @@ export default function LayerManager() {
     { bbox: bbox ?? "-180,-90,180,90" },
     { enabled: waterEnabled && bbox !== null, staleTime: 60 * 60 * 1000 }
   );
+
+  const weatherEnabled = activeLayers.includes("weather");
+  // getWeatherForPoint is currently an unimplemented stub (always throws server-side);
+  // this renders an empty WeatherLayer until that backend work lands.
+  const weatherQuery = trpc.wildfire.getWeatherForPoint.useQuery(
+    { lat: viewport.latitude, lon: viewport.longitude },
+    { enabled: weatherEnabled, retry: false }
+  );
+  // The stub's output type is `never`; give the eventual payload an explicit shape.
+  const weatherPoint = weatherQuery.data as unknown as
+    | { windSpeed: number; windDirection: number; temperature: number; humidity: number }
+    | undefined;
+  const weatherData: WindPoint[] = weatherPoint
+    ? [{ coordinates: [viewport.longitude, viewport.latitude], ...weatherPoint }]
+    : [];
+
+  // Sync visibility of style-baked Martin layers (fire-perimeters/sensors/
+  // interventions/building-footprints) with activeLayers -- these are static
+  // layers added via getStyle(), not React-mounted components, so they need
+  // setLayoutProperty instead of an unmount/remount cycle.
+  useEffect(() => {
+    if (!map) return;
+    const mapInstance = map;
+
+    function syncVisibility() {
+      for (const [toggleId, layerIds] of Object.entries(STYLE_LAYER_TOGGLE_MAP)) {
+        const visibility = activeLayers.includes(toggleId) ? "visible" : "none";
+        for (const layerId of layerIds) {
+          if (mapInstance.getLayer(layerId)) {
+            mapInstance.setLayoutProperty(layerId, "visibility", visibility);
+          }
+        }
+      }
+    }
+
+    if (mapInstance.isStyleLoaded()) syncVisibility();
+    mapInstance.on("style.load", syncVisibility);
+    return () => {
+      mapInstance.off("style.load", syncVisibility);
+    };
+  }, [map, activeLayers]);
 
   if (!map) return null;
 
@@ -98,6 +146,7 @@ export default function LayerManager() {
         zoom={zoom}
         visible={activeLayers.includes("demand-heatmap") && bbox !== null}
       />
+      <WeatherLayer map={map} data={weatherEnabled ? weatherData : []} />
     </>
   );
 }

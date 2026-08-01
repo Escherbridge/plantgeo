@@ -108,6 +108,7 @@ export function CommunityPanel({
           </SheetHeader>
 
           <LayerToggle layerId="demand-heatmap" label="Demand Heatmap" />
+          <LayerToggle layerId="interventions" label="Interventions" />
 
           {/* Filter + Submit */}
           <div className="flex gap-2 mb-4">
