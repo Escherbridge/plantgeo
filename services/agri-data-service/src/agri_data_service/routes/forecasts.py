@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 from uuid import UUID  # noqa: TC003 - Pydantic resolves this annotation at runtime.
 
 from pydantic import BaseModel, ConfigDict
 from sanic import Blueprint, Request, json
+from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates handler annotations at runtime.
 from sqlalchemy import text
 
 from agri_data_service.db.engine import published_reader_session
-
-if TYPE_CHECKING:
-    from sanic.response import HTTPResponse
 
 forecasts_bp = Blueprint("forecasts", url_prefix="/forecasts")
 
@@ -176,8 +174,8 @@ _FORECAST_SERVING_SQL = text(
         FROM agri.v_forecast_series_serving AS serving
         LEFT JOIN agri.spatial_cell AS cell ON cell.id = serving.spatial_cell_id
         WHERE serving.series_key = :series_key
-          AND (:valid_from IS NULL OR serving.valid_time >= :valid_from)
-          AND (:valid_to IS NULL OR serving.valid_time < :valid_to)
+          AND (CAST(:valid_from AS timestamptz) IS NULL OR serving.valid_time >= CAST(:valid_from AS timestamptz))
+          AND (CAST(:valid_to AS timestamptz) IS NULL OR serving.valid_time < CAST(:valid_to AS timestamptz))
         ORDER BY
             serving.valid_time,
             serving.forecast_receipt_id,
