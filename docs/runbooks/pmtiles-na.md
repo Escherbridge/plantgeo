@@ -1,23 +1,23 @@
-# Runbook: North America PMTiles Basemap (Planetiler build + Railway volume serving)
+# Runbook: North America PMTiles Basemap (Planetiler build + Cloudflare R2 serving)
 
 ## Scope
 
 Build a North America basemap as a single PMTiles v3 archive with
 [Planetiler](https://github.com/onthegomap/planetiler), and serve it to the
-browser (via `pmtiles-js`, this repo pins `pmtiles@^4.2.0`) from a Railway
-persistent volume as the near-term serving plane. Cloudflare R2 remains the
-eventual production origin per `.claude/CLAUDE.md`; this runbook's Railway
-volume stage is the near-term step, and the deploy procedure below is
-designed so promoting to R2 later is a one-line env var change on
-`plantgeo-main`, not a re-architecture.
+browser (via `pmtiles-js`, this repo pins `pmtiles@^4.2.0`) directly from
+Cloudflare R2 behind the custom domain `tiles.aevani.com`. R2 is the
+production origin per `.claude/CLAUDE.md`, and it was provisioned on
+2026-08-02 — see "One-time setup" below for the recorded state.
 
 Files this runbook governs:
 - `infra/tiles/compose.yaml` — pinned Planetiler batch-job container
 - `infra/tiles/na-source.env` — Geofabrik input source config
 - `infra/tiles/build-na.sh` — build orchestration script
-- `infra/tiles/serve/Dockerfile`, `infra/tiles/serve/nginx.pmtiles.conf` —
-  the static archive server image deployed to Railway
-- `infra/tiles/serve/pmtiles-server.railway.json` — Railway service config
+- `infra/tiles/serve/r2-cors.json` — CORS policy applied to the R2 bucket
+- `infra/tiles/serve/Dockerfile`, `infra/tiles/serve/nginx.pmtiles.conf`,
+  `infra/tiles/serve/pmtiles-server.railway.json` — the self-hosted nginx
+  serving plane, kept as a fallback and as the reference for the headers the
+  origin must produce. **Not deployed**; no such Railway service exists.
 
 ## Prerequisites
 
@@ -38,12 +38,13 @@ Files this runbook governs:
 - `curl`, `md5sum`, `bash` (build-na.sh is a bash script; on Windows, run it
   under Git Bash/WSL — this repo's shell tooling already assumes Git Bash
   per the environment conventions).
-- Railway CLI (`railway`) authenticated against this project, for the
-  deploy step.
-- A Cloudflare R2 bucket + API token you can generate presigned URLs
-  against, used purely as a transit relay in the deploy step below (not as
-  the browser-facing origin yet — that's the future R2 promotion, out of
-  scope for this runbook).
+- Railway access to the `plantgeo-main` service (in the **Aevani** project)
+  for the `NEXT_PUBLIC_PMTILES_URL` cutover and rebuild.
+- `npx wrangler` authenticated against the Cloudflare account
+  (`wrangler login`; verify with `wrangler whoami`), plus the scoped
+  `R2_*` credentials in `.env` for the upload step. Optionally the `aws`
+  CLI for multipart uploads of multi-GB archives — not installed by default
+  on the dev box.
 
 ## Expected wall-clock and disk (estimates — confirm on first run)
 
@@ -61,9 +62,8 @@ this again.
 ## Step-by-step build
 
 Run on a machine meeting the prerequisites above (NOT on Railway — this is
-a local/CI build; Railway only hosts the finished archive, per the
-task framing that this is a near-term Railway-volume serving plane, not a
-Railway-compute build plane).
+a local/CI build; the finished archive is uploaded to R2 afterwards, and no
+Railway compute is involved in producing it).
 
 ```bash
 cd infra/tiles
@@ -121,14 +121,20 @@ Output lands at `infra/tiles/data/north-america.pmtiles`.
    correctly for this smoke test, even though it's not what you'll run in
    production.
 
-## Deploy to the Railway volume
+## Deploy to Cloudflare R2
 
-Railway volumes attach to exactly one service at a time in the common case,
-so the build does not happen on Railway itself — you build locally/CI (above)
-and push the finished archive onto the volume of the **already-deployed**
-`pmtiles-server` service via `railway ssh`, using a Cloudflare R2 presigned
-URL as a transit relay (this reuses infra already in the stack rather than
-depending on scp/sftp support that Railway containers don't generally have).
+The archive is served **directly from R2** through a custom domain. You build
+locally/CI (above) and upload the finished archive straight to the bucket;
+browsers fetch it from `tiles.aevani.com`. There is no Railway service, no
+persistent volume, and no transit relay in this path.
+
+This supersedes an earlier design that pushed the archive onto a Railway
+volume via `railway ssh` using an R2 presigned URL as a transit relay. That
+relay existed only to work around a volume attaching to a single service —
+serving from R2 directly removes the constraint along with the whole hop.
+The nginx serving plane in `infra/tiles/serve/` is retained as a fallback
+(and as the reference for what headers the origin must produce), but it is
+**not deployed** and no `pmtiles-server` Railway service exists.
 
 > **⚠️ If you use `wrangler` for any R2 step: pass `--remote` on EVERY command.**
 > Wrangler v4 defaults to a **local simulator**, not your real R2 bucket. Without
@@ -144,76 +150,95 @@ depending on scp/sftp support that Railway containers don't generally have).
 
 ### One-time setup
 
-1. Create a new Railway service `pmtiles-server` in this project, building
-   from `infra/tiles/serve/Dockerfile`
-   (`infra/tiles/serve/pmtiles-server.railway.json` mirrors the existing
-   `infra/railway/martin.railway.json` convention — wire it up the same
-   way you wired up the Martin service).
-2. Attach a Railway persistent volume to `pmtiles-server`, mounted at
-   `/data/tiles` (must match `nginx.pmtiles.conf`'s `root /data/tiles;`
-   and the Dockerfile's `RUN mkdir -p /data/tiles`). Size it generously
-   above your expected archive size (e.g. 50 GB) to leave room for the
-   atomic-swap staging described below and for future archive growth.
-3. Under Railway > `pmtiles-server` > Settings > Networking, set the
-   **target port to 8080** explicitly (this config does not read Railway's
-   injected `$PORT` — see the comment in `nginx.pmtiles.conf` for why) and
-   enable a public domain.
-4. Note the public domain Railway assigns, e.g.
-   `https://pmtiles-server-production.up.railway.app`.
+**Already provisioned as of 2026-08-02** — recorded here so the state is
+reproducible, not as work to repeat.
+
+- **Bucket**: `plantgeo-tiles`, location hint `WNAM`, Standard storage class,
+  on Cloudflare account `40334173d585cbf4d43918c7d7d3b0ea`.
+- **Custom domain**: `tiles.aevani.com`, bound to the bucket on the
+  `aevani.com` zone with a TLS 1.2 minimum. This is the origin browsers hit.
+- **CORS**: set from `infra/tiles/serve/r2-cors.json` via
+  `wrangler r2 bucket cors set plantgeo-tiles --file infra/tiles/serve/r2-cors.json`.
+  A public R2 bucket sends **no** `Access-Control-Allow-Origin` by default —
+  without this policy pmtiles-js fails cross-origin with the same opaque
+  "Failed to fetch" that an expired archive produces. The policy mirrors the
+  header set in `nginx.pmtiles.conf`; keep the two in sync if either changes.
+  Note `wrangler` expects a nested `{"rules":[{"allowed":{…}}]}` shape, not
+  the flat `AllowedOrigins` form Cloudflare's docs show for the dashboard.
+- **Credentials**: a scoped R2 API token (Object Read & Write, restricted to
+  `plantgeo-tiles` only) lives in the gitignored `.env` as `R2_*`. Verify any
+  replacement token is genuinely bucket-scoped before use — the dashboard
+  defaults to "all buckets in this account", which silently grants far more
+  than the contract in `.env.example` describes.
+
+**Outstanding**: add a Cloudflare **Cache Rule** for `tiles.aevani.com` so
+`.pmtiles` responses are edge-cached. Cloudflare's default cache only covers
+a fixed list of file extensions and `.pmtiles` is not among them, so every
+range request currently returns `cf-cache-status: DYNAMIC` and goes to the R2
+origin — costing a class B operation per request and losing the CDN benefit
+that motivated the custom domain. Set the rule to match
+`http.host eq "tiles.aevani.com"`, action **Cache eligibility → Eligible for
+cache**, with edge TTL **respecting origin headers** (objects are uploaded
+with `Cache-Control: public, max-age=31536000, immutable`). Re-verify with
+`curl -sI https://tiles.aevani.com/<archive>.pmtiles | grep cf-cache-status`
+— expect `HIT` on the second request.
 
 ### Every deploy (new archive, including OSM refreshes)
 
 1. Pick a content-versioned filename, e.g. `north-america-2026-08-02.pmtiles`
    (date-stamped — never reuse a filename for different bytes, since the
-   nginx config sets `Cache-Control: public, max-age=31536000, immutable`
-   on `*.pmtiles` responses).
-2. Upload the built archive to a temporary object in your R2 bucket and
-   generate a presigned GET URL valid for, say, 1 hour (long enough to
-   cover the transfer):
+   objects are uploaded with `Cache-Control: public, max-age=31536000,
+   immutable`; a reused name would serve stale bytes from cache for a year).
+2. Upload the archive to the bucket root. The `--cache-control` flag is not
+   optional — R2 stores it as object metadata and replays it on every
+   response, and without it the `immutable` caching this scheme depends on
+   never reaches the browser:
    ```bash
-   # example using the AWS CLI against R2's S3-compatible endpoint —
-   # substitute your actual bucket/endpoint/credentials
+   npx wrangler r2 object put \
+     plantgeo-tiles/north-america-2026-08-02.pmtiles \
+     --file infra/tiles/data/north-america.pmtiles \
+     --content-type application/octet-stream \
+     --cache-control "public, max-age=31536000, immutable" \
+     --remote
+   ```
+   For a multi-GB archive prefer the AWS CLI against R2's S3 endpoint, which
+   does multipart uploads and can resume (`R2_*` come from `.env`):
+   ```bash
+   AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
+   AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
    aws s3 cp infra/tiles/data/north-america.pmtiles \
-     s3://<your-r2-bucket>/staging/north-america-2026-08-02.pmtiles \
-     --endpoint-url https://<account-id>.r2.cloudflarestorage.com
-   aws s3 presign \
-     s3://<your-r2-bucket>/staging/north-america-2026-08-02.pmtiles \
-     --endpoint-url https://<account-id>.r2.cloudflarestorage.com \
-     --expires-in 3600
+     "s3://${R2_BUCKET}/north-america-2026-08-02.pmtiles" \
+     --endpoint-url "$R2_ENDPOINT" \
+     --cache-control "public, max-age=31536000, immutable"
    ```
-3. Shell into the running `pmtiles-server` container and pull the archive
-   directly onto the volume, downloading to a `.tmp` name first and
-   `mv`-ing into place so nginx never serves a partially-written file
-   (an atomic rename on the same filesystem):
+   Note the `aws` CLI is **not currently installed** on the dev box; either
+   install it or use the `wrangler` form above.
+3. Verify the uploaded object is complete and reachable before cutting over:
    ```bash
-   railway ssh --service pmtiles-server -- \
-     "curl -fL -o /data/tiles/north-america-2026-08-02.pmtiles.tmp '<presigned-url>' \
-      && mv /data/tiles/north-america-2026-08-02.pmtiles.tmp /data/tiles/north-america-2026-08-02.pmtiles \
-      && ls -la /data/tiles"
-   ```
-4. Verify the deployed copy's size/checksum matches what you built:
-   ```bash
-   railway ssh --service pmtiles-server -- "md5sum /data/tiles/north-america-2026-08-02.pmtiles"
+   npx wrangler r2 object get plantgeo-tiles/north-america-2026-08-02.pmtiles \
+     --remote --pipe | md5sum
    md5sum infra/tiles/data/north-america.pmtiles   # compare by hand
+
+   curl -s -D - -o /dev/null \
+     -H "Range: bytes=0-1023" \
+     https://tiles.aevani.com/north-america-2026-08-02.pmtiles
    ```
-5. Delete the staging object from R2 (it was only a transit relay):
-   ```bash
-   aws s3 rm s3://<your-r2-bucket>/staging/north-america-2026-08-02.pmtiles \
-     --endpoint-url https://<account-id>.r2.cloudflarestorage.com
-   ```
-6. Point the app at the new archive. `src/lib/map/sources.ts` already reads
+   Expect `206 Partial Content`, a `Content-Range` whose total matches the
+   local file size, `Access-Control-Allow-Origin: *`, the `immutable`
+   `Cache-Control`, and **no** `Content-Encoding` (a gzipped body would break
+   the byte-offset math pmtiles-js relies on).
+4. Point the app at the new archive. `src/lib/map/sources.ts` already reads
    `NEXT_PUBLIC_PMTILES_URL` (falling back to a public Protomaps dev
    archive if unset — see the comment in that file about expired daily
-   builds going blank). On the `plantgeo-main` Railway service, set:
+   builds going blank). On the `plantgeo-main` Railway service — which lives
+   in the **Aevani** project, not a project named `plantgeo` — set:
    ```
-   NEXT_PUBLIC_PMTILES_URL=https://pmtiles-server-production.up.railway.app/north-america-2026-08-02.pmtiles
+   NEXT_PUBLIC_PMTILES_URL=https://tiles.aevani.com/north-america-2026-08-02.pmtiles
    ```
-   and redeploy `plantgeo-main` (or trigger a restart if your Railway
-   plan hot-reloads env vars — verify build-time vs. runtime env injection
-   for `NEXT_PUBLIC_*` before assuming a plain restart is sufficient; Next.js
-   inlines `NEXT_PUBLIC_*` vars at build time, so a full rebuild is the safe
-   default here).
-7. Spot-check the live map (same locations as the local smoke test above)
+   and **rebuild** `plantgeo-main`. A restart is not sufficient: Next.js
+   inlines `NEXT_PUBLIC_*` vars into the client bundle at build time, so the
+   old URL stays baked in until a full rebuild runs.
+5. Spot-check the live map (same locations as the local smoke test above)
    and check the browser network tab for `206 Partial Content` responses
    with `Access-Control-Allow-Origin` present on requests to the new domain.
 
@@ -227,13 +252,13 @@ static basemap has always been fetched client-side straight from whatever
 Because filenames are content-versioned and never reused:
 - **Fastest rollback**: revert `NEXT_PUBLIC_PMTILES_URL` on `plantgeo-main`
   back to the previous archive's URL (e.g.
-  `north-america-2026-07-01.pmtiles`) and redeploy. The old file is still
-  sitting on the volume untouched — nothing to restore.
-- Keep at least the last 2 archives on the volume before deleting old ones
-  (`railway ssh --service pmtiles-server -- "ls -la /data/tiles"` to check
-  what's present, `rm` old ones only after confirming the current one has
-  been live and stable for a while).
-- If the volume itself is corrupted or lost, rebuild is a full re-run of
+  `north-america-2026-07-01.pmtiles`) and rebuild. The old object is still
+  in the bucket untouched — nothing to restore.
+- Keep at least the last 2 archives in the bucket before deleting old ones
+  (`npx wrangler r2 object get` / the Cloudflare dashboard to check what's
+  present; delete old ones only after confirming the current one has been
+  live and stable for a while).
+- If the bucket contents are lost, rebuild is a full re-run of
   `build-na.sh` plus a fresh deploy — there is no other backup of the
   archive by design (it's a derived artifact from OSM data, not source of
   truth; the source of truth is Geofabrik's extract + the pinned Planetiler
@@ -255,20 +280,23 @@ Geofabrik regenerates `north-america-latest.osm.pbf` continuously, so:
 
 These are called out inline above too, but collected here for visibility:
 - **Planetiler version pin** (`infra/tiles/compose.yaml`, currently
-  `0.8.2`): confirm this is still the latest stable tag at
-  https://github.com/onthegomap/planetiler/releases before a real NA build,
-  and bump the pin if not.
+  `0.8.2`): verified 2026-08-02 — the `ghcr.io/onthegomap/planetiler:0.8.2`
+  manifest exists and pulls, so the build will not fail on a missing image.
+  It is however well behind: the latest release is `v0.10.2` (2026-03-29),
+  which among other things adds zoom-16 tile generation. Decide whether to
+  bump before committing to a multi-hour run.
 - **RAM/disk/time estimates** throughout this runbook are extrapolated from
   Planetiler's published full-planet benchmark ratios scaled down to a
   North America extract, not measured on an actual NA build. Record real
   numbers from your first run and update this document.
-- **Railway volume-per-service model**: this runbook assumes a Railway
-  volume attaches to a single service and that cross-service file transfer
-  must go through `railway ssh` + a relay (R2 presigned URL). If Railway's
-  current plan/UI supports directly sharing one volume across two services,
-  that would simplify the deploy step (build could write straight to the
-  shared volume) — worth re-checking against the current Railway dashboard
-  before treating the R2-relay approach as permanent.
-- **R2 bucket/credentials** for the staging relay are assumed to already
-  exist per this project's stated eventual-R2 target; if they don't yet,
-  provisioning that bucket is a prerequisite not covered by this runbook.
+- **Railway volume-per-service model**: moot for this runbook now that the
+  archive is served from R2 directly — there is no volume in the path. The
+  question was never resolved: Railway's docs state "each service can only
+  have a single volume" but say nothing either way about attaching one
+  volume to multiple services. Re-open only if the nginx fallback is ever
+  deployed.
+- **R2 bucket/credentials**: provisioned and verified 2026-08-02. Range
+  requests return `206` with correct `Content-Range`, CORS headers are
+  present on both GET and the OPTIONS preflight, and responses are not
+  gzipped. The one gap is edge caching — see the Cache Rule note under
+  "One-time setup".
