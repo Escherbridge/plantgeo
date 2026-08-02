@@ -1,0 +1,40 @@
+SETTLING VELOCITIES (unit-density spores):
+  d= 1.0 um: v= 0.00004 m/s ( 0.004 cm/s)
+  d= 3.0 um: v= 0.00032 m/s ( 0.032 cm/s)
+  d= 5.0 um: v= 0.00087 m/s ( 0.087 cm/s)
+  d= 8.0 um: v= 0.00220 m/s ( 0.220 cm/s)
+  d=10.0 um: v= 0.00341 m/s ( 0.341 cm/s)
+  d=15.0 um: v= 0.00762 m/s ( 0.762 cm/s)
+  d=20.0 um: v= 0.01349 m/s ( 1.349 cm/s)
+
+DRY TRANSPORT SURVIVAL fraction, mixed layer H=1500 m, vdep=max(v_settle,1.5e-3):
+  wind u (m/s) |  10 km   50 km   100 km  200 km
+  d= 3.0 u= 3 |  0.997   0.983   0.967   0.936
+  d= 3.0 u= 7 |  0.999   0.993   0.986   0.972
+  d= 3.0 u=15 |  0.999   0.997   0.993   0.987
+  d= 5.0 u= 3 |  0.997   0.983   0.967   0.936
+  d= 5.0 u= 7 |  0.999   0.993   0.986   0.972
+  d= 5.0 u=15 |  0.999   0.997   0.993   0.987
+  d=10.0 u= 3 |  0.992   0.963   0.927   0.859
+  d=10.0 u= 7 |  0.997   0.984   0.968   0.937
+  d=10.0 u=15 |  0.998   0.992   0.985   0.970
+
+WET SCAVENGING survival after 30 min rain (below-cloud, greenfield-gap regime):
+  d= 3.0 um, Lambda=1e-05/s: survival=0.982
+  d= 5.0 um, Lambda=2e-05/s: survival=0.965
+  d=10.0 um, Lambda=8e-05/s: survival=0.866
+  d=20.0 um, Lambda=3e-04/s: survival=0.583
+
+CLOUD-BASE DELIVERY: delivered = survival(50 km, u=7) x convective fraction
+  d= 3.0: survival=0.993 x conv=0.01 -> delivered=0.0099
+  d= 3.0: survival=0.993 x conv=0.10 -> delivered=0.0993
+  d= 3.0: survival=0.993 x conv=0.30 -> delivered=0.2979
+  d= 5.0: survival=0.993 x conv=0.01 -> delivered=0.0099
+  d= 5.0: survival=0.993 x conv=0.10 -> delivered=0.0993
+  d= 5.0: survival=0.993 x conv=0.30 -> delivered=0.2979
+  d=10.0: survival=0.984 x conv=0.01 -> delivered=0.0098
+  d=10.0: survival=0.984 x conv=0.10 -> delivered=0.0984
+  d=10.0: survival=0.984 x conv=0.30 -> delivered=0.2952
+
+NOTE: horizontal survival of 3-10 um spores over 50-200 km is HIGH; the
+uncertainty is the convective fraction (0.01-0.3), not transport loss.

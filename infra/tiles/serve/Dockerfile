@@ -10,14 +10,14 @@
 # downloading the whole file, so the serving layer MUST support byte-range
 # requests and expose the right CORS headers for Range/Content-Range — see
 # nginx.pmtiles.conf for the concrete config, and
-# docs/runbooks/pmtiles-na.md for how this gets deployed.
+# docs/runbooks/pmtiles-pnw.md for how this gets deployed.
 
 FROM nginx:1.27-alpine
 
 # curl is required by the deploy step in the runbook: the operator uses
 # `railway ssh` to shell into this running container and curl the built
 # archive in from a temporary Cloudflare R2 presigned URL, straight onto
-# the mounted volume. See docs/runbooks/pmtiles-na.md "Deploy to the
+# the mounted volume. See docs/runbooks/pmtiles-pnw.md "Deploy to the
 # Railway volume".
 RUN apk add --no-cache curl
 

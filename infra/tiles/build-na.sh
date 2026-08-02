@@ -11,7 +11,7 @@
 # AUTHORING ONLY — this script is safe to read without executing. It is not
 # invoked by any CI/build step in this repo. The multi-hour North America
 # build is a deliberate, manually-triggered operation; see
-# docs/runbooks/pmtiles-na.md before running it.
+# docs/runbooks/pmtiles-pnw.md before running it.
 #
 # Idempotent / resumable:
 #   - the pbf download streams into a `.part` sidecar with `curl -C -`
@@ -233,4 +233,4 @@ log "  Output:   $OUTPUT_PATH"
 log "  Size:     $OUTPUT_SIZE_HUMAN"
 log "  Total time this run: ${TOTAL_ELAPSED}s ($((TOTAL_ELAPSED / 60)) min)"
 log "----------------------------------------------------------------"
-log "Next step: see docs/runbooks/pmtiles-na.md 'Deploy to the Railway volume'."
+log "Next step: see docs/runbooks/pmtiles-pnw.md 'Deploy to the Railway volume'."

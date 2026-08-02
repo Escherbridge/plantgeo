@@ -1,11 +1,17 @@
-# Standalone Planetiler build environment for the North America PMTiles
-# basemap. This is intentionally NOT part of the root docker-compose.yml:
-# that file describes always-on run-time infra (postgis, redis, martin),
-# while this is a one-shot batch job invoked by build-na.sh.
+# CANCELLED — DO NOT RUN. Retained only as reference for the day a genuinely
+# custom tile schema is needed, and if that day comes this file must be
+# switched to the Protomaps profile first (see below).
 #
-# Usage: see infra/tiles/build-na.sh and docs/runbooks/pmtiles-na.md.
-# This file is authoring-only; do not `docker compose up` it directly for
-# the NA build without reading the runbook first (multi-hour, resource-heavy).
+# The live basemap is built with `pmtiles extract` against the Protomaps daily
+# planet and served from Cloudflare R2. See docs/runbooks/pmtiles-pnw.md.
+#
+# Two independent reasons this path is dead:
+#   1. Wrong schema. This config produces an OpenMapTiles archive, but
+#      src/lib/map/styles.ts reads the Protomaps basemap v4 schema and pins
+#      sprites/glyphs to basemaps-assets/.../v4. An OpenMapTiles archive
+#      renders a blank map.
+#   2. The host cannot run it. 28 GB heap on a 32 GB machine, and a
+#      120-200 GB scratch estimate against ~135 GB free.
 
 services:
   planetiler:
@@ -17,9 +23,13 @@ services:
     # profile fixes worth having.
     image: ghcr.io/onthegomap/planetiler:0.8.2
     environment:
-      # Planetiler's default entrypoint bundles the OpenMapTiles profile,
-      # which is what MapLibre's standard vector styles (and this repo's
-      # src/lib/map/styles.ts "protomaps" source) expect.
+      # WRONG SCHEMA — this is the defect that cancelled this path. Planetiler's
+      # default entrypoint bundles the OpenMapTiles profile, which this repo's
+      # style does NOT read. src/lib/map/styles.ts expects the Protomaps
+      # basemap v4 schema (earth/water/landcover/landuse/roads/boundaries/
+      # places/pois/buildings). The MapLibre source id there happens to be
+      # "protomaps", which is an id, not a schema declaration — do not read it
+      # as evidence that OpenMapTiles is correct.
       #
       # Heap sizing for a North America extract (~10-13 GB compressed pbf
       # from Geofabrik as of writing): Planetiler's own planet-scale

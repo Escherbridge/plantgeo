@@ -4,12 +4,10 @@ const TERRAIN_URL =
   process.env.NEXT_PUBLIC_TERRAIN_URL ||
   "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
 
-// This public archive is only a development fallback. Production must use the
-// project-controlled R2/CDN archive configured with NEXT_PUBLIC_PMTILES_URL.
-// NOTE: Protomaps prunes old daily builds (an expired build 404s without CORS
-// headers, surfacing as "Failed to fetch"); refresh the date if the map goes blank.
+// Project-controlled R2 archive (Pacific Northwest pilot extract). Overridable
+// per-environment with NEXT_PUBLIC_PMTILES_URL. See infra/tiles/AGENTS.md.
 const DEFAULT_PMTILES_ARCHIVE_URL =
-  "https://build.protomaps.com/20260801.pmtiles";
+  "https://tiles.aevani.com/pnw-2026-08-02.pmtiles";
 
 const PMTILES_ARCHIVE_URL =
   process.env.NEXT_PUBLIC_PMTILES_URL || DEFAULT_PMTILES_ARCHIVE_URL;

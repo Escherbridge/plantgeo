@@ -1,0 +1,25 @@
+MONTE CARLO (n=20000): hectares of amended land needed to dose one
+seedable cloud volume (200-1000 km2 x 300-800 m) at 1-10 IN/liter
+  P10:          166 ha
+  P25:         1553 ha
+  P50:        20062 ha
+  P75:       277499 ha
+  P90:      2699049 ha
+  P(need <      100 ha): 0.076
+  P(need <     1000 ha): 0.214
+  P(need <    10000 ha): 0.426
+  P(need <   100000 ha): 0.659
+  P(need <  1000000 ha): 0.844
+
+REFERENCE: same cloud volume dosed with AgI (1e12-1e13 active IN/g at -10 C)
+  500 km2 x 500 m @  1000 IN/m3: need 2.50e+14 IN =   25.0- 250.0 g AgI
+  500 km2 x 500 m @ 10000 IN/m3: need 2.50e+15 IN =  250.0-2500.0 g AgI
+
+SCENARIOS (point estimates, 500 km2 x 500 m @ 3 IN/liter = 7.5e14 IN):
+  pessimistic emission=1.5e+13 spores/ha/season  delivered=1.5e+06 IN/ha  ->  need 500000000 ha
+  central     emission=6.0e+16 spores/ha/season  delivered=2.7e+12 IN/ha  ->  need 278 ha
+  optimistic  emission=5.0e+18 spores/ha/season  delivered=3.0e+16 IN/ha  ->  need 0 ha
+
+BACKGROUND: natural INP at -10 C ~ 1e-4 to 1e-2 per liter (DeMott 2010 range);
+seeding targets 1-10 per liter, i.e. a 100-10000x local uplift. There is no
+dose low enough to be 'undetectable against background' yet effective.

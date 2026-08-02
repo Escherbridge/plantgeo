@@ -21,8 +21,7 @@
     "docker:logs": "podman compose logs -f",
     "tiles:serve": "podman compose up -d martin",
     "tiles:logs": "podman compose logs -f martin",
-    "routing:serve": "podman compose up valhalla -d",
-    "tiles:build-na": "bash infra/tiles/build-na.sh"
+    "routing:serve": "podman compose up valhalla -d"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
