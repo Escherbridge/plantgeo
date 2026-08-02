@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentWeather } from "@/lib/server/services/weather";
 import { authorizeIngressRequest } from "@/lib/server/security/ingress";
 import { ingestFeature } from "@/lib/server/services/ingest";
+import { WEATHER_LAYER_ID } from "@/lib/server/layer-ids";
 
 export const runtime = "nodejs";
-const WEATHER_LAYER_ID = process.env.WEATHER_LAYER_ID ?? "weather-observations";
 
 function parseBoundingBox(value: string): [number, number, number, number] | null {
   const parts = value.split(",");

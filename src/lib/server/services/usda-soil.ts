@@ -1,4 +1,5 @@
 import Redis from "ioredis";
+import { fetchBoundedJson } from "@/lib/server/http/bounded-upstream";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
@@ -21,6 +22,8 @@ const USDA_CACHE_TTL = 60 * 60 * 24;
 
 const USDA_WFS_BASE =
   "https://SDMDataAccess.nrcs.usda.gov/Spatial/SDM.wfs";
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 export interface SoilSurveyProperties {
   mukey: string;
@@ -67,18 +70,11 @@ export async function getSoilSurvey(
     outputFormat: "application/json",
   });
 
-  const response = await fetch(`${USDA_WFS_BASE}?${params}`, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 86400 },
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `USDA SDM WFS error: ${response.status} ${response.statusText}`
-    );
-  }
-
-  const raw = (await response.json()) as WFSResponse;
+  const raw = (await fetchBoundedJson(
+    `${USDA_WFS_BASE}?${params}`,
+    { headers: { Accept: "application/json" } },
+    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS, revalidateSeconds: 86400 }
+  )) as WFSResponse;
 
   // Map raw WFS properties to our typed schema
   const featureCollection: GeoJSON.FeatureCollection = {

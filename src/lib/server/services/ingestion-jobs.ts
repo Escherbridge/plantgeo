@@ -1,5 +1,6 @@
 import type { IngestFeatureInput } from "@/lib/server/services/ingest";
 import { ingestFeatures } from "@/lib/server/services/ingest";
+import { WEATHER_LAYER_ID } from "@/lib/server/layer-ids";
 import { fetchActiveFiresNASA } from "./nasa-firms";
 import { getStreamflowGauges } from "./usgs-water";
 import { getCurrentWeather } from "./weather";
@@ -13,7 +14,6 @@ import {
 const FIRMS_LAYER_ID = process.env.FIRMS_LAYER_ID ?? "fire-detections";
 const WATER_GAUGES_LAYER_ID =
   process.env.WATER_GAUGES_LAYER_ID ?? "water-gauges";
-const WEATHER_LAYER_ID = process.env.WEATHER_LAYER_ID ?? "weather-observations";
 const FIRE_PERIMETERS_LAYER_ID =
   process.env.FIRE_PERIMETERS_LAYER_ID ?? "fire-perimeters";
 const MAX_SOURCE_RECORDS = 5_000;
@@ -175,6 +175,24 @@ export async function runWaterDroughtIngestionJob(
   };
 }
 
+/**
+ * Grades an active perimeter from its reported containment.
+ * Returns null when WFIGS does not report containment, so the map can render
+ * "unknown" rather than inheriting the lowest severity colour.
+ */
+function perimeterSeverity(
+  percentContained: number | null | undefined
+): "critical" | "high" | "moderate" | "low" | null {
+  if (typeof percentContained !== "number" || !Number.isFinite(percentContained)) {
+    return null;
+  }
+  const contained = Math.min(100, Math.max(0, percentContained));
+  if (contained < 25) return "critical";
+  if (contained < 50) return "high";
+  if (contained < 75) return "moderate";
+  return "low";
+}
+
 /** Samples an evenly spaced grid of points within a bounded bbox for point-based upstreams. */
 function boundedSamplePoints(
   bbox: string,
@@ -272,6 +290,7 @@ export async function runFirePerimetersIngestionJob(
       incidentTypeCategory: perimeter.incidentTypeCategory,
       pooState: perimeter.pooState,
       percentContained: perimeter.percentContained,
+      severity: perimeterSeverity(perimeter.percentContained),
       source: "WFIGS Interagency Fire Perimeters",
       geometry: perimeter.geometry,
     },

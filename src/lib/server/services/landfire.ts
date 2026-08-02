@@ -1,3 +1,5 @@
+import { fetchBoundedJson } from "@/lib/server/http/bounded-upstream";
+
 export interface FuelBehaviorParams {
   rateOfSpread: number;
   flameLengthFt: number;
@@ -48,6 +50,8 @@ function getFuelParamsByCode(evtCode: number): FuelBehaviorParams {
 
 const LANDFIRE_IDENTIFY_URL =
   "https://www.landfire.gov/arcgis/rest/services/Landfire/US_200/MapServer/identify";
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 10_000;
 
 export async function getLandFireEVT(lat: number, lon: number): Promise<LandFireEVT> {
   const params = new URLSearchParams({
@@ -62,15 +66,11 @@ export async function getLandFireEVT(lat: number, lon: number): Promise<LandFire
     f: "json",
   });
 
-  const response = await fetch(`${LANDFIRE_IDENTIFY_URL}?${params}`, {
-    next: { revalidate: 86400 },
-  });
-
-  if (!response.ok) {
-    throw new Error(`LANDFIRE API error: ${response.status} ${response.statusText}`);
-  }
-
-  const data = (await response.json()) as {
+  const data = (await fetchBoundedJson(
+    `${LANDFIRE_IDENTIFY_URL}?${params}`,
+    {},
+    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS, revalidateSeconds: 86400 }
+  )) as {
     results?: Array<{ attributes?: { EVT_NAME?: string; Value?: number | string } }>;
   };
 

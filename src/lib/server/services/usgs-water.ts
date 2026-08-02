@@ -1,6 +1,10 @@
 import type { GroundwaterWell, WaterGauge } from "@/lib/environmental/water";
+import { fetchBoundedJson } from "@/lib/server/http/bounded-upstream";
 
 export type { GroundwaterWell, WaterGauge } from "@/lib/environmental/water";
+
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 10_000;
 
 interface NWISTimeSeries {
   sourceInfo: {
@@ -62,18 +66,11 @@ export async function getStreamflowGauges(bbox: string): Promise<WaterGauge[]> {
     `https://waterservices.usgs.gov/nwis/iv/?format=json` +
     `&bBox=${bbox}&parameterCd=00060&siteType=ST&siteStatus=active`;
 
-  const response = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 900 }, // 15 minutes
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `USGS NWIS streamflow error: ${response.status} ${response.statusText}`
-    );
-  }
-
-  const data = (await response.json()) as NWISResponse;
+  const data = (await fetchBoundedJson(
+    url,
+    { headers: { Accept: "application/json" } },
+    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS, revalidateSeconds: 900 }
+  )) as NWISResponse;
   const timeSeries = data?.value?.timeSeries ?? [];
 
   return timeSeries.map((ts): WaterGauge => {
@@ -120,18 +117,11 @@ export async function getGroundwaterWells(
     `https://waterservices.usgs.gov/nwis/iv/?format=json` +
     `&bBox=${bbox}&parameterCd=72019&siteType=GW`;
 
-  const response = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 3600 },
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `USGS NWIS groundwater error: ${response.status} ${response.statusText}`
-    );
-  }
-
-  const data = (await response.json()) as NWISResponse;
+  const data = (await fetchBoundedJson(
+    url,
+    { headers: { Accept: "application/json" } },
+    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS, revalidateSeconds: 3600 }
+  )) as NWISResponse;
   const timeSeries = data?.value?.timeSeries ?? [];
 
   return timeSeries.map((ts): GroundwaterWell => {

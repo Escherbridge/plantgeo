@@ -13,11 +13,6 @@ type JsonBodyResult =
 interface ServiceCredentialOptions {
   secretEnvironmentVariable: "CRON_SECRET" | "INGEST_SECRET";
   headerName: "x-cron-secret" | "x-ingest-secret";
-  requireConfigured?: boolean;
-}
-
-function isProduction(): boolean {
-  return process.env.NODE_ENV === "production";
 }
 
 function credentialsMatch(expected: string, provided: string): boolean {
@@ -39,10 +34,7 @@ function getProvidedCredential(request: Request, headerName: string): string | n
   return bearerMatch?.[1] ?? null;
 }
 
-/**
- * Protect machine-to-machine ingress. A configured secret is always enforced;
- * production refuses to start an unauthenticated ingress boundary.
- */
+/** Fails closed in every environment; a missing secret is a 503. */
 function authorizeServiceRequest(
   request: Request,
   options: ServiceCredentialOptions
@@ -50,15 +42,11 @@ function authorizeServiceRequest(
   const expectedCredential = process.env[options.secretEnvironmentVariable]?.trim();
 
   if (!expectedCredential) {
-    if (options.requireConfigured || isProduction()) {
-      return {
-        authorized: false,
-        status: 503,
-        error: `${options.secretEnvironmentVariable} is not configured`,
-      };
-    }
-
-    return { authorized: true };
+    return {
+      authorized: false,
+      status: 503,
+      error: `${options.secretEnvironmentVariable} is not configured`,
+    };
   }
 
   const providedCredential = getProvidedCredential(request, options.headerName);
@@ -77,14 +65,8 @@ export function authorizeIngressRequest(request: Request): AuthorizationResult {
   });
 }
 
-/** Authorize tracking producers without a development-mode bypass. */
-export function authorizeTrackingIngressRequest(request: Request): AuthorizationResult {
-  return authorizeServiceRequest(request, {
-    secretEnvironmentVariable: "INGEST_SECRET",
-    headerName: "x-ingest-secret",
-    requireConfigured: true,
-  });
-}
+/** Authorize tracking producers; same INGEST_SECRET credential as above. */
+export const authorizeTrackingIngressRequest = authorizeIngressRequest;
 
 /** Authorize the scheduled ingestion runner. */
 export function authorizeCronRequest(request: Request): AuthorizationResult {

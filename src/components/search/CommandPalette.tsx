@@ -73,9 +73,6 @@ export function CommandPalette() {
       case "toggle-fire-perimeters":
         toggleLayer("fire-perimeters");
         break;
-      case "toggle-sensors":
-        toggleLayer("sensors");
-        break;
     }
     setOpen(false);
   };
@@ -129,10 +126,6 @@ export function CommandPalette() {
           <CommandItem value="toggle-fire-perimeters" onSelect={handleSelect}>
             <Layers className="mr-2 h-4 w-4 shrink-0 text-[hsl(var(--muted-foreground))]" />
             Toggle fire perimeters
-          </CommandItem>
-          <CommandItem value="toggle-sensors" onSelect={handleSelect}>
-            <Layers className="mr-2 h-4 w-4 shrink-0 text-[hsl(var(--muted-foreground))]" />
-            Toggle sensors
           </CommandItem>
         </CommandGroup>
       </CommandList>

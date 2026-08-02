@@ -47,10 +47,11 @@ describe('layersRouter', () => {
     expect(procedures).toContain('update')
     expect(procedures).toContain('delete')
     expect(procedures).toContain('reorder')
+    expect(procedures).toContain('getIngestionCoverage')
   })
 
-  it('exposes all 6 procedures', () => {
+  it('exposes all 7 procedures', () => {
     const procedures = Object.keys(layersRouter._def.procedures)
-    expect(procedures).toHaveLength(6)
+    expect(procedures).toHaveLength(7)
   })
 })

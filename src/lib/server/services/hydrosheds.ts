@@ -1,6 +1,9 @@
 import { getRedis } from "@/lib/server/redis";
+import { fetchBoundedJson } from "@/lib/server/http/bounded-upstream";
 
 const WATERSHED_CACHE_TTL = 60 * 60; // 1 hour in seconds
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 10_000;
 
 /**
  * Fetch HUC12 watershed boundaries from USGS NHD+ HR WFS for a bounding box.
@@ -41,18 +44,11 @@ export async function getWatersheds(
     `&f=geojson` +
     `&resultRecordCount=500`;
 
-  const response = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 3600 },
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `USGS NHD WFS error: ${response.status} ${response.statusText}`
-    );
-  }
-
-  const data = (await response.json()) as GeoJSON.FeatureCollection;
+  const data = (await fetchBoundedJson(
+    url,
+    { headers: { Accept: "application/json" } },
+    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS, revalidateSeconds: 3600 }
+  )) as GeoJSON.FeatureCollection;
 
   await r.setex(cacheKey, WATERSHED_CACHE_TTL, JSON.stringify(data));
 

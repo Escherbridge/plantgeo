@@ -13,6 +13,19 @@ export class UpstreamTimeoutError extends Error {}
 interface BoundedJsonOptions {
   maxBytes: number;
   timeoutMs: number;
+  /**
+   * Next.js data-cache lifetime in seconds. Omit for `cache: "no-store"`.
+   * See `src/lib/server/AGENTS.md` — upstream providers with per-key quotas
+   * (NASA FIRMS) depend on this being honoured.
+   */
+  revalidateSeconds?: number;
+}
+
+/** Build the caching half of a `RequestInit`, defaulting to no-store. */
+function cachePolicyInit(options: BoundedJsonOptions): RequestInit {
+  return options.revalidateSeconds === undefined
+    ? { cache: "no-store" }
+    : { next: { revalidate: options.revalidateSeconds } };
 }
 
 export function providerUrl(environmentName: string, developmentDefault: string): URL {
@@ -74,17 +87,39 @@ async function readBoundedBytes(response: Response, maxBytes: number): Promise<U
   return bytes;
 }
 
-/** Fetch and parse a JSON response without allowing unbounded buffering. */
-export async function fetchBoundedJson(
-  url: URL,
+interface BoundedFetchResult {
+  ok: boolean;
+  status: number;
+  headers: Headers;
+  bytes: Uint8Array;
+  text: string;
+  /**
+   * Set when the body could not be read within the byte cap (or was absent, as
+   * on 204/304). `ok`/`status`/`headers` are still accurate; `bytes`/`text` are
+   * empty. Callers must branch on status before treating this as fatal.
+   */
+  bodyError: UpstreamPayloadError | null;
+}
+
+/**
+ * Core bounded fetch: enforces a timeout and a response-size cap. Never throws
+ * on a non-2xx status, and never throws on an unreadable/oversized/absent body
+ * either — a body failure is reported as `bodyError` so that status-based
+ * handling (429 backoff, 5xx "temporarily unavailable") stays reachable even
+ * when the upstream returns a huge HTML error page. Callers decide how to
+ * interpret the result. This is the escape hatch other helpers (and hand-rolled
+ * call sites that need raw status/text access, e.g. relaying an upstream error
+ * body) build on.
+ */
+export async function fetchBounded(
+  url: string | URL,
   init: RequestInit,
   options: BoundedJsonOptions
-): Promise<unknown> {
+): Promise<BoundedFetchResult> {
   let response: Response;
   try {
     response = await fetch(url, {
       ...init,
-      cache: "no-store",
       signal: AbortSignal.timeout(options.timeoutMs),
     });
   } catch (error) {
@@ -97,16 +132,57 @@ export async function fetchBoundedJson(
     throw error;
   }
 
-  if (!response.ok) throw new UpstreamHttpError(response.status);
-  const contentType = response.headers.get("content-type");
+  let bytes: Uint8Array = new Uint8Array(0);
+  let bodyError: UpstreamPayloadError | null = null;
+  try {
+    bytes = await readBoundedBytes(response, options.maxBytes);
+  } catch (error) {
+    if (!(error instanceof UpstreamPayloadError)) throw error;
+    bodyError = error;
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    headers: response.headers,
+    bytes,
+    text: new TextDecoder().decode(bytes),
+    bodyError,
+  };
+}
+
+/** Fetch and parse a JSON response without allowing unbounded buffering. */
+export async function fetchBoundedJson(
+  url: string | URL,
+  init: RequestInit,
+  options: BoundedJsonOptions
+): Promise<unknown> {
+  const result = await fetchBounded(url, { ...init, ...cachePolicyInit(options) }, options);
+
+  // Status first: a 429/5xx with an oversized or absent body must still surface
+  // as an UpstreamHttpError so retry/backoff signalling survives.
+  if (!result.ok) throw new UpstreamHttpError(result.status);
+  if (result.bodyError) throw result.bodyError;
+  const contentType = result.headers.get("content-type");
   if (contentType && !contentType.toLowerCase().includes("json")) {
     throw new UpstreamPayloadError("Upstream response was not JSON");
   }
 
-  const bytes = await readBoundedBytes(response, options.maxBytes);
   try {
-    return JSON.parse(new TextDecoder().decode(bytes));
+    return JSON.parse(result.text);
   } catch {
     throw new UpstreamPayloadError("Upstream response contained invalid JSON");
   }
+}
+
+/** Fetch a text/CSV response without allowing unbounded buffering. */
+export async function fetchBoundedText(
+  url: string | URL,
+  init: RequestInit,
+  options: BoundedJsonOptions
+): Promise<string> {
+  const result = await fetchBounded(url, { ...init, ...cachePolicyInit(options) }, options);
+  if (!result.ok) throw new UpstreamHttpError(result.status);
+  if (result.bodyError) throw result.bodyError;
+  return result.text;
 }

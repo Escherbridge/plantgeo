@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "@/lib/server/db";
 import { droughtData, features, layers } from "@/lib/server/db/schema";
+import { WEATHER_LAYER_ID } from "@/lib/server/layer-ids";
 import type { GroundwaterWell, WaterGauge } from "./usgs-water";
 import {
   firmsDayRange,
@@ -12,6 +13,10 @@ import {
 const MAX_ROWS = 2_000;
 const STREAMFLOW_MAX_AGE_MS = 6 * 60 * 60 * 1_000;
 const DROUGHT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1_000;
+/** Matches the upstream Open-Meteo freshness contract in services/weather.ts. */
+const WEATHER_MAX_AGE_MS = 3 * 60 * 60 * 1_000;
+/** Nearest-first candidates scanned before giving up on a fresh observation. */
+const WEATHER_CANDIDATE_ROWS = 8;
 
 function parseBbox(value: string): [number, number, number, number] {
   const coordinates = value.split(",").map(Number);
@@ -185,6 +190,91 @@ export async function getPublishedStreamflowGauges(
     });
   }
   return [...gauges.values()];
+}
+
+export interface PublishedWeatherObservation {
+  lat: number;
+  lon: number;
+  observedAt: string;
+  temperature: number | null;
+  humidity: number | null;
+  windSpeed: number | null;
+  windDirection: number | null;
+  precipitation: number | null;
+}
+
+/**
+ * Reads the nearest fresh warehouse-backed weather observation to a point.
+ * runWeatherIngestionJob samples a coarse grid across INGEST_BBOX, so the
+ * nearest sample is returned rather than an interpolation; null means no fresh
+ * observation has been published near the point.
+ */
+export async function getPublishedWeatherForPoint(
+  lat: number,
+  lon: number
+): Promise<PublishedWeatherObservation | null> {
+  if (
+    !Number.isFinite(lat) ||
+    lat < -90 ||
+    lat > 90 ||
+    !Number.isFinite(lon) ||
+    lon < -180 ||
+    lon > 180
+  ) {
+    throw new RangeError("Point must be within WGS84 bounds");
+  }
+
+  // MATERIALIZED pins the layer/status filter ahead of the KNN sort, so a sparse
+  // weather set cannot walk a large slice of the GiST index before finding its
+  // candidates. Returned coordinates are read from the same geom column the sort
+  // ranks -- never from the properties copy, which can drift from it silently.
+  const rows = await db.execute<{
+    properties: unknown;
+    lon: number | null;
+    lat: number | null;
+  }>(sql`
+    WITH candidates AS MATERIALIZED (
+      SELECT f.properties, f.geom
+      FROM geo.features f
+      JOIN geo.layers l ON l.id = f.layer_id
+      WHERE l.name = ${WEATHER_LAYER_ID}
+        AND f.status = 'published'
+    )
+    SELECT
+      properties,
+      ST_X(geom) AS lon,
+      ST_Y(geom) AS lat
+    FROM candidates
+    ORDER BY geom <-> ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)
+    LIMIT ${WEATHER_CANDIDATE_ROWS}
+  `);
+
+  for (const row of rows) {
+    const value = asRecord(row.properties);
+    const observedAt = parseZonedObservationTime(value?.observedAt);
+    const rowLat = finiteNumber(row.lat);
+    const rowLon = finiteNumber(row.lon);
+    if (
+      !value ||
+      rowLat === null ||
+      rowLon === null ||
+      !observedAt ||
+      !isFreshObservation(observedAt, WEATHER_MAX_AGE_MS)
+    ) {
+      continue;
+    }
+    return {
+      lat: rowLat,
+      lon: rowLon,
+      observedAt,
+      temperature: finiteNumber(value.temperature),
+      humidity: finiteNumber(value.humidity),
+      windSpeed: finiteNumber(value.windSpeed),
+      windDirection: finiteNumber(value.windDirection),
+      precipitation: finiteNumber(value.precipitation),
+    };
+  }
+  return null;
 }
 
 /** Reads the last accepted USDM publication; never fetches upstream on request. */

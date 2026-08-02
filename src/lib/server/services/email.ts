@@ -4,6 +4,11 @@
  * Gracefully degrades (log only) if no provider is configured.
  */
 
+import { fetchBounded } from "@/lib/server/http/bounded-upstream";
+
+const MAX_RESPONSE_BYTES = 1 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 10_000;
+
 export interface AlertRecord {
   id: string;
   userId: string;
@@ -149,18 +154,21 @@ async function sendViaResend(to: string, subject: string, html: string): Promise
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.EMAIL_FROM ?? "PlantGeo Alerts <alerts@plantgeo.io>";
 
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
+  const res = await fetchBounded(
+    "https://api.resend.com/emails",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from, to, subject, html }),
     },
-    body: JSON.stringify({ from, to, subject, html }),
-  });
+    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS }
+  );
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Resend API error ${res.status}: ${text}`);
+    throw new Error(`Resend API error ${res.status}: ${res.text}`);
   }
 }
 
@@ -168,23 +176,26 @@ async function sendViaSendGrid(to: string, subject: string, html: string): Promi
   const apiKey = process.env.SENDGRID_API_KEY;
   const from = process.env.EMAIL_FROM ?? "alerts@plantgeo.io";
 
-  const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
+  const res = await fetchBounded(
+    "https://api.sendgrid.com/v3/mail/send",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: to }] }],
+        from: { email: from },
+        subject,
+        content: [{ type: "text/html", value: html }],
+      }),
     },
-    body: JSON.stringify({
-      personalizations: [{ to: [{ email: to }] }],
-      from: { email: from },
-      subject,
-      content: [{ type: "text/html", value: html }],
-    }),
-  });
+    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS }
+  );
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`SendGrid API error ${res.status}: ${text}`);
+    throw new Error(`SendGrid API error ${res.status}: ${res.text}`);
   }
 }
 

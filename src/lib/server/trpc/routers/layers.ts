@@ -236,4 +236,27 @@ export const layersRouter = router({
       );
       return { success: true };
     }),
+
+  /**
+   * Reports the bounding box scheduled ingestion is actually confined to.
+   * The map renders globally, so without this the absence of data outside the
+   * ingested region is indistinguishable from a genuine absence of phenomena.
+   * Returns configured: false when INGEST_BBOX is unset, in which case no
+   * ingestion job writes anything at all.
+   */
+  getIngestionCoverage: publicProcedure.query(() => {
+    const raw = process.env.INGEST_BBOX?.trim();
+    if (!raw) {
+      return { configured: false as const, bbox: null };
+    }
+    const parts = raw.split(",").map(Number);
+    if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part))) {
+      return { configured: false as const, bbox: null };
+    }
+    const [west, south, east, north] = parts;
+    return {
+      configured: true as const,
+      bbox: { west, south, east, north },
+    };
+  }),
 });

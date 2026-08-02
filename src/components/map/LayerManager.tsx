@@ -72,21 +72,37 @@ export default function LayerManager() {
   );
 
   const weatherEnabled = activeLayers.includes("weather");
-  // getWeatherForPoint is currently an unimplemented stub (always throws server-side);
-  // this renders an empty WeatherLayer until that backend work lands.
+  // Reads the nearest published observation from the warehouse; reports
+  // "unavailable" (rather than throwing) when the ingestion grid has no fresh
+  // sample near the viewport, so the layer simply stays empty.
   const weatherQuery = trpc.wildfire.getWeatherForPoint.useQuery(
     { lat: viewport.latitude, lon: viewport.longitude },
     { enabled: weatherEnabled, retry: false }
   );
-  // The stub's output type is `never`; give the eventual payload an explicit shape.
-  const weatherPoint = weatherQuery.data as unknown as
-    | { windSpeed: number; windDirection: number; temperature: number; humidity: number }
-    | undefined;
-  const weatherData: WindPoint[] = weatherPoint
-    ? [{ coordinates: [viewport.longitude, viewport.latitude], ...weatherPoint }]
-    : [];
+  const observation =
+    weatherQuery.data?.availability === "published"
+      ? weatherQuery.data.observation
+      : null;
+  // Every rendered field must be measured: a partial observation is dropped
+  // rather than back-filled with a zero the upstream never reported.
+  const weatherData: WindPoint[] =
+    observation &&
+    observation.windSpeed !== null &&
+    observation.windDirection !== null &&
+    observation.temperature !== null &&
+    observation.humidity !== null
+      ? [
+          {
+            coordinates: [observation.lon, observation.lat],
+            windSpeed: observation.windSpeed,
+            windDirection: observation.windDirection,
+            temperature: observation.temperature,
+            humidity: observation.humidity,
+          },
+        ]
+      : [];
 
-  // Sync visibility of style-baked Martin layers (fire-perimeters/sensors/
+  // Sync visibility of style-baked Martin layers (fire-perimeters/
   // interventions/building-footprints) with activeLayers -- these are static
   // layers added via getStyle(), not React-mounted components, so they need
   // setLayoutProperty instead of an unmount/remount cycle.

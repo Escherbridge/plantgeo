@@ -298,18 +298,24 @@ export function AnalyticsDashboard({
                 />
                 <RiskSummaryWidget
                   label="Streamflow %ile"
-                  value={risk ? `${risk.streamflowPercentile}%` : "—"}
+                  value={
+                    risk?.streamflowPercentile != null ? `${risk.streamflowPercentile}%` : "—"
+                  }
                   trend={
-                    (risk?.streamflowPercentile ?? 50) <= 20
+                    risk?.streamflowPercentile == null
+                      ? "stable"
+                      : risk.streamflowPercentile <= 20
                       ? "up"
-                      : (risk?.streamflowPercentile ?? 50) >= 70
+                      : risk.streamflowPercentile >= 70
                       ? "down"
                       : "stable"
                   }
                   color={
-                    (risk?.streamflowPercentile ?? 50) <= 20
+                    risk?.streamflowPercentile == null
+                      ? "gray"
+                      : risk.streamflowPercentile <= 20
                       ? "red"
-                      : (risk?.streamflowPercentile ?? 50) <= 40
+                      : risk.streamflowPercentile <= 40
                       ? "yellow"
                       : "blue"
                   }

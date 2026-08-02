@@ -1,0 +1,10 @@
+{
+  "id": "mycelium_cloud_seeding_spike_20260802",
+  "description": "Feasibility spikes for INA-fungal products (soil amendment, growth media, animal feed) that rely on natural spore transport for bioprecipitation",
+  "type": "research-spike",
+  "created_at": "2026-08-02T00:00:00Z",
+  "status": "planned",
+  "informed_by": [],
+  "dependency_mode": "Standalone exploratory track. No dependency on historical tracks. The optional PlantGeo siting spike (006) may read public datasets but must not modify shared services, databases, or Railway resources.",
+  "activation_gate": "Desk research and disposable computation only. This track does not authorize organism acquisition, field release, weather-modification or precipitation-efficacy claims, product commitments, or production mutations. Individual spikes execute only after explicit user selection."
+}

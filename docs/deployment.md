@@ -406,7 +406,41 @@ Keep both gates false until the database, migrations, public build-time URLs,
 tile service, and the data-release evidence pass their gates. Set the data
 certification SHA only to the reviewed release commit and clear it again after
 the deployment window. The workflow intentionally does not deploy the data
-service, redeploy Martin, run migrations, or provision services.
+service, redeploy Martin, or provision services.
+
+### The `migrate` job
+
+The `plantgeo-main` runtime image is an intentionally migration-free Next.js
+standalone build (see "Database replacement gate"), so Drizzle migrations are
+applied by a dedicated `migrate` job in `.github/workflows/deploy.yml` that runs
+before, and gates, the `deploy` job (`deploy` declares `needs: migrate`).
+
+- **Gating.** The job carries exactly the same conditions as `deploy`: the `CI`
+  run must have succeeded for a `push` to `main` in this repository, repository
+  variable `RAILWAY_PRODUCTION_DEPLOY_ENABLED` must equal `true`, and repository
+  variable `RAILWAY_PRODUCTION_DATA_CERTIFIED_SHA` must exactly equal the
+  verified commit SHA. With either variable unset, no migration runs.
+- **Approval gate.** The job uses the GitHub environment
+  `production-migrations`, deliberately *not* `production`. Schema changes get
+  their own reviewer list and approval prompt rather than inheriting the
+  code-deploy approval. Configure `production-migrations` with required
+  reviewers before enabling the deploy variables.
+- **Secret.** The job requires the secret `PRODUCTION_MIGRATION_DATABASE_URL`,
+  exposed to `npm run db:migrate` as `DATABASE_URL`. A pre-flight step at the
+  top of the job fails immediately with
+  `PRODUCTION_MIGRATION_DATABASE_URL is not configured` when the secret is
+  absent, because `drizzle.config.ts` reads `process.env.DATABASE_URL!` and an
+  empty value would otherwise surface as an opaque driver error minutes later.
+- **Database role.** `PRODUCTION_MIGRATION_DATABASE_URL` **must** use a
+  migration-capable role that owns the `geo` schema and holds DDL rights
+  (`CREATE`/`ALTER`/`DROP`). It **must not** be the runtime application role
+  used by `plantgeo-main`, and it must not be the Martin tile role — both of
+  those are intentionally least-privilege roles with no DDL rights. Scope the
+  DSN to the exact production target; a migration DSN pointed at the wrong
+  database is unrecoverable.
+- **Revision.** Migrations are applied from the same checked-out certified
+  commit as the deploy, so schema and code are never skewed by a mismatched
+  revision.
 
 For an explicitly approved manual web deployment of a verified revision:
 

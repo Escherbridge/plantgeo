@@ -4,10 +4,7 @@ import { useEffect } from "react";
 import { Box, Building2 } from "lucide-react";
 import { useMapStore } from "@/stores/map-store";
 import { Button } from "@/components/ui/button";
-import {
-  FloatingToolbar,
-  FloatingToolbarItem,
-} from "@/components/ui/floating-toolbar";
+import { FloatingToolbar } from "@/components/ui/floating-toolbar";
 import TerrainControl from "./TerrainControl";
 import GlobeToggle from "./GlobeToggle";
 import StyleSwitcher from "./StyleSwitcher";
@@ -61,7 +58,10 @@ export default function MapControls() {
   }, [resetView, toggleTerrain, toggleGlobe, setCurrentStyle]);
 
   return (
-    <FloatingToolbar position="top" className="right-4 left-auto translate-x-0">
+    <FloatingToolbar
+      position="bottom"
+      className="left-4 translate-x-0 max-w-[calc(100vw-2rem)] overflow-x-auto"
+    >
       <div className="flex items-center gap-2">
         <StyleSwitcher />
         <div className="h-6 w-px bg-[hsl(var(--border))]" />

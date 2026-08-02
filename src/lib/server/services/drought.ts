@@ -1,7 +1,10 @@
 import { getRedis } from "@/lib/server/redis";
+import { fetchBoundedJson } from "@/lib/server/http/bounded-upstream";
 
 const DROUGHT_CACHE_KEY = "drought:current";
 const DROUGHT_CACHE_TTL = 6 * 60 * 60; // 6 hours in seconds
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 10_000;
 
 /**
  * Fetch current US Drought Monitor GeoJSON classification.
@@ -17,17 +20,11 @@ export async function getDroughtClassification(): Promise<GeoJSON.FeatureCollect
 
   const url = "https://droughtmonitor.unl.edu/api/webservice/currentouslookup/";
 
-  const response = await fetch(url, {
-    headers: { Accept: "application/json" },
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `USDM API error: ${response.status} ${response.statusText}`
-    );
-  }
-
-  const data = (await response.json()) as GeoJSON.FeatureCollection;
+  const data = (await fetchBoundedJson(
+    url,
+    { headers: { Accept: "application/json" } },
+    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS }
+  )) as GeoJSON.FeatureCollection;
 
   await r.setex(DROUGHT_CACHE_KEY, DROUGHT_CACHE_TTL, JSON.stringify(data));
 
@@ -52,17 +49,11 @@ export async function getDroughtByDate(
   // USDM historical endpoint — date must be a Tuesday (weekly release)
   const url = `https://droughtmonitor.unl.edu/api/webservice/ouslookup/?startdate=${date}&enddate=${date}`;
 
-  const response = await fetch(url, {
-    headers: { Accept: "application/json" },
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `USDM historical API error: ${response.status} ${response.statusText}`
-    );
-  }
-
-  const data = (await response.json()) as GeoJSON.FeatureCollection;
+  const data = (await fetchBoundedJson(
+    url,
+    { headers: { Accept: "application/json" } },
+    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS }
+  )) as GeoJSON.FeatureCollection;
 
   // Historical data is immutable — cache for 24h
   await r.setex(cacheKey, 86400, JSON.stringify(data));

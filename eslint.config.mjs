@@ -16,6 +16,20 @@ export default defineConfig([
       "react-hooks/set-state-in-render": "warn",
     },
   },
+  {
+    files: ["src/lib/server/**/*.{ts,tsx}"],
+    ignores: ["src/lib/server/http/bounded-upstream.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "CallExpression[callee.name='fetch']",
+          message:
+            "Bare fetch() is banned in src/lib/server/**. Use fetchBoundedJson, fetchBoundedText, or fetchBounded from '@/lib/server/http/bounded-upstream' — they enforce a timeout and a response-size cap.",
+        },
+      ],
+    },
+  },
   globalIgnores([
     ".next/**",
     "**/.mypy_cache/**",

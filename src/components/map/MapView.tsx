@@ -15,6 +15,7 @@ import { CommandPalette } from "@/components/search/CommandPalette";
 import { AlertBell } from "@/components/ui/AlertBell";
 import PanelManager from "./PanelManager";
 import LayerManager from "./LayerManager";
+import { IngestionCoverageBadge } from "./IngestionCoverageBadge";
 import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
 import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
 import { AgentInteraction } from "./AgentInteraction";
@@ -270,6 +271,9 @@ export default function MapView() {
             <CommandPalette />
             <PanelManager />
             <LayerManager />
+            <div className="absolute bottom-3 left-3 z-10">
+              <IngestionCoverageBadge />
+            </div>
             {isAIOpen && <RegionalIntelligencePanel />}
             {agentCoords && (
               <AgentInteraction

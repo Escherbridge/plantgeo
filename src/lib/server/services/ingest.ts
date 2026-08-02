@@ -66,34 +66,74 @@ async function ingestResolvedBatch(
     const pending = uniqueInputs.filter(
       (input) => !existingIds.has(input.featureId)
     );
-    if (pending.length === 0) return [];
+    const refreshable = uniqueInputs.filter((input) =>
+      existingIds.has(input.featureId)
+    );
 
-    const inserted = await tx
-      .insert(features)
-      .values(
-        pending.map((input) => ({
-          layerId: resolvedLayerId,
-          properties: { ...input.properties, id: input.featureId },
-        }))
-      )
-      .returning({ id: features.id, properties: features.properties });
+    const written: Array<{ id: string; input: IngestFeatureInput }> = [];
 
-    return inserted.flatMap((row) => {
-      const properties = row.properties as Record<string, unknown>;
-      const externalId = properties.id;
-      const input =
-        typeof externalId === "string" ? inputById.get(externalId) : undefined;
-      return input ? [{ id: row.id, input }] : [];
-    });
+    if (pending.length > 0) {
+      const inserted = await tx
+        .insert(features)
+        .values(
+          pending.map((input) => ({
+            layerId: resolvedLayerId,
+            properties: { ...input.properties, id: input.featureId },
+          }))
+        )
+        .returning({ id: features.id, properties: features.properties });
+
+      for (const row of inserted) {
+        const properties = row.properties as Record<string, unknown>;
+        const externalId = properties.id;
+        const input =
+          typeof externalId === "string" ? inputById.get(externalId) : undefined;
+        if (input) written.push({ id: row.id, input });
+      }
+    }
+
+    // Long-lived source records (notably fire perimeters, keyed on a stable
+    // incident id) keep changing upstream after first sight. Refresh them in
+    // place, but only when the payload actually differs so an unchanged upstream
+    // does not churn rows or replay realtime invalidations.
+    //
+    // Change detection deliberately ignores "geometry": the geometry-sync
+    // trigger (drizzle/0004) rewrites properties.geometry through ST_AsGeoJSON
+    // and may add "geometry_repaired", so the stored copy never matches the raw
+    // upstream text and a whole-payload comparison would rewrite every row on
+    // every run. The scalar payload is a sound change signal for these feeds --
+    // WFIGS advances polygonDateTime/percentContained whenever a perimeter is
+    // redrawn -- and an accepted update still writes the new geometry through.
+    for (const input of refreshable) {
+      const nextProperties = { ...input.properties, id: input.featureId };
+      const [updated] = await tx
+        .update(features)
+        .set({ properties: nextProperties, updatedAt: new Date() })
+        .where(
+          and(
+            eq(features.layerId, resolvedLayerId),
+            eq(sql<string>`${features.properties} ->> 'id'`, input.featureId),
+            sql`(${features.properties} - 'geometry' - 'geometry_repaired')
+                IS DISTINCT FROM (${nextProperties}::jsonb - 'geometry')`
+          )
+        )
+        .returning({ id: features.id });
+      if (updated) written.push({ id: updated.id, input });
+    }
+
+    return written;
   });
 }
 
-/** Writes a validated external feature exactly once per layer and external ID. */
+/** Writes a validated external feature, refreshing it if the payload changed. */
 export async function ingestFeature(input: IngestFeatureInput): Promise<boolean> {
   return (await ingestFeatures([input])) === 1;
 }
 
-/** Persists bounded batches before emitting best-effort realtime invalidations. */
+/**
+ * Persists bounded batches before emitting best-effort realtime invalidations.
+ * Returns the number of rows written -- inserted plus genuinely-changed refreshes.
+ */
 export async function ingestFeatures(inputs: IngestFeatureInput[]): Promise<number> {
   const byLayer = new Map<string, IngestFeatureInput[]>();
   for (const input of inputs) {

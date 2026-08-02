@@ -5,9 +5,31 @@ const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 let redis: Redis | null = null;
 let redisAvailable = true;
 let lastWarning = 0;
+let cooldownTimer: ReturnType<typeof setTimeout> | null = null;
+let intentionallyClosed = false;
+
+const RETRY_COOLDOWN_MS = 30_000;
+
+/**
+ * After the retryStrategy gives up, schedule a single reconnect attempt once
+ * the cooldown elapses so a recovered backend un-latches automatically
+ * instead of staying marked unavailable forever.
+ */
+function scheduleReconnectAttempt(client: Redis): void {
+  if (cooldownTimer || intentionallyClosed) return;
+  cooldownTimer = setTimeout(() => {
+    cooldownTimer = null;
+    client.connect().catch(() => {
+      // Still down — the retryStrategy below will schedule another cooldown.
+    });
+  }, RETRY_COOLDOWN_MS);
+  // Never hold the event loop open just to retry a cache connection.
+  cooldownTimer.unref?.();
+}
 
 export function getRedis(): Redis {
   if (!redis) {
+    intentionallyClosed = false;
     redis = new Redis(REDIS_URL, {
       maxRetriesPerRequest: 1,
       lazyConnect: true,
@@ -20,7 +42,7 @@ export function getRedis(): Redis {
             lastWarning = now;
             console.warn("[redis] Redis unavailable — caching and pub/sub disabled");
           }
-          return null; // stop retrying
+          return null; // stop retrying this connection cycle; the "end" handler below schedules a cooldown retry
         }
         return Math.min(times * 200, 2000);
       },
@@ -28,10 +50,19 @@ export function getRedis(): Redis {
 
     redis.on("connect", () => {
       redisAvailable = true;
+      if (cooldownTimer) {
+        clearTimeout(cooldownTimer);
+        cooldownTimer = null;
+      }
     });
 
     redis.on("error", () => {
       // Suppress — retryStrategy handles logging
+    });
+
+    redis.on("end", () => {
+      redisAvailable = false;
+      if (redis) scheduleReconnectAttempt(redis);
     });
 
     redis.connect().catch(() => {
@@ -43,6 +74,24 @@ export function getRedis(): Redis {
 
 export function isRedisAvailable(): boolean {
   return redisAvailable;
+}
+
+/** Close the shared client on shutdown without triggering a cooldown reconnect. */
+export async function closeRedis(): Promise<void> {
+  intentionallyClosed = true;
+  if (cooldownTimer) {
+    clearTimeout(cooldownTimer);
+    cooldownTimer = null;
+  }
+  const client = redis;
+  redis = null;
+  redisAvailable = false;
+  if (!client) return;
+  try {
+    await client.quit();
+  } catch {
+    client.disconnect();
+  }
 }
 
 export async function publishGeoEvent(

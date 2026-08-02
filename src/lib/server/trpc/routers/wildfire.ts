@@ -3,7 +3,10 @@ import { TRPCError } from "@trpc/server";
 import { router, publicProcedure, contributorProcedure } from "@/lib/server/trpc/init";
 import { features, layers } from "@/lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
-import { getPublishedFireDetections } from "@/lib/server/services/environmental-read-model";
+import {
+  getPublishedFireDetections,
+  getPublishedWeatherForPoint,
+} from "@/lib/server/services/environmental-read-model";
 
 function unpublishedRisk(): never {
   throw new TRPCError({
@@ -143,7 +146,10 @@ export const wildfireRouter = router({
     }),
 
   /**
-   * Fetch current weather for a lat/lon point.
+   * Read the nearest fresh warehouse-backed weather observation to a point.
+   * Never fetches Open-Meteo on request -- the scheduled ingestion job is the
+   * only writer, so an empty warehouse reports unavailable instead of stalling
+   * the request on an upstream call.
    */
   getWeatherForPoint: publicProcedure
     .input(
@@ -152,5 +158,17 @@ export const wildfireRouter = router({
         lon: z.number().min(-180).max(180),
       })
     )
-    .query(() => unpublishedRisk()),
+    .query(async ({ input }) => {
+      const observation = await getPublishedWeatherForPoint(
+        input.lat,
+        input.lon
+      );
+      return observation
+        ? { availability: "published" as const, observation }
+        : {
+            availability: "unavailable" as const,
+            reason: "no_fresh_weather_observation_published" as const,
+            observation: null,
+          };
+    }),
 });

@@ -1,4 +1,5 @@
 import { cacheGeoJSON, getCachedGeoJSON } from "@/lib/server/redis";
+import { fetchBoundedJson } from "@/lib/server/http/bounded-upstream";
 import type {
   BurnSeverityClass,
   MTBSFireProperties,
@@ -19,6 +20,8 @@ const SEVERITY_MAP: Record<number, BurnSeverityClass> = {
 
 const MTBS_URL =
   "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/MTBS_Polygons_v1/FeatureServer/0/query";
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 10_000;
 
 export async function getMTBSPerimeters(
   bbox: string,
@@ -48,15 +51,11 @@ export async function getMTBSPerimeters(
     resultRecordCount: "500",
   });
 
-  const response = await fetch(`${MTBS_URL}?${params}`, {
-    next: { revalidate: 86400 },
-  });
-
-  if (!response.ok) {
-    throw new Error(`MTBS API error: ${response.status} ${response.statusText}`);
-  }
-
-  const raw = (await response.json()) as {
+  const raw = (await fetchBoundedJson(
+    `${MTBS_URL}?${params}`,
+    {},
+    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS, revalidateSeconds: 86400 }
+  )) as {
     features?: Array<{
       type: string;
       geometry: GeoJSON.Geometry;

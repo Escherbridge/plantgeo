@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/server/db";
 import { EXPECTED_DRIZZLE_MIGRATION } from "@/lib/server/db/migration-contract";
+import { WEATHER_LAYER_ID } from "@/lib/server/layer-ids";
 import { probeRedis } from "@/lib/server/redis";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,7 @@ interface DatabaseReadinessRow {
   schemasReady: boolean;
   constraintsReady: boolean;
   layersReady: boolean;
+  dataFloorReady: boolean;
 }
 
 async function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
@@ -78,13 +80,16 @@ async function probeDatabase(): Promise<boolean> {
           'fire-perimeters',
           'fire-detections',
           'water-gauges',
-          'weather-observations',
+          ${WEATHER_LAYER_ID},
           'evacuation-zones',
           'sensors',
           'vegetation',
           'interventions'
         )
-      ) AS "layersReady"
+      ) AS "layersReady",
+      (
+        SELECT EXISTS (SELECT 1 FROM geo.features)
+      ) AS "dataFloorReady"
   `);
   const row = rows[0];
   return Boolean(
@@ -92,7 +97,8 @@ async function probeDatabase(): Promise<boolean> {
       row.migrationReady &&
       row.schemasReady &&
       row.constraintsReady &&
-      row.layersReady
+      row.layersReady &&
+      row.dataFloorReady
   );
 }
 

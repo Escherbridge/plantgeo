@@ -1,3 +1,8 @@
+import { fetchBoundedText } from "@/lib/server/http/bounded-upstream";
+
+const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 15_000;
+
 export interface FIRMSFirePoint {
   latitude: number;
   longitude: number;
@@ -87,18 +92,13 @@ export async function fetchActiveFiresNASA(
 
   const url = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${apiKey}/VIIRS_SNPP_NRT/${area}/${clampedDayRange}`;
 
-  const response = await fetch(url, {
-    headers: { Accept: "text/csv" },
-    next: { revalidate: 3600 },
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `NASA FIRMS API error: ${response.status} ${response.statusText}`
-    );
-  }
-
-  const csv = await response.text();
+  const csv = await fetchBoundedText(
+    url,
+    { headers: { Accept: "text/csv" } },
+    // NASA FIRMS enforces a hard per-key transaction quota; keep the hourly
+    // data-cache lifetime rather than re-fetching per request.
+    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS, revalidateSeconds: 3600 }
+  );
   const points = parseFIRMSCsv(csv);
 
   const featureCollection: FireFeatureCollection = {

@@ -117,6 +117,7 @@ export function exportPDF(
     .badge-green { background: #dcfce7; color: #166534; }
     .badge-yellow { background: #fef9c3; color: #854d0e; }
     .badge-red { background: #fee2e2; color: #991b1b; }
+    .badge-gray { background: #f1f5f9; color: #475569; }
     button.print-btn {
       margin-bottom: 24px;
       padding: 8px 16px;
@@ -168,12 +169,26 @@ export function exportPDF(
       </tr>
       <tr>
         <td>Streamflow Percentile</td>
-        <td>${summary.streamflowPercentile}%</td>
+        <td>${summary.streamflowPercentile != null ? `${summary.streamflowPercentile}%` : "Unavailable"}</td>
         <td>
           <span class="risk-badge ${
-            summary.streamflowPercentile <= 20 ? "badge-red" : summary.streamflowPercentile <= 40 ? "badge-yellow" : "badge-green"
+            summary.streamflowPercentile == null
+              ? "badge-gray"
+              : summary.streamflowPercentile <= 20
+              ? "badge-red"
+              : summary.streamflowPercentile <= 40
+              ? "badge-yellow"
+              : "badge-green"
           }">
-            ${summary.streamflowPercentile <= 20 ? "Critically Low" : summary.streamflowPercentile <= 40 ? "Below Normal" : "Normal"}
+            ${
+              summary.streamflowPercentile == null
+                ? "No Data"
+                : summary.streamflowPercentile <= 20
+                ? "Critically Low"
+                : summary.streamflowPercentile <= 40
+                ? "Below Normal"
+                : "Normal"
+            }
           </span>
         </td>
       </tr>

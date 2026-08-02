@@ -1,0 +1,62 @@
+# Standalone Planetiler build environment for the North America PMTiles
+# basemap. This is intentionally NOT part of the root docker-compose.yml:
+# that file describes always-on run-time infra (postgis, redis, martin),
+# while this is a one-shot batch job invoked by build-na.sh.
+#
+# Usage: see infra/tiles/build-na.sh and docs/runbooks/pmtiles-na.md.
+# This file is authoring-only; do not `docker compose up` it directly for
+# the NA build without reading the runbook first (multi-hour, resource-heavy).
+
+services:
+  planetiler:
+    # Pin an explicit tag for reproducible builds. 0.8.2 was the latest
+    # tagged release verified against https://github.com/onthegomap/planetiler/releases
+    # as of this authoring pass. CONFIRM this is still current (or bump it)
+    # before kicking off a real North America build — Planetiler ships new
+    # releases every few weeks and later tags may include OpenMapTiles
+    # profile fixes worth having.
+    image: ghcr.io/onthegomap/planetiler:0.8.2
+    environment:
+      # Planetiler's default entrypoint bundles the OpenMapTiles profile,
+      # which is what MapLibre's standard vector styles (and this repo's
+      # src/lib/map/styles.ts "protomaps" source) expect.
+      #
+      # Heap sizing for a North America extract (~10-13 GB compressed pbf
+      # from Geofabrik as of writing): Planetiler's own planet-scale
+      # benchmarks (README "Running Planetiler" table, full-planet ~80 GB
+      # pbf) recommend RAM roughly 0.6-0.8x the input pbf size as a floor,
+      # more for speed via larger sort buffers. Scaling that ratio down to
+      # a ~10-13 GB NA extract gives a floor of ~8-11 GB; we pin well above
+      # that floor (28 GB) to leave headroom for the node-location cache
+      # and feature sort, and because continent-level extracts have denser
+      # tag/geometry data per byte than a global average. This is an
+      # extrapolation, not a directly measured NA benchmark — treat as a
+      # starting point and watch `docker stats` during the first real run;
+      # tune PLANETILER_JAVA_OPTS down if the host has less headroom, or up
+      # if you see GC thrashing in the logs.
+      JAVA_TOOL_OPTIONS: ${PLANETILER_JAVA_OPTS:--Xmx28g}
+    volumes:
+      - ${PLANETILER_DATA_DIR:-./data}:/data
+    # No ports published: this is a batch job container invoked with
+    # `docker compose run`, not a long-running service with `up -d`.
+    # Command/flags (--osm-path, --output, --tmpdir, --nodemap-type,
+    # --storage, --force) are supplied at invocation time by build-na.sh so
+    # the flags stay versioned next to the orchestration logic that
+    # constructs them, rather than duplicated here. Note that build-na.sh
+    # passes the already-downloaded extract via --osm-path; it does not use
+    # Planetiler's own area download.
+
+  # Disk requirement note (applies to the ./data bind mount above):
+  # Planetiler needs working space beyond the input pbf and final output:
+  # a temporary node-location cache (memory-mapped, roughly the size of
+  # the node count in the extract) plus a temporary feature sort/merge
+  # area before the final archive is written. Planetiler's planet-scale
+  # docs cite ~950 GB total working disk for an ~80 GB planet.pbf run
+  # (~12x input size). Applying that same ~10-15x ratio to a ~10-13 GB NA
+  # extract gives an estimated 120-200 GB of scratch + output disk needed
+  # under ./data. Provision at least 250 GB free on the build host to be
+  # safe; build-na.sh checks free space before starting and aborts early
+  # with a clear message if it looks insufficient, but that check is a
+  # heuristic, not a guarantee — this ratio is extrapolated from
+  # full-planet benchmarks, not measured on a real NA build, and should be
+  # confirmed against actual disk usage on the first run.

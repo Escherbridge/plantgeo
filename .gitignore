@@ -89,3 +89,6 @@ local-artifacts/
 valhalla-tiles/
 photon-data/
 martin-data/
+
+# Wrangler local simulator state (R2/KV/D1 emulation) — never commit.
+.wrangler/
