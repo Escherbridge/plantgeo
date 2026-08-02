@@ -43,6 +43,17 @@ def _psql(psql: str, dsn: str, *args: str) -> None:
     subprocess.run([psql, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", dsn, *args], check=True)
 
 
+def _server_major(psql: str, dsn: str) -> int:
+    """Read ``server_version_num`` from the target and return its major component."""
+    result = subprocess.run(
+        [psql, "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-d", dsn, "-c", "SHOW server_version_num"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return int(result.stdout.strip()) // 10000
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--admin-dsn", required=True, help="DSN on a maintenance db able to CREATE/DROP DATABASE")
@@ -66,6 +77,21 @@ def main(argv: list[str] | None = None) -> int:
 
     admin = dump_schema.to_libpq_url(args.admin_dsn)
     disposable = _swap_database(admin, args.db_name)
+
+    # The committed tree is the canonical-major artifact. Regenerating from any other
+    # major would silently bake that major's dump dialect (e.g. pg18's catalogued
+    # NOT NULL constraint names) into the reviewed source of truth.
+    server_major = _server_major(psql, admin)
+    if server_major != dump_schema.CANONICAL_SERVER_MAJOR:
+        ap.error(
+            f"refusing to regenerate from a PostgreSQL {server_major} server: the declarative tree is "
+            f"canonical against PostgreSQL {dump_schema.CANONICAL_SERVER_MAJOR}. Point --admin-dsn at a "
+            f"PostgreSQL {dump_schema.CANONICAL_SERVER_MAJOR} server, or change CANONICAL_SERVER_MAJOR "
+            "deliberately and regenerate the whole tree in a reviewed change."
+        )
+    dumper_major = dump_schema.pg_dump_major(args.pg_dump)
+    if dumper_major < server_major:
+        ap.error(f"pg_dump {dumper_major} cannot dump a PostgreSQL {server_major} server; use a newer client")
     sync_dsn = disposable  # alembic reads DATABASE_URL_SYNC (a plain postgresql:// DSN)
 
     print(f"[regen] creating disposable database {args.db_name}")

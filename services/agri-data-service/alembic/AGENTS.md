@@ -195,3 +195,20 @@ against an operational policy row, an operator must review that row's
 `min_coverage_fraction` (and the new `min_interval_coverage_fraction`, backfilled
 to `0.8`) and confirm the threshold is the one actually intended now that both
 gates can fail.
+
+## PostgreSQL 18 portability (rehearsed, not deployed)
+
+Revisions `0001` through `0016` were applied end to end against PostgreSQL 18.4
+(`timescale/timescaledb-ha:pg18`) on 2026-08-02 with no error, no revision
+change, and no schema change. The full behavioural contract suite passes on that
+server, and the object inventory, routine bodies, `SECURITY DEFINER` flags,
+`proconfig` GUC pins, pgcrypto digests and pinned float/date/interval rendering
+are byte-identical to PostgreSQL 16.14. No revision needs a pg18 variant, and no
+`0017` is required for portability.
+
+The one genuine catalogue difference is that PostgreSQL 18 stores NOT NULL as
+`pg_constraint` rows and 16 does not. That is a server-version artifact, not
+something a migration controls, and it is handled in the parity tooling rather
+than in schema. See `../db/AGENTS.md` (*Toolchain and major-version awareness*)
+and `../plans/postgresql-18-migration-rehearsal-2026-08-02.md`, including what
+the rehearsal deliberately did **not** cover (data restore, and Railway itself).

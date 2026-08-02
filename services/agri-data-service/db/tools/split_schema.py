@@ -32,6 +32,11 @@ _ALTER_TARGET = re.compile(r"ALTER TABLE(?:\s+ONLY)?\s+agri\.(?P<rel>\"?[A-Za-z0
 # pg_dump sprinkles these session GUCs between objects; they are not object DDL.
 # We strip them from bodies and set them once in the manifest preamble.
 _SESSION_SET = re.compile(r"(?m)^SET (?:default_tablespace|default_table_access_method) = .*;\n?")
+# pg18's pg_dump brackets its output with \restrict/\unrestrict psql meta-commands.
+# The closing one lands after the final object header, so it would otherwise be
+# swept into the last object file. Stripped here too, so feeding this module a raw
+# pg18 dump file (split_schema.main) behaves like dump_schema.dump_agri.
+_PSQL_META = re.compile(r"(?m)^\\(?:un)?restrict [A-Za-z0-9]+[ \t]*\n?")
 
 # Directory buckets for the on-disk tree.
 PHASES = (
@@ -110,7 +115,7 @@ def parse_blocks(dump: str) -> list[Block]:
         end = matches[i + 1].start() if i + 1 < len(matches) else len(dump)
         body = dump[start:end]
         body = re.sub(r"\n?--\n-- PostgreSQL database dump complete\n--\s*$", "", body)
-        body = _SESSION_SET.sub("", body).strip()
+        body = _PSQL_META.sub("", _SESSION_SET.sub("", body)).strip()
         if body:
             blocks.append(Block(name=m.group("name"), type=m.group("type"), body=body, order=i))
     return blocks

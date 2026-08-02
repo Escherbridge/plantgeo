@@ -101,6 +101,69 @@ inventory in this guide.
 > generated from the migration output, so the parity test (which compares
 > against the migration dump, not a rebuild) is exact.
 
+## Toolchain and major-version awareness
+
+`pg_dump` output is stable only *within* a major version, and `pg_dump` cannot
+dump a server newer than itself. The tree therefore has one **canonical major**,
+`dump_schema.CANONICAL_SERVER_MAJOR` (currently 16, matching the local
+warehouse). Two paths exist and they are deliberately not equal in strength:
+
+- **Canonical major (PostgreSQL 16) -- byte-exact, unchanged.**
+  `test_declarative_tree_matches_migrations` dumps, re-splits, and compares
+  byte-for-byte. It applies **no** normalisation; it asserts the raw dump needs
+  none. `regenerate.py` refuses to run against any other major, so a foreign
+  dump dialect can never be baked into the reviewed source of truth.
+- **Any other major -- normalised, opt-in.**
+  `test_cross_major_tree_matches_migrations` (`AGRI_CROSS_MAJOR_DATABASE_URL`,
+  marker `agri_db_cross_major`) applies exactly two enumerated rules and then
+  requires the same byte-exact match.
+
+The two rules, and why each is narrow enough to trust:
+
+1. **`\restrict` / `\unrestrict` markers (pg18+).** psql meta-commands, not
+   DDL, carrying a randomly generated token that differs every run, so they can
+   never be compared. Stripped in `dump_schema.dump_agri` and again in
+   `split_schema.parse_blocks` (the closing marker sits after the final object
+   header and would otherwise be swept into the last object's file).
+2. **Inline NOT NULL constraint names (pg18+).** PostgreSQL 18 stores NOT NULL
+   as real `pg_constraint` rows (722 of them in `agri`; PostgreSQL 16 stores
+   none), and its `pg_dump` prints an explicit `CONSTRAINT <name>` whenever the
+   stored name is not the one a restore would derive
+   (`<table>_<column>_not_null`) -- here, 14 cases: 6 names truncated at 63
+   characters and 8 inherited by the `job_event_default` partition from its
+   parent. The regex is anchored to a column-level `NOT NULL` and deletes only a
+   *name*, so a NOT NULL appearing or disappearing, a type change, or a
+   table-level constraint still has to match byte-for-byte afterwards.
+
+   **The anchoring alone is not what makes this safe, and must not be relied on
+   as if it were.** The regex is not string-literal aware: a column whose
+   DEFAULT contains text resembling a constraint clause (verified with
+   `DEFAULT ' CONSTRAINT evil NOT NULL'::text`) *is* rewritten by it. What
+   actually holds the guarantee is the **catalogue cross-check** each caller
+   makes. The canonical pg16 path asserts the removed set is *empty*; the
+   cross-major path asserts it *equals* the set of non-derivable
+   `contype = 'n'` rows read independently from that server's catalogue. The
+   injected-literal case above fails both legs loudly (`removed-not-cat=['evil']`
+   plus a tree byte-identity failure). Any future caller of
+   `normalize_named_not_null` **must** pair it with one of those assertions;
+   invoking it bare would silently corrupt a DEFAULT.
+
+   Note also that a pg18 NOT NULL constraint *rename* between two non-derivable
+   names is invisible to this check, and inherently so: pg16 cannot express
+   these names, so the canonical tree holds nothing to drift from. Nothing
+   verifiable is lost, but parity does not cover it.
+
+**What the cross-major check does not prove.** It shows two servers produce the
+same *schema*; it says nothing about data migration, restore, planner behaviour,
+or extension runtime behaviour. See
+`../plans/postgresql-18-migration-rehearsal-2026-08-02.md` for the measured
+evidence and its limits.
+
+When no local client is new enough to dump the foreign server, set
+`AGRI_CROSS_MAJOR_PG_DUMP_ARGV` to a JSON argv that launches the client shipped
+with that server (e.g. `["podman","exec","-i","<container>","pg_dump"]`) and
+`AGRI_CROSS_MAJOR_DUMP_DSN` to the DSN *that* client can reach.
+
 ## Regenerating the tree
 
 Run after any migration that changes schema. Requires the local warehouse (or

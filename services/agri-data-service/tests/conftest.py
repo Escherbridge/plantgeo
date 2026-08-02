@@ -33,10 +33,11 @@ PROTECTED_DATABASE_NAME = "plantgeo"
 AGRI_DB_MARKER = "agri_db"
 AGRI_DB_REHEARSAL_MARKER = "agri_db_migration_rehearsal"
 AGRI_DB_MANUAL_GRANT_MARKER = "agri_db_manual_grant"
+AGRI_DB_CROSS_MAJOR_MARKER = "agri_db_cross_major"
 # Exempt from the strict no-skip gate: each needs a precondition AGRI_TEST_DATABASE_URL
 # alone cannot guarantee (a database deliberately not at head, or an operator-run grant
 # runbook), so a skip here is a structural fact, not an avoidable oversight.
-_EXEMPT_MARKERS = (AGRI_DB_REHEARSAL_MARKER, AGRI_DB_MANUAL_GRANT_MARKER)
+_EXEMPT_MARKERS = (AGRI_DB_REHEARSAL_MARKER, AGRI_DB_MANUAL_GRANT_MARKER, AGRI_DB_CROSS_MAJOR_MARKER)
 _SKIP_REASON = (
     f"set {AGRI_TEST_DATABASE_URL_ENV} to a disposable database migrated to "
     f"Alembic head {EXPECTED_ALEMBIC_HEAD!r} (never the persistent {PROTECTED_DATABASE_NAME!r} warehouse)"
@@ -127,6 +128,12 @@ def pytest_configure(config: pytest.Config) -> None:
         f"{AGRI_DB_REHEARSAL_MARKER}: multi-phase Alembic upgrade rehearsal with its own dedicated "
         f"DSN/phase env vars; exempt from the {AGRI_DB_MARKER} no-silent-skip sweep gate because it "
         "requires a database deliberately not at head",
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{AGRI_DB_CROSS_MAJOR_MARKER}: needs a second PostgreSQL server on a major other than the canonical "
+        "one (AGRI_CROSS_MAJOR_DATABASE_URL), which AGRI_TEST_DATABASE_URL cannot supply; exempt from the "
+        f"{AGRI_DB_MARKER} no-silent-skip sweep gate for that structural reason",
     )
     config.addinivalue_line(
         "markers",
