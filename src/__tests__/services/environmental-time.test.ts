@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  firmsDayRange,
   isFreshObservation,
   parseFirmsObservationTime,
   parseZonedObservationTime,
@@ -30,5 +31,37 @@ describe("environmental observation time", () => {
     expect(
       isFreshObservation("2026-07-19T12:06:00Z", 2 * 60 * 60 * 1_000, now)
     ).toBe(false);
+  });
+});
+
+describe("firmsDayRange", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to 2 when unset", () => {
+    vi.stubEnv("FIRMS_DAY_RANGE", "");
+    expect(firmsDayRange()).toBe(2);
+  });
+
+  it("clamps in-range integers to themselves", () => {
+    vi.stubEnv("FIRMS_DAY_RANGE", "5");
+    expect(firmsDayRange()).toBe(5);
+  });
+
+  it("clamps out-of-range integers to 1-10", () => {
+    vi.stubEnv("FIRMS_DAY_RANGE", "0");
+    expect(firmsDayRange()).toBe(1);
+    vi.stubEnv("FIRMS_DAY_RANGE", "99");
+    expect(firmsDayRange()).toBe(10);
+  });
+
+  it("rejects non-numeric strings instead of truncating them", () => {
+    vi.stubEnv("FIRMS_DAY_RANGE", "5abc");
+    expect(firmsDayRange()).toBe(2);
+    vi.stubEnv("FIRMS_DAY_RANGE", "-3");
+    expect(firmsDayRange()).toBe(2);
+    vi.stubEnv("FIRMS_DAY_RANGE", "3.5");
+    expect(firmsDayRange()).toBe(2);
   });
 });

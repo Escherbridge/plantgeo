@@ -83,3 +83,52 @@ values, availability timestamps, and release checksum.
 This revision refuses effect-tier finalization; a later additive revision must
 persist cluster-bootstrap, placebo, negative-control, and positive
 best-vs-second lower-bound evidence before enabling it.
+
+`20260801_0014` makes hindcast finalization reproducible and its quality gates
+able to fail. `forecast_hindcast_run.actual_knowledge_as_of` stores the
+actuals/knowledge horizon once, at first finalization; every later read —
+regression, residual bands, actual lineage, naive baseline, horizon
+completeness — is pinned to it, so re-verifying a finalized receipt cannot drift
+with the wall clock. Pre-existing finalized rows are backfilled from
+`finalized_at` (the server clock of the transaction that performed those reads)
+or, for `as_recorded` runs, from `simulated_cutoff_time`; that is a
+reconstruction at the resolution of the recorded finalize time, not a byte-exact
+replay of the original `clock_timestamp()`.
+
+New `hindcast_v3` runs redefine `coverage_fraction` as horizon completeness —
+ideal horizon steps with an actual at the pinned knowledge horizon, over
+`horizon_steps` — and must record exactly those steps, so `expected_value_count`
+may be smaller than `horizon_steps` for v3 and stays strictly equal for v1/v2.
+`forecast_quality_policy.min_interval_coverage_fraction` (0.8, the nominal
+coverage of a p10–p90 band) is wired into both `computed_pass` and the
+finalization trigger. `hindcast_v1` and `hindcast_v2` keep their exact
+preimages, their old coverage formula, and no interval gate; only the v3
+preimage carries `plantgeo-forecast-quality-policy-v2`.
+`actual_knowledge_as_of` is deliberately outside every preimage, like
+`finalized_at`: the caller must be able to compute the expected checksum before
+the server sets it.
+
+The same revision corrects the inverted strategy-selection as-of gate
+(`iteration.cutoff_time <= data_cutoff`) into one canonical predicate,
+`agri.strategy_selection_cutoff_violation`, called by both the finalizer and the
+revision's audit pass; finalized receipts violating the corrected rule are
+flagged `audit_state = 'cutoff_violation'` with a reason and flag time rather
+than deleted or grandfathered, and the flag is a one-way post-hoc annotation
+outside the receipt preimage so it cannot invalidate the checksum that records
+what was claimed. `agri.strategy_selection_quality_evidence` adds a hard gate:
+selection finalization requires a finalized `quality_passed` hindcast for the
+backing series (and model, for publishable receipts), available by the receipt's
+issue time. Finally, the four finalizers reject a NULL expected checksum
+explicitly (`NULL !~ pattern` is NULL, not true, so it used to skip the format
+gate), and the receipt-digest dispatch raises on any version outside the known
+set.
+
+**Operator note.** Before `20260801_0014`, `coverage_fraction` was always exactly
+`1.0` (see the defect list above), so any pre-existing `forecast_quality_policy`
+row's `min_coverage_fraction` was never actually exercised as a gate -- it could
+not fail regardless of its stored value. Existing policy rows are not
+renumbered or backfilled by this revision. Before relying on a v3 hindcast run
+against an operational policy row, an operator must review that row's
+`min_coverage_fraction` (and the new `min_interval_coverage_fraction`, backfilled
+to `0.8`) and confirm the threshold is the one actually intended now that both
+gates can fail.

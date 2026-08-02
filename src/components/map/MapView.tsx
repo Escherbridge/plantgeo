@@ -85,6 +85,19 @@ export default function MapView() {
 
     mapRef.current = m;
 
+    m.on("error", (e) => {
+      // Protomaps prunes old daily builds; an expired archive 404s without CORS
+      // headers, which MapLibre reports only as "Failed to fetch" (see the note
+      // above DEFAULT_PMTILES_ARCHIVE_URL in src/lib/map/sources.ts). Name the
+      // actual fix so a blank map is diagnosable instead of a silent failure.
+      console.error(
+        "MapLibre reported a load error. If the basemap is blank, the pinned " +
+          "Protomaps build may have expired -- set NEXT_PUBLIC_PMTILES_URL to a " +
+          "current archive.",
+        e.error
+      );
+    });
+
     m.addControl(new maplibregl.NavigationControl({ visualizePitch: true }));
     m.addControl(new maplibregl.ScaleControl({ maxWidth: 200 }));
     m.addControl(

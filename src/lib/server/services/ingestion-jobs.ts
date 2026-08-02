@@ -5,6 +5,7 @@ import { getStreamflowGauges } from "./usgs-water";
 import { getCurrentWeather } from "./weather";
 import { fetchWfigsFirePerimeters } from "./wfigs-fire-perimeters";
 import {
+  firmsDayRange,
   isFreshObservation,
   parseFirmsObservationTime,
 } from "./environmental-time";
@@ -14,7 +15,7 @@ const WATER_GAUGES_LAYER_ID =
   process.env.WATER_GAUGES_LAYER_ID ?? "water-gauges";
 const WEATHER_LAYER_ID = process.env.WEATHER_LAYER_ID ?? "weather-observations";
 const FIRE_PERIMETERS_LAYER_ID =
-  process.env.FIRES_LAYER_ID ?? "fire-perimeters";
+  process.env.FIRE_PERIMETERS_LAYER_ID ?? "fire-perimeters";
 const MAX_SOURCE_RECORDS = 5_000;
 /** 3x3 grid keeps a bounded fan-out into Open-Meteo per INGEST_BBOX. */
 const WEATHER_SAMPLE_GRID = 3;
@@ -85,7 +86,7 @@ function firmsObservationId(
 /** Fetches bounded FIRMS observations and writes idempotent source events. */
 export async function runFireIngestionJob(
   bbox?: string,
-  dayRange = 1
+  dayRange = firmsDayRange()
 ): Promise<IngestionJobResult> {
   const area = resolveBoundedBbox(bbox);
   if (!area) {

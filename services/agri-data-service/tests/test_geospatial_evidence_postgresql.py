@@ -1,28 +1,18 @@
-"""Optional disposable PostgreSQL 16+ proof for revision 0009 geometry guards."""
-
-import os
+"""Disposable PostgreSQL 16+ proof for the 0009 geometry guards (additive, still enforced at head)."""
 
 import psycopg2
 import pytest
 
-DATABASE_URL = os.getenv("GEOSPATIAL_EVIDENCE_DATABASE_URL")
-DATABASE_PREFIX = "plantgeo_geospatial_test_"
 MIN_SUPPORTED_SERVER_VERSION_NUM = 160000
 MAX_SUPPORTED_SERVER_VERSION_NUM = 190000
 
 
-def _connection() -> psycopg2.extensions.connection:
-    assert DATABASE_URL is not None
-    connection = psycopg2.connect(DATABASE_URL)
+def _connection(dsn: str) -> psycopg2.extensions.connection:
+    connection = psycopg2.connect(dsn)
     with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT current_database(), current_setting('server_version_num')::integer, "
-            "(SELECT version_num FROM public.alembic_version)"
-        )
-        database_name, server_version_num, revision = cursor.fetchone()
-    assert database_name.startswith(DATABASE_PREFIX)
+        cursor.execute("SELECT current_setting('server_version_num')::integer")
+        (server_version_num,) = cursor.fetchone()
     assert MIN_SUPPORTED_SERVER_VERSION_NUM <= server_version_num < MAX_SUPPORTED_SERVER_VERSION_NUM
-    assert revision == "20260723_0009"
     return connection
 
 
@@ -58,12 +48,8 @@ def _expect_geometry_rejection(
     cursor.execute("ROLLBACK TO SAVEPOINT rejected_geometry")
 
 
-@pytest.mark.skipif(
-    not DATABASE_URL,
-    reason="set a guarded disposable GEOSPATIAL_EVIDENCE_DATABASE_URL",
-)
-def test_revision_0009_rejects_invalid_empty_3d_and_nonpolygon_subject_geometry() -> None:
-    connection = _connection()
+def test_revision_0009_rejects_invalid_empty_3d_and_nonpolygon_subject_geometry(agri_db_dsn: str) -> None:
+    connection = _connection(agri_db_dsn)
     try:
         with connection.cursor() as cursor:
             cursor.execute(

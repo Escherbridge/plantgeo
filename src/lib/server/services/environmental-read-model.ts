@@ -3,6 +3,7 @@ import { db } from "@/lib/server/db";
 import { droughtData, features, layers } from "@/lib/server/db/schema";
 import type { GroundwaterWell, WaterGauge } from "./usgs-water";
 import {
+  firmsDayRange,
   isFreshObservation,
   parseFirmsObservationTime,
   parseZonedObservationTime,
@@ -73,10 +74,10 @@ function finiteNumber(value: unknown): number | null {
 /** Reads bounded fire observations already accepted into the platform store. */
 export async function getPublishedFireDetections(
   bbox?: string,
-  dayRange = 1
+  dayRange = firmsDayRange()
 ): Promise<GeoJSON.FeatureCollection<GeoJSON.Point>> {
   const area = bbox ? parseBbox(bbox) : null;
-  const since = new Date(Date.now() - Math.min(10, Math.max(1, dayRange)) * 86_400_000);
+  const since = new Date(Date.now() - dayRange * 86_400_000);
   const rows = await db
     .select({ properties: features.properties })
     .from(features)
@@ -106,7 +107,7 @@ export async function getPublishedFireDetections(
       !properties ||
       !point ||
       !observedAt ||
-      !isFreshObservation(observedAt, Math.min(10, Math.max(1, dayRange)) * 86_400_000)
+      !isFreshObservation(observedAt, dayRange * 86_400_000)
     ) {
       continue;
     }

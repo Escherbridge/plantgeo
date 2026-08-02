@@ -85,9 +85,9 @@ reference not-yet-created objects, matching pg_dump.
 - `test_manifest_matches_tree` (no database) — `manifest.sql` references exactly
   the files on disk and every file carries the generated banner.
 - `test_declarative_tree_matches_migrations` (set
-  `SCHEMA_PARITY_DATABASE_URL` to a head-migrated disposable database) —
-  `pg_dump`s that database, re-splits it, and asserts **byte-identical** to the
-  committed tree.
+  `AGRI_TEST_DATABASE_URL` to a head-migrated disposable database, see
+  `tests/conftest.py`) — `pg_dump`s that database, re-splits it, and asserts
+  **byte-identical** to the committed tree.
 
 Proven separately at build time: applying `manifest.sql` to an empty database
 rebuilds an object inventory identical to the migration-built database; the
@@ -117,6 +117,23 @@ head`, captures the DDL, rewrites `db/agri/**` + `manifest.sql`, and drops the
 disposable database. `pg_dump` output is stable within a major version; the
 parity test pins the comparison to the same toolchain and normalises only the
 version banner.
+
+## Hindcast knowledge pin and quality gates
+
+Revision `20260801_0014` stores the actuals/knowledge horizon on
+`forecast_hindcast_run.actual_knowledge_as_of` at first finalization and pins
+every later read to it, so a finalized receipt re-verifies identically no matter
+when the audit runs. `hindcast_v3` redefines `coverage_fraction` as horizon
+completeness (ideal horizon steps with an actual at that pinned horizon, over
+`horizon_steps`) and wires
+`forecast_quality_policy.min_interval_coverage_fraction` into the pass decision;
+`hindcast_v1`/`hindcast_v2` receipts keep their exact preimages and their old
+gate. Two reusable predicates,
+`agri.strategy_selection_cutoff_violation` and
+`agri.strategy_selection_quality_evidence`, are the single definitions of the
+corrected as-of rule and of the "backing hindcast passed its policy"
+requirement; the finalizer, the audit flagging pass, and the tests all call
+them. See `../alembic/AGENTS.md` for the full rationale.
 
 ## Strategy-selection evidence
 

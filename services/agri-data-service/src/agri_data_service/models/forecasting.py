@@ -334,6 +334,7 @@ class ForecastQualityPolicy(Base, UUIDMixin):
     min_training_points: Mapped[int] = mapped_column(Integer, nullable=False)
     min_backtest_points: Mapped[int] = mapped_column(Integer, nullable=False)
     min_coverage_fraction: Mapped[float] = mapped_column(Float, nullable=False)
+    min_interval_coverage_fraction: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.8"))
     max_mae: Mapped[float | None] = mapped_column(Float)
     max_rmse: Mapped[float | None] = mapped_column(Float)
     max_mape: Mapped[float | None] = mapped_column(Float)
@@ -352,6 +353,10 @@ class ForecastQualityPolicy(Base, UUIDMixin):
         CheckConstraint(
             "min_coverage_fraction > 0 AND min_coverage_fraction <= 1",
             name="coverage",
+        ),
+        CheckConstraint(
+            "min_interval_coverage_fraction > 0 AND min_interval_coverage_fraction <= 1",
+            name="interval_coverage",
         ),
         CheckConstraint(
             "(max_mae IS NULL OR max_mae >= 0) AND (max_rmse IS NULL OR max_rmse >= 0) "
@@ -499,7 +504,7 @@ class ForecastHindcastRun(Base, UUIDMixin):
     model_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     parameter_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     receipt_digest_version: Mapped[str] = mapped_column(
-        String(32), nullable=False, server_default=text("'hindcast_v2'")
+        String(32), nullable=False, server_default=text("'hindcast_v3'")
     )
     status: Mapped[str] = mapped_column(String(24), nullable=False, server_default=text("'staging'"))
     quality_passed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
@@ -511,6 +516,7 @@ class ForecastHindcastRun(Base, UUIDMixin):
     mape: Mapped[float | None] = mapped_column(Float)
     coverage_fraction: Mapped[float | None] = mapped_column(Float)
     interval_coverage_fraction: Mapped[float | None] = mapped_column(Float)
+    actual_knowledge_as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     receipt_checksum: Mapped[str | None] = mapped_column(String(64))
     recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -535,7 +541,9 @@ class ForecastHindcastRun(Base, UUIDMixin):
             name="calibration_horizon",
         ),
         CheckConstraint(
-            "horizon_steps > 0 AND expected_value_count = horizon_steps AND step_interval > INTERVAL '0'",
+            "horizon_steps > 0 AND step_interval > INTERVAL '0' "
+            "AND expected_value_count > 0 AND expected_value_count <= horizon_steps "
+            "AND (receipt_digest_version = 'hindcast_v3' OR expected_value_count = horizon_steps)",
             name="horizon",
         ),
         CheckConstraint(
@@ -553,8 +561,12 @@ class ForecastHindcastRun(Base, UUIDMixin):
             name="checksums",
         ),
         CheckConstraint(
-            "receipt_digest_version IN ('hindcast_v1', 'hindcast_v2')",
+            "receipt_digest_version IN ('hindcast_v1', 'hindcast_v2', 'hindcast_v3')",
             name="receipt_digest_version",
+        ),
+        CheckConstraint(
+            "status <> 'finalized' OR actual_knowledge_as_of IS NOT NULL",
+            name="knowledge_pin",
         ),
         CheckConstraint("status IN ('staging', 'finalized')", name="status"),
         CheckConstraint(

@@ -49,6 +49,26 @@ export function parseFirmsObservationTime(
   return parsed.toISOString();
 }
 
+const STRICT_NONNEGATIVE_INTEGER = /^\d+$/;
+
+/**
+ * FIRMS lookback window in days (FIRMS_DAY_RANGE, clamped 1-10, default 2).
+ * VIIRS NRT lags hours behind and day windows roll at UTC midnight, so a
+ * 1-day window is empty during early-UTC hours.
+ *
+ * This is the single source of truth for the FIRMS day-range default and
+ * clamp: callers pass its return value straight through rather than
+ * re-implementing the clamp themselves. `FIRMS_DAY_RANGE` must be a plain
+ * non-negative integer string (`/^\d+$/`); anything else -- empty, negative,
+ * or trailing garbage like `"5abc"` that `parseInt` would silently truncate
+ * -- falls back to the default instead of being partially accepted.
+ */
+export function firmsDayRange(): number {
+  const raw = process.env.FIRMS_DAY_RANGE?.trim() ?? "";
+  if (!STRICT_NONNEGATIVE_INTEGER.test(raw)) return 2;
+  return Math.min(10, Math.max(1, Number.parseInt(raw, 10)));
+}
+
 /** Rejects stale observations and implausible future timestamps. */
 export function isFreshObservation(
   observedAt: string,

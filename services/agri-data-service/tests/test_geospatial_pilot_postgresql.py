@@ -1,8 +1,12 @@
-"""Disposable PostgreSQL proof for the governed Boise pilot writer."""
+"""Disposable PostgreSQL proof for the governed Boise pilot writer.
+
+Local-dev-only: the plan file's ``capture_base`` (``.agri-local-runs/``) is
+gitignored, so this test only runs where that local capture already exists;
+it is not wired into CI (see ``.github/workflows/ci.yml``).
+"""
 
 # ruff: noqa: PLR2004
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from agri_data_service.execution.geospatial_pilot import ingest_boise_intervention_pilot
 
-DATABASE_URL = os.getenv("GEOSPATIAL_PILOT_DATABASE_URL")
-DATABASE_PREFIX = "plantgeo_geospatial_test_"
 PROTECTED_COUNT_SQL = {
     "forecast_run": text("SELECT count(*) FROM agri.forecast_run"),
     "forecast_hindcast_run": text("SELECT count(*) FROM agri.forecast_hindcast_run"),
@@ -45,24 +47,24 @@ async def _protected_state(connection: Any) -> dict[str, int]:
     return result
 
 
+@pytest.mark.agri_db_manual_grant
 @pytest.mark.asyncio
-@pytest.mark.skipif(
-    not DATABASE_URL,
-    reason="set a guarded disposable GEOSPATIAL_PILOT_DATABASE_URL",
-)
-async def test_pilot_writer_is_loader_scoped_idempotent_and_nonpublishing() -> None:
-    assert DATABASE_URL is not None
+async def test_pilot_writer_is_loader_scoped_idempotent_and_nonpublishing(agri_db_async_dsn: str) -> None:
     service_root = Path(__file__).resolve().parents[1]
     repository_root = service_root.parents[1]
     plan_path = service_root / "plans" / "boise-intervention-capture-v1.json"
     capture_base = repository_root / ".agri-local-runs" / "north-america-intervention"
-    engine = create_async_engine(DATABASE_URL)
+    engine = create_async_engine(agri_db_async_dsn)
     try:
         async with engine.begin() as connection:
-            database_name = await connection.scalar(text("SELECT current_database()"))
-            revision = await connection.scalar(text("SELECT version_num FROM public.alembic_version"))
-            assert str(database_name).startswith(DATABASE_PREFIX)
-            assert revision == "20260723_0009"
+            granted = await connection.scalar(
+                text("SELECT has_table_privilege('plantgeo_loader', 'agri.normalized_source_feature', 'INSERT')")
+            )
+            if not granted:
+                pytest.skip(
+                    "agri.normalized_source_feature grants for plantgeo_loader are missing; run "
+                    "infra/local-warehouse/grant-resolution-aware-loader.sql against this database first"
+                )
             before = await _protected_state(connection)
             await connection.execute(text("SET LOCAL ROLE plantgeo_loader"))
             assert await connection.scalar(text("SELECT current_user")) == "plantgeo_loader"

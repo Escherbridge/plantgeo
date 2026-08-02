@@ -31,7 +31,10 @@ CREATE FUNCTION agri.require_strategy_initial_state() RETURNS trigger
             ELSIF TG_TABLE_NAME = 'strategy_selection_receipt' THEN
                 IF NEW.status <> 'staging'
                    OR NEW.receipt_checksum IS NOT NULL
-                   OR NEW.finalized_at IS NOT NULL THEN
+                   OR NEW.finalized_at IS NOT NULL
+                   OR NEW.audit_state <> 'clear'
+                   OR NEW.audit_reason IS NOT NULL
+                   OR NEW.audit_flagged_at IS NOT NULL THEN
                     RAISE EXCEPTION 'strategy_selection_receipt must be inserted in staging state';
                 END IF;
             ELSE

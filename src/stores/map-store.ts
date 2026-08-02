@@ -25,9 +25,10 @@ interface MapState {
   resetView: () => void;
 }
 
-const DEFAULT_VIEWPORT: Viewport = {
-  longitude: -120.7401,
-  latitude: 47.7511,
+// Boise region: matches the INGEST_BBOX coverage area so the map opens on data.
+export const DEFAULT_VIEWPORT: Viewport = {
+  longitude: -116.2,
+  latitude: 43.6,
   zoom: 7,
   bearing: 0,
   pitch: 0,

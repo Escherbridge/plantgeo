@@ -121,9 +121,7 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL_SYNC: postgresql+psycopg2://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
-      FORECAST_TEST_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
-      INTERVENTION_PARENT_GUARD_TEST_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
-      SCHEMA_PARITY_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
+      AGRI_TEST_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
 
     steps:
       - name: Checkout
@@ -164,37 +162,22 @@ jobs:
           ORDER BY extname;
           SQL
 
-      - name: Migrate disposable database through 0008
-        run: uv run alembic upgrade 20260722_0008
-
-      - name: Run forecast PostgreSQL contract
-        run: uv run pytest tests/test_forecasting_postgresql.py -q
-
-      - name: Migrate contract database to current head
+      - name: Migrate disposable database to current head
         run: uv run alembic upgrade head
 
-      - name: Create current-head signal-evaluation database
-        working-directory: .
-        run: >-
-          docker exec "${{ job.services.postgres.id }}"
-          createdb --username postgres plantgeo_signal_eval_test_ci
-
-      - name: Enable extensions for signal-evaluation database
+      - name: Create the reviewed loader role for the disposable database
         shell: bash
         run: |
           docker exec -i "${{ job.services.postgres.id }}" \
-            psql --set ON_ERROR_STOP=1 --username postgres \
-            --dbname plantgeo_signal_eval_test_ci <<'SQL'
-          CREATE EXTENSION IF NOT EXISTS postgis;
-          CREATE EXTENSION IF NOT EXISTS timescaledb;
-          CREATE EXTENSION IF NOT EXISTS vector;
-          CREATE EXTENSION IF NOT EXISTS pgcrypto;
+            psql --set ON_ERROR_STOP=1 --username postgres --dbname plantgeo_forecast_test_ci <<'SQL'
+          DO $$
+          BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'plantgeo_loader') THEN
+                  CREATE ROLE plantgeo_loader LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+              END IF;
+          END
+          $$;
           SQL
-
-      - name: Migrate signal-evaluation database to current head
-        env:
-          DATABASE_URL_SYNC: postgresql+psycopg2://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_signal_eval_test_ci
-        run: uv run alembic upgrade head
 
       - name: Provide pinned PostgreSQL 16 schema-dump tooling
         env:
@@ -208,16 +191,7 @@ jobs:
           "$RUNNER_TEMP/plantgeo-pg16-bin/pg_dump" --version | grep -E 'PostgreSQL 16([. ]|$)'
 
       - name: Run governed PostgreSQL contracts
-        env:
-          FORECAST_ITERATION_TEST_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_forecast_test_ci
-          SIGNAL_EVAL_TEST_DATABASE_URL: postgresql://postgres:forecast-ci-only@127.0.0.1:5432/plantgeo_signal_eval_test_ci
-        run: >-
-          uv run pytest
-          tests/test_forecast_iteration_postgresql.py
-          tests/test_signal_evaluation_postgresql.py
-          tests/test_intervention_parent_guard_postgresql.py
-          tests/test_declarative_schema_parity.py
-          -q
+        run: uv run pytest -q
 
       - name: Create v1 upgrade rehearsal database
         working-directory: .
@@ -262,7 +236,5 @@ jobs:
         run: |
           docker exec "${{ job.services.postgres.id }}" \
             dropdb --force --if-exists --username postgres plantgeo_forecast_test_upgrade_ci
-          docker exec "${{ job.services.postgres.id }}" \
-            dropdb --force --if-exists --username postgres plantgeo_signal_eval_test_ci
           docker exec "${{ job.services.postgres.id }}" \
             dropdb --force --if-exists --username postgres plantgeo_forecast_test_ci

@@ -5,10 +5,28 @@
 -- db/tools/regenerate.py; the schema-parity test guards drift.
 
 CREATE FUNCTION agri.forecast_hindcast_receipt_checksum(p_hindcast_run_id uuid) RETURNS character varying
-    LANGUAGE sql STABLE
+    LANGUAGE plpgsql STABLE
     SET "TimeZone" TO 'UTC'
     SET "IntervalStyle" TO 'iso_8601'
+    SET "DateStyle" TO 'ISO, MDY'
+    SET extra_float_digits TO '1'
     AS $$
+        DECLARE
+            digest_version varchar;
+            computed varchar;
+        BEGIN
+            SELECT run.receipt_digest_version
+              INTO digest_version
+              FROM agri.forecast_hindcast_run AS run
+             WHERE run.id = p_hindcast_run_id;
+            IF NOT FOUND THEN
+                RETURN NULL;
+            END IF;
+            IF digest_version NOT IN ('hindcast_v1', 'hindcast_v2', 'hindcast_v3') THEN
+                RAISE EXCEPTION
+                    'unsupported hindcast receipt digest version: %', digest_version;
+            END IF;
+
             SELECT encode(public.digest(
                 CASE run.receipt_digest_version
                     WHEN 'hindcast_v1' THEN concat_ws('|',
@@ -79,14 +97,63 @@ CREATE FUNCTION agri.forecast_hindcast_receipt_checksum(p_hindcast_run_id uuid) 
                             WHERE value.hindcast_run_id = run.id
                         ), '[]'::jsonb)
                     )::text
+                    WHEN 'hindcast_v3' THEN jsonb_build_array(
+                        'plantgeo-forecast-hindcast-receipt-v3',
+                        run.hindcast_key,
+                        run.forecast_run_id::text,
+                        run.series_id::text,
+                        series.series_key,
+                        parent.model_id::text,
+                        model.model_key,
+                        model.model_version,
+                        parent.quality_policy_id::text,
+                        policy.policy_key,
+                        agri.forecast_quality_policy_contract_v2(policy),
+                        run.release_set_id::text,
+                        to_char(run.simulated_cutoff_time AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+                        to_char(run.uncertainty_calibration_cutoff_time AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+                        run.horizon_steps::text,
+                        run.step_interval::text,
+                        run.minimum_training_points::text,
+                        run.training_point_count::text,
+                        run.expected_value_count::text,
+                        run.availability_mode,
+                        run.input_release_checksum,
+                        run.model_checksum,
+                        run.parameter_checksum,
+                        coalesce((
+                            SELECT jsonb_agg(
+                                jsonb_build_array(
+                                    value.horizon_step::text,
+                                    to_char(value.valid_time AT TIME ZONE 'UTC',
+                                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+                                    to_char(value.actual_data_available_at AT TIME ZONE 'UTC',
+                                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+                                    value.value_checksum
+                                ) ORDER BY value.horizon_step
+                            )
+                            FROM agri.forecast_hindcast_value AS value
+                            WHERE value.hindcast_run_id = run.id
+                        ), '[]'::jsonb)
+                    )::text
+                    ELSE NULL
                 END,
                 'sha256'
             ), 'hex')::varchar
-            FROM agri.forecast_hindcast_run AS run
-            INNER JOIN agri.forecast_run AS parent ON parent.id = run.forecast_run_id
-            INNER JOIN agri.forecast_series AS series ON series.id = run.series_id
-            INNER JOIN agri.forecast_model AS model ON model.id = parent.model_id
-            INNER JOIN agri.forecast_quality_policy AS policy
-                ON policy.id = parent.quality_policy_id
-            WHERE run.id = p_hindcast_run_id
+              INTO STRICT computed
+              FROM agri.forecast_hindcast_run AS run
+              INNER JOIN agri.forecast_run AS parent ON parent.id = run.forecast_run_id
+              INNER JOIN agri.forecast_series AS series ON series.id = run.series_id
+              INNER JOIN agri.forecast_model AS model ON model.id = parent.model_id
+              INNER JOIN agri.forecast_quality_policy AS policy
+                  ON policy.id = parent.quality_policy_id
+             WHERE run.id = p_hindcast_run_id;
+            IF computed IS NULL THEN
+                RAISE EXCEPTION
+                    'hindcast receipt preimage is undefined for digest version %', digest_version;
+            END IF;
+            RETURN computed;
+        END
         $$;

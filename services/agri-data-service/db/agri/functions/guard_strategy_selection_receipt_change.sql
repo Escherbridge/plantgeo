@@ -8,8 +8,66 @@ CREATE FUNCTION agri.guard_strategy_selection_receipt_change() RETURNS trigger
     LANGUAGE plpgsql
     AS $_$
         BEGIN
-            IF TG_OP = 'DELETE'
-               OR OLD.status <> 'staging'
+            IF TG_OP = 'DELETE' THEN
+                RAISE EXCEPTION 'only verified staging-to-finalized strategy selection transition is allowed';
+            END IF;
+            IF OLD.status = 'finalized' THEN
+                -- The only write a finalized receipt accepts is a one-way audit flag; the
+                -- receipt, its checksum, and its lineage stay byte-identical.
+                IF NEW.status <> 'finalized'
+                   OR OLD.audit_state <> 'clear'
+                   OR NEW.audit_state <> 'cutoff_violation'
+                   OR NEW.audit_reason IS NULL
+                   OR NEW.audit_flagged_at IS NULL
+                   OR ROW(
+                        NEW.id,
+                        NEW.selection_key,
+                        NEW.analysis_subject_id,
+                        NEW.forecast_receipt_id,
+                        NEW.forecast_iteration_id,
+                        NEW.feature_snapshot_id,
+                        NEW.training_run_id,
+                        NEW.selection_policy_id,
+                        NEW.issue_time,
+                        NEW.applicability_start,
+                        NEW.applicability_end,
+                        NEW.data_cutoff,
+                        NEW.execution_mode,
+                        NEW.claim_tier,
+                        NEW.decision_state,
+                        NEW.abstention_reason,
+                        NEW.candidate_count,
+                        NEW.receipt_checksum,
+                        NEW.finalized_at,
+                        NEW.created_at
+                   ) IS DISTINCT FROM ROW(
+                        OLD.id,
+                        OLD.selection_key,
+                        OLD.analysis_subject_id,
+                        OLD.forecast_receipt_id,
+                        OLD.forecast_iteration_id,
+                        OLD.feature_snapshot_id,
+                        OLD.training_run_id,
+                        OLD.selection_policy_id,
+                        OLD.issue_time,
+                        OLD.applicability_start,
+                        OLD.applicability_end,
+                        OLD.data_cutoff,
+                        OLD.execution_mode,
+                        OLD.claim_tier,
+                        OLD.decision_state,
+                        OLD.abstention_reason,
+                        OLD.candidate_count,
+                        OLD.receipt_checksum,
+                        OLD.finalized_at,
+                        OLD.created_at
+                   ) THEN
+                    RAISE EXCEPTION
+                        'a finalized strategy selection accepts only a one-way cutoff_violation audit flag';
+                END IF;
+                RETURN NEW;
+            END IF;
+            IF OLD.status <> 'staging'
                OR NEW.status <> 'finalized'
                OR ROW(
                     NEW.id,
@@ -29,6 +87,9 @@ CREATE FUNCTION agri.guard_strategy_selection_receipt_change() RETURNS trigger
                     NEW.decision_state,
                     NEW.abstention_reason,
                     NEW.candidate_count,
+                    NEW.audit_state,
+                    NEW.audit_reason,
+                    NEW.audit_flagged_at,
                     NEW.created_at
                ) IS DISTINCT FROM ROW(
                     OLD.id,
@@ -48,6 +109,9 @@ CREATE FUNCTION agri.guard_strategy_selection_receipt_change() RETURNS trigger
                     OLD.decision_state,
                     OLD.abstention_reason,
                     OLD.candidate_count,
+                    OLD.audit_state,
+                    OLD.audit_reason,
+                    OLD.audit_flagged_at,
                     OLD.created_at
                )
                OR NEW.receipt_checksum !~ '^[0-9a-f]{64}$'

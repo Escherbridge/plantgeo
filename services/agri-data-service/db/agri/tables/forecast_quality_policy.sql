@@ -17,7 +17,9 @@ CREATE TABLE agri.forecast_quality_policy (
     required_quantiles double precision[] DEFAULT ARRAY[(0.1)::double precision, (0.5)::double precision, (0.9)::double precision] NOT NULL,
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    min_interval_coverage_fraction double precision DEFAULT 0.8 NOT NULL,
     CONSTRAINT ck_forecast_quality_policy_coverage CHECK (((min_coverage_fraction > (0)::double precision) AND (min_coverage_fraction <= (1)::double precision))),
+    CONSTRAINT ck_forecast_quality_policy_interval_coverage CHECK (((min_interval_coverage_fraction > (0)::double precision) AND (min_interval_coverage_fraction <= (1)::double precision))),
     CONSTRAINT ck_forecast_quality_policy_nonnegative_limits CHECK ((((max_mae IS NULL) OR (max_mae >= (0)::double precision)) AND ((max_rmse IS NULL) OR (max_rmse >= (0)::double precision)) AND ((max_mape IS NULL) OR (max_mape >= (0)::double precision)) AND ((min_skill_score IS NULL) OR (min_skill_score <= (1)::double precision)))),
     CONSTRAINT ck_forecast_quality_policy_positive_counts CHECK (((min_training_points >= 3) AND (min_backtest_points > 0))),
     CONSTRAINT ck_forecast_quality_policy_quantiles CHECK ((agri.forecast_quantiles_valid(required_quantiles) AND ((0.5)::double precision = ANY (required_quantiles))))

@@ -182,9 +182,9 @@ ORDER BY available.name;
 - After rehearsal, assert the single Alembic head is `20260725_0013`, readiness
   expects `20260725_0013`, all four extensions remain installed, the
   representative forecast PostgreSQL contract passes with
-  `FORECAST_TEST_DATABASE_URL` pointed only at a disposable database named
-  `plantgeo_forecast_test*`, and the constrained-loader and declarative-schema
-  contracts pass against that head.
+  `AGRI_TEST_DATABASE_URL` pointed only at a disposable database migrated to
+  that head, and the constrained-loader and declarative-schema contracts pass
+  against that same database (see `services/agri-data-service/tests/conftest.py`).
 - Capture migration SQL/logs, elapsed time, lock observations, and before/after
   schema fingerprints. Set bounded lock and statement timeouts and stop on the
   first error. Never run migrations from a long-lived service start command.

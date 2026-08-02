@@ -3,7 +3,10 @@
 Three independent read-only lanes: Codex CLI (31 findings, whole repo), Claude R1
 (25, frontend+infra), Claude R2 (25, agri-data-service). Items found by 2+ lanes
 are marked ✔✔ (cross-confirmed). Singleton CRITICALs went to an adversarial
-Codex verification pass; results recorded below when available.
+Codex verification pass; that run died without output (stdin hang). Instead:
+R2#2 (vacuous coverage gate) and R2#5 (inverted cutoff) were empirically
+confirmed 2026-08-01 by migration-0014 tests that fail on the old behavior;
+R2#1, R1#2, R1#7 are confirmed-or-refuted by the wave that fixes each.
 
 ## P0 — gate production cutover on these
 
@@ -105,8 +108,18 @@ block; generated db/agri tree discipline; NotImplementedError downgrades.
 ## Sequencing
 
 1. Test-infra consolidation (makes everything verifiable) →
-2. Semantic decisions needing the operator: vacuous gate intent (R2#2), strategy
-   cutoff direction (R2#5), quality_passed evidence-vs-gate (R2#12) →
+2. Semantic decisions — RESOLVED by operator 2026-08-01:
+   - R2#2 coverage gate: BOTH — redefine `coverage_fraction` as horizon
+     completeness (actuals available ÷ ideal horizon steps) AND add
+     `min_interval_coverage_fraction` policy column wired into `computed_pass`;
+     existing policy rows need both values backfilled.
+   - R2#5 cutoff gate: flip `>=` to `<=` at
+     `finalize_strategy_selection_receipt.sql:79`; migration flags existing
+     receipts violating the corrected rule as 'cutoff_violation' (no silent
+     grandfathering, no deletion — audit trail shows tainted selections).
+   - R2#12 quality_passed: HARD GATE — `finalize_strategy_selection_receipt`
+     requires a finalized hindcast with `quality_passed = true` for the backing
+     model/series. →
 3. Migration 0014: hindcast knowledge pinning + GUC pinning + NULL-checksum
    guards + digest qualification →
 4. Migration 0015: SECURITY DEFINER owner lockdown →

@@ -86,10 +86,11 @@ it does not replace them. It inherits `engineering-principles.md`.
 
 - Each behavior change ships focused `pytest` coverage of success **and** the
   failure/timeout/stale/partial path, boundary/leakage, and role/scope enforcement.
-- Database invariants use the disposable-PostgreSQL contract tests (env-gated,
-  e.g. `FORECAST_ITERATION_TEST_DATABASE_URL`, `SCHEMA_PARITY_DATABASE_URL`);
-  never point them at the persistent `plantgeo` warehouse. Mock external services
-  at the boundary; tests must not call live APIs/Redis/Railway.
+- Database invariants use the disposable-PostgreSQL contract tests, gated on the
+  single `AGRI_TEST_DATABASE_URL` env var and its shared `tests/conftest.py`
+  fixture (verifies Alembic head, refuses the persistent `plantgeo` warehouse);
+  never point it at that warehouse. Mock external services at the boundary;
+  tests must not call live APIs/Redis/Railway.
 - After any migration that changes schema, regenerate the declarative tree
   (`db/tools/regenerate.py`) so the parity test stays green.
 - Before ready: `uv run ruff format`, `ruff check src/ tests/`, `mypy src/`, and

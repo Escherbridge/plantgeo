@@ -6,6 +6,10 @@
 
 CREATE FUNCTION agri.finalize_forecast_receipt(p_receipt_id uuid, p_expected_checksum character varying) RETURNS agri.forecast_receipt
     LANGUAGE plpgsql
+    SET "TimeZone" TO 'UTC'
+    SET "DateStyle" TO 'ISO, MDY'
+    SET "IntervalStyle" TO 'postgres'
+    SET extra_float_digits TO '1'
     AS $_$
         DECLARE
             receipt agri.forecast_receipt;
@@ -31,7 +35,7 @@ CREATE FUNCTION agri.finalize_forecast_receipt(p_receipt_id uuid, p_expected_che
             state_valid_to timestamptz;
             state_available_at timestamptz;
         BEGIN
-            IF p_expected_checksum !~ '^[0-9a-f]{64}$' THEN
+            IF p_expected_checksum IS NULL OR p_expected_checksum !~ '^[0-9a-f]{64}$' THEN
                 RAISE EXCEPTION 'receipt checksum must be SHA-256';
             END IF;
             SELECT * INTO receipt

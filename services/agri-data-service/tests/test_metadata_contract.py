@@ -157,8 +157,9 @@ def test_forecasting_plane_is_release_job_and_source_variant_bound() -> None:
         "simulated_cutoff_time",
         "receipt_digest_version",
         "receipt_checksum",
+        "actual_knowledge_as_of",
     } <= set(hindcast.c.keys())
-    assert str(hindcast.c.receipt_digest_version.server_default.arg) == "'hindcast_v2'"
+    assert str(hindcast.c.receipt_digest_version.server_default.arg) == "'hindcast_v3'"
 
 
 def test_forecast_ml_and_preaggregate_metadata_remain_explicitly_gated() -> None:

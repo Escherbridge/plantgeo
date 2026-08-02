@@ -11,13 +11,21 @@ CREATE FUNCTION agri.enforce_forecast_hindcast_finalization_policy() RETURNS tri
             policy agri.forecast_quality_policy;
             actual_calibration_samples bigint;
             current_quality_passed boolean;
-            knowledge_as_of timestamptz;
         BEGIN
             IF NEW.status <> 'finalized' OR OLD.status = 'finalized' THEN
                 RETURN NEW;
             END IF;
-            IF NEW.receipt_digest_version <> 'hindcast_v2' THEN
-                RAISE EXCEPTION 'new hindcast finalizations require receipt digest version hindcast_v2';
+            IF NEW.receipt_digest_version NOT IN ('hindcast_v2', 'hindcast_v3') THEN
+                RAISE EXCEPTION
+                    'hindcast finalization requires receipt digest version hindcast_v2 or hindcast_v3';
+            END IF;
+            IF NEW.actual_knowledge_as_of IS NULL THEN
+                RAISE EXCEPTION 'hindcast finalization must pin its actual-knowledge horizon';
+            END IF;
+            IF NEW.availability_mode = 'as_recorded'
+               AND NEW.actual_knowledge_as_of <> NEW.simulated_cutoff_time THEN
+                RAISE EXCEPTION
+                    'as-recorded hindcast knowledge horizon must equal the simulated cutoff';
             END IF;
 
             SELECT policy_row.*
@@ -32,16 +40,12 @@ CREATE FUNCTION agri.enforce_forecast_hindcast_finalization_policy() RETURNS tri
                 RAISE EXCEPTION 'hindcast quality policy is inactive';
             END IF;
 
-            knowledge_as_of := CASE
-                WHEN NEW.availability_mode = 'as_recorded' THEN NEW.simulated_cutoff_time
-                ELSE clock_timestamp()
-            END;
             SELECT bands.backtest_point_count
               INTO actual_calibration_samples
               FROM agri.forecast_linear_residual_bands(
                     NEW.series_id,
                     NEW.release_set_id,
-                    knowledge_as_of,
+                    NEW.actual_knowledge_as_of,
                     NEW.uncertainty_calibration_cutoff_time,
                     NEW.horizon_steps,
                     NEW.step_interval,
@@ -57,6 +61,11 @@ CREATE FUNCTION agri.enforce_forecast_hindcast_finalization_policy() RETURNS tri
 
             current_quality_passed := NEW.training_point_count >= policy.min_training_points
                 AND NEW.coverage_fraction >= policy.min_coverage_fraction
+                AND (
+                    NEW.receipt_digest_version <> 'hindcast_v3'
+                    OR (NEW.interval_coverage_fraction IS NOT NULL
+                        AND NEW.interval_coverage_fraction >= policy.min_interval_coverage_fraction)
+                )
                 AND (policy.max_mae IS NULL OR NEW.mae <= policy.max_mae)
                 AND (policy.max_rmse IS NULL OR NEW.rmse <= policy.max_rmse)
                 AND (policy.max_mape IS NULL

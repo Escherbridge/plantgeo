@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPublishedFireDetections } from "@/lib/server/services/environmental-read-model";
+import { firmsDayRange } from "@/lib/server/services/environmental-time";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -7,7 +8,7 @@ export const runtime = "nodejs";
 /** Serves accepted fire observations without fetching an upstream provider. */
 export async function GET() {
   try {
-    const data = await getPublishedFireDetections(undefined, 1);
+    const data = await getPublishedFireDetections(undefined, firmsDayRange());
     return NextResponse.json(data, {
       headers: {
         "Cache-Control": "public, max-age=30, s-maxage=300, stale-while-revalidate=600",

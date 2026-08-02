@@ -6,6 +6,10 @@
 
 CREATE FUNCTION agri.finalize_strategy_selection_receipt(p_selection_receipt_id uuid, p_expected_checksum character varying) RETURNS agri.strategy_selection_receipt
     LANGUAGE plpgsql
+    SET "TimeZone" TO 'UTC'
+    SET "DateStyle" TO 'ISO, MDY'
+    SET "IntervalStyle" TO 'postgres'
+    SET extra_float_digits TO '1'
     AS $_$
         DECLARE
             receipt agri.strategy_selection_receipt;
@@ -21,7 +25,7 @@ CREATE FUNCTION agri.finalize_strategy_selection_receipt(p_selection_receipt_id 
             invalid_candidate_count integer;
             computed_checksum varchar;
         BEGIN
-            IF p_expected_checksum !~ '^[0-9a-f]{64}$' THEN
+            IF p_expected_checksum IS NULL OR p_expected_checksum !~ '^[0-9a-f]{64}$' THEN
                 RAISE EXCEPTION 'strategy selection receipt checksum must be SHA-256';
             END IF;
 
@@ -31,6 +35,10 @@ CREATE FUNCTION agri.finalize_strategy_selection_receipt(p_selection_receipt_id 
              FOR UPDATE;
             IF NOT FOUND OR receipt.status NOT IN ('staging', 'finalized') THEN
                 RAISE EXCEPTION 'strategy selection receipt is missing or not eligible for finalization';
+            END IF;
+            IF receipt.audit_state <> 'clear' THEN
+                RAISE EXCEPTION
+                    'strategy selection receipt is flagged % and cannot be finalized', receipt.audit_state;
             END IF;
 
             SELECT * INTO training
@@ -76,9 +84,12 @@ CREATE FUNCTION agri.finalize_strategy_selection_receipt(p_selection_receipt_id 
                      WHERE iteration.id = receipt.forecast_iteration_id
                        AND iteration.status = 'finalized'
                        AND iteration.as_of_time = receipt.issue_time
-                       AND iteration.cutoff_time >= receipt.data_cutoff
                 ) THEN
                     RAISE EXCEPTION 'evaluation-only strategy selection requires its finalized forecast iteration';
+                END IF;
+                IF agri.strategy_selection_cutoff_violation(receipt.id) THEN
+                    RAISE EXCEPTION
+                        'strategy selection forecast iteration cutoff is later than the declared data cutoff';
                 END IF;
             ELSIF NOT EXISTS (
                 SELECT 1
@@ -93,6 +104,16 @@ CREATE FUNCTION agri.finalize_strategy_selection_receipt(p_selection_receipt_id 
                    AND publication.state = 'published'
             ) THEN
                 RAISE EXCEPTION 'publishable strategy selection requires a published finalized forecast receipt';
+            END IF;
+
+            IF NOT agri.strategy_selection_quality_evidence(receipt.id) THEN
+                IF receipt.execution_mode = 'evaluation_only' THEN
+                    RAISE EXCEPTION
+                        'strategy selection requires a finalized quality-passed hindcast for its backing series';
+                ELSE
+                    RAISE EXCEPTION
+                        'strategy selection requires a finalized quality-passed hindcast for its backing series and model';
+                END IF;
             END IF;
 
             SELECT

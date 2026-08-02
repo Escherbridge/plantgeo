@@ -1,4 +1,14 @@
-"""Optional two-phase proof that 0008 preserves a structural finalized v1 row."""
+"""Optional two-phase proof that 0008 preserves a structural finalized v1 row.
+
+Deliberately outside the ``AGRI_TEST_DATABASE_URL`` contract (see
+``tests/conftest.py``): this rehearsal needs a database seeded at revision
+0007 and then upgraded to 0008 mid-test, which is structurally incompatible
+with the single always-at-head governance database every other PostgreSQL
+contract test shares. It keeps its own dedicated
+``FORECAST_V1_UPGRADE_DATABASE_URL``/``FORECAST_V1_UPGRADE_PHASE`` env vars and
+is marked ``agri_db_migration_rehearsal`` so the no-silent-skip sweep gate
+reports but does not fail on it.
+"""
 
 import hashlib
 import os
@@ -67,6 +77,7 @@ def _expected_v1_checksum(cursor: psycopg2.extensions.cursor) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+@pytest.mark.agri_db_migration_rehearsal
 @pytest.mark.skipif(
     not DATABASE_URL or PHASE != "seed",
     reason="set the guarded v1 upgrade database and seed phase",
@@ -212,6 +223,7 @@ def test_seed_structural_finalized_v1_row_at_revision_0007() -> None:
         cursor.execute("SET LOCAL session_replication_role = origin")
 
 
+@pytest.mark.agri_db_migration_rehearsal
 @pytest.mark.skipif(
     not DATABASE_URL or PHASE != "verify",
     reason="set the guarded v1 upgrade database and verify phase",
@@ -234,3 +246,49 @@ def test_revision_0008_preserves_the_structural_finalized_v1_row() -> None:
         assert digest_version == "hindcast_v1"
         assert stored_checksum == expected_checksum
         assert recomputed_checksum == expected_checksum
+
+
+@pytest.mark.agri_db_migration_rehearsal
+@pytest.mark.skipif(
+    not DATABASE_URL or PHASE != "verify_head",
+    reason="set the guarded v1 upgrade database and head-verify phase",
+)
+def test_revision_0014_preserves_the_v1_receipt_and_backfills_its_knowledge_pin() -> None:
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT version_num FROM public.alembic_version")
+        assert cursor.fetchone()[0] == "20260801_0014"
+        expected_checksum = _expected_v1_checksum(cursor)
+        cursor.execute(
+            """
+            SELECT receipt_digest_version, receipt_checksum,
+                   agri.forecast_hindcast_receipt_checksum(id),
+                   actual_knowledge_as_of, finalized_at, availability_mode,
+                   coverage_fraction, quality_passed
+            FROM agri.forecast_hindcast_run
+            WHERE id = %s AND status = 'finalized'
+            """,
+            (HINDCAST_ID,),
+        )
+        (
+            digest_version,
+            stored_checksum,
+            recomputed_checksum,
+            knowledge_as_of,
+            finalized_at,
+            availability_mode,
+            coverage_fraction,
+            quality_passed,
+        ) = cursor.fetchone()
+        assert digest_version == "hindcast_v1"
+        assert stored_checksum == expected_checksum
+        assert recomputed_checksum == expected_checksum
+        assert coverage_fraction == 1
+        assert quality_passed is True
+        if availability_mode == "as_recorded":
+            cursor.execute(
+                "SELECT simulated_cutoff_time FROM agri.forecast_hindcast_run WHERE id = %s",
+                (HINDCAST_ID,),
+            )
+            assert knowledge_as_of == cursor.fetchone()[0]
+        else:
+            assert knowledge_as_of == finalized_at

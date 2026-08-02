@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from http import HTTPStatus
 from typing import Any
 
+import psycopg2
 import pytest
 
 from agri_data_service.routes import health as health_route
@@ -129,7 +130,18 @@ def test_receiver_readiness_requires_exact_historical_identity_sequences() -> No
         "vector",
         "pgcrypto",
     }
-    assert health_route.EXPECTED_ALEMBIC_REVISION == "20260725_0013"
+
+
+def test_expected_alembic_revision_matches_migrated_head_database(agri_db_dsn: str) -> None:
+    """Non-vacuous: compares the readiness constant to the live migrated database, not to itself."""
+    connection = psycopg2.connect(agri_db_dsn)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT version_num FROM public.alembic_version")
+            (revision,) = cursor.fetchone()
+    finally:
+        connection.close()
+    assert revision == health_route.EXPECTED_ALEMBIC_REVISION
 
 
 def test_readiness_contract_enforces_separate_forecast_capabilities() -> None:

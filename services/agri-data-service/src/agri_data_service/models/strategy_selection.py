@@ -313,9 +313,18 @@ class StrategySelectionReceipt(Base, UUIDMixin):
     receipt_checksum: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(24), nullable=False, server_default=text("'staging'"))
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    audit_state: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'clear'"))
+    audit_reason: Mapped[str | None] = mapped_column(Text)
+    audit_flagged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (
+        CheckConstraint(
+            "(audit_state = 'clear' AND audit_reason IS NULL AND audit_flagged_at IS NULL) "
+            "OR (audit_state = 'cutoff_violation' AND status = 'finalized' "
+            "AND audit_reason IS NOT NULL AND audit_flagged_at IS NOT NULL)",
+            name="audit_state",
+        ),
         CheckConstraint(
             "(execution_mode = 'evaluation_only' AND forecast_iteration_id IS NOT NULL "
             "AND forecast_receipt_id IS NULL) OR "

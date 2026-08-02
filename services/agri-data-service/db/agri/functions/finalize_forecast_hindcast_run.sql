@@ -6,6 +6,10 @@
 
 CREATE FUNCTION agri.finalize_forecast_hindcast_run(p_hindcast_run_id uuid, p_expected_checksum character varying) RETURNS agri.forecast_hindcast_run
     LANGUAGE plpgsql
+    SET "TimeZone" TO 'UTC'
+    SET "DateStyle" TO 'ISO, MDY'
+    SET "IntervalStyle" TO 'iso_8601'
+    SET extra_float_digits TO '1'
     AS $_$
         DECLARE
             target agri.forecast_hindcast_run;
@@ -18,6 +22,7 @@ CREATE FUNCTION agri.finalize_forecast_hindcast_run(p_hindcast_run_id uuid, p_ex
             computed_checksum varchar;
             value_count integer;
             invalid_count integer;
+            available_step_count integer;
             computed_mae double precision;
             computed_rmse double precision;
             computed_naive_rmse double precision;
@@ -28,6 +33,10 @@ CREATE FUNCTION agri.finalize_forecast_hindcast_run(p_hindcast_run_id uuid, p_ex
             computed_interval_coverage double precision;
             computed_pass boolean;
         BEGIN
+            IF p_expected_checksum IS NULL OR p_expected_checksum !~ '^[0-9a-f]{64}$' THEN
+                RAISE EXCEPTION 'hindcast receipt checksum must be SHA-256';
+            END IF;
+
             SELECT * INTO target
               FROM agri.forecast_hindcast_run
              WHERE id = p_hindcast_run_id
@@ -35,8 +44,9 @@ CREATE FUNCTION agri.finalize_forecast_hindcast_run(p_hindcast_run_id uuid, p_ex
             IF NOT FOUND OR target.status NOT IN ('staging', 'finalized') THEN
                 RAISE EXCEPTION 'hindcast run is missing or not finalizable';
             END IF;
-            IF p_expected_checksum !~ '^[0-9a-f]{64}$' THEN
-                RAISE EXCEPTION 'hindcast receipt checksum must be SHA-256';
+            IF target.receipt_digest_version NOT IN ('hindcast_v1', 'hindcast_v2', 'hindcast_v3') THEN
+                RAISE EXCEPTION
+                    'unsupported hindcast receipt digest version: %', target.receipt_digest_version;
             END IF;
 
             SELECT * INTO STRICT parent_run FROM agri.forecast_run WHERE id = target.forecast_run_id;
@@ -72,10 +82,16 @@ CREATE FUNCTION agri.finalize_forecast_hindcast_run(p_hindcast_run_id uuid, p_ex
                     OR release.as_of_time > target.simulated_cutoff_time) THEN
                 RAISE EXCEPTION 'as-recorded hindcast inputs were not available at the simulated cutoff';
             END IF;
-            knowledge_as_of := CASE
-                WHEN target.availability_mode = 'as_recorded' THEN target.simulated_cutoff_time
-                ELSE clock_timestamp()
-            END;
+
+            -- Pin the actuals/knowledge horizon once, at first finalization, and reuse the
+            -- stored value on every later re-verification so audits are reproducible.
+            knowledge_as_of := coalesce(
+                target.actual_knowledge_as_of,
+                CASE
+                    WHEN target.availability_mode = 'as_recorded' THEN target.simulated_cutoff_time
+                    ELSE clock_timestamp()
+                END
+            );
 
             WITH evidence AS (
                 SELECT
@@ -107,7 +123,7 @@ CREATE FUNCTION agri.finalize_forecast_hindcast_run(p_hindcast_run_id uuid, p_ex
                 LEFT JOIN LATERAL (
                     SELECT base.*
                     FROM agri.forecast_timeseries_base(
-                        target.release_set_id, clock_timestamp()
+                        target.release_set_id, knowledge_as_of
                     ) AS base
                     WHERE base.series_id = target.series_id
                       AND base.observed_at = value.valid_time
@@ -152,6 +168,18 @@ CREATE FUNCTION agri.finalize_forecast_hindcast_run(p_hindcast_run_id uuid, p_ex
                 RAISE EXCEPTION 'hindcast points failed cutoff, grid, uncertainty, or actual-lineage verification';
             END IF;
 
+            -- Horizon completeness: how much of the declared ideal step grid had an actual
+            -- observation at the pinned knowledge time.
+            SELECT count(DISTINCT step.horizon_step)
+              INTO available_step_count
+              FROM generate_series(1, target.horizon_steps) AS step(horizon_step)
+              INNER JOIN agri.forecast_timeseries_base(
+                    target.release_set_id, knowledge_as_of
+              ) AS base
+                ON base.series_id = target.series_id
+               AND base.observed_at = target.simulated_cutoff_time
+                    + target.step_interval * step.horizon_step;
+
             SELECT
                 avg(value.absolute_error),
                 sqrt(avg(value.squared_error)),
@@ -159,27 +187,35 @@ CREATE FUNCTION agri.finalize_forecast_hindcast_run(p_hindcast_run_id uuid, p_ex
                     * (value.naive_value - value.actual_value))),
                 avg(value.point_value - value.actual_value),
                 avg(value.absolute_error / nullif(abs(value.actual_value), 0)),
-                count(*)::double precision / target.expected_value_count,
                 avg(CASE WHEN value.interval_covered THEN 1.0 ELSE 0.0 END)
               INTO computed_mae, computed_rmse, computed_naive_rmse,
-                   computed_bias, computed_mape, computed_coverage,
-                   computed_interval_coverage
+                   computed_bias, computed_mape, computed_interval_coverage
               FROM agri.forecast_hindcast_value AS value
              WHERE value.hindcast_run_id = target.id;
+            IF target.receipt_digest_version = 'hindcast_v3' THEN
+                IF value_count <> available_step_count THEN
+                    RAISE EXCEPTION
+                        'hindcast recorded % of % horizon actuals available at its knowledge horizon',
+                        value_count, available_step_count;
+                END IF;
+                computed_coverage := available_step_count::double precision / target.horizon_steps;
+            ELSE
+                computed_coverage := value_count::double precision / target.expected_value_count;
+            END IF;
             computed_skill := CASE
                 WHEN computed_naive_rmse = 0 AND computed_rmse = 0 THEN 1.0
                 WHEN computed_naive_rmse = 0 THEN NULL
                 ELSE 1.0 - computed_rmse / computed_naive_rmse
             END;
             computed_pass := target.training_point_count >= policy.min_training_points
-                
+
                 AND (
                     (
                         target.receipt_digest_version = 'hindcast_v1'
                         AND target.expected_value_count >= policy.min_backtest_points
                     )
                     OR (
-                        target.receipt_digest_version = 'hindcast_v2'
+                        target.receipt_digest_version IN ('hindcast_v2', 'hindcast_v3')
                         AND (
                             SELECT bands.backtest_point_count
                             FROM agri.forecast_linear_residual_bands(
@@ -194,8 +230,13 @@ CREATE FUNCTION agri.finalize_forecast_hindcast_run(p_hindcast_run_id uuid, p_ex
                         ) >= policy.min_backtest_points
                     )
                 )
-            
+
                 AND computed_coverage >= policy.min_coverage_fraction
+                AND (
+                    target.receipt_digest_version <> 'hindcast_v3'
+                    OR (computed_interval_coverage IS NOT NULL
+                        AND computed_interval_coverage >= policy.min_interval_coverage_fraction)
+                )
                 AND (policy.max_mae IS NULL OR computed_mae <= policy.max_mae)
                 AND (policy.max_rmse IS NULL OR computed_rmse <= policy.max_rmse)
                 AND (policy.max_mape IS NULL
@@ -210,7 +251,9 @@ CREATE FUNCTION agri.finalize_forecast_hindcast_run(p_hindcast_run_id uuid, p_ex
             END IF;
 
             IF target.status = 'finalized' THEN
-                IF target.receipt_checksum IS DISTINCT FROM computed_checksum
+                IF target.actual_knowledge_as_of IS NULL
+                   OR target.actual_knowledge_as_of IS DISTINCT FROM knowledge_as_of
+                   OR target.receipt_checksum IS DISTINCT FROM computed_checksum
                    OR target.mae IS DISTINCT FROM computed_mae
                    OR target.rmse IS DISTINCT FROM computed_rmse
                    OR target.naive_rmse IS DISTINCT FROM computed_naive_rmse
@@ -236,6 +279,7 @@ CREATE FUNCTION agri.finalize_forecast_hindcast_run(p_hindcast_run_id uuid, p_ex
                    mape = computed_mape,
                    coverage_fraction = computed_coverage,
                    interval_coverage_fraction = computed_interval_coverage,
+                   actual_knowledge_as_of = knowledge_as_of,
                    receipt_checksum = computed_checksum,
                    recorded_at = clock_timestamp(),
                    finalized_at = clock_timestamp()

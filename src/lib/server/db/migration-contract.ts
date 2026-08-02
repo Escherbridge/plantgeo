@@ -1,5 +1,5 @@
 export const EXPECTED_DRIZZLE_MIGRATION = {
-  tag: "0003_right_cable",
-  createdAt: 1_784_541_266_725,
-  sha256: "dbeef363be929eae00506ed09c7d3256fbe427b8d0e17787a6ca548951769ce2",
+  tag: "0004_repair_ingested_geometries",
+  createdAt: 1_785_634_586_620,
+  sha256: "c3195e9d72011e30643592938e38aa02b9ab34a4a36dac48c4c5aa8ca80938db",
 } as const;

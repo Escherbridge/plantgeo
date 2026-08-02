@@ -49,7 +49,10 @@ CREATE VIEW agri.v_forecast_hindcast_outcome AS
     hindcast.receipt_digest_version,
     parent.quality_policy_id,
     policy.policy_key,
-    jsonb_build_array('plantgeo-forecast-quality-policy-v1', (policy.is_active)::text, (policy.min_training_points)::text, (policy.min_backtest_points)::text, (policy.min_coverage_fraction)::text, (policy.max_mae)::text, (policy.max_rmse)::text, (policy.max_mape)::text, (policy.min_skill_score)::text, to_jsonb(policy.required_quantiles)) AS quality_policy_contract
+    agri.forecast_quality_policy_contract_v2(policy.*) AS quality_policy_contract,
+    hindcast.actual_knowledge_as_of,
+    hindcast.coverage_fraction,
+    hindcast.interval_coverage_fraction
    FROM (((((agri.forecast_hindcast_run hindcast
      JOIN agri.forecast_hindcast_value value ON ((value.hindcast_run_id = hindcast.id)))
      JOIN agri.forecast_run parent ON ((parent.id = hindcast.forecast_run_id)))

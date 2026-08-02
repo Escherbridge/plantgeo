@@ -6,8 +6,10 @@ const TERRAIN_URL =
 
 // This public archive is only a development fallback. Production must use the
 // project-controlled R2/CDN archive configured with NEXT_PUBLIC_PMTILES_URL.
+// NOTE: Protomaps prunes old daily builds (an expired build 404s without CORS
+// headers, surfacing as "Failed to fetch"); refresh the date if the map goes blank.
 const DEFAULT_PMTILES_ARCHIVE_URL =
-  "https://build.protomaps.com/20240801T000000Z.pmtiles";
+  "https://build.protomaps.com/20260801.pmtiles";
 
 const PMTILES_ARCHIVE_URL =
   process.env.NEXT_PUBLIC_PMTILES_URL || DEFAULT_PMTILES_ARCHIVE_URL;

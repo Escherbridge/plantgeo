@@ -22,7 +22,7 @@ CREATE FUNCTION agri.finalize_strategy_label_release(p_label_release_id uuid, p_
             missing_taxonomy_count bigint;
             computed_checksum varchar;
         BEGIN
-            IF p_expected_checksum !~ '^[0-9a-f]{64}$' THEN
+            IF p_expected_checksum IS NULL OR p_expected_checksum !~ '^[0-9a-f]{64}$' THEN
                 RAISE EXCEPTION 'strategy label release checksum must be SHA-256';
             END IF;
 

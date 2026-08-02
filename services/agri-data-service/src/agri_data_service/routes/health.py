@@ -15,7 +15,7 @@ logger = structlog.get_logger()
 
 health_bp = Blueprint("health", url_prefix="/")
 
-EXPECTED_ALEMBIC_REVISION = "20260725_0013"
+EXPECTED_ALEMBIC_REVISION = "20260801_0014"
 REQUIRED_EXTENSIONS = ("postgis", "timescaledb", "vector", "pgcrypto")
 PUBLICATION_TABLE_PRIVILEGES = (
     ("agri", "release_set", "SELECT"),

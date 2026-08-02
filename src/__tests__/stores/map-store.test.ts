@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { useMapStore } from '@/stores/map-store'
+import { useMapStore, DEFAULT_VIEWPORT } from '@/stores/map-store'
 
 describe('useMapStore', () => {
   beforeEach(() => {
@@ -142,9 +142,9 @@ describe('useMapStore', () => {
       result.current.resetView()
     })
 
-    expect(result.current.viewport.longitude).toBe(-120.7401)
-    expect(result.current.viewport.latitude).toBe(47.7511)
-    expect(result.current.viewport.zoom).toBe(7)
+    expect(result.current.viewport.longitude).toBe(DEFAULT_VIEWPORT.longitude)
+    expect(result.current.viewport.latitude).toBe(DEFAULT_VIEWPORT.latitude)
+    expect(result.current.viewport.zoom).toBe(DEFAULT_VIEWPORT.zoom)
     expect(result.current.isGlobeView).toBe(false)
     expect(result.current.is3DEnabled).toBe(true)
   })

@@ -11,8 +11,11 @@ CREATE FUNCTION agri.enforce_forecast_hindcast_insert_contract() RETURNS trigger
             IF NEW.status <> 'staging' THEN
                 RAISE EXCEPTION 'new hindcast runs must begin in staging status';
             END IF;
-            IF NEW.receipt_digest_version <> 'hindcast_v2' THEN
-                RAISE EXCEPTION 'new hindcast runs require receipt digest version hindcast_v2';
+            IF NEW.receipt_digest_version <> 'hindcast_v3' THEN
+                RAISE EXCEPTION 'new hindcast runs require receipt digest version hindcast_v3';
+            END IF;
+            IF NEW.actual_knowledge_as_of IS NOT NULL THEN
+                RAISE EXCEPTION 'the hindcast actual-knowledge horizon is server-set at finalization';
             END IF;
             RETURN NEW;
         END

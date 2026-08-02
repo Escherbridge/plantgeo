@@ -51,6 +51,8 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/functions/forecast_linear_residual_bands.sql
 \i agri/functions/forecast_normalized_series.sql
 \i agri/functions/forecast_percentile.sql
+\i agri/tables/forecast_quality_policy.sql
+\i agri/functions/forecast_quality_policy_contract_v2.sql
 \i agri/functions/forecast_rolling_stats.sql
 \i agri/functions/forecast_timeseries_base.sql
 \i agri/functions/forecast_timeseries_contract.sql
@@ -95,8 +97,10 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/tables/strategy_outcome_definition.sql
 \i agri/functions/strategy_outcome_definition_checksum.sql
 \i agri/functions/strategy_selection_candidate_checksum.sql
+\i agri/functions/strategy_selection_cutoff_violation.sql
 \i agri/tables/strategy_selection_policy.sql
 \i agri/functions/strategy_selection_policy_checksum.sql
+\i agri/functions/strategy_selection_quality_evidence.sql
 \i agri/functions/strategy_selection_receipt_checksum.sql
 \i agri/functions/v_signal_timeseries_contract.sql
 \i agri/tables/forecast_feature_snapshot.sql
@@ -129,7 +133,6 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/tables/forecast_model.sql
 \i agri/tables/forecast_observation.sql
 \i agri/tables/forecast_publication_item.sql
-\i agri/tables/forecast_quality_policy.sql
 \i agri/tables/forecast_series.sql
 \i agri/tables/forecast_value.sql
 \i agri/tables/historical_promotion_artifact_receipt.sql
