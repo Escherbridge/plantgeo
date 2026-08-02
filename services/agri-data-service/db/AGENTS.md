@@ -168,6 +168,19 @@ self-referential field. The trainer hashes the exact UTF-8 JSON text after
 removing only surrounding file whitespace. Strategy model output metadata
 must repeat both checksums, and the training row repeats the release checksum.
 
+## Assignment-time covariate layer
+
+Revision `20260802_0016` adds the `covariate_*` function family: a pinned,
+ordered 40-name covariate schema (`agri_covariates_v1`), an explicit
+declared-gap registry (ERA5-Land, credential-gated), a per-(cell, UTC day,
+feature) read over the house day spine, and a checksummed window manifest.
+Every meteorology/drought covariate is strictly lagged, so a feature row for a
+day can never contain that day's own observation; availability is always gated
+on server-recorded `data_available_at`, never a simulated cutoff. See
+`../alembic/AGENTS.md` for the full rationale, including why the same revision
+rewrites `drought_class_daily_series`' body for a ~1000x speedup, and what that
+rewrite got wrong on its first pass.
+
 ## Forward-load workflow
 
 When a future migration changes a programmable object, **edit the canonical file

@@ -12,6 +12,19 @@ CREATE FUNCTION agri.drought_class_daily_series(p_cell_id uuid, p_window_start t
         FROM agri.spatial_cell AS spatial_cell
         WHERE spatial_cell.id = p_cell_id
     ),
+    admissible AS MATERIALIZED (
+        SELECT
+            snapshot.issue_date,
+            snapshot.severity_class::integer AS severity_class,
+            snapshot.source_release_id,
+            snapshot.data_available_at,
+            snapshot.geometry_checksum
+        FROM agri.drought_polygon_snapshot AS snapshot
+        CROSS JOIN cell
+        WHERE snapshot.data_available_at <= p_as_of_time
+          AND snapshot.issue_date <= (p_window_end AT TIME ZONE 'UTC')::date
+          AND ST_Intersects(snapshot.geometry, cell.geometry)
+    ),
     spine AS (
         SELECT (day_spine.bucket_start AT TIME ZONE 'UTC')::date AS observed_date
         FROM agri.forecast_date_spine(
@@ -37,14 +50,12 @@ CREATE FUNCTION agri.drought_class_daily_series(p_cell_id uuid, p_window_start t
     LEFT JOIN LATERAL (
         SELECT
             candidate.issue_date,
-            candidate.severity_class::integer AS severity_class,
+            candidate.severity_class,
             candidate.source_release_id,
             candidate.data_available_at,
             candidate.geometry_checksum
-        FROM agri.drought_polygon_snapshot AS candidate
-        WHERE ST_Intersects(candidate.geometry, cell.geometry)
-          AND candidate.issue_date <= spine.observed_date
-          AND candidate.data_available_at <= p_as_of_time
+        FROM admissible AS candidate
+        WHERE candidate.issue_date <= spine.observed_date
         ORDER BY
             candidate.issue_date DESC,
             candidate.severity_class DESC,

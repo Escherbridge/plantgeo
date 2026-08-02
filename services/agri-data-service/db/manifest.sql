@@ -16,6 +16,11 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/sequences/signal_observation_id_seq.sql
 
 -- ==== core objects (pg_dump dependency order) ====
+\i agri/functions/covariate_daily_features.sql
+\i agri/functions/covariate_declared_gap.sql
+\i agri/functions/covariate_feature_schema.sql
+\i agri/functions/covariate_lookback_days.sql
+\i agri/functions/covariate_vector_manifest.sql
 \i agri/functions/drought_class_daily_series.sql
 \i agri/functions/enforce_derived_evidence_run.sql
 \i agri/functions/enforce_forecast_hindcast_finalization_policy.sql

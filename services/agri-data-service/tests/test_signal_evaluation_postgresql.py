@@ -622,3 +622,110 @@ def test_drought_class_daily_series_resolution_imputation_and_leakage_gates(  # 
             (cell_id, window_start, window_end, as_of_full, date(2026, 1, 5)),
         )
         assert cursor.fetchone() == DROUGHT_COLUMN_TYPES
+
+
+def test_drought_class_daily_series_cell_scoping_intersection_and_checksum_tie_break(
+    agri_db_connection: psycopg2.extensions.connection,
+) -> None:
+    """Guard the three paths the 0016 CTE hoist touches: cell existence, ST_Intersects, checksum ties."""
+    connection = agri_db_connection
+    with connection.cursor() as cursor:
+        suffix = _checksum(os.urandom(16).hex())[:12]
+
+        cursor.execute(
+            """
+            INSERT INTO agri.spatial_cell(cell_key, grid_name, resolution_m, geometry, centroid)
+            VALUES (
+                %s, 'signal-eval-test-grid', 10000,
+                ST_GeomFromText(
+                    'POLYGON((-116.15 43.55, -116.10 43.55, -116.10 43.60, -116.15 43.60, -116.15 43.55))',
+                    4326
+                ),
+                ST_GeomFromText('POINT(-116.125 43.575)', 4326)
+            )
+            RETURNING id
+            """,
+            (f"signal-eval-scope-cell-{suffix}",),
+        )
+        cell_id = cursor.fetchone()[0]
+
+        cursor.execute(
+            """
+            INSERT INTO agri.data_source(key, name, owner, purpose, license_name, citation)
+            VALUES (%s, 'USDM scope fixture', 'PlantGeo test', 'rolled-back drought scoping', 'test-only', 'test-only')
+            RETURNING id
+            """,
+            (f"usdm-scope-{suffix}",),
+        )
+        data_source_id = cursor.fetchone()[0]
+
+        available_at = datetime(2026, 1, 2, tzinfo=UTC)
+        cursor.execute(
+            """
+            INSERT INTO agri.source_release(
+                data_source_id, source_version, retrieved_at, data_available_at,
+                payload_checksum, schema_version, license_snapshot, validation_state, validated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, 'fixture-v1', 'test-only', 'valid', %s)
+            RETURNING id
+            """,
+            (
+                data_source_id,
+                f"scope-{suffix}",
+                available_at,
+                available_at,
+                _checksum(f"{suffix}:scope"),
+                available_at,
+            ),
+        )
+        source_release_id = cursor.fetchone()[0]
+
+        def _insert_polygon(geometry_wkt: str, severity_class: int, geometry_checksum: str) -> None:
+            cursor.execute(
+                """
+                INSERT INTO agri.drought_polygon_snapshot(
+                    source_release_id, issue_date, severity_class, impact_type,
+                    geometry, geometry_checksum, data_available_at
+                )
+                VALUES (%s, %s, %s, 'none', ST_GeomFromText(%s, 4326), %s, %s)
+                """,
+                (source_release_id, date(2026, 1, 1), severity_class, geometry_wkt, geometry_checksum, available_at),
+            )
+
+        # two intersecting polygons tied on both issue_date and severity_class: the
+        # lexicographically-least geometry_checksum must win (stable-order house rule)
+        low_checksum = "0" * 63 + "1"
+        high_checksum = "f" * 64
+        _insert_polygon(_COVERING_MULTIPOLYGON_WKT, SEVERITY_ISSUE_A, high_checksum)
+        _insert_polygon(_COVERING_MULTIPOLYGON_WKT, SEVERITY_ISSUE_A, low_checksum)
+        # a strictly higher-severity polygon that does NOT intersect the cell must never win
+        _insert_polygon(
+            "MULTIPOLYGON(((-80.0 30.0, -79.0 30.0, -79.0 31.0, -80.0 31.0, -80.0 30.0)))",
+            SEVERITY_ISSUE_B_HIGH,
+            "a" * 64,
+        )
+
+        window_start = datetime(2026, 1, 1, tzinfo=UTC)
+        window_end = datetime(2026, 1, 3, tzinfo=UTC)
+        as_of = datetime(2026, 1, 10, tzinfo=UTC)
+
+        cursor.execute(
+            "SELECT severity_class, geometry_checksum FROM agri.drought_class_daily_series(%s, %s, %s, %s)",
+            (cell_id, window_start, window_end, as_of),
+        )
+        rows = cursor.fetchall()
+        assert len(rows) == (window_end - window_start).days + 1
+        assert all(severity == SEVERITY_ISSUE_A for severity, _ in rows), (
+            "a non-intersecting higher-severity polygon must not be selected"
+        )
+        assert all(checksum == low_checksum for _, checksum in rows), (
+            "ties must break on the lexicographically-least geometry_checksum"
+        )
+
+        # an unknown cell has no geometry, so the series must be empty -- not a spine of
+        # all-NULL days echoing the caller's own cell_id back as if it were real
+        cursor.execute(
+            "SELECT count(*) FROM agri.drought_class_daily_series(gen_random_uuid(), %s, %s, %s)",
+            (window_start, window_end, as_of),
+        )
+        assert cursor.fetchone()[0] == 0

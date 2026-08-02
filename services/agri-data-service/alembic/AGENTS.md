@@ -123,6 +123,69 @@ explicitly (`NULL !~ pattern` is NULL, not true, so it used to skip the format
 gate), and the receipt-digest dispatch raises on any version outside the known
 set.
 
+`20260802_0016` adds the evaluation-only assignment-time covariate/feature
+layer: `agri.covariate_feature_schema` pins an ordered, contiguous 40-name
+covariate vector (`agri_covariates_v1`) the way `0013`'s label release pins its
+trainer feature order; `agri.covariate_declared_gap` names ERA5-Land as an
+explicit credential-gated gap so an absent stream is never rendered as empty
+covariate columns; `agri.covariate_daily_features` emits one row per
+(cell, UTC day, feature) over the house day spine; and
+`agri.covariate_vector_manifest` returns a single checksummed provenance and
+completion summary for a window.
+
+Every covariate is **strictly lagged** (`lag_days >= 1` for every
+meteorology/drought feature; the two calendar features are deterministic
+functions of the row's own date). A feature row for day D therefore cannot
+contain any day-D observation, so the same layer is safe as the assignment-time
+covariate vector for a day-D decision and as trainer input for a day-D target.
+The availability gate is `signal_observation.data_available_at <=
+p_as_of_time` (and, inside `drought_class_daily_series`, the polygon's own
+`data_available_at`) -- never a simulated cutoff. Partial stays partial: a
+rolling window missing any input returns `feature_value = NULL` with
+`input_count < expected_input_count` rather than a mean over the survivors, and
+an unresolved drought class stays `NULL` rather than becoming class 0.
+
+Because `uq_signal_observation_release_cell_signal_time` includes
+`source_release_id`, a re-ingest or a revision legitimately stores several
+admissible rows for one `(cell, signal, observed_at, support_key)`. The
+observation CTE therefore takes `DISTINCT ON (signal_name, UTC day)` ordered by
+`data_available_at DESC` with a deterministic tie-break, so completeness counts
+distinct **days** and a duplicated day can neither double-count into a rolling
+mean nor make a short window look complete. `covariate_vector_manifest`'s
+lineage scan mirrors the feature reader's `support_key`/`quality_flag` filters,
+so a release that contributed nothing cannot appear in `source_release_ids` or
+perturb `manifest_checksum`.
+
+The revision also rewrites `agri.drought_class_daily_series`' body (body-only,
+`or_replace`) to hoist the per-day `ST_Intersects` into one materialized
+admissible-polygon CTE. A four-year Boise window went from ~11 minutes to
+~0.6 s, which is what makes the covariate layer usable as trainer input at all.
+For an **existing** cell the rewrite is row-identical -- the day spine, the
+issue-date/severity/`geometry_checksum` tie-break order, and both availability
+gates are preserved, and a two-way `EXCEPT ALL` differential over checksum ties,
+non-intersecting polygons, window-edge issue dates, >7-day imputation and both
+gate boundaries found no mismatch.
+
+It is **not** identical by construction, and the first draft of it was wrong:
+moving the `cell` CTE into the `admissible` subquery dropped the outer
+`CROSS JOIN cell`, so an unknown `p_cell_id` stopped returning zero rows and
+started returning one all-NULL `is_imputed = true` row per spine day, echoing
+the caller's own cell_id back as though it were a real cell whose drought was
+merely unresolvable -- and that propagated into
+`covariate_daily_features` as `drought_severity_imputed_lag_1 = 1.0` across the
+whole window. The outer `CROSS JOIN cell` is restored, and the 0011 contract
+test now covers the three paths the hoist actually touches (checksum tie-break,
+a non-intersecting polygon, an unknown cell), so the claim is guarded rather
+than asserted. `covariate_daily_features` cross-joins the same cell existence
+check onto its own day spine for the same reason.
+
+All four functions are evaluation-only reads: none joins
+`v_forecast_series_serving`, `forecast_publication`, `forecast_publication_item`
+or any receipt surface, and none is granted to
+`plantgeo_forecast_reader`/`_writer`/`_publisher`/`_mv_refresher` --
+`REVOKE EXECUTE ... FROM PUBLIC` only, with `plantgeo_local_developer`
+inheriting `EXECUTE` from standing default privileges.
+
 **Operator note.** Before `20260801_0014`, `coverage_fraction` was always exactly
 `1.0` (see the defect list above), so any pre-existing `forecast_quality_policy`
 row's `min_coverage_fraction` was never actually exercised as a gate -- it could

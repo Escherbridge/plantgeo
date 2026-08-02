@@ -65,3 +65,21 @@ incomplete manifest reports every missing path and has no checksum; only a
 complete canonical mapping receives a SHA-256 digest. The module deliberately
 has no row transform or database path, and rejects Boise forecast actuals
 because forecast-error labels cannot establish intervention effects.
+
+`covariate_wind_model.py` is a database-free-at-the-core, evaluation-only direct
+multi-horizon ridge forecaster over the `0016` covariate layer. It reads the
+pinned covariate vector and the WS2M target through their own availability-gated
+SQL functions, fits one standardized closed-form ridge per horizon step, and
+calibrates a p10-p90 band from residuals on a held-out calibration window that
+ends strictly before the forecast origin. The split is temporal only -- fit
+window, then calibration window, then a single held-out origin -- so no target
+day ever appears in the window that produced the model scoring it. It never
+writes to the warehouse, never joins a serving or publication surface, and never
+produces a receipt: its output is a JSON report labelled `evaluation_only`.
+
+Its scores prove the framework runs end to end; they are not an operational or
+life-safety forecast. Interval coverage is an empirical residual band, not a
+calibrated confidence bound. The comparison baseline is the existing
+`daily_increment_bootstrap_v1` iteration read through
+`agri.forecast_iteration_evaluation`, at exactly the same origin and horizon
+steps.
