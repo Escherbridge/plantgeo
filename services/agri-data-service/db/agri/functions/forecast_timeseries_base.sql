@@ -6,6 +6,7 @@
 
 CREATE FUNCTION agri.forecast_timeseries_base(p_release_set_id uuid, p_as_of_time timestamp with time zone) RETURNS TABLE(observation_id bigint, series_id uuid, series_key text, source_variant_key text, entity_type text, entity_key text, entity_state_id uuid, entity_state_checksum text, metric_name text, metric_unit text, observed_at timestamp with time zone, metric_value double precision, representation_kind text, spatial_support_kind text, source_spatial_resolution_m integer, output_spatial_resolution_m integer, source_temporal_support interval, output_temporal_support interval, aggregation_method text, spatial_cell_id uuid, source_release_id uuid, input_release_checksum text, observation_checksum text)
     LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_catalog'
     AS $$
             SELECT
                 NULL::bigint,

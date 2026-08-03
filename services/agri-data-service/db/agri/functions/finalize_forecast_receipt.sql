@@ -10,6 +10,7 @@ CREATE FUNCTION agri.finalize_forecast_receipt(p_receipt_id uuid, p_expected_che
     SET "DateStyle" TO 'ISO, MDY'
     SET "IntervalStyle" TO 'postgres'
     SET extra_float_digits TO '1'
+    SET search_path TO 'public', 'pg_catalog'
     AS $_$
         DECLARE
             receipt agri.forecast_receipt;

@@ -196,6 +196,63 @@ against an operational policy row, an operator must review that row's
 to `0.8`) and confirm the threshold is the one actually intended now that both
 gates can fail.
 
+`20260803_0017` makes the warehouse restorable from its own dump and finishes a
+half-applied checksum pin. Both defects were found by the populated-restore
+rehearsal, both reproduce on PostgreSQL 16, and neither is visible to a
+DDL-only rehearsal against an empty database.
+
+`pg_restore` runs with `search_path = ''`. `forecast_iteration_value.value_checksum`
+is a **stored generated** column, so its values are omitted from the dump and
+recomputed by the restoring server during `COPY`; that calls
+`agri.forecast_iteration_value_checksum`, which called `digest()` unqualified
+against a `pgcrypto` that lives in `public`. A stock unattended `pg_restore`
+therefore aborted the data load with
+`function digest(text, unknown) does not exist`. One routine blocked a restore;
+**21** shared the latent pattern (a `public`-schema extension function called
+unqualified with no `search_path` pin) and all 21 are pinned to
+`public, pg_catalog`. The count was re-derived from the live catalogue, and
+disagrees with the rehearsal report's "20 to fix": the report counted
+`enforce_intervention_lineage_release_membership` in the set and then subtracted
+it again as already-pinned, but that routine qualifies its call as
+`public.digest(...)` and never belonged there. None of the 21 already carried a
+`search_path`, and none is `SECURITY DEFINER` -- the twelve that are keep their
+existing `pg_catalog, agri` pin untouched.
+
+The revision uses `ALTER ROUTINE ... SET search_path`, never `CREATE OR REPLACE`:
+the ALTER *adds* to `proconfig` and preserves each routine's determinism
+settings, while a replace that omitted them would silently drop the
+`TimeZone`/`DateStyle`/`IntervalStyle`/`extra_float_digits` pins the checksums
+depend on. No function body changes, so every `md5(prosrc)` is unchanged.
+
+The second defect is a live receipt-integrity one.
+`agri.forecast_hindcast_value_checksum` rendered six `double precision`
+arguments through `::text` while pinning only `TimeZone`, so session
+`extra_float_digits` leaked into a governed checksum -- measured, identical
+inputs produced two different digests. It now pins the same four GUCs as the
+correct control, `forecast_iteration_value_checksum`. Harmless only because
+`forecast_hindcast_value` is empty: the finalization and immutability machinery
+treats `value_checksum` as identity, so two sessions with different
+`extra_float_digits` would otherwise write two different checksums for one row.
+A `search_path`-only revision would have left this behind while appearing to
+have hardened these functions.
+
+`strategy_label_bundle_checksum` was audited in the same pass and carries **no**
+live defect: it hashes a `jsonb` export, `jsonb` renders date/time values as
+ISO-8601 regardless of `DateStyle` (measured), the bundle has no
+`interval`-typed field, and the one axis that does reach it --
+`extra_float_digits`, via the `double precision` outcome and evidence values --
+was already pinned. `DateStyle` and `IntervalStyle` are added anyway, to it and
+to `export_strategy_label_bundle` (the function that actually renders, and which
+the trainer calls directly to hash its exact export text), so the
+governed-checksum family is uniform and a later bundle field cannot
+reintroduce the defect silently.
+
+Unlike the data-bearing revisions this one has a real `downgrade()`: a
+`proconfig` change is exactly reversible and destroys no evidence. Verified --
+downgrading a `0017` database yields a routine fingerprint byte-identical to a
+pristine `0016` build across all 93 routines. Reversing it does reinstate both
+defects, including a schema no unattended `pg_restore` can load.
+
 ## PostgreSQL 18 portability (rehearsed, not deployed)
 
 Revisions `0001` through `0016` were applied end to end against PostgreSQL 18.4
@@ -203,8 +260,14 @@ Revisions `0001` through `0016` were applied end to end against PostgreSQL 18.4
 change, and no schema change. The full behavioural contract suite passes on that
 server, and the object inventory, routine bodies, `SECURITY DEFINER` flags,
 `proconfig` GUC pins, pgcrypto digests and pinned float/date/interval rendering
-are byte-identical to PostgreSQL 16.14. No revision needs a pg18 variant, and no
-`0017` is required for portability.
+are byte-identical to PostgreSQL 16.14. No revision needs a pg18 variant.
+
+**That is a statement about DDL portability only, and it was read too broadly.**
+This section originally concluded "no `0017` is required". A later
+populated-restore rehearsal found two defects a DDL-only rehearsal structurally
+cannot see, and `20260803_0017` carries both (above). Neither is a PostgreSQL 18
+problem -- they reproduce identically on 16 -- but the restore one is what makes
+"keep pg16 alive as the rollback" executable, so it gates the migration anyway.
 
 The one genuine catalogue difference is that PostgreSQL 18 stores NOT NULL as
 `pg_constraint` rows and 16 does not. That is a server-version artifact, not

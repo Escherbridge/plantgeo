@@ -6,6 +6,7 @@
 
 CREATE FUNCTION agri.publish_forecast_publication(p_publication_id uuid, p_expected_manifest_checksum character varying) RETURNS agri.forecast_publication
     LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_catalog'
     AS $_$
         DECLARE
             publication agri.forecast_publication;

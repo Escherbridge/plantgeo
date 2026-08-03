@@ -7,6 +7,9 @@
 CREATE FUNCTION agri.forecast_hindcast_value_checksum(p_valid_time timestamp with time zone, p_horizon_step integer, p_point_value double precision, p_p10_value double precision, p_p50_value double precision, p_p90_value double precision, p_naive_value double precision, p_actual_value double precision, p_actual_source_release_id uuid, p_actual_observation_checksum character varying) RETURNS character varying
     LANGUAGE sql IMMUTABLE PARALLEL SAFE
     SET "TimeZone" TO 'UTC'
+    SET "DateStyle" TO 'ISO, MDY'
+    SET "IntervalStyle" TO 'postgres'
+    SET extra_float_digits TO '1'
     AS $$
             SELECT encode(public.digest(concat_ws('|',
                 to_char(p_valid_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),

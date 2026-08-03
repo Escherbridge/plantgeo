@@ -9,6 +9,7 @@ CREATE FUNCTION agri.covariate_vector_manifest(p_cell_id uuid, p_window_start ti
     SET "TimeZone" TO 'UTC'
     SET "DateStyle" TO 'ISO, MDY'
     SET extra_float_digits TO '1'
+    SET search_path TO 'public', 'pg_catalog'
     AS $$
     WITH feature AS (
         SELECT

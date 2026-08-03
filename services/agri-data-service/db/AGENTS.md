@@ -244,6 +244,23 @@ on server-recorded `data_available_at`, never a simulated cutoff. See
 rewrites `drought_class_daily_series`' body for a ~1000x speedup, and what that
 rewrite got wrong on its first pass.
 
+## Restore-safe `search_path` and checksum determinism pins
+
+Revision `20260803_0017` adds a `SET search_path TO 'public', 'pg_catalog'` line
+to the 21 routines that called a `public`-schema extension function unqualified,
+and completes the rendering pins on `forecast_hindcast_value_checksum`,
+`strategy_label_bundle_checksum` and `export_strategy_label_bundle`. In this tree
+that is 24 files and 28 added lines, all inside the `CREATE` header -- no body
+changed, so every `md5(prosrc)` is unchanged.
+
+The `search_path` pins are why the schema can now be restored from its own
+`pg_dump` output. `forecast_iteration_value.value_checksum` is a stored generated
+column, so `pg_restore` **recomputes** it during `COPY` under `search_path = ''`,
+and an unqualified `digest()` could not resolve. See `../alembic/AGENTS.md`
+(`20260803_0017`) for the full derivation, and note the shape of the fix:
+`ALTER ROUTINE ... SET`, never `CREATE OR REPLACE`, because a replace that
+omitted the existing `SET` clauses would silently drop the determinism pins.
+
 ## Forward-load workflow
 
 When a future migration changes a programmable object, **edit the canonical file

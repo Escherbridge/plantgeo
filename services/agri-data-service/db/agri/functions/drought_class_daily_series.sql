@@ -6,6 +6,7 @@
 
 CREATE FUNCTION agri.drought_class_daily_series(p_cell_id uuid, p_window_start timestamp with time zone, p_window_end timestamp with time zone, p_as_of_time timestamp with time zone) RETURNS TABLE(cell_id uuid, observed_date date, severity_class integer, is_imputed boolean, issue_date date, source_release_id uuid, data_available_at timestamp with time zone, geometry_checksum text)
     LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_catalog'
     AS $$
     WITH cell AS (
         SELECT spatial_cell.geometry

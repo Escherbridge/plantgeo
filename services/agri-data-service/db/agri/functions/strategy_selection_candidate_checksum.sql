@@ -10,6 +10,7 @@ CREATE FUNCTION agri.strategy_selection_candidate_checksum(p_candidate_id uuid) 
     SET "DateStyle" TO 'ISO, MDY'
     SET "IntervalStyle" TO 'postgres'
     SET extra_float_digits TO '1'
+    SET search_path TO 'public', 'pg_catalog'
     AS $$
         SELECT encode(
             digest(

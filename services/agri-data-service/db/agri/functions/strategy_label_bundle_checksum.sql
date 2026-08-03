@@ -8,6 +8,8 @@ CREATE FUNCTION agri.strategy_label_bundle_checksum(p_label_release_id uuid) RET
     LANGUAGE sql STABLE
     SET "TimeZone" TO 'UTC'
     SET extra_float_digits TO '1'
+    SET "DateStyle" TO 'ISO, MDY'
+    SET "IntervalStyle" TO 'postgres'
     AS $$
         SELECT encode(
             public.digest(

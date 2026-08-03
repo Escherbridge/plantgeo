@@ -6,6 +6,7 @@
 
 CREATE FUNCTION agri.finalize_strategy_label_release(p_label_release_id uuid, p_expected_checksum character varying) RETURNS agri.strategy_label_release
     LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_catalog'
     AS $_$
         DECLARE
             label agri.strategy_label_release;

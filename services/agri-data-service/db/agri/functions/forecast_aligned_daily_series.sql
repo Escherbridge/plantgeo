@@ -10,6 +10,7 @@ CREATE FUNCTION agri.forecast_aligned_daily_series(p_series_id uuid, p_release_s
     SET "DateStyle" TO 'ISO, MDY'
     SET "IntervalStyle" TO 'postgres'
     SET extra_float_digits TO '1'
+    SET search_path TO 'public', 'pg_catalog'
     AS $$
         DECLARE
             source_support interval;

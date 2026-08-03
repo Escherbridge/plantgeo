@@ -8,6 +8,8 @@ CREATE FUNCTION agri.export_strategy_label_bundle(p_label_release_id uuid) RETUR
     LANGUAGE plpgsql STABLE
     SET "TimeZone" TO 'UTC'
     SET extra_float_digits TO '1'
+    SET "DateStyle" TO 'ISO, MDY'
+    SET "IntervalStyle" TO 'postgres'
     AS $$
         DECLARE
             label agri.strategy_label_release;

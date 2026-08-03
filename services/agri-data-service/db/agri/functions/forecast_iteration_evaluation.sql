@@ -9,6 +9,7 @@ CREATE FUNCTION agri.forecast_iteration_evaluation(p_series_id uuid, p_as_of_tim
     SET "TimeZone" TO 'UTC'
     SET "DateStyle" TO 'ISO, MDY'
     SET extra_float_digits TO '1'
+    SET search_path TO 'public', 'pg_catalog'
     AS $$
     WITH gated AS (
         SELECT

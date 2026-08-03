@@ -10,6 +10,7 @@ CREATE PROCEDURE agri.materialize_forecast_iteration(INOUT p_iteration_id uuid, 
     SET "DateStyle" TO 'ISO, MDY'
     SET "IntervalStyle" TO 'postgres'
     SET extra_float_digits TO '1'
+    SET search_path TO 'public', 'pg_catalog'
     AS $$
         DECLARE
             existing agri.forecast_iteration;

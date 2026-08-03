@@ -10,6 +10,7 @@ CREATE FUNCTION agri.forecast_daily_bootstrap(p_series_id uuid, p_release_set_id
     SET "DateStyle" TO 'ISO, MDY'
     SET "IntervalStyle" TO 'postgres'
     SET extra_float_digits TO '1'
+    SET search_path TO 'public', 'pg_catalog'
     AS $$
         DECLARE
             effective_history_start timestamptz;
