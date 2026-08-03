@@ -74,9 +74,11 @@ sample observation.
 
 | Variable | Policy |
 | --- | --- |
-| `REGIONAL_INTELLIGENCE_ENABLED` | Defaults false. Keep false until all context is publication-backed and model/evidence review passes. |
-| `REGIONAL_INTELLIGENCE_MAX_CONCURRENT_PER_REPLICA` | Optional bounded AI concurrency; defaults to `2` and is capped at `16` per replica. |
-| `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Server-only and relevant only when regional intelligence is enabled. Pin a supported model deliberately. |
+| `REGIONAL_INTELLIGENCE_MAX_CONCURRENT_PER_REPLICA` | Optional bounded AI concurrency; defaults to `4` and is capped at `16` per replica. |
+| `ANTHROPIC_API_KEY` | **Required** for the regional-intelligence agent. Absent, the route returns 503 and the panel stays inert. Server-only. |
+| `ANTHROPIC_MODEL` | Optional model pin; defaults to `claude-opus-5`. Set deliberately — it is the dominant cost lever for this feature. |
+| `JINA_API_KEY` | Optional. Enables the agent's `search_web` tool (`s.jina.ai` + `r.jina.ai`). Absent, the agent runs offline and says so in its system prompt rather than failing. |
+| `REDIS_URL` | Load-bearing for AI quota. The per-user reservation is a Redis ZSET; in production an unreachable Redis fails the request closed rather than serving unmetered. |
 | `EMAIL_PROVIDER` | Optional `resend` or `sendgrid`; absence keeps delivery disabled. |
 | `EMAIL_FROM` | Verified sender identity. |
 | `RESEND_API_KEY`, `SENDGRID_API_KEY` | Server-only provider credential; configure only the selected provider. |

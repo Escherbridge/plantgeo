@@ -2,18 +2,42 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { DEFAULT_CALLBACK_URL, safeCallbackUrl } from "@/lib/auth/callback-url";
 
-export function RegisterForm() {
+const MIN_PASSWORD_LENGTH = 8;
+// Mirrors MAX_BCRYPT_PASSWORD_BYTES in src/lib/server/security/registration.ts
+const MAX_PASSWORD_BYTES = 72;
+
+/** Registration form; redirects to /login with callbackUrl preserved on success. */
+export function RegisterForm({
+  callbackUrl = DEFAULT_CALLBACK_URL,
+}: {
+  callbackUrl?: string;
+}) {
   const router = useRouter();
+  const destination = safeCallbackUrl(callbackUrl);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const passwordBytes = new TextEncoder().encode(password).length;
+  const passwordTooShort = password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
+  const passwordTooLong = passwordBytes > MAX_PASSWORD_BYTES;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
     setError(null);
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      return;
+    }
+    if (passwordTooLong) {
+      setError("Password is too long.");
+      return;
+    }
     setLoading(true);
     const res = await fetch("/api/auth/register", {
       method: "POST",
@@ -21,16 +45,23 @@ export function RegisterForm() {
       body: JSON.stringify({ name, email, password }),
     });
     setLoading(false);
+    // The endpoint acknowledges every well-formed submission identically, so
+    // there is no "already exists" branch to render — an address that is
+    // already registered is told so by email, not by this response.
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       setError((data as { error?: string }).error ?? "Registration failed.");
     } else {
-      router.push("/login?registered=1");
+      const query = new URLSearchParams({ registered: "1" });
+      if (destination !== DEFAULT_CALLBACK_URL) {
+        query.set("callbackUrl", destination);
+      }
+      router.push(`/login?${query.toString()}`);
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4 w-full max-w-sm">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4 w-full max-w-sm" noValidate>
       <div className="flex flex-col gap-1">
         <label className="text-sm text-zinc-300" htmlFor="name">
           Name
@@ -55,6 +86,8 @@ export function RegisterForm() {
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? "reg-error" : undefined}
           className="rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
         />
       </div>
@@ -67,13 +100,25 @@ export function RegisterForm() {
           type="password"
           autoComplete="new-password"
           required
-          minLength={8}
+          minLength={MIN_PASSWORD_LENGTH}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          aria-invalid={passwordTooShort || passwordTooLong}
+          aria-describedby="reg-password-hint"
           className="rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
         />
+        <p
+          id="reg-password-hint"
+          className={`text-[11px] ${passwordTooLong ? "text-red-400" : "text-zinc-500"}`}
+        >
+          {MIN_PASSWORD_LENGTH}-{MAX_PASSWORD_BYTES} characters.
+        </p>
       </div>
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && (
+        <p id="reg-error" role="alert" className="text-sm text-red-400">
+          {error}
+        </p>
+      )}
       <button
         type="submit"
         disabled={loading}

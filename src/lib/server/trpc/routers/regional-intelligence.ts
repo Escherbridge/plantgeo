@@ -3,7 +3,7 @@ import { protectedProcedure, router } from '../init';
 import { aiConversations, aiMessages } from '@/lib/server/db/schema';
 import { eq, and, desc, asc } from 'drizzle-orm';
 import {
-  REGIONAL_INTELLIGENCE_ENTITLEMENT_MESSAGE,
+  readRegionalIntelligenceUsage,
   REGIONAL_INTELLIGENCE_SERVING_STATE,
 } from '@/lib/server/security/regional-intelligence-access';
 
@@ -45,13 +45,15 @@ export const regionalIntelligenceRouter = router({
       return { ...conv, messages };
     }),
 
-  getRateLimitStatus: protectedProcedure.query(async () => {
+  getRateLimitStatus: protectedProcedure.query(async ({ ctx }) => {
+    const userId = (ctx.session!.user as { id: string }).id;
+    const usage = await readRegionalIntelligenceUsage(userId);
     return {
       state: REGIONAL_INTELLIGENCE_SERVING_STATE,
-      entitlementRequired: true,
-      message: REGIONAL_INTELLIGENCE_ENTITLEMENT_MESSAGE,
-      remaining: 0,
-      resetAt: null,
+      tier: usage.tier,
+      limit: usage.limit,
+      remaining: usage.remaining,
+      resetAt: usage.resetAt,
     };
   }),
 });

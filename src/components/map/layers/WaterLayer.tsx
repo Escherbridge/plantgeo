@@ -4,9 +4,21 @@ import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, Popup, GeoJSONSource } from "maplibre-gl";
 import type { GroundwaterWell, WaterGauge } from "@/lib/environmental/water";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
+import { formatTimestampWithRelative, toIsoTimestamp } from "@/lib/map/time-format";
 
 function escapeHtml(val: unknown): string {
   return String(val ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+/**
+ * Feature properties survive a GeoJSON round-trip as strings, and absent values
+ * arrive as either null or undefined -- so popups must test for a finite number
+ * rather than `!== null`, which would render "Percentile: th" for a missing value.
+ */
+function finiteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
 }
 
 const CONDITION_COLORS: Record<string, string> = {
@@ -258,15 +270,19 @@ export function WaterLayer({
         if (popupRef.current) popupRef.current.remove();
         const trendSymbol = TREND_ARROW[props.trend as string] ?? "\u2192";
         const condColor = CONDITION_COLORS[props.condition as string] ?? "#9e9e9e";
+        const flow = finiteNumber(props.flowCfs);
+        const percentile = finiteNumber(props.percentile);
+        const measured = formatTimestampWithRelative(toIsoTimestamp(props.updatedAt));
         const html = `
           <div style="font-size:12px;min-width:180px">
             <strong style="display:block;margin-bottom:4px">${escapeHtml(props.siteName ?? "Unknown")}</strong>
             <span style="display:inline-block;padding:1px 6px;border-radius:3px;background:${escapeHtml(condColor)};color:#fff;font-size:10px;margin-bottom:4px">
               ${escapeHtml(String(props.condition ?? "unknown").replace(/_/g, " "))}
             </span>
-            <div>Flow: <strong>${props.flowCfs !== null ? `${escapeHtml(Number(props.flowCfs).toFixed(1))} cfs` : "N/A"}</strong> ${escapeHtml(trendSymbol)}</div>
-            ${props.percentile !== null ? `<div>Percentile: ${escapeHtml(props.percentile)}th</div>` : ""}
-            <div style="color:#888;font-size:10px;margin-top:4px">USGS #${escapeHtml(props.siteNo)}</div>
+            <div>Flow: <strong>${flow !== null ? `${escapeHtml(flow.toFixed(1))} cfs` : "N/A"}</strong> ${escapeHtml(trendSymbol)}</div>
+            ${percentile !== null ? `<div>Percentile: ${escapeHtml(Math.round(percentile))}th</div>` : ""}
+            ${measured ? `<div class="map-popup-meta">Measured: ${escapeHtml(measured)}</div>` : ""}
+            <div class="map-popup-meta">USGS #${escapeHtml(props.siteNo)}</div>
           </div>
         `;
         popupRef.current = new Popup({ closeButton: true, maxWidth: "240px" })
@@ -301,12 +317,15 @@ export function WaterLayer({
       import("maplibre-gl").then(({ Popup }) => {
         if (popupRef.current) popupRef.current.remove();
         const trendSymbol = TREND_ARROW[props.trend as string] ?? "\u2192";
+        const depth = finiteNumber(props.depthFt);
+        const measured = formatTimestampWithRelative(toIsoTimestamp(props.updatedAt));
         const html = `
           <div style="font-size:12px;min-width:160px">
             <strong style="display:block;margin-bottom:4px">${escapeHtml(props.siteName ?? "Groundwater Well")}</strong>
-            <div>Depth: <strong>${props.depthFt !== null ? `${escapeHtml(Number(props.depthFt).toFixed(1))} ft` : "N/A"}</strong></div>
+            <div>Depth: <strong>${depth !== null ? `${escapeHtml(depth.toFixed(1))} ft` : "N/A"}</strong></div>
             <div>Trend: <strong>${escapeHtml(String(props.trend ?? "stable"))} ${escapeHtml(trendSymbol)}</strong></div>
-            <div style="color:#888;font-size:10px;margin-top:4px">USGS #${escapeHtml(props.siteNo)}</div>
+            ${measured ? `<div class="map-popup-meta">Measured: ${escapeHtml(measured)}</div>` : ""}
+            <div class="map-popup-meta">USGS #${escapeHtml(props.siteNo)}</div>
           </div>
         `;
         popupRef.current = new Popup({ closeButton: true, maxWidth: "220px" })

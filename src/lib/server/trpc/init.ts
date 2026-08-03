@@ -24,6 +24,10 @@ export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
   return next({ ctx: { ...ctx, session: ctx.session } });
 });
 
+// Deliberately no org-scoped procedure: a session-carried `teamRole` invites
+// callers to authorize on it. Organization routers re-read membership from the
+// database inside the acting transaction instead.
+
 export const contributorProcedure = t.procedure.use(({ ctx, next }) => {
   if (!ctx.session?.user) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Authentication required' });
   const role = (ctx.session?.user as { platformRole?: string } | undefined)?.platformRole;

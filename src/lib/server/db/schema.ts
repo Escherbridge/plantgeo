@@ -13,6 +13,7 @@ import {
   primaryKey,
   customType,
   uniqueIndex,
+  index,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -46,6 +47,9 @@ export const users = pgTable("users", {
   platformRole: varchar("platform_role", { length: 20 }).default("contributor"),
   verified: boolean("verified").default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  // No .references() here: teams is declared after users in this file, and a
+  // forward reference would create a circular initializer between the two tables.
+  activeTeamId: uuid("active_team_id"),
 });
 
 export const sessions = pgTable("sessions", {
@@ -89,6 +93,8 @@ export const verificationTokens = pgTable("verification_tokens", {
 export const teams = pgTable("teams", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
+  // Plain unique constraint; app code always lowercases the slug before
+  // insert/update, so this stays case-insensitive-safe without a functional index.
   slug: varchar("slug", { length: 100 }).unique(),
   description: text("description"),
   orgType: varchar("org_type", { length: 50 }),
@@ -481,3 +487,93 @@ export const openToolingData = pgTable("open_tooling_data", {
   metadata: jsonb("metadata").default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
+
+// ============================================
+// Organization Credential Lifecycle & Invitations (public schema)
+// "Organizations" are the existing teams/team_members tables above; these
+// tables add credential-lifecycle (verification/reset tokens) and
+// team invitation/join-link flows on top of them.
+// ============================================
+
+export const emailVerificationTokens = pgTable(
+  "email_verification_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("email_verification_tokens_token_hash_unique").on(t.tokenHash),
+    index("email_verification_tokens_user_idx").on(t.userId),
+  ]
+);
+
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("password_reset_tokens_token_hash_unique").on(t.tokenHash),
+    index("password_reset_tokens_user_idx").on(t.userId),
+  ]
+);
+
+export const teamInvitations = pgTable(
+  "team_invitations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+    email: text("email").notNull(), // always stored lowercase by app code
+    teamRole: varchar("team_role", { length: 20 }).notNull().default("member"),
+    tokenHash: text("token_hash").notNull(),
+    invitedBy: uuid("invited_by").references(() => users.id),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    acceptedBy: uuid("accepted_by").references(() => users.id),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("team_invitations_token_hash_unique").on(t.tokenHash),
+    index("team_invitations_team_email_idx").on(t.teamId, t.email),
+    index("team_invitations_email_idx").on(t.email),
+  ]
+);
+
+export const teamJoinLinks = pgTable(
+  "team_join_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+    codeHash: text("code_hash").notNull(),
+    teamRole: varchar("team_role", { length: 20 }).notNull().default("viewer"),
+    allowedEmailDomain: text("allowed_email_domain"),
+    maxUses: integer("max_uses"),
+    useCount: integer("use_count").notNull().default(0),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("team_join_links_code_hash_unique").on(t.codeHash),
+    index("team_join_links_team_idx").on(t.teamId),
+  ]
+);

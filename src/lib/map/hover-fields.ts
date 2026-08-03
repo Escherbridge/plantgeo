@@ -1,6 +1,13 @@
 // Pure field-selection + formatting for the shared map hover tooltip.
 // No React, no maplibre imports (types only) -- keeps this testable in isolation.
 
+import {
+  formatAbsoluteDate,
+  formatTimestampWithRelative,
+  resolveObservationIso,
+  toIsoTimestamp,
+} from "@/lib/map/time-format";
+
 /** Style layer ids the shared hover manager queries via queryRenderedFeatures. */
 export const HOVERABLE_LAYER_IDS: string[] = [
   "published-fire-circles",
@@ -61,46 +68,6 @@ function humanizeSnakeCase(value: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
 }
 
-const ISO_WITH_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Resolves a FIRMS-style observedAt, or acqDate+acqTime, to an ISO timestamp. */
-function resolveObservationIso(properties: Properties): string | null {
-  const observedAt = properties.observedAt;
-  if (typeof observedAt === "string" && ISO_WITH_TIMEZONE.test(observedAt.trim())) {
-    const t = Date.parse(observedAt);
-    if (Number.isFinite(t)) return observedAt;
-  }
-
-  const acqDate = properties.acqDate;
-  if (typeof acqDate === "string" && DATE_ONLY.test(acqDate.trim())) {
-    const acqTimeRaw = properties.acqTime;
-    const acqTime =
-      typeof acqTimeRaw === "string" || typeof acqTimeRaw === "number"
-        ? String(acqTimeRaw).trim().padStart(4, "0")
-        : "";
-    if (/^\d{4}$/.test(acqTime)) {
-      const iso = `${acqDate.trim()}T${acqTime.slice(0, 2)}:${acqTime.slice(2)}:00Z`;
-      const t = Date.parse(iso);
-      if (Number.isFinite(t)) return iso;
-    }
-  }
-
-  return null;
-}
-
-/** Formats an ISO timestamp as coarse relative time ("3h ago"), or null if unparseable. */
-function relativeTime(isoValue: string | null): string | null {
-  if (!isoValue) return null;
-  const ms = Date.parse(isoValue);
-  if (!Number.isFinite(ms)) return null;
-  const diffSec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-  if (diffSec < 60) return "just now";
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
-  return `${Math.floor(diffSec / 86400)}d ago`;
-}
-
 /** Drops null lines and returns null when nothing meaningful survived. */
 function buildContent(title: string, lines: (string | null)[]): HoverContent | null {
   const filtered = lines.filter((line): line is string => line !== null);
@@ -113,14 +80,14 @@ function formatFireDetection(props: Properties): HoverContent | null {
   const frp = formatFixed(props.frp, 1, " MW");
   const brightness = formatInteger(props.brightness, " K");
   const satellite = stringField(props.satellite);
-  const detected = relativeTime(resolveObservationIso(props));
+  const detected = formatTimestampWithRelative(resolveObservationIso(props));
 
   return buildContent("Fire detection", [
     confidence ? `Confidence: ${confidence}` : null,
     frp ? `FRP: ${frp}` : null,
     brightness ? `Brightness: ${brightness}` : null,
     satellite ? `Satellite: ${satellite}` : null,
-    detected ? `Detected ${detected}` : null,
+    detected ? `Detected: ${detected}` : null,
   ]);
 }
 
@@ -130,14 +97,14 @@ function formatWaterGauge(props: Properties): HoverContent | null {
   const condition = stringField(props.condition);
   const trend = stringField(props.trend);
   const percentile = props.percentile != null ? formatInteger(props.percentile, "%") : null;
-  const updated = relativeTime(stringField(props.updatedAt));
+  const updated = formatTimestampWithRelative(toIsoTimestamp(props.updatedAt));
 
   return buildContent(title, [
     flow ? `Flow: ${flow}` : null,
     condition ? `Condition: ${humanizeSnakeCase(condition)}` : null,
     trend ? `Trend: ${humanizeSnakeCase(trend)}` : null,
     percentile ? `Percentile: ${percentile}` : null,
-    updated ? `Updated ${updated}` : null,
+    updated ? `Updated: ${updated}` : null,
   ]);
 }
 
@@ -145,12 +112,12 @@ function formatGroundwaterWell(props: Properties): HoverContent | null {
   const title = stringField(props.siteName) ?? "Groundwater well";
   const depth = formatFixed(props.depthFt, 1, " ft");
   const trend = stringField(props.trend);
-  const updated = relativeTime(stringField(props.updatedAt));
+  const updated = formatTimestampWithRelative(toIsoTimestamp(props.updatedAt));
 
   return buildContent(title, [
     depth ? `Depth: ${depth}` : null,
     trend ? `Trend: ${humanizeSnakeCase(trend)}` : null,
-    updated ? `Updated ${updated}` : null,
+    updated ? `Updated: ${updated}` : null,
   ]);
 }
 
@@ -161,6 +128,10 @@ function formatFirePerimeter(props: Properties): HoverContent | null {
   const severity = stringField(props.severity);
   const cause = stringField(props.fireCause);
   const state = stringField(props.pooState);
+  // Discovery is when the fire started burning; polygonDateTime is only when the
+  // perimeter outline was last redrawn. Showing both keeps them from being confused.
+  const discovered = formatAbsoluteDate(toIsoTimestamp(props.fireDiscoveryDateTime));
+  const perimeterUpdated = formatTimestampWithRelative(toIsoTimestamp(props.polygonDateTime));
 
   return buildContent(title, [
     acres ? `Size: ${acres}` : null,
@@ -168,6 +139,8 @@ function formatFirePerimeter(props: Properties): HoverContent | null {
     severity ? `Severity: ${humanizeSnakeCase(severity)}` : null,
     cause ? `Cause: ${cause}` : null,
     state ? `State: ${state}` : null,
+    discovered ? `Discovered: ${discovered}` : null,
+    perimeterUpdated ? `Perimeter updated: ${perimeterUpdated}` : null,
   ]);
 }
 

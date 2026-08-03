@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/server/db";
-import { users } from "@/lib/server/db/schema";
+import { emailVerificationTokens, users } from "@/lib/server/db/schema";
 import { hashPassword } from "@/lib/server/password";
 import { checkRateLimit } from "@/lib/server/middleware/api-auth";
 import { parseBoundedJson } from "@/lib/server/security/ingress";
@@ -12,6 +12,60 @@ import {
   registrationRateLimitKey,
   registrationSchema,
 } from "@/lib/server/security/registration";
+import {
+  generateToken,
+  TOKEN_TTL,
+  tokenExpiry,
+} from "@/lib/server/security/tokens";
+import {
+  appUrl,
+  sendEmailVerification,
+  sendExistingAccountNotice,
+} from "@/lib/server/services/transactional-email";
+
+/**
+ * The only success shape this route ever produces. A new account and an
+ * address that is already registered return exactly these bytes, so the
+ * endpoint cannot be used to enumerate accounts — the same guarantee
+ * forgot-password makes.
+ */
+function acknowledged() {
+  return NextResponse.json(
+    {
+      ok: true,
+      message: "Check your email to finish setting up your account.",
+    },
+    { status: 201 }
+  );
+}
+
+/** Tells the address owner about the collision; never surfaces to the caller. */
+async function noticeExistingAccount(email: string): Promise<void> {
+  try {
+    await sendExistingAccountNotice(email);
+  } catch (error) {
+    console.error("[auth] Failed to send existing-account notice", error);
+  }
+}
+
+/** Issue and deliver a verification link; never blocks account creation. */
+async function issueEmailVerification(
+  userId: string,
+  email: string
+): Promise<void> {
+  try {
+    const { token, tokenHash } = generateToken();
+    await db.insert(emailVerificationTokens).values({
+      userId,
+      tokenHash,
+      expiresAt: tokenExpiry(TOKEN_TTL.emailVerification),
+    });
+    const verifyUrl = `${appUrl()}/verify-email?token=${encodeURIComponent(token)}`;
+    await sendEmailVerification(email, verifyUrl);
+  } catch (error) {
+    console.error("[auth] Failed to issue email verification", error);
+  }
+}
 
 export async function POST(request: Request) {
   const rateLimit = await checkRateLimit(
@@ -54,14 +108,16 @@ export async function POST(request: Request) {
     .from(users)
     .where(eq(users.email, email))
     .limit(1);
+
+  // Hashing on both branches keeps the dominant cost — bcrypt — on the taken
+  // path either way, so the collision is not visible as a response-time delta.
+  const passwordHash = await hashPassword(password);
+
   if (existing.length > 0) {
-    return NextResponse.json(
-      { error: "An account with this email already exists." },
-      { status: 409 }
-    );
+    await noticeExistingAccount(email);
+    return acknowledged();
   }
 
-  const passwordHash = await hashPassword(password);
   try {
     const [user] = await db
       .insert(users)
@@ -72,13 +128,14 @@ export async function POST(request: Request) {
         platformRole: "contributor",
       })
       .returning({ id: users.id, email: users.email });
-    return NextResponse.json({ id: user.id, email: user.email }, { status: 201 });
+    await issueEmailVerification(user.id, user.email);
+    return acknowledged();
   } catch (error) {
+    // Backstop for the race between the SELECT above and this INSERT; it must
+    // answer identically to the branch that saw the collision up front.
     if (isUniqueConstraintViolation(error)) {
-      return NextResponse.json(
-        { error: "An account with this email already exists." },
-        { status: 409 }
-      );
+      await noticeExistingAccount(email);
+      return acknowledged();
     }
     throw error;
   }

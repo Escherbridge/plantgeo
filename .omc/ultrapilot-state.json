@@ -1,0 +1,19 @@
+{
+  "active": true,
+  "mode": "ultrapilot",
+  "goal": "Solidify auth layer + organization onboarding layer. Teams ARE organizations. Email invites + shareable join links. Auth pages + credential lifecycle + org context in JWT session.",
+  "constraints": [
+    "NEVER touch src/components/map/**, src/app/api/tiles/**, martin/service-worker/layer-style files - another session owns them and will push mid-flight",
+    "NEVER run git commit/push/rebase/checkout - orchestrator handles integration",
+    "No test->fix->test loops; single sweep at the end"
+  ],
+  "phase": "parallel_execution",
+  "workers": [
+    { "id": "w1", "model": "sonnet", "status": "running", "scope": "db schema + drizzle migration", "files": ["src/lib/server/db/schema.ts", "drizzle/**", "src/__tests__/security/org-schema-contract.test.ts"] },
+    { "id": "w2", "model": "opus", "status": "running", "scope": "auth server flows, tokens, transactional email, session org context, middleware", "files": ["src/lib/server/security/tokens.ts", "src/lib/server/security/registration.ts", "src/lib/server/services/transactional-email.ts", "src/lib/server/services/email.ts", "src/lib/server/auth-options.ts", "src/lib/server/auth.ts", "src/middleware.ts", "src/types/next-auth.d.ts", "src/app/api/auth/**", "src/__tests__/security/auth-credential-lifecycle.test.ts"] },
+    { "id": "w3", "model": "sonnet", "status": "running", "scope": "auth UI pages + SessionProvider", "files": ["src/app/(auth)/**", "src/components/auth/**", "src/lib/providers.tsx"] },
+    { "id": "w4", "model": "opus", "status": "running", "scope": "org invitations, join links, authz hardening, trpc", "files": ["src/lib/server/trpc/routers/teams.ts", "src/lib/server/trpc/router.ts", "src/lib/server/trpc/init.ts", "src/lib/server/security/access-control.ts", "src/lib/server/security/org-slug.ts", "src/lib/server/security/invitations.ts", "src/app/api/invitations/**", "src/app/api/join/**", "src/__tests__/security/org-invitations.test.ts"] },
+    { "id": "w5", "model": "sonnet", "status": "running", "scope": "onboarding + org management UI", "files": ["src/app/onboarding/**", "src/app/dashboard/org/**", "src/app/invite/**", "src/app/join/**", "src/components/onboarding/**", "src/components/teams/**"] }
+  ],
+  "shared_files_deferred_to_orchestrator": ["src/app/dashboard/page.tsx", "package.json"]
+}

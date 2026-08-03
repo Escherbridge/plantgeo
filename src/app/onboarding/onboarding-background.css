@@ -1,0 +1,49 @@
+/* Decorative waypoint field for onboarding + invite/join landing pages. */
+.onboarding-waypoint-field {
+  background-image:
+    radial-gradient(circle at 12% 20%, rgba(16, 185, 129, 0.14) 0, transparent 3px),
+    radial-gradient(circle at 32% 68%, rgba(16, 185, 129, 0.1) 0, transparent 3px),
+    radial-gradient(circle at 68% 14%, rgba(16, 185, 129, 0.12) 0, transparent 3px),
+    radial-gradient(circle at 84% 46%, rgba(16, 185, 129, 0.08) 0, transparent 3px),
+    radial-gradient(circle at 54% 82%, rgba(16, 185, 129, 0.1) 0, transparent 3px),
+    linear-gradient(rgba(16, 185, 129, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 185, 129, 0.05) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    64px 64px,
+    64px 64px;
+  animation: onboarding-waypoint-drift 60s ease-in-out infinite alternate;
+}
+
+@keyframes onboarding-waypoint-drift {
+  0% {
+    background-position:
+      0 0,
+      0 0,
+      0 0,
+      0 0,
+      0 0,
+      0 0,
+      0 0;
+  }
+  100% {
+    background-position:
+      0 0,
+      0 0,
+      0 0,
+      0 0,
+      0 0,
+      24px 32px,
+      32px 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-waypoint-field {
+    animation: none;
+  }
+}

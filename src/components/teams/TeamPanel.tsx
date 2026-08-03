@@ -6,7 +6,7 @@ import { useAuthStore } from "@/stores/auth-store";
 
 export function TeamPanel() {
   const { activeTeamId } = useAuthStore();
-  const [inviteUserId, setInviteUserId] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] =
     useState<"member" | "viewer">("viewer");
   const utils = trpc.useUtils();
@@ -14,9 +14,9 @@ export function TeamPanel() {
   const { data: myTeams } = trpc.teams.listMyTeams.useQuery();
   const activeTeam = myTeams?.find((entry) => entry.team.id === activeTeamId);
 
-  const inviteMutation = trpc.teams.inviteMember.useMutation({
+  const inviteMutation = trpc.teams.createInvitation.useMutation({
     onSuccess: () => {
-      setInviteUserId("");
+      setInviteEmail("");
       utils.teams.listMyTeams.invalidate();
     },
   });
@@ -51,10 +51,11 @@ export function TeamPanel() {
           </h3>
           <div className="flex gap-2">
             <input
-              type="text"
-              placeholder="User ID"
-              value={inviteUserId}
-              onChange={(event) => setInviteUserId(event.target.value)}
+              type="email"
+              placeholder="Email address"
+              aria-label="Email address"
+              value={inviteEmail}
+              onChange={(event) => setInviteEmail(event.target.value)}
               className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
             <select
@@ -73,11 +74,11 @@ export function TeamPanel() {
               onClick={() =>
                 inviteMutation.mutate({
                   teamId: activeTeamId,
-                  userId: inviteUserId,
+                  email: inviteEmail,
                   teamRole: inviteRole,
                 })
               }
-              disabled={!inviteUserId || inviteMutation.isPending}
+              disabled={!inviteEmail || inviteMutation.isPending}
               className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
             >
               Invite

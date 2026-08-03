@@ -44,12 +44,21 @@ describe("formatHoverContent: published-fire-circles", () => {
     assertNoSentinels(content);
   });
 
+  it("shows the detection's own timestamp, not only its relative age", () => {
+    const detected = formatHoverContent("published-fire-circles", {
+      confidence: 80,
+      observedAt: "2026-07-14T09:30:00Z",
+    })?.lines.find((l) => l.startsWith("Detected"));
+    expect(detected).toMatch(/2026/);
+    expect(detected).toMatch(/\d:\d{2}/);
+  });
+
   it("falls back to acqDate+acqTime when observedAt is absent", () => {
     const content = formatHoverContent("published-fire-circles", {
       acqDate: "2020-01-01",
       acqTime: "1200",
     });
-    expect(content?.lines.find((l) => l.startsWith("Detected"))).toBeTruthy();
+    expect(content?.lines.find((l) => l.startsWith("Detected"))).toMatch(/2020/);
     assertNoSentinels(content);
   });
 
@@ -130,6 +139,25 @@ describe("formatHoverContent: fire-perimeters", () => {
     expect(content?.lines).toContain("Severity: Critical");
     expect(content?.lines).toContain("Cause: Lightning");
     expect(content?.lines).toContain("State: ID");
+    assertNoSentinels(content);
+  });
+
+  it("distinguishes the discovery date from the perimeter's last redraw", () => {
+    const content = formatHoverContent("fire-perimeters", {
+      incidentName: "Elk Ridge Fire",
+      fireDiscoveryDateTime: "2026-07-14T09:30:00Z",
+      polygonDateTime: new Date(Date.now() - 3 * 3600_000).toISOString(),
+    });
+    expect(content?.lines.find((l) => l.startsWith("Discovered"))).toMatch(/2026/);
+    expect(content?.lines.find((l) => l.startsWith("Perimeter updated"))).toMatch(/3h ago/);
+    assertNoSentinels(content);
+  });
+
+  it("accepts an epoch-millisecond discovery time from WFIGS", () => {
+    const content = formatHoverContent("fire-perimeters", {
+      fireDiscoveryDateTime: 1_753_000_000_000,
+    });
+    expect(content?.lines.find((l) => l.startsWith("Discovered"))).toMatch(/2025/);
     assertNoSentinels(content);
   });
 

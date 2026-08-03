@@ -312,21 +312,154 @@ await trpc.teams.listMyTeams.query();
 
 **Auth**: `protectedProcedure`
 
+#### createInvitation
+
+Send a consent-based email invitation to join a team. The recipient must accept it themselves; membership is never inserted directly.
+
+```typescript
+await trpc.teams.createInvitation.mutate({
+  teamId: string;
+  email: string;
+  teamRole?: "member" | "viewer";  // Default "member"
+});
+
+// Response
+{
+  id: string;
+  email: string;
+  teamRole: "owner" | "member" | "viewer";
+  expiresAt: Date;
+  acceptUrl: string;
+}
+```
+
+**Auth**: `protectedProcedure` (requires owner/member role in team, gated by target role)
+
 #### inviteMember
 
-Invite a user to a team.
+**Deprecated** — backward-compat shim over `createInvitation` that looks up a user's email from their `userId` and sends the same consent-based email invitation. Prefer `createInvitation`.
 
 ```typescript
 await trpc.teams.inviteMember.mutate({
   teamId: string;
   userId: string;
-  teamRole?: "owner" | "member" | "viewer";  // Default "member"
+  teamRole?: "member" | "viewer";  // Default "member"
 });
 
-// Response: Team member object
+// Response: same shape as createInvitation
 ```
 
 **Auth**: `protectedProcedure` (requires owner/member role in team)
+
+#### previewInvitation
+
+Look up an invitation by token without accepting it, so the landing page can render organization/email context before sign-in.
+
+```typescript
+await trpc.teams.previewInvitation.query({
+  token: string;
+});
+
+// Response (discriminated union — invalid tokens reveal nothing else)
+{ valid: true; orgName: string; email: string; role: "owner" | "member" | "viewer" }
+| { valid: false }
+```
+
+**Auth**: `publicProcedure`
+
+#### acceptInvitation
+
+Accept a pending invitation and join the team. Requires the signed-in user's email to match the invitation.
+
+```typescript
+await trpc.teams.acceptInvitation.mutate({
+  token: string;
+});
+
+// Response
+{
+  teamId: string;
+  teamRole: "owner" | "member" | "viewer";
+  orgName: string;
+  orgSlug: string | null;
+  alreadyMember: boolean;
+}
+```
+
+**Auth**: `protectedProcedure`
+
+#### createJoinLink
+
+Create a shareable join link that anyone (optionally restricted by email domain) can redeem to join a team.
+
+```typescript
+await trpc.teams.createJoinLink.mutate({
+  teamId: string;
+  teamRole?: "member" | "viewer";  // Default "viewer"
+  allowedEmailDomain?: string | null;
+  maxUses?: number | null;
+  expiresAt?: Date | null;
+});
+
+// Response — the raw code is returned exactly once; only its hash is stored
+{
+  id: string;
+  code: string;
+  joinUrl: string;
+  teamRole: "owner" | "member" | "viewer";
+  allowedEmailDomain: string | null;
+  maxUses: number | null;
+  expiresAt: Date | null;
+}
+```
+
+**Auth**: `protectedProcedure` (requires owner role)
+
+#### redeemJoinLink
+
+Join a team using a join-link code.
+
+```typescript
+await trpc.teams.redeemJoinLink.mutate({
+  code: string;
+});
+
+// Response: same shape as acceptInvitation
+```
+
+**Auth**: `protectedProcedure`
+
+#### leaveTeam
+
+Leave a team. Rejected if the caller is the last remaining owner.
+
+```typescript
+await trpc.teams.leaveTeam.mutate({
+  teamId: string;
+});
+
+// Response: { success: true }
+```
+
+**Auth**: `protectedProcedure`
+
+#### setActiveTeam
+
+Set the caller's active organization (drives dashboard/session context).
+
+```typescript
+await trpc.teams.setActiveTeam.mutate({
+  teamId: string;
+});
+
+// Response
+{
+  teamId: string;
+  teamRole: "owner" | "member" | "viewer";
+}
+```
+
+**Auth**: `protectedProcedure` (must already be a member)
 
 #### removeMember
 

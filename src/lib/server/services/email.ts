@@ -1,7 +1,8 @@
 /**
  * Email notification service.
  * Supports Resend and SendGrid via EMAIL_PROVIDER env var.
- * Gracefully degrades (log only) if no provider is configured.
+ * Outside production a missing provider degrades to a log line; in production
+ * it throws, so a misconfigured deploy cannot silently swallow credential mail.
  */
 
 import { fetchBounded } from "@/lib/server/http/bounded-upstream";
@@ -199,15 +200,20 @@ async function sendViaSendGrid(to: string, subject: string, html: string): Promi
   }
 }
 
-async function sendEmail(to: string, subject: string, html: string): Promise<void> {
+export async function sendEmail(to: string, subject: string, html: string): Promise<void> {
   const provider = process.env.EMAIL_PROVIDER;
 
   if (provider === "resend") {
     await sendViaResend(to, subject, html);
   } else if (provider === "sendgrid") {
     await sendViaSendGrid(to, subject, html);
+  } else if (process.env.NODE_ENV === "production") {
+    // Silently "succeeding" in production would mint password-reset and
+    // invitation links that reach nobody. Fail loudly instead; every caller
+    // either surfaces a generic failure or logs and continues.
+    throw new Error("EMAIL_PROVIDER is not configured");
   } else {
-    // Graceful degradation — no provider configured
+    // Graceful degradation outside production — no provider configured
     console.log(`[email] No EMAIL_PROVIDER configured. Skipping email to ${to}: ${subject}`);
   }
 }

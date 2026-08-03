@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { DashboardGrid } from "@/components/dashboard/DashboardGrid";
+import { UserMenu } from "@/components/auth/UserMenu";
 
 export default function DashboardPage() {
   return (
@@ -15,12 +16,15 @@ export default function DashboardPage() {
           <span className="text-[hsl(var(--muted-foreground))] text-sm">/</span>
           <span className="text-sm text-[hsl(var(--foreground))]">Analytics Dashboard</span>
         </div>
-        <Link
-          href="/"
-          className="text-sm text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors flex items-center gap-1"
-        >
-          Open Map →
-        </Link>
+        <div className="flex items-center gap-3">
+          <UserMenu />
+          <Link
+            href="/"
+            className="text-sm text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors flex items-center gap-1"
+          >
+            Open Map →
+          </Link>
+        </div>
       </header>
 
       {/* Split layout */}

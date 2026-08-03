@@ -3,6 +3,12 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, Popup } from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
+import {
+  formatAbsoluteDateTime,
+  formatTimestampWithRelative,
+  resolveObservationIso,
+  toIsoTimestamp,
+} from "@/lib/map/time-format";
 
 const EMPTY_FIRE_DATA: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -313,9 +319,14 @@ export function FireLayer({
         const size = props.IncidentSize ? `${Number(props.IncidentSize).toLocaleString()} acres` : "N/A";
         const contained = props.PercentContained != null ? `${Number(props.PercentContained).toFixed(0)}%` : "N/A";
         const state = escapeHtml(props.POOState ?? props.satellite ?? "Unknown");
-        const discovered = props.FireDiscoveryDateTime
-          ? new Date(Number(props.FireDiscoveryDateTime)).toLocaleDateString()
-          : escapeHtml(props.detectedAt ?? "Unknown");
+        // NIFC incidents carry a discovery date; FIRMS detections only carry an
+        // observation time. Both are the event's own date, not an ingestion date.
+        const discovered = formatAbsoluteDateTime(
+          toIsoTimestamp(props.FireDiscoveryDateTime ?? props.discoveredAt),
+        );
+        const detected = formatTimestampWithRelative(
+          resolveObservationIso(props) ?? toIsoTimestamp(props.detectedAt),
+        );
 
         const html = `
           <div style="font-size:12px;min-width:180px">
@@ -323,7 +334,8 @@ export function FireLayer({
             <div>Size: <strong>${escapeHtml(size)}</strong></div>
             <div>Contained: <strong>${escapeHtml(contained)}</strong></div>
             <div>State: <strong>${state}</strong></div>
-            <div style="color:#888;font-size:10px;margin-top:4px">Discovered: ${discovered}</div>
+            ${discovered ? `<div class="map-popup-meta">Discovered: ${escapeHtml(discovered)}</div>` : ""}
+            ${detected ? `<div class="map-popup-meta">Detected: ${escapeHtml(detected)}</div>` : ""}
           </div>
         `;
 

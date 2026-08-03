@@ -99,6 +99,58 @@ body {
   filter: none;
 }
 
+/* MapLibre popup overrides.
+   The stock popup CSS hard-codes a white background but inherits its text color
+   from the app, which is near-white in the default dark theme -- unreadable.
+   Bind both ends to the card tokens so popups follow the active theme. */
+.maplibregl-popup-content {
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  box-shadow: var(--shadow-lg);
+  padding: 0.75rem 0.875rem;
+}
+
+.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: hsl(var(--card));
+}
+
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: hsl(var(--card));
+}
+
+.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: hsl(var(--card));
+}
+
+.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: hsl(var(--card));
+}
+
+.maplibregl-popup-close-button {
+  color: hsl(var(--muted-foreground));
+  font-size: 1rem;
+  padding: 0 0.35rem;
+  border-radius: 0.25rem;
+}
+
+.maplibregl-popup-close-button:hover {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+/* Secondary popup text (site ids, timestamps) -- readable in both themes. */
+.map-popup-meta {
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  margin-top: 4px;
+}
+
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
