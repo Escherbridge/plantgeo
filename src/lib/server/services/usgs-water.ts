@@ -6,6 +6,10 @@ export type { GroundwaterWell, WaterGauge } from "@/lib/environmental/water";
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 
+// NWIS rejects bBox requests wider than 25 square degrees (lon range * lat range).
+const MAX_TILE_DEGREES = 4;
+const MAX_CONCURRENT_TILE_REQUESTS = 4;
+
 interface NWISTimeSeries {
   sourceInfo: {
     siteName: string;
@@ -27,6 +31,101 @@ interface NWISResponse {
   value: {
     timeSeries: NWISTimeSeries[];
   };
+}
+
+interface ParsedBbox {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+}
+
+/** Parse a "west,south,east,north" bbox string into numeric bounds. */
+function parseBbox(bbox: string): ParsedBbox {
+  const [west, south, east, north] = bbox.split(",").map(Number);
+  return { west, south, east, north };
+}
+
+/** Round a coordinate to 6 decimal digits so NWIS's 7-digit limit is never exceeded. */
+function formatCoordinate(value: number): number {
+  return parseFloat(value.toFixed(6));
+}
+
+/**
+ * Split a bbox into a grid of sub-bboxes no larger than maxTileDegrees square,
+ * covering the full extent (the last row/column may be smaller).
+ */
+function tileBbox(bbox: string, maxTileDegrees: number = MAX_TILE_DEGREES): string[] {
+  const { west, south, east, north } = parseBbox(bbox);
+  const tiles: string[] = [];
+
+  for (let tileSouth = south; tileSouth < north; tileSouth += maxTileDegrees) {
+    const tileNorth = Math.min(tileSouth + maxTileDegrees, north);
+    for (let tileWest = west; tileWest < east; tileWest += maxTileDegrees) {
+      const tileEast = Math.min(tileWest + maxTileDegrees, east);
+      tiles.push(
+        [tileWest, tileSouth, tileEast, tileNorth].map(formatCoordinate).join(",")
+      );
+    }
+  }
+
+  return tiles;
+}
+
+/** Run async tasks with at most concurrencyLimit in flight, preserving input order. */
+async function runWithBoundedConcurrency<T>(
+  tasks: (() => Promise<T>)[],
+  concurrencyLimit: number
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let nextIndex = 0;
+
+  async function runNextTask(): Promise<void> {
+    while (nextIndex < tasks.length) {
+      const currentIndex = nextIndex++;
+      results[currentIndex] = await tasks[currentIndex]();
+    }
+  }
+
+  const workerCount = Math.min(concurrencyLimit, tasks.length);
+  await Promise.all(Array.from({ length: workerCount }, runNextTask));
+
+  return results;
+}
+
+/**
+ * Fetch NWIS time series across every tile of a bbox and merge into one list,
+ * deduping by site number (a boundary site can appear in adjacent tiles).
+ * Any tile request failure propagates rather than yielding partial coverage.
+ */
+async function fetchTiledTimeSeries(
+  bbox: string,
+  buildTileUrl: (tileBbox: string) => string,
+  fetchOptions: Parameters<typeof fetchBoundedJson>[2]
+): Promise<NWISTimeSeries[]> {
+  const tasks = tileBbox(bbox).map((tile) => async () => {
+    const data = (await fetchBoundedJson(
+      buildTileUrl(tile),
+      { headers: { Accept: "application/json" } },
+      fetchOptions
+    )) as NWISResponse;
+    return data?.value?.timeSeries ?? [];
+  });
+
+  const tileResults = await runWithBoundedConcurrency(tasks, MAX_CONCURRENT_TILE_REQUESTS);
+
+  const seenSiteNumbers = new Set<string>();
+  const mergedTimeSeries: NWISTimeSeries[] = [];
+  for (const timeSeriesForTile of tileResults) {
+    for (const series of timeSeriesForTile) {
+      const siteNo = series.sourceInfo.siteCode[0]?.value ?? "";
+      if (seenSiteNumbers.has(siteNo)) continue;
+      seenSiteNumbers.add(siteNo);
+      mergedTimeSeries.push(series);
+    }
+  }
+
+  return mergedTimeSeries;
 }
 
 /**
@@ -62,16 +161,15 @@ function inferTrend(
  * @param bbox "west,south,east,north"
  */
 export async function getStreamflowGauges(bbox: string): Promise<WaterGauge[]> {
-  const url =
+  const buildTileUrl = (tileBbox: string) =>
     `https://waterservices.usgs.gov/nwis/iv/?format=json` +
-    `&bBox=${bbox}&parameterCd=00060&siteType=ST&siteStatus=active`;
+    `&bBox=${tileBbox}&parameterCd=00060&siteType=ST&siteStatus=active`;
 
-  const data = (await fetchBoundedJson(
-    url,
-    { headers: { Accept: "application/json" } },
-    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS, revalidateSeconds: 900 }
-  )) as NWISResponse;
-  const timeSeries = data?.value?.timeSeries ?? [];
+  const timeSeries = await fetchTiledTimeSeries(bbox, buildTileUrl, {
+    maxBytes: MAX_RESPONSE_BYTES,
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    revalidateSeconds: 900,
+  });
 
   return timeSeries.map((ts): WaterGauge => {
     const siteNo = ts.sourceInfo.siteCode[0]?.value ?? "";
@@ -113,16 +211,15 @@ export async function getStreamflowGauges(bbox: string): Promise<WaterGauge[]> {
 export async function getGroundwaterWells(
   bbox: string
 ): Promise<GroundwaterWell[]> {
-  const url =
+  const buildTileUrl = (tileBbox: string) =>
     `https://waterservices.usgs.gov/nwis/iv/?format=json` +
-    `&bBox=${bbox}&parameterCd=72019&siteType=GW`;
+    `&bBox=${tileBbox}&parameterCd=72019&siteType=GW`;
 
-  const data = (await fetchBoundedJson(
-    url,
-    { headers: { Accept: "application/json" } },
-    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS, revalidateSeconds: 3600 }
-  )) as NWISResponse;
-  const timeSeries = data?.value?.timeSeries ?? [];
+  const timeSeries = await fetchTiledTimeSeries(bbox, buildTileUrl, {
+    maxBytes: MAX_RESPONSE_BYTES,
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    revalidateSeconds: 3600,
+  });
 
   return timeSeries.map((ts): GroundwaterWell => {
     const siteNo = ts.sourceInfo.siteCode[0]?.value ?? "";

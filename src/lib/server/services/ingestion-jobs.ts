@@ -16,9 +16,38 @@ const WATER_GAUGES_LAYER_ID =
   process.env.WATER_GAUGES_LAYER_ID ?? "water-gauges";
 const FIRE_PERIMETERS_LAYER_ID =
   process.env.FIRE_PERIMETERS_LAYER_ID ?? "fire-perimeters";
-const MAX_SOURCE_RECORDS = 5_000;
-/** 3x3 grid keeps a bounded fan-out into Open-Meteo per INGEST_BBOX. */
-const WEATHER_SAMPLE_GRID = 3;
+const DEFAULT_MAX_SOURCE_RECORDS = 10_000;
+const MIN_MAX_SOURCE_RECORDS = 1_000;
+const MAX_MAX_SOURCE_RECORDS = 50_000;
+const DEFAULT_WEATHER_SAMPLE_SPACING_DEGREES = 1.0;
+const MIN_WEATHER_SAMPLE_SPACING_DEGREES = 0.25;
+const MAX_WEATHER_SAMPLE_SPACING_DEGREES = 5;
+/** Bounds the Open-Meteo fan-out regardless of how dense INGEST_BBOX makes the grid. */
+const MAX_WEATHER_SAMPLE_POINTS = 150;
+
+/** Reads INGEST_MAX_SOURCE_RECORDS at call time so cron env changes take effect without a restart. */
+function resolveMaxSourceRecords(): number {
+  const raw = process.env.INGEST_MAX_SOURCE_RECORDS?.trim();
+  if (!raw) return DEFAULT_MAX_SOURCE_RECORDS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_MAX_SOURCE_RECORDS;
+  return Math.min(
+    MAX_MAX_SOURCE_RECORDS,
+    Math.max(MIN_MAX_SOURCE_RECORDS, parsed)
+  );
+}
+
+/** Reads WEATHER_SAMPLE_SPACING_DEGREES at call time, clamped to a sane densification range. */
+function resolveWeatherSampleSpacingDegrees(): number {
+  const raw = process.env.WEATHER_SAMPLE_SPACING_DEGREES?.trim();
+  if (!raw) return DEFAULT_WEATHER_SAMPLE_SPACING_DEGREES;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_WEATHER_SAMPLE_SPACING_DEGREES;
+  return Math.min(
+    MAX_WEATHER_SAMPLE_SPACING_DEGREES,
+    Math.max(MIN_WEATHER_SAMPLE_SPACING_DEGREES, parsed)
+  );
+}
 
 export type IngestionJobStatus = "ingested" | "skipped" | "failed";
 
@@ -100,7 +129,8 @@ export async function runFireIngestionJob(
   }
 
   const collection = await fetchActiveFiresNASA(area, dayRange);
-  const selected = collection.features.slice(0, MAX_SOURCE_RECORDS);
+  const maxSourceRecords = resolveMaxSourceRecords();
+  const selected = collection.features.slice(0, maxSourceRecords);
   const maxObservationAgeMs =
     Math.min(10, Math.max(1, dayRange)) * 24 * 60 * 60 * 1_000;
   const records: IngestFeatureInput[] = selected.flatMap((feature) => {
@@ -151,7 +181,7 @@ export async function runWaterDroughtIngestionJob(
   }
 
   const gauges = await getStreamflowGauges(area);
-  const selected = gauges.slice(0, MAX_SOURCE_RECORDS);
+  const selected = gauges.slice(0, resolveMaxSourceRecords());
   const records: IngestFeatureInput[] = selected.map((gauge) => ({
     layerId: WATER_GAUGES_LAYER_ID,
     featureId: `${gauge.siteNo}:${gauge.updatedAt}`,
@@ -193,18 +223,35 @@ function perimeterSeverity(
   return "low";
 }
 
-/** Samples an evenly spaced grid of points within a bounded bbox for point-based upstreams. */
+/**
+ * Samples a target-spacing grid of centered points within a bounded bbox.
+ * Column/row counts derive from the bbox extent; if the derived grid would
+ * exceed maxPoints, spacing is scaled up uniformly (never sliced) until it fits.
+ */
 function boundedSamplePoints(
   bbox: string,
-  gridSize: number
+  spacingDegrees: number,
+  maxPoints: number
 ): Array<{ lat: number; lon: number }> {
   const [west, south, east, north] = bbox.split(",").map(Number);
+  const lonExtent = east - west;
+  const latExtent = north - south;
+
+  let spacing = spacingDegrees;
+  let columns = Math.max(1, Math.ceil(lonExtent / spacing));
+  let rows = Math.max(1, Math.ceil(latExtent / spacing));
+  while (columns * rows > maxPoints) {
+    spacing *= Math.max(Math.sqrt((columns * rows) / maxPoints), 1.01);
+    columns = Math.max(1, Math.ceil(lonExtent / spacing));
+    rows = Math.max(1, Math.ceil(latExtent / spacing));
+  }
+
   const points: Array<{ lat: number; lon: number }> = [];
-  for (let column = 0; column < gridSize; column++) {
-    for (let row = 0; row < gridSize; row++) {
+  for (let column = 0; column < columns; column++) {
+    for (let row = 0; row < rows; row++) {
       points.push({
-        lon: west + ((east - west) * (column + 0.5)) / gridSize,
-        lat: south + ((north - south) * (row + 0.5)) / gridSize,
+        lon: west + (lonExtent * (column + 0.5)) / columns,
+        lat: south + (latExtent * (row + 0.5)) / rows,
       });
     }
   }
@@ -226,7 +273,11 @@ export async function runWeatherIngestionJob(
     };
   }
 
-  const points = boundedSamplePoints(area, WEATHER_SAMPLE_GRID);
+  const points = boundedSamplePoints(
+    area,
+    resolveWeatherSampleSpacingDegrees(),
+    MAX_WEATHER_SAMPLE_POINTS
+  );
   const observations = await Promise.allSettled(
     points.map((point) => getCurrentWeather(point.lat, point.lon))
   );
@@ -272,7 +323,7 @@ export async function runFirePerimetersIngestionJob(
   }
 
   const collection = await fetchWfigsFirePerimeters(area);
-  const selected = collection.features.slice(0, MAX_SOURCE_RECORDS);
+  const selected = collection.features.slice(0, resolveMaxSourceRecords());
   // poly_PolygonDateTime is frequently null upstream and the "_Current" feed is
   // already scoped server-side to active (non-contained) incidents, so no
   // additional client-side freshness rejection is applied here.

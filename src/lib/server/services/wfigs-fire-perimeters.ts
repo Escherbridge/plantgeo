@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   fetchBoundedJson,
+  UpstreamHttpError,
   UpstreamPayloadError,
 } from "@/lib/server/http/bounded-upstream";
 
@@ -86,6 +87,30 @@ const WfigsErrorSchema = z.object({
   }),
 });
 
+const MAX_ATTEMPTS = 3;
+const RETRY_BASE_DELAYS_MS = [1_000, 2_000];
+const BUSY_MESSAGE_PATTERN = /too many requests|busy|try again/i;
+
+/** Resolve after `ms`, wrapping setTimeout as an awaitable promise. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Exponential backoff base delay for `attemptIndex`, randomized by a 0.5-1.5x jitter. */
+function jitteredRetryDelayMs(attemptIndex: number): number {
+  return RETRY_BASE_DELAYS_MS[attemptIndex] * (0.5 + Math.random());
+}
+
+/** True when ArcGIS reported its own busy/throttling error instead of an HTTP status. */
+function isBusyPayloadError(error: unknown): boolean {
+  return error instanceof UpstreamPayloadError && BUSY_MESSAGE_PATTERN.test(error.message);
+}
+
+/** True for a transient upstream HTTP failure (429 or 5xx) worth retrying. */
+function isRetryableHttpError(error: unknown): boolean {
+  return error instanceof UpstreamHttpError && (error.status === 429 || error.status >= 500);
+}
+
 function epochMsToIso(value: number | null | undefined): string | null {
   if (value === null || value === undefined) return null;
   const date = new Date(value);
@@ -108,15 +133,10 @@ function buildQueryUrl(bbox: string, maxRecordCount: number): URL {
   return url;
 }
 
-/**
- * Fetch bounded WFIGS Interagency Fire Perimeters (current, non-contained incidents)
- * from the public NIFC ArcGIS FeatureServer. No API key required.
- * @param bbox "west,south,east,north"
- */
-export async function fetchWfigsFirePerimeters(
-  bbox: string
+/** One query attempt: fetch, reject ArcGIS busy payloads, then parse the feature collection. */
+async function requestWfigsFirePerimeters(
+  url: URL
 ): Promise<WfigsFirePerimeterCollection> {
-  const url = buildQueryUrl(bbox, MAX_RECORD_COUNT);
   const payload = await fetchBoundedJson(
     url,
     { method: "GET" },
@@ -155,4 +175,33 @@ export async function fetchWfigsFirePerimeters(
       };
     }),
   };
+}
+
+/**
+ * Fetch bounded WFIGS Interagency Fire Perimeters (current, non-contained incidents)
+ * from the public NIFC ArcGIS FeatureServer. No API key required.
+ * Retries up to {@link MAX_ATTEMPTS} times with jittered backoff when the
+ * service reports itself busy (HTTP-200 error payload) or returns 429/5xx;
+ * every other failure throws immediately.
+ * @param bbox "west,south,east,north"
+ */
+export async function fetchWfigsFirePerimeters(
+  bbox: string
+): Promise<WfigsFirePerimeterCollection> {
+  const url = buildQueryUrl(bbox, MAX_RECORD_COUNT);
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      return await requestWfigsFirePerimeters(url);
+    } catch (error) {
+      lastError = error;
+      const isLastAttempt = attempt === MAX_ATTEMPTS - 1;
+      const isRetryable = isBusyPayloadError(error) || isRetryableHttpError(error);
+      if (isLastAttempt || !isRetryable) throw error;
+      await sleep(jitteredRetryDelayMs(attempt));
+    }
+  }
+  // Unreachable: the loop above always returns or throws.
+  throw lastError;
 }

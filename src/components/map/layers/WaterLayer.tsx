@@ -112,9 +112,9 @@ export function WaterLayer({
         type: "circle",
         source: "water-gauges",
         paint: {
-          "circle-radius": 8,
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 2.5, 7, 4, 10, 6, 14, 9],
           "circle-color": ["get", "color"],
-          "circle-stroke-width": 1.5,
+          "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 4, 0.5, 10, 1, 14, 1.5],
           "circle-stroke-color": "#ffffff",
           "circle-opacity": 0.9,
         },
@@ -134,9 +134,9 @@ export function WaterLayer({
         type: "circle",
         source: "groundwater-wells",
         paint: {
-          "circle-radius": 5,
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 1.5, 7, 2.5, 10, 4, 14, 6.5],
           "circle-color": ["get", "color"],
-          "circle-stroke-width": 1,
+          "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 4, 0.5, 14, 1],
           "circle-stroke-color": "#ffffff",
           "circle-opacity": 0.85,
         },
