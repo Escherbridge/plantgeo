@@ -308,10 +308,16 @@ there is none. Risk: **low**.
 3. **Four checksum functions** — `forecast_iteration_value_checksum`, `forecast_hindcast_value_checksum`,
    `forecast_iteration_receipt_checksum`, `forecast_hindcast_receipt_checksum` (272 lines) — with
    their 0017 determinism pins intact, but **called explicitly**, not via a generated column.
-   *(Amended 2026-08-03: the owner cut the receipt/hindcast planes — see §7 item 2. The two
-   `*_receipt_checksum` functions then have no table to digest and go with them; the two
-   `*_value_checksum` functions stay regardless, since they are what the generated columns are being
-   converted to explicit calls of.)*
+   *(Amended twice on 2026-08-03 — see §7 item 2. **First** amendment said both `*_receipt_checksum`
+   functions go with the cut planes. **Superseded**: the owner then ruled "the ml must stay", so the
+   receipt/publication plane survives as plain storage and only the hindcast plane is cut. Final
+   disposition: keep `forecast_iteration_value_checksum` and `forecast_iteration_receipt_checksum`
+   (`forecast_iteration` survives — it is the Monte Carlo lane); drop `forecast_hindcast_value_checksum`
+   and `forecast_hindcast_receipt_checksum` with the hindcast plane. Note that
+   `agri.forecast_receipt.receipt_checksum` — the column the ML serving view's `status='finalized'`
+   filter depends on — has **no SQL function** behind it at all and must be computed in Python,
+   which is why `ck_forecast_receipt_finalized_evidence` (`tables/forecast_receipt.sql:24`) should
+   be retained even though the other status↔checksum evidence CHECKs are dropped.)*
 4. `procedures/materialize_forecast_iteration.sql` including its idempotency block (`:186-212`).
    This is the live re-run protection.
 5. **One** immutability rule: `guard_forecast_immutable_rows` (13 lines, 6 triggers) on the
@@ -423,17 +429,28 @@ checksums are the one part that unambiguously earns its keep for a research tool
    > **Dropping the publication/receipt tables therefore deletes the ML serving lane**, which
    > `plans/ingestion-warehouse-consolidation-2026-08-03.md` §6 relies on for the slider's ML variant.
    >
-   > Two admissible readings, and the choice belongs in that plan's Phase 2, not here:
-   > **(a)** cut the enforcement and keep the plane tables as plain storage — i.e. Option 4, which
-   > already "leaves the zero-row planes in place" — so the ML lane keeps working unchanged; or
-   > **(b)** cut the tables too and rebuild the ML lane narrow, writing
-   > `(geometry_id, metric_name, valid_on, issued_on, p10, p50, p90)` directly into the serving fact
-   > table. §3.2's finding that **no `src/` code writes `forecast_receipt` or `forecast_publication`**
-   > makes (b) cheap today and expensive once rows exist.
+   > **RESOLVED — owner, same day: *"the ml must stay."*** Option (a): **cut the enforcement, keep
+   > the plane tables as plain storage.** This audit's **Option 4 is therefore the accepted
+   > recommendation, not Option 3** — Option 4 already "leaves the zero-row planes in place" and
+   > captures ~75 % of the benefit at ~60 % of the work. The nine tables
+   > `publication_pointer`, `forecast_publication`, `forecast_publication_item`, `forecast_receipt`,
+   > `forecast_value`, `forecast_series`, `forecast_run`, `forecast_feature_snapshot` and
+   > `forecast_training_run` all survive. The narrow-rebuild option (b) is withdrawn: the owner
+   > requires no intermediate state in which the ML view is dead, and a same-phase rebuild would mean
+   > shipping an untested ML writer inside a deletion migration.
    >
-   > Nothing else in §6's recommendation changes: the checksum columns, the identity UNIQUEs,
-   > `materialize_forecast_iteration`'s idempotency block and the 11 checksum functions are kept
-   > either way, and the two `GENERATED … STORED` `value_checksum` columns go either way.
+   > **Still cut:** the hindcast plane, the strategy/intervention planes, all `guard_*` / `enforce_*` /
+   > `verify_*` / `require_*` / `record_*` / `finalize_*`, the four owner roles, and the two
+   > `GENERATED … STORED` `value_checksum` columns. §5.3's "nearly nothing breaks" holds for the
+   > *enforcement*; it was never a claim about the tables.
+   >
+   > **One thing §3.2 measured that now becomes scoped work rather than a curiosity.** The serving
+   > view requires `publication.state='published'` **and** `receipt.status='finalized'` **and**
+   > `run.status='validated'` (`views/v_forecast_series_serving.sql:61`), and §3.2 established that
+   > **no `src/` code writes `forecast_receipt` or `forecast_publication`** and the SQL finalizers
+   > have zero callers. Keeping the tables is necessary but not sufficient: **the ML lane has never
+   > actually produced a row**, and a CLI-side publisher must be written to move those three states.
+   > That obligation is pre-existing, not created by this cut — but it is now on the critical path.
 3. **Current row counts for the strategy/intervention planes.** The "zero rows" claim comes from
    project memory and is corroborated by `db/AGENTS.md:212-219` (0013 refuses every
    `effect_candidate` finalization), but I did not query them.

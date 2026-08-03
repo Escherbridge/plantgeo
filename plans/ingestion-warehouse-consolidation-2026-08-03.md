@@ -18,11 +18,13 @@ Practical research tool, one solo dev, not multi-org. Ceremony is a liability.
 | **D2** | **The map forecast is a time slider, not a metric.** One day-granular slider, past → today → +30 d. Toggle picks statistical vs ML **for future days only**. | *"I want a slider from past to current to the future planes. People should be able to select and view each day, and it should just indicate that it switched to ML forecasts or statistical forecasts for future dates, set by a toggle for that slider."* | "5/10/30-day horizon buttons" (§6) and "which metric goes on the map?" (old open Q2) |
 | **D3** | **MTBS burn severity is in scope.** Persist it; settle licensing later. | *"we need to persist it so lets do it, we can figure out licensing or whatever later."* | the "no MTBS" non-goal |
 | **D4** | **Remove the evaluation-only lock.** Drop the two `forecast_iteration` CHECKs and the eval-only gating. | *"totally remove the eval only logic and check constraints, lets just keep things moving."* | "widen the CHECKs, never drop them" (old risk 2) |
+| **D5** | **The ML serving lane must survive Phase 2.** The eight tables its view depends on are kept as **plain storage**; only the trigger/guard/finalize machinery *on* them is removed. No intermediate state in which the ML view is dead. | *"the ml must stay."* | the blanket "receipt / publication planes are cut"; closes old open Q3 |
+| **D6** | **The geometry dimension is Type-2 (versioned).** `natural_key` identifies a place across time; `geometry_id` identifies one *version* of it. One dimension carries both `geom_kind` variety and version history. | *"ideally the dim can share both geometry type and based on layer selection it just serves out properly."* | D1's Type-1 sketch; closes old open Q4 and old risk 7 |
 
 Also already decided today, and load-bearing here:
 
-- **The checksum *enforcement* layer is cut.** Keep the checksum columns and the 11 `*_checksum` functions; delete `finalize_*` (4 fns), the `guard_*` triggers, and convert the two `GENERATED ALWAYS … STORED` `value_checksum` columns to plain columns (`db/agri/tables/forecast_iteration_value.sql:17`, `forecast_hindcast_value.sql:25`). See `services/agri-data-service/plans/checksum-layer-audit-2026-08-03.md` §6 Option 3.
-- **The receipt / publication / hindcast planes are cut** — owner: *"does not seem needed lets cut it."* This has a consequence the audit did not measure; see risk 3.
+- **The checksum *enforcement* layer is cut.** Keep the checksum columns and the surviving `*_checksum` functions; delete `finalize_*` (4 fns), the `guard_*` triggers, and convert the two `GENERATED ALWAYS … STORED` `value_checksum` columns to plain columns (`db/agri/tables/forecast_iteration_value.sql:17`, `forecast_hindcast_value.sql:25`). See `services/agri-data-service/plans/checksum-layer-audit-2026-08-03.md` §6.
+- **The hindcast plane is cut; the receipt/publication plane is not** — D5 narrowed the earlier *"does not seem needed lets cut it"*. Table-by-table disposition in §2 DDL sketch A.
 - **`agri` is live in production at head `20260803_0017`: 69 tables, 93 routines, 0 rows.** Destructive simplification is free **right now**. That window closes the moment Phase 4 writes the first `source_release` row — which is why Phases 2 and 3 come before it.
 
 **Ordering constraint that follows:** governance cut (Phase 2) and the geometry repoint (Phase 3) must both land before any phase writes an `agri` row.
@@ -116,51 +118,113 @@ One conformed dimension, two storage classes, one provenance spine. That is the 
 
 **`geo.geometry.natural_key` is where identity gets defined once.** Every producer resolves a `natural_key` to a `geometry_id` through one function; nothing downstream ever re-derives an identity string.
 
+**It is Type-2 (versioned), per D6.** `natural_key` identifies the *place or feature* across its whole life; `geometry_id` identifies **one version** of it. Both the `geom_kind` variety and the version history live in this one table — that is what "share both" means.
+
 ```sql
 -- Drizzle owns this. See "Migration ordering" below for why that matters.
 CREATE TABLE geo.geometry (
-  geometry_id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  natural_key   varchar(255) NOT NULL,                    -- '<producer>:<producer-local id>'
-  geom_kind     varchar(16)  NOT NULL,                    -- point|polygon|line|grid_cell
-  geom          geometry(Geometry,4326) NOT NULL,
-  centroid      geometry(Point,4326)    NOT NULL,         -- plain column, written at insert
-  grid_name     varchar(100),                             -- grid cells only
-  cell_key      varchar(180),                             -- grid cells only
-  resolution_m  integer,                                  -- grid cells only
-  producer      varchar(100) NOT NULL,                    -- which ingest minted it
-  first_seen_at timestamptz NOT NULL DEFAULT now(),        -- set on INSERT only, never on UPDATE
-  last_seen_at  timestamptz NOT NULL DEFAULT now(),        -- bumped on every resolve
-  CONSTRAINT uq_geometry_natural_key UNIQUE (natural_key),
+  geometry_id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),  -- identifies ONE VERSION
+  natural_key        varchar(255) NOT NULL,                 -- '<producer>:<producer-local id>'
+                                                            -- identifies the PLACE across versions
+  version_valid_from timestamptz  NOT NULL,                 -- when this shape became true
+  version_valid_to   timestamptz,                           -- NULL = current version
+  geom_kind          varchar(16)  NOT NULL,                 -- point|polygon|line|grid_cell
+  geom               geometry(Geometry,4326) NOT NULL,
+  centroid           geometry(Point,4326)    NOT NULL,      -- plain column, written at insert
+  grid_name          varchar(100),                          -- grid cells only
+  cell_key           varchar(180),                          -- grid cells only
+  resolution_m       integer,                               -- grid cells only
+  producer           varchar(100) NOT NULL,                 -- which ingest minted it
+  superseded_by      uuid REFERENCES geo.geometry(geometry_id),  -- next version, NULL if current
+  last_confirmed_at  timestamptz  NOT NULL DEFAULT now(),   -- last run that saw this version unchanged
+  CONSTRAINT uq_geometry_version UNIQUE (natural_key, version_valid_from),
+  CONSTRAINT ck_geometry_version_order CHECK (
+    version_valid_to IS NULL OR version_valid_to > version_valid_from),
+  CONSTRAINT ck_geometry_supersede CHECK (
+    (version_valid_to IS NULL AND superseded_by IS NULL)
+    OR (version_valid_to IS NOT NULL AND superseded_by IS NOT NULL)),
   CONSTRAINT ck_geometry_kind CHECK (geom_kind IN ('point','polygon','line','grid_cell')),
   CONSTRAINT ck_geometry_cell_fields CHECK (
     (geom_kind <> 'grid_cell' AND grid_name IS NULL AND cell_key IS NULL AND resolution_m IS NULL)
-    OR (geom_kind = 'grid_cell' AND grid_name IS NOT NULL AND cell_key IS NOT NULL AND resolution_m > 0)),
-  CONSTRAINT uq_geometry_grid_cell UNIQUE (grid_name, cell_key)
+    OR (geom_kind = 'grid_cell' AND grid_name IS NOT NULL AND cell_key IS NOT NULL AND resolution_m > 0))
 );
+
+-- exactly one current version per place
+CREATE UNIQUE INDEX uq_geometry_current
+  ON geo.geometry (natural_key) WHERE version_valid_to IS NULL;
+-- a grid cell's key is unique among current versions only
+CREATE UNIQUE INDEX uq_geometry_grid_cell
+  ON geo.geometry (grid_name, cell_key) WHERE version_valid_to IS NULL;
+
 CREATE INDEX ix_geometry_geom     ON geo.geometry USING GIST (geom);
 CREATE INDEX ix_geometry_centroid ON geo.geometry USING GIST (centroid);
 CREATE INDEX ix_geometry_kind     ON geo.geometry (geom_kind, producer);
+CREATE INDEX ix_geometry_asof     ON geo.geometry (natural_key, version_valid_from DESC);
 ```
 
-Four refinements to the sketch, each with a reason:
+#### How the slider "just serves out properly" (D6)
+
+**Facts carry the `geometry_id` of the version that was valid at the fact's own observation time.** Resolution happens **once, at ingest**, not on every read. A drought polygon measured last Tuesday already points at last Tuesday's shape, so:
+
+```sql
+-- the §2.1 read is UNCHANGED. No as-of predicate, no date branch, no per-layer special case.
+JOIN geo.geometry g USING (geometry_id)
+```
+
+That is the whole mechanism, and it is why Type-2 costs the read path nothing.
+
+**Current-state tables need one predicate, used in exactly one place.** `geo.features` holds current state (it is refreshed in place), so its `geometry_id` always points at the current version and is repointed when a version closes. Rendering a *feature* layer at a past date therefore does need an as-of lookup — but it is one predicate, not a per-layer branch:
+
+```sql
+CREATE VIEW geo.geometry_current AS
+  SELECT * FROM geo.geometry WHERE version_valid_to IS NULL;
+
+-- as-of form, the only temporal predicate in the codebase:
+--   WHERE g.version_valid_from <= $ts
+--     AND (g.version_valid_to IS NULL OR g.version_valid_to > $ts)
+```
+
+**Static geometry pays nothing.** A weather station or a stream gauge has exactly one row, `version_valid_to IS NULL`, so the as-of predicate matches it for every `$ts` at or after its `version_valid_from` and the `DISTINCT ON`/current-index paths behave identically to a Type-1 table. **The versioning cost is paid only by things that actually move: WFIGS perimeters, USDM drought polygons, MTBS burn perimeters.** Everything else is one version forever.
+
+#### Change detection — the rule that decides when a new version is minted
+
+This is where a Type-2 dimension either works or explodes. **Do not compare geometry floats.** A naive `geom IS DISTINCT FROM` or a bare `NOT ST_Equals(...)` versions rows on vertex-order changes, coordinate-precision drift and re-serialisation noise — and the table then grows by one row per feature per run, forever.
+
+The codebase already solved exactly this problem once. Trap #4 in §3: the refresh-in-place diff **deliberately ignores `geometry`** and uses the producer's own scalar revision fields as the change signal, because the `drizzle/0004` trigger rewrites `properties.geometry` on every write (`src/lib/server/services/ingest.ts:95-122`). Reuse that finding.
+
+**Rule, in priority order:**
+
+| Step | Rule | Applies to |
+|---|---|---|
+| 1 | **Version on the producer's own revision signal** where one exists. Geometry is never compared. | WFIGS — `polygonDateTime` advances (also drives trap #4 today, `ingestion-jobs.ts:335`); USDM — `valid_date` (weekly by construction); MTBS — annual release identifier |
+| 2 | **Never version** where location is part of identity — a "moved" record is a different record, and versioning it would be wrong, not just expensive. | FIRMS detections (lat/lon are *in* the `natural_key`), weather grid points, stream gauges |
+| 3 | Fallback only where neither applies: `NOT ST_Equals(old, new) AND ST_HausdorffDistance(old, new) > <tolerance_m for that producer>`. Both conditions, not either. | any future source with no revision field |
+| 4 | **Circuit breaker, mandatory.** If a single run would open new versions for more than a stated fraction of a layer (start at 5 %), abort the run, write nothing, exit non-zero. | every producer |
+
+Step 4 is what makes this survivable rather than merely careful: it converts "the dimension quietly grew 10× overnight" into a red Railway run, which is the same failure mode Phase 1 exists to create. Each producer declares its rule and its threshold in its ingest module, next to its `data_available_at` rule (§5b), and both are unit-tested against recorded payloads.
+
+Five refinements to the sketch, each with a reason:
 
 | Refinement | Why |
 |---|---|
-| **`natural_key` is namespaced** (`firms:<sat>:<acqDate>:<acqTime>:<lat4>:<lon4>`), not the bare producer-local id | Today's key is unique only *within a layer* (`schema.ts:181-184`). A globally-UNIQUE column over unnamespaced ids would silently merge a FIRMS detection and a gauge that happened to share a string. The namespace is not decoration; it is what makes the UNIQUE legal. |
+| **`natural_key` is namespaced** (`firms:<sat>:<acqDate>:<acqTime>:<lat4>:<lon4>`), not the bare producer-local id | Today's key is unique only *within a layer* (`schema.ts:181-184`). Under Type-2 this matters **more**, not less: `natural_key` no longer carries a bare UNIQUE, it carries "these rows are the same place over time". Two producers colliding on an unnamespaced id are therefore not merged into one row — they are interleaved into one *version chain*, producing a plausible-looking history that is fiction. See risk 1. |
 | **`centroid` is a plain column, not `GENERATED … STORED`** | A stored generated column calling a PostGIS function is exactly the mechanism that made the warehouse unrestorable from its own `pg_dump` (`services/agri-data-service/plans/checksum-layer-audit-2026-08-03.md:178-186`). We are deleting the other two this quarter; do not add a third. |
 | **`resolution_m` and `producer` added** | `resolution_m` mirrors `agri.spatial_cell.resolution_m` (`db/agri/tables/spatial_cell.sql:11`) so retiring that table loses nothing. `producer` makes "which ingest owns this row" answerable without parsing `natural_key`. |
-| **`first_seen_at` and `last_seen_at` are split, and `first_seen_at` is insert-only** | `geo.features.created_at` is measurably *not* a first-seen timestamp — the refresh-in-place path rewrites it (see "Backfill" below), so all 15 016 rows read as created today. The dimension must not repeat that: one column that only ever means "first", one that only ever means "most recent". |
-| **No `valid_from`/`valid_to`** — the dimension is Type-1 | WFIGS redraws a perimeter under a stable `uniqueFireIdentifier` (`ingestion-jobs.ts:335`), so a redraw updates `geom` in place and bumps `last_seen_at`. **This is a real trade-off, not an oversight:** with D2's slider, scrubbing to last week will show *today's* perimeter shape. See open question 4. |
+| **`first_seen_at` is gone — `version_valid_from` on v1 *is* first-seen** | The previous draft added `first_seen_at`/`last_seen_at` because `geo.features.created_at` is measurably not a first-seen timestamp (the refresh path rewrites it, so all 15 016 rows read as created today). Type-2 subsumes that honestly: `min(version_valid_from)` over a `natural_key` is first-seen **by construction**, and it cannot be silently rewritten because closing a version writes `version_valid_to`, never `version_valid_from`. Two columns removed, the guarantee strengthened. |
+| **`last_confirmed_at` kept, and it is *not* a validity column** | "we last saw this shape upstream and it was unchanged" is genuinely useful for staleness detection and is not derivable from the validity interval. Keeping it separate is what stops it drifting into a pseudo-`version_valid_to`. |
+| **`superseded_by` as an explicit forward pointer** | Walking a version chain by `ORDER BY version_valid_from` works but is implicit; a real FK makes "what replaced this?" a join instead of a window function, and the paired CHECK makes a half-closed version (`version_valid_to` set, no successor) unrepresentable. |
 
 **Facts reference `geometry_id`. A grid cell is a geometry row with `geom_kind='grid_cell'` — grid cells stop being a separate concept.**
 
-| Fact | Change |
-|---|---|
-| `geo.features` | gains `geometry_id uuid REFERENCES geo.geometry`; keeps its own `geom` denormalised for tile serving (see "Martin" below) |
-| `agri.signal_observation.cell_id` | becomes `geometry_id`, cross-schema FK → `geo.geometry` |
-| `agri.forecast_series.spatial_cell_id` | becomes `geometry_id` (`db/agri/tables/forecast_series.sql:22`) |
-| `agri.cell_source_crosswalk.cell_id` | becomes `geometry_id` |
-| `geo.metric_daily` (new, §2.1) | keyed on `geometry_id` from birth |
+| Fact | Change | Which version it points at |
+|---|---|---|
+| `geo.features` | gains `geometry_id uuid REFERENCES geo.geometry`; keeps its own `geom` denormalised for tile serving (see "Martin" below) | **the current version**, repointed when a version closes — `features` is current state, not history |
+| `agri.signal_observation.cell_id` | becomes `geometry_id`, cross-schema FK → `geo.geometry` | the version valid at `observed_at` |
+| `agri.forecast_series.spatial_cell_id` | becomes `geometry_id` (`db/agri/tables/forecast_series.sql:22`) | the current version — a series is a standing configuration |
+| `agri.cell_source_crosswalk.cell_id` | becomes `geometry_id` | the version valid at the crosswalk's `source_release` |
+| `geo.metric_daily` (new, §2.1) | keyed on `geometry_id` from birth | the version valid at `valid_on` — this is what makes the slider correct with no as-of join |
+
+**No fact may reference a version by `natural_key`.** The FK is always to `geometry_id`, so a fact is pinned to a shape, permanently. This has one hard consequence: **version rows are never deleted.** `geo.metric_daily`'s FK is therefore `ON DELETE RESTRICT`, not `CASCADE` (§2.1) — pruning facts is allowed, pruning the dimension is not, and a superseded polygon stays forever at a few KB.
 
 **`agri.spatial_cell` retires.** Verified: **0 rows and no grids defined**, so this costs nothing — drop it, or leave it as a view over `geo.geometry WHERE geom_kind='grid_cell'` if any SQL still names it. Prefer the view for one revision, then drop.
 
@@ -193,18 +257,37 @@ SELECT count(*) FILTER (WHERE properties ? 'id' AND geom IS NOT NULL) AS eligibl
        count(*)                                                       AS total
 FROM geo.features;
 
--- 2. insert
-INSERT INTO geo.geometry (natural_key, geom_kind, geom, centroid, producer)
+-- 2. insert every existing row as v1: current version, open-ended.
+--    version_valid_from is the feature's TRUE first observation, per producer.
+--    NEVER created_at (it is "last touched"), NEVER now() (it would hide all
+--    history before backfill day and blank the slider's past).
+INSERT INTO geo.geometry (natural_key, version_valid_from, version_valid_to,
+                          geom_kind, geom, centroid, producer)
 SELECT l.name || ':' || (f.properties ->> 'id'),
+       geo.backfill_first_observed(l.name, f.properties),  -- see table below
+       NULL,                                               -- v1 is current
        lower(replace(GeometryType(f.geom), 'MULTI', '')),
        f.geom, ST_Centroid(f.geom), l.name
 FROM geo.features f JOIN geo.layers l ON l.id = f.layer_id
 WHERE f.properties ? 'id' AND f.geom IS NOT NULL;
 
--- 3. assert, then COMMIT: eligible == inserted, and every eligible feature
---    resolved a geometry_id. Raise and ROLLBACK on mismatch.
+-- 3. assert, then COMMIT: eligible == inserted, every eligible feature resolved
+--    a geometry_id, and every inserted row has version_valid_to IS NULL.
+--    Raise and ROLLBACK on mismatch.
 COMMIT;
 ```
+
+**`version_valid_from` for the 15 016 backfilled rows.** The observation timestamp is already inside the identity string for three of the four producers, so `identity.py`'s parsers supply it — the same per-producer knowledge, reused:
+
+| Producer | v1 `version_valid_from` |
+|---|---|
+| FIRMS | `acqDate` + `acqTime`, already embedded in the id (`ingestion-jobs.ts:100-115`) |
+| USGS gauges | `updatedAt`, already embedded in the id (`:189`) |
+| Open-Meteo | `observedAt`, already embedded in the id (`:294`) |
+| WFIGS perimeters | `properties->>'polygonDateTime'` where present, else `'-infinity'` |
+| anything else | `'-infinity'` |
+
+**`'-infinity'` is the correct fallback, not `now()`.** It states "this shape has been true for as long as we know", which is honest, and it makes the as-of predicate match at every past slider position. Backfilling `now()` instead would make every geometry vanish when the slider is scrubbed to yesterday — a total, silent blanking of the map's history on day one.
 
 **Do not hardcode the expected count — including from this document.** Measured against production during this revision: the four ingested layers hold **15 016** rows (water-gauges 7 596, fire-detections 6 297, weather-observations 1 013, fire-perimeters 110). The earlier draft of this plan cited 12 287 from a capture taken the same morning; the ~2.7 k difference is entirely water-gauges (+2 244) and weather-observations (+485) written by ingestion runs in between. **Nothing was wrong with either number — the cron simply runs, so any figure written into a document is stale within hours.** That is the actual hazard: an assertion compared against a literal will fail spuriously (or, worse, pass for the wrong reason) whenever ingestion has run since the literal was written. Compare against a count taken inside the same transaction, always.
 
@@ -214,7 +297,7 @@ COMMIT;
 
 **`geo.features.created_at` is "last touched", not "first seen" — do not inherit it.** Measured: all 15 016 rows carry `created_at` = today, including fire-detections and fire-perimeters whose newest upstream data predates today's runs. The refresh-in-place path (`src/lib/server/services/ingest.ts:107-122`) rewrites the row on any payload change, so the column tracks the most recent write. Consequences:
 
-- The backfill must **not** copy `created_at` into `geo.geometry.first_seen_at`; the dimension's `first_seen_at` starts honest at backfill time and is only ever set on insert, never on update.
+- The backfill must **not** derive `version_valid_from` from `created_at`; it uses the per-producer observation timestamp above, falling back to `'-infinity'`. Under Type-2 there is no `first_seen_at` column to poison — `min(version_valid_from)` is first-seen by construction — which is one reason D6 is an improvement here and not just extra machinery.
 - Nothing may derive `data_available_at` from `created_at` (§5b) — it would report "knowable today" for a three-day-old detection.
 - The slider's history depth (§6) cannot be computed from `created_at` either; it comes from `geo.metric_daily.valid_on`, which is an observation date, not a write date.
 
@@ -226,7 +309,9 @@ So: **one table, one shape, `value_kind` as a column.**
 
 ```sql
 CREATE TABLE geo.metric_daily (
-  geometry_id   uuid         NOT NULL REFERENCES geo.geometry(geometry_id) ON DELETE CASCADE,
+  geometry_id   uuid         NOT NULL REFERENCES geo.geometry(geometry_id) ON DELETE RESTRICT,
+                -- RESTRICT, not CASCADE: this points at one *version* (D6). Facts pin a shape
+                -- permanently, so dimension versions are never deleted. Prune facts, not geometry.
   metric_name   varchar(150) NOT NULL,
   valid_on      date         NOT NULL,
   issued_on     date         NOT NULL,      -- observations: = valid_on, so the PK stays NOT NULL
@@ -327,7 +412,42 @@ ALTER TABLE agri.forecast_iteration
 >
 > **If you decline it:** delete the `purpose` column and the two WHERE clauses. The plan still works — `geo.metric_daily` is a projection, so a bad batch is fixed by re-running the projector, not by editing rows. The only thing lost is the guarantee that it never *reaches* the map in the first place.
 
-**Also in this revision (the checksum-layer cut):** drop `finalize_*` (4 fns, 886 lines), the `guard_*` triggers, the 10 status↔checksum evidence CHECKs, and convert the two `GENERATED ALWAYS … STORED` `value_checksum` columns to plain columns. Keep every checksum column, the 11 `*_checksum` functions, the identity UNIQUEs, and `materialize_forecast_iteration`'s idempotency block. Full inventory and rationale: `services/agri-data-service/plans/checksum-layer-audit-2026-08-03.md` §6.
+**Also in this revision (the checksum-layer cut):** drop `finalize_*` (4 fns, 886 lines), the `guard_*` triggers, and convert the two `GENERATED ALWAYS … STORED` `value_checksum` columns to plain columns. Keep every checksum column, the identity UNIQUEs, and `materialize_forecast_iteration`'s idempotency block. Full inventory: `services/agri-data-service/plans/checksum-layer-audit-2026-08-03.md` §6.
+
+**A2. What survives the cut — table by table (D5).** *"The ml must stay."* The enforcement to remove is the trigger / guard / finalize machinery **on** these tables, never the tables themselves.
+
+`agri.v_forecast_series_serving` joins eight tables plus one LEFT JOIN (`db/agri/views/v_forecast_series_serving.sql:53-60`). All nine are load-bearing for ML serving and all nine **survive as plain storage**:
+
+| Table | Role in the ML lane | Disposition |
+|---|---|---|
+| `publication_pointer` | entry point: `(job_output_id, scope_key, release_set_id, product='forecast_series')` | **KEEP** as plain storage. Drop its triggers. |
+| `forecast_publication` | the view filters `state = 'published'` (`:61`) | **KEEP.** Drop triggers; `state` stays a plain column the CLI sets. |
+| `forecast_publication_item` | publication → receipt fan-out | **KEEP.** Drop triggers. |
+| `forecast_receipt` | the view filters `status = 'finalized'` (`:61`) | **KEEP.** Drop triggers and `finalize_*`. **Retain `ck_forecast_receipt_finalized_evidence`** (`db/agri/tables/forecast_receipt.sql:24`) — see below. |
+| `forecast_value` | the p10/p50/p90 rows themselves | **KEEP.** Drop `guard_forecast_value_write` (which today makes a botched run undeletable, audit §4.2). |
+| `forecast_series` | series identity, `allow_ml_daily_aggregate` gate | **KEEP.** Also gains `geometry_id` in Phase 3 (D1/D6). |
+| `forecast_run` | the view filters `status = 'validated'` (`:61`) | **KEEP.** Drop triggers. |
+| `forecast_feature_snapshot` | `release_set_id` join that pins the leakage gate (`:61`) | **KEEP** — this is the ML lane's as-of anchor; deleting it would silently unpin leakage control. |
+| `forecast_training_run` | LEFT JOIN for model/training checksums | **KEEP.** |
+
+**Replaced by nothing.** There is no narrow-rebuild step. Option (b) from the previous revision — rebuild the ML lane directly onto `geo.metric_daily` — is **withdrawn**, because D5 forbids an intermediate state where the ML view is dead and a same-phase rebuild would mean writing an untested ML writer inside a deletion migration. Keeping nine tables of plain storage is cheaper and carries zero serving risk.
+
+**Still cut:** the hindcast plane (`forecast_hindcast_run`, `forecast_hindcast_value`, `forecast_backtest_metric`'s guards), the strategy/intervention planes, all `guard_*` / `enforce_*` / `verify_*` / `require_*` / `record_*` functions, the four `SECURITY DEFINER` owner roles, and the two generated columns. None of them appear in `v_forecast_series_serving`.
+
+**Checksum functions, corrected disposition.** There are four `forecast_*` checksum functions (`db/agri/functions/`):
+
+| Function | Digests | Disposition |
+|---|---|---|
+| `forecast_iteration_value_checksum` | `forecast_iteration_value` rows | **KEEP** — this is what the generated column becomes an explicit call to |
+| `forecast_iteration_receipt_checksum` | a finalized `forecast_iteration` | **KEEP** — `forecast_iteration` is the Monte Carlo lane and survives D4 |
+| `forecast_hindcast_value_checksum` | `forecast_hindcast_value` rows | **DROP** — hindcast plane is cut |
+| `forecast_hindcast_receipt_checksum` | `forecast_hindcast_run` | **DROP** — hindcast plane is cut |
+
+> **Two findings that make D5 more than a deletion-list edit.**
+>
+> **(i) `forecast_receipt.receipt_checksum` has no SQL function behind it.** Unlike the iteration/hindcast digests, nothing in `db/agri/functions/` computes it; it is a nullable `varchar(64)` gated by `ck_forecast_receipt_finalized_evidence` (`forecast_receipt.sql:24`). So whoever finalizes a receipt must compute the digest **in Python** — which is the pattern 18 `src/` files already use (audit §5.2). Retain that one CHECK: with the guards gone it is the only thing preventing `status='finalized'` on a receipt with no evidence, and the serving view trusts that status.
+>
+> **(ii) Keeping the tables is necessary but not sufficient — the ML lane has never actually run.** The view requires `publication.state='published'` **and** `receipt.status='finalized'` **and** `run.status='validated'` (`:61`), and **no code in `src/` writes `forecast_receipt` or `forecast_publication` at all** (`models/forecasting.py:852,903,941` are ORM class definitions; `routes/forecasts.py` is undeployed). The DB finalizers that could have moved those states are being deleted and had zero callers anyway (audit §3.2). **Phase 7 must therefore ship a CLI-side publisher that writes those three states**, not merely a trained model. This is not a regression introduced by the cut — it was already true — but D5 turns it from a dormant gap into scoped work.
 
 **B. Covariate schema `agri_covariates_v2` — Alembic, function bodies only.** No table changes. Adds stream keys for the newly in-housed sources (§5).
 
@@ -344,7 +464,7 @@ Every row also mints or resolves `geo.geometry` rows; the "Geometry" column says
 | 1 | NASA FIRMS | `source_release` + `artifact` (R2 if >1 MB) | `point` | `signal_observation` (fire count per cell) | `geo.features` layer `fire-detections` | no |
 | 2 | USGS NWIS streamflow | `source_release` | `point` | `signal_observation` (`streamflow_cfs`, `gauge_height_ft`) | `geo.features` layer `water-gauges` | no |
 | 3 | Open-Meteo current | `source_release` | `point` | `signal_observation` (temp/precip/RH/wind) | `geo.features` layer `weather-observations` | no |
-| 4 | WFIGS fire perimeters | `source_release` + `artifact` | `polygon` (Type-1, redrawn in place) | — (geometry, not a cell signal) | `geo.features` layer `fire-perimeters` | no |
+| 4 | WFIGS fire perimeters | `source_release` + `artifact` | `polygon`, **versioned on `polygonDateTime`** (§2.0) | — (geometry, not a cell signal) | `geo.features` layer `fire-perimeters` | no |
 | 5 | USDM drought | `source_release` + `artifact` (~19 MB → R2) | `polygon` | `drought_polygon_snapshot` (**already wired**) | `geo.drought_areas` + `geo.metric_daily` | no |
 | 6 | NDVI (GIBS MODIS 8-day) | `source_release` + `artifact` (PMTiles → R2) | `grid_cell` via `cell_source_crosswalk` | `signal_observation` (`ndvi_mean` per cell) | R2 PMTiles + `/api/tiles/vegetation/ndvi/...` + `geo.metric_daily` | **yes** |
 | 7 | SoilGrids | `source_release` + `artifact` (COG → R2) | `grid_cell` | `signal_observation` static features | keep `public.soil_grid_cache` as the point-read path | yes |
@@ -436,7 +556,7 @@ Different shape from the other four: vector, not raster; annual, not static; and
 | Raw size | CONUS all-time is ~30 k polygons; the PNW share is ~3-5 k. **~5-20 MB per annual GeoJSON release**, over the 1 MB threshold ⇒ R2 artifact |
 | Storage 5-yr projection | **< 150 MB** total including every annual release. Negligible |
 | Retention | **keep every annual release.** Each is a distinct versioned scientific product and re-derivation is not possible if the service changes |
-| Geometry | `geo.geometry`, `geom_kind='polygon'`, `natural_key='mtbs:<Fire_ID>'`. Type-1: MTBS revises perimeters between annual releases under a stable `Fire_ID` |
+| Geometry | `geo.geometry`, `geom_kind='polygon'`, `natural_key='mtbs:<Fire_ID>'`. **Versioned on the annual release identifier** — MTBS revises perimeters between releases under a stable `Fire_ID`, which is exactly a version chain (§2.0 rule 1) |
 | Model plane | per-cell `burn_severity_class` / `burned_area_ac` via `agri.cell_source_crosswalk` with `spatial_support_kind='area_aggregate'` — severity is a per-fire attribute, so it must be areally apportioned onto cells, which is exactly what `coverage_fraction` is for |
 | Serving plane | `geo.features` layer `burn-severity`; `BurnHistoryLayer.tsx` repoints off the live call |
 | `data_available_at` | the **release publication date** of the MTBS annual product, *not* `Ig_Date`. A 2023 fire only became knowable when the 2024/25 release shipped; using the ignition date would leak roughly 18 months |
@@ -542,7 +662,9 @@ The alternative — two tables and a `UNION ALL` view — was rejected because t
 
 Both lanes already emit a three-number band, so the projection into `geo.metric_daily` is a column rename, not a new uncertainty representation.
 
-> **Blocking caveat — read this before Phase 2.** `mv_forecast_ml_daily_serving` is built on `agri.v_forecast_series_serving`, which joins `publication_pointer → forecast_publication → forecast_publication_item → forecast_receipt → forecast_value` (`db/agri/views/v_forecast_series_serving.sql:53-59`) and keys on `(publication_id, forecast_receipt_id, series_id, valid_day)` (`mv_forecast_ml_daily_serving.sql:47`). **Cutting the receipt/publication planes deletes the ML lane.** See risk 3 and open question 3.
+> **Resolved by D5 — *"the ml must stay."*** `mv_forecast_ml_daily_serving` is built on `agri.v_forecast_series_serving`, which joins `publication_pointer → forecast_publication → forecast_publication_item → forecast_receipt → forecast_value → forecast_series → forecast_run → forecast_feature_snapshot` (`db/agri/views/v_forecast_series_serving.sql:53-60`) and keys on `(publication_id, forecast_receipt_id, series_id, valid_day)` (`mv_forecast_ml_daily_serving.sql:47`). **All nine tables survive Phase 2 as plain storage; only the machinery on them is removed** — table-by-table disposition in §2 DDL sketch A2. The view is never dead, not even mid-phase.
+>
+> One consequence carried into Phase 7: the view gates on `publication.state='published' AND receipt.status='finalized' AND run.status='validated'`, and nothing in `src/` writes those tables today, so **Phase 7 ships a CLI publisher, not just a model.** See §2 A2 finding (ii).
 
 ### Per-layer forecast capability — the slider must not lie
 
@@ -625,14 +747,14 @@ Each phase ships alone and is worth having alone.
 **Value:** a failed fetch becomes a red Railway run instead of a log line nobody reads.
 **Zero schema changes** — no Drizzle migration, no Alembic migration. Targets already exist.
 
-### Phase 2 — Cut the enforcement layer; remove the eval-only lock (D4)
-One or two Alembic revisions: drop `finalize_*`, the `guard_*` triggers, the evidence CHECKs and the 4 owner roles; convert the two `GENERATED … STORED` `value_checksum` columns to plain columns; drop `ck_forecast_iteration_method` and `ck_forecast_iteration_purpose` and flip the `purpose` default to `'serving'`. Keep every checksum column, the 11 checksum functions and `materialize_forecast_iteration`'s idempotency block.
+### Phase 2 — Cut the enforcement layer; remove the eval-only lock (D4, D5)
+One or two Alembic revisions: drop `finalize_*`, the `guard_*` triggers and the 4 owner roles; convert the two `GENERATED … STORED` `value_checksum` columns to plain columns; drop `ck_forecast_iteration_method` and `ck_forecast_iteration_purpose` and flip the `purpose` default to `'serving'`. **Keep all nine ML-serving tables as plain storage (D5, §2 A2), and keep `ck_forecast_receipt_finalized_evidence`.** Keep every checksum column and `materialize_forecast_iteration`'s idempotency block; drop the two hindcast checksum functions with the hindcast plane.
 **Value:** the warehouse restores from its own `pg_dump` again, schema changes stop needing a `DISABLE TRIGGER` bracket, and a serving forecast becomes legal to write.
-**Free only right now** — 0 rows means no data migration and no backfill. Resolve open question 3 (the ML lane's spine) inside this phase, not after it.
+**Free only right now** — 0 rows means no data migration and no backfill. **Verification gate:** `SELECT count(*) FROM agri.mv_forecast_ml_daily_serving` and a `REFRESH MATERIALIZED VIEW` must both succeed after every revision in this phase, including intermediate ones. The ML view is never allowed to be dead.
 
-### Phase 3 — `geo.geometry` conformed dimension; backfill; repoint the facts (D1)
-Drizzle: `geo.geometry` + `migration-contract.ts`. Backfill from `geo.features` behind a census and a two-sided row-count assertion. Alembic: repoint `signal_observation.cell_id`, `forecast_series.spatial_cell_id` and `cell_source_crosswalk.cell_id` to `geometry_id`; retire `agri.spatial_cell`. Add the Drizzle-before-Alembic note to `services/agri-data-service/db/AGENTS.md`.
-**Value:** identity is defined once. Six scattered dedupe rules and a per-layer partial index collapse into one UNIQUE `natural_key`, which is the structural fix for the plan's own critical risk.
+### Phase 3 — `geo.geometry` Type-2 conformed dimension; backfill; repoint the facts (D1, D6)
+Drizzle: `geo.geometry` with version columns + `geo.geometry_current` view + `migration-contract.ts`. Backfill from `geo.features` as v1 rows dated by the per-producer observation rule (never `created_at`, never `now()`), inside one transaction with two-sided assertions. Python: the change-detection rule and circuit breaker per producer (§2.0). Alembic: repoint `signal_observation.cell_id`, `forecast_series.spatial_cell_id` and `cell_source_crosswalk.cell_id` to `geometry_id`; retire `agri.spatial_cell`. Add the Drizzle-before-Alembic note to `services/agri-data-service/db/AGENTS.md`.
+**Value:** identity is defined once **and geometry gains honest history** — six scattered dedupe rules collapse into one version chain per place, and scrubbing the slider backwards renders the shape that was actually true then.
 Existing MVT tile functions are untouched.
 
 ### Phase 4 — Provenance on the operational lane
@@ -648,7 +770,7 @@ Alembic: `agri_covariates_v2`. Drizzle: `geo.metric_daily`, the three `geo.layer
 **Value:** the headline — scrub any day from the start of history to +30 and see the map at that date, with observed values behind today and an honest uncertainty band ahead of it.
 
 ### Phase 7 — ML variant on the slider toggle
-Train against `covariate_daily_features` at `agri_covariates_v2`; publish through whichever ML lane open question 3 settles on; enable the toggle for future dates; run hindcast evaluation to compare the two.
+Train against `covariate_daily_features` at `agri_covariates_v2`; **ship the CLI publisher that writes `forecast_run.status='validated'` → `forecast_receipt.status='finalized'` (with a Python-computed `receipt_checksum`) → `forecast_publication.state='published'`**, which is what makes `mv_forecast_ml_daily_serving` return rows at all (§2 A2 finding ii); project it into `geo.metric_daily`; enable the toggle for future dates.
 **Value:** the toggle gets its second option, and there is a defensible answer to "is the ML better than the bootstrap?"
 The only phase whose value depends on another (Phase 6).
 
@@ -660,15 +782,18 @@ The only phase whose value depends on another (Phase 6).
 
 | # | Risk | Severity | Mitigation |
 |---|---|---|---|
-| 1 | **Dimension identity collision (Phase 3).** `geo.geometry.natural_key` is globally UNIQUE, but today's ids are unique only *within a layer* (`features_layer_external_id_unique`, `src/lib/server/db/schema.ts:181-184`). An unnamespaced key merges two unrelated facts onto one geometry — silently and irreversibly | **Critical** | `natural_key` is always `'<producer>:<producer-local id>'`. Assert `eligible == inserted` inside the backfill transaction, before COMMIT (§2.0). Rehearse on a DB snapshot. *Measured and no longer a concern: `properties->>'id'` is non-null on **all** 15 016 rows, so there is no unkeyed remainder to reconcile.* |
+| 1 | **Dimension identity collision (Phase 3), worse under Type-2.** `natural_key` no longer carries a bare global UNIQUE — D6 moved it to `(natural_key, version_valid_from)` plus a partial unique on `natural_key WHERE version_valid_to IS NULL`. So the column's meaning changed from "this row is unique" to **"these rows are the same place over time"**. Two producers colliding on an unnamespaced id are therefore not merged into one row; they are **interleaved into one version chain**, and the result is a fabricated history that looks entirely plausible — strictly harder to detect than the Type-1 merge | **Critical** | `natural_key` is always `'<producer>:<producer-local id>'`, and the namespace is now a correctness requirement rather than hygiene. Add a standing assertion that every `natural_key` in a version chain shares one `producer` value. Assert `eligible == inserted` inside the backfill transaction (§2.0). Rehearse on a DB snapshot. *Measured: `properties->>'id'` is non-null on all 15 016 rows, so there is no unkeyed remainder.* |
+| 1b | **Version explosion (Phase 3, D6).** Geometry-float comparison as the change-detection rule versions every moving feature on every run. The dimension is the table every fact joins to, versions can never be deleted (facts pin them), and the growth is silent — the map keeps rendering correctly while the table goes unbounded | **Critical** | Never compare geometry floats. Version on the producer's own revision signal (`polygonDateTime`, USDM `valid_date`, MTBS release id); never version producers whose location is part of identity; `ST_Equals` **and** a Hausdorff tolerance only as a last-resort fallback. **Mandatory circuit breaker:** >5 % of a layer versioning in one run aborts the run and exits non-zero. Full rule table in §2.0. This reuses the finding already load-bearing in trap #4 (`src/lib/server/services/ingest.ts:95-122`). |
 | 2 | **Feature-ID drift (Phases 1-3).** Python generating subtly different id strings (float formatting, timezone rendering, `toFixed(4)` vs `f"{x:.4f}"`) duplicates every existing row, because dedupe is entirely `properties->>'id'` (`ingest.ts:56-65`) | **High** *(was Critical)* | Golden-file ID test gates DB access (§3 step 1); idempotence asserts a delta of exactly 0 on frozen replay **against a baseline captured in the same transaction**, never a literal. **Character changed:** after Phase 3 the format is defined once in `ingest/identity.py` and stored once as `natural_key`, so drift becomes structurally impossible rather than test-suppressed. Bounded to Phases 1-3. |
 | 2b | **Stale hardcoded row counts.** Ingestion runs on a cron, so any count written into a test, a fixture or this document is wrong within hours — the four layers moved by ~2.7 k rows during the drafting of this revision. A test asserting against a literal fails spuriously, and the reflex fix ("update the number") hides the next real regression | Medium | Every count assertion captures its own baseline immediately before the run. No literal row counts in test code. The figures in §3 and §2.0 are labelled orientation-only. |
-| 2c | **`created_at` is "last touched", not "first seen."** All 15 016 rows read as created today because the refresh-in-place path rewrites them (`src/lib/server/services/ingest.ts:107-122`). Anything treating it as a first-observation timestamp — `data_available_at`, the slider's history depth, retention windows, "new since" queries — is silently wrong, and wrong in the direction that looks plausible | **High** | `geo.geometry.first_seen_at` is set on INSERT only and is **not** backfilled from `created_at`. `data_available_at` comes from the per-source availability rule (§5b), never from a write timestamp. Slider history depth comes from `geo.metric_daily.valid_on`. Audit for other `created_at` readers before Phase 6. |
-| 3 | **Cutting the receipt/publication planes deletes the ML serving lane.** `mv_forecast_ml_daily_serving` → `v_forecast_series_serving` → `publication_pointer / forecast_publication / forecast_publication_item / forecast_receipt / forecast_value` (`db/agri/views/v_forecast_series_serving.sql:53-59`). D2 says reuse that matview; "cut the planes" removes its spine. The checksum audit did not measure this | **High** | Decide in Phase 2, not after. Two options in open question 3. Mitigating fact: **no Python code writes `forecast_receipt` or `forecast_publication` today** — only ORM class definitions (`models/forecasting.py:852,903,941`) and the undeployed `routes/forecasts.py` — so the ML lane is not wired end-to-end regardless, and rebuilding it narrow is cheap now and expensive later. |
+| 2c | **`created_at` is "last touched", not "first seen."** All 15 016 rows read as created today because the refresh-in-place path rewrites them (`src/lib/server/services/ingest.ts:107-122`). Anything treating it as a first-observation timestamp — `data_available_at`, the slider's history depth, retention windows, "new since" queries — is silently wrong, and wrong in the direction that looks plausible | **High** | Under D6 there is no `first_seen_at` column to poison: v1's `version_valid_from` is dated from the per-producer observation timestamp, falling back to `'-infinity'`, never `created_at` and never `now()`. `data_available_at` comes from the per-source availability rule (§5b), never a write timestamp. Slider history depth comes from `geo.metric_daily.valid_on`. Audit for other `created_at` readers before Phase 6. |
+| 3 | **Phase 2 accidentally breaks ML serving.** `mv_forecast_ml_daily_serving` → `v_forecast_series_serving` → nine tables (`db/agri/views/v_forecast_series_serving.sql:53-60`). D5 requires the lane never be dead, not even between revisions in the same phase | **Medium** *(was High; D5 resolved the decision, not the execution risk)* | All nine tables KEEP as plain storage — table-by-table in §2 A2. `DROP FUNCTION` without `CASCADE` so any missed dependency surfaces immediately (audit §7 item 6). Gate: `REFRESH MATERIALIZED VIEW agri.mv_forecast_ml_daily_serving` must succeed after **every** revision in Phase 2. |
+| 3b | **The ML lane has never actually run, and Phase 7 now owns that.** The serving view requires `publication.state='published'`, `receipt.status='finalized'` and `run.status='validated'` (`v_forecast_series_serving.sql:61`), yet **nothing in `src/` writes `forecast_receipt` or `forecast_publication`** (`models/forecasting.py:852,903,941` are ORM classes; `routes/forecasts.py` is undeployed), and the DB finalizers that could have set those states had zero callers and are being deleted | **High** | Pre-existing, not caused by the cut — but D5 makes it scoped work rather than a dormant gap. Phase 7 ships a CLI publisher writing all three states, with the receipt digest computed in Python (there is no SQL function for `forecast_receipt.receipt_checksum`). Retain `ck_forecast_receipt_finalized_evidence` so a state-only fake cannot pass. |
 | 4 | **`data_available_at` set to `now()`.** One lazy ingest module poisons every downstream model with lookahead, and it is invisible — the forecast just looks suspiciously good. MTBS makes this worse: using `Ig_Date` instead of the annual release date leaks ~18 months | **High** | No ingest may default it. Per-source availability rules are pure functions with unit tests (§5b). Batch-runner assertion: reject a `source_release` whose `data_available_at` is within 60 s of `now()` for any source that is not near-real-time. |
 | 5 | **Drizzle-must-run-before-Alembic on a fresh database.** Cross-schema FK `agri.* → geo.geometry` (Phase 3). `preDeployCommand` runs Drizzle automatically; Alembic is manual, so the ordering is invisible until someone builds a new environment | Medium | The Alembic revision opens with `SELECT to_regclass('geo.geometry')` and raises a readable error rather than a bare FK failure. Document it in `services/agri-data-service/db/AGENTS.md` in the Phase 3 commit. Precedent for cross-schema FKs exists: `geo.layers.team_id → public.teams.id` (`schema.ts:159`). |
 | 6 | **Slider read amplification (Phase 6).** Every layer × every day is a distinct query and a distinct cache key; naive keying turns 1 Redis key per layer into ~430 | Medium | Cache only the ±7-day neighbourhood of the current selection, short TTL, older days fall through to Postgres. Debounce slider drag; fetch on settle, not on every tick. Measure p95 on `getMetricAtDate` before adding a matview (§2.1). |
-| 7 | **Type-1 dimension vs. a historical slider.** A redrawn WFIGS perimeter overwrites `geom` in place, so scrubbing to last week renders **today's** shape under last week's date — a silent lie, and exactly the class of error D2 exists to avoid | Medium | Open question 4. Cheapest honest fix: mark `producer='wfigs'` geometries as `temporal_kind='event'` on their layer so the slider does not claim historical fidelity for them; a Type-2 dimension is a much larger change and is not proposed here. |
+| 7 | ~~Type-1 dimension vs. a historical slider~~ | **Resolved by D6.** The dimension is Type-2; a redrawn perimeter closes its version and opens a new one, and facts point at the version valid at their own observation time. The residual cost moved to risk 1b (version explosion), which is the price of the fix. |
+| 7b | **Slider scrubbed before a geometry's `version_valid_from` renders nothing.** Correct behaviour — the place was not known to us then — but indistinguishable from "the layer is broken" if it happens silently, and it would happen to *every* geometry at once if the backfill dated v1 with `now()` | Medium | Backfill fallback is `'-infinity'`, never `now()` (§2.0). The legend states "not yet observed at this date" rather than rendering an empty layer, reusing the honest-degradation mechanism already required for non-forecastable layers (§6). |
 | 8 | **Migration-contract coupling.** Phases 3 and 6 each add a Drizzle migration and each breaks the deploy unless `src/lib/server/db/migration-contract.ts:1-5` is updated in the same commit — `/api/ready` checks `drizzle.__drizzle_migrations` for the exact `created_at`+`hash` (`src/app/api/ready/route.ts:47-48`) and the Railway healthcheck kills the release | Medium | Same-commit rule; `src/__tests__/security/readiness-migration-contract.test.ts` already catches it in CI, which runs inside the Docker build (`Dockerfile:64-69`). Fires twice now, not once. |
 | 9 | **Two migration tools on one database.** Alembic and Drizzle both migrate `plantgeo` | Medium | Ownership rule: Drizzle owns DDL for `geo`/`public`/`tracking`, Alembic owns `agri`, Python does DML only into `geo`. Neither tool's autogenerate is ever run against the other's schema. |
 | 10 | Bulk raster processing (Phase 5) is real local compute — hours of babysitting, not a cron job | Medium | One-time per source; run locally, upload the result. Do not put raster processing in the hourly container. |
@@ -687,7 +812,7 @@ The only phase whose value depends on another (Phase 6).
 - **No new raster catalog table.** `agri.artifact` is it.
 - **No request-time forecasting.**
 - **No horizon buttons.** The slider is the horizon control (D2).
-- **No Type-2 / temporal geometry dimension** in this plan. See risk 7 and open question 4.
+- **No temporal *facts* table beyond `geo.metric_daily`.** The dimension is Type-2 (D6), but history lives in versions plus daily facts — there is no separate audit/history table and no bitemporal modelling (no "as-known-at" axis on top of `version_valid_from`).
 - **No animation or interpolation between slider days.** Discrete days only.
 - **No forecast-comparison UI, model registry, or skill dashboard.** CLI + existing evaluation tables.
 - **No ERA5-Land.** It remains a `credential_gated` declared gap (`covariate_declared_gap.sql`) until CDS credentials exist.
@@ -702,13 +827,13 @@ A "session" = one focused multi-hour working block. Ranges reflect genuine uncer
 | Phase | Sessions | Confidence | What drives the spread |
 |---|---|---|---|
 | 1 — Port six jobs, swap cron | **4-7** | Medium | Trap-list fidelity (§3). The USDM job alone is ~1 session (geometry repair + prune + release-walk). `ingest/identity.py` is ~0.5 and pays for itself in Phase 3. If the golden-file ID test fails repeatedly, add 2. |
-| 2 — Cut enforcement + eval-only lock | **1-2** | **High** | Almost entirely deletion, against 0 rows. The audit measured the drop set exactly (`checksum-layer-audit-2026-08-03.md` §5.3). The only genuine work is deciding the ML lane's fate (open question 3) and re-pointing the two views that read the generated columns. |
-| 3 — Geometry dimension + backfill | **3-5** | Medium | The Drizzle table is trivial. The backfill is a single transaction over ~15 k rows that all carry a natural key, so the mechanics are easy; the work is the namespacing scheme and rehearsing it on a snapshot. Repointing three `agri` FKs is mechanical at 0 rows. Add 1 if the rehearsal turns up a collision. |
+| 2 — Cut enforcement + eval-only lock | **2-3** | **High** | Almost entirely deletion, against 0 rows; the audit measured the drop set exactly (`checksum-layer-audit-2026-08-03.md` §5.3). D5 added ~0.5-1: the drop set must be filtered table-by-table against the nine ML-serving tables, and the `REFRESH MATERIALIZED VIEW` gate re-run after every revision instead of once at the end. |
+| 3 — Type-2 geometry dimension + backfill | **5-8** | Medium | Was 3-5 under Type-1. D6 adds: version columns and their constraints (~0.5), the per-producer **change-detection rule and circuit breaker** with replayed-payload tests (~1.5 — this is the real work and risk 1b lives here), and dating v1 from the per-producer observation timestamp rather than a single column (~0.5). Backfill mechanics stay easy: one transaction, ~15 k rows, all with natural keys. Add 1 if a rehearsal turns up a collision or a versioning storm. |
 | 4 — Operational provenance | **2-3** | High | Mostly mechanical: one `publish_operational_release` helper reused six times. `source_release`/`artifact` writers already exist in `execution/source_ingestion.py`. |
 | 5 — Five new sources in-house | **7-12** | **Low** | Raster tooling (GDAL/rio-tiler/PMTiles) is the unknown. Terrain is easy (tiles exist, copy a bbox). NLCD/LANDFIRE need reprojection + categorical tiling. Soil is 6 COGs. NDVI needs a scheduled WMTS harvester. MTBS is the easiest (**1-2**: paged vector fetch, no raster toolchain). Budget 1.5-2.5 per raster source. |
 | 6 — Narrow fact + covariates v2 + MC + slider | **7-11** | Medium | `covariate_daily_features` is a large, carefully-tested SQL function; extending it is delicate and its contract test (from `0011`, extended by `0016`) must be extended too (~3). The slider is real front-end work, not a control swap (~3): store, component, capability gating, band rendering, date-threaded reads at 6 call sites, cache-key strategy. Projection CLIs ~2. |
-| 7 — ML variant on the toggle | **4-8** | **Low** | Depends on whether a trainable target exists, and on open question 3's answer — rebuilding a narrow ML lane costs 1-2 more than reusing the matview. Known blocker: the `0013` strategy-selection plane has zero labelled rows, so the *existing* ML target is not trainable; a different target may need defining first, which is not scoped here. |
-| **Total** | **28-48** | | Phases 1-4 (**10-17 sessions**) deliver reliability, a simplified schema, single-source identity and full provenance before any forecast work starts. Phase 2 is the cheapest session in the plan and the only one with an expiry date. |
+| 7 — ML variant on the toggle | **6-10** | **Low** | Was 4-8. D5 keeps the lane intact but exposes that it has never run: **+2 for the CLI publisher** writing `run.status='validated'` → `receipt.status='finalized'` (Python-computed digest) → `publication.state='published'`, without which the matview returns nothing. Known blocker unchanged: the `0013` strategy-selection plane has zero labelled rows, so the *existing* ML target is not trainable; a different target may need defining first, which is not scoped here. |
+| **Total** | **32-55** | | Phases 1-4 (**12-20 sessions**) deliver reliability, a simplified schema, versioned single-source identity and full provenance before any forecast work starts. Phase 2 remains the cheapest phase and the only one with an expiry date. |
 
 ---
 
@@ -830,15 +955,14 @@ Until one of those fires, **keep consuming GIBS and spend the 9-15 sessions on P
 
 These are genuinely unknown and should be resolved before the phase that depends on them, not guessed at now.
 
-**Closed by D1-D4 and removed from this list:** which `spatial_cell` grid the sources key to (D1 — there is one dimension and `cell_source_crosswalk` does the resampling); which metric goes on the map (D2 — the control is a date, and the fact table is metric-generic); whether Phase 7's ML forecasts the same metric as Monte Carlo (D2 — yes, they are two variants behind one toggle on one slider, so like-for-like is structural); whether `forecast_series` needs a row per variant (D2 — `variant` is a column on `geo.metric_daily`, so the serving read does not care).
+**Closed by D1-D4 and removed from this list:** which `spatial_cell` grid the sources key to (D1 — there is one dimension and `cell_source_crosswalk` does the resampling); which metric goes on the map (D2 — the control is a date, and the fact table is metric-generic); whether Phase 7's ML forecasts the same metric as Monte Carlo (D2 — yes, two variants behind one toggle on one slider); whether `forecast_series` needs a row per variant (D2 — `variant` is a column on `geo.metric_daily`).
+
+**Closed by D5 and D6:** whether the receipt/publication plane survives Phase 2 (**D5 — yes, all nine ML-serving tables survive as plain storage**; §2 A2 has the table-by-table disposition, and the "rebuild narrow" option is withdrawn); and Type-1 vs Type-2 geometry (**D6 — Type-2**; the old risk 7 is resolved and its cost has moved to risk 1b).
 
 1. **What defines the first grid, and who mints it?** D1 made grid cells ordinary geometry rows, but `agri.spatial_cell` has **0 rows and no grids defined**, so `geo.geometry` will have zero `grid_cell` rows after the Phase 3 backfill — every backfilled geometry is a point or a perimeter polygon. A drought or vegetation forecast needs areal cells. Resolution, extent (PNW bbox), and generator (PostGIS `ST_SquareGrid`? H3? align to a source's native grid?) are all unpinned. **Blocks Phase 6.** This is not the old "which existing grid" question — there is nothing to choose between; one has to be created.
 2. **Does the slider layer need date-parameterised MVT, or is GeoJSON-over-tRPC enough?** §2.1 recommends GeoJSON because the four declared Martin function sources take `(z,x,y)` only (`infra/martin/martin.yaml:29-40`). Confirm the cell count at full-bbox zoom stays in the low thousands; if a grid choice in question 1 pushes it to tens of thousands, a `(z,x,y,query)` Martin function becomes necessary and that is a different piece of work. **Blocks Phase 6's front end.**
-3. **Does "cut the receipt/publication planes" also cut the ML lane, or do those tables survive as plain storage?** Two options, both viable, and the choice must be made **inside Phase 2**:
-   - **(a) Keep the tables, cut only the enforcement.** `mv_forecast_ml_daily_serving` and `v_forecast_series_serving` keep working unchanged. This is what the audit's Option 4 actually describes. Cost: ~8 tables of unused schema carried forward.
-   - **(b) Cut them and rebuild the ML lane narrow** — an ML writer that emits `(geometry_id, metric_name, valid_on, issued_on, p10, p50, p90)` straight into `geo.metric_daily`, skipping the publication chain. Cheaper to reason about, and **nothing in `src/` writes `forecast_receipt` or `forecast_publication` today** (`models/forecasting.py:852,903,941` are class definitions; `routes/forecasts.py` is undeployed), so no working code is lost. Costs 1-2 extra sessions in Phase 7.
-   **Recommendation: (b)**, because the lane is not wired end-to-end anyway and the narrow shape is what the slider needs. But it is the owner's call, and doing it after data lands is much more expensive.
-4. **Type-1 or Type-2 geometry for redrawn perimeters?** The dimension as specified overwrites `geom` in place, so scrubbing the slider to last week shows today's WFIGS perimeter shape (risk 7). Options: accept it and mark those layers `temporal_kind='event'`; or add `valid_from`/`valid_to` to `geo.geometry` and make the fact join time-aware. The second is a materially bigger design and would change every read in §2.1. **Decide before Phase 6's slider ships**, not before Phase 3.
+3. **Change-detection thresholds, per producer.** D6 settled the *rule* (§2.0: revision signal first, never version identity-bearing locations, `ST_Equals` + Hausdorff only as fallback, 5 % circuit breaker). What is not settled is the **numbers**: the Hausdorff tolerance in metres for any producer that needs the fallback, and whether 5 % is the right breaker threshold for a layer as small as fire-perimeters (110 rows — 5 % is 6 rows, which a single genuine fire day could exceed). Measure against replayed WFIGS payloads before Phase 3 ships; a per-layer floor (`max(5 %, 25 rows)`) is the likely answer but should be derived, not assumed. **Blocks Phase 3's ingest wiring, not its DDL.**
+4. **Does any surviving ML-lane table need a `geometry_id` beyond `forecast_series`?** §2 A2 keeps nine tables; Phase 3 repoints only `forecast_series.spatial_cell_id`. `forecast_receipt` and `forecast_value` carry no geometry today and inherit it through the series, which is correct if a series never changes place — confirm that holds before Phase 7 publishes, since a re-sited series would silently re-attribute its whole history.
 5. **MTBS licensing under Esri AGOL hosting terms** (D3, deferred by the owner). The underlying USGS/USFS product is normally public domain; the AGOL feature service's terms are a separate instrument. Determine before publishing derived tiles to a public CDN, which is a later and larger exposure than persisting rows privately.
 6. **Where does the per-layer capability flag live?** §6 proposes three columns on `geo.layers`. The alternative is a front-end config constant, which is cheaper but drifts from what the data actually supports. Columns are recommended; confirm before Phase 6 writes the Drizzle migration.
 7. **Whose "today" defines the observed/forecast boundary?** Server date in UTC, or the viewer's local date? They disagree for up to a day, and the slider's hatched region, the toggle's enabled state and the `WHERE valid_on = $date` clause must all agree on one answer. Pin it to a single server-supplied `current_date` returned with the layer capabilities.
