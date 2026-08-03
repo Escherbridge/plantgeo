@@ -64,7 +64,7 @@ export function FireDashboard({
         </SheetHeader>
 
         <LayerToggle layerId="fire" label="Fire Detections" />
-        <LayerToggle layerId="fire-perimeters" label="Fire Risk Zones" />
+        <LayerToggle layerId="fire-perimeters" label="Active Fire Perimeters" />
 
         <div className="flex flex-col gap-4 mt-4 overflow-y-auto max-h-[calc(100vh-8rem)]">
           {fireData.error && !fireData.isLoading && (

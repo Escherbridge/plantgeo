@@ -48,7 +48,8 @@ const WeatherLayer = dynamic(
 
 export default function LayerManager() {
   const map = useMap();
-  const { viewport, activeLayers } = useMapStore();
+  const viewport = useMapStore((s) => s.viewport);
+  const activeLayers = useMapStore((s) => s.activeLayers);
   const vegState = useVegetationStore();
   const soilState = useSoilStore();
   const fireData = useFireData(activeLayers.includes("fire"));
@@ -72,35 +73,30 @@ export default function LayerManager() {
   );
 
   const weatherEnabled = activeLayers.includes("weather");
-  // Reads the nearest published observation from the warehouse; reports
-  // "unavailable" (rather than throwing) when the ingestion grid has no fresh
-  // sample near the viewport, so the layer simply stays empty.
-  const weatherQuery = trpc.wildfire.getWeatherForPoint.useQuery(
-    { lat: viewport.latitude, lon: viewport.longitude },
-    { enabled: weatherEnabled, retry: false }
+  // Reads every published, fresh observation across the viewport bbox --
+  // not just the nearest one -- so the wind layer reflects the full spread
+  // of warehouse-backed samples instead of a single point.
+  const weatherQuery = trpc.wildfire.getWeatherForBbox.useQuery(
+    { bbox: bbox ?? "-180,-90,180,90" },
+    { enabled: weatherEnabled && bbox !== null, staleTime: 15 * 60 * 1000 }
   );
-  const observation =
-    weatherQuery.data?.availability === "published"
-      ? weatherQuery.data.observation
-      : null;
   // Every rendered field must be measured: a partial observation is dropped
   // rather than back-filled with a zero the upstream never reported.
-  const weatherData: WindPoint[] =
-    observation &&
-    observation.windSpeed !== null &&
-    observation.windDirection !== null &&
-    observation.temperature !== null &&
-    observation.humidity !== null
-      ? [
-          {
-            coordinates: [observation.lon, observation.lat],
-            windSpeed: observation.windSpeed,
-            windDirection: observation.windDirection,
-            temperature: observation.temperature,
-            humidity: observation.humidity,
-          },
-        ]
-      : [];
+  const weatherData: WindPoint[] = (weatherQuery.data ?? [])
+    .filter(
+      (observation) =>
+        observation.windSpeed !== null &&
+        observation.windDirection !== null &&
+        observation.temperature !== null &&
+        observation.humidity !== null
+    )
+    .map((observation) => ({
+      coordinates: [observation.lon, observation.lat],
+      windSpeed: observation.windSpeed as number,
+      windDirection: observation.windDirection as number,
+      temperature: observation.temperature as number,
+      humidity: observation.humidity as number,
+    }));
 
   // Sync visibility of style-baked Martin layers (fire-perimeters/
   // interventions/building-footprints) with activeLayers -- these are static
@@ -162,7 +158,7 @@ export default function LayerManager() {
         zoom={zoom}
         visible={activeLayers.includes("demand-heatmap") && bbox !== null}
       />
-      <WeatherLayer map={map} data={weatherEnabled ? weatherData : []} />
+      <WeatherLayer map={map} data={weatherData} visible={weatherEnabled} />
     </>
   );
 }

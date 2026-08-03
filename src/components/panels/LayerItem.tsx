@@ -25,7 +25,9 @@ export function LayerItem({
   onDragOver,
   onDrop,
 }: LayerItemProps) {
-  const { activeLayers, toggleLayer } = useMapStore();
+  // Per-field selectors — avoids re-rendering every layer row on viewport ticks.
+  const activeLayers = useMapStore((s) => s.activeLayers);
+  const toggleLayer = useMapStore((s) => s.toggleLayer);
   const { styleOverrides, setStyleOverride } = useLayerStore();
 
   const isVisible = activeLayers.includes(id);

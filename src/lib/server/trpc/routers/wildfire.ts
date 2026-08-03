@@ -5,8 +5,34 @@ import { features, layers } from "@/lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
   getPublishedFireDetections,
+  getPublishedWeatherForBbox,
   getPublishedWeatherForPoint,
 } from "@/lib/server/services/environmental-read-model";
+
+/** Matches the "west,south,east,north" bbox format environmental.getStreamflow validates. */
+const COORDINATE_PATTERN = /^-?(?:\d+(?:\.\d*)?|\.\d+)$/;
+const bboxSchema = z
+  .string()
+  .trim()
+  .min(7)
+  .max(100)
+  .superRefine((value, context) => {
+    const raw = value.split(",");
+    if (raw.length !== 4 || raw.some((part) => !COORDINATE_PATTERN.test(part))) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Invalid bbox format: expected "west,south,east,north"',
+      });
+      return;
+    }
+    const [west, south, east, north] = raw.map(Number);
+    if (west < -180 || east > 180 || south < -90 || north > 90 || west >= east || south >= north) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Bounding box is outside WGS84 bounds",
+      });
+    }
+  });
 
 function unpublishedRisk(): never {
   throw new TRPCError({
@@ -171,4 +197,13 @@ export const wildfireRouter = router({
             observation: null,
           };
     }),
+
+  /**
+   * Read every published, fresh, complete warehouse-backed weather
+   * observation intersecting a viewport bbox -- the full spread rather than
+   * a single nearest-point sample.
+   */
+  getWeatherForBbox: publicProcedure
+    .input(z.object({ bbox: bboxSchema }))
+    .query(({ input }) => getPublishedWeatherForBbox(input.bbox)),
 });

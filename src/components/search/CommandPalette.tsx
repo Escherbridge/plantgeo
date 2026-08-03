@@ -17,8 +17,14 @@ import type { MapStyle } from "@/types/map";
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const map = useMap();
-  const { toggleTerrain, toggleGlobe, toggle3D, setCurrentStyle, toggleLayer, resetView } =
-    useMapStore();
+  // Per-field selectors — CommandPalette reads no viewport field, so a whole-store
+  // destructure would re-render it on every pan/zoom tick even while closed.
+  const toggleTerrain = useMapStore((s) => s.toggleTerrain);
+  const toggleGlobe = useMapStore((s) => s.toggleGlobe);
+  const toggle3D = useMapStore((s) => s.toggle3D);
+  const setCurrentStyle = useMapStore((s) => s.setCurrentStyle);
+  const toggleLayer = useMapStore((s) => s.toggleLayer);
+  const resetView = useMapStore((s) => s.resetView);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

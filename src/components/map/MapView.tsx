@@ -15,6 +15,7 @@ import { CommandPalette } from "@/components/search/CommandPalette";
 import { AlertBell } from "@/components/ui/AlertBell";
 import PanelManager from "./PanelManager";
 import LayerManager from "./LayerManager";
+import HoverTooltip from "./HoverTooltip";
 import { ServiceAreaLayer } from "./ServiceAreaLayer";
 import { IngestionCoverageBadge } from "./IngestionCoverageBadge";
 import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
@@ -275,6 +276,7 @@ export default function MapView() {
                 first -- see the ordering note in ServiceAreaLayer.tsx. */}
             <ServiceAreaLayer map={mapInstance} />
             <LayerManager />
+            <HoverTooltip map={mapInstance} />
             <div className="absolute bottom-16 left-4 z-10">
               <IngestionCoverageBadge />
             </div>

@@ -11,16 +11,16 @@ import StyleSwitcher from "./StyleSwitcher";
 import { AlertBell } from "@/components/ui/AlertBell";
 
 export default function MapControls() {
-  const {
-    is3DEnabled,
-    toggle3D,
-    toggleTerrain,
-    toggleGlobe,
-    setCurrentStyle,
-    resetView,
-    activeLayers,
-    toggleLayer,
-  } = useMapStore();
+  // Per-field selectors — MapControls reads no viewport field, so a whole-store
+  // destructure would re-render this toolbar on every pan/zoom tick.
+  const is3DEnabled = useMapStore((s) => s.is3DEnabled);
+  const toggle3D = useMapStore((s) => s.toggle3D);
+  const toggleTerrain = useMapStore((s) => s.toggleTerrain);
+  const toggleGlobe = useMapStore((s) => s.toggleGlobe);
+  const setCurrentStyle = useMapStore((s) => s.setCurrentStyle);
+  const resetView = useMapStore((s) => s.resetView);
+  const activeLayers = useMapStore((s) => s.activeLayers);
+  const toggleLayer = useMapStore((s) => s.toggleLayer);
   const buildingFootprintsEnabled = activeLayers.includes("building-footprints");
 
   useEffect(() => {

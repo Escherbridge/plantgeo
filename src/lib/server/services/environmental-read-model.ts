@@ -17,8 +17,10 @@ const DROUGHT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1_000;
 const WEATHER_MAX_AGE_MS = 3 * 60 * 60 * 1_000;
 /** Nearest-first candidates scanned before giving up on a fresh observation. */
 const WEATHER_CANDIDATE_ROWS = 8;
+/** Sane upper bound on observations rendered for a single viewport bbox. */
+const WEATHER_BBOX_MAX_ROWS = 500;
 
-function parseBbox(value: string): [number, number, number, number] {
+export function parseBbox(value: string): [number, number, number, number] {
   const coordinates = value.split(",").map(Number);
   if (
     coordinates.length !== 4 ||
@@ -275,6 +277,76 @@ export async function getPublishedWeatherForPoint(
     };
   }
   return null;
+}
+
+/** True when every rendered field was actually measured -- never zero-filled. */
+export function isCompleteWeatherObservation(
+  observation: Pick<
+    PublishedWeatherObservation,
+    "windSpeed" | "windDirection" | "temperature" | "humidity"
+  >
+): boolean {
+  return (
+    observation.windSpeed !== null &&
+    observation.windDirection !== null &&
+    observation.temperature !== null &&
+    observation.humidity !== null
+  );
+}
+
+/**
+ * Reads every published, fresh, complete weather observation intersecting a
+ * viewport bbox. Unlike getPublishedWeatherForPoint's nearest-1 KNN, this
+ * powers the wind layer with the full warehouse spread instead of a single
+ * sample -- capped at WEATHER_BBOX_MAX_ROWS to bound render cost.
+ */
+export async function getPublishedWeatherForBbox(
+  bbox: string
+): Promise<PublishedWeatherObservation[]> {
+  const [west, south, east, north] = parseBbox(bbox);
+  const rows = await db
+    .select({ properties: features.properties })
+    .from(features)
+    .innerJoin(layers, eq(features.layerId, layers.id))
+    .where(
+      and(
+        eq(layers.name, WEATHER_LAYER_ID),
+        eq(features.status, "published"),
+        gte(sql<number>`ST_X(${features.geom})`, west),
+        lte(sql<number>`ST_X(${features.geom})`, east),
+        gte(sql<number>`ST_Y(${features.geom})`, south),
+        lte(sql<number>`ST_Y(${features.geom})`, north)
+      )
+    )
+    .orderBy(desc(features.createdAt))
+    .limit(WEATHER_BBOX_MAX_ROWS);
+
+  const observations: PublishedWeatherObservation[] = [];
+  for (const row of rows) {
+    const value = asRecord(row.properties);
+    const point = parsePoint(value?.geometry);
+    const observedAt = parseZonedObservationTime(value?.observedAt);
+    if (
+      !value ||
+      !point ||
+      !observedAt ||
+      !isFreshObservation(observedAt, WEATHER_MAX_AGE_MS)
+    ) {
+      continue;
+    }
+    const observation: PublishedWeatherObservation = {
+      lat: point[1],
+      lon: point[0],
+      observedAt,
+      temperature: finiteNumber(value.temperature),
+      humidity: finiteNumber(value.humidity),
+      windSpeed: finiteNumber(value.windSpeed),
+      windDirection: finiteNumber(value.windDirection),
+      precipitation: finiteNumber(value.precipitation),
+    };
+    if (isCompleteWeatherObservation(observation)) observations.push(observation);
+  }
+  return observations;
 }
 
 /** Reads the last accepted USDM publication; never fetches upstream on request. */

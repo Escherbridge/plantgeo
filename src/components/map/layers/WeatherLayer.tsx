@@ -16,6 +16,7 @@ export interface WindPoint {
 interface WeatherLayerProps {
   map: MapLibreMap | null;
   data: WindPoint[];
+  visible?: boolean;
   layerId?: string;
   sourceId?: string;
 }
@@ -44,13 +45,26 @@ function windSpeedToColor(speed: number): string {
 export function WeatherLayer({
   map,
   data,
+  visible = true,
   layerId = "weather-wind",
   sourceId = "weather-wind-source",
 }: WeatherLayerProps) {
   const addedRef = useRef(false);
 
   useEffect(() => {
-    if (!map || data.length === 0) return;
+    if (!map) return;
+
+    function removeLayers() {
+      if (!map!.isStyleLoaded()) return;
+      if (map!.getLayer(layerId)) map!.removeLayer(layerId);
+      if (map!.getSource(sourceId)) map!.removeSource(sourceId);
+      addedRef.current = false;
+    }
+
+    if (!visible || data.length === 0) {
+      removeLayers();
+      return;
+    }
 
     const geojson: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
@@ -112,13 +126,8 @@ export function WeatherLayer({
       map.once("styledata", addLayers);
     }
 
-    return () => {
-      if (!map || !map.isStyleLoaded()) return;
-      if (map.getLayer(layerId)) map.removeLayer(layerId);
-      if (map.getSource(sourceId)) map.removeSource(sourceId);
-      addedRef.current = false;
-    };
-  }, [map, data, layerId, sourceId]);
+    return removeLayers;
+  }, [map, data, visible, layerId, sourceId]);
 
   return null;
 }

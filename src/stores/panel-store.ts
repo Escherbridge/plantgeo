@@ -18,11 +18,11 @@ export type PanelId =
 
 /** Maps each panel to the layer IDs it governs. */
 const PANEL_LAYER_MAP: Record<PanelId, string[]> = {
-  fire:       ["fire"],
-  water:      ["water", "drought"],
+  fire:       ["fire", "fire-perimeters"],
+  water:      ["water", "drought", "weather"],
   vegetation: ["vegetation"],
   soil:       ["soil"],
-  community:  ["demand-heatmap"],
+  community:  ["demand-heatmap", "interventions"],
   strategy:   [],
   analytics:  [],
   team:       [],
@@ -46,8 +46,6 @@ interface PanelState {
   closePanel: () => void;
   /** Mark a layer as prefetched (data loaded, ready for instant toggle). */
   markPrefetched: (layerId: string) => void;
-  /** Toggle a layer on/off — delegates to map-store. */
-  toggleLayer: (layerId: string) => void;
 }
 
 export const usePanelStore = create<PanelState>()(
@@ -67,11 +65,6 @@ export const usePanelStore = create<PanelState>()(
           next.add(layerId);
           return { prefetchedLayers: next };
         }),
-
-      toggleLayer: (layerId) => {
-        // Delegate to map-store (single source of truth for layer visibility)
-        useMapStore.getState().toggleLayer(layerId);
-      },
     }),
     { name: "panel-store" },
   ),
