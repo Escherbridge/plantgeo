@@ -238,3 +238,286 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================
+   Editorial token layer -- Swiss brutalist
+   Rationale, adoption rules and the full token index live in
+   src/components/ui/editorial/AGENTS.md.
+   ============================================================ */
+
+:root {
+  --application-top-bar-height: 3.5rem;
+  --application-viewport-below-top-bar: calc(
+    100dvh - var(--application-top-bar-height)
+  );
+
+  /* Colour -- dark is the platform default, matching the block above. */
+  --editorial-color-paper: #0c0c0b;
+  --editorial-color-paper-recessed: #171714;
+  --editorial-color-ink: #efebe2;
+  --editorial-color-ink-muted: #9a968c;
+  --editorial-color-ink-inverse: #0c0c0b;
+  --editorial-color-rule: #efebe2;
+  --editorial-color-rule-faint: #35342f;
+  --editorial-color-accent: #10b981;
+  --editorial-color-accent-ink: #0c0c0b;
+  --editorial-color-signal: #f97316;
+
+  /* Type scale -- fluid where the step is large enough to need it. */
+  --editorial-type-size-label: 0.6875rem;
+  --editorial-type-size-caption: 0.8125rem;
+  --editorial-type-size-body: 1.0625rem;
+  --editorial-type-size-subheading: clamp(1.125rem, 1.02rem + 0.42vw, 1.375rem);
+  --editorial-type-size-lead: clamp(1.1875rem, 1.05rem + 0.55vw, 1.5rem);
+  --editorial-type-size-heading: clamp(1.5rem, 1.24rem + 1.1vw, 2.25rem);
+  --editorial-type-size-title: clamp(2rem, 1.5rem + 2.1vw, 3.25rem);
+  --editorial-type-size-headline: clamp(2.75rem, 1.7rem + 4.4vw, 5.5rem);
+  --editorial-type-size-display: clamp(3.25rem, 1.4rem + 8.4vw, 9rem);
+
+  --editorial-leading-display: 0.86;
+  --editorial-leading-headline: 0.94;
+  --editorial-leading-title: 1.02;
+  --editorial-leading-heading: 1.1;
+  --editorial-leading-subheading: 1.25;
+  --editorial-leading-lead: 1.35;
+  --editorial-leading-body: 1.62;
+  --editorial-leading-caption: 1.45;
+  --editorial-leading-label: 1.2;
+
+  --editorial-tracking-display: -0.035em;
+  --editorial-tracking-headline: -0.028em;
+  --editorial-tracking-title: -0.02em;
+  --editorial-tracking-heading: -0.012em;
+  --editorial-tracking-body: 0em;
+  --editorial-tracking-label: 0.2em;
+
+  /* Rules -- the load-bearing ornament of the system. */
+  --editorial-rule-hairline: 1px;
+  --editorial-rule-medium: 2px;
+  --editorial-rule-heavy: 4px;
+  --editorial-rule-massive: 10px;
+
+  /* Spacing -- named by intent so rhythm survives refactors. */
+  --editorial-space-hairline: 0.25rem;
+  --editorial-space-tight: 0.5rem;
+  --editorial-space-snug: 0.75rem;
+  --editorial-space-regular: 1rem;
+  --editorial-space-comfortable: 1.5rem;
+  --editorial-space-roomy: 2.5rem;
+  --editorial-space-section: clamp(3rem, 6vw, 5.5rem);
+  --editorial-space-chapter: clamp(4.5rem, 9vw, 9rem);
+
+  /* Grid and measure. */
+  --editorial-grid-gutter: clamp(1rem, 2.2vw, 2rem);
+  --editorial-page-inset: clamp(1.25rem, 5vw, 5rem);
+  --editorial-page-max-width: 84rem;
+  --editorial-measure: 36rem;
+  --editorial-measure-narrow: 26rem;
+
+  /* Flatness is a token, not an omission. */
+  --editorial-radius: 0px;
+}
+
+.light {
+  --editorial-color-paper: #f4f1ea;
+  --editorial-color-paper-recessed: #e7e3d9;
+  --editorial-color-ink: #0f0f0e;
+  --editorial-color-ink-muted: #57544d;
+  --editorial-color-ink-inverse: #f4f1ea;
+  --editorial-color-rule: #0f0f0e;
+  --editorial-color-rule-faint: #c9c4b7;
+  --editorial-color-accent: #046b4b;
+  --editorial-color-accent-ink: #f4f1ea;
+  --editorial-color-signal: #c2410c;
+}
+
+/* `inline` keeps the utilities pointing at the runtime custom properties above,
+   so every editorial utility follows the light/dark switch without duplication. */
+@theme inline {
+  --font-editorial-display: var(--editorial-font-display), ui-sans-serif, sans-serif;
+  --font-editorial-text: var(--editorial-font-text), ui-serif, Georgia, serif;
+  --font-editorial-label: var(--editorial-font-label), ui-monospace, monospace;
+
+  --color-paper: var(--editorial-color-paper);
+  --color-paper-recessed: var(--editorial-color-paper-recessed);
+  --color-ink: var(--editorial-color-ink);
+  --color-ink-muted: var(--editorial-color-ink-muted);
+  --color-ink-inverse: var(--editorial-color-ink-inverse);
+  --color-rule: var(--editorial-color-rule);
+  --color-rule-faint: var(--editorial-color-rule-faint);
+  --color-accent: var(--editorial-color-accent);
+  --color-accent-ink: var(--editorial-color-accent-ink);
+  --color-signal: var(--editorial-color-signal);
+
+  --text-label: var(--editorial-type-size-label);
+  --text-label--line-height: var(--editorial-leading-label);
+  --text-label--letter-spacing: var(--editorial-tracking-label);
+  --text-caption: var(--editorial-type-size-caption);
+  --text-caption--line-height: var(--editorial-leading-caption);
+  --text-body: var(--editorial-type-size-body);
+  --text-body--line-height: var(--editorial-leading-body);
+  --text-subheading: var(--editorial-type-size-subheading);
+  --text-subheading--line-height: var(--editorial-leading-subheading);
+  --text-lead: var(--editorial-type-size-lead);
+  --text-lead--line-height: var(--editorial-leading-lead);
+  --text-heading: var(--editorial-type-size-heading);
+  --text-heading--line-height: var(--editorial-leading-heading);
+  --text-heading--letter-spacing: var(--editorial-tracking-heading);
+  --text-title: var(--editorial-type-size-title);
+  --text-title--line-height: var(--editorial-leading-title);
+  --text-title--letter-spacing: var(--editorial-tracking-title);
+  --text-headline: var(--editorial-type-size-headline);
+  --text-headline--line-height: var(--editorial-leading-headline);
+  --text-headline--letter-spacing: var(--editorial-tracking-headline);
+  --text-display: var(--editorial-type-size-display);
+  --text-display--line-height: var(--editorial-leading-display);
+  --text-display--letter-spacing: var(--editorial-tracking-display);
+
+  --leading-display: var(--editorial-leading-display);
+  --leading-headline: var(--editorial-leading-headline);
+  --leading-title: var(--editorial-leading-title);
+  --leading-heading: var(--editorial-leading-heading);
+  --leading-body: var(--editorial-leading-body);
+  --leading-caption: var(--editorial-leading-caption);
+
+  --tracking-display: var(--editorial-tracking-display);
+  --tracking-headline: var(--editorial-tracking-headline);
+  --tracking-title: var(--editorial-tracking-title);
+  --tracking-heading: var(--editorial-tracking-heading);
+  --tracking-label: var(--editorial-tracking-label);
+
+  --spacing-hairline: var(--editorial-space-hairline);
+  --spacing-tight: var(--editorial-space-tight);
+  --spacing-snug: var(--editorial-space-snug);
+  --spacing-regular: var(--editorial-space-regular);
+  --spacing-comfortable: var(--editorial-space-comfortable);
+  --spacing-roomy: var(--editorial-space-roomy);
+  --spacing-section: var(--editorial-space-section);
+  --spacing-chapter: var(--editorial-space-chapter);
+  --spacing-gutter: var(--editorial-grid-gutter);
+  --spacing-page-inset: var(--editorial-page-inset);
+
+  --container-page: var(--editorial-page-max-width);
+  --container-measure: var(--editorial-measure);
+  --container-measure-narrow: var(--editorial-measure-narrow);
+
+  --radius-editorial: var(--editorial-radius);
+}
+
+/* Rules are the system's only ornament, so they get first-class utilities.
+   Width and style only -- colour stays with `border-*-rule` / `border-*-rule-faint`
+   because the base layer already paints every border with the legacy token. */
+
+@utility rule-all-hairline {
+  border-style: solid;
+  border-width: var(--editorial-rule-hairline);
+}
+@utility rule-all-medium {
+  border-style: solid;
+  border-width: var(--editorial-rule-medium);
+}
+@utility rule-all-heavy {
+  border-style: solid;
+  border-width: var(--editorial-rule-heavy);
+}
+
+@utility rule-top-hairline {
+  border-top-style: solid;
+  border-top-width: var(--editorial-rule-hairline);
+}
+@utility rule-top-medium {
+  border-top-style: solid;
+  border-top-width: var(--editorial-rule-medium);
+}
+@utility rule-top-heavy {
+  border-top-style: solid;
+  border-top-width: var(--editorial-rule-heavy);
+}
+@utility rule-top-massive {
+  border-top-style: solid;
+  border-top-width: var(--editorial-rule-massive);
+}
+
+@utility rule-bottom-hairline {
+  border-bottom-style: solid;
+  border-bottom-width: var(--editorial-rule-hairline);
+}
+@utility rule-bottom-medium {
+  border-bottom-style: solid;
+  border-bottom-width: var(--editorial-rule-medium);
+}
+@utility rule-bottom-heavy {
+  border-bottom-style: solid;
+  border-bottom-width: var(--editorial-rule-heavy);
+}
+@utility rule-bottom-massive {
+  border-bottom-style: solid;
+  border-bottom-width: var(--editorial-rule-massive);
+}
+
+@utility rule-left-hairline {
+  border-left-style: solid;
+  border-left-width: var(--editorial-rule-hairline);
+}
+@utility rule-left-medium {
+  border-left-style: solid;
+  border-left-width: var(--editorial-rule-medium);
+}
+@utility rule-left-heavy {
+  border-left-style: solid;
+  border-left-width: var(--editorial-rule-heavy);
+}
+@utility rule-left-massive {
+  border-left-style: solid;
+  border-left-width: var(--editorial-rule-massive);
+}
+
+@utility rule-right-hairline {
+  border-right-style: solid;
+  border-right-width: var(--editorial-rule-hairline);
+}
+@utility rule-right-heavy {
+  border-right-style: solid;
+  border-right-width: var(--editorial-rule-heavy);
+}
+
+/* The system is flat by contract: primitives opt in rather than reset. */
+@utility editorial-flat {
+  border-radius: var(--editorial-radius);
+  box-shadow: none;
+  background-image: none;
+}
+
+/* ------------------------------------------------------------
+   Global shell geometry
+   The top bar is a block in normal flow, so any page root that asked for the
+   whole viewport must be re-measured against the remainder. Both selectors
+   stay unlayered on purpose: unlayered rules win over Tailwind's `utilities`
+   layer, which is what lets an untouched `h-screen` page root keep working.
+   New code should use `.viewport-below-top-bar` explicitly instead.
+   ------------------------------------------------------------ */
+
+.viewport-below-top-bar {
+  block-size: var(--application-viewport-below-top-bar);
+}
+
+.application-shell-with-top-bar > .h-screen,
+.application-shell-with-top-bar > .h-dvh {
+  height: var(--application-viewport-below-top-bar);
+}
+
+.application-shell-with-top-bar > .min-h-screen,
+.application-shell-with-top-bar > .min-h-dvh {
+  min-height: var(--application-viewport-below-top-bar);
+}
+
+/* Routes that opt out of the global bar must cost the layout nothing. The
+   height vars are redeclared rather than inherited: `--application-viewport-
+   below-top-bar` substitutes its `var()` where it is *declared* (:root), so
+   zeroing only the bar height here would not reach it. Redeclaring both keeps
+   `.viewport-below-top-bar` correct on barless routes. */
+.application-shell-without-top-bar {
+  display: contents;
+  --application-top-bar-height: 0rem;
+  --application-viewport-below-top-bar: 100dvh;
+}

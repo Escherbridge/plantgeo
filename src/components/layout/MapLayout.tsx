@@ -19,7 +19,7 @@ export default function MapLayout({
   bottomSheetOpen = false,
 }: MapLayoutProps) {
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden bg-[hsl(var(--background))]">
+    <div className="viewport-below-top-bar relative flex w-screen overflow-hidden bg-[hsl(var(--background))]">
       {sidePanel && sidePanelOpen && (
         <div className="relative z-20 h-full shrink-0">{sidePanel}</div>
       )}
