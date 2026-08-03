@@ -1,4 +1,6 @@
-const CACHE_VERSION = 'v1';
+// v2: purge v1 caches that trapped pre-launch API responses; API requests are
+// now network-only (never cached) so data can never go stale behind the SW.
+const CACHE_VERSION = 'v2';
 const CACHE_NAME = 'plantgeo-' + CACHE_VERSION;
 const CACHE_SIZE_LIMIT_BYTES = 500 * 1024 * 1024; // 500MB
 
@@ -7,11 +9,13 @@ const APP_SHELL = [
   '/manifest.webmanifest',
 ];
 
+// Static raster/vector tile hosts only. Dynamic Martin tiles and the PMTiles
+// archive are excluded: Martin data changes between cron runs, and PMTiles
+// range requests return 206 responses the Cache API cannot store.
 const TILE_URL_PATTERNS = [
-  'build.protomaps.com',
   'arcgisonline.com',
   'elevation-tiles-prod',
-  '/tiles/',
+  'basemaps-assets',
 ];
 
 const API_URL_PATTERNS = [
@@ -66,9 +70,10 @@ function cacheFirst(request) {
         return cached;
       }
       return fetch(request).then(function(response) {
-        if (response.ok) {
-          cache.put(request, response.clone());
-          evictIfNeeded();
+        // Only full 200 responses are cacheable; cache.put throws on 206.
+        if (response.status === 200) {
+          var copy = response.clone();
+          cache.put(request, copy).then(evictIfNeeded);
         }
         return response;
       });
@@ -78,9 +83,11 @@ function cacheFirst(request) {
 
 function networkFirst(request) {
   return fetch(request).then(function(response) {
-    if (response.ok) {
+    if (response.status === 200) {
+      // Clone synchronously, before the page can consume the body.
+      var copy = response.clone();
       caches.open(CACHE_NAME).then(function(cache) {
-        cache.put(request, response.clone());
+        cache.put(request, copy);
       });
     }
     return response;
@@ -116,13 +123,11 @@ self.addEventListener('fetch', function(event) {
 
   if (event.request.method !== 'GET') return;
 
+  // API traffic passes straight through -- freshness beats offline here.
+  if (isApiRequest(url)) return;
+
   if (isTileRequest(url)) {
     event.respondWith(cacheFirst(event.request));
-    return;
-  }
-
-  if (isApiRequest(url)) {
-    event.respondWith(networkFirst(event.request));
     return;
   }
 

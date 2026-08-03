@@ -17,14 +17,18 @@ const PMTILES_ARCHIVE_URL =
 const DYNAMIC_TILES_URL =
   process.env.NEXT_PUBLIC_DYNAMIC_TILES_URL || "http://localhost:3100";
 
+// Function and table sources must stay in SEPARATE composites: Martin declares
+// vector_layers in TileJSON for tables but cannot for functions, and MapLibre
+// validates style source-layers against vector_layers whenever the field is
+// present -- a mixed composite therefore rejects every function-backed layer.
 const DYNAMIC_TILE_SOURCE_IDS = [
   "fire_risk_tiles",
   "sensor_tiles",
   "intervention_tiles",
   "building_tiles",
-  "osm_roads",
-  "osm_waterways",
 ] as const;
+
+const OSM_TILE_SOURCE_IDS = ["osm_roads", "osm_waterways"] as const;
 
 const SATELLITE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
@@ -48,14 +52,25 @@ export function createPmtilesSource(archiveUrl: string): SourceSpecification {
   };
 }
 
-export function createMartinDynamicSource(baseUrl: string): SourceSpecification {
+function createMartinCompositeSource(
+  baseUrl: string,
+  sourceIds: readonly string[]
+): SourceSpecification {
   return {
     type: "vector",
     // Martin's TileJSON endpoint keeps client tile paths aligned with its catalog.
-    url: `${stripTrailingSlash(baseUrl)}/${DYNAMIC_TILE_SOURCE_IDS.join(",")}`,
+    url: `${stripTrailingSlash(baseUrl)}/${sourceIds.join(",")}`,
     minzoom: 0,
     maxzoom: 22,
   };
+}
+
+export function createMartinDynamicSource(baseUrl: string): SourceSpecification {
+  return createMartinCompositeSource(baseUrl, DYNAMIC_TILE_SOURCE_IDS);
+}
+
+export function createMartinOsmSource(baseUrl: string): SourceSpecification {
+  return createMartinCompositeSource(baseUrl, OSM_TILE_SOURCE_IDS);
 }
 
 export function getSources(
@@ -65,6 +80,7 @@ export function getSources(
   return {
     protomaps: createPmtilesSource(pmtilesArchiveUrl),
     "martin-dynamic": createMartinDynamicSource(dynamicTilesUrl),
+    "martin-osm": createMartinOsmSource(dynamicTilesUrl),
     "terrain-dem": terrainSource,
     satellite: {
       type: "raster",
@@ -98,3 +114,4 @@ export const terrainSource: SourceSpecification = {
 export const pmtilesSource = createPmtilesSource(PMTILES_ARCHIVE_URL);
 
 export const martinDynamicSource = createMartinDynamicSource(DYNAMIC_TILES_URL);
+export const martinOsmSource = createMartinOsmSource(DYNAMIC_TILES_URL);

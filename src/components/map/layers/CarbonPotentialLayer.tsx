@@ -105,6 +105,7 @@ export function CarbonPotentialLayer({
           source: CARBON_SOURCE,
           layout: {
             "text-field": ["get", "label"],
+          "text-font": ["Noto Sans Regular"],
             "text-size": 9,
             "text-offset": [0, 2],
             "text-anchor": "top",

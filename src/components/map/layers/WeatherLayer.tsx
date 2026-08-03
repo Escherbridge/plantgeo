@@ -90,6 +90,7 @@ export function WeatherLayer({
         source: sourceId,
         layout: {
           "text-field": ["get", "label"],
+          "text-font": ["Noto Sans Regular"],
           "text-size": 12,
           "text-anchor": "center",
           "text-allow-overlap": false,

@@ -4,6 +4,10 @@ import type {
 } from "@maplibre/maplibre-gl-style-spec";
 
 const MARTIN_SOURCE = "martin-dynamic";
+// Table-backed OSM tiles live in a separate composite: mixing them with the
+// function sources makes Martin declare vector_layers, which MapLibre then
+// validates against and rejects every function-backed layer. See sources.ts.
+const OSM_SOURCE = "martin-osm";
 
 export function buildings3dLayer(
   baseColor: string,
@@ -163,7 +167,7 @@ export const buildingFootprintsLayer: FillExtrusionLayerSpecification = {
 export const roadsLayer: LayerSpecification = {
   id: "osm-roads",
   type: "line",
-  source: MARTIN_SOURCE,
+  source: OSM_SOURCE,
   "source-layer": "osm_roads",
   minzoom: 10,
   paint: {
@@ -175,7 +179,7 @@ export const roadsLayer: LayerSpecification = {
 export const waterwaysLayer: LayerSpecification = {
   id: "osm-waterways",
   type: "line",
-  source: MARTIN_SOURCE,
+  source: OSM_SOURCE,
   "source-layer": "osm_waterways",
   minzoom: 8,
   paint: {

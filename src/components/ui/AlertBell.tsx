@@ -5,10 +5,21 @@ import { Bell } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
 import { AlertPanel } from "@/components/panels/AlertPanel";
 
+/** True when a NextAuth session cookie exists; unsigned visitors get no cookie. */
+function hasSessionCookie(): boolean {
+  if (typeof document === "undefined") return false;
+  return /(?:^|;\s*)(?:__Secure-)?(?:next-auth|authjs)\.session-token=/.test(
+    document.cookie
+  );
+}
+
 export function AlertBell() {
   const [panelOpen, setPanelOpen] = useState(false);
 
   const { data: unreadCount, refetch } = trpc.alerts.getUnreadCount.useQuery(undefined, {
+    // Signed-out visitors have no alerts to poll; skipping the query avoids a
+    // guaranteed 401 every 30 seconds.
+    enabled: hasSessionCookie(),
     // Poll every 30 seconds for new alerts
     refetchInterval: 30_000,
     // Don't refetch on window focus to avoid excess requests
