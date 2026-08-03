@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useMap } from "@/lib/map/map-context";
 import { useMapStore } from "@/stores/map-store";
@@ -81,48 +81,70 @@ export default function LayerManager() {
     { enabled: weatherEnabled && bbox !== null, staleTime: 15 * 60 * 1000 }
   );
   // Every rendered field must be measured: a partial observation is dropped
-  // rather than back-filled with a zero the upstream never reported.
-  const weatherData: WindPoint[] = (weatherQuery.data ?? [])
-    .filter(
-      (observation) =>
-        observation.windSpeed !== null &&
-        observation.windDirection !== null &&
-        observation.temperature !== null &&
-        observation.humidity !== null
-    )
-    .map((observation) => ({
-      coordinates: [observation.lon, observation.lat],
-      windSpeed: observation.windSpeed as number,
-      windDirection: observation.windDirection as number,
-      temperature: observation.temperature as number,
-      humidity: observation.humidity as number,
-    }));
+  // rather than back-filled with a zero the upstream never reported. Memoized
+  // because this component re-renders on every viewport tick.
+  const weatherData = useMemo<WindPoint[]>(
+    () =>
+      (weatherQuery.data ?? [])
+        .filter(
+          (observation) =>
+            observation.windSpeed !== null &&
+            observation.windDirection !== null &&
+            observation.temperature !== null &&
+            observation.humidity !== null
+        )
+        .map((observation) => ({
+          coordinates: [observation.lon, observation.lat],
+          windSpeed: observation.windSpeed as number,
+          windDirection: observation.windDirection as number,
+          temperature: observation.temperature as number,
+          humidity: observation.humidity as number,
+        })),
+    [weatherQuery.data]
+  );
 
   // Sync visibility of style-baked Martin layers (fire-perimeters/
   // interventions/building-footprints) with activeLayers -- these are static
   // layers added via getStyle(), not React-mounted components, so they need
   // setLayoutProperty instead of an unmount/remount cycle.
-  useEffect(() => {
-    if (!map) return;
-    const mapInstance = map;
-
-    function syncVisibility() {
+  const applyVisibility = useCallback(
+    (mapInstance: NonNullable<typeof map>, layerToggles: string[]) => {
       for (const [toggleId, layerIds] of Object.entries(STYLE_LAYER_TOGGLE_MAP)) {
-        const visibility = activeLayers.includes(toggleId) ? "visible" : "none";
+        const visibility = layerToggles.includes(toggleId) ? "visible" : "none";
         for (const layerId of layerIds) {
           if (mapInstance.getLayer(layerId)) {
             mapInstance.setLayoutProperty(layerId, "visibility", visibility);
           }
         }
       }
-    }
+    },
+    []
+  );
 
-    if (mapInstance.isStyleLoaded()) syncVisibility();
-    mapInstance.on("style.load", syncVisibility);
+  // Read through a ref so the style.load registration below never depends on
+  // activeLayers -- see src/components/map/AGENTS.md "Style.load listener order".
+  const activeLayersRef = useRef(activeLayers);
+  useEffect(() => {
+    activeLayersRef.current = activeLayers;
+  }, [activeLayers]);
+
+  // Registered once per map so it keeps its place in the listener queue.
+  useEffect(() => {
+    if (!map) return;
+    const mapInstance = map;
+    const onStyleLoad = () => applyVisibility(mapInstance, activeLayersRef.current);
+
+    mapInstance.on("style.load", onStyleLoad);
     return () => {
-      mapInstance.off("style.load", syncVisibility);
+      mapInstance.off("style.load", onStyleLoad);
     };
-  }, [map, activeLayers]);
+  }, [map, applyVisibility]);
+
+  // Apply toggles immediately, without touching the listener registration.
+  useEffect(() => {
+    if (!map || !map.isStyleLoaded()) return;
+    applyVisibility(map, activeLayers);
+  }, [map, activeLayers, applyVisibility]);
 
   if (!map) return null;
 

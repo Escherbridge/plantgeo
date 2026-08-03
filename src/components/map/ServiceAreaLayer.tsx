@@ -151,28 +151,18 @@ export function ServiceAreaLayer({ map }: ServiceAreaLayerProps) {
     safeRemoveLayerAndSource(m, [MASK_LAYER_ID, GLOW_LAYER_ID, LINE_LAYER_ID], SOURCE_ID);
   }, []);
 
-  // Add/remove the mask+boundary and re-add across style switches, which wipe
-  // custom layers. Mount this component before LayerManager in MapView so this
-  // effect (and its style.load handler) registers first -- later layer
-  // components add() after it, and MapLibre stacks later-added layers above
-  // earlier ones sharing the same beforeId, so data pins end up above the mask.
+  // Re-add the mask+boundary across style switches, which wipe custom layers.
+  // Mount this component before LayerManager in MapView and register this
+  // handler exactly once per map -- later layer components add() after it, and
+  // MapLibre stacks later-added layers above earlier ones sharing the same
+  // beforeId, so data pins end up above the mask. Coverage is read from a ref
+  // so a bbox change cannot re-register (and thus re-order) the handler.
   useEffect(() => {
     if (!map) return;
-
-    if (!bbox) {
-      removeAllLayers(map);
-      return;
-    }
 
     const onStyleLoad = () => {
       if (bboxRef.current) addAllLayers(map);
     };
-
-    if (map.isStyleLoaded()) {
-      addAllLayers(map);
-    } else {
-      map.once("style.load", () => addAllLayers(map));
-    }
 
     map.on("style.load", onStyleLoad);
 
@@ -180,8 +170,23 @@ export function ServiceAreaLayer({ map }: ServiceAreaLayerProps) {
       map.off("style.load", onStyleLoad);
       removeAllLayers(map);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, bbox?.west, bbox?.south, bbox?.east, bbox?.north, addAllLayers, removeAllLayers]);
+  }, [map, addAllLayers, removeAllLayers]);
+
+  // Apply the current coverage immediately; a not-yet-loaded style is covered
+  // by the handler above. Keyed on a primitive so a refetch returning an equal
+  // bbox does not churn the layers.
+  const bboxKey = bbox
+    ? `${bbox.west},${bbox.south},${bbox.east},${bbox.north}`
+    : null;
+
+  useEffect(() => {
+    if (!map) return;
+    if (!bboxKey) {
+      removeAllLayers(map);
+      return;
+    }
+    if (map.isStyleLoaded()) addAllLayers(map);
+  }, [map, bboxKey, addAllLayers, removeAllLayers]);
 
   // Constrain panning to the service area and land the user on it, once per
   // distinct coverage value. fitBounds only fires on the very first arrival

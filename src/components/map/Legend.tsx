@@ -7,6 +7,21 @@ import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
 import { stylePresets } from "@/lib/map/layer-styles";
 
+/**
+ * Translates a `geo.layers.name` into the activeLayers toggle id that actually
+ * renders it. Names absent here have no renderer and must not be toggleable --
+ * see src/components/map/AGENTS.md "The layer toggle is the only source of
+ * layer visibility".
+ */
+const TOGGLE_ID_BY_LAYER_NAME: Record<string, string> = {
+  "fire-perimeters": "fire-perimeters",
+  "fire-detections": "fire",
+  "water-gauges": "water",
+  "weather-observations": "weather",
+  vegetation: "vegetation",
+  interventions: "interventions",
+};
+
 export function Legend() {
   const { data: layers = [] } = trpc.layers.list.useQuery();
   const { legendVisible, toggleLegend, styleOverrides } = useLayerStore();
@@ -33,14 +48,22 @@ export function Legend() {
             const preset = styleKey ? stylePresets[styleKey] : null;
             const fillColor =
               override?.fillColor ?? preset?.fillColor ?? "#6b7280";
-            const isVisible = activeLayers.includes(layer.id);
+            const toggleId = TOGGLE_ID_BY_LAYER_NAME[layer.name] ?? null;
+            const isVisible = toggleId !== null && activeLayers.includes(toggleId);
 
             return (
               <li key={layer.id} className="flex items-center gap-2">
                 <button
-                  onClick={() => toggleLayer(layer.id)}
-                  className="flex items-center gap-2 text-left"
-                  title={isVisible ? "Hide layer" : "Show layer"}
+                  onClick={() => toggleId && toggleLayer(toggleId)}
+                  disabled={toggleId === null}
+                  className="flex items-center gap-2 text-left disabled:cursor-not-allowed"
+                  title={
+                    toggleId === null
+                      ? "No renderer for this layer"
+                      : isVisible
+                        ? "Hide layer"
+                        : "Show layer"
+                  }
                 >
                   <span
                     className="inline-block h-3 w-3 shrink-0 rounded-sm border border-black/10"

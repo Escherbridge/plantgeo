@@ -68,10 +68,12 @@ export const useMapStore = create<MapState>()(
     setTerrainExaggeration: (value) => set({ terrainExaggeration: value }),
     setCurrentStyle: (style) => set({ currentStyle: style }),
     toggleTerrain: () => set((s) => ({ isTerrainEnabled: !s.isTerrainEnabled })),
+    // is3DEnabled must agree with DEFAULT_VIEWPORT.pitch, or the 3D control
+    // reports a tilt the camera does not have.
     resetView: () =>
       set({
         viewport: { ...DEFAULT_VIEWPORT },
-        is3DEnabled: true,
+        is3DEnabled: DEFAULT_VIEWPORT.pitch > 0,
         isGlobeView: false,
       }),
   }))

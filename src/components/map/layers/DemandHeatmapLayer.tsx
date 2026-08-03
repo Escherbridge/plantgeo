@@ -6,6 +6,7 @@ import {
   type ActionNetworkFilters,
   useActionNetworkFeatures,
 } from "@/hooks/useActionNetworkFeatures";
+import { safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 
 const SOURCE_ID = "demand-heatmap-source";
 const LAYER_ID = "demand-heatmap-layer";
@@ -116,20 +117,12 @@ export function DemandHeatmapLayer({
       addedRef.current = Boolean(map.getLayer(LAYER_ID));
     };
 
+    if (map.isStyleLoaded()) addLayer();
     map.on("style.load", addLayer);
-    if (map.isStyleLoaded()) {
-      addLayer();
-    } else {
-      map.once("styledata", addLayer);
-    }
 
     return () => {
       map.off("style.load", addLayer);
-      map.off("styledata", addLayer);
-      if (map.isStyleLoaded()) {
-        if (map.getLayer(LAYER_ID)) map.removeLayer(LAYER_ID);
-        if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
-      }
+      safeRemoveLayerAndSource(map, [LAYER_ID], SOURCE_ID);
       addedRef.current = false;
     };
   }, [map, visible]);

@@ -146,7 +146,10 @@ describe('useMapStore', () => {
     expect(result.current.viewport.latitude).toBe(DEFAULT_VIEWPORT.latitude)
     expect(result.current.viewport.zoom).toBe(DEFAULT_VIEWPORT.zoom)
     expect(result.current.isGlobeView).toBe(false)
-    expect(result.current.is3DEnabled).toBe(true)
+    // is3DEnabled is derived from the pitch resetView actually restores, so the
+    // two cannot drift apart; DEFAULT_VIEWPORT.pitch is 0, so 3D is off.
+    expect(result.current.is3DEnabled).toBe(DEFAULT_VIEWPORT.pitch > 0)
+    expect(result.current.viewport.pitch).toBe(DEFAULT_VIEWPORT.pitch)
   })
 
   it('toggleLayer adds a layer when not active', () => {

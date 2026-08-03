@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
+import { safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 
 export interface WindPoint {
   coordinates: [number, number];
@@ -49,24 +50,8 @@ export function WeatherLayer({
   layerId = "weather-wind",
   sourceId = "weather-wind-source",
 }: WeatherLayerProps) {
-  const addedRef = useRef(false);
-
-  useEffect(() => {
-    if (!map) return;
-
-    function removeLayers() {
-      if (!map!.isStyleLoaded()) return;
-      if (map!.getLayer(layerId)) map!.removeLayer(layerId);
-      if (map!.getSource(sourceId)) map!.removeSource(sourceId);
-      addedRef.current = false;
-    }
-
-    if (!visible || data.length === 0) {
-      removeLayers();
-      return;
-    }
-
-    const geojson: GeoJSON.FeatureCollection = {
+  const geojson = useMemo<GeoJSON.FeatureCollection>(
+    () => ({
       type: "FeatureCollection",
       features: data.map((point, i) => ({
         type: "Feature",
@@ -85,49 +70,90 @@ export function WeatherLayer({
           label: `${directionToArrow(point.windDirection)} ${point.windSpeed.toFixed(1)} m/s`,
         },
       })),
-    };
+    }),
+    [data]
+  );
 
-    function addLayers() {
-      if (map!.getSource(sourceId)) {
-        (map!.getSource(sourceId) as maplibregl.GeoJSONSource).setData(geojson);
-        return;
+  // Keep latest props in refs so the style.load handler uses current values.
+  const propsRef = useRef({ visible, geojson });
+  useEffect(() => {
+    propsRef.current = { visible, geojson };
+  }, [visible, geojson]);
+
+  const addAllLayers = useCallback(
+    (m: MapLibreMap) => {
+      if (m.getSource(sourceId)) {
+        (m.getSource(sourceId) as maplibregl.GeoJSONSource).setData(
+          propsRef.current.geojson
+        );
+      } else {
+        m.addSource(sourceId, { type: "geojson", data: propsRef.current.geojson });
       }
 
-      map!.addSource(sourceId, {
-        type: "geojson",
-        data: geojson,
-      });
+      if (!m.getLayer(layerId)) {
+        m.addLayer({
+          id: layerId,
+          type: "symbol",
+          source: sourceId,
+          layout: {
+            "text-field": ["get", "label"],
+            "text-font": ["Noto Sans Regular"],
+            "text-size": 12,
+            "text-anchor": "center",
+            "text-allow-overlap": false,
+            "text-ignore-placement": false,
+          },
+          paint: {
+            "text-color": ["get", "color"],
+            "text-halo-color": "rgba(0,0,0,0.6)",
+            "text-halo-width": 1,
+          },
+        });
+      }
+    },
+    [layerId, sourceId]
+  );
 
-      map!.addLayer({
-        id: layerId,
-        type: "symbol",
-        source: sourceId,
-        layout: {
-          "text-field": ["get", "label"],
-          "text-font": ["Noto Sans Regular"],
-          "text-size": 12,
-          "text-anchor": "center",
-          "text-allow-overlap": false,
-          "text-ignore-placement": false,
-        },
-        paint: {
-          "text-color": ["get", "color"],
-          "text-halo-color": "rgba(0,0,0,0.6)",
-          "text-halo-width": 1,
-        },
-      });
+  const removeAllLayers = useCallback(
+    (m: MapLibreMap) => {
+      safeRemoveLayerAndSource(m, [layerId], sourceId);
+    },
+    [layerId, sourceId]
+  );
 
-      addedRef.current = true;
+  // Add/remove and re-add across style swaps, which wipe custom layers.
+  // Only `visible` may remove the layer -- an empty feed renders an empty
+  // source so a style swap can never be mistaken for the toggle being off.
+  useEffect(() => {
+    if (!map) return;
+
+    if (!visible) {
+      removeAllLayers(map);
+      return;
     }
 
-    if (map.isStyleLoaded()) {
-      addLayers();
-    } else {
-      map.once("styledata", addLayers);
-    }
+    const onStyleLoad = () => {
+      if (!propsRef.current.visible) return;
+      addAllLayers(map);
+    };
 
-    return removeLayers;
-  }, [map, data, visible, layerId, sourceId]);
+    if (map.isStyleLoaded()) addAllLayers(map);
+    map.on("style.load", onStyleLoad);
+
+    return () => {
+      map.off("style.load", onStyleLoad);
+      removeAllLayers(map);
+    };
+  }, [map, visible, addAllLayers, removeAllLayers]);
+
+  // Push new observations into the existing source without a remount cycle.
+  useEffect(() => {
+    if (!map || !visible) return;
+    const source = map.getSource(sourceId);
+    if (source && "setData" in source) {
+      (source as maplibregl.GeoJSONSource).setData(geojson);
+    }
+  }, [map, visible, geojson, sourceId]);
 
   return null;
 }

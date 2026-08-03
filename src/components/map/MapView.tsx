@@ -190,20 +190,33 @@ export default function MapView() {
     };
   }, [initMap]);
 
+  // Re-assert render mode after a basemap swap. See src/components/map/AGENTS.md
+  // "Style swaps and render-mode state" -- the handler MUST be registered before
+  // setStyle, which fires style.load synchronously.
   useEffect(() => {
     const m = mapRef.current;
     if (!m || prevStyleRef.current === currentStyle) return;
     prevStyleRef.current = currentStyle;
-    m.setStyle(getStyle(currentStyle));
-    m.once("style.load", () => {
+
+    function restoreRenderMode() {
+      if (!m) return;
       m.setSky(skyThemes[currentStyle]);
       if (isTerrainEnabled && m.getSource("terrain-dem")) {
         m.setTerrain({ source: "terrain-dem", exaggeration: terrainExaggeration });
+      } else {
+        m.setTerrain(null);
       }
-      if (isGlobeView) {
-        m.setProjection({ type: "globe" });
-      }
-    });
+      m.setProjection({ type: isGlobeView ? "globe" : "mercator" });
+    }
+
+    m.once("style.load", restoreRenderMode);
+    m.setStyle(getStyle(currentStyle));
+
+    // A no-op diff never fires style.load; drop the handler so a later swap
+    // cannot replay these now-stale values.
+    return () => {
+      m.off("style.load", restoreRenderMode);
+    };
   }, [currentStyle, isTerrainEnabled, terrainExaggeration, isGlobeView]);
 
   useEffect(() => {
@@ -216,16 +229,12 @@ export default function MapView() {
     }
   }, [isTerrainEnabled, terrainExaggeration]);
 
+  // Projection only -- never zoom. See src/components/map/AGENTS.md
+  // "The layer toggle is the only source of layer visibility".
   useEffect(() => {
     const m = mapRef.current;
     if (!m || !m.isStyleLoaded()) return;
     m.setProjection({ type: isGlobeView ? "globe" : "mercator" });
-    const targetZoom = isGlobeView
-      ? Math.min(m.getZoom(), 5)
-      : Math.max(m.getZoom(), 3);
-    if (Math.abs(m.getZoom() - targetZoom) > 0.5) {
-      m.flyTo({ zoom: targetZoom, duration: 1000 });
-    }
   }, [isGlobeView]);
 
   useEffect(() => {
