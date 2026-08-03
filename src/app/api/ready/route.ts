@@ -17,7 +17,6 @@ interface DatabaseReadinessRow {
   schemasReady: boolean;
   constraintsReady: boolean;
   layersReady: boolean;
-  dataFloorReady: boolean;
 }
 
 async function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
@@ -86,10 +85,7 @@ async function probeDatabase(): Promise<boolean> {
           'vegetation',
           'interventions'
         )
-      ) AS "layersReady",
-      (
-        SELECT EXISTS (SELECT 1 FROM geo.features)
-      ) AS "dataFloorReady"
+      ) AS "layersReady"
   `);
   const row = rows[0];
   return Boolean(
@@ -97,8 +93,7 @@ async function probeDatabase(): Promise<boolean> {
       row.migrationReady &&
       row.schemasReady &&
       row.constraintsReady &&
-      row.layersReady &&
-      row.dataFloorReady
+      row.layersReady
   );
 }
 
