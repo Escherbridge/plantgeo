@@ -1,8 +1,9 @@
 """Disposable PostgreSQL proof for the governed Boise pilot writer.
 
 Local-dev-only: the plan file's ``capture_base`` (``.agri-local-runs/``) is
-gitignored, so this test only runs where that local capture already exists;
-it is not wired into CI (see ``.github/workflows/ci.yml``).
+gitignored, so this test only runs where that local capture already exists.
+There is no CI for this suite; it is operator-run via pytest against a live
+PostgreSQL 16 instance.
 """
 
 # ruff: noqa: PLR2004
