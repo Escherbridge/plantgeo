@@ -18,10 +18,12 @@ const DYNAMIC_TILES_URL =
   process.env.NEXT_PUBLIC_DYNAMIC_TILES_URL || "http://localhost:3100";
 
 const DYNAMIC_TILE_SOURCE_IDS = [
-  "geo.fire_risk_tiles",
-  "geo.sensor_tiles",
-  "geo.intervention_tiles",
-  "geo.building_tiles",
+  "fire_risk_tiles",
+  "sensor_tiles",
+  "intervention_tiles",
+  "building_tiles",
+  "osm_roads",
+  "osm_waterways",
 ] as const;
 
 const SATELLITE_URL =

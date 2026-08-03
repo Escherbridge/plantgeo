@@ -114,7 +114,7 @@ async function ingestResolvedBatch(
             eq(features.layerId, resolvedLayerId),
             eq(sql<string>`${features.properties} ->> 'id'`, input.featureId),
             sql`(${features.properties} - 'geometry' - 'geometry_repaired')
-                IS DISTINCT FROM (${nextProperties}::jsonb - 'geometry')`
+                IS DISTINCT FROM (${JSON.stringify(nextProperties)}::jsonb - 'geometry')`
           )
         )
         .returning({ id: features.id });

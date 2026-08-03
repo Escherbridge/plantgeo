@@ -143,7 +143,7 @@ export const interventionsOutlineLayer: LayerSpecification = {
 
 // Martin-served 3D building footprints from geo.osm_buildings — a separate
 // dataset from the always-on protomaps "buildings" basemap layer above.
-// "geo.building_tiles" is the Martin *source id*; the MVT layer name emitted by
+// "building_tiles" is the Martin *source id*; the MVT layer name emitted by
 // ST_AsMVT inside geo.building_tiles() is "buildings" (drizzle/0001:499).
 export const buildingFootprintsLayer: FillExtrusionLayerSpecification = {
   id: "building-footprints",
@@ -164,7 +164,7 @@ export const roadsLayer: LayerSpecification = {
   id: "osm-roads",
   type: "line",
   source: MARTIN_SOURCE,
-  "source-layer": "geo.osm_roads",
+  "source-layer": "osm_roads",
   minzoom: 10,
   paint: {
     "line-color": "#94a3b8",
@@ -176,7 +176,7 @@ export const waterwaysLayer: LayerSpecification = {
   id: "osm-waterways",
   type: "line",
   source: MARTIN_SOURCE,
-  "source-layer": "geo.osm_waterways",
+  "source-layer": "osm_waterways",
   minzoom: 8,
   paint: {
     "line-color": "#3b82f6",

@@ -22,16 +22,31 @@ postgres:
   auto_bounds: skip
   max_feature_count: 10000
   auto_publish: false
+  # Source ids are bare (no schema prefix) to match what the deployed Martin
+  # auto-publishes today; the client composes them in src/lib/map/sources.ts.
   functions:
-    geo.fire_risk_tiles:
+    fire_risk_tiles:
       schema: geo
       function: fire_risk_tiles
-    geo.sensor_tiles:
+    sensor_tiles:
       schema: geo
       function: sensor_tiles
-    geo.intervention_tiles:
+    intervention_tiles:
       schema: geo
       function: intervention_tiles
-    geo.building_tiles:
+    building_tiles:
       schema: geo
       function: building_tiles
+  tables:
+    osm_roads:
+      schema: geo
+      table: osm_roads
+      srid: 4326
+      geometry_column: geom
+      geometry_type: LINESTRING
+    osm_waterways:
+      schema: geo
+      table: osm_waterways
+      srid: 4326
+      geometry_column: geom
+      geometry_type: GEOMETRY
