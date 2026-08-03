@@ -17,7 +17,6 @@ import PanelManager from "./PanelManager";
 import LayerManager from "./LayerManager";
 import HoverTooltip from "./HoverTooltip";
 import { ServiceAreaLayer } from "./ServiceAreaLayer";
-import { IngestionCoverageBadge } from "./IngestionCoverageBadge";
 import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
 import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
 import { AgentInteraction } from "./AgentInteraction";
@@ -231,8 +230,22 @@ export default function MapView() {
 
   useEffect(() => {
     const m = mapRef.current;
-    if (!m || !m.isStyleLoaded()) return;
-    m.easeTo({ pitch: is3DEnabled ? 60 : 0, duration: 500 });
+    if (!m) return;
+
+    const targetPitch = is3DEnabled ? 60 : 0;
+    function applyPitch() {
+      m?.easeTo({ pitch: targetPitch, duration: 500 });
+    }
+
+    // Applying on style.load rather than dropping the change keeps the toggle
+    // from becoming a no-op when it is flipped mid-style-load.
+    if (!m.isStyleLoaded()) {
+      m.once("style.load", applyPitch);
+      return () => {
+        m.off("style.load", applyPitch);
+      };
+    }
+    applyPitch();
   }, [is3DEnabled]);
 
   if (webglError) {
@@ -277,9 +290,6 @@ export default function MapView() {
             <ServiceAreaLayer map={mapInstance} />
             <LayerManager />
             <HoverTooltip map={mapInstance} />
-            <div className="absolute bottom-16 left-4 z-10">
-              <IngestionCoverageBadge />
-            </div>
             {isAIOpen && <RegionalIntelligencePanel />}
             {agentCoords && (
               <AgentInteraction

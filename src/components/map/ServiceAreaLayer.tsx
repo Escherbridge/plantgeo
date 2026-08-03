@@ -195,9 +195,14 @@ export function ServiceAreaLayer({ map }: ServiceAreaLayerProps) {
     if (appliedBoundsKeyRef.current === key) return;
     appliedBoundsKeyRef.current = key;
 
+    // Pad by half the span: a pitched (3D) camera sees far more ground than a
+    // flat one, and MapLibre constrains the camera against maxBounds -- a tight
+    // box silently cancels the pitch, which reads as a dead 3D toggle.
+    const longitudePadding = Math.max(2, (bbox.east - bbox.west) * 0.5);
+    const latitudePadding = Math.max(2, (bbox.north - bbox.south) * 0.5);
     map.setMaxBounds([
-      [bbox.west - 1.5, bbox.south - 1],
-      [bbox.east + 1.5, bbox.north + 1],
+      [bbox.west - longitudePadding, bbox.south - latitudePadding],
+      [bbox.east + longitudePadding, bbox.north + latitudePadding],
     ]);
     map.setMinZoom(4);
 

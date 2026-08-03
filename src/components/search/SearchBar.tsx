@@ -8,6 +8,7 @@ import { useGeocode } from "@/hooks/useGeocode";
 import { useMapStore } from "@/stores/map-store";
 import SearchResults from "./SearchResults";
 import RecentSearches from "./RecentSearches";
+import { IngestionCoverageBadge } from "@/components/map/IngestionCoverageBadge";
 
 export default function SearchBar() {
   const { query, isOpen, isLoading, setQuery, setResults, setIsOpen, setIsLoading, setSelectedIndex, reset } =
@@ -127,6 +128,7 @@ export default function SearchBar() {
 
         {showResults && <SearchResults />}
         {showRecent && <RecentSearches />}
+        <IngestionCoverageBadge />
       </div>
     </>
   );

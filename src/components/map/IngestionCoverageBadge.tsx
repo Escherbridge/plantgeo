@@ -2,17 +2,19 @@
 
 import { AlertTriangle, Globe2 } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
-
-function formatDegrees(value: number, positive: string, negative: string) {
-  const hemisphere = value >= 0 ? positive : negative;
-  return `${Math.abs(value).toFixed(1)}°${hemisphere}`;
-}
+import {
+  describeCoverageRegion,
+  formatCoverageBounds,
+} from "@/lib/map/coverage-region";
 
 /**
  * States plainly that data coverage is regional, not global.
  * The basemap is worldwide while every ingestion job is clamped to INGEST_BBOX,
  * so an empty layer outside that box means "not ingested here", not "nothing
  * happening here" -- a distinction the map itself cannot express.
+ *
+ * Renders as an inline strip, hosted inside the search panel (see SearchBar),
+ * so it never overlaps the map toolbar.
  */
 export function IngestionCoverageBadge() {
   const coverage = trpc.layers.getIngestionCoverage.useQuery(undefined, {
@@ -24,21 +26,22 @@ export function IngestionCoverageBadge() {
 
   if (!coverage.data.configured) {
     return (
-      <div className="pointer-events-none flex items-center gap-2 rounded-md border border-amber-400/60 bg-amber-50/95 px-2.5 py-1.5 text-xs font-medium text-amber-800 shadow-sm dark:border-amber-500/40 dark:bg-amber-950/80 dark:text-amber-300">
+      <div className="flex items-center gap-2 border-t border-[hsl(var(--border))] px-3 py-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">
         <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-        <span>No ingestion region configured — data layers are empty</span>
+        <span>No ingestion region configured</span>
       </div>
     );
   }
 
-  const { west, south, east, north } = coverage.data.bbox;
+  const { bbox } = coverage.data;
   return (
-    <div className="pointer-events-none flex items-center gap-2 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))]/95 px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--muted-foreground))] shadow-sm">
+    <div
+      className="flex items-center gap-2 border-t border-[hsl(var(--border))] px-3 py-1.5 text-xs text-[hsl(var(--muted-foreground))]"
+      title={`Data coverage: ${formatCoverageBounds(bbox)}`}
+    >
       <Globe2 className="h-3.5 w-3.5 shrink-0" />
-      <span>
-        Data coverage: {formatDegrees(south, "N", "S")}–
-        {formatDegrees(north, "N", "S")}, {formatDegrees(west, "E", "W")}–
-        {formatDegrees(east, "E", "W")}
+      <span className="truncate">
+        Covering {describeCoverageRegion(bbox)}
       </span>
     </div>
   );
