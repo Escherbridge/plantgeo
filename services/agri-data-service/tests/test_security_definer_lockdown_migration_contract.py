@@ -77,21 +77,17 @@ def test_input_recorder_functions_are_owned_by_the_input_recorder_role() -> None
     migration = _migration()
 
     for function_name in _INPUT_RECORDER_FUNCTIONS:
-        assert (
-            f"ALTER FUNCTION agri.{function_name}()\n            OWNER TO {_INPUT_RECORDER_OWNER};"
-        ) in migration
+        assert (f"ALTER FUNCTION agri.{function_name}()\n            OWNER TO {_INPUT_RECORDER_OWNER};") in migration
 
 
 def test_mv_refresh_function_owns_the_matview_it_refreshes() -> None:
     migration = _migration()
 
     assert (
-        "ALTER FUNCTION agri.refresh_forecast_ml_daily_serving()\n"
-        f"            OWNER TO {_MV_REFRESH_OWNER};"
+        f"ALTER FUNCTION agri.refresh_forecast_ml_daily_serving()\n            OWNER TO {_MV_REFRESH_OWNER};"
     ) in migration
     assert (
-        "ALTER MATERIALIZED VIEW agri.mv_forecast_ml_daily_serving\n"
-        f"            OWNER TO {_MV_REFRESH_OWNER};"
+        f"ALTER MATERIALIZED VIEW agri.mv_forecast_ml_daily_serving\n            OWNER TO {_MV_REFRESH_OWNER};"
     ) in migration
 
 
@@ -99,9 +95,7 @@ def test_lineage_guard_functions_are_owned_by_the_lineage_guard_role() -> None:
     migration = _migration()
 
     for function_name in _LINEAGE_GUARD_FUNCTIONS:
-        assert (
-            f"ALTER FUNCTION agri.{function_name}()\n            OWNER TO {_LINEAGE_GUARD_OWNER};"
-        ) in migration
+        assert (f"ALTER FUNCTION agri.{function_name}()\n            OWNER TO {_LINEAGE_GUARD_OWNER};") in migration
 
 
 def test_owner_roles_are_created_with_locked_attributes_and_validated() -> None:

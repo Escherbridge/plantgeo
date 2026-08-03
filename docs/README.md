@@ -81,8 +81,9 @@ does not provide a destructive database-reset command.
 - [Ecological knowledge source register](./ecological-knowledge-source-register.md)
   — evidence tiers and governed sources for strategies, amendments, plants,
   seeds, and companion claims.
-- [Railway operations](./deployment.md) — exact shared-project allowlist,
-  replacement-database cutover, Martin gate, and deploy kill switch.
+- [Railway operations](./deployment.md) — exact shared-project allowlist, the
+  single-path deploy sequence (build gates → pre-deploy migration → `/api/ready`),
+  replacement-database cutover, and the Martin gate.
 - [Environment variables](./env-vars.md) — server/client separation and
   production configuration.
 - [Database](./database.md) and [DBML](./schema.dbml) — schema ownership and
@@ -123,5 +124,8 @@ uv run mypy src
 uv run pytest
 ```
 
-Production deployment is separately gated. A successful local/CI build does not
-authorize database migration, Martin publication, or Railway cutover.
+Deploying `plantgeo-main` is a push to `main`: Railway builds the image (the
+build stage runs the data-boundary, type, lint, and test gates), applies pending
+Drizzle migrations through `preDeployCommand`, then gates traffic on
+`/api/ready`. A green deploy does not authorize a database cutover, Martin
+publication, or a data-release certification.

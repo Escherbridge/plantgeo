@@ -5,6 +5,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
+    "preDeployCommand": "node scripts/migrate.mjs",
     "startCommand": "node server.js",
     "healthcheckPath": "/api/ready",
     "healthcheckTimeout": 60,

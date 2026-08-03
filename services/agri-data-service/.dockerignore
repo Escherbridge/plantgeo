@@ -21,7 +21,8 @@ dist
 htmlcov
 
 # Development-only files and runtime output
-tests
+# tests IS needed in the build context: the "checks" Dockerfile stage runs
+# `ruff format --check src tests` against it. It never reaches the runtime image.
 *.log
 logs
 *.pid

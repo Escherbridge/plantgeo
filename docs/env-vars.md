@@ -15,6 +15,7 @@ in the browser bundle and must be treated as public.
 | Variable | Scope | Policy |
 | --- | --- | --- |
 | `DATABASE_URL` | server | PlantGeo PostgreSQL DSN. Production currently references `${{Plantgeo.DATABASE_URL}}`; change only during the reviewed replacement cutover. |
+| `MIGRATION_DATABASE_URL` | server, optional | DDL-capable DSN for the `preDeployCommand` (`scripts/migrate.mjs`). Unset means the step reuses `DATABASE_URL`; set it once the runtime role loses `CREATE` on the database. Never the Martin role. |
 | `REDIS_URL` | server | `${{plantgeo-Redis.REDIS_URL}}` in Railway. Cache/pub-sub only, never the durable job ledger. |
 | `NEXTAUTH_SECRET` | server | Unique high-entropy production secret. Rotating it invalidates sessions. |
 | `NEXTAUTH_URL` | server | Canonical application origin, `http://localhost:3001` in development. |
@@ -22,8 +23,8 @@ in the browser bundle and must be treated as public.
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | server | Optional pair; configure both or omit the provider. |
 
 Use separate least-privilege database identities for the web application,
-Python publisher, migration workflow, and Martin. Runtime services must not use
-the database owner.
+Python publisher, pre-deploy migration, and Martin. Runtime services must not
+use the database owner.
 
 ### Public map configuration
 
@@ -240,5 +241,6 @@ PUBLISHED_READER_DATABASE_URL=<sealed published-reader DSN>
 
 The first reference remains on `Plantgeo` until the replacement cutover is
 approved. Never reference `${{Aevani-Postgress.DATABASE_URL}}`. Do not print a
-resolved reference in CI. See [Railway Operations](./deployment.md) for the full
-service allowlist and cutover gate.
+resolved reference in a build or deploy log. See
+[Railway Operations](./deployment.md) for the full service allowlist, the
+single-path deploy sequence, and the cutover gate.

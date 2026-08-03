@@ -58,4 +58,11 @@ martin-data
 infra/*
 !infra/martin/
 !infra/martin/martin.yaml
-scripts
+
+# Only the scripts the image itself runs: the build-stage data-boundary gate
+# (and the two checks it imports) plus the pre-deploy migration runner.
+scripts/*
+!scripts/check-client-provider-urls.mjs
+!scripts/check-client-server-imports.mjs
+!scripts/check-data-boundaries.mjs
+!scripts/migrate.mjs

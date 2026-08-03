@@ -1,6 +1,7 @@
 FROM node:22.16.0-alpine3.22 AS base
 
-# Install dependencies only when needed
+# Install dependencies only when needed. NODE_ENV must stay unset here so that
+# npm ci keeps devDependencies: the build stage runs eslint, tsc, and vitest.
 FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
@@ -56,6 +57,15 @@ RUN if [ "${RAILWAY_ENVIRONMENT_NAME:-}" = "production" ]; then \
         } \
       }'; \
     fi
+
+# Quality gates run in the image so a failure fails the build instead of the
+# post-deploy healthcheck. Ordered cheapest-first: filesystem scan, then the
+# type program, then eslint, then the test suite.
+RUN npm run check:data-boundary
+RUN npm run type-check
+RUN npm run lint
+RUN npm test
+
 RUN npm run build
 
 # Production runtime image
@@ -70,6 +80,14 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=build /app/public ./public
 COPY --from=build --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Railway's preDeployCommand applies pending Drizzle migrations from this image.
+# The standalone trace only carries the package files the app itself imports, so
+# copy drizzle-orm and postgres whole — the migrator entrypoints are not traced.
+COPY --from=build --chown=nextjs:nodejs /app/drizzle ./drizzle
+COPY --from=build --chown=nextjs:nodejs /app/scripts/migrate.mjs ./scripts/migrate.mjs
+COPY --from=build --chown=nextjs:nodejs /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
+COPY --from=build --chown=nextjs:nodejs /app/node_modules/postgres ./node_modules/postgres
 
 USER nextjs
 EXPOSE 3000

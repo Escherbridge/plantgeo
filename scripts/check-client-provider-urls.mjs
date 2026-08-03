@@ -22,6 +22,7 @@ const ALLOWED_ORIGINS = new Map([
 const ALLOWED_PATH_PREFIXES = new Map([
   ["http://www.w3.org/2000/svg", "SVG namespace identifier"],
   ["https://www.w3.org/2000/svg", "SVG namespace identifier"],
+  ["https://tiles.aevani.com/", "first-party PMTiles archive on Cloudflare R2, see infra/tiles/AGENTS.md"],
   ["https://protomaps.github.io/basemaps-assets/", "versioned glyph and sprite assets"],
   ["https://build.protomaps.com/", "development PMTiles default; rejected by production build gate"],
   ["https://s3.amazonaws.com/elevation-tiles-prod/", "public terrain asset exception"],
@@ -33,6 +34,19 @@ const ALLOWED_PATH_PREFIXES = new Map([
 
 const SOURCE_EXTENSION = /\.(?:[cm]?[jt]sx?)$/;
 const URL_PATTERN = /https?:\/\/[^\s"'`)<>{}\\]+/g;
+const BLOCK_COMMENT_PATTERN = /\/\*[\s\S]*?\*\//g;
+
+// Blanks /* ... */ (incl. JSDoc) bodies so example/rejected URLs in doc comments
+// aren't flagged, while keeping length/line numbers intact for match reporting.
+function stripBlockComments(source) {
+  return source.replace(BLOCK_COMMENT_PATTERN, (comment) => comment.replace(/[^\n]/g, " "));
+}
+
+// A template literal like `https://${host}` truncates at the regex's excluded
+// `{`, leaving a trailing `$` immediately followed by `{` -- not a literal URL.
+function isTemplateLiteralInterpolation(url, source, matchEnd) {
+  return url.endsWith("$") && source[matchEnd] === "{";
+}
 
 async function collectSourceFiles(relativeDirectory) {
   const absoluteDirectory = path.resolve(relativeDirectory);
@@ -78,9 +92,10 @@ function isAllowed(url) {
 const violations = [];
 for (const root of DISPLAY_ROOTS) {
   for (const file of await collectSourceFiles(root)) {
-    const source = await readFile(file.absolutePath, "utf8");
+    const source = stripBlockComments(await readFile(file.absolutePath, "utf8"));
     for (const match of source.matchAll(URL_PATTERN)) {
       const url = match[0].replace(/[.,;:]$/, "");
+      if (isTemplateLiteralInterpolation(url, source, match.index + match[0].length)) continue;
       if (!isAllowed(url)) {
         const line = source.slice(0, match.index).split("\n").length;
         violations.push(`${file.relativePath}:${line} ${url}`);

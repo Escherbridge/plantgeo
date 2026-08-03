@@ -45,4 +45,13 @@ PlantGeo is an enterprise-grade open-source 3D mapping platform built to provide
 - `npm run docker:up` - Start all infrastructure services
 - `npm run docker:down` - Stop infrastructure
 - `npm run db:generate` - Generate Drizzle migrations
-- `npm run db:migrate` - Run migrations
+- `npm run db:migrate` - Run migrations locally (production uses the Railway
+  `preDeployCommand` → `scripts/migrate.mjs`; see `docs/deployment.md`
+  "Deployment workflow")
+
+## Deployment
+Single path: push to `main` → Railway builds `Dockerfile` (the build stage runs
+`check:data-boundary`, `type-check`, `lint`, `test`) → `preDeployCommand`
+applies Drizzle migrations → healthcheck `/api/ready` → traffic. There is no
+GitHub Actions pipeline. A new migration must land with a matching
+`src/lib/server/db/migration-contract.ts` update in the same commit.

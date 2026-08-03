@@ -10,14 +10,17 @@ the legacy auto-deploy and migration-on-deploy statements in
 
 ## Current state — reviewed 2026-07-26
 
-Production data is **not certified**. The production deploy workflow remains
-deliberately disabled unless both its explicit production switch and the exact
-reviewed certification SHA are set. Local schema governance is implemented
-through `20260725_0013`; that does not prove production database parity.
+Production data is **not certified**. Code deployment is no longer gated by a
+Conductor switch: the operator moved `plantgeo-main` to a single Railway path
+where a push to `main` builds, runs the in-build quality gates, applies pending
+Drizzle migrations through `deploy.preDeployCommand`, and must pass
+`/api/ready`. Data certification is unaffected — a green deploy does not certify
+sources, forecasts, or labels. Local schema governance is implemented through
+`20260725_0013`; that does not prove production database parity.
 
 | Gate | Current state | Authority / evidence |
 | --- | --- | --- |
-| Exact revision checks and deployment switch | implemented, disabled | `.github/workflows/deploy.yml` |
+| Build gates, pre-deploy migration, and readiness gate | implemented, always on | `Dockerfile`, `railway.json`, `docs/deployment.md` |
 | Production PostgreSQL 18 backup/restore and extension parity | blocked | `tracks/forecasting_predeploy_20260722/plan.md` |
 | Certified source/release lineage | blocked pending separately reviewed production handoff | `docs/data-ingestion-and-serving-contract.md` |
 | Forecast validation and publication | blocked; candidates remain evaluation-only | `tracks/forecasting_predeploy_20260722/` |
@@ -25,9 +28,10 @@ through `20260725_0013`; that does not prove production database parity.
 
 ## Release rule
 
-A successful build, local migration, evaluation artifact, or historical track
-does not authorize a production release. Certification requires all applicable
-gates above, the exact release revision, a reviewed rollback/observability plan,
-and separate operator authorization. Do not enable an automatic migration,
-forecast publication, scheduler, or `effect_candidate` finalization as part of
-Conductor maintenance.
+A successful build, deploy, local migration, evaluation artifact, or historical
+track does not certify data. Data certification requires all applicable gates
+above, the exact release revision, a reviewed rollback/observability plan, and
+separate operator authorization. The Drizzle `preDeployCommand` is the one
+automatic migration the operator has authorized; do not enable a forecast
+publication, scheduler, or `effect_candidate` finalization as part of Conductor
+maintenance.

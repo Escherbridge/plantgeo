@@ -13,7 +13,8 @@ define the security boundary:
 
 | Service | PlantGeo responsibility | Current gate |
 | --- | --- | --- |
-| `plantgeo-main` | Next.js application | Running; the production workflow targets only this service. |
+| `plantgeo-main` | Next.js application | Running; Railway's GitHub integration deploys it from `main`, and no other service is deployed by a web release. |
+| `plantgeo-ingest-cron` | Hourly trigger for `GET /api/cron/ingest` | Running; config-as-code in `infra/cron-ingest/`. |
 | `plantgeo-dataservice` | Bounded Python API and publication receiver | Running; Alembic owns only the `agri` schema. |
 | `plantgeo-Redis` | Cache, pub/sub, and non-durable wake-up transport | Running; never use it as the durable job ledger. |
 | `Plantgeo` | Legacy PlantGeo PostgreSQL 18.3 database | Running, but the last audit found no required geospatial/time-series extensions. |
@@ -242,10 +243,12 @@ Do not cut over until every item below has evidence:
 10. After explicit approval, retain the backup but stop/remove `Plantgeo` so
     duplicate compute and storage charges do not persist.
 
-Do not run database migrations in long-lived service start commands. The
-current Next.js runtime image intentionally lacks migration tooling. Production
-migration needs a reviewed administrative workflow with the exact artifacts,
-target-service guard, backup evidence, and a human approval gate.
+Do not run database migrations in a long-lived service start command. Drizzle
+migrations are applied by the Railway `preDeployCommand` described in
+[Deployment workflow](#deployment-workflow), which runs once per release in the
+runtime image before the deployment receives traffic. A cutover still needs
+backup evidence, a target-service guard, and operator authorization; the
+pre-deploy step applies the committed migrations, it does not certify data.
 
 ## Service configuration
 
@@ -382,6 +385,20 @@ grant the Martin role only database connect, `geo` schema usage, and execute on
 those functions; place the public endpoint behind CDN/WAF rate limits. CORS is
 not authentication. Static PMTiles belong in R2/CDN, not the Martin container.
 
+### `plantgeo-ingest-cron`
+
+- Repository root: `/infra/cron-ingest`
+- Dockerfile: `/infra/cron-ingest/Dockerfile`
+- Config-as-code: `/infra/cron-ingest/railway.json` (`cronSchedule: 0 * * * *`,
+  `restartPolicyType: NEVER`)
+
+The container calls `GET /api/cron/ingest` once with the `x-cron-secret` header
+and exits. `202` (accepted, ingestion detached) and `409` (a run is already in
+flight) are success; anything else fails the run. It needs only `CRON_SECRET`,
+which must match `plantgeo-main`'s value and must differ from `INGEST_SECRET`
+and the data-service publication token. This service is the only scheduler for
+ingestion.
+
 ### Deferred services
 
 Valhalla and Photon are not part of the currently provisioned PlantGeo
@@ -390,59 +407,62 @@ privacy, and operating-cost review. Never deploy a floating `:latest` image.
 
 ## Deployment workflow
 
-The GitHub workflow `.github/workflows/deploy.yml`:
+Railway is the only deployment path. There is no GitHub Actions pipeline; the
+repository has no `.github/workflows/`. A push to `main` on
+`Escherbridge/plantgeo` triggers Railway's own GitHub integration for
+`plantgeo-main`, and one release proceeds in this order:
 
-- runs only after the `CI` workflow succeeds on `main`;
-- checks out the exact verified commit;
-- pins Railway CLI `5.27.0`;
-- targets project `6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`, environment
-  `production`, and service `plantgeo-main`; and
-- remains disabled unless repository variable
-  `RAILWAY_PRODUCTION_DEPLOY_ENABLED` equals `true` and repository variable
-  `RAILWAY_PRODUCTION_DATA_CERTIFIED_SHA` exactly equals the verified commit
-  SHA.
+1. **Build.** Railway builds `/Dockerfile`. The `build` stage runs
+   `npm run check:data-boundary`, `npm run type-check`, `npm run lint`, and
+   `npm test` before `next build`, so a failing gate fails the image and no
+   release is produced. The production public-URL gate runs in the same stage.
+2. **Pre-deploy migration.** `railway.json` sets
+   `deploy.preDeployCommand` to `node scripts/migrate.mjs`. Railway runs it in
+   the new runtime image, once, before any traffic is routed. A non-zero exit
+   aborts the deployment and the previous release keeps serving.
+3. **Healthcheck.** Railway polls `GET /api/ready`, which requires the exact
+   Drizzle migration pinned in `src/lib/server/db/migration-contract.ts`, so
+   schema drift fails the rollout rather than reaching users.
+4. **Traffic.** Only a deployment that built, migrated, and reported ready
+   receives traffic.
 
-Keep both gates false until the database, migrations, public build-time URLs,
-tile service, and the data-release evidence pass their gates. Set the data
-certification SHA only to the reviewed release commit and clear it again after
-the deployment window. The workflow intentionally does not deploy the data
-service, redeploy Martin, or provision services.
+Railway deploys only `plantgeo-main` from the repository root. The data service,
+Martin, and the ingest cron service each have their own root, Dockerfile, and
+`railway.json`; none of them is redeployed by a web release.
 
-### The `migrate` job
+### The pre-deploy migration step
 
-The `plantgeo-main` runtime image is an intentionally migration-free Next.js
-standalone build (see "Database replacement gate"), so Drizzle migrations are
-applied by a dedicated `migrate` job in `.github/workflows/deploy.yml` that runs
-before, and gates, the `deploy` job (`deploy` declares `needs: migrate`).
+`scripts/migrate.mjs` applies migrations with `drizzle-orm`'s postgres-js
+migrator against the `drizzle/` folder copied into the runtime image.
+`drizzle-kit` stays a devDependency and never ships.
 
-- **Gating.** The job carries exactly the same conditions as `deploy`: the `CI`
-  run must have succeeded for a `push` to `main` in this repository, repository
-  variable `RAILWAY_PRODUCTION_DEPLOY_ENABLED` must equal `true`, and repository
-  variable `RAILWAY_PRODUCTION_DATA_CERTIFIED_SHA` must exactly equal the
-  verified commit SHA. With either variable unset, no migration runs.
-- **Approval gate.** The job uses the GitHub environment
-  `production-migrations`, deliberately *not* `production`. Schema changes get
-  their own reviewer list and approval prompt rather than inheriting the
-  code-deploy approval. Configure `production-migrations` with required
-  reviewers before enabling the deploy variables.
-- **Secret.** The job requires the secret `PRODUCTION_MIGRATION_DATABASE_URL`,
-  exposed to `npm run db:migrate` as `DATABASE_URL`. A pre-flight step at the
-  top of the job fails immediately with
-  `PRODUCTION_MIGRATION_DATABASE_URL is not configured` when the secret is
-  absent, because `drizzle.config.ts` reads `process.env.DATABASE_URL!` and an
-  empty value would otherwise surface as an opaque driver error minutes later.
-- **Database role.** `PRODUCTION_MIGRATION_DATABASE_URL` **must** use a
-  migration-capable role that owns the `geo` schema and holds DDL rights
-  (`CREATE`/`ALTER`/`DROP`). It **must not** be the runtime application role
-  used by `plantgeo-main`, and it must not be the Martin tile role — both of
-  those are intentionally least-privilege roles with no DDL rights. Scope the
-  DSN to the exact production target; a migration DSN pointed at the wrong
-  database is unrecoverable.
-- **Revision.** Migrations are applied from the same checked-out certified
-  commit as the deploy, so schema and code are never skewed by a mismatched
-  revision.
+- **Idempotency.** The migrator reads `drizzle/meta/_journal.json`, hashes each
+  `.sql` file with sha256, and applies only entries whose journal timestamp is
+  greater than the newest `created_at` already in
+  `drizzle.__drizzle_migrations`. That is the same hash and timestamp pair that
+  `migration-contract.ts` and `/api/ready` assert, so an already-applied
+  migration is never re-run or duplicated.
+- **Failure behavior.** A missing DSN, an unreachable database, or a failing
+  statement exits non-zero, which aborts the deployment.
+- **DSN and role.** The step reuses the service's `DATABASE_URL` unless
+  `MIGRATION_DATABASE_URL` is set, in which case that DSN wins. The DSN must
+  belong to a role with DDL rights that owns the `geo` schema: the migrator
+  issues `CREATE SCHEMA IF NOT EXISTS drizzle` and `CREATE TABLE IF NOT EXISTS
+  drizzle.__drizzle_migrations` on every run, and PostgreSQL checks `CREATE` on
+  the database even when both already exist. When `plantgeo-main`'s runtime role
+  is reduced to least privilege, set `MIGRATION_DATABASE_URL` to a
+  migration-capable DSN scoped to the exact production database. Never point it
+  at the Martin tile role or at `Aevani-Postgress`.
+- **TLS.** The client mirrors `src/lib/server/db/index.ts` and does not force
+  TLS, because production reaches PostgreSQL over Railway's private network.
+- **Revision.** The migrations, the migrator, and the application code all come
+  out of the same image, so schema and code cannot skew.
 
-For an explicitly approved manual web deployment of a verified revision:
+Adding a Drizzle migration therefore requires updating
+`src/lib/server/db/migration-contract.ts` in the same commit; otherwise the new
+migration applies and `/api/ready` still fails on the old pinned hash.
+
+For an explicitly approved manual deployment of a local revision:
 
 ```powershell
 npx --yes @railway/cli@5.27.0 up `
@@ -508,7 +528,7 @@ vCPU, storage, egress, and retention determine the bill.
 - Keep releases content-addressed and retain the previous valid publication so
   upstream or model failures degrade to an explicit stale state.
 - Never print resolved Railway variables, connection strings, API tokens, or
-  local publication tokens into CI or support logs.
+  local publication tokens into build, deploy, or support logs.
 
 ## Production-readiness checklist
 
@@ -524,8 +544,8 @@ vCPU, storage, egress, and retention determine the bill.
 - [ ] Production browser build contains no localhost, placeholder, private
       Railway hostname, provider credential, or unapproved provider URL.
 - [ ] `/api/health` and `/api/ready` have distinct liveness/readiness behavior.
-- [ ] CI passes at the exact revision and the production deploy kill switch is
-      enabled only for the reviewed release window.
+- [ ] The in-build gates and `preDeployCommand` pass at the exact revision, and
+      `migration-contract.ts` pins the newest committed migration.
 - [ ] Old `Plantgeo` is stopped/removed after the observation window and explicit
       approval.
 

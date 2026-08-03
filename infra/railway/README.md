@@ -130,12 +130,14 @@ time, and operator/change record. The target service name must be exactly
 - Record `server_version`, `server_version_num`, image digest, and both
   available and installed versions of `postgis`, `timescaledb`, `vector`, and
   `pgcrypto`. A package being present in an image is not an installed extension.
-- Compare the PG18 versions and behavior with the pinned PostgreSQL 16 image in
-  the [`postgresql-governance` CI job](../../.github/workflows/ci.yml). The CI
-  job exercises the historical forecast contract at `20260722_0008`, then
-  migrates the same disposable database through the current head and proves the
-  constrained-loader and declarative-schema contracts. It is not PG18
-  production evidence.
+- Compare the PG18 versions and behavior with the pinned PostgreSQL 16 image
+  used by the operator-run governance rehearsal in `services/agri-data-service`
+  (`uv run alembic upgrade`, then `uv run pytest`, against a disposable
+  database). The rehearsal exercises the historical forecast contract at
+  `20260722_0008`, then migrates the same disposable database through the
+  current head and proves the constrained-loader and declarative-schema
+  contracts. It is not PG18 production evidence. There is no GitHub Actions
+  pipeline; see `docs/deployment.md` — "Deployment workflow".
 - If any extension is unavailable, incompatible, or requires a restart, stop.
   An approved operator must install extensions before migration; neither a
   service start command nor Alembic may create them.
