@@ -1,8 +1,9 @@
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "@/lib/server/db";
-import { droughtData, features, layers } from "@/lib/server/db/schema";
+import { features, layers } from "@/lib/server/db/schema";
 import { WEATHER_LAYER_ID } from "@/lib/server/layer-ids";
 import type { GroundwaterWell, WaterGauge } from "./usgs-water";
+import { DROUGHT_CATEGORY_LABELS } from "./usdm-drought";
 import {
   firmsDayRange,
   isFreshObservation,
@@ -19,6 +20,10 @@ const WEATHER_MAX_AGE_MS = 3 * 60 * 60 * 1_000;
 const WEATHER_CANDIDATE_ROWS = 8;
 /** Sane upper bound on observations rendered for a single viewport bbox. */
 const WEATHER_BBOX_MAX_ROWS = 500;
+/** ~5 km: USDM boundaries are hand-drawn at roughly this scale anyway. */
+const NATIONAL_DROUGHT_TOLERANCE_DEGREES = 0.05;
+/** ~55 m: below this the client cannot resolve the extra vertices. */
+const MIN_DROUGHT_TOLERANCE_DEGREES = 0.0005;
 
 export function parseBbox(value: string): [number, number, number, number] {
   const coordinates = value.split(",").map(Number);
@@ -349,28 +354,85 @@ export async function getPublishedWeatherForBbox(
   return observations;
 }
 
-/** Reads the last accepted USDM publication; never fetches upstream on request. */
-export async function getPublishedDroughtClassification(): Promise<
-  GeoJSON.FeatureCollection & {
-    availability: "published" | "unavailable";
-    observedAt: string | null;
-    reason?: "not_published" | "invalid_observation_time" | "stale";
-  }
-> {
-  const [latest] = await db
-    .select({
-      geojson: droughtData.geojson,
-      weekDate: droughtData.weekDate,
-    })
-    .from(droughtData)
-    .orderBy(desc(droughtData.fetchedAt))
-    .limit(1);
-  const collection = asRecord(latest?.geojson);
-  if (
-    !latest ||
-    collection?.type !== "FeatureCollection" ||
-    !Array.isArray(collection.features)
-  ) {
+export interface PublishedDroughtCollection extends GeoJSON.FeatureCollection {
+  availability: "published" | "unavailable";
+  observedAt: string | null;
+  reason?: "not_published" | "invalid_observation_time" | "stale";
+}
+
+/**
+ * Simplification tolerance in degrees for a viewport width.
+ * Roughly one screen pixel at a 2000px-wide map, so the clipped polygon is
+ * generalized to what the client can actually resolve instead of shipping
+ * full-resolution national rings.
+ */
+function droughtSimplifyTolerance(bboxWidthDegrees: number | null): number {
+  if (bboxWidthDegrees === null) return NATIONAL_DROUGHT_TOLERANCE_DEGREES;
+  return Math.min(
+    NATIONAL_DROUGHT_TOLERANCE_DEGREES,
+    Math.max(MIN_DROUGHT_TOLERANCE_DEGREES, bboxWidthDegrees / 2_000)
+  );
+}
+
+/**
+ * Reads the newest accepted USDM release, clipped and generalized in PostGIS.
+ *
+ * Never fetches upstream on request. The stored geometry is full-resolution
+ * (~19 MB nationally), so clipping to the viewport and simplifying happens in
+ * the database -- returning the raw collection would be unservable. Simplifying
+ * generalizes boundaries; it never reclassifies, and a class whose clipped
+ * geometry is empty is omitted rather than emitted as a null feature.
+ *
+ * @param bbox optional "west,south,east,north"; omitted returns the national extent.
+ */
+export async function getPublishedDroughtClassification(
+  bbox?: string
+): Promise<PublishedDroughtCollection> {
+  const area = bbox ? parseBbox(bbox) : null;
+  const tolerance = droughtSimplifyTolerance(area ? area[2] - area[0] : null);
+
+  // ST_CollectionExtract keeps the clip polygon-only: intersecting a polygon
+  // with an envelope can yield touching edges as lines/points at the boundary.
+  const clipped = area
+    ? sql`ST_CollectionExtract(
+        ST_Intersection(
+          d.geom,
+          ST_MakeEnvelope(${area[0]}, ${area[1]}, ${area[2]}, ${area[3]}, 4326)
+        ),
+        3
+      )`
+    : sql`d.geom`;
+
+  const rows = await db.execute<{
+    dm_category: number;
+    valid_date: string;
+    source_url: string;
+    geometry: string | null;
+  }>(sql`
+    WITH latest AS (
+      SELECT valid_date
+      FROM geo.drought_areas
+      ORDER BY valid_date DESC
+      LIMIT 1
+    )
+    SELECT
+      d.dm_category,
+      d.valid_date,
+      d.source_url,
+      ST_AsGeoJSON(
+        ST_SimplifyPreserveTopology(${clipped}, ${tolerance})
+      ) AS geometry
+    FROM geo.drought_areas d
+    JOIN latest ON latest.valid_date = d.valid_date
+    ${
+      area
+        ? sql`WHERE d.geom && ST_MakeEnvelope(${area[0]}, ${area[1]}, ${area[2]}, ${area[3]}, 4326)`
+        : sql``
+    }
+    ORDER BY d.dm_category
+  `);
+
+  if (rows.length === 0) {
     return {
       type: "FeatureCollection",
       features: [],
@@ -379,9 +441,8 @@ export async function getPublishedDroughtClassification(): Promise<
       reason: "not_published",
     };
   }
-  const observedAt = parseZonedObservationTime(
-    latest.weekDate.includes("T") ? latest.weekDate : `${latest.weekDate}T00:00:00Z`
-  );
+
+  const observedAt = parseZonedObservationTime(`${rows[0].valid_date}T00:00:00Z`);
   if (!observedAt) {
     return {
       type: "FeatureCollection",
@@ -400,11 +461,97 @@ export async function getPublishedDroughtClassification(): Promise<
       reason: "stale",
     };
   }
+
+  const collected: GeoJSON.Feature[] = [];
+  for (const row of rows) {
+    if (!row.geometry) continue;
+    const geometry = JSON.parse(row.geometry) as GeoJSON.Geometry;
+    // An empty clip means this class does not reach the viewport at all.
+    if (
+      (geometry.type === "MultiPolygon" || geometry.type === "Polygon") &&
+      geometry.coordinates.length === 0
+    ) {
+      continue;
+    }
+    collected.push({
+      type: "Feature",
+      geometry,
+      properties: {
+        DM: row.dm_category,
+        label: DROUGHT_CATEGORY_LABELS[row.dm_category] ?? null,
+        validDate: row.valid_date,
+        observedAt,
+        source: "US Drought Monitor",
+        sourceUrl: row.source_url,
+      },
+    });
+  }
+
   return {
     type: "FeatureCollection",
-    features: collection.features as GeoJSON.Feature[],
+    features: collected,
     availability: "published",
     observedAt,
+  };
+}
+
+export interface DroughtCategoryAtPoint {
+  dmCategory: number;
+  validDate: string;
+  observedAt: string;
+  sourceUrl: string;
+}
+
+/**
+ * Highest USDM drought class containing a point, evaluated in PostGIS.
+ * Returns null when the newest release is stale or the point is in no class --
+ * "no drought reported here" is never reported as D0.
+ */
+export async function getDroughtCategoryAtPoint(
+  lat: number,
+  lon: number
+): Promise<DroughtCategoryAtPoint | null> {
+  if (
+    !Number.isFinite(lat) ||
+    lat < -90 ||
+    lat > 90 ||
+    !Number.isFinite(lon) ||
+    lon < -180 ||
+    lon > 180
+  ) {
+    throw new RangeError("Point must be within WGS84 bounds");
+  }
+
+  const rows = await db.execute<{
+    dm_category: number;
+    valid_date: string;
+    source_url: string;
+  }>(sql`
+    WITH latest AS (
+      SELECT valid_date
+      FROM geo.drought_areas
+      ORDER BY valid_date DESC
+      LIMIT 1
+    )
+    SELECT d.dm_category, d.valid_date, d.source_url
+    FROM geo.drought_areas d
+    JOIN latest ON latest.valid_date = d.valid_date
+    WHERE ST_Intersects(d.geom, ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326))
+    ORDER BY d.dm_category DESC
+    LIMIT 1
+  `);
+
+  const row = rows[0];
+  if (!row) return null;
+  const observedAt = parseZonedObservationTime(`${row.valid_date}T00:00:00Z`);
+  if (!observedAt || !isFreshObservation(observedAt, DROUGHT_MAX_AGE_MS)) {
+    return null;
+  }
+  return {
+    dmCategory: row.dm_category,
+    validDate: row.valid_date,
+    observedAt,
+    sourceUrl: row.source_url,
   };
 }
 

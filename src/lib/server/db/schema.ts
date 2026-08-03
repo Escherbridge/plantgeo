@@ -29,6 +29,10 @@ const spatialPoint = customType<{ data: string; driverData: string }>({
   dataType: () => "geometry(POINT,4326)",
 });
 
+const spatialMultiPolygon = customType<{ data: string; driverData: string }>({
+  dataType: () => "geometry(MULTIPOLYGON,4326)",
+});
+
 const spatialGeographyPoint = customType<{ data: string; driverData: string }>({
   dataType: () => "geography(POINT,4326)",
 });
@@ -292,6 +296,28 @@ export const droughtData = pgTable("drought_data", {
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow(),
 });
 
+/** One USDM D0-D4 classification polygon per weekly release; see `src/lib/server/AGENTS.md` §drought-ingestion. */
+export const droughtAreas = geoSchema.table(
+  "drought_areas",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    validDate: varchar("valid_date", { length: 10 }).notNull(),
+    dmCategory: integer("dm_category").notNull(),
+    geom: spatialMultiPolygon("geom").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("drought_areas_valid_date_category_unique").on(
+      table.validDate,
+      table.dmCategory
+    ),
+    index("drought_areas_valid_date_idx").on(table.validDate),
+  ]
+);
+
 // ============================================
 // Community Strategy Requests (public schema)
 // ============================================
@@ -333,17 +359,26 @@ export const priorityZones = pgTable("priority_zones", {
 // Soil Health Tables (public schema)
 // ============================================
 
-export const soilGridCache = pgTable("soil_grid_cache", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  lat: doublePrecision("lat").notNull(),
-  lon: doublePrecision("lon").notNull(),
-  ph: doublePrecision("ph"),
-  organicCarbon: doublePrecision("organic_carbon"),
-  nitrogen: doublePrecision("nitrogen"),
-  bulkDensity: doublePrecision("bulk_density"),
-  cec: doublePrecision("cec"),
-  cachedAt: timestamp("cached_at", { withTimezone: true }).defaultNow(),
-});
+/** SoilGrids point cache keyed on a rounded grid cell; see `src/lib/server/AGENTS.md` §soil-evidence. */
+export const soilGridCache = pgTable(
+  "soil_grid_cache",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    lat: doublePrecision("lat").notNull(),
+    lon: doublePrecision("lon").notNull(),
+    ph: doublePrecision("ph"),
+    organicCarbon: doublePrecision("organic_carbon"),
+    nitrogen: doublePrecision("nitrogen"),
+    bulkDensity: doublePrecision("bulk_density"),
+    cec: doublePrecision("cec"),
+    ocd: doublePrecision("ocd"),
+    /** False records a verified upstream no-data cell so it is not re-queried. */
+    complete: boolean("complete").notNull().default(false),
+    sourceUrl: text("source_url"),
+    cachedAt: timestamp("cached_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [uniqueIndex("soil_grid_cache_cell_unique").on(table.lat, table.lon)]
+);
 
 // ============================================
 // Environmental Alert System (public schema)

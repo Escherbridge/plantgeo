@@ -10,10 +10,67 @@ export interface NDVIColorStop {
 }
 
 // Activation requires a database-backed, immutable publication catalog.
+// Still false: no first-party tile release (NBR, NLCD land cover) is published.
 export const ENVIRONMENTAL_TILES_CONFIGURED = false;
 
 export function getEnvironmentalTileTemplate(_path: string): string {
   return "";
+}
+
+/**
+ * NASA EOSDIS GIBS NDVI product actually served as web-mercator raster tiles.
+ * Public, keyless, CORS-open. See `src/lib/server/AGENTS.md` §vegetation-tiles.
+ */
+export const GIBS_NDVI_PRODUCT = {
+  layerIdentifier: "MODIS_Terra_NDVI_8Day",
+  tileMatrixSet: "GoogleMapsCompatible_Level9",
+  /** GIBS publishes this product no deeper than zoom 9. */
+  maxZoom: 9,
+  /** Each tile is a rolling composite of the 8 days ending at the requested date. */
+  compositeWindowDays: 8,
+  attribution: "NASA EOSDIS GIBS — MODIS/Terra NDVI 8-Day",
+} as const;
+
+/** MODIS/Terra NDVI coverage begins in Feb 2000; earlier requests have no tiles. */
+const GIBS_NDVI_FIRST_YEAR = 2000;
+const GIBS_NDVI_FIRST_MONTH = 3;
+
+/**
+ * Resolves the GIBS TIME value for a requested month, or null when GIBS has no
+ * coverage. Returns "default" (GIBS' newest available composite) for the current
+ * month, because a mid-month date in the current month may not exist yet.
+ * Dates outside the product extent 404 at GIBS rather than returning a blank
+ * tile, so an out-of-range month is refused here instead of emitting a dead URL.
+ */
+export function resolveGibsNdviDate(
+  year: number,
+  month: number,
+  now = new Date()
+): string | null {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return null;
+  }
+  if (year < GIBS_NDVI_FIRST_YEAR) return null;
+  if (year === GIBS_NDVI_FIRST_YEAR && month < GIBS_NDVI_FIRST_MONTH) return null;
+
+  const currentYear = now.getUTCFullYear();
+  const currentMonth = now.getUTCMonth() + 1;
+  if (year > currentYear || (year === currentYear && month > currentMonth)) {
+    return null;
+  }
+  if (year === currentYear && month === currentMonth) return "default";
+  return `${year}-${String(month).padStart(2, "0")}-15`;
+}
+
+/**
+ * Builds the first-party NDVI tile template for a resolved TIME value.
+ * The browser never calls GIBS directly — `/api/tiles/vegetation/ndvi` proxies
+ * it so attribution and caching stay first-party. The upstream orders its path
+ * as {TileMatrix}/{TileRow}/{TileCol}, which is MapLibre's {z}/{y}/{x}; the
+ * placeholders are left for MapLibre to substitute.
+ */
+export function getGibsNDVITileTemplate(time: string): string {
+  return `/api/tiles/vegetation/ndvi/${time}/{z}/{y}/{x}`;
 }
 
 /** NDVI color ramp: -1 (water/bare) → 0 (sparse) → 1 (dense healthy vegetation) */
@@ -40,23 +97,28 @@ export const NDWI_COLOR_RAMP: NDVIColorStop[] = [
 ];
 
 /**
- * Returns the first-party published NDVI tile template, or an empty string.
+ * Returns the NASA GIBS NDVI tile template, or an empty string when unavailable.
+ * "anomaly" is always empty: GIBS publishes absolute NDVI only, and deriving an
+ * anomaly needs a climatological baseline this platform has not published.
  */
 export function getNDVITileUrl(
   year: number,
   month: number,
-  mode: "absolute" | "anomaly" = "absolute"
+  mode: "absolute" | "anomaly" = "absolute",
+  now = new Date()
 ): string {
-  const mm = String(month).padStart(2, "0");
-  return getEnvironmentalTileTemplate(`vegetation/ndvi/${mode}/${year}/${mm}/{z}/{x}/{y}.png`);
+  if (mode === "anomaly") return "";
+  const time = resolveGibsNdviDate(year, month, now);
+  return time ? getGibsNDVITileTemplate(time) : "";
 }
 
 /**
- * Returns the first-party published NDWI tile template, or an empty string.
+ * Always an empty string: GIBS publishes no NDWI (or any water-index) raster
+ * layer, and no first-party NDWI release exists. Rendering a substitute such as
+ * a land/water mask would report something the source never measured.
  */
-export function getNDWITileUrl(year: number, month: number): string {
-  const mm = String(month).padStart(2, "0");
-  return getEnvironmentalTileTemplate(`vegetation/ndwi/${year}/${mm}/{z}/{x}/{y}.png`);
+export function getNDWITileUrl(_year: number, _month: number): string {
+  return "";
 }
 
 /**

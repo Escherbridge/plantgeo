@@ -3,6 +3,7 @@ import { z } from "zod";
 import { router, publicProcedure } from "@/lib/server/trpc/init";
 import { getInterventionSuitability } from "@/lib/server/services/carbon-potential";
 import {
+  getPublishedDroughtClassification,
   getPublishedGroundwaterWells,
   getPublishedStreamflowGauges,
 } from "@/lib/server/services/environmental-read-model";
@@ -10,11 +11,14 @@ import { NLCD_CLASSES } from "@/lib/server/services/nlcd";
 import {
   getSoilProperties,
   SoilEvidenceUnavailableError,
+  SoilUpstreamUnavailableError,
 } from "@/lib/server/services/soilgrids";
 import {
+  GIBS_NDVI_PRODUCT,
   getEnvironmentalTileTemplate,
   getNDVITileUrl,
   getNDWITileUrl,
+  resolveGibsNdviDate,
 } from "@/lib/vegetation";
 
 const COORDINATE_PATTERN = /^-?(?:\d+(?:\.\d*)?|\.\d+)$/;
@@ -78,10 +82,20 @@ export const environmentalRouter = router({
       return {
         tileUrl,
         availability: tileUrl ? ("published" as const) : ("unavailable" as const),
+        reason: tileUrl
+          ? null
+          : input.mode === "anomaly"
+            ? ("ndvi_anomaly_baseline_not_published" as const)
+            : ("gibs_ndvi_coverage_not_available_for_month" as const),
         year: input.year,
         month: input.month,
         mode: input.mode,
-        attribution: "NASA GIBS / Copernicus Global Land Service",
+        // The composite the tile actually represents -- 8 days ending at this
+        // date, not the whole month -- so the client can label it honestly.
+        compositeDate: resolveGibsNdviDate(input.year, input.month),
+        compositeWindowDays: GIBS_NDVI_PRODUCT.compositeWindowDays,
+        maxZoom: GIBS_NDVI_PRODUCT.maxZoom,
+        attribution: GIBS_NDVI_PRODUCT.attribution,
       };
     }),
 
@@ -96,24 +110,41 @@ export const environmentalRouter = router({
       const ndvi = getNDVITileUrl(input.year, input.month, "absolute");
       const anomaly = getNDVITileUrl(input.year, input.month, "anomaly");
       const ndwi = getNDWITileUrl(input.year, input.month);
+      const nlcd = getEnvironmentalTileTemplate(
+        "land-cover/nlcd-2021/{z}/{x}/{y}.png"
+      );
+      // Availability is reported per product: NDVI is served by GIBS while
+      // NDWI, the NDVI anomaly, and the first-party land-cover release are all
+      // genuinely unpublished. A single collapsed flag would either hide the
+      // working layer or overstate the missing ones.
       return {
-        availability:
-          ndvi && anomaly && ndwi
-            ? ("published" as const)
-            : ("unavailable" as const),
+        availability: ndvi ? ("partial" as const) : ("unavailable" as const),
         ndvi: {
           tileUrl: ndvi,
+          availability: ndvi ? ("published" as const) : ("unavailable" as const),
+          maxZoom: GIBS_NDVI_PRODUCT.maxZoom,
+          compositeDate: resolveGibsNdviDate(input.year, input.month),
+          compositeWindowDays: GIBS_NDVI_PRODUCT.compositeWindowDays,
           anomalyTileUrl: anomaly,
-          attribution: "NASA GIBS",
+          anomalyAvailability: anomaly
+            ? ("published" as const)
+            : ("unavailable" as const),
+          anomalyReason: "ndvi_anomaly_baseline_not_published" as const,
+          attribution: GIBS_NDVI_PRODUCT.attribution,
         },
-        ndwi: { tileUrl: ndwi, attribution: "NASA GIBS" },
+        ndwi: {
+          tileUrl: ndwi,
+          availability: ndwi ? ("published" as const) : ("unavailable" as const),
+          reason: "no_public_ndwi_raster_product_exists" as const,
+          attribution: null,
+        },
         nlcd: {
-          tileUrl: getEnvironmentalTileTemplate(
-            "land-cover/nlcd-2021/{z}/{x}/{y}.png"
-          ),
+          tileUrl: nlcd,
           changeTileUrl: getEnvironmentalTileTemplate(
             "land-cover/nlcd-change/{z}/{x}/{y}.png"
           ),
+          availability: nlcd ? ("published" as const) : ("unavailable" as const),
+          reason: "first_party_land_cover_release_not_published" as const,
           classes: Object.values(NLCD_CLASSES),
         },
       };
@@ -129,9 +160,14 @@ export const environmentalRouter = router({
     .input(z.object({ bbox: bboxSchema }))
     .query(({ input }) => getPublishedStreamflowGauges(input.bbox)),
 
-  getDroughtClassification: publicProcedure.query(() =>
-    unavailableCollection("bounded_drought_tile_publication_not_available")
-  ),
+  /**
+   * Serves the newest stored USDM release, clipped and generalized in PostGIS.
+   * bbox is optional so the existing no-argument callers keep working; passing
+   * one returns far less geometry and is strongly preferred.
+   */
+  getDroughtClassification: publicProcedure
+    .input(z.object({ bbox: bboxSchema.optional() }).optional())
+    .query(({ input }) => getPublishedDroughtClassification(input?.bbox)),
 
   getWatersheds: publicProcedure
     .input(z.object({ bbox: bboxSchema }))
@@ -160,6 +196,13 @@ export const environmentalRouter = router({
         if (error instanceof SoilEvidenceUnavailableError) {
           throw new TRPCError({
             code: "PRECONDITION_FAILED",
+            message: error.message,
+          });
+        }
+        // Throttling is transient: the client may retry, unlike a coverage gap.
+        if (error instanceof SoilUpstreamUnavailableError) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
             message: error.message,
           });
         }

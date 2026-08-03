@@ -1,10 +1,12 @@
 import { db } from "@/lib/server/db";
-import { environmentalAlerts, droughtData, priorityZones } from "@/lib/server/db/schema";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { environmentalAlerts, priorityZones } from "@/lib/server/db/schema";
+import { and, eq, gte, sql } from "drizzle-orm";
 import {
+  getDroughtCategoryAtPoint,
   getPublishedFireDetections,
   getPublishedStreamflowGauges,
 } from "@/lib/server/services/environmental-read-model";
+import { DROUGHT_CATEGORY_LABELS } from "@/lib/server/services/usdm-drought";
 
 export type AlertSeverity = "info" | "warning" | "critical";
 
@@ -264,26 +266,13 @@ export async function checkDroughtAlerts(
   const isDuplicate = await deduplicateAlert(userId, "drought_escalation", locationId);
   if (isDuplicate) return [];
 
-  const rows = await db
-    .select({
-      geojson: droughtData.geojson,
-      weekDate: droughtData.weekDate,
-      fetchedAt: droughtData.fetchedAt,
-    })
-    .from(droughtData)
-    .orderBy(desc(droughtData.weekDate))
-    .limit(1);
+  // Containment is evaluated in PostGIS against the stored release geometry:
+  // the national collection is far too large to load into Node per watched
+  // location. getDroughtCategoryAtPoint already rejects a stale release.
+  const observed = await getDroughtCategoryAtPoint(lat, lon);
+  if (!observed || observed.dmCategory < 3) return [];
 
-  if (rows.length === 0) return [];
-  if (!isFreshDroughtRelease(rows[0].weekDate, rows[0].fetchedAt)) return [];
-
-  const geojson = rows[0].geojson as GeoJSON.FeatureCollection | null;
-  if (geojson?.type !== "FeatureCollection" || !Array.isArray(geojson.features)) return [];
-
-  const maxDm = droughtLevelAtPoint(geojson, lat, lon);
-  if (maxDm === null || maxDm < 3) return [];
-
-  const label = maxDm === 4 ? "D4 — Exceptional Drought" : "D3 — Extreme Drought";
+  const label = DROUGHT_CATEGORY_LABELS[observed.dmCategory];
 
   return [
     {
@@ -291,13 +280,14 @@ export async function checkDroughtAlerts(
       alertType: "drought_escalation",
       severity: "critical",
       title: `${label} detected near watched location`,
-      body: `The US Drought Monitor reports ${label} conditions in your region as of the latest weekly update (${rows[0].weekDate}).`,
+      body: `The US Drought Monitor reports ${label} conditions in your region as of the latest weekly update (${observed.validDate}).`,
       metadata: {
         watchedLocationId: locationId,
         source: "warehouse:drought-usdm",
-        observedAt: rows[0].weekDate,
-        droughtClass: maxDm,
-        weekDate: rows[0].weekDate,
+        sourceUrl: observed.sourceUrl,
+        observedAt: observed.observedAt,
+        droughtClass: observed.dmCategory,
+        weekDate: observed.validDate,
         lat,
         lon,
       },

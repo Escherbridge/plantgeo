@@ -84,10 +84,12 @@ export function VegetationLayer({
       "vegetation/nbr/latest/{z}/{x}/{y}.png"
     );
 
-    if (!ndviTileUrl || !ndwiTileUrl || !nbrTileUrl) return;
+    // Each product attaches independently. NDWI has no upstream at all (GIBS
+    // publishes no water-index raster) and NBR is unpublished, so an
+    // all-or-nothing guard here would suppress NDVI, which is real and served.
 
     // --- NDVI ---
-    if (!m.getSource("ndvi-overlay")) {
+    if (ndviTileUrl && !m.getSource("ndvi-overlay")) {
       m.addSource("ndvi-overlay", {
         type: "raster",
         tiles: [ndviTileUrl],
@@ -95,7 +97,7 @@ export function VegetationLayer({
         attribution: "NASA GIBS / Copernicus",
       });
     }
-    if (!m.getLayer(NDVI_LAYER_ID)) {
+    if (ndviTileUrl && !m.getLayer(NDVI_LAYER_ID)) {
       m.addLayer({
         id: NDVI_LAYER_ID,
         type: "raster",
@@ -105,7 +107,7 @@ export function VegetationLayer({
     }
 
     // --- NDWI ---
-    if (!m.getSource("ndwi-overlay")) {
+    if (ndwiTileUrl && !m.getSource("ndwi-overlay")) {
       m.addSource("ndwi-overlay", {
         type: "raster",
         tiles: [ndwiTileUrl],
@@ -113,7 +115,7 @@ export function VegetationLayer({
         attribution: "NASA GIBS",
       });
     }
-    if (!m.getLayer(NDWI_LAYER_ID)) {
+    if (ndwiTileUrl && !m.getLayer(NDWI_LAYER_ID)) {
       m.addLayer({
         id: NDWI_LAYER_ID,
         type: "raster",
@@ -123,14 +125,14 @@ export function VegetationLayer({
     }
 
     // --- NBR ---
-    if (!m.getSource("nbr-recovery")) {
+    if (nbrTileUrl && !m.getSource("nbr-recovery")) {
       m.addSource("nbr-recovery", {
         type: "raster",
         tiles: [nbrTileUrl],
         tileSize: 256,
       });
     }
-    if (!m.getLayer(NBR_LAYER_ID)) {
+    if (nbrTileUrl && !m.getLayer(NBR_LAYER_ID)) {
       m.addLayer({
         id: NBR_LAYER_ID,
         type: "raster",
@@ -161,14 +163,10 @@ export function VegetationLayer({
       addAllLayers(map);
     };
 
-    // Add layers now if style is ready, otherwise wait for first load
-    if (map.isStyleLoaded()) {
-      addAllLayers(map);
-    } else {
-      map.once("style.load", () => addAllLayers(map));
-    }
-
-    // Persist layers across future style changes
+    // Add now if the style is ready; the persistent listener covers both the
+    // first load and every later swap. See src/components/map/AGENTS.md
+    // "Style.load listener order" -- no `once` alongside `on`.
+    if (map.isStyleLoaded()) addAllLayers(map);
     map.on("style.load", onStyleLoad);
 
     return () => {

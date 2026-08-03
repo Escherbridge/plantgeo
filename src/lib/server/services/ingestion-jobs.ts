@@ -1,6 +1,7 @@
 import type { IngestFeatureInput } from "@/lib/server/services/ingest";
 import { ingestFeatures } from "@/lib/server/services/ingest";
 import { WEATHER_LAYER_ID } from "@/lib/server/layer-ids";
+import { ingestDroughtRelease } from "./drought-ingestion";
 import { fetchActiveFiresNASA } from "./nasa-firms";
 import { getStreamflowGauges } from "./usgs-water";
 import { getCurrentWeather } from "./weather";
@@ -57,7 +58,8 @@ export interface IngestionJobResult {
     | "usgs-streamflow"
     | "ndvi"
     | "open-meteo"
-    | "wfigs-fire-perimeters";
+    | "wfigs-fire-perimeters"
+    | "usdm-drought";
   status: IngestionJobStatus;
   recordsSeen: number;
   recordsWritten: number;
@@ -357,6 +359,23 @@ export async function runFirePerimetersIngestionJob(
   };
 }
 
+/**
+ * Fetches the newest published US Drought Monitor release and stores it as
+ * PostGIS geometry. Unlike the other jobs this is not bbox-scoped: USDM
+ * publishes one indivisible national collection per week, and re-running within
+ * the same week writes nothing.
+ */
+export async function runDroughtIngestionJob(): Promise<IngestionJobResult> {
+  const outcome = await ingestDroughtRelease();
+  return {
+    source: "usdm-drought",
+    status: outcome.validDate ? "ingested" : "skipped",
+    recordsSeen: outcome.areasSeen,
+    recordsWritten: outcome.areasWritten,
+    reason: outcome.reason,
+  };
+}
+
 /** Refuses to publish NDVI until a versioned warehouse adapter exists. */
 export async function runVegetationIngestionJob(): Promise<IngestionJobResult> {
   return {
@@ -381,6 +400,7 @@ export async function runAllIngestionJobs(): Promise<IngestionJobResult[]> {
       source: "wfigs-fire-perimeters",
       run: () => runFirePerimetersIngestionJob(),
     },
+    { source: "usdm-drought", run: runDroughtIngestionJob },
     { source: "ndvi", run: runVegetationIngestionJob },
   ];
 
