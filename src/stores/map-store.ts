@@ -25,11 +25,13 @@ interface MapState {
   resetView: () => void;
 }
 
-// Boise region: matches the INGEST_BBOX coverage area so the map opens on data.
+// PNW-wide: matches the INGEST_BBOX coverage area so the map opens on data
+// instead of a Boise close-up; ServiceAreaLayer's fitBounds also lands users
+// on the exact coverage bbox once it resolves, covering any drift here.
 export const DEFAULT_VIEWPORT: Viewport = {
-  longitude: -116.2,
-  latitude: 43.6,
-  zoom: 7,
+  longitude: -118,
+  latitude: 45.5,
+  zoom: 5.2,
   bearing: 0,
   pitch: 0,
 };
