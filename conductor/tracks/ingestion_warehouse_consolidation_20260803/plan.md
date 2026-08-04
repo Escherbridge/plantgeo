@@ -81,6 +81,35 @@ It is the same failure shape as the `value_checksum` conversion — a governed c
 silently stops covering anything while every format check still passes. Worth assuming a
 third instance exists somewhere and looking for it.
 
+### Plan corrections found while writing the lane briefs, 2026-08-03
+
+Verified against the code and against production. The plan's *rules* survive; two of its
+stated *mechanisms* do not, and a third is a latent bug.
+
+1. **Risk 2c's mechanism is wrong.** The plan says
+   `src/lib/server/services/ingest.ts:107-122` rewrites `geo.features.created_at`. It does
+   not — that UPDATE sets `properties` and `updatedAt` only (`:109-119`), and no trigger in
+   `drizzle/**` writes `created_at`. **The measurement still holds**: production `created_at`
+   spans just 1–2 distinct days per layer, none earlier than 2026-08-03, so it cannot date a
+   v1 row honestly. The operative rule is unchanged — date `version_valid_from` from the
+   producer's observation timestamp, fall back to `'-infinity'`, never `created_at`, never
+   `now()` — but do not repeat the false mechanism, and lane J must not audit "`created_at`
+   readers" looking for a rewrite that isn't there.
+2. **The backfill sketch has a latent CHECK violation.** `plans/…:269` maps geometry type via
+   `lower(replace(GeometryType(f.geom),'MULTI',''))`, which yields `'linestring'` — but
+   `ck_geometry_kind` (`plans/…:146`) allows only `point|polygon|line|grid_cell`. Harmless
+   today (all four live layers are points and polygons), a hard failure the first time a line
+   source lands. Use an explicit `CASE` mapping.
+3. **The `natural_key` namespace contradicts itself.** The backfill SQL (`plans/…:266`) uses
+   `l.name` (`fire-detections`, `water-gauges`, …) while `:210` and `:474` specify producer
+   tokens (`firms:`, `mtbs:`). **Lane A's producer tokens win**; lane A exports the mapping and
+   lane B must substitute it rather than reading the plan's SQL literally. Under Type-2 a
+   namespace disagreement does not merely duplicate — it interleaves two producers into one
+   version chain.
+4. **Boundary gap.** The plan requires the Drizzle-before-Alembic note in
+   `services/agri-data-service/db/AGENTS.md` in the Phase 3 commit, but lane B is forbidden
+   from `services/agri-data-service/**`. Lane C owns that note.
+
 ### Corrections found by adversarial verification, 2026-08-03
 
 The drop set as first surveyed was refuted with high confidence. Six repairs are
