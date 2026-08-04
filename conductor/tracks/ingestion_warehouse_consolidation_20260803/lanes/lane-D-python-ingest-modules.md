@@ -512,3 +512,68 @@ stderr.
 | 6 | `redis>=5.0,<6` was added to `pyproject.toml` and locked, but `realtime.py` speaks RESP directly over `asyncio.open_connection` and imports nothing from it. `ingest/AGENTS.md` asserts both and contradicts itself. Drop the dependency or reimplement on `redis.asyncio` — do not leave both | follow-up |
 | 7 | Dead/stale after the TypeScript deletion, all outside this lane's boundary: `src/lib/server/security/ingress.ts:72` `authorizeCronRequest` lost its only caller; `docs/deployment.md:385-400` and `docs/env-vars.md:60` still document the curl trigger and `CRON_SECRET`; prose references in `src/lib/server/AGENTS.md:108`, `src/lib/map/layers.ts:71`, `src/lib/server/services/environmental-read-model.ts:215` | follow-up |
 | 8 | `src/lib/server/services/nasa-firms.ts` carries an **uncommitted** VIIRS constellation upgrade from another agent (SNPP/NOAA20/NOAA21, `bright_ti4`, `Promise.allSettled`). The behaviour is carried forward in `ingest/firms.py`, but that diff is now orphaned — decide keep or revert | owner |
+
+---
+
+### Production outage 2026-08-04 20:01Z–23:37Z — and its true root cause
+
+**What happened.** The TypeScript cron route was deleted and pushed before the Python cron
+container could build, so scheduled ingestion simply stopped. Last insert `20:01:45Z`; the
+21:01, 22:01 and 23:01 ticks all did nothing. This is exactly the handoff risk recorded above
+("the image cannot build until the Root Directory change lands"), realised.
+
+**The diagnosis in the earlier handoff was wrong, and the wrong fix was retried four times.**
+It read as "`RAILWAY_DOCKERFILE_PATH` didn't take because redeploy reuses build config." It was
+never going to take, on any build, fresh or not: the **repo-root `railway.json` explicitly declares
+`"build": {"dockerfilePath": "Dockerfile"}`** (the Next.js web app), and Railway's config-as-code
+**overrides** the environment variable. Every build — including a genuinely fresh one triggered at
+`23:38Z` (`d05ba2af`) — built the web app and died on its tile-URL gate
+(`NEXT_PUBLIC_PMTILES_URL must be a reviewed production URL`).
+
+`infra/cron-ingest/railway.json` had carried the correct `build.dockerfilePath` all along. The
+service just was not reading that file.
+
+**What does not work, verified rather than assumed:**
+
+| Attempt | Result |
+|---|---|
+| `RAILWAY_DOCKERFILE_PATH` variable | Ignored — root `railway.json` wins |
+| `RAILWAY_CONFIG_PATH` variable | Not honoured; fresh build still used the root Dockerfile |
+| `railway service` CLI | No `update`/`settings` subcommand — only list/delete/link/source/status/logs/redeploy/restart/scale/files |
+| `railway up` | Blocked: `services/agri-data-service/.pytest_cache` is ACL-poisoned. `takeown` and `icacls` both fail with Access Denied **for the owner**; `.railwayignore` does not help because the indexer stats before filtering |
+
+**The fix is the dashboard Config-as-code path** → `infra/cron-ingest/railway.json`. Once the owner
+set it, the build immediately switched to the correct Dockerfile.
+
+**Second failure, once the right Dockerfile was building:**
+`"/services/agri-data-service/alembic.ini": not found`. The file exists on disk but **was never
+`git add`ed**, so it is absent from the GitHub build context while every other COPY resolved.
+
+Fixed by **deleting** the `alembic/`, `db/` and `alembic.ini` COPY lines rather than committing the
+file — which also closes the quality reviewer's hardening finding. The cron container must never run
+a migration; omitting the machinery makes that true *by construction* instead of by trusting the
+`ENTRYPOINT` string. Safe because `cli.py:19` imports the alembic *package* (a locked dependency),
+while `alembic.ini` is read only inside `_alembic_config()` (`cli.py:266-267`), which only the
+migration verbs call. `ingest-all` never touches it.
+
+**Interim mitigation.** A manual `agri-cli ingest-all` against production at `23:36Z` closed the gap
+and did considerably more than that — it ran the three producers this track had built but never
+executed against production, and self-healed every orphan:
+
+| Source | Result |
+|---|---|
+| `sentinel2-ndvi` | 1,549 written |
+| `nws-sensors` | 590 written |
+| `evacuation-zones` | 381 written |
+| `open-meteo` | 94 written |
+| `wfigs-fire-perimeters` | 14 written |
+| `usdm-drought` | 0 written (already current) |
+| `geometry-repair` | **793 of 793 confirmed — orphan backlog cleared** |
+| `nasa-firms` | failed — `NASA_FIRMS_KEY` not set |
+| `usgs-streamflow` | failed — upstream timeout (transient) |
+
+**Standing lesson for this track.** Do not delete a producer's only live path in the same push that
+introduces its replacement, unless the replacement has been observed running in its target
+environment. The lane's own §6 required a container build proof and got one *locally*; a local
+`podman build` cannot prove a Railway build, because Railway's build config lives outside the
+repository.

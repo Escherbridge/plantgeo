@@ -21,10 +21,13 @@ WORKDIR /app
 COPY services/agri-data-service/pyproject.toml services/agri-data-service/uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
 
+# Source only. The migration machinery (alembic/, db/, alembic.ini) is deliberately NOT
+# copied: this container must never run a migration, and omitting the files makes that true
+# by construction rather than by trusting the ENTRYPOINT string. `agri-cli ingest-all` never
+# reads them -- cli.py:19 imports the alembic *package* (a locked dependency), while
+# alembic.ini is read only inside _alembic_config() (cli.py:266-267), which only the
+# migration verbs call. alembic.ini is also untracked, so copying it broke the build.
 COPY services/agri-data-service/src/ src/
-COPY services/agri-data-service/alembic/ alembic/
-COPY services/agri-data-service/db/ db/
-COPY services/agri-data-service/alembic.ini ./
 RUN uv sync --locked --no-dev
 
 RUN groupadd --system --gid 10001 plantgeo \
