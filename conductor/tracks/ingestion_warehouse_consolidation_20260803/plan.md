@@ -148,6 +148,23 @@ Verified: PostgreSQL 16.14, host-reachable, with `postgis`, `timescaledb`, `vect
 `pgcrypto` all available. Use it as `--admin-dsn` for `regenerate.py` and as
 `AGRI_TEST_DATABASE_URL` for the byte-parity gate.
 
+That container was **removed** after use — it is disposable, so recreate it from the command
+above when needed. Note that the app roles must be created **before** migrating: the grants in
+`0012`/`0015` are skipped for a role that does not yet exist, and two role-boundary tests then
+fail with `role "plantgeo_forecast_reader" does not exist`. Create
+`plantgeo_owner`, `plantgeo_loader`, `plantgeo_forecast_{reader,writer,publisher}`,
+`plantgeo_forecast_mv_refresher`, `plantgeo_forecast_refresh_operator`,
+`plantgeo_local_{developer,viewer}` as `NOLOGIN`, then `CREATE DATABASE`, run
+`infra/local-warehouse/enable-extensions.sql`, then `alembic upgrade head`.
+
+**All podman containers were stopped at the end of this session** to free the machine; nothing
+was removed except the disposable regen container, so every volume is intact — including the
+precious `plantgeo_boise_completion_20260725` on the warehouse container. Restart only what a
+task needs: `plantgeo-warehouse_plantgeo-warehouse_1` (pg16 warehouse, `:5442`, unreachable
+from the host — `podman exec` only), `plantgeo-pg18-rehearsal` (`:5445`, the PG18 verification
+target), and the `plantgeo` compose trio (postgis `:5434`, redis `:6379`, martin `:3100`) for
+running the Next.js app.
+
 **Never run `regenerate.py` while anything is editing `db/agri/`** — it wipes the tree and
 rewrites it from the migrations, so concurrent hand edits are lost. Regenerate only after
 the revision and all declarative edits are final.
