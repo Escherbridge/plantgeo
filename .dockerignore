@@ -63,6 +63,13 @@ infra/*
 # (plus every check-*.mjs it imports) and the pre-deploy migration runner.
 # The re-include is a whole-pattern one so adding a new check to
 # check-data-boundaries.mjs cannot silently break the Docker build again.
+#
+# *.sql is re-included for the same reason, one step further along: the build
+# stage runs `npm test`, and src/__tests__/lib/geometry-migration.test.ts reads
+# scripts/backfill-geometry.sql to assert the backfill's dating rules. A test
+# that reads a repo file passes locally and fails only inside the image, so the
+# pattern is whole-suffix rather than a single filename.
 scripts/*
 !scripts/check-*.mjs
 !scripts/migrate.mjs
+!scripts/*.sql
