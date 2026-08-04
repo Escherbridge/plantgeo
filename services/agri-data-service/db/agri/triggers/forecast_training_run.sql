@@ -6,9 +6,3 @@
 
 -- TRIGGER: forecast_training_run forecast_training_run_initial_state
 CREATE TRIGGER forecast_training_run_initial_state BEFORE INSERT ON agri.forecast_training_run FOR EACH ROW EXECUTE FUNCTION agri.require_initial_forecast_state();
-
--- TRIGGER: forecast_training_run forecast_training_run_terminal_guard
-CREATE TRIGGER forecast_training_run_terminal_guard BEFORE DELETE OR UPDATE ON agri.forecast_training_run FOR EACH ROW EXECUTE FUNCTION agri.guard_forecast_terminal_lineage();
-
--- TRIGGER: forecast_training_run forecast_training_run_validated_verify
-CREATE TRIGGER forecast_training_run_validated_verify AFTER UPDATE OF status ON agri.forecast_training_run FOR EACH ROW EXECUTE FUNCTION agri.verify_forecast_validated_transition();

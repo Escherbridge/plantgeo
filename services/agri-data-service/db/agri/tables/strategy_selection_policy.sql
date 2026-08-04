@@ -28,7 +28,6 @@ CREATE TABLE agri.strategy_selection_policy (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_strategy_selection_policy_checksum_sha256 CHECK (((policy_checksum IS NULL) OR ((policy_checksum)::text ~ '^[0-9a-f]{64}$'::text))),
     CONSTRAINT ck_strategy_selection_policy_positive_support CHECK (((min_treated_per_strategy > 0) AND (min_control_count > 0) AND (min_spatial_blocks > 0) AND (min_effective_sample_size > (0)::double precision))),
-    CONSTRAINT ck_strategy_selection_policy_review_evidence CHECK ((((review_state)::text = 'draft'::text) OR ((reviewed_at IS NOT NULL) AND (reviewed_by IS NOT NULL) AND ((policy_checksum)::text ~ '^[0-9a-f]{64}$'::text)))),
     CONSTRAINT ck_strategy_selection_policy_review_state CHECK (((review_state)::text = ANY ((ARRAY['draft'::character varying, 'approved'::character varying, 'rejected'::character varying])::text[]))),
     CONSTRAINT ck_strategy_selection_policy_score_weights_object CHECK ((jsonb_typeof(score_weights) = 'object'::text)),
     CONSTRAINT ck_strategy_selection_policy_valid_thresholds CHECK ((((min_overlap_score >= (0)::double precision) AND (min_overlap_score <= (1)::double precision)) AND ((min_coverage_fraction >= (0)::double precision) AND (min_coverage_fraction <= (1)::double precision)) AND (max_weighted_smd >= (0)::double precision) AND (max_model_disagreement >= (0)::double precision) AND (max_ood_score >= (0)::double precision) AND (max_data_age > '00:00:00'::interval)))

@@ -1,4 +1,12 @@
-"""Disposable PostgreSQL 16+ proof for the 0009 geometry guards (additive, still enforced at head)."""
+"""Disposable PostgreSQL 16+ proof for the 0009 geometry guards.
+
+Every geometry-validity CHECK 0009 added is still enforced at head. What 0009's
+append-only trigger enforced is not: revision ``20260803_0018`` dropped
+``agri.reject_geospatial_evidence_mutation()`` with the rest of the ``reject_*``
+family, so ``normalized_source_feature`` rows are now updatable in-database and
+the append-only rule belongs to the CLI. The last block below pins that split --
+validity survived, immutability did not.
+"""
 
 import psycopg2
 import pytest
@@ -145,16 +153,39 @@ def test_revision_0009_rejects_invalid_empty_3d_and_nonpolygon_subject_geometry(
                 )
             cursor.execute("ROLLBACK TO SAVEPOINT rejected_subject")
 
-            cursor.execute("SAVEPOINT rejected_mutation")
-            with pytest.raises(psycopg2.errors.RaiseException, match="immutable"):
+            cursor.execute("SAVEPOINT mutation_no_longer_blocked")
+            cursor.execute(
+                """
+                UPDATE agri.normalized_source_feature
+                SET feature_kind = 'changed'
+                WHERE id = '10000000-0000-4000-8000-000000000004'
+                RETURNING feature_kind
+                """
+            )
+            assert cursor.fetchone() == ("changed",)
+            cursor.execute(
+                """
+                SELECT count(*)
+                FROM pg_trigger AS trigger_object
+                WHERE trigger_object.tgrelid = 'agri.normalized_source_feature'::regclass
+                  AND NOT trigger_object.tgisinternal
+                """
+            )
+            assert cursor.fetchone() == (0,)
+
+            # The CHECKs still fire on UPDATE, so only the immutability rule left 0009's
+            # guarantees: an existing row cannot be edited into an invalid geometry.
+            cursor.execute("SAVEPOINT rejected_update_geometry")
+            with pytest.raises(psycopg2.errors.CheckViolation):
                 cursor.execute(
                     """
                     UPDATE agri.normalized_source_feature
-                    SET feature_kind = 'changed'
+                    SET geometry = ST_GeomFromEWKT('SRID=4326;POLYGON((0 0,1 1,1 0,0 1,0 0))')
                     WHERE id = '10000000-0000-4000-8000-000000000004'
                     """
                 )
-            cursor.execute("ROLLBACK TO SAVEPOINT rejected_mutation")
+            cursor.execute("ROLLBACK TO SAVEPOINT rejected_update_geometry")
+            cursor.execute("ROLLBACK TO SAVEPOINT mutation_no_longer_blocked")
     finally:
         connection.rollback()
         connection.close()

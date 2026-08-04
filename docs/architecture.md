@@ -187,7 +187,7 @@ MapLibre GL JS and deck.gl are used in "interleaved mode" to share the same map 
    └→ Initialize camera state
 
 2. deck.gl layer initialization
-   ├→ Mount DeckOverlay component on MapLibre
+   ├→ (historical: a shared DeckOverlay component; removed — no DeckGL surface is mounted today)
    ├→ Register all active layers (from layer store)
    ├→ Each layer gets:
    │   ├→ Data source (GeoJSON, Mapbox tiles, or WebGL data)

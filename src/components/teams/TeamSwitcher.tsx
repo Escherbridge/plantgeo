@@ -117,7 +117,7 @@ export function TeamSwitcher() {
 
           <div className="border-t border-zinc-800 p-1">
             <Link
-              href="/onboarding"
+              href="/onboarding?create=1"
               onClick={() => setOpen(false)}
               className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-emerald-400 transition-colors hover:bg-zinc-800"
             >

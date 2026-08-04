@@ -14,7 +14,7 @@ CREATE TABLE agri.forecast_iteration_value (
     high_value double precision NOT NULL,
     increment_count integer NOT NULL,
     parameter_checksum character varying(64) NOT NULL,
-    value_checksum character varying(64) GENERATED ALWAYS AS (agri.forecast_iteration_value_checksum(valid_time, horizon_step, low_value, median_value, high_value, increment_count, parameter_checksum)) STORED,
+    value_checksum character varying(64),
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_forecast_iteration_value_finite CHECK ((((low_value)::text <> ALL (ARRAY['NaN'::text, 'Infinity'::text, '-Infinity'::text])) AND ((median_value)::text <> ALL (ARRAY['NaN'::text, 'Infinity'::text, '-Infinity'::text])) AND ((high_value)::text <> ALL (ARRAY['NaN'::text, 'Infinity'::text, '-Infinity'::text])))),
     CONSTRAINT ck_forecast_iteration_value_horizon CHECK ((horizon_step > 0)),

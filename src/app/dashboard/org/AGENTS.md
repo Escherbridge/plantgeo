@@ -15,6 +15,12 @@ Organization management: overview, members, invitations/join-links, settings.
   fields weren't finalized when this UI was built against the frozen `teams`
   contract. Reconcile field names against the actual router before relying on
   anything beyond what's read here.
+- `layout.tsx` gives its `<main>` the scroll surface (`min-h-0 flex-1
+  overflow-y-auto`) rather than letting the page scroll: `globals.css` keeps
+  `body { overflow: hidden }` for the map, and scrolling the whole shell would
+  move the header — which holds the only exit link back to `/dashboard` — off
+  screen. `min-h-0` is load-bearing; without it the flex child refuses to
+  shrink below its content and the overflow never engages.
 - Switching organizations always goes through `teams.setActiveTeam` (persists
   server-side) *and* `useSession().update({ activeTeamId })` (refreshes the
   JWT immediately) — see `TeamSwitcher`. Skipping either leaves the UI and the

@@ -60,8 +60,9 @@ Tables and functions depend on each other **bidirectionally**, so no coarse
 "all functions then all tables" split is valid:
 
 - tables → functions: `forecast_receipt`/`forecast_quality_policy` `CHECK`s call
-  `forecast_quantiles_valid`; `forecast_hindcast_value`/`forecast_iteration_value`
-  have `GENERATED` columns calling checksum functions.
+  `forecast_quantiles_valid`. Until `20260803_0018` the same edge also came from
+  `GENERATED` columns calling checksum functions; both are gone — one left with
+  the hindcast plane, one became plain storage.
 - functions → tables: several functions `RETURNS agri.<table>` row types.
 
 `manifest.sql` therefore applies:
@@ -181,55 +182,151 @@ disposable database. `pg_dump` output is stable within a major version; the
 parity test pins the comparison to the same toolchain and normalises only the
 version banner.
 
-## Hindcast knowledge pin and quality gates
+## Governance: checksums are records, not enforcement
 
-Revision `20260801_0014` stores the actuals/knowledge horizon on
-`forecast_hindcast_run.actual_knowledge_as_of` at first finalization and pins
-every later read to it, so a finalized receipt re-verifies identically no matter
-when the audit runs. `hindcast_v3` redefines `coverage_fraction` as horizon
-completeness (ideal horizon steps with an actual at that pinned horizon, over
-`horizon_steps`) and wires
-`forecast_quality_policy.min_interval_coverage_fraction` into the pass decision;
-`hindcast_v1`/`hindcast_v2` receipts keep their exact preimages and their old
-gate. Two reusable predicates,
-`agri.strategy_selection_cutoff_violation` and
-`agri.strategy_selection_quality_evidence`, are the single definitions of the
-corrected as-of rule and of the "backing hindcast passed its policy"
-requirement; the finalizer, the audit flagging pass, and the tests all call
-them. See `../alembic/AGENTS.md` for the full rationale.
+Head revision is `20260803_0018`. It retires the database-level enforcement
+layer built on top of the checksums — 48 triggers, 34 routines, 10
+status-to-checksum evidence CHECKs and 3 owner roles — plus the whole hindcast
+plane (`forecast_hindcast_run`, `forecast_hindcast_value`,
+`v_forecast_hindcast_outcome`, their checksum/finalize/signal functions, and
+`strategy_selection_quality_evidence`, which INNER JOINed that view). All 61
+checksum columns and their 29 format CHECKs stay.
 
-## Strategy-selection evidence
+Why: `../plans/checksum-layer-audit-2026-08-03.md` §3.1. Tamper-evidence needs
+the digest to be beyond the reach of the party who might tamper, and here the
+researcher, the DBA and the hypothetical adversary are **one person with one
+credential**. The digest lives in the same row it protects, in the same
+database, defended only by triggers the table owner can disable — the repo
+ships two copy-pasteable bypasses (`…0014:169`,
+`tests/test_forecasting_v1_upgrade_postgresql.py:209`). What the layer actually
+bought was accident prevention, and §3.2 shows that comes from the checksum
+columns plus `materialize_forecast_iteration`'s idempotency block, both kept.
 
-Revision `20260725_0013` introduces an append-only treatment/control label and
-selection-receipt plane. Raw intervention facts remain in
-`intervention_evidence_input`; a `strategy_label_episode` may call rows a
-baseline and outcome only by binding them to an approved outcome definition,
-explicit arm, subject, availability cutoff, and finalized label-release
-checksum. Selection candidates are immutable before receipt finalization.
-Only the finalizers may move a label release from `staging` to `validated` or a
-selection receipt from `staging` to `finalized`.
+So, reading this tree after `0018`:
 
-`feasibility_candidate` and `effect_candidate` are distinct database states,
-but revision `0013` deliberately refuses every `effect_candidate`
-finalization. A later migration may open that path only after it persists and
-verifies cluster-bootstrap uncertainty, placebo and negative-control tests,
-and a strictly positive held-out lower confidence bound for
-`best - second_best`. Until then, evaluation and feasibility receipts may be
-finalized; an effect request must remain staging or be replaced by a durable
-abstention.
+- **Checksums are a reproducibility record.** They state what the inputs were.
+  They do not assert that nobody changed them.
+- **There are no database-enforced state machines.** `staging → finalized`,
+  `draft → validated`, `→ published` are no longer gated by `verify_*` triggers
+  or evidence CHECKs, and release-set membership is no longer frozen after
+  draft. Nothing in the database stops a hand-written UPDATE.
+- **The CLI owns preconditions.** Every invariant the guards used to hold — a
+  validated run before a receipt, a manifest before publishing, lineage before
+  an actual, membership discipline on a release set — is the caller's job to
+  establish before it writes.
 
-Validated labels are reproducible trainer inputs, not merely normalized
-targets. The release pins the ordered feature-name schema and the outcome's
-smallest meaningful effect. Every episode pins its cohort, assignment time,
-assignment-time covariate vector and checksum, covariate availability, raw
-baseline/outcome evidence, and data availability. The private
-`export_strategy_label_bundle` function emits exactly `strategy_labels_v1`,
-ordered by episode key, only after the release and server-computed outcome
-checksum validate. The export includes the finalized label-release checksum;
-`strategy_label_bundle_checksum` hashes the exact JSONB export text without a
-self-referential field. The trainer hashes the exact UTF-8 JSON text after
-removing only surrounding file whitespace. Strategy model output metadata
-must repeat both checksums, and the training row repeats the release checksum.
+Two weakenings that no DDL signature reveals: dropping
+`ck_forecast_publication_published_evidence` and
+`ck_forecast_training_validated_evidence` lets
+`agri/views/v_forecast_series_serving.sql` emit rows with NULL
+`manifest_checksum`/`published_at` (`:12-13`) and NULL training checksums
+(`:48-49`). No column changed nullability; only the served contract weakened.
+
+## What survives `0018`, and why each survivor is load-bearing
+
+- **`ck_forecast_receipt_finalized_evidence`**
+  (`agri/tables/forecast_receipt.sql:24`) — the only status-to-checksum evidence
+  CHECK retained. With the guards gone it is the **only** thing preventing
+  `status = 'finalized'` on a receipt carrying no `receipt_checksum`, and
+  `agri/views/v_forecast_series_serving.sql:61` filters the ML serving lane on
+  exactly that status. `receipt_checksum` has no SQL function behind it, so the
+  digest must arrive from Python; this CHECK is what keeps the two moving
+  together.
+- **The seven `record_*` writers and their 16 triggers** — they populate
+  `agri.forecast_input_recorded_at`, which
+  `agri/views/v_forecast_timeseries_contract.sql:45-46` INNER JOINs and on which
+  `agri/functions/forecast_daily_bootstrap.sql:67-72` does
+  `IF NOT FOUND THEN RAISE EXCEPTION`. Dropping them hard-RAISEs for any series
+  or data source registered after `0018`. They stay `SECURITY DEFINER` (the
+  constrained-loader path needs it) but now run as the migrating role rather
+  than the retired `plantgeo_forecast_input_recorder_owner` — a real privilege
+  widening, accepted deliberately, not a no-op.
+- **`guard_strategy_review_change`** (2 triggers) — sole caller of
+  `strategy_outcome_definition_checksum` and
+  `strategy_selection_policy_checksum`
+  (`agri/functions/guard_strategy_review_change.sql:35-36,53-54`), which it
+  assigns into `NEW`. Dropping it leaves `definition_checksum` and
+  `policy_checksum` permanently NULL.
+- **`plantgeo_forecast_mv_refresh_owner`** — the one owner role kept. It owns
+  `agri.mv_forecast_ml_daily_serving` and
+  `agri.refresh_forecast_ml_daily_serving()`; non-concurrent `REFRESH` requires
+  matview ownership and the refresher is `SECURITY DEFINER`, so **owner and
+  definer must remain the same role**. A bare `DROP ROLE` errors `2BP01`; a
+  `DROP OWNED BY` would delete the ML matview. Its `GRANT EXECUTE` to
+  `plantgeo_forecast_mv_refresher` is untouched and asserted at runtime.
+- **`guard_forecast_immutable_rows`** (6 triggers) — the one immutability rule
+  kept, on the append-only reference tables.
+- **The `require_*` family** (3 functions, 10 triggers) — outside every dropped
+  family, left in place deliberately rather than swept up by prefix analogy.
+- **`publish_forecast_publication`, `validate_forecast_run`,
+  `validate_forecast_feature_snapshot`, `validate_forecast_training_run`** —
+  also outside every dropped family, so two of the serving view's three state
+  predicates still have an in-database mover. Only receipt finalization loses
+  its writer.
+
+The strategy-selection plane itself (`20260725_0013`) still stands as storage:
+label episodes, candidates, releases, receipts and
+`export_strategy_label_bundle`/`strategy_label_bundle_checksum` are unchanged.
+What is gone is the machinery that *enforced* the contract — the finalizers, the
+parent-state insert triggers and the change guards. The `strategy_labels_v1`
+export is still exact and still the trainer's input; producing it is now a CLI
+obligation, and the refusal of `effect_candidate` finalization is a CLI rule
+rather than a database one.
+
+## `value_checksum` is now computed in the procedure
+
+`forecast_iteration_value.value_checksum` was
+`GENERATED ALWAYS AS (agri.forecast_iteration_value_checksum(...)) STORED`;
+`0018` converts it to a plain nullable column, and forward-loads
+`agri/procedures/materialize_forecast_iteration.sql` so its INSERT computes the
+checksum **explicitly**.
+
+That amendment is not cosmetic. Had the INSERT kept relying on the dropped
+expression, every new row would carry NULL;
+`agri/functions/forecast_iteration_receipt_checksum.sql:44` does
+`string_agg(value.value_checksum, '|' ORDER BY horizon_step)`, which returns
+NULL over all-NULL input, and `concat_ws` **silently omits** NULL arguments — so
+the receipt digest would stop covering the forecast values while still emitting
+a well-formed 64-hex string that passes every retained format CHECK. A
+valid-looking digest covering nothing.
+
+The column is left nullable (a NOT NULL would need a full-table validation pass,
+outside the agreed scope). The amended procedure is now the only thing that
+populates it.
+
+## `forecast_receipt.receipt_checksum` has no writer
+
+`agri.finalize_forecast_receipt` was the **only** object in the schema that
+wrote `forecast_receipt.receipt_checksum` and set `status = 'finalized'`, and
+`0018` drops it. There is no `forecast_receipt_checksum()` function to fall back
+on. So **the ML serving view can never gain a new row** until a Python publisher
+reproduces that digest byte-exactly: the preimage that lived at
+`finalize_forecast_receipt.sql:153-168`, rendered under the `20260803_0017`
+determinism pins (`TimeZone`, `DateStyle`, `IntervalStyle`,
+`extra_float_digits`). Anything less produces a digest that passes the format
+CHECK and matches nothing. The obligation is pre-existing — the ML lane has
+never produced a row — but `0018` puts it on the critical path.
+
+## Drop conventions, and what parity does not see
+
+- **No `CASCADE`, ever.** Every drop names its object explicitly, function drops
+  carry full argument-type signatures so a name collision cannot take out the
+  wrong overload, and the statements are ordered by dependency (triggers before
+  their functions, a view before its tables, a composite-returning function
+  before the table whose row type it returns). A missed dependency must fail the
+  migration loudly rather than quietly widen its blast radius.
+- **SQL and PL/pgSQL bodies given as string literals are not tracked
+  dependencies.** `DROP VIEW` succeeds against a function that INNER JOINs that
+  view and leaves a runtime landmine which raises only when called — which is
+  why `strategy_selection_quality_evidence` had to be retired alongside
+  `v_forecast_hindcast_outcome`.
+- **Roles, ownership and grants are invisible to the parity test.**
+  `tools/dump_schema.py`'s `DUMP_ARGS` passes `--no-owner --no-privileges`, so no
+  role, no `ALTER ... OWNER TO` and no `GRANT`/`REVOKE` appears anywhere under
+  `agri/**`. Dropping a role produces **no tree diff**, and a forgotten `REVOKE`
+  is not caught by `test_declarative_tree_matches_migrations`. Privilege changes
+  are reviewed in the migration and asserted by behavioural tests
+  (`routes/health.py`, the role contract tests) — never by regenerating.
 
 ## Assignment-time covariate layer
 
@@ -248,18 +345,21 @@ rewrite got wrong on its first pass.
 
 Revision `20260803_0017` adds a `SET search_path TO 'public', 'pg_catalog'` line
 to the 21 routines that called a `public`-schema extension function unqualified,
-and completes the rendering pins on `forecast_hindcast_value_checksum`,
-`strategy_label_bundle_checksum` and `export_strategy_label_bundle`. In this tree
-that is 24 files and 28 added lines, all inside the `CREATE` header -- no body
-changed, so every `md5(prosrc)` is unchanged.
+and completes the rendering pins on `strategy_label_bundle_checksum`,
+`export_strategy_label_bundle` and `forecast_hindcast_value_checksum` (the last
+of which left with the hindcast plane in `20260803_0018`). No body changed, so
+every `md5(prosrc)` is unchanged.
 
-The `search_path` pins are why the schema can now be restored from its own
-`pg_dump` output. `forecast_iteration_value.value_checksum` is a stored generated
-column, so `pg_restore` **recomputes** it during `COPY` under `search_path = ''`,
-and an unqualified `digest()` could not resolve. See `../alembic/AGENTS.md`
-(`20260803_0017`) for the full derivation, and note the shape of the fix:
-`ALTER ROUTINE ... SET`, never `CREATE OR REPLACE`, because a replace that
-omitted the existing `SET` clauses would silently drop the determinism pins.
+The `search_path` pins are why the schema can be restored from its own `pg_dump`
+output. `forecast_iteration_value.value_checksum` *was* a stored generated
+column, so `pg_restore` **recomputed** it during `COPY` under `search_path = ''`
+and an unqualified `digest()` could not resolve; `20260803_0018` converts that
+column to plain storage, which retires the restore-time recompute but not the
+pins — every routine that still renders a checksum at write time depends on
+them. See `../alembic/AGENTS.md` (`20260803_0018`) for the full derivation, and
+note the shape of the fix: `ALTER ROUTINE ... SET`, never `CREATE OR REPLACE`,
+because a replace that omitted the existing `SET` clauses would silently drop the
+determinism pins.
 
 ## Forward-load workflow
 

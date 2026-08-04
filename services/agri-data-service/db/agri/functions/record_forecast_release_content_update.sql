@@ -5,7 +5,7 @@
 -- db/tools/regenerate.py; the schema-parity test guards drift.
 
 CREATE FUNCTION agri.record_forecast_release_content_update() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER
+    LANGUAGE plpgsql
     SET search_path TO 'pg_catalog', 'agri'
     AS $$
         BEGIN

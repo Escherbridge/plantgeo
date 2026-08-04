@@ -6,6 +6,3 @@
 
 -- TRIGGER: strategy_selection_candidate strategy_selection_candidate_immutable
 CREATE TRIGGER strategy_selection_candidate_immutable BEFORE DELETE OR UPDATE ON agri.strategy_selection_candidate FOR EACH ROW EXECUTE FUNCTION agri.guard_forecast_immutable_rows();
-
--- TRIGGER: strategy_selection_candidate strategy_selection_candidate_parent_state
-CREATE TRIGGER strategy_selection_candidate_parent_state BEFORE INSERT ON agri.strategy_selection_candidate FOR EACH ROW EXECUTE FUNCTION agri.guard_strategy_child_insert();

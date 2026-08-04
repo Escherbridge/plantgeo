@@ -6,6 +6,3 @@
 
 -- TRIGGER: strategy_label_episode strategy_label_episode_immutable
 CREATE TRIGGER strategy_label_episode_immutable BEFORE DELETE OR UPDATE ON agri.strategy_label_episode FOR EACH ROW EXECUTE FUNCTION agri.guard_forecast_immutable_rows();
-
--- TRIGGER: strategy_label_episode strategy_label_episode_parent_state
-CREATE TRIGGER strategy_label_episode_parent_state BEFORE INSERT ON agri.strategy_label_episode FOR EACH ROW EXECUTE FUNCTION agri.guard_strategy_child_insert();

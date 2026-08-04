@@ -6,9 +6,3 @@
 
 -- TRIGGER: release_set forecast_input_record_release_set
 CREATE TRIGGER forecast_input_record_release_set AFTER INSERT OR UPDATE ON agri.release_set FOR EACH ROW EXECUTE FUNCTION agri.record_forecast_input_change();
-
--- TRIGGER: release_set release_set_identity_freeze
-CREATE TRIGGER release_set_identity_freeze BEFORE UPDATE ON agri.release_set FOR EACH ROW EXECUTE FUNCTION agri.enforce_release_set_freeze();
-
--- TRIGGER: release_set trg_release_set_intervention_parent
-CREATE TRIGGER trg_release_set_intervention_parent BEFORE DELETE OR UPDATE ON agri.release_set FOR EACH ROW EXECUTE FUNCTION agri.protect_intervention_evidence_parents();

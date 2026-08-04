@@ -15,6 +15,3 @@ CREATE TRIGGER forecast_input_record_observation_update AFTER UPDATE ON agri.for
 
 -- TRIGGER: forecast_observation forecast_observation_immutable
 CREATE TRIGGER forecast_observation_immutable BEFORE DELETE OR UPDATE ON agri.forecast_observation FOR EACH ROW EXECUTE FUNCTION agri.guard_forecast_immutable_rows();
-
--- TRIGGER: forecast_observation forecast_observation_lineage_guard
-CREATE TRIGGER forecast_observation_lineage_guard BEFORE INSERT ON agri.forecast_observation FOR EACH ROW EXECUTE FUNCTION agri.enforce_forecast_input_lineage();

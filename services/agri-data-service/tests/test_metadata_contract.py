@@ -126,8 +126,6 @@ def test_forecasting_plane_is_release_job_and_source_variant_bound() -> None:
         "forecast_value",
         "forecast_publication",
         "forecast_publication_item",
-        "forecast_hindcast_run",
-        "forecast_hindcast_value",
     }
     assert expected <= {table.name for table in Base.metadata.tables.values()}
 
@@ -149,17 +147,6 @@ def test_forecasting_plane_is_release_job_and_source_variant_bound() -> None:
     receipt = Base.metadata.tables["agri.forecast_receipt"]
     assert {"forecast_run_id", "job_output_id", "receipt_checksum", "quantile_levels"} <= set(receipt.c.keys())
     assert "agri.job_output.id" in {key.target_fullname for key in receipt.foreign_keys}
-    hindcast = Base.metadata.tables["agri.forecast_hindcast_run"]
-    assert {
-        "forecast_run_id",
-        "series_id",
-        "release_set_id",
-        "simulated_cutoff_time",
-        "receipt_digest_version",
-        "receipt_checksum",
-        "actual_knowledge_as_of",
-    } <= set(hindcast.c.keys())
-    assert str(hindcast.c.receipt_digest_version.server_default.arg) == "'hindcast_v3'"
 
 
 def test_forecast_ml_and_preaggregate_metadata_remain_explicitly_gated() -> None:

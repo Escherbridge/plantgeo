@@ -5,10 +5,20 @@
 Mounted once by `src/app/layout.tsx`, inside `Providers` so `TopBar` can read the
 NextAuth session. It decides, per route, whether the global bar exists.
 
-`ROUTES_WITHOUT_GLOBAL_NAVIGATION` is a **deny** list, not an allow list: a new
-page is navigable the moment it exists. The entries on it either ship their own
-chrome (`/dashboard`), are a focused single-task flow (`/onboarding`, the auth
-group, `/invite`, `/join`), or must stay frameless (`/embed`).
+Suppression is a **deny** list, not an allow list: a new page is navigable the
+moment it exists. It is split in two because "this page has its own chrome" and
+"nothing under here has chrome" are different claims.
+
+`SUBTREES_WITHOUT_GLOBAL_NAVIGATION` matches the route and everything below it.
+Those trees are focused single-task flows (`/onboarding`, the auth group,
+`/invite`, `/join`) or must stay frameless (`/embed`), children included.
+
+`EXACT_ROUTES_WITHOUT_GLOBAL_NAVIGATION` matches the route and nothing else.
+`/dashboard` is the only entry: `dashboard/page.tsx` renders its own menu, but
+its children do not, so `/dashboard/org/**` and `/dashboard/conversations/**`
+get the global bar. Matching `/dashboard` as a subtree left those pages with
+only the links they happened to draw themselves, which on the org settings form
+meant the Save button sat below an unscrollable viewport.
 
 When the bar is suppressed the wrapper is `display: contents`, so the route's
 layout is byte-for-byte what it was before the bar existed.

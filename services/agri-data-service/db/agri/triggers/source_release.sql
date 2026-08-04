@@ -6,6 +6,3 @@
 
 -- TRIGGER: source_release forecast_input_record_source_release
 CREATE TRIGGER forecast_input_record_source_release AFTER INSERT OR UPDATE ON agri.source_release FOR EACH ROW EXECUTE FUNCTION agri.record_forecast_input_change();
-
--- TRIGGER: source_release trg_source_release_intervention_parent
-CREATE TRIGGER trg_source_release_intervention_parent BEFORE DELETE OR UPDATE ON agri.source_release FOR EACH ROW EXECUTE FUNCTION agri.protect_intervention_evidence_parents();

@@ -10,7 +10,6 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
-    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -312,11 +311,6 @@ class ForecastTrainingRun(Base, UUIDMixin):
             name="input_checksums",
         ),
         CheckConstraint(
-            "status <> 'validated' OR (completed_at IS NOT NULL AND validated_at IS NOT NULL "
-            "AND model_checksum ~ '^[0-9a-f]{64}$' AND validation_checksum ~ '^[0-9a-f]{64}$')",
-            name="validated_evidence",
-        ),
-        CheckConstraint(
             "(strategy_label_release_id IS NULL AND strategy_label_checksum IS NULL) "
             "OR (strategy_label_release_id IS NOT NULL "
             "AND strategy_label_checksum ~ '^[0-9a-f]{64}$')",
@@ -423,10 +417,6 @@ class ForecastRun(Base, UUIDMixin):
             name="checksums",
         ),
         CheckConstraint("status IN ('staged', 'validated', 'rejected')", name="status"),
-        CheckConstraint(
-            "status <> 'validated' OR (backtest_passed AND validated_at IS NOT NULL)",
-            name="validated_evidence",
-        ),
         Index("ix_forecast_run_issue_time", text("issue_time DESC")),
     )
 
@@ -475,177 +465,6 @@ class ForecastBacktestMetric(Base, UUIDMixin):
     )
 
 
-class ForecastHindcastRun(Base, UUIDMixin):
-    """Immutable retrospective SQL forecast receipt with an explicit simulated cutoff."""
-
-    __tablename__ = "forecast_hindcast_run"
-
-    hindcast_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    forecast_run_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("agri.forecast_run.id"), nullable=False
-    )
-    series_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("agri.forecast_series.id"), nullable=False
-    )
-    release_set_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("agri.release_set.id"), nullable=False
-    )
-    simulated_cutoff_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    uncertainty_calibration_cutoff_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    horizon_steps: Mapped[int] = mapped_column(Integer, nullable=False)
-    step_interval: Mapped[timedelta] = mapped_column(Interval(), nullable=False)
-    minimum_training_points: Mapped[int] = mapped_column(Integer, nullable=False)
-    training_point_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    expected_value_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    availability_mode: Mapped[str] = mapped_column(
-        String(40), nullable=False, server_default=text("'retrospective_pinned_release'")
-    )
-    input_release_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
-    model_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
-    parameter_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
-    receipt_digest_version: Mapped[str] = mapped_column(
-        String(32), nullable=False, server_default=text("'hindcast_v3'")
-    )
-    status: Mapped[str] = mapped_column(String(24), nullable=False, server_default=text("'staging'"))
-    quality_passed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    mae: Mapped[float | None] = mapped_column(Float)
-    rmse: Mapped[float | None] = mapped_column(Float)
-    naive_rmse: Mapped[float | None] = mapped_column(Float)
-    skill_score: Mapped[float | None] = mapped_column(Float)
-    bias: Mapped[float | None] = mapped_column(Float)
-    mape: Mapped[float | None] = mapped_column(Float)
-    coverage_fraction: Mapped[float | None] = mapped_column(Float)
-    interval_coverage_fraction: Mapped[float | None] = mapped_column(Float)
-    actual_knowledge_as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    receipt_checksum: Mapped[str | None] = mapped_column(String(64))
-    recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-
-    __table_args__ = (
-        UniqueConstraint(
-            "forecast_run_id",
-            "series_id",
-            "simulated_cutoff_time",
-            "input_release_checksum",
-            "model_checksum",
-            "parameter_checksum",
-            name="uq_forecast_hindcast_run_identity",
-        ),
-        CheckConstraint(
-            "uncertainty_calibration_cutoff_time < simulated_cutoff_time",
-            name="calibration_cutoff",
-        ),
-        CheckConstraint(
-            "uncertainty_calibration_cutoff_time + step_interval * horizon_steps <= simulated_cutoff_time",
-            name="calibration_horizon",
-        ),
-        CheckConstraint(
-            "horizon_steps > 0 AND step_interval > INTERVAL '0' "
-            "AND expected_value_count > 0 AND expected_value_count <= horizon_steps "
-            "AND (receipt_digest_version = 'hindcast_v3' OR expected_value_count = horizon_steps)",
-            name="horizon",
-        ),
-        CheckConstraint(
-            "minimum_training_points >= 3 AND training_point_count >= minimum_training_points",
-            name="training_count",
-        ),
-        CheckConstraint(
-            "availability_mode IN ('as_recorded', 'retrospective_pinned_release')",
-            name="availability",
-        ),
-        CheckConstraint(
-            "input_release_checksum ~ '^[0-9a-f]{64}$' "
-            "AND model_checksum ~ '^[0-9a-f]{64}$' "
-            "AND parameter_checksum ~ '^[0-9a-f]{64}$'",
-            name="checksums",
-        ),
-        CheckConstraint(
-            "receipt_digest_version IN ('hindcast_v1', 'hindcast_v2', 'hindcast_v3')",
-            name="receipt_digest_version",
-        ),
-        CheckConstraint(
-            "status <> 'finalized' OR actual_knowledge_as_of IS NOT NULL",
-            name="knowledge_pin",
-        ),
-        CheckConstraint("status IN ('staging', 'finalized')", name="status"),
-        CheckConstraint(
-            "status <> 'finalized' OR (receipt_checksum ~ '^[0-9a-f]{64}$' "
-            "AND recorded_at IS NOT NULL AND finalized_at IS NOT NULL "
-            "AND mae >= 0 AND rmse >= 0 AND naive_rmse >= 0 "
-            "AND (skill_score IS NULL OR skill_score <= 1) "
-            "AND (mape IS NULL OR mape >= 0) "
-            "AND coverage_fraction BETWEEN 0 AND 1 "
-            "AND interval_coverage_fraction BETWEEN 0 AND 1)",
-            name="finalized_evidence",
-        ),
-        Index("ix_forecast_hindcast_run_series_cutoff", "series_id", "simulated_cutoff_time"),
-        Index("ix_forecast_hindcast_run_parent", "forecast_run_id"),
-    )
-
-
-class ForecastHindcastValue(Base):
-    """Cutoff-verified prediction, actual, residual, and empirical interval evidence."""
-
-    __tablename__ = "forecast_hindcast_value"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    hindcast_run_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("agri.forecast_hindcast_run.id"), nullable=False
-    )
-    valid_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    horizon_step: Mapped[int] = mapped_column(Integer, nullable=False)
-    point_value: Mapped[float] = mapped_column(Float, nullable=False)
-    p10_value: Mapped[float] = mapped_column(Float, nullable=False)
-    p50_value: Mapped[float] = mapped_column(Float, nullable=False)
-    p90_value: Mapped[float] = mapped_column(Float, nullable=False)
-    naive_value: Mapped[float] = mapped_column(Float, nullable=False)
-    actual_value: Mapped[float] = mapped_column(Float, nullable=False)
-    actual_source_release_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("agri.source_release.id"), nullable=False
-    )
-    actual_observation_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
-    actual_data_available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    residual_value: Mapped[float] = mapped_column(Float, Computed("actual_value - point_value", persisted=True))
-    absolute_error: Mapped[float] = mapped_column(Float, Computed("abs(actual_value - point_value)", persisted=True))
-    squared_error: Mapped[float] = mapped_column(
-        Float,
-        Computed("(actual_value - point_value) * (actual_value - point_value)", persisted=True),
-    )
-    interval_covered: Mapped[bool] = mapped_column(
-        Boolean,
-        Computed("actual_value >= p10_value AND actual_value <= p90_value", persisted=True),
-    )
-    value_checksum: Mapped[str] = mapped_column(
-        String(64),
-        Computed(
-            "agri.forecast_hindcast_value_checksum(valid_time, horizon_step, point_value, "
-            "p10_value, p50_value, p90_value, naive_value, actual_value, "
-            "actual_source_release_id, actual_observation_checksum)",
-            persisted=True,
-        ),
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-
-    __table_args__ = (
-        UniqueConstraint("hindcast_run_id", "valid_time", name="uq_forecast_hindcast_value_time"),
-        UniqueConstraint("hindcast_run_id", "horizon_step", name="uq_forecast_hindcast_value_horizon"),
-        CheckConstraint("horizon_step > 0", name="horizon"),
-        CheckConstraint("p10_value <= p50_value AND p50_value <= p90_value", name="bands"),
-        CheckConstraint("actual_observation_checksum ~ '^[0-9a-f]{64}$'", name="actual_checksum"),
-        CheckConstraint(
-            "point_value::text NOT IN ('NaN', 'Infinity', '-Infinity') "
-            "AND p10_value::text NOT IN ('NaN', 'Infinity', '-Infinity') "
-            "AND p50_value::text NOT IN ('NaN', 'Infinity', '-Infinity') "
-            "AND p90_value::text NOT IN ('NaN', 'Infinity', '-Infinity') "
-            "AND naive_value::text NOT IN ('NaN', 'Infinity', '-Infinity') "
-            "AND actual_value::text NOT IN ('NaN', 'Infinity', '-Infinity')",
-            name="finite",
-        ),
-        Index("ix_forecast_hindcast_value_run_time", "hindcast_run_id", "valid_time"),
-    )
-
-
 class ForecastInputRecordedAt(Base):
     """Server-written knowledge boundary for generic forecast inputs."""
 
@@ -657,7 +476,7 @@ class ForecastInputRecordedAt(Base):
 
 
 class ForecastIteration(Base, UUIDMixin):
-    """Immutable evaluation-only bootstrap iteration over the generic time-series contract."""
+    """Immutable bootstrap iteration over the generic time-series contract."""
 
     __tablename__ = "forecast_iteration"
 
@@ -668,7 +487,7 @@ class ForecastIteration(Base, UUIDMixin):
     release_set_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("agri.release_set.id"), nullable=False
     )
-    purpose: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'evaluation_only'"))
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'serving'"))
     availability_mode: Mapped[str] = mapped_column(String(40), nullable=False)
     method: Mapped[str] = mapped_column(
         String(64), nullable=False, server_default=text("'daily_increment_bootstrap_v1'")
@@ -698,8 +517,6 @@ class ForecastIteration(Base, UUIDMixin):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (
-        CheckConstraint("method = 'daily_increment_bootstrap_v1'", name="method"),
-        CheckConstraint("purpose = 'evaluation_only'", name="purpose"),
         CheckConstraint(
             "availability_mode IN ('as_of_pinned_release', 'retrospective_pinned_release')",
             name="availability",
@@ -732,16 +549,12 @@ class ForecastIteration(Base, UUIDMixin):
             name="snapshots",
         ),
         CheckConstraint("status IN ('staging', 'finalized')", name="status"),
-        CheckConstraint(
-            "status <> 'finalized' OR (receipt_checksum ~ '^[0-9a-f]{64}$' AND recorded_at IS NOT NULL)",
-            name="finalized_evidence",
-        ),
         Index("ix_forecast_iteration_series_cutoff", "series_id", text("cutoff_time DESC")),
     )
 
 
 class ForecastIterationValue(Base):
-    """One checksummed low, median, and high value from an evaluation iteration."""
+    """One low, median, and high value from a bootstrap iteration; see models/AGENTS.md on value_checksum."""
 
     __tablename__ = "forecast_iteration_value"
 
@@ -756,15 +569,7 @@ class ForecastIterationValue(Base):
     high_value: Mapped[float] = mapped_column(Float, nullable=False)
     increment_count: Mapped[int] = mapped_column(Integer, nullable=False)
     parameter_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
-    value_checksum: Mapped[str] = mapped_column(
-        String(64),
-        Computed(
-            "agri.forecast_iteration_value_checksum("
-            "valid_time, horizon_step, low_value, median_value, high_value, "
-            "increment_count, parameter_checksum)",
-            persisted=True,
-        ),
-    )
+    value_checksum: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (
@@ -960,10 +765,6 @@ class ForecastPublication(Base, UUIDMixin):
 
     __table_args__ = (
         CheckConstraint("state IN ('draft', 'published', 'retired')", name="state"),
-        CheckConstraint(
-            "state = 'draft' OR (manifest_checksum ~ '^[0-9a-f]{64}$' AND published_at IS NOT NULL)",
-            name="published_evidence",
-        ),
         Index(
             "uq_forecast_publication_live_scope",
             "scope_key",

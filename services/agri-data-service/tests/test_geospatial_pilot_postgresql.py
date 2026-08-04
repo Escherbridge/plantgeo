@@ -13,15 +13,12 @@ from typing import Any
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from agri_data_service.execution.geospatial_pilot import ingest_boise_intervention_pilot
 
 PROTECTED_COUNT_SQL = {
     "forecast_run": text("SELECT count(*) FROM agri.forecast_run"),
-    "forecast_hindcast_run": text("SELECT count(*) FROM agri.forecast_hindcast_run"),
-    "forecast_hindcast_value": text("SELECT count(*) FROM agri.forecast_hindcast_value"),
     "forecast_quality_policy": text("SELECT count(*) FROM agri.forecast_quality_policy"),
     "forecast_receipt": text("SELECT count(*) FROM agri.forecast_receipt"),
     "forecast_value": text("SELECT count(*) FROM agri.forecast_value"),
@@ -135,54 +132,5 @@ async def test_pilot_writer_is_loader_scoped_idempotent_and_nonpublishing(agri_d
                 == 1
             )
 
-        async with engine.connect() as connection:
-            transaction = await connection.begin()
-            await connection.execute(
-                text(
-                    "UPDATE agri.source_release SET validation_state = 'retracted', "
-                    "retraction_reason = 'disposable lifecycle proof' "
-                    "WHERE id = :source_release_id"
-                ),
-                {"source_release_id": next(iter(first.source_release_ids.values()))},
-            )
-            await transaction.rollback()
-
-        async with engine.connect() as connection:
-            transaction = await connection.begin()
-            critical_updates = (
-                (
-                    "UPDATE agri.source_release SET payload_checksum = repeat('0', 64) WHERE id = :record_id",
-                    next(iter(first.source_release_ids.values())),
-                    "frozen by intervention evidence lineage",
-                ),
-                (
-                    "UPDATE agri.artifact SET metadata_json = '{}'::jsonb "
-                    "WHERE source_release_id = :record_id "
-                    "AND kind = 'source_metadata_reference'",
-                    first.source_release_ids["osm-hillside-to-hollow-20260723"],
-                    "frozen by intervention evidence lineage",
-                ),
-                (
-                    "UPDATE agri.release_set SET description = 'drift' WHERE id = :record_id",
-                    first.release_set_id,
-                    "frozen by intervention evidence lineage",
-                ),
-                (
-                    "UPDATE agri.release_set SET state = 'published', published_at = now() WHERE id = :record_id",
-                    first.release_set_id,
-                    "validated release set identity is immutable",
-                ),
-                (
-                    "UPDATE agri.release_set_item SET source_role = 'drift' WHERE release_set_id = :record_id",
-                    first.release_set_id,
-                    "release set membership is immutable after validation",
-                ),
-            )
-            for statement, record_id, expected_error in critical_updates:
-                savepoint = await connection.begin_nested()
-                with pytest.raises(DBAPIError, match=expected_error):
-                    await connection.execute(text(statement), {"record_id": record_id})
-                await savepoint.rollback()
-            await transaction.rollback()
     finally:
         await engine.dispose()

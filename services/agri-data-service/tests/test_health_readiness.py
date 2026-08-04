@@ -158,7 +158,6 @@ def test_readiness_contract_enforces_separate_forecast_capabilities() -> None:
     }
     assert reader_relations == {
         ("agri", "v_forecast_series_serving", "SELECT"),
-        ("agri", "v_forecast_hindcast_outcome", "SELECT"),
         ("agri", "mv_forecast_ml_daily_serving", "SELECT"),
         ("agri", "spatial_cell", "SELECT"),
     }
@@ -175,16 +174,22 @@ def test_readiness_contract_enforces_separate_forecast_capabilities() -> None:
         ("plantgeo_forecast_writer", "agri", "forecast_observation_id_seq", "SELECT"),
         ("plantgeo_forecast_writer", "agri", "forecast_value_id_seq", "USAGE"),
         ("plantgeo_forecast_writer", "agri", "forecast_value_id_seq", "SELECT"),
-        ("plantgeo_forecast_writer", "agri", "forecast_hindcast_value_id_seq", "USAGE"),
-        ("plantgeo_forecast_writer", "agri", "forecast_hindcast_value_id_seq", "SELECT"),
     }
     function_roles = {role_name for role_name, _signature, _privilege in health_route.FORECAST_ROLE_FUNCTION_PRIVILEGES}
+    # The reader is absent: its only EXECUTE was `forecast_hindcast_signal_timeseries`,
+    # which left with the hindcast plane in 20260803_0018. It is now a relation-only role,
+    # and `_READINESS_SQL` asserts it holds EXECUTE on no agri function at all.
     assert function_roles == {
         "plantgeo_forecast_writer",
         "plantgeo_forecast_publisher",
-        "plantgeo_forecast_reader",
         "plantgeo_forecast_mv_refresher",
     }
+    assert "plantgeo_forecast_reader" in health_route.FORECAST_ROLES
+    assert "forecast_hindcast" not in health_route._READINESS_SQL
+    assert (
+        "FROM agri_functions AS function_object\n"
+        "            WHERE has_function_privilege(current_user, function_object.oid, 'EXECUTE')"
+    ) in health_route._READINESS_SQL
     assert "aclexplode" in health_route._READINESS_SQL
     assert "has_column_privilege" in health_route._READINESS_SQL
     assert "pg_auth_members" in health_route._READINESS_SQL

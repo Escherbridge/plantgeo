@@ -1,40 +1,51 @@
 """Real-Postgres proof that every SECURITY DEFINER function in ``agri`` is locked down.
 
-Companion to the 0012/0015 migration-contract tests, which only check migration
-text. This asserts, against a real head-migrated database, that *every*
-``agri`` SECURITY DEFINER function (not just the eleven this revision touches)
-has: a non-PUBLIC execute grant, the expected dedicated NOLOGIN owner, and a
-pinned ``search_path``. A newly discovered SECURITY DEFINER function that is
-missing from ``_EXPECTED_OWNER_BY_FUNCTION`` fails loudly instead of being
-silently skipped, so the inventory in this test is the enforcement mechanism
-against future drift.
+Asserts, against a real head-migrated database, that *every* ``agri``
+SECURITY DEFINER function has a non-PUBLIC execute grant and a pinned
+``search_path``, and that the one function still owned by a dedicated role
+keeps it. A newly discovered SECURITY DEFINER function missing from
+``_EXPECTED_FUNCTIONS`` fails loudly instead of being silently skipped, so the
+inventory in this test is the enforcement mechanism against future drift.
+
+Revision ``20260803_0018`` retired the lineage guards and reassigned the seven
+``record_*`` writers away from ``plantgeo_forecast_input_recorder_owner``; they
+are kept SECURITY DEFINER but now run as the migrating role, which is the
+privilege widening that revision's docstring accepts. Only
+``refresh_forecast_ml_daily_serving`` still has a locked NOLOGIN owner, because
+it must own the matview it non-concurrently refreshes.
 """
 
 import psycopg2
 import pytest
 
-_INTERVENTION_GUARD_OWNER = "plantgeo_intervention_guard_owner"
-_INPUT_RECORDER_OWNER = "plantgeo_forecast_input_recorder_owner"
 _MV_REFRESH_OWNER = "plantgeo_forecast_mv_refresh_owner"
-_LINEAGE_GUARD_OWNER = "plantgeo_release_lineage_guard_owner"
 
-# function_name -> expected owner role. Every SECURITY DEFINER function found
-# in the `agri` schema must appear here exactly once (see
-# test_every_security_definer_function_is_in_the_locked_inventory).
-_EXPECTED_OWNER_BY_FUNCTION: dict[str, str] = {
-    "protect_intervention_evidence_parents": _INTERVENTION_GUARD_OWNER,
-    "record_forecast_release_set_item_insert": _INPUT_RECORDER_OWNER,
-    "record_forecast_release_set_item_update": _INPUT_RECORDER_OWNER,
-    "record_forecast_release_set_item_delete": _INPUT_RECORDER_OWNER,
-    "record_forecast_release_content_insert": _INPUT_RECORDER_OWNER,
-    "record_forecast_release_content_update": _INPUT_RECORDER_OWNER,
-    "record_forecast_release_content_delete": _INPUT_RECORDER_OWNER,
-    "record_forecast_input_change": _INPUT_RECORDER_OWNER,
+# The seven input recorders. SECURITY INVOKER since 0018: they were SECURITY DEFINER only so
+# a restricted role could append to agri.forecast_input_recorded_at without holding INSERT on
+# it, owned by a locked NOLOGIN role that 0018 retires. Reassigning them would have widened
+# their privileges rather than preserved them, so the definer bit was dropped instead.
+_INPUT_RECORDER_FUNCTIONS = frozenset(
+    {
+        "record_forecast_release_set_item_insert",
+        "record_forecast_release_set_item_update",
+        "record_forecast_release_set_item_delete",
+        "record_forecast_release_content_insert",
+        "record_forecast_release_content_update",
+        "record_forecast_release_content_delete",
+        "record_forecast_input_change",
+    }
+)
+
+# function_name -> the dedicated NOLOGIN role that must still own it.
+_EXPECTED_LOCKED_OWNER_BY_FUNCTION: dict[str, str] = {
     "refresh_forecast_ml_daily_serving": _MV_REFRESH_OWNER,
-    "enforce_intervention_lineage_release_membership": _LINEAGE_GUARD_OWNER,
-    "enforce_normalized_feature_artifact_release": _LINEAGE_GUARD_OWNER,
-    "enforce_intervention_analysis_release_set": _LINEAGE_GUARD_OWNER,
 }
+
+# Every SECURITY DEFINER function found in `agri` must appear here exactly once
+# (see test_every_security_definer_function_is_in_the_locked_inventory). After 0018 the
+# refresher is the only one left: it must stay SECURITY DEFINER because a non-concurrent
+# REFRESH requires matview ownership.
+_EXPECTED_FUNCTIONS = frozenset(_EXPECTED_LOCKED_OWNER_BY_FUNCTION)
 
 _SECURITY_DEFINER_FUNCTIONS_SQL = """
     SELECT
@@ -69,31 +80,54 @@ def test_every_security_definer_function_is_in_the_locked_inventory(
     security_definer_rows: list[dict],
 ) -> None:
     discovered = {row["function_name"] for row in security_definer_rows}
-    expected = set(_EXPECTED_OWNER_BY_FUNCTION)
 
-    missing_from_inventory = discovered - expected
+    missing_from_inventory = discovered - _EXPECTED_FUNCTIONS
     assert not missing_from_inventory, (
         f"undeclared SECURITY DEFINER function(s) found in agri: {missing_from_inventory}; "
-        "add them to _EXPECTED_OWNER_BY_FUNCTION with their intended locked owner"
+        "add them to _EXPECTED_FUNCTIONS, and to _EXPECTED_LOCKED_OWNER_BY_FUNCTION if "
+        "they are meant to keep a dedicated NOLOGIN owner"
     )
-    missing_from_database = expected - discovered
+    missing_from_database = _EXPECTED_FUNCTIONS - discovered
     assert not missing_from_database, (
         f"expected SECURITY DEFINER function(s) not found (renamed/dropped?): {missing_from_database}"
     )
 
 
-def test_every_security_definer_function_has_its_expected_locked_owner(
+def test_input_recorders_exist_and_run_as_the_invoker(
+    agri_db_connection: psycopg2.extensions.connection,
+) -> None:
+    """All seven recorders survive 0018 and none of them carries the definer bit."""
+    with agri_db_connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT procedure.proname, procedure.prosecdef
+            FROM pg_catalog.pg_proc AS procedure
+            INNER JOIN pg_catalog.pg_namespace AS namespace
+                ON namespace.oid = procedure.pronamespace
+            WHERE namespace.nspname = 'agri'
+              AND procedure.proname = ANY(%s)
+            """,
+            (sorted(_INPUT_RECORDER_FUNCTIONS),),
+        )
+        found = dict(cursor.fetchall())
+
+    missing = _INPUT_RECORDER_FUNCTIONS - found.keys()
+    assert not missing, (
+        f"input recorder(s) missing: {missing}. They feed agri.forecast_input_recorded_at, which "
+        "v_forecast_timeseries_contract INNER JOINs and forecast_daily_bootstrap RAISEs on."
+    )
+    still_definer = {name for name, prosecdef in found.items() if prosecdef}
+    assert not still_definer, f"input recorder(s) still SECURITY DEFINER after 0018: {still_definer}"
+
+
+def test_owner_locked_functions_keep_their_dedicated_nologin_owner(
     security_definer_rows: list[dict],
 ) -> None:
     for row in security_definer_rows:
-        expected_owner = _EXPECTED_OWNER_BY_FUNCTION[row["function_name"]]
+        expected_owner = _EXPECTED_LOCKED_OWNER_BY_FUNCTION.get(row["function_name"])
+        if expected_owner is None:
+            continue
         assert row["owner_name"] == expected_owner, row["function_name"]
-
-
-def test_every_security_definer_owner_is_a_locked_nologin_non_superuser_role(
-    security_definer_rows: list[dict],
-) -> None:
-    for row in security_definer_rows:
         assert row["rolcanlogin"] is False, row["function_name"]
         assert row["rolsuper"] is False, row["function_name"]
         assert row["rolinherit"] is False, row["function_name"]
@@ -118,7 +152,7 @@ def test_every_security_definer_function_pins_its_search_path(
         assert "agri" in search_path_setting, row["function_name"]
 
 
-def test_owner_roles_have_no_role_memberships(
+def test_locked_owner_roles_have_no_role_memberships(
     agri_db_connection: psycopg2.extensions.connection,
 ) -> None:
     with agri_db_connection.cursor() as cursor:
@@ -134,7 +168,7 @@ def test_owner_roles_have_no_role_memberships(
                   )
               )
             """,
-            (list(set(_EXPECTED_OWNER_BY_FUNCTION.values())),),
+            (sorted(set(_EXPECTED_LOCKED_OWNER_BY_FUNCTION.values())),),
         )
         offenders = [row[0] for row in cursor.fetchall()]
     assert not offenders, f"locked owner role(s) with role memberships: {offenders}"

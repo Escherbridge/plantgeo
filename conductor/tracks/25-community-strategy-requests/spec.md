@@ -39,8 +39,8 @@ Allow users to submit, browse, and vote on strategy requests pinned to map locat
 - `src/lib/server/services/priority-zones.ts` — DBSCAN clustering + convex hull generation
 - `src/lib/server/jobs/priority-zone-refresh.ts` — BullMQ nightly job to recompute zones
 - `src/lib/server/trpc/routers/community.ts` — `submitRequest`, `voteOnRequest`, `getRequests` (bbox), `getPriorityZones` (bbox)
-- `src/components/map/layers/StrategyRequestLayer.tsx` — Pin layer with vote count badges
-- `src/components/map/layers/PriorityZoneLayer.tsx` — Priority zone polygon choropleth
+- ~~`src/components/map/layers/StrategyRequestLayer.tsx` — Pin layer with vote count badges~~ — superseded, requests are private and coordinates are never plotted; the component was deleted
+- ~~`src/components/map/layers/PriorityZoneLayer.tsx` — Priority zone polygon choropleth~~ — superseded, requests are private and coordinates are never plotted; the component was deleted
 - `src/components/panels/CommunityPanel.tsx` — Request list, filter controls, detail view
 - `src/components/map/RequestSubmitModal.tsx` — Map-click modal for submitting requests
 

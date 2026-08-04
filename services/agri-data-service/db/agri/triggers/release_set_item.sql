@@ -12,9 +12,3 @@ CREATE TRIGGER forecast_input_record_release_set_item_insert AFTER INSERT ON agr
 
 -- TRIGGER: release_set_item forecast_input_record_release_set_item_update
 CREATE TRIGGER forecast_input_record_release_set_item_update AFTER UPDATE ON agri.release_set_item REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION agri.record_forecast_release_set_item_update();
-
--- TRIGGER: release_set_item release_set_membership_draft_only
-CREATE TRIGGER release_set_membership_draft_only BEFORE INSERT OR DELETE OR UPDATE ON agri.release_set_item FOR EACH ROW EXECUTE FUNCTION agri.enforce_release_set_membership_draft();
-
--- TRIGGER: release_set_item trg_release_set_item_intervention_parent
-CREATE TRIGGER trg_release_set_item_intervention_parent BEFORE DELETE OR UPDATE ON agri.release_set_item FOR EACH ROW EXECUTE FUNCTION agri.protect_intervention_evidence_parents();

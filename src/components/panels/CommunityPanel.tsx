@@ -107,7 +107,11 @@ export function CommunityPanel({
             </SheetTitle>
           </SheetHeader>
 
-          <LayerToggle layerId="demand-heatmap" label="Demand Heatmap" />
+          <LayerToggle
+            layerId="demand-heatmap"
+            label="Demand Heatmap"
+            unavailableReason="Aggregate demand is not published, because it would leak the locations the ledger exists to protect. It stays dark until a reviewed, access-controlled warehouse publication is in place."
+          />
           <LayerToggle layerId="interventions" label="Interventions" />
 
           {/* Filter + Submit */}
@@ -160,8 +164,9 @@ export function CommunityPanel({
             <div className="flex flex-col gap-2">
             {requestsError ? (
               <p role="alert" className="text-sm text-[hsl(var(--muted-foreground))] text-center py-8">
-                Sign in and select a workspace you belong to before viewing
-                strategy requests.
+                {requestsError.data?.code === "UNAUTHORIZED"
+                  ? "Sign in and select a workspace you belong to before viewing strategy requests."
+                  : requestsError.message}
               </p>
             ) : !requests || requests.length === 0 ? (
               <p className="text-sm text-[hsl(var(--muted-foreground))] text-center py-8">

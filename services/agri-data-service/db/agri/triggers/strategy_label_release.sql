@@ -4,8 +4,5 @@
 -- (see db/AGENTS.md, 'Forward-load workflow'). Regenerate with
 -- db/tools/regenerate.py; the schema-parity test guards drift.
 
--- TRIGGER: strategy_label_release strategy_label_release_change_guard
-CREATE TRIGGER strategy_label_release_change_guard BEFORE DELETE OR UPDATE ON agri.strategy_label_release FOR EACH ROW EXECUTE FUNCTION agri.guard_strategy_label_release_change();
-
 -- TRIGGER: strategy_label_release strategy_label_release_initial_state
 CREATE TRIGGER strategy_label_release_initial_state BEFORE INSERT ON agri.strategy_label_release FOR EACH ROW EXECUTE FUNCTION agri.require_strategy_initial_state();

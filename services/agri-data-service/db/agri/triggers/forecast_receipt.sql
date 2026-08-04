@@ -4,11 +4,5 @@
 -- (see db/AGENTS.md, 'Forward-load workflow'). Regenerate with
 -- db/tools/regenerate.py; the schema-parity test guards drift.
 
--- TRIGGER: forecast_receipt forecast_receipt_change_guard
-CREATE TRIGGER forecast_receipt_change_guard BEFORE DELETE OR UPDATE ON agri.forecast_receipt FOR EACH ROW EXECUTE FUNCTION agri.guard_forecast_receipt_change();
-
--- TRIGGER: forecast_receipt forecast_receipt_finalized_verify
-CREATE TRIGGER forecast_receipt_finalized_verify AFTER UPDATE OF status ON agri.forecast_receipt FOR EACH ROW EXECUTE FUNCTION agri.verify_forecast_receipt_finalization();
-
 -- TRIGGER: forecast_receipt forecast_receipt_initial_state
 CREATE TRIGGER forecast_receipt_initial_state BEFORE INSERT ON agri.forecast_receipt FOR EACH ROW EXECUTE FUNCTION agri.require_initial_forecast_state();

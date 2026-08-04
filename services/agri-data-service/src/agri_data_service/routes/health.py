@@ -15,7 +15,7 @@ logger = structlog.get_logger()
 
 health_bp = Blueprint("health", url_prefix="/")
 
-EXPECTED_ALEMBIC_REVISION = "20260803_0017"
+EXPECTED_ALEMBIC_REVISION = "20260803_0018"
 REQUIRED_EXTENSIONS = ("postgis", "timescaledb", "vector", "pgcrypto")
 PUBLICATION_TABLE_PRIVILEGES = (
     ("agri", "release_set", "SELECT"),
@@ -123,8 +123,6 @@ FORECAST_ROLE_RELATION_PRIVILEGES = (
             "forecast_backtest_metric",
             "forecast_receipt",
             "forecast_value",
-            "forecast_hindcast_run",
-            "forecast_hindcast_value",
         )
         for privilege_name in ("SELECT", "INSERT")
     ),
@@ -160,8 +158,6 @@ FORECAST_ROLE_RELATION_PRIVILEGES = (
             "forecast_backtest_metric",
             "forecast_receipt",
             "forecast_value",
-            "forecast_hindcast_run",
-            "forecast_hindcast_value",
             "forecast_publication",
             "forecast_publication_item",
             "publication_pointer",
@@ -180,7 +176,6 @@ FORECAST_ROLE_RELATION_PRIVILEGES = (
         ("plantgeo_forecast_reader", "agri", relation_name, "SELECT")
         for relation_name in (
             "v_forecast_series_serving",
-            "v_forecast_hindcast_outcome",
             "mv_forecast_ml_daily_serving",
             "spatial_cell",
         )
@@ -222,24 +217,6 @@ FORECAST_ROLE_COLUMN_PRIVILEGES = (
         "UPDATE",
     ),
     *(
-        ("plantgeo_forecast_publisher", "agri", "forecast_hindcast_run", column_name, "UPDATE")
-        for column_name in (
-            "status",
-            "quality_passed",
-            "mae",
-            "rmse",
-            "naive_rmse",
-            "skill_score",
-            "bias",
-            "mape",
-            "coverage_fraction",
-            "interval_coverage_fraction",
-            "receipt_checksum",
-            "recorded_at",
-            "finalized_at",
-        )
-    ),
-    *(
         ("plantgeo_forecast_publisher", "agri", "forecast_receipt", column_name, "UPDATE")
         for column_name in ("status", "receipt_checksum", "finalized_at")
     ),
@@ -253,8 +230,6 @@ FORECAST_ROLE_SEQUENCE_PRIVILEGES = (
     ("plantgeo_forecast_writer", "agri", "forecast_observation_id_seq", "SELECT"),
     ("plantgeo_forecast_writer", "agri", "forecast_value_id_seq", "USAGE"),
     ("plantgeo_forecast_writer", "agri", "forecast_value_id_seq", "SELECT"),
-    ("plantgeo_forecast_writer", "agri", "forecast_hindcast_value_id_seq", "USAGE"),
-    ("plantgeo_forecast_writer", "agri", "forecast_hindcast_value_id_seq", "SELECT"),
 )
 FORECAST_ROLE_FUNCTION_PRIVILEGES = (
     *(
@@ -274,10 +249,6 @@ FORECAST_ROLE_FUNCTION_PRIVILEGES = (
             "timestamp with time zone,integer,interval,integer)",
             "agri.forecast_linear_residual_bands(uuid,uuid,timestamp with time zone,"
             "timestamp with time zone,integer,interval,integer)",
-            "agri.forecast_hindcast_value_checksum(timestamp with time zone,integer,"
-            "double precision,double precision,double precision,double precision,"
-            "double precision,double precision,uuid,character varying)",
-            "agri.forecast_hindcast_receipt_checksum(uuid)",
         )
     ),
     *(
@@ -286,9 +257,6 @@ FORECAST_ROLE_FUNCTION_PRIVILEGES = (
             "agri.validate_forecast_feature_snapshot(uuid)",
             "agri.validate_forecast_training_run(uuid,character varying,character varying,jsonb)",
             "agri.validate_forecast_run(uuid)",
-            "agri.finalize_forecast_receipt(uuid,character varying)",
-            "agri.finalize_forecast_hindcast_run(uuid,character varying)",
-            "agri.forecast_hindcast_receipt_checksum(uuid)",
             "agri.v_signal_timeseries_contract(timestamp with time zone,uuid)",
             "agri.forecast_timeseries_base(uuid,timestamp with time zone)",
             "agri.forecast_linear_regression(uuid,uuid,timestamp with time zone,"
@@ -297,11 +265,6 @@ FORECAST_ROLE_FUNCTION_PRIVILEGES = (
             "timestamp with time zone,integer,interval,integer)",
             "agri.publish_forecast_publication(uuid,character varying)",
         )
-    ),
-    (
-        "plantgeo_forecast_reader",
-        "agri.forecast_hindcast_signal_timeseries(uuid,uuid,character varying,integer,timestamp with time zone)",
-        "EXECUTE",
     ),
     (
         "plantgeo_forecast_mv_refresher",
@@ -794,25 +757,7 @@ SELECT
         AND NOT EXISTS (
             SELECT 1
             FROM agri_functions AS function_object
-            WHERE (
-                coalesce(
-                    has_function_privilege(current_user, function_object.oid, 'EXECUTE'),
-                    false
-                ) IS DISTINCT FROM (
-                    function_object.oid = to_regprocedure(
-                        'agri.forecast_hindcast_signal_timeseries(uuid,uuid,character varying,'
-                        'integer,timestamp with time zone)'
-                    )
-                )
-                OR coalesce(
-                    has_function_privilege(
-                        current_user,
-                        function_object.oid,
-                        'EXECUTE WITH GRANT OPTION'
-                    ),
-                    false
-                )
-            )
+            WHERE has_function_privilege(current_user, function_object.oid, 'EXECUTE')
         )
         AND NOT EXISTS (
             SELECT 1
@@ -825,7 +770,6 @@ SELECT
                 ) IS DISTINCT FROM (
                     relation.relation_name IN (
                         'v_forecast_series_serving',
-                        'v_forecast_hindcast_outcome',
                         'mv_forecast_ml_daily_serving',
                         'spatial_cell'
                     )
@@ -850,7 +794,6 @@ SELECT
                 AND NOT (
                     relation.relation_name IN (
                         'v_forecast_series_serving',
-                        'v_forecast_hindcast_outcome',
                         'mv_forecast_ml_daily_serving',
                         'spatial_cell'
                     )

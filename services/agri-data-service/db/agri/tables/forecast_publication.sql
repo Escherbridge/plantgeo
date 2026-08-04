@@ -16,7 +16,6 @@ CREATE TABLE agri.forecast_publication (
     published_at timestamp with time zone,
     retired_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_forecast_publication_published_evidence CHECK ((((state)::text = 'draft'::text) OR (((manifest_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND (published_at IS NOT NULL)))),
     CONSTRAINT ck_forecast_publication_state CHECK (((state)::text = ANY ((ARRAY['draft'::character varying, 'published'::character varying, 'retired'::character varying])::text[])))
 );
 

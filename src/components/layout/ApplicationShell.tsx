@@ -4,25 +4,25 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import TopBar from "@/components/layout/TopBar";
 
-/**
- * Routes that supply their own chrome or must stay frameless. Everything else
- * gets the global bar by default so new pages are navigable on arrival.
- */
-const ROUTES_WITHOUT_GLOBAL_NAVIGATION = [
+/** Route trees that stay frameless all the way down: auth, onboarding, embeds. */
+const SUBTREES_WITHOUT_GLOBAL_NAVIGATION = [
   "/login",
   "/register",
   "/forgot-password",
   "/reset-password",
   "/verify-email",
   "/onboarding",
-  "/dashboard",
   "/invite",
   "/join",
   "/embed",
 ];
 
+/** Single pages that ship their own chrome; their children still get the bar. */
+const EXACT_ROUTES_WITHOUT_GLOBAL_NAVIGATION = ["/dashboard"];
+
 function hasGlobalNavigation(pathname: string): boolean {
-  return !ROUTES_WITHOUT_GLOBAL_NAVIGATION.some(
+  if (EXACT_ROUTES_WITHOUT_GLOBAL_NAVIGATION.includes(pathname)) return false;
+  return !SUBTREES_WITHOUT_GLOBAL_NAVIGATION.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`)
   );
 }

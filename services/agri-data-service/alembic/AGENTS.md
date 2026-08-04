@@ -6,7 +6,7 @@ The foundation revision is intentionally forward-only because downgrading would 
 
 Keep future revisions explicit and deterministic. Do not call current ORM `metadata.create_all()` from a historical revision because replaying that revision would otherwise change as models evolve.
 
-Release-set membership is mutable only in `draft`. The foundation triggers serialize draft finalization against membership writes, reject item inserts, updates, or deletes after validation, and freeze state, identity, and validation timestamps after the set first leaves draft. Future migrations must preserve that database-level invariant.
+Release-set membership was mutable only in `draft`, enforced by foundation triggers that serialized draft finalization against membership writes, rejected item writes after validation, and froze state, identity and validation timestamps once the set left draft. `20260803_0018` retires those triggers (`release_set_identity_freeze`, `release_set_membership_draft_only`, `enforce_release_set_freeze`, `enforce_release_set_membership_draft`) along with the rest of the enforcement layer. The rule still holds as a contract; it is now the CLI's to enforce, and no future migration is required to reinstate it in the database.
 
 `20260720_0002` adds the typed historical-observation plane. It retains immutable source-release ownership, maps native source geometries to stable analysis cells, requires a spatial-cell identity for each normalized time-series point, records both cell- and source-level coverage audits, and exposes data only through a release-set-pinned contract function.
 
@@ -253,6 +253,78 @@ downgrading a `0017` database yields a routine fingerprint byte-identical to a
 pristine `0016` build across all 93 routines. Reversing it does reinstate both
 defects, including a schema no unattended `pg_restore` can load.
 
+`20260803_0018` retires the forecast governance enforcement layer and the
+hindcast plane. It implements Option 4 of
+`../plans/checksum-layer-audit-2026-08-03.md` (§6), extended by the owner with
+the hindcast plane and three of the four locked owner roles: 48 triggers, 34
+routines, 2 tables, 1 view, 10 status-to-checksum evidence CHECKs and 3 roles
+are dropped, one generated column becomes plain storage, one DEFAULT flips, and
+one procedure is amended.
+
+The audit's finding in one line: the **checksum columns** earn their keep and
+stay, the **database-level enforcement built on top of them** does not. §3.1 is
+the reason — tamper-evidence needs the digest to be beyond the reach of the
+party who might tamper, and here the researcher, the DBA and the hypothetical
+adversary are one person with one credential. The digest sits in the same row it
+protects, in the same database, defended only by triggers the table owner can
+disable; the repo already ships two copy-pasteable bypasses
+(`…0014:169`, `tests/test_forecasting_v1_upgrade_postgresql.py:209`). What
+remains is accident prevention, and §3.2 shows that is already delivered by the
+checksum columns plus `materialize_forecast_iteration`'s idempotency block, both
+retained. All 61 checksum columns and their 29 format CHECKs stay.
+
+The consequence for every later revision: **checksums are records, not
+enforcement; there are no database-enforced state machines; the CLI owns
+preconditions.** Do not write a migration that reinstates a `verify_*` /
+`guard_*` / `enforce_*` / `finalize_*` trigger on the forecast, strategy,
+release-set or intervention planes without reopening that audit.
+
+What survives, and why each survivor is load-bearing, is enumerated in
+`../db/AGENTS.md` (*What survives `0018`*): the retained
+`ck_forecast_receipt_finalized_evidence` (the only remaining bar to
+`status = 'finalized'` on an evidence-free receipt, which
+`v_forecast_series_serving:61` trusts); the seven `record_*` writers (whose
+`forecast_input_recorded_at` rows `v_forecast_timeseries_contract` INNER JOINs
+and `forecast_daily_bootstrap` RAISEs on); `guard_strategy_review_change` (sole
+populator of the two strategy checksum columns); `guard_forecast_immutable_rows`;
+the `require_*` family; the four `publish_*`/`validate_*` movers; and
+`plantgeo_forecast_mv_refresh_owner`, kept because it owns the ML matview and
+its `SECURITY DEFINER` refresher and the two must remain the same role.
+
+Three things this revision changes that no DDL signature reveals:
+
+- `forecast_iteration_value.value_checksum` stops being `GENERATED ... STORED`,
+  so `materialize_forecast_iteration` is forward-loaded to compute it
+  explicitly. Without that amendment every new row would be NULL,
+  `forecast_iteration_receipt_checksum`'s `string_agg` would return NULL, and
+  `concat_ws` would silently omit it — yielding a well-formed 64-hex receipt
+  digest that covers nothing and passes every retained format CHECK.
+- `agri.finalize_forecast_receipt` is gone and was the **only** writer of
+  `forecast_receipt.receipt_checksum`; no `forecast_receipt_checksum()` function
+  exists. The ML serving view cannot gain a new row until a Python publisher
+  reproduces that digest byte-exactly under the `20260803_0017` determinism pins.
+- Dropping `ck_forecast_publication_published_evidence` and
+  `ck_forecast_training_validated_evidence` lets `v_forecast_series_serving`
+  serve NULL manifest/publication/training checksums, and flipping
+  `forecast_iteration.purpose`'s DEFAULT to `'serving'` changes the receipt
+  digest for new iterations because that column is hashed. Pre-`0018` rows keep
+  `'evaluation_only'` and re-derive exactly as before.
+
+Conventions this revision sets for every later teardown: **no `DROP ... CASCADE`**
+(name every object, order by dependency, let a missed dependency fail loudly),
+full argument-type signatures on every `DROP FUNCTION`, and role teardown as
+`REASSIGN OWNED BY … TO CURRENT_USER` then `DROP OWNED BY` then a `DROP ROLE`
+that traps only `dependent_objects_still_exist` — roles are cluster-wide while
+both `OWNED BY` statements are database-local, so a role still holding objects in
+a database that has not replayed this revision survives with a NOTICE. Note also
+that roles, ownership and every `GRANT`/`REVOKE` are **invisible** to the parity
+test: `dump_schema.DUMP_ARGS` uses `--no-owner --no-privileges`, so a role drop
+produces no diff in `../db/agri/**` and a forgotten `REVOKE` is not caught.
+
+Like the data-bearing revisions, `0018` has no `downgrade()`: reversing it would
+have to invent the dropped hindcast rows and digests only the dropped finalizers
+could compute. Restore a verified backup into a fresh database.
+
 ## PostgreSQL 18 portability (rehearsed, not deployed)
 
 Revisions `0001` through `0016` were applied end to end against PostgreSQL 18.4
@@ -268,6 +340,12 @@ populated-restore rehearsal found two defects a DDL-only rehearsal structurally
 cannot see, and `20260803_0017` carries both (above). Neither is a PostgreSQL 18
 problem -- they reproduce identically on 16 -- but the restore one is what makes
 "keep pg16 alive as the rollback" executable, so it gates the migration anyway.
+
+The rehearsal predates `0017` and `20260803_0018`; neither has been replayed on
+pg18. `0018` is the one to re-rehearse there, because its role teardown is
+cluster-wide: the pg18 rehearsal database `plantgeo_boise_pg18` still sits at
+`20260802_0016` and holds objects owned by all three retired roles, so its
+`DROP ROLE` takes the trapped-NOTICE path until that database replays `0018` too.
 
 The one genuine catalogue difference is that PostgreSQL 18 stores NOT NULL as
 `pg_constraint` rows and 16 does not. That is a server-version artifact, not

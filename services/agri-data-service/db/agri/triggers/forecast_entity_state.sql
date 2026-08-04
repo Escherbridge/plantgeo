@@ -7,12 +7,6 @@
 -- TRIGGER: forecast_entity_state forecast_entity_state_immutable
 CREATE TRIGGER forecast_entity_state_immutable BEFORE DELETE OR UPDATE ON agri.forecast_entity_state FOR EACH ROW EXECUTE FUNCTION agri.guard_forecast_immutable_rows();
 
--- TRIGGER: forecast_entity_state forecast_entity_state_lineage_guard
-CREATE TRIGGER forecast_entity_state_lineage_guard BEFORE INSERT ON agri.forecast_entity_state FOR EACH ROW EXECUTE FUNCTION agri.enforce_forecast_input_lineage();
-
--- TRIGGER: forecast_entity_state forecast_entity_state_overlap_guard
-CREATE TRIGGER forecast_entity_state_overlap_guard BEFORE INSERT ON agri.forecast_entity_state FOR EACH ROW EXECUTE FUNCTION agri.prevent_forecast_entity_state_overlap();
-
 -- TRIGGER: forecast_entity_state forecast_input_record_entity_state_delete
 CREATE TRIGGER forecast_input_record_entity_state_delete AFTER DELETE ON agri.forecast_entity_state REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION agri.record_forecast_release_content_delete();
 

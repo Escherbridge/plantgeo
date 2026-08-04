@@ -21,7 +21,7 @@ CREATE TABLE agri.forecast_receipt (
     finalized_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_forecast_receipt_expected_values CHECK ((expected_value_count > 0)),
-    CONSTRAINT ck_forecast_receipt_finalized_evidence CHECK ((((status)::text <> 'finalized'::text) OR (((receipt_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND (finalized_at IS NOT NULL)))),
+    CONSTRAINT ck_forecast_receipt_finalized_evidence CHECK ((((status)::text <> 'finalized'::text) OR ((receipt_checksum IS NOT NULL) AND ((receipt_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND (finalized_at IS NOT NULL)))),
     CONSTRAINT ck_forecast_receipt_ordered_window CHECK ((valid_to > valid_from)),
     CONSTRAINT ck_forecast_receipt_quantiles CHECK ((agri.forecast_quantiles_valid(quantile_levels) AND ((0.5)::double precision = ANY (quantile_levels)))),
     CONSTRAINT ck_forecast_receipt_status CHECK (((status)::text = ANY ((ARRAY['staging'::character varying, 'finalized'::character varying])::text[])))

@@ -342,10 +342,11 @@ export function CommunityLedger() {
         <EditorialProse>
           <p>
             A strategy request is anchored to a point on the ground, so it is
-            created from the map rather than from this page. Open the map, drop a
-            pin on the parcel you have in mind, and submit from the community
-            panel. The location is stored against your account or your workspace
-            and is never made public by the act of submitting it.
+            created from the map rather than from this page. Open the map, centre
+            it on the parcel you have in mind, open the community panel, and
+            press Submit; the request is recorded at the map&rsquo;s centre point.
+            The location is stored against your account or your workspace and is
+            never made public by the act of submitting it.
           </p>
         </EditorialProse>
         <div className="mt-comfortable flex flex-wrap gap-tight">

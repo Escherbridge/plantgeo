@@ -1,9 +1,12 @@
 """Static contracts for the 0015 SECURITY DEFINER lockdown-completion revision.
 
-Companion to ``test_intervention_parent_guard_migration_contract.py`` (the 0012
-contract for the one function that was already locked down). This file checks
-the migration text only; ``test_security_definer_lockdown_postgresql.py``
-proves the resulting grants/owners/search_path against a real database.
+This file checks the 0015 migration text only, which is history and therefore
+still true in full. It is *not* a description of the schema at head: revision
+``20260803_0018`` drops the three ``enforce_*`` lineage guards and retires
+``plantgeo_forecast_input_recorder_owner`` and
+``plantgeo_release_lineage_guard_owner``, so only ``refresh_forecast_ml_daily_serving``
+still carries the owner 0015 gave it. ``test_security_definer_lockdown_postgresql.py``
+is the post-0018 live inventory; read that one for what the database looks like now.
 """
 
 from pathlib import Path

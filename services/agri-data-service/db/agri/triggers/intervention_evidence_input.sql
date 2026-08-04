@@ -4,11 +4,5 @@
 -- (see db/AGENTS.md, 'Forward-load workflow'). Regenerate with
 -- db/tools/regenerate.py; the schema-parity test guards drift.
 
--- TRIGGER: intervention_evidence_input trg_derived_evidence_run
-CREATE TRIGGER trg_derived_evidence_run BEFORE INSERT ON agri.intervention_evidence_input FOR EACH ROW EXECUTE FUNCTION agri.enforce_derived_evidence_run();
-
--- TRIGGER: intervention_evidence_input trg_intervention_evidence_input_immutable
-CREATE TRIGGER trg_intervention_evidence_input_immutable BEFORE DELETE OR UPDATE ON agri.intervention_evidence_input FOR EACH ROW EXECUTE FUNCTION agri.reject_geospatial_evidence_mutation();
-
 -- TRIGGER: intervention_evidence_input trg_intervention_evidence_requires_lineage
 CREATE CONSTRAINT TRIGGER trg_intervention_evidence_requires_lineage AFTER INSERT ON agri.intervention_evidence_input DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION agri.require_intervention_evidence_lineage();

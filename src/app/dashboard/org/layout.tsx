@@ -28,8 +28,8 @@ export default function OrganizationLayout({ children }: { children: React.React
   const visibleItems = NAV_ITEMS.filter((item) => !role || item.roles.includes(role));
 
   return (
-    <div className="min-h-screen bg-zinc-950 [font-family:var(--font-onboarding-mono,inherit)]">
-      <header className="border-b border-zinc-800 bg-zinc-900/60 px-6 py-4 backdrop-blur-xl">
+    <div className="viewport-below-top-bar flex flex-col bg-zinc-950 [font-family:var(--font-onboarding-mono,inherit)]">
+      <header className="shrink-0 border-b border-zinc-800 bg-zinc-900/60 px-6 py-4 backdrop-blur-xl">
         <div className="mx-auto flex max-w-4xl items-center justify-between">
           <Link
             href="/dashboard"
@@ -62,7 +62,10 @@ export default function OrganizationLayout({ children }: { children: React.React
         </nav>
       </header>
 
-      <main className="mx-auto max-w-4xl px-6 py-8">{children}</main>
+      {/* Owns the scroll surface — see src/app/dashboard/org/AGENTS.md. */}
+      <main className="mx-auto min-h-0 w-full max-w-4xl flex-1 overflow-y-auto px-6 py-8">
+        {children}
+      </main>
     </div>
   );
 }

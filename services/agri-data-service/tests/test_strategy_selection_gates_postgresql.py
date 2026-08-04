@@ -1,4 +1,4 @@
-"""Corrected strategy-selection cutoff rule, quality gate, and audit-flag contract."""
+"""Corrected strategy-selection cutoff rule and the insert-time audit-flag contract."""
 
 import hashlib
 import json
@@ -40,9 +40,9 @@ def _build_selection_fixture(
 ) -> SelectionFixture:
     """Build a staged evaluation-only selection receipt bound to a staged iteration.
 
-    Only the identities the corrected cutoff rule and the quality gate read are
-    real; the receipt is deliberately left in ``staging`` because both gates are
-    pure functions of the receipt, its iteration, and the hindcast plane.
+    Only the identities the corrected cutoff rule reads are real; the receipt is
+    deliberately left in ``staging`` because the rule is a pure function of the
+    receipt and its iteration.
     """
     suffix = _digest(os.urandom(16).hex())[:12]
     cursor.execute(
@@ -385,37 +385,15 @@ def test_corrected_cutoff_rule_flags_only_late_iterations(
         assert cursor.fetchone()[0] is True
 
 
-def test_quality_evidence_gate_blocks_without_a_passing_hindcast(
+def test_audit_flag_is_never_hand_set_at_insert(
     agri_db_connection: psycopg2.extensions.connection,
 ) -> None:
-    """No finalized quality_passed hindcast for the backing series means no selection.
+    """A receipt enters clear and in staging; ``require_strategy_initial_state`` holds that line.
 
-    The gate is proven at the predicate the finalizer evaluates. This fixture
-    stops short of a validated label-release lineage, so ``finalize`` still
-    refuses it earlier, on lineage -- asserted here so the ordering is explicit
-    rather than assumed.
+    The update half of this rule left with ``guard_strategy_selection_receipt_change``
+    in revision 20260803_0018; only the insert-time contract is still enforced
+    in the database.
     """
-    with agri_db_connection.cursor() as cursor:
-        fixture = _build_selection_fixture(cursor, iteration_cutoff_time=FIXTURE_DATA_CUTOFF)
-        cursor.execute(
-            "SELECT agri.strategy_selection_quality_evidence(%s)",
-            (fixture.selection_receipt_id,),
-        )
-        assert cursor.fetchone()[0] is False
-
-        cursor.execute("SAVEPOINT quality_gate")
-        with pytest.raises(psycopg2.Error, match="lineage is not validated and policy-approved"):
-            cursor.execute(
-                "SELECT agri.finalize_strategy_selection_receipt(%s, %s)",
-                (fixture.selection_receipt_id, _digest("expected")),
-            )
-        cursor.execute("ROLLBACK TO SAVEPOINT quality_gate")
-
-
-def test_audit_flag_is_finalized_only_and_never_hand_set(
-    agri_db_connection: psycopg2.extensions.connection,
-) -> None:
-    """A cutoff_violation flag belongs to finalized receipts and to the audit path only."""
     with agri_db_connection.cursor() as cursor:
         fixture = _build_selection_fixture(cursor, iteration_cutoff_time=FIXTURE_DATA_CUTOFF)
         cursor.execute(
@@ -423,20 +401,6 @@ def test_audit_flag_is_finalized_only_and_never_hand_set(
             (fixture.selection_receipt_id,),
         )
         assert cursor.fetchone() == ("clear", None, None)
-
-        cursor.execute("SAVEPOINT staging_flag")
-        with pytest.raises(psycopg2.Error, match="only verified staging-to-finalized"):
-            cursor.execute(
-                """
-                UPDATE agri.strategy_selection_receipt
-                SET audit_state = 'cutoff_violation',
-                    audit_reason = 'hand set',
-                    audit_flagged_at = now()
-                WHERE id = %s
-                """,
-                (fixture.selection_receipt_id,),
-            )
-        cursor.execute("ROLLBACK TO SAVEPOINT staging_flag")
 
         cursor.execute("SAVEPOINT inserted_flag")
         with pytest.raises(psycopg2.Error, match="must be inserted in staging state"):

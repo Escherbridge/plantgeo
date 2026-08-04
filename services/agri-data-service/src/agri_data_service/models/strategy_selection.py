@@ -75,11 +75,6 @@ class StrategyOutcomeDefinition(Base, UUIDMixin):
             "review_state IN ('draft', 'approved', 'rejected')",
             name="review_state",
         ),
-        CheckConstraint(
-            "review_state = 'draft' OR (reviewed_at IS NOT NULL AND reviewed_by IS NOT NULL "
-            "AND definition_checksum ~ '^[0-9a-f]{64}$')",
-            name="review_evidence",
-        ),
     )
 
 
@@ -139,12 +134,6 @@ class StrategyLabelRelease(Base, UUIDMixin):
             name="counts",
         ),
         CheckConstraint("status IN ('staging', 'validated', 'rejected')", name="status"),
-        CheckConstraint(
-            "status <> 'validated' OR (row_count > 0 AND treated_count > 0 "
-            "AND control_count > 0 AND strategy_count > 0 AND spatial_block_count > 0 "
-            "AND receipt_checksum ~ '^[0-9a-f]{64}$' AND validated_at IS NOT NULL)",
-            name="validated_evidence",
-        ),
         Index("ix_strategy_label_release_outcome_asof", "outcome_definition_id", text("as_of_time DESC")),
     )
 
@@ -269,11 +258,6 @@ class StrategySelectionPolicy(Base, UUIDMixin):
             name="checksum_sha256",
         ),
         CheckConstraint("review_state IN ('draft', 'approved', 'rejected')", name="review_state"),
-        CheckConstraint(
-            "review_state = 'draft' OR (reviewed_at IS NOT NULL AND reviewed_by IS NOT NULL "
-            "AND policy_checksum ~ '^[0-9a-f]{64}$')",
-            name="review_evidence",
-        ),
     )
 
 
@@ -349,10 +333,6 @@ class StrategySelectionReceipt(Base, UUIDMixin):
             name="ordered_times",
         ),
         CheckConstraint("status IN ('staging', 'finalized')", name="status"),
-        CheckConstraint(
-            "status <> 'finalized' OR (receipt_checksum ~ '^[0-9a-f]{64}$' AND finalized_at IS NOT NULL)",
-            name="finalized_evidence",
-        ),
         Index("ix_strategy_selection_receipt_subject_issue", "analysis_subject_id", text("issue_time DESC")),
     )
 

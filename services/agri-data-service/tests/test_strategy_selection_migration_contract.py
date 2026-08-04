@@ -1,4 +1,11 @@
-"""Static contracts for the governed strategy-selection schema."""
+"""Static contracts for the governed strategy-selection schema.
+
+Revision ``20260803_0018`` retired this plane's enforcement layer while keeping
+its tables and every checksum function, so the programmable objects 0013 loaded
+now split in two: those still on disk, which 0013 keeps loading through
+``load_object_sql``, and those whose canonical file is gone, whose DDL 0013 now
+carries itself as a module-level raw string. Both halves are checked here.
+"""
 
 from pathlib import Path
 
@@ -6,11 +13,19 @@ SERVICE_ROOT = Path(__file__).parents[1]
 MIGRATION = SERVICE_ROOT / "alembic" / "versions" / "20260725_0013_strategy_selection_contract.py"
 FUNCTION_ROOT = SERVICE_ROOT / "db" / "agri" / "functions"
 TRIGGER_ROOT = SERVICE_ROOT / "db" / "agri" / "triggers"
-EXPECTED_PARENT_LOCKS = 2
+# An embedded body must appear exactly twice: its definition and its one execution.
+EMBEDDED_BODY_MENTIONS = 2
 
 
 def _migration() -> str:
     return MIGRATION.read_text(encoding="utf-8")
+
+
+def _embedded_body(migration: str, constant_name: str) -> str:
+    """The raw-string DDL 0013 carries for a function whose canonical file 0018 removed."""
+    opener = f'{constant_name} = r"""'
+    start = migration.index(opener) + len(opener)
+    return migration[start : migration.index('"""', start)]
 
 
 def test_strategy_selection_revision_is_additive_and_forward_only() -> None:
@@ -71,26 +86,63 @@ def test_strategy_selection_revision_adds_the_complete_receipt_plane() -> None:
 def test_strategy_selection_programmable_objects_are_canonical_and_private() -> None:
     migration = _migration()
 
-    function_files = (
+    surviving_function_files = (
         "strategy_outcome_definition_checksum.sql",
         "strategy_selection_policy_checksum.sql",
         "strategy_label_release_checksum.sql",
         "strategy_label_episode_checksum.sql",
         "require_strategy_initial_state.sql",
-        "guard_strategy_child_insert.sql",
         "guard_strategy_review_change.sql",
-        "guard_strategy_label_release_change.sql",
-        "finalize_strategy_label_release.sql",
         "export_strategy_label_bundle.sql",
         "strategy_label_bundle_checksum.sql",
         "strategy_selection_candidate_checksum.sql",
         "strategy_selection_receipt_checksum.sql",
-        "guard_strategy_selection_receipt_change.sql",
-        "finalize_strategy_selection_receipt.sql",
     )
-    for name in function_files:
+    # Created by 0013, dropped by 0018: the canonical file is gone and must stay gone,
+    # so 0013 carries the DDL itself. Each entry is (file name, constant, CREATE header).
+    retired_function_bodies = (
+        (
+            "guard_strategy_child_insert.sql",
+            "_GUARD_STRATEGY_CHILD_INSERT",
+            "CREATE FUNCTION agri.guard_strategy_child_insert() RETURNS trigger",
+        ),
+        (
+            "guard_strategy_label_release_change.sql",
+            "_GUARD_STRATEGY_LABEL_RELEASE_CHANGE",
+            "CREATE FUNCTION agri.guard_strategy_label_release_change() RETURNS trigger",
+        ),
+        (
+            "finalize_strategy_label_release.sql",
+            "_FINALIZE_STRATEGY_LABEL_RELEASE",
+            "CREATE FUNCTION agri.finalize_strategy_label_release("
+            "p_label_release_id uuid, p_expected_checksum character varying)"
+            " RETURNS agri.strategy_label_release",
+        ),
+        (
+            "guard_strategy_selection_receipt_change.sql",
+            "_GUARD_STRATEGY_SELECTION_RECEIPT_CHANGE",
+            "CREATE FUNCTION agri.guard_strategy_selection_receipt_change() RETURNS trigger",
+        ),
+        (
+            "finalize_strategy_selection_receipt.sql",
+            "_FINALIZE_STRATEGY_SELECTION_RECEIPT",
+            "CREATE FUNCTION agri.finalize_strategy_selection_receipt("
+            "p_selection_receipt_id uuid, p_expected_checksum character varying)"
+            " RETURNS agri.strategy_selection_receipt",
+        ),
+    )
+    for name in surviving_function_files:
         assert (FUNCTION_ROOT / name).is_file()
         assert f'"functions/{name}"' in migration
+    for file_name, constant_name, create_header in retired_function_bodies:
+        assert not (FUNCTION_ROOT / file_name).exists(), file_name
+        # Loading a file 0018 deleted would break a chain replayed from scratch.
+        assert f'"functions/{file_name}"' not in migration, file_name
+        body = _embedded_body(migration, constant_name)
+        assert create_header in body, create_header
+        assert "RAISE EXCEPTION" in body, constant_name
+        # Defined once, executed once: a body that stops being applied fails here.
+        assert migration.count(constant_name) == EMBEDDED_BODY_MENTIONS, constant_name
 
     trigger_files = (
         "strategy_outcome_definition.sql",
@@ -112,60 +164,6 @@ def test_strategy_selection_programmable_objects_are_canonical_and_private() -> 
     assert '"functions/validate_forecast_training_run.sql"' in migration
 
 
-def test_label_finalization_is_availability_and_lineage_gated() -> None:
-    finalizer = (FUNCTION_ROOT / "finalize_strategy_label_release.sql").read_text(encoding="utf-8")
-
-    for contract in (
-        "baseline.analysis_subject_id <> episode.analysis_subject_id",
-        "observed.analysis_subject_id <> episode.analysis_subject_id",
-        "baseline.release_set_id <> label.release_set_id",
-        "observed.release_set_id <> label.release_set_id",
-        "baseline.evidence_kind <> 'observed_fact'",
-        "observed.evidence_kind <> 'observed_fact'",
-        "baseline.value_unit IS DISTINCT FROM outcome.metric_unit",
-        "observed.value_unit IS DISTINCT FROM outcome.metric_unit",
-        "episode.target_unit <> outcome.metric_unit",
-        "observed.numeric_value - baseline.numeric_value",
-        "strategy_label_episode_checksum",
-        "baseline.data_available_at > label.as_of_time",
-        "observed.data_available_at > label.as_of_time",
-        "episode.data_available_at > label.as_of_time",
-        "episode.covariates_available_at > episode.assigned_at",
-        "jsonb_array_length(episode.covariate_snapshot)",
-        "label.feature_schema_checksum",
-        "strategy_outcome_definition_checksum",
-        "count(DISTINCT episode.assigned_at) <> 1",
-        "cohort maps to multiple assignment times",
-        "strategy_taxonomy_snapshot",
-        "strategy_label_release_checksum",
-    ):
-        assert contract in finalizer
-
-
-def test_receipt_finalization_is_cutoff_honest_and_effect_disabled() -> None:
-    finalizer = (FUNCTION_ROOT / "finalize_strategy_selection_receipt.sql").read_text(encoding="utf-8")
-
-    for contract in (
-        "model.model_purpose <> 'strategy_selection'",
-        "publication.state = 'published'",
-        "label.as_of_time > receipt.data_cutoff",
-        "feature.training_window_end > receipt.data_cutoff",
-        "strategy_selection_policy_checksum",
-        "training.strategy_label_checksum IS DISTINCT FROM label.receipt_checksum",
-        "effect_candidate finalization is disabled in strategy_selection_v1",
-        "cluster-bootstrap",
-        "placebo",
-        "negative-control",
-        "best-vs-second lower-bound",
-    ):
-        assert contract in finalizer
-
-    assert "abstained strategy selection cannot retain ranked candidates" in finalizer
-    assert "feasibility receipt cannot contain effect-tier candidates" in finalizer
-    assert "receipt.data_cutoff > label.as_of_time" not in finalizer
-    assert "receipt.data_cutoff > feature.training_window_end" not in finalizer
-
-
 def test_training_validation_binds_artifact_output_to_label_receipt() -> None:
     validator = (FUNCTION_ROOT / "validate_forecast_training_run.sql").read_text(encoding="utf-8")
     receipt = (FUNCTION_ROOT / "strategy_selection_receipt_checksum.sql").read_text(encoding="utf-8")
@@ -183,18 +181,18 @@ def test_training_validation_binds_artifact_output_to_label_receipt() -> None:
 
 
 def test_review_and_child_writes_are_state_and_server_checksum_gated() -> None:
+    """``guard_strategy_review_change`` is the sole writer of both review checksums.
+
+    The child-insert parent-state rule left with ``guard_strategy_child_insert`` in
+    revision 20260803_0018; the two child tables keep only their append-only guard.
+    """
     review_guard = (FUNCTION_ROOT / "guard_strategy_review_change.sql").read_text(encoding="utf-8")
     initial_guard = (FUNCTION_ROOT / "require_strategy_initial_state.sql").read_text(encoding="utf-8")
-    child_guard = (FUNCTION_ROOT / "guard_strategy_child_insert.sql").read_text(encoding="utf-8")
 
     assert "strategy_outcome_definition_checksum(NEW)" in review_guard
     assert "strategy_selection_policy_checksum(NEW)" in review_guard
     assert "NEW.review_state <> 'draft'" in initial_guard
     assert "NEW.status <> 'staging'" in initial_guard
-    assert "parent_status IS DISTINCT FROM 'staging'" in child_guard
-    assert child_guard.count("FOR UPDATE") == EXPECTED_PARENT_LOCKS
-    assert "strategy_label_episode" in child_guard
-    assert "strategy_selection_candidate" in child_guard
 
     for trigger_name in (
         "strategy_outcome_definition.sql",
@@ -204,7 +202,7 @@ def test_review_and_child_writes_are_state_and_server_checksum_gated() -> None:
     ):
         assert "require_strategy_initial_state()" in (TRIGGER_ROOT / trigger_name).read_text(encoding="utf-8")
     for trigger_name in ("strategy_label_episode.sql", "strategy_selection_candidate.sql"):
-        assert "guard_strategy_child_insert()" in (TRIGGER_ROOT / trigger_name).read_text(encoding="utf-8")
+        assert "guard_forecast_immutable_rows()" in (TRIGGER_ROOT / trigger_name).read_text(encoding="utf-8")
 
 
 def test_validated_label_export_matches_the_strict_trainer_bundle() -> None:

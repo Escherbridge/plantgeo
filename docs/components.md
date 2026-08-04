@@ -11,8 +11,6 @@ src/components/
 │   ├── MapControls.tsx          # Zoom, fullscreen, compass controls
 │   ├── PanelManager.tsx         # Sidebar panel orchestration
 │   ├── LayerManager.tsx         # Layer list and reordering
-│   ├── DeckOverlay.tsx          # deck.gl layer renderer
-│   ├── DeckTooltip.tsx          # Layer feature tooltips
 │   ├── Legend.tsx               # Layer legend display
 │   ├── TerrainControl.tsx       # Terrain exaggeration slider
 │   ├── StyleSwitcher.tsx        # Basemap style selector
@@ -38,8 +36,6 @@ src/components/
 │       ├── InterventionLayer.tsx
 │       ├── ReforestationLayer.tsx
 │       ├── TeamLayer.tsx
-│       ├── PriorityZoneLayer.tsx
-│       ├── StrategyRequestLayer.tsx
 │       ├── DemandHeatmapLayer.tsx
 │       ├── ModelLayer.tsx
 │       └── ...more layers
@@ -146,31 +142,14 @@ export function MapView() {
 
 ---
 
-### DeckOverlay
+### DeckOverlay — removed
 
-Renders all deck.gl layers with interactive tooltips.
-
-```typescript
-export function DeckOverlay() {
-  const { layers: activeLayerIds } = useLayerStore();
-  const layers = activeLayerIds.map(id => createDeckLayer(id));
-
-  return (
-    <DeckGL
-      layers={layers}
-      controller={{ type: MapController }}
-      onHover={(info) => setTooltip(info)}
-      pickingRadius={5}
-    />
-  );
-}
-```
-
-**Features:**
-- Dynamic layer creation from layer store
-- Interactive hover tooltips
-- Click-to-identify
-- Synchronized with MapLibre camera
+The shared deck.gl overlay (`DeckOverlay.tsx`) and its tooltip companion
+(`DeckTooltip.tsx`) were deleted along with the community request pin layers
+they existed to render. Layers now add themselves to MapLibre directly, and
+hover labels are owned by `HoverTooltip.tsx`. Individual `deck.gl` layer
+classes are still imported by files under `src/components/map/layers/`, but
+nothing mounts a `DeckGL` surface any more.
 
 ---
 

@@ -276,7 +276,8 @@ CREATE PROCEDURE agri.materialize_forecast_iteration(INOUT p_iteration_id uuid, 
                 median_value,
                 high_value,
                 increment_count,
-                parameter_checksum
+                parameter_checksum,
+                value_checksum
             )
             SELECT
                 p_iteration_id,
@@ -286,7 +287,16 @@ CREATE PROCEDURE agri.materialize_forecast_iteration(INOUT p_iteration_id uuid, 
                 bootstrap.median_value,
                 bootstrap.high_value,
                 bootstrap.increment_count,
-                bootstrap.parameter_checksum
+                bootstrap.parameter_checksum,
+                agri.forecast_iteration_value_checksum(
+                    bootstrap.valid_time,
+                    bootstrap.horizon_step,
+                    bootstrap.low_value,
+                    bootstrap.median_value,
+                    bootstrap.high_value,
+                    bootstrap.increment_count,
+                    bootstrap.parameter_checksum
+                )
             FROM agri.forecast_daily_bootstrap(
                 p_series_id,
                 p_release_set_id,

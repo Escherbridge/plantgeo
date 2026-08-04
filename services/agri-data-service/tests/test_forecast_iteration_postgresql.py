@@ -11,6 +11,9 @@ FORECAST_HORIZON_DAYS = 30
 FIXTURE_OBSERVATION_COUNT = 100
 MIN_SUPPORTED_POSTGRES_VERSION = 160000
 MAX_SUPPORTED_POSTGRES_VERSION = 190000
+RECEIPT_DIGEST_STILL_MATCHES_SQL = (
+    "SELECT receipt_checksum = agri.forecast_iteration_receipt_checksum(id) FROM agri.forecast_iteration WHERE id = %s"
+)
 
 
 def _checksum(value: str) -> str:
@@ -243,7 +246,7 @@ def test_deterministic_iteration_materialization_and_actual_reconciliation(  # n
         result = cursor.fetchone()
         assert result[:6] == (
             "finalized",
-            "evaluation_only",
+            "serving",
             "retrospective_pinned_release",
             30,
             69,
@@ -254,6 +257,31 @@ def test_deterministic_iteration_materialization_and_actual_reconciliation(  # n
         assert result[8] == pytest.approx(150.0)
         assert result[9] == pytest.approx(208.0)
         assert result[10:] == (True, True)
+
+        # 20260803_0018 turned `value_checksum` from a generated column into a plain one,
+        # so the procedure is now the only writer; a NULL here silently empties the
+        # receipt digest without breaking any format CHECK.
+        cursor.execute(
+            """
+            SELECT
+                count(*),
+                count(value.value_checksum),
+                count(*) FILTER (
+                    WHERE value.value_checksum = agri.forecast_iteration_value_checksum(
+                        value.valid_time, value.horizon_step, value.low_value,
+                        value.median_value, value.high_value, value.increment_count,
+                        value.parameter_checksum
+                    )
+                )
+            FROM agri.forecast_iteration_value AS value
+            WHERE value.iteration_id = %s
+            """,
+            (iteration_id,),
+        )
+        value_count, populated_count, checksummed_count = cursor.fetchone()
+        assert value_count == FORECAST_HORIZON_DAYS
+        assert populated_count == value_count
+        assert checksummed_count == value_count
 
         cursor.execute("SET LOCAL DateStyle = 'German, DMY'")
         cursor.execute("SET LOCAL IntervalStyle = 'sql_standard'")
@@ -447,10 +475,26 @@ def test_deterministic_iteration_materialization_and_actual_reconciliation(  # n
         assert signal[0] == cutoff + timedelta(days=1)
         assert signal[1] == pytest.approx(0.0)
 
-        cursor.execute("SAVEPOINT immutable_iteration")
-        with pytest.raises(psycopg2.Error):
-            cursor.execute(
-                "UPDATE agri.forecast_iteration SET simulation_count = 101 WHERE id = %s",
-                (iteration_id,),
-            )
-        cursor.execute("ROLLBACK TO SAVEPOINT immutable_iteration")
+        # 20260803_0018 dropped `forecast_iteration_change_guard`
+        # (`agri.guard_forecast_iteration_change`), so a finalized iteration is no longer
+        # immutable in-database and the append-only rule belongs to the CLI. Tamper
+        # *detection* survives: `receipt_checksum` hashes `simulation_count`, so the
+        # stored digest stops matching a recomputation the moment the row is edited.
+        cursor.execute(
+            RECEIPT_DIGEST_STILL_MATCHES_SQL,
+            (iteration_id,),
+        )
+        assert cursor.fetchone() == (True,)
+
+        cursor.execute("SAVEPOINT mutable_iteration")
+        cursor.execute(
+            "UPDATE agri.forecast_iteration SET simulation_count = 101 WHERE id = %s RETURNING simulation_count",
+            (iteration_id,),
+        )
+        assert cursor.fetchone() == (101,)
+        cursor.execute(
+            RECEIPT_DIGEST_STILL_MATCHES_SQL,
+            (iteration_id,),
+        )
+        assert cursor.fetchone() == (False,)
+        cursor.execute("ROLLBACK TO SAVEPOINT mutable_iteration")

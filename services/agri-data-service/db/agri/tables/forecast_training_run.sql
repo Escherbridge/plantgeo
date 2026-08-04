@@ -28,8 +28,7 @@ CREATE TABLE agri.forecast_training_run (
     CONSTRAINT ck_forecast_training_execution_mode CHECK (((execution_mode)::text = 'local'::text)),
     CONSTRAINT ck_forecast_training_input_checksums CHECK ((((input_release_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((feature_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((training_code_checksum)::text ~ '^[0-9a-f]{64}$'::text))),
     CONSTRAINT ck_forecast_training_status CHECK (((status)::text = ANY ((ARRAY['gated'::character varying, 'running'::character varying, 'validated'::character varying, 'rejected'::character varying])::text[]))),
-    CONSTRAINT ck_forecast_training_strategy_label_binding CHECK ((((strategy_label_release_id IS NULL) AND (strategy_label_checksum IS NULL)) OR ((strategy_label_release_id IS NOT NULL) AND ((strategy_label_checksum)::text ~ '^[0-9a-f]{64}$'::text)))),
-    CONSTRAINT ck_forecast_training_validated_evidence CHECK ((((status)::text <> 'validated'::text) OR ((completed_at IS NOT NULL) AND (validated_at IS NOT NULL) AND ((model_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((validation_checksum)::text ~ '^[0-9a-f]{64}$'::text))))
+    CONSTRAINT ck_forecast_training_strategy_label_binding CHECK ((((strategy_label_release_id IS NULL) AND (strategy_label_checksum IS NULL)) OR ((strategy_label_release_id IS NOT NULL) AND ((strategy_label_checksum)::text ~ '^[0-9a-f]{64}$'::text))))
 );
 
 -- CONSTRAINT: forecast_training_run forecast_training_run_pkey

@@ -27,14 +27,11 @@
 - [x] Add `npm install bullmq` if not already installed (check water-scarcity track)
 
 ## Phase 5: Map Layers
-- [x] Create `src/components/map/layers/StrategyRequestLayer.tsx` — circle markers with vote badge labels
-- [x] Color-code by strategyType (keyline=blue, silvopasture=green, reforestation=teal, biochar=brown)
-- [x] Create `src/components/map/layers/PriorityZoneLayer.tsx` — fill polygon with dominant strategy color + opacity by vote intensity
-- [x] Add click handler → open CommunityPanel with selected request detail
+- Superseded — requests are private, coordinates are never plotted. The request, priority-zone and deck.gl overlay components were deleted.
 
 ## Phase 6: Submit Modal & Panel
 - [x] Create `src/components/panels/RequestSubmitModal.tsx` — form with strategyType select + optional description
-- [ ] Wire map right-click / long-press → open modal with lat/lon pre-filled
+- [ ] Wire map right-click / long-press → open modal with lat/lon pre-filled — deliberately not wired: `contextmenu` belongs to AgentInteraction, so submission uses the viewport centre instead
 - [x] Create `src/components/panels/CommunityPanel.tsx` — request list (sorted by votes), filter bar, detail view
 - [ ] Detail view: request info + "Why here?" environmental context (fire risk, water stress, soil SOC via tRPC queries)
 - [ ] Link to relevant strategy cards from Track 26
