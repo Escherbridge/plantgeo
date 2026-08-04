@@ -1,5 +1,5 @@
 export const EXPECTED_DRIZZLE_MIGRATION = {
-  tag: "0007_governed_environmental_ingestion",
-  createdAt: 1_785_900_000_000,
-  sha256: "ae8f5f36bba7c29dc03d32363ccb3ef2cc870a4a604694e6d8da0e1c6bcdbf16",
+  tag: "0008_geometry_dimension",
+  createdAt: 1_786_000_000_000,
+  sha256: "a3976b8a91181eab377f9bc7e750e250c8affdc9fb60c8d9ae47d60bee225284",
 } as const;

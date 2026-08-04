@@ -12,6 +12,7 @@ import {
   real,
   primaryKey,
   customType,
+  unique,
   uniqueIndex,
   index,
 } from "drizzle-orm/pg-core";
@@ -162,6 +163,47 @@ export const layers = geoSchema.table("layers", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
 
+/** Type-2 conformed geometry dimension: one row per version of a place. See `src/lib/server/db/AGENTS.md` §geometry-dimension. */
+export const geometry = geoSchema.table(
+  "geometry",
+  {
+    geometryId: uuid("geometry_id").defaultRandom().primaryKey(),
+    naturalKey: varchar("natural_key", { length: 255 }).notNull(),
+    versionValidFrom: timestamp("version_valid_from", {
+      withTimezone: true,
+    }).notNull(),
+    versionValidTo: timestamp("version_valid_to", { withTimezone: true }),
+    geomKind: varchar("geom_kind", { length: 16 }).notNull(),
+    geom: spatialGeometry("geom").notNull(),
+    centroid: spatialPoint("centroid").notNull(),
+    gridName: varchar("grid_name", { length: 100 }),
+    cellKey: varchar("cell_key", { length: 180 }),
+    resolutionMeters: integer("resolution_m"),
+    producer: varchar("producer", { length: 100 }).notNull(),
+    // No .references() here: a self-reference would create a circular initializer,
+    // the same reason users.activeTeamId is a bare uuid. The FK is in the migration,
+    // and it is DEFERRABLE; closing a version has exactly one legal statement order.
+    supersededBy: uuid("superseded_by"),
+    lastConfirmedAt: timestamp("last_confirmed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("uq_geometry_version").on(table.naturalKey, table.versionValidFrom),
+    uniqueIndex("uq_geometry_current")
+      .on(table.naturalKey)
+      .where(sql`${table.versionValidTo} IS NULL`),
+    uniqueIndex("uq_geometry_grid_cell")
+      .on(table.gridName, table.cellKey)
+      .where(sql`${table.versionValidTo} IS NULL`),
+    index("ix_geometry_kind").on(table.geomKind, table.producer),
+    index("ix_geometry_asof").on(
+      table.naturalKey,
+      sql`${table.versionValidFrom} DESC`
+    ),
+  ]
+);
+
 export const features = geoSchema.table(
   "features",
   {
@@ -173,6 +215,10 @@ export const features = geoSchema.table(
     properties: jsonb("properties").notNull().default({}),
     status: varchar("status", { length: 20 }).default("published"),
     reviewNote: text("review_note"),
+    // Current version of this place, repointed whenever a version closes.
+    geometryId: uuid("geometry_id").references(() => geometry.geometryId, {
+      onDelete: "restrict",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
@@ -180,6 +226,7 @@ export const features = geoSchema.table(
     uniqueIndex("features_layer_external_id_unique")
       .on(table.layerId, sql`(${table.properties} ->> 'id')`)
       .where(sql`${table.properties} ? 'id'`),
+    index("ix_features_geometry_id").on(table.geometryId),
   ]
 );
 

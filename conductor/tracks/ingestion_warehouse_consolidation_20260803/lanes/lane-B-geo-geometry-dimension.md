@@ -2,9 +2,14 @@
 type: lane-brief
 track: ingestion_warehouse_consolidation_20260803
 lane: B
-status: in-progress
+status: complete
 depends_on: A
 started_at: 2026-08-03
+completed_at: 2026-08-03
+note: >-
+  Landed by workflow wf_a0967264-fef. Applied to PRODUCTION (owner-directed,
+  overriding the README's never-migrate-prod rule): drizzle ledger row 9,
+  20 021 v1 rows backfilled and committed. See §8 Completion record.
 ---
 
 # Lane B — `geo.geometry` Type-2 dimension + backfill (Drizzle)
@@ -457,3 +462,92 @@ nothing else: `src/lib/server/db/schema.ts`, `drizzle/0008_geometry_dimension.sq
 | 2 | **Does `version_valid_from` need a NOT-`now()` guard in the DDL?** A future ingest module defaulting it to `now()` reproduces risk 7b one producer at a time rather than all at once. | Add `CONSTRAINT ck_geometry_valid_from_not_write_time CHECK (version_valid_from < now() - interval '60 seconds' OR version_valid_from = '-infinity')` only if you can confirm no near-real-time producer legitimately observes within 60 s. FIRMS and Open-Meteo plausibly can. **Recommendation: do not add it here.** The equivalent assertion belongs in the batch runner, where it already exists for `data_available_at` (plan `:792`, risk 4). Note it for lane D. |
 | 3 | **Circuit-breaker threshold for version churn.** The rule is settled (>5 % of a layer versioning in one run aborts and exits non-zero); the number is not, and 5 % of the 110-row `fire-perimeters` layer is 6 rows (`../plan.md:235-237`). | Lane D owns the enforcement. **Your job is only to leave the dimension able to answer the question**: `ix_geometry_asof` on `(natural_key, version_valid_from DESC)` makes "how many versions opened in this window" a cheap query. Document the threshold as TBD in `AGENTS.md` and hand the number to lane D. |
 | 4 | **Does any surviving `agri` table beyond `forecast_series` need `geometry_id`?** Explicitly left open (`../plan.md:238`). | Not yours to answer — lane C decides it. Do not pre-emptively widen anything to accommodate it; `geometry_id` is a plain uuid PK and any number of FKs can point at it later. |
+
+## 8. Completion record — 2026-08-03
+
+Shipped by workflow `wf_a0967264-fef` (recon → lane A → lane B → 3 adversarial reviewers → fix).
+**Applied to production**, not to a local rehearsal container: the owner directed prod explicitly,
+overriding `README.md:74` ("never run a migration against production") and the `metadata.json`
+activation gate. Recording that here so the override is auditable rather than silent.
+
+### What landed
+
+| Artefact | State |
+|---|---|
+| `drizzle/0008_geometry_dimension.sql` | applied to prod; `drizzle.__drizzle_migrations` row **id 9**, `created_at` 1786000000000 |
+| `migration-contract.ts` | `sha256 = a3976b8a91181eab377f9bc7e750e250c8affdc9fb60c8d9ae47d60bee225284` |
+| `geo.geometry` | 20 021 rows, all v1 (`version_valid_to IS NULL`) |
+| `geo.geometry_current`, `geo.features.geometry_id` | created; 20 021 features repointed, 0 dangling |
+
+Census at backfill time was **20 021**, not the 15 016 in the plan and not the 19 113 measured
+during this same session's recon two hours earlier — the cron moved ~900 rows mid-run. The
+never-hardcode-a-row-count rule earned its place again.
+
+### Deltas beyond the brief, all deliberate
+
+1. **`ck_geometry_cell_fields` NULL-hardened.** The brief's verbatim constraint has a hole: a
+   `grid_cell` row with `grid_name` and `cell_key` set but `resolution_m` NULL evaluates to NULL
+   and *passes*. Added `resolution_m IS NOT NULL AND`. This was exactly trap #7's warning, found in
+   the brief's own text.
+2. **Self-FK is `DEFERRABLE INITIALLY DEFERRED`.** Found by adversarial review, and it is the most
+   important fix in the lane: with an immediate FK, the immediate `ck_geometry_supersede` CHECK and
+   the non-deferrable `uq_geometry_current` index, **all four orderings of "close v1, open v2" abort**
+   — the dimension could only ever have held v1 rows, and the Type-2 apparatus would have been inert.
+3. **`search_path` pinned on all six pre-existing `geo` routines.** Naming a table `geometry` inside
+   schema `geo` creates a composite type that shadows PostGIS's `public.geometry`. All six routines
+   (`fire_risk_tiles`, `sensor_tiles`, `intervention_tiles`, `building_tiles`,
+   `sync_feature_geom_from_properties`, `sync_historical_point_geom`) declare locals as bare
+   `geometry`, so on any `geo`-first `search_path` they resolve to the row type and fail at runtime —
+   including the **write trigger on `geo.features`**. Production was safe by luck (sole role
+   `postgres`, effective path `public`), so this corrects step 8's "Martin needs zero edits":
+   the tile *functions* need no body change, but they did need pinning. Precedent: `b7c0023`.
+4. **`fire-perimeters` falls back to `fireDiscoveryDateTime`.** 14 of 112 rows carry a JSON-null
+   `polygonDateTime` but a parseable `fireDiscoveryDateTime`; they would have been permanently dated
+   `-infinity`. Post-backfill `-infinity` count is **0**.
+5. **`LOCK TABLE ... IN SHARE MODE`** added. REPEATABLE READ does not raise on concurrent *inserts* —
+   rows ingested mid-run would have been silently left unlinked while the script printed success.
+6. Backfill prints a per-producer fan-out `NOTICE`; `ix_features_geometry_id` added.
+
+### Verified, not assumed
+
+Trap #7 is **satisfied**: every constraint was watched rejecting its bad case against prod (13/13
+probes, rolled back). `ck_geometry_supersede`, `ck_geometry_natural_key_namespaced`,
+`ck_geometry_cell_fields` (both arms), `ck_geometry_version_order`, `uq_geometry_current`,
+`uq_geometry_version` all reject; `geom_kind` accepts `'line'` and rejects `'linestring'`; the
+close-v1-open-v2 sequence succeeds; all four Martin functions return non-null under
+`search_path = geo, public`.
+
+Invariants on prod: current == total == 20 021; 0 unnamespaced keys; 0 keys with >1 producer; 0
+eligible features unlinked; 0 dangling `geometry_id`; `centroid` is not generated. Idempotence: a
+second run inserted 0, delta exactly 0. Offline sweep: 342/342 vitest, `tsc` clean, eslint 0 errors,
+data-boundary passed, `next build` succeeded; lane A's `test_ingest_identity.py` 81 passed.
+
+`version_valid_from` spans 1990-10-01 → 2026-08-04. The 2 926 rows dated today share only 36
+distinct timestamps on clean 15-min/hourly boundaries — the gauge and weather cadence, not `now()`,
+which would have produced a single timestamp across all 20 021 rows (risk 7b).
+
+### Open, and owned by someone else
+
+- **Deferred low finding — the namespace CHECK is not airtight.** `natural_key LIKE producer || ':%'`
+  interpolates the producer into a LIKE pattern, so `_` and `%` in a producer token act as wildcards
+  (`producer='open_meteo'` matches `natural_key='open-meteo:1'`), and the trailing `%` matches zero
+  characters, so an empty producer-local id passes. Harmless today — `identity.py` constrains tokens
+  to `^[a-z0-9][a-z0-9-]{1,98}$`, which admits no wildcard — but the DB-side guarantee is weaker than
+  `AGENTS.md` claims. Fix if a token ever gains `_`.
+- **USDM and MTBS are not in the dimension and have no owner.** Lane A defines a `usdm` producer, but
+  USDM lives in `geo.drought_areas` with no `geo.layers` row, so it is outside this backfill (which
+  covers `geo.features`, per plan §2.0). MTBS needs `"burn-severity" → MTBS_PRODUCER` added to both
+  `identity.py` and the backfill VALUES list when lane E creates the layer — the guard aborts
+  otherwise, which is the correct failure. **Lane J needs this settled before `geo.metric_daily`.**
+- **Three of four producers are v1-only and always will be** (`firms`, `open-meteo`, `usgs-nwis`
+  embed the observation time in their id: 11 533 gauge keys over 899 real sites). That is the stated
+  identity contract, not a defect — but it means `min(version_valid_from)` over a `natural_key` is
+  first-seen *only* for `wfigs`/`usdm`/`mtbs`. `db/AGENTS.md` is corrected; the same overclaim in
+  `services/agri-data-service/.../ingest/AGENTS.md:3` is **lane A's file** and still needs qualifying.
+- **Open question #1 stands unresolved and unbudged**: nothing in `drizzle/**` or `ingest.ts` writes
+  `geo.features.created_at`, so plan risk 2c attributes the "all rows dated today" measurement to the
+  wrong mechanism. The rule is unaffected and now structurally satisfied (no `first_seen_at` column).
+  **Lane J must not inherit the false mechanism** when it audits `created_at` readers.
+- **Churn circuit-breaker threshold is still TBD — lane D owns the number.** `ix_geometry_asof` makes
+  "how many versions opened in this window" cheap, which was this lane's only obligation.
+- Lane C may now repoint `agri.*` FKs at `geo.geometry`; the target exists on prod.

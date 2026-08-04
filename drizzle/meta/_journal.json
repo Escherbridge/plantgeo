@@ -57,6 +57,13 @@
       "when": 1785900000000,
       "breakpoints": true,
       "tag": "0007_governed_environmental_ingestion"
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786000000000,
+      "breakpoints": true,
+      "tag": "0008_geometry_dimension"
     }
   ]
 }
