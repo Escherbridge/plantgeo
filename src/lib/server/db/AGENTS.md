@@ -50,14 +50,23 @@ which is "last touched" rather than "first seen" and must never be used to deriv
 first-observation time, a `data_available_at`, a retention window or the slider's
 history depth.
 
-That equivalence holds only where a `natural_key` names a durable place, which is
-`wfigs`, `usdm` and `mtbs` — see the next subsection. For the three producers whose
-key embeds the observation, `min(version_valid_from)` over one key returns that single
-reading's own time, so first-seen for the underlying site is a `min` over the *set* of
-keys that share a site, not over one key. Asking the dimension when gauge `14181500`
-was first seen is a question the dimension cannot answer; ask
-`min(version_valid_from) WHERE natural_key LIKE 'usgs-nwis:14181500:%'` and know that
-you are pattern-matching a key the rest of this file tells you never to parse.
+That equivalence now holds for every producer. **Corrected 2026-08-04:** this paragraph
+used to say the dimension could not answer when gauge `14181500` was first seen, and to
+suggest `min(version_valid_from) WHERE natural_key LIKE 'usgs-nwis:14181500:%'`. Both
+statements are stale. `scripts/rekey-geometry-to-entity.sql` re-keyed `geo.geometry` from
+the OBSERVATION key onto the ENTITY key — `identity.FeatureIdentity.entity_key`, "the
+enduring place this observation was taken at, not the observation" — so the table now
+holds one row per place (7,424 rows) rather than one per reading. The key is exactly
+`usgs-nwis:14181500`, that `LIKE` pattern matches nothing at all, and the question is a
+plain equality:
+
+```sql
+SELECT version_valid_from FROM geo.geometry WHERE natural_key = 'usgs-nwis:14181500';
+```
+
+`usgs-nwis` and `open-meteo` are the two producers that set `entity_local_id` (the site
+number, and the 4dp `lat:lon` sample point). Everywhere else `entity_local_id` is None, so
+`entity_key == natural_key` by construction and nothing changed.
 
 ### Three producers are v1-only, and that is the identity contract, not a bug
 

@@ -4,28 +4,17 @@ import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc/client";
 import { useLayerStore } from "@/stores/layer-store";
-import { useMapStore } from "@/stores/map-store";
+import { toggleIdForWarehouseLayerName } from "@/lib/map/layer-registry";
+import { useActiveLayerToggles, useToggleLayer } from "@/lib/map/layer-toggle-context";
 import { stylePresets } from "@/lib/map/layer-styles";
-
-/**
- * Translates a `geo.layers.name` into the activeLayers toggle id that actually
- * renders it. Names absent here have no renderer and must not be toggleable --
- * see src/components/map/AGENTS.md "The layer toggle is the only source of
- * layer visibility".
- */
-const TOGGLE_ID_BY_LAYER_NAME: Record<string, string> = {
-  "fire-perimeters": "fire-perimeters",
-  "fire-detections": "fire",
-  "water-gauges": "water",
-  "weather-observations": "weather",
-  vegetation: "vegetation",
-  interventions: "interventions",
-};
 
 export function Legend() {
   const { data: layers = [] } = trpc.layers.list.useQuery();
   const { legendVisible, toggleLegend, styleOverrides } = useLayerStore();
-  const { activeLayers, toggleLayer } = useMapStore();
+  // The legend is a consumer of the toggle vocabulary, never a second source of it: it
+  // translates a geo.layers name to the toggle that renders it, and disables the rest.
+  const activeLayers = useActiveLayerToggles();
+  const toggleLayer = useToggleLayer();
 
   if (layers.length === 0) return null;
 
@@ -48,7 +37,7 @@ export function Legend() {
             const preset = styleKey ? stylePresets[styleKey] : null;
             const fillColor =
               override?.fillColor ?? preset?.fillColor ?? "#6b7280";
-            const toggleId = TOGGLE_ID_BY_LAYER_NAME[layer.name] ?? null;
+            const toggleId = toggleIdForWarehouseLayerName(layer.name);
             const isVisible = toggleId !== null && activeLayers.includes(toggleId);
 
             return (

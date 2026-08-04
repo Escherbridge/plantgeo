@@ -13,6 +13,7 @@ import {
 } from "@/lib/server/db/schema";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { isTeamEditorRole } from "@/lib/server/security/access-control";
+import { summarizeStrategyActivity } from "@/lib/server/services/community-activity";
 
 const bboxSchema = z.string().regex(
   /^-?\d+\.?\d*,-?\d+\.?\d*,-?\d+\.?\d*,-?\d+\.?\d*$/,
@@ -69,14 +70,6 @@ async function requireTeamAccess(
     });
   }
   return membership;
-}
-
-function publicWaypointUnavailable(): never {
-  throw new TRPCError({
-    code: "PRECONDITION_FAILED",
-    message:
-      "Opportunity waypoints are unavailable until a reviewed, access-controlled warehouse publication is available",
-  });
 }
 
 export const communityRouter = router({
@@ -215,13 +208,25 @@ export const communityRouter = router({
       return rows;
     }),
 
+  /** Per-strategy totals over the requests the caller may already read. */
   getPriorityZones: protectedProcedure
     .input(
       z.object({
         strategyType: z.string().optional(),
+        teamId: z.string().uuid().optional(),
       })
     )
-    .query(() => publicWaypointUnavailable()),
+    .query(async ({ ctx, input }) => {
+      const userId = currentUserId(ctx.session);
+      if (input.teamId) {
+        await requireTeamAccess(ctx, input.teamId, userId, false);
+      }
+      return summarizeStrategyActivity(ctx.db, {
+        userId,
+        teamId: input.teamId,
+        strategyType: input.strategyType,
+      });
+    }),
 
   getRequestById: protectedProcedure
     .input(

@@ -131,6 +131,14 @@ async def local_source_loader_session(database_url: str) -> AsyncIterator[AsyncS
 
 
 @asynccontextmanager
+async def ingest_session() -> AsyncIterator[AsyncSession]:
+    """Yield one isolated session for a cron ingest job; see ingest/AGENTS.md for the DSN it uses."""
+    database_url = settings.require_local_source_loader_database_url()
+    async with local_source_loader_session(database_url) as session:
+        yield session
+
+
+@asynccontextmanager
 async def forecast_mv_refresh_session(database_url: str) -> AsyncIterator[AsyncSession]:
     """Yield one isolated session for the reviewed forecast MV refresher DSN."""
     refresh_engine = create_async_engine(

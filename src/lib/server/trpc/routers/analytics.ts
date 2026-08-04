@@ -12,13 +12,14 @@ import {
   type RegionalRiskSummary,
   type TrendPoint,
 } from "@/lib/server/db/analytics";
+import { parseBoundingBox } from "@/lib/server/security/bbox";
+import {
+  activityGridToFeatureCollection,
+  aggregateActivityGrid,
+} from "@/lib/server/services/community-activity";
 
-function unpublishedAggregate<T>(name: string): T {
-  throw new TRPCError({
-    code: "PRECONDITION_FAILED",
-    message: `${name} is unavailable until a versioned warehouse aggregate is published`,
-  });
-}
+const DEMAND_GRID_ZOOM = 6;
+const DEMAND_GRID_LIMIT = 2_000;
 
 export const analyticsRouter = router({
   featureCounts: publicProcedure.query(async ({ ctx }) => {
@@ -48,12 +49,26 @@ export const analyticsRouter = router({
     return getSystemStats(ctx.db);
   }),
 
-  /** Reserved contract for a published regional-risk aggregate. */
+  /**
+   * Still closed: every field of RegionalRiskSummary is a non-nullable number or
+   * trend, and no published risk aggregate exists to fill them. Returning zeros
+   * would fabricate a confident "no risk" answer — see src/lib/server/db/analytics.ts.
+   */
   getRegionalRiskSummary: publicProcedure
     .input(z.object({ bbox: z.string().max(100) }))
-    .query(() => unpublishedAggregate<RegionalRiskSummary>("Regional risk summary")),
+    .query((): RegionalRiskSummary => {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message:
+          "No regional risk aggregate is published. The predictive tables this reads " +
+          "(agri.danger_prediction, agri.strategy_effect) do not exist in any schema yet.",
+      });
+    }),
 
-  /** Reserved contract for published environmental time series. */
+  /**
+   * Open and empty: no environmental time-series aggregate is published yet, so the
+   * honest series is no points. It fills in as soon as one is.
+   */
   getTrendData: publicProcedure
     .input(
       z.object({
@@ -62,19 +77,31 @@ export const analyticsRouter = router({
         days: z.number().int().min(1).max(365).default(30),
       })
     )
-    .query(() => unpublishedAggregate<TrendPoint[]>("Environmental trend series")),
+    .query((): TrendPoint[] => []),
 
-  /** Reserved contract for an approved priority-ranking release. */
+  /** Open and empty until a ranked-subregion release exists to read. */
   getPrioritySubregions: publicProcedure
     .input(z.object({ bbox: z.string() }))
-    .query(() => unpublishedAggregate<PrioritySubregion[]>("Priority-subregion ranking")),
+    .query((): PrioritySubregion[] => []),
 
-  /** Reserved contract for privacy-reviewed partner opportunity waypoints. */
+  /** Community request density, aggregated server-side onto a coarse grid. */
   getDemandDensity: protectedProcedure
     .input(z.object({ bbox: z.string().max(100) }))
-    .query(() =>
-      unpublishedAggregate<GeoJSON.FeatureCollection>(
-        "Partner opportunity waypoint density"
-      )
-    ),
+    .query(async ({ ctx, input }) => {
+      const boundingBox = parseBoundingBox(input.bbox);
+      if (!boundingBox) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Invalid bbox. Expected ordered west,south,east,north",
+        });
+      }
+      const grid = await aggregateActivityGrid(ctx.db, {
+        boundingBox,
+        zoom: DEMAND_GRID_ZOOM,
+        limit: DEMAND_GRID_LIMIT,
+        minimumVotes: 0,
+        minimumFeatureCount: 1,
+      });
+      return activityGridToFeatureCollection(grid);
+    }),
 });

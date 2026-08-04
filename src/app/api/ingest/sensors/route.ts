@@ -40,6 +40,11 @@ export async function POST(request: NextRequest) {
     properties: {
       sensor_id,
       timestamp,
+      // Same instant under the key environmental-read-model.ts dates rows by; `timestamp` is
+      // not in its COALESCE list, so a row without this is invisible to the time axis. Kept
+      // byte-identical to the Python producer's payload so a pushed and a pulled reading for
+      // the same observation do not churn each other on refresh.
+      observedAt: timestamp,
       readings,
       geometry: {
         type: "Point",

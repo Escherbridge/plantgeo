@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { Box, Building2 } from "lucide-react";
 import { useMapStore } from "@/stores/map-store";
+import { useLayerToggle, useToggleLayer } from "@/lib/map/layer-toggle-context";
 import { Button } from "@/components/ui/button";
 import { FloatingToolbar } from "@/components/ui/floating-toolbar";
 import TerrainControl from "./TerrainControl";
@@ -19,9 +20,9 @@ export default function MapControls() {
   const toggleGlobe = useMapStore((s) => s.toggleGlobe);
   const setCurrentStyle = useMapStore((s) => s.setCurrentStyle);
   const resetView = useMapStore((s) => s.resetView);
-  const activeLayers = useMapStore((s) => s.activeLayers);
-  const toggleLayer = useMapStore((s) => s.toggleLayer);
-  const buildingFootprintsEnabled = activeLayers.includes("building-footprints");
+  const toggleLayer = useToggleLayer();
+  // Subscribes to this one layer, not the whole toggle list.
+  const buildingFootprintsEnabled = useLayerToggle("building-footprints");
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {

@@ -10,6 +10,7 @@ import { visualizationRouter } from "@/lib/server/trpc/routers/visualization";
 import { placesRouter } from "@/lib/server/trpc/routers/places";
 import { environmentalRouter } from "@/lib/server/trpc/routers/environmental";
 import { communityRouter } from "@/lib/server/trpc/routers/community";
+import { interventionsRouter } from "@/lib/server/trpc/routers/interventions";
 import { strategyRouter } from "@/lib/server/trpc/routers/strategy";
 import { alertsRouter } from "@/lib/server/trpc/routers/alerts";
 import { regionalIntelligenceRouter } from "@/lib/server/trpc/routers/regional-intelligence";
@@ -26,6 +27,7 @@ export const appRouter = router({
   places: placesRouter,
   environmental: environmentalRouter,
   community: communityRouter,
+  interventions: interventionsRouter,
   strategy: strategyRouter,
   alerts: alertsRouter,
   regionalIntelligence: regionalIntelligenceRouter,

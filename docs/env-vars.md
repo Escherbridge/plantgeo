@@ -57,11 +57,13 @@ does not update the client.
 | Variable | Policy |
 | --- | --- |
 | `INGEST_SECRET` | Dedicated bearer secret for authenticated ingestion routes. Required in production for those routes. |
-| `CRON_SECRET` | Dedicated bearer secret for the bounded cron ingress route. It does not enable a forecast/training worker. |
-| `INGEST_BBOX` | Required for scheduled FIRMS/water acquisition; `west,south,east,north`, capped by code. Start with one reviewed region. |
-| `NASA_FIRMS_KEY` | Server-only; required only when running the FIRMS acquisition path. |
+| `INGEST_BBOX` | Required for scheduled acquisition; `west,south,east,north`, capped at 30° longitude by 20° latitude. Read by both the authenticated `/api/ingest/*` routes and the `plantgeo-ingest-cron` container's `agri-cli ingest-all`. Start with one reviewed region. |
+| `NASA_FIRMS_KEY` | Server-only; required only when running the FIRMS acquisition path (the web routes and the cron container both read it). |
+| `FIRMS_DAY_RANGE` | Optional, cron container only. FIRMS lookback window in days; must be a plain non-negative integer string or it silently falls back to the default. Clamped to 1-10, default 2. |
+| `INGEST_MAX_SOURCE_RECORDS` | Optional, cron container only. Caps the number of records accepted from a single ingestion source per run. Clamped to 1,000-50,000, default 10,000. |
+| `WEATHER_SAMPLE_SPACING_DEGREES` | Optional, cron container only. Starting grid spacing (degrees) for the Open-Meteo sampling sweep. Clamped to 0.25-5.0, default 1.0; the sweep coarsens spacing until `columns * rows <= 150`, it never slices the grid. |
 | `MAPILLARY_ACCESS_TOKEN` | Server-only imagery proxy token. Mapillary remains a licensed imagery exception, not a warehouse bypass. |
-| `FIRES_LAYER_ID` | Existing layer name/UUID for submitted fire perimeters; default `fire-perimeters`. |
+| `FIRES_LAYER_ID` | **Web routes only** (`POST /api/ingest/fires`). Existing layer name/UUID for submitted fire perimeters; default `fire-perimeters`. The cron container's WFIGS producer reads `FIRE_PERIMETERS_LAYER_ID` instead — both default to `fire-perimeters`, so nothing breaks until someone repoints one of them. |
 | `FIRMS_LAYER_ID` | Existing layer name/UUID for persisted detections; default `fire-detections`. |
 | `SENSORS_LAYER_ID` | Existing layer name/UUID for sensor writes; default `sensors`. |
 | `WATER_GAUGES_LAYER_ID` | Existing layer name/UUID for gauge observations; default `water-gauges`. |
@@ -70,6 +72,37 @@ does not update the client.
 Layer references must exist before ingestion. A missing key, source, or layer
 must fail closed and preserve the last valid publication; it must not generate a
 sample observation.
+
+`CRON_SECRET` is retired: `plantgeo-ingest-cron` now runs `agri-cli ingest-all` as a Python
+container that reaches Postgres and Redis directly, instead of calling an HTTP route with an
+`x-cron-secret` header. There is no cron ingress secret left to configure once
+`src/app/api/cron/ingest/route.ts` is removed.
+
+**The cron container's database variable is `LOCAL_SOURCE_LOADER_DATABASE_URL`, not
+`DATABASE_URL`.** Every `ingest-*` verb opens `ingest_session()`, which calls
+`settings.require_local_source_loader_database_url()`; that reader has no fallback and raises
+`source-ingest requires LOCAL_SOURCE_LOADER_DATABASE_URL; DATABASE_URL is never a loader fallback`
+outside any per-source isolation, so a container configured with `DATABASE_URL` alone dies with an
+unhandled traceback on every hourly tick and ingests nothing. `DATABASE_URL` must **not** be set on
+this service: the validator rejects a loader DSN equal to it, and both fields are normalised to
+`postgresql+asyncpg://` before the comparison, so the "obvious" fix of setting them to the same
+string fails too. The value must be the Railway **public proxy** DSN
+(`switchback.proxy.rlwy.net:37967`, role `postgres`) — `_INGEST_SOURCE_LOADER_ALLOWED_TARGETS`
+does not accept the `postgres.railway.internal` private-network host. `REDIS_URL` is still
+required, for the realtime publisher. See
+`services/agri-data-service/src/agri_data_service/ingest/AGENTS.md`.
+
+| Variable | Policy |
+| --- | --- |
+| `LOCAL_SOURCE_LOADER_DATABASE_URL` | **Required on `plantgeo-ingest-cron`**, and on any local `agri-cli ingest-*`/`source-ingest` run. The only new variable with no default. Allowed targets: `127.0.0.1:5442/plantgeo` as `plantgeo_loader`, or `switchback.proxy.rlwy.net:37967/plantgeo` as `postgres`. Rejects the `plantgeo_owner` bootstrap role, a query string, and any DSN equal to `DATABASE_URL`. |
+| `FIRE_PERIMETERS_LAYER_ID` | Optional, cron container only. Existing layer name/UUID for WFIGS perimeters; default `fire-perimeters`. This is the variable the Python `wfigs` module reads — `FIRES_LAYER_ID` below is read only by the web route `POST /api/ingest/fires`. Set both if you repoint the layer, or the two writers silently diverge. |
+| `VEGETATION_LAYER_ID` | Optional, cron container only. Layer for Sentinel-2 NDVI grid samples; default `vegetation`. |
+| `EVACUATION_ZONES_LAYER_ID` | Optional, cron container only. Layer for Oregon OEM evacuation areas; default `evacuation-zones`. |
+| `NWS_API_USER_AGENT` | Optional, cron container only. Contact string the NWS API requires of API clients; has a default, but set a real contact before running at volume. |
+| `SENSOR_STATION_STATES` | Optional, cron container only. Comma-separated US state codes the NWS station sweep covers. |
+| `SENSOR_STATION_NETWORKS` | Optional, cron container only. Comma-separated NWS observation networks to accept. |
+| `SENSOR_MAX_STATIONS` | Optional, cron container only. Caps stations polled per run. |
+| `DROUGHT_RETAINED_RELEASES` | Optional, cron container only. How many USDM weekly releases survive the post-run prune. Raise it before running `ingest-drought-history`, or the next ordinary tick deletes the history you just walked. |
 
 ### AI, email, commerce, and administration
 

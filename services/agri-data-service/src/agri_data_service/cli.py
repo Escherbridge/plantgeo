@@ -122,6 +122,7 @@ from agri_data_service.execution.strategy_selection import (
     load_strategy_label_bundle,
     train_strategy_models,
 )
+from agri_data_service.ingest.commands import register_ingest_commands
 from agri_data_service.models.strategy import Strategy
 from agri_data_service.seed.strategies import STRATEGY_SEEDS
 from alembic import command
@@ -140,6 +141,9 @@ if TYPE_CHECKING:
 @click.group()
 def cli() -> None:
     """Agri Data Service CLI."""
+
+
+register_ingest_commands(cli)
 
 
 @cli.command()

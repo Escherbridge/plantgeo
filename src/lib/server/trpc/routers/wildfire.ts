@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, publicProcedure, contributorProcedure } from "@/lib/server/trpc/init";
+import { router, publicProcedure } from "@/lib/server/trpc/init";
 import { features, layers } from "@/lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
@@ -117,59 +117,12 @@ export const wildfireRouter = router({
       return rows;
     }),
 
-  /**
-   * Create a new intervention feature in the interventions layer.
-   */
-  createIntervention: contributorProcedure
-    .input(
-      z.object({
-        strategyId: z.string(),
-        name: z.string(),
-        description: z.string().optional(),
-        priority: z.enum(["High", "Medium", "Low"]).default("Medium"),
-        geometry: z.record(z.unknown()).optional(),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      // Find or create the interventions layer
-      let layerRow = await ctx.db
-        .select({ id: layers.id })
-        .from(layers)
-        .where(eq(layers.name, "interventions"))
-        .limit(1);
-
-      let layerId: string;
-      if (layerRow.length === 0) {
-        const created = await ctx.db
-          .insert(layers)
-          .values({
-            name: "interventions",
-            type: "vector",
-            description: "Wildfire intervention strategy zones",
-            isPublic: true,
-          })
-          .returning({ id: layers.id });
-        layerId = created[0].id;
-      } else {
-        layerId = layerRow[0].id;
-      }
-
-      const [inserted] = await ctx.db
-        .insert(features)
-        .values({
-          layerId,
-          properties: {
-            strategyId: input.strategyId,
-            name: input.name,
-            description: input.description ?? null,
-            priority: input.priority,
-            geometry: input.geometry ?? null,
-          },
-        })
-        .returning();
-
-      return inserted;
-    }),
+  // `createIntervention` was retired here: it wrote unreviewed, unvalidated
+  // rows into the shared interventions layer under a fire-specific
+  // strategyId/priority vocabulary. Interactive submission now lives in
+  // `interventions.submitIntervention`, which validates geometry and always
+  // enters expert review. It had no callers, and the layer had no rows, so
+  // nothing was migrated.
 
   /**
    * Read the nearest fresh warehouse-backed weather observation to a point.

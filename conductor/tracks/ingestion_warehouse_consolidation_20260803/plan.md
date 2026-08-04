@@ -267,3 +267,69 @@ Two UI defects the owner found in the browser on 2026-08-03, in code shipped by
 - Whether any surviving ML table needs `geometry_id` beyond `forecast_series`.
 - MTBS licensing under Esri AGOL terms — persist now, record the terms in
   `data_source`, revisit only if distribution changes.
+
+---
+
+## Out-of-band: geometry dimension repaired against production, 2026-08-04
+
+Applied by the owner's direction to run against prod (overriding this track's
+never-touch-prod rule; recorded here so the override is auditable, not silent).
+
+**Before:** 3,669 of 23,690 features had `geometry_id IS NULL`; `geo.geometry` held 20,021
+rows. The orphan count was *growing* — 3,505 → 3,669 in roughly one hour — because the
+Python ingest path never writes the dimension.
+
+**Applied:** one transaction. 3,669 geometry versions inserted, 3,669 features linked.
+Guarded by a `DO` block that aborts if any orphan lacks an observation time or geometry.
+
+**After:** `0` orphans; 23,690 features = 23,690 geometry rows = 23,690 open versions.
+
+Every repaired row was dated from its **own payload** (`updatedAt` for `usgs-nwis`,
+`observedAt` for `open-meteo`) — zero from a clock, zero at `-infinity`, zero key
+collisions, zero pre-existing open versions for those keys (rehearsed under `ROLLBACK`
+first, which left the row count unchanged at 20,021).
+
+Key formula confirmed empirically against all 20,021 previously-linked rows:
+`natural_key = producer || ':' || (properties->>'id')` — resolving §7 Q1 in favour of
+producer tokens, as lane A recommended.
+
+**This is a repair, not a fix.** `ingest/writer.py` still inserts `(layer_id, properties)`
+only, so orphans regrow every cron tick until the versioned warehouse adapter lands. That
+adapter is in flight.
+
+### Lane A closed out
+
+`ingest/identity.py` shipped and was validated the strong way: it reproduces **all 23,526**
+stored production keys byte-identically — every row, not a sample — via §4.2's *preferred*
+route (reading `properties->>'id'` back out of `geo.features`), which closes the
+carry-forward that the golden fixtures were only TypeScript-derived.
+
+## Out-of-band: geometry dimension re-keyed to entities, 2026-08-04
+
+The dimension was keyed by OBSERVATION, not place: 15,936 gauge rows for 899 real gauges (17x),
+2,983 weather rows for 116 sample points (25x). Every key held exactly one version and
+`superseded_by` was NULL everywhere — the Type-2 machinery was inert.
+
+`identity.py` gained an additive split (observation key unchanged, so TypeScript parity holds):
+`natural_key` = the observation; `entity_key` = the enduring place. `geometry.py`'s
+`geometry_key_for()` returns `entity_key` — it originally returned `natural_key` and no test
+caught it, because no fixture set `entity_local_id`. Now covered.
+
+**Rebuild applied to production:** 17,281 observation-keyed rows deleted; 1,015 entity rows
+inserted; every feature re-linked.
+
+| | Before | After |
+|---|---|---|
+| `geo.geometry` rows | 23,690 | **7,424** |
+| Orphaned features | 1,638 (regrown) | **0** |
+| `usgs-nwis` slider depth | 1990-10-01 | **1990-10-01** (preserved) |
+
+Each entity's first version is dated from its **earliest** observation and shaped by its
+**latest** — dating from the latest would have silently discarded 36 years of slider range.
+Cross-validated two ways: the SQL derivation and `identity.py` in Python both produced 7,424.
+
+Python sweep after the spine landed: **853 passed, 26 skipped** (baseline was 645).
+
+**Not fixed by this:** `geo.features` still grows ~13,200 rows/day at ~5.4 KB (~71 MB/day).
+Geometry growth is now ~zero. Owner decision: no `geo.metric_daily` and no new migration —
+serve the slider from queries over existing tables, driven by layer toggles.

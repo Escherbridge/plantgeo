@@ -2,14 +2,17 @@
 type: lane-brief
 track: ingestion_warehouse_consolidation_20260803
 lane: A
-status: in-progress
+status: complete
 depends_on: none
 started_at: 2026-08-03
+completed_at: 2026-08-03
 note: >-
-  An earlier session set this to in-progress without landing anything —
-  ingest/identity.py and tests/test_ingest_identity.py did not exist. Being
-  executed for real as the blocking wave 0 of workflow wf_41869a8a-31f
-  (see lane-D-python-ingest-modules.md §8).
+  Landed TWICE, concurrently, by two workflows: wf_7aa077b2-b9d and
+  wf_4f98c325-5fa. The second agent found three of its four files already on disk
+  and identity.py being edited underneath it (a refactor of format_coordinate into
+  format_javascript_fixed); it reviewed and merged rather than aborting, then
+  re-verified. The merged file is coherent and the full sweep is green, but the
+  merge was never independently reviewed — see §8.
 ---
 
 # Lane A — The identity contract
@@ -414,3 +417,75 @@ release identifier to read. *Recommendation:* return `observed_at = None` for MT
 let lane E supply the release date when it builds the real ingest. Note it in `ingest/AGENTS.md` as
 a known gap rather than guessing a date — a guessed release date is exactly the ~18-month leak D3
 exists to prevent.
+
+---
+
+## 8. Outcome — complete 2026-08-03 (workflow `wf_7aa077b2-b9d`)
+
+Four files written, nothing else touched: `ingest/identity.py`, `ingest/__init__.py` (empty),
+`ingest/AGENTS.md`, `tests/test_ingest_identity.py`.
+
+### The key format, per producer — verbatim
+
+| Producer | `natural_key` format | Example |
+|---|---|---|
+| `firms` | `firms:{satellite}:{acqDate}:{acqTime raw, unpadded}:{lat 4dp}:{lon 4dp}` | `firms:N:2026-08-03:0142:45.1563:-119.1563` |
+| `usgs-nwis` | `usgs-nwis:{siteNo}:{updatedAt upstream string, verbatim}` | `usgs-nwis:14105700:2026-08-03T09:15:00.000-07:00` |
+| `open-meteo` | `open-meteo:{lat 4dp}:{lon 4dp}:{observedAt upstream string, verbatim}` | `open-meteo:42.5000:-111.5000:2026-08-03T01:15:00.000Z` |
+| `wfigs` | `wfigs:{uniqueFireIdentifier}` | `wfigs:2026-ORTNF-000123` |
+| `usdm` | `usdm:{validDate YYYY-MM-DD}:{dmCategory}` | `usdm:2026-07-28:2` |
+| `mtbs` | `mtbs:{Fire_ID}` | `mtbs:ID4315711583020210714` |
+
+### `observed_at`, per producer
+
+| Producer | Rule | May be `None`? |
+|---|---|---|
+| `firms` | `acqDate` + `acqTime` zero-padded to 4 digits, parsed UTC. An explicitly-zoned `properties.observedAt` is preferred when present (ports `parseFirmsObservationTime`'s stored branch). | no |
+| `usgs-nwis` | upstream `updatedAt` — the same string embedded in the key — parsed on a **separate copy**. Absent ⇒ raises. | no |
+| `open-meteo` | upstream `observedAt`, same separate-copy rule. Absent ⇒ raises. | no |
+| `wfigs` | `polygonDateTime` when present and non-blank, else `None`. | **yes** |
+| `usdm` | midnight UTC on the release `validDate`. | no |
+| `mtbs` | always `None` — no annual release identifier is readable yet. Lane E supplies it. | **yes** |
+
+### Q1 resolved — **producer token, not layer name**. Lane B is unblocked.
+
+`identity.py` exports `PRODUCER_BY_LAYER_NAME` as a `MappingProxyType`:
+`fire-detections→firms`, `water-gauges→usgs-nwis`, `weather-observations→open-meteo`,
+`fire-perimeters→wfigs`. **Lane B must substitute this for `l.name` in the backfill `INSERT`**
+rather than using the plan §2.0 line 266 SQL `l.name || ':' || (f.properties ->> 'id')` literally.
+Pinned by `test_producer_by_layer_name_replaces_the_layer_namespace_in_the_backfill`.
+
+`observed_at is None` maps to the SQL literal `'-infinity'::timestamptz`. No sentinel datetime
+exists on the dataclass — `datetime.min` would sort as year 1, not as "before all time".
+
+### T4 divergence — lane D must NOT undo this
+
+`build_streamflow_gauge_identity` **raises** `MissingNativeKeyError` when upstream supplies no
+`updatedAt`, instead of the TypeScript's `usgs-water.ts:183` fallback
+`latest?.dateTime ?? new Date().toISOString()`. Deliberate: the TS behaviour is wall-clock
+non-deterministic and therefore not golden-testable at all, and under a Type-2 dimension it would
+mint a fresh version chain every hour for every silent gauge. Recorded in `ingest/AGENTS.md` ¶9.
+
+### Gate evidence (re-run and watched, not taken on report)
+
+`pytest tests/test_ingest_identity.py -q` → **81 passed, 0 skipped**, 0.63 s, no database.
+`ruff format --check` → `3 files already formatted`. `ruff check` → `All checks passed!`.
+`mypy` → `Success: no issues found`. Smoke import prints `mtbs:ID4315711583020210714`.
+Pre-lane baseline for §6 step 2 was **245 passed, 26 skipped**.
+
+§6 steps 2 and 7 (full-repo sweep, clean `git status`) are **not attributable to this lane** —
+lanes B, D, E and a front-end lane were writing concurrently from another session throughout.
+
+### Carry-forward
+
+1. **The golden fixtures are TypeScript-derived, not database-captured.** `PLANTGEO_READONLY_URL`
+   was unset for the whole lane, so §4.2's preferred route was unavailable and the sanctioned
+   fallback was used: a character-for-character Node transcription of the TS builders, executed
+   under node v24.13.0. This pins the port against the *current TypeScript's logic*, not against
+   stored history. Both `ingest/AGENTS.md` ¶2 and the fixture header say so explicitly and name
+   stored history as the authority if a key mismatch ever appears. **A real §4.2 capture is still
+   outstanding** once a populated database is reachable.
+2. Upstream string *shapes* are assumed, not observed — the NWIS `updatedAt`
+   millisecond-and-offset spelling and the `boundedSamplePoints` grid coordinates. A wrong
+   assumption there still passes every assertion in the file.
+3. `ingest/AGENTS.md` is shared; lane D has appended its own paragraphs. Expected, not a breach.

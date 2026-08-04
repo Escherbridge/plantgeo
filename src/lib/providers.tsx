@@ -1,11 +1,9 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { httpBatchLink } from "@trpc/client";
-import superjson from "superjson";
 import { useState } from "react";
 import { SessionProvider } from "next-auth/react";
-import { trpc } from "@/lib/trpc/client";
+import { trpc, trpcLinks } from "@/lib/trpc/client";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -20,16 +18,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       })
   );
 
-  const [trpcClient] = useState(() =>
-    trpc.createClient({
-      links: [
-        httpBatchLink({
-          url: "/api/trpc",
-          transformer: superjson,
-        }),
-      ],
-    })
-  );
+  const [trpcClient] = useState(() => trpc.createClient({ links: trpcLinks() }));
 
   return (
     <SessionProvider>

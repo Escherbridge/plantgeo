@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { trpc } from "@/lib/trpc/client";
 import { RequestSubmitModal } from "@/components/panels/RequestSubmitModal";
+import { InterventionSubmitModal } from "@/components/panels/InterventionSubmitModal";
 import { LayerToggle } from "@/components/ui/layer-toggle";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -37,6 +38,32 @@ const STRATEGY_LABELS: Record<string, string> = {
   cover_cropping: "Cover Cropping",
 };
 
+const INTERVENTION_STATUS_LABELS: Record<string, string> = {
+  pending_review: "In review",
+  published: "Approved",
+  rejected: "Not accepted",
+};
+
+const INTERVENTION_TYPE_LABELS: Record<string, string> = {
+  reforestation: "Reforestation",
+  silvopasture: "Silvopasture",
+  cover_cropping: "Cover Cropping",
+  biochar: "Biochar",
+  keyline: "Keyline Design",
+};
+
+/** Narrows the jsonb properties bag a submission row carries. */
+function readInterventionSummary(properties: unknown): {
+  name: string;
+  type: string;
+} {
+  const bag = (properties ?? {}) as { name?: unknown; type?: unknown };
+  return {
+    name: typeof bag.name === "string" ? bag.name : "Untitled site",
+    type: typeof bag.type === "string" ? bag.type : "",
+  };
+}
+
 interface CommunityPanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -65,6 +92,7 @@ export function CommunityPanel({
 }: CommunityPanelProps) {
   const [strategyFilter, setStrategyFilter] = useState<StrategyFilter>("");
   const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [showInterventionModal, setShowInterventionModal] = useState(false);
   const { activeTeamId } = useAuthStore();
   const { data: memberships } = trpc.teams.listMyTeams.useQuery(undefined, {
     enabled: open,
@@ -92,6 +120,14 @@ export function CommunityPanel({
     { enabled: open }
   );
 
+  const {
+    data: interventionSubmissions,
+    refetch: refetchInterventions,
+  } = trpc.interventions.listMySubmissions.useQuery(
+    { teamId: activeTeamId ?? undefined, limit: 25 },
+    { enabled: open }
+  );
+
   const submitLat = mapCenter?.lat ?? 0;
   const submitLon = mapCenter?.lon ?? 0;
 
@@ -107,12 +143,73 @@ export function CommunityPanel({
             </SheetTitle>
           </SheetHeader>
 
-          <LayerToggle
-            layerId="demand-heatmap"
-            label="Demand Heatmap"
-            unavailableReason="Aggregate demand is not published, because it would leak the locations the ledger exists to protect. It stays dark until a reviewed, access-controlled warehouse publication is in place."
-          />
+          {/* demand-heatmap's withheld reason lives in the layer registry, not here. */}
+          <LayerToggle layerId="demand-heatmap" label="Demand Heatmap" />
           <LayerToggle layerId="interventions" label="Interventions" />
+
+          {/* Intervention recommendations */}
+          <section className="mt-4 mb-5 rounded-lg border border-[hsl(var(--border))] p-3">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <h3 className="text-sm font-medium text-[hsl(var(--foreground))]">
+                Intervention recommendations
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowInterventionModal(true)}
+                disabled={!canSubmitToActiveTeam}
+                title={
+                  canSubmitToActiveTeam
+                    ? undefined
+                    : "Only a workspace owner or member can recommend a shared intervention"
+                }
+                className="px-3 py-2 min-h-11 rounded-lg border border-[hsl(var(--border))] text-sm text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] transition-colors whitespace-nowrap disabled:opacity-50"
+              >
+                + Recommend
+              </button>
+            </div>
+
+            <p className="text-xs text-[hsl(var(--muted-foreground))] mb-2">
+              Recommendations are held for expert review and only reach the
+              public map once a reviewer approves them.
+            </p>
+
+            {!interventionSubmissions || interventionSubmissions.length === 0 ? (
+              <p className="text-xs text-[hsl(var(--muted-foreground))] py-2">
+                {activeTeamId
+                  ? "This partner workspace has not recommended any interventions yet."
+                  : "You have not recommended any interventions yet."}
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {interventionSubmissions.map((submission) => {
+                  const { name, type } = readInterventionSummary(
+                    submission.properties
+                  );
+                  const status = submission.status ?? "pending_review";
+                  return (
+                    <li
+                      key={submission.id}
+                      className="rounded-lg bg-[hsl(var(--card))] px-3 py-2"
+                    >
+                      <p className="text-sm text-[hsl(var(--foreground))] truncate">
+                        {name}
+                      </p>
+                      <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                        {INTERVENTION_TYPE_LABELS[type] ?? type}
+                        {type && " · "}
+                        {INTERVENTION_STATUS_LABELS[status] ?? status}
+                      </p>
+                      {status === "rejected" && submission.reviewNote && (
+                        <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
+                          Reviewer note: {submission.reviewNote}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
 
           {/* Filter + Submit */}
           <div className="flex gap-2 mb-4">
@@ -240,6 +337,17 @@ export function CommunityPanel({
           workspaceName={activeTeam?.name}
           onClose={() => setShowSubmitModal(false)}
           onSuccess={() => refetch()}
+        />
+      )}
+
+      {showInterventionModal && (
+        <InterventionSubmitModal
+          lat={submitLat}
+          lon={submitLon}
+          teamId={activeTeamId ?? undefined}
+          workspaceName={activeTeam?.name}
+          onClose={() => setShowInterventionModal(false)}
+          onSuccess={() => refetchInterventions()}
         />
       )}
     </>

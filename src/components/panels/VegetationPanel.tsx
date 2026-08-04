@@ -13,6 +13,8 @@ import {
 } from "@/lib/vegetation";
 import { NLCD_CATEGORY_CLASSES, NLCD_CLASSES, type NLCDCategory } from "@/lib/environmental/nlcd";
 import { useVegetationStore } from "@/stores/vegetation-store";
+import { isCalendarDate } from "@/stores/time-slider-store";
+import { useLayerRenderState, useMapDay } from "@/lib/map/layer-toggle-context";
 import { LayerToggle } from "@/components/ui/layer-toggle";
 import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
 import type { LandCoverMode } from "@/components/map/layers/LandCoverLayer";
@@ -38,9 +40,29 @@ interface VegetationPanelProps {
   onEnabledCategoriesChange?: (cats: NLCDCategory[]) => void;
 }
 
-// GIBS NDVI monthly composites have ~2 month processing delay
-const MAX_YEAR = new Date().getFullYear() - 1;
 const MIN_YEAR = 2000;
+
+// The geo.layers name these NDVI controls drive lives in the layer registry
+// ("vegetation" -> "vegetation").
+
+/**
+ * Ceiling used until capabilities land. A constant, never the live selection: deriving the
+ * ceiling from the current year would make the slider's max follow its own value, so moving
+ * the year down would permanently lower the ceiling. Matches the vegetation store's default
+ * year -- see src/stores/vegetation-store.ts.
+ */
+const FALLBACK_LATEST_COMPOSITE_YEAR = 2024;
+
+/**
+ * Newest selectable composite year. GIBS NDVI monthly composites carry a ~2 month
+ * processing delay, so it is the year before the server's today. Derived from the
+ * capabilities payload and never from the browser clock, which is a different clock and
+ * across New Year disagrees by a whole year.
+ */
+function latestCompositeYear(serverCurrentDate: string | null, fallbackYear: number): number {
+  if (serverCurrentDate === null || !isCalendarDate(serverCurrentDate)) return fallbackYear;
+  return Number(serverCurrentDate.slice(0, 4)) - 1;
+}
 
 function ColorLegendRow({ color, label }: { color: string; label: string }) {
   return (
@@ -70,6 +92,26 @@ export function VegetationPanel({
   const showNDWI = vegStore.showNDWI;
   const [landCoverMode, setLandCoverMode] = useState<LandCoverMode>("2021");
   const [enabledCategories, setEnabledCategories] = useState<NLCDCategory[]>([...ALL_CATEGORIES]);
+
+  // The map's day, read from the toggle context. These controls stay monthly because GIBS
+  // composites are monthly -- rebinding them to a day-granular slider would claim a
+  // resolution the upstream does not have -- so the panel states the composite period
+  // instead of implying it follows.
+  const mapDay = useMapDay();
+  const selectedDate = mapDay.selectedDate;
+  const hasSelectedDay = selectedDate !== null;
+
+  // Slider depth from the payload, never the browser clock.
+  const maxYear = Math.max(
+    MIN_YEAR,
+    latestCompositeYear(mapDay.serverCurrentDate, FALLBACK_LATEST_COMPOSITE_YEAR)
+  );
+
+  const compositePeriod = `${year}-${String(month).padStart(2, "0")}`;
+  const compositeDiffersFromSelectedDay =
+    selectedDate !== null && selectedDate.slice(0, 7) !== compositePeriod;
+
+  const vegetationReason = useLayerRenderState("vegetation").unavailableReason;
 
   const zonesQuery = trpc.environmental.getReforestationZones.useQuery(
     { bbox: bbox ?? "" },
@@ -139,6 +181,22 @@ export function VegetationPanel({
 
         <LayerToggle layerId="vegetation" label="Vegetation (NDVI)" />
 
+        {hasSelectedDay && (
+          <p className="mt-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2 py-1.5 text-[11px] text-[hsl(var(--muted-foreground))]">
+            Map date{" "}
+            <span className="font-medium text-[hsl(var(--foreground))]">{selectedDate}</span>
+            {compositeDiffersFromSelectedDay && (
+              <>
+                {" — NDVI composite shown is "}
+                <span className="font-medium text-[hsl(var(--foreground))]">
+                  {MONTHS[month - 1]} {year}
+                </span>
+                {", not this date."}
+              </>
+            )}
+          </p>
+        )}
+
         <div className="mt-4 overflow-y-auto max-h-[calc(100vh-8rem)]">
           <Tabs defaultValue="ndvi">
             <TabsList className="w-full">
@@ -158,6 +216,14 @@ export function VegetationPanel({
 
             {/* NDVI Tab */}
             <TabsContent value="ndvi" className="flex flex-col gap-4 mt-4">
+              {/* Why the vegetation layer has nothing for the selected day, so an empty
+                  layer is never mistaken for the toggle being off. */}
+              {vegetationReason !== null && (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                  {vegetationReason}
+                </p>
+              )}
+
               {!ENVIRONMENTAL_TILES_CONFIGURED && (
                 <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
                   Vegetation tiles are paused until a versioned first-party
@@ -171,7 +237,7 @@ export function VegetationPanel({
                 </div>
                 <Slider
                   min={MIN_YEAR}
-                  max={MAX_YEAR}
+                  max={maxYear}
                   step={1}
                   value={year}
                   onValueChange={handleYearChange}

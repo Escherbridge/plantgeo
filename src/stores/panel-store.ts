@@ -1,5 +1,10 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
+import {
+  layerRegistryEntries,
+  panelIdForLayerToggle,
+  type LayerToggleId,
+} from "@/lib/map/layer-registry";
 import { useMapStore } from "@/stores/map-store";
 
 // ---------------------------------------------------------------------------
@@ -16,17 +21,29 @@ export type PanelId =
   | "team"
   | "analytics";
 
-/** Maps each panel to the layer IDs it governs. */
-const PANEL_LAYER_MAP: Record<PanelId, string[]> = {
-  fire:       ["fire", "fire-perimeters"],
-  water:      ["water", "drought", "weather"],
-  vegetation: ["vegetation"],
-  soil:       ["soil"],
-  community:  ["demand-heatmap", "interventions"],
-  strategy:   [],
-  analytics:  [],
-  team:       [],
-};
+/**
+ * Maps each panel to the layer IDs it governs, inverted from the layer registry so a
+ * layer's owning panel is declared once, next to the rest of that layer's wiring.
+ * Panels with no layers of their own still get an entry, hence the seeded record.
+ */
+function buildPanelLayerMap(): Record<PanelId, LayerToggleId[]> {
+  const panelLayers: Record<PanelId, LayerToggleId[]> = {
+    fire:       [],
+    water:      [],
+    vegetation: [],
+    soil:       [],
+    community:  [],
+    strategy:   [],
+    analytics:  [],
+    team:       [],
+  };
+  for (const entry of layerRegistryEntries()) {
+    if (entry.panelId !== null) panelLayers[entry.panelId].push(entry.toggleId);
+  }
+  return panelLayers;
+}
+
+const PANEL_LAYER_MAP: Record<PanelId, LayerToggleId[]> = buildPanelLayerMap();
 
 // ---------------------------------------------------------------------------
 // Store
@@ -81,10 +98,7 @@ export function getLayersForPanel(panelId: PanelId): string[] {
 
 /** Get the panel that owns a layer ID (if any). */
 export function getPanelForLayer(layerId: string): PanelId | null {
-  for (const [panelId, layers] of Object.entries(PANEL_LAYER_MAP)) {
-    if (layers.includes(layerId)) return panelId as PanelId;
-  }
-  return null;
+  return panelIdForLayerToggle(layerId);
 }
 
 /** All layer IDs managed by any panel. */

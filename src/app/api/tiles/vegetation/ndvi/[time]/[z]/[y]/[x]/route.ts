@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
+import { toAsciiHeaderValue } from "@/app/api/tiles/vegetation/header-value";
 import { fetchBounded } from "@/lib/server/http/bounded-upstream";
 import { GIBS_NDVI_PRODUCT } from "@/lib/vegetation";
 
 export const runtime = "nodejs";
+
+/** The attribution keeps its typography for display; a header must be a ByteString. */
+const DATA_SOURCE_HEADER = toAsciiHeaderValue(GIBS_NDVI_PRODUCT.attribution);
 
 /** Observed GIBS NDVI tiles are ~50 KB; this only bounds a pathological response. */
 const MAX_TILE_BYTES = 2 * 1024 * 1024;
@@ -105,7 +109,7 @@ export async function GET(
       "Cache-Control": `public, max-age=${
         isLatest ? LATEST_TILE_MAX_AGE_S : IMMUTABLE_TILE_MAX_AGE_S
       }, stale-while-revalidate=3600`,
-      "X-Data-Source": GIBS_NDVI_PRODUCT.attribution,
+      "X-Data-Source": DATA_SOURCE_HEADER,
       "X-Composite-Date": time,
     },
   });

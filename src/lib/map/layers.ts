@@ -2,6 +2,7 @@ import type {
   LayerSpecification,
   FillExtrusionLayerSpecification,
 } from "@maplibre/maplibre-gl-style-spec";
+import { styleBackedLayerEntries } from "@/lib/map/layer-registry";
 
 const MARTIN_SOURCE = "martin-dynamic";
 // Table-backed OSM tiles live in a separate composite: mixing them with the
@@ -202,11 +203,9 @@ export function getLayers(): LayerSpecification[] {
 
 /**
  * Maps an activeLayers toggle id to the concrete style layer ids it controls.
- * Synced against map-store's activeLayers in LayerManager via setLayoutProperty,
- * since these are static style layers (not React-mounted components).
+ * Derived from the layer registry so a new style-backed toggle is one registry entry
+ * rather than a hand-edit here that can silently disagree with the rest.
  */
-export const STYLE_LAYER_TOGGLE_MAP: Record<string, string[]> = {
-  "fire-perimeters": ["fire-perimeters", "fire-perimeters-outline"],
-  interventions: ["interventions", "interventions-outline"],
-  "building-footprints": ["building-footprints"],
-};
+export const STYLE_LAYER_TOGGLE_MAP: Record<string, string[]> = Object.fromEntries(
+  styleBackedLayerEntries().map((entry) => [entry.toggleId, entry.styleLayerIds])
+);

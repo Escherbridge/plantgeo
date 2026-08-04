@@ -10,6 +10,10 @@ type JsonBodyResult =
   | { ok: true; data: unknown }
   | { ok: false; status: 400 | 413; error: string };
 
+type BodyBytesResult =
+  | { ok: true; bytes: Uint8Array }
+  | { ok: false; status: 400 | 413; error: string };
+
 interface ServiceCredentialOptions {
   secretEnvironmentVariable: "CRON_SECRET" | "INGEST_SECRET";
   headerName: "x-cron-secret" | "x-ingest-secret";
@@ -76,11 +80,17 @@ export function authorizeCronRequest(request: Request): AuthorizationResult {
   });
 }
 
-/** Parse a request body without allowing an unbounded JSON allocation. */
-export async function parseBoundedJson(
+/**
+ * Read a request body into memory while refusing to allocate past `maxBytes`.
+ *
+ * A declared Content-Length is rejected before a single byte is read; a chunked
+ * body is cancelled the moment the running total crosses the ceiling, so an
+ * omitted or lying header cannot buy an attacker an unbounded allocation.
+ */
+export async function readBoundedBody(
   request: Request,
   maxBytes = MAX_INGRESS_BODY_BYTES
-): Promise<JsonBodyResult> {
+): Promise<BodyBytesResult> {
   const contentLength = request.headers.get("content-length");
   if (contentLength) {
     const parsedContentLength = Number(contentLength);
@@ -128,9 +138,19 @@ export async function parseBoundedJson(
     buffer.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  return { ok: true, bytes: buffer };
+}
+
+/** Parse a request body without allowing an unbounded JSON allocation. */
+export async function parseBoundedJson(
+  request: Request,
+  maxBytes = MAX_INGRESS_BODY_BYTES
+): Promise<JsonBodyResult> {
+  const body = await readBoundedBody(request, maxBytes);
+  if (!body.ok) return body;
 
   try {
-    return { ok: true, data: JSON.parse(new TextDecoder().decode(buffer)) };
+    return { ok: true, data: JSON.parse(new TextDecoder().decode(body.bytes)) };
   } catch {
     return { ok: false, status: 400, error: "Invalid JSON body" };
   }

@@ -31,17 +31,34 @@ export interface FireFeatureCollection {
 }
 
 /**
- * Parse NASA FIRMS CSV response into structured fire point records.
- * Expected columns: latitude,longitude,brightness,scan,track,acq_date,acq_time,satellite,confidence,version,bright_t31,frp,daynight
+ * NASA FIRMS near-real-time products that make up the VIIRS constellation.
+ * See `src/lib/server/AGENTS.md` — a single satellite is not a reliable feed.
  */
-function parseFIRMSCsv(csv: string): FIRMSFirePoint[] {
+export const FIRMS_VIIRS_SOURCES = [
+  "VIIRS_SNPP_NRT",
+  "VIIRS_NOAA20_NRT",
+  "VIIRS_NOAA21_NRT",
+] as const;
+
+export type FirmsSource = (typeof FIRMS_VIIRS_SOURCES)[number] | "MODIS_NRT";
+
+/**
+ * Parse NASA FIRMS CSV response into structured fire point records.
+ * VIIRS columns: latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,instrument,confidence,version,bright_ti5,frp,daynight
+ * MODIS columns: latitude,longitude,brightness,scan,track,acq_date,acq_time,satellite,instrument,confidence,version,bright_t31,frp,daynight
+ */
+function parseFIRMSCsv(csv: string, source: FirmsSource): FIRMSFirePoint[] {
   const lines = csv.trim().split("\n");
   if (lines.length < 2) return [];
 
   const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
   const latIdx = header.indexOf("latitude");
   const lonIdx = header.indexOf("longitude");
-  const brightnessIdx = header.indexOf("brightness");
+  // VIIRS names its 4um channel bright_ti4; only MODIS publishes "brightness".
+  const brightnessIdx =
+    header.indexOf("brightness") >= 0
+      ? header.indexOf("brightness")
+      : header.indexOf("bright_ti4");
   const confidenceIdx = header.indexOf("confidence");
   const frpIdx = header.indexOf("frp");
   const satelliteIdx = header.indexOf("satellite");
@@ -64,7 +81,7 @@ function parseFIRMSCsv(csv: string): FIRMSFirePoint[] {
       brightness: brightnessIdx >= 0 ? parseFloat(cols[brightnessIdx]) || 0 : 0,
       confidence: confidenceIdx >= 0 ? cols[confidenceIdx].trim() : "nominal",
       frp: frpIdx >= 0 ? parseFloat(cols[frpIdx]) || 0 : 0,
-      satellite: satelliteIdx >= 0 ? cols[satelliteIdx].trim() : "VIIRS",
+      satellite: satelliteIdx >= 0 ? cols[satelliteIdx].trim() : source,
       acqDate: acqDateIdx >= 0 ? cols[acqDateIdx].trim() : "",
       acqTime: acqTimeIdx >= 0 ? cols[acqTimeIdx].trim() : "",
     });
@@ -74,13 +91,15 @@ function parseFIRMSCsv(csv: string): FIRMSFirePoint[] {
 }
 
 /**
- * Fetch active fires from NASA FIRMS VIIRS SNPP NRT dataset.
+ * Fetch active fires from one NASA FIRMS near-real-time product.
  * @param bbox - Optional bounding box "west,south,east,north" (default world)
  * @param dayRange - Number of days back to fetch (1-10, default 1)
+ * @param source - FIRMS product to query (default VIIRS SNPP NRT)
  */
 export async function fetchActiveFiresNASA(
   bbox?: string,
-  dayRange: number = 1
+  dayRange: number = 1,
+  source: FirmsSource = "VIIRS_SNPP_NRT"
 ): Promise<FireFeatureCollection> {
   const apiKey = process.env.NASA_FIRMS_KEY;
   if (!apiKey) {
@@ -90,7 +109,7 @@ export async function fetchActiveFiresNASA(
   const area = bbox ?? "-180,-90,180,90";
   const clampedDayRange = Math.min(10, Math.max(1, dayRange));
 
-  const url = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${apiKey}/VIIRS_SNPP_NRT/${area}/${clampedDayRange}`;
+  const url = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${apiKey}/${source}/${area}/${clampedDayRange}`;
 
   const csv = await fetchBoundedText(
     url,
@@ -99,7 +118,7 @@ export async function fetchActiveFiresNASA(
     // data-cache lifetime rather than re-fetching per request.
     { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS, revalidateSeconds: 3600 }
   );
-  const points = parseFIRMSCsv(csv);
+  const points = parseFIRMSCsv(csv, source);
 
   const featureCollection: FireFeatureCollection = {
     type: "FeatureCollection",

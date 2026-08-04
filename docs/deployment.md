@@ -14,7 +14,7 @@ define the security boundary:
 | Service | PlantGeo responsibility | Current gate |
 | --- | --- | --- |
 | `plantgeo-main` | Next.js application | Running; Railway's GitHub integration deploys it from `main`, and no other service is deployed by a web release. |
-| `plantgeo-ingest-cron` | Hourly trigger for `GET /api/cron/ingest` | Running; config-as-code in `infra/cron-ingest/`. |
+| `plantgeo-ingest-cron` | Hourly `agri-cli ingest-all` run against Postgres/Redis directly | Running; config-as-code in `infra/cron-ingest/`. Root Directory dashboard change pending — see below. |
 | `plantgeo-dataservice` | Bounded Python API and publication receiver | Running; Alembic owns only the `agri` schema. |
 | `plantgeo-Redis` | Cache, pub/sub, and non-durable wake-up transport | Running; never use it as the durable job ledger. |
 | `Plantgeo` | Legacy PlantGeo PostgreSQL 18.3 database | Running, but the last audit found no required geospatial/time-series extensions. |
@@ -387,17 +387,76 @@ not authentication. Static PMTiles belong in R2/CDN, not the Martin container.
 
 ### `plantgeo-ingest-cron`
 
-- Repository root: `/infra/cron-ingest`
+- Repository root: **must move to `/`** (currently `/infra/cron-ingest`) — see "Required
+  dashboard change" below. The image cannot build until this lands.
 - Dockerfile: `/infra/cron-ingest/Dockerfile`
 - Config-as-code: `/infra/cron-ingest/railway.json` (`cronSchedule: 0 * * * *`,
   `restartPolicyType: NEVER`)
 
-The container calls `GET /api/cron/ingest` once with the `x-cron-secret` header
-and exits. `202` (accepted, ingestion detached) and `409` (a run is already in
-flight) are success; anything else fails the run. It needs only `CRON_SECRET`,
-which must match `plantgeo-main`'s value and must differ from `INGEST_SECRET`
-and the data-service publication token. This service is the only scheduler for
-ingestion.
+The container installs the `agri-data-service` package (uv, locked sync, `--no-dev` runtime —
+the same multi-stage pattern as `services/agri-data-service/Dockerfile`, minus its quality-gate
+stage, which this image does not need to re-run) and runs `agri-cli ingest-all` directly against
+Postgres and Redis on the private network. It runs every ingestion source to completion and
+**exits non-zero if any source failed** — an unhandled failure is a red Railway deployment, not a
+line in a server log. There is no HTTP hop through `plantgeo-main` any more: no
+`GET /api/cron/ingest` call, no `x-cron-secret` header, no `202`/`409` status mapping, and
+`CRON_SECRET` is retired (see `docs/env-vars.md`). `restartPolicyType: NEVER` together with the
+hourly `cronSchedule` is now the concurrency guard that the deleted in-memory
+`ingestionInFlight` boolean used to provide: a failed run does not restart, and the next tick
+simply starts a fresh container. This service is the only scheduler for ingestion.
+
+**Required dashboard change (owner action, blocks the build):** a Python image needs
+`services/agri-data-service/{pyproject.toml,uv.lock,src/}` in its build context, which the
+service's current Railway Root Directory (`/infra/cron-ingest`) cannot see. In the Railway
+dashboard for `plantgeo-ingest-cron`, set:
+
+- Root Directory → `/`
+- Dockerfile path → `infra/cron-ingest/Dockerfile`
+- Config-as-code path → `infra/cron-ingest/railway.json`
+
+This repoints only `plantgeo-ingest-cron`'s build context; it does not touch the repo-root
+`railway.json`, which belongs to `plantgeo-main`. Until the Root Directory change lands, builds of
+this service will fail — its `Dockerfile`'s `COPY services/agri-data-service/...` lines cannot
+resolve from the old root.
+
+**Required variables.** The DSN variable this container reads is
+`LOCAL_SOURCE_LOADER_DATABASE_URL`, **not** `DATABASE_URL`. Every `ingest-*` verb opens
+`db/engine.ingest_session()`, which calls `settings.require_local_source_loader_database_url()`
+(`config.py`), and that reader has no fallback: with only `DATABASE_URL` set the run dies before
+any source is fetched with
+
+```
+ValueError: source-ingest requires LOCAL_SOURCE_LOADER_DATABASE_URL; DATABASE_URL is never a loader fallback
+```
+
+The raise happens outside `run_isolated_job`, so it is an unhandled traceback and a red hourly
+deployment, not a per-source `failed` summary — zero rows ingested on every tick.
+
+| Variable | Value on this service |
+| --- | --- |
+| `LOCAL_SOURCE_LOADER_DATABASE_URL` | **Required.** The Railway **public proxy** DSN: `postgresql://postgres:<password>@switchback.proxy.rlwy.net:37967/plantgeo`. |
+| `DATABASE_URL` | **Must NOT be set.** `require_local_source_loader_database_url` rejects a loader DSN equal to `DATABASE_URL`, and both fields are normalised to `postgresql+asyncpg://` before comparison, so identical raw strings compare equal and the run fails. |
+| `REDIS_URL` | Required, for the realtime publisher. |
+| `INGEST_BBOX` | Required. Without it every source returns a `skipped` summary and writes nothing. |
+| `NASA_FIRMS_KEY` | Required for the FIRMS source. |
+
+`_INGEST_SOURCE_LOADER_ALLOWED_TARGETS` (`config.py`) accepts only `127.0.0.1:5442` with role
+`plantgeo_loader` and `switchback.proxy.rlwy.net:37967` with role `postgres`. The private-network
+DSN (`postgres.railway.internal:5432`) therefore **fails validation** — this service must use the
+public proxy host. See `services/agri-data-service/src/agri_data_service/ingest/AGENTS.md`.
+
+Optional: `FIRMS_DAY_RANGE`, `INGEST_MAX_SOURCE_RECORDS`, `WEATHER_SAMPLE_SPACING_DEGREES`, and
+the layer-id and sensor-selection overrides in `docs/env-vars.md`. See that file for policy and
+defaults on each.
+
+**Verbs this image can run.** `agri-cli ingest-all` is the scheduled one: eight sources followed by
+the geometry repair pass, each isolated, one JSON summary per job. The other verbs are operator
+tools on the same image — `ingest-<source>` for a single source, `ingest-geometry-repair` to link
+orphaned `geo.features.geometry_id` rows on demand, `ingest-backfill --source … --since … --until …`
+to walk a date-ranged history for the sources that publish one (`nws-sensors`, `sentinel2-ndvi`), and
+`ingest-drought-history --years N` to walk the USDM archive week by week. Do not run
+`ingest-geometry-repair` concurrently with `ingest-all`: both are safe individually and take their
+locks in the same order, but the second one to arrive simply waits.
 
 ### Deferred services
 

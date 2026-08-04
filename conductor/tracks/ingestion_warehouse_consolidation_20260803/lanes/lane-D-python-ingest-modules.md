@@ -2,9 +2,10 @@
 type: lane-brief
 track: ingestion_warehouse_consolidation_20260803
 lane: D
-status: in-progress
+status: partial
 depends_on: A
 started_at: 2026-08-03
+blocked_on: owner - Railway cron service Root Directory must move to / before the image can build
 ---
 
 # Lane D — six Python ingest modules + cron container swap
@@ -480,3 +481,34 @@ Per owner instruction, no agent runs tests, linters, type-checks or builds durin
 Every gate in §6 — golden-file, ruff/mypy, pytest, the prod idempotence and exit-code proofs,
 realtime, the Next.js sweep after the deletions, and the container build — runs once in a single
 dedicated verification phase after all code is written and the TypeScript path is deleted.
+
+### Second, concurrent execution 2026-08-03 — workflow `wf_4f98c325-5fa`
+
+A separate session ran lane D again, in parallel with `wf_41869a8a-31f` above, against the same
+working tree. **Both runs' output is now merged on disk and the full sweep is green**, but the
+duplication is real and the merge was never independently reviewed. The two runs converged on
+open question 1 without coordinating: this run detected that the loader validator had already been
+widened in `config.py` / `db/engine.py` (outside its boundary) and therefore did **not** add a
+competing `INGEST_DATABASE_URL` setting.
+
+Sweep after both runs: ruff format 149 files clean, `ruff check` all passed, mypy clean over 67
+files, pytest **645 passed / 26 skipped / 0 failed**, `npm run build` + `lint` + `type-check`
+clean, `/api/cron/ingest` absent from the generated route table.
+
+One real defect this run fixed: `ingest-all` emitted 3 stdout lines instead of 2 because
+structlog's default sink is `sys.stdout`, so `_run_all`'s `realtime_publish_totals` INFO line
+landed in the same stream as the per-job JSON summaries. `commands.py`'s logger is now bound to
+stderr.
+
+**Status is `partial`, not `complete`.** Outstanding:
+
+| # | Item | Owner |
+|---|---|---|
+| 1 | **Railway cron service Root Directory must move from `/infra/cron-ingest` to `/`** (Dockerfile path `infra/cron-ingest/Dockerfile`, config path `infra/cron-ingest/railway.json`). The Dockerfile needs repo-root context and **cannot build on Railway until this lands.** | owner dashboard |
+| 2 | Container image never built (`podman build -f infra/cron-ingest/Dockerfile .`) | verification |
+| 3 | Production idempotence proof (delta exactly 0 per layer, captured in the same transaction) and the forced-failure exit-code proof — both need a live write run, which was withheld under the read-only production rule | owner approval |
+| 4 | End-to-end realtime proof (subscribe `layer:fire-detections`, one message per written row). `test_ingest_realtime.py` only proves correct RESP against a loopback stand-in | verification |
+| 5 | `CRON_SECRET` no longer needed by the cron service; it now needs `LOCAL_SOURCE_LOADER_DATABASE_URL` and optionally `REDIS_URL`, `INGEST_BBOX`, `NASA_FIRMS_KEY`. **`INGEST_BBOX` is unset in every env file — without it every bbox job reports `skipped` (exit 0, not a failure).** | owner |
+| 6 | `redis>=5.0,<6` was added to `pyproject.toml` and locked, but `realtime.py` speaks RESP directly over `asyncio.open_connection` and imports nothing from it. `ingest/AGENTS.md` asserts both and contradicts itself. Drop the dependency or reimplement on `redis.asyncio` — do not leave both | follow-up |
+| 7 | Dead/stale after the TypeScript deletion, all outside this lane's boundary: `src/lib/server/security/ingress.ts:72` `authorizeCronRequest` lost its only caller; `docs/deployment.md:385-400` and `docs/env-vars.md:60` still document the curl trigger and `CRON_SECRET`; prose references in `src/lib/server/AGENTS.md:108`, `src/lib/map/layers.ts:71`, `src/lib/server/services/environmental-read-model.ts:215` | follow-up |
+| 8 | `src/lib/server/services/nasa-firms.ts` carries an **uncommitted** VIIRS constellation upgrade from another agent (SNPP/NOAA20/NOAA21, `bright_ti4`, `Promise.allSettled`). The behaviour is carried forward in `ingest/firms.py`, but that diff is now orphaned — decide keep or revert | owner |

@@ -30,6 +30,7 @@ import {
   wouldRemoveLastOwner,
   type TeamRole,
 } from "@/lib/server/security/access-control";
+import { summarizeStrategyActivity } from "@/lib/server/services/community-activity";
 import {
   canRedeemJoinLink,
   emailMatchesInvitation,
@@ -94,7 +95,8 @@ const PARTNER_DIRECTORY_UNAVAILABLE_MESSAGE =
   "Partner discovery is unavailable until verified organizations and access rules are published";
 
 const OPPORTUNITY_WAYPOINTS_UNAVAILABLE_MESSAGE =
-  "Opportunity waypoints are inactive until a reviewed, workspace-scoped warehouse publication is available";
+  "Opportunity waypoints are not built yet: agri.opportunity_candidate, " +
+  "agri.opportunity_waypoint and agri.waypoint_access_review do not exist in any schema";
 
 type Database = Context["db"];
 
@@ -1625,19 +1627,20 @@ export const teamsRouter = router({
         .innerJoin(users, eq(teamMembers.userId, users.id))
         .where(eq(teamMembers.teamId, input.teamId));
 
-      // Opportunity waypoints stay inactive until reviewed publication is available.
+      // Priority zones are a live aggregate over this workspace's own requests;
+      // opportunity waypoints have no table to read yet.
+      const priorityZones = await summarizeStrategyActivity(ctx.db, {
+        userId,
+        teamId: input.teamId,
+      });
+
       return {
         team,
         members,
         memberRole: membership.teamRole,
-        priorityZones: [] as Array<{
-          id: string;
-          strategyType: string;
-          requestCount: number;
-          totalVotes: number;
-        }>,
+        priorityZones,
         opportunityWaypoints: {
-          state: "inactive" as const,
+          state: "not_built" as const,
           message: OPPORTUNITY_WAYPOINTS_UNAVAILABLE_MESSAGE,
         },
       };

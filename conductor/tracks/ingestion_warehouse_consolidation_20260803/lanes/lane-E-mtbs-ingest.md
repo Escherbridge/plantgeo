@@ -2,9 +2,10 @@
 type: lane-brief
 track: ingestion_warehouse_consolidation_20260803
 lane: E
-status: in-progress
+status: complete
 depends_on: A
 started_at: 2026-08-03
+completed_at: 2026-08-03
 ---
 
 # Lane E — MTBS burn severity ingest
@@ -191,3 +192,69 @@ Proof: the module prints the `returnCountOnly` total and the paged feature count
 | 4 | **Where does the `ingest-mtbs` CLI verb get registered?** `cli.py` belongs to lane K ([`README.md`](README.md) §"File boundaries", lane K row), not to you. | Expose `async def ingest_mtbs(...)` plus a `main()` in `mtbs.py` (precedent: `execution/geospatial_capture.py:728`) and let the `cli.py` owner add the `@cli.command("ingest-mtbs")` wrapper. Report the intended signature in your handoff. |
 | 5 | **MTBS licensing under Esri AGOL hosting terms** — deferred by the owner under D3; plan open question 5 (`plans/…`:966), risk 13 (`:802`). | Record both instruments in `license_name`, leave `allowed_client_exposure=False` (already the default at `source_ingestion.py:248`), and **publish nothing MTBS-derived to the public CDN in this lane.** Persisting rows privately is low exposure; a public tile publish is a different and larger one — escalate before that step. |
 | 6 | **Should the first pull carry an `Ig_Year` floor?** The plan offers one as optional (§4, "Bounding"). | **No floor.** The all-time PNW share is ~3-5 k polygons (small), and "years since burn" is a proposed covariate (plan §5a) that wants full history. Per-release partitioning already bounds each individual capture. |
+
+## 8. Outcome — complete 2026-08-03 (workflow `wf_4f98c325-5fa`)
+
+Both files landed: `ingest/mtbs.py` (1021 lines) and `tests/test_ingest_mtbs.py` (30 tests).
+Full sweep green — ruff format 149 files, `ruff check` all passed, mypy clean over 67 files,
+pytest **645 passed / 26 skipped / 0 failed**, `npm run build` + `lint` + `type-check` clean.
+No database was touched; the lane stopped at the capture as open question 3 directs.
+
+### Three brief premises the live service disproved
+
+1. **The endpoint in `mtbs.ts:21-22` is dead, not merely truncating.** `MTBS_Polygons_v1` returns
+   HTTP 400 "Invalid URL" and is absent from that NIFC org's 862-service catalogue. The
+   authoritative service is `apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MTBS_01/MapServer/63`
+   (USGS EROS + USFS GTAC). Its field names are **lowercase** (`fire_id`, `year`, `ig_date` as
+   int `YYYYMMDD`) — the brief's `Fire_ID`/`Ig_Year` schema is the direct-download shapefile, not
+   the service. The module accepts both spellings.
+2. **No MTBS perimeter service publishes a `Severity` field** — severity is a raster product.
+   So `mtbs.ts:78`'s `?? "unburned"` fabricated a legitimate-looking class for *every* feature,
+   not just odd ones (trap 3 was worse than written). Resolution: a present-but-unknown code
+   raises; an *absent* attribute yields `severity_class=None` plus the real per-fire dNBR
+   thresholds. Raising on absence would reject 100% of real data.
+3. **MTBS publishes quarterly, not annually** (Feb/May/Aug/Nov, mtbs.gov/data-availability), so
+   "the annual release date" is not well defined — one fire year accretes across many releases
+   over 2-4 years. `MTBS_ANNUAL_RELEASE_DATES` is redefined as the date of the **last** release
+   that added that year's fires: late by construction, so it under-claims knowledge and can never
+   leak hindsight. This preserves the intent of D3 and risk 4 under a corrected publication model.
+
+### Live smoke — the truncation bug is provably fixed
+
+| Run | `returnCountOnly` | Paged | Agree |
+|---|---|---|---|
+| PNW, release-year 2022 | 113 | 113 | yes |
+| PNW `--all-releases` (2018/2020/2021/2022) | 478 | 478 | yes |
+| **CONUS-wide, release-year 2018** | **562** | **562** | **yes** |
+
+The 562-feature single capture is the >500 proof required by §6 — past the old `resultRecordCount:
+"500"` cap with counts reconciling. The PNW all-time authoritative count is **3824**, so the live
+bug was silently dropping ~87% of PNW MTBS.
+
+Two real defects the smoke run exposed and fixed: (a) the host answers an oversized polygon page
+with HTTP 500 rather than truncating (1000 rows fails; 50 works at 10.7 MB) — added bounded retry
+plus adaptive window halving; (b) output paths keyed only on release identifier let a second bbox
+silently overwrite the first — now scoped by a bbox fingerprint.
+
+### Open questions — answers
+
+| # | Answer |
+|---|---|
+| 1 | **Escalated, partially answered.** Only 4 of 43 fire years are defensible: 2018→2020-11-24, 2020→2022-04-28, 2021→2023-08-09, 2022→2024-08-22, each commented in-code with its source and cross-checked against USGS ScienceBase revision history for DOI 10.5066/P9IED7RZ. Rejected for insufficient evidence: 2016/2017 (counts do not corroborate), 2019 (MTBS published no announcement — a genuine gap), 1984-2015 (archive not enumerated). Correctly excluded as still-in-progress: 2023-2026. Every excluded year raises `MtbsReleaseNotPublishedError` with no fallback. **This is a governance gap awaiting the owner, not a code defect.** |
+| 2 | **No per-fire release/version field exists.** The 29-field layer list is pinned as `RECORDED_LAYER_FIELD_NAMES` with an assertion that no field name contains `release`/`version`. Falls back to the `year` cohort as directed, but *additionally* exposes a strictly better Type-2 signal: `mapping_revision`, a composite of `map_id + asmnt_type + pre_id + post_id + perim_id` — MTBS's own mapping identifiers, which change when a fire is re-mapped under a stable `fire_id`, and never compares geometry floats. **Lane I should version on `mapping_revision`.** `license_url` verified live: `https://doi.org/10.5066/P9IED7RZ` returns 200. |
+| 3 | **Confirmed — stopped at the capture.** One relaxation: `MAX_SOURCE_GEOJSON_BYTES` (5 MB) is *not* enforced on the capture, because it belongs to the inline-publication path this lane deliberately does not use, and enforcing it meant capturing nothing (the first live run died on it). The 5,000-**feature** cap is still enforced, before paging. `requires_object_storage` flags every real release for R2. |
+| 4 | `async def ingest_mtbs(ignition_years, *, bounding_box=PACIFIC_NORTHWEST_BBOX, output_root=None, review=None, client=None) -> list[MtbsReleaseCapture]`, plus `main()`. Lane K wraps it. Gotcha: argparse reads a leading `-` in a bbox as a flag — require `--bbox=VALUE`. |
+| 5 | **Premise changed.** Because the AGOL endpoint is dead, the capture uses the USDA FS EDW ArcGIS **Server**, which is not ArcGIS Online. An AGOL mirror exists (`services2.arcgis.com/FiaPA4ga0iQKduv3/…/EDW_MTBS_v1`) and is deliberately unused, so no AGOL terms attach. `MTBS_LICENSE_NAME` is 249 chars, inside the `varchar(255)` snapshot column. `allowed_client_exposure` stays false; nothing MTBS-derived was published to any CDN. |
+| 6 | **Confirmed — no `Ig_Year` floor.** In practice the release table is a far tighter constraint than any floor: it admits 4 years, so the full-history "years since burn" covariate is blocked on question 1, not on a floor. |
+
+### Owner decisions still required
+
+1. **The release-date table (blocking full history).** 39 of 43 fire years raise. Either supply
+   per-year completion dates or approve a documented conservative rule.
+2. **Licence strings are immutable on first publication** (`source_ingestion.py:258-273`).
+   `MTBS_LICENSE_NAME` / `MTBS_CITATION` currently name the FS EDW ArcGIS Server as the hosting
+   instrument, not AGOL. If the AGOL mirror is preferred, the text must change *before* the first
+   `publish_source_release`.
+3. **`src/lib/server/services/mtbs.ts` is dead code**, outside this lane's boundary. Delete it or
+   repoint it at the EDW endpoint with lowercase field names. Any MTBS map layer fed by it has
+   been returning nothing in production.

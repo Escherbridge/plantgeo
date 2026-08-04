@@ -3,9 +3,11 @@ import { z } from "zod";
 import { router, publicProcedure } from "@/lib/server/trpc/init";
 import { getInterventionSuitability } from "@/lib/server/services/carbon-potential";
 import {
+  getMetricAtDate,
   getPublishedDroughtClassification,
   getPublishedGroundwaterWells,
   getPublishedStreamflowGauges,
+  getSliderCapabilities,
 } from "@/lib/server/services/environmental-read-model";
 import { NLCD_CLASSES } from "@/lib/server/services/nlcd";
 import {
@@ -199,10 +201,10 @@ export const environmentalRouter = router({
             message: error.message,
           });
         }
-        // Throttling is transient: the client may retry, unlike a coverage gap.
+        // Transient upstream fault: the client may retry, unlike a coverage gap.
         if (error instanceof SoilUpstreamUnavailableError) {
           throw new TRPCError({
-            code: "TOO_MANY_REQUESTS",
+            code: "SERVICE_UNAVAILABLE",
             message: error.message,
           });
         }
@@ -217,4 +219,29 @@ export const environmentalRouter = router({
   getInterventionSuitability: publicProcedure
     .input(pointSchema)
     .query(({ input }) => getInterventionSuitability(input.lat, input.lon)),
+
+  /**
+   * What the time slider may offer, and the server's UTC today.
+   * The client must take "today" from here and never from its own clock, or a
+   * browser in another timezone silently disagrees about which days are future.
+   */
+  getSliderCapabilities: publicProcedure.query(() => getSliderCapabilities()),
+
+  /**
+   * One layer's metric for one day. Returns an availability/reason pair rather
+   * than a bare empty collection, so "nothing observed that day" is legible as
+   * something other than a failure.
+   */
+  getMetricAtDate: publicProcedure
+    .input(
+      z.object({
+        metric: z.string().trim().min(1).max(64),
+        date: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
+        variant: z.enum(["observed", "monte_carlo", "ml"]).default("observed"),
+        bbox: bboxSchema.optional(),
+      })
+    )
+    .query(({ input }) => getMetricAtDate(input)),
 });

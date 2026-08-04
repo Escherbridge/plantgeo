@@ -102,6 +102,46 @@ token cost, not result quality, is the binding constraint on this call.
 No `JINA_API_KEY` is a supported state, not a broken one: the provider resolves
 to `null` and the system prompt tells the model it is working offline.
 
+## §fire-detections
+
+NASA FIRMS active-fire points. Files: `services/nasa-firms.ts` (upstream client),
+`services/ingestion-jobs.ts` (`runFireIngestionJob`),
+`services/environmental-time.ts` (day range + freshness),
+`services/environmental-read-model.ts` (`getPublishedFireDetections`).
+
+### One satellite is not a feed
+
+The job queries the whole VIIRS constellation — SNPP, NOAA-20, NOAA-21 — and
+unions the result. It used to query `VIIRS_SNPP_NRT` alone, and on 2026-08-02
+that one product stopped publishing over the ingest bbox while its siblings kept
+producing normally. FIRMS answered `200` with a header-only CSV, so the job
+parsed zero points, wrote zero rows, and reported `status: "ingested"`. Nothing
+threw and nothing went red; the layer simply stopped growing and would have gone
+empty once the existing rows aged past the freshness window.
+
+A single dead product must therefore never zero the layer. `Promise.allSettled`
+keeps the healthy products' rows, names the unavailable ones in `reason`, and
+only rethrows when every product fails. The FIRMS `satellite` column (`N`,
+`N20`, `N21`) already namespaces the observation id, so the union cannot
+collide. The record cap applies to the merged, newest-first set so truncation
+drops the oldest detections rather than whichever satellite resolved last.
+
+### The CSV schema is per-instrument
+
+VIIRS publishes `bright_ti4`/`bright_ti5`; only MODIS publishes `brightness`.
+The parser was written against the MODIS header, so against VIIRS the lookup
+missed and every detection was stored with `brightness: 0` — which the map reads
+as the bottom of its colour ramp. The parser now accepts either column name.
+Rows written before 2026-08-04 still carry the zero and are not backfilled; they
+age out of the freshness window on their own.
+
+### Staleness is not masked
+
+`FIRMS_DAY_RANGE` (default 2) bounds both the upstream request and the read
+model's freshness filter. Widening it to keep a dark panel populated would hide
+exactly the upstream outage described above, so it stays narrow and an empty
+window is allowed to read as empty.
+
 ## §drought-ingestion
 
 The US Drought Monitor D0–D4 layer. Files: `services/usdm-drought.ts` (upstream
@@ -156,13 +196,31 @@ coverage, and every consumer (USLE K-factor, carbon potential) treats the six
 topsoil properties as jointly measured — so a partial profile is refused rather
 than back-filled.
 
-Two failure modes are deliberately distinct. A verified coverage gap is cached
-as `complete = false` and re-raised as `SoilEvidenceUnavailableError`
-(`PRECONDITION_FAILED`), so a no-data cell is not re-queried forever. A 429/5xx
-is a `SoilUpstreamUnavailableError` (`TOO_MANY_REQUESTS`) and is never cached —
-recording throttling as "no data here" would poison the cache with a claim the
-upstream never made. ISRIC throttles near 5 req/min, which is why the warm route
-is serial and paced rather than a fan-out.
+Three upstream readings are distinguished, because only two of them are claims
+SoilGrids actually made. Every property `null` is a verified coverage gap: it is
+cached as `complete = false` and re-raised as `SoilEvidenceUnavailableError`
+(`PRECONDITION_FAILED`), so a no-data cell is not re-queried forever. A *mixed*
+response is not — the six properties share one raster extent, so a partial
+profile is an upstream anomaly, and it is neither cached nor served. A timeout,
+429, 5xx or unreadable body is a `SoilUpstreamUnavailableError`
+(`SERVICE_UNAVAILABLE`) and is never cached — recording a transport fault as "no
+data here" would poison the cache with a claim the upstream never made.
+
+The six properties travel in **one** request carrying six `property` parameters,
+not six requests. Measured 2026-08-04 against `rest.isric.org`: a one-property
+and a six-property query for the same point are indistinguishable — both hung
+past 40 s, and both drew a 0.6 s nginx `503` while `/docs` answered in 0.76 s.
+Latency is upstream queueing, not payload size, so splitting the batch buys
+nothing and costs six slots against ISRIC's ~5 req/min limit. That limit is also
+why the warm route (`app/api/ingest/soil/route.ts`) is serial and paced, and why
+concurrent readers of one cell are collapsed into a single in-flight request.
+
+`REQUEST_TIMEOUT_MS` is 12 s rather than 30 s for the same reason: ISRIC answers
+in about a second or does not answer at all, so a longer bound only lengthens
+the spinner before an identical failure. It also stays under the warm route's
+13 s pacing, so a request cannot outlive its own slot. Because v2.0 is a frozen
+release, an expired cache row is the same measurement as a fresh one and is
+served in preference to failing while ISRIC sheds load.
 
 Cache keys quantize to a 0.001° cell, finer than SoilGrids' own 250 m pixel, and
 the quantized cell is what gets queried — so the cached value corresponds
@@ -212,3 +270,73 @@ Three products remain genuinely unavailable and return empty strings:
 `getVegetationSources` therefore reports availability **per product**. A single
 collapsed flag would either hide the working NDVI layer or overstate the three
 missing ones.
+
+## §community-activity
+
+`services/community-activity.ts` holds the two aggregates that replaced the
+governance gates installed in `e38b1fa`. Consumers: `app/api/v1/action-network`,
+`trpc/routers/analytics.getDemandDensity`, `trpc/routers/community.getPriorityZones`,
+`trpc/routers/teams.getTeamDashboard`.
+
+### Why these gates opened (2026-08-03)
+
+Six surfaces threw `PRECONDITION_FAILED`/503 rather than answering, on the theory
+that publishing any community aggregate would leak the locations the ledger exists
+to protect. The owner decision reversed that: aggregation **is** the privacy
+mechanism, and a dark panel that throws is worse than a dark panel that says
+"nothing here yet" — the second one starts working by itself.
+
+So the rule is now: return a correctly-shaped, possibly-empty result. Never
+fabricate rows to fill it.
+
+### What the aggregation actually guarantees
+
+`aggregateActivityGrid` snaps `strategy_requests` to a zoom-derived cell and emits
+only cell centres with `featureCount` and `voteCount`. No id, author, workspace,
+title, or exact coordinate is selected at all, so there is nothing to leak
+downstream from a single response.
+
+Two rules together — not the cell size on its own — are what stop a *sequence* of
+responses resolving a submitted point:
+
+1. **The cell floor.** A cell never goes finer than `MINIMUM_CELL_DEGREES` (0.01°,
+   ~1.1 km) no matter how far the caller zooms in.
+2. **Whole-cell membership.** The caller's bbox selects which cells come back and
+   never which rows compose one: it is applied as `floor(lon / cellDegrees) BETWEEN
+   …`, the identical expression the `GROUP BY` uses, so a bbox takes a whole cell or
+   none of it. `MINIMUM_CELL_MEMBERS` (3) is a `HAVING` over the grouped rows, so
+   without this it filtered a set the caller had already trimmed.
+
+Rule 2 is load-bearing and was missing until 2026-08-04. With the raw bbox pushed
+into the `WHERE`, `?zoom=22&bbox=<one 0.01° cell>` returned that cell's exact count,
+and querying the same cell minus a thin strip returned the count without it — about
+40 requests per axis resolved one contributor's submitted lat/lon to full float
+precision. Do not "optimise" the index-space predicate back into a plain coordinate
+range: a snapped coordinate literal and `floor()` can disagree at a cell boundary,
+which is the same hole in a smaller costume. The coordinate comparisons that remain
+are a deliberately over-wide sargable pre-filter, one whole cell beyond the index
+bounds on every side.
+
+`minimumVotes`/`minimumFeatureCount` are safe under the same rule: they can only
+include or exclude a whole cell, and both of that cell's totals already ride in its
+own properties. The route additionally applies `enforcePublicProviderRateLimit`; it
+is unauthenticated and every call is a full grouped scan.
+
+`summarizeStrategyActivity` carries no geometry whatsoever and additionally scopes
+to rows the caller could already read directly (own personal requests, plus the
+workspaces they are a member of).
+
+### What stayed closed, and why it is not a policy gate
+
+- `analytics.getRegionalRiskSummary` throws. Every field of `RegionalRiskSummary`
+  is a non-nullable number or a trend enum, so "no data" can only be expressed as
+  `fireRiskAvg: 0` / `riskTrend: "stable"` — a confident wrong answer. See
+  `db/analytics.ts`, which removed exactly that bug once already. Opening this
+  needs the type widened to nullable and the dashboard taught to render unknown.
+- Opportunity waypoints. `agri.opportunity_candidate`, `agri.opportunity_waypoint`
+  and `agri.waypoint_access_review` exist in no schema — the message now names
+  those tables instead of implying a review is pending.
+- `services/priority-zones.ts` stays a no-op. `public.priority_zones` holds 0 rows,
+  nothing reads it, and the serving contract forbids reusing it for waypoints. It
+  should be deleted, not revived; the aggregates above deliberately compute from
+  `strategy_requests` instead.

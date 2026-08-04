@@ -1,19 +1,26 @@
 "use client";
 
-import { useMapStore } from "@/stores/map-store";
+import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
+import { useLayerToggle, useToggleLayer } from "@/lib/map/layer-toggle-context";
 
 interface LayerToggleProps {
-  layerId: string;
+  layerId: LayerToggleId;
   label: string;
-  /** When set, the switch is disabled and this reads as a caption beneath it. */
+  /**
+   * Overrides the registry's own reason. When either is set the switch is disabled and the
+   * reason reads as a caption beneath it, so a withheld capability is visible, not missing.
+   */
   unavailableReason?: string;
 }
 
 export function LayerToggle({ layerId, label, unavailableReason }: LayerToggleProps) {
-  const activeLayers = useMapStore((s) => s.activeLayers);
-  const toggleLayer = useMapStore((s) => s.toggleLayer);
-  const isUnavailable = Boolean(unavailableReason);
-  const isActive = !isUnavailable && activeLayers.includes(layerId);
+  const isToggledOn = useLayerToggle(layerId);
+  const toggleLayer = useToggleLayer();
+  // A layer withheld by governance carries its reason in the registry, so every switch for
+  // it is disabled by construction rather than by each panel remembering to pass the prop.
+  const reason = unavailableReason ?? LAYER_REGISTRY[layerId].permanentlyUnavailableReason;
+  const isUnavailable = reason !== null;
+  const isActive = !isUnavailable && isToggledOn;
 
   return (
     <div className="flex flex-col gap-1 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--muted)/0.3)] px-3 py-2 select-none">
@@ -51,9 +58,9 @@ export function LayerToggle({ layerId, label, unavailableReason }: LayerTogglePr
           </span>
         </button>
       </div>
-      {unavailableReason && (
+      {reason !== null && (
         <p className="text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
-          {unavailableReason}
+          {reason}
         </p>
       )}
     </div>

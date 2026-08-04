@@ -69,3 +69,26 @@ export const InterventionGeometrySchema = z.discriminatedUnion("type", [
 ]);
 
 export type InterventionGeometry = z.infer<typeof InterventionGeometrySchema>;
+
+/**
+ * The per-shape maxima above multiply out to 8,388,608 positions for a
+ * MultiPolygon, which is only survivable behind a byte cap. An interactive
+ * caller gets this far tighter total-vertex ceiling as well: an intervention
+ * site is a field, a stand or a parcel, and 10,000 vertices already describes
+ * one at sub-metre fidelity.
+ */
+export const MAX_INTERVENTION_GEOMETRY_POSITIONS = 10_000;
+
+/** Total coordinate positions across every ring of a validated geometry. */
+export function countInterventionGeometryPositions(
+  geometry: InterventionGeometry
+): number {
+  if (geometry.type === "Point") return 1;
+  const polygons =
+    geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  return polygons.reduce(
+    (total, polygon) =>
+      total + polygon.reduce((subtotal, ring) => subtotal + ring.length, 0),
+    0
+  );
+}

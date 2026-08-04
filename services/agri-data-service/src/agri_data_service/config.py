@@ -14,6 +14,20 @@ _LOCAL_SOURCE_LOADER_HOST = "127.0.0.1"
 _LOCAL_SOURCE_LOADER_PORT = 5442
 _LOCAL_SOURCE_LOADER_DATABASE = "plantgeo"
 _LOCAL_SOURCE_LOADER_ROLE = "plantgeo_loader"
+# The Railway cron container's target: the private-network/proxy host, port and login recorded
+# in services/agri-data-service/.env's DATABASE_URL. Never the password; that stays in the
+# environment. See ingest/AGENTS.md for why the loader allowlist was widened to include it.
+_PRODUCTION_INGEST_HOST = "switchback.proxy.rlwy.net"
+_PRODUCTION_INGEST_PORT = 37967
+_PRODUCTION_INGEST_ROLE = "postgres"
+# Explicit (host, port, role) triples permitted for source-ingest. Widening this list is the
+# only change the 2026-08-03 ingestion-warehouse-consolidation track made to the loader
+# validator; scheme, empty-query-string and database-name guards are unchanged. See
+# ingest/AGENTS.md for the full rationale and the residual coupling this widening accepts.
+_INGEST_SOURCE_LOADER_ALLOWED_TARGETS: tuple[tuple[str, int, str], ...] = (
+    (_LOCAL_SOURCE_LOADER_HOST, _LOCAL_SOURCE_LOADER_PORT, _LOCAL_SOURCE_LOADER_ROLE),
+    (_PRODUCTION_INGEST_HOST, _PRODUCTION_INGEST_PORT, _PRODUCTION_INGEST_ROLE),
+)
 _LOCAL_FORECAST_ITERATION_HOST = "127.0.0.1"
 _LOCAL_FORECAST_ITERATION_PORT = 5442
 _LOCAL_FORECAST_ITERATION_ROLE = "plantgeo_local_developer"
@@ -134,7 +148,8 @@ class Settings(BaseSettings):
     local_execution_root: Path = Path(".agri-local-runs")
 
     def require_local_source_loader_database_url(self) -> str:
-        """Return the explicit local compose DSN allowed for source-ingest only."""
+        """Return the DSN allowed for source-ingest: the local compose loader or the Railway
+        cron target in `_INGEST_SOURCE_LOADER_ALLOWED_TARGETS`. See ingest/AGENTS.md."""
         value = self.local_source_loader_database_url
         if not value:
             raise ValueError(
@@ -148,25 +163,36 @@ class Settings(BaseSettings):
         except ValueError as exc:
             raise ValueError("LOCAL_SOURCE_LOADER_DATABASE_URL has an invalid port") from exc
         database_name = parsed.path.removeprefix("/")
-        if (
-            parsed.scheme != "postgresql+asyncpg"
-            or parsed.hostname != _LOCAL_SOURCE_LOADER_HOST
-            or port != _LOCAL_SOURCE_LOADER_PORT
-            or not (
-                database_name == _LOCAL_SOURCE_LOADER_DATABASE
-                or database_name.startswith(f"{_LOCAL_SOURCE_LOADER_DATABASE}_")
-            )
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError(
-                "LOCAL_SOURCE_LOADER_DATABASE_URL must target postgresql+asyncpg://127.0.0.1:5442/plantgeo "
-                "or a plantgeo_-prefixed disposable database"
-            )
+        valid_database_name = database_name == _LOCAL_SOURCE_LOADER_DATABASE or database_name.startswith(
+            f"{_LOCAL_SOURCE_LOADER_DATABASE}_"
+        )
+        # Role is deliberately excluded from this lookup: an allowed host/port with the wrong
+        # role must fall through to the more specific role errors below, not this generic one.
+        matching_target = next(
+            (
+                target
+                for target in _INGEST_SOURCE_LOADER_ALLOWED_TARGETS
+                if parsed.hostname == target[0] and port == target[1]
+            ),
+            None,
+        )
+        allowed_hosts = ", ".join(
+            f"{host}:{host_port}" for host, host_port, _role in _INGEST_SOURCE_LOADER_ALLOWED_TARGETS
+        )
+        target_error = (
+            "LOCAL_SOURCE_LOADER_DATABASE_URL must target postgresql+asyncpg://127.0.0.1:5442/plantgeo "
+            "or a plantgeo_-prefixed disposable database there, or one of the other approved "
+            f"source-ingest targets ({allowed_hosts}) with a plantgeo (or plantgeo_-prefixed) database"
+        )
+        if parsed.scheme != "postgresql+asyncpg" or not valid_database_name or parsed.query or parsed.fragment:
+            raise ValueError(target_error)
+        if matching_target is None:
+            raise ValueError(target_error)
         if parsed.username == "plantgeo_owner":
             raise ValueError("LOCAL_SOURCE_LOADER_DATABASE_URL must not use the plantgeo_owner bootstrap role")
-        if parsed.username != _LOCAL_SOURCE_LOADER_ROLE:
-            raise ValueError("LOCAL_SOURCE_LOADER_DATABASE_URL must authenticate as plantgeo_loader")
+        _, _, required_role = matching_target
+        if parsed.username != required_role:
+            raise ValueError(f"LOCAL_SOURCE_LOADER_DATABASE_URL must authenticate as {required_role}")
         return value
 
     def require_forecast_mv_refresh_database_url(self) -> str:

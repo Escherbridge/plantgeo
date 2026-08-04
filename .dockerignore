@@ -60,9 +60,9 @@ infra/*
 !infra/martin/martin.yaml
 
 # Only the scripts the image itself runs: the build-stage data-boundary gate
-# (and the two checks it imports) plus the pre-deploy migration runner.
+# (plus every check-*.mjs it imports) and the pre-deploy migration runner.
+# The re-include is a whole-pattern one so adding a new check to
+# check-data-boundaries.mjs cannot silently break the Docker build again.
 scripts/*
-!scripts/check-client-provider-urls.mjs
-!scripts/check-client-server-imports.mjs
-!scripts/check-data-boundaries.mjs
+!scripts/check-*.mjs
 !scripts/migrate.mjs

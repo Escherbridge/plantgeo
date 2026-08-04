@@ -31,9 +31,19 @@ export const GIBS_NDVI_PRODUCT = {
   attribution: "NASA EOSDIS GIBS — MODIS/Terra NDVI 8-Day",
 } as const;
 
-/** MODIS/Terra NDVI coverage begins in Feb 2000; earlier requests have no tiles. */
-const GIBS_NDVI_FIRST_YEAR = 2000;
-const GIBS_NDVI_FIRST_MONTH = 3;
+/**
+ * GIBS publishes `MODIS_Terra_NDVI_8Day` from 2025-02-12 only, not from the
+ * MODIS/Terra mission start in 2000. Earlier dates 404 rather than returning a
+ * blank tile. Re-verify against the `Time` dimension in
+ * `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/1.0.0/WMTSCapabilities.xml`.
+ * February 2025 is representable because the representative day below is the
+ * 15th, which falls inside the extent.
+ */
+const GIBS_NDVI_FIRST_YEAR = 2025;
+const GIBS_NDVI_FIRST_MONTH = 2;
+
+/** A month is requested as its midpoint; the tile is the 8 days ending there. */
+const REPRESENTATIVE_DAY_OF_MONTH = 15;
 
 /**
  * Resolves the GIBS TIME value for a requested month, or null when GIBS has no
@@ -59,7 +69,7 @@ export function resolveGibsNdviDate(
     return null;
   }
   if (year === currentYear && month === currentMonth) return "default";
-  return `${year}-${String(month).padStart(2, "0")}-15`;
+  return `${year}-${String(month).padStart(2, "0")}-${REPRESENTATIVE_DAY_OF_MONTH}`;
 }
 
 /**

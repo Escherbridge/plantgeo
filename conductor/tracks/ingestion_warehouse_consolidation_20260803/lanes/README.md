@@ -26,13 +26,27 @@ than a duplicate. That is the single failure this whole dimension exists to prev
 So: **lane A ships first, alone.** It is small (~0.5 session). Everything else waits on
 its key format, not on its code.
 
+## Status as of 2026-08-03
+
+| Lane | Status | Note |
+|---|---|---|
+| **A** | complete | Landed **twice, concurrently** (`wf_7aa077b2-b9d`, `wf_4f98c325-5fa`). Merged and green; the merge itself was never independently reviewed. |
+| **D** | partial | Code landed and green. **Blocked on an owner dashboard change** (Railway Root Directory → `/`) before the cron image can build. Live write-proofs withheld. See §8. |
+| **E** | complete | Green. Found the TS endpoint is dead, not merely truncating; 39 of 43 fire years raise pending owner release dates. See §8. |
+| B, C, F, G, H, I, J, K | not started here | G has uncommitted work in the tree from another session. |
+
+**Concurrency warning.** At least two sessions have run lanes against this working tree
+simultaneously (workflows `wf_7aa077b2-b9d`, `wf_41869a8a-31f`, `wf_4f98c325-5fa`). Duplicated
+lane A and lane D runs merged without conflict and the sweep is green, but check for a running
+session before launching any lane that is already `in-progress`.
+
 ## Wave plan
 
 ```
-WAVE 0  (blocking, ~0.5 session)
+WAVE 0  (blocking, ~0.5 session)          [DONE]
   A  identity contract ......... ingest/identity.py + golden-file test
 
-WAVE 1  (all parallel, no shared files)
+WAVE 1  (all parallel, no shared files)   [D partial, E done]
   B  geo.geometry DDL + backfill ..... Drizzle / geo
   D  six Python ingest modules ....... agri CLI
   E  MTBS ingest ..................... easiest of phase 5

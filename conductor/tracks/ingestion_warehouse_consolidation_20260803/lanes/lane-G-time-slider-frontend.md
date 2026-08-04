@@ -2,7 +2,7 @@
 type: lane-brief
 track: ingestion_warehouse_consolidation_20260803
 lane: G
-status: in-progress
+status: built-pending-integration
 depends_on: none
 launched_at: 2026-08-03
 ---
@@ -361,3 +361,65 @@ PostgreSQL 18.4), per the owner's "run against prod, not local" instruction:
 Per the owner: **no test→fix→test loop, and no per-agent sweeps.** Implementing agents run
 no `npm test`, `npm run build`, `type-check` or `lint`. The orchestrator runs the §6 sweep
 exactly once after every agent has reported, plus `npm run build`.
+
+## 9. Execution record — 2026-08-03
+
+Ran as a 6-agent workflow: recon (2) → contract/store (1) → component ‖ wiring (2) → review (1).
+Implementing agents ran no verification; the orchestrator ran one sweep at the end.
+
+### Delivered
+
+| File | Change |
+|---|---|
+| `src/types/time-slider.ts` | net-new — the shared contract (§7 Q4 ruling) |
+| `src/stores/time-slider-store.ts` | net-new — store + pure UTC selectors |
+| `src/stores/useMetricAtDate.ts` | net-new — query hook, ±7-day prefetch, `NODE_ENV`-guarded mock |
+| `src/components/map/TimeSlider.tsx` | net-new — integer-day slider, hatched future, variant toggle |
+| `src/components/map/LayerManager.tsx` | edit — slider-day ref + four lane-J seams (§7 Q1 ruling) |
+| `src/components/panels/WaterPanel.tsx` | edit — reads the selected day |
+| `src/components/panels/VegetationPanel.tsx` | edit — reads the selected day |
+| `src/__tests__/stores/time-slider-store.test.ts` | net-new — 23 tests |
+| `src/__tests__/components/TimeSlider.test.tsx` | net-new — 9 tests |
+| `src/components/ui/time-slider.tsx` | **deleted** (§7 Q3 ruling); zero importers re-confirmed |
+
+### Sweep result
+
+`type-check` 0 errors in lane G files · `lint` 0 problems in lane G files ·
+`check:data-boundary` passed (12 documented URL rules) · lane G tests **32 new, all green**
+(23 store + 9 component); no regressions in the 337-test suite.
+
+Two failures during the sweep were traced to **other sessions**, not this lane:
+
+- `src/__tests__/api/action-network.test.ts` failed once — vitest collected the file mid-write
+  while another session lifted the `ACTION_NETWORK_INACTIVE` stub into a real implementation.
+  Re-run: 3 tests pass. Not lane G's.
+- **`npm run build` is currently red** and this lane cannot clear it. 23 `TS2339 … on type
+  'never'` errors, **all 23 in `src/components/panels/AnalyticsDashboard.tsx`**, a file lane G
+  never touched. Root cause is a concurrent edit to
+  `src/lib/server/trpc/routers/analytics.ts` (not lane G's) that collapsed that query's
+  inferred output type. `type-check` was clean at 22:38 and red at 22:50 with no lane G write
+  in between. **Do not "fix" the consumer while the producer is mid-flight.**
+
+### Post-review fix applied by the orchestrator
+
+The reviewer escalated `selectedDateRef` as write-only: `LayerManager` subscribed reactively to
+`selectedDate` but no render path read it, so once `TimeSlider` mounts every pointer tick of a
+scrub would re-render ~8 layer children for nothing. Resolved by subscribing **outside React**
+(`useTimeSliderStore.subscribe` into the ref) rather than by deleting the seam — the ref-
+discipline rule lane J needs is preserved, and the per-tick re-render is gone. The four seam
+comments now state that lane J needs a *reactive, debounced* day, since a ref cannot trigger a
+refetch and the raw day would reintroduce the per-tick storm `useMetricAtDate` exists to bound.
+
+### Lane status: built and tested, NOT yet reachable in the app
+
+Both remaining steps are outside lane G's boundary and are **unowned**:
+
+1. **Mount `<TimeSlider />` in `MapView.tsx`** as a sibling of `MapControls`. One line.
+2. **Nothing calls `setCapabilities`**, so `capabilities` is permanently `null` — which means
+   `TimeSlider` renders `null`, both panel date banners stay hidden, and every availability
+   message is unreachable. This needs lane J's four `geo.layers` columns plus a tRPC procedure
+   to serve `SliderCapabilities`. **Assign this before lane J starts** — the read path is
+   specified here but owned by nobody.
+
+Also still open: `Legend.tsx` should export `TOGGLE_ID_BY_LAYER_NAME` so the band-width key can
+move into the legend proper (availability messaging is keyed on `geo.layers.name` meanwhile).

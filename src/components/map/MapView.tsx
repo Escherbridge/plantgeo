@@ -16,6 +16,7 @@ import { AlertBell } from "@/components/ui/AlertBell";
 import PanelManager from "./PanelManager";
 import LayerManager from "./LayerManager";
 import HoverTooltip from "./HoverTooltip";
+import TimeSliderPanel from "./TimeSliderPanel";
 import { ServiceAreaLayer } from "./ServiceAreaLayer";
 import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
 import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
@@ -298,6 +299,9 @@ export default function MapView() {
                 first -- see the ordering note in ServiceAreaLayer.tsx. */}
             <ServiceAreaLayer map={mapInstance} />
             <LayerManager />
+            {/* Owns the only read of environmental.getSliderCapabilities; the store's day
+                and the whole axis come from that payload alone. */}
+            <TimeSliderPanel />
             <HoverTooltip map={mapInstance} />
             {isAIOpen && <RegionalIntelligencePanel />}
             {agentCoords && (

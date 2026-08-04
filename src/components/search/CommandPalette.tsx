@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/command";
 import { useMapStore } from "@/stores/map-store";
 import { useMap } from "@/lib/map/map-context";
+import { useToggleLayer } from "@/lib/map/layer-toggle-context";
 import type { MapStyle } from "@/types/map";
 
 export function CommandPalette() {
@@ -23,7 +24,7 @@ export function CommandPalette() {
   const toggleGlobe = useMapStore((s) => s.toggleGlobe);
   const toggle3D = useMapStore((s) => s.toggle3D);
   const setCurrentStyle = useMapStore((s) => s.setCurrentStyle);
-  const toggleLayer = useMapStore((s) => s.toggleLayer);
+  const toggleLayer = useToggleLayer();
   const resetView = useMapStore((s) => s.resetView);
 
   useEffect(() => {

@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "permissions": {
+    "allow": [
+      "Bash(ls*)",
+      "Bash(pwd*)",
+      "Bash(cat*)",
+      "Bash(head*)",
+      "Bash(tail*)",
+      "Bash(grep*)",
+      "Bash(rg*)",
+      "Bash(find*)",
+      "Bash(wc*)",
+      "Bash(stat*)",
+      "Bash(tree*)",
+      "Bash(which*)",
+      "Bash(whoami*)",
+      "Bash(date*)",
+      "Bash(echo*)",
+      "Bash(sed*)",
+      "Bash(awk*)",
+      "Bash(sort*)",
+      "Bash(uniq*)",
+      "Bash(diff*)",
+      "Bash(mkdir*)",
+
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git remote -v*)",
+      "Bash(git ls-files*)",
+      "Bash(git merge-base*)",
+      "Bash(git rev-parse*)",
+      "Bash(git blame*)",
+
+      "Bash(uv run*)",
+      "Bash(uv sync*)",
+      "Bash(uv --version*)",
+      "Bash(uv pip list*)",
+      "Bash(python*)",
+
+      "Bash(npm run build*)",
+      "Bash(npm run type-check*)",
+      "Bash(npm run lint*)",
+      "Bash(npm test*)",
+      "Bash(npm run test*)",
+      "Bash(npm run check:data-boundary*)",
+      "Bash(npm ci*)",
+      "Bash(npm install*)",
+      "Bash(npx tsc*)",
+      "Bash(node*)",
+
+      "Bash(psql*)",
+      "Bash(*psql.exe*)",
+      "Bash(PGCONNECT_TIMEOUT=*)",
+
+      "Read",
+      "Edit(.claude/**)",
+      "Edit(conductor/**)",
+      "Edit(services/agri-data-service/**)"
+    ],
+    "deny": [
+      "Bash(rm -rf /*)",
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)"
+    ]
+  }
+}

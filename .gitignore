@@ -92,3 +92,6 @@ martin-data/
 
 # Wrangler local simulator state (R2/KV/D1 emulation) — never commit.
 .wrangler/
+
+# Captured command output from conductor lane runs: machine-specific paths, never history.
+conductor/tracks/**/*.out

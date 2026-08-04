@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc/client";
 import { DROUGHT_LEGEND } from "@/components/map/layers/DroughtLayer";
 import { LayerToggle } from "@/components/ui/layer-toggle";
+import { useLayerRenderState, useMapDay } from "@/lib/map/layer-toggle-context";
 
 interface WaterPanelProps {
   open: boolean;
@@ -31,6 +32,9 @@ const CONDITION_LABEL: Record<string, string> = {
   unknown: "Unknown",
 };
 
+// The gauge layer's geo.layers name lives in the layer registry ("water" -> "water-gauges").
+// Drought has no geo.layers row, so the registry gives it none and it makes no claim.
+
 const TREND_SYMBOL: Record<string, string> = {
   rising: "↑",
   stable: "→",
@@ -48,11 +52,13 @@ function ColorSwatch({ color, label }: { color: string; label: string }) {
 }
 
 export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
+  // lane J: add { date: selectedDate } once environmental.getStreamflow accepts a date -- today it returns the latest reading, not the selected day.
   const streamflowQuery = trpc.environmental.getStreamflow.useQuery(
     { bbox: bbox ?? "" },
     { enabled: open && !!bbox }
   );
 
+  // lane J: replace `undefined` with { date: selectedDate } once environmental.getDroughtClassification accepts a date -- today it returns the latest release, not the selected day.
   const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(undefined, {
     enabled: open,
   });
@@ -61,6 +67,18 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
     { bbox: bbox ?? "" },
     { enabled: open && !!bbox }
   );
+
+  // The map's day, read from the toggle context, so the panel and the map can never
+  // disagree about what is displayed.
+  const mapDay = useMapDay();
+  const selectedDate = mapDay.selectedDate;
+  const hasSelectedDay = selectedDate !== null;
+  // None of the three queries above accept a date yet, so whenever the slider is off the
+  // server's today these figures are the latest published values and must say so.
+  const figuresAreLatestNotSelectedDay = mapDay.isOffServerToday;
+
+  // The gauge layer's own availability at that day; the context names it "water-gauges".
+  const gaugeReason = useLayerRenderState("water").unavailableReason;
 
   const gauges = streamflowQuery.data ?? [];
   const watersheds = watershedQuery.data?.features ?? [];
@@ -103,6 +121,15 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
           <LayerToggle layerId="weather" label="Wind & Weather" />
         </div>
 
+        {hasSelectedDay && (
+          <p className="mt-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2 py-1.5 text-[11px] text-[hsl(var(--muted-foreground))]">
+            Map date{" "}
+            <span className="font-medium text-[hsl(var(--foreground))]">{selectedDate}</span>
+            {figuresAreLatestNotSelectedDay &&
+              " — the readings below are the latest published values, not values for this date."}
+          </p>
+        )}
+
         <div className="mt-4 overflow-y-auto max-h-[calc(100vh-8rem)]">
           <Tabs defaultValue="streamflow">
             <TabsList className="w-full">
@@ -122,6 +149,15 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
 
             {/* Streamflow tab */}
             <TabsContent value="streamflow" className="flex flex-col gap-4 mt-4">
+              {/* Why the gauge layer has nothing for the selected day. Stated even while
+                  the latest readings are listed below, so an empty map layer is never
+                  mistaken for the toggle being off. */}
+              {gaugeReason !== null && (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                  {gaugeReason}
+                </p>
+              )}
+
               {!bbox && (
                 <p
                   role="status"
@@ -247,6 +283,11 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
                     <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 text-center">
                       <p className="text-xs text-[hsl(var(--muted-foreground))] mb-1">
                         Dominant Classification
+                        {figuresAreLatestNotSelectedDay && (
+                          <span className="block text-[10px]">
+                            Latest published release — not {selectedDate}
+                          </span>
+                        )}
                       </p>
                       <span
                         className="inline-block px-3 py-1 rounded font-bold text-sm text-white"
