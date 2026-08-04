@@ -1,0 +1,22 @@
+# Paths `railway up` must not index when uploading a build context.
+#
+# .pytest_cache is here because a killed pytest run can leave it read-protected on
+# Windows, and the indexer then fails the whole upload with "Access is denied
+# (os error 5)" rather than skipping it. Everything else is build output or a
+# dependency tree the Dockerfile reinstalls from a lockfile anyway.
+
+node_modules/
+.next/
+.git/
+.venv/
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+.omc/
+.agri-local-runs/
+coverage/
+*.log
+data/tiles/
+martin-data/
