@@ -47,10 +47,17 @@ ingestion. The script retains eight completed archives by default; choose an
 output directory outside this repository and include it in the normal machine
 backup policy.
 
+Resolve the container once per shell — the id differs on every machine and every
+recreate, so it must never be pasted from a runbook:
+
+```powershell
+$env:PLANTGEO_WAREHOUSE_CONTAINER = (podman ps --filter name=plantgeo-warehouse --format '{{.ID}}')
+```
+
 ```powershell
 pwsh -File infra/local-warehouse/backup.ps1 `
-  -Container 332c3be17420 `
-  -OutputDirectory C:\PlantGeoWarehouseBackups
+  -Container $env:PLANTGEO_WAREHOUSE_CONTAINER `
+  -OutputDirectory $env:PLANTGEO_BACKUP_ROOT
 ```
 
 Every `.dump` has an adjacent checksum manifest. A restore verifies that
@@ -59,8 +66,8 @@ and never invoked by the ingestion commands:
 
 ```powershell
 pwsh -File infra/local-warehouse/restore.ps1 `
-  -Container 332c3be17420 `
-  -ArchivePath C:\PlantGeoWarehouseBackups\plantgeo-<timestamp>.dump `
+  -Container $env:PLANTGEO_WAREHOUSE_CONTAINER `
+  -ArchivePath $env:PLANTGEO_BACKUP_ROOT\plantgeo-<timestamp>.dump `
   -IUnderstandThisReplacesData
 ```
 
@@ -307,15 +314,15 @@ target with the reviewed migration/owner identity:
 ```powershell
 pwsh -File infra/local-warehouse/backup.ps1 `
   -Container <local-warehouse-container> `
-  -OutputDirectory C:\PlantGeoWarehouseBackups
+  -OutputDirectory $env:PLANTGEO_BACKUP_ROOT
 
 & 'C:\Program Files\PostgreSQL\16\bin\pg_restore.exe' `
-  --list C:\PlantGeoWarehouseBackups\plantgeo-<timestamp>.dump
+  --list $env:PLANTGEO_BACKUP_ROOT\plantgeo-<timestamp>.dump
 
 & 'C:\Program Files\PostgreSQL\16\bin\pg_restore.exe' `
   --dbname '<authorized-target-admin-dsn>' `
   --no-owner --no-acl --single-transaction --exit-on-error `
-  C:\PlantGeoWarehouseBackups\plantgeo-<timestamp>.dump
+  $env:PLANTGEO_BACKUP_ROOT\plantgeo-<timestamp>.dump
 ```
 
 The restore target must already have the required extensions and reviewed

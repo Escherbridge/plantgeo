@@ -35,7 +35,7 @@ Verify the tree is where this brief expects before starting:
 
 | Check | Command | Expected |
 |---|---|---|
-| On `main`, clean | `git -C c:/Users/atooz/Programming/plantgeo status --short` | no output |
+| On `main`, clean | `git status --short` | no output |
 | No slider work exists yet | `grep -rn "getMetricAtDate\|metricDaily\|selectedDate\|forecastVariant" src/` | no matches |
 | Baseline is green | `npm run type-check` | exits 0, no errors |
 
@@ -268,7 +268,7 @@ has not shipped yet — read from the same hook.
 One sweep at the end — no test → fix → test loop.
 
 ```powershell
-cd c:\Users\atooz\Programming\plantgeo
+cd <repo-root>
 npm run type-check
 npm run lint
 npm run check:data-boundary

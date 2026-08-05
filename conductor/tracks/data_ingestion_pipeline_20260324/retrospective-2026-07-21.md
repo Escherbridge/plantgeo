@@ -40,7 +40,7 @@ forecasts, not the full local four-year source archive.
 - The local Podman container was intentionally stopped, not deleted. Its named
   `plantgeo_warehouse_pgdata` volume remains present, so normal restart
   recovers the validated NASA facts and raw cache.
-- `C:\Users\atooz\PlantGeoWarehouseBackups\plantgeo-20260721T070210Z.dump`
+- `<backup-root>/plantgeo-20260721T070210Z.dump`
   has a matching SHA-256 manifest and `pg_restore --list` succeeded with 315
   table-of-contents lines. It is structurally recoverable, but it predates the
   completed NASA replay and is therefore not its restore point.
@@ -48,7 +48,7 @@ forecasts, not the full local four-year source archive.
   `services/agri-data-service/.agri-local-runs/warehouse/nasa-power-daily/fa4b726f6bb728906580f429d82be3480dd5c1b1633172f0a133c17f4868352b`:
   34,854,080 rows, 1,462 UTC partitions, and 1,462 Parquet files. The manifest
   checksum is `7586ea8eae24f9e1e6adfc26f42bb89e2abbe3066be119e63536dbfa1fb8e6fc`.
-- `C:\Users\atooz\PlantGeoWarehouseBackups\plantgeo-20260721T201702Z.dump`
+- `<backup-root>/plantgeo-20260721T201702Z.dump`
   is the current NASA restore point: 1,578,003,562 bytes, SHA-256
   `7cc183b0ba7391b2bd49404c400bc4d494885a8c3951ae2e3b35620ca0222969`, and
   `pg_restore --list` returned 315 catalog entries.

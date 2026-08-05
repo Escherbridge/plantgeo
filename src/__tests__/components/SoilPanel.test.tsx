@@ -25,6 +25,11 @@ type SoilSurveyResult = {
          * predating the zoom-aware tiers looks like, and it must read as "detail".
          */
         granularity?: "detail" | "regional-average" | "coarse-average";
+        /**
+         * Optional for the same reason as `granularity`: a response predating persistence
+         * carries no coverage, and must claim no gap rather than inventing one.
+         */
+        coverage?: { cells: number; covered: number; ingested: number };
       })
     | undefined;
   isLoading: boolean;
@@ -83,6 +88,7 @@ function soilSurveyCollection(
     availability?: "published" | "unavailable";
     reason?: string;
     unreadableGeometries?: number;
+    coverage?: { cells: number; covered: number; ingested: number };
   } = {}
 ): NonNullable<SoilSurveyResult["data"]> {
   return {
@@ -107,6 +113,7 @@ function soilSurveyCollection(
     reason: overrides.reason ?? null,
     truncated: overrides.truncated ?? false,
     unreadableGeometries: overrides.unreadableGeometries ?? 0,
+    ...(overrides.coverage === undefined ? {} : { coverage: overrides.coverage }),
   };
 }
 
@@ -174,7 +181,7 @@ describe("SoilPanel SSURGO coverage", () => {
 
     renderPanel();
 
-    expect(screen.getByText(/surveyed more map units than this view draws/)).toBeTruthy();
+    expect(screen.getByText(/More map units are stored for this view than it draws/)).toBeTruthy();
     expect(screen.getByText(/subset/)).toBeTruthy();
     // The count must never be presented as the whole view.
     expect(screen.queryByText(/1,?000 SSURGO map units drawn/)).toBeNull();
@@ -236,7 +243,7 @@ describe("SoilPanel SSURGO coverage", () => {
 
     renderPanel();
 
-    expect(screen.getByText(/3 map units whose boundary could not be read/)).toBeTruthy();
+    expect(screen.getByText(/3 map units this reader could not store/)).toBeTruthy();
     expect(screen.queryByText(/no surveyed SSURGO map units/)).toBeNull();
   });
 
@@ -250,7 +257,47 @@ describe("SoilPanel SSURGO coverage", () => {
     renderPanel();
 
     expect(screen.getByText(/2 SSURGO map units drawn/)).toBeTruthy();
-    expect(screen.getByText(/1 map unit whose boundary could not be read/)).toBeTruthy();
+    expect(screen.getByText(/1 map unit this reader could not store/)).toBeTruthy();
+  });
+
+  it("names ground nobody has fetched as missing coverage, not as an absence of soil", () => {
+    // The dishonest-empty case persistence introduced. Without this the response below --
+    // no features, nothing truncated, nothing unreadable, availability "published" -- is
+    // byte-identical to a viewport USDA surveyed and found nothing in.
+    queries.getSoilSurvey.mockReturnValue({
+      data: soilSurveyCollection(0, { coverage: { cells: 4, covered: 1, ingested: 0 } }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderPanel();
+
+    expect(screen.getByText(/3 of 4 grid cells in this view have not been loaded/)).toBeTruthy();
+  });
+
+  it("claims no coverage gap for a fully covered view", () => {
+    queries.getSoilSurvey.mockReturnValue({
+      data: soilSurveyCollection(2, { coverage: { cells: 2, covered: 2, ingested: 1 } }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderPanel();
+
+    expect(screen.queryByText(/have not been loaded from USDA/)).toBeNull();
+  });
+
+  it("claims no coverage gap for a response that predates persistence", () => {
+    // `coverage` absent is a fixture or an older client cache entry, not a gap.
+    queries.getSoilSurvey.mockReturnValue({
+      data: soilSurveyCollection(2),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderPanel();
+
+    expect(screen.queryByText(/have not been loaded from USDA/)).toBeNull();
   });
 
   it("makes no unreadable-geometry claim when every map unit parsed", () => {

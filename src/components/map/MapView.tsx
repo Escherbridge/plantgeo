@@ -306,8 +306,10 @@ export default function MapView() {
                 first -- see the ordering note in ServiceAreaLayer.tsx. */}
             <ServiceAreaLayer map={mapInstance} />
             <LayerManager />
-            {/* Owns the only read of environmental.getSliderCapabilities; the store's day
-                and the whole axis come from that payload alone. */}
+            {/* The right-hand panel region, always mounted: it owns the only read of
+                environmental.getSliderCapabilities (the store's day and the whole axis come
+                from that payload alone) and pins the global time marker at its top, so the
+                selected day is reachable without opening any panel. */}
             <TimeSliderPanel />
             <HoverTooltip map={mapInstance} />
             {isAIOpen && <RegionalIntelligencePanel />}

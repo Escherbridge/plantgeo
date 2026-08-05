@@ -37,7 +37,7 @@ north_america_intervention_data_20260723 (curation), seasonal_forecast_feedback_
 - Side quest: escherbridge business cards (separate repo, not this conductor).
 
 ## Frozen export — COMPLETE 2026-07-27T20:30:34Z
-- `C:\PlantGeoWarehouseBackups\plantgeo-20260727T203034Z.dump` (pg_dump custom/zstd)
+- `$env:PLANTGEO_BACKUP_ROOT\plantgeo-20260727T203034Z.dump` (pg_dump custom/zstd)
 - bytes=1,589,330,137; toc_entries=623
 - sha256=`8d687845d31bbee6d2b081a35e0e1d7b475194558f8cc1857239e59b0d526217`
   (sidecars: `.sha256`, `.manifest.json` adjacent to the dump)

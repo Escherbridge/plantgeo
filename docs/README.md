@@ -62,8 +62,18 @@ uv run sanic agri_data_service.app:create_app --factory --dev --port 8000
 Do not point local reset/migration experiments at Railway. The Python service
 does not provide a destructive database-reset command.
 
+The map layers stay empty until data is ingested. To populate them on your own
+machine, follow [Rebuilding the dataset from a clone](./rebuilding-the-dataset.md);
+it covers the separate local warehouse on port `5442`, which credentials each
+source needs, and the plan-generation step that every historical backfill
+depends on.
+
 ## Documentation index
 
+- [Rebuilding the dataset from a clone](./rebuilding-the-dataset.md) — the
+  newcomer path: per-source credentials, local-warehouse bootstrap, the
+  plan-regeneration prerequisite, the ingestion verbs, and what cannot be
+  reproduced without the maintainer's hosted accounts.
 - [Architecture](./architecture.md) — major runtime boundaries and data flows.
 - [Data ingestion and serving contract](./data-ingestion-and-serving-contract.md)
   — warehouse-first custody, exceptions, and browser boundaries.

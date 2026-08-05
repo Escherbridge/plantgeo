@@ -232,6 +232,12 @@ exactly to the coordinate returned, with no interpolation across cells.
 from §soil-evidence above: that is SoilGrids' modelled raster at a point, this is
 USDA's surveyed SSURGO map units over a viewport.
 
+> **Partly superseded 2026-08-05 by §soil-survey-persistence below.** The provider
+> findings, the tri-state `hydric` rule, the density measurements and the honest-gap
+> reasoning all still hold. The *acquisition* half does not: map units are persisted, the
+> Redis day-cache is gone, and three specific claims in this section are now falsified —
+> §soil-survey-persistence lists them.
+
 **The SSURGO spatial WFS cannot serve this feature, and the tabular endpoint can.**
 Probed live 2026-08-04:
 
@@ -333,6 +339,139 @@ captioned there too, beside `truncated`, and suppresses the empty-coverage sente
 The area ceiling is server-side only, so an over-wide viewport surfaces to the client as
 a rejected request, not as a pre-emptive client-side check that could drift from the
 constant.
+
+## §soil-survey-persistence
+
+Supersedes the acquisition half of §soil-survey above as of 2026-08-05: SSURGO map units
+are **persisted in the warehouse**, and a viewport read is a local PostGIS query. Files:
+`services/usda-soil.ts`, `drizzle/0013_soil_survey_persistence.sql`,
+`db/schema.ts#soilSurveyCoverage`. Read §soil-survey for the tabular-vs-WFS finding, the
+tri-state `hydric` rule and the density measurements, which all still hold.
+
+**Three statements in §soil-survey are now falsified. Do not act on them.**
+
+1. *"`mupolygon.STIntersects(...)` written out longhand instead of the macro times out
+   past 90 s and is not an alternative."* Measured 2026-08-05 against the live endpoint:
+   the longhand form over a 0.02 sq deg Boise AOI answers in **4.3–6.7 s** and returns
+   649 delineations in 2.78 MB. It is what this module now uses, and it is not slow.
+2. *"`MAX_RESPONSE_BYTES` (8 MB) is unchanged."* It is 24 MB, because whole delineations
+   are ~4.4 KB of WKT each and the per-cell ingest ceiling is 4,000 of them.
+3. `toSoilSurveyCollection` and `isSoilSurveyCollection` no longer exist, and neither does
+   the Redis day-cache. The names to look for are `parseSoilSurveyRows` (pure, exported)
+   and `geo.soil_survey_coverage`.
+
+**Why the macro had to go, and it is not performance.** `~GetClippedMapunits~` returns
+geometry *clipped to the AOI that asked*, keyed on `mukey`. Both properties are fatal to
+persistence. A clipped shape depends on the viewport that fetched it, so storing one
+records an arbitrary slice of a real boundary and makes blank ground appear on the next
+pan. And `mukey` is not one shape: measured over a single Boise cell the macro returned
+**683 rows across 98 distinct mukeys**, so keying identity on `mukey` would have collapsed
+683 delineations into 98. `mupolygon.mupolygonkey` is SSURGO's own per-delineation primary
+key and is what `geo.geometry.natural_key` is built from —
+`'usda-sda:<mupolygonkey>'`, producer `usda-sda`, `geom_kind` `'polygon'`.
+
+**The vintage is the survey area's, and there is no observation date.** SSURGO is a static
+survey product with per-survey-area vintages, not a time series, so `observedAt` stays
+`null` on the collection exactly as it was — there is no single release timestamp to put
+there and inventing one would be a fabricated observation. What does exist is
+`sacatalog.saverest`, the survey area's own export vintage, joined through
+`mapunit.lkey → legend.lkey → legend.areasymbol`. Verified over the PNW envelope: all
+**220** intersecting survey areas carry one, spanning 2025-08-26 to 2026-03-19. It lands
+in two places — `properties.surveyAreaVintage` (ISO date, per feature, alongside
+`areaSymbol`) and `geo.geometry.version_valid_from`. SDA serves it as US-locale text with
+**no timezone** ("8/27/2025 8:27:08 PM"); `parseSurveyAreaVintage` keeps the date at UTC
+midnight and discards the clock, because keeping the time would look more faithful while
+asserting a timezone the publisher never stated. A row whose vintage will not parse is
+**unstorable** (`version_valid_from` is `NOT NULL`) and is counted, not dropped silently.
+
+`saverest` is also the Type-2 revision signal, which is what §geometry-dimension's change
+detection rule demands (*"version on the producer's own revision signal where one
+exists"*) and rules out comparing geometry floats. A re-fetch of unchanged ground only
+advances `last_confirmed_at`; a survey area republished with a **strictly newer** vintage
+closes the old version and opens a new one, in the one legal statement order. Strictly
+newer, because `ck_geometry_version_order` requires `version_valid_to > version_valid_from`
+— a regressed upstream vintage is an anomaly to fail loudly on, not to absorb.
+
+**The coverage ledger exists because persistence adds a second dishonest-empty case.**
+Proxying had exactly one: SDA answering with no map units, which really does mean
+unsurveyed. Reading a warehouse adds *ground nobody has fetched*, and it paints
+identically — polygons that stop. `geo.soil_survey_coverage` is what separates them: one
+row per grid cell, written only after a successful fetch, so a cell **with** a row is
+authoritative (`polygon_count = 0` genuinely means unsurveyed) and a cell **without** one
+has never been asked. `coverage.covered < coverage.cells` rides all the way to
+`SoilPanel`, which captions it as missing coverage on our side. A transport fault leaves
+the cell unrecorded on purpose — recording it would convert an outage into a claim about
+the ground.
+
+`polygon_count` is counted back out of `geo.features` *after* the writes, and
+`unreadable_count` is served-minus-stored. So a row lost anywhere in the path — including
+inside PostGIS, where TypeScript cannot see it — still surfaces to the reader instead of
+quietly shrinking the map.
+
+**The grid is 1/8 degree and that number is load-bearing.** `SOIL_SURVEY_CELL_DEGREES =
+0.125` is exactly representable in binary floating point, so `floor(lon / 0.125)` never
+drifts and the same ground always resolves to the same `cell_key`; a decimal such as 0.1
+would eventually mint near-duplicate ledger rows for one cell. Cell area is 0.015625 sq
+deg, just inside `MAX_SOIL_BBOX_SQUARE_DEGREES` — the largest area one SDA round trip is
+measured safe over — so no fetch, read-through or backfill, ever asks for more than that.
+`MAX_SOIL_AGGREGATION_CELLS_PER_SIDE` (3) keeps its name and changes its job: it used to
+bound the SDA fan-out an averaged *read* made, and now bounds the cells one request may
+warm. A viewport needing more is answered from what the ledger covers, with the gap
+reported.
+
+**Measured cost, and the envelope projection.** All figures from the verified slice run
+against production on 2026-08-05, from a Windows laptop over Railway's **public TCP proxy**
+— which is the number that matters, because it is not where a real backfill should run.
+
+| what | measured |
+| --- | --- |
+| SDA fetch, one 1/8° cell (probed alone) | 4.3–6.7 s, 2.8 MB, 649 delineations |
+| whole ingest, one 541-delineation cell | **52 s** (so ~47 s is the write, not SDA) |
+| detail read, warm, 23 delineations | 0.8–3.5 s |
+| averaged read over 4 cells (2,134 units) | **1.2–1.5 s** — was a measured 30–40 s |
+| storage, `geo.features` payload | 4,469 B/delineation |
+| storage, `geo.geometry` payload | 1,875 B/delineation |
+
+The PNW envelope `-125,42,-111,49` is 112 × 56 = **6,272 cells** and holds **1,507,623
+delineations across 44,332 mukeys and 220 survey areas** (counted directly at SDA in 23 s).
+So: **~91 h single-stream / ~30 h at concurrency 3 from a laptop**, and **~9.5 GB** of row
+payload (~13–15 GB with indexes). The laptop figure is dominated by round-trip latency to
+Railway, not by SDA or by PostGIS — SDA is only ~10% of it. **Run the backfill from inside
+Railway's private network**, where SDA becomes the floor at roughly 3 h at concurrency 3.
+`backfillSoilSurvey` is bounded by `maxCells` and resumable with no cursor of its own — the
+ledger *is* the cursor — so an interrupted run is safe to restart. Do not run the whole
+envelope unattended in one pass.
+
+Two measurement traps worth knowing. `WITH … AS MATERIALIZED` in the geometry insert is
+worth ~2× on the write path: without it the CTE is inlined and `ST_GeomFromGeoJSON` is
+re-evaluated for every column referencing it (the first slice averaged 116 s/cell, the same
+code with the CTE materialized 52 s). And **the ledger's `polygon_count` does not sum to the
+feature count**: a delineation straddling a cell boundary is fetched by both cells and
+counted in both ledger rows while being stored once (measured: 5 cells, ledger sum 2,675,
+distinct features 2,525). `unreadable_count` is unaffected, because the stored-count probe
+matches on the payload's keys regardless of which cell first inserted them.
+
+Verified on the slice: 2,525 features, 2,525 dimension rows, **0 features with a null
+`geometry_id`**, 0 invalid or empty geometries, 0 non-areal geometries, 0 unreadable rows,
+and every `natural_key` namespaced. The forward path therefore maintains the geometry
+dimension rather than leaving orphans for `agri-cli ingest-geometry-repair` to claim later.
+
+**The averaged tiers got much cheaper and that is the point.** They used to tile the
+viewport into up to nine SDA calls, a measured 30–40 s. They are now one local query that
+simplifies each delineation *before* the union (the union is the expensive step; feeding it
+generalized input is what makes a multi-degree viewport answerable) and bounds its input at
+`MAX_SOIL_AGGREGATE_INPUT_ROWS`. The aggregate shape is unchanged and still structurally
+unable to pass as a surveyed unit: `aggregated: true`, `mapUnitCount`, `hydricFraction`,
+and never a `mukey`. `hydricFraction` is divided in TypeScript rather than SQL because its
+two operands are `COUNT(*)` bigints and a fractional parameter placed next to one gets
+bound as bigint by postgres-js.
+
+**No Martin restart, no tile function.** `soil-survey` is drawn by
+`components/map/layers/SoilSurveyLayer.tsx` from a GeoJSON source fed by the tRPC
+procedure, not by a `geo.*_tiles` function — unlike `drizzle/0009` and `0012`, which did
+add function sources and did need one. Detail-tier reads serve **whole** delineations now
+rather than viewport-clipped ones; the renderer clips, and every other polygon layer here
+already serves whole shapes.
 
 ## §watershed-boundaries
 

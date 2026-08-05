@@ -1,7 +1,9 @@
 import os
 import re
 
-tracks_dir = r"c:\Users\atooz\Programming\plantgeo\conductor\tracks"
+# Resolved from this file's own location, so the script runs from any clone and any working
+# directory. It previously hard-coded one machine's absolute path and crashed everywhere else.
+tracks_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracks")
 summary = []
 
 for item in os.listdir(tracks_dir):

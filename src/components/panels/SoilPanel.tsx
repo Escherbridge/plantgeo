@@ -168,16 +168,18 @@ export function SoilPanel({
   // rather than drawn at a guessed outline, so the ground under them paints blank -- a
   // gap in what we can read, which must never be captioned as unsurveyed ground.
   const soilSurveyUnreadable = soilSurvey?.unreadableGeometries ?? 0;
-  // Not yet on ProxiedFeatureCollection's declared type (environmental.ts, owned by
-  // another lane) -- present at runtime via the collection's own spread regardless.
-  // Undefined reads as "detail" so every existing (pre-zoom-aware) caller and test
-  // fixture keeps its original wording unchanged.
-  const soilSurveyGranularity =
-    (
-      soilSurvey as
-        | { granularity?: "detail" | "regional-average" | "coarse-average" }
-        | undefined
-    )?.granularity ?? "detail";
+  // Undefined reads as "detail" so every pre-zoom-aware test fixture keeps its original
+  // wording unchanged.
+  const soilSurveyGranularity = soilSurvey?.granularity ?? "detail";
+  // Ground nobody has fetched from USDA yet. It draws exactly like ground the survey
+  // found nothing on, so this is the only surface that can tell the two apart -- the same
+  // honest-gap duty `truncated` and `unreadableGeometries` carry. Undefined (a fixture or
+  // a response from before persistence landed) claims no gap rather than inventing one.
+  const soilSurveyCoverage = soilSurvey?.coverage;
+  const soilSurveyUncoveredCells =
+    soilSurveyCoverage === undefined
+      ? 0
+      : Math.max(soilSurveyCoverage.cells - soilSurveyCoverage.covered, 0);
   const soilSurveyAggregated = soilSurveyGranularity !== "detail";
   // The real SSURGO map units merged behind the drawn averages, summed across every
   // averaged region in view -- the count that keeps an average from reading as a
@@ -259,7 +261,7 @@ export function SoilPanel({
               >
                 USDA Soil Data Access did not return a map-unit table for this view.
                 Nothing is drawn — that is a provider fault, not an absence of soil. The
-                response was not cached, so returning to this view asks USDA again.
+                view was not recorded as covered, so returning to it asks USDA again.
               </p>
             )}
 
@@ -278,7 +280,7 @@ export function SoilPanel({
                   </>
                 ) : (
                   <>
-                    USDA surveyed more map units than this view draws. The first{" "}
+                    More map units are stored for this view than it draws. The first{" "}
                     {soilSurveyCount} are shown — what is drawn is a subset, so ground
                     left blank here is not necessarily unsurveyed. Zoom in for complete
                     coverage.
@@ -287,9 +289,27 @@ export function SoilPanel({
               </p>
             )}
 
-            {/* Rows SDA served that never became polygons. Same honest-gap principle as
-                `truncated`: the map paints the ground under them exactly like ground the
-                survey found nothing on, and only this note can tell the two apart. */}
+            {/* Ground the warehouse has never fetched from USDA. The one dishonest-empty
+                case persistence introduced, and the most important note here: without it,
+                un-backfilled ground reads as "USDA reports no surveyed SSURGO map units
+                in this view". */}
+            {!soilSurveyUnavailable && soilSurveyUncoveredCells > 0 && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                {soilSurveyUncoveredCells} of {soilSurveyCoverage?.cells} grid cell
+                {soilSurveyCoverage?.cells === 1 ? "" : "s"} in this view have not been
+                loaded from USDA yet, so blank ground there is missing coverage on our
+                side, not an absence of soil.
+              </p>
+            )}
+
+            {/* Rows SDA served that never became stored map units -- unreadable geometry,
+                or a survey area with no publisher vintage to date the version by. Same
+                honest-gap principle as `truncated`: the map paints the ground under them
+                exactly like ground the survey found nothing on. */}
             {soilSurveyUnreadable > 0 && (
               <p
                 role="status"
@@ -297,10 +317,9 @@ export function SoilPanel({
                 className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
               >
                 USDA returned {soilSurveyUnreadable} map unit
-                {soilSurveyUnreadable === 1 ? "" : "s"} whose boundary could not be read,
-                so {soilSurveyUnreadable === 1 ? "it is" : "they are"} not drawn. Blank
-                ground here is a gap in what this reader could parse, not an absence of
-                soil.
+                {soilSurveyUnreadable === 1 ? "" : "s"} this reader could not store, so{" "}
+                {soilSurveyUnreadable === 1 ? "it is" : "they are"} not drawn. Blank ground
+                here is a gap in what we could read, not an absence of soil.
               </p>
             )}
 
@@ -525,10 +544,17 @@ export function SoilPanel({
                 </p>
               )}
 
+              {/* Two very different failures, told apart by the code the router chose.
+                  PRECONDITION_FAILED is `SoilEvidenceUnavailableError` -- SoilGrids
+                  actually reporting no measurement at this cell. Anything else is a
+                  transport or provider fault. The previous single sentence blamed both on
+                  an unpublished warehouse release, which names neither cause: this point
+                  query has never been warehouse-backed, it reads ISRIC live. */}
               {queryPoint && soilQuery.isError && (
                 <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
-                  Point soil properties are unavailable until a validated
-                  warehouse release is published.
+                  {soilQuery.error?.data?.code === "PRECONDITION_FAILED"
+                    ? "SoilGrids reports no soil measurement at this point."
+                    : "SoilGrids did not answer for this point — that is a provider fault, not an absence of soil. Try again shortly."}
                 </p>
               )}
 

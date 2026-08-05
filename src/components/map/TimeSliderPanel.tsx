@@ -1,13 +1,20 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc/client";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
 import TimeSlider from "./TimeSlider";
 
 /**
- * The connected time slider: the one place `environmental.getSliderCapabilities` is read and
- * fed into the store.
+ * The connected time slider and the right-hand panel region that anchors it: the one place
+ * `environmental.getSliderCapabilities` is read and fed into the store, and the one place the
+ * slider's position is decided.
+ *
+ * The region is ALWAYS mounted, with no dependence on an open panel: the selected day applies
+ * to every layer on the map, so the marker for it cannot be something a user has to open a
+ * panel to reach. Only the body below it is conditional. The region draws no chrome of its
+ * own, so while capabilities are in flight it is an empty, invisible box rather than a
+ * placeholder frame.
  *
  * Nothing else may set capabilities. Before this existed the slider had no mount point at
  * all, so `setCapabilities` was called only from tests, the store's `selectedDate` never left
@@ -24,7 +31,38 @@ import TimeSlider from "./TimeSlider";
 /** Matches CAPABILITIES_CACHE_TTL_MS in environmental-read-model.ts, so a poll is a cache hit. */
 const CAPABILITIES_REFRESH_MS = 5 * 60_000;
 
-export default function TimeSliderPanel() {
+/**
+ * The right-hand panel region's anchor. This is the whole of the slider's positioning, moved
+ * out of `TIME_SLIDER_CONTAINER_CLASSES` when the slider stopped being a card floating over
+ * the middle of the canvas (2026-08-05) and became the region's global time marker.
+ *
+ * Column geometry deliberately echoes the panel sheets' (`max-w-sm`, right-aligned) so the
+ * slider reads as the top of the right-hand panel region rather than as one more floating
+ * widget. The two offsets are both collision avoidance, not taste: `right-16` clears
+ * MapLibre's own top-right control stack (29px wide, 44px under the (max-width: 640px) rule in
+ * globals.css), and `top-16` clears the row above -- MapControls' centred `top-4` toolbar,
+ * whose centred half-width reaches into this column on a ~1024px viewport, and SearchBar's
+ * button on a phone. Width is capped against the viewport, never fixed, so the column can
+ * never exceed the screen.
+ *
+ * `overflow-y-auto` on the region with a `sticky` time section means one scroller, not two:
+ * a short viewport scrolls the region's body under a pinned slider instead of nesting a
+ * scroller inside a scroller, which on a phone is how a control becomes unreachable.
+ */
+const PANEL_REGION_CLASSES =
+  "absolute right-16 top-16 z-10 flex max-h-[calc(100%-5rem)] w-[min(24rem,calc(100vw-5rem))] flex-col overflow-y-auto overscroll-contain";
+
+export interface TimeSliderPanelProps {
+  /**
+   * The region's body, scrolling below the pinned time section. Optional and conditional --
+   * the region and its time marker are always mounted, because the day applies to every layer
+   * whether or not a panel is open, but the body only exists when there is something to dock
+   * there. Panel sheets currently render themselves as overlays and do not use this.
+   */
+  children?: ReactNode;
+}
+
+export default function TimeSliderPanel({ children }: TimeSliderPanelProps) {
   const setCapabilities = useTimeSliderStore((state) => state.setCapabilities);
   const setCapabilitiesUnavailable = useTimeSliderStore(
     (state) => state.setCapabilitiesUnavailable
@@ -62,5 +100,23 @@ export default function TimeSliderPanel() {
     setCapabilitiesUnavailable(capabilities === undefined && isError);
   }, [capabilities, isError, setCapabilitiesUnavailable]);
 
-  return <TimeSlider />;
+  return (
+    <section
+      className={PANEL_REGION_CLASSES}
+      aria-label="Map time and panel region"
+      data-testid="map-panel-region"
+    >
+      {/* Pinned: the day is the one marker every layer draws as of, so it stays put while the
+          body below scrolls. `sticky` rather than a fixed-height split so the section is
+          exactly as tall as the slider, whose height changes with its two disclosures. */}
+      <div className="sticky top-0 shrink-0" data-testid="map-panel-region-time">
+        <TimeSlider />
+      </div>
+      {children !== undefined && (
+        <div className="mt-2 shrink-0" data-testid="map-panel-region-body">
+          {children}
+        </div>
+      )}
+    </section>
+  );
 }

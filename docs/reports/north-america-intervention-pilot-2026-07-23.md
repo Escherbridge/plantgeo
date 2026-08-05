@@ -31,7 +31,7 @@ The implemented Boise release is `boise-hillside-hollow-open-v1`, manifest
 
 The immutable capture root is:
 
-`C:\Users\atooz\Programming\plantgeo\.agri-local-runs\north-america-intervention\boise-hillside-hollow-20260723\39d01682649d68a9bfb1d7ee4ebd258a3cfb627b6dc192df8e84be6c1eb2ac73`
+`<repo-root>/.agri-local-runs/north-america-intervention\boise-hillside-hollow-20260723\39d01682649d68a9bfb1d7ee4ebd258a3cfb627b6dc192df8e84be6c1eb2ac73`
 
 The four raw/reference artifacts total 249,000 bytes. Their receipt-set checksum
 is `c17baeefc8c758b577989dcc02f3e8b78eb8354199f029580a7781de9906874a`.

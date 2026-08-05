@@ -38,14 +38,14 @@ a failed Railway cron run. **Zero schema changes**: `geo.features`, `geo.layers`
 **Lane A must have landed `ingest/identity.py`.** Verify — do not assume:
 
 ```powershell
-Test-Path C:\Users\atooz\Programming\plantgeo\services\agri-data-service\src\agri_data_service\ingest\identity.py
+Test-Path services\agri-data-service\src\agri_data_service\ingest\identity.py
 ```
 Expected: `True`. (At the time this brief was written the `ingest/` directory did **not** exist —
 `services/agri-data-service/src/agri_data_service/` holds only `app.py`, `cli.py`, `config.py`,
 `db/`, `execution/`, `models/`, `routes/`, `schemas/`, `seed/`.)
 
 ```powershell
-cd C:\Users\atooz\Programming\plantgeo\services\agri-data-service
+cd <repo-root>/services/agri-data-service
 uv run pytest tests/test_ingest_identity.py -q
 ```
 Expected: all pass, `0 failed`. Do **not** set `AGRI_TEST_DATABASE_URL` for this — the identity

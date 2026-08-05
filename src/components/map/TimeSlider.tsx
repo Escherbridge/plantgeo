@@ -30,9 +30,16 @@ const FUTURE_HATCH_BACKGROUND =
 /**
  * Shared by the slider panel and its unavailable-state notice, so a fetch that later
  * succeeds does not reposition anything -- both render at the same anchor, sized the same.
+ *
+ * Carries no positioning of its own any more. This was `absolute bottom-24 left-1/2
+ * -translate-x-1/2` -- a card floating over the middle of the canvas -- until 2026-08-05,
+ * when the slider became the global time marker pinned at the top of the right-hand panel
+ * region. The anchor now belongs to that region's shell (`TimeSliderPanel`), which is also
+ * what makes the invariant above hold: both states are `w-full` inside one anchored column,
+ * so neither can be positioned independently of the other by accident.
  */
 const TIME_SLIDER_CONTAINER_CLASSES =
-  "absolute bottom-24 left-1/2 z-10 w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 rounded-(--radius) border border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 p-3 shadow-lg backdrop-blur-sm";
+  "w-full rounded-(--radius) border border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 p-3 shadow-lg backdrop-blur-sm";
 
 /**
  * A local range input rather than `@/components/ui/slider`: that component paints an inline
@@ -46,7 +53,8 @@ const timeSliderStyles = `
     appearance: none;
     background: transparent;
     /* Taller than the 18px visual track/thumb on purpose: this is the touch hit area for
-       the one drag control in a compact dock, so it grows without changing what's drawn. */
+       the one drag control in a compact dock, so it grows without changing what's drawn.
+       The (max-width: 640px) block in src/styles/globals.css raises it to 44px on a phone. */
     height: 28px;
     outline: none;
     cursor: pointer;
@@ -160,10 +168,10 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
   const capabilitiesUnavailable = useTimeSliderStore((state) => state.capabilitiesUnavailable);
   const setSelectedDate = useTimeSliderStore((state) => state.setSelectedDate);
   const setForecastVariant = useTimeSliderStore((state) => state.setForecastVariant);
-  // Collapsed by default: the compact dock shows only the date, observed/forecast state,
-  // the track and the today tick. The per-layer record is real but secondary detail, and
-  // living behind a disclosure keeps the docked control from re-growing into a floating
-  // mid-map card the way the always-open 9-row list used to.
+  // Collapsed by default: the always-visible part is the date, observed/forecast state, the
+  // track and the today tick. The per-layer record is real but secondary detail, and living
+  // behind a disclosure is what keeps this a compact top section of the right-hand panel
+  // region rather than a column-length list the panel body has to scroll past.
   const [isRecordListExpanded, setIsRecordListExpanded] = useState(false);
   const recordListId = useId();
   // `null` means "no explicit choice yet": the band key then defaults to expanded whenever
@@ -274,7 +282,9 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
                   disabled={disabledReason !== null}
                   title={disabledReason ?? `Show the ${option.label} forecast`}
                   onClick={() => setForecastVariant(option.value)}
-                  className={`rounded-(--radius) border px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50 ${
+                  // max-sm:min-h-11 -- 44px tap target at small viewports, same rule the
+                  // panel rail and the sheet's close button follow. Desktop stays compact.
+                  className={`rounded-(--radius) border px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50 max-sm:min-h-11 max-sm:px-3 ${
                     isSelected
                       ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary))]/15 text-[hsl(var(--foreground))]"
                       : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))]"
@@ -292,7 +302,10 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
         </div>
       </div>
 
-      <div className="relative flex h-7 items-center">
+      {/* h-7 matches the 28px range hit area; max-sm:h-11 matches the 44px it grows to under
+          the (max-width: 640px) rule in globals.css, so the row still contains its own input
+          on a phone rather than letting it overflow the track. */}
+      <div className="relative flex h-7 items-center max-sm:h-11">
         <div className="absolute inset-x-0 h-1.5 rounded-full bg-[hsl(var(--secondary))]" />
         <div
           className="absolute left-0 h-1.5 rounded-full bg-[hsl(var(--primary))]"
@@ -350,8 +363,8 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
         One tick is one calendar day as the data publisher dated it.
       </p>
 
-      {/* Collapsed by default so the docked control stays compact: the per-layer record is
-          real detail, not part of the always-visible dock (date, observed/forecast state,
+      {/* Collapsed by default so the time section stays compact: the per-layer record is
+          real detail, not part of the always-visible marker (date, observed/forecast state,
           track, today tick). A real <button> with aria-expanded/aria-controls keeps this
           keyboard- and screen-reader-operable rather than a hover-only affordance. Naming
           what the list is about matters even collapsed: without it a row reading "Not yet
@@ -362,7 +375,7 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
         aria-expanded={isRecordListExpanded}
         aria-controls={recordListId}
         onClick={() => setIsRecordListExpanded((expanded) => !expanded)}
-        className="map-popup-meta mt-2 flex w-full items-center gap-1 py-1 text-left"
+        className="map-popup-meta mt-2 flex w-full items-center gap-1 py-1 text-left max-sm:min-h-11"
         data-testid="time-slider-record-heading"
       >
         <span
@@ -423,7 +436,7 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
             aria-expanded={isBandKeyExpanded}
             aria-controls={bandKeyId}
             onClick={() => setBandKeyExpandedOverride(!isBandKeyExpanded)}
-            className="flex w-full items-center gap-1 py-1 text-left text-xs font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]"
+            className="flex w-full items-center gap-1 py-1 text-left text-xs font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))] max-sm:min-h-11"
             data-testid="forecast-band-key-heading"
           >
             <span

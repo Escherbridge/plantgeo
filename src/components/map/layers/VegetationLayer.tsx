@@ -23,8 +23,14 @@ interface VegetationLayerProps {
    */
   geojson?: GeoJSON.FeatureCollection | null;
   mode?: VegetationMode;
-  year?: number;
-  month?: number;
+  /**
+   * Composite period of the GIBS raster, projected from the time slider's day by
+   * `useVegetationDisplayMode` -- never independent vegetation state. Null means "no day yet"
+   * (capabilities have not landed): the raster is then not attached at all rather than
+   * guessed from the browser clock, which is a different clock than the server's.
+   */
+  year?: number | null;
+  month?: number | null;
   ndviMode?: "absolute" | "anomaly";
   showNDWI?: boolean;
   opacity?: number;
@@ -42,6 +48,20 @@ const EMPTY_CELL_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
+
+/**
+ * The GIBS tile template for a composite period, or "" when there is no period to request or
+ * the period is outside what GIBS publishes. One helper so attach and update cannot disagree
+ * about which periods are requestable.
+ */
+function ndviTemplateFor(
+  year: number | null,
+  month: number | null,
+  ndviMode: "absolute" | "anomaly"
+): string {
+  if (year === null || month === null) return "";
+  return getNDVITileUrl(year, month, ndviMode);
+}
 
 /**
  * Fill colour interpolated over the shared NDVI ramp, so a cell and the legend below it
@@ -97,8 +117,10 @@ export function VegetationLayer({
   map,
   geojson = null,
   mode = "ndvi",
-  year = new Date().getFullYear(),
-  month = new Date().getMonth() + 1,
+  // No browser-clock default: the composite period is the slider's day projected onto a
+  // month, and until capabilities name a day there is honestly no period to draw.
+  year = null,
+  month = null,
   ndviMode = "absolute",
   showNDWI = false,
   opacity = 0.75,
@@ -111,8 +133,8 @@ export function VegetationLayer({
   const addAllLayers = useCallback((m: MapLibreMap) => {
     const { geojson, mode, year, month, ndviMode, showNDWI, opacity } = propsRef.current;
     const beforeId = getFirstSymbolLayer(m);
-    const ndviTileUrl = getNDVITileUrl(year, month, ndviMode);
-    const ndwiTileUrl = getNDWITileUrl(year, month);
+    const ndviTileUrl = ndviTemplateFor(year, month, ndviMode);
+    const ndwiTileUrl = year === null || month === null ? "" : getNDWITileUrl(year, month);
     const nbrTileUrl = getEnvironmentalTileTemplate(
       "vegetation/nbr/latest/{z}/{x}/{y}.png"
     );
@@ -250,7 +272,9 @@ export function VegetationLayer({
     };
   }, [map, visible, addAllLayers, removeAllLayers]);
 
-  // Update tile URLs and opacity when year/month/mode/opacity change
+  // Update tile URLs and opacity when the composite period, mode or opacity change. `year`
+  // and `month` move only when the slider's day crosses a month boundary (they are memoized
+  // on that pair upstream), so a day-granular scrub inside one month never re-requests tiles.
   useEffect(() => {
     if (!map || !visible) return;
     try {
@@ -261,7 +285,7 @@ export function VegetationLayer({
 
     // NDVI tile URL + opacity
     const ndviSource = map.getSource("ndvi-overlay") as RasterTileSource | undefined;
-    const ndviTileUrl = getNDVITileUrl(year, month, ndviMode);
+    const ndviTileUrl = ndviTemplateFor(year, month, ndviMode);
     if (ndviSource && ndviTileUrl) {
       ndviSource.setTiles([ndviTileUrl]);
     }
@@ -271,7 +295,7 @@ export function VegetationLayer({
 
     // NDWI tile URL + opacity
     const ndwiSource = map.getSource("ndwi-overlay") as RasterTileSource | undefined;
-    const ndwiTileUrl = getNDWITileUrl(year, month);
+    const ndwiTileUrl = year === null || month === null ? "" : getNDWITileUrl(year, month);
     if (ndwiSource && ndwiTileUrl) {
       ndwiSource.setTiles([ndwiTileUrl]);
     }

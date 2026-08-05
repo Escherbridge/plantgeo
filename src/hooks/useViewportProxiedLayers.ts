@@ -22,7 +22,11 @@ const NO_VIEWPORT_BBOX = "-180,-90,180,90";
 /** HUC12: Redis holds the viewport an hour upstream, so a pan back re-reads rather than re-asks. */
 const WATERSHEDS_STALE_TIME_MS = 60 * 60 * 1000;
 
-/** SSURGO: republished on an annual cycle and cached a day upstream. */
+/**
+ * SSURGO: a static survey product, persisted in the warehouse rather than proxied, so a
+ * pan back is a local read either way. The long stale time is about not re-asking our own
+ * store, not about an upstream cache — see `usda-soil.ts` §soil-survey-persistence.
+ */
 const SOIL_SURVEY_STALE_TIME_MS = 24 * 60 * 60 * 1000;
 
 /** One retry, not react-query's default three — each attempt re-pays the full upstream cost. */
@@ -79,7 +83,8 @@ export function useWatershedsQuery(
 }
 
 /**
- * SSURGO map units for the viewport, proxied live from USDA Soil Data Access.
+ * SSURGO map units for the viewport, read from the warehouse (uncovered ground is warmed
+ * from USDA Soil Data Access on first sight).
  * `zoom` selects render granularity server-side (real map units at high zoom,
  * progressively coarser drainage-class averages below it -- see
  * `src/lib/server/services/usda-soil.ts` §soil-survey-zoom) and is part of the query

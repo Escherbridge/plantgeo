@@ -87,3 +87,51 @@ which keeps exactly one writer for viewport state.
 Params are validated on read, never trusted: a URL is user input and MapLibre
 throws on a non-finite centre instead of ignoring it. `prefers-reduced-motion`
 turns the `flyTo` into a `jumpTo`.
+
+## One time control, projected per layer
+
+There is exactly one notion of "when" on this map: `time-slider-store`'s `selectedDate`. Any
+layer whose upstream is coarser than a day derives its own grain from that day — it does not
+keep state for it.
+
+`VegetationPanel` used to own a Year slider and a Month slider backed by `vegetation-store`'s
+`year`/`month`, so the app had two clocks that could disagree, and two controls competing to be
+"the" time control. Those fields and both sliders were removed on 2026-08-05.
+`useVegetationDisplayMode` now projects the day onto the GIBS composite period, and
+`vegetation-store` holds display state only (`mode`, `ndviMode`, `showNDWI`, `opacity`).
+
+Two details make the projection safe to copy for the next coarse-grained layer:
+
+- **Read the settled day, and memoize on the derived grain, not the day.**
+  `useVegetationDisplayMode` reads `useDebouncedMapDay()` and returns an object memoized on
+  `(year, month)`. Scrubbing thirty days inside one month therefore leaves every prop
+  `VegetationLayer` keys its `setTiles` effect on referentially unchanged. Memoizing on the day
+  would re-request a month-granular tile once per day scrubbed.
+- **A day the upstream does not cover is stated, not drawn blank.** `resolveGibsNdviDate`
+  refuses a period outside the product's published extent rather than emitting a URL that 404s,
+  so `compositeUnavailableReason` names the gap and `VegetationPanel` renders it on the page.
+  Coverage is judged against `serverCurrentDate`, never `new Date()`: across New Year the two
+  disagree by a whole year. Before capabilities land there is no day, so `year`/`month` are
+  `null` and no raster is attached — a browser-clock default would draw a period nobody chose.
+
+## The time slider is the right-hand region's header, not a floating card
+
+`TimeSliderPanel` renders an always-mounted right-hand panel region with the slider pinned
+(`sticky`) at its top; the region's body below it is conditional. This supersedes the earlier
+bottom-centre dock (`absolute bottom-24 left-1/2 -translate-x-1/2`, which lived in
+`TIME_SLIDER_CONTAINER_CLASSES`): the day applies to every layer, so its marker cannot be
+something a user opens a panel to reach, and a card floating over the canvas read as one more
+per-layer widget.
+
+`TIME_SLIDER_CONTAINER_CLASSES` keeps its invariant — the loaded slider and the
+`time-slider-unavailable` alert render from the same class list, so a fetch that later succeeds
+cannot reposition or resize anything — and now holds no positioning at all. All of it lives in
+`PANEL_REGION_CLASSES` in `TimeSliderPanel.tsx`. The two offsets there are collision avoidance
+against known neighbours (`right-16` for MapLibre's top-right control stack, `top-16` for
+`MapControls`' centred toolbar and `SearchBar`), and the region is the single scroller: a
+scroller nested inside a scroller is how the one drag control becomes unreachable on a phone.
+
+Panel sheets still portal themselves over the whole viewport, so an open panel covers the
+region exactly as it covered the old dock. Docking a panel's body into the region's body slot
+instead would mean giving `src/components/ui/sheet.tsx` a top offset for the time section —
+deliberately not done here, because that file is shared by every sheet in the app.

@@ -77,6 +77,32 @@ describe("TimeSliderPanel", () => {
     expect(screen.getByTestId("time-slider-selected-date").textContent).toBe(SERVER_CURRENT_DATE);
   });
 
+  it("mounts the right-hand panel region and its time section with no panel open at all", () => {
+    capabilitiesQuery.mockReturnValue({ data: CAPABILITIES });
+    // Nothing here opens a panel: the region is rendered unconditionally, because the selected
+    // day applies to every layer and must not be something a user opens a panel to reach.
+    renderWithProviders(<TimeSliderPanel />);
+
+    const region = screen.getByTestId("map-panel-region");
+    expect(region.getAttribute("aria-label")).toBe("Map time and panel region");
+    // Pinned at the top of the region, and the only section there when no body is docked.
+    expect(screen.getByTestId("map-panel-region-time").contains(screen.getByTestId("time-slider")))
+      .toBe(true);
+    expect(screen.queryByTestId("map-panel-region-body")).toBeNull();
+    // One scroller, on the region -- a scroller nested inside a scroller is how the slider
+    // would become unreachable on a phone.
+    expect(region.className).toContain("overflow-y-auto");
+  });
+
+  it("keeps the region mounted while the payload is still in flight", () => {
+    renderWithProviders(<TimeSliderPanel />);
+
+    // The slider itself renders nothing without capabilities; the region still exists, so the
+    // marker appears in place rather than shifting the layout when the payload lands.
+    expect(screen.getByTestId("map-panel-region")).toBeTruthy();
+    expect(screen.queryByTestId("time-slider")).toBeNull();
+  });
+
   it("starts the axis at the earliest date the server published, not at a client guess", () => {
     capabilitiesQuery.mockReturnValue({ data: CAPABILITIES });
     renderWithProviders(<TimeSliderPanel />);

@@ -30,6 +30,7 @@ import {
   getSoilSurvey,
   soilSurveyAreaCeiling,
   SoilSurveyResponseError,
+  type SoilSurveyCoverage,
   type SoilSurveyGranularity,
 } from "@/lib/server/services/usda-soil";
 import {
@@ -154,6 +155,13 @@ export interface ProxiedFeatureCollection extends GeoJSON.FeatureCollection {
  */
 export interface ProxiedSoilSurveyCollection extends ProxiedFeatureCollection {
   granularity: SoilSurveyGranularity;
+  /**
+   * How much of the viewport the warehouse can answer for. The gap persistence created:
+   * ground nobody has fetched paints exactly like ground the survey found nothing on, and
+   * `covered < cells` is the only thing that tells them apart. See
+   * `usda-soil.ts#SoilSurveyCoverage`.
+   */
+  coverage: SoilSurveyCoverage;
 }
 
 /**
@@ -387,14 +395,15 @@ export const environmentalRouter = router({
     }),
 
   /**
-   * SSURGO map-unit polygons for the viewport, proxied live from USDA Soil Data
-   * Access and cached in Redis for a day by the service.
+   * SSURGO map-unit polygons for the viewport, read from the warehouse. Cells nobody has
+   * fetched yet are warmed from USDA Soil Data Access first, bounded per request; see
+   * `usda-soil.ts` §soil-survey-persistence.
    *
    * The area ceiling is zoom-dependent, so it cannot live on the bbox field the way
    * `areaBoundedBbox` puts it: `soilSurveyAreaCeiling` returns the original measured ceiling
-   * only for the detail tier, which makes one uncapped SDA call, and null for the aggregated
-   * tiers, which tile themselves inside that same per-cell ceiling and degrade to
-   * `truncated: true` rather than erroring. See `usda-soil.ts` §soil-survey-zoom.
+   * only for the detail tier, which may warm at most a 2x2 patch of cells, and null for the
+   * aggregated tiers, which cap their own cell budget and degrade to `truncated: true`
+   * rather than erroring. See `usda-soil.ts` §soil-survey-zoom.
    */
   getSoilSurvey: publicProcedure
     .input(
@@ -430,8 +439,12 @@ export const environmentalRouter = router({
           // Which tier actually answered, so an averaged view is never captioned as a
           // surveyed map unit.
           granularity: collection.granularity,
-          // SSURGO's survey areas each carry their own vintage; the response exposes
-          // no single publication time for the returned map units.
+          // How much of the viewport the store actually covers. Carried, never absorbed:
+          // unfetched ground draws exactly like unsurveyed ground.
+          coverage: collection.coverage,
+          // SSURGO's survey areas each carry their own vintage (per feature, as
+          // `surveyAreaVintage`); the product publishes no single release timestamp for a
+          // set of map units, so there is nothing honest to put here.
           observedAt: null,
           revision: null,
         };
@@ -442,6 +455,10 @@ export const environmentalRouter = router({
             // A provider fault answered nothing, so no tier described the viewport. The
             // detail tier is the honest default: it is what a zoomless request resolves to.
             granularity: "detail",
+            // No cell was described, so there is no coverage gap to report on top of the
+            // provider fault: `availability: "unavailable"` is what the client captions
+            // this view with, and a second "partly backfilled" note would compete with it.
+            coverage: { cells: 0, covered: 0, ingested: 0 },
           };
         }
         rethrowUpstreamFault(error, "USDA Soil Data Access");

@@ -109,6 +109,15 @@ body {
     width: 2.75rem;
     height: 2.75rem;
   }
+
+  /* The time slider's range input is the one drag control in the right-hand panel region, and
+     its 28px desktop hit area (timeSliderStyles in src/components/map/TimeSlider.tsx) is under
+     a comfortable phone tap target. Only the hit area grows: the 18px thumb and the track are
+     drawn by separate rules and keep their size. The row around it carries `max-sm:h-11` so it
+     still contains the taller input. */
+  .time-slider-range {
+    height: 2.75rem;
+  }
 }
 
 /* MapLibre popup overrides.

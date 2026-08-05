@@ -123,6 +123,9 @@ describe("TimeSlider", () => {
       selectedDate: BEFORE_ANY_PROBE_DATA,
       forecastVariant: "monte_carlo",
       capabilities: CAPABILITIES,
+      // Explicit, because one test below drives the failure branch: leaving it to whatever the
+      // previous test left behind would make the in-flight and failed states swap silently.
+      capabilitiesUnavailable: false,
     });
   });
 
@@ -329,6 +332,24 @@ describe("TimeSlider", () => {
     fireEvent.click(disclosure);
     expect(disclosure.getAttribute("aria-expanded")).toBe("false");
     expect(list.className).toContain("hidden");
+  });
+
+  it("carries no anchor of its own, and fails over to the notice without moving or resizing", () => {
+    const { unmount } = renderWithProviders(<TimeSlider />);
+    const loadedClassName = screen.getByTestId("time-slider").className;
+    unmount();
+
+    useTimeSliderStore.setState({ capabilities: null, capabilitiesUnavailable: true });
+    renderWithProviders(<TimeSlider />);
+
+    // The documented invariant: a fetch that later succeeds must not reposition or resize
+    // anything, so both states render from one shared class list.
+    expect(screen.getByTestId("time-slider-unavailable").className).toBe(loadedClassName);
+    // Positioning now belongs to the panel-region shell in TimeSliderPanel. The old
+    // bottom-centre dock (`absolute bottom-24 left-1/2 -translate-x-1/2`) is gone: the slider
+    // fills the region's column instead of anchoring itself over the canvas.
+    expect(loadedClassName).toContain("w-full");
+    expect(loadedClassName).not.toMatch(/absolute|bottom-24|left-1\/2/);
   });
 
   it("no longer claims the map itself is dateless -- a sibling change made that untrue", () => {

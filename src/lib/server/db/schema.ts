@@ -427,6 +427,31 @@ export const soilGridCache = pgTable(
   (table) => [uniqueIndex("soil_grid_cache_cell_unique").on(table.lat, table.lon)]
 );
 
+/**
+ * Which SSURGO grid cells have been fetched from USDA Soil Data Access, so a cell
+ * nobody asked for stays distinguishable from a cell the survey found nothing in.
+ * See `src/lib/server/AGENTS.md` §soil-survey-persistence.
+ */
+export const soilSurveyCoverage = geoSchema.table(
+  "soil_survey_coverage",
+  {
+    /** '<col>:<row>' on the 1/8-degree grid; minted only by `soilSurveyCellKey`. */
+    cellKey: varchar("cell_key", { length: 40 }).primaryKey(),
+    west: doublePrecision("west").notNull(),
+    south: doublePrecision("south").notNull(),
+    east: doublePrecision("east").notNull(),
+    north: doublePrecision("north").notNull(),
+    polygonCount: integer("polygon_count").notNull(),
+    /** Rows SDA served that had no readable geometry or no publisher vintage. */
+    unreadableCount: integer("unreadable_count").notNull().default(0),
+    /** SDA held more delineations than the row ceiling served: covered in part only. */
+    truncated: boolean("truncated").notNull().default(false),
+    /** When we asked. Never when SSURGO published — that is per feature. */
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("ix_soil_survey_coverage_fetched_at").on(table.fetchedAt)]
+);
+
 // ============================================
 // Environmental Alert System (public schema)
 // ============================================

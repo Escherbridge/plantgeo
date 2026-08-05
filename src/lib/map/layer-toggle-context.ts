@@ -25,6 +25,7 @@ import {
   useTimeSliderStore,
 } from "@/stores/time-slider-store";
 import { useVegetationStore } from "@/stores/vegetation-store";
+import { resolveGibsNdviDate } from "@/lib/vegetation";
 import type { SoilProperty } from "@/components/map/layers/SoilLayer";
 import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
 import type {
@@ -251,29 +252,103 @@ export function useLayerRenderState(layerId: LayerToggleId): LayerRenderState {
   }, [layerId, isToggledOn, mapDay, capabilities]);
 }
 
-/** The vegetation layer's selected mode, as the renderer consumes it. */
+/** Month labels for the composite period the vegetation raster is addressed by. */
+const COMPOSITE_MONTH_ABBREVIATIONS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
+/**
+ * Why NASA GIBS publishes no NDVI composite for a period, or null when it publishes one.
+ *
+ * `resolveGibsNdviDate` refuses a month outside the product's published extent instead of
+ * emitting a tile URL that would 404 (see src/lib/vegetation.ts), so without this the layer
+ * would just go quietly blank as someone scrubbed off the archive. "Today" comes from the
+ * capabilities payload, never the browser clock: across New Year the two disagree by a whole
+ * year, which is the same trap `serverCurrentDate` exists to close everywhere else.
+ */
+function describeCompositeGap(
+  period: string,
+  year: number,
+  month: number,
+  serverCurrentDate: string | null
+): string | null {
+  const asOf =
+    serverCurrentDate === null ? new Date() : new Date(`${serverCurrentDate}T00:00:00Z`);
+  if (resolveGibsNdviDate(year, month, asOf) !== null) return null;
+  return (
+    `No NDVI composite exists for ${period}: it falls outside the NASA GIBS ` +
+    `MODIS/Terra 8-Day NDVI product's published extent. Scrub to a covered date to see it.`
+  );
+}
+
+/**
+ * The vegetation layer's selected mode, as the renderer consumes it.
+ *
+ * `year`, `month` and `compositePeriod` are a PROJECTION of the time slider's day, never
+ * state of their own: the GIBS raster is addressed by a month, so the selected day is
+ * narrowed to the month containing it. The vegetation store held its own `year`/`month`
+ * behind two panel sliders until 2026-08-05, which gave the app two disagreeing notions of
+ * "when" -- do not reintroduce them. See src/components/map/AGENTS.md "One time control,
+ * projected per layer".
+ */
 export interface VegetationDisplayMode {
   mode: VegetationMode;
-  year: number;
-  month: number;
+  /** Calendar year of the slider's settled day; null until capabilities supply a day. */
+  year: number | null;
+  /** Month (1-12) of the slider's settled day; null until capabilities supply a day. */
+  month: number | null;
+  /** "Aug 2026" -- the composite period actually drawn; null with no day. */
+  compositePeriod: string | null;
+  /** Why GIBS publishes nothing for that period, or null when it does. */
+  compositeUnavailableReason: string | null;
   ndviMode: "absolute" | "anomaly";
   showNDWI: boolean;
   opacity: number;
 }
 
-/** Read-only view of the vegetation store; the panel keeps the store for its setters. */
+/**
+ * Read-only view of the vegetation store plus the slider day projected onto a composite
+ * month; the panel keeps the store for its display setters.
+ *
+ * Reads the SETTLED day, not the raw one: this feeds `LayerManager`, which sits above ~8
+ * layer children, and the returned object is memoized on the (year, month) pair rather than
+ * on the day -- so scrubbing 30 days inside one month leaves the raster's tile URL, and every
+ * prop `VegetationLayer` keys its `setTiles` effect on, referentially unchanged. A month-
+ * granular product must not re-request per day.
+ */
 export function useVegetationDisplayMode(): VegetationDisplayMode {
   const mode = useVegetationStore((state) => state.mode);
-  const year = useVegetationStore((state) => state.year);
-  const month = useVegetationStore((state) => state.month);
   const ndviMode = useVegetationStore((state) => state.ndviMode);
   const showNDWI = useVegetationStore((state) => state.showNDWI);
   const opacity = useVegetationStore((state) => state.opacity);
+  const { settledDate, serverCurrentDate } = useDebouncedMapDay();
 
-  return useMemo(
-    () => ({ mode, year, month, ndviMode, showNDWI, opacity }),
-    [mode, year, month, ndviMode, showNDWI, opacity]
-  );
+  // Plain slices of a YYYY-MM-DD string the store already validated with `isCalendarDate`;
+  // `new Date(day)` would reintroduce a timezone shift on the very value that exists to
+  // avoid one.
+  const year = settledDate === null ? null : Number(settledDate.slice(0, 4));
+  const month = settledDate === null ? null : Number(settledDate.slice(5, 7));
+
+  return useMemo(() => {
+    const compositePeriod =
+      year === null || month === null
+        ? null
+        : `${COMPOSITE_MONTH_ABBREVIATIONS[month - 1]} ${year}`;
+    return {
+      mode,
+      year,
+      month,
+      compositePeriod,
+      compositeUnavailableReason:
+        compositePeriod === null || year === null || month === null
+          ? null
+          : describeCompositeGap(compositePeriod, year, month, serverCurrentDate),
+      ndviMode,
+      showNDWI,
+      opacity,
+    };
+  }, [mode, year, month, serverCurrentDate, ndviMode, showNDWI, opacity]);
 }
 
 /** The soil layer's selected mode, as the renderer consumes it. */

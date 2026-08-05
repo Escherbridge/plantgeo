@@ -486,4 +486,29 @@ describe("LayerManager threads the slider's day into the warehouse-backed querie
       expect((inputOf(query) as { date?: string }).date, name).toBeUndefined();
     }
   });
+
+  /**
+   * The GIBS raster is addressed by a month, so it takes year/month rather than a day. Those
+   * came from two sliders of vegetation's own until 2026-08-05; they are now the slider day
+   * projected onto a month, and this is the seam where that projection reaches the renderer.
+   */
+  it("gives the vegetation raster the slider day's own month, not a stored one", () => {
+    renderAtSelectedDate("2026-07-30");
+
+    const vegetationProps = lastRenderOf("VegetationLayer");
+    expect(vegetationProps?.year).toBe(2026);
+    expect(vegetationProps?.month).toBe(7);
+  });
+
+  it("gives it no month at all before capabilities name a day", () => {
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    // Null, not the browser clock's month: the layer then attaches no raster instead of
+    // drawing a composite period nobody selected.
+    const vegetationProps = lastRenderOf("VegetationLayer");
+    expect(vegetationProps?.year).toBeNull();
+    expect(vegetationProps?.month).toBeNull();
+  });
 });

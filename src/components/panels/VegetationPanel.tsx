@@ -4,7 +4,6 @@ import { useState } from "react";
 import { Leaf, Layers, TreePine } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Slider } from "@/components/ui/slider";
 import { trpc } from "@/lib/trpc/client";
 import {
   ENVIRONMENTAL_TILES_CONFIGURED,
@@ -15,16 +14,14 @@ import {
 } from "@/lib/vegetation";
 import { NLCD_CATEGORY_CLASSES, NLCD_CLASSES, type NLCDCategory } from "@/lib/environmental/nlcd";
 import { useVegetationStore } from "@/stores/vegetation-store";
-import { isCalendarDate } from "@/stores/time-slider-store";
-import { useLayerRenderState, useMapDay } from "@/lib/map/layer-toggle-context";
+import {
+  useLayerRenderState,
+  useMapDay,
+  useVegetationDisplayMode,
+} from "@/lib/map/layer-toggle-context";
 import { LayerToggle } from "@/components/ui/layer-toggle";
 import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
 import type { LandCoverMode } from "@/components/map/layers/LandCoverLayer";
-
-const MONTHS = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
 
 const ALL_CATEGORIES = Object.keys(NLCD_CATEGORY_CLASSES) as NLCDCategory[];
 
@@ -34,37 +31,14 @@ interface VegetationPanelProps {
   bbox?: string;
   // Callbacks to drive the map layers
   onVegetationModeChange?: (mode: VegetationMode) => void;
-  onYearChange?: (year: number) => void;
-  onMonthChange?: (month: number) => void;
   onNDVIModeChange?: (mode: "absolute" | "anomaly") => void;
   onShowNDWIChange?: (show: boolean) => void;
   onLandCoverModeChange?: (mode: LandCoverMode) => void;
   onEnabledCategoriesChange?: (cats: NLCDCategory[]) => void;
 }
 
-const MIN_YEAR = 2000;
-
 // The geo.layers name these NDVI controls drive lives in the layer registry
 // ("vegetation" -> "vegetation").
-
-/**
- * Ceiling used until capabilities land. A constant, never the live selection: deriving the
- * ceiling from the current year would make the slider's max follow its own value, so moving
- * the year down would permanently lower the ceiling. Matches the vegetation store's default
- * year -- see src/stores/vegetation-store.ts.
- */
-const FALLBACK_LATEST_COMPOSITE_YEAR = 2024;
-
-/**
- * Newest selectable composite year. GIBS NDVI monthly composites carry a ~2 month
- * processing delay, so it is the year before the server's today. Derived from the
- * capabilities payload and never from the browser clock, which is a different clock and
- * across New Year disagrees by a whole year.
- */
-function latestCompositeYear(serverCurrentDate: string | null, fallbackYear: number): number {
-  if (serverCurrentDate === null || !isCalendarDate(serverCurrentDate)) return fallbackYear;
-  return Number(serverCurrentDate.slice(0, 4)) - 1;
-}
 
 function ColorLegendRow({ color, label }: { color: string; label: string }) {
   return (
@@ -80,38 +54,24 @@ export function VegetationPanel({
   onOpenChange,
   bbox,
   onVegetationModeChange,
-  onYearChange,
-  onMonthChange,
   onNDVIModeChange,
   onShowNDWIChange,
   onLandCoverModeChange,
   onEnabledCategoriesChange,
 }: VegetationPanelProps) {
   const vegStore = useVegetationStore();
-  const year = vegStore.year;
-  const month = vegStore.month;
   const anomalyMode = vegStore.ndviMode === "anomaly";
   const showNDWI = vegStore.showNDWI;
   const [landCoverMode, setLandCoverMode] = useState<LandCoverMode>("2021");
   const [enabledCategories, setEnabledCategories] = useState<NLCDCategory[]>([...ALL_CATEGORIES]);
 
-  // The map's day, read from the toggle context. These controls stay monthly because GIBS
-  // composites are monthly -- rebinding them to a day-granular slider would claim a
-  // resolution the upstream does not have -- so the panel states the composite period
-  // instead of implying it follows.
-  const mapDay = useMapDay();
-  const selectedDate = mapDay.selectedDate;
+  // The map's day, read from the toggle context. This panel owns NO time control of its own:
+  // the time slider at the top of the right-hand region is the one clock for every layer, and
+  // the composite below is that day projected onto a month. `useMapDay` for the readout so it
+  // tracks the pointer; the composite comes from the settled day the raster actually drew.
+  const selectedDate = useMapDay().selectedDate;
   const hasSelectedDay = selectedDate !== null;
-
-  // Slider depth from the payload, never the browser clock.
-  const maxYear = Math.max(
-    MIN_YEAR,
-    latestCompositeYear(mapDay.serverCurrentDate, FALLBACK_LATEST_COMPOSITE_YEAR)
-  );
-
-  const compositePeriod = `${year}-${String(month).padStart(2, "0")}`;
-  const compositeDiffersFromSelectedDay =
-    selectedDate !== null && selectedDate.slice(0, 7) !== compositePeriod;
+  const { compositePeriod, compositeUnavailableReason } = useVegetationDisplayMode();
 
   const vegetationReason = useLayerRenderState("vegetation").unavailableReason;
 
@@ -132,16 +92,6 @@ export function VegetationPanel({
   const lowCount = zones.filter(
     (f) => (f.properties as Record<string, unknown>).suitability === "Low"
   ).length;
-
-  function handleYearChange(val: number) {
-    vegStore.setYear(val);
-    onYearChange?.(val);
-  }
-
-  function handleMonthChange(val: number) {
-    vegStore.setMonth(val);
-    onMonthChange?.(val);
-  }
 
   function handleAnomalyToggle() {
     const next = !anomalyMode;
@@ -183,19 +133,43 @@ export function VegetationPanel({
 
         <LayerToggle layerId="vegetation" label="Vegetation (NDVI)" />
 
+        {/* This panel has no time control of its own -- the slider at the top of the
+            right-hand region is the one clock for every layer. What it does owe the reader is
+            what that day means HERE: GIBS publishes NDVI as an 8-day composite binned by
+            month, so every day in a month draws the same tile. Stating the period keeps a
+            day-granular scrub from reading as a day-granular raster. */}
         {hasSelectedDay && (
-          <p className="mt-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2 py-1.5 text-[11px] text-[hsl(var(--muted-foreground))]">
+          <p
+            className="mt-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2 py-1.5 text-[11px] text-[hsl(var(--muted-foreground))]"
+            data-testid="vegetation-composite-period"
+          >
             Map date{" "}
             <span className="font-medium text-[hsl(var(--foreground))]">{selectedDate}</span>
-            {compositeDiffersFromSelectedDay && (
+            {/* Only claims a composite is drawn when one exists -- the gap notice below owns
+                the other case, and saying "NDVI draws Jul 2024" for a period GIBS never
+                published would be exactly the silent substitution this readout prevents. */}
+            {compositePeriod !== null && compositeUnavailableReason === null && (
               <>
-                {" — NDVI composite shown is "}
+                {" — NDVI draws the "}
                 <span className="font-medium text-[hsl(var(--foreground))]">
-                  {MONTHS[month - 1]} {year}
+                  {compositePeriod}
                 </span>
-                {", not this date."}
+                {" composite; the period follows the map date, month by month."}
               </>
             )}
+          </p>
+        )}
+
+        {/* Outside the tabs on purpose: the day is outside what GIBS publishes, so the raster
+            is genuinely absent rather than switched off or still loading, and that must be
+            legible the moment the panel opens rather than only on the NDVI tab. On the page,
+            not in a title -- there is no focusable control here to hang one on. */}
+        {compositeUnavailableReason !== null && (
+          <p
+            className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+            data-testid="vegetation-composite-unavailable"
+          >
+            {compositeUnavailableReason}
           </p>
         )}
 
@@ -232,40 +206,6 @@ export function VegetationPanel({
                   warehouse release is published.
                 </p>
               )}
-              <div className="flex flex-col gap-2">
-                <div className="flex justify-between text-xs text-[hsl(var(--muted-foreground))]">
-                  <span>Year</span>
-                  <span className="font-medium text-[hsl(var(--foreground))]">{year}</span>
-                </div>
-                <Slider
-                  min={MIN_YEAR}
-                  max={maxYear}
-                  step={1}
-                  value={year}
-                  onValueChange={handleYearChange}
-                />
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <div className="flex justify-between text-xs text-[hsl(var(--muted-foreground))]">
-                  <span>Month</span>
-                  <span className="font-medium text-[hsl(var(--foreground))]">
-                    {MONTHS[month - 1]}
-                  </span>
-                </div>
-                <Slider
-                  min={1}
-                  max={12}
-                  step={1}
-                  value={month}
-                  onValueChange={handleMonthChange}
-                />
-                <div className="flex justify-between text-[10px] text-[hsl(var(--muted-foreground))] px-0.5">
-                  {MONTHS.map((m) => (
-                    <span key={m}>{m[0]}</span>
-                  ))}
-                </div>
-              </div>
 
               <div className="flex items-center justify-between">
                 <label

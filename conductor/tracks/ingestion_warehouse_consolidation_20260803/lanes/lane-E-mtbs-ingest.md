@@ -24,7 +24,7 @@ A single Python module, `services/agri-data-service/src/agri_data_service/ingest
 
 | # | What | Verify | Expected |
 |---|---|---|---|
-| 1 | Lane A has landed `ingest/identity.py` | `Test-Path C:\Users\atooz\Programming\plantgeo\services\agri-data-service\src\agri_data_service\ingest\identity.py` | `True` |
+| 1 | Lane A has landed `ingest/identity.py` | `Test-Path services\agri-data-service\src\agri_data_service\ingest\identity.py` | `True` |
 | 2 | You know lane A's public key-builder surface | from `services/agri-data-service`: `uv run python -c "from agri_data_service.ingest import identity; print([n for n in dir(identity) if not n.startswith('_')])"` | a list containing `build_burn_severity_identity`, `FeatureIdentity` and `MissingNativeKeyError`. **`uv run`, not bare `python`** — the package lives in a uv-managed venv (`services/agri-data-service/Dockerfile:33-36` runs every gate through `uv run`) |
 | 3 | Lane D has **not** already created `ingest/mtbs.py` | `Test-Path ...\ingest\mtbs.py` | `False` — if `True`, stop and report (see trap 7) |
 
@@ -136,7 +136,7 @@ Lane-specific only; the generic rules are in [`README.md`](README.md) §"Rules e
 
 ## 6. Definition of done
 
-Run from `C:\Users\atooz\Programming\plantgeo\services\agri-data-service`. One sweep, at the end.
+Run from `<repo-root>/services/agri-data-service`. One sweep, at the end.
 
 Every command goes through `uv run` — the package lives in a uv-managed venv and the Docker
 `checks` stage invokes it that way (`Dockerfile:33-36`). Bare `python -m ruff` will not resolve.

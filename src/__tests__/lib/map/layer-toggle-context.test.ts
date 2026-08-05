@@ -7,9 +7,11 @@ import {
   useLayerVisibility,
   useMapDay,
   useToggleLayer,
+  useVegetationDisplayMode,
 } from "@/lib/map/layer-toggle-context";
 import { DEFAULT_VIEWPORT, useMapStore } from "@/stores/map-store";
 import { UNINITIALIZED_DATE, useTimeSliderStore } from "@/stores/time-slider-store";
+import { useVegetationStore } from "@/stores/vegetation-store";
 import { SCRUB_SETTLE_MS } from "@/stores/useMetricAtDate";
 import type { SliderCapabilities, SliderLayerCapability } from "@/types/time-slider";
 
@@ -240,5 +242,121 @@ describe("useDebouncedMapDay", () => {
     });
 
     expect(result.current.requestDate).toBeUndefined();
+  });
+});
+
+/**
+ * The vegetation raster's year and month. These were vegetation-store state behind two panel
+ * sliders of their own until 2026-08-05 -- a second, disagreeing clock. They are now a
+ * projection of the one slider day, and the two properties worth defending are that the
+ * projection tracks the day at all, and that it does NOT move within a month: GIBS bins this
+ * product monthly, so a day-granular scrub must not re-request a month-granular tile.
+ */
+describe("useVegetationDisplayMode", () => {
+  beforeEach(() => {
+    resetStores();
+    useVegetationStore.setState({
+      mode: "ndvi",
+      ndviMode: "absolute",
+      showNDWI: false,
+      opacity: 0.75,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("has no composite period before capabilities name a day", () => {
+    const { result } = renderHook(() => useVegetationDisplayMode());
+
+    // Not a browser-clock guess: with no day there is honestly no period, and the layer
+    // attaches no raster rather than drawing a month nobody selected.
+    expect(result.current.year).toBeNull();
+    expect(result.current.month).toBeNull();
+    expect(result.current.compositePeriod).toBeNull();
+    expect(result.current.compositeUnavailableReason).toBeNull();
+  });
+
+  it("projects the slider's day onto the composite month it falls in", () => {
+    useTimeSliderStore.setState({
+      selectedDate: SERVER_CURRENT_DATE,
+      forecastVariant: "monte_carlo",
+      capabilities,
+    });
+    const { result } = renderHook(() => useVegetationDisplayMode());
+
+    expect(result.current.year).toBe(2026);
+    expect(result.current.month).toBe(8);
+    expect(result.current.compositePeriod).toBe("Aug 2026");
+    expect(result.current.compositeUnavailableReason).toBeNull();
+  });
+
+  it("holds the same period -- the same object -- across a scrub inside one month", () => {
+    vi.useFakeTimers();
+    useTimeSliderStore.setState({
+      selectedDate: "2026-08-01",
+      forecastVariant: "monte_carlo",
+      capabilities,
+    });
+    const { result } = renderHook(() => useVegetationDisplayMode());
+    const beforeScrub = result.current;
+
+    act(() => {
+      useTimeSliderStore.getState().setSelectedDate("2026-08-20");
+      vi.advanceTimersByTime(SCRUB_SETTLE_MS);
+    });
+
+    // Referentially identical, not merely equal: VegetationLayer keys its setTiles effect on
+    // these props, so a new object for the same month would re-request the same tiles.
+    expect(result.current).toBe(beforeScrub);
+    expect(result.current.compositePeriod).toBe("Aug 2026");
+  });
+
+  it("moves to the next composite when the scrub crosses a month boundary", () => {
+    vi.useFakeTimers();
+    useTimeSliderStore.setState({
+      selectedDate: "2026-08-01",
+      forecastVariant: "monte_carlo",
+      capabilities,
+    });
+    const { result } = renderHook(() => useVegetationDisplayMode());
+
+    act(() => {
+      useTimeSliderStore.getState().setSelectedDate("2026-07-28");
+      vi.advanceTimersByTime(SCRUB_SETTLE_MS);
+    });
+
+    expect(result.current.month).toBe(7);
+    expect(result.current.compositePeriod).toBe("Jul 2026");
+  });
+
+  it("names the reason when the selected day is outside what GIBS publishes", () => {
+    // Before the product's first published composite (2025-02) -- these dates 404 upstream
+    // rather than returning a blank tile, so the gap has to be stated, not drawn.
+    useTimeSliderStore.setState({
+      selectedDate: "2024-07-15",
+      forecastVariant: "monte_carlo",
+      capabilities,
+    });
+    const { result } = renderHook(() => useVegetationDisplayMode());
+
+    expect(result.current.compositePeriod).toBe("Jul 2024");
+    expect(result.current.compositeUnavailableReason).toContain("Jul 2024");
+    expect(result.current.compositeUnavailableReason).toContain("published extent");
+  });
+
+  it("reports a future month as uncovered against the server's today, not the browser's", () => {
+    // A month past the payload's today has no composite yet. Judged against
+    // serverCurrentDate, so a machine running in a different year cannot flip this.
+    useTimeSliderStore.setState({
+      selectedDate: "2026-09-10",
+      forecastVariant: "monte_carlo",
+      capabilities,
+    });
+    const { result } = renderHook(() => useVegetationDisplayMode());
+
+    expect(result.current.compositePeriod).toBe("Sep 2026");
+    expect(result.current.compositeUnavailableReason).toContain("Sep 2026");
   });
 });
