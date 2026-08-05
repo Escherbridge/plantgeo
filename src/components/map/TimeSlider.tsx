@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useId, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import type {
   ForecastVariant,
@@ -45,7 +45,9 @@ const timeSliderStyles = `
     -webkit-appearance: none;
     appearance: none;
     background: transparent;
-    height: 18px;
+    /* Taller than the 18px visual track/thumb on purpose: this is the touch hit area for
+       the one drag control in a compact dock, so it grows without changing what's drawn. */
+    height: 28px;
     outline: none;
     cursor: pointer;
     margin: 0;
@@ -158,6 +160,19 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
   const capabilitiesUnavailable = useTimeSliderStore((state) => state.capabilitiesUnavailable);
   const setSelectedDate = useTimeSliderStore((state) => state.setSelectedDate);
   const setForecastVariant = useTimeSliderStore((state) => state.setForecastVariant);
+  // Collapsed by default: the compact dock shows only the date, observed/forecast state,
+  // the track and the today tick. The per-layer record is real but secondary detail, and
+  // living behind a disclosure keeps the docked control from re-growing into a floating
+  // mid-map card the way the always-open 9-row list used to.
+  const [isRecordListExpanded, setIsRecordListExpanded] = useState(false);
+  const recordListId = useId();
+  // `null` means "no explicit choice yet": the band key then defaults to expanded whenever
+  // the selection is in the future, so someone who has actively picked a forecast day is not
+  // made to find an extra disclosure just to read what the band means. Once toggled, the
+  // choice sticks across further date changes -- an escape hatch to reclaim the vertical
+  // space this block costs on a short viewport, not a one-shot animation.
+  const [bandKeyExpandedOverride, setBandKeyExpandedOverride] = useState<boolean | null>(null);
+  const bandKeyId = useId();
 
   const domain = sliderDomain(capabilities);
 
@@ -207,14 +222,7 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
   const todayTickOffset = todayOffset(domain);
   const selectedOffset = dayOffset(firstDay, selectedDate);
   const isFuture = isFutureDate(selectedDate, capabilities);
-  // Every map layer is still dateless (lane J): FireLayer, WaterLayer, the four LayerManager
-  // queries, the Martin style layers and the GIBS raster all draw the latest published values
-  // whatever day is selected. The control asserts a date in large type directly above a canvas
-  // that is answering a different question, and the per-layer list below reports the WAREHOUSE
-  // record -- so a day the map is painting points on can legitimately read "Not yet observed".
-  // Say that here, where the date is asserted, rather than only in two side panels that fire
-  // when they happen to be open. Delete this block when a layer reads `selectedDate`.
-  const mapIsStillDateless = selectedDate !== today;
+  const isBandKeyExpanded = bandKeyExpandedOverride ?? isFuture;
   const activeVariantLabel =
     FORECAST_VARIANT_OPTIONS.find((option) => option.value === forecastVariant)?.label ??
     forecastVariant;
@@ -266,7 +274,7 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
                   disabled={disabledReason !== null}
                   title={disabledReason ?? `Show the ${option.label} forecast`}
                   onClick={() => setForecastVariant(option.value)}
-                  className={`rounded-(--radius) border px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50 ${
+                  className={`rounded-(--radius) border px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50 ${
                     isSelected
                       ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary))]/15 text-[hsl(var(--foreground))]"
                       : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))]"
@@ -284,17 +292,7 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
         </div>
       </div>
 
-      {mapIsStillDateless && (
-        <p
-          className="mb-2 rounded-(--radius) border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] px-2 py-1.5 text-[11px] text-[hsl(var(--foreground))]"
-          data-testid="time-slider-dateless-map-notice"
-        >
-          The map is still showing the latest published values, not values for {selectedDate}.
-          Only the record below is read at this date.
-        </p>
-      )}
-
-      <div className="relative flex h-4.5 items-center">
+      <div className="relative flex h-7 items-center">
         <div className="absolute inset-x-0 h-1.5 rounded-full bg-[hsl(var(--secondary))]" />
         <div
           className="absolute left-0 h-1.5 rounded-full bg-[hsl(var(--primary))]"
@@ -352,13 +350,41 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
         One tick is one calendar day as the data publisher dated it.
       </p>
 
-      {/* Names what the list is about. Without it a row reading "Not yet observed at this
-          date" beside a map drawing points is read as a claim about those points. */}
-      <p className="map-popup-meta mt-2" data-testid="time-slider-record-heading">
+      {/* Collapsed by default so the docked control stays compact: the per-layer record is
+          real detail, not part of the always-visible dock (date, observed/forecast state,
+          track, today tick). A real <button> with aria-expanded/aria-controls keeps this
+          keyboard- and screen-reader-operable rather than a hover-only affordance. Naming
+          what the list is about matters even collapsed: without it a row reading "Not yet
+          observed at this date" beside a map drawing points would be read as a claim about
+          those points once expanded. */}
+      <button
+        type="button"
+        aria-expanded={isRecordListExpanded}
+        aria-controls={recordListId}
+        onClick={() => setIsRecordListExpanded((expanded) => !expanded)}
+        className="map-popup-meta mt-2 flex w-full items-center gap-1 py-1 text-left"
+        data-testid="time-slider-record-heading"
+      >
+        <span
+          aria-hidden="true"
+          className={`inline-block transition-transform ${isRecordListExpanded ? "rotate-90" : ""}`}
+        >
+          &#9656;
+        </span>
         Warehouse record at this date
-      </p>
+      </button>
 
-      <ul className="mt-1 flex flex-col gap-1" aria-label="Layer availability">
+      <ul
+        id={recordListId}
+        data-testid="time-slider-record-list"
+        // Not the native `hidden` attribute plus a `flex` class: Tailwind's `.flex` utility
+        // is an author-origin rule, the UA's `[hidden]{display:none}` is user-agent-origin,
+        // and author beats user-agent at equal specificity -- `flex` would win and the list
+        // would stay visible. Swapping the whole className instead means only one display
+        // rule is ever present.
+        className={isRecordListExpanded ? "mt-1 flex flex-col gap-1" : "hidden"}
+        aria-label="Layer availability"
+      >
         {layerRows.map(({ layer, availability }) => {
           const message = availabilityMessage(availability, layer, activeVariantLabel);
           const isPublished = availability === "published";
@@ -385,35 +411,60 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
       </ul>
 
       {isFuture && (
-        <div
-          className="mt-2 border-t border-[hsl(var(--border))] pt-2"
-          data-testid="forecast-band-key"
-        >
-          <span className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
+        <div className="mt-2 border-t border-[hsl(var(--border))] pt-2">
+          {/* Real <button>, keyboard- and screen-reader-operable, same as the warehouse
+              record disclosure above. It defaults open on a future date (isBandKeyExpanded
+              follows isFuture until the user overrides it) so the content is not hidden from
+              someone who has actively chosen a forecast day -- the toggle exists so it can be
+              collapsed to reclaim vertical space on a short viewport, not to hide it by
+              default. */}
+          <button
+            type="button"
+            aria-expanded={isBandKeyExpanded}
+            aria-controls={bandKeyId}
+            onClick={() => setBandKeyExpandedOverride(!isBandKeyExpanded)}
+            className="flex w-full items-center gap-1 py-1 text-left text-xs font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]"
+            data-testid="forecast-band-key-heading"
+          >
+            <span
+              aria-hidden="true"
+              className={`inline-block transition-transform ${isBandKeyExpanded ? "rotate-90" : ""}`}
+            >
+              &#9656;
+            </span>
             Forecast band
-          </span>
-          <div className="mt-1 flex items-center gap-2">
-            <span
-              aria-hidden="true"
-              className="h-3 w-8 shrink-0 rounded-sm bg-[hsl(var(--primary))]"
-            />
-            <span className="map-popup-meta">Narrow band, drawn solid: a confident forecast</span>
+          </button>
+          <div
+            id={bandKeyId}
+            data-testid="forecast-band-key"
+            // Same className-swap idiom as the warehouse record list: the native `hidden`
+            // attribute would lose to an author-origin `flex` utility at equal specificity,
+            // so only one display rule is ever present.
+            className={isBandKeyExpanded ? "mt-1 flex flex-col gap-1" : "hidden"}
+          >
+            <div className="flex items-center gap-2">
+              <span
+                aria-hidden="true"
+                className="h-3 w-8 shrink-0 rounded-sm bg-[hsl(var(--primary))]"
+              />
+              <span className="map-popup-meta">Narrow band, drawn solid: a confident forecast</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span
+                aria-hidden="true"
+                className="h-3 w-8 shrink-0 rounded-sm bg-[hsl(var(--primary))]/25"
+              />
+              <span className="map-popup-meta">Wide band, washed out: an uncertain forecast</span>
+            </div>
+            <p className="map-popup-meta">
+              Colour is the median value; opacity is (high - low) normalised, so a wide
+              uncertainty band fades the feature out.
+            </p>
+            <p className="map-popup-meta">
+              Forecast days draw a dashed outline where observed days draw a solid one, and
+              carry no isolines: a contour would claim a precision the band does not support.
+            </p>
           </div>
-          <div className="mt-1 flex items-center gap-2">
-            <span
-              aria-hidden="true"
-              className="h-3 w-8 shrink-0 rounded-sm bg-[hsl(var(--primary))]/25"
-            />
-            <span className="map-popup-meta">Wide band, washed out: an uncertain forecast</span>
-          </div>
-          <p className="map-popup-meta">
-            Colour is the median value; opacity is (high - low) normalised, so a wide
-            uncertainty band fades the feature out.
-          </p>
-          <p className="map-popup-meta">
-            Forecast days draw a dashed outline where observed days draw a solid one, and carry
-            no isolines: a contour would claim a precision the band does not support.
-          </p>
         </div>
       )}
     </div>

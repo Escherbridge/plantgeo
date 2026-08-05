@@ -7,7 +7,11 @@ import { trpc } from "@/lib/trpc/client";
 import { useWatershedsQuery } from "@/hooks/useViewportProxiedLayers";
 import { DROUGHT_LEGEND } from "@/components/map/layers/DroughtLayer";
 import { LayerToggle } from "@/components/ui/layer-toggle";
-import { useLayerRenderState, useMapDay } from "@/lib/map/layer-toggle-context";
+import {
+  useDebouncedMapDay,
+  useLayerRenderState,
+  useMapDay,
+} from "@/lib/map/layer-toggle-context";
 
 interface WaterPanelProps {
   open: boolean;
@@ -39,6 +43,31 @@ const CONDITION_LABEL: Record<string, string> = {
 /** Rows rendered in the watershed list; the header states the full count beside it. */
 const WATERSHED_LIST_LIMIT = 50;
 
+/**
+ * Why the drought layer is empty, in the reader's own vocabulary. Keyed by
+ * `PublishedDroughtCollection.reason` in
+ * `src/lib/server/services/environmental-read-model.ts`, which is the source of truth for
+ * these codes; an unrecognised one falls back rather than rendering a blank warning.
+ *
+ * A skipped release week is NOT a fault and must not read as one: the ingest lane recorded
+ * that USDM published nothing that week, and the map is required to render it empty rather
+ * than carry the previous week forward over it.
+ */
+const DROUGHT_UNAVAILABLE_COPY: Record<string, string> = {
+  not_published: "No US Drought Monitor release covers the selected date.",
+  release_week_not_published:
+    "The US Drought Monitor published no release for this week, so nothing is drawn — the preceding week is deliberately not carried over it.",
+  stale:
+    "The newest stored US Drought Monitor release is too old to describe the selected date.",
+  not_forecastable: "Drought classification is not forecast beyond today.",
+  invalid_observation_time:
+    "The stored US Drought Monitor release carries no readable date, so it is not drawn.",
+};
+
+/** Fallback when the reader reports a code this panel has no sentence for. */
+const DROUGHT_UNAVAILABLE_FALLBACK =
+  "No US Drought Monitor classification is available for the selected date.";
+
 const TREND_SYMBOL: Record<string, string> = {
   rising: "↑",
   stable: "→",
@@ -66,16 +95,21 @@ function ColorSwatch({ color, label }: { color: string; label: string }) {
 }
 
 export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
-  // lane J: add { date: selectedDate } once environmental.getStreamflow accepts a date -- today it returns the latest reading, not the selected day.
+  // The same settled day LayerManager sends, so the panel and the map share one cache entry
+  // per feed rather than asking the warehouse for two different days.
+  const { requestDate } = useDebouncedMapDay();
+
   const streamflowQuery = trpc.environmental.getStreamflow.useQuery(
-    { bbox: bbox ?? "" },
+    { bbox: bbox ?? "", date: requestDate },
     { enabled: open && !!bbox }
   );
 
-  // lane J: replace `undefined` with { date: selectedDate } once environmental.getDroughtClassification accepts a date -- today it returns the latest release, not the selected day.
-  const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(undefined, {
-    enabled: open,
-  });
+  // tRPC keys `undefined` input differently from an object, so the dateless case must stay
+  // literally undefined rather than becoming `{ date: undefined }`.
+  const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(
+    requestDate === undefined ? undefined : { date: requestDate },
+    { enabled: open }
+  );
 
   // The same hook LayerManager calls, so the boundaries this tab lists are the ones the
   // map already fetched: one query entry, not a second ~5 MB USGS request 60 s later.
@@ -83,13 +117,18 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
   const watershedQuery = useWatershedsQuery(bbox, { enabled: open });
 
   // The map's day, read from the toggle context, so the panel and the map can never
-  // disagree about what is displayed.
+  // disagree about what is displayed. Read raw rather than settled, because this one is a
+  // label: the caption must track the pointer even while the queries wait for it to stop.
   const mapDay = useMapDay();
   const selectedDate = mapDay.selectedDate;
   const hasSelectedDay = selectedDate !== null;
-  // None of the three queries above accept a date yet, so whenever the slider is off the
-  // server's today these figures are the latest published values and must say so.
-  const figuresAreLatestNotSelectedDay = mapDay.isOffServerToday;
+  // Streamflow and drought are read for the selected day; the watershed boundaries below are
+  // proxied live from USGS per viewport and carry no date at all, so the caption says so
+  // rather than letting one undated feed be read as if it shared the other two's day.
+  const watershedsAreUndated = mapDay.isOffServerToday;
+  // The release actually served, which for a weekly product is on or before the selected day.
+  const droughtReleaseDate =
+    droughtQuery.data?.observedAt?.slice(0, 10) ?? null;
 
   // The gauge layer's own availability at that day; the context names it "water-gauges".
   const gaugeReason = useLayerRenderState("water").unavailableReason;
@@ -151,8 +190,8 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
           <p className="mt-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2 py-1.5 text-[11px] text-[hsl(var(--muted-foreground))]">
             Map date{" "}
             <span className="font-medium text-[hsl(var(--foreground))]">{selectedDate}</span>
-            {figuresAreLatestNotSelectedDay &&
-              " — the readings below are the latest published values, not values for this date."}
+            {watershedsAreUndated &&
+              " — streamflow and drought below are read for this date; watershed boundaries are not dated."}
           </p>
         )}
 
@@ -309,11 +348,15 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
                     <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 text-center">
                       <p className="text-xs text-[hsl(var(--muted-foreground))] mb-1">
                         Dominant Classification
-                        {figuresAreLatestNotSelectedDay && (
-                          <span className="block text-[10px]">
-                            Latest published release — not {selectedDate}
-                          </span>
-                        )}
+                        {/* USDM is weekly, so the release covering the selected day is
+                            normally dated before it. Naming the release is what keeps a
+                            carried-forward map from reading as a same-day measurement. */}
+                        {droughtReleaseDate !== null &&
+                          droughtReleaseDate !== selectedDate && (
+                            <span className="block text-[10px]">
+                              As of the {droughtReleaseDate} release
+                            </span>
+                          )}
                       </p>
                       <span
                         className="inline-block px-3 py-1 rounded font-bold text-sm text-white"
@@ -364,8 +407,8 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
 
               {!droughtQuery.isLoading && droughtUnavailable && !droughtQuery.isError && (
                 <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
-                  Drought classifications are paused until a recent warehouse
-                  release is exposed through a bounded viewport or tile contract.
+                  {DROUGHT_UNAVAILABLE_COPY[droughtQuery.data?.reason ?? ""] ??
+                    DROUGHT_UNAVAILABLE_FALLBACK}
                 </p>
               )}
             </TabsContent>

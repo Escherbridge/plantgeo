@@ -8,16 +8,42 @@ import { getEnvironmentalTileTemplate } from "@/lib/vegetation";
 const SOIL_SOURCE_ID = "soilgrids-wms";
 const SOIL_LAYER_ID = "soilgrids-layer";
 
-export type SoilProperty = "phh2o" | "soc" | "clay" | "sand" | "nitrogen" | "bdod" | "cec";
+/**
+ * The six SoilGrids topsoil (0-5cm) properties this platform actually has data for --
+ * the same six `soilgrids.ts#PROPERTY_FIELDS` fetches for the point query, and the six
+ * the raster pipeline plan names for the first-party tile release (see
+ * `conductor/tracks/ingestion_warehouse_consolidation_20260803/lanes/lane-F-raster-sources-to-r2.md`
+ * \u00a74.2). "clay" and "sand" were never wired to a data source on either path and are
+ * not offered; "ocd" was offered by neither path until now.
+ */
+export type SoilProperty = "phh2o" | "soc" | "nitrogen" | "bdod" | "cec" | "ocd";
 
 export const SOIL_PROPERTY_LABELS: Record<SoilProperty, string> = {
   phh2o: "pH (H\u2082O)",
   soc: "Organic Carbon",
-  clay: "Clay Content",
-  sand: "Sand Content",
   nitrogen: "Nitrogen",
   bdod: "Bulk Density",
   cec: "CEC",
+  ocd: "Organic Carbon Density",
+};
+
+/**
+ * The point-query field (`SoilProperties` in `soilgrids.ts`) each raster property
+ * corresponds to -- restated as literals rather than imported, since soilgrids.ts
+ * pulls in the server DB and this is a client component. Lets SoilPanel highlight the
+ * one point-query row that actually matches the selected raster property, instead of
+ * always showing the same six fields no matter what is selected.
+ */
+export const SOIL_PROPERTY_POINT_FIELD: Record<
+  SoilProperty,
+  "ph" | "organicCarbon" | "nitrogen" | "bulkDensity" | "cec" | "ocd"
+> = {
+  phh2o: "ph",
+  soc: "organicCarbon",
+  nitrogen: "nitrogen",
+  bdod: "bulkDensity",
+  cec: "cec",
+  ocd: "ocd",
 };
 
 function getSoilTileUrl(property: SoilProperty): string {

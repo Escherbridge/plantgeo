@@ -247,7 +247,13 @@ def test_forecast_iteration_database_url_is_explicit_local_and_profile_separate(
             forecast_iteration_database_url=target,
         ).require_forecast_iteration_database_url()
 
-    with pytest.raises(ValueError, match=r"127\.0\.0\.1:5442/plantgeo"):
+    approved_production = "postgresql+asyncpg://postgres:password@switchback.proxy.rlwy.net:37967/plantgeo"
+    assert (
+        _settings(forecast_iteration_database_url=approved_production).require_forecast_iteration_database_url()
+        == approved_production
+    )
+
+    with pytest.raises(ValueError, match="approved forecast-iteration targets"):
         _settings(
             forecast_iteration_database_url=(
                 "postgresql+asyncpg://plantgeo_local_developer:password@db.internal:5432/plantgeo"
@@ -259,7 +265,14 @@ def test_forecast_iteration_database_url_is_explicit_local_and_profile_separate(
             forecast_iteration_database_url=("postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5442/plantgeo")
         ).require_forecast_iteration_database_url()
 
-    with pytest.raises(ValueError, match=r"127\.0\.0\.1:5442/plantgeo"):
+    with pytest.raises(ValueError, match="must authenticate as postgres"):
+        _settings(
+            forecast_iteration_database_url=(
+                "postgresql+asyncpg://plantgeo_local_developer:password@switchback.proxy.rlwy.net:37967/plantgeo"
+            )
+        ).require_forecast_iteration_database_url()
+
+    with pytest.raises(ValueError, match="approved forecast-iteration targets"):
         _settings(
             forecast_iteration_database_url=(
                 "postgresql+asyncpg://plantgeo_local_developer:password@127.0.0.1:5442/"

@@ -9,7 +9,7 @@ import math
 import os
 import tempfile
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -122,6 +122,31 @@ from agri_data_service.execution.strategy_selection import (
     load_strategy_label_bundle,
     train_strategy_models,
 )
+from agri_data_service.execution.vegetation_ndvi_forecast import (
+    METHOD_NAME as VEGETATION_METHOD_NAME,
+)
+from agri_data_service.execution.vegetation_ndvi_forecast import (
+    PURPOSE_FORWARD_SIMULATION,
+    PURPOSE_HOLDOUT_EVALUATION,
+    SimulationRequest,
+)
+from agri_data_service.execution.vegetation_ndvi_plane import (
+    ErrorMetrics,
+    HoldoutEvaluation,
+    IterationOutcome,
+    RegistrationSummary,
+    load_governed_history,
+    load_governed_plane,
+    load_license_snapshots,
+    load_outcome_rows,
+    load_series_identities,
+    pin_determinism,
+    reconcile_actuals,
+    register_governed_plane,
+    select_candidate_cell_keys,
+    simulate_cells,
+    summarize_holdout,
+)
 from agri_data_service.ingest.commands import register_ingest_commands
 from agri_data_service.models.strategy import Strategy
 from agri_data_service.seed.strategies import STRATEGY_SEEDS
@@ -136,6 +161,8 @@ _MAX_RUN_PLAN_KEY_LENGTH = 500
 
 if TYPE_CHECKING:
     import uuid
+
+    from agri_data_service.execution.vegetation_ndvi_forecast import SeasonalHistory
 
 
 @click.group()
@@ -705,6 +732,395 @@ async def _forecast_reconcile_actuals(
         "mean_absolute_error": (float(row["mean_absolute_error"]) if row["mean_absolute_error"] is not None else None),
         "forecast_value_count": row["forecast_value_count"],
     }
+
+
+def _forecast_cli_day(value: str, option_name: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise click.BadParameter("must be an ISO-8601 calendar date", param_hint=option_name) from exc
+
+
+def _resolved_as_of_time(as_of_time: datetime | None, cutoff_day: date) -> datetime:
+    """Resolve the governed availability boundary, refusing a future or pre-cutoff as-of."""
+    resolved = as_of_time if as_of_time is not None else datetime.now(tz=UTC)
+    if resolved > datetime.now(tz=UTC):
+        raise ValueError("as-of boundary cannot be in the future")
+    if resolved < datetime.combine(cutoff_day, datetime.min.time(), tzinfo=UTC):
+        raise ValueError("as-of boundary cannot precede the cutoff day")
+    return resolved
+
+
+VEGETATION_HORIZON_BUCKETS: tuple[tuple[str, int, int], ...] = (
+    ("horizon_1_to_7_days", 1, 7),
+    ("horizon_8_to_14_days", 8, 14),
+    ("horizon_15_to_30_days", 15, 30),
+)
+
+
+def _error_metrics_payload(metrics: ErrorMetrics) -> dict[str, Any]:
+    return {
+        "label": metrics.label,
+        "point_count": metrics.point_count,
+        "mae": (round(metrics.mean_absolute_error, 6) if metrics.point_count else None),
+        "rmse": (round(metrics.root_mean_squared_error, 6) if metrics.point_count else None),
+        "bias": (round(metrics.bias, 6) if metrics.point_count else None),
+    }
+
+
+def _skill_score(method: ErrorMetrics, baseline: ErrorMetrics) -> float | None:
+    if not method.point_count or not baseline.point_count or baseline.root_mean_squared_error == 0.0:
+        return None
+    return round(1.0 - method.root_mean_squared_error / baseline.root_mean_squared_error, 6)
+
+
+def _registration_payload(summary: RegistrationSummary) -> dict[str, Any]:
+    return {
+        "corpus_cell_count": summary.plane.corpus_cell_count,
+        "corpus_cell_day_count": summary.plane.corpus_cell_day_count,
+        "corpus_source_row_count": summary.plane.corpus_row_count,
+        "data_source_id": str(summary.plane.data_source_id),
+        "first_observed_day": summary.plane.first_observed_day.isoformat(),
+        "last_observed_day": summary.plane.last_observed_day.isoformat(),
+        "observation_rows_inserted": summary.observation_count,
+        "payload_checksum": summary.plane.payload_checksum,
+        "release_manifest_checksum": summary.plane.release_manifest_checksum,
+        "release_set_id": str(summary.plane.release_set_id),
+        "requested_cell_count": summary.requested_cell_count,
+        "series_rows_inserted": summary.series_count,
+        "source_release_id": str(summary.plane.source_release_id),
+        "spatial_cell_rows_inserted": summary.spatial_cell_count,
+    }
+
+
+def _iteration_outcome_payload(outcomes: tuple[IterationOutcome, ...]) -> dict[str, Any]:
+    refusals: dict[str, int] = {}
+    for outcome in outcomes:
+        if outcome.skipped_reason_code is not None:
+            refusals[outcome.skipped_reason_code] = refusals.get(outcome.skipped_reason_code, 0) + 1
+    written = tuple(outcome for outcome in outcomes if outcome.iteration_id is not None)
+    return {
+        "candidate_series_count": len(outcomes),
+        "iteration_count": len(written),
+        "iteration_value_count": sum(outcome.value_count for outcome in written),
+        "refusals_by_reason": dict(sorted(refusals.items())),
+        "training_day_count_min": (min((outcome.training_day_count for outcome in written), default=None)),
+        "training_day_count_max": (max((outcome.training_day_count for outcome in written), default=None)),
+    }
+
+
+def _holdout_payload(evaluation: HoldoutEvaluation) -> dict[str, Any]:
+    return {
+        "cutoff_days": [day.isoformat() for day in evaluation.cutoff_days],
+        "interval_coverage_fraction": (
+            round(evaluation.interval_coverage_fraction, 6) if evaluation.reconciled_actual_count else None
+        ),
+        "iteration_count": evaluation.iteration_count,
+        "metrics_by_horizon_bucket": {
+            name: _error_metrics_payload(metrics) for name, metrics in evaluation.metrics_by_horizon_bucket
+        },
+        "method_metrics": _error_metrics_payload(evaluation.method_metrics),
+        "reconciled_actual_count": evaluation.reconciled_actual_count,
+        "baseline_climatology_metrics": _error_metrics_payload(evaluation.climatology_metrics),
+        "baseline_persistence_metrics": _error_metrics_payload(evaluation.persistence_metrics),
+        "skill_versus_climatology": _skill_score(evaluation.method_metrics, evaluation.climatology_metrics),
+        "skill_versus_persistence": _skill_score(evaluation.method_metrics, evaluation.persistence_metrics),
+    }
+
+
+@cli.command("forecast-vegetation-register")
+@click.option("--cutoff-day", required=True, help="Publisher-named UTC day that closes the governed NDVI corpus.")
+@click.option("--cell-limit", type=click.IntRange(1, 2000), default=24, show_default=True)
+@click.option("--cell-key", "cell_keys", multiple=True, help="Explicit vegetation cell keys; overrides sampling.")
+def forecast_vegetation_register(cutoff_day: str, cell_limit: int, cell_keys: tuple[str, ...]) -> None:
+    """Register the governed Sentinel-2 NDVI observation plane for a bounded cell selection."""
+    try:
+        summary = asyncio.run(
+            _forecast_vegetation_register(
+                cutoff_day=_forecast_cli_day(cutoff_day, "cutoff-day"),
+                cell_limit=cell_limit,
+                cell_keys=cell_keys,
+            )
+        )
+    except (SQLAlchemyError, ValueError) as exc:
+        reason = (
+            f"vegetation NDVI plane registration failed ({exc.__class__.__name__})"
+            if isinstance(exc, SQLAlchemyError)
+            else str(exc)
+        )
+        raise click.ClickException(reason) from exc
+    click.echo(json.dumps(summary, sort_keys=True))
+
+
+async def _forecast_vegetation_register(
+    *,
+    cutoff_day: date,
+    cell_limit: int,
+    cell_keys: tuple[str, ...],
+) -> dict[str, Any]:
+    database_url = settings.require_forecast_iteration_database_url()
+    async with forecast_iteration_session(database_url) as session, session.begin():
+        await pin_determinism(session)
+        selected = cell_keys or await select_candidate_cell_keys(
+            session,
+            cutoff_day=cutoff_day,
+            cell_limit=cell_limit,
+        )
+        summary = await register_governed_plane(session, cutoff_day=cutoff_day, cell_keys=selected)
+    payload = _registration_payload(summary)
+    payload["cutoff_day"] = cutoff_day.isoformat()
+    return payload
+
+
+@cli.command("forecast-vegetation-simulate")
+@click.option("--cutoff-day", required=True, help="Publisher-named UTC day that ends the training history.")
+@click.option("--release-cutoff-day", help="Governed release-set cutoff day; defaults to --cutoff-day.")
+@click.option("--horizon-days", type=click.IntRange(1, 366), default=30, show_default=True)
+@click.option("--simulation-count", type=click.IntRange(100, 10_000), default=1000, show_default=True)
+@click.option("--seed", type=click.IntRange(0, 2**31 - 1), default=0, show_default=True)
+@click.option(
+    "--purpose",
+    type=click.Choice([PURPOSE_FORWARD_SIMULATION, PURPOSE_HOLDOUT_EVALUATION], case_sensitive=True),
+    default=PURPOSE_FORWARD_SIMULATION,
+    show_default=True,
+)
+@click.option("--cell-key", "cell_keys", multiple=True, help="Restrict to explicit vegetation cell keys.")
+@click.option(
+    "--as-of-time",
+    help="Timezone-aware governed availability boundary; pin it to reproduce a recorded iteration.",
+)
+def forecast_vegetation_simulate(  # noqa: PLR0913
+    cutoff_day: str,
+    release_cutoff_day: str | None,
+    horizon_days: int,
+    simulation_count: int,
+    seed: int,
+    purpose: str,
+    cell_keys: tuple[str, ...],
+    as_of_time: str | None,
+) -> None:
+    """Write one deterministic seasonal-anomaly Monte Carlo iteration per eligible NDVI cell."""
+    try:
+        summary = asyncio.run(
+            _forecast_vegetation_simulate(
+                cutoff_day=_forecast_cli_day(cutoff_day, "cutoff-day"),
+                release_cutoff_day=(
+                    _forecast_cli_day(release_cutoff_day, "release-cutoff-day")
+                    if release_cutoff_day is not None
+                    else _forecast_cli_day(cutoff_day, "cutoff-day")
+                ),
+                request=SimulationRequest(
+                    horizon_days=horizon_days,
+                    simulation_count=simulation_count,
+                    seed=seed,
+                ),
+                purpose=purpose,
+                cell_keys=cell_keys,
+                as_of_time=(_forecast_cli_timestamp(as_of_time, "as-of-time") if as_of_time is not None else None),
+            )
+        )
+    except (SQLAlchemyError, ValueError) as exc:
+        reason = (
+            f"vegetation NDVI simulation failed ({exc.__class__.__name__})"
+            if isinstance(exc, SQLAlchemyError)
+            else str(exc)
+        )
+        raise click.ClickException(reason) from exc
+    click.echo(json.dumps(summary, sort_keys=True))
+
+
+async def _forecast_vegetation_simulate(  # noqa: PLR0913
+    *,
+    cutoff_day: date,
+    release_cutoff_day: date,
+    request: SimulationRequest,
+    purpose: str,
+    cell_keys: tuple[str, ...],
+    as_of_time: datetime | None,
+) -> dict[str, Any]:
+    if cutoff_day > release_cutoff_day:
+        raise ValueError("simulation cutoff day cannot follow the governed release-set cutoff day")
+    resolved_as_of = _resolved_as_of_time(as_of_time, cutoff_day)
+    database_url = settings.require_forecast_iteration_database_url()
+    async with forecast_iteration_session(database_url) as session, session.begin():
+        await pin_determinism(session)
+        plane = await load_governed_plane(session, cutoff_day=release_cutoff_day)
+        identities = await load_series_identities(session, cell_keys=cell_keys or None)
+        if not identities:
+            raise ValueError("no registered NDVI series match the requested cells")
+        governed_history = await load_governed_history(
+            session,
+            release_set_id=plane.release_set_id,
+            as_of_time=resolved_as_of,
+            cutoff_day=cutoff_day,
+        )
+        license_snapshots = await load_license_snapshots(
+            session,
+            release_set_id=plane.release_set_id,
+            as_of_time=resolved_as_of,
+            cutoff_day=cutoff_day,
+        )
+        outcomes, _histories = await simulate_cells(
+            session,
+            plane=plane,
+            identities=identities,
+            governed_history=governed_history,
+            license_snapshots=license_snapshots,
+            purpose=purpose,
+            as_of_time=resolved_as_of,
+            cutoff_day=cutoff_day,
+            request=request,
+        )
+    payload = _iteration_outcome_payload(outcomes)
+    payload.update(
+        {
+            "as_of_time": resolved_as_of.isoformat(),
+            "cutoff_day": cutoff_day.isoformat(),
+            "horizon_days": request.horizon_days,
+            "method": VEGETATION_METHOD_NAME,
+            "purpose": purpose,
+            "release_set_id": str(plane.release_set_id),
+            "seed": request.seed,
+            "simulation_count": request.simulation_count,
+        }
+    )
+    return payload
+
+
+@cli.command("forecast-vegetation-evaluate")
+@click.option("--release-cutoff-day", required=True, help="Governed release-set cutoff day holding the actuals.")
+@click.option(
+    "--holdout-cutoff-day",
+    "holdout_cutoff_days",
+    multiple=True,
+    required=True,
+    help="Simulated historical cutoff day; repeatable.",
+)
+@click.option("--horizon-days", type=click.IntRange(1, 366), default=30, show_default=True)
+@click.option("--simulation-count", type=click.IntRange(100, 10_000), default=1000, show_default=True)
+@click.option("--seed", type=click.IntRange(0, 2**31 - 1), default=0, show_default=True)
+@click.option("--cell-key", "cell_keys", multiple=True, help="Restrict to explicit vegetation cell keys.")
+@click.option(
+    "--as-of-time",
+    help="Timezone-aware governed availability boundary; pin it to reproduce a recorded evaluation.",
+)
+def forecast_vegetation_evaluate(  # noqa: PLR0913
+    release_cutoff_day: str,
+    holdout_cutoff_days: tuple[str, ...],
+    horizon_days: int,
+    simulation_count: int,
+    seed: int,
+    cell_keys: tuple[str, ...],
+    as_of_time: str | None,
+) -> None:
+    """Run time-honest holdout iterations and report method error against its trivial baselines."""
+    try:
+        summary = asyncio.run(
+            _forecast_vegetation_evaluate(
+                release_cutoff_day=_forecast_cli_day(release_cutoff_day, "release-cutoff-day"),
+                holdout_cutoff_days=tuple(
+                    _forecast_cli_day(value, "holdout-cutoff-day") for value in holdout_cutoff_days
+                ),
+                request=SimulationRequest(
+                    horizon_days=horizon_days,
+                    simulation_count=simulation_count,
+                    seed=seed,
+                ),
+                cell_keys=cell_keys,
+                as_of_time=(_forecast_cli_timestamp(as_of_time, "as-of-time") if as_of_time is not None else None),
+            )
+        )
+    except (SQLAlchemyError, ValueError) as exc:
+        reason = (
+            f"vegetation NDVI holdout evaluation failed ({exc.__class__.__name__})"
+            if isinstance(exc, SQLAlchemyError)
+            else str(exc)
+        )
+        raise click.ClickException(reason) from exc
+    click.echo(json.dumps(summary, sort_keys=True))
+
+
+async def _forecast_vegetation_evaluate(
+    *,
+    release_cutoff_day: date,
+    holdout_cutoff_days: tuple[date, ...],
+    request: SimulationRequest,
+    cell_keys: tuple[str, ...],
+    as_of_time: datetime | None,
+) -> dict[str, Any]:
+    ordered_cutoffs = tuple(sorted(set(holdout_cutoff_days)))
+    if any(cutoff >= release_cutoff_day for cutoff in ordered_cutoffs):
+        raise ValueError("every holdout cutoff day must precede the governed release-set cutoff day")
+    resolved_as_of = _resolved_as_of_time(as_of_time, max(ordered_cutoffs))
+    database_url = settings.require_forecast_iteration_database_url()
+    async with forecast_iteration_session(database_url) as session, session.begin():
+        await pin_determinism(session)
+        plane = await load_governed_plane(session, cutoff_day=release_cutoff_day)
+        identities = await load_series_identities(session, cell_keys=cell_keys or None)
+        if not identities:
+            raise ValueError("no registered NDVI series match the requested cells")
+        governed_history = await load_governed_history(
+            session,
+            release_set_id=plane.release_set_id,
+            as_of_time=resolved_as_of,
+            cutoff_day=max(ordered_cutoffs),
+        )
+        license_snapshots = await load_license_snapshots(
+            session,
+            release_set_id=plane.release_set_id,
+            as_of_time=resolved_as_of,
+            cutoff_day=max(ordered_cutoffs),
+        )
+        histories_by_cutoff: dict[date, dict[uuid.UUID, SeasonalHistory]] = {}
+        iteration_ids: list[uuid.UUID] = []
+        refusals: dict[str, int] = {}
+        for cutoff_day in ordered_cutoffs:
+            outcomes, histories = await simulate_cells(
+                session,
+                plane=plane,
+                identities=identities,
+                governed_history=governed_history,
+                license_snapshots=license_snapshots,
+                purpose=PURPOSE_HOLDOUT_EVALUATION,
+                as_of_time=resolved_as_of,
+                cutoff_day=cutoff_day,
+                request=request,
+            )
+            histories_by_cutoff[cutoff_day] = histories
+            iteration_ids.extend(outcome.iteration_id for outcome in outcomes if outcome.iteration_id is not None)
+            for outcome in outcomes:
+                if outcome.skipped_reason_code is not None:
+                    refusals[outcome.skipped_reason_code] = refusals.get(outcome.skipped_reason_code, 0) + 1
+        reconciled = await reconcile_actuals(
+            session,
+            iteration_ids=tuple(iteration_ids),
+            release_set_id=plane.release_set_id,
+            as_of_time=resolved_as_of,
+        )
+        outcome_rows = await load_outcome_rows(session, iteration_ids=tuple(iteration_ids))
+        evaluation = summarize_holdout(
+            cutoff_days=ordered_cutoffs,
+            iteration_count=len(iteration_ids),
+            outcome_rows=outcome_rows,
+            histories_by_cutoff=histories_by_cutoff,
+            horizon_buckets=VEGETATION_HORIZON_BUCKETS,
+        )
+    payload = _holdout_payload(evaluation)
+    payload.update(
+        {
+            "as_of_time": resolved_as_of.isoformat(),
+            "availability_mode": "retrospective_pinned_release",
+            "horizon_days": request.horizon_days,
+            "inserted_actual_count": reconciled,
+            "method": VEGETATION_METHOD_NAME,
+            "refusals_by_reason": dict(sorted(refusals.items())),
+            "release_cutoff_day": release_cutoff_day.isoformat(),
+            "release_set_id": str(plane.release_set_id),
+            "seed": request.seed,
+            "simulation_count": request.simulation_count,
+        }
+    )
+    return payload
 
 
 @cli.command("job-logs-maintain")

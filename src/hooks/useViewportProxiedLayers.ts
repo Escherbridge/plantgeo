@@ -78,14 +78,22 @@ export function useWatershedsQuery(
   );
 }
 
-/** SSURGO map units for the viewport, proxied live from USDA Soil Data Access. */
+/**
+ * SSURGO map units for the viewport, proxied live from USDA Soil Data Access.
+ * `zoom` selects render granularity server-side (real map units at high zoom,
+ * progressively coarser drainage-class averages below it -- see
+ * `src/lib/server/services/usda-soil.ts` §soil-survey-zoom) and is part of the query
+ * key, so the map and the panel must pass the *same* zoom or they split into two
+ * cache entries -- both read it from the one `useViewportBounds()` derivation, same
+ * as `bbox`. Omitted callers keep the pre-zoom-aware behavior.
+ */
 export function useSoilSurveyQuery(
   bbox: string | null | undefined,
-  { enabled }: ProxiedQueryOptions
+  { enabled, zoom }: ProxiedQueryOptions & { zoom?: number }
 ) {
   const requested = bbox ?? null;
   return trpc.environmental.getSoilSurvey.useQuery(
-    { bbox: requested ?? NO_VIEWPORT_BBOX },
+    { bbox: requested ?? NO_VIEWPORT_BBOX, zoom },
     {
       enabled: enabled && requested !== null && !isWithheld("soil-survey"),
       staleTime: SOIL_SURVEY_STALE_TIME_MS,

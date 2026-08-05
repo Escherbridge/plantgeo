@@ -4,7 +4,12 @@ import { Layers, Wind, Leaf } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc/client";
-import { type SoilProperty, SOIL_PROPERTY_LABELS } from "@/components/map/layers/SoilLayer";
+import { Fragment } from "react";
+import {
+  type SoilProperty,
+  SOIL_PROPERTY_LABELS,
+  SOIL_PROPERTY_POINT_FIELD,
+} from "@/components/map/layers/SoilLayer";
 import { useSoilStore } from "@/stores/soil-store";
 import { EROSION_COLORS, type ErosionClass } from "@/lib/environmental/erosion";
 import { CARBON_COLORS, classifyCarbonPotential, type CarbonClass } from "@/components/map/layers/CarbonPotentialLayer";
@@ -21,16 +26,41 @@ interface SoilPanelProps {
   queryPoint?: { lat: number; lon: number } | null;
   /** The map's viewport, handed down by PanelManager exactly as the other panels get it. */
   bbox?: string;
+  /**
+   * The map's viewport zoom, from the same `useViewportBounds()` derivation PanelManager
+   * hands `bbox` from. Selects the SSURGO survey's render granularity -- see
+   * `useSoilSurveyQuery` and `src/lib/server/services/usda-soil.ts` §soil-survey-zoom.
+   * Omitted keeps the pre-zoom-aware detail-tier behavior.
+   */
+  zoom?: number;
 }
 
 const SOIL_PROPERTY_OPTIONS: { value: SoilProperty; label: string }[] = [
   { value: "phh2o", label: "pH" },
   { value: "soc", label: "Organic Carbon" },
-  { value: "clay", label: "Clay Content" },
-  { value: "sand", label: "Sand Content" },
   { value: "nitrogen", label: "Nitrogen" },
   { value: "bdod", label: "Bulk Density" },
   { value: "cec", label: "CEC" },
+  { value: "ocd", label: "Organic Carbon Density" },
+];
+
+/**
+ * The queried-point card's rows, one per `SoilProperties` field. Selecting a property
+ * above highlights its matching row here via `SOIL_PROPERTY_POINT_FIELD` -- previously
+ * this card showed the same six values regardless of which property was selected, so
+ * the selector had no visible effect on a drill-down query.
+ */
+const SOIL_POINT_FIELD_ROWS: {
+  field: "ph" | "organicCarbon" | "nitrogen" | "bulkDensity" | "cec" | "ocd";
+  label: string;
+  format: (value: number) => string;
+}[] = [
+  { field: "ph", label: "pH", format: (v) => v.toFixed(1) },
+  { field: "organicCarbon", label: "Organic Carbon", format: (v) => `${v.toFixed(1)} g/kg` },
+  { field: "nitrogen", label: "Nitrogen", format: (v) => `${v.toFixed(2)} g/kg` },
+  { field: "bulkDensity", label: "Bulk Density", format: (v) => `${v.toFixed(2)} g/cm³` },
+  { field: "cec", label: "CEC", format: (v) => `${v.toFixed(1)} cmol/kg` },
+  { field: "ocd", label: "OCD", format: (v) => `${v.toFixed(1)} kg/m³` },
 ];
 
 const EROSION_CLASSES: ErosionClass[] = ["very_low", "low", "moderate", "high", "very_high"];
@@ -97,6 +127,7 @@ export function SoilPanel({
   onOpenChange,
   queryPoint,
   bbox,
+  zoom,
 }: SoilPanelProps) {
   const { property: selectedProperty, setProperty } = useSoilStore();
 
@@ -123,6 +154,7 @@ export function SoilPanel({
   const soilSurveyVisible = useLayerVisibility()["soil-survey"];
   const soilSurveyQuery = useSoilSurveyQuery(bbox, {
     enabled: open && soilSurveyVisible,
+    zoom,
   });
   const soilSurvey = soilSurveyQuery.data;
   // USDA holds more map units than it serves for one view and returned a subset; the
@@ -136,6 +168,28 @@ export function SoilPanel({
   // rather than drawn at a guessed outline, so the ground under them paints blank -- a
   // gap in what we can read, which must never be captioned as unsurveyed ground.
   const soilSurveyUnreadable = soilSurvey?.unreadableGeometries ?? 0;
+  // Not yet on ProxiedFeatureCollection's declared type (environmental.ts, owned by
+  // another lane) -- present at runtime via the collection's own spread regardless.
+  // Undefined reads as "detail" so every existing (pre-zoom-aware) caller and test
+  // fixture keeps its original wording unchanged.
+  const soilSurveyGranularity =
+    (
+      soilSurvey as
+        | { granularity?: "detail" | "regional-average" | "coarse-average" }
+        | undefined
+    )?.granularity ?? "detail";
+  const soilSurveyAggregated = soilSurveyGranularity !== "detail";
+  // The real SSURGO map units merged behind the drawn averages, summed across every
+  // averaged region in view -- the count that keeps an average from reading as a
+  // surveyed unit.
+  const soilSurveyAggregatedUnitCount = soilSurveyAggregated
+    ? (soilSurvey?.features ?? []).reduce((total, feature) => {
+        const count = Number(
+          (feature.properties as { mapUnitCount?: unknown } | null)?.mapUnitCount
+        );
+        return total + (Number.isFinite(count) ? count : 0);
+      }, 0)
+    : 0;
 
   const soil = soilQuery.data;
   const suitability = suitabilityQuery.data;
@@ -178,6 +232,25 @@ export function SoilPanel({
               </p>
             )}
 
+            {/* Zoomed out past the detail tier: the shapes below are real map units
+                merged by drainage class, not individual surveyed boundaries -- see
+                usda-soil.ts §soil-survey-zoom. Shown whenever the response says so,
+                never guessed ahead of it. */}
+            {soilSurveyAggregated && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                Zoomed out: showing drainage-class averages built from{" "}
+                {soilSurveyAggregatedUnitCount} real SSURGO map unit
+                {soilSurveyAggregatedUnitCount === 1 ? "" : "s"}
+                {soilSurveyGranularity === "coarse-average" ? ", generalized further" : ""}
+                . These are not individual surveyed boundaries — zoom in for the exact
+                survey.
+              </p>
+            )}
+
             {soilSurveyUnavailable && (
               <p
                 role="status"
@@ -196,9 +269,21 @@ export function SoilPanel({
                 aria-live="polite"
                 className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
               >
-                USDA surveyed more map units than this view draws. The first{" "}
-                {soilSurveyCount} are shown — what is drawn is a subset, so ground left
-                blank here is not necessarily unsurveyed. Zoom in for complete coverage.
+                {soilSurveyAggregated ? (
+                  <>
+                    This average covers only part of the visible map, centered on your
+                    view — the sampled area is a subset, so ground left blank here is
+                    not necessarily unsurveyed. Zoom in for wider or fully detailed
+                    coverage.
+                  </>
+                ) : (
+                  <>
+                    USDA surveyed more map units than this view draws. The first{" "}
+                    {soilSurveyCount} are shown — what is drawn is a subset, so ground
+                    left blank here is not necessarily unsurveyed. Zoom in for complete
+                    coverage.
+                  </>
+                )}
               </p>
             )}
 
@@ -238,7 +323,9 @@ export function SoilPanel({
             {soilSurvey && !soilSurveyUnavailable && !soilSurveyTruncated && (
               <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
                 {soilSurveyCount > 0
-                  ? `${soilSurveyCount} SSURGO map units drawn for this view.`
+                  ? soilSurveyAggregated
+                    ? `${soilSurveyCount} averaged drainage region${soilSurveyCount === 1 ? "" : "s"} shown for this view.`
+                    : `${soilSurveyCount} SSURGO map units drawn for this view.`
                   : soilSurveyUnreadable > 0
                     ? "No map unit USDA returned for this view could be read, so nothing is drawn."
                     : "USDA reports no surveyed SSURGO map units in this view."}
@@ -312,22 +399,40 @@ export function SoilPanel({
 
               {soil && queryPoint && (
                 <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 flex flex-col gap-2">
-                  <p className="text-xs font-semibold text-[hsl(var(--foreground))]">
-                    Point ({queryPoint.lat.toFixed(4)}, {queryPoint.lon.toFixed(4)})
-                  </p>
+                  <div>
+                    <p className="text-xs font-semibold text-[hsl(var(--foreground))]">
+                      Point ({queryPoint.lat.toFixed(4)}, {queryPoint.lon.toFixed(4)})
+                    </p>
+                    <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                      Showing {SOIL_PROPERTY_LABELS[selectedProperty]}, highlighted below.
+                    </p>
+                  </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                    <span className="text-[hsl(var(--muted-foreground))]">pH</span>
-                    <span className="font-medium">{soil.ph.toFixed(1)}</span>
-                    <span className="text-[hsl(var(--muted-foreground))]">Organic Carbon</span>
-                    <span className="font-medium">{soil.organicCarbon.toFixed(1)} g/kg</span>
-                    <span className="text-[hsl(var(--muted-foreground))]">Nitrogen</span>
-                    <span className="font-medium">{soil.nitrogen.toFixed(2)} g/kg</span>
-                    <span className="text-[hsl(var(--muted-foreground))]">Bulk Density</span>
-                    <span className="font-medium">{soil.bulkDensity.toFixed(2)} g/cm³</span>
-                    <span className="text-[hsl(var(--muted-foreground))]">CEC</span>
-                    <span className="font-medium">{soil.cec.toFixed(1)} cmol/kg</span>
-                    <span className="text-[hsl(var(--muted-foreground))]">OCD</span>
-                    <span className="font-medium">{soil.ocd.toFixed(1)} kg/m³</span>
+                    {SOIL_POINT_FIELD_ROWS.map(({ field, label, format }) => {
+                      const isSelected = SOIL_PROPERTY_POINT_FIELD[selectedProperty] === field;
+                      return (
+                        <Fragment key={field}>
+                          <span
+                            className={
+                              isSelected
+                                ? "font-semibold text-[hsl(var(--foreground))]"
+                                : "text-[hsl(var(--muted-foreground))]"
+                            }
+                          >
+                            {label}
+                          </span>
+                          <span
+                            className={
+                              isSelected
+                                ? "font-semibold text-[hsl(var(--primary))]"
+                                : "font-medium"
+                            }
+                          >
+                            {format(soil[field])}
+                          </span>
+                        </Fragment>
+                      );
+                    })}
                   </div>
                 </div>
               )}

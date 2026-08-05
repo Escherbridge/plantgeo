@@ -190,10 +190,14 @@ describe('layer registry derivations', () => {
     expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty('soil-survey')
   })
 
-  it('withholds demand-heatmap at every date, and withholds nothing else', () => {
+  // demand-heatmap's stub was lifted 2026-08-03: /api/v1/action-network's k-anonymity
+  // floor already satisfies the "reviewed, access-controlled publication" condition it
+  // was withheld pending. building-footprints is withheld instead: its Martin function
+  // is live but geo.osm_buildings has 0 rows, so the toggle would control nothing.
+  it('withholds building-footprints at every date, and withholds nothing else', () => {
     const withheld = LAYER_TOGGLE_IDS.filter(
       (toggleId) => LAYER_REGISTRY[toggleId].permanentlyUnavailableReason !== null
     )
-    expect(withheld).toEqual(['demand-heatmap'])
+    expect(withheld).toEqual(['building-footprints'])
   })
 })

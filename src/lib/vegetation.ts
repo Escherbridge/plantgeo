@@ -132,6 +132,22 @@ export function getNDWITileUrl(_year: number, _month: number): string {
 }
 
 /**
+ * Why NDWI is offered as a mode but never renders anything -- shown next to the control in
+ * VegetationPanel, not only in a title attribute, because a disabled control isn't
+ * focusable. Restates getNDWITileUrl's doc comment; keep the two in sync.
+ */
+export const NDWI_UNAVAILABLE_REASON =
+  "NASA GIBS publishes no NDWI (or any water-index) raster, and no first-party NDWI release exists.";
+
+/**
+ * Why NDVI "anomaly" mode is offered but never renders anything -- shown next to the
+ * control in VegetationPanel, not only in a title attribute. Restates getNDVITileUrl's
+ * doc comment; keep the two in sync.
+ */
+export const NDVI_ANOMALY_UNAVAILABLE_REASON =
+  "GIBS publishes absolute NDVI only; no climatological baseline is published to compute an anomaly.";
+
+/**
  * Compatibility alias for the first-party published NDVI tile template.
  */
 export function getCopernicusNDVITileUrl(year: number, month: number): string {

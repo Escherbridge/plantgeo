@@ -34,6 +34,14 @@ const bboxSchema = z
     }
   });
 
+/**
+ * The day the map is drawing, as the warehouse-backed reads here take it. Mirrors
+ * `environmental.ts`'s own schema: omitting it means the live edge, not today's date.
+ */
+const observationDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD");
+
 function unpublishedRisk(): never {
   throw new TRPCError({
     code: "PRECONDITION_FAILED",
@@ -45,16 +53,22 @@ export const wildfireRouter = router({
   /**
    * Get fire detection features filtered by bounding box.
    * bbox: "west,south,east,north"
+   *
+   * `date` narrows to one FIRMS acquisition day instead of the rolling `dayRange` lookback.
+   * NOTE: `src/app/api/fires/route.ts` -- which `useFireData` actually calls -- does not
+   * forward a date yet, so the map's fire layer is still dateless. See
+   * `src/lib/server/AGENTS.md` §slider-day.
    */
   getFireDetections: publicProcedure
     .input(
       z.object({
         bbox: z.string().optional(),
         dayRange: z.number().int().min(1).max(10).default(1),
+        date: observationDateSchema.optional(),
       })
     )
     .query(async ({ input }) => {
-      return getPublishedFireDetections(input.bbox, input.dayRange);
+      return getPublishedFireDetections(input.bbox, input.dayRange, input.date);
     }),
 
   /**
@@ -152,11 +166,14 @@ export const wildfireRouter = router({
     }),
 
   /**
-   * Read every published, fresh, complete warehouse-backed weather
-   * observation intersecting a viewport bbox -- the full spread rather than
-   * a single nearest-point sample.
+   * Read every published, complete warehouse-backed weather observation
+   * intersecting a viewport bbox -- the full spread rather than a single
+   * nearest-point sample.
+   *
+   * `date` narrows to that day's newest sample per grid point; omitting it reads the live
+   * freshness window unchanged.
    */
   getWeatherForBbox: publicProcedure
-    .input(z.object({ bbox: bboxSchema }))
-    .query(({ input }) => getPublishedWeatherForBbox(input.bbox)),
+    .input(z.object({ bbox: bboxSchema, date: observationDateSchema.optional() }))
+    .query(({ input }) => getPublishedWeatherForBbox(input.bbox, input.date)),
 });

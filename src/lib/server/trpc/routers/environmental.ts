@@ -28,8 +28,9 @@ import {
 } from "@/lib/server/services/soilgrids";
 import {
   getSoilSurvey,
-  MAX_SOIL_BBOX_SQUARE_DEGREES,
+  soilSurveyAreaCeiling,
   SoilSurveyResponseError,
+  type SoilSurveyGranularity,
 } from "@/lib/server/services/usda-soil";
 import {
   GIBS_NDVI_PRODUCT,
@@ -74,6 +75,17 @@ const bboxSchema = z
       });
     }
   });
+
+/**
+ * The day the map is drawing, as every warehouse-backed viewport read takes it.
+ *
+ * Optional everywhere, and OMITTING it is not the same as passing today: an omitted day means
+ * "the live edge", which is the query each reader has always run and the one the client keeps
+ * its existing cache entry for. See `src/lib/server/AGENTS.md` §slider-day.
+ */
+const observationDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD");
 
 /**
  * Caps the viewport area for a procedure that proxies a third-party API per request.
@@ -130,6 +142,18 @@ export interface ProxiedFeatureCollection extends GeoJSON.FeatureCollection {
   unreadableGeometries: number;
   observedAt: string | null;
   revision: string | null;
+}
+
+/**
+ * The SSURGO response, which additionally reports WHICH granularity answered.
+ *
+ * Its own type rather than an optional field on `ProxiedFeatureCollection`: the watershed feed
+ * has no granularity at all, and an optional one there would let a caller test for a property
+ * that can never be set. `SoilPanel` reads this to caption an averaged view as an average
+ * rather than as a surveyed map unit -- see `src/lib/server/AGENTS.md` §soil-survey-zoom.
+ */
+export interface ProxiedSoilSurveyCollection extends ProxiedFeatureCollection {
+  granularity: SoilSurveyGranularity;
 }
 
 /**
@@ -241,9 +265,14 @@ export const environmentalRouter = router({
       unavailableCollection("validated_reforestation_output_not_published")
     ),
 
+  /**
+   * USGS gauge readings for the viewport: the live edge, or one named day's newest reading
+   * per gauge. A day the record has nothing for answers with an empty array; the layer's own
+   * slider capability is what captions it.
+   */
   getStreamflow: publicProcedure
-    .input(z.object({ bbox: bboxSchema }))
-    .query(({ input }) => getPublishedStreamflowGauges(input.bbox)),
+    .input(z.object({ bbox: bboxSchema, date: observationDateSchema.optional() }))
+    .query(({ input }) => getPublishedStreamflowGauges(input.bbox, input.date)),
 
   /**
    * The newest published NDVI observation per sampling-grid cell in a viewport.
@@ -257,19 +286,32 @@ export const environmentalRouter = router({
    * do so because each one proxies a third-party API per request. This one reads the local
    * warehouse and is bounded by the grid itself -- a whole-world bbox answers with the same
    * 1,568 cells a regional one does.
+   *
+   * `date` slides the 30-day observation window to end at that day rather than at now.
    */
   getVegetationIndex: publicProcedure
-    .input(z.object({ bbox: bboxSchema }))
-    .query(({ input }) => getPublishedVegetationIndex(input.bbox)),
+    .input(z.object({ bbox: bboxSchema, date: observationDateSchema.optional() }))
+    .query(({ input }) => getPublishedVegetationIndex(input.bbox, input.date)),
 
   /**
-   * Serves the newest stored USDM release, clipped and generalized in PostGIS.
+   * Serves the stored USDM release covering a day, clipped and generalized in PostGIS.
    * bbox is optional so the existing no-argument callers keep working; passing
-   * one returns far less geometry and is strongly preferred.
+   * one returns far less geometry and is strongly preferred. `date` is resolved through the
+   * same bounded weekly carry-forward the slider metric uses, so a release week the record
+   * skips renders empty rather than borrowing the week before it.
    */
   getDroughtClassification: publicProcedure
-    .input(z.object({ bbox: bboxSchema.optional() }).optional())
-    .query(({ input }) => getPublishedDroughtClassification(input?.bbox)),
+    .input(
+      z
+        .object({
+          bbox: bboxSchema.optional(),
+          date: observationDateSchema.optional(),
+        })
+        .optional()
+    )
+    .query(({ input }) =>
+      getPublishedDroughtClassification(input?.bbox, input?.date)
+    ),
 
   /**
    * HUC12 watershed boundaries for the viewport, proxied live from USGS NHD+ HR and
@@ -303,9 +345,13 @@ export const environmentalRouter = router({
       }
     }),
 
+  /**
+   * Reserved: no groundwater observation is published on any day. `date` is accepted so the
+   * client can pass the slider's day uniformly, not because it narrows anything yet.
+   */
   getGroundwater: publicProcedure
-    .input(z.object({ bbox: bboxSchema }))
-    .query(({ input }) => getPublishedGroundwaterWells(input.bbox)),
+    .input(z.object({ bbox: bboxSchema, date: observationDateSchema.optional() }))
+    .query(({ input }) => getPublishedGroundwaterWells(input.bbox, input.date)),
 
   getWaterScarcityScore: publicProcedure
     .input(z.object({ bbox: bboxSchema }))
@@ -343,12 +389,37 @@ export const environmentalRouter = router({
   /**
    * SSURGO map-unit polygons for the viewport, proxied live from USDA Soil Data
    * Access and cached in Redis for a day by the service.
+   *
+   * The area ceiling is zoom-dependent, so it cannot live on the bbox field the way
+   * `areaBoundedBbox` puts it: `soilSurveyAreaCeiling` returns the original measured ceiling
+   * only for the detail tier, which makes one uncapped SDA call, and null for the aggregated
+   * tiers, which tile themselves inside that same per-cell ceiling and degrade to
+   * `truncated: true` rather than erroring. See `usda-soil.ts` §soil-survey-zoom.
    */
   getSoilSurvey: publicProcedure
-    .input(z.object({ bbox: areaBoundedBbox(MAX_SOIL_BBOX_SQUARE_DEGREES) }))
-    .query(async ({ input }): Promise<ProxiedFeatureCollection> => {
+    .input(
+      z
+        .object({
+          bbox: bboxSchema,
+          /** Viewport zoom; selects render granularity and the ceiling that applies. */
+          zoom: z.number().finite().optional(),
+        })
+        .superRefine((value, context) => {
+          const ceiling = soilSurveyAreaCeiling(value.zoom);
+          if (ceiling === null) return;
+          const [west, south, east, north] = value.bbox.split(",").map(Number);
+          const area = (east - west) * (north - south);
+          if (Number.isFinite(area) && area > ceiling) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `Bounding box exceeds ${ceiling} square degrees; zoom in`,
+            });
+          }
+        })
+    )
+    .query(async ({ input }): Promise<ProxiedSoilSurveyCollection> => {
       try {
-        const collection = await getSoilSurvey(input.bbox);
+        const collection = await getSoilSurvey(input.bbox, input.zoom);
         return {
           ...collection,
           availability: "published",
@@ -356,6 +427,9 @@ export const environmentalRouter = router({
           // Map units SDA served that would not parse. Carried rather than absorbed:
           // SoilPanel must not caption a reader gap as ground USDA found no soil on.
           unreadableGeometries: collection.unreadableGeometries,
+          // Which tier actually answered, so an averaged view is never captioned as a
+          // surveyed map unit.
+          granularity: collection.granularity,
           // SSURGO's survey areas each carry their own vintage; the response exposes
           // no single publication time for the returned map units.
           observedAt: null,
@@ -363,7 +437,12 @@ export const environmentalRouter = router({
         };
       } catch (error) {
         if (error instanceof SoilSurveyResponseError) {
-          return unavailableCollection("soil_survey_upstream_returned_no_table");
+          return {
+            ...unavailableCollection("soil_survey_upstream_returned_no_table"),
+            // A provider fault answered nothing, so no tier described the viewport. The
+            // detail tier is the honest default: it is what a zoomless request resolves to.
+            granularity: "detail",
+          };
         }
         rethrowUpstreamFault(error, "USDA Soil Data Access");
       }
@@ -389,9 +468,9 @@ export const environmentalRouter = router({
     .input(
       z.object({
         metric: z.string().trim().min(1).max(64),
-        date: z
-          .string()
-          .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
+        // Required here, unlike the viewport reads above: this procedure exists to answer
+        // "what did this metric read on this day", so there is no live-edge default.
+        date: observationDateSchema,
         variant: z.enum(["observed", "monte_carlo", "ml"]).default("observed"),
         bbox: bboxSchema.optional(),
       })

@@ -420,6 +420,80 @@ and `fetchBoundedJson` does not forward an inbound `AbortSignal`, so panning awa
 cancels nothing server-side. Both are transport-layer concerns in `lib/trpc/client.ts`
 and `http/bounded-upstream.ts` respectively, not per-query settings.
 
+## §slider-day
+
+`services/environmental-read-model.ts`, the `date` inputs on
+`trpc/routers/environmental.ts` and `trpc/routers/wildfire.ts`, and
+`lib/map/layer-toggle-context.ts`'s `useDebouncedMapDay` on the client. The time slider used
+to report *whether* the warehouse held a chosen day while every layer kept drawing the live
+edge; this is what makes the layers draw the day.
+
+**An omitted day and today's date are the same read, deliberately.**
+`resolveRequestedObservationDay` collapses both to `{ kind: "live" }`, so first paint runs the
+exact query each reader has always run — the one whose cost is measured — and the client sends
+no `date` at all when the selection is `capabilities.serverCurrentDate`. That is not cosmetic:
+tRPC keys on the input, so passing the date explicitly would mint a second react-query entry
+for an identical answer and fetch it twice on load. `useDebouncedMapDay().requestDate` is
+`undefined` in exactly that case, and also before capabilities arrive — without them nothing
+knows which day is today, and reading the browser clock is the timezone disagreement
+`serverCurrentDate` exists to prevent.
+
+**Bucket a named day on the publisher's own named day, never in UTC.** In SQL that is
+`substring(<iso text>, 1, 10)::date` (`OBSERVATION_DAY`, or `namedDaySql` for one explicitly
+named field); in TypeScript it is `publisherNamedDay`, which reads the raw stored string
+because `parseZonedObservationTime` has already normalized it to UTC by then. All 16,743
+stored USGS gauge readings carry `-07:00`, and 6,279 of them (37.5%) land on the day *after*
+the one their own timestamp names under UTC bucketing: `2026-08-03T23:50:00.000-07:00` buckets
+to 2026-08-04. The map renders correctly and lies about the day, and a user cross-checking
+waterdata.usgs.gov sees the mismatch.
+
+**A now-relative freshness window must not survive into a named day.** Every live reader gates
+on `Date.now()` — 6 h for streamflow, 3 h for weather, 30 d for vegetation — and left in place
+those windows report *every* historical day as unobserved. Re-anchoring the same duration to
+the end of the requested day is just as wrong: six hours before midnight drops every gauge
+whose last reading that day was before 18:00. So the window is re-expressed, per reader:
+
+- **streamflow, weather, fire detections** — the day predicate pins the publisher-named day
+  exactly, and the window *is* that day. `DISTINCT ON` (site / grid point) then keeps the
+  newest reading per entity, which also makes the row cap count entities rather than readings:
+  a busy national streamflow day is ~10,900 readings, and paging those by `created_at` would
+  have answered with a subset of the country. `created_at` can never date an observation on
+  either path — it is a "last touched" column the refresh path rewrites.
+- **vegetation** — the 30-day per-cell window slides to *end* at the requested day, i.e.
+  `(date − VEGETATION_MAX_OBSERVATION_AGE_DAYS, date]`. A reading after the requested day is
+  dropped too, so a past day can never borrow a later cloud-free scene. The
+  `stale` / `not_published` probe is bounded to the same day, so a viewport the grid had not
+  yet sampled reads `not_published` rather than being captioned merely stale.
+- **drought** — weekly, so `resolveDroughtRelease` owns it and both
+  `getPublishedDroughtClassification` and `getDroughtMetricAtDate` share it: the newest release
+  valid on or before the day, bounded. When a later release is stored, the preceding release's
+  coverage ended at its own week and a request past that renders EMPTY
+  (`reason: "release_week_not_published"`) — `usdm_history.ingest_release_week` recorded that
+  week as `is_gap`, and filling it would paint classes USDM never published. Only at the live
+  edge may the newest release carry forward, bounded by `DROUGHT_MAX_CARRY_FORWARD_DAYS`.
+  `carryForwardDays` is reported so a carried-forward map cannot read as a same-day measurement.
+
+**A future day is refused, never answered.** `FORECAST_HORIZON_DAYS` is 0 and no capability
+publishes a forecast variant, so the only thing a future day could be answered with is the
+newest observation wearing a date it does not describe. Each reader returns its own empty
+shape with a reason (`not_forecastable` where the payload has a slot for one; a bare `[]` where
+it does not, in which case the layer's slider capability supplies the caption). Nothing is
+interpolated, smoothed or back-filled on any path — a day with no observation comes back empty
+with a reason, never a neighbouring day's value wearing the requested date.
+
+**Cast fractional parameters `::numeric`.** postgres-js binds every non-bigint JS number as an
+untyped parameter (OID 0), so one bound next to a `COUNT(*)` resolves as bigint and throws
+`invalid input syntax for type bigint` at runtime — TypeScript and the `renderSqlText` test
+helper both miss it. Exempt only when the value lands directly in a PostGIS argument whose
+signature already declares the type (`ST_MakeEnvelope`, `ST_SimplifyPreserveTopology`).
+`expectNoBareFractionalParameter` in the read-model test guards each new statement.
+
+Known gap: `wildfire.getFireDetections` and `getPublishedFireDetections` accept a `date`, but
+`useFireData` calls `/api/fires` — a route handler that takes no parameters — so the map's fire
+layer is still dateless. Forwarding `?date=` from that route to `getPublishedFireDetections` is
+all that is missing; the client must not send one before then, because the route would ignore
+it and draw today's detections under the selected day.
+
 ## §vegetation-tiles
 
 `lib/vegetation.ts` is client-safe and holds no secrets.

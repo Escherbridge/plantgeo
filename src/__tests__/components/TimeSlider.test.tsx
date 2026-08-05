@@ -253,16 +253,35 @@ describe("TimeSlider", () => {
     expect(fetchMetricAtDate).not.toHaveBeenCalled();
   });
 
-  it("explains what a forecast band means only while the selection is in the future", () => {
+  it("explains what a forecast band means only while the selection is in the future, via a disclosure that defaults open", () => {
     const { container } = renderWithProviders(<TimeSlider />);
     expect(container.querySelector("[data-testid='forecast-band-key']")).toBeNull();
 
     act(() => {
       useTimeSliderStore.getState().setSelectedDate("2019-03-10");
     });
+
+    const heading = screen.getByTestId("forecast-band-key-heading");
     const bandKey = screen.getByTestId("forecast-band-key");
+
+    // Defaults open: a user who has actively picked a forecast day isn't made to find an
+    // extra disclosure just to read what the band means.
+    expect(heading.getAttribute("aria-expanded")).toBe("true");
+    expect(heading.getAttribute("aria-controls")).toBe(bandKey.getAttribute("id"));
+    expect(bandKey.className).not.toContain("hidden");
     expect(bandKey.textContent).toContain("(high - low) normalised");
     expect(bandKey.textContent).toContain("no isolines");
+
+    // Still a real, keyboard-operable disclosure -- it can be collapsed to reclaim vertical
+    // space on a short viewport, without hiding the content from anyone who hasn't asked to
+    // collapse it.
+    fireEvent.click(heading);
+    expect(heading.getAttribute("aria-expanded")).toBe("false");
+    expect(bandKey.className).toContain("hidden");
+
+    fireEvent.click(heading);
+    expect(heading.getAttribute("aria-expanded")).toBe("true");
+    expect(bandKey.className).not.toContain("hidden");
   });
 
   it("names a beyond-horizon layer's own horizon in its reason", () => {
@@ -286,5 +305,38 @@ describe("TimeSlider", () => {
     const row = screen.getByTestId("layer-availability-interventions");
     expect(row.getAttribute("data-availability")).toBe("not_yet_observed");
     expect(row.textContent).toContain("Not yet observed at this date");
+  });
+
+  it("keeps the per-layer warehouse record collapsed behind a real, keyboard-operable disclosure", () => {
+    renderWithProviders(<TimeSlider />);
+
+    const disclosure = screen.getByTestId("time-slider-record-heading");
+    const list = screen.getByTestId("time-slider-record-list");
+
+    // A real <button>, not a hover-only affordance -- role comes for free.
+    expect(disclosure.tagName).toBe("BUTTON");
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    expect(disclosure.getAttribute("aria-controls")).toBe(list.getAttribute("id"));
+    expect(list.className).toContain("hidden");
+
+    fireEvent.click(disclosure);
+
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+    expect(list.className).not.toContain("hidden");
+    // The rows underneath are unaffected by the disclosure -- same testids, same content.
+    expect(screen.getByTestId("layer-availability-vegetation")).not.toBeNull();
+
+    fireEvent.click(disclosure);
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    expect(list.className).toContain("hidden");
+  });
+
+  it("no longer claims the map itself is dateless -- a sibling change made that untrue", () => {
+    renderWithProviders(<TimeSlider />);
+    act(() => {
+      useTimeSliderStore.getState().setSelectedDate("2019-01-20");
+    });
+
+    expect(screen.queryByTestId("time-slider-dateless-map-notice")).toBeNull();
   });
 });

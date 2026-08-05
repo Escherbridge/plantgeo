@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useMap } from "@/lib/map/map-context";
 import {
+  useDebouncedMapDay,
   useLayerVisibility,
-  useSelectedMapDateRef,
   useSoilDisplayMode,
   useVegetationDisplayMode,
   type LayerVisibility,
@@ -69,28 +69,26 @@ export default function LayerManager() {
   // Shared with PanelManager: one derivation, so the map and the panels key on one bbox.
   const { zoom, bbox } = useViewportBounds();
 
-  // lane J -- the five queries below are dateless: each returns the latest published
-  // value, not the day the slider is labelled with. Making them date-aware needs a
-  // *reactive* selectedDate, which is `useMapDay().selectedDate` on the toggle context;
-  // selectedDateRef below is for the style.load handler body only and cannot trigger a
-  // refetch. Subscribe to the debounced day, not the raw one -- useMetricAtDate debounces
-  // so that a scrub issues one request on settle rather than one per pointer tick, and
-  // these five would otherwise reintroduce exactly that storm.
-  // lane J: replace `undefined` with { date } once getDroughtClassification accepts one.
+  // The slider's day, settled. `requestDate` is undefined whenever the selection IS the
+  // server's today, which keeps the hot path on the exact dateless query key -- and the exact
+  // server query -- it has always used, so first paint never fetches the same day twice.
+  // Settled rather than raw: a day-granular scrub writes on every pointer tick, and this
+  // component sits above ~8 layer children.
+  const { requestDate } = useDebouncedMapDay();
+  // tRPC keys `undefined` input differently from an object, so the dateless case must stay
+  // literally undefined here rather than becoming `{ date: undefined }`.
   const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(
-    undefined,
+    requestDate === undefined ? undefined : { date: requestDate },
     { enabled: layerVisibility.drought }
   );
   const droughtGeoJSON = droughtQuery.data ?? EMPTY_FEATURE_COLLECTION;
   const waterEnabled = layerVisibility.water;
-  // lane J: add { date } to this input once environmental.getStreamflow accepts one.
   const streamflowQuery = trpc.environmental.getStreamflow.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90" },
+    { bbox: bbox ?? "-180,-90,180,90", date: requestDate },
     { enabled: waterEnabled && bbox !== null, staleTime: 15 * 60 * 1000 }
   );
-  // lane J: add { date } to this input once environmental.getGroundwater accepts one.
   const groundwaterQuery = trpc.environmental.getGroundwater.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90" },
+    { bbox: bbox ?? "-180,-90,180,90", date: requestDate },
     { enabled: waterEnabled && bbox !== null, staleTime: 60 * 60 * 1000 }
   );
 
@@ -100,10 +98,10 @@ export default function LayerManager() {
   // VegetationLayer also draws -- that one is a global 8-day composite this platform
   // proxies, this one is the 184,409-row series this platform ingested. Sentinel-2 yields
   // at most one clear reading per cell every few days, so the hour-long staleTime matches
-  // the groundwater/watershed cadence rather than the 15-minute observation feeds.
-  // lane J: add { date } to this input once environmental.getVegetationIndex accepts one.
+  // the groundwater/watershed cadence rather than the 15-minute observation feeds. A named
+  // day slides that per-cell window to end there instead of at now.
   const vegetationQuery = trpc.environmental.getVegetationIndex.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90" },
+    { bbox: bbox ?? "-180,-90,180,90", date: requestDate },
     { enabled: vegetationEnabled && bbox !== null, staleTime: 60 * 60 * 1000 }
   );
   const vegetationGeoJSON: GeoJSON.FeatureCollection =
@@ -132,12 +130,11 @@ export default function LayerManager() {
   const soilSurveyGeoJSON = soilSurveyQuery.data ?? EMPTY_FEATURE_COLLECTION;
 
   const weatherEnabled = layerVisibility.weather;
-  // Reads every published, fresh observation across the viewport bbox --
-  // not just the nearest one -- so the wind layer reflects the full spread
-  // of warehouse-backed samples instead of a single point.
-  // lane J: add { date } to this input once wildfire.getWeatherForBbox accepts one.
+  // Reads every published observation across the viewport bbox -- not just the
+  // nearest one -- so the wind layer reflects the full spread of
+  // warehouse-backed samples instead of a single point.
   const weatherQuery = trpc.wildfire.getWeatherForBbox.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90" },
+    { bbox: bbox ?? "-180,-90,180,90", date: requestDate },
     { enabled: weatherEnabled && bbox !== null, staleTime: 15 * 60 * 1000 }
   );
   // Every rendered field must be measured: a partial observation is dropped
@@ -188,16 +185,6 @@ export default function LayerManager() {
     layerVisibilityRef.current = layerVisibility;
   }, [layerVisibility]);
 
-  // The toggle context's non-reactive view of the slider's day. Two distinct reasons it is
-  // a ref, both load-bearing. First, a reactive selector here would re-render this
-  // component -- and its ~8 layer children -- on every pointer tick of a day-granular
-  // scrub, for a value no render path reads. Second, putting selectedDate in the
-  // style.load registration effect below would tear down and re-register the handler on
-  // every scrub, moving it behind ServiceAreaLayer's and dropping the dimming mask on top
-  // of the data pins. Lane J's date-filtered re-add must read selectedDateRef.current
-  // inside the handler body and leave the dependency array as [map, applyVisibility].
-  const selectedDateRef = useSelectedMapDateRef();
-
   // True once the CURRENT style has actually finished loading, per isStyleLoaded() --
   // not merely "style.load fired". isStyleLoaded() also requires every source's tiles
   // to be in, so it can still read false the instant style.load fires; styledata fires
@@ -213,6 +200,9 @@ export default function LayerManager() {
   // src/components/map/AGENTS.md "Style.load listener order". The direct
   // applyVisibility call here is the basemap-swap safety net and must not start
   // depending on styleReady: it already runs on every style.load, synchronous or not.
+  // The slider's day must never enter these deps either: the queries above own the day, and
+  // listing it here would re-register the handler on every scrub, moving it behind
+  // ServiceAreaLayer's and dropping the dimming mask on top of the data pins.
   useEffect(() => {
     if (!map) return;
     const mapInstance = map;

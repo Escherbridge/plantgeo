@@ -31,6 +31,14 @@ _INGEST_SOURCE_LOADER_ALLOWED_TARGETS: tuple[tuple[str, int, str], ...] = (
 _LOCAL_FORECAST_ITERATION_HOST = "127.0.0.1"
 _LOCAL_FORECAST_ITERATION_PORT = 5442
 _LOCAL_FORECAST_ITERATION_ROLE = "plantgeo_local_developer"
+# Explicit (host, port, role) triples permitted for evaluation-only forecast iteration writes,
+# mirroring the loader allowlist above. The production proxy entry exists because the governed
+# NDVI observation plane and its Monte Carlo iterations were authorized to run against the
+# consolidated warehouse; see execution/AGENTS.md.
+_FORECAST_ITERATION_ALLOWED_TARGETS: tuple[tuple[str, int, str], ...] = (
+    (_LOCAL_FORECAST_ITERATION_HOST, _LOCAL_FORECAST_ITERATION_PORT, _LOCAL_FORECAST_ITERATION_ROLE),
+    (_PRODUCTION_INGEST_HOST, _PRODUCTION_INGEST_PORT, _PRODUCTION_INGEST_ROLE),
+)
 
 
 class Settings(BaseSettings):
@@ -242,19 +250,33 @@ class Settings(BaseSettings):
         except ValueError as exc:
             raise ValueError("FORECAST_ITERATION_DATABASE_URL has an invalid port") from exc
         database_name = parsed.path.removeprefix("/")
+        matching_target = next(
+            (
+                target
+                for target in _FORECAST_ITERATION_ALLOWED_TARGETS
+                if parsed.hostname == target[0] and port == target[1]
+            ),
+            None,
+        )
+        allowed_hosts = ", ".join(
+            f"{host}:{host_port}" for host, host_port, _role in _FORECAST_ITERATION_ALLOWED_TARGETS
+        )
+        target_error = (
+            "FORECAST_ITERATION_DATABASE_URL must target a plantgeo (or plantgeo_-prefixed) database over "
+            f"postgresql+asyncpg on one of the approved forecast-iteration targets ({allowed_hosts})"
+        )
         if (
             parsed.scheme != "postgresql+asyncpg"
-            or parsed.hostname != _LOCAL_FORECAST_ITERATION_HOST
-            or port != _LOCAL_FORECAST_ITERATION_PORT
             or not (database_name == "plantgeo" or database_name.startswith("plantgeo_"))
             or parsed.query
             or parsed.fragment
         ):
-            raise ValueError(
-                "FORECAST_ITERATION_DATABASE_URL must target postgresql+asyncpg://127.0.0.1:5442/plantgeo or plantgeo_*"
-            )
-        if unquote(parsed.username or "") != _LOCAL_FORECAST_ITERATION_ROLE:
-            raise ValueError("FORECAST_ITERATION_DATABASE_URL must authenticate as plantgeo_local_developer")
+            raise ValueError(target_error)
+        if matching_target is None:
+            raise ValueError(target_error)
+        _, _, required_role = matching_target
+        if unquote(parsed.username or "") != required_role:
+            raise ValueError(f"FORECAST_ITERATION_DATABASE_URL must authenticate as {required_role}")
         return value
 
     # Local clients need the URL/token; the receiver additionally needs its gate/actor.

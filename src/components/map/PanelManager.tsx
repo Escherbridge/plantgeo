@@ -90,8 +90,10 @@ function PanelButton({ id, icon, label }: { id: PanelId; icon: React.ReactNode; 
       title={panelTooltip(id, label)}
       aria-label={label}
       onClick={() => togglePanel(id)}
+      // h-11 w-11 (44px): the previous h-9 (36px) fell under a comfortable mobile tap
+      // target for the rail that opens every data panel.
       className={[
-        "relative flex h-9 w-9 items-center justify-center rounded-md shadow-md transition-colors",
+        "relative flex h-11 w-11 items-center justify-center rounded-md shadow-md transition-colors",
         "bg-[hsl(var(--background))] text-[hsl(var(--foreground))]",
         "hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--accent-foreground))]",
         openPanel === id
@@ -126,7 +128,7 @@ export default function PanelManager() {
   return (
     <>
       {/* Floating toolbar on the left side */}
-      <div className="absolute left-3 top-1/2 z-10 flex -translate-y-1/2 flex-col gap-1">
+      <div className="absolute left-3 top-1/2 z-10 flex max-h-[70vh] -translate-y-1/2 flex-col gap-1.5 overflow-y-auto">
         {RAIL_PANEL_IDS.map((id) => (
           <PanelButton
             key={id}

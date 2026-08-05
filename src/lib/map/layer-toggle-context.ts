@@ -7,7 +7,7 @@
  * "The layer toggle is the only source of layer visibility".
  */
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   LAYER_REGISTRY,
   LAYER_TOGGLE_IDS,
@@ -15,6 +15,7 @@ import {
 } from "@/lib/map/layer-registry";
 import { useMapStore } from "@/stores/map-store";
 import { useSoilStore } from "@/stores/soil-store";
+import { SCRUB_SETTLE_MS } from "@/stores/useMetricAtDate";
 import {
   describeAvailability,
   findLayerCapability,
@@ -105,21 +106,82 @@ export function useMapDay(): MapDay {
 }
 
 /**
- * The selected day without subscribing to it. Style.load handlers and other non-render
- * readers use this so a day-granular scrub never re-renders the layer tree, and so the
- * handler's registration effect never lists the day in its deps -- see
- * src/components/map/AGENTS.md "Style.load listener order".
+ * The slider's day, re-rendered only once a scrub has settled.
+ *
+ * Deliberately NOT `useDebounce(useMapDay().selectedDate, …)`. That subscribes to the raw day,
+ * so every consumer re-renders on every pointer tick of a day-granular scrub even though only
+ * the settled value is ever read -- and `LayerManager` has ~8 layer children behind it. Reading
+ * the store imperatively and setting state only after the settle window gives one render per
+ * settle instead of one per tick, on the SAME boundary `useMetricAtDate` debounces to.
+ *
+ * The store fires for every field, not just the day; the timer re-reads the current day when
+ * it finally elapses, and setting the same string is a React no-op.
  */
-export function useSelectedMapDateRef() {
-  const selectedDateRef = useRef(useTimeSliderStore.getState().selectedDate);
-  useEffect(
-    () =>
-      useTimeSliderStore.subscribe((state) => {
-        selectedDateRef.current = state.selectedDate;
-      }),
-    []
+function useSettledSelectedDate(): string {
+  const [settledDate, setSettledDate] = useState(
+    () => useTimeSliderStore.getState().selectedDate
   );
-  return selectedDateRef;
+  useEffect(() => {
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = useTimeSliderStore.subscribe(() => {
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      settleTimer = setTimeout(
+        () => setSettledDate(useTimeSliderStore.getState().selectedDate),
+        SCRUB_SETTLE_MS
+      );
+    });
+    return () => {
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      unsubscribe();
+    };
+  }, []);
+  return settledDate;
+}
+
+/** The slider's day as a request carries it: settled, and absent at the server's today. */
+export interface DebouncedMapDay {
+  /** YYYY-MM-DD, or null until the capabilities payload supplies one. */
+  settledDate: string | null;
+  /** Server UTC today; the only definition of "today". Null before capabilities arrive. */
+  serverCurrentDate: string | null;
+  /** True when the settled selection is some day other than the server's today. */
+  isOffServerToday: boolean;
+  /**
+   * What a reader's optional `date` input must carry, and `undefined` whenever the settled day
+   * IS the server's today.
+   *
+   * The server treats an omitted day and today's date identically, so sending the date
+   * explicitly would only mint a SECOND react-query entry for the same answer and make first
+   * paint fetch it twice. `undefined` also covers "capabilities have not arrived": without them
+   * nothing knows which day is today, and guessing from the browser clock is exactly the
+   * timezone disagreement `serverCurrentDate` exists to prevent.
+   */
+  requestDate: string | undefined;
+}
+
+/**
+ * The day every warehouse-backed viewport query keys on. One hook, so the map and the panels
+ * settle on the same boundary and land on the same cache entry -- see
+ * src/lib/server/AGENTS.md §slider-day.
+ */
+export function useDebouncedMapDay(): DebouncedMapDay {
+  const settledSelection = useSettledSelectedDate();
+  const capabilities = useTimeSliderStore((state) => state.capabilities);
+
+  return useMemo(() => {
+    const settledDate = isCalendarDate(settledSelection) ? settledSelection : null;
+    const serverCurrentDate = capabilities?.serverCurrentDate ?? null;
+    const isOffServerToday =
+      settledDate !== null &&
+      serverCurrentDate !== null &&
+      settledDate !== serverCurrentDate;
+    return {
+      settledDate,
+      serverCurrentDate,
+      isOffServerToday,
+      requestDate: isOffServerToday && settledDate !== null ? settledDate : undefined,
+    };
+  }, [settledSelection, capabilities]);
 }
 
 /** Everything one layer needs to decide whether and how to draw. */

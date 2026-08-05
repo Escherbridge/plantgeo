@@ -33,7 +33,9 @@ export function AlertBell() {
       <button
         type="button"
         onClick={() => setPanelOpen(true)}
-        className="relative p-2 rounded-md hover:bg-[hsl(var(--accent))] transition-colors"
+        // p-2 around a 20px icon is a 36px hit area; max-sm:p-3 brings it to the 44px
+        // mobile minimum without changing the icon's own size or the desktop footprint.
+        className="relative p-2 max-sm:p-3 rounded-md hover:bg-[hsl(var(--accent))] transition-colors"
         aria-label={count > 0 ? `${count} unread alerts` : "Alerts"}
       >
         <Bell className="h-5 w-5 text-[hsl(var(--foreground))]" />

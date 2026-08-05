@@ -10,6 +10,8 @@ Source-ingestion checkpoint v2 binds both the complete reviewed plan and the rel
 
 `historical_backfill.py` owns deterministic, bounded NASA POWER daily request and response contracts for the initial four-year meteorology baseline. It validates the exact four-calendar-year window, canonical sampling-point plan, per-source query, response payload size, UTC observation timestamps, missing values, coverage accounting, a checksum-bound complete local receipt checkpoint, and raw response cache. The cache is written only after complete validation and before a warehouse transaction, so retried writes never re-request a successful source response. A later NASA finalization can only rebind a complete source replay to an advanced release-set as-of time; it never refetches or rewrites source receipts. It never carries credentials, opens a database connection, selects an ingestion geography, or publishes to Railway.
 
+`NASA_POWER_SIGNAL_SPECIFICATIONS` carries the three POWER soil-wetness parameters (`GWETTOP`, `GWETROOT`, `GWETPROF`) alongside the meteorology baseline because POWER is keyless, whereas the ERA5-Land soil path in `historical_era5.py` is gated on a Copernicus dataset licence that only the account holder can accept in a browser. The two soil streams are complementary, not interchangeable, and must never be unit-mixed: POWER reports a MERRA-2 **degree of saturation** in `fraction_of_saturation` (0 = dry, 1 = saturated), while ERA5 `soil_water_content_layer_1` reports a **volumetric** water content in `m^3/m^3`. Depth support is named in the signal (`soil_wetness_surface` = top 5 cm, `soil_wetness_root_zone` = top 100 cm, `soil_wetness_profile` = the full modelled column), matching the existing ERA5 `soil_temperature_level_1` convention, because `support_key` is written as `surface` for every historical signal and is therefore not a depth discriminator. Adding a signal name needs no migration: `agri.signal_observation.signal_name` is a plain `varchar(150)` with no enum or check constraint. Extending the ML covariate vector is a separate, reviewed change — `agri.covariate_feature_schema` pins its signal list to the immutable `agri_covariates_v1` version, so new signals are deliberately invisible to training until a new schema version is authored.
+
 `historical_parquet.py` converts only a complete local NASA raw-receipt set into an immutable, compressed daily Hive-partitioned Parquet dataset. It stages one bounded source-cell file at a time, caps DuckDB to one thread and 1 GB with a build-local spill directory, and atomically publishes a manifest-bound dataset. An interrupted conversion reuses its single target-bound build directory only after each staged cell's row count, key, and payload checksum are revalidated against the raw receipt; ambiguous or mismatched staging fails closed. Successful publication removes staging. It is intentionally a local cold-history store; it never requests an upstream API, writes PostgreSQL, or promotes a full history to Railway.
 
 `historical_era5.py` owns cache-first CDS capture for the governed ERA5-Land plan. It treats each calendar month as one immutable ZIP artifact, validates every planned point/variable/day before advancing the durable checkpoint, and requires local CDS credentials only for a missing cache entry. Its requested one-degree points remain point samples; they never claim the product's native 0.1-degree grid or acre-scale precision.
@@ -83,3 +85,90 @@ calibrated confidence bound. The comparison baseline is the existing
 `daily_increment_bootstrap_v1` iteration read through
 `agri.forecast_iteration_evaluation`, at exactly the same origin and horizon
 steps.
+
+## Vegetation NDVI Monte Carlo (`vegetation_ndvi_forecast.py`, `vegetation_ndvi_plane.py`)
+
+`vegetation_ndvi_forecast.py` is the pure, database-free method
+`ndvi_seasonal_anomaly_bootstrap_v1`: a deterministic Monte Carlo for the **sparse,
+strongly seasonal** daily NDVI series of one 0.25-degree grid cell. It exists because the
+shipped `agri.forecast_daily_bootstrap` (`daily_increment_bootstrap_v1`) cannot serve this
+stream at all — that function resamples **consecutive-calendar-day first differences** and
+demands at least two of them, while the measured Sentinel-2 corpus has a median 7-day gap
+between observation days and **1,411 of 1,568 cells have zero consecutive-day pairs**. Under
+`gap_policy = 'locf'` the single-day carry-forward would manufacture increments of exactly
+zero and therefore a zero-width band, which is worse than refusing.
+
+The method, per cell, from that cell's own governed history only:
+
+1. **Seasonal level** — a circular day-of-year climatology over a +/-15-day window
+   (`SEASONAL_WINDOW_DAYS`), requiring at least `MIN_CLIMATOLOGY_SAMPLES` real observations in
+   the window. No interpolation and no carry-forward anywhere.
+2. **Anomaly pool** — `observed - climatology(day_of_year)`. An observation whose *own*
+   seasonal window is unsupported (typical of isolated PNW Nov-Feb scenes that survive the
+   20 % cloud screen) is **dropped from the pool**, never referenced to a fabricated level.
+3. **Persistence** — a daily anomaly decay `phi` derived from that cell's own lag-1 anomaly
+   autocorrelation across consecutive *observations* (gap <= 30 days, at least
+   `MIN_AUTOCORRELATION_PAIRS` pairs), rescaled by the mean gap and clamped to
+   `[0, MAX_DAILY_PERSISTENCE]`.
+4. **Simulation** — `climatology(t) + phi**(gap+h) * anchor_anomaly
+   + sqrt(1 - phi**(2*(gap+h))) * innovation`, where `innovation` is resampled with
+   replacement from the **seasonally matched** anomaly pool for the target day, and the path
+   is clipped to the physical NDVI range `[-1, 1]`. `p10/p50/p90` are `numpy.percentile`
+   (linear, matching `percentile_cont`) over the simulated values at each horizon step.
+
+**Assumptions and limits — do not overstate this method.** NDVI anomalies are assumed
+approximately stationary inside a +/-15-day seasonal window with a single per-cell geometric
+memory. Innovations are drawn **independently per horizon step**, so the product is
+calibrated for **marginal per-horizon quantiles only** and supports no joint-path statistic.
+The climatology rests on at most four seasonal cycles and is weakest Nov-Feb. There is no
+trend term, so a multi-year greening or browning signal is absorbed into the anomaly pool and
+biases the median toward climatology. No covariates (weather, drought, irrigation, fire) are
+used. Band widening with horizon is a *consequence* of estimated persistence: where a cell's
+anomalies are effectively white at its observation cadence, the band is climatological from
+step 1 and does not widen. Measured holdout interval coverage is well below the nominal 80 %,
+so the band is under-dispersed and must be presented as indicative, not as a calibrated
+prediction interval.
+
+`vegetation_ndvi_plane.py` registers the governed observation plane and writes the
+**evaluation-only iteration plane**. `agri.forecast_observation` is the input adapter because
+NDVI never reached `agri.signal_observation` — that table holds only NASA POWER. Publisher
+day is `substring(properties->>'observedAt', 1, 10)::date`, the repo's ISO-prefix rule, never
+a UTC recast; `observed_at` is stored as that day at 00:00Z so no downstream reader can
+re-derive a different calendar day. `data_available_at` is the real warehouse arrival
+(`max(geo.features.created_at)`), and `forecast_input_recorded_at` is maintained entirely by
+the shipped triggers — there is no parallel provenance mechanism.
+
+Two reinterpretations are deliberate and load-bearing. `forecast_iteration.increment_count`
+and `forecast_iteration_value.increment_count` carry the **seasonal innovation pool size**
+(the number of resampling units), not a count of daily increments, because this method has
+none. `training_day_count` is the number of **seasonally referenced** observation days, while
+`governed_day_count` in the in-memory state is every eligible day; the difference is the
+dropped winter tail.
+
+`purpose` discriminates the two products: `forward_simulation` (renderable, `cutoff_time` =
+today's publisher day, `availability_mode = as_of_pinned_release`) and `holdout_evaluation`
+(historical simulated cutoffs, `retrospective_pinned_release`). Because the NDVI corpus was
+backfilled in a single run, warehouse-availability time carries no hindcast information, so
+the holdout controls leakage by **publisher-named day** and its metrics measure method skill,
+not operational latency. Revision leakage cannot be excluded: Sentinel-2 L2A reprocessing is
+not tracked in this corpus.
+
+`agri.forecast_backtest_metric` is deliberately **not** written. It is foreign-keyed to
+`agri.forecast_run`, whose `ck_forecast_run_method` admits only `sql_linear` or `ml`; naming
+a seasonal-anomaly Monte Carlo either way would be a false label, and that plane is the gated
+publication path that evaluation evidence must not enter. Holdout evidence therefore lives in
+`agri.forecast_iteration_actual` and `agri.v_forecast_iteration_outcome`.
+
+Reproducing a recorded iteration requires passing its recorded `as_of_time`: the as-of
+boundary is part of the parameter digest, matching `agri.forecast_daily_bootstrap`. A
+consequence worth knowing before widening a plane: writing more governed inputs bumps
+`forecast_input_recorded_at`, after which an earlier as-of no longer satisfies the governed
+read, so an already recorded iteration can no longer be re-simulated from the warehouse. The
+rows remain valid immutable evidence via their own history and receipt checksums. Moving the
+as-of out of the parameter digest (keeping it in the receipt digest) would remove that
+coupling and would require a new method version, not an edit to this one.
+
+The method lives in Python rather than `db/agri/functions/**` because promoting it to a
+reusable SQL function requires a new Alembic migration, which this track was scoped out of.
+That is the recommended follow-up; the canonical parameter text and the hash-seeded sampler
+were written to be portable to SQL without changing any digest.

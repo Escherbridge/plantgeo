@@ -344,6 +344,33 @@ describe("formatHoverContent: soil-survey-fill", () => {
   it("returns null when nothing meaningful is present", () => {
     expect(formatHoverContent("soil-survey-fill", {})).toBeNull();
   });
+
+  it("labels an aggregated cell as an average, not a surveyed map unit", () => {
+    const content = formatHoverContent("soil-survey-fill", {
+      aggregated: true,
+      drainageClass: "well-drained",
+      mapUnitCount: 4,
+      hydricFraction: 0.25,
+    });
+    expect(content?.title).toBe("Soil drainage average");
+    expect(content?.lines).toContain("Dominant drainage: Well drained");
+    expect(content?.lines).toContain("Built from 4 real map units");
+    expect(content?.lines).toContain("Hydric share: 25%");
+    // Never a surveyed-unit caption: an aggregated feature carries no mukey/muname.
+    expect(content?.lines.some((l) => l.startsWith("Map unit"))).toBe(false);
+    assertNoSentinels(content);
+  });
+
+  it("omits the hydric-share line when no merged unit carried a rating", () => {
+    const content = formatHoverContent("soil-survey-fill", {
+      aggregated: true,
+      drainageClass: "poorly-drained",
+      mapUnitCount: 1,
+      hydricFraction: null,
+    });
+    expect(content?.lines.some((l) => l.startsWith("Hydric share"))).toBe(false);
+    assertNoSentinels(content);
+  });
 });
 
 describe("formatHoverContent: building-footprints", () => {

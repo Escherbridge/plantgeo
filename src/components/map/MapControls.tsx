@@ -75,6 +75,9 @@ export default function MapControls() {
         <Button
           variant={is3DEnabled ? "default" : "ghost"}
           size="icon"
+          // size="icon" is 40px; grown to the 44px mobile minimum here rather than in
+          // button.tsx, since that variant is shared well beyond this toolbar.
+          className="max-sm:h-11 max-sm:w-11"
           onClick={toggle3D}
           title="Toggle 3D"
         >
@@ -83,6 +86,7 @@ export default function MapControls() {
         <Button
           variant={buildingFootprintsEnabled ? "default" : "ghost"}
           size="icon"
+          className="max-sm:h-11 max-sm:w-11"
           onClick={() => toggleLayer("building-footprints")}
           title="Toggle 3D building footprints"
         >

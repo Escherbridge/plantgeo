@@ -40,10 +40,16 @@ HISTORICAL_NASA_RAW_CACHE_SCHEMA_VERSION: Literal[1] = 1
 WGS84_MAX_LATITUDE = 90
 WGS84_MAX_LONGITUDE = 180
 
-# Initial signals are the documented daily meteorology minimum. Each keeps the
-# provider's analysis-ready unit so no unrecorded conversion occurs on ingest.
+# Initial signals are the documented daily meteorology minimum plus the three
+# documented soil-wetness depths. Each keeps the provider's analysis-ready unit so
+# no unrecorded conversion occurs on ingest. The soil signals report a degree of
+# saturation, not a volumetric water content, and name their depth support in the
+# signal rather than in support_key. See execution/AGENTS.md §historical_backfill.
 NASA_POWER_SIGNAL_SPECIFICATIONS: dict[str, tuple[str, str]] = {
     "ALLSKY_SFC_SW_DWN": ("surface_shortwave_radiation", "MJ/m^2/day"),
+    "GWETPROF": ("soil_wetness_profile", "fraction_of_saturation"),
+    "GWETROOT": ("soil_wetness_root_zone", "fraction_of_saturation"),
+    "GWETTOP": ("soil_wetness_surface", "fraction_of_saturation"),
     "PRECTOTCORR": ("precipitation", "mm/day"),
     "RH2M": ("relative_humidity", "%"),
     "T2M": ("air_temperature_mean", "C"),

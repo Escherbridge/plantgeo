@@ -3,6 +3,8 @@ import { act } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import { MapProvider } from "@/lib/map/map-context";
 import { useMapStore } from "@/stores/map-store";
+import { UNINITIALIZED_DATE, useTimeSliderStore } from "@/stores/time-slider-store";
+import type { SliderCapabilities } from "@/types/time-slider";
 import type maplibregl from "maplibre-gl";
 
 const dynamicStub = vi.hoisted(() => ({
@@ -54,27 +56,30 @@ type StreamflowQueryResult = { data: unknown[] };
 
 const viewportQueries = vi.hoisted(() => ({
   // Declared with no parameters on purpose: both arguments are still recorded on
-  // `mock.calls`, which is where the `enabled` flag is read from.
+  // `mock.calls`, which is where the `enabled` flag and the query input are read from.
   getWatersheds: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getSoilSurvey: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   // react-query's `enabled: false` does not evict a cached result -- see the negative
-  // test below -- so this is mutable per-test rather than a static `vi.fn(() => ...)`
-  // the way getGroundwater/getDroughtClassification still are.
+  // test below -- so this is mutable per-test rather than a static `vi.fn(() => ...)`.
   getStreamflow: vi.fn((): StreamflowQueryResult => ({ data: [] })),
+  getGroundwater: vi.fn((): StreamflowQueryResult => ({ data: [] })),
+  getVegetationIndex: vi.fn((): ViewportQueryResult => ({ data: undefined })),
+  getDroughtClassification: vi.fn((): ViewportQueryResult => ({ data: undefined })),
+  getWeatherForBbox: vi.fn((): StreamflowQueryResult => ({ data: [] })),
 }));
 
 vi.mock("@/lib/trpc/client", () => ({
   trpc: {
     environmental: {
-      getDroughtClassification: { useQuery: vi.fn(() => ({ data: undefined })) },
+      getDroughtClassification: { useQuery: viewportQueries.getDroughtClassification },
       getStreamflow: { useQuery: viewportQueries.getStreamflow },
-      getGroundwater: { useQuery: vi.fn(() => ({ data: [] })) },
+      getGroundwater: { useQuery: viewportQueries.getGroundwater },
       getWatersheds: { useQuery: viewportQueries.getWatersheds },
       getSoilSurvey: { useQuery: viewportQueries.getSoilSurvey },
-      getVegetationIndex: { useQuery: vi.fn(() => ({ data: undefined })) },
+      getVegetationIndex: { useQuery: viewportQueries.getVegetationIndex },
     },
     wildfire: {
-      getWeatherForBbox: { useQuery: vi.fn(() => ({ data: [] })) },
+      getWeatherForBbox: { useQuery: viewportQueries.getWeatherForBbox },
     },
   },
 }));
@@ -107,6 +112,11 @@ function polygonCollection(): GeoJSON.FeatureCollection {
 function enabledFlagOf(query: { mock: { calls: unknown[][] } }): boolean | undefined {
   const lastCall = query.mock.calls.at(-1);
   return (lastCall?.[1] as { enabled?: boolean } | undefined)?.enabled;
+}
+
+/** The input the component passed for a query. */
+function inputOf(query: { mock: { calls: unknown[][] } }): unknown {
+  return query.mock.calls.at(-1)?.[0];
 }
 
 import LayerManager from "@/components/map/LayerManager";
@@ -153,24 +163,58 @@ function renderLayerManager(fakeMap: FakeMap) {
 
 const INITIAL_MAP_STATE = useMapStore.getState();
 
+const SERVER_CURRENT_DATE = "2026-08-04";
+const sliderCapabilities: SliderCapabilities = {
+  serverCurrentDate: SERVER_CURRENT_DATE,
+  layers: [
+    {
+      layerName: "water-gauges",
+      temporalKind: "daily_series",
+      forecastHorizonDays: 0,
+      forecastVariants: [],
+      earliestObservedDate: "2026-05-24",
+    },
+  ],
+};
+
+/** No day selected and no capabilities: what every case here but the date ones assumes. */
+function resetSliderStore() {
+  useTimeSliderStore.setState({
+    selectedDate: UNINITIALIZED_DATE,
+    forecastVariant: "monte_carlo",
+    capabilities: null,
+  });
+}
+
 beforeEach(() => {
   useMapStore.setState(INITIAL_MAP_STATE, true);
+  resetSliderStore();
   dynamicStub.renders.length = 0;
   viewportQueries.getWatersheds.mockReturnValue({ data: undefined });
   viewportQueries.getSoilSurvey.mockReturnValue({ data: undefined });
   viewportQueries.getStreamflow.mockReturnValue({ data: [] });
+  viewportQueries.getGroundwater.mockReturnValue({ data: [] });
+  viewportQueries.getVegetationIndex.mockReturnValue({ data: undefined });
+  viewportQueries.getDroughtClassification.mockReturnValue({ data: undefined });
+  viewportQueries.getWeatherForBbox.mockReturnValue({ data: [] });
 });
 
 afterEach(() => {
   vi.clearAllMocks();
   dynamicStub.renders.length = 0;
   useMapStore.setState(INITIAL_MAP_STATE, true);
+  // The slider store is reset in beforeEach only: writing it here would fire
+  // useDebouncedMapDay's subscription while the tree is still mounted, scheduling a settle
+  // timer that lands after the test and outside act().
 });
 
 describe("LayerManager style readiness", () => {
   it("re-applies visibility once the style catches up, not just when style.load fires", () => {
-    // building-footprints is style-backed (a single style layer id, toolbar-toggled, no
-    // panel gating) so applyVisibility is the only thing deciding its visibility.
+    // `sensors` is style-backed with a single style layer id and no governance reason, so
+    // applyVisibility is the only thing deciding its visibility. (This was
+    // `building-footprints` until the registry withheld that one for having an empty backing
+    // table -- a withheld toggle reads false in useLayerVisibility whatever activeLayers says,
+    // which would make every case here pass for the wrong reason.)
     useMapStore.setState({ activeLayers: [] });
     const fakeMap = createFakeMap();
     renderLayerManager(fakeMap);
@@ -184,10 +228,10 @@ describe("LayerManager style readiness", () => {
     // hydrating). Before the fix, the guarded effect ran once here, saw
     // isStyleLoaded() === false, no-opped, and was never retried.
     act(() => {
-      useMapStore.setState({ activeLayers: ["building-footprints"] });
+      useMapStore.setState({ activeLayers: ["sensors"] });
     });
     expect(fakeMap.setLayoutProperty).not.toHaveBeenCalledWith(
-      "building-footprints",
+      "sensors",
       "visibility",
       "visible"
     );
@@ -200,7 +244,7 @@ describe("LayerManager style readiness", () => {
     });
 
     expect(fakeMap.setLayoutProperty).toHaveBeenCalledWith(
-      "building-footprints",
+      "sensors",
       "visibility",
       "visible"
     );
@@ -224,14 +268,14 @@ describe("LayerManager style readiness", () => {
   });
 
   it("re-applies visibility to the new style after a basemap swap, not just on first load", () => {
-    useMapStore.setState({ activeLayers: ["building-footprints"] });
+    useMapStore.setState({ activeLayers: ["sensors"] });
     const fakeMap = createFakeMap();
     fakeMap.setStyleLoaded(true);
     renderLayerManager(fakeMap);
 
     // Mount alone already applies once, since isStyleLoaded() reads true immediately.
     expect(fakeMap.setLayoutProperty).toHaveBeenCalledWith(
-      "building-footprints",
+      "sensors",
       "visibility",
       "visible"
     );
@@ -247,7 +291,7 @@ describe("LayerManager style readiness", () => {
     // net and fires unconditionally on every style.load -- this is what already made
     // "switch the basemap" work before this fix, and must keep working after it.
     expect(fakeMap.setLayoutProperty).toHaveBeenCalledWith(
-      "building-footprints",
+      "sensors",
       "visibility",
       "visible"
     );
@@ -261,7 +305,7 @@ describe("LayerManager style readiness", () => {
       fakeMap.emit("styledata");
     });
     expect(fakeMap.setLayoutProperty).toHaveBeenCalledWith(
-      "building-footprints",
+      "sensors",
       "visibility",
       "visible"
     );
@@ -376,5 +420,70 @@ describe("LayerManager viewport-proxied polygon layers", () => {
     expect(enabledFlagOf(viewportQueries.getSoilSurvey)).toBe(false);
     expect(lastRenderOf("WaterLayer")?.visible).toBe(false);
     expect(lastRenderOf("SoilSurveyLayer")?.visible).toBe(false);
+  });
+});
+
+/**
+ * Every warehouse-backed feed here used to be dateless: the slider reported whether the
+ * warehouse held a day and no layer drew it. These cases pin both halves of the fix -- the day
+ * reaches every query, and the server's today reaches none of them, because an omitted day and
+ * today's date are the same server read and passing the date would mint a second cache entry
+ * for the same answer.
+ */
+describe("LayerManager threads the slider's day into the warehouse-backed queries", () => {
+  /** The four procedures whose input carries `date` alongside a bbox. */
+  const DATED_BBOX_QUERIES = [
+    ["getStreamflow", viewportQueries.getStreamflow],
+    ["getGroundwater", viewportQueries.getGroundwater],
+    ["getVegetationIndex", viewportQueries.getVegetationIndex],
+    ["getWeatherForBbox", viewportQueries.getWeatherForBbox],
+  ] as const;
+
+  function renderAtSelectedDate(selectedDate: string) {
+    useTimeSliderStore.setState({
+      selectedDate,
+      forecastVariant: "monte_carlo",
+      capabilities: sliderCapabilities,
+    });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+  }
+
+  it("omits the date at the server's today, so first paint keeps one cache entry per feed", () => {
+    renderAtSelectedDate(SERVER_CURRENT_DATE);
+
+    // tRPC keys `undefined` input differently from an object, so the dateless drought call
+    // must stay literally undefined rather than becoming `{ date: undefined }`.
+    expect(inputOf(viewportQueries.getDroughtClassification)).toBeUndefined();
+    for (const [name, query] of DATED_BBOX_QUERIES) {
+      const input = inputOf(query) as { bbox?: string; date?: string };
+      expect(input.bbox, name).toBeTypeOf("string");
+      expect(input.date, name).toBeUndefined();
+    }
+  });
+
+  it("carries a past day into every one of them", () => {
+    renderAtSelectedDate("2026-07-30");
+
+    expect(inputOf(viewportQueries.getDroughtClassification)).toEqual({
+      date: "2026-07-30",
+    });
+    for (const [name, query] of DATED_BBOX_QUERIES) {
+      const input = inputOf(query) as { date?: string };
+      expect(input.date, name).toBe("2026-07-30");
+    }
+  });
+
+  it("stays dateless before capabilities name a today, rather than guessing from the browser clock", () => {
+    // The default store state: UNINITIALIZED_DATE and no capabilities.
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    expect(inputOf(viewportQueries.getDroughtClassification)).toBeUndefined();
+    for (const [name, query] of DATED_BBOX_QUERIES) {
+      expect((inputOf(query) as { date?: string }).date, name).toBeUndefined();
+    }
   });
 });

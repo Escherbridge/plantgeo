@@ -99,6 +99,18 @@ body {
   filter: none;
 }
 
+/* MapLibre's own zoom/geolocate/fullscreen buttons ship at 29x29px -- comfortably clickable
+   with a mouse but under any reasonable mobile tap target. `.maplibregl-ctrl-icon` is
+   `width/height: 100%` of the button with no `background-size`, so the icon itself stays its
+   native pixel size and centred; growing the button here only adds tap-target padding around
+   it, it does not stretch or crop the icon. */
+@media (max-width: 640px) {
+  .maplibregl-ctrl-group button {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
+
 /* MapLibre popup overrides.
    The stock popup CSS hard-codes a white background but inherits its text color
    from the app, which is near-white in the default dark theme -- unreadable.

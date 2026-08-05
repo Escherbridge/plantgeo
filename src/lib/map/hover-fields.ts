@@ -219,8 +219,29 @@ function formatWatershed(props: Properties): HoverContent | null {
  * `src/lib/server/AGENTS.md` §soil-survey), so the names cannot drift with SDA's casing.
  * `drainageClass` arrives hyphenated ("well-drained"); the humanizer splits on
  * underscores, so it is converted before formatting rather than shown raw.
+ *
+ * Zoomed out, `getSoilSurvey` draws drainage-class averages instead of individual map
+ * units (`aggregated: true`, §soil-survey-zoom in usda-soil.ts) -- those carry no
+ * mukey/muname/soilSeries at all, and must be captioned as an average, not a surveyed
+ * unit, or this tooltip would be the one place the honesty that field-naming enforces
+ * everywhere else in this formatter quietly breaks.
  */
 function formatSoilSurvey(props: Properties): HoverContent | null {
+  if (props.aggregated === true) {
+    const drainage = stringField(props.drainageClass);
+    const mapUnitCount =
+      typeof props.mapUnitCount === "number" ? props.mapUnitCount : null;
+    const hydricFraction =
+      typeof props.hydricFraction === "number" ? props.hydricFraction : null;
+    return buildContent("Soil drainage average", [
+      drainage ? `Dominant drainage: ${humanizeSnakeCase(drainage.replace(/-/g, "_"))}` : null,
+      mapUnitCount === null
+        ? null
+        : `Built from ${mapUnitCount} real map unit${mapUnitCount === 1 ? "" : "s"}`,
+      hydricFraction === null ? null : `Hydric share: ${Math.round(hydricFraction * 100)}%`,
+    ]);
+  }
+
   const title = stringField(props.muname) ?? "Soil map unit";
   const series = stringField(props.soilSeries);
   const drainage = stringField(props.drainageClass);

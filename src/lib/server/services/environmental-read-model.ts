@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/server/db";
 import { features, layers } from "@/lib/server/db/schema";
 import { WEATHER_LAYER_ID } from "@/lib/server/layer-ids";
@@ -84,6 +84,96 @@ function isMissingValueSentinel(value: number | null, sentinel: number): boolean
   return value !== null && value === sentinel;
 }
 
+const CALENDAR_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/* ---------------------------------------------------------------------------
+ * The day the map asked to draw
+ *
+ * Every viewport reader below answers either for the live edge or for one named calendar
+ * day, and the two are separate code paths rather than one parameterized query. See
+ * `src/lib/server/AGENTS.md` §slider-day for why.
+ * ------------------------------------------------------------------------- */
+
+/** How a reader must answer the day the slider asked for. */
+export type RequestedObservationDay =
+  /** No day was named, or the named day IS the server's today: read the live edge. */
+  | { kind: "live" }
+  /** A past day: read that day's own observations, never the live edge's. */
+  | { kind: "historical"; date: string }
+  /** Nothing is observed on that day, and nothing may be invented for it. */
+  | { kind: "unobserved"; date: string; reason: string };
+
+/**
+ * Resolves the slider's optional day against the server's own today.
+ *
+ * The `live` branch is deliberately indistinguishable from no day at all: an omitted day and
+ * today's date must run the exact query the reader has always run, because that is the first
+ * paint of every session and the one path whose cost and behaviour are already measured.
+ *
+ * A future day is refused rather than answered. This warehouse publishes no forecast series
+ * -- FORECAST_HORIZON_DAYS is 0 and every capability reports no forecast variants -- so the
+ * only thing a future day could be answered with is the newest observation wearing a date it
+ * does not describe, which is the fabrication the whole read model is written against.
+ */
+export function resolveRequestedObservationDay(
+  date: string | undefined,
+  today: string = serverCurrentDate()
+): RequestedObservationDay {
+  if (date === undefined) return { kind: "live" };
+  if (!CALENDAR_DATE_PATTERN.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+    return { kind: "unobserved", date, reason: `"${date}" is not a calendar date.` };
+  }
+  if (date === today) return { kind: "live" };
+  if (date > today) {
+    return {
+      kind: "unobserved",
+      date,
+      reason: `Nothing is observed on ${date}; the server's today is ${today}.`,
+    };
+  }
+  return { kind: "historical", date };
+}
+
+/**
+ * The calendar day the PUBLISHER named, read from a stored ISO string's own date part.
+ *
+ * The JavaScript twin of OBSERVATION_DAY, and load-bearing for the same reason:
+ * `parseZonedObservationTime` normalizes to UTC, which MOVES 6,279 of the 16,743 stored USGS
+ * gauge readings (37.5%) onto the following calendar day -- `2026-08-03T23:50:00.000-07:00`
+ * normalizes to `2026-08-04T06:50Z`. Anything comparing a stored observation against a
+ * requested day must therefore compare the named day, never the normalized instant.
+ */
+function publisherNamedDay(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const day = value.slice(0, 10);
+  return CALENDAR_DATE_PATTERN.test(day) ? day : null;
+}
+
+/** True when a stored observation's publisher-named day is exactly `date`. */
+function isObservedOnNamedDay(rawObservationTime: unknown, date: string): boolean {
+  return publisherNamedDay(rawObservationTime) === date;
+}
+
+/** True when a stored observation's publisher-named day falls in (`after`, `through`]. */
+function isObservedWithinNamedDays(
+  rawObservationTime: unknown,
+  after: string,
+  through: string
+): boolean {
+  const day = publisherNamedDay(rawObservationTime);
+  return day !== null && day > after && day <= through;
+}
+
+/**
+ * OBSERVATION_DAY over one explicitly named JSONB text field.
+ *
+ * `substring(…, 1, 10)::date`, NEVER `(… AT TIME ZONE 'UTC')::date` -- see OBSERVATION_DAY's
+ * own note for the 37.5% of gauge readings that rule is written against.
+ */
+function namedDaySql(observationTimeText: SQL): SQL {
+  return sql`substring(${observationTimeText}, 1, 10)::date`;
+}
+
 export function parseBbox(value: string): [number, number, number, number] {
   const coordinates = value.split(",").map(Number);
   if (
@@ -142,12 +232,71 @@ function finiteNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** Reads bounded fire observations already accepted into the platform store. */
+/** Fire detections for one named day, or the live FIRMS lookback window. */
+type FireDetectionRow = { properties: unknown };
+
+/**
+ * One day's accepted fire detections, bucketed on the publisher's named day.
+ *
+ * A separate statement rather than an extra predicate on the live read, because the live read
+ * floors on `created_at` -- a "last touched" column the refresh path rewrites -- which for a
+ * past day returns today's rows and nothing else. FIRMS dates a detection with `acqDate`
+ * (plus `acqTime`), so that is what the day predicate reads, falling back to `observedAt` for
+ * rows whose producer already wrote one.
+ *
+ * Compared as text, not cast to `date`: a single unparseable stored `acqDate` would make a
+ * `::date` in the predicate abort the whole statement, whereas the reader's job is to omit
+ * that one detection. Both sides are the same fixed-width YYYY-MM-DD form, so the comparison
+ * is exact.
+ */
+async function readFireDetectionsOnDay(
+  date: string,
+  area: [number, number, number, number] | null
+): Promise<FireDetectionRow[]> {
+  const observedDayText = sql`COALESCE(
+    substring(f.properties->>'observedAt', 1, 10),
+    f.properties->>'acqDate'
+  )`;
+  return db.execute<FireDetectionRow>(sql`
+    SELECT f.properties
+    FROM geo.features f
+    JOIN geo.layers l ON l.id = f.layer_id
+    WHERE l.name = ${process.env.FIRMS_LAYER_ID ?? "fire-detections"}
+      AND f.status = 'published'
+      AND ${observedDayText} = ${date}
+      ${
+        area
+          ? sql`AND f.geom && ST_MakeEnvelope(${area[0]}, ${area[1]}, ${area[2]}, ${area[3]}, 4326)`
+          : sql``
+      }
+    ORDER BY f.properties->>'acqTime' DESC NULLS LAST
+    LIMIT ${MAX_ROWS}
+  `);
+}
+
+/**
+ * Reads bounded fire observations already accepted into the platform store.
+ *
+ * @param date optional YYYY-MM-DD; omitted (or the server's today) reads the live FIRMS
+ *   lookback window unchanged, a past day reads that day's own detections, and a future day
+ *   returns empty rather than restamping the newest detections.
+ */
 export async function getPublishedFireDetections(
   bbox?: string,
-  dayRange = firmsDayRange()
+  dayRange = firmsDayRange(),
+  date?: string
 ): Promise<GeoJSON.FeatureCollection<GeoJSON.Point>> {
   const area = bbox ? parseBbox(bbox) : null;
+  const day = resolveRequestedObservationDay(date);
+  if (day.kind === "unobserved") return { type: "FeatureCollection", features: [] };
+  if (day.kind === "historical") {
+    return collectFireDetections(
+      await readFireDetectionsOnDay(day.date, area),
+      day,
+      dayRange
+    );
+  }
+
   const since = new Date(Date.now() - dayRange * 86_400_000);
   const rows = await db
     .select({ properties: features.properties })
@@ -167,6 +316,22 @@ export async function getPublishedFireDetections(
     .orderBy(desc(features.createdAt))
     .limit(MAX_ROWS);
 
+  return collectFireDetections(rows, day, dayRange);
+}
+
+/**
+ * Turns stored detection rows into drawable points, dropping any that cannot be dated.
+ *
+ * The window each branch applies is what keeps a named day honest: at the live edge it is the
+ * FIRMS lookback in `dayRange`, and for a named day it is that day itself. Re-anchoring the
+ * lookback to a past date would accept detections from the two days before it, which the map
+ * would then draw under the requested date.
+ */
+function collectFireDetections(
+  rows: readonly FireDetectionRow[],
+  day: RequestedObservationDay,
+  dayRange: number
+): GeoJSON.FeatureCollection<GeoJSON.Point> {
   const published: GeoJSON.Feature<GeoJSON.Point>[] = [];
   for (const row of rows) {
     const properties = asRecord(row.properties);
@@ -174,14 +339,15 @@ export async function getPublishedFireDetections(
     const observedAt = properties
       ? parseFirmsObservationTime(properties)
       : null;
-    if (
-      !properties ||
-      !point ||
-      !observedAt ||
-      !isFreshObservation(observedAt, dayRange * 86_400_000)
-    ) {
-      continue;
-    }
+    const isWithinWindow =
+      day.kind === "historical"
+        ? isObservedOnNamedDay(
+            properties?.observedAt ?? properties?.acqDate,
+            day.date
+          )
+        : observedAt !== null &&
+          isFreshObservation(observedAt, dayRange * 86_400_000);
+    if (!properties || !point || !observedAt || !isWithinWindow) continue;
     const { geometry: _geometry, ...safeProperties } = properties;
     published.push({
       type: "Feature",
@@ -192,27 +358,82 @@ export async function getPublishedFireDetections(
   return { type: "FeatureCollection", features: published };
 }
 
-/** Reads the latest warehouse-backed streamflow observations in a viewport. */
+/** One stored water-gauges row, as both the live and the named-day read path consume it. */
+type StreamflowRow = { properties: unknown };
+
+/**
+ * One day's newest reading per gauge, bucketed on the publisher's named day.
+ *
+ * A separate statement rather than an extra predicate on the live read, for two reasons. The
+ * live read pages by `created_at DESC` -- a "last touched" column -- so for a past day it
+ * returns today's rows and nothing else. And DISTINCT ON makes MAX_ROWS count gauges rather
+ * than readings: a busy national day is 10,911 readings over far fewer sites, and paging
+ * readings would silently answer with a subset of the country.
+ *
+ * The freshness window for a named day IS that day. STREAMFLOW_MAX_AGE_MS's six hours exist
+ * to refuse a stale reading at the LIVE edge; re-anchoring six hours to the end of a past day
+ * would drop every gauge whose last reading that day landed before 18:00, which is most of
+ * them, and report a real day as unobserved.
+ */
+async function readStreamflowGaugesOnDay(
+  date: string,
+  west: number,
+  south: number,
+  east: number,
+  north: number
+): Promise<StreamflowRow[]> {
+  return db.execute<StreamflowRow>(sql`
+    SELECT DISTINCT ON (f.properties->>'siteNo') f.properties
+    FROM geo.features f
+    JOIN geo.layers l ON l.id = f.layer_id
+    WHERE l.name = ${process.env.WATER_GAUGES_LAYER_ID ?? "water-gauges"}
+      AND f.status = 'published'
+      AND f.properties->>'siteNo' IS NOT NULL
+      AND ${namedDaySql(sql`f.properties->>'updatedAt'`)} = ${date}::date
+      AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
+    ORDER BY
+      f.properties->>'siteNo',
+      (f.properties->>'updatedAt')::timestamptz DESC
+    LIMIT ${MAX_ROWS}
+  `);
+}
+
+/**
+ * Reads warehouse-backed streamflow observations in a viewport.
+ *
+ * @param date optional YYYY-MM-DD; omitted (or the server's today) returns the latest reading
+ *   per gauge inside the live freshness window, unchanged. A past day returns that day's
+ *   newest reading per gauge. A future day returns empty -- `WaterGauge[]` has no slot to
+ *   explain itself in, and the layer's own capability is what captions an empty day (see
+ *   `getSliderCapabilities` and `useLayerRenderState`).
+ */
 export async function getPublishedStreamflowGauges(
-  bbox: string
+  bbox: string,
+  date?: string
 ): Promise<WaterGauge[]> {
   const [west, south, east, north] = parseBbox(bbox);
-  const rows = await db
-    .select({ properties: features.properties })
-    .from(features)
-    .innerJoin(layers, eq(features.layerId, layers.id))
-    .where(
-      and(
-        eq(layers.name, process.env.WATER_GAUGES_LAYER_ID ?? "water-gauges"),
-        eq(features.status, "published"),
-        gte(sql<number>`ST_X(${features.geom})`, west),
-        lte(sql<number>`ST_X(${features.geom})`, east),
-        gte(sql<number>`ST_Y(${features.geom})`, south),
-        lte(sql<number>`ST_Y(${features.geom})`, north)
-      )
-    )
-    .orderBy(desc(features.createdAt))
-    .limit(MAX_ROWS);
+  const day = resolveRequestedObservationDay(date);
+  if (day.kind === "unobserved") return [];
+
+  const rows: StreamflowRow[] =
+    day.kind === "historical"
+      ? await readStreamflowGaugesOnDay(day.date, west, south, east, north)
+      : await db
+          .select({ properties: features.properties })
+          .from(features)
+          .innerJoin(layers, eq(features.layerId, layers.id))
+          .where(
+            and(
+              eq(layers.name, process.env.WATER_GAUGES_LAYER_ID ?? "water-gauges"),
+              eq(features.status, "published"),
+              gte(sql<number>`ST_X(${features.geom})`, west),
+              lte(sql<number>`ST_X(${features.geom})`, east),
+              gte(sql<number>`ST_Y(${features.geom})`, south),
+              lte(sql<number>`ST_Y(${features.geom})`, north)
+            )
+          )
+          .orderBy(desc(features.createdAt))
+          .limit(MAX_ROWS);
 
   const gauges = new Map<string, WaterGauge>();
   for (const row of rows) {
@@ -221,13 +442,13 @@ export async function getPublishedStreamflowGauges(
     const siteNo = typeof value.siteNo === "string" ? value.siteNo : "";
     const point = parsePoint(value.geometry);
     const updatedAt = parseZonedObservationTime(value.updatedAt);
-    if (
-      !siteNo ||
-      !point ||
-      !updatedAt ||
-      !isFreshObservation(updatedAt, STREAMFLOW_MAX_AGE_MS) ||
-      gauges.has(siteNo)
-    ) {
+    // Re-checked here rather than trusted from SQL, the same way the vegetation reader
+    // re-checks its own cutoff: the day predicate is bound before the round trip.
+    const isWithinWindow =
+      day.kind === "historical"
+        ? isObservedOnNamedDay(value.updatedAt, day.date)
+        : updatedAt !== null && isFreshObservation(updatedAt, STREAMFLOW_MAX_AGE_MS);
+    if (!siteNo || !point || !updatedAt || !isWithinWindow || gauges.has(siteNo)) {
       continue;
     }
 
@@ -364,16 +585,110 @@ export function isCompleteWeatherObservation(
   );
 }
 
+/** Object type, not an interface: db.execute requires an implicit index signature. */
+type WeatherDayRow = {
+  properties: unknown;
+  lon: number | null;
+  lat: number | null;
+};
+
 /**
- * Reads every published, fresh, complete weather observation intersecting a
- * viewport bbox. Unlike getPublishedWeatherForPoint's nearest-1 KNN, this
- * powers the wind layer with the full warehouse spread instead of a single
- * sample -- capped at WEATHER_BBOX_MAX_ROWS to bound render cost.
+ * One day's newest observation per grid point, bucketed on the publisher's named day.
+ *
+ * Coordinates come from the `geom` column the DISTINCT ON ranks, never from the properties
+ * copy -- the same rule `getPublishedWeatherForPoint` follows, because the two can drift
+ * apart silently. The grid is fixed, so collapsing to the newest row per point is what turns
+ * a whole day of ingest into one sample per place.
+ *
+ * The freshness window for a named day IS that day. WEATHER_MAX_AGE_MS's three hours mirror
+ * the Open-Meteo contract at the LIVE edge; re-anchored to the end of a past day it would keep
+ * roughly one ingest tick in eight and report the rest of a fully observed day as empty.
+ */
+async function readWeatherOnDay(
+  date: string,
+  west: number,
+  south: number,
+  east: number,
+  north: number
+): Promise<WeatherDayRow[]> {
+  return db.execute<WeatherDayRow>(sql`
+    SELECT DISTINCT ON (ST_X(f.geom), ST_Y(f.geom))
+      f.properties,
+      ST_X(f.geom) AS lon,
+      ST_Y(f.geom) AS lat
+    FROM geo.features f
+    JOIN geo.layers l ON l.id = f.layer_id
+    WHERE l.name = ${WEATHER_LAYER_ID}
+      AND f.status = 'published'
+      AND ${namedDaySql(sql`f.properties->>'observedAt'`)} = ${date}::date
+      AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
+    ORDER BY
+      ST_X(f.geom),
+      ST_Y(f.geom),
+      (f.properties->>'observedAt')::timestamptz DESC
+    LIMIT ${WEATHER_BBOX_MAX_ROWS}
+  `);
+}
+
+/** Turns one stored weather row into an observation, or null when it cannot be drawn. */
+function toWeatherObservation(
+  properties: Record<string, unknown> | null,
+  point: [number, number] | null,
+  observedAt: string | null
+): PublishedWeatherObservation | null {
+  if (!properties || !point || !observedAt) return null;
+  const observation: PublishedWeatherObservation = {
+    lat: point[1],
+    lon: point[0],
+    observedAt,
+    temperature: finiteNumber(properties.temperature),
+    humidity: finiteNumber(properties.humidity),
+    windSpeed: finiteNumber(properties.windSpeed),
+    windDirection: finiteNumber(properties.windDirection),
+    precipitation: finiteNumber(properties.precipitation),
+  };
+  // Every rendered field must be measured: a partial observation is dropped rather than
+  // back-filled with a zero the upstream never reported.
+  return isCompleteWeatherObservation(observation) ? observation : null;
+}
+
+/**
+ * Reads every published, complete weather observation intersecting a viewport
+ * bbox. Unlike getPublishedWeatherForPoint's nearest-1 KNN, this powers the
+ * wind layer with the full warehouse spread instead of a single sample --
+ * capped at WEATHER_BBOX_MAX_ROWS to bound render cost.
+ *
+ * @param date optional YYYY-MM-DD; omitted (or the server's today) reads the live freshness
+ *   window unchanged, a past day reads that day's newest sample per grid point, and a future
+ *   day returns empty rather than restamping the newest samples.
  */
 export async function getPublishedWeatherForBbox(
-  bbox: string
+  bbox: string,
+  date?: string
 ): Promise<PublishedWeatherObservation[]> {
   const [west, south, east, north] = parseBbox(bbox);
+  const day = resolveRequestedObservationDay(date);
+  if (day.kind === "unobserved") return [];
+
+  if (day.kind === "historical") {
+    const dayRows = await readWeatherOnDay(day.date, west, south, east, north);
+    const observations: PublishedWeatherObservation[] = [];
+    for (const row of dayRows) {
+      const value = asRecord(row.properties);
+      const rowLat = finiteNumber(row.lat);
+      const rowLon = finiteNumber(row.lon);
+      if (rowLat === null || rowLon === null) continue;
+      if (!isObservedOnNamedDay(value?.observedAt, day.date)) continue;
+      const observation = toWeatherObservation(
+        value,
+        [rowLon, rowLat],
+        parseZonedObservationTime(value?.observedAt)
+      );
+      if (observation) observations.push(observation);
+    }
+    return observations;
+  }
+
   const rows = await db
     .select({ properties: features.properties })
     .from(features)
@@ -396,33 +711,38 @@ export async function getPublishedWeatherForBbox(
     const value = asRecord(row.properties);
     const point = parsePoint(value?.geometry);
     const observedAt = parseZonedObservationTime(value?.observedAt);
-    if (
-      !value ||
-      !point ||
-      !observedAt ||
-      !isFreshObservation(observedAt, WEATHER_MAX_AGE_MS)
-    ) {
+    if (observedAt === null || !isFreshObservation(observedAt, WEATHER_MAX_AGE_MS)) {
       continue;
     }
-    const observation: PublishedWeatherObservation = {
-      lat: point[1],
-      lon: point[0],
-      observedAt,
-      temperature: finiteNumber(value.temperature),
-      humidity: finiteNumber(value.humidity),
-      windSpeed: finiteNumber(value.windSpeed),
-      windDirection: finiteNumber(value.windDirection),
-      precipitation: finiteNumber(value.precipitation),
-    };
-    if (isCompleteWeatherObservation(observation)) observations.push(observation);
+    const observation = toWeatherObservation(value, point, observedAt);
+    if (observation) observations.push(observation);
   }
   return observations;
 }
 
+/** Why a drought viewport read came back empty. The payload has no free-text slot. */
+export type PublishedDroughtReason =
+  | "not_published"
+  | "invalid_observation_time"
+  | "stale"
+  /** The requested day is in the future; USDM is not forecast. */
+  | "not_forecastable"
+  /**
+   * A release week the record does not hold. It must render EMPTY: a later release is stored,
+   * so the preceding one's coverage ended at its own week and filling the gap would invent a
+   * map. `usdm_history.ingest_release_week` records exactly this case as `is_gap`.
+   */
+  | "release_week_not_published";
+
 export interface PublishedDroughtCollection extends GeoJSON.FeatureCollection {
   availability: "published" | "unavailable";
   observedAt: string | null;
-  reason?: "not_published" | "invalid_observation_time" | "stale";
+  reason?: PublishedDroughtReason;
+  /**
+   * Days between the release actually served and the day asked for. 0 at the release's own
+   * date; non-zero means a legitimately carried-forward weekly release, never an interpolation.
+   */
+  carryForwardDays?: number;
 }
 
 /**
@@ -439,21 +759,28 @@ function droughtSimplifyTolerance(bboxWidthDegrees: number | null): number {
   );
 }
 
+/** Object type, not an interface: db.execute requires an implicit index signature. */
+type DroughtAreaRow = {
+  dm_category: number;
+  valid_date: string;
+  source_url: string;
+  geometry: string | null;
+};
+
 /**
- * Reads the newest accepted USDM release, clipped and generalized in PostGIS.
+ * Reads one USDM release's classes, clipped and generalized in PostGIS.
  *
- * Never fetches upstream on request. The stored geometry is full-resolution
- * (~19 MB nationally), so clipping to the viewport and simplifying happens in
- * the database -- returning the raw collection would be unservable. Simplifying
- * generalizes boundaries; it never reclassifies, and a class whose clipped
- * geometry is empty is omitted rather than emitted as a null feature.
+ * @param validDate the release to read, or null for the newest stored one.
  *
- * @param bbox optional "west,south,east,north"; omitted returns the national extent.
+ * The stored geometry is full-resolution (~19 MB nationally), so clipping to the viewport and
+ * simplifying happens in the database -- returning the raw collection would be unservable.
+ * Simplifying generalizes boundaries; it never reclassifies, and a class whose clipped
+ * geometry is empty is omitted by the caller rather than emitted as a null feature.
  */
-export async function getPublishedDroughtClassification(
-  bbox?: string
-): Promise<PublishedDroughtCollection> {
-  const area = bbox ? parseBbox(bbox) : null;
+async function readDroughtRelease(
+  validDate: string | null,
+  area: [number, number, number, number] | null
+): Promise<DroughtAreaRow[]> {
   const tolerance = droughtSimplifyTolerance(area ? area[2] - area[0] : null);
 
   // ST_CollectionExtract keeps the clip polygon-only: intersecting a polygon
@@ -468,18 +795,17 @@ export async function getPublishedDroughtClassification(
       )`
     : sql`d.geom`;
 
-  const rows = await db.execute<{
-    dm_category: number;
-    valid_date: string;
-    source_url: string;
-    geometry: string | null;
-  }>(sql`
-    WITH latest AS (
-      SELECT valid_date
-      FROM geo.drought_areas
-      ORDER BY valid_date DESC
-      LIMIT 1
-    )
+  return db.execute<DroughtAreaRow>(sql`
+    ${
+      validDate === null
+        ? sql`WITH latest AS (
+            SELECT valid_date
+            FROM geo.drought_areas
+            ORDER BY valid_date DESC
+            LIMIT 1
+          )`
+        : sql``
+    }
     SELECT
       d.dm_category,
       d.valid_date,
@@ -488,43 +814,168 @@ export async function getPublishedDroughtClassification(
         ST_SimplifyPreserveTopology(${clipped}, ${tolerance})
       ) AS geometry
     FROM geo.drought_areas d
-    JOIN latest ON latest.valid_date = d.valid_date
+    ${validDate === null ? sql`JOIN latest ON latest.valid_date = d.valid_date` : sql``}
+    WHERE ${validDate === null ? sql`TRUE` : sql`d.valid_date = ${validDate}::date`}
     ${
       area
-        ? sql`WHERE d.geom && ST_MakeEnvelope(${area[0]}, ${area[1]}, ${area[2]}, ${area[3]}, 4326)`
+        ? sql`AND d.geom && ST_MakeEnvelope(${area[0]}, ${area[1]}, ${area[2]}, ${area[3]}, 4326)`
         : sql``
     }
     ORDER BY d.dm_category
   `);
+}
 
-  if (rows.length === 0) {
-    return {
-      type: "FeatureCollection",
-      features: [],
-      availability: "unavailable",
-      observedAt: null,
-      reason: "not_published",
+/** Which stored USDM release describes a date, or why none does. */
+type DroughtReleaseResolution =
+  | { kind: "resolved"; asOfRelease: string; carryForwardDays: number }
+  | {
+      kind: "unavailable";
+      availability: MetricAtDateAvailability;
+      /** Sentence for the metric reader, which has a free-text reason slot. */
+      reason: string;
+      /** Enum code for the viewport reader, whose payload does not. */
+      code: PublishedDroughtReason;
     };
+
+/**
+ * Resolves which stored USDM release describes a date, with the carry-forward BOUNDED.
+ *
+ * Shared by `getPublishedDroughtClassification` and `getDroughtMetricAtDate` so the layer and
+ * the slider metric can never disagree about what a day means.
+ *
+ * USDM is a weekly snapshot, not a daily series, so an exact-date match would make six days in
+ * seven look empty. Carrying the release forward is what the publisher itself does -- a release
+ * stands until the next one supersedes it -- and every caller reports the release's OWN date,
+ * never the requested one, so a value is never dressed up as fresher than it is.
+ *
+ * The bound depends on whether the record already knows what comes next. When a later release
+ * is stored, this release's coverage ended at its own week: a request landing past that week
+ * sits in a release week the record does not hold, and that week must render EMPTY.
+ * `usdm_history.ingest_release_week` records exactly this case as
+ * `skip_reason="not_published"`/`is_gap=True`, and `history_gap_weeks` documents that "the
+ * slider must render these empty" -- an unbounded lookback would fill the gap the ingest lane
+ * honestly reported, painting drought classes on a week USDM never published. When no later
+ * release is stored we are at the live edge instead, where the newest release legitimately
+ * stands until the next Thursday publication, bounded by DROUGHT_MAX_CARRY_FORWARD_DAYS.
+ */
+async function resolveDroughtRelease(
+  date: string
+): Promise<DroughtReleaseResolution> {
+  const releases = await db.execute<{
+    earliest_release: string | null;
+    as_of_release: string | null;
+    next_release: string | null;
+  }>(sql`
+    SELECT
+      MIN(valid_date) AS earliest_release,
+      MAX(valid_date) FILTER (WHERE valid_date <= ${date}) AS as_of_release,
+      MIN(valid_date) FILTER (WHERE valid_date > ${date}) AS next_release
+    FROM geo.drought_areas
+  `);
+  const earliestRelease = toCalendarDate(releases[0]?.earliest_release);
+  const asOfRelease = toCalendarDate(releases[0]?.as_of_release);
+  const nextRelease = toCalendarDate(releases[0]?.next_release);
+
+  if (earliestRelease === null) {
+    return {
+      kind: "unavailable",
+      availability: "not_yet_observed",
+      reason: "No US Drought Monitor release has been published yet.",
+      code: "not_published",
+    };
+  }
+  if (asOfRelease === null) {
+    return {
+      kind: "unavailable",
+      availability: "not_yet_observed",
+      reason: `No US Drought Monitor release covers ${date}; the record starts ${earliestRelease}.`,
+      code: "not_published",
+    };
+  }
+
+  const carryForwardDays = utcDayDifference(asOfRelease, date) ?? 0;
+  if (nextRelease !== null && carryForwardDays >= DROUGHT_RELEASE_INTERVAL_DAYS) {
+    return {
+      kind: "unavailable",
+      availability: "not_published",
+      reason: `No US Drought Monitor release covers ${date}; the record skips from ${asOfRelease} to ${nextRelease}.`,
+      code: "release_week_not_published",
+    };
+  }
+  if (nextRelease === null && carryForwardDays > DROUGHT_MAX_CARRY_FORWARD_DAYS) {
+    return {
+      kind: "unavailable",
+      availability: "not_published",
+      reason: `The newest US Drought Monitor release is ${asOfRelease}, ${carryForwardDays} days before ${date}; it is too stale to describe that day.`,
+      code: "stale",
+    };
+  }
+  return { kind: "resolved", asOfRelease, carryForwardDays };
+}
+
+/** A drought viewport read that states why it is empty instead of just being empty. */
+function emptyDroughtCollection(
+  reason: PublishedDroughtReason,
+  observedAt: string | null
+): PublishedDroughtCollection {
+  return {
+    type: "FeatureCollection",
+    features: [],
+    availability: "unavailable",
+    observedAt,
+    reason,
+  };
+}
+
+/**
+ * Reads the accepted USDM release covering a day, clipped and generalized in PostGIS.
+ *
+ * Never fetches upstream on request.
+ *
+ * @param bbox optional "west,south,east,north"; omitted returns the national extent.
+ * @param date optional YYYY-MM-DD. Omitted (or the server's today) reads the newest stored
+ *   release under the existing now-relative DROUGHT_MAX_AGE_MS gate, unchanged. A past day
+ *   resolves through `resolveDroughtRelease`, so the weekly carry-forward and its bound are
+ *   the same ones the slider metric applies -- a release week the record skips renders EMPTY.
+ *   A future day is refused: USDM is not forecast.
+ */
+export async function getPublishedDroughtClassification(
+  bbox?: string,
+  date?: string
+): Promise<PublishedDroughtCollection> {
+  const area = bbox ? parseBbox(bbox) : null;
+  const day = resolveRequestedObservationDay(date);
+  if (day.kind === "unobserved") {
+    return emptyDroughtCollection(
+      CALENDAR_DATE_PATTERN.test(day.date) ? "not_forecastable" : "not_published",
+      null
+    );
+  }
+
+  let asOfRelease: string | null = null;
+  let carryForwardDays = 0;
+  if (day.kind === "historical") {
+    const resolution = await resolveDroughtRelease(day.date);
+    if (resolution.kind === "unavailable") {
+      return emptyDroughtCollection(resolution.code, null);
+    }
+    asOfRelease = resolution.asOfRelease;
+    carryForwardDays = resolution.carryForwardDays;
+  }
+
+  const rows = await readDroughtRelease(asOfRelease, area);
+  if (rows.length === 0) {
+    return emptyDroughtCollection("not_published", null);
   }
 
   const observedAt = parseZonedObservationTime(`${rows[0].valid_date}T00:00:00Z`);
   if (!observedAt) {
-    return {
-      type: "FeatureCollection",
-      features: [],
-      availability: "unavailable",
-      observedAt: null,
-      reason: "invalid_observation_time",
-    };
+    return emptyDroughtCollection("invalid_observation_time", null);
   }
-  if (!isFreshObservation(observedAt, DROUGHT_MAX_AGE_MS)) {
-    return {
-      type: "FeatureCollection",
-      features: [],
-      availability: "unavailable",
-      observedAt,
-      reason: "stale",
-    };
+  // At the live edge, staleness is measured against now. For a named day the bound is already
+  // the release-week rule above, which is what lets a historical day be served at all.
+  if (asOfRelease === null && !isFreshObservation(observedAt, DROUGHT_MAX_AGE_MS)) {
+    return emptyDroughtCollection("stale", observedAt);
   }
 
   const collected: GeoJSON.Feature[] = [];
@@ -552,12 +1003,16 @@ export async function getPublishedDroughtClassification(
     });
   }
 
-  return {
+  const collection: PublishedDroughtCollection = {
     type: "FeatureCollection",
     features: collected,
     availability: "published",
     observedAt,
   };
+  // Only meaningful when a day was actually named: at the live edge nothing was carried
+  // forward TO, so reporting 0 there would answer a question nobody asked.
+  if (day.kind === "historical") collection.carryForwardDays = carryForwardDays;
+  return collection;
 }
 
 export interface DroughtCategoryAtPoint {
@@ -651,8 +1106,11 @@ export interface PublishedVegetationCollection
   availability: "published" | "unavailable";
   /** Newest observation in the returned set; null when nothing was returned. */
   observedAt: string | null;
-  /** `stale` means cells exist here but none was observed inside the window. */
-  reason: "not_published" | "stale" | null;
+  /**
+   * `stale` means cells exist here but none was observed inside the window ending at the
+   * requested day; `not_forecastable` means the day itself is in the future.
+   */
+  reason: "not_published" | "stale" | "not_forecastable" | null;
   /** More cells intersect the viewport than the cap allows; this set is a subset. */
   truncated: boolean;
   cellCount: number;
@@ -679,7 +1137,7 @@ type VegetationCellRow = {
 
 /** A viewport that holds no vegetation cell at all, or none observed recently enough. */
 function emptyVegetationCollection(
-  reason: "not_published" | "stale",
+  reason: NonNullable<PublishedVegetationCollection["reason"]>,
   observedAt: string | null
 ): PublishedVegetationCollection {
   return {
@@ -715,12 +1173,38 @@ function emptyVegetationCollection(
  *
  * Nothing is interpolated, carried forward or averaged: a cell under cloud for a month is
  * omitted, not painted with a value from before the cloud.
+ *
+ * @param date optional YYYY-MM-DD. Omitted (or the server's today) applies the 30-day window
+ *   ending NOW, unchanged. A past day slides the same window to end at that day -- "the newest
+ *   reading per cell within VEGETATION_MAX_OBSERVATION_AGE_DAYS ending at the selected date" --
+ *   which is what stops a request for last spring returning an empty grid under a now-relative
+ *   cutoff. A future day returns empty: Sentinel-2 has not flown it.
  */
 export async function getPublishedVegetationIndex(
-  bbox: string
+  bbox: string,
+  date?: string
 ): Promise<PublishedVegetationCollection> {
   const [west, south, east, north] = parseBbox(bbox);
+  const day = resolveRequestedObservationDay(date);
+  if (day.kind === "unobserved") {
+    return emptyVegetationCollection("not_forecastable", null);
+  }
   const freshSince = new Date(Date.now() - VEGETATION_MAX_AGE_MS).toISOString();
+  // The observation window as publisher-named days, for a named day only: (after, through].
+  const windowThroughDay = day.kind === "historical" ? day.date : null;
+  const windowAfterDay =
+    windowThroughDay === null
+      ? null
+      : addUtcDays(windowThroughDay, -VEGETATION_MAX_OBSERVATION_AGE_DAYS);
+  const observedDay = namedDaySql(sql`f.properties->>'observedAt'`);
+  // The live branch keeps the timestamptz cutoff it has always used -- every stored value
+  // carries an explicit `Z`, so for this layer the named day and the UTC day agree; the named
+  // day is what a bounded historical window is expressed in, because that is the form a
+  // requested date arrives as.
+  const observationWindowSql =
+    windowThroughDay === null || windowAfterDay === null
+      ? sql`(f.properties->>'observedAt')::timestamptz >= ${freshSince}::timestamptz`
+      : sql`${observedDay} > ${windowAfterDay}::date AND ${observedDay} <= ${windowThroughDay}::date`;
   const tolerance = droughtSimplifyTolerance(east - west);
 
   // Every stored cell is a 5-vertex axis-aligned square (verified: ST_NPoints = 5 on all
@@ -753,7 +1237,7 @@ export async function getPublishedVegetationIndex(
         AND f.status = 'published'
         AND f.geometry_id IS NOT NULL
         AND jsonb_typeof(f.properties->'ndvi') = 'number'
-        AND (f.properties->>'observedAt')::timestamptz >= ${freshSince}::timestamptz
+        AND ${observationWindowSql}
         AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
     )
     SELECT DISTINCT ON (c.geometry_id)
@@ -780,6 +1264,10 @@ export async function getPublishedVegetationIndex(
     // a viewport the grid does not cover at all, versus one it covers where every cell has
     // been under cloud longer than the window. MAX over the ISO-8601 text is chronological
     // because every stored value is the same fixed-width UTC format.
+    //
+    // Bounded to the requested day for a named day: a cell first sampled AFTER that day says
+    // nothing about whether the grid covered the viewport then, and reporting it as the
+    // "newest observation" here would caption a never-sampled day as merely stale.
     const newest = await db.execute<{ observed_at: string | null }>(sql`
       SELECT MAX(f.properties->>'observedAt') AS observed_at
       FROM geo.features f
@@ -787,6 +1275,11 @@ export async function getPublishedVegetationIndex(
       WHERE l.name = ${VEGETATION_LAYER_ID}
         AND f.status = 'published'
         AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
+        ${
+          windowThroughDay === null
+            ? sql``
+            : sql`AND ${observedDay} <= ${windowThroughDay}::date`
+        }
     `);
     const newestObservedAt = parseZonedObservationTime(newest[0]?.observed_at);
     return newestObservedAt === null
@@ -799,12 +1292,17 @@ export async function getPublishedVegetationIndex(
   for (const row of rows.slice(0, VEGETATION_MAX_CELLS)) {
     const ndvi = finiteNumber(row.ndvi);
     const observedAt = parseZonedObservationTime(row.observed_at);
+    // Re-checked after the round trip because the cutoff above was computed before it.
+    const isWithinWindow =
+      windowThroughDay === null || windowAfterDay === null
+        ? observedAt !== null && isFreshObservation(observedAt, VEGETATION_MAX_AGE_MS)
+        : isObservedWithinNamedDays(row.observed_at, windowAfterDay, windowThroughDay);
     if (
       !row.geometry ||
       row.geometry_id === null ||
       ndvi === null ||
       observedAt === null ||
-      !isFreshObservation(observedAt, VEGETATION_MAX_AGE_MS)
+      !isWithinWindow
     ) {
       continue;
     }
@@ -848,9 +1346,17 @@ export async function getPublishedVegetationIndex(
   };
 }
 
-/** Reserved read model for a future versioned groundwater layer. */
+/**
+ * Reserved read model for a future versioned groundwater layer.
+ *
+ * `date` is accepted and deliberately unread: no groundwater observation is published on ANY
+ * day, so there is nothing for a day predicate to narrow. Taking the parameter now is what
+ * lets the caller pass the slider's day uniformly instead of special-casing this one layer,
+ * and makes the eventual producer a change to this body alone.
+ */
 export async function getPublishedGroundwaterWells(
-  bbox: string
+  bbox: string,
+  _date?: string
 ): Promise<GroundwaterWell[]> {
   parseBbox(bbox);
   return [];
@@ -880,8 +1386,6 @@ export async function getPublishedGroundwaterWells(
  * that invariant at write time in the ingest lane first; one offsetless value would land on a
  * different day than the index expected and the two would silently disagree.
  * ------------------------------------------------------------------------- */
-
-const CALENDAR_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Gap, in days, that ends a layer's continuous observation record.
@@ -1679,23 +2183,12 @@ type DroughtMetricRow = {
 };
 
 /**
- * Drought as of a date: the newest USDM release valid on or before it.
+ * Drought as of a date: the release `resolveDroughtRelease` says covers it.
  *
- * USDM is a weekly snapshot, not a daily series, so an exact-date match would make
- * six days in seven look empty. Carrying the release forward is what the publisher
- * itself does -- a release stands until the next one supersedes it -- and `issuedOn`
- * always reports the release's own date, never the requested one, so a value is
- * never dressed up as fresher than it is.
- *
- * The carry-forward is BOUNDED, and the bound depends on whether the record already knows
- * what comes next. When a later release is stored, this release's coverage ended at its own
- * week: a request landing past that week sits in a release week the record does not hold, and
- * that week must render EMPTY. `usdm_history.ingest_release_week` records exactly this case
- * as `skip_reason="not_published"`/`is_gap=True`, and `history_gap_weeks` documents that "the
- * slider must render these empty" -- an unbounded lookback would fill the gap the ingest lane
- * honestly reported, painting drought classes on a week USDM never published. When no later
- * release is stored we are at the live edge instead, where the newest release legitimately
- * stands until the next Thursday publication, bounded by DROUGHT_MAX_CARRY_FORWARD_DAYS.
+ * The weekly carry-forward and its bound live in `resolveDroughtRelease`, shared with
+ * `getPublishedDroughtClassification` so the slider metric and the map layer can never
+ * disagree about which release a day means. `issuedOn` always reports the release's own date,
+ * never the requested one, so a value is never dressed up as fresher than it is.
  *
  * geo.drought_areas has no geo.layers row and no geometry_id, so this metric is
  * absent from getSliderCapabilities. geometryId falls back to the release identity
@@ -1720,49 +2213,11 @@ async function getDroughtMetricAtDate(
     );
   }
 
-  const releases = await db.execute<{
-    earliest_release: string | null;
-    as_of_release: string | null;
-    next_release: string | null;
-  }>(sql`
-    SELECT
-      MIN(valid_date) AS earliest_release,
-      MAX(valid_date) FILTER (WHERE valid_date <= ${date}) AS as_of_release,
-      MIN(valid_date) FILTER (WHERE valid_date > ${date}) AS next_release
-    FROM geo.drought_areas
-  `);
-  const earliestRelease = toCalendarDate(releases[0]?.earliest_release);
-  const asOfRelease = toCalendarDate(releases[0]?.as_of_release);
-  const nextRelease = toCalendarDate(releases[0]?.next_release);
-
-  if (earliestRelease === null) {
-    return emptyMetricCollection(
-      "not_yet_observed",
-      "No US Drought Monitor release has been published yet."
-    );
+  const resolution = await resolveDroughtRelease(date);
+  if (resolution.kind === "unavailable") {
+    return emptyMetricCollection(resolution.availability, resolution.reason);
   }
-  if (asOfRelease === null) {
-    return emptyMetricCollection(
-      "not_yet_observed",
-      `No US Drought Monitor release covers ${date}; the record starts ${earliestRelease}.`
-    );
-  }
-
-  const carryForwardDays = utcDayDifference(asOfRelease, date) ?? 0;
-  if (nextRelease !== null && carryForwardDays >= DROUGHT_RELEASE_INTERVAL_DAYS) {
-    // A later release is on record, so the gap between them is a release week the warehouse
-    // does not hold -- not a lag. Filling it from the preceding release would invent a map.
-    return emptyMetricCollection(
-      "not_published",
-      `No US Drought Monitor release covers ${date}; the record skips from ${asOfRelease} to ${nextRelease}.`
-    );
-  }
-  if (nextRelease === null && carryForwardDays > DROUGHT_MAX_CARRY_FORWARD_DAYS) {
-    return emptyMetricCollection(
-      "not_published",
-      `The newest US Drought Monitor release is ${asOfRelease}, ${carryForwardDays} days before ${date}; it is too stale to describe that day.`
-    );
-  }
+  const { asOfRelease, carryForwardDays } = resolution;
 
   const tolerance = droughtSimplifyTolerance(area ? area[2] - area[0] : null);
   const clipped = area

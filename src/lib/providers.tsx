@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { SessionProvider } from "next-auth/react";
 import { trpc, trpcLinks } from "@/lib/trpc/client";
+import { indexedDbLayerQueryPersister } from "@/lib/cache/query-persister";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -13,6 +14,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
           queries: {
             staleTime: 60 * 1000,
             refetchOnWindowFocus: false,
+            // Allowlisted geospatial layer reads only; see src/lib/cache/AGENTS.md.
+            persister: indexedDbLayerQueryPersister,
           },
         },
       })

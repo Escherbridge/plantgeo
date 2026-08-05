@@ -86,7 +86,11 @@ const SheetContent = React.forwardRef<HTMLDivElement, SheetContentProps>(
           {onOpenChange && (
             <button
               onClick={() => onOpenChange(false)}
-              className="absolute right-4 top-4 rounded-(--radius) p-1 text-[hsl(var(--muted-foreground))] opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+              // Full 44px tap target -- this is the primary way to escape a sheet that can
+              // cover most of the screen on a phone, so a thumb-sized hit area matters more
+              // here than almost anywhere else in the shell. The icon stays 16px; only the
+              // hit area grows.
+              className="absolute right-2 top-2 flex h-11 w-11 items-center justify-center rounded-(--radius) text-[hsl(var(--muted-foreground))] opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
             >
               <X className="h-4 w-4" />
               <span className="sr-only">Close</span>

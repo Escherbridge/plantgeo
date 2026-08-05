@@ -41,10 +41,13 @@ import { gte, lte } from "drizzle-orm";
 import {
   clearSliderCapabilitiesCache,
   getMetricAtDate,
+  getPublishedDroughtClassification,
   getPublishedFireDetections,
   getPublishedStreamflowGauges,
   getPublishedVegetationIndex,
+  getPublishedWeatherForBbox,
   getSliderCapabilities,
+  resolveRequestedObservationDay,
   serverCurrentDate,
 } from "@/lib/server/services/environmental-read-model";
 
@@ -90,6 +93,43 @@ function flattenSql(value: unknown, tokens: SqlToken[] = []): SqlToken[] {
     tokens.push({ kind: "param", value: node.value });
   }
   return tokens;
+}
+
+/**
+ * Fails when a statement binds a fractional value that Postgres would have to type from its
+ * surroundings.
+ *
+ * postgres-js sends every non-bigint JS number as an UNTYPED parameter (OID 0), so a fractional
+ * value in a bare arithmetic context next to a bigint resolves as a bigint and throws
+ * `invalid input syntax for type bigint` at runtime -- the exact production 500
+ * getSliderCapabilities hit. Safe only with its own `::` cast, or inside a PostGIS call whose
+ * signature already declares `double precision`.
+ */
+function expectNoBareFractionalParameter(statement: unknown): void {
+  const tokens = flattenSql(statement);
+  /** Literal SQL written before `index`; parameters contribute no text of their own. */
+  const textBefore = (index: number) =>
+    tokens
+      .slice(0, index)
+      .map((token) => (token.kind === "text" ? token.text : ""))
+      .join("");
+
+  const fractional = tokens.flatMap((token, index) =>
+    token.kind === "param" &&
+    typeof token.value === "number" &&
+    !Number.isInteger(token.value)
+      ? [{ value: token.value, before: textBefore(index), following: tokens[index + 1] }]
+      : []
+  );
+  // Pins the assertion against passing vacuously: callers pass a fractional viewport.
+  expect(fractional.length).toBeGreaterThan(0);
+
+  const untyped = fractional.filter(({ before, following }) => {
+    const next = following?.kind === "text" ? following.text.trimStart() : "";
+    if (next.startsWith("::")) return false;
+    return !/ST_(MakeEnvelope|SimplifyPreserveTopology)\([^()]*$/.test(before);
+  });
+  expect(untyped.map(({ value }) => value)).toEqual([]);
 }
 
 function resetQueryChain() {
@@ -926,5 +966,436 @@ describe("getPublishedVegetationIndex -- one cell per place, not one row per obs
   it("rejects a malformed bbox before touching the warehouse", async () => {
     await expect(getPublishedVegetationIndex("not,a,bbox")).rejects.toThrow(RangeError);
     expect(dbExecute).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The slider's day, threaded through the viewport readers.
+ *
+ * Two failure modes these cases exist to prevent, both of which produce a map that looks fine
+ * and lies. First, bucketing a named day in UTC displaces 37.5% of stored USGS readings onto
+ * the following calendar day. Second, leaving a now-relative freshness window in place while
+ * pinning a past day empties every historical day the warehouse genuinely holds -- a 6-hour
+ * streamflow window and a 30-day vegetation window both reject every reading from last spring.
+ */
+describe("a named day is answered by that day, and today's answer is unchanged", () => {
+  /** A fractional viewport, so the corners bound below are genuinely non-integer. */
+  const VIEWPORT = "-116.75,43.25,-115.25,44.5";
+  const TODAY = "2026-08-05";
+  const NOW_MS = Date.parse(`${TODAY}T12:00:00Z`);
+  /** Deep enough in the past that every live freshness window would reject it. */
+  const PAST_DAY = "2026-05-01";
+
+  /** Runs `body` with the server's clock pinned, so "today" is a known date. */
+  async function atServerToday<T>(body: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW_MS);
+    try {
+      return await body();
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  describe("resolveRequestedObservationDay", () => {
+    it("treats an omitted day and the server's today as the same live read", () => {
+      expect(resolveRequestedObservationDay(undefined, TODAY)).toEqual({ kind: "live" });
+      expect(resolveRequestedObservationDay(TODAY, TODAY)).toEqual({ kind: "live" });
+    });
+
+    it("routes a past day to the historical read", () => {
+      expect(resolveRequestedObservationDay(PAST_DAY, TODAY)).toEqual({
+        kind: "historical",
+        date: PAST_DAY,
+      });
+    });
+
+    it("refuses a future day and a non-date outright", () => {
+      const future = resolveRequestedObservationDay("2026-08-06", TODAY);
+      expect(future.kind).toBe("unobserved");
+      const nonsense = resolveRequestedObservationDay("2026-13-45", TODAY);
+      expect(nonsense.kind).toBe("unobserved");
+      const notADate = resolveRequestedObservationDay("yesterday", TODAY);
+      expect(notADate.kind).toBe("unobserved");
+    });
+  });
+
+  describe("getPublishedStreamflowGauges", () => {
+    /** A stored water-gauges row as the reader consumes it, on either path. */
+    function gaugeRow(siteNo: string, flowCfs: number, updatedAt: string) {
+      return {
+        properties: {
+          siteNo,
+          siteName: `Site ${siteNo}`,
+          geometry: { type: "Point", coordinates: [-116.2, 43.6] },
+          flowCfs,
+          updatedAt,
+        },
+      };
+    }
+
+    it("keeps a reading the 6-hour live window would have rejected, and collapses to one row per gauge", async () => {
+      const gauges = await atServerToday(async () => {
+        // 02:15 local on the requested day: three months old, so `isFreshObservation` against
+        // STREAMFLOW_MAX_AGE_MS rejects it, and re-anchoring six hours to the end of that day
+        // would too. A fully observed day must not come back empty for either reason.
+        dbExecute.mockResolvedValueOnce([
+          gaugeRow("13172500", 512, `${PAST_DAY}T02:15:00.000-07:00`),
+        ]);
+        return getPublishedStreamflowGauges(VIEWPORT, PAST_DAY);
+      });
+
+      expect(gauges.map((gauge) => gauge.siteNo)).toEqual(["13172500"]);
+      expect(gauges[0].flowCfs).toBe(512);
+      // The live read pages by created_at, which for a past day returns today's rows only.
+      expect(queryChain.limit).not.toHaveBeenCalled();
+
+      const statement = renderSqlText(dbExecute.mock.calls[0]?.[0]);
+      expect(statement).toContain("SELECT DISTINCT ON (f.properties->>'siteNo')");
+      expect(statement).toContain("substring(");
+      expect(statement).toContain(", 1, 10)::date");
+      // Restoring the UTC cast moves 37.5% of gauge readings onto the following day.
+      expect(statement).not.toContain("AT TIME ZONE 'UTC'");
+    });
+
+    it("keeps an offset-bearing late-evening reading on the day its own timestamp names", async () => {
+      const [named, theDayAfter] = await atServerToday(async () => {
+        // 23:50 at -07:00 is 06:50Z the NEXT day. The publisher, and anyone cross-checking
+        // waterdata.usgs.gov, calls this a 2026-05-01 reading.
+        dbExecute.mockResolvedValue([
+          gaugeRow("14211720", 88, `${PAST_DAY}T23:50:00.000-07:00`),
+        ]);
+        return Promise.all([
+          getPublishedStreamflowGauges(VIEWPORT, PAST_DAY),
+          getPublishedStreamflowGauges(VIEWPORT, "2026-05-02"),
+        ]);
+      });
+
+      expect(named).toHaveLength(1);
+      // Under UTC bucketing this reading would have answered 2026-05-02 instead.
+      expect(theDayAfter).toHaveLength(0);
+    });
+
+    it("refuses a future day without touching the warehouse", async () => {
+      const gauges = await atServerToday(() =>
+        getPublishedStreamflowGauges(VIEWPORT, "2026-08-06")
+      );
+
+      expect(gauges).toEqual([]);
+      expect(dbExecute).not.toHaveBeenCalled();
+      expect(queryChain.limit).not.toHaveBeenCalled();
+    });
+
+    it("runs the live read, unchanged, for an omitted day and for the server's today", async () => {
+      const [omitted, today] = await atServerToday(async () => {
+        queryChain.limit.mockResolvedValue([
+          gaugeRow("13206000", 42.5, `${TODAY}T04:00:00.000-07:00`),
+        ]);
+        return Promise.all([
+          getPublishedStreamflowGauges(VIEWPORT),
+          getPublishedStreamflowGauges(VIEWPORT, TODAY),
+        ]);
+      });
+
+      expect(today).toEqual(omitted);
+      expect(today).toHaveLength(1);
+      // Today's answer is the query it has always been: no named-day statement is issued.
+      expect(dbExecute).not.toHaveBeenCalled();
+      expect(queryChain.limit).toHaveBeenCalledTimes(2);
+    });
+
+    it("binds no bare fractional parameter on the named-day path", async () => {
+      await atServerToday(() => getPublishedStreamflowGauges(VIEWPORT, PAST_DAY));
+      expectNoBareFractionalParameter(dbExecute.mock.calls[0]?.[0]);
+    });
+  });
+
+  describe("getPublishedWeatherForBbox", () => {
+    /** The projection the named-day read selects: geom coordinates, not the properties copy. */
+    function weatherRow(lon: number, lat: number, observedAt: string) {
+      return {
+        properties: {
+          observedAt,
+          temperature: 24,
+          humidity: 30,
+          windSpeed: 5,
+          windDirection: 180,
+          precipitation: 0,
+          // Deliberately disagrees with the geom columns beside it, which is the drift
+          // getPublishedWeatherForPoint's own note warns about.
+          geometry: { type: "Point", coordinates: [0, 0] },
+        },
+        lon,
+        lat,
+      };
+    }
+
+    it("collapses to the newest sample per grid point, and reads coordinates from geom", async () => {
+      const observations = await atServerToday(async () => {
+        dbExecute.mockResolvedValueOnce([
+          weatherRow(-116.2, 43.6, `${PAST_DAY}T18:00:00.000Z`),
+        ]);
+        return getPublishedWeatherForBbox(VIEWPORT, PAST_DAY);
+      });
+
+      expect(observations).toHaveLength(1);
+      expect(observations[0].lon).toBe(-116.2);
+      expect(observations[0].lat).toBe(43.6);
+
+      const statement = renderSqlText(dbExecute.mock.calls[0]?.[0]);
+      expect(statement).toContain("SELECT DISTINCT ON (ST_X(f.geom), ST_Y(f.geom))");
+      expect(statement).toContain(", 1, 10)::date");
+      expect(statement).not.toContain("AT TIME ZONE 'UTC'");
+    });
+
+    it("still drops a partial observation rather than zero-filling it", async () => {
+      const observations = await atServerToday(async () => {
+        const partial = weatherRow(-116.2, 43.6, `${PAST_DAY}T18:00:00.000Z`);
+        partial.properties.windDirection = null as unknown as number;
+        dbExecute.mockResolvedValueOnce([partial]);
+        return getPublishedWeatherForBbox(VIEWPORT, PAST_DAY);
+      });
+
+      expect(observations).toEqual([]);
+    });
+
+    it("refuses a future day without touching the warehouse", async () => {
+      const observations = await atServerToday(() =>
+        getPublishedWeatherForBbox(VIEWPORT, "2026-08-06")
+      );
+
+      expect(observations).toEqual([]);
+      expect(dbExecute).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("getPublishedVegetationIndex", () => {
+    /** The projection the cell scan selects, with the stored payload's shape. */
+    function cellRow(cellKey: string, ndvi: number, observedAt: string) {
+      return {
+        geometry_id: `geom-${cellKey}`,
+        geometry: JSON.stringify({
+          type: "Polygon",
+          coordinates: [
+            [
+              [-113.75, 43],
+              [-113.5, 43],
+              [-113.5, 43.25],
+              [-113.75, 43.25],
+              [-113.75, 43],
+            ],
+          ],
+        }),
+        ndvi: String(ndvi),
+        observed_at: observedAt,
+        cell_key: cellKey,
+        scene_id: "S2A_11TQH_20260501_0_L2A",
+        cloud_cover: "3.6",
+        sample_count: "21",
+        grid_name: "sentinel2-ndvi-0p25deg",
+        resolution_metres: "27830",
+        source: "Sentinel-2 L2A",
+        provenance_key: `${cellKey}:${observedAt}`,
+      };
+    }
+
+    it("slides the 30-day window to end at the requested day instead of at now", async () => {
+      const result = await atServerToday(async () => {
+        // Inside 30 days of 2026-05-01, and ~3.5 months before "now": a now-relative cutoff
+        // would blank the whole grid for that day.
+        dbExecute.mockResolvedValueOnce([
+          cellRow("43.1250:-113.6250", 0.31, "2026-04-20T18:42:36.471Z"),
+        ]);
+        return getPublishedVegetationIndex(VIEWPORT, PAST_DAY);
+      });
+
+      expect(result.availability).toBe("published");
+      expect(result.features).toHaveLength(1);
+
+      const statement = renderSqlText(dbExecute.mock.calls[0]?.[0]);
+      expect(statement).toMatch(
+        /substring\(f\.properties->>'observedAt', 1, 10\)::date >\s*::date/
+      );
+      expect(statement).toMatch(
+        /substring\(f\.properties->>'observedAt', 1, 10\)::date <=\s*::date/
+      );
+    });
+
+    it("drops a cell read before the window, and one read after the requested day", async () => {
+      const result = await atServerToday(async () => {
+        dbExecute.mockResolvedValueOnce([
+          cellRow("in-window", 0.31, "2026-04-20T18:42:36.471Z"),
+          cellRow("before-window", 0.28, "2026-03-01T18:42:36.471Z"),
+          // A later reading must never leak backwards into a past day's answer.
+          cellRow("after-the-day", 0.55, "2026-06-01T18:42:36.471Z"),
+        ]);
+        return getPublishedVegetationIndex(VIEWPORT, PAST_DAY);
+      });
+
+      expect(
+        result.features.map(
+          (feature) => (feature.properties as Record<string, unknown>).cellKey
+        )
+      ).toEqual(["in-window"]);
+    });
+
+    it("bounds the empty-case probe to the requested day, so a never-sampled day is not called stale", async () => {
+      const result = await atServerToday(async () => {
+        dbExecute
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([{ observed_at: "2026-03-01T18:42:36.471Z" }]);
+        return getPublishedVegetationIndex(VIEWPORT, PAST_DAY);
+      });
+
+      expect(result.reason).toBe("stale");
+      const probe = renderSqlText(dbExecute.mock.calls[1]?.[0]);
+      expect(probe).toMatch(/<=\s*::date/);
+    });
+
+    it("reports not_forecastable for a future day without reading the warehouse", async () => {
+      const result = await atServerToday(() =>
+        getPublishedVegetationIndex(VIEWPORT, "2026-08-06")
+      );
+
+      expect(result.availability).toBe("unavailable");
+      expect(result.reason).toBe("not_forecastable");
+      expect(result.features).toEqual([]);
+      expect(dbExecute).not.toHaveBeenCalled();
+    });
+
+    it("binds no bare fractional parameter on the named-day path", async () => {
+      await atServerToday(() => getPublishedVegetationIndex(VIEWPORT, PAST_DAY));
+      expectNoBareFractionalParameter(dbExecute.mock.calls[0]?.[0]);
+    });
+  });
+
+  describe("getPublishedDroughtClassification", () => {
+    /** The release probe `resolveDroughtRelease` issues before reading geometry. */
+    function releaseProbe(
+      earliest: string | null,
+      asOf: string | null,
+      next: string | null
+    ) {
+      return [{ earliest_release: earliest, as_of_release: asOf, next_release: next }];
+    }
+
+    function classRow(dmCategory: number, validDate: string) {
+      return {
+        dm_category: dmCategory,
+        valid_date: validDate,
+        source_url: "https://droughtmonitor.unl.edu/",
+        geometry: JSON.stringify({
+          type: "Polygon",
+          coordinates: [
+            [
+              [-117, 43],
+              [-116, 43],
+              [-116, 44],
+              [-117, 43],
+            ],
+          ],
+        }),
+      };
+    }
+
+    it("renders a release week the record skips as empty, not as the week before it", async () => {
+      const result = await atServerToday(async () => {
+        dbExecute.mockResolvedValueOnce(
+          releaseProbe("2026-01-06", "2026-03-03", "2026-03-17")
+        );
+        return getPublishedDroughtClassification(VIEWPORT, "2026-03-10");
+      });
+
+      expect(result.availability).toBe("unavailable");
+      expect(result.reason).toBe("release_week_not_published");
+      expect(result.features).toEqual([]);
+      // Refused before any geometry is read: the shared resolver decides this, not the clip.
+      expect(dbExecute).toHaveBeenCalledTimes(1);
+    });
+
+    it("pins a past day to the release covering it, never to the newest one", async () => {
+      const result = await atServerToday(async () => {
+        dbExecute
+          .mockResolvedValueOnce(
+            releaseProbe("2026-01-06", "2026-04-28", "2026-05-05")
+          )
+          .mockResolvedValueOnce([classRow(2, "2026-04-28")]);
+        return getPublishedDroughtClassification(VIEWPORT, PAST_DAY);
+      });
+
+      expect(result.availability).toBe("published");
+      // The release's own date, not the requested one, and how far it was carried.
+      expect(result.features[0]?.properties?.validDate).toBe("2026-04-28");
+      expect(result.carryForwardDays).toBe(3);
+
+      const geometryStatement = renderSqlText(dbExecute.mock.calls[1]?.[0]);
+      expect(geometryStatement).toContain("d.valid_date = ");
+      expect(geometryStatement).not.toContain("ORDER BY valid_date DESC");
+    });
+
+    it("reads the newest release, in one statement, when no day is named", async () => {
+      const result = await atServerToday(async () => {
+        dbExecute.mockResolvedValueOnce([classRow(1, "2026-08-04")]);
+        return getPublishedDroughtClassification(VIEWPORT);
+      });
+
+      expect(result.availability).toBe("published");
+      // Nothing was carried forward TO, so the field is absent rather than a bare 0.
+      expect(result.carryForwardDays).toBeUndefined();
+      // The live path must not start paying for a release probe.
+      expect(dbExecute).toHaveBeenCalledTimes(1);
+      expect(renderSqlText(dbExecute.mock.calls[0]?.[0])).toContain(
+        "ORDER BY valid_date DESC"
+      );
+    });
+
+    it("refuses a future day without touching the warehouse", async () => {
+      const result = await atServerToday(() =>
+        getPublishedDroughtClassification(VIEWPORT, "2026-08-06")
+      );
+
+      expect(result.availability).toBe("unavailable");
+      expect(result.reason).toBe("not_forecastable");
+      expect(dbExecute).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("getPublishedFireDetections", () => {
+    it("dates a detection by its FIRMS acquisition day, never by created_at", async () => {
+      const collection = await atServerToday(async () => {
+        dbExecute.mockResolvedValueOnce([
+          {
+            properties: {
+              geometry: { type: "Point", coordinates: [-116.2, 43.6] },
+              acqDate: PAST_DAY,
+              acqTime: "1042",
+              frp: 12.5,
+            },
+          },
+        ]);
+        return getPublishedFireDetections(VIEWPORT, 2, PAST_DAY);
+      });
+
+      expect(collection.features).toHaveLength(1);
+      expect(collection.features[0].properties?.observedAt).toBe(
+        `${PAST_DAY}T10:42:00.000Z`
+      );
+      // created_at is a "last touched" column the refresh path rewrites, so the live read's
+      // floor on it can never answer for a past day.
+      expect(queryChain.limit).not.toHaveBeenCalled();
+      expect(renderSqlText(dbExecute.mock.calls[0]?.[0])).toContain(
+        "f.properties->>'acqDate'"
+      );
+    });
+
+    it("refuses a future day without touching the warehouse", async () => {
+      const collection = await atServerToday(() =>
+        getPublishedFireDetections(VIEWPORT, 2, "2026-08-06")
+      );
+
+      expect(collection.features).toEqual([]);
+      expect(dbExecute).not.toHaveBeenCalled();
+      expect(queryChain.limit).not.toHaveBeenCalled();
+    });
   });
 });

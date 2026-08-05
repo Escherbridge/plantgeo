@@ -20,14 +20,23 @@ export default function StyleSwitcher() {
           key={opt.id}
           onClick={() => setCurrentStyle(opt.id)}
           title={opt.label}
-          className={cn(
-            "h-8 w-8 rounded-md border-2 transition-all",
-            opt.color,
-            currentStyle === opt.id
-              ? "border-[hsl(var(--primary))] ring-2 ring-[hsl(var(--primary)/0.3)]"
-              : "border-transparent hover:border-[hsl(var(--muted-foreground))]"
-          )}
-        />
+          // The hit area grows to the 44px mobile minimum without the swatch reading as a
+          // bigger colour chip than its neighbours: the visible square stays h-8 w-8 and is
+          // centred inside a larger tap target, the same "icon smaller than its button"
+          // proportion the icon buttons elsewhere in this toolbar already use.
+          className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-md max-sm:h-11 max-sm:w-11"
+        >
+          <span
+            aria-hidden="true"
+            className={cn(
+              "h-8 w-8 rounded-md border-2 transition-all",
+              opt.color,
+              currentStyle === opt.id
+                ? "border-[hsl(var(--primary))] ring-2 ring-[hsl(var(--primary)/0.3)]"
+                : "border-transparent group-hover:border-[hsl(var(--muted-foreground))]"
+            )}
+          />
+        </button>
       ))}
     </div>
   );

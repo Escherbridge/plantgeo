@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   fetchBoundedJson: vi.fn(),
   getCachedGeoJSON: vi.fn(async () => null as unknown),
   cacheGeoJSON: vi.fn(async () => undefined),
+  dbExecute: vi.fn(async () => [] as unknown[]),
 }));
 
 vi.mock("@/lib/server/http/bounded-upstream", async (importOriginal) => {
@@ -22,7 +23,9 @@ vi.mock("@/lib/server/redis", () => ({
   cacheGeoJSON: mocks.cacheGeoJSON,
 }));
 
-vi.mock("@/lib/server/db", () => ({ db: {} }));
+// The aggregated SSURGO tiers merge fetched map units through one PostGIS query
+// (`db.execute`); everything else in this file is an upstream proxy with no local DB.
+vi.mock("@/lib/server/db", () => ({ db: { execute: mocks.dbExecute } }));
 vi.mock("@/lib/server/auth", () => ({ getServerSession: vi.fn() }));
 
 import {
@@ -37,8 +40,13 @@ import {
 } from "@/lib/server/services/hydrosheds";
 import {
   getSoilSurvey,
+  MAX_SOIL_AGGREGATION_CELLS_PER_SIDE,
   MAX_SOIL_BBOX_SQUARE_DEGREES,
   MAX_SOIL_POLYGONS,
+  resolveSoilSurveyGranularity,
+  soilSurveyAreaCeiling,
+  SOIL_SURVEY_DETAIL_MIN_ZOOM,
+  SOIL_SURVEY_REGIONAL_MIN_ZOOM,
   SoilSurveyResponseError,
 } from "@/lib/server/services/usda-soil";
 import type { Context } from "@/lib/server/trpc/init";
@@ -63,6 +71,8 @@ beforeEach(() => {
   mocks.getCachedGeoJSON.mockResolvedValue(null);
   mocks.cacheGeoJSON.mockReset();
   mocks.cacheGeoJSON.mockResolvedValue(undefined);
+  mocks.dbExecute.mockReset();
+  mocks.dbExecute.mockResolvedValue([]);
 });
 
 /** The URL the service asked for, as a parsed URL. */
@@ -496,6 +506,201 @@ describe("SSURGO response handling", () => {
       RangeError
     );
     expect(mocks.fetchBoundedJson).not.toHaveBeenCalled();
+  });
+});
+
+describe("SSURGO render granularity", () => {
+  it("resolves detail with no zoom, and at or above the detail threshold", () => {
+    expect(resolveSoilSurveyGranularity(undefined)).toBe("detail");
+    expect(resolveSoilSurveyGranularity(SOIL_SURVEY_DETAIL_MIN_ZOOM)).toBe("detail");
+    expect(resolveSoilSurveyGranularity(SOIL_SURVEY_DETAIL_MIN_ZOOM + 2)).toBe("detail");
+  });
+
+  it("resolves the finer averaged band between the two thresholds", () => {
+    expect(resolveSoilSurveyGranularity(SOIL_SURVEY_REGIONAL_MIN_ZOOM)).toBe(
+      "regional-average"
+    );
+    expect(resolveSoilSurveyGranularity(SOIL_SURVEY_DETAIL_MIN_ZOOM - 1)).toBe(
+      "regional-average"
+    );
+  });
+
+  it("resolves the coarser averaged band below the regional threshold", () => {
+    expect(resolveSoilSurveyGranularity(SOIL_SURVEY_REGIONAL_MIN_ZOOM - 1)).toBe(
+      "coarse-average"
+    );
+    expect(resolveSoilSurveyGranularity(0)).toBe("coarse-average");
+  });
+
+  it("caps the schema-level viewport area only for the detail tier", () => {
+    // No zoom is a legacy caller: keep the original hard ceiling exactly.
+    expect(soilSurveyAreaCeiling(undefined)).toBe(MAX_SOIL_BBOX_SQUARE_DEGREES);
+    expect(soilSurveyAreaCeiling(SOIL_SURVEY_DETAIL_MIN_ZOOM)).toBe(
+      MAX_SOIL_BBOX_SQUARE_DEGREES
+    );
+    // Zoom-aware and averaged: no schema-level rejection, ever -- the service tiles
+    // and truncates honestly instead of erroring.
+    expect(soilSurveyAreaCeiling(SOIL_SURVEY_REGIONAL_MIN_ZOOM)).toBeNull();
+    expect(soilSurveyAreaCeiling(0)).toBeNull();
+  });
+});
+
+describe("SSURGO zoom-aware aggregation", () => {
+  /** A viewport needing exactly a 2x2 grid of safe-sized cells to cover. */
+  const REGIONAL_BBOX = (() => {
+    const side = Math.sqrt(MAX_SOIL_BBOX_SQUARE_DEGREES) * 2;
+    return `-116.5,43.5,${-116.5 + side},${43.5 + side}`;
+  })();
+
+  /** One row of `mergeDrainageClassGroups`' PostGIS output. */
+  function mergedRow(
+    overrides: Partial<{
+      drainage_class: string;
+      geometry: string | null;
+      map_unit_count: string;
+      hydric_count: string;
+      rated_count: string;
+    }> = {}
+  ) {
+    return {
+      drainage_class: "well-drained",
+      geometry: JSON.stringify({
+        type: "Polygon",
+        coordinates: [
+          [
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 1],
+            [0, 0],
+          ],
+        ],
+      }),
+      map_unit_count: "6",
+      hydric_count: "2",
+      rated_count: "4",
+      ...overrides,
+    };
+  }
+
+  it("tiles a viewport needing more than one safe-sized cell into several bounded SDA calls", async () => {
+    mocks.fetchBoundedJson.mockResolvedValue(soilTable([soilRow()]));
+    mocks.dbExecute.mockResolvedValue([mergedRow()]);
+
+    await getSoilSurvey(REGIONAL_BBOX, SOIL_SURVEY_REGIONAL_MIN_ZOOM);
+
+    // A 2x2 grid of MAX_SOIL_BBOX_SQUARE_DEGREES-sized cells -- never one call over
+    // the whole (unsafe) area.
+    expect(mocks.fetchBoundedJson).toHaveBeenCalledTimes(4);
+  });
+
+  it("merges the fetched map units by drainage class and labels the result an average, never a surveyed unit", async () => {
+    mocks.fetchBoundedJson.mockResolvedValue(soilTable([soilRow()]));
+    mocks.dbExecute.mockResolvedValue([mergedRow()]);
+
+    const collection = await getSoilSurvey(REGIONAL_BBOX, SOIL_SURVEY_REGIONAL_MIN_ZOOM);
+
+    expect(collection.granularity).toBe("regional-average");
+    expect(collection.features).toHaveLength(1);
+    const properties = collection.features[0].properties as Record<string, unknown>;
+    expect(properties).toMatchObject({
+      aggregated: true,
+      drainageClass: "well-drained",
+      mapUnitCount: 6,
+      hydricFraction: 0.5,
+    });
+    // Never a surveyed-unit shape: no mukey/muname on an averaged feature.
+    expect(properties.mukey).toBeUndefined();
+    // The merged shape PostGIS returned, not any one fetched map unit's own geometry.
+    expect(collection.features[0].geometry).toEqual({
+      type: "Polygon",
+      coordinates: [
+        [
+          [0, 0],
+          [1, 0],
+          [1, 1],
+          [0, 1],
+          [0, 0],
+        ],
+      ],
+    });
+  });
+
+  it("reports hydricFraction null rather than 0 when no merged unit carried a rating", async () => {
+    mocks.fetchBoundedJson.mockResolvedValue(soilTable([soilRow()]));
+    mocks.dbExecute.mockResolvedValue([
+      mergedRow({ hydric_count: "0", rated_count: "0" }),
+    ]);
+
+    const collection = await getSoilSurvey(REGIONAL_BBOX, SOIL_SURVEY_REGIONAL_MIN_ZOOM);
+
+    expect(
+      (collection.features[0].properties as Record<string, unknown>).hydricFraction
+    ).toBeNull();
+  });
+
+  it("marks an aggregated view truncated when the viewport needs more cells than the budget allows", async () => {
+    mocks.fetchBoundedJson.mockResolvedValue(soilTable([soilRow()]));
+    mocks.dbExecute.mockResolvedValue([mergedRow()]);
+
+    const side =
+      Math.sqrt(MAX_SOIL_BBOX_SQUARE_DEGREES) * (MAX_SOIL_AGGREGATION_CELLS_PER_SIDE + 2);
+    const oversizedBbox = `-116.5,43.5,${-116.5 + side},${43.5 + side}`;
+
+    const collection = await getSoilSurvey(oversizedBbox, SOIL_SURVEY_REGIONAL_MIN_ZOOM);
+
+    expect(collection.truncated).toBe(true);
+    // Capped at the budget -- never fanning out further just because the viewport grew.
+    expect(mocks.fetchBoundedJson).toHaveBeenCalledTimes(
+      MAX_SOIL_AGGREGATION_CELLS_PER_SIDE * MAX_SOIL_AGGREGATION_CELLS_PER_SIDE
+    );
+  });
+
+  it("never rejects an oversized viewport once zoom selects an averaged tier", async () => {
+    mocks.fetchBoundedJson.mockResolvedValue(soilTable([soilRow()]));
+    mocks.dbExecute.mockResolvedValue([mergedRow()]);
+
+    const side = Math.sqrt(MAX_SOIL_BBOX_SQUARE_DEGREES) * 20;
+    const hugeBbox = `-116.5,43.5,${-116.5 + side},${43.5 + side}`;
+
+    await expect(getSoilSurvey(hugeBbox, 4)).resolves.toMatchObject({
+      granularity: "coarse-average",
+      truncated: true,
+    });
+  });
+
+  it("sums unreadable-geometry and upstream-truncation across every fetched cell", async () => {
+    mocks.fetchBoundedJson.mockResolvedValue(
+      soilTable([soilRow({ geom: "POLYGON EMPTY" }), soilRow({ mukey: "2496658" })])
+    );
+    mocks.dbExecute.mockResolvedValue([mergedRow()]);
+
+    const collection = await getSoilSurvey(REGIONAL_BBOX, SOIL_SURVEY_REGIONAL_MIN_ZOOM);
+
+    // Each of the four cells drops one unreadable row.
+    expect(collection.unreadableGeometries).toBe(4);
+  });
+
+  it("returns an empty averaged collection without touching PostGIS when no cell has a map unit", async () => {
+    mocks.fetchBoundedJson.mockResolvedValue({});
+
+    const collection = await getSoilSurvey(REGIONAL_BBOX, SOIL_SURVEY_REGIONAL_MIN_ZOOM);
+
+    expect(collection.features).toEqual([]);
+    expect(mocks.dbExecute).not.toHaveBeenCalled();
+  });
+
+  it("still serves real per-map-unit polygons at the detail tier, unchanged", async () => {
+    mocks.fetchBoundedJson.mockResolvedValue(soilTable([soilRow()]));
+
+    const collection = await getSoilSurvey(BBOX, SOIL_SURVEY_DETAIL_MIN_ZOOM);
+
+    expect(collection.granularity).toBe("detail");
+    expect(mocks.fetchBoundedJson).toHaveBeenCalledTimes(1);
+    expect(mocks.dbExecute).not.toHaveBeenCalled();
+    expect((collection.features[0].properties as { mukey: string }).mukey).toBe(
+      "2519086"
+    );
   });
 });
 

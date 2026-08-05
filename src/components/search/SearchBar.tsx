@@ -62,7 +62,8 @@ export default function SearchBar() {
       <button
         className={cn(
           "absolute top-4 left-4 z-10 sm:hidden",
-          "flex h-10 w-10 items-center justify-center rounded-full",
+          // h-11 w-11 (44px): a real tap target for the primary way to reach search on mobile.
+          "flex h-11 w-11 items-center justify-center rounded-full",
           "bg-[var(--glass-bg)] border border-[var(--glass-border)]",
           "shadow-[var(--shadow-lg)] [backdrop-filter:blur(var(--glass-blur))]",
           "text-[hsl(var(--foreground))]",
@@ -108,14 +109,17 @@ export default function SearchBar() {
           {query.length > 0 && (
             <button
               onClick={handleClear}
-              className="text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors"
+              // p-1.5 grows the tap target around a 16px icon; this had no padding at all
+              // before (a 16x16 hit area), and the two icon buttons sit close enough together
+              // that a full 44px target on each would make them overlap.
+              className="p-1.5 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors"
               aria-label="Clear search"
             >
               <X className="size-4" />
             </button>
           )}
           <button
-            className="sm:hidden text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors"
+            className="sm:hidden p-1.5 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors"
             onClick={() => {
               setIsExpanded(false);
               reset();

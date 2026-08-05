@@ -14,6 +14,7 @@ from agri_data_service.config import settings
 from agri_data_service.execution import historical_parquet
 from agri_data_service.execution.historical_backfill import (
     NASA_POWER_DAILY_SCHEMA_VERSION,
+    NASA_POWER_SIGNAL_SPECIFICATIONS,
     AnalysisGridCell,
     HistoricalBackfillWindow,
     HistoricalNasaBackfillPlan,
@@ -77,14 +78,25 @@ def _payload() -> bytes:
     ).encode()
 
 
+# Representative in-range value per parameter so a payload never asserts a soil
+# saturation fraction using a precipitation magnitude.
+_REPRESENTATIVE_PARAMETER_VALUES: dict[str, float] = {
+    "PRECTOTCORR": 3.5,
+    "T2M": 21.2,
+    "GWETPROF": 0.42,
+    "GWETROOT": 0.44,
+    "GWETTOP": 0.46,
+}
+
+
 def _complete_payload(plan: NasaPowerDailyPlan) -> bytes:
     days = [plan.window.start_date + timedelta(days=offset) for offset in range(plan.window.day_count)]
     return json.dumps(
         {
             "properties": {
                 "parameter": {
-                    "PRECTOTCORR": {day.strftime("%Y%m%d"): 3.5 for day in days},
-                    "T2M": {day.strftime("%Y%m%d"): 21.2 for day in days},
+                    parameter: {day.strftime("%Y%m%d"): _REPRESENTATIVE_PARAMETER_VALUES[parameter] for day in days}
+                    for parameter in plan.parameters
                 }
             }
         },
@@ -125,6 +137,33 @@ def test_nasa_power_plan_requires_canonical_four_year_window_and_inputs() -> Non
     plan = _plan()
     assert plan.window.day_count == EXPECTED_FOUR_YEAR_DAY_COUNT
     assert plan.window.start_date.isoformat() == "2022-07-20"
+
+
+def test_nasa_power_soil_wetness_signals_keep_a_saturation_fraction_contract() -> None:
+    """Pin the soil signal names, units and depth ordering that serving reads."""
+    assert NASA_POWER_SIGNAL_SPECIFICATIONS["GWETTOP"] == ("soil_wetness_surface", "fraction_of_saturation")
+    assert NASA_POWER_SIGNAL_SPECIFICATIONS["GWETROOT"] == ("soil_wetness_root_zone", "fraction_of_saturation")
+    assert NASA_POWER_SIGNAL_SPECIFICATIONS["GWETPROF"] == ("soil_wetness_profile", "fraction_of_saturation")
+
+    # A degree of saturation must never be reported in ERA5's volumetric unit.
+    soil_units = {
+        unit for signal_name, unit in NASA_POWER_SIGNAL_SPECIFICATIONS.values() if signal_name.startswith("soil_")
+    }
+    assert soil_units == {"fraction_of_saturation"}
+
+    plan = _plan(parameters=["GWETPROF", "GWETROOT", "GWETTOP"])
+    payload = _complete_payload(plan)
+    result = parse_nasa_power_daily_payload(
+        plan, plan.cells[0], payload, retrieved_at=datetime(2026, 7, 21, tzinfo=UTC)
+    )
+    landed = {observation.signal_name for observation in result.observations}
+    assert landed == {"soil_wetness_profile", "soil_wetness_root_zone", "soil_wetness_surface"}
+    assert all(observation.original_unit == observation.normalized_unit for observation in result.observations)
+    assert all(
+        observation.original_value == observation.normalized_value
+        for observation in result.observations
+        if observation.is_observed
+    )
 
 
 def test_nasa_power_url_is_canonical_and_credential_free() -> None:

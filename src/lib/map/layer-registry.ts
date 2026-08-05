@@ -38,7 +38,10 @@ export interface LayerRegistryEntry {
   warehouseLayerName: string | null;
   /** The sidebar panel that owns this switch, or null when no panel does. */
   panelId: PanelId | null;
-  /** Set when the capability is withheld by governance; the switch is disabled and the layer never renders. */
+  /**
+   * Set when the capability is withheld -- by governance, or because the data behind it
+   * doesn't exist yet -- the switch is disabled and the layer never renders either way.
+   */
   permanentlyUnavailableReason: string | null;
 }
 
@@ -136,14 +139,22 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "soil",
     permanentlyUnavailableReason: null,
   },
+  // Served by /api/v1/action-network's k-anonymity-floored activity grid --
+  // aggregateActivityGrid in src/lib/server/services/community-activity.ts groups
+  // strategy_requests into zoom-derived cells with a HAVING count(*) >= 3 floor and
+  // bbox-independent cell membership, so publishing it never leaks a single private
+  // submission's location (see community-activity-anonymity.test.ts). That is the
+  // "reviewed, access-controlled warehouse publication" this switch was withheld
+  // pending; the 2026-08-03 owner decision reversed the governance stubs generally
+  // ("open the gates rather than preserving them"), and this one's gate was already
+  // satisfied. DemandHeatmapLayer/useActionNetworkFeatures/the worker needed no changes.
   "demand-heatmap": {
     toggleId: "demand-heatmap",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,
     panelId: "community",
-    permanentlyUnavailableReason:
-      "Aggregate demand is not published, because it would leak the locations the ledger exists to protect. It stays dark until a reviewed, access-controlled warehouse publication is in place.",
+    permanentlyUnavailableReason: null,
   },
   interventions: {
     toggleId: "interventions",
@@ -174,14 +185,20 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "fire",
     permanentlyUnavailableReason: null,
   },
-  // Toggled from the MapControls toolbar, so no panel governs it.
+  // Toggled from the MapControls toolbar, so no panel governs it. Withheld: the Martin
+  // function (building_tiles) is live, but its backing table geo.osm_buildings has 0 rows
+  // in production -- the osm2pgsql import (infra/db/import/osm-flex-config.lua) has not
+  // been run for the covered region -- so the switch would toggle a capability that can
+  // never show anything. Drop this reason the same way demand-heatmap's was dropped, once
+  // the import has run and the table is populated; nothing else needs to change.
   "building-footprints": {
     toggleId: "building-footprints",
     renderKind: "style",
     styleLayerIds: ["building-footprints"],
     warehouseLayerName: null,
     panelId: null,
-    permanentlyUnavailableReason: null,
+    permanentlyUnavailableReason:
+      "3D building footprints are not published yet: the OSM building import has not been run for this region, so geo.osm_buildings has no rows even though the tile function is live.",
   },
 };
 

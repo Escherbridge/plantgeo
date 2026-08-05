@@ -8,8 +8,10 @@ import { Slider } from "@/components/ui/slider";
 import { trpc } from "@/lib/trpc/client";
 import {
   ENVIRONMENTAL_TILES_CONFIGURED,
+  NDVI_ANOMALY_UNAVAILABLE_REASON,
   NDVI_COLOR_RAMP,
   NDWI_COLOR_RAMP,
+  NDWI_UNAVAILABLE_REASON,
 } from "@/lib/vegetation";
 import { NLCD_CATEGORY_CLASSES, NLCD_CLASSES, type NLCDCategory } from "@/lib/environmental/nlcd";
 import { useVegetationStore } from "@/stores/vegetation-store";
@@ -266,32 +268,50 @@ export function VegetationPanel({
               </div>
 
               <div className="flex items-center justify-between">
-                <label className="text-xs text-[hsl(var(--foreground))] cursor-pointer">
+                <label
+                  htmlFor="ndvi-anomaly-toggle"
+                  className="text-xs text-[hsl(var(--foreground))] cursor-not-allowed opacity-60"
+                >
                   Anomaly mode
-                  <span className="block text-[10px] text-[hsl(var(--muted-foreground))]">
-                    Deviation from 10-yr average
+                  {/* The reason is on the page, not only in a title: a disabled control
+                      isn't focusable. See TimeSlider's forecast-variant hint. */}
+                  <span className="block text-[10px] text-amber-600 dark:text-amber-400">
+                    {NDVI_ANOMALY_UNAVAILABLE_REASON}
                   </span>
                 </label>
                 <input
+                  id="ndvi-anomaly-toggle"
                   type="checkbox"
                   checked={anomalyMode}
                   onChange={handleAnomalyToggle}
-                  className="rounded"
+                  disabled
+                  aria-disabled="true"
+                  title={NDVI_ANOMALY_UNAVAILABLE_REASON}
+                  className="rounded disabled:cursor-not-allowed disabled:opacity-50"
                 />
               </div>
 
               <div className="flex items-center justify-between">
-                <label className="text-xs text-[hsl(var(--foreground))] cursor-pointer">
+                <label
+                  htmlFor="ndvi-ndwi-toggle"
+                  className="text-xs text-[hsl(var(--foreground))] cursor-not-allowed opacity-60"
+                >
                   Show NDWI (water stress)
-                  <span className="block text-[10px] text-[hsl(var(--muted-foreground))]">
-                    Vegetation water content
+                  {/* The reason is on the page, not only in a title: a disabled control
+                      isn't focusable. See TimeSlider's forecast-variant hint. */}
+                  <span className="block text-[10px] text-amber-600 dark:text-amber-400">
+                    {NDWI_UNAVAILABLE_REASON}
                   </span>
                 </label>
                 <input
+                  id="ndvi-ndwi-toggle"
                   type="checkbox"
                   checked={showNDWI}
                   onChange={handleNDWIToggle}
-                  className="rounded"
+                  disabled
+                  aria-disabled="true"
+                  title={NDWI_UNAVAILABLE_REASON}
+                  className="rounded disabled:cursor-not-allowed disabled:opacity-50"
                 />
               </div>
 

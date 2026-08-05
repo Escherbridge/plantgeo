@@ -21,6 +21,11 @@ const DYNAMIC_TILES_URL =
 // vector_layers in TileJSON for tables but cannot for functions, and MapLibre
 // validates style source-layers against vector_layers whenever the field is
 // present -- a mixed composite therefore rejects every function-backed layer.
+// building_tiles stays in this composite even though geo.osm_buildings has 0 rows in
+// production: the Martin function is live and serves valid (empty) tiles, so there is no
+// 404 risk to the rest of the composite. What's withheld is the *switch* --
+// LAYER_REGISTRY["building-footprints"].permanentlyUnavailableReason in layer-registry.ts
+// -- not the source, so populating the table needs no change here.
 const DYNAMIC_TILE_SOURCE_IDS = [
   "fire_risk_tiles",
   "sensor_tiles",
@@ -30,6 +35,15 @@ const DYNAMIC_TILE_SOURCE_IDS = [
   "building_tiles",
 ] as const;
 
+// Both are Martin *table* sources, and both geo.osm_roads and geo.osm_waterways also have
+// 0 rows in production -- but unlike building-footprints, neither has a LayerRegistry
+// toggle to withhold: they're baked unconditionally into every style's roadsLayer/
+// waterwaysLayer (src/lib/map/layers.ts), the same always-on shape as the protomaps
+// roads/water basemap layers. An empty source renders nothing rather than erroring (see
+// src/components/map/AGENTS.md "The layer toggle is the only source of layer
+// visibility"), and there is no switch here to mislead anyone about, so nothing needs to
+// change: both start drawing with no code change once the osm2pgsql import
+// (infra/db/import/osm-flex-config.lua) has been run for the covered region.
 const OSM_TILE_SOURCE_IDS = ["osm_roads", "osm_waterways"] as const;
 
 const SATELLITE_URL =

@@ -46,7 +46,17 @@ STREAMFLOW_QUERY_TEMPLATE: Final = (
     "https://waterservices.usgs.gov/nwis/iv/?format=json&bBox={tile}&parameterCd=00060&siteType=ST&siteStatus=active"
 )
 
-NWIS_BOUNDS: Final = UpstreamBounds(max_bytes=8 * 1024 * 1024, timeout_seconds=10.0)
+# 25s, not the 10s this carried until 2026-08-05. NWIS's bBox/spatial-filter path degraded
+# that day: measured against it live, non-spatial lookups stayed sub-second (root 0.52s,
+# single-site 0.37s) while every bBox query -- any region, and a 1-degree box as readily as a
+# 4-degree one -- answered in 7-14s or not at all. All eight tiles must succeed for the job to
+# write anything (see _fetch_tile), so a 10s budget failed every run for hours. 25s covers the
+# genuine-but-slow band; a tile that never answers still times out and the job still fails
+# loudly, which is correct -- partial coverage must never be reported as a complete day. Costs
+# at most ~50s more per run against a 30-minute cadence. See src/lib/server/services/
+# usgs-water.ts for the user-facing sibling, deliberately left at 10s: a request someone is
+# waiting on cannot afford this.
+NWIS_BOUNDS: Final = UpstreamBounds(max_bytes=8 * 1024 * 1024, timeout_seconds=25.0)
 
 # NWIS rejects bBox requests wider than 25 square degrees (longitude span * latitude span).
 MAX_TILE_DEGREES: Final = 4.0

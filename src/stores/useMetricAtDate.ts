@@ -19,8 +19,15 @@ import {
   useTimeSliderStore,
 } from "./time-slider-store";
 
-/** Milliseconds of stillness before a scrub turns into a request. */
-const SCRUB_SETTLE_MS = 250;
+/**
+ * Milliseconds of stillness before a scrub turns into a request.
+ *
+ * Exported and shared rather than restated per caller: the slider writes a new day on every
+ * pointer tick, and every consumer that turns the day into a request must settle on the SAME
+ * boundary. Two different settle windows would issue two waves of requests per scrub for the
+ * same day -- see `useDebouncedMapDay` in `src/lib/map/layer-toggle-context.ts`.
+ */
+export const SCRUB_SETTLE_MS = 250;
 /**
  * Days either side of the selection that are worth warming.
  *
