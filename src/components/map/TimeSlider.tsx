@@ -114,6 +114,18 @@ const FORECAST_VARIANT_OPTIONS: ReadonlyArray<{
 /** Shown while the selection is not in the future, where no forecast applies. */
 const FORECASTS_ARE_FUTURE_ONLY = "forecasts apply to future dates";
 
+/**
+ * Horizontal anchor for a label pinned to a percentage along the track. Centred in the middle
+ * of the range; at either end the label's own edge is anchored to the tick instead, so it can
+ * never overhang the panel. The 12%/88% cutoffs are where a ~80px label stops fitting either
+ * side of the tick in the 384px right-hand region -- the narrowest place this renders.
+ */
+function todayLabelTransform(percent: number): string {
+  if (percent >= 88) return "translateX(-100%)";
+  if (percent <= 12) return "translateX(0)";
+  return "translateX(-50%)";
+}
+
 /** "fire-detections" -> "Fire detections", so a geo.layers name can start a sentence. */
 function humanizeLayerName(layerName: string): string {
   const spaced = layerName.replace(/-/g, " ");
@@ -341,10 +353,19 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
         />
       </div>
 
+      {/* The label is centred on the today tick, EXCEPT near either end, where centring would
+          hang half of it outside the panel. Measured in production at 384px wide with today at
+          the domain's right edge: it overflowed by 27px and gave the whole region a horizontal
+          scrollbar. Anchoring its trailing edge to the tick instead keeps it attached to the
+          thing it names while staying inside -- clipping it would hide the date, and letting
+          the panel scroll sideways is what this replaces. */}
       <div className="relative h-4">
         <span
           className="map-popup-meta absolute whitespace-nowrap"
-          style={{ left: `${percentOfOffset(todayTickOffset)}%`, transform: "translateX(-50%)" }}
+          style={{
+            left: `${percentOfOffset(todayTickOffset)}%`,
+            transform: todayLabelTransform(percentOfOffset(todayTickOffset)),
+          }}
           data-testid="time-slider-today-label"
         >
           Today {today}
