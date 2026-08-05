@@ -17,7 +17,6 @@ export type PanelId =
   | "vegetation"
   | "soil"
   | "community"
-  | "strategy"
   | "team"
   | "analytics";
 
@@ -33,7 +32,6 @@ function buildPanelLayerMap(): Record<PanelId, LayerToggleId[]> {
     vegetation: [],
     soil:       [],
     community:  [],
-    strategy:   [],
     analytics:  [],
     team:       [],
   };

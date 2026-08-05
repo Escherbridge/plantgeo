@@ -35,6 +35,36 @@ const NATIONAL_DROUGHT_TOLERANCE_DEGREES = 0.05;
 const MIN_DROUGHT_TOLERANCE_DEGREES = 0.0005;
 
 /**
+ * How old a vegetation cell's newest observation may be and still be served.
+ *
+ * Sentinel-2 revisits every five days but a cell only yields an NDVI sample on a scene
+ * clear enough to read, so per-cell freshness is set by cloud, not by revisit. Measured
+ * against production 2026-08-05 over all 1,568 cells on record: 1,503 were last observed
+ * within 9 days and the remaining 65 between 15 and 28 days. 30 days therefore keeps every
+ * cell the warehouse currently holds while still refusing a genuinely abandoned one, and a
+ * 14-day window -- the value the drought reader uses -- would blank 65 real cells that have
+ * simply been under cloud.
+ *
+ * It is also the read's main lever on cost: the stored series is four years deep
+ * (2022-08-05 onward, 184,409 rows over those same 1,568 cells), so cutting the scan to a
+ * 30-day window is what stops every viewport read from walking the whole history.
+ */
+const VEGETATION_MAX_OBSERVATION_AGE_DAYS = 30;
+const VEGETATION_MAX_AGE_MS = VEGETATION_MAX_OBSERVATION_AGE_DAYS * 86_400_000;
+
+/**
+ * Upper bound on grid cells returned for one viewport.
+ *
+ * Stated rather than left implicit, because the bbox is NOT what bounds this read. The
+ * sampling grid is fixed at 0.25 degrees, so after the latest-per-cell collapse below even
+ * a whole-world bbox answers with the grid itself -- 1,568 cells today, against the 184,409
+ * rows that back them. What the bbox buys is a smaller scan, not a smaller answer, and the
+ * only thing standing between a future national grid and an unservable payload is this cap.
+ * A truncated answer says so in `truncated` rather than silently serving a subset.
+ */
+const VEGETATION_MAX_CELLS = 4_000;
+
+/**
  * USGS NWIS writes this in place of a reading it does not have -- an ice-affected gauge, a
  * failed sensor, a provisional value pulled back. It arrives as a JSON number and is stored
  * verbatim, so 259 of the 16,743 stored water-gauges rows currently carry it.
@@ -590,6 +620,234 @@ export async function getDroughtCategoryAtPoint(
   };
 }
 
+/** Canonical `geo.layers.name` for the NDVI grid; mirrors the producer's own env override. */
+const VEGETATION_LAYER_ID = process.env.VEGETATION_LAYER_ID ?? "vegetation";
+
+/**
+ * One sampling-grid cell's newest NDVI reading, with the provenance that dates it.
+ * A type alias rather than an interface, for the same reason MetricAtDateProperties is one:
+ * only an alias picks up the implicit index signature GeoJSON's `properties` slot needs.
+ */
+export type PublishedVegetationCellProperties = {
+  /** geo.geometry identity of the cell; stable across observations of the same place. */
+  geometryId: string;
+  /** The producer's own grid key, e.g. "43.1250:-113.6250". */
+  cellKey: string;
+  ndvi: number;
+  observedAt: string;
+  sceneId: string | null;
+  cloudCover: number | null;
+  /** Usable pixels behind this cell's NDVI; a thin cell is legible as thin. */
+  sampleCount: number | null;
+  gridName: string | null;
+  resolutionMetres: number | null;
+  source: string | null;
+  /** The stored natural key (cellKey:observedAt), so one reading is traceable upstream. */
+  provenanceKey: string;
+};
+
+export interface PublishedVegetationCollection
+  extends GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon> {
+  availability: "published" | "unavailable";
+  /** Newest observation in the returned set; null when nothing was returned. */
+  observedAt: string | null;
+  /** `stale` means cells exist here but none was observed inside the window. */
+  reason: "not_published" | "stale" | null;
+  /** More cells intersect the viewport than the cap allows; this set is a subset. */
+  truncated: boolean;
+  cellCount: number;
+  /** Both bounds published, so the client never has to infer either one. */
+  maxCellCount: number;
+  maxObservationAgeDays: number;
+}
+
+/** Object type, not an interface: db.execute requires an implicit index signature. */
+type VegetationCellRow = {
+  geometry_id: string | null;
+  geometry: string | null;
+  ndvi: string | null;
+  observed_at: string | null;
+  cell_key: string | null;
+  scene_id: string | null;
+  cloud_cover: string | null;
+  sample_count: string | null;
+  grid_name: string | null;
+  resolution_metres: string | null;
+  source: string | null;
+  provenance_key: string | null;
+};
+
+/** A viewport that holds no vegetation cell at all, or none observed recently enough. */
+function emptyVegetationCollection(
+  reason: "not_published" | "stale",
+  observedAt: string | null
+): PublishedVegetationCollection {
+  return {
+    type: "FeatureCollection",
+    features: [],
+    availability: "unavailable",
+    observedAt,
+    reason,
+    truncated: false,
+    cellCount: 0,
+    maxCellCount: VEGETATION_MAX_CELLS,
+    maxObservationAgeDays: VEGETATION_MAX_OBSERVATION_AGE_DAYS,
+  };
+}
+
+/**
+ * Reads the newest published NDVI observation per sampling-grid cell in a viewport.
+ *
+ * The whole difficulty is that `vegetation` is a four-year daily series stacked on a small
+ * fixed grid, not a snapshot: 184,409 published rows over 1,568 distinct cells, ~118
+ * observations of the same place each. Returning the rows raw would draw the same cell a
+ * hundred times over, so the read collapses to one row per `geo.geometry` identity -- the
+ * newest -- exactly as `getPublishedStreamflowGauges` keeps one row per gauge and
+ * `getMetricAtDate` keeps one per geometry. Measured, that collapse is the entire payload
+ * story: a PNW viewport goes from 124,959 rows to 1,036 cells.
+ *
+ * Three bounds, all explicit rather than left to the viewport's good behaviour:
+ *   - the bbox filters the scan (`&&` against the GiST index on geo.features.geom);
+ *   - VEGETATION_MAX_OBSERVATION_AGE_DAYS bounds how far back a cell may have been seen,
+ *     applied in SQL so the cap below counts only cells that will actually be drawn;
+ *   - VEGETATION_MAX_CELLS caps the answer, probed one row over so `truncated` is never
+ *     claimed against a result that merely filled the page exactly.
+ *
+ * Nothing is interpolated, carried forward or averaged: a cell under cloud for a month is
+ * omitted, not painted with a value from before the cloud.
+ */
+export async function getPublishedVegetationIndex(
+  bbox: string
+): Promise<PublishedVegetationCollection> {
+  const [west, south, east, north] = parseBbox(bbox);
+  const freshSince = new Date(Date.now() - VEGETATION_MAX_AGE_MS).toISOString();
+  const tolerance = droughtSimplifyTolerance(east - west);
+
+  // Every stored cell is a 5-vertex axis-aligned square (verified: ST_NPoints = 5 on all
+  // 184,409 rows, in geo.features.geom and in the geo.geometry dimension alike), so
+  // simplification has nothing to remove and is skipped by geometry kind rather than paid
+  // for per row -- the same CASE getMetricAtDate uses to leave point layers untouched. The
+  // ELSE branch is what keeps a future finer or irregular cell servable.
+  const geometrySql = sql`CASE
+    WHEN g.geom_kind IN ('point', 'grid_cell') THEN g.geom
+    ELSE ST_SimplifyPreserveTopology(g.geom, ${tolerance})
+  END`;
+
+  // Values come back as text and are parsed by finiteNumber rather than cast in SQL: a
+  // single non-numeric JSONB value would make a `::double precision` in the projection
+  // abort the whole statement, whereas the reader's job is to drop that one cell. The one
+  // exception is `ndvi`, whose jsonb_typeof test in the WHERE clause is load-bearing for a
+  // different reason -- excluding a valueless cell there is what makes LIMIT count only
+  // cells that will be drawn.
+  //
+  // The DISTINCT ON sort casts `observedAt` to timestamptz, which is deterministic here
+  // because every stored value carries an explicit `Z`. NULLs cannot win the sort's default
+  // NULLS FIRST either: the same expression is filtered above, so a cell with no readable
+  // observation time never reaches the ranking.
+  const rows = await db.execute<VegetationCellRow>(sql`
+    WITH candidate AS (
+      SELECT f.geometry_id, f.properties
+      FROM geo.features f
+      JOIN geo.layers l ON l.id = f.layer_id
+      WHERE l.name = ${VEGETATION_LAYER_ID}
+        AND f.status = 'published'
+        AND f.geometry_id IS NOT NULL
+        AND jsonb_typeof(f.properties->'ndvi') = 'number'
+        AND (f.properties->>'observedAt')::timestamptz >= ${freshSince}::timestamptz
+        AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
+    )
+    SELECT DISTINCT ON (c.geometry_id)
+      g.geometry_id::text AS geometry_id,
+      ST_AsGeoJSON(${geometrySql}) AS geometry,
+      c.properties->>'ndvi' AS ndvi,
+      c.properties->>'observedAt' AS observed_at,
+      c.properties->>'cellKey' AS cell_key,
+      c.properties->>'sceneId' AS scene_id,
+      c.properties->>'cloudCover' AS cloud_cover,
+      c.properties->>'sampleCount' AS sample_count,
+      c.properties->>'gridName' AS grid_name,
+      c.properties->>'resolutionMetres' AS resolution_metres,
+      c.properties->>'source' AS source,
+      COALESCE(c.properties->>'id', g.geometry_id::text) AS provenance_key
+    FROM candidate c
+    JOIN geo.geometry g ON g.geometry_id = c.geometry_id
+    ORDER BY c.geometry_id, (c.properties->>'observedAt')::timestamptz DESC
+    LIMIT ${VEGETATION_MAX_CELLS + 1}
+  `);
+
+  if (rows.length === 0) {
+    // Paid for only in the empty case, and only to tell two very different answers apart:
+    // a viewport the grid does not cover at all, versus one it covers where every cell has
+    // been under cloud longer than the window. MAX over the ISO-8601 text is chronological
+    // because every stored value is the same fixed-width UTC format.
+    const newest = await db.execute<{ observed_at: string | null }>(sql`
+      SELECT MAX(f.properties->>'observedAt') AS observed_at
+      FROM geo.features f
+      JOIN geo.layers l ON l.id = f.layer_id
+      WHERE l.name = ${VEGETATION_LAYER_ID}
+        AND f.status = 'published'
+        AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
+    `);
+    const newestObservedAt = parseZonedObservationTime(newest[0]?.observed_at);
+    return newestObservedAt === null
+      ? emptyVegetationCollection("not_published", null)
+      : emptyVegetationCollection("stale", newestObservedAt);
+  }
+
+  const collected: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>[] = [];
+  let newestObservedAt: string | null = null;
+  for (const row of rows.slice(0, VEGETATION_MAX_CELLS)) {
+    const ndvi = finiteNumber(row.ndvi);
+    const observedAt = parseZonedObservationTime(row.observed_at);
+    if (
+      !row.geometry ||
+      row.geometry_id === null ||
+      ndvi === null ||
+      observedAt === null ||
+      !isFreshObservation(observedAt, VEGETATION_MAX_AGE_MS)
+    ) {
+      continue;
+    }
+    const properties: PublishedVegetationCellProperties = {
+      geometryId: row.geometry_id,
+      cellKey: row.cell_key ?? row.geometry_id,
+      ndvi,
+      observedAt,
+      sceneId: row.scene_id,
+      cloudCover: finiteNumber(row.cloud_cover),
+      sampleCount: finiteNumber(row.sample_count),
+      gridName: row.grid_name,
+      resolutionMetres: finiteNumber(row.resolution_metres),
+      source: row.source,
+      provenanceKey: row.provenance_key ?? row.geometry_id,
+    };
+    if (newestObservedAt === null || observedAt > newestObservedAt) {
+      newestObservedAt = observedAt;
+    }
+    collected.push({
+      type: "Feature",
+      id: row.geometry_id,
+      geometry: JSON.parse(row.geometry) as GeoJSON.Polygon | GeoJSON.MultiPolygon,
+      properties,
+    });
+  }
+
+  if (collected.length === 0) {
+    return emptyVegetationCollection("not_published", null);
+  }
+  return {
+    type: "FeatureCollection",
+    features: collected,
+    availability: "published",
+    observedAt: newestObservedAt,
+    reason: null,
+    truncated: rows.length > VEGETATION_MAX_CELLS,
+    cellCount: collected.length,
+    maxCellCount: VEGETATION_MAX_CELLS,
+    maxObservationAgeDays: VEGETATION_MAX_OBSERVATION_AGE_DAYS,
+  };
+}
+
 /** Reserved read model for a future versioned groundwater layer. */
 export async function getPublishedGroundwaterWells(
   bbox: string
@@ -672,6 +930,17 @@ const OBSERVATION_CLUSTER_GAP_DAYS = 21;
  *
  * The floor only moves the START of the axis forward. Sparse days INSIDE the window are kept
  * and render as the genuine thin days they are -- this never removes an observation.
+ *
+ * It MUST be bound into SQL with an explicit `::numeric` cast. postgres-js sends a plain JS
+ * number as an UNTYPED parameter -- its `inferType` answers OID 0 for every number that is
+ * not a bigint -- so Postgres resolves the parameter's type from the expression around it.
+ * Multiplied against `MAX(observation_count)`, which is a `COUNT(*)` bigint, operator
+ * resolution picks `bigint * bigint` and tries to read "0.01" as a bigint. That is exactly
+ * how getSliderCapabilities answered 500 in production with
+ * `invalid input syntax for type bigint: "0.01"`, which left TimeSliderPanel's capabilities
+ * query rejected and the time slider permanently unmounted. No other fractional parameter in
+ * this file needs the cast: every one of them lands in a PostGIS function argument whose
+ * signature already declares `double precision`, so there is nothing for Postgres to guess.
  */
 const OBSERVATION_DENSITY_FLOOR_FRACTION = 0.01;
 
@@ -962,8 +1231,13 @@ async function readObservationWindows(): Promise<Map<string, ObservationWindowRo
     density AS (
       SELECT
         layer_name,
-        GREATEST(1, CEIL(MAX(observation_count) * ${OBSERVATION_DENSITY_FLOOR_FRACTION}))::bigint
-          AS density_floor
+        -- ::numeric is load-bearing, not decoration: without it Postgres resolves this
+        -- untyped parameter against the bigint on its left and rejects "0.01". See the
+        -- constant's own note.
+        GREATEST(
+          1,
+          CEIL(MAX(observation_count) * ${OBSERVATION_DENSITY_FLOOR_FRACTION}::numeric)
+        )::bigint AS density_floor
       FROM newest_cluster
       GROUP BY layer_name
     ),

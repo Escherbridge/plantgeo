@@ -85,6 +85,13 @@
       "when": 1786300000000,
       "breakpoints": true,
       "tag": "0011_burn_severity_layer"
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786400000000,
+      "breakpoints": true,
+      "tag": "0012_burn_severity_tiles"
     }
   ]
 }

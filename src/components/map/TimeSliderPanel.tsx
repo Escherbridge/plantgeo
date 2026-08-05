@@ -16,13 +16,19 @@ import TimeSlider from "./TimeSlider";
  *
  * The server's payload is the ONLY source of the axis and of "today"; there is no fallback
  * domain, because a browser-clock guess would put "today" on the wrong day for anyone outside
- * UTC and invent an axis nobody measured. Until the payload lands, TimeSlider renders nothing.
+ * UTC and invent an axis nobody measured. Until the payload lands, TimeSlider renders nothing
+ * -- unless the fetch failed outright (see capabilitiesUnavailable below), because a failed
+ * request and a slow-but-healthy one must not look identical: the former was mistaken for a
+ * UI bug once already (the read-model's `invalid input syntax for type bigint: "0.01"` 500).
  */
 /** Matches CAPABILITIES_CACHE_TTL_MS in environmental-read-model.ts, so a poll is a cache hit. */
 const CAPABILITIES_REFRESH_MS = 5 * 60_000;
 
 export default function TimeSliderPanel() {
   const setCapabilities = useTimeSliderStore((state) => state.setCapabilities);
+  const setCapabilitiesUnavailable = useTimeSliderStore(
+    (state) => state.setCapabilitiesUnavailable
+  );
   // The layer list moves only when an ingest run lands a new day, so refetching on every
   // focus would spend the whole-warehouse scan for an answer that has not changed.
   //
@@ -41,10 +47,20 @@ export default function TimeSliderPanel() {
   });
 
   const capabilities = capabilitiesQuery.data;
+  const isError = capabilitiesQuery.isError;
+
   useEffect(() => {
     if (capabilities === undefined) return;
     setCapabilities(capabilities);
   }, [capabilities, setCapabilities]);
+
+  // Only "never got a payload at all" is worth interrupting the panel for. `data` stays the
+  // last successful payload across a background refetch failure (react-query does not clear
+  // it), so once one fetch has succeeded a later transient failure leaves this false and
+  // TimeSlider keeps drawing from the stale-but-real capabilities already in the store.
+  useEffect(() => {
+    setCapabilitiesUnavailable(capabilities === undefined && isError);
+  }, [capabilities, isError, setCapabilitiesUnavailable]);
 
   return <TimeSlider />;
 }

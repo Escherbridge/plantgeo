@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import type { Map as MapLibreMap, RasterTileSource } from "maplibre-gl";
+import type { Map as MapLibreMap, GeoJSONSource, RasterTileSource } from "maplibre-gl";
 import {
   getEnvironmentalTileTemplate,
   getNDVITileUrl,
@@ -10,11 +10,18 @@ import {
   NDWI_COLOR_RAMP,
 } from "@/lib/vegetation";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
+import type { ExpressionSpecification } from "@/types/map";
 
 export type VegetationMode = "ndvi" | "ndwi" | "nbr";
 
 interface VegetationLayerProps {
   map: MapLibreMap | null;
+  /**
+   * Measured NDVI cells read from the warehouse, one per sampling-grid square, each
+   * carrying an `ndvi` number in its properties. Empty -- never null -- when the layer is
+   * switched off or the viewport holds none, so `setData` has something to clear with.
+   */
+  geojson?: GeoJSON.FeatureCollection | null;
   mode?: VegetationMode;
   year?: number;
   month?: number;
@@ -27,6 +34,31 @@ interface VegetationLayerProps {
 const NDVI_LAYER_ID = "ndvi-overlay-layer";
 const NDWI_LAYER_ID = "ndwi-overlay-layer";
 const NBR_LAYER_ID = "nbr-recovery-layer";
+const NDVI_CELL_SOURCE_ID = "vegetation-ndvi-cells";
+const NDVI_CELL_FILL_LAYER_ID = "vegetation-ndvi-cells-fill";
+const NDVI_CELL_OUTLINE_LAYER_ID = "vegetation-ndvi-cells-outline";
+
+const EMPTY_CELL_COLLECTION: GeoJSON.FeatureCollection = {
+  type: "FeatureCollection",
+  features: [],
+};
+
+/**
+ * Fill colour interpolated over the shared NDVI ramp, so a cell and the legend below it
+ * cannot disagree about what a value looks like.
+ *
+ * Derived from NDVI_COLOR_RAMP rather than restated, which is what forces the assertion:
+ * MapLibre types an expression as a union of fixed-length tuples, and spreading a mapped
+ * array widens it to `(string | number | string[])[]`. Restating the nine stops inline
+ * would let the literal be contextually typed -- and would be the first place the fill and
+ * the legend drift apart.
+ */
+const NDVI_CELL_FILL_COLOR = [
+  "interpolate",
+  ["linear"],
+  ["get", "ndvi"],
+  ...NDVI_COLOR_RAMP.flatMap((stop) => [stop.value, stop.color]),
+] as unknown as ExpressionSpecification;
 
 const NBR_COLOR_RAMP = [
   { value: -1.0, color: "#7a0000", label: "Severely burned" },
@@ -63,6 +95,7 @@ function ColorLegend({
 
 export function VegetationLayer({
   map,
+  geojson = null,
   mode = "ndvi",
   year = new Date().getFullYear(),
   month = new Date().getMonth() + 1,
@@ -72,11 +105,11 @@ export function VegetationLayer({
   visible = true,
 }: VegetationLayerProps) {
   // Keep latest prop values in refs so the style.load handler always uses current values
-  const propsRef = useRef({ mode, year, month, ndviMode, showNDWI, opacity, visible });
-  propsRef.current = { mode, year, month, ndviMode, showNDWI, opacity, visible };
+  const propsRef = useRef({ geojson, mode, year, month, ndviMode, showNDWI, opacity, visible });
+  propsRef.current = { geojson, mode, year, month, ndviMode, showNDWI, opacity, visible };
 
   const addAllLayers = useCallback((m: MapLibreMap) => {
-    const { mode, year, month, ndviMode, showNDWI, opacity } = propsRef.current;
+    const { geojson, mode, year, month, ndviMode, showNDWI, opacity } = propsRef.current;
     const beforeId = getFirstSymbolLayer(m);
     const ndviTileUrl = getNDVITileUrl(year, month, ndviMode);
     const ndwiTileUrl = getNDWITileUrl(year, month);
@@ -140,12 +173,54 @@ export function VegetationLayer({
         paint: { "raster-opacity": mode === "nbr" ? opacity : 0 },
       }, beforeId);
     }
+
+    // --- Measured NDVI grid cells (environmental.getVegetationIndex) ---
+    // Added last so it draws ABOVE the rasters: these are the readings this platform
+    // ingested and can cite a scene for, while the NDVI raster underneath is a global
+    // composite proxied from GIBS. Where the grid has been sampled the measurement wins;
+    // everywhere else the raster shows through unchanged. The outline is deliberate --
+    // it keeps the cells legible as discrete 0.25-degree samples rather than as a
+    // continuous surface the sampling never produced.
+    if (!m.getSource(NDVI_CELL_SOURCE_ID)) {
+      m.addSource(NDVI_CELL_SOURCE_ID, {
+        type: "geojson",
+        data: geojson ?? EMPTY_CELL_COLLECTION,
+      });
+    }
+    if (!m.getLayer(NDVI_CELL_FILL_LAYER_ID)) {
+      m.addLayer({
+        id: NDVI_CELL_FILL_LAYER_ID,
+        type: "fill",
+        source: NDVI_CELL_SOURCE_ID,
+        paint: {
+          "fill-color": NDVI_CELL_FILL_COLOR,
+          "fill-opacity": mode === "ndvi" ? opacity : 0,
+        },
+      }, beforeId);
+    }
+    if (!m.getLayer(NDVI_CELL_OUTLINE_LAYER_ID)) {
+      m.addLayer({
+        id: NDVI_CELL_OUTLINE_LAYER_ID,
+        type: "line",
+        source: NDVI_CELL_SOURCE_ID,
+        paint: {
+          "line-color": "#1b3a1b",
+          "line-width": 0.5,
+          "line-opacity": mode === "ndvi" ? 0.35 : 0,
+        },
+      }, beforeId);
+    }
   }, []);
 
   const removeAllLayers = useCallback((m: MapLibreMap) => {
     safeRemoveLayerAndSource(m, [NDVI_LAYER_ID], "ndvi-overlay");
     safeRemoveLayerAndSource(m, [NDWI_LAYER_ID], "ndwi-overlay");
     safeRemoveLayerAndSource(m, [NBR_LAYER_ID], "nbr-recovery");
+    safeRemoveLayerAndSource(
+      m,
+      [NDVI_CELL_FILL_LAYER_ID, NDVI_CELL_OUTLINE_LAYER_ID],
+      NDVI_CELL_SOURCE_ID
+    );
   }, []);
 
   // Main effect: add/remove layers and listen for style changes
@@ -212,7 +287,28 @@ export function VegetationLayer({
     if (map.getLayer(NBR_LAYER_ID)) {
       map.setPaintProperty(NBR_LAYER_ID, "raster-opacity", mode === "nbr" ? opacity : 0);
     }
-  }, [map, year, month, ndviMode, mode, showNDWI, opacity, visible]);
+
+    // Measured NDVI cells: new viewport data, then per-mode opacity. setData rather than a
+    // re-add, so panning swaps the cells without tearing the source down under the map. The
+    // source can legitimately be missing here on the first pass -- the style had not loaded
+    // when this ran -- and addAllLayers then creates it from propsRef with this same data.
+    const cellSource = map.getSource(NDVI_CELL_SOURCE_ID) as GeoJSONSource | undefined;
+    if (cellSource) cellSource.setData(geojson ?? EMPTY_CELL_COLLECTION);
+    if (map.getLayer(NDVI_CELL_FILL_LAYER_ID)) {
+      map.setPaintProperty(
+        NDVI_CELL_FILL_LAYER_ID,
+        "fill-opacity",
+        mode === "ndvi" ? opacity : 0
+      );
+    }
+    if (map.getLayer(NDVI_CELL_OUTLINE_LAYER_ID)) {
+      map.setPaintProperty(
+        NDVI_CELL_OUTLINE_LAYER_ID,
+        "line-opacity",
+        mode === "ndvi" ? 0.35 : 0
+      );
+    }
+  }, [map, geojson, year, month, ndviMode, mode, showNDWI, opacity, visible]);
 
   return null;
 }

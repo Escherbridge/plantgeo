@@ -137,6 +137,10 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
           <LayerToggle layerId="water" label="Water Gauges" />
           <LayerToggle layerId="drought" label="Drought Monitor" />
           <LayerToggle layerId="weather" label="Wind & Weather" />
+          {/* The registry has assigned "sensors" to this panel since the style layer
+              landed, but no switch was ever added here -- so geo.sensor_tiles()' published
+              stations served correctly and could be turned on by nothing. */}
+          <LayerToggle layerId="sensors" label="Sensor Stations" />
           {/* The registry assigns "watersheds" to this panel, and the Legend only lists
               warehouse-backed layers -- so without a switch here the boundaries the tab
               below enumerates could never be drawn on the map. */}

@@ -21,6 +21,7 @@ export type LayerToggleId =
   | "demand-heatmap"
   | "interventions"
   | "evacuation-zones"
+  | "burn-severity"
   | "building-footprints";
 
 /** How a toggle reaches the map: a React-mounted layer component, or baked style layers. */
@@ -84,8 +85,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "water",
     permanentlyUnavailableReason: null,
   },
-  // 750 published rows, geo.sensor_tiles() already live in martin.yaml -- the
-  // style layer was the only missing piece. See sensorsLayer in layers.ts.
+  // Published rows served by geo.sensor_tiles(), live in martin.yaml. See sensorsLayer in
+  // layers.ts; the switch that reaches it is WaterPanel's, added later than the style layer.
   sensors: {
     toggleId: "sensors",
     renderKind: "style",
@@ -152,13 +153,24 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "community",
     permanentlyUnavailableReason: null,
   },
-  // 381 published Oregon OEM rows, previously with no tile function at all --
-  // see evacuationZonesLayer/evacuationZonesOutlineLayer in layers.ts.
+  // Published Oregon OEM rows, previously with no tile function at all -- see
+  // evacuationZonesLayer/evacuationZonesOutlineLayer in layers.ts; FireDashboard owns the switch.
   "evacuation-zones": {
     toggleId: "evacuation-zones",
     renderKind: "style",
     styleLayerIds: ["evacuation-zones", "evacuation-zones-outline"],
     warehouseLayerName: "evacuation-zones",
+    panelId: "fire",
+    permanentlyUnavailableReason: null,
+  },
+  // MTBS burned-area boundaries. 0011 gave them a geo.layers row and 0012 the tile
+  // function; before that the layer had no path to the map at any level, so it was
+  // invisible by construction rather than switched off. See burnSeverityLayer in layers.ts.
+  "burn-severity": {
+    toggleId: "burn-severity",
+    renderKind: "style",
+    styleLayerIds: ["burn-severity", "burn-severity-outline"],
+    warehouseLayerName: "burn-severity",
     panelId: "fire",
     permanentlyUnavailableReason: null,
   },
@@ -202,4 +214,41 @@ export function toggleIdForWarehouseLayerName(layerName: string): LayerToggleId 
 export function panelIdForLayerToggle(layerId: string): PanelId | null {
   if (!isLayerToggleId(layerId)) return null;
   return LAYER_REGISTRY[layerId].panelId;
+}
+
+/**
+ * Toggles reachable from the MapControls toolbar instead of the sidebar rail. See
+ * src/components/map/AGENTS.md "The layer registry and the toggle context".
+ */
+export const TOOLBAR_OWNED_LAYER_TOGGLE_IDS: readonly LayerToggleId[] = ["building-footprints"];
+
+/** Panels owning at least one layer, in registry declaration order; the rail's layer buttons. */
+export function panelIdsOwningLayers(): PanelId[] {
+  const ordered: PanelId[] = [];
+  for (const entry of layerRegistryEntries()) {
+    if (entry.panelId !== null && !ordered.includes(entry.panelId)) ordered.push(entry.panelId);
+  }
+  return ordered;
+}
+
+/**
+ * Toggles nothing reaches — always empty; a non-empty result is a wiring gap.
+ *
+ * Called with no argument this only catches an entry that claims no panel, which is the
+ * weaker half: a `panelId` is a claim about a component the registry never sees, and this
+ * returned `[]` while `sensors` and `evacuation-zones` had no switch in any panel. Pass the
+ * toggle ids the panel sources actually render to catch that larger class — see
+ * src/__tests__/lib/map/layer-registry.test.ts, which reads them out of src/components.
+ */
+export function unreachableLayerToggleIds(renderedToggleIds?: Iterable<string>): LayerToggleId[] {
+  // Toolbar layers are switched by bespoke controls (MapControls), never by a LayerToggle,
+  // so they are exempt from both the panel claim and the rendered-switch check.
+  const rendered = renderedToggleIds === undefined ? null : new Set(renderedToggleIds);
+  return layerRegistryEntries()
+    .filter((entry) => {
+      if (TOOLBAR_OWNED_LAYER_TOGGLE_IDS.includes(entry.toggleId)) return false;
+      if (entry.panelId === null) return true;
+      return rendered !== null && !rendered.has(entry.toggleId);
+    })
+    .map((entry) => entry.toggleId);
 }

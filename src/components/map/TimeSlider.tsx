@@ -28,6 +28,13 @@ const FUTURE_HATCH_BACKGROUND =
   "repeating-linear-gradient(45deg, hsl(var(--muted-foreground) / 0.55) 0 3px, transparent 3px 6px)";
 
 /**
+ * Shared by the slider panel and its unavailable-state notice, so a fetch that later
+ * succeeds does not reposition anything -- both render at the same anchor, sized the same.
+ */
+const TIME_SLIDER_CONTAINER_CLASSES =
+  "absolute bottom-24 left-1/2 z-10 w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 rounded-(--radius) border border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 p-3 shadow-lg backdrop-blur-sm";
+
+/**
  * A local range input rather than `@/components/ui/slider`: that component paints an inline
  * gradient over its own track, which would bury the hatched future segment, and it forwards
  * no ARIA, so a screen reader would read the day offset instead of the date. Same `<style>`
@@ -148,6 +155,7 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
   const selectedDate = useTimeSliderStore((state) => state.selectedDate);
   const forecastVariant = useTimeSliderStore((state) => state.forecastVariant);
   const capabilities = useTimeSliderStore((state) => state.capabilities);
+  const capabilitiesUnavailable = useTimeSliderStore((state) => state.capabilitiesUnavailable);
   const setSelectedDate = useTimeSliderStore((state) => state.setSelectedDate);
   const setForecastVariant = useTimeSliderStore((state) => state.setForecastVariant);
 
@@ -165,8 +173,33 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
     }));
   }, [capabilities, layerNames, selectedDate, forecastVariant]);
 
+  // The fetch failed and never succeeded even once: there is nothing else below that can be
+  // computed honestly (no domain, no "today"), so this replaces the whole panel instead of
+  // leaving it silent. Silence is what made the owner read a failing endpoint as "no slider
+  // UI" in the first place -- see time-slider-store.ts's capabilitiesUnavailable doc comment.
+  if (capabilities === null && capabilitiesUnavailable) {
+    return (
+      <div
+        className={cn(TIME_SLIDER_CONTAINER_CLASSES, className)}
+        role="alert"
+        data-testid="time-slider-unavailable"
+      >
+        <p className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--destructive))]">
+          Time range unavailable
+        </p>
+        <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
+          The available dates could not be loaded. This is a loading failure, not a sign that
+          nothing has been published, and it will retry automatically.
+        </p>
+      </div>
+    );
+  }
+
   // Both ends come from the payload. Without it there is no honest domain to draw, and
-  // guessing one from the browser clock would put "today" on the wrong day.
+  // guessing one from the browser clock would put "today" on the wrong day. This also covers
+  // the ordinary in-flight case (capabilities still null, capabilitiesUnavailable still
+  // false): rendering nothing here, rather than a loading placeholder, is what keeps a normal
+  // fast load from flashing a spinner in and back out.
   if (capabilities === null || domain === null || !isCalendarDate(selectedDate)) return null;
 
   const { firstDay, lastDay, today } = domain;
@@ -199,10 +232,7 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
 
   return (
     <div
-      className={cn(
-        "absolute bottom-24 left-1/2 z-10 w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 rounded-(--radius) border border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 p-3 shadow-lg backdrop-blur-sm",
-        className
-      )}
+      className={cn(TIME_SLIDER_CONTAINER_CLASSES, className)}
       data-testid="time-slider"
     >
       <style dangerouslySetInnerHTML={{ __html: timeSliderStyles }} />

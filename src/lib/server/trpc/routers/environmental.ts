@@ -12,6 +12,7 @@ import {
   getPublishedDroughtClassification,
   getPublishedGroundwaterWells,
   getPublishedStreamflowGauges,
+  getPublishedVegetationIndex,
   getSliderCapabilities,
 } from "@/lib/server/services/environmental-read-model";
 import {
@@ -243,6 +244,23 @@ export const environmentalRouter = router({
   getStreamflow: publicProcedure
     .input(z.object({ bbox: bboxSchema }))
     .query(({ input }) => getPublishedStreamflowGauges(input.bbox)),
+
+  /**
+   * The newest published NDVI observation per sampling-grid cell in a viewport.
+   *
+   * bbox is required, unlike getDroughtClassification's: `vegetation` is the largest layer
+   * in the warehouse and is a four-year daily series rather than a snapshot, so there is no
+   * honest no-argument answer. The reader collapses the series to one row per grid cell and
+   * publishes both of its bounds (`maxCellCount`, `maxObservationAgeDays`) in the payload.
+   *
+   * Deliberately NOT wrapped in areaBoundedBbox: the two procedures that cap viewport area
+   * do so because each one proxies a third-party API per request. This one reads the local
+   * warehouse and is bounded by the grid itself -- a whole-world bbox answers with the same
+   * 1,568 cells a regional one does.
+   */
+  getVegetationIndex: publicProcedure
+    .input(z.object({ bbox: bboxSchema }))
+    .query(({ input }) => getPublishedVegetationIndex(input.bbox)),
 
   /**
    * Serves the newest stored USDM release, clipped and generalized in PostGIS.

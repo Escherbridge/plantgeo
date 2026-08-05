@@ -40,6 +40,9 @@ postgres:
     evacuation_zone_tiles:
       schema: geo
       function: evacuation_zone_tiles
+    burn_severity_tiles:
+      schema: geo
+      function: burn_severity_tiles
   tables:
     osm_roads:
       schema: geo

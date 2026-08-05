@@ -1,5 +1,5 @@
 export const EXPECTED_DRIZZLE_MIGRATION = {
-  tag: "0011_burn_severity_layer",
-  createdAt: 1_786_300_000_000,
-  sha256: "146de8f4cd130ec13f7a858eb00ff4e13f57129a30a2ee8bb538dddcb5f1ae95",
+  tag: "0012_burn_severity_tiles",
+  createdAt: 1_786_400_000_000,
+  sha256: "792ba61418327f778ea213f12cdc075c2c8fb61579bdfc200e268e2cd6fcda2a",
 } as const;

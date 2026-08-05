@@ -7,12 +7,17 @@ import {
   Leaf,
   Mountain,
   Users,
-  Lightbulb,
   Building2,
   BarChart3,
 } from "lucide-react";
+import { panelIdsOwningLayers } from "@/lib/map/layer-registry";
 import { useMapStore } from "@/stores/map-store";
-import { usePanelStore, usePanelHasActiveLayers, type PanelId } from "@/stores/panel-store";
+import {
+  usePanelStore,
+  usePanelHasActiveLayers,
+  getLayersForPanel,
+  type PanelId,
+} from "@/stores/panel-store";
 import { useViewportBounds } from "@/hooks/useViewportProxiedLayers";
 
 const FireDashboard = dynamic(
@@ -35,10 +40,6 @@ const CommunityPanel = dynamic(
   () => import("@/components/panels/CommunityPanel").then((m) => ({ default: m.CommunityPanel })),
   { ssr: false }
 );
-const StrategyPanel = dynamic(
-  () => import("@/components/panels/StrategyPanel").then((m) => ({ default: m.StrategyPanel })),
-  { ssr: false }
-);
 const TeamDashboard = dynamic(
   () => import("@/components/panels/TeamDashboard").then((m) => ({ default: m.TeamDashboard })),
   { ssr: false }
@@ -48,16 +49,36 @@ const AnalyticsDashboard = dynamic(
   { ssr: false }
 );
 
-const PANEL_BUTTONS: { id: PanelId; icon: React.ReactNode; label: string }[] = [
-  { id: "fire", icon: <Flame className="h-4 w-4" />, label: "Fire Dashboard" },
-  { id: "water", icon: <Droplets className="h-4 w-4" />, label: "Water" },
-  { id: "vegetation", icon: <Leaf className="h-4 w-4" />, label: "Vegetation" },
-  { id: "soil", icon: <Mountain className="h-4 w-4" />, label: "Soil" },
-  { id: "community", icon: <Users className="h-4 w-4" />, label: "Community" },
-  { id: "strategy", icon: <Lightbulb className="h-4 w-4" />, label: "Strategy" },
-  { id: "team", icon: <Building2 className="h-4 w-4" />, label: "Teams" },
-  { id: "analytics", icon: <BarChart3 className="h-4 w-4" />, label: "Analytics" },
-];
+/** Icon and label for every panel the rail can open. Exhaustive over PanelId by construction. */
+const PANEL_PRESENTATION: Record<PanelId, { icon: React.ReactNode; label: string }> = {
+  fire: { icon: <Flame className="h-4 w-4" />, label: "Fire Dashboard" },
+  water: { icon: <Droplets className="h-4 w-4" />, label: "Water" },
+  vegetation: { icon: <Leaf className="h-4 w-4" />, label: "Vegetation" },
+  soil: { icon: <Mountain className="h-4 w-4" />, label: "Soil" },
+  community: { icon: <Users className="h-4 w-4" />, label: "Community" },
+  team: { icon: <Building2 className="h-4 w-4" />, label: "Teams" },
+  analytics: { icon: <BarChart3 className="h-4 w-4" />, label: "Analytics" },
+};
+
+/** Panels that govern no layer of their own, so the registry cannot order them. */
+const NON_LAYER_PANEL_IDS: PanelId[] = ["team", "analytics"];
+
+/**
+ * The rail's buttons: every layer-owning panel in registry declaration order, then the
+ * panels that carry no layers. Deriving the first half means a new registry entry becomes
+ * reachable without editing this file.
+ */
+const RAIL_PANEL_IDS: PanelId[] = [...panelIdsOwningLayers(), ...NON_LAYER_PANEL_IDS];
+
+/**
+ * Tooltip text: the panel's name, plus every layer it governs so the rail reads as a map of
+ * them. Only truthful while each named layer really has a switch in that panel, which
+ * src/__tests__/lib/map/layer-registry.test.ts asserts against the panel sources.
+ */
+function panelTooltip(id: PanelId, label: string): string {
+  const layerNames = getLayersForPanel(id).map((layerId) => layerId.replace(/-/g, " "));
+  return layerNames.length > 0 ? `${label}\n${layerNames.join(", ")}` : label;
+}
 
 function PanelButton({ id, icon, label }: { id: PanelId; icon: React.ReactNode; label: string }) {
   const openPanel = usePanelStore((s) => s.openPanel);
@@ -66,7 +87,8 @@ function PanelButton({ id, icon, label }: { id: PanelId; icon: React.ReactNode; 
 
   return (
     <button
-      title={label}
+      title={panelTooltip(id, label)}
+      aria-label={label}
       onClick={() => togglePanel(id)}
       className={[
         "relative flex h-9 w-9 items-center justify-center rounded-md shadow-md transition-colors",
@@ -105,8 +127,13 @@ export default function PanelManager() {
     <>
       {/* Floating toolbar on the left side */}
       <div className="absolute left-3 top-1/2 z-10 flex -translate-y-1/2 flex-col gap-1">
-        {PANEL_BUTTONS.map(({ id, icon, label }) => (
-          <PanelButton key={id} id={id} icon={icon} label={label} />
+        {RAIL_PANEL_IDS.map((id) => (
+          <PanelButton
+            key={id}
+            id={id}
+            icon={PANEL_PRESENTATION[id].icon}
+            label={PANEL_PRESENTATION[id].label}
+          />
         ))}
       </div>
 
@@ -137,12 +164,6 @@ export default function PanelManager() {
         onOpenChange={(o) => handleOpenChange("community", o)}
         mapCenter={mapCenter}
         bbox={bbox ?? undefined}
-      />
-      <StrategyPanel
-        open={openPanel === "strategy"}
-        onOpenChange={(o) => handleOpenChange("strategy", o)}
-        lat={viewport.latitude}
-        lon={viewport.longitude}
       />
       <TeamDashboard
         teamId={null}

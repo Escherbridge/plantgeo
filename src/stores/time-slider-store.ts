@@ -167,10 +167,20 @@ interface TimeSliderState {
   selectedDate: string;
   forecastVariant: ForecastVariant;
   capabilities: SliderCapabilities | null;
+  /**
+   * True only when getSliderCapabilities has never once succeeded and its most recent
+   * attempt failed -- e.g. the read-model 500. TimeSliderPanel is the sole writer and
+   * deliberately does NOT set this on a background-refetch failure once capabilities already
+   * exist: the last known-good payload keeps the slider working, and flipping a working
+   * slider into an error state over a transient poll would be worse than the silence this
+   * flag exists to fix. See TimeSlider's early-return branch that reads it.
+   */
+  capabilitiesUnavailable: boolean;
 
   setSelectedDate: (date: string) => void;
   setForecastVariant: (variant: ForecastVariant) => void;
   setCapabilities: (capabilities: SliderCapabilities) => void;
+  setCapabilitiesUnavailable: (unavailable: boolean) => void;
   resetToToday: () => void;
 }
 
@@ -179,6 +189,7 @@ export const useTimeSliderStore = create<TimeSliderState>()(
     selectedDate: UNINITIALIZED_DATE,
     forecastVariant: "monte_carlo",
     capabilities: null,
+    capabilitiesUnavailable: false,
 
     setSelectedDate: (date) => set({ selectedDate: date }),
     setForecastVariant: (variant) => set({ forecastVariant: variant }),
@@ -188,6 +199,9 @@ export const useTimeSliderStore = create<TimeSliderState>()(
     setCapabilities: (capabilities) =>
       set((state) => ({
         capabilities,
+        // A payload landed, however late: whatever the fetch history was, it is no longer
+        // true that the slider has nothing to show.
+        capabilitiesUnavailable: false,
         selectedDate: clampDateToDomain(
           state.selectedDate === UNINITIALIZED_DATE
             ? capabilities.serverCurrentDate
@@ -195,6 +209,8 @@ export const useTimeSliderStore = create<TimeSliderState>()(
           capabilities
         ),
       })),
+
+    setCapabilitiesUnavailable: (unavailable) => set({ capabilitiesUnavailable: unavailable }),
 
     resetToToday: () =>
       set((state) =>

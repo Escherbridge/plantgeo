@@ -43,6 +43,7 @@ import {
   getMetricAtDate,
   getPublishedFireDetections,
   getPublishedStreamflowGauges,
+  getPublishedVegetationIndex,
   getSliderCapabilities,
   serverCurrentDate,
 } from "@/lib/server/services/environmental-read-model";
@@ -60,6 +61,35 @@ function renderSqlText(value: unknown): string {
   }
   if (Array.isArray(node.value)) return node.value.join("");
   return "";
+}
+
+/** One element of a drizzle `sql` template: literal text, or a value bound as a parameter. */
+type SqlToken = { kind: "text"; text: string } | { kind: "param"; value: unknown };
+
+/**
+ * Flattens a drizzle `sql` template into its literal chunks AND its bound parameters, in
+ * order. Literal text arrives as a StringChunk, whose `value` is a string[]; an interpolated
+ * value sits in `queryChunks` as the bare primitive, because drizzle only wraps it in a Param
+ * when the dialect builds the query. renderSqlText above discards parameters entirely, which
+ * is exactly why a parameter with no cast after it is invisible to it -- keeping both is what
+ * lets a test see what follows a placeholder.
+ */
+function flattenSql(value: unknown, tokens: SqlToken[] = []): SqlToken[] {
+  if (value === undefined || value === null) return tokens;
+  if (typeof value !== "object") {
+    tokens.push({ kind: "param", value });
+    return tokens;
+  }
+  const node = value as { queryChunks?: unknown[]; value?: unknown; encoder?: unknown };
+  if (Array.isArray(node.queryChunks)) {
+    for (const chunk of node.queryChunks) flattenSql(chunk, tokens);
+  } else if (Array.isArray(node.value)) {
+    tokens.push({ kind: "text", text: node.value.join("") });
+  } else if ("encoder" in node) {
+    // A value wrapped explicitly via sql.param().
+    tokens.push({ kind: "param", value: node.value });
+  }
+  return tokens;
 }
 
 function resetQueryChain() {
@@ -355,6 +385,56 @@ describe("getSliderCapabilities -- the 36-year trap", () => {
   });
 });
 
+describe("the capability scan is typed for Postgres, not only for TypeScript", () => {
+  /**
+   * getSliderCapabilities answered 500 in production with
+   * `invalid input syntax for type bigint: "0.01"`, so TimeSliderPanel's query stayed
+   * rejected, `capabilities` stayed undefined, and the time slider never mounted at all.
+   *
+   * postgres-js sends a plain JS number as an UNTYPED parameter -- its `inferType` answers
+   * OID 0 for every number that is not a bigint -- so Postgres resolves the parameter from
+   * the expression around it. A bare `MAX(observation_count) * $n` therefore resolves $n
+   * against the `COUNT(*)` bigint on its left and tries to read "0.01" as an integer.
+   *
+   * These assert over the statement the function actually built, not over a stub of it: the
+   * bug lives entirely in the parameter's SQL context, so a test that mocked the query away
+   * could only ever agree with itself while production kept 500ing.
+   */
+  async function captureWindowScan() {
+    dbExecute.mockResolvedValue([]);
+    await getSliderCapabilities();
+    return dbExecute.mock.calls[0]?.[0];
+  }
+
+  it("casts every fractional parameter it binds, so none can be resolved against a bigint", async () => {
+    const tokens = flattenSql(await captureWindowScan());
+    const fractional = tokens.flatMap((token, index) =>
+      token.kind === "param" &&
+      typeof token.value === "number" &&
+      !Number.isInteger(token.value)
+        ? [{ value: token.value, following: tokens[index + 1] }]
+        : []
+    );
+
+    // Pins the scan against passing vacuously: the density floor is bound here, and if it
+    // ever stops being a parameter the loop below would have nothing left to check.
+    expect(fractional.map(({ value }) => value)).toContain(0.01);
+
+    const uncast = fractional.filter(({ following }) => {
+      const next = following?.kind === "text" ? following.text.trimStart() : "";
+      return !next.startsWith("::");
+    });
+    expect(uncast.map(({ value }) => value)).toEqual([]);
+  });
+
+  it("multiplies the bigint observation count by a numeric, and floors back to a bigint", async () => {
+    // renderSqlText drops the placeholder, so the parameter's own cast abuts the `*`.
+    const statement = renderSqlText(await captureWindowScan());
+    expect(statement).toMatch(/MAX\(observation_count\)\s*\*\s*::numeric/);
+    expect(statement).toMatch(/\)::bigint AS density_floor/);
+  });
+});
+
 describe("getMetricAtDate -- typed availability, never a bare empty collection", () => {
   it("reports not_published, with a reason naming the metric, for a metric with no backing source", async () => {
     const result = await getMetricAtDate({
@@ -616,5 +696,235 @@ describe("bbox narrows the warehouse query", () => {
   it("rejects a malformed bbox before touching the warehouse", async () => {
     await expect(getPublishedFireDetections("not,a,bbox")).rejects.toThrow(RangeError);
     expect(queryChain.select).not.toHaveBeenCalled();
+  });
+});
+
+describe("getPublishedVegetationIndex -- one cell per place, not one row per observation", () => {
+  /**
+   * A fractional viewport, so the bbox corners the reader binds are genuinely non-integer.
+   * A whole-degree bbox would let the typing assertion below pass vacuously.
+   */
+  const VIEWPORT = "-116.75,43.25,-115.25,44.5";
+
+  /** The projection getPublishedVegetationIndex selects, with the stored payload's shape. */
+  function cellRow(cellKey: string, ndvi: number, observedAt: string) {
+    return {
+      geometry_id: `geom-${cellKey}`,
+      geometry: JSON.stringify({
+        type: "Polygon",
+        coordinates: [[[-113.75, 43], [-113.5, 43], [-113.5, 43.25], [-113.75, 43.25], [-113.75, 43]]],
+      }),
+      ndvi: String(ndvi),
+      observed_at: observedAt,
+      cell_key: cellKey,
+      scene_id: "S2A_11TQH_20260804_0_L2A",
+      cloud_cover: "3.626448",
+      sample_count: "21",
+      grid_name: "sentinel2-ndvi-0p25deg",
+      resolution_metres: "27830",
+      source: "Sentinel-2 L2A",
+      provenance_key: `${cellKey}:${observedAt}`,
+    };
+  }
+
+  /** Runs the reader against an empty warehouse and hands back the statement it built. */
+  async function captureCellScan() {
+    dbExecute.mockResolvedValue([]);
+    await getPublishedVegetationIndex(VIEWPORT);
+    return dbExecute.mock.calls[0]?.[0];
+  }
+
+  it("collapses the stacked series to the newest row per geometry, never returning it raw", async () => {
+    // 184,409 published rows sit on 1,568 distinct cells -- ~118 observations of the same
+    // square. Without the DISTINCT ON the map draws every cell a hundred times over, and a
+    // single PNW viewport ships 124,959 features instead of 1,036.
+    const statement = renderSqlText(await captureCellScan());
+    expect(statement).toContain("SELECT DISTINCT ON (c.geometry_id)");
+    expect(statement).toMatch(
+      /ORDER BY c\.geometry_id, \(c\.properties->>'observedAt'\)::timestamptz DESC/
+    );
+  });
+
+  it("narrows the scan by viewport and by observation window, both in SQL", async () => {
+    const statement = renderSqlText(await captureCellScan());
+    // The bbox is an index-usable && against geo.features.geom, not a post-filter.
+    expect(statement).toMatch(/f\.geom && ST_MakeEnvelope\(/);
+    // The freshness cutoff is bound as text, so its cast is what makes the comparison a
+    // timestamp comparison rather than a string one.
+    expect(statement).toMatch(/\(f\.properties->>'observedAt'\)::timestamptz >=\s*::timestamptz/);
+    // Excluding valueless cells in SQL is what makes LIMIT count only drawable cells.
+    expect(statement).toContain("jsonb_typeof(f.properties->'ndvi') = 'number'");
+  });
+
+  it("binds no bare fractional parameter, so none can be resolved against a bigint", async () => {
+    // postgres-js types every non-bigint JS number as OID 0, so Postgres resolves the
+    // parameter from the expression around it. A fractional value in a bare arithmetic
+    // context next to a bigint is read as a bigint and throws `invalid input syntax for
+    // type bigint` at runtime -- the exact production 500 getSliderCapabilities hit. Every
+    // fractional value this query binds must therefore either carry its own cast or land in
+    // a PostGIS argument whose signature already declares the type.
+    const tokens = flattenSql(await captureCellScan());
+    /** Literal SQL written before `index`; parameters contribute no text of their own. */
+    const textBefore = (index: number) =>
+      tokens
+        .slice(0, index)
+        .map((token) => (token.kind === "text" ? token.text : ""))
+        .join("");
+
+    const fractional = tokens.flatMap((token, index) =>
+      token.kind === "param" &&
+      typeof token.value === "number" &&
+      !Number.isInteger(token.value)
+        ? [{ value: token.value, before: textBefore(index), following: tokens[index + 1] }]
+        : []
+    );
+
+    // Pins the assertion against passing vacuously: the viewport corners above are
+    // fractional, so at least the envelope's arguments must show up here.
+    expect(fractional.length).toBeGreaterThan(0);
+
+    const untyped = fractional.filter(({ before, following }) => {
+      const next = following?.kind === "text" ? following.text.trimStart() : "";
+      if (next.startsWith("::")) return false;
+      // Otherwise it is only safe inside a PostGIS call that declares its argument types --
+      // the innermost parenthesis still open at this point must belong to one.
+      return !/ST_(MakeEnvelope|SimplifyPreserveTopology)\([^()]*$/.test(before);
+    });
+    expect(untyped.map(({ value }) => value)).toEqual([]);
+  });
+
+  it("reports stale rather than empty when cells exist here but none was seen recently", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.parse("2026-08-05T12:00:00Z"));
+      dbExecute
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ observed_at: "2025-09-01T18:42:36.471Z" }]);
+
+      const result = await getPublishedVegetationIndex(VIEWPORT);
+
+      expect(result.availability).toBe("unavailable");
+      expect(result.reason).toBe("stale");
+      expect(result.observedAt).toBe("2025-09-01T18:42:36.471Z");
+      expect(result.features).toEqual([]);
+      // The explaining probe is paid for only when the main read came back empty.
+      expect(dbExecute).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports not_published, with no observation time, for a viewport the grid never sampled", async () => {
+    dbExecute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ observed_at: null }]);
+
+    const result = await getPublishedVegetationIndex(VIEWPORT);
+
+    expect(result.availability).toBe("unavailable");
+    expect(result.reason).toBe("not_published");
+    expect(result.observedAt).toBeNull();
+  });
+
+  it("carries the cell's provenance and drops the duplicated geometry copy", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.parse("2026-08-05T12:00:00Z"));
+      dbExecute.mockResolvedValueOnce([
+        cellRow("43.1250:-113.6250", 0.1578, "2026-08-01T18:42:36.471Z"),
+        cellRow("43.1250:-113.8750", 0.203, "2026-08-04T18:42:36.471Z"),
+      ]);
+
+      const result = await getPublishedVegetationIndex(VIEWPORT);
+
+      expect(result.availability).toBe("published");
+      expect(result.reason).toBeNull();
+      expect(result.truncated).toBe(false);
+      expect(result.cellCount).toBe(2);
+      // The collection reports the newest reading in it, not the newest row order-wise.
+      expect(result.observedAt).toBe("2026-08-04T18:42:36.471Z");
+
+      const properties = result.features[0]?.properties as Record<string, unknown>;
+      expect(properties.ndvi).toBe(0.1578);
+      expect(properties.cellKey).toBe("43.1250:-113.6250");
+      expect(properties.geometryId).toBe("geom-43.1250:-113.6250");
+      expect(properties.provenanceKey).toBe("43.1250:-113.6250:2026-08-01T18:42:36.471Z");
+      expect(properties.sampleCount).toBe(21);
+      // geo.features.properties keeps its own copy of the geometry; shipping it as a
+      // property would double the payload and could disagree with the drawn geom.
+      expect(properties.geometry).toBeUndefined();
+      expect(result.features[0]?.geometry.type).toBe("Polygon");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says so when it truncates, and probes exactly one row past its own cap", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.parse("2026-08-05T12:00:00Z"));
+
+      // The cap is read off the statement rather than restated here, so this test cannot
+      // drift away from the constant it is guarding.
+      const tokens = flattenSql(await captureCellScan());
+      const limitIndex = tokens.findIndex(
+        (token) => token.kind === "text" && /LIMIT\s*$/.test(token.text)
+      );
+      const probe = tokens[limitIndex + 1];
+      if (probe?.kind !== "param" || typeof probe.value !== "number") {
+        throw new Error("expected the cell scan to bind its LIMIT as a parameter");
+      }
+      const maxCells = probe.value - 1;
+      expect(Number.isInteger(maxCells)).toBe(true);
+      expect(maxCells).toBeGreaterThan(0);
+
+      // One row past the cap is what distinguishes "there is more" from "the page filled
+      // exactly", so `truncated` is never claimed against a complete answer.
+      dbExecute.mockResolvedValueOnce(
+        Array.from({ length: maxCells + 1 }, (_value, index) =>
+          cellRow(`cell-${index}`, 0.4, "2026-08-04T18:42:36.471Z")
+        )
+      );
+      const truncated = await getPublishedVegetationIndex(VIEWPORT);
+      expect(truncated.truncated).toBe(true);
+      expect(truncated.features).toHaveLength(maxCells);
+      expect(truncated.maxCellCount).toBe(maxCells);
+
+      dbExecute.mockResolvedValueOnce(
+        Array.from({ length: maxCells }, (_value, index) =>
+          cellRow(`cell-${index}`, 0.4, "2026-08-04T18:42:36.471Z")
+        )
+      );
+      const exact = await getPublishedVegetationIndex(VIEWPORT);
+      expect(exact.truncated).toBe(false);
+      expect(exact.features).toHaveLength(maxCells);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a cell whose stored reading is older than the window it publishes", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.parse("2026-08-05T12:00:00Z"));
+      dbExecute.mockResolvedValueOnce([
+        cellRow("43.1250:-113.6250", 0.31, "2026-08-04T18:42:36.471Z"),
+        // Would have been excluded by the SQL cutoff; re-checked here because the cutoff
+        // was computed before the round trip, not after it.
+        cellRow("43.1250:-113.8750", 0.28, "2025-01-04T18:42:36.471Z"),
+      ]);
+
+      const result = await getPublishedVegetationIndex(VIEWPORT);
+
+      expect(result.features).toHaveLength(1);
+      expect(result.maxObservationAgeDays).toBeGreaterThan(0);
+      const kept = result.features[0]?.properties as Record<string, unknown>;
+      expect(kept.cellKey).toBe("43.1250:-113.6250");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a malformed bbox before touching the warehouse", async () => {
+    await expect(getPublishedVegetationIndex("not,a,bbox")).rejects.toThrow(RangeError);
+    expect(dbExecute).not.toHaveBeenCalled();
   });
 });

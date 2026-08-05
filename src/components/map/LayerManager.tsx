@@ -69,13 +69,13 @@ export default function LayerManager() {
   // Shared with PanelManager: one derivation, so the map and the panels key on one bbox.
   const { zoom, bbox } = useViewportBounds();
 
-  // lane J -- the four queries below are dateless: each returns the latest published
+  // lane J -- the five queries below are dateless: each returns the latest published
   // value, not the day the slider is labelled with. Making them date-aware needs a
   // *reactive* selectedDate, which is `useMapDay().selectedDate` on the toggle context;
   // selectedDateRef below is for the style.load handler body only and cannot trigger a
   // refetch. Subscribe to the debounced day, not the raw one -- useMetricAtDate debounces
   // so that a scrub issues one request on settle rather than one per pointer tick, and
-  // these four would otherwise reintroduce exactly that storm.
+  // these five would otherwise reintroduce exactly that storm.
   // lane J: replace `undefined` with { date } once getDroughtClassification accepts one.
   const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(
     undefined,
@@ -93,6 +93,21 @@ export default function LayerManager() {
     { bbox: bbox ?? "-180,-90,180,90" },
     { enabled: waterEnabled && bbox !== null, staleTime: 60 * 60 * 1000 }
   );
+
+  const vegetationEnabled = layerVisibility.vegetation;
+  // The measured NDVI grid, read from the warehouse: one cell per sampling-grid square,
+  // carrying that cell's newest Sentinel-2 reading. Distinct from the GIBS raster
+  // VegetationLayer also draws -- that one is a global 8-day composite this platform
+  // proxies, this one is the 184,409-row series this platform ingested. Sentinel-2 yields
+  // at most one clear reading per cell every few days, so the hour-long staleTime matches
+  // the groundwater/watershed cadence rather than the 15-minute observation feeds.
+  // lane J: add { date } to this input once environmental.getVegetationIndex accepts one.
+  const vegetationQuery = trpc.environmental.getVegetationIndex.useQuery(
+    { bbox: bbox ?? "-180,-90,180,90" },
+    { enabled: vegetationEnabled && bbox !== null, staleTime: 60 * 60 * 1000 }
+  );
+  const vegetationGeoJSON: GeoJSON.FeatureCollection =
+    vegetationQuery.data ?? EMPTY_FEATURE_COLLECTION;
 
   // HUC12 boundaries and SSURGO map units are proxied live from USGS/USDA per viewport
   // rather than published to the warehouse, so they carry no slider day: both endpoints
@@ -244,7 +259,8 @@ export default function LayerManager() {
       <DroughtLayer map={map} geojson={droughtGeoJSON} visible={layerVisibility.drought} />
       <VegetationLayer
         map={map}
-        visible={layerVisibility.vegetation}
+        visible={vegetationEnabled}
+        geojson={vegetationGeoJSON}
         mode={vegetationMode.mode}
         year={vegetationMode.year}
         month={vegetationMode.month}

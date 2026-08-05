@@ -71,6 +71,7 @@ vi.mock("@/lib/trpc/client", () => ({
       getGroundwater: { useQuery: vi.fn(() => ({ data: [] })) },
       getWatersheds: { useQuery: viewportQueries.getWatersheds },
       getSoilSurvey: { useQuery: viewportQueries.getSoilSurvey },
+      getVegetationIndex: { useQuery: vi.fn(() => ({ data: undefined })) },
     },
     wildfire: {
       getWeatherForBbox: { useQuery: vi.fn(() => ({ data: [] })) },

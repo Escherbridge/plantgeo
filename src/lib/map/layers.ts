@@ -184,6 +184,70 @@ export const evacuationZonesOutlineLayer: LayerSpecification = {
   },
 };
 
+// MTBS burned-area boundaries, served by geo.burn_severity_tiles()
+// (drizzle/0012_burn_severity_tiles.sql). Painted on "acres" and deliberately NOT on
+// "severity_class": that column is null on all 478 published rows, because MTBS
+// distributes burn severity as a thematic raster and publishes no polygon-level class
+// (see mtbs.py MtbsBurnSeverityRecord.severity_class -- null there means "the source
+// classifies nothing", never "unburned"). Keying the fill to it would repaint every scar
+// in the neutral fallback, the same fabricated-field bug interventions and sensors each
+// had. The per-fire dNBR numbers the layer does carry are mapping *calibration*, not an
+// outcome, so they cannot stand in for it either.
+//
+// Burned area is the ordinal magnitude this layer genuinely measures, and it spans two
+// and a half orders of magnitude (993 to 413,425 acres in production, median 3,727), so
+// the stops are log-spaced rather than even -- even stops would put ~75% of scars in the
+// first bucket. Ramp runs amber to deep maroon, reading as scar depth, and shares its
+// palette with fire-perimeters above without reusing that layer's containment vocabulary.
+// Scars with no reported acreage stay neutral grey rather than borrowing the low end.
+export const burnSeverityLayer: LayerSpecification = {
+  id: "burn-severity",
+  type: "fill",
+  source: MARTIN_SOURCE,
+  "source-layer": "burn_severity",
+  minzoom: 4,
+  layout: { visibility: "none" },
+  paint: {
+    "fill-color": [
+      "case",
+      ["has", "acres"],
+      [
+        "interpolate",
+        ["linear"],
+        ["get", "acres"],
+        1000,
+        "#fbbf24",
+        5000,
+        "#f59e0b",
+        25000,
+        "#ea580c",
+        100000,
+        "#b91c1c",
+        400000,
+        "#7f1d1d",
+      ],
+      "#9ca3af",
+    ],
+    "fill-opacity": 0.4,
+  },
+};
+
+// Thinner and darker than the evacuation-zone outline above: a burn scar is historical
+// context drawn beneath live incident data and must not out-shout an active perimeter.
+export const burnSeverityOutlineLayer: LayerSpecification = {
+  id: "burn-severity-outline",
+  type: "line",
+  source: MARTIN_SOURCE,
+  "source-layer": "burn_severity",
+  minzoom: 4,
+  layout: { visibility: "none" },
+  paint: {
+    "line-color": "#7f1d1d",
+    "line-width": 1,
+    "line-opacity": 0.8,
+  },
+};
+
 export const interventionsLayer: LayerSpecification = {
   id: "interventions",
   type: "fill",
@@ -363,6 +427,8 @@ export function getLayers(): LayerSpecification[] {
     sensorsLayer,
     evacuationZonesLayer,
     evacuationZonesOutlineLayer,
+    burnSeverityLayer,
+    burnSeverityOutlineLayer,
     interventionsLayer,
     interventionsOutlineLayer,
     buildingFootprintsLayer,
