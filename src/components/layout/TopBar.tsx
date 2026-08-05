@@ -4,18 +4,33 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  editorialFocusRing,
+  editorialFocusRingInverse,
+} from "@/components/ui/editorial";
 import { cn } from "@/lib/utils";
 
 const NAVIGATION_ITEMS = [
   { href: "/", label: "Map" },
+  { href: "/feed", label: "Feed" },
   { href: "/community", label: "Community" },
   { href: "/about", label: "About" },
 ] as const;
 
-const focusRing =
-  "focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2";
+/** Appended for expert/admin sessions only — mirrors expertProcedure at src/lib/server/trpc/init.ts. */
+const MODERATION_NAV_ITEM = { href: "/moderation", label: "Moderation" } as const;
+const MODERATION_ROLES = ["expert", "admin"];
 
-const labelType = "font-editorial-label text-label uppercase";
+type NavigationItem = { href: string; label: string };
+
+/** Nav chrome steps up from `text-label`; see src/components/layout/AGENTS.md §contrast. */
+const navType = "font-editorial-label text-nav uppercase";
+
+/** Ink-filled controls carry the inverse ring — accent on ink is only 2.16:1. */
+const solidControl = cn(
+  "bg-ink text-paper transition-colors hover:bg-accent hover:text-accent-ink disabled:opacity-70",
+  editorialFocusRingInverse
+);
 
 function isActiveRoute(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
@@ -28,7 +43,7 @@ function Wordmark() {
       href="/"
       className={cn(
         "flex h-full shrink-0 items-center pr-comfortable pl-page-inset font-editorial-display text-[0.9375rem] leading-none font-black tracking-[-0.04em] text-ink uppercase",
-        focusRing
+        editorialFocusRing
       )}
     >
       <span>Plant</span>
@@ -39,10 +54,16 @@ function Wordmark() {
   );
 }
 
-function DesktopNavigation({ pathname }: { pathname: string }) {
+function DesktopNavigation({
+  pathname,
+  items,
+}: {
+  pathname: string;
+  items: readonly NavigationItem[];
+}) {
   return (
     <nav aria-label="Primary" className="hidden h-full md:flex">
-      {NAVIGATION_ITEMS.map((item) => {
+      {items.map((item) => {
         const active = isActiveRoute(pathname, item.href);
         return (
           <Link
@@ -51,11 +72,14 @@ function DesktopNavigation({ pathname }: { pathname: string }) {
             aria-current={active ? "page" : undefined}
             className={cn(
               "flex h-full items-center rule-left-hairline rule-top-heavy border-l-rule-faint px-comfortable transition-colors",
-              labelType,
+              navType,
+              // The accent rule carries the active state alongside `aria-current`,
+              // so selection is never signalled by colour alone. Hover thickens
+              // the same rule rather than only shifting text colour.
               active
                 ? "border-t-accent text-ink"
-                : "border-t-transparent text-ink-muted hover:text-ink",
-              focusRing
+                : "border-t-transparent text-ink-muted hover:border-t-rule-faint hover:text-ink",
+              editorialFocusRing
             )}
           >
             {item.label}
@@ -71,10 +95,11 @@ function SignedOutActions({ compact }: { compact?: boolean }) {
     <Link
       href="/login"
       className={cn(
-        "flex items-center bg-ink px-comfortable text-paper transition-opacity hover:opacity-85",
-        labelType,
+        "flex items-center px-comfortable",
+        navType,
+        solidControl,
         compact ? "mx-page-inset h-11 justify-center" : "h-full",
-        focusRing
+        editorialFocusRingInverse
       )}
     >
       Log in
@@ -99,11 +124,12 @@ function SignedInActions({
 
   return (
     <div className={cn("flex", compact ? "flex-col" : "h-full items-stretch")}>
+      {/* Truncation is CSS-only, so assistive tech still reads the full identity. */}
       <span
         title={identity}
         className={cn(
           "flex items-center text-ink-muted",
-          labelType,
+          navType,
           compact
             ? "px-page-inset pb-snug"
             : "hidden max-w-[18ch] truncate px-comfortable lg:flex"
@@ -116,11 +142,11 @@ function SignedInActions({
         href="/dashboard"
         className={cn(
           "flex items-center px-comfortable text-ink transition-colors hover:text-accent",
-          labelType,
+          navType,
           compact
             ? "h-11 rule-top-hairline border-t-rule-faint px-page-inset"
             : "h-full rule-left-hairline border-l-rule-faint",
-          focusRing
+          editorialFocusRing
         )}
       >
         Dashboard
@@ -130,11 +156,12 @@ function SignedInActions({
         type="button"
         onClick={handleSignOut}
         disabled={signingOut}
+        aria-busy={signingOut}
         className={cn(
-          "flex items-center bg-ink px-comfortable text-paper transition-opacity hover:opacity-85 disabled:opacity-50",
-          labelType,
-          compact ? "mx-page-inset mt-snug h-11 justify-center" : "h-full",
-          focusRing
+          "flex items-center px-comfortable",
+          navType,
+          solidControl,
+          compact ? "mx-page-inset mt-snug h-11 justify-center" : "h-full"
         )}
       >
         {signingOut ? "Signing out" : "Sign out"}
@@ -147,14 +174,22 @@ function AccountArea({ compact }: { compact?: boolean }) {
   const { data: session, status } = useSession();
 
   if (status === "loading") {
+    // Sized to the resolved control so the bar does not reflow when the session
+    // lands, and announced rather than left as a silent flash of empty chrome.
     return (
       <div
-        aria-hidden
+        role="status"
         className={cn(
-          "bg-rule-faint",
-          compact ? "mx-page-inset h-11" : "my-snug mr-page-inset w-24"
+          "flex items-center",
+          compact ? "px-page-inset" : "mr-page-inset"
         )}
-      />
+      >
+        <span
+          aria-hidden
+          className={cn("bg-rule-faint", compact ? "h-11 w-full" : "h-6 w-28")}
+        />
+        <span className="sr-only">Checking your session</span>
+      </div>
     );
   }
 
@@ -176,9 +211,17 @@ function AccountArea({ compact }: { compact?: boolean }) {
  */
 export default function TopBar() {
   const pathname = usePathname();
+  const { data: session } = useSession();
   const [menuOpen, setMenuOpen] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
+
+  const role = (session?.user as { platformRole?: string } | undefined)?.platformRole;
+  const navigationItems: readonly NavigationItem[] =
+    role && MODERATION_ROLES.includes(role)
+      ? [...NAVIGATION_ITEMS, MODERATION_NAV_ITEM]
+      : NAVIGATION_ITEMS;
 
   const closeMenu = useCallback(() => setMenuOpen(false), []);
 
@@ -186,22 +229,48 @@ export default function TopBar() {
     closeMenu();
   }, [pathname, closeMenu]);
 
+  // Disclosure dismissal, per the APG disclosure pattern: Escape restores focus
+  // to the toggle, while a pointer or a Tab that leaves the bar just closes it —
+  // this is a disclosure, not a modal, so focus is never trapped inside it.
   useEffect(() => {
     if (!menuOpen) return;
+
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       setMenuOpen(false);
       toggleRef.current?.focus();
     }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && headerRef.current?.contains(target)) return;
+      setMenuOpen(false);
+    }
+
+    function handleFocusIn(event: FocusEvent) {
+      const target = event.target;
+      if (target instanceof Node && headerRef.current?.contains(target)) return;
+      setMenuOpen(false);
+    }
+
     document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("focusin", handleFocusIn);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("focusin", handleFocusIn);
+    };
   }, [menuOpen]);
 
   return (
-    <header className="relative z-40 flex h-[var(--application-top-bar-height)] items-stretch justify-between rule-bottom-heavy border-b-rule bg-paper">
+    <header
+      ref={headerRef}
+      className="relative z-40 flex h-(--application-top-bar-height) items-stretch justify-between rule-bottom-heavy border-b-rule bg-paper"
+    >
       <div className="flex min-w-0 items-stretch">
         <Wordmark />
-        <DesktopNavigation pathname={pathname} />
+        <DesktopNavigation pathname={pathname} items={navigationItems} />
       </div>
 
       <div className="hidden items-stretch md:flex">
@@ -215,21 +284,23 @@ export default function TopBar() {
         aria-controls={menuId}
         onClick={() => setMenuOpen((open) => !open)}
         className={cn(
-          "flex items-center rule-left-hairline border-l-rule-faint px-page-inset text-ink md:hidden",
-          labelType,
-          focusRing
+          "flex items-center rule-left-hairline border-l-rule-faint px-page-inset text-ink transition-colors hover:text-accent md:hidden",
+          navType,
+          editorialFocusRing
         )}
       >
         {menuOpen ? "Close" : "Menu"}
       </button>
 
+      {/* `hidden` is the HTML attribute, not the class: it takes the whole panel
+          out of the tab order and the accessibility tree while collapsed. */}
       <div
         id={menuId}
         hidden={!menuOpen}
         className="absolute inset-x-0 top-full rule-bottom-massive border-b-rule bg-paper md:hidden"
       >
-        <nav aria-label="Primary" className="flex flex-col">
-          {NAVIGATION_ITEMS.map((item) => {
+        <nav aria-label="Primary, compact" className="flex flex-col">
+          {navigationItems.map((item) => {
             const active = isActiveRoute(pathname, item.href);
             return (
               <Link
@@ -237,10 +308,10 @@ export default function TopBar() {
                 href={item.href}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex items-center justify-between rule-top-hairline border-t-rule-faint px-page-inset py-comfortable",
-                  labelType,
-                  active ? "text-ink" : "text-ink-muted",
-                  focusRing
+                  "flex min-h-11 items-center justify-between rule-top-hairline border-t-rule-faint px-page-inset py-comfortable transition-colors",
+                  navType,
+                  active ? "text-ink" : "text-ink-muted hover:text-ink",
+                  editorialFocusRing
                 )}
               >
                 {item.label}

@@ -4,6 +4,7 @@ import { Droplets, CloudRain, Map } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc/client";
+import { useWatershedsQuery } from "@/hooks/useViewportProxiedLayers";
 import { DROUGHT_LEGEND } from "@/components/map/layers/DroughtLayer";
 import { LayerToggle } from "@/components/ui/layer-toggle";
 import { useLayerRenderState, useMapDay } from "@/lib/map/layer-toggle-context";
@@ -35,12 +36,25 @@ const CONDITION_LABEL: Record<string, string> = {
 // The gauge layer's geo.layers name lives in the layer registry ("water" -> "water-gauges").
 // Drought has no geo.layers row, so the registry gives it none and it makes no claim.
 
+/** Rows rendered in the watershed list; the header states the full count beside it. */
+const WATERSHED_LIST_LIMIT = 50;
+
 const TREND_SYMBOL: Record<string, string> = {
   rising: "↑",
   stable: "→",
   declining: "↓",
   critical: "↓↓",
 };
+
+/**
+ * Trims a watershed attribute down to a usable list label, rejecting blanks.
+ * WBDHU12 leaves fields like `states` null on some features, and `??` alone would
+ * happily render an empty string as the row's name.
+ */
+function watershedLabel(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return value.trim() || null;
+}
 
 function ColorSwatch({ color, label }: { color: string; label: string }) {
   return (
@@ -63,10 +77,10 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
     enabled: open,
   });
 
-  const watershedQuery = trpc.environmental.getWatersheds.useQuery(
-    { bbox: bbox ?? "" },
-    { enabled: open && !!bbox }
-  );
+  // The same hook LayerManager calls, so the boundaries this tab lists are the ones the
+  // map already fetched: one query entry, not a second ~5 MB USGS request 60 s later.
+  // See src/lib/server/AGENTS.md §proxied-viewport-queries.
+  const watershedQuery = useWatershedsQuery(bbox, { enabled: open });
 
   // The map's day, read from the toggle context, so the panel and the map can never
   // disagree about what is displayed.
@@ -85,6 +99,10 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
   const droughtUnavailable = droughtQuery.data?.availability === "unavailable";
   const watershedsUnavailable =
     watershedQuery.data?.availability === "unavailable";
+  // USGS stops at its transfer limit and says so. The count below then describes a
+  // subset of the view, so it must not be presented as the number of watersheds here.
+  const watershedsTruncated = watershedQuery.data?.truncated === true;
+  const listedWatersheds = watersheds.slice(0, WATERSHED_LIST_LIMIT);
 
   // Summary counts per condition
   const conditionCounts = gauges.reduce<Record<string, number>>((acc, g) => {
@@ -119,6 +137,10 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
           <LayerToggle layerId="water" label="Water Gauges" />
           <LayerToggle layerId="drought" label="Drought Monitor" />
           <LayerToggle layerId="weather" label="Wind & Weather" />
+          {/* The registry assigns "watersheds" to this panel, and the Legend only lists
+              warehouse-backed layers -- so without a switch here the boundaries the tab
+              below enumerates could never be drawn on the map. */}
+          <LayerToggle layerId="watersheds" label="Watershed Boundaries" />
         </div>
 
         {hasSelectedDay && (
@@ -369,23 +391,44 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
                 <>
                   <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 text-center">
                     <span className="block text-2xl font-bold text-blue-600">
-                      {watersheds.length}
+                      {watershedsTruncated ? `${watersheds.length}+` : watersheds.length}
                     </span>
                     <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                      Watersheds in View
+                      {watershedsTruncated
+                        ? "Watersheds Returned (partial view)"
+                        : "Watersheds in View"}
                     </span>
                   </div>
+
+                  {watershedsTruncated && (
+                    <p
+                      role="status"
+                      aria-live="polite"
+                      className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+                    >
+                      USGS reached its transfer limit for this view and returned only
+                      the first {watersheds.length} boundaries. Zoom in for complete
+                      coverage — the count above and the map outlines are a subset.
+                    </p>
+                  )}
 
                   <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
                     <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
                       Watershed Boundaries
+                      {watersheds.length > WATERSHED_LIST_LIMIT &&
+                        ` (showing ${listedWatersheds.length} of ${watersheds.length})`}
                     </p>
                     <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto">
-                      {watersheds.slice(0, 50).map((f, i) => {
+                      {listedWatersheds.map((f, i) => {
                         const props = f.properties as Record<string, unknown> | null;
+                        // The WBDHU12 layer's `f=geojson` output carries the layer's own
+                        // lowercase field names, not the title-case aliases the ArcGIS
+                        // catalog displays -- reading "Name"/"HUC12" matched nothing and
+                        // listed every row as "Watershed N". Same spelling as
+                        // formatWatershed in src/lib/map/hover-fields.ts.
                         const name =
-                          (props?.["Name"] as string) ??
-                          (props?.["HUC12"] as string) ??
+                          watershedLabel(props?.["name"]) ??
+                          watershedLabel(props?.["huc12"]) ??
                           `Watershed ${i + 1}`;
                         return (
                           <div key={i} className="flex items-center gap-2 text-xs">
@@ -394,9 +437,10 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
                           </div>
                         );
                       })}
-                      {watersheds.length > 50 && (
+                      {watersheds.length > WATERSHED_LIST_LIMIT && (
                         <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                          +{watersheds.length - 50} more…
+                          +{watersheds.length - WATERSHED_LIST_LIMIT} more returned,
+                          not listed here
                         </p>
                       )}
                     </div>
@@ -409,12 +453,31 @@ export function WaterPanel({ open, onOpenChange, bbox }: WaterPanelProps) {
                 </>
               )}
 
+              {/* Boundaries are proxied live from USGS per viewport, so there is no
+                  warehouse release to wait on: "unavailable" here means the hydrography
+                  service itself answered without a feature collection (ArcGIS reports
+                  some faults as HTTP 200 plus an error object), which is a transient
+                  upstream condition rather than a withheld capability. hydrosheds.ts
+                  validates before it writes to Redis, so a fault is never cached and
+                  reloading this same view really does re-ask the provider. */}
               {!watershedQuery.isLoading && watershedsUnavailable && bbox && !watershedQuery.isError && (
                 <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
-                  Watershed boundaries are unavailable until a validated
-                  warehouse release is published.
+                  The USGS hydrography service did not return boundaries for this view.
+                  Nothing is drawn; the response was not cached, so reloading this view
+                  asks the provider again.
                 </p>
               )}
+
+              {/* Only claimed once a response actually arrived: an undefined query result
+                  is "not answered yet", not "the provider says there are none here". */}
+              {watershedQuery.data &&
+                !watershedQuery.isLoading &&
+                !watershedsUnavailable &&
+                watersheds.length === 0 && (
+                  <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                    USGS reports no HUC12 watersheds intersecting this view.
+                  </p>
+                )}
             </TabsContent>
           </Tabs>
         </div>

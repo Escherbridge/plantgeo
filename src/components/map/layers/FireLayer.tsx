@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, Popup } from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
+import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import {
   formatAbsoluteDateTime,
   formatTimestampWithRelative,
@@ -241,7 +242,11 @@ export function FireLayer({
     );
   }, []);
 
-  // Main effect: add/remove layers and persist across style changes
+  // Persist layers across every future style change (basemap swap included).
+  // addLayer/addSource work as soon as "style.load" fires -- see
+  // src/components/map/AGENTS.md -- and addAllLayers is idempotent (guards
+  // on getLayer/getSource), so calling it unconditionally here is safe even
+  // if it races with the styleReady effect below.
   useEffect(() => {
     if (!map) return;
 
@@ -254,14 +259,6 @@ export function FireLayer({
       if (!propsRef.current.visible) return;
       addAllLayers(map);
     };
-
-    if (map.isStyleLoaded()) {
-      addAllLayers(map);
-    } else {
-      map.once("style.load", () => addAllLayers(map));
-    }
-
-    // Persist layers across future style changes
     map.on("style.load", onStyleLoad);
 
     return () => {
@@ -269,6 +266,19 @@ export function FireLayer({
       removeAllLayers(map);
     };
   }, [map, visible, addAllLayers, removeAllLayers]);
+
+  // Add (or retry adding) once the style is actually ready. This is what
+  // covers the bug this hook exists for: a mount (or a swap) where
+  // isStyleLoaded() reads false at the moment "style.load" fires, and no
+  // further "style.load" arrives to retry -- only "styledata" events do, as
+  // tiles land. styleReady is only used to force this effect to re-run;
+  // the actual gate re-reads the live map so it can never act on a stale
+  // value. See use-style-ready.ts and AGENTS.md.
+  const styleReady = useStyleReady(map);
+  useEffect(() => {
+    if (!map || !visible || !map.isStyleLoaded()) return;
+    addAllLayers(map);
+  }, [map, visible, addAllLayers, styleReady]);
 
   // Update fire data when new geojson arrives
   useEffect(() => {

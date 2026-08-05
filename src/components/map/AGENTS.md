@@ -28,6 +28,20 @@ A style swap wipes custom layers, so every layer component re-adds its own on `s
 
 That invariant only holds if each `style.load` handler registers exactly once per map. An effect that lists changing values (`activeLayers`, bbox corners) in its deps tears down and re-registers its listener on every change, moving it to the back of the queue and inverting the stacking. Such handlers read their inputs from a ref and register with `[map]`-shaped deps only; a separate, cheap effect applies the change immediately without touching the registration. For the same reason, do not pair a `once("style.load", add)` with an `on("style.load", add)` — the persistent listener already covers every future swap, and an `isStyleLoaded()` check covers the current one.
 
+## Custom-added layers need a retriggerable readiness signal, not `once()`
+
+A component that adds its own sources/layers (rather than toggling visibility on layers the style already declares, like `applyVisibility` above) faces a sharper version of the same race. `FireLayer` and `WaterLayer` both hard-loaded invisibly in dark mode: `map.isStyleLoaded()` read `false` on mount, the code fell back to `map.once("style.load", () => addAllLayers(map))`, and that handler never ran. `isStyleLoaded()` requires every source's tiles to be in, not just the style JSON parsed, so it can stay `false` well after `style.load` — including the synchronous fire inside `setStyle()`'s diff path — has already come and gone. A `once` registered against that already-past event fires never; switching the basemap or toggling the layer off/on "fixed" it only because those actions register a fresh listener against a fresh `style.load`.
+
+The fix is `src/components/map/layers/use-style-ready.ts` — `useStyleReady(map)` subscribes with `on` (never `once`) to both `style.load` and `styledata`, recomputes `map.isStyleLoaded()` on each, and returns that boolean. Consumers don't gate on the returned value directly (mid-render it can be one tick stale); they put it in a `useEffect` dependency array purely to force a re-run, then re-read `map.isStyleLoaded()` live inside the effect — the same decoupled trigger-vs-gate shape `LayerManager`'s `styleReady` state already uses. `FireLayer` and `WaterLayer` now run two effects: one registers a persistent, unconditional `on("style.load", addAllLayers)` (safe because `addLayer`/`addSource` only require the style's `_loaded` flag, which is set at the same moment `style.load` fires — see `node_modules/maplibre-gl/src/style/style.ts` `_load()`/`setState()` — so this is also the primary mechanism that survives a basemap swap); the other depends on `useStyleReady`'s output and re-checks `map.isStyleLoaded()` live, which is what catches the mount-time race where no further `style.load` will ever arrive. Both call the same `addAllLayers`, which is idempotent — every `addSource`/`addLayer` call is guarded by `getSource`/`getLayer` — so redundant invocations from the two effects, or from a rapid style-catch-up, are no-ops rather than throws.
+
+**Remaining files with the same class of bug (not fixed in this pass — do not assume they are safe):**
+- `ErosionLayer.tsx`, `CarbonPotentialLayer.tsx`, `BurnHistoryLayer.tsx`, `ReforestationLayer.tsx`, `LandFireLayer.tsx`, `RecoveryLayer.tsx`, `LandCoverLayer.tsx` (two call sites) — all use `map.once("styledata", addLayers)`.
+- `SoilLayer.tsx`, `DroughtLayer.tsx`, `RouteLayer.tsx`, `IsochroneLayer.tsx` — use `map.once("style.load", ...)`, the exact shape this section fixes in Fire/Water.
+- `ModelLayer.tsx`, `AnimatedBeacon.tsx`, `ThreeLayer.tsx` — use `map.once("load", addLayer)`. `"load"` is the map's own one-time init event rather than a per-style event, so these don't retry across a basemap swap at all; whether that is a live bug depends on whether the map is ever re-created versus just re-styled.
+- `VegetationLayer.tsx`, `WeatherLayer.tsx`, `DemandHeatmapLayer.tsx` — already dropped `once()` in favor of `if (map.isStyleLoaded()) addAllLayers(map); map.on("style.load", onStyleLoad);`, which fixes the basemap-swap case but **not** the mount-time race: if `isStyleLoaded()` reads `false` on mount and no later `style.load` arrives (because the current style already finished loading before this component mounted), nothing retries. These are the closest candidates for a follow-up `useStyleReady` adoption since the persistent-listener half is already in place.
+
+Adopting `useStyleReady` in the files above is a known, deliberately deferred follow-up — each has its own layer/source ids and idempotency assumptions to verify individually rather than a mechanical find-replace.
+
 ## Popups and hover labels
 
 MapLibre's stock popup CSS hard-codes a white background but inherits its text color from the app, which is near-white under the default dark theme — popups rendered as blank cards until `globals.css` bound `.maplibregl-popup-content` to the `--card` tokens. Popup markup must therefore never hard-code text colors; use the `.map-popup-meta` class for secondary lines so both themes stay readable.
@@ -43,3 +57,27 @@ The action-network layer owns viewport cancellation through `useActionNetworkFea
 This is a governance stub, not accidental dead code. Deleting the chain would mean rebuilding it when the gate lifts, and would quietly erase the fact that the capability was withheld on purpose rather than never built. What re-enables it: a reviewed, access-controlled warehouse publication of aggregated demand, at which point the toggle's `unavailableReason` is dropped and the existing chain lights up unchanged.
 
 Contrast `interventions` in the same panel, which must stay freely toggleable: it is a live Martin style layer (`interventionsLayer`/`interventionsOutlineLayer` in `src/lib/map/layers.ts`, mapped in `STYLE_LAYER_TOGGLE_MAP`, flipped by `LayerManager.applyVisibility`). Its own `minzoom` of 6 already hides it when zoomed out, so a disabled switch would block a control whose preconditions the user can satisfy.
+
+## Sensors and evacuation-zones: re-connected, one SQL fix still outstanding
+
+Both `sensorsLayer` and `evacuationZonesLayer`/`evacuationZonesOutlineLayer` (`src/lib/map/layers.ts`) are registered exactly like every other style-backed toggle -- `LAYER_REGISTRY` entries with `renderKind: "style"`, no hand-edits needed in `LayerManager`, `Legend`, or `STYLE_LAYER_TOGGLE_MAP`, all of which derive from the registry. `evacuation-zones` reads `geo.evacuation_zone_tiles()` (Drizzle migration `0009_evacuation_zone_tiles`) and paints on `severity`, populated unconditionally alongside `evacuation_level_label` whenever the Oregon OEM feed reports an `evacuationLevel` -- see `evacuation_zones.py build_evacuation_zone_write`.
+
+`sensors` paints on `network`, the one property `sensors.py._matches_networks` guarantees is set on every row the NWS producer writes (it rejects a station before collection otherwise). That property is not yet in `geo.sensor_tiles()`'s `ST_AsMVT` SELECT list -- the function still only emits `sensor_type`/`status`/`name`, none of which any producer populates (the same "styled on a fabricated field" bug `interventions` once had, at the SQL layer instead of the paint layer). Until a migration replaces that SELECT list with `network`/`sensor_id`/`station_name`/`observed_at`, the sensors circle layer will render every one of the 750 published stations in the neutral grey fallback color rather than by network -- a degraded but honest default, not a crash.
+
+## Deep-linking the camera
+
+`/feed` links each proposed intervention to its site, so the map camera has to be
+addressable from outside the map. The query contract lives in
+`src/lib/map/focus-params.ts` — `focusLng`, `focusLat`, `focusZoom` — because two
+unrelated modules must agree on it byte for byte, and `MapFocus.tsx` applies it.
+
+`MapFocus` moves the camera directly rather than seeding the store. `MapView`
+reads `viewport` once, inside an init effect with an empty dependency list, so
+writing to the store only works on a cold mount and silently does nothing when a
+client-side navigation lands on an already-mounted map. Moving the camera works
+in both cases, and `MapView`'s own `moveend` handler writes the result back —
+which keeps exactly one writer for viewport state.
+
+Params are validated on read, never trusted: a URL is user input and MapLibre
+throws on a non-finite centre instead of ignoring it. `prefers-reduced-motion`
+turns the `flyTo` into a `jumpTo`.

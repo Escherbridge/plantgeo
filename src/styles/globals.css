@@ -265,6 +265,9 @@ body {
 
   /* Type scale -- fluid where the step is large enough to need it. */
   --editorial-type-size-label: 0.6875rem;
+  /* Navigation chrome is read at a glance, not studied, so it steps up from
+     `label` and loosens its tracking. See src/components/ui/editorial/AGENTS.md. */
+  --editorial-type-size-nav: 0.75rem;
   --editorial-type-size-caption: 0.8125rem;
   --editorial-type-size-body: 1.0625rem;
   --editorial-type-size-subheading: clamp(1.125rem, 1.02rem + 0.42vw, 1.375rem);
@@ -290,6 +293,7 @@ body {
   --editorial-tracking-heading: -0.012em;
   --editorial-tracking-body: 0em;
   --editorial-tracking-label: 0.2em;
+  --editorial-tracking-nav: 0.14em;
 
   /* Rules -- the load-bearing ornament of the system. */
   --editorial-rule-hairline: 1px;
@@ -352,6 +356,9 @@ body {
   --text-label: var(--editorial-type-size-label);
   --text-label--line-height: var(--editorial-leading-label);
   --text-label--letter-spacing: var(--editorial-tracking-label);
+  --text-nav: var(--editorial-type-size-nav);
+  --text-nav--line-height: var(--editorial-leading-label);
+  --text-nav--letter-spacing: var(--editorial-tracking-nav);
   --text-caption: var(--editorial-type-size-caption);
   --text-caption--line-height: var(--editorial-leading-caption);
   --text-body: var(--editorial-type-size-body);

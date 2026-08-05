@@ -18,6 +18,8 @@ describe('layer registry derivations', () => {
   it('derives exactly the style-backed toggles, with their style layer ids', () => {
     expect(STYLE_LAYER_TOGGLE_MAP).toEqual({
       'fire-perimeters': ['fire-perimeters', 'fire-perimeters-outline'],
+      sensors: ['sensors'],
+      'evacuation-zones': ['evacuation-zones', 'evacuation-zones-outline'],
       interventions: ['interventions', 'interventions-outline'],
       'building-footprints': ['building-footprints'],
     })
@@ -27,7 +29,9 @@ describe('layer registry derivations', () => {
     const styleBackedIds = styleBackedLayerEntries().map((entry) => entry.toggleId)
     expect(styleBackedIds).toEqual([
       'fire-perimeters',
+      'sensors',
       'interventions',
+      'evacuation-zones',
       'building-footprints',
     ])
     for (const entry of styleBackedLayerEntries()) {
@@ -42,10 +46,10 @@ describe('layer registry derivations', () => {
     expect(toggleIdForWarehouseLayerName('weather-observations')).toBe('weather')
     expect(toggleIdForWarehouseLayerName('vegetation')).toBe('vegetation')
     expect(toggleIdForWarehouseLayerName('interventions')).toBe('interventions')
-    // geo.layers rows with no renderer must stay untoggleable rather than pushing an
-    // inert string into activeLayers.
-    expect(toggleIdForWarehouseLayerName('evacuation-zones')).toBeNull()
-    expect(toggleIdForWarehouseLayerName('sensors')).toBeNull()
+    // Both now have renderers: sensors' 750 rows and evacuation-zones' 381 rows
+    // were previously toggleable by nothing.
+    expect(toggleIdForWarehouseLayerName('evacuation-zones')).toBe('evacuation-zones')
+    expect(toggleIdForWarehouseLayerName('sensors')).toBe('sensors')
   })
 
   it('gives each warehouse-backed toggle a distinct geo.layers name', () => {
@@ -56,10 +60,16 @@ describe('layer registry derivations', () => {
   })
 
   it('inverts panel ownership into the same lists the panels governed before', () => {
-    expect(getLayersForPanel('fire')).toEqual(['fire', 'fire-perimeters'])
-    expect(getLayersForPanel('water')).toEqual(['water', 'drought', 'weather'])
+    expect(getLayersForPanel('fire')).toEqual(['fire', 'fire-perimeters', 'evacuation-zones'])
+    expect(getLayersForPanel('water')).toEqual([
+      'water',
+      'drought',
+      'weather',
+      'sensors',
+      'watersheds',
+    ])
     expect(getLayersForPanel('vegetation')).toEqual(['vegetation'])
-    expect(getLayersForPanel('soil')).toEqual(['soil'])
+    expect(getLayersForPanel('soil')).toEqual(['soil', 'soil-survey'])
     expect(getLayersForPanel('community')).toEqual(['demand-heatmap', 'interventions'])
     expect(getLayersForPanel('strategy')).toEqual([])
     expect(getLayersForPanel('team')).toEqual([])
@@ -75,6 +85,27 @@ describe('layer registry derivations', () => {
     // resolve to a registry entry or claim a panel.
     expect(isLayerToggleId('3f6c1e2a-0000-4000-8000-000000000000')).toBe(false)
     expect(panelIdForLayerToggle('3f6c1e2a-0000-4000-8000-000000000000')).toBeNull()
+  })
+
+  // watersheds and soil-survey are proxied live from USGS NHD+ HR and the USDA Soil Data
+  // Mart through environmental.getWatersheds/getSoilSurvey. Nothing publishes them into
+  // geo.layers, so claiming a warehouse layer name would make useLayerRenderState look up
+  // a slider capability that can never exist and caption the layer with a history nobody
+  // measured. Their governance stubs are lifted, so neither may carry a withheld reason.
+  it('treats the upstream-proxied collections as component layers with no warehouse feed', () => {
+    for (const toggleId of ['watersheds', 'soil-survey'] as const) {
+      const entry = LAYER_REGISTRY[toggleId]
+      expect(entry.renderKind).toBe('component')
+      expect(entry.styleLayerIds).toEqual([])
+      expect(entry.warehouseLayerName).toBeNull()
+      expect(entry.permanentlyUnavailableReason).toBeNull()
+    }
+    expect(panelIdForLayerToggle('watersheds')).toBe('water')
+    expect(panelIdForLayerToggle('soil-survey')).toBe('soil')
+    // Their style layer ids stay out of the setLayoutProperty path: a component-added
+    // layer is toggled by presence, and LayerManager would flip a layer nobody added.
+    expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty('watersheds')
+    expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty('soil-survey')
   })
 
   it('withholds demand-heatmap at every date, and withholds nothing else', () => {

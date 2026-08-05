@@ -11,12 +11,16 @@ import { CARBON_COLORS, classifyCarbonPotential, type CarbonClass } from "@/comp
 import { LayerToggle } from "@/components/ui/layer-toggle";
 import type { InterventionType } from "@/lib/environmental/intervention";
 import { ENVIRONMENTAL_TILES_CONFIGURED } from "@/lib/vegetation";
+import { useLayerVisibility } from "@/lib/map/layer-toggle-context";
+import { useSoilSurveyQuery } from "@/hooks/useViewportProxiedLayers";
 
 interface SoilPanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Point to query for soil + intervention suitability */
   queryPoint?: { lat: number; lon: number } | null;
+  /** The map's viewport, handed down by PanelManager exactly as the other panels get it. */
+  bbox?: string;
 }
 
 const SOIL_PROPERTY_OPTIONS: { value: SoilProperty; label: string }[] = [
@@ -92,6 +96,7 @@ export function SoilPanel({
   open,
   onOpenChange,
   queryPoint,
+  bbox,
 }: SoilPanelProps) {
   const { property: selectedProperty, setProperty } = useSoilStore();
 
@@ -109,6 +114,29 @@ export function SoilPanel({
     setProperty(prop);
   }
 
+  // The SSURGO collection the map is drawing, read back so this panel can say when what
+  // is drawn is partial or missing. The same hook LayerManager calls, on the bbox
+  // PanelManager derived once, so the two observers share one react-query entry: opening
+  // this panel never issues an upstream request the map was not already making.
+  // `useLayerVisibility` and not `useLayerToggle`: the panel must not become the sole
+  // requester of a layer governance withholds from the map.
+  const soilSurveyVisible = useLayerVisibility()["soil-survey"];
+  const soilSurveyQuery = useSoilSurveyQuery(bbox, {
+    enabled: open && soilSurveyVisible,
+  });
+  const soilSurvey = soilSurveyQuery.data;
+  // USDA holds more map units than it serves for one view and returned a subset; the
+  // count below then describes part of the view, not the view.
+  const soilSurveyTruncated = soilSurvey?.truncated === true;
+  // A provider fault, not a coverage answer: `features: []` here means SDA did not
+  // answer, which the map paints exactly like ground the survey found nothing on.
+  const soilSurveyUnavailable = soilSurvey?.availability === "unavailable";
+  const soilSurveyCount = soilSurvey?.features.length ?? 0;
+  // Map units SDA did serve whose geometry this reader could not parse. They are dropped
+  // rather than drawn at a guessed outline, so the ground under them paints blank -- a
+  // gap in what we can read, which must never be captioned as unsurveyed ground.
+  const soilSurveyUnreadable = soilSurvey?.unreadableGeometries ?? 0;
+
   const soil = soilQuery.data;
   const suitability = suitabilityQuery.data;
   const suitabilityAvailable = suitability?.availability === "published";
@@ -124,6 +152,100 @@ export function SoilPanel({
         </SheetHeader>
 
         <LayerToggle layerId="soil" label="Soil Properties" />
+        {/* The registry routes "soil-survey" to this panel, and the Legend only lists
+            warehouse-backed layers (soil-survey's warehouseLayerName is null) -- so without
+            a switch here the SSURGO polygons SoilSurveyLayer renders could never be turned
+            on. Same pattern as the "watersheds" toggle in WaterPanel.tsx. */}
+        <LayerToggle layerId="soil-survey" label="Soil Survey (SSURGO)" />
+
+        {/* What the survey layer is actually drawing. Both dishonest cases -- a subset
+            served past USDA's row ceiling, and an upstream fault -- reach the map as
+            polygons that stop, indistinguishable from ground the survey found nothing on,
+            so the panel is the only surface that can tell them apart. Same treatment
+            WaterPanel gives the watershed collection. The registry's unavailableReason
+            channel cannot carry this: soil-survey is upstream-proxied with no
+            warehouseLayerName, so it has no per-day capability to be unavailable at, and
+            a reason there would also disable the switch while the layer is still drawing. */}
+        {soilSurveyVisible && (
+          <div className="mt-1.5 flex flex-col gap-1.5">
+            {soilSurveyQuery.isLoading && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="text-xs text-[hsl(var(--muted-foreground))]"
+              >
+                Loading the USDA soil survey for this view…
+              </p>
+            )}
+
+            {soilSurveyUnavailable && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                USDA Soil Data Access did not return a map-unit table for this view.
+                Nothing is drawn — that is a provider fault, not an absence of soil. The
+                response was not cached, so returning to this view asks USDA again.
+              </p>
+            )}
+
+            {soilSurveyTruncated && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                USDA surveyed more map units than this view draws. The first{" "}
+                {soilSurveyCount} are shown — what is drawn is a subset, so ground left
+                blank here is not necessarily unsurveyed. Zoom in for complete coverage.
+              </p>
+            )}
+
+            {/* Rows SDA served that never became polygons. Same honest-gap principle as
+                `truncated`: the map paints the ground under them exactly like ground the
+                survey found nothing on, and only this note can tell the two apart. */}
+            {soilSurveyUnreadable > 0 && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                USDA returned {soilSurveyUnreadable} map unit
+                {soilSurveyUnreadable === 1 ? "" : "s"} whose boundary could not be read,
+                so {soilSurveyUnreadable === 1 ? "it is" : "they are"} not drawn. Blank
+                ground here is a gap in what this reader could parse, not an absence of
+                soil.
+              </p>
+            )}
+
+            {/* The viewport area ceiling lives on the server, so the client learns it has
+                been exceeded only from the rejected request; a transient SDA outage
+                arrives the same way, hence one note covering both. */}
+            {soilSurveyQuery.isError && (
+              <p
+                role="alert"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                The soil survey could not be loaded for this view. It is served only over
+                a bounded viewport area — zoom in, or try again shortly.
+              </p>
+            )}
+
+            {/* Only claimed once a response actually arrived, and only for a published
+                one: an undefined result is "not answered yet", not "USDA says there is
+                nothing here". */}
+            {soilSurvey && !soilSurveyUnavailable && !soilSurveyTruncated && (
+              <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                {soilSurveyCount > 0
+                  ? `${soilSurveyCount} SSURGO map units drawn for this view.`
+                  : soilSurveyUnreadable > 0
+                    ? "No map unit USDA returned for this view could be read, so nothing is drawn."
+                    : "USDA reports no surveyed SSURGO map units in this view."}
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="mt-4 overflow-y-auto max-h-[calc(100vh-8rem)]">
           <Tabs defaultValue="properties">

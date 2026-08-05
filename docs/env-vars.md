@@ -57,8 +57,8 @@ does not update the client.
 | Variable | Policy |
 | --- | --- |
 | `INGEST_SECRET` | Dedicated bearer secret for authenticated ingestion routes. Required in production for those routes. |
-| `INGEST_BBOX` | Required for scheduled acquisition; `west,south,east,north`, capped at 30° longitude by 20° latitude. Read by both the authenticated `/api/ingest/*` routes and the `plantgeo-ingest-cron` container's `agri-cli ingest-all`. Start with one reviewed region. |
-| `NASA_FIRMS_KEY` | Server-only; required only when running the FIRMS acquisition path (the web routes and the cron container both read it). |
+| `INGEST_BBOX` | Required for scheduled acquisition; `west,south,east,north`, capped at 30° longitude by 20° latitude. Read by the authenticated `/api/ingest/*` routes and by every ingestion cron container — `plantgeo-ingest-cron`'s `agri-cli ingest-all` and each per-layer service's single verb. Start with one reviewed region and set it identically on every cron service; a mismatched bbox across services silently narrows one source's coverage relative to the others. |
+| `NASA_FIRMS_KEY` | Server-only; required only when running the FIRMS acquisition path — the web routes, `plantgeo-ingest-cron`'s `ingest-all`, and `plantgeo-ingest-firms`'s `ingest-firms` all read it. No other per-layer service needs it. |
 | `FIRMS_DAY_RANGE` | Optional, cron container only. FIRMS lookback window in days; must be a plain non-negative integer string or it silently falls back to the default. Clamped to 1-10, default 2. |
 | `INGEST_MAX_SOURCE_RECORDS` | Optional, cron container only. Caps the number of records accepted from a single ingestion source per run. Clamped to 1,000-50,000, default 10,000. |
 | `WEATHER_SAMPLE_SPACING_DEGREES` | Optional, cron container only. Starting grid spacing (degrees) for the Open-Meteo sampling sweep. Clamped to 0.25-5.0, default 1.0; the sweep coarsens spacing until `columns * rows <= 150`, it never slices the grid. |
@@ -73,28 +73,36 @@ Layer references must exist before ingestion. A missing key, source, or layer
 must fail closed and preserve the last valid publication; it must not generate a
 sample observation.
 
-`CRON_SECRET` is retired: `plantgeo-ingest-cron` now runs `agri-cli ingest-all` as a Python
-container that reaches Postgres and Redis directly, instead of calling an HTTP route with an
-`x-cron-secret` header. There is no cron ingress secret left to configure once
-`src/app/api/cron/ingest/route.ts` is removed.
+`CRON_SECRET` is retired: every ingestion cron container — `plantgeo-ingest-cron` (`agri-cli
+ingest-all`) and, once created, each of the eight per-layer services in `docs/deployment.md`'s
+"Per-layer ingestion cron services" (`plantgeo-ingest-streamflow`, `-weather`, `-fire-perimeters`,
+`-firms`, `-drought`, `-ndvi`, `-sensors`, `-evacuation-zones`) — is a Python container that reaches
+Postgres and Redis directly, instead of calling an HTTP route with an `x-cron-secret` header. There
+is no cron ingress secret left to configure once `src/app/api/cron/ingest/route.ts` is removed, on
+any of them.
 
-**The cron container's database variable is `LOCAL_SOURCE_LOADER_DATABASE_URL`, not
-`DATABASE_URL`.** Every `ingest-*` verb opens `ingest_session()`, which calls
+**Every ingestion cron container's database variable is `LOCAL_SOURCE_LOADER_DATABASE_URL`, not
+`DATABASE_URL`.** This applies identically whether the container runs `ingest-all` or a single
+per-layer verb: every `ingest-*` verb opens `ingest_session()`, which calls
 `settings.require_local_source_loader_database_url()`; that reader has no fallback and raises
 `source-ingest requires LOCAL_SOURCE_LOADER_DATABASE_URL; DATABASE_URL is never a loader fallback`
 outside any per-source isolation, so a container configured with `DATABASE_URL` alone dies with an
-unhandled traceback on every hourly tick and ingests nothing. `DATABASE_URL` must **not** be set on
-this service: the validator rejects a loader DSN equal to it, and both fields are normalised to
-`postgresql+asyncpg://` before the comparison, so the "obvious" fix of setting them to the same
-string fails too. The value must be the Railway **public proxy** DSN
-(`switchback.proxy.rlwy.net:37967`, role `postgres`) — `_INGEST_SOURCE_LOADER_ALLOWED_TARGETS`
-does not accept the `postgres.railway.internal` private-network host. `REDIS_URL` is still
-required, for the realtime publisher. See
+unhandled traceback on its first tick and ingests nothing. `DATABASE_URL` must **not** be set on
+any of these services: the validator rejects a loader DSN equal to it, and both fields are
+normalised to `postgresql+asyncpg://` before the comparison, so the "obvious" fix of setting them to
+the same string fails too. The scheme itself is effectively mandatory: `config.py`'s
+`fix_database_url_schema` rewrites a bare `postgres://` or `postgresql://` prefix to
+`postgresql+asyncpg://` before validation, but the final check
+(`require_local_source_loader_database_url`) still requires `parsed.scheme == "postgresql+asyncpg"`
+— write the DSN as `postgresql+asyncpg://` explicitly rather than relying on the silent rewrite. The
+value must be the Railway **public proxy** DSN (`postgresql+asyncpg://postgres:<password>@switchback.proxy.rlwy.net:37967/plantgeo`)
+— `_INGEST_SOURCE_LOADER_ALLOWED_TARGETS` does not accept the `postgres.railway.internal`
+private-network host. `REDIS_URL` is still required, for the realtime publisher. See
 `services/agri-data-service/src/agri_data_service/ingest/AGENTS.md`.
 
 | Variable | Policy |
 | --- | --- |
-| `LOCAL_SOURCE_LOADER_DATABASE_URL` | **Required on `plantgeo-ingest-cron`**, and on any local `agri-cli ingest-*`/`source-ingest` run. The only new variable with no default. Allowed targets: `127.0.0.1:5442/plantgeo` as `plantgeo_loader`, or `switchback.proxy.rlwy.net:37967/plantgeo` as `postgres`. Rejects the `plantgeo_owner` bootstrap role, a query string, and any DSN equal to `DATABASE_URL`. |
+| `LOCAL_SOURCE_LOADER_DATABASE_URL` | **Required on every ingestion cron service** — `plantgeo-ingest-cron` and each per-layer service in `docs/deployment.md`'s "Per-layer ingestion cron services" — and on any local `agri-cli ingest-*`/`source-ingest` run. The only new variable with no default. Allowed targets: `127.0.0.1:5442/plantgeo` as `plantgeo_loader`, or `switchback.proxy.rlwy.net:37967/plantgeo` as `postgres`. Rejects the `plantgeo_owner` bootstrap role, a query string, and any DSN equal to `DATABASE_URL`. Scheme must resolve to `postgresql+asyncpg://` — write it explicitly rather than relying on the `postgres://`/`postgresql://` auto-rewrite. |
 | `FIRE_PERIMETERS_LAYER_ID` | Optional, cron container only. Existing layer name/UUID for WFIGS perimeters; default `fire-perimeters`. This is the variable the Python `wfigs` module reads — `FIRES_LAYER_ID` below is read only by the web route `POST /api/ingest/fires`. Set both if you repoint the layer, or the two writers silently diverge. |
 | `VEGETATION_LAYER_ID` | Optional, cron container only. Layer for Sentinel-2 NDVI grid samples; default `vegetation`. |
 | `EVACUATION_ZONES_LAYER_ID` | Optional, cron container only. Layer for Oregon OEM evacuation areas; default `evacuation-zones`. |

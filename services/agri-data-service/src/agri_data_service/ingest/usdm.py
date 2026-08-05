@@ -46,7 +46,15 @@ TUESDAY: Final = 1  # date.weekday(): Monday is 0, so Tuesday is 1.
 RETAINED_RELEASES_VARIABLE: Final = "DROUGHT_RETAINED_RELEASES"
 DEFAULT_RETAINED_RELEASES: Final = 8
 MIN_RETAINED_RELEASES: Final = 2
-MAX_RETAINED_RELEASES: Final = 52
+# The history backfill (ingest/usdm_history.py) walks further than its "two year" description
+# suggests: a 2026-08 run reached 2022-08, i.e. ~208 weekly releases. This cap has twice been set
+# below what the backfill actually produces -- first 52, then 120 -- and because it clamps the
+# DROUGHT_RETAINED_RELEASES tunable rather than just defaulting it, a too-low value means NO
+# setting can protect the history and the next weekly tick prunes it away. Sized here to clear a
+# five-year series with headroom. Cost is ~2.5 MB of stored geometry per release (measured, not the
+# ~19 MB upstream payload), so 280 releases is roughly 700 MB -- the deliberate price of
+# "we persist and serve everything we present" and a slider whose depth is whatever was ingested.
+MAX_RETAINED_RELEASES: Final = 280
 
 MIN_DROUGHT_CLASS: Final = 0
 MAX_DROUGHT_CLASS: Final = 4

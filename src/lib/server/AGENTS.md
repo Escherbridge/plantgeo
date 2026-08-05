@@ -226,6 +226,200 @@ Cache keys quantize to a 0.001° cell, finer than SoilGrids' own 250 m pixel, an
 the quantized cell is what gets queried — so the cached value corresponds
 exactly to the coordinate returned, with no interpolation across cells.
 
+## §soil-survey
+
+`services/usda-soil.ts` + `trpc/routers/environmental.ts#getSoilSurvey`. Distinct
+from §soil-evidence above: that is SoilGrids' modelled raster at a point, this is
+USDA's surveyed SSURGO map units over a viewport.
+
+**The SSURGO spatial WFS cannot serve this feature, and the tabular endpoint can.**
+Probed live 2026-08-04:
+
+- `Spatial/SDM.wfs` — the URL this module originally used — does not exist. Every
+  request answers `400 <ServiceException>Requested WFS Service does not exist
+  'SDM.wfs'</ServiceException>`.
+- `Spatial/SDMWGS84Geographic.wfs` does exist, but rejects
+  `outputFormat=application/json` with `parameter "outputformat" requires a value
+  from the list ("GML2","GML3","XMLMukeyList")`. There is no JSON from that service.
+- Its `MapunitPoly` type carries only `areasymbol`, `spatialversion`, `musym`,
+  `nationalmusym`, `mukey`, `mupolygonkey`, `muareaacres`. **No `muname`, `compname`,
+  `drainagecl` or `hydricrating` at all** — those live in the tabular database. A URL
+  fix alone would therefore have painted every polygon in the country
+  `muname: "Unknown"`, `drainageClass: "unknown"`, `hydric: false`.
+
+So both halves come from `Tabular/post.rest` in one round trip: SDA's own
+`~DeclareGeometry~`/`~GetClippedMapunits~` preprocessor macros clip the map-unit
+polygons to the viewport and return them as WKT, and ordinary T-SQL joins `mapunit`
+and the dominant `component` for the ratings. `mupolygon.STIntersects(...)` written
+out longhand instead of the macro **times out past 90 s** and is not an alternative.
+
+`hydric` is tri-state. SSURGO's `hydricrating` is `"Yes"`, `"No"`, `"Unranked"`, or
+null; only the first two are ratings. `Boolean(rating)` is `true` for the string
+`"No"` and `true` for `"Unranked"`, and `false` for a null — it both inverts real
+ratings and manufactures a "Hydric: No" verdict for unrated units. Every other
+rating is `string | null` for the same reason: `hover-fields.ts` omits a line it
+cannot fill, which is honest, whereas `"Unknown"` reads as a survey finding.
+
+Payload is linear in viewport **area**, but not in geography: SSURGO map-unit density
+varies by an order of magnitude across CONUS, so unlike HUC12 below no single site
+generalizes. Measured over **Boise** (arid rangeland, coarse map units): 0.0025 sq deg
+→ 0.20 MB / 3.9 s; **0.02 sq deg → 1.32 MB / 5.0 s / 380 polygons**; 0.0625 sq deg →
+7.25 MB / 27 s / 2129 polygons. Measured over **Des Moines** (Corn Belt farmland, the
+densest surveying in the country) at the *identical* 0.02 sq deg: **2.94 MB / 14.0 s /
+1001 map units** — 2.6× the polygons and 2.8× the time for the same area, and past
+`MAX_SOIL_POLYGONS`, so the Corn Belt truncates at the sanctioned zoom rather than in
+some exotic edge case. Treat the Boise row as the best case and the Des Moines row as
+the CONUS ceiling.
+
+`MAX_SOIL_BBOX_SQUARE_DEGREES` is the middle Boise figure, kept because it is also
+roughly the zoom at which a 1:24,000 survey is worth drawing, and because payload is
+linear in area: halving it would halve the Corn Belt worst case, which is the lever to
+reach for if 14 s proves too long a wait, rather than shortening the timeout.
+
+`REQUEST_TIMEOUT_MS` is 30 s, tuned against Des Moines and not Boise. At the old 20 s
+the densest viewport in CONUS had 1.43× headroom, so any upstream variance above 43%
+turned a slow-but-correct answer into a timeout — and a timeout here is not a cheap
+failure: cache keys are per-exact-bbox, nothing is written on failure, so every retry
+re-pays in full while the panel reports the layer unavailable. 30 s is ~2.1× the
+measured ceiling and stays inside the house band (`usdm-drought` 60 s, `wfigs` 20 s).
+This is the opposite call from §soil-evidence's 12 s deliberately: ISRIC answers in a
+second or not at all, so a longer bound there only lengthens the spinner before an
+identical failure, whereas SDA does answer the dense viewports — just slowly.
+`MAX_RESPONSE_BYTES` (8 MB) is unchanged and remains the payload bound; Des Moines'
+2.94 MB leaves 2.7× of room.
+
+`SELECT TOP MAX_SOIL_POLYGONS + 1 … ORDER BY g.id` bounds the rows independently and
+makes truncation detectable; the extra row is dropped and `truncated` is set. Reducing
+geometry in SQL (`geom.Reduce(0.00001)`) was measured and rejected — it saves 2.6%,
+because SSURGO vertices are already sparse relative to a metre.
+
+`{}` with no `Table` key is SDA's answer where it holds no map units (verified over
+open ocean). That is a coverage gap and is served as an empty published collection.
+A `Table` that is present but unreadable is a `SoilSurveyResponseError`, reported as
+`soil_survey_upstream_returned_no_table`, and is never cached.
+
+**A dropped row is a gap, not an absence.** `toSoilSurveyCollection` drops any map unit
+whose WKT `parseWktPolygon` will not read — an SRID prefix, a geometry type it does not
+handle, an unclosed ring — because the ratings alone cannot be placed on the map. Those
+drops are counted into `unreadableGeometries` and carried all the way to the client on
+`ProxiedFeatureCollection`, for the same reason `truncated` is: without it, a viewport
+whose every row failed to parse is byte-identical to open ocean (`features: []`,
+`truncated: false`, `availability: "published"`) and `SoilPanel` would caption a reader
+gap as "USDA reports no surveyed SSURGO map units in this view" — a coverage claim USDA
+never made — and `getSoilSurvey` would then cache that claim for 24 h under this bbox.
+The closure check above makes the parser strictly *more* rejecting, so the count is the
+thing that keeps that strictness honest. `isSoilSurveyCollection` requires the field, so
+a Redis entry written before it existed is re-fetched rather than served: it cannot say
+how many rows it dropped, and defaulting to zero would assert a completeness nobody
+measured. `getWatersheds` reports `0` because hydrosheds rejects a payload whole rather
+than dropping features from it.
+
+Rings are rejected unless they close (RFC 7946 3.1.6, first position repeated last).
+SDA's `STAsText()` always closes them, so this is latent — but `parseWktPolygon`'s
+contract is "never a partial or repaired geometry", and an unclosed ring handed to a
+renderer is auto-closed into a polygon the survey never recorded.
+
+**Where truncation and unavailability are consumed.** `truncated`, `availability` and
+`reason` reach the client on `ProxiedFeatureCollection` and are rendered by
+`components/panels/SoilPanel.tsx` beneath the `soil-survey` toggle: a truncated view is
+captioned as a subset, an `unavailable` one as a provider fault, and only a published
+empty one as ground the survey found nothing on. The map itself cannot express the
+difference — all three arrive as polygons that stop. The layer registry's
+`unavailableReason` channel is not the carrier: `soil-survey` is upstream-proxied with
+`warehouseLayerName: null`, so `useLayerRenderState` has no capability to evaluate and
+always reads "published", and a reason routed through `LayerToggle` would also disable
+the switch while the layer is still drawing. A non-zero `unreadableGeometries` is
+captioned there too, beside `truncated`, and suppresses the empty-coverage sentence.
+The area ceiling is server-side only, so an over-wide viewport surfaces to the client as
+a rejected request, not as a pre-emptive client-side check that could drift from the
+constant.
+
+## §watershed-boundaries
+
+`services/hydrosheds.ts` + `trpc/routers/environmental.ts#getWatersheds`.
+
+WBDHU12 reports its own truncation. At basin scale the layer answers with a
+top-level `exceededTransferLimit: true` beside exactly `resultRecordCount`
+features (measured: 500 features, 21.6 MB over a 30 sq deg envelope). Reading the
+flag is the only way to tell a complete viewport from an arbitrary slice, so it is
+surfaced as `truncated` on `ProxiedFeatureCollection` and rendered as a
+partial-coverage note; without it the API asserted `availability: "published"` over
+a subset. Paging past it is not available: `resultOffset=500` returns **HTTP 500**,
+with or without `orderByFields`.
+
+`geometryPrecision=6` rounds to ~0.1 m — far finer than 1:24,000 boundaries were
+digitized at — and cuts a 1 sq deg response from 8.63 MB to 5.07 MB over the same
+131 polygons. Without it that viewport exceeds `MAX_RESPONSE_BYTES` and fails as an
+oversized payload. HUC12 density is near-uniform by design (~40 sq mi per unit), so
+`MAX_WATERSHED_BBOX_SQUARE_DEGREES = 1` is ~130 polygons / ~5 MB / ~7 s anywhere in
+CONUS.
+
+Validation happens inside `getWatersheds`, before the cache write, because ArcGIS
+answers some faults with HTTP 200 and an `error` object: caching one persisted the
+fault for the full hour, and the panel's "pan or zoom to retry" advice could not
+work for the same viewport. A rejected payload raises `WatershedResponseError`,
+which the router reports as `watershed_upstream_returned_no_features` rather than
+as an empty viewport the provider never claimed.
+
+Client-side, `WaterPanel`'s watershed tab and `LayerManager` both call
+`useWatershedsQuery` — see §proxied-viewport-queries for why neither may build the query
+itself.
+
+Both proxied procedures cap viewport **area**, not just WGS84 legality. They are
+unauthenticated, they call a third-party API per request, and the Redis key is the
+exact bbox — so nothing amortizes a basin-wide ask, and the ceiling is the only
+cost boundary. Both go through `cacheGeoJSON`/`getCachedGeoJSON`, which latch off a
+dead Redis instead of throwing: the cache is an optimization, and a Redis outage
+must not take two map layers down with an `INTERNAL_SERVER_ERROR`.
+
+## §proxied-viewport-queries
+
+`src/hooks/useViewportProxiedLayers.ts`, consumed by `components/map/LayerManager.tsx`,
+`components/map/PanelManager.tsx`, `components/panels/SoilPanel.tsx` and
+`components/panels/WaterPanel.tsx`. Applies to both feeds above.
+
+**One query per feed, not one per caller.** A map layer and the panel that describes it
+read the same viewport, so they must produce the *same* react-query entry — not two that
+look alike. Four things have to agree for that to hold: the bbox derivation, the
+placeholder input used when there is no bbox, `staleTime`, and `retry`. Hand-copied
+across two files they drift silently, and the failure is invisible on first paint: with
+the map on 1 h and a panel inheriting `providers.tsx`'s 60 s default, opening the panel a
+minute later issues a *second* full upstream fetch (~5 MB / ~7 s for HUC12) of data the
+map considered fresh for another 59 minutes. `staleTime` is per-observer in TanStack v5
+and `refetchOnMount` defaults true, so nothing about a shared key prevents this.
+
+So all four live in `useSoilSurveyQuery` / `useWatershedsQuery`, and the bbox in
+`useViewportBounds` — one derivation, called by `LayerManager` and by `PanelManager`,
+which hands it to the panels as a `bbox` prop exactly as the other viewport-scoped panels
+already receive one. Callers supply only `enabled`, which is genuinely per-caller (a map
+layer is mounted, a panel is open) and can never split one cache entry into two, since it
+is not part of the key.
+
+The hooks also apply the registry's `permanentlyUnavailableReason` guard to the
+*request*, not just to the render, so a panel can never become the sole requester of a
+layer governance withholds from the map. `SoilPanel` reads `useLayerVisibility()` rather
+than `useLayerToggle()` for the same reason — raw `activeLayers` membership bypasses that
+guard.
+
+`retry: 1`, not react-query's default 3. Cache keys are per-exact-bbox and nothing is
+written on failure, so every attempt re-pays in full: at `REQUEST_TIMEOUT_MS` a dense
+Corn Belt viewport that times out costs 4 × 30 s = 120 s of SDA work under the default,
+against 60 s at one retry. Not 0, because the observed failure mode is a transport blip
+rather than a deterministic fault, and with nothing cached the user's only recourse would
+be to pan away and back. A bbox the router rejects for area is a Zod failure that never
+reaches the provider, so retrying one costs nothing measurable.
+
+`src/__tests__/components/viewport-proxied-query-sharing.test.tsx` pins this by rendering
+the real `LayerManager` and the real `PanelManager` over a recording tRPC link, and
+asserting one cache entry, two observers, one set of options and one request per feed. It
+deliberately does not mock `useQuery`: a mock would let the two callers diverge and still
+report green, which is exactly the state this section exists to prevent.
+
+Known gap, deliberately unfixed here: `abortOnUnmount` is unset (tRPC default `false`)
+and `fetchBoundedJson` does not forward an inbound `AbortSignal`, so panning away
+cancels nothing server-side. Both are transport-layer concerns in `lib/trpc/client.ts`
+and `http/bounded-upstream.ts` respectively, not per-query settings.
+
 ## §vegetation-tiles
 
 `lib/vegetation.ts` is client-safe and holds no secrets.

@@ -44,6 +44,7 @@ ERA5_LAND_FINALIZATION_SCHEMA_VERSION: Literal[1] = 1
 ERA5_LAND_DAY_STRING_LENGTH = 2
 WGS84_HALF_CIRCLE_DEGREES = 180
 ERA5_LAND_COORDINATE_EPSILON = 0.000_001
+ERA5_LAND_LICENCE_REFUSED_HTTP_STATUS = 403
 
 # The CDS daily-statistics product returns the original analysis units.  The
 # normalized unit is explicit so local readers never guess which temperature scale
@@ -639,11 +640,42 @@ def _download_era5_land_monthly(plan: HistoricalEra5LandBackfillPlan, period: Er
     with tempfile.TemporaryDirectory(prefix="plantgeo-era5-download-") as temporary:
         target = Path(temporary) / f"{period.key}.zip"
         client = cdsapi.Client(url=url, key=key, quiet=True, progress=False)
-        client.retrieve(plan.dataset, request, str(target))
+        try:
+            client.retrieve(plan.dataset, request, str(target))
+        except Exception as exc:
+            _reject_unaccepted_era5_licences(exc, plan.dataset)
+            raise
         payload = target.read_bytes()
     if not payload:
         raise ValueError("CDS returned an empty ERA5-Land monthly artifact")
     return payload
+
+
+def _reject_unaccepted_era5_licences(exc: BaseException, dataset: str) -> None:
+    """Restate a CDS licence refusal as an actionable, credential-free operator error.
+
+    The CLI prints ValueError text verbatim and collapses every other exception to its class
+    name, so an untranslated refusal surfaces only as "operation failed (HTTPError)" and hides
+    the one thing an operator must act on. Licence acceptance is a browser action for the
+    account behind CDSAPI_KEY; no retry, credential change, or plan edit can clear it.
+    """
+    response = getattr(exc, "response", None)
+    if response is None or getattr(response, "status_code", None) != ERA5_LAND_LICENCE_REFUSED_HTTP_STATUS:
+        return
+    try:
+        body = response.json()
+    except ValueError:
+        return
+    if not isinstance(body, dict):
+        return
+    title = str(body.get("title", ""))
+    if "licence" not in title.lower() and "license" not in title.lower():
+        return
+    raise ValueError(
+        f"CDS refused the ERA5-Land request for {dataset}: {title}. {body.get('detail', '')} "
+        "Accepting a licence is a browser action for the Copernicus account that owns "
+        "CDSAPI_KEY; the API client cannot accept it and retrying will not clear it."
+    ) from exc
 
 
 def _require_cds_credentials() -> tuple[str, str]:

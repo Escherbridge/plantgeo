@@ -37,6 +37,9 @@ postgres:
     building_tiles:
       schema: geo
       function: building_tiles
+    evacuation_zone_tiles:
+      schema: geo
+      function: evacuation_zone_tiles
   tables:
     osm_roads:
       schema: geo

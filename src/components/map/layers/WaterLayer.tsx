@@ -4,7 +4,15 @@ import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, Popup, GeoJSONSource } from "maplibre-gl";
 import type { GroundwaterWell, WaterGauge } from "@/lib/environmental/water";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
+import {
+  WATERSHEDS_SOURCE,
+  watershedsLayer,
+  watershedsOutlineLayer,
+} from "@/lib/map/layers";
+import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { formatTimestampWithRelative, toIsoTimestamp } from "@/lib/map/time-format";
+
+const WATERSHEDS_LAYER_IDS = [watershedsLayer.id, watershedsOutlineLayer.id];
 
 function escapeHtml(val: unknown): string {
   return String(val ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -45,6 +53,18 @@ interface WaterLayerProps {
   onGaugeClick?: (gauge: WaterGauge) => void;
   onWellClick?: (well: GroundwaterWell) => void;
   visible?: boolean;
+  /**
+   * Independent visibility for the watershed polygons. Without this, `visible` alone
+   * decided both lifecycles: turning on watersheds mounted the (empty) gauge/well sources
+   * too, and turning watersheds off had no dedicated teardown path -- the polygons only
+   * cleared because the caller happened to push an empty FeatureCollection through
+   * `watershedsGeoJSON` rather than because anything removed the layer. LayerManager now
+   * always passes this separately, so the two switches no longer affect each other's
+   * sources. Optional (defaults to `false`) only so a caller that omits it entirely --
+   * rather than one relying on the old coupling -- gets the watershed polygons off by
+   * default instead of silently inheriting `visible`.
+   */
+  watershedsVisible?: boolean;
 }
 
 function buildGaugeGeoJSON(gauges: WaterGauge[]): GeoJSON.FeatureCollection {
@@ -100,15 +120,16 @@ export function WaterLayer({
   onGaugeClick,
   onWellClick,
   visible = true,
+  watershedsVisible = false,
 }: WaterLayerProps) {
   const popupRef = useRef<Popup | null>(null);
 
-  // Keep latest data in refs for use inside style.load handler
-  const dataRef = useRef({ gauges, wells, watershedsGeoJSON, visible });
-  dataRef.current = { gauges, wells, watershedsGeoJSON, visible };
+  // Keep latest data in refs for use inside style.load handlers
+  const dataRef = useRef({ gauges, wells, watershedsGeoJSON, visible, watershedsVisible });
+  dataRef.current = { gauges, wells, watershedsGeoJSON, visible, watershedsVisible };
 
-  const addAllLayers = useCallback((m: MapLibreMap) => {
-    const { gauges, wells, watershedsGeoJSON } = dataRef.current;
+  const addPointLayers = useCallback((m: MapLibreMap) => {
+    const { gauges, wells } = dataRef.current;
     const beforeId = getFirstSymbolLayer(m);
 
     // --- Gauge circles ---
@@ -154,67 +175,99 @@ export function WaterLayer({
         },
       }, beforeId);
     }
+  }, []);
 
-    // --- Watershed polygons ---
-    if (watershedsGeoJSON) {
-      if (!m.getSource("watersheds")) {
-        m.addSource("watersheds", { type: "geojson", data: watershedsGeoJSON });
-      } else {
-        (m.getSource("watersheds") as GeoJSONSource).setData(watershedsGeoJSON);
-      }
-      if (!m.getLayer("watersheds-fill")) {
-        m.addLayer({
-          id: "watersheds-fill",
-          type: "fill",
-          source: "watersheds",
-          paint: { "fill-color": "#1565c0", "fill-opacity": 0.05 },
-        }, beforeId);
-      }
-      if (!m.getLayer("watersheds-outline")) {
-        m.addLayer({
-          id: "watersheds-outline",
-          type: "line",
-          source: "watersheds",
-          paint: { "line-color": "#1565c0", "line-width": 1, "line-opacity": 0.6 },
-        }, beforeId);
-      }
+  const removePointLayers = useCallback((m: MapLibreMap) => {
+    safeRemoveLayerAndSource(m, ["water-gauges-circle"], "water-gauges");
+    safeRemoveLayerAndSource(m, ["groundwater-wells-circle"], "groundwater-wells");
+  }, []);
+
+  const addWatershedLayer = useCallback((m: MapLibreMap) => {
+    const { watershedsGeoJSON } = dataRef.current;
+    if (!watershedsGeoJSON) return;
+    const beforeId = getFirstSymbolLayer(m);
+    if (!m.getSource(WATERSHEDS_SOURCE)) {
+      m.addSource(WATERSHEDS_SOURCE, { type: "geojson", data: watershedsGeoJSON });
+    } else {
+      (m.getSource(WATERSHEDS_SOURCE) as GeoJSONSource).setData(watershedsGeoJSON);
+    }
+    if (!m.getLayer(watershedsLayer.id)) {
+      m.addLayer(watershedsLayer, beforeId);
+    }
+    if (!m.getLayer(watershedsOutlineLayer.id)) {
+      m.addLayer(watershedsOutlineLayer, beforeId);
     }
   }, []);
 
-  const removeAllLayers = useCallback((m: MapLibreMap) => {
-    safeRemoveLayerAndSource(m, ["water-gauges-circle"], "water-gauges");
-    safeRemoveLayerAndSource(m, ["groundwater-wells-circle"], "groundwater-wells");
-    safeRemoveLayerAndSource(m, ["watersheds-fill", "watersheds-outline"], "watersheds");
+  const removeWatershedLayer = useCallback((m: MapLibreMap) => {
+    safeRemoveLayerAndSource(m, WATERSHEDS_LAYER_IDS, WATERSHEDS_SOURCE);
   }, []);
 
-  // Main effect: add/remove layers and persist across style changes
+  // Persist layers across every future style change (basemap swap included).
+  // addLayer/addSource work as soon as "style.load" fires -- see
+  // src/components/map/AGENTS.md -- and addPointLayers/addWatershedLayer are each
+  // idempotent (guarded on getLayer/getSource), so calling either unconditionally here is
+  // safe even if it races with the styleReady effect below. Gauges/wells and the watershed
+  // polygons are two independent lifecycles -- see `watershedsVisible` above -- so each
+  // gets its own style.load listener and its own teardown, rather than one `visible` flag
+  // gating both.
   useEffect(() => {
     if (!map) return;
 
     if (!visible) {
-      removeAllLayers(map);
+      removePointLayers(map);
       return;
     }
 
     const onStyleLoad = () => {
       if (!dataRef.current.visible) return;
-      addAllLayers(map);
+      addPointLayers(map);
     };
-
-    if (map.isStyleLoaded()) {
-      addAllLayers(map);
-    } else {
-      map.once("style.load", () => addAllLayers(map));
-    }
-
-    // Persist layers across future style changes
     map.on("style.load", onStyleLoad);
 
     return () => {
       map.off("style.load", onStyleLoad);
-      removeAllLayers(map);
+      removePointLayers(map);
     };
-  }, [map, visible, addAllLayers, removeAllLayers]);
+  }, [map, visible, addPointLayers, removePointLayers]);
+
+  useEffect(() => {
+    if (!map) return;
+
+    if (!watershedsVisible) {
+      removeWatershedLayer(map);
+      return;
+    }
+
+    const onStyleLoad = () => {
+      if (!dataRef.current.watershedsVisible) return;
+      addWatershedLayer(map);
+    };
+    map.on("style.load", onStyleLoad);
+
+    return () => {
+      map.off("style.load", onStyleLoad);
+      removeWatershedLayer(map);
+    };
+  }, [map, watershedsVisible, addWatershedLayer, removeWatershedLayer]);
+
+  // Add (or retry adding) once the style is actually ready. This is what
+  // covers the bug this hook exists for: a mount (or a swap) where
+  // isStyleLoaded() reads false at the moment "style.load" fires, and no
+  // further "style.load" arrives to retry -- only "styledata" events do, as
+  // tiles land. styleReady is only used to force these effects to re-run;
+  // the actual gate re-reads the live map so it can never act on a stale
+  // value. See use-style-ready.ts and AGENTS.md.
+  const styleReady = useStyleReady(map);
+  useEffect(() => {
+    if (!map || !visible || !map.isStyleLoaded()) return;
+    addPointLayers(map);
+  }, [map, visible, addPointLayers, styleReady]);
+
+  useEffect(() => {
+    if (!map || !watershedsVisible || !map.isStyleLoaded()) return;
+    addWatershedLayer(map);
+  }, [map, watershedsVisible, addWatershedLayer, styleReady]);
 
   // Update gauge data when gauges prop changes
   useEffect(() => {
@@ -240,14 +293,14 @@ export function WaterLayer({
 
   // Update watershed data when prop changes
   useEffect(() => {
-    if (!map || !visible || !watershedsGeoJSON) return;
+    if (!map || !watershedsVisible || !watershedsGeoJSON) return;
     try { if (!map.getStyle()) return; } catch { return; }
-    const source = map.getSource("watersheds") as
+    const source = map.getSource(WATERSHEDS_SOURCE) as
       | { setData: (d: GeoJSON.FeatureCollection) => void }
       | undefined;
     if (!source) return;
     source.setData(watershedsGeoJSON);
-  }, [map, watershedsGeoJSON, visible]);
+  }, [map, watershedsGeoJSON, watershedsVisible]);
 
   // Gauge click popup
   useEffect(() => {

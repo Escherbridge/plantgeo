@@ -187,6 +187,12 @@ export const interventionsRouter = router({
             geometry: input.geometry,
             submittedByUserId: userId,
             submittedByTeamId: input.teamId ?? null,
+            // Persisted, not merely validated: `listProposed` filters on a
+            // consent flag recorded against the row rather than inferring it
+            // from which code path happened to create it. Rows written by the
+            // machine-ingress route carry no flag and so stay out of the feed,
+            // and any row predating this field fails closed for the same reason.
+            publicationConsent: input.publicationConsent,
           },
         })
         .returning(submissionProjection);
@@ -224,6 +230,65 @@ export const interventionsRouter = router({
         .select(submissionProjection)
         .from(features)
         .where(and(eq(features.layerId, layerId), ownership))
+        .orderBy(desc(features.createdAt))
+        .limit(input.limit);
+    }),
+
+  /**
+   * The `/feed` read: every recommendation still awaiting an expert decision,
+   * across all contributors.
+   *
+   * Three deliberate bounds, because this is the one procedure here that shows
+   * one account's submission to another account:
+   *   - `protectedProcedure`, not public. Consent covers publication to the
+   *     platform, not publication to the open internet.
+   *   - `publicationConsent` must be recorded true on the row itself.
+   *   - only `pending_review`. Published rows are already on the map through
+   *     `geo.intervention_tiles`, and rejected rows are nobody else's business.
+   *
+   * The centroid, rather than `properties.geometry`, is what a feed row needs:
+   * it is enough to fly the camera to the site without shipping every parcel
+   * outline to every signed-in reader.
+   */
+  listProposed: protectedProcedure
+    .input(
+      z
+        .object({
+          type: InterventionTypeSchema.optional(),
+          limit: z.number().int().min(1).max(100).default(50),
+        })
+        .default({})
+    )
+    .query(async ({ ctx, input }) => {
+      const layerId = await resolveInterventionsLayerId(ctx);
+
+      return ctx.db
+        .select({
+          id: features.id,
+          name: sql<string | null>`${features.properties} ->> 'name'`,
+          type: sql<string | null>`${features.properties} ->> 'type'`,
+          description: sql<
+            string | null
+          >`${features.properties} ->> 'description'`,
+          // NULL when `geom` is NULL; the client renders those rows without a
+          // map link rather than dropping them.
+          longitude: sql<
+            number | null
+          >`ST_X(ST_Centroid(${features.geom}))`,
+          latitude: sql<number | null>`ST_Y(ST_Centroid(${features.geom}))`,
+          createdAt: features.createdAt,
+        })
+        .from(features)
+        .where(
+          and(
+            eq(features.layerId, layerId),
+            eq(features.status, RECOMMENDATION_STATUS),
+            sql`${features.properties} ->> 'publicationConsent' = 'true'`,
+            input.type
+              ? sql`${features.properties} ->> 'type' = ${input.type}`
+              : undefined
+          )
+        )
         .orderBy(desc(features.createdAt))
         .limit(input.limit);
     }),

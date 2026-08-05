@@ -26,6 +26,7 @@ from agri_data_service.ingest.http import (
     UpstreamTimeoutError,
     UpstreamTransportError,
     fetch_bounded_json,
+    upstream_client,
 )
 from agri_data_service.ingest.identity import (
     FeatureIdentity,
@@ -989,18 +990,27 @@ def build_ndvi_write(record: Mapping[str, object], layer_name: str) -> FeatureWr
     )
 
 
-def _require_client(request: FetchRequest) -> httpx.AsyncClient:
-    """Return the caller's upstream client; sampling a remote raster cannot open one per byte range."""
-    if request.client is None:
-        raise ValueError("Sentinel-2 NDVI sampling requires an upstream client on the fetch request")
-    return request.client
+async def _sample_grid(request: FetchRequest, window: GridSampleWindow) -> Sequence[UpstreamRecord]:
+    """Sample the grid over one window, owning a bounded client only when the caller supplied none.
+
+    The caller's client is preferred, so a multi-chunk backfill pools its connections across the
+    whole walk instead of reopening one per chunk. Owning one as a fallback is what makes the
+    source usable by any caller that holds a FetchRequest but no client -- `run_source_backfill`
+    builds exactly that request, so refusing here made `ingest-backfill --source sentinel2-ndvi`
+    fail every chunk before it read a single scene. `sensors.py` resolves the same choice the same
+    way; this is that idiom, not a second one.
+    """
+    if request.client is not None:
+        return (await collect_ndvi_grid_records(request.client, window)).records
+    async with upstream_client(COG_BOUNDS) as owned_client:
+        return (await collect_ndvi_grid_records(owned_client, window)).records
 
 
 async def fetch_current_ndvi_records(request: FetchRequest) -> Sequence[UpstreamRecord]:
     """Fetch the current window: the clearest Sentinel-2 scenes of the most recent observation window."""
     end = request.now if request.now is not None else datetime.now(UTC)
-    outcome = await collect_ndvi_grid_records(
-        _require_client(request),
+    return await _sample_grid(
+        request,
         GridSampleWindow(
             bbox=request.bbox,
             start=end - CURRENT_OBSERVATION_WINDOW,
@@ -1008,13 +1018,12 @@ async def fetch_current_ndvi_records(request: FetchRequest) -> Sequence[Upstream
             max_cells=request.max_records,
         ),
     )
-    return outcome.records
 
 
 async def fetch_history_ndvi_records(request: FetchRequest, window: HistoryWindow) -> Sequence[UpstreamRecord]:
     """Fetch one past window from the same archive; the catalogue serves any past date the collection covers."""
-    outcome = await collect_ndvi_grid_records(
-        _require_client(request),
+    return await _sample_grid(
+        request,
         GridSampleWindow(
             bbox=request.bbox,
             start=window.start,
@@ -1022,7 +1031,6 @@ async def fetch_history_ndvi_records(request: FetchRequest, window: HistoryWindo
             max_cells=request.max_records,
         ),
     )
-    return outcome.records
 
 
 def build_vegetation_write(record: UpstreamRecord, _request: FetchRequest) -> FeatureWrite | None:

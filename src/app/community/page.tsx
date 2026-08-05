@@ -6,13 +6,14 @@ import {
   EditorialEyebrow,
   EditorialGrid,
   EditorialLead,
+  EditorialLink,
   EditorialPage,
 } from "@/components/ui/editorial";
 
 export const metadata: Metadata = {
   title: "Community - PlantGeo",
   description:
-    "Strategy requests recorded by PlantGeo accounts and partner workspaces. Private by default, with locations held in the database rather than published.",
+    "Strategy requests recorded by PlantGeo accounts and partner workspaces. Private by default, with locations held in the database rather than published. For sites drawn and submitted for review, see the feed.",
 };
 
 export default function CommunityPage() {
@@ -26,7 +27,7 @@ export default function CommunityPage() {
                 Community — Strategy requests, private by default
               </EditorialEyebrow>
               <EditorialDisplay className="mt-comfortable">
-                A ledger, not a feed.
+                A ledger, not a broadcast.
               </EditorialDisplay>
             </div>
           </EditorialGrid>
@@ -40,6 +41,13 @@ export default function CommunityPage() {
                 account or the partner workspace that made them. This page shows
                 you yours, and tells you plainly when something is not available
                 to show.
+              </EditorialLead>
+              <EditorialLead className="mt-comfortable">
+                A request is not a proposal. A request says a strategy ought to
+                go somewhere and keeps the where to itself; a proposal is a site
+                someone has drawn and asked to have reviewed. Proposals are
+                shared with every signed-in account, and they live in the{" "}
+                <EditorialLink href="/feed">feed</EditorialLink>.
               </EditorialLead>
             </div>
           </EditorialGrid>

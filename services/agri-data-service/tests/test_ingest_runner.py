@@ -35,6 +35,7 @@ EXPECTED_VERBS = (
     "ingest-ndvi",
     "ingest-sensors",
     "ingest-evacuation-zones",
+    "ingest-mtbs",
     "ingest-backfill",
     "ingest-geometry-repair",
     "ingest-drought-history",

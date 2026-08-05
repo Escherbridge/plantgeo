@@ -62,6 +62,48 @@ Session state comes from `useSession()`, the same hook `UserMenu` and
 toggle, route change closes it). The active route is marked with both
 `aria-current="page"` and a heavy accent rule.
 
+### Contrast
+
+The bar is the one place where every editorial surface meets every other, so its
+colour choices are load-bearing rather than incidental. Measured against the
+tokens in `globals.css`, in both themes:
+
+| Pair | Dark | Light |
+| --- | --- | --- |
+| `ink-muted` on `paper` (inactive nav) | 6.65:1 | 6.70:1 |
+| `accent` on `paper` (focus ring, active rule) | 7.64:1 | 5.76:1 |
+| `paper` on `ink` (solid control label + its ring) | 16.5:1 | 15.1:1 |
+| `accent-ink` on `accent` (solid control, hover) | 7.64:1 | 5.76:1 |
+
+Three rules follow from that table and must survive any restyle:
+
+1. **The focus ring is tone-aware.** Rings are inset (`-outline-offset-2`) so a
+   full-bleed control cannot clip them, which means the ring lands on the
+   control's own fill. `accent` on an `ink` fill is 2.16:1 dark / 2.96:1 light —
+   below the 3:1 that WCAG 2.2 SC 1.4.11 requires of a focus indicator. Ink- and
+   accent-filled controls therefore use `editorialFocusRingInverse`; everything
+   sitting on paper uses `editorialFocusRing`.
+2. **Hover shifts fill, never opacity.** `hover:opacity-*` dims a control at the
+   moment the pointer is on it, which lowers contrast exactly when the user is
+   reading it. Solid controls go `bg-ink` → `bg-accent`; nav items thicken their
+   rule instead of only changing text colour.
+3. **State is never colour alone.** The active route carries `aria-current`, a
+   4px accent top rule, and a colour change; hover adds a `rule-faint` top rule.
+
+Nav chrome uses `text-nav` (0.75rem / 0.14em) rather than `text-label`
+(0.6875rem / 0.2em): the label token is tuned for captions read in place, and at
+that size and tracking a primary nav is legible but effortful.
+
+### The disclosure, and why focus is not trapped
+
+The compact menu is a disclosure, not a modal, so it follows the APG disclosure
+pattern rather than the dialog one: Escape closes it and returns focus to the
+toggle, and a pointer press or a Tab that leaves the header closes it, but focus
+is never trapped and the page behind stays operable. Collapsed, it uses the
+`hidden` **attribute** rather than the class, which takes it out of both the tab
+order and the accessibility tree; the desktop nav's `hidden md:flex` does the
+same by `display: none`, so the two `nav` landmarks are never exposed at once.
+
 ## MapLayout
 
 Pre-existing and owned elsewhere. It is the map route's own shell (side panel,

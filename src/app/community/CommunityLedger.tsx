@@ -84,8 +84,9 @@ function SignedOutGate() {
       <EditorialNotice title="Sign in required" role="status">
         <p>
           The ledger holds strategy requests that are private to an account or to
-          a partner workspace. There is no public feed to show you, so this page
-          shows nothing until it knows who you are.
+          a partner workspace. None of it is public, so this page shows nothing
+          until it knows who you are. Proposed interventions — sites drawn and
+          submitted for expert review — are a separate record, kept in the feed.
         </p>
       </EditorialNotice>
       <div className="mt-comfortable flex flex-wrap gap-tight">
@@ -348,9 +349,17 @@ export function CommunityLedger() {
             The location is stored against your account or your workspace and is
             never made public by the act of submitting it.
           </p>
+          <p>
+            Drawing a site and asking to have it reviewed is the other, louder
+            move: that is a proposal, it is shared with every signed-in account,
+            and it is submitted from the map as well.
+          </p>
         </EditorialProse>
         <div className="mt-comfortable flex flex-wrap gap-tight">
           <EditorialActionLink href="/">Open the map</EditorialActionLink>
+          <EditorialActionLink href="/feed" tone="outline">
+            Proposals awaiting review
+          </EditorialActionLink>
           <EditorialActionLink href="/about#principles" tone="outline">
             Why this stays private
           </EditorialActionLink>

@@ -1,0 +1,12 @@
+{
+  "id": "community_engagement_completion_20260805",
+  "description": "Close the community engagement loop: make expert moderation reachable so submitted interventions can reach the map, restore the sensors layer whose removal premise is now false, publish evacuation-zones end to end, return review outcomes to submitters, and decide whether community submissions become ML labels",
+  "type": "feature",
+  "created_at": "2026-08-05T00:00:00Z",
+  "status": "active",
+  "informed_by": [
+    "conductor/tracks/ingestion_warehouse_consolidation_20260803/spec.md"
+  ],
+  "dependency_mode": "UI, tRPC and Drizzle only. Phase 3 adds one geo tile function (Drizzle owns geo) and one infra/martin/martin.yaml entry. No Alembic revision, no agri schema change, no DML into geo outside the existing submission path. Does not touch the Python ingestion CLI except where phase 5 reads from it.",
+  "activation_gate": "Phase 1 is the ordering constraint: interventions is the one layer that is deliberately empty and must stay that way until a real contributor submits. No phase in this track may seed an intervention row (owner directive 2026-08-04). Phases 2 and 3 are independent of phase 1 and of each other. Phase 5 is design-gated and must not start until its open questions are answered by the owner."
+}

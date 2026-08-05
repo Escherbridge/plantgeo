@@ -62,7 +62,7 @@ background image) for components that need to say so explicitly.
   `DefinitionList`. All accept `as` to keep the heading outline honest
   independently of the visual step.
 - `controls.tsx` — `EditorialLink`, `EditorialActionLink`, `EditorialButton`,
-  `EditorialNotice`, `EditorialTag`, plus the shared `editorialFocusRing`.
+  `EditorialNotice`, `EditorialTag`, plus the shared focus rings.
 - `fields.tsx` — `EditorialSelectField`. Carries `"use client"` and is therefore
   **not** re-exported from `index.ts`, which keeps the barrel safe to import from
   a server component.
@@ -70,6 +70,40 @@ background image) for components that need to say so explicitly.
 `EditorialNotice` with `tone="signal"` is reserved for *this data is unavailable
 and here is why*. It is never decorative — see the honest-empty-state principle
 on `/about`.
+
+## Focus
+
+There are two rings, and picking the wrong one is a WCAG failure rather than a
+style slip.
+
+Rings are inset (`focus-visible:-outline-offset-2`) so that full-bleed chrome —
+the top bar's controls run edge to edge and floor to ceiling — cannot clip them.
+The cost of drawing inside the control is that the ring's contrast is decided by
+the control's own fill, not by the page background:
+
+- `editorialFocusRing` (accent) — for controls on `paper` or transparent.
+  7.64:1 dark, 5.76:1 light.
+- `editorialFocusRingInverse` (paper) — for `ink`- or `accent`-filled controls.
+  16.5:1 and 7.64:1 dark, 15.1:1 and 5.76:1 light.
+
+Accent on an ink fill measures 2.16:1 dark and 2.96:1 light, under the 3:1 that
+WCAG 2.2 SC 1.4.11 requires of a focus indicator, which is the whole reason the
+pair exists. `EditorialButton` and `EditorialActionLink` already switch on
+`tone`; anything hand-rolling a solid control must switch too.
+
+Two related rules live in the same primitives:
+
+- **Hover shifts fill, not opacity.** `hover:opacity-*` dims a control exactly
+  when the user is reading it. Solid goes `bg-ink` → `bg-accent`; outline moves
+  its rule and ink to accent, keeping the paper fill so the accent ring stays
+  legible when a control is hovered and focused at once.
+- **`disabled:opacity-70`, not 50.** At 50% a solid label falls to 3.51:1
+  against its own dimmed fill in the light theme, and a disabled control still
+  has to be readable enough to explain why it is disabled.
+
+The `text-nav` step (0.75rem / 0.14em) exists for navigation chrome. `text-label`
+stays tuned for captions and eyebrows read in place; at 0.6875rem with 0.2em
+tracking a primary nav is legible but effortful.
 
 ## Adopting incrementally
 

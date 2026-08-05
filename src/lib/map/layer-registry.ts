@@ -13,10 +13,14 @@ export type LayerToggleId =
   | "water"
   | "drought"
   | "weather"
+  | "sensors"
+  | "watersheds"
   | "vegetation"
   | "soil"
+  | "soil-survey"
   | "demand-heatmap"
   | "interventions"
+  | "evacuation-zones"
   | "building-footprints";
 
 /** How a toggle reaches the map: a React-mounted layer component, or baked style layers. */
@@ -80,6 +84,28 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "water",
     permanentlyUnavailableReason: null,
   },
+  // 750 published rows, geo.sensor_tiles() already live in martin.yaml -- the
+  // style layer was the only missing piece. See sensorsLayer in layers.ts.
+  sensors: {
+    toggleId: "sensors",
+    renderKind: "style",
+    styleLayerIds: ["sensors"],
+    warehouseLayerName: "sensors",
+    panelId: "water",
+    permanentlyUnavailableReason: null,
+  },
+  // USGS NHD+ HR HUC12 boundaries, proxied per viewport through
+  // environmental.getWatersheds. A live upstream feed rather than a geo.layers
+  // release, so it claims no warehouse layer name and gets no slider capability --
+  // the same shape drought has. See watershedsLayer in layers.ts.
+  watersheds: {
+    toggleId: "watersheds",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "water",
+    permanentlyUnavailableReason: null,
+  },
   vegetation: {
     toggleId: "vegetation",
     renderKind: "component",
@@ -91,6 +117,18 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // Rendered from raster tiles, not from a geo.layers feed.
   soil: {
     toggleId: "soil",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "soil",
+    permanentlyUnavailableReason: null,
+  },
+  // USDA SSURGO map units, proxied per viewport through environmental.getSoilSurvey.
+  // Distinct from `soil` above, which draws the SoilGrids raster: this one is the
+  // vector survey polygons. Also upstream-proxied, so no warehouse layer name.
+  // See soilSurveyLayer in layers.ts.
+  "soil-survey": {
+    toggleId: "soil-survey",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,
@@ -112,6 +150,16 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     styleLayerIds: ["interventions", "interventions-outline"],
     warehouseLayerName: "interventions",
     panelId: "community",
+    permanentlyUnavailableReason: null,
+  },
+  // 381 published Oregon OEM rows, previously with no tile function at all --
+  // see evacuationZonesLayer/evacuationZonesOutlineLayer in layers.ts.
+  "evacuation-zones": {
+    toggleId: "evacuation-zones",
+    renderKind: "style",
+    styleLayerIds: ["evacuation-zones", "evacuation-zones-outline"],
+    warehouseLayerName: "evacuation-zones",
+    panelId: "fire",
     permanentlyUnavailableReason: null,
   },
   // Toggled from the MapControls toolbar, so no panel governs it.

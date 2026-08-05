@@ -29,6 +29,7 @@ export {
   EditorialNotice,
   EditorialTag,
   editorialFocusRing,
+  editorialFocusRingInverse,
 } from "@/components/ui/editorial/controls";
 
 /* `fields` carries a "use client" directive and is imported directly, keeping

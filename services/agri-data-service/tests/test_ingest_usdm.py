@@ -15,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agri_data_service.ingest.http import UpstreamHttpError, UpstreamPayloadError
 from agri_data_service.ingest.usdm import (
+    MAX_RETAINED_RELEASES,
     USDM_SOURCE,
     DroughtRelease,
     PostgresDroughtStore,
@@ -265,7 +266,11 @@ def test_retention_defaults_and_clamps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DROUGHT_RETAINED_RELEASES", "1")
     assert resolve_retained_releases() == 2
     monkeypatch.setenv("DROUGHT_RETAINED_RELEASES", "999")
-    assert resolve_retained_releases() == 52
+    assert resolve_retained_releases() == MAX_RETAINED_RELEASES
+    # The clamp must clear a full history backfill (~208 weekly releases). Pinned against a
+    # literal as well, because a cap below what usdm_history.py writes means no setting can
+    # protect the backfill -- that has silently regressed twice.
+    assert MAX_RETAINED_RELEASES >= 208
     monkeypatch.setenv("DROUGHT_RETAINED_RELEASES", "12.9")
     assert resolve_retained_releases() == 12
     monkeypatch.setenv("DROUGHT_RETAINED_RELEASES", "nonsense")

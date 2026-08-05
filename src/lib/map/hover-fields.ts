@@ -13,8 +13,12 @@ export const HOVERABLE_LAYER_IDS: string[] = [
   "published-fire-circles",
   "water-gauges-circle",
   "groundwater-wells-circle",
+  "sensors",
   "fire-perimeters",
+  "evacuation-zones",
   "interventions",
+  "watersheds-fill",
+  "soil-survey-fill",
   "building-footprints",
   "osm-roads",
   "osm-waterways",
@@ -121,6 +125,19 @@ function formatGroundwaterWell(props: Properties): HoverContent | null {
   ]);
 }
 
+function formatSensorStation(props: Properties): HoverContent | null {
+  const title = stringField(props.station_name) ?? "Weather station";
+  const network = stringField(props.network);
+  const sensorId = stringField(props.sensor_id);
+  const observed = formatTimestampWithRelative(toIsoTimestamp(props.observed_at));
+
+  return buildContent(title, [
+    network ? `Network: ${network}` : null,
+    sensorId ? `Station ID: ${sensorId}` : null,
+    observed ? `Observed: ${observed}` : null,
+  ]);
+}
+
 function formatFirePerimeter(props: Properties): HoverContent | null {
   const title = stringField(props.incidentName) ?? "Fire perimeter";
   const acres = formatLocaleNumber(props.gisAcres, " acres");
@@ -144,6 +161,24 @@ function formatFirePerimeter(props: Properties): HoverContent | null {
   ]);
 }
 
+function formatEvacuationZone(props: Properties): HoverContent | null {
+  const title =
+    stringField(props.evacuation_area_name) ?? stringField(props.fire_name) ?? "Evacuation zone";
+  const level = stringField(props.evacuation_level_label);
+  const county = stringField(props.county);
+  const structures =
+    props.structures_within != null ? formatInteger(props.structures_within, "") : null;
+  const population =
+    props.population_within != null ? formatInteger(props.population_within, "") : null;
+
+  return buildContent(title, [
+    level ? `Level: ${level}` : null,
+    county ? `County: ${county}` : null,
+    structures ? `Structures within: ${structures}` : null,
+    population ? `Population within: ${population}` : null,
+  ]);
+}
+
 function formatIntervention(props: Properties): HoverContent | null {
   const title = stringField(props.name) ?? "Intervention";
   const priority = stringField(props.priority);
@@ -154,6 +189,52 @@ function formatIntervention(props: Properties): HoverContent | null {
     priority ? `Priority: ${priority}` : null,
     status ? `Status: ${status}` : null,
     description,
+  ]);
+}
+
+/**
+ * USGS NHD+ HR watershed boundaries. Field names are the WBDHU12 layer's own, as its
+ * ArcGIS `f=geojson` output emits them (lowercase attribute names, not the title-case
+ * aliases the service catalog displays). A feature carrying none of them yields no
+ * tooltip rather than a shell of empty labels.
+ */
+function formatWatershed(props: Properties): HoverContent | null {
+  const title = stringField(props.name) ?? "Watershed";
+  const huc12 = stringField(props.huc12);
+  const area = formatFixed(props.areasqkm, 1, " km²");
+  const drainsTo = stringField(props.tohuc);
+  const states = stringField(props.states);
+
+  return buildContent(title, [
+    huc12 ? `HUC12: ${huc12}` : null,
+    area ? `Area: ${area}` : null,
+    states ? `States: ${states}` : null,
+    drainsTo ? `Drains to: ${drainsTo}` : null,
+  ]);
+}
+
+/**
+ * USDA SSURGO map units. Every field here is one usda-soil.ts constructs itself while
+ * normalizing the Soil Data Access result table (there is no WFS in this path; see
+ * `src/lib/server/AGENTS.md` §soil-survey), so the names cannot drift with SDA's casing.
+ * `drainageClass` arrives hyphenated ("well-drained"); the humanizer splits on
+ * underscores, so it is converted before formatting rather than shown raw.
+ */
+function formatSoilSurvey(props: Properties): HoverContent | null {
+  const title = stringField(props.muname) ?? "Soil map unit";
+  const series = stringField(props.soilSeries);
+  const drainage = stringField(props.drainageClass);
+  const capability = stringField(props.landCapabilityClass);
+  const mapUnitKey = stringField(props.mukey);
+  // Only an actual boolean is reportable: an absent hydric rating is not a "No".
+  const hydric = typeof props.hydric === "boolean" ? props.hydric : null;
+
+  return buildContent(title, [
+    series ? `Series: ${series}` : null,
+    drainage ? `Drainage: ${humanizeSnakeCase(drainage.replace(/-/g, "_"))}` : null,
+    capability ? `Land capability: ${capability}` : null,
+    hydric === null ? null : `Hydric: ${hydric ? "Yes" : "No"}`,
+    mapUnitKey ? `Map unit: ${mapUnitKey}` : null,
   ]);
 }
 
@@ -196,8 +277,12 @@ const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
   "published-fire-circles": formatFireDetection,
   "water-gauges-circle": formatWaterGauge,
   "groundwater-wells-circle": formatGroundwaterWell,
+  sensors: formatSensorStation,
   "fire-perimeters": formatFirePerimeter,
+  "evacuation-zones": formatEvacuationZone,
   interventions: formatIntervention,
+  "watersheds-fill": formatWatershed,
+  "soil-survey-fill": formatSoilSurvey,
   "building-footprints": formatBuildingFootprint,
   "osm-roads": formatRoad,
   "osm-waterways": formatWaterway,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -26,6 +27,8 @@ from agri_data_service.ingest.backfill import (
 )
 from agri_data_service.ingest.evacuation_zones import EVACUATION_ZONES_SOURCE, run_evacuation_zones_ingestion_job
 from agri_data_service.ingest.firms import FIRMS_SOURCE, run_fire_ingestion_job
+from agri_data_service.ingest.http import upstream_client
+from agri_data_service.ingest.mtbs import MTBS_SOURCE, run_mtbs_ingestion_job
 from agri_data_service.ingest.ndvi import NDVI_SOURCE, run_vegetation_ingestion_job
 from agri_data_service.ingest.open_meteo import OPEN_METEO_SOURCE, run_weather_ingestion_job
 from agri_data_service.ingest.realtime import RealtimePublisher
@@ -42,7 +45,7 @@ from agri_data_service.ingest.usdm_history import (
     run_usdm_history_backfill,
 )
 from agri_data_service.ingest.usgs_nwis import USGS_STREAMFLOW_SOURCE, run_water_ingestion_job
-from agri_data_service.ingest.vegetation import build_vegetation_source
+from agri_data_service.ingest.vegetation import COG_BOUNDS, build_vegetation_source
 from agri_data_service.ingest.wfigs import WFIGS_SOURCE, run_fire_perimeters_ingestion_job
 from agri_data_service.ingest.writer import bind_feature_writer
 
@@ -215,6 +218,42 @@ def ingest_evacuation_zones(context: click.Context, bbox: str | None) -> None:
     finish(context, results)
 
 
+@click.command("ingest-mtbs")
+@click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
+@click.option(
+    "--release-year",
+    "release_years",
+    type=int,
+    multiple=True,
+    help="An MTBS fire year to ingest; repeatable. Omit for every year with an established release date.",
+)
+@click.pass_context
+def ingest_mtbs(context: click.Context, bbox: str | None, release_years: tuple[int, ...]) -> None:
+    """Ingest MTBS burned-area boundaries, one published release cohort at a time.
+
+    Unlike the other verbs this one is not hourly-shaped: MTBS publishes quarterly and a fire year
+    accretes over two to four years, so a run re-reads cohorts that almost never move. That is
+    intentional and cheap -- the writer's diff rejects an unchanged payload and the geometry adapter
+    confirms an unchanged shape -- and it is why `ingest-all` does not include this source.
+
+    A fire year with no established release publication date fails the run rather than borrowing an
+    ignition date, a run clock, or an assumed mapping lag for `observedAt`.
+    """
+    results = [
+        asyncio.run(
+            _run_with_feature_writer(
+                MTBS_SOURCE,
+                lambda write_features: run_mtbs_ingestion_job(
+                    write_features,
+                    bbox=bbox,
+                    release_years=list(release_years) or None,
+                ),
+            )
+        )
+    ]
+    finish(context, results)
+
+
 def _build_backfillable_sources() -> Mapping[str, IngestionSource]:
     """The sources that declare a usable HistoryCapability, keyed by the token `--source` takes.
 
@@ -283,12 +322,21 @@ async def _run_backfill(source: IngestionSource, plan: BackfillPlan) -> list[Ing
     chunks it wrote, which is what an operator resumes `--since` from; `run_isolated_job` turns the
     death itself into one failed summary and a non-zero exit rather than an unhandled traceback.
     """
-    async with ingest_session() as session, RealtimePublisher() as publisher:
+    # One upstream client for the whole walk, not one per chunk: a raster source reads many byte
+    # ranges per scene, so pooling across chunks is the difference between reusing a connection and
+    # renegotiating TLS hundreds of times. A source that would rather own its own still may -- the
+    # plan's client is an offer, and only a source that reads `request.client` takes it.
+    async with (
+        ingest_session() as session,
+        RealtimePublisher() as publisher,
+        upstream_client(COG_BOUNDS) as client,
+    ):
         write_features = bind_feature_writer(session, publisher)
+        walked = replace(plan, client=client)
         chunks: list[IngestionJobResult] = []
 
         async def walk() -> IngestionJobResult:
-            chunks.extend(await run_source_backfill(source, write_features, plan))
+            chunks.extend(await run_source_backfill(source, write_features, walked))
             return merge_backfill_results(source.source_name, chunks)
 
         # Bound to a name first: a list display evaluates `*chunks` before the await, so inlining
@@ -378,6 +426,7 @@ INGEST_COMMANDS: tuple[click.Command, ...] = (
     ingest_ndvi,
     ingest_sensors,
     ingest_evacuation_zones,
+    ingest_mtbs,
     ingest_backfill,
     ingest_geometry_repair,
     ingest_drought_history,

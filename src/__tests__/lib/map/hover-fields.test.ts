@@ -17,8 +17,12 @@ describe("HOVERABLE_LAYER_IDS", () => {
       "published-fire-circles",
       "water-gauges-circle",
       "groundwater-wells-circle",
+      "sensors",
       "fire-perimeters",
+      "evacuation-zones",
       "interventions",
+      "watersheds-fill",
+      "soil-survey-fill",
       "building-footprints",
       "osm-roads",
       "osm-waterways",
@@ -123,6 +127,33 @@ describe("formatHoverContent: groundwater-wells-circle", () => {
   });
 });
 
+describe("formatHoverContent: sensors", () => {
+  it("formats a full sensor station reading", () => {
+    const content = formatHoverContent("sensors", {
+      station_name: "Boise Air Terminal",
+      network: "ASOS",
+      sensor_id: "KBOI",
+      observed_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+    });
+    expect(content?.title).toBe("Boise Air Terminal");
+    expect(content?.lines).toContain("Network: ASOS");
+    expect(content?.lines).toContain("Station ID: KBOI");
+    expect(content?.lines.find((l) => l.startsWith("Observed"))).toMatch(/20m ago/);
+    assertNoSentinels(content);
+  });
+
+  it("falls back to a generic title when station_name is missing", () => {
+    const content = formatHoverContent("sensors", { network: "RAWS" });
+    expect(content?.title).toBe("Weather station");
+    expect(content?.lines).toEqual(["Network: RAWS"]);
+    assertNoSentinels(content);
+  });
+
+  it("returns null when nothing meaningful is present", () => {
+    expect(formatHoverContent("sensors", {})).toBeNull();
+  });
+});
+
 describe("formatHoverContent: fire-perimeters", () => {
   it("formats a full perimeter", () => {
     const content = formatHoverContent("fire-perimeters", {
@@ -169,6 +200,42 @@ describe("formatHoverContent: fire-perimeters", () => {
   });
 });
 
+describe("formatHoverContent: evacuation-zones", () => {
+  it("formats a full evacuation zone", () => {
+    const content = formatHoverContent("evacuation-zones", {
+      evacuation_area_name: "Riverside Estates",
+      fire_name: "Elk Ridge Fire",
+      county: "Deschutes",
+      severity: "critical",
+      evacuation_level_label: "Go Now",
+      structures_within: 42,
+      population_within: 118,
+    });
+    expect(content?.title).toBe("Riverside Estates");
+    expect(content?.lines).toContain("Level: Go Now");
+    expect(content?.lines).toContain("County: Deschutes");
+    expect(content?.lines).toContain("Structures within: 42");
+    expect(content?.lines).toContain("Population within: 118");
+    assertNoSentinels(content);
+  });
+
+  it("falls back to fireName, then a generic title, when evacuationAreaName is missing", () => {
+    expect(
+      formatHoverContent("evacuation-zones", {
+        fire_name: "Elk Ridge Fire",
+        county: "Deschutes",
+      })?.title
+    ).toBe("Elk Ridge Fire");
+    expect(formatHoverContent("evacuation-zones", { county: "Deschutes" })?.title).toBe(
+      "Evacuation zone"
+    );
+  });
+
+  it("returns null when nothing meaningful is present", () => {
+    expect(formatHoverContent("evacuation-zones", {})).toBeNull();
+  });
+});
+
 describe("formatHoverContent: interventions", () => {
   it("formats a full intervention", () => {
     const content = formatHoverContent("interventions", {
@@ -189,6 +256,93 @@ describe("formatHoverContent: interventions", () => {
     expect(content?.title).toBe("Intervention");
     expect(content?.lines).toEqual(["Priority: Low"]);
     assertNoSentinels(content);
+  });
+});
+
+// Property names below are the WBDHU12 layer's own attribute names, taken from a live
+// ArcGIS `f=geojson` response rather than from the title-case aliases the service catalog
+// displays -- `f=geojson` emits the attribute names, so "Name"/"HUC12" never arrive.
+describe("formatHoverContent: watersheds-fill", () => {
+  it("formats a full HUC12 boundary", () => {
+    const content = formatHoverContent("watersheds-fill", {
+      name: "Kellogg Creek",
+      huc12: "170900120102",
+      areasqkm: 42.18,
+      areaacres: 10422.32,
+      tohuc: "170900120104",
+      states: "OR",
+    });
+    expect(content?.title).toBe("Kellogg Creek");
+    expect(content?.lines).toContain("HUC12: 170900120102");
+    expect(content?.lines).toContain("Area: 42.2 km²");
+    expect(content?.lines).toContain("States: OR");
+    expect(content?.lines).toContain("Drains to: 170900120104");
+    assertNoSentinels(content);
+  });
+
+  it("omits a null States rather than rendering the sentinel", () => {
+    const content = formatHoverContent("watersheds-fill", {
+      name: "Lake River-Frontal Columbia River",
+      huc12: "170800030104",
+      states: null,
+    });
+    expect(content?.lines.some((l) => l.startsWith("States"))).toBe(false);
+    assertNoSentinels(content);
+  });
+
+  it("falls back to a generic title when name is missing", () => {
+    const content = formatHoverContent("watersheds-fill", { huc12: "170900120102" });
+    expect(content?.title).toBe("Watershed");
+    expect(content?.lines).toEqual(["HUC12: 170900120102"]);
+  });
+
+  it("shows no tooltip for a feature carrying none of the HUC12 attributes", () => {
+    expect(formatHoverContent("watersheds-fill", {})).toBeNull();
+  });
+});
+
+describe("formatHoverContent: soil-survey-fill", () => {
+  it("formats a full SSURGO map unit", () => {
+    const content = formatHoverContent("soil-survey-fill", {
+      mukey: "462571",
+      muname: "Jory silty clay loam, 3 to 12 percent slopes",
+      soilSeries: "Jory",
+      drainageClass: "well-drained",
+      hydric: false,
+      landCapabilityClass: "3e",
+    });
+    expect(content?.title).toBe("Jory silty clay loam, 3 to 12 percent slopes");
+    expect(content?.lines).toContain("Series: Jory");
+    expect(content?.lines).toContain("Drainage: Well drained");
+    expect(content?.lines).toContain("Land capability: 3e");
+    expect(content?.lines).toContain("Hydric: No");
+    expect(content?.lines).toContain("Map unit: 462571");
+    assertNoSentinels(content);
+  });
+
+  it("reports a hydric map unit, and omits the line when the rating is absent", () => {
+    expect(
+      formatHoverContent("soil-survey-fill", { soilSeries: "Semiahmoo", hydric: true })?.lines
+    ).toContain("Hydric: Yes");
+    // An absent rating is not a "No": the line disappears instead of asserting one.
+    const unrated = formatHoverContent("soil-survey-fill", { soilSeries: "Semiahmoo" });
+    expect(unrated?.lines.some((l) => l.startsWith("Hydric"))).toBe(false);
+    assertNoSentinels(unrated);
+  });
+
+  it("falls back to a generic title, and drops the empty mukey the service can emit", () => {
+    const content = formatHoverContent("soil-survey-fill", {
+      mukey: "",
+      soilSeries: "Unknown",
+      drainageClass: "unknown",
+    });
+    expect(content?.title).toBe("Soil map unit");
+    expect(content?.lines.some((l) => l.startsWith("Map unit"))).toBe(false);
+    assertNoSentinels(content);
+  });
+
+  it("returns null when nothing meaningful is present", () => {
+    expect(formatHoverContent("soil-survey-fill", {})).toBeNull();
   });
 });
 

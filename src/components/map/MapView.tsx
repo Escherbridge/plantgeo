@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { Suspense, useEffect, useRef, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
@@ -9,6 +9,7 @@ import { getStyle, skyThemes } from "@/lib/map/styles";
 import { MapProvider } from "@/lib/map/map-context";
 import { Skeleton } from "@/components/ui/skeleton";
 import MapControls from "./MapControls";
+import { MapFocus } from "./MapFocus";
 import SearchBar from "@/components/search/SearchBar";
 import { ReverseGeocode } from "@/components/search/ReverseGeocode";
 import { CommandPalette } from "@/components/search/CommandPalette";
@@ -290,6 +291,12 @@ export default function MapView() {
         <div ref={mapContainer} className="h-full w-full" />
         {mapInstance && (
           <>
+            {/* Suspense because MapFocus reads useSearchParams; MapView itself is
+                only ever mounted client-side, but the boundary keeps that true
+                regardless of how a future route renders it. */}
+            <Suspense fallback={null}>
+              <MapFocus />
+            </Suspense>
             <MapControls />
             <SearchBar />
             <ReverseGeocode />

@@ -24,6 +24,7 @@ const DYNAMIC_TILES_URL =
 const DYNAMIC_TILE_SOURCE_IDS = [
   "fire_risk_tiles",
   "sensor_tiles",
+  "evacuation_zone_tiles",
   "intervention_tiles",
   "building_tiles",
 ] as const;

@@ -577,3 +577,61 @@ introduces its replacement, unless the replacement has been observed running in 
 environment. The lane's own §6 required a container build proof and got one *locally*; a local
 `podman build` cannot prove a Railway build, because Railway's build config lives outside the
 repository.
+
+**Third failure — the settings come in a PAIR, and only one was changed.** After the
+config-as-code path landed, the build used the right Dockerfile but failed on
+`"/services/agri-data-service/src": not found` (the `pyproject.toml`/`uv.lock` COPY errored too).
+The build context contained no `services/` directory, i.e. **Root Directory was still
+`/infra/cron-ingest`**. Both settings are required and neither is reachable from the CLI:
+
+| Setting | Required value |
+|---|---|
+| Root Directory | `/` |
+| Config-as-code path | `infra/cron-ingest/railway.json` |
+| (Dockerfile path — redundant once config-as-code is set) | `infra/cron-ingest/Dockerfile` |
+
+The Dockerfile deliberately builds from the repository root, because the image needs
+`services/agri-data-service/{pyproject.toml,uv.lock,src/}` — a Root Directory of
+`/infra/cron-ingest` cannot see them. That is the constraint recorded in §7 open question 2 from
+the day the brief was written; it has now cost three separate failed builds because the two
+settings were changed one at a time.
+
+### USDM retention — a live landmine at the seam between two changes
+
+The two-year (in practice four-year) history backfill and the weekly job's prune are on a
+collision course, and neither change on its own is wrong:
+
+- `ingest/usdm.py` prunes to `DROUGHT_RETAINED_RELEASES` after **every** run, default
+  `DEFAULT_RETAINED_RELEASES = 8`.
+- `MAX_RETAINED_RELEASES` was raised `52 -> 120` so a backfill *can* be protected. Raising the
+  ceiling does not arm it — the default is still 8.
+- Nothing set the variable. `docs/env-vars.md:113` documents the hazard; no service configured it.
+
+Set `DROUGHT_RETAINED_RELEASES=110` on `plantgeo-ingest-cron` (2026-08-05, `--skip-deploys`) so the
+first successful cron tick does not silently prune the backfill back to 8 releases.
+
+**Unresolved ceiling.** The backfill reached 95 releases spanning `2022-08-09`..`2026-07-28` and was
+still climbing. If the final count exceeds **110**, the next `ingest-drought` run trims to 110; if it
+exceeds **120**, `MAX_RETAINED_RELEASES` clamps it and the variable cannot protect the history at all.
+Check the final release count, then either raise the variable (<=120) or raise the constant. A
+four-year weekly series is ~208 releases, which the current cap cannot hold.
+
+This also applies to the new per-layer `infra/cron-drought/` service (`0 14 * * 4`) — it runs the
+same prune and needs the same variable set when it is created.
+
+**Ceiling resolved 2026-08-05.** The backfill did not stop near 104. It walked to
+`2022-08-09`..`2026-07-28` — 172 releases and still advancing, heading for roughly 208 (four years
+of weekly releases). Both earlier caps were therefore below what the backfill actually produces,
+which is the dangerous shape: `MAX_RETAINED_RELEASES` **clamps the tunable**, so a cap set too low
+means *no* value of `DROUGHT_RETAINED_RELEASES` can protect the history.
+
+Resolution: `MAX_RETAINED_RELEASES` `120 -> 280` (five years with headroom) and
+`DROUGHT_RETAINED_RELEASES=260` on `plantgeo-ingest-cron`. `test_ingest_usdm.py` now asserts
+`MAX_RETAINED_RELEASES >= 208` against a literal as well as the symbol, so a future edit that drops
+the cap below a full backfill fails the suite instead of silently deleting history — this constant
+has regressed twice.
+
+Measured cost: **421 MB for 172 releases, ~2.5 MB per release** of stored geometry. The lane brief's
+"~19 MB each" is the *upstream payload*, not what lands in `geo.drought_areas` — a ~7x difference
+that makes full retention affordable. 280 releases is roughly 700 MB, the deliberate price of
+"we persist and serve everything we present" and a slider whose depth is whatever was ingested.

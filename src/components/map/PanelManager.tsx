@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useMapStore } from "@/stores/map-store";
 import { usePanelStore, usePanelHasActiveLayers, type PanelId } from "@/stores/panel-store";
-import { viewportBbox } from "@/lib/map/viewport-bbox";
+import { useViewportBounds } from "@/hooks/useViewportProxiedLayers";
 
 const FireDashboard = dynamic(
   () => import("@/components/panels/FireDashboard").then((m) => ({ default: m.FireDashboard })),
@@ -96,8 +96,8 @@ export default function PanelManager() {
     }
   }
 
-  const zoom = viewport.zoom ?? 8;
-  const bbox = viewportBbox(viewport.longitude, viewport.latitude, zoom);
+  // The same derivation LayerManager uses, so a panel keys on the bbox the map fetched.
+  const { bbox } = useViewportBounds();
 
   const mapCenter = { lat: viewport.latitude, lon: viewport.longitude };
 
@@ -130,6 +130,7 @@ export default function PanelManager() {
       <SoilPanel
         open={openPanel === "soil"}
         onOpenChange={(o) => handleOpenChange("soil", o)}
+        bbox={bbox ?? undefined}
       />
       <CommunityPanel
         open={openPanel === "community"}
