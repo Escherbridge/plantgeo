@@ -815,7 +815,12 @@ async function readDroughtRelease(
       ) AS geometry
     FROM geo.drought_areas d
     ${validDate === null ? sql`JOIN latest ON latest.valid_date = d.valid_date` : sql``}
-    WHERE ${validDate === null ? sql`TRUE` : sql`d.valid_date = ${validDate}::date`}
+    ${/* No ::date cast: geo.drought_areas.valid_date is character varying, so casting the
+          parameter makes this `character varying = date` and Postgres has no such operator --
+          it 500s at runtime, which neither tsc nor renderSqlText can see. Compared as text,
+          exactly as getDroughtMetricAtDate does, which is safe because every stored value is
+          fixed-width ISO YYYY-MM-DD, so lexicographic order IS chronological order. */ sql``}
+    WHERE ${validDate === null ? sql`TRUE` : sql`d.valid_date = ${validDate}`}
     ${
       area
         ? sql`AND d.geom && ST_MakeEnvelope(${area[0]}, ${area[1]}, ${area[2]}, ${area[3]}, 4326)`

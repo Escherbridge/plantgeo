@@ -639,6 +639,42 @@ describe("drought carry-forward is bounded, never unlimited", () => {
     return [{ earliest_release: earliest, as_of_release: asOf, next_release: next }];
   }
 
+  /**
+   * Regression: shipped comparing the release date as `d.valid_date = $1::date`, which 500s
+   * with `operator does not exist: character varying = date` because geo.drought_areas.valid_date
+   * is varchar. Every historical drought day failed in production while today's kept working,
+   * and nothing caught it -- tsc cannot see a SQL operator, and renderSqlText discards the
+   * placeholder, so the cast that abutted it was invisible. flattenSql keeps both, so this
+   * asserts on the parameter's actual SQL context. Text comparison is correct here: every
+   * stored value is fixed-width ISO YYYY-MM-DD, so lexicographic order is chronological order.
+   */
+  it("compares the release date as text, since valid_date is varchar and has no = date operator", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.parse("2026-08-04T12:00:00Z"));
+      dbExecute
+        .mockResolvedValueOnce(releaseProbe("2022-08-09", "2024-06-11", "2024-06-18"))
+        .mockResolvedValueOnce([]);
+
+      await getPublishedDroughtClassification("-125,42,-111,49", "2024-06-15");
+
+      const geometryRead = dbExecute.mock.calls[1]?.[0];
+      const tokens = flattenSql(geometryRead);
+      const releaseDateParams = tokens.flatMap((token, index) => {
+        if (token.kind !== "param" || token.value !== "2024-06-11") return [];
+        const next = tokens[index + 1];
+        return [next !== undefined && next.kind === "text" ? next.text : ""];
+      });
+      expect(releaseDateParams.length).toBeGreaterThan(0);
+      for (const following of releaseDateParams) {
+        expect(following.startsWith("::date")).toBe(false);
+      }
+      expect(renderSqlText(geometryRead)).not.toMatch(/valid_date\s*=\s*::date/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("refuses a release week the record skips instead of filling it from the week before", async () => {
     vi.useFakeTimers();
     try {
