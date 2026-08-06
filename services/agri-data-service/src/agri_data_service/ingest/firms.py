@@ -5,13 +5,20 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
 import structlog
 
-from agri_data_service.ingest.http import UpstreamBounds, fetch_bounded_text, upstream_client
+from agri_data_service.ingest.http import (
+    UpstreamBounds,
+    UpstreamPayloadError,
+    fetch_bounded_text,
+    upstream_client,
+)
 from agri_data_service.ingest.identity import (
+    FIRMS_PRODUCER,
     MissingNativeKeyError,
     build_firms_identity,
     format_javascript_timestamp,
@@ -24,19 +31,29 @@ from agri_data_service.ingest.policy import (
     resolve_max_source_records,
 )
 from agri_data_service.ingest.results import IngestionJobResult, skipped_result
+from agri_data_service.ingest.source import (
+    FetchRequest,
+    FreshnessRule,
+    FunctionSource,
+    HistoryCapability,
+    HistoryWindow,
+)
 from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from datetime import datetime
+    from collections.abc import Mapping, Sequence
 
     import httpx
 
+    from agri_data_service.ingest.source import UpstreamRecord
     from agri_data_service.ingest.writer import FeatureWriter
 
 logger = structlog.get_logger()
 
 FIRMS_SOURCE: Final = "nasa-firms"
+# A separate `--source` token so an operator cannot ask the archive walk for a current window, or the
+# forward job for a past one. Same producer, same layer, same identity contract; different access path.
+FIRMS_ARCHIVE_SOURCE: Final = "nasa-firms-archive"
 FIRMS_CHANNEL: Final = "layer:fire-detections"
 FIRMS_PROPERTY_SOURCE: Final = "NASA FIRMS"
 FIRMS_LAYER_VARIABLE: Final = "FIRMS_LAYER_ID"
@@ -47,17 +64,53 @@ FIRMS_DAY_RANGE_VARIABLE: Final = "FIRMS_DAY_RANGE"
 FIRMS_AREA_CSV_TEMPLATE: Final = (
     "https://firms.modaps.eosdis.nasa.gov/api/area/csv/{api_key}/{source}/{area}/{day_range}"
 )
+# The same endpoint with a trailing start date, which is the whole of FIRMS' archive access: there is
+# no separate archive host, only products whose availability window reaches further back.
+FIRMS_AREA_CSV_DATED_TEMPLATE: Final = f"{FIRMS_AREA_CSV_TEMPLATE}/{{start_date}}"
+FIRMS_AVAILABILITY_CSV_TEMPLATE: Final = (
+    "https://firms.modaps.eosdis.nasa.gov/api/data_availability/csv/{api_key}/all"
+)
 
 # The full VIIRS NRT constellation, matching `nasa-firms.ts` FIRMS_VIIRS_SOURCES. Querying a single
 # satellite silently zeroes the layer whenever that satellite stops publishing -- see ingest/AGENTS.md
 # "firms.py" -- so the job fans out across all three and merges rather than picking one.
 FIRMS_VIIRS_SOURCES: Final[tuple[str, ...]] = ("VIIRS_SNPP_NRT", "VIIRS_NOAA20_NRT", "VIIRS_NOAA21_NRT")
 
+# Every product a history walk may draw on, NRT and standard-processing alike. Which of them actually
+# answers for a given past day is decided per chunk from the live availability table, never assumed.
+FIRMS_HISTORY_SOURCES: Final[tuple[str, ...]] = (
+    *FIRMS_VIIRS_SOURCES,
+    "VIIRS_SNPP_SP",
+    "VIIRS_NOAA20_SP",
+    "VIIRS_NOAA21_SP",
+    "MODIS_SP",
+)
+
 FIRMS_BOUNDS: Final = UpstreamBounds(max_bytes=16 * 1024 * 1024, timeout_seconds=15.0)
+FIRMS_AVAILABILITY_BOUNDS: Final = UpstreamBounds(max_bytes=64 * 1024, timeout_seconds=15.0)
 
 DEFAULT_FIRMS_DAY_RANGE: Final = 2
 MIN_FIRMS_DAY_RANGE: Final = 1
-MAX_FIRMS_DAY_RANGE: Final = 10
+# Measured against the live API on 2026-08-05, not read off the documentation: day ranges 1-5 answer
+# HTTP 200 and 6, 7 and 10 all answer `400 Invalid day range. Expects [1..5].` for both the dated and
+# the undated form. This constant was 10 until that measurement, which made `FIRMS_DAY_RANGE=10` a
+# configuration that failed every product and therefore the whole job. See ingest/AGENTS.md "firms.py".
+MAX_FIRMS_DAY_RANGE: Final = 5
+# A century, so `is_fresh_observation` keeps its five-minute future-skew guard on a history record while
+# imposing no lower bound: the oldest FIRMS product starts 2000-11-01. Never a way to accept an undated
+# record -- that rejection is separate and unconditional.
+UNBOUNDED_OBSERVATION_AGE: Final = timedelta(days=100 * 365)
+
+# MODIS_SP's own published `min_date`, read from the live availability table on 2026-08-05 and the
+# oldest floor any FIRMS_HISTORY_SOURCES member offers (VIIRS_SNPP_SP starts 2012-01-20). It bounds
+# only whether a walk is refused outright; per-day coverage is still decided from the live table.
+FIRMS_ARCHIVE_EARLIEST_OBSERVATION: Final = datetime(2000, 11, 1, tzinfo=UTC)
+FIRMS_ARCHIVE_CURRENT_REFUSAL: Final = (
+    "nasa-firms-archive serves past windows only; `agri-cli ingest-firms` owns the current window "
+    "because it is the path that reports a partial-constellation outage as a reason rather than a "
+    "clean empty run."
+)
+
 MIN_CSV_LINES: Final = 2
 MIN_CSV_COLUMNS: Final = 4
 DEFAULT_CONFIDENCE: Final = "nominal"
@@ -144,6 +197,10 @@ def parse_firms_csv(csv_text: str, source: str) -> list[dict[str, object]]:
             "satellite": _text_column(columns, satellite_index, source),
             "acqDate": _text_column(columns, acquisition_date_index, ""),
             "acqTime": _text_column(columns, acquisition_time_index, ""),
+            # The FIRMS product this row was read from, which is the discriminator between the
+            # near-real-time and the standard-processing series a history walk also draws on. The
+            # `satellite` column cannot serve: VIIRS_NOAA20_NRT and VIIRS_NOAA20_SP both report `N20`.
+            "product": source,
         }
         # A radiometric channel this product did not publish is omitted, never zero-filled.
         brightness = _numeric_column(columns, brightness_index)
@@ -173,21 +230,100 @@ def _text_column(columns: Sequence[str], index: int, fallback: str) -> str:
     return fallback if cell is None else cell.strip()
 
 
-async def fetch_active_fires(
-    client: httpx.AsyncClient, area: str, day_range: int, source: str
-) -> list[dict[str, object]]:
-    """Fetch bounded FIRMS detections for one constellation product as GeoJSON point features."""
+def _require_api_key() -> str:
+    """Read NASA_FIRMS_KEY at call time, matching `nasa-firms.ts`'s own per-call check."""
     api_key = os.environ.get(FIRMS_API_KEY_VARIABLE, "").strip()
     if not api_key:
         raise ValueError(f"{FIRMS_API_KEY_VARIABLE} environment variable is not set")
-    url = FIRMS_AREA_CSV_TEMPLATE.format(
+    return api_key
+
+
+async def fetch_active_fires(
+    client: httpx.AsyncClient,
+    area: str,
+    day_range: int,
+    source: str,
+    start_date: date | None = None,
+) -> list[dict[str, object]]:
+    """Fetch bounded FIRMS detections for one product as GeoJSON point features, optionally from a past date."""
+    api_key = _require_api_key()
+    template = FIRMS_AREA_CSV_TEMPLATE if start_date is None else FIRMS_AREA_CSV_DATED_TEMPLATE
+    url = template.format(
         api_key=api_key,
         source=source,
         area=area,
         day_range=_clamp_day_range(day_range),
+        start_date=start_date.isoformat() if start_date is not None else "",
     )
     csv_text = await fetch_bounded_text(client, url, FIRMS_BOUNDS, {"Accept": "text/csv"})
     return parse_firms_csv(csv_text, source)
+
+
+@dataclass(frozen=True, slots=True)
+class ProductAvailability:
+    """One FIRMS product's published availability window, read from the API rather than assumed."""
+
+    product: str
+    earliest: date
+    latest: date
+
+    def covers(self, day: date) -> bool:
+        """True when this product publishes detections for the given acquisition day."""
+        return self.earliest <= day <= self.latest
+
+
+def parse_product_availability(csv_text: str) -> dict[str, ProductAvailability]:
+    """Parse the `data_availability` table, which is the only authority on how far back a product reaches."""
+    lines = [line.strip() for line in csv_text.strip().split("\n") if line.strip()]
+    if len(lines) < MIN_CSV_LINES:
+        raise UpstreamPayloadError("NASA FIRMS returned an empty data availability table")
+    header = [column.strip().lower() for column in lines[0].split(",")]
+    product_index = _header_index(header, "data_id")
+    earliest_index = _header_index(header, "min_date")
+    latest_index = _header_index(header, "max_date")
+    if min(product_index, earliest_index, latest_index) < 0:
+        raise UpstreamPayloadError("NASA FIRMS data availability table is missing a required column")
+
+    availability: dict[str, ProductAvailability] = {}
+    for line in lines[1:]:
+        columns = line.split(",")
+        product = _column(columns, product_index)
+        earliest = _column(columns, earliest_index)
+        latest = _column(columns, latest_index)
+        if not product or not earliest or not latest:
+            continue
+        try:
+            window = ProductAvailability(
+                product=product.strip(),
+                earliest=date.fromisoformat(earliest.strip()),
+                latest=date.fromisoformat(latest.strip()),
+            )
+        except ValueError:
+            continue
+        availability[window.product] = window
+    return availability
+
+
+async def fetch_product_availability(client: httpx.AsyncClient) -> dict[str, ProductAvailability]:
+    """Fetch the live availability table once per walk, so no window is assumed for any product."""
+    url = FIRMS_AVAILABILITY_CSV_TEMPLATE.format(api_key=_require_api_key())
+    return parse_product_availability(await fetch_bounded_text(client, url, FIRMS_AVAILABILITY_BOUNDS))
+
+
+def products_covering(
+    availability: Mapping[str, ProductAvailability],
+    day: date,
+    candidates: Sequence[str] = FIRMS_HISTORY_SOURCES,
+) -> tuple[str, ...]:
+    """Name the candidate products that publish the given day, in candidate order.
+
+    Selecting per day is what keeps the near-real-time and standard-processing series from being asked
+    for the same acquisition. Their windows are disjoint upstream today -- VIIRS_NOAA20_SP ended
+    2026-05-31 the day before VIIRS_NOAA20_NRT began -- but that boundary moves with every reprocessing
+    campaign, so it is read per walk rather than pinned. Both series report the same `satellite` token
+    and would therefore key identically; `properties.product` is what tells them apart once stored.
+    """
+    return tuple(product for product in candidates if product in availability and availability[product].covers(day))
 
 
 async def _gather_constellation(
@@ -217,12 +353,18 @@ def _partition_unavailable_sources(
 
 
 def build_fire_detection_write(
-    feature: dict[str, object],
+    feature: Mapping[str, object],
     layer_name: str,
-    max_observation_age: timedelta,
+    max_observation_age: timedelta | None,
     now: datetime | None = None,
 ) -> FeatureWrite | None:
-    """Build one detection's write, returning None for a record with no native key or a stale observation."""
+    """Build one detection's write, returning None for a record with no native key or a stale observation.
+
+    `max_observation_age=None` is the history caller: a walk over a past window has already bounded the
+    age it asked for, so re-imposing the forward path's rolling window would reject every archive
+    record. The future-skew guard still applies either way -- an acquisition FIRMS dates after the run
+    clock is garbage in both directions of time.
+    """
     properties = feature.get("properties")
     geometry = feature.get("geometry")
     if not isinstance(properties, dict) or not isinstance(geometry, dict):
@@ -232,7 +374,10 @@ def build_fire_detection_write(
         identity = build_firms_identity(properties, coordinates if isinstance(coordinates, list) else None)
     except (MissingNativeKeyError, ValueError):
         return None
-    if identity.observed_at is None or not is_fresh_observation(identity.observed_at, max_observation_age, now):
+    if identity.observed_at is None:
+        return None
+    age_bound = max_observation_age if max_observation_age is not None else UNBOUNDED_OBSERVATION_AGE
+    if not is_fresh_observation(identity.observed_at, age_bound, now):
         return None
     return FeatureWrite(
         layer_reference=layer_name,
@@ -316,3 +461,143 @@ async def run_fire_ingestion_job(
         reason=reason,
         details={"rejected": rejected},
     )
+
+
+def history_day_spans(window: HistoryWindow) -> tuple[tuple[date, int], ...]:
+    """Cut one chunk into `(start_day, day_range)` requests no wider than the five days FIRMS allows.
+
+    Days come from the window bounds' own UTC calendar dates, so a chunk boundary lands on the day the
+    publisher names rather than on whatever local date a recast would produce. The end bound is
+    exclusive, matching `HistoryWindow`, so a chunk ending at midnight does not fetch the next day.
+    """
+    first_day = window.start.astimezone(UTC).date()
+    last_day = (window.end.astimezone(UTC) - timedelta(microseconds=1)).date()
+    spans: list[tuple[date, int]] = []
+    cursor = first_day
+    while cursor <= last_day:
+        remaining = (last_day - cursor).days + 1
+        span = min(MAX_FIRMS_DAY_RANGE, remaining)
+        spans.append((cursor, span))
+        cursor += timedelta(days=span)
+    return tuple(spans)
+
+
+async def _fetch_history_span(
+    client: httpx.AsyncClient,
+    area: str,
+    availability: Mapping[str, ProductAvailability],
+    start_day: date,
+    day_range: int,
+) -> tuple[list[dict[str, object]], tuple[str, ...]]:
+    """Fetch one dated span from every product that publishes it, reporting the products that failed."""
+    products = products_covering(availability, start_day)
+    if not products:
+        return [], ()
+    collections = await asyncio.gather(
+        *(fetch_active_fires(client, area, day_range, product, start_day) for product in products),
+        return_exceptions=True,
+    )
+    records: list[dict[str, object]] = []
+    unavailable: list[str] = []
+    for product, collection in zip(products, collections, strict=True):
+        if isinstance(collection, BaseException):
+            unavailable.append(product)
+            continue
+        records.extend(collection)
+    return records, tuple(unavailable)
+
+
+async def fetch_firms_history_records(request: FetchRequest, window: HistoryWindow) -> Sequence[UpstreamRecord]:
+    """Fetch one past chunk from every FIRMS product whose live availability window covers each of its days.
+
+    A product that answers with a header and no rows is NOT evidence the sky was empty -- VIIRS_SNPP_SP
+    answered exactly that for 2022-08-05 while VIIRS_NOAA20_SP returned 1,649 detections for the same
+    five days. The walk therefore never treats one product's silence as coverage; it queries every
+    product the availability table says publishes the day and merges what answered.
+    """
+    if request.client is None:
+        async with upstream_client(FIRMS_BOUNDS) as owned_client:
+            return await _walk_history(owned_client, request, window)
+    return await _walk_history(request.client, request, window)
+
+
+async def _walk_history(
+    client: httpx.AsyncClient,
+    request: FetchRequest,
+    window: HistoryWindow,
+) -> Sequence[UpstreamRecord]:
+    """Walk one chunk's five-day spans against a single availability read, merging every product's answer."""
+    availability = await fetch_product_availability(client)
+    records: list[dict[str, object]] = []
+    unavailable: list[str] = []
+    for start_day, day_range in history_day_spans(window):
+        span_records, span_unavailable = await _fetch_history_span(
+            client, request.bbox, availability, start_day, day_range
+        )
+        records.extend(span_records)
+        unavailable.extend(span_unavailable)
+    if unavailable:
+        logger.warning("firms_history_products_unavailable", unavailable=sorted(set(unavailable)))
+    return merge_history_records(records)
+
+
+def merge_history_records(records: Sequence[dict[str, object]]) -> list[dict[str, object]]:
+    """Collapse records that key identically, last-write-wins, mirroring the forward job's Map semantics.
+
+    `select_writes` does not deduplicate, so without this a walk could hand `writer.py` several rows
+    carrying one `properties->>'id'` in a single batch -- which `_INSERT_FEATURES`' `ON CONFLICT DO
+    UPDATE` cannot apply twice to one row and would fail the whole chunk on. Two products of the SAME
+    satellite are the only way that arises and the per-day availability selection already prevents it,
+    so this is the backstop rather than the plan. Keys come from `build_firms_identity` and are never
+    re-derived here; a record that cannot be keyed passes through untouched so `select_writes` counts it
+    as a rejection instead of this function silently dropping it.
+    """
+    merged: dict[str, dict[str, object]] = {}
+    unkeyable: list[dict[str, object]] = []
+    for record in records:
+        properties = record.get("properties")
+        geometry = record.get("geometry")
+        coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+        try:
+            if not isinstance(properties, dict):
+                raise MissingNativeKeyError("record carries no properties")
+            key = build_firms_identity(properties, coordinates if isinstance(coordinates, list) else None).natural_key
+        except (MissingNativeKeyError, ValueError):
+            unkeyable.append(record)
+            continue
+        merged[key] = record
+    return [*merged.values(), *unkeyable]
+
+
+def build_firms_history_write(record: UpstreamRecord, request: FetchRequest) -> FeatureWrite | None:
+    """Map one archive detection through the same builder the forward path uses, without its rolling window."""
+    return build_fire_detection_write(record, resolve_firms_layer_name(), None, request.now)
+
+
+def firms_archive_source() -> FunctionSource:
+    """Compose the FIRMS source used for history walks, pinning its floor to the oldest product on offer.
+
+    `earliest` is deliberately a static floor rather than the availability table's own minimum: reading
+    the table needs a client, and `HistoryCapability` is consulted before any fetch happens. The table
+    is still authoritative per chunk -- a day no product covers simply yields no records -- so this
+    constant only decides whether the walk is refused outright.
+    """
+    return FunctionSource(
+        source_name=FIRMS_ARCHIVE_SOURCE,
+        producer=FIRMS_PRODUCER,
+        channel=FIRMS_CHANNEL,
+        # No maximum age: a history walk's window IS its age bound, and the write builder keeps the
+        # future-skew guard. Undated records stay refused -- FIRMS always names an acquisition instant.
+        freshness=FreshnessRule(max_observation_age=None, accepts_undated_records=False),
+        resolve_layer_reference=resolve_firms_layer_name,
+        fetch_current_records=_refuse_current_window,
+        build_feature_write=build_firms_history_write,
+        history=HistoryCapability(supported=True, earliest=FIRMS_ARCHIVE_EARLIEST_OBSERVATION),
+        fetch_history_records=fetch_firms_history_records,
+        shape="feature",
+    )
+
+
+async def _refuse_current_window(_request: FetchRequest) -> Sequence[UpstreamRecord]:
+    """Refuse a current-window fetch: `ingest-firms` owns that path and reports partial-constellation outages."""
+    raise NotImplementedError(FIRMS_ARCHIVE_CURRENT_REFUSAL)

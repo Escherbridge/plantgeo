@@ -26,7 +26,7 @@ from agri_data_service.ingest.backfill import (
     subtract_years,
 )
 from agri_data_service.ingest.evacuation_zones import EVACUATION_ZONES_SOURCE, run_evacuation_zones_ingestion_job
-from agri_data_service.ingest.firms import FIRMS_SOURCE, run_fire_ingestion_job
+from agri_data_service.ingest.firms import FIRMS_SOURCE, firms_archive_source, run_fire_ingestion_job
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.mtbs import MTBS_SOURCE, run_mtbs_ingestion_job
 from agri_data_service.ingest.ndvi import NDVI_SOURCE, run_vegetation_ingestion_job
@@ -259,8 +259,14 @@ def _build_backfillable_sources() -> Mapping[str, IngestionSource]:
 
     Built on demand rather than at import: `nws_sensor_source` stamps its own `earliest` from the
     run clock, so a module-level instance would freeze the NWS retention window at import time.
+
+    `nasa-firms-archive` is a second source token over the same producer, layer and identity contract
+    as `nasa-firms`, not a second producer: FIRMS' archive is the same endpoint with a start date, and
+    which product answers for a past day is read from the live availability table per chunk. It is a
+    separate token so `ingest-backfill` cannot ask the forward job for a past window, nor this walk for
+    the current one -- only `ingest-firms` reports a partial-constellation outage as a reason.
     """
-    sources = (nws_sensor_source(), build_vegetation_source())
+    sources = (nws_sensor_source(), build_vegetation_source(), firms_archive_source())
     return MappingProxyType({source.source_name: source for source in sources})
 
 

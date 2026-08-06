@@ -77,6 +77,79 @@ The API key env var is `NASA_FIRMS_KEY` (`nasa-firms.ts:104`) — not `FIRMS_API
 
 **No standalone `time_rules.py` was created**, though one was in this lane's original file list, because `environmental-time.ts`'s three functions already have a single home apiece and a fourth copy would be the "second definition of a contract" the `results.py` paragraph above already warns against for the same reason. `parseFirmsObservationTime`/`parseZonedObservationTime` are folded into `identity.py`'s `build_firms_identity` — the only place that ever derives a FIRMS record's `observed_at`, see the `identity.py` paragraph above. `firmsDayRange` lives in this module as `firms_day_range()` because it is genuinely FIRMS-only and nothing else in the package reads `FIRMS_DAY_RANGE`. `isFreshObservation` lives in `policy.py` as `is_fresh_observation()` because it is the general bounded-ingestion freshness check the "policy.py" paragraph above already documents, not a FIRMS-specific rule — `open_meteo.py` calls that same function for its own staleness check. Introducing `time_rules.py` would have meant either duplicating logic two other modules already own correctly, or relocating `is_fresh_observation` out of `policy.py` and rewriting `open_meteo.py` and its tests, both outside this module's file boundary.
 
+## firms.py: the archive is the same endpoint with a date, and the product is the discriminator
+
+`nasa-firms-archive` is a second `--source` token over the **same** producer, layer, channel and identity
+contract as `nasa-firms` — not a second producer. FIRMS has no separate archive host: `/api/area/csv/…`
+takes an optional trailing start date, and how far back you can reach is a property of the *product*, not
+of the URL. Four things about it are load-bearing.
+
+**The day-range ceiling is 5, and it was 10.** Measured against the live API on 2026-08-05 with the
+production key over `-125,42,-111,49`: day ranges 1, 2, 3, 4 and 5 answered HTTP 200 (3,741 / 6,886 /
+10,094 / 16,264 / 20,633 CSV lines on `VIIRS_NOAA21_NRT`), and 6, 7 and 10 each answered
+`400 Invalid day range. Expects [1..5].` — identically for the dated and the undated form. `MAX_FIRMS_DAY_RANGE`
+was 10 until that measurement, so `_clamp_day_range` advertised a ceiling every product refused:
+`FIRMS_DAY_RANGE=10` produced a 400 on all three constellation products and therefore a **failed job**,
+confirmed by running `ingest-firms` that way against production. Nothing in production sets
+`FIRMS_DAY_RANGE` (checked on `plantgeo-ingest-cron`, `plantgeo-cron-firms` and `plantgeo-main`), so
+`firms_day_range()` returns the default 2 there and lowering the clamp changes no live behaviour — it only
+stops a 6-to-10 configuration from being silently accepted and then failing.
+
+**Which product answers for a past day is read from the live availability table, never assumed.**
+`fetch_product_availability` reads `/api/data_availability/csv/{key}/all` once per walk and
+`products_covering` picks per day. This exists because the near-real-time and standard-processing series
+of one satellite **report the same `satellite` token** — `VIIRS_NOAA20_NRT` and `VIIRS_NOAA20_SP` are both
+`N20` — so they would key identically and silently overwrite each other. Their windows are disjoint
+upstream today (`VIIRS_NOAA20_SP` ends 2026-05-31, the day before `VIIRS_NOAA20_NRT` begins) but that
+boundary moves with every reprocessing campaign, so it is read rather than pinned. `properties.product`
+records which product actually answered and is the stored discriminator. Note what that means for rows
+written **before** this landed: they carry no `product` key at all, and absence therefore means "written by
+the forward NRT path before 2026-08-05" — the forward path records `product` from now on, so the gap does
+not grow, but it does not retroactively close either.
+
+**A product answering with a header and no rows is not evidence the sky was empty.** `VIIRS_SNPP_SP`
+returned a bare header for 2022-08-05..08-09 while `VIIRS_NOAA20_SP` returned 1,650 detections and
+`MODIS_SP` 356 for exactly the same five days and box. The walk therefore queries every product the
+availability table covers and merges, and never reads one product's silence as coverage. This is the same
+"gap certified as complete" failure `HistoryCapability` exists to prevent, wearing a product token.
+
+**`max_observation_age=None` removes the age floor and keeps the future-skew guard.** The forward job's
+rolling window is `min(10, max(1, dayRange))` days, which would reject every archive record; a history
+walk's window *is* its age bound. `build_fire_detection_write` therefore takes `timedelta | None` and
+substitutes `UNBOUNDED_OBSERVATION_AGE` (a century) rather than skipping `is_fresh_observation`, so an
+acquisition FIRMS dates after the run clock is still refused. An undated record stays refused
+unconditionally, separately from the age check.
+
+**`merge_history_records` is a backstop, not the plan.** `select_writes` does not deduplicate, so several
+rows carrying one `properties->>'id'` in a single batch would reach `_INSERT_FEATURES`, whose
+`ON CONFLICT DO UPDATE` cannot affect one row twice and would fail the whole chunk. Keys come from
+`build_firms_identity` — never re-derived — and a record that cannot be keyed passes through so
+`select_writes` counts it as a rejection rather than this function dropping it silently.
+
+`history_day_spans` cuts a chunk on the bounds' **own UTC calendar dates**. A window expressed at `-07:00`
+covers two UTC days and the span says two, which is a superset of what was asked for and every record in it
+carries the acquisition day FIRMS itself named; reading the bound as a naive local date instead would start
+the walk a day early and still miss part of the day requested.
+
+## usdm.py: a single-part drought class is a Polygon, and rejecting it lost 26 weeks
+
+`_parse_drought_feature` required `geometry.type == "MultiPolygon"`. USDM publishes a class as a bare
+`Polygon` whenever that class happens to be one contiguous area, so the gate rejected the **whole release**
+over its simplest class. Measured against production on 2026-08-05, that was the sole cause of 26 of the 29
+release weeks missing from `geo.drought_areas` between 2022-08-09 and 2026-08-04 — every one a week whose D4
+class was single-part (2024-02-20..2024-06-04, 2024-12-17..2025-01-28, 2025-11-11, 2025-12-09, 2025-12-16).
+Each of those files fetches fine and parses as a five-feature `FeatureCollection` with classes D0-D4; only
+the D4 geometry type differs from the stored weeks.
+
+Storing is unaffected and nothing is promoted in Python: `_STORE_DROUGHT_AREA_TEMPLATE` already wraps every
+geometry in `ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(…), 4326)), 3))`, and
+`ST_Multi` promotes a `Polygon` to a single-part `MultiPolygon`, so an accepted `Polygon` lands byte-identically
+to what USDM would have sent had the class been multi-part. `DROUGHT_AREA_GEOMETRY_TYPES` is a two-member
+frozenset rather than a dropped check: a `GeometryCollection`, a line or a point class still fails the gate,
+and `tests/test_ingest_usdm.py` pins both directions. The three genuinely absent weeks (2026-02-17,
+2026-02-24, 2026-08-04) answer HTTP 404 and stay reported as `not_published` gaps — a gap USDM never filled
+is data, and is still never fabricated.
+
 ## open_meteo.py
 
 `bounded_sample_points` **densifies, never slices**. When the derived grid would exceed `MAX_WEATHER_SAMPLE_POINTS` (150), the spacing grows uniformly until the grid fits, so the whole bbox stays covered at a coarser resolution. Truncating the point list instead — the obvious "simplification" — would silently blank whichever half of the region sorted last, and the map would render a clean, believable, half-empty weather layer. The `MIN_SPACING_GROWTH_FACTOR` of 1.01 is what guarantees the loop terminates even when the square-root estimate rounds back to the same column and row counts.

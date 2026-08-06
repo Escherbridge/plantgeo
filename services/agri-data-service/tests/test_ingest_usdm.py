@@ -191,12 +191,34 @@ def test_a_release_with_no_drought_classes_is_refused() -> None:
         {"type": "FeatureCollection", "features": "not-a-list"},
         {"type": "FeatureCollection", "features": [_feature(9)]},
         {"type": "FeatureCollection", "features": [_feature(True)]},
-        {"type": "FeatureCollection", "features": [_feature(1, geometry_type="Polygon")]},
+        {"type": "FeatureCollection", "features": [_feature(1, geometry_type="LineString")]},
+        {"type": "FeatureCollection", "features": [_feature(1, geometry_type="GeometryCollection")]},
     ],
 )
 def test_an_unexpected_release_shape_is_refused(payload: object) -> None:
     with pytest.raises(UpstreamPayloadError):
         parse_drought_release(LATEST_TUESDAY, payload)
+
+
+def test_a_single_part_polygon_class_is_accepted_rather_than_rejecting_the_whole_release() -> None:
+    """USDM ships a contiguous drought class as a bare Polygon; the store's ST_Multi already promotes it.
+
+    This case was pinned as a REFUSAL until 2026-08-05, when it was measured to be the sole cause of 26
+    of the 29 release weeks missing from production `geo.drought_areas` -- every one a week whose D4
+    class happened to be one contiguous area. See ingest/AGENTS.md "usdm.py".
+    """
+    release = parse_drought_release(
+        LATEST_TUESDAY,
+        {
+            "type": "FeatureCollection",
+            "features": [
+                *(_feature(drought_class) for drought_class in (0, 1, 2, 3)),
+                _feature(4, geometry_type="Polygon"),
+            ],
+        },
+    )
+    assert [area.drought_monitor_category for area in release.areas] == [0, 1, 2, 3, 4]
+    assert release.areas[4].geometry["type"] == "Polygon"
 
 
 async def test_a_non_tuesday_is_refused_before_any_request_is_made() -> None:

@@ -96,6 +96,9 @@ def test_the_csv_is_parsed_by_header_name_not_by_column_position() -> None:
         "satellite": "N",
         "acqDate": "2026-08-02",
         "acqTime": "1106",
+        # The product that answered, recorded as provenance and as the near-real-time versus
+        # standard-processing discriminator `satellite` cannot supply.
+        "product": "VIIRS_SNPP_NRT",
     }
     assert features[0]["geometry"] == {"type": "Point", "coordinates": [-113.26495, 47.83797]}
 
@@ -140,8 +143,11 @@ def test_a_header_only_payload_carries_no_detections() -> None:
 
 
 @pytest.mark.parametrize(
+    # The `99 -> 5` case read `99 -> 10` until 2026-08-05, when the API was measured to answer
+    # `400 Invalid day range. Expects [1..5].` for 6, 7 and 10 while 1-5 answered HTTP 200. The old
+    # ceiling was a value the clamp advertised as legal and every product refused.
     ("configured", "expected"),
-    [("", 2), ("5abc", 2), ("-3", 2), ("0", 1), ("3", 3), ("99", 10)],
+    [("", 2), ("5abc", 2), ("-3", 2), ("0", 1), ("3", 3), ("99", 5)],
 )
 def test_the_day_range_accepts_only_a_plain_integer(
     monkeypatch: pytest.MonkeyPatch,

@@ -38,6 +38,18 @@ USDM_BASE_URL: Final = "https://droughtmonitor.unl.edu/data/json"
 # The national collection is ~19 MB of full-resolution MultiPolygon rings.
 USDM_BOUNDS: Final = UpstreamBounds(max_bytes=48 * 1024 * 1024, timeout_seconds=60.0)
 
+# USDM publishes a drought class as a bare `Polygon` whenever that class happens to be one contiguous
+# area, and as a `MultiPolygon` otherwise -- it is the same instrument answering about a simpler map, not
+# a different product. Accepting only `MultiPolygon` rejected the WHOLE release over its single-part
+# class, which measured against production on 2026-08-05 was 26 of the 29 weeks missing from
+# `geo.drought_areas` between 2022-08-09 and 2026-08-04: every one of them a week whose D4 class was
+# single-part (2024-02-20..2024-06-04, 2024-12-17..2025-01-28, 2025-11-11, 2025-12-09, 2025-12-16).
+# Storing is unaffected: `_STORE_DROUGHT_AREA_TEMPLATE` already wraps every geometry in
+# `ST_Multi(ST_CollectionExtract(ST_MakeValid(...), 3))`, so a `Polygon` lands byte-identically to the
+# single-part `MultiPolygon` USDM would otherwise have sent. Nothing is promoted in Python, nothing is
+# repaired here, and a `GeometryCollection` or a line/point class still fails the gate.
+DROUGHT_AREA_GEOMETRY_TYPES: Final = frozenset({"Polygon", "MultiPolygon"})
+
 # USDM publishes Thursdays for the preceding Tuesday; two misses is a real outage.
 DEFAULT_CANDIDATE_WEEKS: Final = 3
 MAX_CANDIDATE_WEEKS: Final = 8
@@ -169,7 +181,7 @@ def _parse_drought_feature(feature: object) -> tuple[int, Mapping[str, object]]:
     geometry = feature.get("geometry")
     if not isinstance(properties, dict) or not isinstance(geometry, dict):
         raise UpstreamPayloadError("USDM returned an unexpected drought feature collection shape")
-    if geometry.get("type") != "MultiPolygon" or not isinstance(geometry.get("coordinates"), list):
+    if geometry.get("type") not in DROUGHT_AREA_GEOMETRY_TYPES or not isinstance(geometry.get("coordinates"), list):
         raise UpstreamPayloadError("USDM returned an unexpected drought feature collection shape")
     drought_class = properties.get("DM")
     if (
