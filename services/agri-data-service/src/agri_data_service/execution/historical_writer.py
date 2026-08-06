@@ -10,6 +10,7 @@ from geoalchemy2 import WKTElement
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
+from agri_data_service.execution.contracts import reject_sensitive_fields
 from agri_data_service.execution.historical_backfill import (
     AnalysisGridCell,
     HistoricalNasaBackfillPlan,
@@ -939,13 +940,18 @@ async def _ensure_open_meteo_source_release(
     observed_from = datetime.combine(plan.window.start_date, datetime.min.time(), tzinfo=UTC)
     observed_to = datetime.combine(plan.window.end_date, datetime.max.time(), tzinfo=UTC)
     query_parameters = {
-        "request_url": open_meteo_archive_chunk_url(plan, chunk),
+        # The host this chunk's bytes really came from, without the paid-tier credential, which is
+        # an environment fact and never a stored one. See execution/AGENTS.md §historical_open_meteo.
+        "request_url": open_meteo_archive_chunk_url(plan, chunk, base_url=result.request_base_url),
         "model": plan.model,
         "cell_selection": plan.cell_selection,
         "time_zone": plan.time_zone,
         "parameters": plan.parameters,
         "cell_keys": [cell.cell_key for cell in chunk.cells],
     }
+    # The export path already refuses a credentialed URL, but it runs long after the INSERT. This is
+    # the same check at the moment the value would become permanent.
+    reject_sensitive_fields(query_parameters)
     quality_summary = {
         "requested_series_count": len(chunk.cells) * len(plan.parameters),
         "expected_daily_rows": len(result.observations),

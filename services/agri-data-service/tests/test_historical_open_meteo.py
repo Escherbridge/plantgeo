@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from agri_data_service.execution.contracts import canonical_json_bytes
+from agri_data_service.execution.contracts import canonical_json_bytes, reject_sensitive_fields
 from agri_data_service.execution.historical_backfill import AnalysisGridCell  # noqa: TC001
 from agri_data_service.execution.historical_open_meteo import (
     OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS,
@@ -17,6 +17,7 @@ from agri_data_service.execution.historical_open_meteo import (
     OPEN_METEO_ARCHIVE_SUPPORT_KEY,
     RATE_LIMIT_BACKOFF_SECONDS,
     HistoricalOpenMeteoArchivePlan,
+    HistoricalOpenMeteoRawCacheReceipt,
     OpenMeteoArchiveCapture,
     OpenMeteoArchiveChunk,
     OpenMeteoArchiveFetchError,
@@ -34,8 +35,12 @@ from agri_data_service.execution.historical_open_meteo import (
     require_accounted_open_meteo_result,
 )
 from agri_data_service.ingest.open_meteo import (
+    OPEN_METEO_API_KEY_VARIABLE,
+    OPEN_METEO_ARCHIVE_BASE_URL,
+    OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL,
     OpenMeteoRateLimitError,
     _rate_limit_scope,
+    archive_daily_request,
     archive_daily_url,
 )
 
@@ -422,6 +427,185 @@ def test_chunk_url_matches_the_url_the_fetcher_would_request() -> None:
         plan.window.start_date,
         plan.window.end_date,
     )
+
+
+# --- paid-tier access: the key is an environment fact, never a stored one --------------------
+# See execution/AGENTS.md §historical_open_meteo and ingest/AGENTS.md §the paid archive host.
+
+TEST_API_KEY = "test-key-not-real"
+
+# Byte-for-byte what the keyless builder produced before paid-tier support existed. Already-persisted
+# probe releases pin this exact string in `agri.source_release.query_parameters`; a changed parameter
+# order or host would silently orphan them.
+KEYLESS_CANONICAL_URL = (
+    "https://archive-api.open-meteo.com/v1/archive"
+    "?latitude=43.125&longitude=-116.375&start_date=2022-04-30&end_date=2026-04-30"
+    "&daily=soil_moisture_0_to_7cm_mean&models=era5_land&timezone=GMT&cell_selection=nearest"
+)
+
+
+def test_the_keyless_canonical_url_is_byte_identical_to_the_pre_paid_tier_builder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No key means the free host and eight parameters in the original order -- nothing may shift."""
+    monkeypatch.delenv(OPEN_METEO_API_KEY_VARIABLE, raising=False)
+    url = archive_daily_url([(43.125, -116.375)], ["soil_moisture_0_to_7cm_mean"], WINDOW_START, WINDOW_END)
+    assert url == KEYLESS_CANONICAL_URL
+    request = archive_daily_request([(43.125, -116.375)], ["soil_moisture_0_to_7cm_mean"], WINDOW_START, WINDOW_END)
+    assert request.base_url == OPEN_METEO_ARCHIVE_BASE_URL
+    assert request.request_url == KEYLESS_CANONICAL_URL
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_key_is_the_free_tier_not_a_credentialed_request(
+    monkeypatch: pytest.MonkeyPatch, blank: str
+) -> None:
+    """An exported-but-empty variable must not send `apikey=` to a host that would reject it."""
+    monkeypatch.setenv(OPEN_METEO_API_KEY_VARIABLE, blank)
+    request = archive_daily_request([(43.125, -116.375)], ["soil_moisture_0_to_7cm_mean"], WINDOW_START, WINDOW_END)
+    assert request.request_url == KEYLESS_CANONICAL_URL
+
+
+def test_a_configured_key_moves_the_real_request_and_only_the_real_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The credential belongs in the request URL alone; the canonical URL keeps the host and drops the key."""
+    monkeypatch.setenv(OPEN_METEO_API_KEY_VARIABLE, TEST_API_KEY)
+    coordinates = [(43.125, -116.375)]
+    request = archive_daily_request(coordinates, ["soil_moisture_0_to_7cm_mean"], WINDOW_START, WINDOW_END)
+    assert request.base_url == OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL
+    assert request.request_url.startswith(f"{OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL}?")
+    assert request.request_url.endswith(f"&apikey={TEST_API_KEY}")
+    canonical = archive_daily_url(
+        coordinates, ["soil_moisture_0_to_7cm_mean"], WINDOW_START, WINDOW_END, base_url=request.base_url
+    )
+    assert canonical.startswith(f"{OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL}?")
+    assert TEST_API_KEY not in canonical
+    assert "apikey" not in canonical
+    # Only the host and the appended credential differ; every governed parameter keeps its position.
+    assert canonical.split("?", 1)[1] == KEYLESS_CANONICAL_URL.split("?", 1)[1]
+
+
+def test_the_persisted_chunk_url_names_the_retrieval_host_without_the_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Naming the free host while the paid host answered is a provenance lie; so is the reverse."""
+    monkeypatch.setenv(OPEN_METEO_API_KEY_VARIABLE, TEST_API_KEY)
+    plan = _plan()
+    chunk = plan.chunks[0]
+    paid = open_meteo_archive_chunk_url(plan, chunk, base_url=OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL)
+    assert paid.startswith(f"{OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL}?")
+    assert TEST_API_KEY not in paid
+    # Bytes fetched keylessly stay attributed to the free host even once a key is configured.
+    cached_keyless = open_meteo_archive_chunk_url(plan, chunk, base_url=OPEN_METEO_ARCHIVE_BASE_URL)
+    assert cached_keyless.startswith(f"{OPEN_METEO_ARCHIVE_BASE_URL}?")
+
+
+def test_an_unreviewed_archive_host_is_refused() -> None:
+    """A tampered local cache receipt must not be able to write an arbitrary URL into provenance."""
+    plan = _plan()
+    with pytest.raises(ValueError, match="not a reviewed endpoint"):
+        open_meteo_archive_chunk_url(plan, plan.chunks[0], base_url="https://example.invalid/v1/archive")
+
+
+def test_the_plan_checksum_ignores_the_key_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Access is not a governed input: keying the lane must not orphan a checkpoint or its raw cache."""
+    monkeypatch.delenv(OPEN_METEO_API_KEY_VARIABLE, raising=False)
+    keyless = historical_open_meteo_plan_checksum(_plan())
+    monkeypatch.setenv(OPEN_METEO_API_KEY_VARIABLE, TEST_API_KEY)
+    keyed_plan = _plan()
+    assert historical_open_meteo_plan_checksum(keyed_plan) == keyless
+    governed = keyed_plan.model_dump(mode="json")
+    reject_sensitive_fields(governed)
+    assert TEST_API_KEY not in canonical_json_bytes(governed).decode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_the_key_reaches_the_wire_and_nothing_durable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End to end: the credential is in the request, and in no receipt, checkpoint, or release field."""
+    monkeypatch.setenv(OPEN_METEO_API_KEY_VARIABLE, TEST_API_KEY)
+    plan = _plan()
+    chunk = plan.chunks[0]
+    payload = _payload(plan, chunk)
+    requested: list[str] = []
+
+    async def answer(_client: object, url: str) -> str:
+        requested.append(url)
+        return payload.decode("utf-8")
+
+    monkeypatch.setattr("agri_data_service.execution.historical_open_meteo.fetch_archive_daily", answer)
+    result = await fetch_open_meteo_archive_chunk(plan, chunk, client=object(), retrieved_at=RETRIEVED_AT)
+
+    assert len(requested) == 1
+    assert f"apikey={TEST_API_KEY}" in requested[0]
+    assert requested[0].startswith(OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL)
+    assert result.request_base_url == OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL
+
+    cache_historical_open_meteo_result(tmp_path, plan, result)
+    checkpoint = record_historical_open_meteo_result(
+        plan, initialize_historical_open_meteo_checkpoint(plan), result, updated_at=RETRIEVED_AT
+    )
+    written = sorted(path for path in tmp_path.rglob("*") if path.is_file())
+    assert written
+    for path in written:
+        assert TEST_API_KEY.encode() not in path.read_bytes()
+    assert TEST_API_KEY not in canonical_json_bytes(checkpoint.model_dump(mode="json")).decode("utf-8")
+
+    # The exact dict `_ensure_open_meteo_source_release` persists, checked by the repo's own guard.
+    query_parameters = {
+        "request_url": open_meteo_archive_chunk_url(plan, chunk, base_url=result.request_base_url),
+        "model": plan.model,
+        "cell_selection": plan.cell_selection,
+        "time_zone": plan.time_zone,
+        "parameters": plan.parameters,
+        "cell_keys": [cell.cell_key for cell in chunk.cells],
+    }
+    reject_sensitive_fields(query_parameters)
+    assert TEST_API_KEY not in canonical_json_bytes(query_parameters).decode("utf-8")
+
+
+def test_the_custody_guard_would_refuse_a_credentialed_request_url() -> None:
+    """Defence in depth: if a key ever reached the URL, the write-time guard must reject the row."""
+    with pytest.raises(ValueError, match="credential query parameters"):
+        reject_sensitive_fields({"request_url": f"{KEYLESS_CANONICAL_URL}&apikey={TEST_API_KEY}"})
+
+
+def test_cached_bytes_keep_the_host_they_were_fetched_from(tmp_path: Path) -> None:
+    """Persistence replays the cache, so the receipt -- not the current environment -- names the host."""
+    plan = _plan()
+    chunk = plan.chunks[0]
+    payload = _payload(plan, chunk)
+    capture = OpenMeteoArchiveCapture(
+        retrieved_at=RETRIEVED_AT,
+        wire_payload_bytes=len(payload),
+        wire_payload_checksum=hashlib.sha256(payload).hexdigest(),
+        request_base_url=OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL,
+    )
+    result = parse_open_meteo_archive_payload(plan, chunk, payload, capture)
+    receipt = cache_historical_open_meteo_result(tmp_path, plan, result)
+    assert receipt.request_base_url == OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL
+    replayed = load_cached_historical_open_meteo_result(tmp_path, plan, chunk)
+    assert replayed is not None
+    assert replayed.request_base_url == OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL
+
+
+def test_a_receipt_written_before_the_paid_host_reads_as_the_free_host() -> None:
+    """No other host was reachable when a v1 receipt was written, so the free host is derived, not assumed."""
+    legacy = HistoricalOpenMeteoRawCacheReceipt.model_validate(
+        {
+            "schema_version": 1,
+            "plan_checksum": "a" * 64,
+            "chunk_key": "cells-0000",
+            "payload_checksum": "b" * 64,
+            "payload_bytes": 1,
+            "wire_payload_checksum": "c" * 64,
+            "wire_payload_bytes": 1,
+            "retrieved_at": RETRIEVED_AT.isoformat(),
+        }
+    )
+    assert legacy.request_base_url == OPEN_METEO_ARCHIVE_BASE_URL
 
 
 class _RateLimitedClient:

@@ -122,13 +122,20 @@ downstream assuming regular cadence must handle it.
 One drought polygon costs as much as ~915 signal observations. Narrow fact tables are
 essentially free; multipolygon layers are not.
 
-## Credentials — only one pipeline has any
+## Credentials — one pipeline requires any, one accepts an optional one
 
-Grep `os.environ.get` in `execution/*.py` and you will find exactly two secrets:
-**`CDSAPI_URL`** and **`CDSAPI_KEY`**, both for ERA5-Land.
+Two secrets are **required**, both by the CDS ERA5-Land lane: **`CDSAPI_URL`** and
+**`CDSAPI_KEY`**.
+
+One is **optional**: **`OPEN_METEO_API_KEY`**, read by
+`ingest/open_meteo.py::resolve_open_meteo_api_key` for the
+`historical-open-meteo-backfill` archive lane. Absent is the supported default
+(free host, free quota); present switches the request to
+`customer-archive-api.open-meteo.com` and buys quota, not access. It is not in
+any plan, so it does not change `plan_checksum`, and it is never persisted.
 
 Everything else is keyless and open: Sentinel-2 (Earth Search), NASA POWER,
-Open-Meteo, USGS NWIS, USDM, MTBS (USDA ArcGIS), USDA Soil Data Access, HydroSHEDS,
+USGS NWIS, USDM, MTBS (USDA ArcGIS), USDA Soil Data Access, HydroSHEDS,
 ISRIC SoilGrids. `NASA_FIRMS_KEY` is used by the FIRMS path only.
 
 **The CDS gotcha:** `_require_cds_credentials()` reads `os.environ` **directly**.

@@ -18,8 +18,9 @@ Source-ingestion checkpoint v2 binds both the complete reviewed plan and the rel
 
 ## `historical_open_meteo.py` -- the Open-Meteo ERA5-Land archive lane
 
-The keyless read of the **same ERA5-Land product** as `historical_era5.py`, at its **native 0.1
-degrees**, over the 1,568-cell `sentinel2-ndvi-0p25deg` analysis lattice.
+A read of the **same ERA5-Land product** as `historical_era5.py`, at its **native 0.1 degrees**, over
+the 1,568-cell `sentinel2-ndvi-0p25deg` analysis lattice. Keyless by default; an optional
+`OPEN_METEO_API_KEY` buys quota, not access (see "Paid access is environment, not plan" below).
 
 ### Why this lane exists at all
 
@@ -153,6 +154,46 @@ the backfill fetches only that.
 
 Chunk boundaries are part of the plan checksum, so changing `chunk_cell_count` is a new plan rather
 than a resume that straddles two chunk shapes.
+
+### Paid access is environment, not plan
+
+A Professional subscription lifts the quota wall above. `OPEN_METEO_API_KEY` is read from
+`os.environ` at fetch time and appears in **no** plan field, so it does not enter `plan_checksum`.
+
+That was the deciding argument. A key is a credential and an access path, not a property of the data
+requested: the same cells, window, model and variables come back either way. Putting it -- or a host
+field -- in the plan would change `plan_checksum`, which orphans
+`historical-open-meteo/<checksum>.json` and its entire `raw/` cache, forcing a re-fetch of a
+quota-bound dataset. Paying for quota must not cost a re-fetch, and it must not silently invalidate
+the already-validated 16-cell probe. Absent stays fully supported: the free host is the default and
+the published repo has no key.
+
+Provenance is served **per release** instead, where it costs no checksum. Each retrieval carries the
+host that answered it (`OpenMeteoArchiveCapture.request_base_url` ->
+`HistoricalOpenMeteoRawCacheReceipt` -> `OpenMeteoArchiveChunkResult`), and
+`_ensure_open_meteo_source_release` records `open_meteo_archive_chunk_url(plan, chunk,
+base_url=result.request_base_url)` in `source_release.query_parameters.request_url`. The key is
+never part of that URL.
+
+The host is threaded through the cache receipt rather than re-resolved at persist time because
+`historical-open-meteo-persist` **replays the local cache**. Re-resolving would let a keyless
+retrieval be written up as a paid one the moment an operator exported a key -- a mixed-host crawl is
+the normal case when a run starts free, walls, and resumes keyed. `request_base_url` is additive
+inside `schema_version: 1` on the raw cache receipt: bumping the version would invalidate the probe's
+existing 718 KB cache, and a receipt written without the field provably predates the paid host, so
+the free host is derived rather than defaulted. `require_archive_base_url` admits only the two
+reviewed hosts, since a cache receipt is a file and therefore untrusted input.
+
+Re-persisting the same bytes under a different host raises "already governed by different metadata"
+from the existing `query_parameters` comparison. That is correct: the provenance really did change,
+and it can only happen if someone deletes the cache, re-fetches, and re-persists.
+
+**Where the key may and may not appear.** May: the process environment, and the wire URL built by
+`archive_daily_request`. May not: a plan, a checkpoint, a raw cache receipt, an artifact, a log line,
+a test fixture, or any warehouse column. `reject_sensitive_fields` runs over `query_parameters`
+immediately before the release INSERT -- the export path (`_validate_metadata` in
+`historical_promotion.py`) already refuses a credentialed URL, but it runs long after the row is
+permanent, so the same check is applied at the moment the value would become durable.
 
 ### Checkpoint `state` is re-derived on load, never trusted
 

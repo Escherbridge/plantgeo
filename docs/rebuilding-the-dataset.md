@@ -35,9 +35,11 @@ keyed source that fails without its variable set says so explicitly.
 | Evacuation zones (`ingest-evacuation-zones`) | No | `EVACUATION_ZONES_LAYER_ID` *(optional)* | Not a key — a layer label override | Nothing; uses a default layer name |
 | **NASA FIRMS active fire** (`ingest-firms`, and `ingest-all`) | **Yes** | `NASA_FIRMS_KEY` | Free MAP_KEY from [firms.modaps.eosdis.nasa.gov](https://firms.modaps.eosdis.nasa.gov/api/area/) | The verb raises `NASA_FIRMS_KEY environment variable is not set` and exits. `ingest-all` fails with it |
 | **ERA5-Land** (`historical-era5-backfill`) | **Yes** | `CDSAPI_URL` **and** `CDSAPI_KEY` | Free account at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu/), then accept the dataset licence in the browser | The command refuses to contact the provider: "ERA5-Land requires accepted CDS web terms plus CDSAPI_URL and CDSAPI_KEY in the local operator environment" |
+| ERA5-Land via Open-Meteo (`historical-open-meteo-backfill`) | Optional | `OPEN_METEO_API_KEY` *(optional)* | A paid Open-Meteo subscription; the lane works without one | Nothing breaks. Absent, the lane calls the keyless free host and is subject to its minute/hour/day quotas — a full 1,568-cell crawl walls repeatedly. Present, the request goes to the Professional host instead |
 
-So: exactly two credentials exist, and only one of them requires a hosted
-account with a browser step. Everything else on the list is keyless.
+So: two credentials are *required* by a lane, and only one of them needs a
+hosted account with a browser step. `OPEN_METEO_API_KEY` is the only optional
+credential — it buys quota, not access. Everything else on the list is keyless.
 
 Two facts about these variables bite every time:
 
@@ -51,6 +53,11 @@ Two facts about these variables bite every time:
   $env:CDSAPI_URL = 'https://cds.climate.copernicus.eu/api'
   $env:CDSAPI_KEY = '<your-cds-key>'
   ```
+
+- **`OPEN_METEO_API_KEY` is exported the same way, and is never stored.** It is
+  not part of the Open-Meteo plan and does not enter `plan_checksum`, so adding
+  or removing it never orphans a checkpoint or the local raw cache. The
+  warehouse records the host that answered, never the key.
 
 - **The FIRMS recent-days API is keyed; the archive is a separate product.**
   `NASA_FIRMS_KEY` covers the bounded recent-detections endpoint that

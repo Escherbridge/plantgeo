@@ -1,4 +1,4 @@
-"""Cache-first contracts for the keyless Open-Meteo ERA5-Land archive replay over the NDVI lattice."""
+"""Cache-first contracts for the Open-Meteo ERA5-Land archive replay over the NDVI lattice."""
 
 from __future__ import annotations
 
@@ -24,12 +24,16 @@ from agri_data_service.execution.historical_backfill import (
 from agri_data_service.execution.source_ingestion import SourceDefinition  # noqa: TC001
 from agri_data_service.ingest.http import UpstreamError, upstream_client
 from agri_data_service.ingest.open_meteo import (
+    OPEN_METEO_ARCHIVE_BASE_URL,
     OPEN_METEO_ARCHIVE_BOUNDS,
     OPEN_METEO_ARCHIVE_CELL_SELECTION,
     OPEN_METEO_ERA5_LAND_MODEL,
+    OpenMeteoArchiveBaseUrl,
     OpenMeteoRateLimitError,
+    archive_daily_request,
     archive_daily_url,
     fetch_archive_daily,
+    require_archive_base_url,
 )
 
 if TYPE_CHECKING:
@@ -119,6 +123,8 @@ class OpenMeteoArchiveCapture:
     retrieved_at: datetime
     wire_payload_bytes: int
     wire_payload_checksum: str
+    # The host this retrieval really answered from; see execution/AGENTS.md §historical_open_meteo.
+    request_base_url: OpenMeteoArchiveBaseUrl = OPEN_METEO_ARCHIVE_BASE_URL
 
 
 class HistoricalOpenMeteoArchivePlan(ContractModel):
@@ -229,6 +235,9 @@ class HistoricalOpenMeteoRawCacheReceipt(ContractModel):
     wire_payload_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     wire_payload_bytes: int = Field(ge=1, le=OPEN_METEO_ARCHIVE_MAX_RESPONSE_BYTES)
     retrieved_at: datetime
+    # Additive within schema_version 1: a receipt written without it predates the paid host, so the
+    # free host is derived, not defaulted. See execution/AGENTS.md §historical_open_meteo.
+    request_base_url: OpenMeteoArchiveBaseUrl = OPEN_METEO_ARCHIVE_BASE_URL
 
     @field_validator("retrieved_at")
     @classmethod
@@ -273,19 +282,26 @@ class OpenMeteoArchiveChunkResult:
     payload_checksum: str
     wire_payload_bytes: int
     wire_payload_checksum: str
+    request_base_url: OpenMeteoArchiveBaseUrl
     observations: tuple[HistoricalSignalObservation, ...]
     coverage: tuple[HistoricalCoverageAudit, ...]
     grid_points: tuple[tuple[str, float, float, float | None], ...]
 
 
-def open_meteo_archive_chunk_url(plan: HistoricalOpenMeteoArchivePlan, chunk: OpenMeteoArchiveChunk) -> str:
-    """Return the exact request one chunk is answered by, so the release records a reproducible query."""
+def open_meteo_archive_chunk_url(
+    plan: HistoricalOpenMeteoArchivePlan,
+    chunk: OpenMeteoArchiveChunk,
+    *,
+    base_url: str | None = None,
+) -> str:
+    """Return the credential-free request one chunk is answered by, so a release records a reproducible query."""
     _plan_chunk(plan, chunk.key)
     return archive_daily_url(
         [(cell.latitude, cell.longitude) for cell in chunk.cells],
         plan.parameters,
         plan.window.start_date,
         plan.window.end_date,
+        base_url=base_url,
     )
 
 
@@ -434,6 +450,7 @@ def cache_historical_open_meteo_result(
         wire_payload_checksum=result.wire_payload_checksum,
         wire_payload_bytes=result.wire_payload_bytes,
         retrieved_at=result.retrieved_at,
+        request_base_url=require_archive_base_url(result.request_base_url),
     )
     if payload_path.exists() or receipt_path.exists():
         cached = load_cached_historical_open_meteo_result(root, plan, chunk)
@@ -472,6 +489,7 @@ def load_cached_historical_open_meteo_result(
             retrieved_at=receipt.retrieved_at,
             wire_payload_bytes=receipt.wire_payload_bytes,
             wire_payload_checksum=receipt.wire_payload_checksum,
+            request_base_url=receipt.request_base_url,
         ),
     )
     require_accounted_open_meteo_result(plan, result)
@@ -488,7 +506,8 @@ async def fetch_open_meteo_archive_chunk(
 ) -> OpenMeteoArchiveChunkResult:
     """Fetch one chunk with bounded retries; an exhausted quota is raised, never swallowed."""
     _plan_chunk(plan, chunk.key)
-    url = archive_daily_url(
+    # The credential lives only in `request.request_url`; only `request.base_url` is ever recorded.
+    request = archive_daily_request(
         [(cell.latitude, cell.longitude) for cell in chunk.cells],
         plan.parameters,
         plan.window.start_date,
@@ -499,7 +518,7 @@ async def fetch_open_meteo_archive_chunk(
     attempt = 0
     for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
         try:
-            body = await fetch_archive_daily(client, url)
+            body = await fetch_archive_daily(client, request.request_url)
         except OpenMeteoRateLimitError as error:
             last_error = error
             backoff = RATE_LIMIT_BACKOFF_SECONDS.get(error.scope)
@@ -522,6 +541,7 @@ async def fetch_open_meteo_archive_chunk(
                 retrieved_at=_require_aware_utc(retrieved_at or datetime.now(UTC), "retrieved_at"),
                 wire_payload_bytes=len(wire_payload),
                 wire_payload_checksum=hashlib.sha256(wire_payload).hexdigest(),
+                request_base_url=request.base_url,
             ),
         )
     raise OpenMeteoArchiveFetchError(chunk.key, last_error, attempt)
@@ -622,6 +642,7 @@ def parse_open_meteo_archive_payload(
         payload_checksum=payload_checksum,
         wire_payload_bytes=capture.wire_payload_bytes,
         wire_payload_checksum=capture.wire_payload_checksum,
+        request_base_url=require_archive_base_url(capture.request_base_url),
         observations=tuple(observations),
         coverage=tuple(coverage),
         grid_points=tuple(grid_points),

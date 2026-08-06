@@ -421,3 +421,37 @@ substring "day", which is how a daily wall got classified `unknown` in a live ru
 Multi-location responses are a JSON **array**, and the provider omits `location_id` on the first entry
 while numbering the rest from 1. Order is the contract; the archive lane validates it rather than
 trusting it.
+
+## open_meteo.py: the paid archive host is an environment fact, and two URLs exist on purpose
+
+Open-Meteo's Professional tier is a **different host** plus one query parameter:
+`customer-archive-api.open-meteo.com/v1/archive?...&apikey=<key>`. `resolve_open_meteo_api_key()`
+reads `OPEN_METEO_API_KEY` from `os.environ` at call time, matching `firms.py::_require_api_key`,
+except that **absent is not an error**: the free host is the supported default, the published repo
+has no key, and the already-validated 16-cell probe was fetched keylessly.
+
+The module therefore exposes **two** builders over one private implementation, and the distinction is
+load-bearing rather than cosmetic:
+
+| Function | Host | Credential | May be persisted |
+|---|---|---|---|
+| `archive_daily_url` | the one this process would call | never | **yes** — this is the canonical URL |
+| `archive_daily_request` | the one this process would call | when configured | **no** — wire only |
+
+The safe one keeps the plain name, so a caller that reaches for the obvious function persists the
+safe value. `_archive_daily_parameters` builds and validates only the eight governed parameters;
+appending the credential lives in `archive_daily_request` alone, so `archive_daily_url` is
+structurally incapable of emitting a key rather than merely choosing not to. `ArchiveDailyRequest`
+exists so the fetcher resolves the credential **once** and gets back both the host to record and the
+URL to send; two separate environment reads could disagree.
+
+**The credential is appended last, after all eight governed parameters.** `urlencode` preserves dict
+insertion order, so the keyless URL is byte-identical to what the pre-paid-tier builder produced.
+That is not a nicety: `agri.source_release.query_parameters.request_url` on already-persisted probe
+releases contains that exact string, and `test_the_keyless_canonical_url_is_byte_identical_to_the_pre_paid_tier_builder`
+pins it literally.
+
+**`archive_daily_url` accepts an explicit `base_url`** and validates it through
+`require_archive_base_url`, which admits only the two reviewed hosts. Persistence replays a local
+cache receipt, so the host must come from the receipt rather than from the current environment;
+that receipt is a file, therefore untrusted, therefore checked before it can become provenance.

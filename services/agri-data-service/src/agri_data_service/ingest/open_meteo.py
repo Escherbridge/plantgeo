@@ -6,8 +6,9 @@ import asyncio
 import json
 import math
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 from urllib.parse import urlencode
 
 import structlog
@@ -85,6 +86,19 @@ CURRENT_VALUE_BOUNDS: Final = (
 OPEN_METEO_ARCHIVE_BASE_URL: Final = "https://archive-api.open-meteo.com/v1/archive"
 OPEN_METEO_ARCHIVE_BOUNDS: Final = UpstreamBounds(max_bytes=64 * 1024 * 1024, timeout_seconds=300.0)
 
+# The paid tier is a different host plus one query parameter. The key is read from the environment
+# at call time and belongs to no plan, checkpoint, cache receipt, log line, or warehouse row.
+# See ingest/AGENTS.md §"open_meteo.py: the paid archive host is an environment fact".
+OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL: Final = "https://customer-archive-api.open-meteo.com/v1/archive"
+OPEN_METEO_API_KEY_VARIABLE: Final = "OPEN_METEO_API_KEY"
+OPEN_METEO_API_KEY_PARAMETER: Final = "apikey"
+
+# A closed set, so a host can be carried through provenance and validated on the way back in.
+OpenMeteoArchiveBaseUrl = Literal[
+    "https://archive-api.open-meteo.com/v1/archive",
+    "https://customer-archive-api.open-meteo.com/v1/archive",
+]
+
 # `models` MUST be sent. The endpoint's default is `era5` at 0.25 degrees; only this value
 # selects the 0.1-degree ERA5-Land product whose layers match the CDS variable definitions.
 OPEN_METEO_ERA5_LAND_MODEL: Final = "era5_land"
@@ -111,13 +125,82 @@ def resolve_weather_layer_name() -> str:
     return os.environ.get(WEATHER_LAYER_VARIABLE, "").strip() or DEFAULT_WEATHER_LAYER_NAME
 
 
+@dataclass(frozen=True, slots=True)
+class ArchiveDailyRequest:
+    """One resolved archive request: the host provenance records, and the URL actually sent."""
+
+    base_url: OpenMeteoArchiveBaseUrl
+    # Carries the paid-tier credential when one is configured. Never persist, log, or checksum it.
+    request_url: str
+
+
+def resolve_open_meteo_api_key() -> str | None:
+    """Read OPEN_METEO_API_KEY at call time; absent is the free tier, which is not an error."""
+    return os.environ.get(OPEN_METEO_API_KEY_VARIABLE, "").strip() or None
+
+
+def open_meteo_archive_base_url() -> OpenMeteoArchiveBaseUrl:
+    """Return the archive host this process will really call: customer when a key is set, free otherwise."""
+    return _archive_base_url(resolve_open_meteo_api_key())
+
+
+def require_archive_base_url(value: str) -> OpenMeteoArchiveBaseUrl:
+    """Accept only a reviewed archive host, so a tampered local receipt cannot be persisted as provenance."""
+    if value == OPEN_METEO_ARCHIVE_BASE_URL:
+        return OPEN_METEO_ARCHIVE_BASE_URL
+    if value == OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL:
+        return OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL
+    raise ValueError("Open-Meteo archive base URL is not a reviewed endpoint")
+
+
 def archive_daily_url(
     coordinates: Sequence[tuple[float, float]],
     daily_variables: Sequence[str],
     start_date: date,
     end_date: date,
+    *,
+    base_url: str | None = None,
 ) -> str:
-    """Build one multi-location ERA5-Land archive URL whose parameter order is stable for a checksum."""
+    """Build the credential-free archive URL, whose parameter order is stable for a checksum.
+
+    Safe to persist, and structurally unable to carry a key. `base_url` defaults to the host this
+    process would call now; pass the host a past retrieval really used when recording provenance
+    for cached bytes.
+    """
+    resolved = open_meteo_archive_base_url() if base_url is None else require_archive_base_url(base_url)
+    parameters = _archive_daily_parameters(coordinates, daily_variables, start_date, end_date)
+    return f"{resolved}?{urlencode(parameters)}"
+
+
+def archive_daily_request(
+    coordinates: Sequence[tuple[float, float]],
+    daily_variables: Sequence[str],
+    start_date: date,
+    end_date: date,
+) -> ArchiveDailyRequest:
+    """Resolve the credential once, returning the host to record and the credentialed URL to send.
+
+    The key is appended after every governed parameter, so the keyless URL never shifts.
+    """
+    api_key = resolve_open_meteo_api_key()
+    base_url = _archive_base_url(api_key)
+    parameters = _archive_daily_parameters(coordinates, daily_variables, start_date, end_date)
+    if api_key is not None:
+        parameters[OPEN_METEO_API_KEY_PARAMETER] = api_key
+    return ArchiveDailyRequest(base_url=base_url, request_url=f"{base_url}?{urlencode(parameters)}")
+
+
+def _archive_base_url(api_key: str | None) -> OpenMeteoArchiveBaseUrl:
+    return OPEN_METEO_ARCHIVE_BASE_URL if api_key is None else OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL
+
+
+def _archive_daily_parameters(
+    coordinates: Sequence[tuple[float, float]],
+    daily_variables: Sequence[str],
+    start_date: date,
+    end_date: date,
+) -> dict[str, str]:
+    """Validate one multi-location archive request and order its governed parameters for a checksum."""
     if not coordinates or len(coordinates) > MAX_ARCHIVE_LOCATIONS_PER_REQUEST:
         raise ValueError("Open-Meteo archive requests must carry between one and 200 locations")
     if not daily_variables or sorted(daily_variables) != list(daily_variables):
@@ -132,19 +215,16 @@ def archive_daily_url(
             or not MIN_LONGITUDE <= longitude <= MAX_LONGITUDE
         ):
             raise ValueError("Open-Meteo archive coordinates are outside WGS84 bounds")
-    query = urlencode(
-        {
-            "latitude": ",".join(format_javascript_number(latitude) for latitude, _ in coordinates),
-            "longitude": ",".join(format_javascript_number(longitude) for _, longitude in coordinates),
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(),
-            "daily": ",".join(daily_variables),
-            "models": OPEN_METEO_ERA5_LAND_MODEL,
-            "timezone": "GMT",
-            "cell_selection": OPEN_METEO_ARCHIVE_CELL_SELECTION,
-        }
-    )
-    return f"{OPEN_METEO_ARCHIVE_BASE_URL}?{query}"
+    return {
+        "latitude": ",".join(format_javascript_number(latitude) for latitude, _ in coordinates),
+        "longitude": ",".join(format_javascript_number(longitude) for _, longitude in coordinates),
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "daily": ",".join(daily_variables),
+        "models": OPEN_METEO_ERA5_LAND_MODEL,
+        "timezone": "GMT",
+        "cell_selection": OPEN_METEO_ARCHIVE_CELL_SELECTION,
+    }
 
 
 async def fetch_archive_daily(client: httpx.AsyncClient, url: str) -> str:

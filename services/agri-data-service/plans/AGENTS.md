@@ -161,3 +161,9 @@ new plan rather than a resume that straddles two chunk shapes.
 **No CDS credentials, no licence acceptance, no queue.** This lane needs neither `CDSAPI_*` nor a
 browser licence click. The environment note above about exporting CDS credentials does not apply;
 the note about blanking `DATABASE_URL` does.
+
+**`OPEN_METEO_API_KEY` is optional and is deliberately absent from these plans.** A paid
+subscription raises the quota that walls a full lattice crawl; it changes no requested datum. It is
+an environment fact, so setting it does not change `plan_checksum` and does not orphan an existing
+checkpoint or raw cache. Do not add it, or a host field, to a plan file. See
+`execution/AGENTS.md` §historical_open_meteo, "Paid access is environment, not plan".
