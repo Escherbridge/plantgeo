@@ -45,6 +45,13 @@ it does not replace them. It inherits `engineering-principles.md`.
   DDL. To change a programmable object, edit the canonical file in `db/agri/**`
   and load it via `agri_data_service.db.sql_objects.load_object_sql` from a new
   migration (see `db/AGENTS.md`).
+- A non-trivial runtime query (a CTE, a join, or anything already a multi-line
+  `text("""...""")` literal) is not typed inline: it lives in its own
+  `src/agri_data_service/sql/<package>/<name>.sql` file and is loaded at module
+  import time through `agri_data_service.db.sql_queries.load_query_sql`, bound with
+  named parameters. See `code_styleguides/sql.md`, "Runtime query SQL lives in
+  dedicated files, not Python strings", for the file layout, the loader, the
+  required header, and where inline SQL still belongs.
 - Secrets, exact sensitive locations, and raw prompts are redacted from logs; log
   request IDs, source health, and safe diagnostics instead.
 

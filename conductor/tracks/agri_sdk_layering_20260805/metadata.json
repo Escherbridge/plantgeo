@@ -1,0 +1,15 @@
+{
+  "id": "agri_sdk_layering_20260805",
+  "description": "Restructure agri_data_service (36,438 lines) into six layers with a lint-enforceable dependency rule, separating pure Monte Carlo and ML method code over a shared foundation, dissolving the 2,474-line cli.py into thin command wiring, and exposing a public importable SDK surface without changing any of the 52 CLI command strings",
+  "type": "refactor",
+  "created_at": "2026-08-05T00:00:00Z",
+  "status": "planned",
+  "informed_by": [
+    "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+    "services/agri-data-service/src/agri_data_service/ingest/AGENTS.md",
+    "conductor/code_styleguides/sql.md",
+    "conductor/code_styleguides/python.md"
+  ],
+  "dependency_mode": "Python only, inside services/agri-data-service/src/agri_data_service. No Alembic revision, no Drizzle migration, no DDL, no schema change, no DML. Phase 6 edits infra/cron-ingest/Dockerfile comments only; the nine infra/cron-*/railway.json startCommand strings and the pyproject.toml agri-cli entry point are frozen for the whole track. Overlaps the parallel SQL-extraction convention work on exactly two files; the plan's sequencing section holds the freeze protocol.",
+  "activation_gate": "Phase 0 must land first and independently: the golden 52-leaf command surface fixture, the AST layering contract test, and the cron container smoke script must all be green against an unmodified tree before any code moves. Phase 1 must precede every move because two modules resolve paths by __file__ depth and relocate silently wrong. Phase 6 is the only phase permitted to restructure cli.py; it ships as 6a then 6b in separate releases, with at least one full weekly cron cycle (cron-drought, 0 14 * * 4) observed green between them. Phase 3 is blocked on the owner's answer to spec open question 1 (covariate_wind_model.py reader/estimator split) and Phase 4 on open question 2."
+}
