@@ -8,10 +8,17 @@ See plans/AGENTS.md.
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
+if TYPE_CHECKING:
+    from types import ModuleType
+
+from agri_data_service.execution.contracts import canonical_json_bytes
 from agri_data_service.execution.historical_backfill import (
     HistoricalNasaBackfillPlan,
     historical_nasa_plan_checksum,
@@ -25,9 +32,28 @@ from agri_data_service.execution.historical_era5 import (
 PLANS_ROOT = Path(__file__).resolve().parent.parent / "plans"
 NASA_LATTICE_PLAN_PATH = PLANS_ROOT / "nasa-power-pnw-soil-lattice-20220430-20260430.json"
 ERA5_PLAN_PATH = PLANS_ROOT / "era5-land-pnw-soil-20220430-20260430.json"
+WESTERN_NASA_LATTICE_PLAN_PATH = PLANS_ROOT / "nasa-power-western-na-soil-lattice-20220430-20260430.json"
+WESTERN_ERA5_PLAN_PATH = PLANS_ROOT / "era5-land-western-na-soil-20220430-20260430.json"
 
 PACIFIC_NORTHWEST_ENVELOPE = {"north": 49.0, "west": -125.0, "south": 42.0, "east": -111.0}
+WESTERN_NORTH_AMERICA_ENVELOPE = {"north": 51.0, "west": -125.0, "south": 31.0, "east": -104.0}
 SOIL_PARAMETERS = ["soil_temperature_level_1", "volumetric_soil_water_layer_1"]
+
+# The widened replay is worth roughly 100x the probe's cells; the count is asserted so a silent
+# narrowing of the lattice cannot pass as a successful regeneration.
+WESTERN_LATTICE_CELL_COUNT = 397
+
+
+def _plan_generator() -> ModuleType:
+    """Import the committed generator so the artifacts can be re-derived, not just re-read."""
+    path = PLANS_ROOT / "author_pnw_soil_moisture_plans.py"
+    spec = importlib.util.spec_from_file_location("author_pnw_soil_moisture_plans", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture(scope="module")
@@ -38,6 +64,16 @@ def nasa_lattice_plan() -> HistoricalNasaBackfillPlan:
 @pytest.fixture(scope="module")
 def era5_plan() -> HistoricalEra5LandBackfillPlan:
     return HistoricalEra5LandBackfillPlan.model_validate_json(ERA5_PLAN_PATH.read_bytes())
+
+
+@pytest.fixture(scope="module")
+def western_nasa_lattice_plan() -> HistoricalNasaBackfillPlan:
+    return HistoricalNasaBackfillPlan.model_validate_json(WESTERN_NASA_LATTICE_PLAN_PATH.read_bytes())
+
+
+@pytest.fixture(scope="module")
+def western_era5_plan() -> HistoricalEra5LandBackfillPlan:
+    return HistoricalEra5LandBackfillPlan.model_validate_json(WESTERN_ERA5_PLAN_PATH.read_bytes())
 
 
 def test_era5_plan_quotes_the_real_nasa_lattice_checksum(
@@ -77,6 +113,83 @@ def test_era5_periods_exactly_cover_the_four_year_window(era5_plan: HistoricalEr
     assert era5_plan.periods[0].start_date == era5_plan.window.start_date
     assert era5_plan.periods[-1].end_date == era5_plan.window.end_date
     assert len(era5_plan.periods) <= 60  # noqa: PLR2004
+
+
+def test_western_era5_plan_quotes_the_real_western_nasa_lattice_checksum(
+    western_nasa_lattice_plan: HistoricalNasaBackfillPlan,
+    western_era5_plan: HistoricalEra5LandBackfillPlan,
+) -> None:
+    """The widened pair must chain to its own lattice, not inherit the four-cell probe's checksum."""
+    assert western_era5_plan.nasa_lattice_plan_checksum == historical_nasa_plan_checksum(western_nasa_lattice_plan)
+
+
+def test_western_era5_cells_are_established_by_the_named_western_lattice(
+    western_nasa_lattice_plan: HistoricalNasaBackfillPlan,
+    western_era5_plan: HistoricalEra5LandBackfillPlan,
+) -> None:
+    lattice = {cell.cell_key: (cell.latitude, cell.longitude) for cell in western_nasa_lattice_plan.nasa.cells}
+    assert len(western_era5_plan.cells) == WESTERN_LATTICE_CELL_COUNT
+    for cell in western_era5_plan.cells:
+        assert cell.cell_key in lattice
+        assert (cell.latitude, cell.longitude) == lattice[cell.cell_key]
+
+
+def test_western_lattice_is_a_strict_superset_of_the_probe_lattice(
+    era5_plan: HistoricalEra5LandBackfillPlan,
+    western_era5_plan: HistoricalEra5LandBackfillPlan,
+) -> None:
+    """Reused cell keys keep `_ensure_spatial_cell` idempotent instead of colliding on geometry."""
+    probe = {cell.cell_key: (cell.latitude, cell.longitude) for cell in era5_plan.cells}
+    widened = {cell.cell_key: (cell.latitude, cell.longitude) for cell in western_era5_plan.cells}
+    assert probe.keys() < widened.keys()
+    for key, coordinates in probe.items():
+        assert widened[key] == coordinates
+
+
+def test_western_plan_is_a_distinct_release_set_from_the_probe(
+    era5_plan: HistoricalEra5LandBackfillPlan,
+    western_era5_plan: HistoricalEra5LandBackfillPlan,
+) -> None:
+    """A widened lattice is a different release set; the partially fetched probe must stay separate."""
+    assert western_era5_plan.release_set_key != era5_plan.release_set_key
+    assert western_era5_plan.requested_area != era5_plan.requested_area
+
+
+def test_western_era5_cells_lie_inside_the_requested_cds_envelope(
+    western_era5_plan: HistoricalEra5LandBackfillPlan,
+) -> None:
+    """A cell outside `area` is absent from the NetCDF and fails the nearest-point tolerance."""
+    assert western_era5_plan.requested_area.model_dump() == WESTERN_NORTH_AMERICA_ENVELOPE
+    for cell in western_era5_plan.cells:
+        assert WESTERN_NORTH_AMERICA_ENVELOPE["south"] <= cell.latitude <= WESTERN_NORTH_AMERICA_ENVELOPE["north"]
+        assert WESTERN_NORTH_AMERICA_ENVELOPE["west"] <= cell.longitude <= WESTERN_NORTH_AMERICA_ENVELOPE["east"]
+
+
+def test_western_plan_excludes_cells_outside_the_era5_land_domain(
+    western_era5_plan: HistoricalEra5LandBackfillPlan,
+) -> None:
+    """Out-of-domain cells are not gaps; recording them would write only is_observed=false rows."""
+    generator = _plan_generator()
+    excluded = generator.CELLS_OUTSIDE_ERA5_LAND_DOMAIN
+    assert excluded
+    assert not {cell.cell_key for cell in western_era5_plan.cells}.intersection(excluded)
+
+
+def test_western_plan_carries_only_the_two_soil_signals(
+    western_era5_plan: HistoricalEra5LandBackfillPlan,
+) -> None:
+    assert western_era5_plan.parameters == SOIL_PARAMETERS
+
+
+@pytest.mark.parametrize("artifact", ["nasa", "era5"])
+def test_western_artifacts_regenerate_byte_for_byte(artifact: str) -> None:
+    """A hand-edited plan is unreproducible from a clone; re-derive both artifacts to forbid that."""
+    generator = _plan_generator()
+    nasa_plan, era5_plan_value = generator.build_western_north_america_plans()
+    plan, path = (
+        (nasa_plan, WESTERN_NASA_LATTICE_PLAN_PATH) if artifact == "nasa" else (era5_plan_value, WESTERN_ERA5_PLAN_PATH)
+    )
+    assert canonical_json_bytes(plan.model_dump(mode="json")) == path.read_bytes()
 
 
 class _StubResponse:

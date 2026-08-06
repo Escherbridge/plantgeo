@@ -47,6 +47,67 @@ intact. `_ensure_spatial_cell` compares existing rows with `ST_Equals` and refus
 "already governed by different geometry", so borrowing keeps a later full-coverage run
 idempotent instead of making it collide.
 
+## CDS prices retrievals by time, not by area
+
+Measured 2026-08-05 against the CDS costing endpoint
+(`POST /api/retrieve/v1/processes/derived-era5-land-daily-statistics/costing`) for
+`derived-era5-land-daily-statistics`:
+
+```
+cost = 2 x variables x days      limit = 400 per request
+```
+
+`area` and `grid` are **not cost inputs at all**. A 2-variable 31-day request costs 124 whether
+its area is the four-cell Boise box, Western North America, or the whole globe; grids of 1.0,
+0.5, 0.25 and 0.1 degrees all cost 124 over the same area. The consequences are worth stating
+plainly because they are counter-intuitive:
+
+- **Widening the sampled extent is free** — same retrievals, same queue time, same cost. Only
+  warehouse rows scale (2 x 1462 x cells, at ~529 bytes measured per `agri.signal_observation`
+  row).
+- What actually blows the limit is *time span in one request*: 2 months costs 244, 12 months
+  costs 1460. The earlier "cost 930" rejection was a multi-month request, not a large area. The
+  49-monthly-period decomposition exists to keep each request at 124 of 400, and it is the only
+  reason the plan validates.
+- There is real headroom: a quarterly period would cost ~368 and would cut 49 retrievals to 17.
+  `Era5LandPeriod` forbids it (`max_length=31` on `days`, plus `require_consistent_month`), so
+  this is a contract change, not a plan change. It is the single highest-leverage available
+  speedup, because wall clock is dominated by CDS queue wait (~1 h per full month, so ~45 h for
+  a 49-period plan) and not by area, bytes, or parsing.
+
+## Extent is free but grid is frozen, so widen rather than densify
+
+`requested_grid_degrees` is pinned to exactly 1.0 by `require_governed_monthly_coverage`, and
+`AnalysisGridCell` keys must resolve to an `agri.spatial_cell` row. The canonical lattice is a
+1-degree lattice, so a 0.1-degree ERA5 request would have no matching analysis cells to attach
+its values to. **Grid tightening is blocked by the lattice, not by cost** — it requires a new
+finer analysis lattice plus a contract change, whereas widening the extent needs neither.
+
+The 1-degree output is a 10x downsample of ERA5-Land's native 0.1-degree grid, and that
+downsample is not free of consequence: cross-checked against Open-Meteo's ERA5-Land archive,
+soil *moisture* agrees to 0.00014 m^3/m^3 but soil *temperature* disagreed by up to 1.7 C at a
+Cascades cell, where 1-degree averaging spans thousands of feet of relief. Treat 1-degree soil
+temperature in complex terrain as representative of the cell, not of any point in it.
+
+## The raw cache is keyed by the whole plan checksum
+
+`historical_era5_raw_cache_paths` keys the download directory on
+`historical_era5_plan_checksum(plan)`, which hashes `cells` and `requested_area` along with
+everything else. Any re-plan therefore looks in a directory that does not exist and refetches,
+even when the bytes it needs are one directory over. `load_cached_historical_era5_result`
+accepts a `cache_plan_checksum` override and the checkpoint carries `raw_cache_plan_checksum`,
+but `historical-era5-backfill` exposes no CLI flag for it, and the override is only sound when
+the CDS request dict is unchanged — that is, same `area`, `grid`, `parameters`, `daily_statistic`,
+`time_zone` and `frequency`. Reuse is therefore possible when *densifying inside an unchanged
+envelope* and impossible when *widening the envelope*, because the cached NetCDF simply does not
+contain the new cells and the nearest-point tolerance in `_era5_values_by_cell_and_date` will
+reject them.
+
+Note also that the download always contains the **entire `requested_area` at `requested_grid_degrees`**,
+not just the declared cells: the four-cell PNW probe was downloading all 8 x 15 = 120 grid points
+every month and discarding 116 of them. Declaring more cells inside an envelope you are already
+requesting is pure upside.
+
 ## As-of times are frozen once a plan has run
 
 `NASA_ACQUISITION_RELEASE_SET_AS_OF` must not be edited: that plan has been run and its checksum
