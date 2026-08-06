@@ -1146,10 +1146,10 @@ async def _insert_open_meteo_observations(
                 "quality_flag": observation.quality_flag,
                 "coverage_fraction": 1,
                 "is_observed": observation.is_observed,
-                "metadata_json": {
-                    "source_parameter": observation.source_parameter,
-                    "native_grid_name": plan.native_grid_name,
-                },
+                # Empty on purpose: `source_parameter` is the column beside it and
+                # `native_grid_name` is already in the release, the crosswalk, and the plan.
+                # At 6.8M rows an inline duplicate costs ~690 MB and adds nothing.
+                "metadata_json": {},
             }
         )
         if len(rows) == HISTORICAL_SIGNAL_INSERT_BATCH_SIZE:
@@ -1793,7 +1793,14 @@ def _open_meteo_chunk(plan: HistoricalOpenMeteoArchivePlan, chunk_key: str) -> O
 
 
 def _open_meteo_source_version(plan: HistoricalOpenMeteoArchivePlan, chunk: OpenMeteoArchiveChunk) -> str:
-    """Return the stable source version for one immutable archive chunk."""
+    """Return the window/grid/chunk-ordinal label for a chunk; NOT on its own a unique identity.
+
+    `chunk_cell_count` is deliberately absent, so two plans that chunk the same grid differently
+    both emit `...:cells-0000` for disjoint cell sets. Identity is the composite
+    `uq_source_release_identity` (data source, source_version, payload_checksum, transform_version),
+    which every lookup here binds; folding the chunk size in would change the label of already
+    persisted releases and orphan a finalized release set. See execution/AGENTS.md.
+    """
     return (
         f"{OPEN_METEO_ARCHIVE_SCHEMA_VERSION}:{plan.window.start_date:%Y%m%d}-"
         f"{plan.window.end_date:%Y%m%d}:{plan.grid_name}:{chunk.key}"

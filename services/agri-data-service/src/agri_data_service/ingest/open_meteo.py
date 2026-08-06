@@ -161,14 +161,13 @@ async def fetch_archive_daily(client: httpx.AsyncClient, url: str) -> str:
     return response.text
 
 
-# The provider's own adjectives, which are what its 429 bodies actually say. Matching the bare noun
-# is not enough and is not a hypothetical: "Daily API request limit exceeded. Please try again
-# tomorrow." contains no substring "day", so a daily wall would be classified `unknown` and slept
-# through instead of surfaced. Measured against live 429 bodies on 2026-08-06.
+# The provider's own adjectives, in LEAST-retryable-first order so an ambiguous body
+# ("Daily API request limit exceeded. Please try again in 60 minutes.") resolves to `day`, not
+# `minute`. Measured against live 429 bodies on 2026-08-06; see ingest/AGENTS.md.
 RATE_LIMIT_SCOPE_MARKERS: Final = (
-    ("minute", ("minutely", "minute")),
-    ("hour", ("hourly", "hour")),
     ("day", ("daily", "day")),
+    ("hour", ("hourly", "hour")),
+    ("minute", ("minutely", "minute")),
 )
 
 

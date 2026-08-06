@@ -30,6 +30,7 @@ from agri_data_service.execution.historical_open_meteo import (
     open_meteo_archive_chunk_url,
     parse_open_meteo_archive_payload,
     record_historical_open_meteo_result,
+    rederive_historical_open_meteo_checkpoint_state,
     require_accounted_open_meteo_result,
 )
 from agri_data_service.ingest.open_meteo import (
@@ -170,16 +171,38 @@ def test_plan_rejects_an_unsupported_parameter() -> None:
 
 def test_moisture_layers_reuse_the_cds_signal_names_and_unit() -> None:
     """One physical quantity keeps one name; only support and provenance differ from the CDS lane."""
-    assert OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS["soil_moisture_0_to_7cm_mean"] == (
-        "soil_water_content_layer_1",
-        "m^3/m^3",
-        "m^3/m^3",
-    )
+    layer_one = OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS["soil_moisture_0_to_7cm_mean"]
+    assert layer_one.signal_name == "soil_water_content_layer_1"
+    assert layer_one.original_unit == layer_one.normalized_unit == "m^3/m^3"
     assert OPEN_METEO_ARCHIVE_SUPPORT_KEY == "era5-land-0.1deg"
     for parameter in OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS:
-        signal_name, original_unit, normalized_unit = OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[parameter]
-        assert signal_name.startswith("soil_water_content_layer_")
-        assert original_unit == normalized_unit == "m^3/m^3"
+        specification = OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[parameter]
+        assert specification.signal_name.startswith("soil_water_content_layer_")
+        assert specification.original_unit == specification.normalized_unit == "m^3/m^3"
+
+
+def test_every_moisture_layer_is_bounded_to_the_physical_volumetric_range() -> None:
+    """Volumetric water content is physically [0, 1] m^3/m^3; nothing else may be stored as one."""
+    for parameter in OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS:
+        specification = OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[parameter]
+        assert (specification.minimum, specification.maximum) == (0.0, 1.0)
+
+
+@pytest.mark.parametrize("sentinel", [-999.0, 9.969209968386869e36, 1.5, -0.0001])
+def test_an_out_of_range_value_fails_the_whole_chunk(sentinel: float) -> None:
+    """A provider sentinel is a provider failure, not a gap: it must never land as an accepted row.
+
+    `-999` and the netCDF `_FillValue` 9.969e36 are both finite, so the finite-check alone lets them
+    through. Downgrading them to `no_data` would assert the provider modelled nothing here, which is
+    a different and unevidenced claim, so the chunk fails and keeps no receipt.
+    """
+    plan = _plan()
+    chunk = plan.chunks[0]
+    poisoned: list[float | None] = [0.25] * plan.window.day_count
+    poisoned[7] = sentinel
+    payload = _payload(plan, chunk, values={plan.parameters[0]: poisoned})
+    with pytest.raises(ValueError, match="outside its reviewed physical range"):
+        parse_open_meteo_archive_payload(plan, chunk, payload, _capture(payload))
 
 
 def test_archive_url_pins_the_land_model_and_nearest_cell_selection() -> None:
@@ -417,6 +440,8 @@ class _RateLimitedClient:
         ('{"reason":"Minutely API request limit exceeded. Please try again in one minute.","error":true}', "minute"),
         ('{"reason":"Hourly API request limit exceeded. Please try again in the next hour.","error":true}', "hour"),
         ('{"reason":"Daily API request limit exceeded. Please try again tomorrow.","error":true}', "day"),
+        # Ambiguous: names two windows. It must resolve to the LEAST retryable one.
+        ('{"reason":"Daily API request limit exceeded. Please try again in 60 minutes.","error":true}', "day"),
         ('{"reason":"something entirely new","error":true}', "unknown"),
         ("not json at all", "unknown"),
     ],
@@ -433,6 +458,36 @@ def test_a_daily_wall_is_never_slept_through() -> None:
     )
     assert scope not in RATE_LIMIT_BACKOFF_SECONDS
     assert "tomorrow" in reason
+
+
+def test_only_a_minutely_refusal_is_ever_waited_out() -> None:
+    """An unrecognised 429 body is more likely a reworded wall than a blip, so it fails closed."""
+    assert RATE_LIMIT_BACKOFF_SECONDS == {"minute": 70.0}
+    for scope in ("hour", "day", "unknown"):
+        assert scope not in RATE_LIMIT_BACKOFF_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_an_unrecognised_refusal_fails_immediately_without_sleeping(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Burning 4 requests and 360 s against an exhausted keyless quota is the failure mode to avoid."""
+    plan = _plan()
+    chunk = plan.chunks[0]
+    attempts = 0
+    waits: list[float] = []
+
+    async def refuse(_client: object, _url: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        raise OpenMeteoRateLimitError("unknown", "something entirely new")
+
+    async def record_wait(seconds: float) -> None:
+        waits.append(seconds)
+
+    monkeypatch.setattr("agri_data_service.execution.historical_open_meteo.fetch_archive_daily", refuse)
+    with pytest.raises(OpenMeteoArchiveFetchError):
+        await fetch_open_meteo_archive_chunk(plan, chunk, client=_RateLimitedClient("unknown"), sleep=record_wait)
+    assert attempts == 1
+    assert waits == []
 
 
 @pytest.mark.asyncio
@@ -509,6 +564,35 @@ async def test_a_recovered_rate_limit_still_produces_an_accounted_result(monkeyp
     assert calls == 2  # noqa: PLR2004
     require_accounted_open_meteo_result(plan, result)
     assert result.chunk_key == chunk.key
+
+
+def test_a_blocked_checkpoint_whose_chunks_all_landed_is_recoverable() -> None:
+    """Trusting a stored `blocked` strands a complete run: nothing outstanding would ever clear it."""
+    plan = _plan(chunk_cell_count=2)
+    checkpoint = initialize_historical_open_meteo_checkpoint(plan, updated_at=RETRIEVED_AT)
+    for chunk in plan.chunks:
+        payload = _payload(plan, chunk)
+        result = parse_open_meteo_archive_payload(plan, chunk, payload, _capture(payload))
+        checkpoint = record_historical_open_meteo_result(plan, checkpoint, result, updated_at=RETRIEVED_AT)
+    stranded = checkpoint.model_copy(update={"state": "blocked", "reason": "a transient warehouse error"})
+    recovered = rederive_historical_open_meteo_checkpoint_state(plan, stranded)
+    assert recovered.state == "validated"
+    assert recovered.reason == "a transient warehouse error"
+    assert len(historical_open_meteo_release_manifest(plan, recovered)) == 64  # noqa: PLR2004
+
+
+def test_a_blocked_checkpoint_with_no_receipts_rederives_to_initialized() -> None:
+    plan = _plan(chunk_cell_count=2)
+    checkpoint = initialize_historical_open_meteo_checkpoint(plan, updated_at=RETRIEVED_AT)
+    stranded = checkpoint.model_copy(update={"state": "blocked", "reason": "a daily quota wall"})
+    assert rederive_historical_open_meteo_checkpoint_state(plan, stranded).state == "initialized"
+
+
+def test_state_rederivation_refuses_a_checkpoint_bound_to_another_plan() -> None:
+    plan = _plan(chunk_cell_count=2)
+    other = initialize_historical_open_meteo_checkpoint(_plan(chunk_cell_count=3), updated_at=RETRIEVED_AT)
+    with pytest.raises(ValueError, match="does not bind the reviewed plan"):
+        rederive_historical_open_meteo_checkpoint_state(plan, other)
 
 
 def test_plan_checksum_changes_when_chunking_changes() -> None:

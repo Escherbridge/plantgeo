@@ -412,6 +412,12 @@ returns `minute`, `hour`, `day` or `unknown`. An unrecognised body is `unknown`,
 cheapest scope would make a daily wall look like a transient blip. `OpenMeteoRateLimitError` carries
 both the scope and the provider's wording so an operator sees which window is exhausted.
 
+`RATE_LIMIT_SCOPE_MARKERS` is ordered **day, hour, minute** -- least retryable first -- because the
+bodies are not mutually exclusive: "Daily API request limit exceeded. Please try again in 60
+minutes." names two windows, and a minute-first scan would classify a daily wall as a blip.
+Matching the bare noun as well as the adjective is also required: "…try again tomorrow." contains no
+substring "day", which is how a daily wall got classified `unknown` in a live run.
+
 Multi-location responses are a JSON **array**, and the provider omits `location_id` on the first entry
 while numbering the rest from 1. Order is the contract; the archive lane validates it rather than
 trusting it.

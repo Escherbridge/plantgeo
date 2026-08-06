@@ -9,7 +9,8 @@ import math
 import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from typing import TYPE_CHECKING, Final, Literal
+from functools import cached_property
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple
 
 from pydantic import Field, field_validator, model_validator
 
@@ -42,9 +43,7 @@ OPEN_METEO_ARCHIVE_SCHEMA_VERSION: Literal["open-meteo-era5-land-archive-daily-v
 )
 OPEN_METEO_ARCHIVE_SOURCE_KEY: Final = "open-meteo-era5-land-archive"
 
-# The spatial support these rows carry. It is deliberately NOT `surface`: every other historical
-# signal writes `surface`, so a distinct key is what lets a reader tell a 0.1-degree ERA5-Land
-# sample apart from a 0.5-degree NASA POWER sample of the same cell.
+# Deliberately not `surface`; see execution/AGENTS.md §historical_open_meteo.
 OPEN_METEO_ARCHIVE_SUPPORT_KEY: Final = "era5-land-0.1deg"
 
 OPEN_METEO_ARCHIVE_NATIVE_GRID_NAME: Final = "era5-land-0.1-degree"
@@ -55,17 +54,15 @@ OPEN_METEO_ARCHIVE_NATIVE_RESOLUTION_M: Final = 9_000
 # from the requested centroid is a different grid box and must fail rather than be attributed.
 OPEN_METEO_ARCHIVE_MAX_GRID_OFFSET_DEGREES: Final = 0.05 + 1e-6
 
-OPEN_METEO_ARCHIVE_MAX_RESPONSE_BYTES: Final = 64 * 1024 * 1024
+OPEN_METEO_ARCHIVE_MAX_RESPONSE_BYTES: Final = OPEN_METEO_ARCHIVE_BOUNDS.max_bytes
 OPEN_METEO_ARCHIVE_MAX_CELLS: Final = 10_000
 OPEN_METEO_ARCHIVE_MAX_CHUNKS: Final = 2_000
 OPEN_METEO_ARCHIVE_CHECKPOINT_SCHEMA_VERSION: Literal[1] = 1
 OPEN_METEO_ARCHIVE_RAW_CACHE_SCHEMA_VERSION: Literal[1] = 1
 
-# Backoff for a refused request, by the quota window the provider named. A minutely refusal is
-# worth waiting out; an hourly or daily one is NOT -- sleeping through it would turn a quota wall
-# into an unexplained hang, so those scopes are absent here and fail immediately with the provider's
-# own wording. The operator resumes from the checkpoint when the window rolls over.
-RATE_LIMIT_BACKOFF_SECONDS: Final = {"minute": 70.0, "unknown": 120.0}
+# Only a minutely refusal is waited out; every other scope, including an unrecognised body, fails
+# closed. See execution/AGENTS.md §historical_open_meteo.
+RATE_LIMIT_BACKOFF_SECONDS: Final = {"minute": 70.0}
 TRANSPORT_BACKOFF_SECONDS: Final = 15.0
 MAX_FETCH_ATTEMPTS: Final = 4
 DEFAULT_CHUNK_CONCURRENCY: Final = 2
@@ -73,20 +70,31 @@ MAX_CHUNK_CONCURRENCY: Final = 4
 
 ISO_DATE_LENGTH: Final = 10
 
-# (Open-Meteo daily variable) -> (warehouse signal name, provider unit, normalized unit).
-#
-# The moisture layers carry the SAME signal names as the CDS lane in `historical_era5.py`: this is
-# the same physical quantity from the same product, differing only in spatial support and
-# provenance, both of which the schema already models. A third name would invite a model to treat
-# one variable as two independent features.
-#
-# `soil_temperature_0_to_7cm_mean` is defined but is NOT in the reviewed plans. See
-# execution/AGENTS.md §historical_open_meteo for the measured reason.
-OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS: Final[dict[str, tuple[str, str, str]]] = {
-    "soil_moisture_0_to_7cm_mean": ("soil_water_content_layer_1", "m^3/m^3", "m^3/m^3"),
-    "soil_moisture_7_to_28cm_mean": ("soil_water_content_layer_2", "m^3/m^3", "m^3/m^3"),
-    "soil_moisture_28_to_100cm_mean": ("soil_water_content_layer_3", "m^3/m^3", "m^3/m^3"),
-    "soil_temperature_0_to_7cm_mean": ("soil_temperature_level_1", "C", "C"),
+
+class OpenMeteoArchiveSignal(NamedTuple):
+    """One daily variable's warehouse naming, units, and inclusive physical acceptance range."""
+
+    signal_name: str
+    original_unit: str
+    normalized_unit: str
+    minimum: float
+    maximum: float
+
+
+# Open-Meteo daily variable -> warehouse signal, units, and the range a value must fall inside.
+# The bounds are the only thing standing between a provider sentinel (-999, a netCDF `_FillValue`)
+# and 1,462 accepted rows per cell. See execution/AGENTS.md §historical_open_meteo.
+OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS: Final[dict[str, OpenMeteoArchiveSignal]] = {
+    "soil_moisture_0_to_7cm_mean": OpenMeteoArchiveSignal(
+        "soil_water_content_layer_1", "m^3/m^3", "m^3/m^3", 0.0, 1.0
+    ),
+    "soil_moisture_7_to_28cm_mean": OpenMeteoArchiveSignal(
+        "soil_water_content_layer_2", "m^3/m^3", "m^3/m^3", 0.0, 1.0
+    ),
+    "soil_moisture_28_to_100cm_mean": OpenMeteoArchiveSignal(
+        "soil_water_content_layer_3", "m^3/m^3", "m^3/m^3", 0.0, 1.0
+    ),
+    "soil_temperature_0_to_7cm_mean": OpenMeteoArchiveSignal("soil_temperature_level_1", "C", "C", -100.0, 70.0),
 }
 
 OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS: Final = (
@@ -176,7 +184,7 @@ class HistoricalOpenMeteoArchivePlan(ContractModel):
             raise ValueError("Open-Meteo archive plan exceeds the reviewed chunk ceiling")
         return self
 
-    @property
+    @cached_property
     def chunks(self) -> tuple[OpenMeteoArchiveChunk, ...]:
         """Cut the sorted cell list into stable request chunks anchored at the first cell."""
         size = self.chunk_cell_count
@@ -184,6 +192,11 @@ class HistoricalOpenMeteoArchivePlan(ContractModel):
             OpenMeteoArchiveChunk(key=f"cells-{index // size:04d}", cells=tuple(self.cells[index : index + size]))
             for index in range(0, len(self.cells), size)
         )
+
+    @cached_property
+    def plan_checksum(self) -> str:
+        """Fingerprint every governed input controlling this replay, once per validated instance."""
+        return hashlib.sha256(canonical_json_bytes(self.model_dump(mode="json"))).hexdigest()
 
 
 class HistoricalOpenMeteoReceipt(ContractModel):
@@ -277,8 +290,8 @@ def open_meteo_archive_chunk_url(plan: HistoricalOpenMeteoArchivePlan, chunk: Op
 
 
 def historical_open_meteo_plan_checksum(plan: HistoricalOpenMeteoArchivePlan) -> str:
-    """Fingerprint every governed input controlling this replay."""
-    return hashlib.sha256(canonical_json_bytes(plan.model_dump(mode="json"))).hexdigest()
+    """Fingerprint every governed input controlling this replay; memoized on the validated plan."""
+    return plan.plan_checksum
 
 
 def historical_open_meteo_checkpoint_path(root: Path, plan: HistoricalOpenMeteoArchivePlan) -> Path:
@@ -318,6 +331,28 @@ def load_historical_open_meteo_checkpoint(path: Path) -> HistoricalOpenMeteoChec
 def write_historical_open_meteo_checkpoint(path: Path, checkpoint: HistoricalOpenMeteoCheckpoint) -> None:
     """Atomically update credential-free archive checkpoint metadata."""
     _atomic_write(path, canonical_json_bytes(checkpoint.model_dump(mode="json")))
+
+
+def rederive_historical_open_meteo_checkpoint_state(
+    plan: HistoricalOpenMeteoArchivePlan,
+    checkpoint: HistoricalOpenMeteoCheckpoint,
+) -> HistoricalOpenMeteoCheckpoint:
+    """Recompute `state` from receipt completeness so a recorded `blocked` cannot outlive its cause.
+
+    `reason` is preserved: it is the evidence of the last stop, and only `state` gates a resume.
+    """
+    if checkpoint.plan_checksum != historical_open_meteo_plan_checksum(plan):
+        raise ValueError("Open-Meteo archive checkpoint does not bind the reviewed plan")
+    receipted = {receipt.chunk_key for receipt in checkpoint.receipts}
+    if not receipted:
+        derived = "initialized"
+    elif all(chunk.key in receipted for chunk in plan.chunks):
+        derived = "validated"
+    else:
+        derived = "running"
+    if derived == checkpoint.state:
+        return checkpoint
+    return checkpoint.model_copy(update={"state": derived})
 
 
 def record_historical_open_meteo_result(
@@ -555,15 +590,15 @@ def parse_open_meteo_archive_payload(
         daily = _archive_daily_block(location, plan.parameters)
         days = _archive_days(daily, expected_dates)
         for parameter in plan.parameters:
-            signal_name, original_unit, normalized_unit = OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[parameter]
-            values = _archive_values(daily, parameter, len(days))
+            specification = OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[parameter]
+            values = _archive_values(daily, parameter, specification, len(days))
             observed_count = sum(1 for value in values if value is not None)
             if observed_count:
                 observations.extend(
                     _cell_observations(
                         cell_key=cell.cell_key,
                         parameter=parameter,
-                        specification=(signal_name, original_unit, normalized_unit),
+                        specification=specification,
                         dated_values=list(zip(days, values, strict=True)),
                         payload_checksum=payload_checksum,
                     )
@@ -572,7 +607,7 @@ def parse_open_meteo_archive_payload(
                 HistoricalCoverageAudit(
                     cell_key=cell.cell_key,
                     source_parameter=parameter,
-                    signal_name=signal_name,
+                    signal_name=specification.signal_name,
                     window_start=datetime.combine(plan.window.start_date, time.min, tzinfo=UTC),
                     window_end=datetime.combine(plan.window.end_date, time.max, tzinfo=UTC),
                     expected_observation_count=len(days),
@@ -601,9 +636,7 @@ def require_accounted_open_meteo_result(
 ) -> None:
     """Reject any chunk that cannot account for every requested cell, signal, and day.
 
-    Completeness is not required -- ocean and out-of-domain cells legitimately have no data -- but
-    every requested series must be explained by exactly one coverage row, and the fact rows must
-    match those rows exactly. A chunk that silently dropped records fails here.
+    Accounting, not completeness; see execution/AGENTS.md §historical_open_meteo.
     """
     chunk = _plan_chunk(plan, result.chunk_key)
     day_count = plan.window.day_count
@@ -636,22 +669,21 @@ def _cell_observations(
     *,
     cell_key: str,
     parameter: str,
-    specification: tuple[str, str, str],
+    specification: OpenMeteoArchiveSignal,
     dated_values: Sequence[tuple[date, float | None]],
     payload_checksum: str,
 ) -> Iterator[HistoricalSignalObservation]:
     """Emit one row per publisher-named day, preserving an absent measurement as absent."""
-    signal_name, original_unit, normalized_unit = specification
     for observed_date, value in dated_values:
         yield HistoricalSignalObservation(
             cell_key=cell_key,
             source_parameter=parameter,
-            signal_name=signal_name,
+            signal_name=specification.signal_name,
             observed_at=datetime.combine(observed_date, time.min, tzinfo=UTC),
             original_value=value,
-            original_unit=original_unit,
+            original_unit=specification.original_unit,
             normalized_value=value,
-            normalized_unit=normalized_unit,
+            normalized_unit=specification.normalized_unit,
             quality_flag="accepted" if value is not None else "source_missing",
             is_observed=value is not None,
             payload_checksum=payload_checksum,
@@ -665,10 +697,9 @@ def _coverage_status(observed_count: int, expected_count: int) -> str:
 
 
 def _canonical_archive_document(wire_payload: bytes) -> bytes:
-    """Strip the provider's per-request timing metric so the same content yields the same checksum.
+    """Strip only `generationtime_ms` so identical content yields an identical checksum.
 
-    `generationtime_ms` is server instrumentation, not data: leaving it in would make every
-    refetch a new source release and would defeat idempotent persistence. Nothing else is removed.
+    Two checksums, on purpose; see execution/AGENTS.md §historical_open_meteo.
     """
     try:
         parsed = json.loads(wire_payload)
@@ -745,7 +776,18 @@ def _archive_days(daily: dict[str, object], expected_dates: Sequence[date]) -> l
     return days
 
 
-def _archive_values(daily: dict[str, object], parameter: str, day_count: int) -> list[float | None]:
+def _archive_values(
+    daily: dict[str, object],
+    parameter: str,
+    specification: OpenMeteoArchiveSignal,
+    day_count: int,
+) -> list[float | None]:
+    """Read one variable's daily series; a value outside its physical range fails the whole chunk.
+
+    A sentinel is a provider failure, not a gap: downgrading it to `no_data` would assert the
+    provider modelled nothing here, which is a different and unevidenced claim. See
+    execution/AGENTS.md §historical_open_meteo.
+    """
     raw = daily.get(parameter)
     if not isinstance(raw, list) or len(raw) != day_count:
         raise ValueError(f"Open-Meteo archive variable {parameter} does not align with its daily time axis")
@@ -756,7 +798,13 @@ def _archive_values(daily: dict[str, object], parameter: str, day_count: int) ->
             continue
         if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
             raise ValueError(f"Open-Meteo archive variable {parameter} carries a non-numeric value")
-        values.append(float(value))
+        numeric = float(value)
+        if not specification.minimum <= numeric <= specification.maximum:
+            raise ValueError(
+                f"Open-Meteo archive variable {parameter} carries a value outside its reviewed physical "
+                f"range [{specification.minimum}, {specification.maximum}]"
+            )
+        values.append(numeric)
     return values
 
 

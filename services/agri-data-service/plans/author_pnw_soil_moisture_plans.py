@@ -151,10 +151,17 @@ OPEN_METEO_PROBE_CHUNK_CELL_COUNT = 8
 OPEN_METEO_PROBE_RELEASE_SET_KEY = "open-meteo-era5-land-boise-ndvi-probe-20220430-20260430"
 OPEN_METEO_LATTICE_RELEASE_SET_KEY = "open-meteo-era5-land-pnw-ndvi-lattice-20220430-20260430"
 
-# Later than any receipt this lane can produce today, in the safe direction: an as-of time before a
-# receipt blocks finalization, it never leaks. The full lattice is quota-bound over several days.
+# An as-of time is the receipt-acquisition boundary, not a data-freshness claim: the observed window
+# is fixed by `window`, and `finalize_open_meteo_release_set` refuses a set whose as-of precedes any
+# persisted receipt. Setting it before the last receipt lands is therefore unrecoverable without
+# re-authoring the plan, which changes the plan checksum and orphans the checkpoint and raw cache.
+#
+# The probe is 2 chunks, already fetched and finalized under this value; it is frozen.
 OPEN_METEO_PROBE_RELEASE_SET_AS_OF = "2026-08-06T23:59:59Z"
-OPEN_METEO_LATTICE_RELEASE_SET_AS_OF = "2026-08-20T23:59:59Z"
+# The lattice is 32 chunks against a keyless daily quota that admits roughly one chunk a day, and it
+# resumes across quota walls and interruptions, so its completion date is not predictable to a week.
+# This value is far past any plausible completion rather than a forecast of one.
+OPEN_METEO_LATTICE_RELEASE_SET_AS_OF = "2027-12-31T23:59:59Z"
 
 OPEN_METEO_SOURCE_DEFINITION: dict[str, object] = {
     "key": "open-meteo-era5-land-archive",

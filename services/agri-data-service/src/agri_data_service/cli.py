@@ -90,6 +90,7 @@ from agri_data_service.execution.historical_open_meteo import (
     load_cached_historical_open_meteo_result,
     load_historical_open_meteo_checkpoint,
     record_historical_open_meteo_result,
+    rederive_historical_open_meteo_checkpoint_state,
     run_open_meteo_archive_chunks,
     write_historical_open_meteo_checkpoint,
 )
@@ -1770,11 +1771,7 @@ def historical_open_meteo_status(plan: Path) -> None:
     try:
         value = HistoricalOpenMeteoArchivePlan.model_validate_json(plan.read_bytes())
         checkpoint_path_value = historical_open_meteo_checkpoint_path(settings.local_execution_root, value)
-        checkpoint = (
-            load_historical_open_meteo_checkpoint(checkpoint_path_value)
-            if checkpoint_path_value.exists()
-            else initialize_historical_open_meteo_checkpoint(value)
-        )
+        checkpoint = _load_open_meteo_checkpoint(value, checkpoint_path_value)
     except (OSError, ValueError) as exc:
         raise click.ClickException(_historical_open_meteo_failure_reason(exc)) from exc
     completed = {receipt.chunk_key for receipt in checkpoint.receipts}
@@ -1813,13 +1810,7 @@ async def _historical_open_meteo_backfill(plan_path: Path, max_chunks: int | Non
     try:
         plan = HistoricalOpenMeteoArchivePlan.model_validate_json(plan_path.read_bytes())
         checkpoint_path_value = historical_open_meteo_checkpoint_path(settings.local_execution_root, plan)
-        checkpoint = (
-            load_historical_open_meteo_checkpoint(checkpoint_path_value)
-            if checkpoint_path_value.exists()
-            else initialize_historical_open_meteo_checkpoint(plan)
-        )
-        if checkpoint.plan_checksum != historical_open_meteo_plan_checksum(plan):
-            raise ValueError("Open-Meteo archive checkpoint does not bind the reviewed plan")
+        checkpoint = _load_open_meteo_checkpoint(plan, checkpoint_path_value)
         write_historical_open_meteo_checkpoint(checkpoint_path_value, checkpoint)
         completed = {receipt.chunk_key for receipt in checkpoint.receipts}
         outstanding = [chunk for chunk in plan.chunks if chunk.key not in completed]
@@ -1905,9 +1896,9 @@ async def _historical_open_meteo_persist(plan_path: Path) -> None:
         loader_database_url = settings.require_local_source_loader_database_url()
         plan = HistoricalOpenMeteoArchivePlan.model_validate_json(plan_path.read_bytes())
         checkpoint_path_value = historical_open_meteo_checkpoint_path(settings.local_execution_root, plan)
-        checkpoint = load_historical_open_meteo_checkpoint(checkpoint_path_value)
-        if checkpoint.plan_checksum != historical_open_meteo_plan_checksum(plan):
+        if not checkpoint_path_value.exists():
             raise ValueError("Open-Meteo archive persistence requires a matching checkpoint")
+        checkpoint = _load_open_meteo_checkpoint(plan, checkpoint_path_value)
         receipted = {receipt.chunk_key for receipt in checkpoint.receipts}
         persisted: list[dict[str, object]] = []
         for chunk in plan.chunks:
@@ -1917,30 +1908,53 @@ async def _historical_open_meteo_persist(plan_path: Path) -> None:
             if result is None:
                 raise ValueError("Open-Meteo archive persistence requires every receipted local chunk document")
             persisted.append(await _persist_open_meteo_chunk(loader_database_url, plan, result))
+        # Coverage complete but the as-of time predates a receipt is a governance failure, not a
+        # wait-and-resume state: the chunks an operator would be sent to fetch do not exist.
+        stale_chunk_keys = sorted(
+            receipt.chunk_key for receipt in checkpoint.receipts if receipt.retrieved_at > plan.release_set_as_of
+        )
         release_set = None
-        if checkpoint.state == "validated" and all(
-            receipt.retrieved_at <= plan.release_set_as_of for receipt in checkpoint.receipts
-        ):
+        if checkpoint.state == "validated" and not stale_chunk_keys:
             async with local_source_loader_session(loader_database_url) as session, session.begin():
                 release_set = await finalize_open_meteo_release_set(session, plan=plan, checkpoint=checkpoint)
     except (OSError, SQLAlchemyError, ValueError) as exc:
         raise click.ClickException(_historical_open_meteo_failure_reason(exc)) from exc
-    click.echo(
-        json.dumps(
-            {
-                "checkpoint": str(checkpoint_path_value),
-                "state": checkpoint.state,
-                "persisted_chunk_count": len(persisted),
-                "chunk_count": len(plan.chunks),
-                "observation_row_count": sum(int(cast("int", item["observation_count"])) for item in persisted),
-                "observed_value_count": sum(int(cast("int", item["observed_value_count"])) for item in persisted),
-                "no_data_series_count": sum(int(cast("int", item["no_data_series_count"])) for item in persisted),
-                "release_set_id": None if release_set is None else str(release_set.release_set_id),
-                "release_set_manifest_checksum": None if release_set is None else release_set.manifest_checksum,
-                "finalization_blocked_by_incomplete_coverage": release_set is None,
-            },
-            indent=2,
+    payload = {
+        "checkpoint": str(checkpoint_path_value),
+        "state": checkpoint.state,
+        "persisted_chunk_count": len(persisted),
+        "chunk_count": len(plan.chunks),
+        "observation_row_count": sum(int(cast("int", item["observation_count"])) for item in persisted),
+        "observed_value_count": sum(int(cast("int", item["observed_value_count"])) for item in persisted),
+        "no_data_series_count": sum(int(cast("int", item["no_data_series_count"])) for item in persisted),
+        "release_set_id": None if release_set is None else str(release_set.release_set_id),
+        "release_set_manifest_checksum": None if release_set is None else release_set.manifest_checksum,
+        "finalization_blocked_by_incomplete_coverage": release_set is None and not stale_chunk_keys,
+        "finalization_blocked_by_stale_release_set_as_of": bool(stale_chunk_keys),
+        "release_set_as_of": plan.release_set_as_of.isoformat(),
+        "stale_receipt_chunk_keys": stale_chunk_keys[:_OPEN_METEO_PENDING_PREVIEW],
+    }
+    if stale_chunk_keys:
+        raise click.ClickException(
+            json.dumps({**payload, "error": "open_meteo_release_set_as_of_precedes_a_persisted_receipt"}, indent=2)
         )
+    click.echo(json.dumps(payload, indent=2))
+
+
+def _load_open_meteo_checkpoint(
+    plan: HistoricalOpenMeteoArchivePlan,
+    checkpoint_path_value: Path,
+) -> HistoricalOpenMeteoCheckpoint:
+    """Load a plan-bound checkpoint, re-deriving `state` from receipts rather than trusting the file.
+
+    A `blocked` checkpoint whose chunks are all receipted has nothing left to fetch, so trusting the
+    stored value would strand it: nothing would ever move it off `blocked`.
+    """
+    if not checkpoint_path_value.exists():
+        return initialize_historical_open_meteo_checkpoint(plan)
+    return rederive_historical_open_meteo_checkpoint_state(
+        plan,
+        load_historical_open_meteo_checkpoint(checkpoint_path_value),
     )
 
 

@@ -10,7 +10,7 @@ Source-ingestion checkpoint v2 binds both the complete reviewed plan and the rel
 
 `historical_backfill.py` owns deterministic, bounded NASA POWER daily request and response contracts for the initial four-year meteorology baseline. It validates the exact four-calendar-year window, canonical sampling-point plan, per-source query, response payload size, UTC observation timestamps, missing values, coverage accounting, a checksum-bound complete local receipt checkpoint, and raw response cache. The cache is written only after complete validation and before a warehouse transaction, so retried writes never re-request a successful source response. A later NASA finalization can only rebind a complete source replay to an advanced release-set as-of time; it never refetches or rewrites source receipts. It never carries credentials, opens a database connection, selects an ingestion geography, or publishes to Railway.
 
-`NASA_POWER_SIGNAL_SPECIFICATIONS` carries the three POWER soil-wetness parameters (`GWETTOP`, `GWETROOT`, `GWETPROF`) alongside the meteorology baseline because POWER is keyless, whereas the ERA5-Land soil path in `historical_era5.py` is gated on a Copernicus dataset licence that only the account holder can accept in a browser. The two soil streams are complementary, not interchangeable, and must never be unit-mixed: POWER reports a MERRA-2 **degree of saturation** in `fraction_of_saturation` (0 = dry, 1 = saturated), while ERA5 `soil_water_content_layer_1` reports a **volumetric** water content in `m^3/m^3`. Depth support is named in the signal (`soil_wetness_surface` = top 5 cm, `soil_wetness_root_zone` = top 100 cm, `soil_wetness_profile` = the full modelled column), matching the existing ERA5 `soil_temperature_level_1` convention, because `support_key` is written as `surface` for every historical signal and is therefore not a depth discriminator. Adding a signal name needs no migration: `agri.signal_observation.signal_name` is a plain `varchar(150)` with no enum or check constraint. Extending the ML covariate vector is a separate, reviewed change — `agri.covariate_feature_schema` pins its signal list to the immutable `agri_covariates_v1` version, so new signals are deliberately invisible to training until a new schema version is authored.
+`NASA_POWER_SIGNAL_SPECIFICATIONS` carries the three POWER soil-wetness parameters (`GWETTOP`, `GWETROOT`, `GWETPROF`) alongside the meteorology baseline because POWER is keyless, whereas the ERA5-Land soil path in `historical_era5.py` is gated on a Copernicus dataset licence that only the account holder can accept in a browser. The two soil streams are complementary, not interchangeable, and must never be unit-mixed: POWER reports a MERRA-2 **degree of saturation** in `fraction_of_saturation` (0 = dry, 1 = saturated), while ERA5 `soil_water_content_layer_1` reports a **volumetric** water content in `m^3/m^3`. Depth support is named in the signal (`soil_wetness_surface` = top 5 cm, `soil_wetness_root_zone` = top 100 cm, `soil_wetness_profile` = the full modelled column), matching the existing ERA5 `soil_temperature_level_1` convention. `support_key` is not a depth discriminator: the NASA, CDS and USDM lanes all write `surface`, and the one lane that writes something else (`historical_open_meteo.py`, `era5-land-0.1deg`) uses it to distinguish *spatial* support, not depth. Adding a signal name needs no migration: `agri.signal_observation.signal_name` is a plain `varchar(150)` with no enum or check constraint. Extending the ML covariate vector is a separate, reviewed change — `agri.covariate_feature_schema` pins its signal list to the immutable `agri_covariates_v1` version, so new signals are deliberately invisible to training until a new schema version is authored.
 
 `historical_parquet.py` converts only a complete local NASA raw-receipt set into an immutable, compressed daily Hive-partitioned Parquet dataset. It stages one bounded source-cell file at a time, caps DuckDB to one thread and 1 GB with a build-local spill directory, and atomically publishes a manifest-bound dataset. An interrupted conversion reuses its single target-bound build directory only after each staged cell's row count, key, and payload checksum are revalidated against the raw receipt; ambiguous or mismatched staging fails closed. Successful publication removes staging. It is intentionally a local cold-history store; it never requests an upstream API, writes PostgreSQL, or promotes a full history to Railway.
 
@@ -50,6 +50,10 @@ schema already:
 | licence snapshot | CC-BY (Copernicus) | CC-BY 4.0 (Open-Meteo) over Copernicus/ECMWF |
 | provenance strength | first-party CDS receipt | **intermediary redistribution** |
 
+`support_key` here carries **spatial** support, not depth: every other historical lane writes
+`surface`, so `era5-land-0.1deg` is what lets a reader tell a 0.1-degree ERA5-Land sample from a
+0.5-degree NASA POWER sample of the same cell.
+
 Open-Meteo is an intermediary. The source registration says so in its citation and in
 `data_source.configuration.provider_role = intermediary_redistributor`, and every source release
 repeats it in `quality_summary`. This is deliberately not dressed up as an ECMWF receipt.
@@ -57,6 +61,25 @@ repeats it in `quality_summary`. This is deliberately not dressed up as an ECMWF
 None of this may ever be blended with NASA POWER's `soil_wetness_{surface,root_zone,profile}`, which
 is a MERRA-2 **degree of saturation** (`fraction_of_saturation`), a different physical quantity.
 Distinct `support_key` values are what make the two safely coexist on one cell-day.
+
+### Every value is bounded, and an out-of-range value fails the chunk
+
+`OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS` carries an inclusive `[minimum, maximum]` per variable --
+`[0.0, 1.0]` m^3/m^3 for volumetric water content, `[-100.0, 70.0]` C for temperature -- and
+`_archive_values` rejects anything outside it. This follows the current-weather precedent in
+`ingest/open_meteo.py` (`CURRENT_VALUE_BOUNDS` / `_bounded_value`).
+
+The finite check alone is not enough: `-999` and the netCDF `_FillValue` `9.969e36` are both finite
+floats. Without a range, a provider that emitted a sentinel instead of `null` for an out-of-domain
+cell would write 1,462 rows per cell with `is_observed=true`, `quality_flag='accepted'`,
+`coverage_fraction=1`, a `complete` coverage audit, a valid checksum and a finalizable release set.
+Every structural guard would pass.
+
+An out-of-range value **fails the chunk** rather than being downgraded to `no_data`. `no_data` is a
+positive claim -- "the provider modelled nothing here" -- earned by an honest `null`; a sentinel is
+evidence the provider malfunctioned, and recording it as a modelled gap would assert something no
+one measured. A failed chunk gets no receipt, so it stays pending and resumable, which is the same
+failure mode this lane already uses for a truncated response.
 
 ### Soil temperature is deliberately excluded -- measured, not assumed
 
@@ -112,11 +135,16 @@ first ten characters), never by recasting an instant, and stored as that day at 
 Open-Meteo's free tier weights a request by locations x variables x timesteps, so chunk size changes
 request count but **not** total quota cost. A refusal is classified from the 429 body:
 
-- `minute` -> retried up to `MAX_FETCH_ATTEMPTS` with a 70 s wait.
-- `hour` / `day` -> **not retried**. Sleeping through an hourly wall turns a quota refusal into an
-  unexplained hang; the chunk fails immediately carrying the provider's own wording.
-- unrecognised body -> `unknown`, retried once per attempt at 120 s. It is never optimistically
-  treated as `minute`.
+- `minute` -> retried up to `MAX_FETCH_ATTEMPTS` with a 70 s wait. It is the only scope in
+  `RATE_LIMIT_BACKOFF_SECONDS`.
+- `hour` / `day` / **unrecognised** -> not retried. Sleeping through an hourly wall turns a quota
+  refusal into an unexplained hang; the chunk fails immediately carrying the provider's own wording.
+
+`unknown` used to sleep 3 x 120 s. It no longer does. The lesson of the daily-wall bug is that an
+unretryable wall must not be slept through, and an unrecognised body is far likelier to be a
+reworded wall than a transient blip -- against a keyless quota, guessing wrong burns four requests
+and six minutes for nothing. It fails closed instead, and `_rate_limit_scope` classifies
+least-retryable-first so an ambiguous body ("Daily ... try again in 60 minutes") resolves to `day`.
 
 A failed chunk gets **no receipt**, so it stays pending in the checkpoint and
 `historical-open-meteo-backfill` exits non-zero with the failed chunk keys listed. The checkpoint is
@@ -125,6 +153,48 @@ the backfill fetches only that.
 
 Chunk boundaries are part of the plan checksum, so changing `chunk_cell_count` is a new plan rather
 than a resume that straddles two chunk shapes.
+
+### Checkpoint `state` is re-derived on load, never trusted
+
+`rederive_historical_open_meteo_checkpoint_state` recomputes `state` from receipt completeness
+(none -> `initialized`, all -> `validated`, otherwise `running`) every time a CLI command loads a
+checkpoint. A `blocked` checkpoint whose chunks are all receipted would otherwise be unrecoverable:
+nothing is outstanding, so no run can move it off `blocked` and persistence would refuse to finalize
+forever, needing a hand-edited JSON file. `reason` is preserved -- it is the evidence of the last
+stop, and only `state` gates a resume. Nothing is lost by re-deriving, because finalization
+independently re-validates the manifest, the cached documents, and the persisted releases.
+
+### Two different finalization refusals, only one of which is a wait
+
+`historical-open-meteo-persist` reports `finalization_blocked_by_incomplete_coverage` and
+`finalization_blocked_by_stale_release_set_as_of` separately, and **exits non-zero** on the second.
+Incomplete coverage is a wait-and-resume state. A `release_set_as_of` that precedes a persisted
+receipt is not: coverage is complete, there is nothing left to fetch, and the plan itself has to be
+re-authored. Reporting it as missing coverage sends an operator after chunks that do not exist. The
+sibling finalizers all raise `ValueError("release_set_as_of must not precede a persisted source
+receipt")` for this condition; the CLI now reports it faithfully instead of skipping past the raise.
+
+Re-authoring a plan is expensive on purpose: `release_set_as_of` is inside the plan checksum, so a
+new as-of orphans `historical-open-meteo/<checksum>.json` **and** its whole `raw/` cache, forcing a
+re-fetch of a quota-bound dataset. Set the as-of far past any plausible completion rather than
+forecasting one; an as-of after the last receipt is the safe direction, since an as-of before one
+blocks finalization and never leaks.
+
+### What is not stored twice
+
+`signal_observation.metadata_json` is written empty for this lane. It used to carry
+`source_parameter` (already a first-class column on the same row) and `native_grid_name` (already in
+`source_release.query_parameters`, in `cell_source_crosswalk.metadata_json`, and in the plan). At
+~104 inline bytes that never reach TOAST, the duplicate would have cost roughly 690 MB across the
+6.8 M-row lattice. The NASA and CDS lanes still write `{"source_parameter": ...}`; aligning them is
+a separate reviewed change, not a silent edit to an already-persisted shape.
+
+`_open_meteo_source_version` is a window/grid/chunk-ordinal **label**, not an identity: it omits
+`chunk_cell_count`, so a 50-cell plan and an 8-cell plan both emit `...:cells-0000` for disjoint
+cell sets. Identity is the `uq_source_release_identity` composite (data source, source version,
+payload checksum, transform version), which every lookup in `historical_writer.py` binds. Folding
+the chunk size into the label would rename already-persisted releases and orphan a finalized
+release set, so the label stays and the docstring says what it is.
 
 `historical_era5_parquet.py` turns only a complete ERA5 receipt set into an atomic Zstandard-compressed daily Hive lake. It re-parses the locally cached monthly ZIPs without a provider or database call, emits a bounded daily row set, and ties the manifest to both the exact plan and receipt manifest. It is the compact cold-history representation and does not promote history to Railway.
 
