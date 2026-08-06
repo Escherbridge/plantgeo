@@ -387,3 +387,31 @@ Nothing on the existing path was rewritten. `_INSERT_FEATURES` and `_REFRESH_FEA
 **`run_source_job` is the forward half of the contract `run_source_backfill` only served the past half of.** `IngestionSource.fetch_current` had no caller anywhere in the package: the only driver was `run_source_backfill`, which calls `fetch_history`, so every adopting module hand-rolled fetch + accept + truncate and the Protocol member was unreachable. `run_source_job` mirrors the backfill driver exactly — resolve the bounded bbox or skip with `UNCONFIGURED_BBOX_REASON`, fetch the current window, `select_writes`, write through the same `FeatureWriter`.
 
 **The four bespoke jobs are deliberately NOT migrated onto it in this pass, and that gap is real.** `firms.py`, `usgs_nwis.py`, `open_meteo.py` and `wfigs.py` keep their own `run_*_ingestion_job`, and the section above describing them as adapting "by binding" is aspirational — no `FunctionSource` exists for any of them. The blocker is not effort, it is a missing channel: `run_fire_ingestion_job` reports `reason="Unavailable FIRMS products: VIIRS_NOAA21_NRT"` when part of the constellation is down, and `FetchCallable` returns only `Sequence[UpstreamRecord]`, so a run where two of three satellites failed would report a clean "ingested" through the shared driver. That is the same failure `HistoryCapability.__post_init__` was written to prevent on the history side, and migrating those four before a partial-availability reason channel exists would reintroduce it on the current-window side. Add the channel first, then migrate.
+
+## open_meteo.py: two endpoints, two contracts
+
+The module now serves both the forecast endpoint (`api.open-meteo.com/v1/forecast`, one current
+observation per sample point, 128 KB / 5 s budget) and the **archive** endpoint
+(`archive-api.open-meteo.com/v1/archive`, years of daily rows for up to 200 locations at a time,
+64 MB / 300 s budget). They share nothing but the host vendor; keeping one bounds object for both
+would either starve the archive or hand the forecast path a 300-second timeout.
+
+**`models=era5_land` is mandatory, not a default.** The archive endpoint's default is `era5` at
+**0.25 degrees**. Only the explicit `era5_land` value returns the 0.1-degree ERA5-Land product whose
+layer definitions match the CDS variables (`soil_moisture_0_to_7cm` == `volumetric_soil_water_layer_1`).
+Measured: a request for 43.375/-116.375 answers from 43.40001/-116.399994, the nearest 0.1-degree
+node. `cell_selection=nearest` is sent explicitly for the same reason -- the parameter exists and its
+other values (`land`, `sea`) would relocate a coastal request to a cell the caller did not name.
+
+**`fetch_archive_daily` returns raw text, not parsed JSON.** The governed lane checksums exactly what
+arrived, so `fetch_bounded_json` -- which parses and discards the body -- cannot be used.
+
+**429 is classified, never generic.** `_rate_limit_scope` reads the provider's own `reason` string and
+returns `minute`, `hour`, `day` or `unknown`. An unrecognised body is `unknown`, never optimistically
+`minute`: the caller's backoff table is what decides whether waiting is worth it, and guessing the
+cheapest scope would make a daily wall look like a transient blip. `OpenMeteoRateLimitError` carries
+both the scope and the provider's wording so an operator sees which window is exhausted.
+
+Multi-location responses are a JSON **array**, and the provider omits `location_id` on the first entry
+while numbering the rest from 1. Order is the contract; the archive lane validates it rather than
+trusting it.

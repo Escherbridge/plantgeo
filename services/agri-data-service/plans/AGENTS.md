@@ -127,3 +127,37 @@ Two environment facts bite every time:
 - `require_local_source_loader_database_url()` rejects a loader DSN equal to `DATABASE_URL`.
   Because `.env` already points `DATABASE_URL` at the production proxy, `DATABASE_URL` has to be
   blanked in the process environment when passing the same target as the loader DSN.
+
+## The Open-Meteo ERA5-Land archive plans
+
+`build_open_meteo_ndvi_plans()` authors two artifacts:
+
+| Plan | Cells | Chunks | Purpose |
+|---|---|---|---|
+| `open-meteo-era5-land-boise-ndvi-probe-20220430-20260430.json` | 16 | 2 | prove the whole path and finalize a release set inside one session |
+| `open-meteo-era5-land-pnw-ndvi-lattice-20220430-20260430.json` | 1,568 | 32 | the real target: every `sentinel2-ndvi-0p25deg` cell |
+
+**The lattice is derived arithmetically, never read from the warehouse.** `ndvi_lattice_cells()`
+regenerates the fixed global 0.25-degree grid the way `ingest/vegetation.py` cuts it -- cell south/west
+plus half a cell, rendered to four decimals, prefixed with the grid name, sorted by the resulting
+string. Verified 2026-08-06 against production: the 1,568 generated keys and coordinates are
+identical to `agri.spatial_cell`, with zero missing, zero extra and zero coordinate mismatches. A
+generator that queried the warehouse would not be reproducible from a clone, and
+`test_open_meteo_artifacts_regenerate_byte_for_byte` would have nothing to compare against.
+
+Note the ordering: keys sort lexically, so the first cell is `42.1250:-111.1250` and the last is
+`48.8750:-124.8750`. That is not a bug and it matches the producer.
+
+**These plans mint no spatial cells.** Unlike the NASA lattice plans, whose whole purpose is to
+establish `agri.spatial_cell` rows, this lane requires them to exist already and fails closed
+otherwise. There is no NASA-plan checksum binding because there is no NASA lattice involved: the
+cells came from the Sentinel-2 NDVI backfill.
+
+**Chunk size is a request-count knob, not a cost knob.** Open-Meteo weights a request by
+locations x variables x timesteps, so `chunk_cell_count` changes how many HTTP calls the run makes and
+nothing about how much quota it consumes. It is part of the plan checksum, so changing it produces a
+new plan rather than a resume that straddles two chunk shapes.
+
+**No CDS credentials, no licence acceptance, no queue.** This lane needs neither `CDSAPI_*` nor a
+browser licence click. The environment note above about exporting CDS credentials does not apply;
+the note about blanking `DATABASE_URL` does.

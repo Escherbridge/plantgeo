@@ -76,10 +76,6 @@ from agri_data_service.execution.historical_export import (
     LocalHistoricalPromotionExporter,
     load_historical_promotion_spool,
 )
-from agri_data_service.execution.historical_parquet import (
-    historical_nasa_parquet_root,
-    materialize_historical_nasa_parquet,
-)
 from agri_data_service.execution.historical_open_meteo import (
     HistoricalOpenMeteoArchivePlan,
     HistoricalOpenMeteoCheckpoint,
@@ -96,6 +92,10 @@ from agri_data_service.execution.historical_open_meteo import (
     record_historical_open_meteo_result,
     run_open_meteo_archive_chunks,
     write_historical_open_meteo_checkpoint,
+)
+from agri_data_service.execution.historical_parquet import (
+    historical_nasa_parquet_root,
+    materialize_historical_nasa_parquet,
 )
 from agri_data_service.execution.historical_usdm import (
     HistoricalUsdmBackfillPlan,
@@ -174,6 +174,7 @@ from alembic import command
 logger = structlog.get_logger()
 _RUN_PLAN_MAX_BYTES = 512_000
 _SHA256_HEX_LENGTH = 64
+_OPEN_METEO_PENDING_PREVIEW = 8
 _MAX_RUN_PLAN_OUTPUTS = 1_000
 _MAX_RUN_PLAN_KEYS = 10_000
 _MAX_RUN_PLAN_KEY_LENGTH = 500
@@ -1847,7 +1848,12 @@ async def _historical_open_meteo_backfill(plan_path: Path, max_chunks: int | Non
         "next_steps": ["historical-open-meteo-persist"],
     }
     if failures:
-        # A chunk that dropped records must never read as success: report and exit non-zero.
+        # A chunk that dropped records must never read as success: record why, report, exit non-zero.
+        _write_historical_open_meteo_blocked_checkpoint(
+            checkpoint_path_value,
+            checkpoint,
+            ValueError(f"{len(failures)} chunk(s) failed; first: {failures[0]['reason']}"),
+        )
         raise click.ClickException(json.dumps({**payload, "error": "open_meteo_chunks_failed"}, indent=2))
     click.echo(json.dumps(payload, indent=2))
 
@@ -1869,16 +1875,21 @@ async def _fetch_open_meteo_chunks(
             continue
         checkpoint = record_historical_open_meteo_result(plan, checkpoint, cached)
         write_historical_open_meteo_checkpoint(checkpoint_path_value, checkpoint)
-    if not pending:
-        return checkpoint, failures
-    results = await run_open_meteo_archive_chunks(plan, pending, concurrency=concurrency)
-    for chunk, result in zip(pending, results, strict=True):
-        if isinstance(result, BaseException):
-            failures.append({"chunk_key": chunk.key, "reason": _historical_open_meteo_failure_reason(result)})
-            continue
-        cache_historical_open_meteo_result(settings.local_execution_root, plan, result)
-        checkpoint = record_historical_open_meteo_result(plan, checkpoint, result)
-        write_historical_open_meteo_checkpoint(checkpoint_path_value, checkpoint)
+    # Harvested in waves of `concurrency` rather than one gather over everything, so an interrupted
+    # long run keeps every chunk that already answered instead of discarding the whole batch.
+    for start in range(0, len(pending), concurrency):
+        wave = pending[start : start + concurrency]
+        results = await run_open_meteo_archive_chunks(plan, wave, concurrency=concurrency)
+        for chunk, result in zip(wave, results, strict=True):
+            if isinstance(result, BaseException):
+                failures.append({"chunk_key": chunk.key, "reason": _historical_open_meteo_failure_reason(result)})
+                continue
+            cache_historical_open_meteo_result(settings.local_execution_root, plan, result)
+            checkpoint = record_historical_open_meteo_result(plan, checkpoint, result)
+            write_historical_open_meteo_checkpoint(checkpoint_path_value, checkpoint)
+        if failures:
+            # A quota wall does not clear inside one run; stop rather than burn the remaining waves.
+            break
     return checkpoint, failures
 
 

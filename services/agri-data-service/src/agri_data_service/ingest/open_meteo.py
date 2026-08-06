@@ -161,6 +161,17 @@ async def fetch_archive_daily(client: httpx.AsyncClient, url: str) -> str:
     return response.text
 
 
+# The provider's own adjectives, which are what its 429 bodies actually say. Matching the bare noun
+# is not enough and is not a hypothetical: "Daily API request limit exceeded. Please try again
+# tomorrow." contains no substring "day", so a daily wall would be classified `unknown` and slept
+# through instead of surfaced. Measured against live 429 bodies on 2026-08-06.
+RATE_LIMIT_SCOPE_MARKERS: Final = (
+    ("minute", ("minutely", "minute")),
+    ("hour", ("hourly", "hour")),
+    ("day", ("daily", "day")),
+)
+
+
 def _rate_limit_scope(body: str) -> tuple[str, str]:
     """Classify a 429 body into a quota window; an unrecognised body stays `unknown`, never `minute`."""
     reason = ""
@@ -172,8 +183,8 @@ def _rate_limit_scope(body: str) -> tuple[str, str]:
         raw_reason = parsed.get("reason")
         reason = raw_reason if isinstance(raw_reason, str) else ""
     lowered = reason.lower()
-    for scope in ("minute", "hour", "day"):
-        if scope in lowered:
+    for scope, markers in RATE_LIMIT_SCOPE_MARKERS:
+        if any(marker in lowered for marker in markers):
             return scope, reason or "rate limited"
     return "unknown", reason or "rate limited"
 

@@ -9,7 +9,6 @@ import math
 import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -34,6 +33,7 @@ from agri_data_service.ingest.open_meteo import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
+    from pathlib import Path
 
     import httpx
 
@@ -61,9 +61,11 @@ OPEN_METEO_ARCHIVE_MAX_CHUNKS: Final = 2_000
 OPEN_METEO_ARCHIVE_CHECKPOINT_SCHEMA_VERSION: Literal[1] = 1
 OPEN_METEO_ARCHIVE_RAW_CACHE_SCHEMA_VERSION: Literal[1] = 1
 
-# Backoff for a refused request, by the quota window the provider named. The hour and day waits
-# are deliberately long enough to be useless as an unattended retry: the runner surfaces them.
-RATE_LIMIT_BACKOFF_SECONDS: Final = {"minute": 70.0, "hour": 300.0, "day": 900.0, "unknown": 120.0}
+# Backoff for a refused request, by the quota window the provider named. A minutely refusal is
+# worth waiting out; an hourly or daily one is NOT -- sleeping through it would turn a quota wall
+# into an unexplained hang, so those scopes are absent here and fail immediately with the provider's
+# own wording. The operator resumes from the checkpoint when the window rolls over.
+RATE_LIMIT_BACKOFF_SECONDS: Final = {"minute": 70.0, "unknown": 120.0}
 TRANSPORT_BACKOFF_SECONDS: Final = 15.0
 MAX_FETCH_ATTEMPTS: Final = 4
 DEFAULT_CHUNK_CONCURRENCY: Final = 2
@@ -100,6 +102,15 @@ class OpenMeteoArchiveChunk:
 
     key: str
     cells: tuple[AnalysisGridCell, ...]
+
+
+@dataclass(frozen=True)
+class OpenMeteoArchiveCapture:
+    """What is known about one retrieval before its content is normalized."""
+
+    retrieved_at: datetime
+    wire_payload_bytes: int
+    wire_payload_checksum: str
 
 
 class HistoricalOpenMeteoArchivePlan(ContractModel):
@@ -422,9 +433,11 @@ def load_cached_historical_open_meteo_result(
         plan,
         chunk,
         payload,
-        retrieved_at=receipt.retrieved_at,
-        wire_payload_bytes=receipt.wire_payload_bytes,
-        wire_payload_checksum=receipt.wire_payload_checksum,
+        OpenMeteoArchiveCapture(
+            retrieved_at=receipt.retrieved_at,
+            wire_payload_bytes=receipt.wire_payload_bytes,
+            wire_payload_checksum=receipt.wire_payload_checksum,
+        ),
     )
     require_accounted_open_meteo_result(plan, result)
     return result
@@ -448,14 +461,16 @@ async def fetch_open_meteo_archive_chunk(
     )
     waiter = sleep if callable(sleep) else asyncio.sleep
     last_error: UpstreamError | None = None
+    attempt = 0
     for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
         try:
             body = await fetch_archive_daily(client, url)
         except OpenMeteoRateLimitError as error:
             last_error = error
-            if attempt == MAX_FETCH_ATTEMPTS:
+            backoff = RATE_LIMIT_BACKOFF_SECONDS.get(error.scope)
+            if backoff is None or attempt == MAX_FETCH_ATTEMPTS:
                 break
-            await waiter(RATE_LIMIT_BACKOFF_SECONDS[error.scope])
+            await waiter(backoff)
             continue
         except UpstreamError as error:
             last_error = error
@@ -468,22 +483,26 @@ async def fetch_open_meteo_archive_chunk(
             plan,
             chunk,
             _canonical_archive_document(wire_payload),
-            retrieved_at=_require_aware_utc(retrieved_at or datetime.now(UTC), "retrieved_at"),
-            wire_payload_bytes=len(wire_payload),
-            wire_payload_checksum=hashlib.sha256(wire_payload).hexdigest(),
+            OpenMeteoArchiveCapture(
+                retrieved_at=_require_aware_utc(retrieved_at or datetime.now(UTC), "retrieved_at"),
+                wire_payload_bytes=len(wire_payload),
+                wire_payload_checksum=hashlib.sha256(wire_payload).hexdigest(),
+            ),
         )
-    raise OpenMeteoArchiveFetchError(chunk.key, last_error)
+    raise OpenMeteoArchiveFetchError(chunk.key, last_error, attempt)
 
 
 class OpenMeteoArchiveFetchError(RuntimeError):
-    """Raised when a chunk exhausted its retries; carries the chunk so a resume is unambiguous."""
+    """Raised when a chunk stopped for good; carries the chunk so a resume is unambiguous."""
 
-    def __init__(self, chunk_key: str, cause: UpstreamError | None) -> None:
-        """Name the chunk that failed and the provider condition that stopped it."""
+    def __init__(self, chunk_key: str, cause: UpstreamError | None, attempts: int) -> None:
+        """Name the chunk, how many attempts it really made, and the provider condition that stopped it."""
         detail = "no upstream response" if cause is None else str(cause)
-        super().__init__(f"Open-Meteo archive chunk {chunk_key} failed after {MAX_FETCH_ATTEMPTS} attempts: {detail}")
+        plural = "attempt" if attempts == 1 else "attempts"
+        super().__init__(f"Open-Meteo archive chunk {chunk_key} failed after {attempts} {plural}: {detail}")
         self.chunk_key = chunk_key
         self.cause = cause
+        self.attempts = attempts
 
 
 async def run_open_meteo_archive_chunks(
@@ -512,14 +531,11 @@ def parse_open_meteo_archive_payload(
     plan: HistoricalOpenMeteoArchivePlan,
     chunk: OpenMeteoArchiveChunk,
     payload: bytes,
-    *,
-    retrieved_at: datetime,
-    wire_payload_bytes: int,
-    wire_payload_checksum: str,
+    capture: OpenMeteoArchiveCapture,
 ) -> OpenMeteoArchiveChunkResult:
     """Validate one canonical archive document and normalize every reviewed cell/signal/day."""
     _plan_chunk(plan, chunk.key)
-    timestamp = _require_aware_utc(retrieved_at, "retrieved_at")
+    timestamp = _require_aware_utc(capture.retrieved_at, "retrieved_at")
     if not payload or len(payload) > OPEN_METEO_ARCHIVE_MAX_RESPONSE_BYTES:
         raise ValueError("Open-Meteo archive response exceeds the reviewed byte boundary")
     locations = _archive_locations(payload, len(chunk.cells))
@@ -547,11 +563,8 @@ def parse_open_meteo_archive_payload(
                     _cell_observations(
                         cell_key=cell.cell_key,
                         parameter=parameter,
-                        signal_name=signal_name,
-                        original_unit=original_unit,
-                        normalized_unit=normalized_unit,
-                        days=days,
-                        values=values,
+                        specification=(signal_name, original_unit, normalized_unit),
+                        dated_values=list(zip(days, values, strict=True)),
                         payload_checksum=payload_checksum,
                     )
                 )
@@ -572,8 +585,8 @@ def parse_open_meteo_archive_payload(
         retrieved_at=timestamp,
         payload=payload,
         payload_checksum=payload_checksum,
-        wire_payload_bytes=wire_payload_bytes,
-        wire_payload_checksum=wire_payload_checksum,
+        wire_payload_bytes=capture.wire_payload_bytes,
+        wire_payload_checksum=capture.wire_payload_checksum,
         observations=tuple(observations),
         coverage=tuple(coverage),
         grid_points=tuple(grid_points),
@@ -623,15 +636,13 @@ def _cell_observations(
     *,
     cell_key: str,
     parameter: str,
-    signal_name: str,
-    original_unit: str,
-    normalized_unit: str,
-    days: Sequence[date],
-    values: Sequence[float | None],
+    specification: tuple[str, str, str],
+    dated_values: Sequence[tuple[date, float | None]],
     payload_checksum: str,
 ) -> Iterator[HistoricalSignalObservation]:
     """Emit one row per publisher-named day, preserving an absent measurement as absent."""
-    for observed_date, value in zip(days, values, strict=True):
+    signal_name, original_unit, normalized_unit = specification
+    for observed_date, value in dated_values:
         yield HistoricalSignalObservation(
             cell_key=cell_key,
             source_parameter=parameter,

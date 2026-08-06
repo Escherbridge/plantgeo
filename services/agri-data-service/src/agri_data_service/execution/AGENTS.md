@@ -16,6 +16,116 @@ Source-ingestion checkpoint v2 binds both the complete reviewed plan and the rel
 
 `historical_era5.py` owns cache-first CDS capture for the governed ERA5-Land plan. It treats each calendar month as one immutable ZIP artifact, validates every planned point/variable/day before advancing the durable checkpoint, and requires local CDS credentials only for a missing cache entry. Its requested one-degree points remain point samples; they never claim the product's native 0.1-degree grid or acre-scale precision.
 
+## `historical_open_meteo.py` -- the Open-Meteo ERA5-Land archive lane
+
+The keyless read of the **same ERA5-Land product** as `historical_era5.py`, at its **native 0.1
+degrees**, over the 1,568-cell `sentinel2-ndvi-0p25deg` analysis lattice.
+
+### Why this lane exists at all
+
+`HistoricalEra5LandBackfillPlan.require_governed_monthly_coverage` rejects any cell whose centroid
+is not a multiple of the reviewed 1.0-degree output grid. Every NDVI lattice centroid sits on
+`.125`/`.375`. The CDS contract therefore **structurally cannot** address these cells; the lane that
+covers them has to be a different one. Those cells already exist in `agri.spatial_cell` with zero
+signal rows, which is why the ML covariate layer returns all-NULL there. This lane mints no spatial
+cells: `_require_open_meteo_spatial_cells` fails closed if a reviewed `cell_key` is absent or sits
+on a different `grid_name`.
+
+The archive endpoint's `models` parameter defaults to `era5` at 0.25 degrees. `models=era5_land` is
+mandatory and is pinned in the contract as a `Literal`, not a default an operator can drift.
+`cell_selection=nearest` is likewise pinned so a coastal request can never be silently relocated to
+a land cell the lattice does not name.
+
+### Naming: one physical quantity, one name
+
+The moisture layers carry the **same `signal_name`** as the CDS lane
+(`soil_water_content_layer_1/2/3`) and the same unit `m^3/m^3`. A third name for the same variable
+would invite a model to treat one feature as two independent ones. What differs is modelled by the
+schema already:
+
+| Axis | CDS lane | This lane |
+|---|---|---|
+| `data_source.key` | `era5-land` | `open-meteo-era5-land-archive` |
+| `support_key` | `surface` | `era5-land-0.1deg` |
+| licence snapshot | CC-BY (Copernicus) | CC-BY 4.0 (Open-Meteo) over Copernicus/ECMWF |
+| provenance strength | first-party CDS receipt | **intermediary redistribution** |
+
+Open-Meteo is an intermediary. The source registration says so in its citation and in
+`data_source.configuration.provider_role = intermediary_redistributor`, and every source release
+repeats it in `quality_summary`. This is deliberately not dressed up as an ECMWF receipt.
+
+None of this may ever be blended with NASA POWER's `soil_wetness_{surface,root_zone,profile}`, which
+is a MERRA-2 **degree of saturation** (`fraction_of_saturation`), a different physical quantity.
+Distinct `support_key` values are what make the two safely coexist on one cell-day.
+
+### Soil temperature is deliberately excluded -- measured, not assumed
+
+`OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS` defines `soil_temperature_0_to_7cm_mean`, but no reviewed
+plan requests it. Measured 2026-08-06 against a first-party CDS `derived-era5-land-daily-statistics`
+retrieval on the product's native 0.1-degree grid, over the 16 Boise probe cells:
+
+| Quantity | Provider output precision | Rounding half-width | Measured MAE | Measured max abs error |
+|---|---|---|---|---|
+| `soil_moisture_0_to_7cm_mean` | 3 dp | 0.0005 | **0.00024 m^3/m^3** | **0.00050 m^3/m^3** |
+| `soil_temperature_0_to_7cm_mean` | 1 dp | 0.05 | **0.45 C** | **1.30 C** |
+
+Moisture's entire residual is display rounding: the max error is below the rounding half-width, so
+the underlying values are identical to Open-Meteo's output precision. Temperature's error is 9x the
+rounding bound at the mean and 26x at the maximum, so it is a real systematic difference -- Open-Meteo
+applies its own elevation handling, which moves a temperature and cannot move a dimensionless
+volumetric water content. Until that difference is explained and bounded, temperature from this lane
+would be a different variable wearing the CDS lane's `soil_temperature_level_1` name. It is not
+ingested.
+
+### Two checksums, on purpose
+
+The wire response carries `generationtime_ms`, a per-request server timing metric. Left in, every
+refetch would produce a new `payload_checksum` and therefore a second source release for identical
+content. `_canonical_archive_document` removes exactly that key and canonicalizes the rest; the
+result is the artifact's bytes and `source_release.payload_checksum`. The **exact wire bytes'**
+digest and length are preserved in `quality_summary.wire_payload_checksum`, in the artifact's
+`metadata_json`, and in the local raw-cache receipt, so custody of what actually arrived is not lost.
+Artifacts are `database_inline` (~360 KB per 16-cell chunk of JSON, TOAST-compressed) rather than the
+ERA5 lane's `local_raw_cache`, because a keyless source's document is small enough to keep durably.
+
+### Accounting, not completeness
+
+`require_accounted_open_meteo_result` is the guard against a chunk that dropped records reporting
+success. It does **not** demand completeness -- ocean and out-of-domain cells legitimately have no
+data -- it demands that every requested `(cell, parameter)` series is explained by exactly one
+coverage row spanning the whole window, and that the fact rows match those rows exactly.
+
+- A series with **no** value on any day writes **zero** observation rows and one
+  `signal_coverage_audit` row with `status='no_data'`. That is one honest gap record, not 1,462
+  `is_observed=false` rows, and matches the CDS lane's own precedent for out-of-domain cells.
+- A series with **some** missing days writes an explicit `is_observed=false`,
+  `quality_flag='source_missing'`, `normalized_value=NULL` row for each and
+  `status='partial'`. Partial stays partial.
+- Nulls are never coerced to zero. A verified ocean point returns 1,462 nulls, and a zero volumetric
+  water content would be a physically meaningful (bone-dry) claim.
+
+Observations are bucketed by the **ISO date prefix the publisher named** (`date.fromisoformat` on the
+first ten characters), never by recasting an instant, and stored as that day at 00:00Z.
+
+### Rate limiting is the binding constraint
+
+Open-Meteo's free tier weights a request by locations x variables x timesteps, so chunk size changes
+request count but **not** total quota cost. A refusal is classified from the 429 body:
+
+- `minute` -> retried up to `MAX_FETCH_ATTEMPTS` with a 70 s wait.
+- `hour` / `day` -> **not retried**. Sleeping through an hourly wall turns a quota refusal into an
+  unexplained hang; the chunk fails immediately carrying the provider's own wording.
+- unrecognised body -> `unknown`, retried once per attempt at 120 s. It is never optimistically
+  treated as `minute`.
+
+A failed chunk gets **no receipt**, so it stays pending in the checkpoint and
+`historical-open-meteo-backfill` exits non-zero with the failed chunk keys listed. The checkpoint is
+the resume point: `historical-open-meteo-status` reports what is still outstanding, and re-running
+the backfill fetches only that.
+
+Chunk boundaries are part of the plan checksum, so changing `chunk_cell_count` is a new plan rather
+than a resume that straddles two chunk shapes.
+
 `historical_era5_parquet.py` turns only a complete ERA5 receipt set into an atomic Zstandard-compressed daily Hive lake. It re-parses the locally cached monthly ZIPs without a provider or database call, emits a bounded daily row set, and ties the manifest to both the exact plan and receipt manifest. It is the compact cold-history representation and does not promote history to Railway.
 
 `historical_usdm.py` owns bounded U.S. Drought Monitor medium-resolution ZIP capture. It accepts only reviewed Tuesday releases in the four-year plan, verifies the exact WGS84 shapefile package/schema, preserves only native D0–D4 polygons without inferring absent classes or normal conditions, and writes checksum-bound weekly checkpoints. It is not an analysis-grid interpolation or local-condition source.

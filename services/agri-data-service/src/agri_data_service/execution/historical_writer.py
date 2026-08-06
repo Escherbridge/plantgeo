@@ -82,6 +82,15 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class ReleaseSetIdentity:
+    """The three fields that distinguish one governed release set from another."""
+
+    logical_key: str
+    as_of_time: datetime
+    description: str | None
+
+
+@dataclass(frozen=True)
 class HistoricalNasaWriteResult:
     """Identifiers and row counts from one persisted NASA POWER source cell."""
 
@@ -298,9 +307,11 @@ async def finalize_nasa_release_set(
     expected_ids = {release.id for release in source_releases}
     return await _finalize_release_set(
         session,
-        release_set_key=plan.release_set_key,
-        as_of_time=plan.release_set_as_of,
-        description=plan.description,
+        ReleaseSetIdentity(
+            logical_key=plan.release_set_key,
+            as_of_time=plan.release_set_as_of,
+            description=plan.description,
+        ),
         manifest_checksum=manifest_checksum,
         expected_ids=expected_ids,
         validated_at=validated_at,
@@ -324,9 +335,11 @@ async def finalize_era5_release_set(
     expected_ids = {release.id for release in source_releases}
     return await _finalize_release_set(
         session,
-        release_set_key=plan.release_set_key,
-        as_of_time=plan.release_set_as_of,
-        description=plan.description,
+        ReleaseSetIdentity(
+            logical_key=plan.release_set_key,
+            as_of_time=plan.release_set_as_of,
+            description=plan.description,
+        ),
         manifest_checksum=manifest_checksum,
         expected_ids=expected_ids,
         validated_at=validated_at,
@@ -350,9 +363,11 @@ async def finalize_usdm_release_set(
     expected_ids = {release.id for release in source_releases}
     return await _finalize_release_set(
         session,
-        release_set_key=plan.release_set_key,
-        as_of_time=plan.release_set_as_of,
-        description=plan.description,
+        ReleaseSetIdentity(
+            logical_key=plan.release_set_key,
+            as_of_time=plan.release_set_as_of,
+            description=plan.description,
+        ),
         manifest_checksum=manifest_checksum,
         expected_ids=expected_ids,
         validated_at=validated_at,
@@ -376,9 +391,11 @@ async def finalize_open_meteo_release_set(
     expected_ids = {release.id for release in source_releases}
     return await _finalize_release_set(
         session,
-        release_set_key=plan.release_set_key,
-        as_of_time=plan.release_set_as_of,
-        description=plan.description,
+        ReleaseSetIdentity(
+            logical_key=plan.release_set_key,
+            as_of_time=plan.release_set_as_of,
+            description=plan.description,
+        ),
         manifest_checksum=manifest_checksum,
         expected_ids=expected_ids,
         validated_at=validated_at,
@@ -387,15 +404,14 @@ async def finalize_open_meteo_release_set(
 
 async def _finalize_release_set(
     session: AsyncSession,
+    identity: ReleaseSetIdentity,
     *,
-    release_set_key: str,
-    as_of_time: datetime,
-    description: str | None,
     manifest_checksum: str,
     expected_ids: set[uuid.UUID],
     validated_at: datetime | None,
 ) -> HistoricalReleaseSetResult:
     """Atomically validate one release set's membership; the warehouse trigger freezes it afterwards."""
+    release_set_key = identity.logical_key
     existing = (
         (
             await session.execute(
@@ -414,10 +430,10 @@ async def _finalize_release_set(
     if release_set is None:
         release_set = ReleaseSet(
             logical_key=release_set_key,
-            as_of_time=as_of_time,
+            as_of_time=identity.as_of_time,
             manifest_checksum=manifest_checksum,
             state=ReleaseSetState.DRAFT,
-            description=description,
+            description=identity.description,
         )
         session.add(release_set)
         await session.flush()
@@ -425,8 +441,8 @@ async def _finalize_release_set(
     elif (
         release_set.logical_key != release_set_key
         or release_set.manifest_checksum != manifest_checksum
-        or release_set.as_of_time != as_of_time
-        or release_set.description != description
+        or release_set.as_of_time != identity.as_of_time
+        or release_set.description != identity.description
     ):
         raise ValueError("historical release set identity is already governed by different content")
     elif release_set.state in {ReleaseSetState.VALIDATED, ReleaseSetState.PUBLISHED}:

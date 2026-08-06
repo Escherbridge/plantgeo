@@ -35,6 +35,11 @@ from agri_data_service.execution.historical_era5 import (  # noqa: E402
     HistoricalEra5LandBackfillPlan,
     historical_era5_plan_checksum,
 )
+from agri_data_service.execution.historical_open_meteo import (  # noqa: E402
+    OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS,
+    HistoricalOpenMeteoArchivePlan,
+    historical_open_meteo_plan_checksum,
+)
 
 REPOSITORY_ROOT = SERVICE_ROOT.parent.parent
 CANONICAL_NORTH_AMERICA_LATTICE_PLAN = (
@@ -110,6 +115,72 @@ ERA5_RELEASE_SET_AS_OF = "2026-08-05T23:59:59Z"
 # second finalization artifact. It is later than every `data_available_at` in the window, which
 # is the safe direction: an as-of *before* a receipt blocks publication, it never leaks.
 WESTERN_RELEASE_SET_AS_OF = "2026-08-12T23:59:59Z"
+
+# --- Open-Meteo ERA5-Land archive over the Sentinel-2 NDVI lattice ---------------------------
+# This lane exists because the CDS contract structurally cannot reach these cells:
+# `require_governed_monthly_coverage` rejects any ERA5 cell whose centroid is not on the 1.0-degree
+# output grid, and every NDVI cell sits on `.125`/`.375`. The keyless Open-Meteo archive serves the
+# same ERA5-Land product at its native 0.1 degrees for arbitrary points, so it can.
+#
+# The grid is FIXED and is regenerated arithmetically here rather than read from the warehouse, so
+# a clone reproduces the plan byte for byte. It must match `ingest/vegetation.py`'s global
+# 0.25-degree grid exactly: centroids at cell south/west plus half a cell, rendered with the same
+# four-decimal JavaScript-compatible formatting, prefixed with the grid name.
+NDVI_GRID_NAME = "sentinel2-ndvi-0p25deg"
+NDVI_CELL_SPACING_DEGREES = 0.25
+NDVI_CELL_RESOLUTION_METRES = 27_830
+NDVI_LATTICE_SOUTH = 42.0
+NDVI_LATTICE_NORTH = 49.0
+NDVI_LATTICE_WEST = -125.0
+NDVI_LATTICE_EAST = -111.0
+
+# Locations per archive request. Measured: 50 cells x 4 years x 4 variables answered in 13.7 s for
+# 2.6 MB. Larger chunks do not reduce the provider's quota cost, which scales with
+# cells x variables x days, but they do reduce request count and per-request overhead.
+OPEN_METEO_CHUNK_CELL_COUNT = 50
+
+# The probe is the 4x4 block of lattice cells around Boise, chosen so the end-to-end path -- fetch,
+# cache, persist, finalize -- can be completed and verified inside one session while the full
+# lattice is still landing.
+OPEN_METEO_PROBE_SOUTH = 43.125
+OPEN_METEO_PROBE_NORTH = 43.875
+OPEN_METEO_PROBE_WEST = -116.875
+OPEN_METEO_PROBE_EAST = -116.125
+OPEN_METEO_PROBE_CHUNK_CELL_COUNT = 8
+
+OPEN_METEO_PROBE_RELEASE_SET_KEY = "open-meteo-era5-land-boise-ndvi-probe-20220430-20260430"
+OPEN_METEO_LATTICE_RELEASE_SET_KEY = "open-meteo-era5-land-pnw-ndvi-lattice-20220430-20260430"
+
+# Later than any receipt this lane can produce today, in the safe direction: an as-of time before a
+# receipt blocks finalization, it never leaks. The full lattice is quota-bound over several days.
+OPEN_METEO_PROBE_RELEASE_SET_AS_OF = "2026-08-06T23:59:59Z"
+OPEN_METEO_LATTICE_RELEASE_SET_AS_OF = "2026-08-20T23:59:59Z"
+
+OPEN_METEO_SOURCE_DEFINITION: dict[str, object] = {
+    "key": "open-meteo-era5-land-archive",
+    "name": "Open-Meteo ERA5-Land archive (redistributed ECMWF reanalysis)",
+    "owner": "Open-Meteo",
+    "purpose": (
+        "Native 0.1-degree ERA5-Land soil-state covariates for the Sentinel-2 NDVI analysis "
+        "lattice, which the 1.0-degree CDS output-grid contract cannot address."
+    ),
+    "base_url": "https://archive-api.open-meteo.com/v1/archive",
+    "license_name": "CC-BY 4.0 (Open-Meteo) over Copernicus/ECMWF ERA5-Land",
+    "license_url": "https://open-meteo.com/en/license",
+    "citation": (
+        "Zippenfenig, P. (2023). Open-Meteo.com Weather API. Generated using Copernicus Climate "
+        "Change Service information: Munoz Sabater, J. (2019): ERA5-Land hourly data from 1950 to "
+        "present, Copernicus Climate Change Service (C3S) Climate Data Store (CDS). Open-Meteo is "
+        "an INTERMEDIARY redistributor: these values were not retrieved from ECMWF or the CDS, so "
+        "this provenance is weaker than a first-party CDS receipt and must not be presented as one."
+    ),
+    "retention_days": None,
+    "reviewed_at": "2026-08-05T00:00:00Z",
+    "reviewed_by": "local-data-operator",
+}
+
+OPEN_METEO_PROBE_PLAN_PATH = SERVICE_ROOT / "plans" / f"{OPEN_METEO_PROBE_RELEASE_SET_KEY}.json"
+OPEN_METEO_LATTICE_PLAN_PATH = SERVICE_ROOT / "plans" / f"{OPEN_METEO_LATTICE_RELEASE_SET_KEY}.json"
 
 NASA_PLAN_PATH = SERVICE_ROOT / "plans" / f"{NASA_RELEASE_SET_KEY}.json"
 NASA_FINALIZATION_PATH = SERVICE_ROOT / "plans" / f"{NASA_FINALIZATION_RELEASE_SET_KEY}-finalization.json"
@@ -395,6 +466,128 @@ def build_western_north_america_plans() -> tuple[HistoricalNasaBackfillPlan, His
     return nasa_plan, era5_plan
 
 
+def _format_ndvi_coordinate(value: float) -> str:
+    """Render a lattice coordinate exactly as `ingest/vegetation.py` renders it into a cell key."""
+    rendered = f"{value:.4f}"
+    return "0.0000" if rendered == "-0.0000" else rendered
+
+
+def ndvi_lattice_cells(
+    *,
+    south: float = NDVI_LATTICE_SOUTH,
+    north: float = NDVI_LATTICE_NORTH,
+    west: float = NDVI_LATTICE_WEST,
+    east: float = NDVI_LATTICE_EAST,
+) -> list[dict[str, object]]:
+    """Enumerate the fixed 0.25-degree NDVI grid cells whose centroids fall inside an envelope."""
+    spacing = NDVI_CELL_SPACING_DEGREES
+    cells: list[dict[str, object]] = []
+    for row in range(round(south / spacing), round(north / spacing) + 1):
+        latitude = round(row * spacing + spacing / 2, 10)
+        if not south <= latitude <= north:
+            continue
+        for column in range(round(west / spacing), round(east / spacing) + 1):
+            longitude = round(column * spacing + spacing / 2, 10)
+            if not west <= longitude <= east:
+                continue
+            cells.append(
+                {
+                    "cell_key": (
+                        f"{NDVI_GRID_NAME}:{_format_ndvi_coordinate(latitude)}:"
+                        f"{_format_ndvi_coordinate(longitude)}"
+                    ),
+                    "latitude": latitude,
+                    "longitude": longitude,
+                }
+            )
+    cells.sort(key=lambda cell: str(cell["cell_key"]))
+    if not cells:
+        raise SystemExit(f"no NDVI lattice cells inside N{north} W{west} S{south} E{east}")
+    return cells
+
+
+def build_open_meteo_archive_plan(
+    *,
+    cells: list[dict[str, object]],
+    chunk_cell_count: int,
+    release: ReleaseIdentity,
+) -> HistoricalOpenMeteoArchivePlan:
+    """Author an Open-Meteo ERA5-Land archive replay over already-established analysis cells.
+
+    The plan mints no spatial cells: persistence resolves every `cell_key` against the lattice the
+    Sentinel-2 NDVI backfill already wrote, and fails closed if one is absent.
+    """
+    return HistoricalOpenMeteoArchivePlan.model_validate(
+        {
+            "source": OPEN_METEO_SOURCE_DEFINITION,
+            "window": {
+                "start_date": WINDOW_START_DATE.isoformat(),
+                "end_date": WINDOW_END_DATE.isoformat(),
+            },
+            "grid_name": NDVI_GRID_NAME,
+            "grid_resolution_m": NDVI_CELL_RESOLUTION_METRES,
+            "native_grid_degrees": 0.1,
+            "native_grid_resolution_m": 9000,
+            "cells": cells,
+            "chunk_cell_count": chunk_cell_count,
+            "parameters": sorted(OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS),
+            "transform_version": "open-meteo-era5-land-archive-daily-mean-normalization-v1",
+            "release_set_key": release.key,
+            "release_set_as_of": release.as_of,
+            "description": release.description,
+        }
+    )
+
+
+def build_open_meteo_ndvi_plans() -> tuple[HistoricalOpenMeteoArchivePlan, HistoricalOpenMeteoArchivePlan]:
+    """Author the Boise probe and the full Pacific Northwest NDVI-lattice archive replays."""
+    probe_cells = ndvi_lattice_cells(
+        south=OPEN_METEO_PROBE_SOUTH,
+        north=OPEN_METEO_PROBE_NORTH,
+        west=OPEN_METEO_PROBE_WEST,
+        east=OPEN_METEO_PROBE_EAST,
+    )
+    lattice_cells = ndvi_lattice_cells()
+    probe_plan = build_open_meteo_archive_plan(
+        cells=probe_cells,
+        chunk_cell_count=OPEN_METEO_PROBE_CHUNK_CELL_COUNT,
+        release=ReleaseIdentity(
+            key=OPEN_METEO_PROBE_RELEASE_SET_KEY,
+            as_of=OPEN_METEO_PROBE_RELEASE_SET_AS_OF,
+            description=(
+                f"Boise-area probe of the Open-Meteo ERA5-Land archive lane: the {len(probe_cells)} "
+                "Sentinel-2 NDVI lattice cells around Boise, carrying the three ERA5-Land volumetric "
+                "soil-water layers at their native 0.1-degree support. It exists so the whole path -- "
+                "fetch, canonical cache, warehouse persistence, release-set finalization -- can be "
+                "completed and verified while the full lattice is still quota-bound. Its cells are a "
+                "strict subset of the lattice plan's and reuse the same cell keys, so both stay "
+                "idempotent. soil_water_content_layer_* (m^3/m^3) is a volumetric water content and "
+                "is NOT NASA POWER's soil_wetness_* (fraction_of_saturation); the two must never "
+                "share a scale or legend."
+            ),
+        ),
+    )
+    lattice_plan = build_open_meteo_archive_plan(
+        cells=lattice_cells,
+        chunk_cell_count=OPEN_METEO_CHUNK_CELL_COUNT,
+        release=ReleaseIdentity(
+            key=OPEN_METEO_LATTICE_RELEASE_SET_KEY,
+            as_of=OPEN_METEO_LATTICE_RELEASE_SET_AS_OF,
+            description=(
+                f"The complete {len(lattice_cells)}-cell Sentinel-2 NDVI analysis lattice "
+                "(-125,42,-111,49) covered with ERA5-Land volumetric soil water at native 0.1-degree "
+                "support, read through the keyless Open-Meteo archive. These are the cells the ML "
+                "covariate layer returns all-NULL for: they exist in agri.spatial_cell with zero "
+                "signal rows, and the CDS contract structurally cannot address them because "
+                "require_governed_monthly_coverage rejects any cell off the 1.0-degree output grid. "
+                "Ocean and out-of-domain cells come back null, never zero, and are recorded as "
+                "no_data coverage rather than fabricated values."
+            ),
+        ),
+    )
+    return probe_plan, lattice_plan
+
+
 def main() -> None:
     nasa_plan = build_nasa_lattice_plan()
     nasa_checksum = historical_nasa_plan_checksum(nasa_plan)
@@ -416,6 +609,10 @@ def main() -> None:
     western_era5_checksum = historical_era5_plan_checksum(western_era5_plan)
     WESTERN_NASA_PLAN_PATH.write_bytes(canonical_json_bytes(western_nasa_plan.model_dump(mode="json")))
     WESTERN_ERA5_PLAN_PATH.write_bytes(canonical_json_bytes(western_era5_plan.model_dump(mode="json")))
+
+    open_meteo_probe_plan, open_meteo_lattice_plan = build_open_meteo_ndvi_plans()
+    OPEN_METEO_PROBE_PLAN_PATH.write_bytes(canonical_json_bytes(open_meteo_probe_plan.model_dump(mode="json")))
+    OPEN_METEO_LATTICE_PLAN_PATH.write_bytes(canonical_json_bytes(open_meteo_lattice_plan.model_dump(mode="json")))
 
     print(
         json.dumps(
@@ -440,6 +637,20 @@ def main() -> None:
                 "western_era5_requested_area": western_era5_plan.requested_area.model_dump(),
                 "western_era5_row_projection": (
                     len(western_era5_plan.cells) * len(western_era5_plan.parameters) * 1462
+                ),
+                "open_meteo_probe_plan": str(OPEN_METEO_PROBE_PLAN_PATH),
+                "open_meteo_probe_plan_checksum": historical_open_meteo_plan_checksum(open_meteo_probe_plan),
+                "open_meteo_probe_cell_count": len(open_meteo_probe_plan.cells),
+                "open_meteo_probe_chunk_count": len(open_meteo_probe_plan.chunks),
+                "open_meteo_lattice_plan": str(OPEN_METEO_LATTICE_PLAN_PATH),
+                "open_meteo_lattice_plan_checksum": historical_open_meteo_plan_checksum(open_meteo_lattice_plan),
+                "open_meteo_lattice_cell_count": len(open_meteo_lattice_plan.cells),
+                "open_meteo_lattice_chunk_count": len(open_meteo_lattice_plan.chunks),
+                "open_meteo_parameters": open_meteo_lattice_plan.parameters,
+                "open_meteo_lattice_row_projection": (
+                    len(open_meteo_lattice_plan.cells)
+                    * len(open_meteo_lattice_plan.parameters)
+                    * open_meteo_lattice_plan.window.day_count
                 ),
             },
             indent=2,
