@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "type-check": "tsc --noEmit",
     "check:data-boundary": "node scripts/check-data-boundaries.mjs",
+    "backfill:soil-survey": "node scripts/backfill-soil-survey.mjs",
     "test": "vitest run --configLoader runner --maxWorkers=2",
     "test:watch": "vitest --configLoader runner --maxWorkers=2",
     "test:coverage": "vitest run --coverage --configLoader runner --maxWorkers=2",
