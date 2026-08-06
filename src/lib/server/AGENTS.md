@@ -511,11 +511,90 @@ cost boundary. Both go through `cacheGeoJSON`/`getCachedGeoJSON`, which latch of
 dead Redis instead of throwing: the cache is an optimization, and a Redis outage
 must not take two map layers down with an `INTERNAL_SERVER_ERROR`.
 
+## §soil-moisture
+
+`services/environmental-read-model.ts#getPublishedSoilMoisture`,
+`drizzle/0014_soil_moisture_field.sql`, `lib/geo/isobands.ts`,
+`lib/environmental/soil-moisture.ts`, `trpc/routers/environmental.ts#getSoilMoisture`,
+`components/map/layers/SoilMoistureLayer.tsx`.
+
+**The first layer served out of the model plane.** Everything else on this map reads
+`geo.features`. ERA5-Land volumetric soil water lands in `agri.signal_observation` joined
+to `agri.spatial_cell`: signals `soil_water_content_layer_1/_2/_3` (ECMWF's 0–7 cm,
+7–28 cm and 28–100 cm layers), `normalized_unit = 'm^3/m^3'`, `support_key =
+'era5-land-0.1deg'`, daily at midnight UTC over a 1,568-cell 0.25° PNW lattice for
+2022-04-30..2026-04-30. Before 2026-08-06 there were **zero** references to
+`soil_water_content` or `era5-land` anywhere in `src/`: no reader, no registry entry, no
+toggle, no renderer.
+
+**Ownership boundary.** 0014 creates `geo.soil_moisture_observation` (a view) and
+`geo.soil_moisture_field` (a set-returning function) in the **serving** plane, reading the
+**model** plane. Nothing is created in `agri` and no lock is taken on a table the
+ingestion crawl writes. Martin is unaffected: `infra/martin/martin.yaml` sets
+`auto_publish: false` and names its six function sources explicitly, so a new `geo`
+function cannot join a composite and nothing needs restarting.
+
+**Where each step runs, and why.**
+
+| Step | Runs in | Why not elsewhere |
+| --- | --- | --- |
+| bbox → covered cells | SQL (GiST on `agri.spatial_cell.geometry`) | — |
+| resolve the served day | SQL | one round trip answers "which day is drawn" and "what does it look like" together |
+| average onto a coarser lattice | SQL (`geo.soil_moisture_field`) | repo rule: geospatial aggregation goes through PostGIS, never the client |
+| Gaussian blur across that lattice | SQL, as a weighted self-join over neighbours within `blur_radius_cells` | it is a grid convolution, which is a join; moving it out would mean shipping the grid |
+| marching squares → isobands | TypeScript, server-side (`lib/geo/isobands.ts`) | **`postgis_raster` is not installed.** Verified on production 2026-08-05: `pg_available_extensions` lists `postgis_raster` 3.6.4 with `installed_version` NULL, and `pg_extension` holds only postgis, timescaledb, timescaledb_toolkit, vector, pgcrypto, plpgsql. So `ST_Contour` is unavailable, and installing a raster extension is a far larger change than one layer justifies. The node grid it contours is tens of nodes, so this is cheap; the browser still never sees it. |
+| paint | MapLibre `fill` | see §soil-moisture in `src/components/map/AGENTS.md` for why not deck.gl |
+
+**No new index.** Measured with `EXPLAIN (ANALYZE)` on production 2026-08-06, against a
+`agri.signal_observation` already past 2 M rows: a PNW-wide coarse aggregation is 15 ms
+and a PNW-wide detail read 27 ms, both on the existing
+`ix_signal_observation_cell_time_signal (cell_id, observed_at, signal_name)` — the bbox
+resolves the cell list first and the day is then one index search per cell. An index built
+here would also lock a table a live crawl is writing to, for no measured gain.
+
+**Two query shapes that look equivalent and are not.** Reading
+`geo.soil_moisture_observation` **twice** in one statement (once to resolve the day, once
+to read it) makes PostgreSQL materialize it as a CTE, and the same viewport costs **2.3 s**
+instead of 27 ms. `readSoilMoistureCells` therefore resolves the day from the base tables
+and references the view exactly once. The same trap will catch the next reader of this
+view; the comment on that function says so.
+
+**Honest gaps, as everywhere else.** A lattice square with any corner the lane has not
+filled is skipped rather than interpolated across, so unfetched ground stays blank. The
+archive ends 2026-04-30 while the slider's today is later, so `observedDay` and
+`requestedDay` routinely differ and both are published — `SoilPanel` names them. Past
+`SOIL_MOISTURE_MAX_OBSERVATION_AGE_DAYS` (30, matching vegetation) nothing is carried
+forward: the answer is `reason: "stale"` plus the `newestAvailableDay` the user should
+scrub to. A future day is `not_forecastable`; a reanalysis archive has not run it.
+
+**One unresolved governance question, deliberately surfaced rather than decided.**
+`agri.data_source.allowed_client_exposure` is `false` for `open-meteo-era5-land-archive`.
+That is the server DEFAULT every generically-ingested source gets
+(`source_ingestion.py:248`), not a decision anybody made about this lane: the same row
+carries `review_state = 'approved'` and a CC-BY 4.0 licence that expressly permits
+redistribution with attribution. Nothing in `src/` has ever read that column. The read
+model **publishes** it as `sourceClientExposureApproved` and carries the required
+attribution in `attribution`, rather than silently gating the layer off or silently
+ignoring the flag. Flipping the column in the warehouse is the owner's call.
+
 ## §proxied-viewport-queries
 
 `src/hooks/useViewportProxiedLayers.ts`, consumed by `components/map/LayerManager.tsx`,
 `components/map/PanelManager.tsx`, `components/panels/SoilPanel.tsx` and
-`components/panels/WaterPanel.tsx`. Applies to both feeds above.
+`components/panels/WaterPanel.tsx`. Applies to the two proxied feeds above and, since
+2026-08-06, to the warehouse-backed soil-moisture field as well: what the three share is
+not their upstream but the sharing hazard.
+
+**`zoom` is part of the key, and omitting it is not neutral.** `getSoilSurvey` and
+`getSoilMoisture` both resolve their render granularity from `zoom` server-side. Until
+2026-08-06 *neither* soil-survey caller passed one: `LayerManager` called
+`useSoilSurveyQuery(bbox, { enabled })` and `PanelManager` mounted `SoilPanel` without the
+prop it already accepted. `resolveSoilSurveyGranularity(undefined)` falls to `"detail"`,
+whose 0.02 sq-deg ceiling `getSoilSurvey`'s `superRefine` then enforces — so at any
+ordinary zoom the request was rejected and the panel showed its "zoom in" note. The
+server's whole zoom-adaptive path existed and was never once exercised. Both call sites
+now pass `zoom` from the one `useViewportBounds()` derivation, which is also what keeps
+them on a single cache entry.
 
 **One query per feed, not one per caller.** A map layer and the panel that describes it
 read the same viewport, so they must produce the *same* react-query entry — not two that

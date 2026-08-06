@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/server/db";
 import { fetchBoundedJson } from "@/lib/server/http/bounded-upstream";
+import {
+  resolveZoomGranularity,
+  type ZoomGranularity,
+  type ZoomGranularityTiers,
+} from "@/lib/server/services/zoom-granularity";
 
 /**
  * USDA Soil Data Access tabular SQL endpoint. Geometry and ratings both come from
@@ -98,8 +103,12 @@ export interface AggregatedSoilSurveyProperties {
  * "detail" draws real per-map-unit SSURGO polygons (unchanged behavior). The two
  * coarser bands draw `AggregatedSoilSurveyProperties` shapes instead — see
  * `resolveSoilSurveyGranularity`.
+ *
+ * An alias for the shared vocabulary in `zoom-granularity.ts` rather than its own union:
+ * the soil-moisture field reuses the same three tier names, and two independent unions
+ * would let a panel's wording for one drift from the other.
  */
-export type SoilSurveyGranularity = "detail" | "regional-average" | "coarse-average";
+export type SoilSurveyGranularity = ZoomGranularity;
 
 /**
  * How much of the viewport the warehouse can actually answer for.
@@ -152,15 +161,18 @@ export const SOIL_SURVEY_DETAIL_MIN_ZOOM = 13;
 /** Below this, the coarser of the two averaged bands applies. */
 export const SOIL_SURVEY_REGIONAL_MIN_ZOOM = 9;
 
+/** Where the SSURGO survey puts its two tier boundaries, in the shared vocabulary. */
+export const SOIL_SURVEY_TIERS: ZoomGranularityTiers = {
+  detailMinZoom: SOIL_SURVEY_DETAIL_MIN_ZOOM,
+  regionalMinZoom: SOIL_SURVEY_REGIONAL_MIN_ZOOM,
+};
+
 /**
  * No zoom means a legacy caller — keep the original single-shot, hard-capped
  * behavior exactly as it was rather than guessing which tier it meant.
  */
 export function resolveSoilSurveyGranularity(zoom?: number): SoilSurveyGranularity {
-  if (zoom === undefined || !Number.isFinite(zoom)) return "detail";
-  if (zoom >= SOIL_SURVEY_DETAIL_MIN_ZOOM) return "detail";
-  if (zoom >= SOIL_SURVEY_REGIONAL_MIN_ZOOM) return "regional-average";
-  return "coarse-average";
+  return resolveZoomGranularity(zoom, SOIL_SURVEY_TIERS);
 }
 
 /**

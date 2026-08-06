@@ -136,6 +136,11 @@ export default function MapView() {
     });
 
     m.on("click", (e) => {
+      // A panel capturing query points owns the click: without this stand-down, one click
+      // both drops the soil query pin and opens the agent popup over it. Read from the
+      // store rather than a prop so this handler stays registered once, for the life of
+      // the map -- see src/components/map/AGENTS.md "Picking a point to query".
+      if (useMapStore.getState().isCapturingQueryPoint) return;
       // Do not send coordinates to the analysis service until the user confirms.
       const features = m.queryRenderedFeatures(e.point);
       if (features && features.length > 0) return;
@@ -143,6 +148,8 @@ export default function MapView() {
       setAgentCoords([lng, lat]);
     });
 
+    // Right-click stays available even while a panel is capturing: it is the one way to
+    // reach the agent popup without giving up the pin.
     m.on("contextmenu", (e) => {
       e.preventDefault();
       const { lat, lng } = e.lngLat;

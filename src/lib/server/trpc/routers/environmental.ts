@@ -11,10 +11,12 @@ import {
   getMetricAtDate,
   getPublishedDroughtClassification,
   getPublishedGroundwaterWells,
+  getPublishedSoilMoisture,
   getPublishedStreamflowGauges,
   getPublishedVegetationIndex,
   getSliderCapabilities,
 } from "@/lib/server/services/environmental-read-model";
+import { SOIL_MOISTURE_DEPTHS } from "@/lib/environmental/soil-moisture";
 import {
   getWatersheds,
   MAX_WATERSHED_BBOX_SQUARE_DEGREES,
@@ -464,6 +466,39 @@ export const environmentalRouter = router({
         rethrowUpstreamFault(error, "USDA Soil Data Access");
       }
     }),
+
+  /**
+   * ERA5-Land volumetric soil water for the viewport, on the slider's day, at one depth.
+   *
+   * Deliberately NOT wrapped in `areaBoundedBbox`: like `getVegetationIndex` this reads the
+   * local warehouse rather than proxying a third party, and zooming OUT is exactly when it
+   * gets cheaper -- `zoom` moves it onto a coarser aggregation lattice, so a whole-PNW
+   * request returns ~28 lattice nodes and at most nine isobands rather than 1,568 squares.
+   * See `environmental-read-model.ts` §soil-moisture.
+   */
+  getSoilMoisture: publicProcedure
+    .input(
+      z.object({
+        bbox: bboxSchema,
+        date: observationDateSchema.optional(),
+        // Enumerated from the depth table rather than restated, so a depth added there
+        // cannot be rejected here.
+        depth: z
+          .enum(
+            SOIL_MOISTURE_DEPTHS.map((definition) => definition.depth) as [string, ...string[]]
+          )
+          .optional(),
+        /** Viewport zoom; selects the aggregation tier. */
+        zoom: z.number().finite().optional(),
+      })
+    )
+    .query(({ input }) =>
+      getPublishedSoilMoisture(input.bbox, {
+        date: input.date,
+        depth: input.depth as (typeof SOIL_MOISTURE_DEPTHS)[number]["depth"] | undefined,
+        zoom: input.zoom,
+      })
+    ),
 
   getInterventionSuitability: publicProcedure
     .input(pointSchema)

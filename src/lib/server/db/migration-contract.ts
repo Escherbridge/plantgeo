@@ -1,5 +1,5 @@
 export const EXPECTED_DRIZZLE_MIGRATION = {
-  tag: "0013_soil_survey_persistence",
-  createdAt: 1_786_500_000_000,
-  sha256: "c3ebe548a7643762c6c24c3dfcfeb5b4a831cf5cd222718eb92cb70c8ea51ea9",
+  tag: "0014_soil_moisture_field",
+  createdAt: 1_786_600_000_000,
+  sha256: "830ace0dddccd2e1f1afbffb8b310b084af8758c88c166fb2dfcc66645974e74",
 } as const;

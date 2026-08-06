@@ -135,3 +135,61 @@ Panel sheets still portal themselves over the whole viewport, so an open panel c
 region exactly as it covered the old dock. Docking a panel's body into the region's body slot
 instead would mean giving `src/components/ui/sheet.tsx` a top offset for the time section —
 deliberately not done here, because that file is shared by every sheet in the app.
+
+## Picking a point to query
+
+`SoilPanel` has accepted a `queryPoint` prop since it was written, and nothing ever passed
+one: `PanelManager` mounted the panel without it and no `map.on("click")` handler anywhere
+in `src/` produced one. The point query — SoilGrids properties and intervention
+suitability at a place — was unreachable from the UI.
+
+The wiring is deliberately split three ways rather than put in one component:
+
+- **`map-store` holds the point** (`queryPoint`, `isCapturingQueryPoint`), beside
+  `selectedFeatureId`. It is map interaction state, and a store is what lets the click
+  handler, the panel and the pin layer see it without prop-drilling through `MapView`.
+- **`PanelManager` arms capture**, through `useMapQueryPoint(map, isSoilPanelOpen)`. The
+  panel that has a point query to answer is the one that turns clicks into points; capture
+  is not always on, because a click on the map means different things depending on what is
+  open.
+- **`LayerManager` draws the pin**, via `QueryPointLayer`. The map owns its layers, and a
+  GeoJSON source rather than a `maplibregl.Marker` so the pin re-attaches on `style.load`
+  and survives a basemap swap like every other layer here.
+
+**One click, one meaning.** `MapView`'s own click handler opens the agent popup on empty
+ground. Both handlers would otherwise fire on the same click and the popup would cover the
+pin, so `MapView` reads `isCapturingQueryPoint` from the store and stands down. It reads
+the store imperatively rather than taking a prop, because that handler is registered once
+for the life of the map and must not be re-registered as panels open and close.
+Right-click still reaches the agent popup, so nothing becomes unreachable.
+
+**Three ways to cancel.** Clicking the pin again, pressing Escape, and closing the panel
+(`setCapturingQueryPoint(false)` clears the point as well as disarming). Clicking anywhere
+else *moves* the pin — that is a second question about a second place, not a cancellation.
+`SoilPanel` also renders an explicit "Clear queried point" button, because a pin the user
+cannot obviously get rid of is worse than no pin.
+
+## §soil-moisture
+
+`SoilMoistureLayer` draws whatever `environmental.getSoilMoisture` served: the stored
+0.25° cells at zoom ≥ 9, or dissolved isobands over a coarser aggregation lattice below
+it. One source and one `fill` either way, because every served feature carries a `value` —
+a cell's measurement, or a band's representative value. Branching the paint on granularity
+would be a second place for the colour ramp to drift from the panel's legend; both read
+`soilMoistureColorStops()` from `lib/environmental/soil-moisture.ts`.
+
+Outlines are drawn only on unaggregated cells, where they say something true (these are
+discrete samples). An isoband boundary is a contour through interpolated space, and
+stroking it would draw a hard edge the data does not have.
+
+**Why not deck.gl.** `@deck.gl/core`, `/layers`, `/geo-layers`, `/mapbox` and `/react` are
+dependencies; **`@deck.gl/aggregation-layers` is not**, so `ContourLayer`, `ScreenGridLayer`
+and `HeatmapLayer` are not available without adding one (this is also why
+`layers/HeatmapLayer.tsx` is a `ScatterplotLayer` under the hood). Adding it would not help
+anyway: those layers aggregate *on the client*, which is the thing the repo rule forbids
+and the thing `geo.soil_moisture_field` exists to avoid. By the time geometry reaches the
+browser it is at most nine polygons, which a MapLibre `fill` — already WebGL — draws for
+free. No custom shader was needed and none was written.
+
+The depth selector in `SoilPanel` is a **depth**, not a second clock: the day always comes
+from the global time slider, as "One time control, projected per layer" above requires.

@@ -62,6 +62,10 @@ const CACHEABLE_LAYER_QUERIES: readonly string[] = [
   "environmental.getGroundwater",
   "environmental.getVegetationIndex",
   "environmental.getDroughtClassification",
+  // The isobands are the most expensive answer here to recompute and the cheapest to store:
+  // a whole-PNW coarse view is at most nine features, and the archive day behind it is
+  // immutable, so scrubbing back to a day already seen must never re-run the aggregation.
+  "environmental.getSoilMoisture",
   "wildfire.getWeatherForBbox",
 ];
 

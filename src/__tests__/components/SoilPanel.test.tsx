@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import { useMapStore } from "@/stores/map-store";
 import { useSoilStore } from "@/stores/soil-store";
@@ -52,6 +52,31 @@ type SoilPropertiesResult = {
   isError: boolean;
 };
 
+/**
+ * Mirrors `PublishedSoilMoistureCollection`, hand-rolled so the stub pulls in no server
+ * code. Only the fields the panel actually reads are declared.
+ */
+type SoilMoistureResult = {
+  data:
+    | (GeoJSON.FeatureCollection & {
+        availability: "published" | "unavailable";
+        reason: "not_published" | "stale" | "not_forecastable" | null;
+        granularity: "detail" | "regional-average" | "coarse-average";
+        unit: string;
+        attribution: string;
+        observedDay: string | null;
+        requestedDay: string;
+        newestAvailableDay: string | null;
+        cellCount: number;
+        maxObservationAgeDays: number;
+        latticeDegrees: number | null;
+        bands: { bandIndex: number; color: string; label: string }[];
+      })
+    | undefined;
+  isLoading: boolean;
+  isError: boolean;
+};
+
 const queries = vi.hoisted(() => ({
   getSoilProperties: vi.fn(
     (): SoilPropertiesResult => ({ data: undefined, isLoading: false, isError: false })
@@ -66,6 +91,9 @@ const queries = vi.hoisted(() => ({
   getSoilSurvey: vi.fn(
     (): SoilSurveyResult => ({ data: undefined, isLoading: false, isError: false })
   ),
+  getSoilMoisture: vi.fn(
+    (): SoilMoistureResult => ({ data: undefined, isLoading: false, isError: false })
+  ),
 }));
 
 vi.mock("@/lib/trpc/client", () => ({
@@ -74,6 +102,7 @@ vi.mock("@/lib/trpc/client", () => ({
       getSoilProperties: { useQuery: queries.getSoilProperties },
       getInterventionSuitability: { useQuery: queries.getInterventionSuitability },
       getSoilSurvey: { useQuery: queries.getSoilSurvey },
+      getSoilMoisture: { useQuery: queries.getSoilMoisture },
     },
   },
 }));
@@ -147,6 +176,11 @@ beforeEach(() => {
     isError: false,
   });
   queries.getSoilSurvey.mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+  });
+  queries.getSoilMoisture.mockReturnValue({
     data: undefined,
     isLoading: false,
     isError: false,
@@ -454,5 +488,172 @@ describe("SoilPanel property selector", () => {
     expect(screen.getByText("1.35 g/cm³")).toBeTruthy();
     expect(screen.getByText("18.2 cmol/kg")).toBeTruthy();
     expect(screen.getByText("4.6 kg/m³")).toBeTruthy();
+  });
+});
+
+/**
+ * The soil-moisture field publishes three things the map cannot say on its own: that a
+ * zoomed-out view is a smoothed average rather than measured cells, that the day drawn is
+ * not always the day asked for (the ERA5-Land archive ends before the live edge), and that
+ * an empty view is missing coverage rather than dry soil.
+ */
+describe("SoilPanel soil-moisture field", () => {
+  /** A published collection carrying only what the panel reads. */
+  function moistureCollection(
+    overrides: Partial<NonNullable<SoilMoistureResult["data"]>> = {}
+  ): NonNullable<SoilMoistureResult["data"]> {
+    return {
+      type: "FeatureCollection",
+      features: [],
+      availability: "published",
+      reason: null,
+      granularity: "detail",
+      unit: "m^3/m^3",
+      attribution: "ERA5-Land (Copernicus/ECMWF) via Open-Meteo, CC-BY 4.0",
+      observedDay: "2026-04-30",
+      requestedDay: "2026-04-30",
+      newestAvailableDay: null,
+      cellCount: 12,
+      maxObservationAgeDays: 30,
+      latticeDegrees: null,
+      bands: [{ bandIndex: 0, color: "#8c510a", label: "< 0.05" }],
+      ...overrides,
+    };
+  }
+
+  function renderWithMoistureOn(
+    data: NonNullable<SoilMoistureResult["data"]> | undefined,
+    zoom = 10
+  ) {
+    useMapStore.setState({ activeLayers: ["soil-moisture"] });
+    queries.getSoilMoisture.mockReturnValue({ data, isLoading: false, isError: false });
+    return renderWithProviders(
+      <SoilPanel open onOpenChange={() => {}} bbox={VIEWPORT_BBOX} zoom={zoom} />
+    );
+  }
+
+  it("neither queries nor describes the field while the toggle is off", () => {
+    useMapStore.setState({ activeLayers: [] });
+    renderWithProviders(<SoilPanel open onOpenChange={() => {}} bbox={VIEWPORT_BBOX} zoom={10} />);
+
+    expect(enabledFlagOf(queries.getSoilMoisture)).toBe(false);
+    expect(screen.queryByText(/Volumetric soil water/)).toBeNull();
+  });
+
+  it("keys on the same zoom and depth the map drew with", () => {
+    useSoilStore.setState({ moistureDepth: "deep" });
+    renderWithMoistureOn(moistureCollection(), 6);
+
+    const [input] = queries.getSoilMoisture.mock.calls.at(-1) as unknown as [
+      { bbox: string; zoom: number; depth: string },
+    ];
+    expect(input.bbox).toBe(VIEWPORT_BBOX);
+    expect(input.zoom).toBe(6);
+    expect(input.depth).toBe("deep");
+  });
+
+  it("labels a zoomed-out view as a smoothed average over a coarser lattice", () => {
+    renderWithMoistureOn(
+      moistureCollection({ granularity: "coarse-average", latticeDegrees: 1, cellCount: 1568 }),
+      5
+    );
+
+    expect(screen.getByText(/smoothed contours over a/)).toBeTruthy();
+    expect(screen.getByText(/not individual/)).toBeTruthy();
+  });
+
+  it("makes no average claim at the detail tier, where the cells are the measurements", () => {
+    renderWithMoistureOn(moistureCollection({ granularity: "detail" }));
+
+    expect(screen.queryByText(/smoothed contours over a/)).toBeNull();
+  });
+
+  it("names both days when the newest reading predates the day asked for", () => {
+    renderWithMoistureOn(
+      moistureCollection({ observedDay: "2026-04-30", requestedDay: "2026-05-20" })
+    );
+
+    expect(screen.getByText(/Drawn for 2026-04-30/)).toBeTruthy();
+    expect(screen.getByText(/at or before 2026-05-20/)).toBeTruthy();
+  });
+
+  it("says which day to scrub to rather than drawing a field that is too old", () => {
+    renderWithMoistureOn(
+      moistureCollection({
+        availability: "unavailable",
+        reason: "stale",
+        observedDay: null,
+        requestedDay: "2026-08-06",
+        newestAvailableDay: "2026-04-30",
+      })
+    );
+
+    expect(screen.getByText(/Scrub the time slider to 2026-04-30/)).toBeTruthy();
+  });
+
+  it("calls an uncovered view missing coverage, not dry soil", () => {
+    renderWithMoistureOn(
+      moistureCollection({ availability: "unavailable", reason: "not_published", observedDay: null })
+    );
+
+    expect(screen.getByText(/not dry soil/)).toBeTruthy();
+  });
+
+  it("refuses a future day instead of drawing the newest reading under it", () => {
+    renderWithMoistureOn(
+      moistureCollection({
+        availability: "unavailable",
+        reason: "not_forecastable",
+        observedDay: null,
+        requestedDay: "2027-01-01",
+      })
+    );
+
+    expect(screen.getByText(/is in the future/)).toBeTruthy();
+    expect(screen.getByText(/nothing may be invented/)).toBeTruthy();
+  });
+
+  it("publishes the licence attribution wherever the values are drawn", () => {
+    renderWithMoistureOn(moistureCollection());
+
+    expect(screen.getByText(/CC-BY 4.0/)).toBeTruthy();
+  });
+
+  it("offers a depth selector and writes the chosen depth to the store", () => {
+    renderWithMoistureOn(moistureCollection());
+
+    act(() => screen.getByText("Root zone (7-28 cm)").click());
+    expect(useSoilStore.getState().moistureDepth).toBe("root-zone");
+  });
+});
+
+/**
+ * `queryPoint` drove the point query since the panel was written and nothing ever passed
+ * one. These pin the reachable half: the instruction is stated when there is no point, and
+ * the pin is clearable from the panel when there is.
+ */
+describe("SoilPanel queried point", () => {
+  it("tells the user how to pick a point, and how to clear it", () => {
+    renderWithProviders(<SoilPanel open onOpenChange={() => {}} bbox={VIEWPORT_BBOX} />);
+
+    expect(screen.getByText(/Click anywhere on the map to query soil properties/)).toBeTruthy();
+    expect(screen.getByText(/press Escape, to clear it/)).toBeTruthy();
+    expect(screen.queryByText("Clear queried point")).toBeNull();
+  });
+
+  it("clears the pin through the handler PanelManager supplied", () => {
+    const onClearQueryPoint = vi.fn();
+    renderWithProviders(
+      <SoilPanel
+        open
+        onOpenChange={() => {}}
+        bbox={VIEWPORT_BBOX}
+        queryPoint={{ lat: 43.6, lon: -116.2 }}
+        onClearQueryPoint={onClearQueryPoint}
+      />
+    );
+
+    act(() => screen.getByText("Clear queried point").click());
+    expect(onClearQueryPoint).toHaveBeenCalledTimes(1);
   });
 });

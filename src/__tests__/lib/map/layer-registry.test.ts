@@ -119,7 +119,7 @@ describe('layer registry derivations', () => {
       'watersheds',
     ])
     expect(getLayersForPanel('vegetation')).toEqual(['vegetation'])
-    expect(getLayersForPanel('soil')).toEqual(['soil', 'soil-survey'])
+    expect(getLayersForPanel('soil')).toEqual(['soil', 'soil-survey', 'soil-moisture'])
     expect(getLayersForPanel('community')).toEqual(['demand-heatmap', 'interventions'])
     expect(getLayersForPanel('team')).toEqual([])
     expect(getLayersForPanel('analytics')).toEqual([])
@@ -174,6 +174,20 @@ describe('layer registry derivations', () => {
   // geo.layers, so claiming a warehouse layer name would make useLayerRenderState look up
   // a slider capability that can never exist and caption the layer with a history nobody
   // measured. Their governance stubs are lifted, so neither may carry a withheld reason.
+  // soil-moisture is served out of the agri MODEL plane (agri.signal_observation), not out
+  // of geo.features, so it has no geo.layers row to name and no slider capability to look
+  // up -- the same shape drought and the proxied collections have. It still draws the
+  // slider's day; it simply makes no claim about which days the axis should offer.
+  it('gives the agri-plane soil-moisture field a panel switch and no warehouse feed', () => {
+    const entry = LAYER_REGISTRY['soil-moisture']
+    expect(entry.renderKind).toBe('component')
+    expect(entry.styleLayerIds).toEqual([])
+    expect(entry.warehouseLayerName).toBeNull()
+    expect(entry.permanentlyUnavailableReason).toBeNull()
+    expect(panelIdForLayerToggle('soil-moisture')).toBe('soil')
+    expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty('soil-moisture')
+  })
+
   it('treats the upstream-proxied collections as component layers with no warehouse feed', () => {
     for (const toggleId of ['watersheds', 'soil-survey'] as const) {
       const entry = LAYER_REGISTRY[toggleId]

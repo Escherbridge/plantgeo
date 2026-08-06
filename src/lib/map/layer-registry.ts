@@ -18,6 +18,7 @@ export type LayerToggleId =
   | "vegetation"
   | "soil"
   | "soil-survey"
+  | "soil-moisture"
   | "demand-heatmap"
   | "interventions"
   | "evacuation-zones"
@@ -133,6 +134,19 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // See soilSurveyLayer in layers.ts.
   "soil-survey": {
     toggleId: "soil-survey",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "soil",
+    permanentlyUnavailableReason: null,
+  },
+  // ERA5-Land volumetric soil water, read through environmental.getSoilMoisture. The first
+  // layer served out of the MODEL plane (agri.signal_observation) rather than geo.features,
+  // so it claims no `geo.layers` name and gets no slider capability -- the same shape drought
+  // and watersheds have. It still draws the slider's day; it simply makes no claim about
+  // which days the axis should offer. See SoilMoistureLayer in layers/SoilMoistureLayer.tsx.
+  "soil-moisture": {
+    toggleId: "soil-moisture",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,

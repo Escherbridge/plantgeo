@@ -12,12 +12,14 @@ import {
 } from "@/lib/map/layer-toggle-context";
 import { useFireData } from "@/hooks/useFireData";
 import {
+  useSoilMoistureQuery,
   useSoilSurveyQuery,
   useViewportBounds,
   useWatershedsQuery,
 } from "@/hooks/useViewportProxiedLayers";
 import { trpc } from "@/lib/trpc/client";
 import { styleBackedLayerEntries } from "@/lib/map/layer-registry";
+import { useMapStore } from "@/stores/map-store";
 import type { WindPoint } from "@/components/map/layers/WeatherLayer";
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
@@ -49,12 +51,20 @@ const SoilSurveyLayer = dynamic(
   () => import("@/components/map/layers/SoilSurveyLayer").then((m) => ({ default: m.SoilSurveyLayer })),
   { ssr: false }
 );
+const SoilMoistureLayer = dynamic(
+  () => import("@/components/map/layers/SoilMoistureLayer").then((m) => ({ default: m.SoilMoistureLayer })),
+  { ssr: false }
+);
 const DemandHeatmapLayer = dynamic(
   () => import("@/components/map/layers/DemandHeatmapLayer").then((m) => ({ default: m.DemandHeatmapLayer })),
   { ssr: false }
 );
 const WeatherLayer = dynamic(
   () => import("@/components/map/layers/WeatherLayer").then((m) => ({ default: m.WeatherLayer })),
+  { ssr: false }
+);
+const QueryPointLayer = dynamic(
+  () => import("@/components/map/layers/QueryPointLayer").then((m) => ({ default: m.QueryPointLayer })),
   { ssr: false }
 );
 
@@ -68,6 +78,8 @@ export default function LayerManager() {
   const fireData = useFireData(layerVisibility.fire);
   // Shared with PanelManager: one derivation, so the map and the panels key on one bbox.
   const { zoom, bbox } = useViewportBounds();
+  // Written only by PanelManager's capture hook; drawn here because the map owns its layers.
+  const queryPoint = useMapStore((state) => state.queryPoint);
 
   // The slider's day, settled. `requestDate` is undefined whenever the selection IS the
   // server's today, which keeps the hot path on the exact dateless query key -- and the exact
@@ -123,11 +135,31 @@ export default function LayerManager() {
     watershedsVisible && watershedQuery.data ? watershedQuery.data : EMPTY_FEATURE_COLLECTION;
 
   const soilSurveyVisible = layerVisibility["soil-survey"];
-  const soilSurveyQuery = useSoilSurveyQuery(bbox, { enabled: soilSurveyVisible });
+  // `zoom` is what selects the survey's render granularity server-side. Omitting it -- which
+  // both call sites did until now -- resolves to the detail tier, whose 0.02 sq-deg ceiling
+  // the tRPC input then rejects at any ordinary zoom, so the layer only ever drew when zoomed
+  // in past ~13. Passed from the same `useViewportBounds()` derivation SoilPanel reads it
+  // from, so the map and the panel stay on ONE react-query entry.
+  const soilSurveyQuery = useSoilSurveyQuery(bbox, { enabled: soilSurveyVisible, zoom });
   // Only the features are drawable: a truncated view and an upstream fault both reach the
   // map as polygons that stop, so the collection's truncated/availability pair is read by
   // SoilPanel instead, from this same query key. See src/lib/server/AGENTS.md §soil-survey.
   const soilSurveyGeoJSON = soilSurveyQuery.data ?? EMPTY_FEATURE_COLLECTION;
+
+  // ERA5-Land soil moisture. `zoom` is not a hint here -- it selects the server-side
+  // aggregation tier, so zooming out makes the answer SMALLER (isobands over a coarse
+  // lattice) rather than shipping 1,568 squares. The day is the slider's, settled, like
+  // every other warehouse-backed feed; the depth is the panel's, and neither is a second
+  // time control. staleTime matches vegetation's: a reanalysis archive day is immutable.
+  const soilMoistureVisible = layerVisibility["soil-moisture"];
+  const soilMoistureQuery = useSoilMoistureQuery(bbox, {
+    enabled: soilMoistureVisible,
+    date: requestDate,
+    depth: soilMode.moistureDepth,
+    zoom,
+  });
+  const soilMoistureGeoJSON: GeoJSON.FeatureCollection =
+    soilMoistureQuery.data ?? EMPTY_FEATURE_COLLECTION;
 
   const weatherEnabled = layerVisibility.weather;
   // Reads every published observation across the viewport bbox -- not just the
@@ -265,6 +297,12 @@ export default function LayerManager() {
         opacity={soilMode.opacity}
       />
       <SoilSurveyLayer map={map} geojson={soilSurveyGeoJSON} visible={soilSurveyVisible} />
+      <SoilMoistureLayer
+        map={map}
+        geojson={soilMoistureGeoJSON}
+        opacity={soilMode.opacity}
+        visible={soilMoistureVisible}
+      />
       <DemandHeatmapLayer
         map={map}
         bbox={bbox}
@@ -272,6 +310,9 @@ export default function LayerManager() {
         visible={layerVisibility["demand-heatmap"] && bbox !== null}
       />
       <WeatherLayer map={map} data={weatherData} visible={weatherEnabled} />
+      {/* Not a data layer and so not in the registry: it marks where the user clicked,
+          and PanelManager's capture hook is the only thing that ever sets it. */}
+      <QueryPointLayer map={map} point={queryPoint} />
     </>
   );
 }

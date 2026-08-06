@@ -99,6 +99,13 @@
       "when": 1786500000000,
       "breakpoints": true,
       "tag": "0013_soil_survey_persistence"
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1786600000000,
+      "breakpoints": true,
+      "tag": "0014_soil_moisture_field"
     }
   ]
 }

@@ -26,6 +26,7 @@ import {
 } from "@/stores/time-slider-store";
 import { useVegetationStore } from "@/stores/vegetation-store";
 import { resolveGibsNdviDate } from "@/lib/vegetation";
+import type { SoilMoistureDepth } from "@/lib/environmental/soil-moisture";
 import type { SoilProperty } from "@/components/map/layers/SoilLayer";
 import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
 import type {
@@ -355,12 +356,21 @@ export function useVegetationDisplayMode(): VegetationDisplayMode {
 export interface SoilDisplayMode {
   property: SoilProperty;
   opacity: number;
+  /**
+   * The ECMWF layer the moisture field draws. A depth, never a date -- the moisture layer
+   * takes its day from `useDebouncedMapDay` like every other warehouse-backed feed.
+   */
+  moistureDepth: SoilMoistureDepth;
 }
 
 /** Read-only view of the soil store; the panel keeps the store for its setters. */
 export function useSoilDisplayMode(): SoilDisplayMode {
   const property = useSoilStore((state) => state.property);
   const opacity = useSoilStore((state) => state.opacity);
+  const moistureDepth = useSoilStore((state) => state.moistureDepth);
 
-  return useMemo(() => ({ property, opacity }), [property, opacity]);
+  return useMemo(
+    () => ({ property, opacity, moistureDepth }),
+    [property, opacity, moistureDepth]
+  );
 }

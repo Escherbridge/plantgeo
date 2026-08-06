@@ -16,14 +16,27 @@ import { CARBON_COLORS, classifyCarbonPotential, type CarbonClass } from "@/comp
 import { LayerToggle } from "@/components/ui/layer-toggle";
 import type { InterventionType } from "@/lib/environmental/intervention";
 import { ENVIRONMENTAL_TILES_CONFIGURED } from "@/lib/vegetation";
-import { useLayerVisibility } from "@/lib/map/layer-toggle-context";
-import { useSoilSurveyQuery } from "@/hooks/useViewportProxiedLayers";
+import { useDebouncedMapDay, useLayerVisibility } from "@/lib/map/layer-toggle-context";
+import {
+  useSoilMoistureQuery,
+  useSoilSurveyQuery,
+} from "@/hooks/useViewportProxiedLayers";
+import {
+  SOIL_MOISTURE_DEPTHS,
+  soilMoistureDepthDefinition,
+} from "@/lib/environmental/soil-moisture";
 
 interface SoilPanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Point to query for soil + intervention suitability */
   queryPoint?: { lat: number; lon: number } | null;
+  /**
+   * Drops the query pin. Supplied by PanelManager, which owns the click capture -- closing
+   * the panel clears the pin too, so this is the in-panel escape hatch rather than the only
+   * one. See `src/components/map/AGENTS.md` "Picking a point to query".
+   */
+  onClearQueryPoint?: () => void;
   /** The map's viewport, handed down by PanelManager exactly as the other panels get it. */
   bbox?: string;
   /**
@@ -126,10 +139,13 @@ export function SoilPanel({
   open,
   onOpenChange,
   queryPoint,
+  onClearQueryPoint,
   bbox,
   zoom,
 }: SoilPanelProps) {
   const { property: selectedProperty, setProperty } = useSoilStore();
+  const moistureDepth = useSoilStore((state) => state.moistureDepth);
+  const setMoistureDepth = useSoilStore((state) => state.setMoistureDepth);
 
   const soilQuery = trpc.environmental.getSoilProperties.useQuery(
     { lat: queryPoint?.lat ?? 0, lon: queryPoint?.lon ?? 0 },
@@ -151,11 +167,37 @@ export function SoilPanel({
   // this panel never issues an upstream request the map was not already making.
   // `useLayerVisibility` and not `useLayerToggle`: the panel must not become the sole
   // requester of a layer governance withholds from the map.
-  const soilSurveyVisible = useLayerVisibility()["soil-survey"];
+  const layerVisibility = useLayerVisibility();
+  const soilSurveyVisible = layerVisibility["soil-survey"];
   const soilSurveyQuery = useSoilSurveyQuery(bbox, {
     enabled: open && soilSurveyVisible,
     zoom,
   });
+
+  // The soil-moisture field the map is drawing, read back on the same key so opening this
+  // panel never issues a request the map was not already making. The day comes from the
+  // global slider -- this panel adds a DEPTH control, never a second date control.
+  const soilMoistureVisible = layerVisibility["soil-moisture"];
+  const { requestDate } = useDebouncedMapDay();
+  const soilMoistureQuery = useSoilMoistureQuery(bbox, {
+    enabled: open && soilMoistureVisible,
+    date: requestDate,
+    depth: moistureDepth,
+    zoom,
+  });
+  const soilMoisture = soilMoistureQuery.data;
+  const soilMoistureAggregated =
+    soilMoisture !== undefined && soilMoisture.granularity !== "detail";
+  // The archive ends before the live edge, so "the day you asked for" and "the day drawn"
+  // routinely differ. Saying so is the whole point: a field silently drawn from four months
+  // ago while the slider reads today is a lie the map cannot tell on its own.
+  const soilMoistureDayDiffers =
+    soilMoisture?.observedDay != null &&
+    soilMoisture.observedDay !== soilMoisture.requestedDay;
+  // Defaulted rather than dereferenced. The server always sends the band table, but a
+  // response replayed from IndexedDB was serialized by whatever schema was current when it
+  // was written -- and a panel that throws is a worse failure than a missing legend.
+  const soilMoistureBands = soilMoisture?.bands ?? [];
   const soilSurvey = soilSurveyQuery.data;
   // USDA holds more map units than it serves for one view and returned a subset; the
   // count below then describes part of the view, not the view.
@@ -208,6 +250,141 @@ export function SoilPanel({
         </SheetHeader>
 
         <LayerToggle layerId="soil" label="Soil Properties" />
+        {/* ERA5-Land volumetric soil water. Registry-routed to this panel like the survey
+            below; without a switch here the SoilMoistureLayer polygons could never be turned
+            on, since the Legend only lists warehouse-backed (geo.layers) feeds and this one
+            reads the agri model plane. */}
+        <LayerToggle layerId="soil-moisture" label="Soil Moisture (ERA5-Land)" />
+
+        {soilMoistureVisible && (
+          <div className="mt-1.5 flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5">
+              <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                Depth (ECMWF soil layer)
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {SOIL_MOISTURE_DEPTHS.map((definition) => (
+                  <button
+                    key={definition.depth}
+                    className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                      moistureDepth === definition.depth
+                        ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent"
+                        : "border-[hsl(var(--border))] text-[hsl(var(--foreground))] bg-[hsl(var(--card))]"
+                    }`}
+                    onClick={() => setMoistureDepth(definition.depth)}
+                  >
+                    {definition.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {soilMoistureQuery.isLoading && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="text-xs text-[hsl(var(--muted-foreground))]"
+              >
+                Loading the soil-moisture field for this view…
+              </p>
+            )}
+
+            {/* Zoomed out past the detail tier: these are contours through a smoothed
+                average over a coarser lattice, not individual 0.25-degree readings. Shown
+                whenever the response says so, never guessed ahead of it. */}
+            {soilMoistureAggregated && soilMoisture && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                Zoomed out: showing smoothed contours over a{" "}
+                {soilMoisture.latticeDegrees}° lattice, averaged from{" "}
+                {soilMoisture.cellCount} measured 0.25° cell
+                {soilMoisture.cellCount === 1 ? "" : "s"}. These are not individual
+                readings — zoom in past z{9} for the measured cells.
+              </p>
+            )}
+
+            {/* The archive's last day is not today's day. Naming both is the only way the
+                map can be read correctly. */}
+            {soilMoistureDayDiffers && soilMoisture && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                Drawn for {soilMoisture.observedDay}, the newest reading at or before{" "}
+                {soilMoisture.requestedDay} — nothing is carried forward past{" "}
+                {soilMoisture.maxObservationAgeDays} days.
+              </p>
+            )}
+
+            {soilMoisture?.reason === "stale" && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                Nothing is drawn for {soilMoisture.requestedDay}: the newest ERA5-Land
+                reading for this view is {soilMoisture.newestAvailableDay}, more than{" "}
+                {soilMoisture.maxObservationAgeDays} days earlier. Scrub the time slider to{" "}
+                {soilMoisture.newestAvailableDay} or before to see the field.
+              </p>
+            )}
+
+            {soilMoisture?.reason === "not_published" && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                The ERA5-Land lattice does not cover this view yet. Blank ground here is
+                missing coverage on our side, not dry soil.
+              </p>
+            )}
+
+            {soilMoisture?.reason === "not_forecastable" && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                {soilMoisture.requestedDay} is in the future. ERA5-Land is a reanalysis
+                archive, so there is nothing to draw and nothing may be invented for it.
+              </p>
+            )}
+
+            {soilMoistureQuery.isError && (
+              <p
+                role="alert"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                The soil-moisture field could not be loaded for this view. Try again shortly.
+              </p>
+            )}
+
+            {soilMoisture?.availability === "published" && soilMoistureBands.length > 0 && (
+              <>
+                <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                  <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
+                    Volumetric soil water ({soilMoisture.unit}) —{" "}
+                    {soilMoistureDepthDefinition(moistureDepth).label}
+                  </p>
+                  <div className="flex flex-col gap-1">
+                    {soilMoistureBands.map((band) => (
+                      <ColorLegendRow key={band.bandIndex} color={band.color} label={band.label} />
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                  {soilMoisture.attribution}
+                </p>
+              </>
+            )}
+          </div>
+        )}
+
         {/* The registry routes "soil-survey" to this panel, and the Legend only lists
             warehouse-backed layers (soil-survey's warehouseLayerName is null) -- so without
             a switch here the SSURGO polygons SoilSurveyLayer renders could never be turned
@@ -403,11 +580,22 @@ export function SoilPanel({
                 </p>
               </div>
 
-              {/* Queried point data */}
+              {/* Queried point data. Capture is armed for as long as this panel is open --
+                  PanelManager owns it -- so the instruction below is always true here. */}
               {!queryPoint && (
                 <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                  Click anywhere on the map to query soil properties at that point.
+                  Click anywhere on the map to query soil properties at that point. Click the
+                  pin again, or press Escape, to clear it.
                 </p>
+              )}
+
+              {queryPoint && onClearQueryPoint && (
+                <button
+                  className="self-start rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2.5 py-1 text-xs font-medium text-[hsl(var(--foreground))] transition-colors hover:bg-[hsl(var(--accent))]"
+                  onClick={onClearQueryPoint}
+                >
+                  Clear queried point
+                </button>
               )}
 
               {queryPoint && soilQuery.isLoading && (

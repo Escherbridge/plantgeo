@@ -3,6 +3,7 @@ import { act } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import { MapProvider } from "@/lib/map/map-context";
 import { useMapStore } from "@/stores/map-store";
+import { useSoilStore } from "@/stores/soil-store";
 import { UNINITIALIZED_DATE, useTimeSliderStore } from "@/stores/time-slider-store";
 import type { SliderCapabilities } from "@/types/time-slider";
 import type maplibregl from "maplibre-gl";
@@ -59,6 +60,7 @@ const viewportQueries = vi.hoisted(() => ({
   // `mock.calls`, which is where the `enabled` flag and the query input are read from.
   getWatersheds: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getSoilSurvey: vi.fn((): ViewportQueryResult => ({ data: undefined })),
+  getSoilMoisture: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   // react-query's `enabled: false` does not evict a cached result -- see the negative
   // test below -- so this is mutable per-test rather than a static `vi.fn(() => ...)`.
   getStreamflow: vi.fn((): StreamflowQueryResult => ({ data: [] })),
@@ -76,6 +78,7 @@ vi.mock("@/lib/trpc/client", () => ({
       getGroundwater: { useQuery: viewportQueries.getGroundwater },
       getWatersheds: { useQuery: viewportQueries.getWatersheds },
       getSoilSurvey: { useQuery: viewportQueries.getSoilSurvey },
+      getSoilMoisture: { useQuery: viewportQueries.getSoilMoisture },
       getVegetationIndex: { useQuery: viewportQueries.getVegetationIndex },
     },
     wildfire: {
@@ -162,6 +165,7 @@ function renderLayerManager(fakeMap: FakeMap) {
 }
 
 const INITIAL_MAP_STATE = useMapStore.getState();
+const INITIAL_SOIL_STATE = useSoilStore.getState();
 
 const SERVER_CURRENT_DATE = "2026-08-04";
 const sliderCapabilities: SliderCapabilities = {
@@ -188,10 +192,12 @@ function resetSliderStore() {
 
 beforeEach(() => {
   useMapStore.setState(INITIAL_MAP_STATE, true);
+  useSoilStore.setState(INITIAL_SOIL_STATE, true);
   resetSliderStore();
   dynamicStub.renders.length = 0;
   viewportQueries.getWatersheds.mockReturnValue({ data: undefined });
   viewportQueries.getSoilSurvey.mockReturnValue({ data: undefined });
+  viewportQueries.getSoilMoisture.mockReturnValue({ data: undefined });
   viewportQueries.getStreamflow.mockReturnValue({ data: [] });
   viewportQueries.getGroundwater.mockReturnValue({ data: [] });
   viewportQueries.getVegetationIndex.mockReturnValue({ data: undefined });
@@ -203,6 +209,7 @@ afterEach(() => {
   vi.clearAllMocks();
   dynamicStub.renders.length = 0;
   useMapStore.setState(INITIAL_MAP_STATE, true);
+  useSoilStore.setState(INITIAL_SOIL_STATE, true);
   // The slider store is reset in beforeEach only: writing it here would fire
   // useDebouncedMapDay's subscription while the tree is still mounted, scheduling a settle
   // timer that lands after the test and outside act().
@@ -421,6 +428,58 @@ describe("LayerManager viewport-proxied polygon layers", () => {
     expect(lastRenderOf("WaterLayer")?.visible).toBe(false);
     expect(lastRenderOf("SoilSurveyLayer")?.visible).toBe(false);
   });
+
+  /**
+   * The bug this pins. `resolveSoilSurveyGranularity(undefined)` falls to the detail tier,
+   * whose 0.02 sq-deg ceiling the tRPC input then enforces -- so a zoomless request is
+   * rejected at any ordinary zoom and the panel shows its "zoom in" note. The server's
+   * zoom-adaptive path existed and no caller ever reached it. Same for soil moisture, where
+   * zoom selects the server-side aggregation lattice.
+   */
+  it("sends the live viewport zoom with both zoom-adaptive queries", () => {
+    useMapStore.setState({
+      activeLayers: ["soil-survey", "soil-moisture"],
+      viewport: { longitude: -116.2, latitude: 43.6, zoom: 6.5, bearing: 0, pitch: 0 },
+    });
+
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    expect(inputOf(viewportQueries.getSoilSurvey)).toMatchObject({ zoom: 6.5 });
+    expect(inputOf(viewportQueries.getSoilMoisture)).toMatchObject({ zoom: 6.5 });
+  });
+
+  it("moves both zoom-adaptive queries onto a new tier when the viewport zooms", () => {
+    useMapStore.setState({
+      activeLayers: ["soil-survey", "soil-moisture"],
+      viewport: { longitude: -116.2, latitude: 43.6, zoom: 5, bearing: 0, pitch: 0 },
+    });
+
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    act(() => {
+      useMapStore.setState({
+        viewport: { longitude: -116.2, latitude: 43.6, zoom: 14, bearing: 0, pitch: 0 },
+      });
+    });
+
+    expect(inputOf(viewportQueries.getSoilSurvey)).toMatchObject({ zoom: 14 });
+    expect(inputOf(viewportQueries.getSoilMoisture)).toMatchObject({ zoom: 14 });
+  });
+
+  it("asks for soil moisture at the panel's selected depth", () => {
+    useMapStore.setState({ activeLayers: ["soil-moisture"] });
+    useSoilStore.setState({ moistureDepth: "root-zone" });
+
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    expect(inputOf(viewportQueries.getSoilMoisture)).toMatchObject({ depth: "root-zone" });
+  });
 });
 
 /**
@@ -431,11 +490,12 @@ describe("LayerManager viewport-proxied polygon layers", () => {
  * for the same answer.
  */
 describe("LayerManager threads the slider's day into the warehouse-backed queries", () => {
-  /** The four procedures whose input carries `date` alongside a bbox. */
+  /** Every procedure whose input carries `date` alongside a bbox. */
   const DATED_BBOX_QUERIES = [
     ["getStreamflow", viewportQueries.getStreamflow],
     ["getGroundwater", viewportQueries.getGroundwater],
     ["getVegetationIndex", viewportQueries.getVegetationIndex],
+    ["getSoilMoisture", viewportQueries.getSoilMoisture],
     ["getWeatherForBbox", viewportQueries.getWeatherForBbox],
   ] as const;
 

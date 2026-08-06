@@ -1,10 +1,14 @@
 "use client";
 
 /**
- * The two viewport-proxied polygon feeds (HUC12 watersheds, SSURGO map units) as one
- * hook each, so the map and the panels that describe it issue the *same* react-query
- * entry rather than two that merely look alike. See `src/lib/server/AGENTS.md`
+ * The viewport polygon feeds the map AND a panel both read (HUC12 watersheds, SSURGO map
+ * units, the ERA5-Land soil-moisture field) as one hook each, so the two issue the *same*
+ * react-query entry rather than two that merely look alike. See `src/lib/server/AGENTS.md`
  * §proxied-viewport-queries.
+ *
+ * Two of the three are proxied from a third party and one is read from the warehouse; what
+ * they share is not their upstream but the sharing hazard, which is that a panel describing
+ * a layer must never key its read differently from the map drawing it.
  */
 
 import { useMemo } from "react";
@@ -12,6 +16,7 @@ import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
 import { viewportBbox } from "@/lib/map/viewport-bbox";
 import { trpc } from "@/lib/trpc/client";
 import { useMapStore } from "@/stores/map-store";
+import type { SoilMoistureDepth } from "@/lib/environmental/soil-moisture";
 
 /** Zoom a viewport is read at before the map has reported one of its own. */
 const DEFAULT_ZOOM = 8;
@@ -31,6 +36,13 @@ const SOIL_SURVEY_STALE_TIME_MS = 24 * 60 * 60 * 1000;
 
 /** One retry, not react-query's default three — each attempt re-pays the full upstream cost. */
 const PROXIED_RETRY_COUNT = 1;
+
+/**
+ * ERA5-Land: a reanalysis archive day never changes once published, and the answer is
+ * aggregated and contoured per request, so the hour matches vegetation's rather than the
+ * 15-minute observation feeds'. The IndexedDB persister backs it beyond the session.
+ */
+const SOIL_MOISTURE_STALE_TIME_MS = 60 * 60 * 1000;
 
 /** The viewport as every viewport-scoped query keys on it. */
 export interface ViewportBounds {
@@ -102,6 +114,45 @@ export function useSoilSurveyQuery(
     {
       enabled: enabled && requested !== null && !isWithheld("soil-survey"),
       staleTime: SOIL_SURVEY_STALE_TIME_MS,
+      retry: PROXIED_RETRY_COUNT,
+    }
+  );
+}
+
+/** Everything that keys a soil-moisture read; all of it must match across the two callers. */
+export interface SoilMoistureQueryOptions extends ProxiedQueryOptions {
+  /** The slider's settled day, or undefined at the server's today. */
+  date: string | undefined;
+  depth: SoilMoistureDepth;
+  /**
+   * Selects the server-side aggregation tier; zooming out makes the answer smaller.
+   *
+   * `number | undefined`, not `number`, and the two callers must agree on which. Coercing a
+   * missing zoom to 0 here would mean "coarse tier" while `useSoilSurveyQuery` reads the
+   * same absence as "detail" — two different answers for the same viewport, on two cache
+   * entries. Undefined is passed through so the server resolves it, once, for both.
+   */
+  zoom: number | undefined;
+}
+
+/**
+ * ERA5-Land soil moisture for the viewport, read from the warehouse and aggregated
+ * server-side by zoom.
+ *
+ * Every input here is part of the query key, so the map and the panel must pass the same
+ * four -- both take `bbox`/`zoom` from the one `useViewportBounds()` derivation, `date` from
+ * `useDebouncedMapDay`, and `depth` from the soil store.
+ */
+export function useSoilMoistureQuery(
+  bbox: string | null | undefined,
+  { enabled, date, depth, zoom }: SoilMoistureQueryOptions
+) {
+  const requested = bbox ?? null;
+  return trpc.environmental.getSoilMoisture.useQuery(
+    { bbox: requested ?? NO_VIEWPORT_BBOX, date, depth, zoom },
+    {
+      enabled: enabled && requested !== null && !isWithheld("soil-moisture"),
+      staleTime: SOIL_MOISTURE_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
     }
   );

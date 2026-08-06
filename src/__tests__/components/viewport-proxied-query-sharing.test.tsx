@@ -236,6 +236,27 @@ describe("viewport-proxied feeds are fetched once for the map and its panel", ()
     expect(operationsFor("environmental.getWatersheds")).toHaveLength(1);
   });
 
+  // Warehouse-backed rather than proxied, and keyed on four inputs rather than two (bbox,
+  // date, depth AND zoom). More inputs is more surface for the map and the panel to
+  // disagree on, which is exactly why it belongs in this file.
+  it("gives the soil-moisture field one query entry, one request and one set of options", async () => {
+    useMapStore.setState({ activeLayers: ["soil-moisture"] });
+    usePanelStore.setState({ openPanel: "soil" });
+
+    const queryClient = await renderMapAndPanels();
+
+    await settle(queryClient);
+    expect(operationsFor("environmental.getSoilMoisture").length).toBeGreaterThan(0);
+
+    const entries = cacheEntriesFor(queryClient, "getSoilMoisture");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].observers).toHaveLength(2);
+    expect(new Set(entries[0].observers.map((o) => o.options.staleTime))).toEqual(
+      new Set([60 * 60 * 1000])
+    );
+    expect(operationsFor("environmental.getSoilMoisture")).toHaveLength(1);
+  });
+
   it("keeps one entry even with the panel closed, since the key cannot depend on it", async () => {
     useMapStore.setState({ activeLayers: ["soil-survey"] });
     usePanelStore.setState({ openPanel: null });

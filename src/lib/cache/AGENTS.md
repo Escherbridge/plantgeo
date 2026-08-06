@@ -107,3 +107,18 @@ network this time":
 - `indexeddb-store.ts` -- the wrapper described above.
 - `query-persister.ts` -- allowlist predicate, TTL policy, cacheability check, eviction, and
   the exported `indexedDbLayerQueryPersister` wired into `src/lib/providers.tsx`.
+
+## `environmental.getSoilMoisture` (added 2026-08-06)
+
+The most expensive answer on the allowlist to recompute and the cheapest to store. Every
+request costs a PostGIS aggregation plus a Gaussian blur plus a marching-squares pass, and
+the result for a whole-PNW coarse view is at most nine polygons — a few KB. The day behind
+it is an ERA5-Land archive day, which is immutable once published, so `resolveCacheTtlMs`
+gives any past day the 30-day historical TTL and scrubbing back to a day already seen must
+never re-run the aggregation.
+
+Its input carries `depth` and `zoom` on top of `bbox`/`date`. Both are part of the
+`queryHash`, so a different depth or a different aggregation tier is a different entry
+rather than a stale hit — which is the correct behaviour, and needs no change here:
+`isPersistableQueryKey` only requires that a bbox or a date be present, and never inspects
+the rest of the input.

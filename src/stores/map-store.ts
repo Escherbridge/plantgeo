@@ -4,10 +4,28 @@ import type { MapStyle, Viewport } from "@/types/map";
 
 export type { Viewport };
 
+/** A place on the map the user picked, for the point-query panels to read. */
+export interface MapQueryPoint {
+  lat: number;
+  lon: number;
+}
+
 interface MapState {
   viewport: Viewport;
   activeLayers: string[];
   selectedFeatureId: string | null;
+  /**
+   * The point a panel is querying, or null when none is picked. Interaction state, so it
+   * lives beside `selectedFeatureId` rather than in a store of its own -- see
+   * src/components/map/AGENTS.md "Picking a point to query".
+   */
+  queryPoint: MapQueryPoint | null;
+  /**
+   * True while a panel is capturing map clicks as query points. MapView's own click handler
+   * reads this and stands down, so one click cannot both drop a query pin and open the
+   * agent popup.
+   */
+  isCapturingQueryPoint: boolean;
   is3DEnabled: boolean;
   isGlobeView: boolean;
   terrainExaggeration: number;
@@ -17,6 +35,9 @@ interface MapState {
   setViewport: (viewport: Partial<Viewport>) => void;
   toggleLayer: (layerId: string) => void;
   selectFeature: (id: string | null) => void;
+  setQueryPoint: (point: MapQueryPoint | null) => void;
+  /** Arms/disarms click capture; disarming always clears the point it was capturing. */
+  setCapturingQueryPoint: (capturing: boolean) => void;
   toggle3D: () => void;
   toggleGlobe: () => void;
   setTerrainExaggeration: (value: number) => void;
@@ -41,6 +62,8 @@ export const useMapStore = create<MapState>()(
     viewport: { ...DEFAULT_VIEWPORT },
     activeLayers: ["fire", "water", "weather"], // demo-friendly defaults
     selectedFeatureId: null,
+    queryPoint: null,
+    isCapturingQueryPoint: false,
     is3DEnabled: false,
     isGlobeView: false,
     terrainExaggeration: 1.5,
@@ -56,6 +79,11 @@ export const useMapStore = create<MapState>()(
           : [...s.activeLayers, id],
       })),
     selectFeature: (id) => set({ selectedFeatureId: id }),
+    setQueryPoint: (point) => set({ queryPoint: point }),
+    // Disarming clears the point as well, so closing the panel that armed capture can never
+    // leave a pin on the map with nothing reading it.
+    setCapturingQueryPoint: (capturing) =>
+      set(capturing ? { isCapturingQueryPoint: true } : { isCapturingQueryPoint: false, queryPoint: null }),
     toggle3D: () =>
       set((s) => ({
         is3DEnabled: !s.is3DEnabled,

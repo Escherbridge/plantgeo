@@ -11,6 +11,7 @@ import {
   BarChart3,
 } from "lucide-react";
 import { panelIdsOwningLayers } from "@/lib/map/layer-registry";
+import { useMap } from "@/lib/map/map-context";
 import { useMapStore } from "@/stores/map-store";
 import {
   usePanelStore,
@@ -18,6 +19,7 @@ import {
   getLayersForPanel,
   type PanelId,
 } from "@/stores/panel-store";
+import { useMapQueryPoint } from "@/hooks/useMapQueryPoint";
 import { useViewportBounds } from "@/hooks/useViewportProxiedLayers";
 
 const FireDashboard = dynamic(
@@ -120,8 +122,16 @@ export default function PanelManager() {
     }
   }
 
-  // The same derivation LayerManager uses, so a panel keys on the bbox the map fetched.
-  const { bbox } = useViewportBounds();
+  // The same derivation LayerManager uses, so a panel keys on the bbox AND the zoom the map
+  // fetched. Both matter: zoom selects the SSURGO survey's render granularity server-side,
+  // and a panel that omitted it would split the map's query entry in two.
+  const { bbox, zoom } = useViewportBounds();
+
+  // Map clicks become a query point only while the Soil panel is open -- the one panel with
+  // a point query to answer. See src/components/map/AGENTS.md "Picking a point to query".
+  const map = useMap();
+  const isSoilPanelOpen = openPanel === "soil";
+  const { queryPoint, clearQueryPoint } = useMapQueryPoint(map, isSoilPanelOpen);
 
   const mapCenter = { lat: viewport.latitude, lon: viewport.longitude };
 
@@ -157,9 +167,12 @@ export default function PanelManager() {
         bbox={bbox ?? undefined}
       />
       <SoilPanel
-        open={openPanel === "soil"}
+        open={isSoilPanelOpen}
         onOpenChange={(o) => handleOpenChange("soil", o)}
         bbox={bbox ?? undefined}
+        zoom={zoom}
+        queryPoint={queryPoint}
+        onClearQueryPoint={clearQueryPoint}
       />
       <CommunityPanel
         open={openPanel === "community"}
