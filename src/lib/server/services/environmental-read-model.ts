@@ -1576,6 +1576,12 @@ interface MetricSource {
   label: string;
   /** Exact upstream "no reading" marker to exclude, when the producer emits one. */
   missingValueSentinel?: number;
+  /**
+   * Extra predicate applied inside the candidate CTE, for a metric whose backing layer holds
+   * values that are not on one scale. Applied in SQL, not after the fact, so LIMIT and the
+   * candidate/unlinked counts all speak about the same restricted population.
+   */
+  comparableRowsOnly?: SQL;
 }
 
 /**
@@ -1610,8 +1616,17 @@ const METRIC_SOURCES: Readonly<Record<string, MetricSource>> = {
   "fire-radiative-power": {
     layerName: "fire-detections",
     valueKey: "frp",
-    label: "Fire radiative power",
+    label: "Fire radiative power (VIIRS)",
     missingValueSentinel: 0,
+    // FRP is integrated over the sensor pixel, so it is not comparable across instruments. The
+    // FIRMS archive walk added MODIS_SP (1 km pixel) to a layer the forward path had only ever
+    // filled from VIIRS (375 m). Measured on production 2026-08-05: MODIS_SP median FRP 33.10 MW
+    // against VIIRS 4.27 -- an ~8x gap that is pixel area, not fire intensity -- painted in one
+    // symbology with no field recording spatial support. VIIRS is the series this metric was
+    // built on and the only one the live path produces. Rows written before 2026-08-05 carry no
+    // `product` at all and are VIIRS by construction, so absence must pass. Checked against
+    // production: 0 served days go empty under this filter.
+    comparableRowsOnly: sql`COALESCE(f.properties->>'product', '') NOT LIKE 'MODIS%'`,
   },
   "fire-brightness": {
     layerName: "fire-detections",
@@ -2084,6 +2099,11 @@ export async function getMetricAtDate(
             ? sql``
             : sql`AND (f.properties->>${source.valueKey})::double precision
                     <> ${source.missingValueSentinel}::double precision`
+        }
+        ${
+          source.comparableRowsOnly === undefined
+            ? sql``
+            : sql`AND ${source.comparableRowsOnly}`
         }
         ${
           area

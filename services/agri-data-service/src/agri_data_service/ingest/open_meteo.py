@@ -1,8 +1,9 @@
-"""Open-Meteo current-conditions ingestion: the point adapter and the densified sample grid that feeds it."""
+"""Open-Meteo adapters: the current-conditions point sampler and the ERA5-Land archive reader."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import os
 from datetime import UTC, datetime, timedelta
@@ -11,7 +12,16 @@ from urllib.parse import urlencode
 
 import structlog
 
-from agri_data_service.ingest.http import UpstreamBounds, UpstreamPayloadError, fetch_bounded_json, upstream_client
+from agri_data_service.ingest.http import (
+    HTTP_TOO_MANY_REQUESTS,
+    UpstreamBounds,
+    UpstreamError,
+    UpstreamHttpError,
+    UpstreamPayloadError,
+    fetch_bounded,
+    fetch_bounded_json,
+    upstream_client,
+)
 from agri_data_service.ingest.identity import (
     MissingNativeKeyError,
     build_weather_observation_identity,
@@ -34,7 +44,8 @@ from agri_data_service.ingest.results import IngestionJobResult, skipped_result
 from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
+    from datetime import date
 
     import httpx
 
@@ -67,9 +78,104 @@ CURRENT_VALUE_BOUNDS: Final = (
 )
 
 
+# --- ERA5-Land archive endpoint -------------------------------------------------------------
+# A separate endpoint from the forecast one above, with its own byte and time budget: an archive
+# request carries years of daily rows for many locations, not one current observation.
+# See ingest/AGENTS.md and execution/AGENTS.md §historical_open_meteo.
+OPEN_METEO_ARCHIVE_BASE_URL: Final = "https://archive-api.open-meteo.com/v1/archive"
+OPEN_METEO_ARCHIVE_BOUNDS: Final = UpstreamBounds(max_bytes=64 * 1024 * 1024, timeout_seconds=300.0)
+
+# `models` MUST be sent. The endpoint's default is `era5` at 0.25 degrees; only this value
+# selects the 0.1-degree ERA5-Land product whose layers match the CDS variable definitions.
+OPEN_METEO_ERA5_LAND_MODEL: Final = "era5_land"
+
+# `nearest` is pinned rather than left to the default so a coastal request can never be silently
+# relocated to a land cell that is not the one the analysis lattice names.
+OPEN_METEO_ARCHIVE_CELL_SELECTION: Final = "nearest"
+
+MAX_ARCHIVE_LOCATIONS_PER_REQUEST: Final = 200
+
+
+class OpenMeteoRateLimitError(UpstreamError):
+    """Raised when Open-Meteo refuses a request for quota reasons; the scope drives the backoff."""
+
+    def __init__(self, scope: str, reason: str) -> None:
+        """Record which quota window was exhausted and the provider's own wording."""
+        super().__init__(f"Open-Meteo refused the request: {reason}")
+        self.scope = scope
+        self.reason = reason
+
+
 def resolve_weather_layer_name() -> str:
     """Read WEATHER_LAYER_ID at call time so a cron environment change needs no restart."""
     return os.environ.get(WEATHER_LAYER_VARIABLE, "").strip() or DEFAULT_WEATHER_LAYER_NAME
+
+
+def archive_daily_url(
+    coordinates: Sequence[tuple[float, float]],
+    daily_variables: Sequence[str],
+    start_date: date,
+    end_date: date,
+) -> str:
+    """Build one multi-location ERA5-Land archive URL whose parameter order is stable for a checksum."""
+    if not coordinates or len(coordinates) > MAX_ARCHIVE_LOCATIONS_PER_REQUEST:
+        raise ValueError("Open-Meteo archive requests must carry between one and 200 locations")
+    if not daily_variables or sorted(daily_variables) != list(daily_variables):
+        raise ValueError("Open-Meteo archive daily variables must be sorted and non-empty")
+    if end_date < start_date:
+        raise ValueError("Open-Meteo archive end_date must not precede start_date")
+    for latitude, longitude in coordinates:
+        if (
+            not math.isfinite(latitude)
+            or not MIN_LATITUDE <= latitude <= MAX_LATITUDE
+            or not math.isfinite(longitude)
+            or not MIN_LONGITUDE <= longitude <= MAX_LONGITUDE
+        ):
+            raise ValueError("Open-Meteo archive coordinates are outside WGS84 bounds")
+    query = urlencode(
+        {
+            "latitude": ",".join(format_javascript_number(latitude) for latitude, _ in coordinates),
+            "longitude": ",".join(format_javascript_number(longitude) for _, longitude in coordinates),
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "daily": ",".join(daily_variables),
+            "models": OPEN_METEO_ERA5_LAND_MODEL,
+            "timezone": "GMT",
+            "cell_selection": OPEN_METEO_ARCHIVE_CELL_SELECTION,
+        }
+    )
+    return f"{OPEN_METEO_ARCHIVE_BASE_URL}?{query}"
+
+
+async def fetch_archive_daily(client: httpx.AsyncClient, url: str) -> str:
+    """Fetch one archive response as raw text so the caller can checksum exactly what arrived."""
+    response = await fetch_bounded(client, url, OPEN_METEO_ARCHIVE_BOUNDS)
+    if response.status == HTTP_TOO_MANY_REQUESTS:
+        raise OpenMeteoRateLimitError(*_rate_limit_scope(response.text))
+    if not response.ok:
+        raise UpstreamHttpError(response.status)
+    if response.payload_error is not None:
+        raise response.payload_error
+    if response.content_type is not None and "json" not in response.content_type.lower():
+        raise UpstreamPayloadError("Open-Meteo archive response was not JSON")
+    return response.text
+
+
+def _rate_limit_scope(body: str) -> tuple[str, str]:
+    """Classify a 429 body into a quota window; an unrecognised body stays `unknown`, never `minute`."""
+    reason = ""
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict):
+        raw_reason = parsed.get("reason")
+        reason = raw_reason if isinstance(raw_reason, str) else ""
+    lowered = reason.lower()
+    for scope in ("minute", "hour", "day"):
+        if scope in lowered:
+            return scope, reason or "rate limited"
+    return "unknown", reason or "rate limited"
 
 
 def bounded_sample_points(

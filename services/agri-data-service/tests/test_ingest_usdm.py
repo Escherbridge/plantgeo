@@ -64,7 +64,7 @@ class RecordingStore:
 
 
 class FakeResult:
-    """The one result accessor the drought store uses."""
+    """The two result accessors the drought store uses: `one()` for a store, `all()` for a prune."""
 
     def __init__(self, rows: Sequence[Any]) -> None:
         """Hold the rows this statement is pretending to have returned."""
@@ -73,6 +73,12 @@ class FakeResult:
     def all(self) -> list[Any]:
         """Every row the statement returned."""
         return list(self._rows)
+
+    def one(self) -> Any:
+        """The single row the store's statement always returns, exactly as SQLAlchemy's `one()` does."""
+        if len(self._rows) != 1:
+            raise AssertionError(f"expected exactly one row, got {len(self._rows)}")
+        return self._rows[0]
 
 
 class RecordingSession:
@@ -83,11 +89,13 @@ class RecordingSession:
         returned_ids: Sequence[str] = ("d1c0ffee",),
         pruned_dates: Sequence[str] = (),
         fail: bool = False,
+        repaired_to_empty: bool = False,
     ) -> None:
-        """Configure the RETURNING rows each insert reports, the prune's rows, and whether execution fails."""
+        """Configure the rows each insert reports, the prune's rows, whether execution fails, and emptiness."""
         self.returned_ids = list(returned_ids)
         self.pruned_dates = list(pruned_dates)
         self.fail = fail
+        self.repaired_to_empty = repaired_to_empty
         self.statements: list[tuple[str, dict[str, Any]]] = []
         self.commits = 0
         self.rollbacks = 0
@@ -99,7 +107,16 @@ class RecordingSession:
         if self.fail:
             raise SQLAlchemyError("drought write refused")
         if "INSERT INTO geo.drought_areas" in rendered:
-            return FakeResult([SimpleNamespace(id=identifier) for identifier in self.returned_ids])
+            # The store's statement always yields exactly one row carrying the emptiness verdict and
+            # the number of rows the guarded insert actually stored.
+            return FakeResult(
+                [
+                    SimpleNamespace(
+                        repaired_to_empty=self.repaired_to_empty,
+                        rows_stored=0 if self.repaired_to_empty else len(self.returned_ids),
+                    )
+                ]
+            )
         return FakeResult([SimpleNamespace(valid_date=value) for value in self.pruned_dates])
 
     async def commit(self) -> None:
@@ -395,7 +412,22 @@ async def test_the_conflict_predicate_is_what_makes_a_re_run_a_no_op(replace: bo
     collapsed = _collapse_whitespace(session.statements[0][0])
     assert "ON CONFLICT (valid_date, dm_category) DO UPDATE" in collapsed
     assert predicate in collapsed
-    assert collapsed.endswith("RETURNING id")
+    assert "RETURNING id" in collapsed
+
+
+async def test_a_class_whose_geometry_repairs_to_empty_is_refused_rather_than_stored() -> None:
+    """`geo.drought_areas.geom` is NOT NULL and MULTIPOLYGON EMPTY satisfies it, claiming coverage of nothing."""
+    session = RecordingSession(repaired_to_empty=True)
+    release = parse_drought_release(LATEST_TUESDAY, _collection(0))
+
+    with pytest.raises(UpstreamPayloadError, match="repaired to an empty geometry"):
+        await PostgresDroughtStore(session).store_release(release, replace=False)
+
+    collapsed = _collapse_whitespace(session.statements[0][0])
+    # The guard is in the statement as well as in the reaction: an empty repair inserts no row at all.
+    assert "WHERE NOT ST_IsEmpty(repaired.geom)" in collapsed
+    assert session.commits == 0
+    assert session.rollbacks == 1
 
 
 async def test_a_release_is_written_in_one_transaction_and_counts_only_the_rows_returning() -> None:

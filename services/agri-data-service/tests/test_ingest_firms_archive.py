@@ -14,12 +14,17 @@ from agri_data_service.ingest.backfill import BackfillPlan, run_source_backfill
 from agri_data_service.ingest.firms import (
     MAX_FIRMS_DAY_RANGE,
     build_fire_detection_write,
+    collapse_history_records,
     firms_archive_source,
     firms_day_range,
     history_day_spans,
+    normalize_confidence,
     parse_firms_csv,
     parse_product_availability,
+    processing_tier,
+    product_spatial_support_meters,
     products_covering,
+    products_covering_span,
 )
 from agri_data_service.ingest.http import UpstreamPayloadError
 from agri_data_service.ingest.policy import PACIFIC_NORTHWEST_COVERAGE_BBOX
@@ -47,6 +52,8 @@ AVAILABILITY_CSV = "\n".join(
 VIIRS_HEADER = "latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,version,frp"
 # Standard-processing rows carry a bare version (`2.0`); near-real-time carries `2.0NRT`.
 ARCHIVE_ROW = "47.83797,-113.26495,312.4,0.4,0.4,2022-08-05,1106,N20,n,2.0,12.3"
+# MODIS publishes the same columns with a 0-100 `confidence` rather than the VIIRS `l`/`n`/`h`.
+MODIS_ROW = "47.83797,-113.26495,312.4,1.0,1.0,2022-08-05,1106,Terra,78,6.1NRT,33.1"
 RUN_CLOCK = datetime(2026, 8, 5, tzinfo=UTC)
 
 # Where the product sits in `/api/area/csv/{key}/{product}/{area}/{day_range}/{start_date}`.
@@ -233,7 +240,13 @@ async def test_a_history_walk_reads_availability_once_and_writes_the_dated_archi
 
 
 async def test_two_products_of_one_satellite_collapse_to_a_single_write() -> None:
-    """The backstop for the `ON CONFLICT DO UPDATE` a duplicated key inside one batch would fail on."""
+    """One acquisition delivered by two products of one satellite is one detection, so it is one write.
+
+    `build_firms_identity` keys on `satellite:acqDate:acqTime:lat4dp:lon4dp` and cannot carry `product`
+    -- the key is byte-identical to the TypeScript `properties->>'id'` that stored rows depend on. Two
+    products of the same satellite therefore key identically, and `collapse_history_records` decides
+    which survives rather than letting arrival order decide.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         # Every product answers as N20 -- the shape the per-day availability selection prevents.
@@ -271,3 +284,209 @@ def test_an_archive_detection_dated_after_the_run_clock_is_still_refused() -> No
     """Removing the age floor must not remove the future-skew guard: a future acquisition is garbage."""
     future = _point_feature({"satellite": "N20", "acqDate": "2026-09-01", "acqTime": "1106"})
     assert build_fire_detection_write(future, "fire-detections", None, RUN_CLOCK) is None
+
+
+# --- standard processing supersedes near-real-time for one key, deterministically -------------------
+
+
+def _keyed_record(product: str, satellite: str = "N20") -> dict[str, object]:
+    """One parsed record for a fixed acquisition, so two products of one satellite key identically."""
+    return parse_firms_csv(_csv(ARCHIVE_ROW.replace(",N20,", f",{satellite},")), product)[0]
+
+
+@pytest.mark.parametrize(
+    "order",
+    [("VIIRS_NOAA20_NRT", "VIIRS_NOAA20_SP"), ("VIIRS_NOAA20_SP", "VIIRS_NOAA20_NRT")],
+)
+def test_standard_processing_supersedes_near_real_time_whichever_arrives_first(order: tuple[str, str]) -> None:
+    """`product` is not in the key, so NRT and SP of one satellite collide; SP must win either way.
+
+    Failure mode this pins out: last-write-wins over `FIRMS_HISTORY_SOURCES` order. That happens to put
+    SP after NRT today, so the right record survives by accident. Reorder the tuple, or have a caller
+    pass its own candidate list, and the NRT draft silently overwrites the SP reprocessing of the same
+    physical detection -- with nothing in the summary to notice by.
+    """
+    collapsed = collapse_history_records([_keyed_record(product) for product in order])
+
+    assert len(collapsed) == 1
+    properties = collapsed[0]["properties"]
+    assert isinstance(properties, dict)
+    assert properties["product"] == "VIIRS_NOAA20_SP"
+    assert properties["supersededProduct"] == "VIIRS_NOAA20_NRT"
+
+
+def test_two_records_of_the_same_product_keep_the_later_arrival_and_record_no_supersession() -> None:
+    """Equal tiers keep the forward job's `Map.set` semantics; nothing was superseded, so nothing says so."""
+    collapsed = collapse_history_records([_keyed_record("VIIRS_NOAA20_SP"), _keyed_record("VIIRS_NOAA20_SP")])
+
+    assert len(collapsed) == 1
+    properties = collapsed[0]["properties"]
+    assert isinstance(properties, dict)
+    assert "supersededProduct" not in properties
+
+
+def test_two_products_of_different_satellites_are_two_detections_and_never_collapse() -> None:
+    """The precedence rule must not merge across satellites: N and N20 saw the fire independently."""
+    collapsed = collapse_history_records([_keyed_record("VIIRS_SNPP_SP", "N"), _keyed_record("VIIRS_NOAA20_SP")])
+
+    assert len(collapsed) == 2
+
+
+def test_the_processing_tier_is_read_off_the_product_suffix_and_never_off_the_satellite() -> None:
+    assert processing_tier("VIIRS_NOAA20_SP") > processing_tier("VIIRS_NOAA20_NRT")
+    assert processing_tier("MODIS_SP") > processing_tier("MODIS_NRT")
+    # An unknown or absent token is the lowest tier rather than an error: absence must not outrank SP.
+    assert processing_tier(None) == processing_tier("VIIRS_NOAA20_NRT")
+
+
+# --- a span is up to five days wide, so its products are resolved over all of them -------------------
+
+
+def test_a_product_whose_coverage_begins_mid_span_is_still_asked_for_the_days_it_covers() -> None:
+    """Resolving from `start_day` alone dropped a product for the part of the span it does publish.
+
+    In the committed availability fixture VIIRS_NOAA20_NRT begins 2026-06-01. A five-day span starting
+    2026-05-29 covers 05-29..06-02, so that product publishes two of its days -- and resolving from the
+    start day alone names none of them, silently answering `records_seen=0` for 06-01 and 06-02.
+    """
+    availability = parse_product_availability(AVAILABILITY_CSV)
+    start = date(2026, 5, 29)
+
+    from_start_day = products_covering(availability, start)
+    over_the_span = products_covering_span(availability, start, 5)
+
+    assert "VIIRS_NOAA20_NRT" not in from_start_day
+    assert "VIIRS_NOAA20_NRT" in over_the_span
+    # Candidate order, so the request sequence stays deterministic across walks.
+    assert over_the_span == (
+        "VIIRS_SNPP_NRT",
+        "VIIRS_NOAA20_NRT",
+        "VIIRS_NOAA21_NRT",
+        "VIIRS_NOAA20_SP",
+    )
+
+
+def test_a_one_day_span_resolves_exactly_the_products_that_cover_that_day() -> None:
+    """Widening to the span must not widen a single day: over-asking is only safe for days in the span."""
+    availability = parse_product_availability(AVAILABILITY_CSV)
+    for day in (date(2022, 8, 5), date(2026, 5, 29), date(2026, 8, 5)):
+        assert products_covering_span(availability, day, 1) == products_covering(availability, day)
+
+
+async def test_a_span_no_product_covers_is_named_rather_than_reported_as_an_empty_week(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`records_seen=0` from an uncovered span is indistinguishable from "no fires" unless the walk says so.
+
+    `firms.py` takes a plain `structlog.get_logger()`, which lands on stdout in a test run, so the
+    warning is read off captured stdout rather than off `caplog` -- see ingest/AGENTS.md
+    "results.py, runner.py and commands.py" for why that logger is not yet bound to stderr.
+    """
+    gapped = "\n".join(("data_id,min_date,max_date", "VIIRS_NOAA20_SP,2018-04-01,2020-12-31"))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = gapped if "data_availability" in request.url.path else _csv(ARCHIVE_ROW)
+        return httpx.Response(200, content=body.encode(), headers={"content-type": "text/csv"})
+
+    writer = RecordingWriter()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        results = await run_source_backfill(
+            firms_archive_source(),
+            writer,
+            BackfillPlan(
+                window=HistoryWindow(start=datetime(2022, 8, 5, tzinfo=UTC), end=datetime(2022, 8, 6, tzinfo=UTC)),
+                chunk=timedelta(days=1),
+                bbox=PACIFIC_NORTHWEST_COVERAGE_BBOX,
+                now=RUN_CLOCK,
+                client=client,
+            ),
+        )
+
+    logged = capsys.readouterr().out
+    assert results[0].records_seen == 0
+    assert writer.writes == []
+    assert "firms_history_spans_uncovered" in logged
+    assert "2022-08-05+1" in logged
+
+
+# --- the coverage frontier travels with the record, so an as-of query gates on a field ---------------
+
+
+async def test_every_archive_record_carries_the_coverage_frontier_of_the_product_that_answered() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "data_availability" in request.url.path:
+            body = AVAILABILITY_CSV
+        else:
+            product = request.url.path.split("/")[_PRODUCT_INDEX]
+            body = _csv(ARCHIVE_ROW.replace(",N20,", f",{SATELLITE_BY_PRODUCT[product]},"))
+        return httpx.Response(200, content=body.encode(), headers={"content-type": "text/csv"})
+
+    writer = RecordingWriter()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await run_source_backfill(
+            firms_archive_source(),
+            writer,
+            BackfillPlan(
+                window=HistoryWindow(start=datetime(2022, 8, 5, tzinfo=UTC), end=datetime(2022, 8, 6, tzinfo=UTC)),
+                chunk=timedelta(days=1),
+                bbox=PACIFIC_NORTHWEST_COVERAGE_BBOX,
+                now=RUN_CLOCK,
+                client=client,
+            ),
+        )
+
+    coverage_by_product = {
+        str(write.properties["product"]): write.properties["productCoverageThrough"] for write in writer.writes
+    }
+    assert coverage_by_product == {
+        "VIIRS_SNPP_SP": "2026-04-27",
+        "VIIRS_NOAA20_SP": "2026-05-31",
+        "MODIS_SP": "2026-04-30",
+    }
+
+
+# --- MODIS is a different instrument, not a further satellite ----------------------------------------
+
+
+def test_the_instrument_pixel_travels_with_the_record_so_frp_is_not_read_as_one_scale() -> None:
+    """MODIS_SP's median FRP on production is 33.10 MW against VIIRS' 4.27; the gap is pixel area."""
+    viirs = parse_firms_csv(_csv(ARCHIVE_ROW), "VIIRS_NOAA20_SP")[0]["properties"]
+    modis = parse_firms_csv(_csv(MODIS_ROW), "MODIS_SP")[0]["properties"]
+    assert isinstance(viirs, dict)
+    assert isinstance(modis, dict)
+    assert viirs["spatialSupportMeters"] == 375
+    assert modis["spatialSupportMeters"] == 1000
+
+
+def test_an_unrecognised_product_omits_the_pixel_rather_than_defaulting_to_one() -> None:
+    """A wrong spatial support is worse than an absent one: it makes an incomparable value look comparable."""
+    assert product_spatial_support_meters("LANDSAT_SOMETHING") is None
+    parsed = parse_firms_csv(_csv(ARCHIVE_ROW), "LANDSAT_SOMETHING")[0]["properties"]
+    assert isinstance(parsed, dict)
+    assert "spatialSupportMeters" not in parsed
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("l", "low"), ("n", "nominal"), ("h", "high"), ("0", "low"), ("29", "low"), ("30", "nominal"),
+     ("80", "nominal"), ("81", "high"), ("100", "high")],
+)
+def test_the_two_confidence_spellings_normalise_onto_one_scale(raw: str, expected: str) -> None:
+    """VIIRS writes l/n/h and MODIS a 0-100 percentage into one `properties.confidence`."""
+    assert normalize_confidence(raw) == expected
+
+
+def test_an_unreadable_confidence_normalises_to_nothing_rather_than_to_nominal() -> None:
+    assert normalize_confidence("unknown") is None
+    parsed = parse_firms_csv(_csv(ARCHIVE_ROW.replace(",n,", ",unknown,")), "VIIRS_NOAA20_SP")[0]["properties"]
+    assert isinstance(parsed, dict)
+    assert parsed["confidence"] == "unknown"
+    assert "confidenceNormalized" not in parsed
+
+
+def test_the_raw_confidence_is_kept_verbatim_beside_the_normalised_one() -> None:
+    """The normalised band is an addition, never a replacement: MODIS' percentage is a real measurement."""
+    modis = parse_firms_csv(_csv(MODIS_ROW), "MODIS_SP")[0]["properties"]
+    assert isinstance(modis, dict)
+    assert modis["confidence"] == "78"
+    assert modis["confidenceNormalized"] == "nominal"

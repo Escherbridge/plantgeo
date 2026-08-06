@@ -71,7 +71,7 @@ Two more corrections belong in the CSV parser, both silent-data-loss bugs rather
 
 The CSV adapter otherwise resolves every column by *header name*, and the `_column` helper exists for exactly one reason: `header.indexOf(name)` returns `-1` in JavaScript and `cols[-1]` is `undefined`, so a FIRMS feed that stopped sending a column silently fell back to its default. In Python `columns[-1]` is the *last* cell, so a naive transcription would have keyed every detection on whatever the final column happened to hold. `-1` is therefore checked explicitly before any indexing. `javascript_parse_float` is likewise not decoration: `parseFloat("312.4NRT")` is `312.4` where `float()` raises, and the confidence and version columns of some FIRMS releases carry exactly that shape.
 
-Two rejections are load-bearing and must stay rejections rather than substitutions. A detection whose `observedAt` cannot be derived, or whose native key is incomplete, is dropped (the TypeScript's `flatMap -> []`), and a detection older than `min(10, max(1, dayRange))` days, or skewed more than five minutes into the future, is dropped. Neither is an error: FIRMS routinely reissues rows a previous run already stored, and the count lands in the result's `details.rejected` so a sudden jump stays visible. The freshness window derives from the *effective* day range rather than from `FIRMS_DAY_RANGE` directly, because `firms_day_range()` clamps a garbage value to the default and the two must not diverge. That variable accepts only a plain non-negative integer: `"5abc"` falls back to `2` rather than being partially accepted the way `parseInt` would truncate it.
+Two rejections are load-bearing and must stay rejections rather than substitutions. A detection whose `observedAt` cannot be derived, or whose native key is incomplete, is dropped (the TypeScript's `flatMap -> []`), and a detection older than `min(5, max(1, dayRange))` days, or skewed more than five minutes into the future, is dropped. Neither is an error: FIRMS routinely reissues rows a previous run already stored, and the count lands in the result's `details.rejected` so a sudden jump stays visible. The freshness window derives from the *effective* day range rather than from `FIRMS_DAY_RANGE` directly, because `firms_day_range()` clamps a garbage value to the default and the two must not diverge. That variable accepts only a plain non-negative integer: `"5abc"` falls back to `2` rather than being partially accepted the way `parseInt` would truncate it.
 
 The API key env var is `NASA_FIRMS_KEY` (`nasa-firms.ts:104`) — not `FIRMS_API_KEY`, which an earlier version of this lane's brief had — and it is read at call time inside `fetch_active_fires`, once per constellation product per run, matching `fetchActiveFiresNASA`'s own per-call check (`nasa-firms.ts:104-107`) rather than being validated once up front. A missing key raises `ValueError` immediately, before any HTTP request; with all three products failing identically, `run_fire_ingestion_job` raises that same error rather than reporting a quiet "ingested, wrote nothing" — matching `runFireIngestionJob`'s behaviour when every product in its `Promise.allSettled` rejects. The key never reaches an exception message anywhere in the module: it is interpolated into the request URL, so `http.py` converts every `httpx.HTTPError` into an `UpstreamTransportError` carrying only the exception class name — a job's failure reason is printed into a cron log that operators read and paste.
 
@@ -95,17 +95,78 @@ confirmed by running `ingest-firms` that way against production. Nothing in prod
 `firms_day_range()` returns the default 2 there and lowering the clamp changes no live behaviour — it only
 stops a 6-to-10 configuration from being silently accepted and then failing.
 
-**Which product answers for a past day is read from the live availability table, never assumed.**
-`fetch_product_availability` reads `/api/data_availability/csv/{key}/all` once per walk and
-`products_covering` picks per day. This exists because the near-real-time and standard-processing series
-of one satellite **report the same `satellite` token** — `VIIRS_NOAA20_NRT` and `VIIRS_NOAA20_SP` are both
-`N20` — so they would key identically and silently overwrite each other. Their windows are disjoint
-upstream today (`VIIRS_NOAA20_SP` ends 2026-05-31, the day before `VIIRS_NOAA20_NRT` begins) but that
-boundary moves with every reprocessing campaign, so it is read rather than pinned. `properties.product`
-records which product actually answered and is the stored discriminator. Note what that means for rows
-written **before** this landed: they carry no `product` key at all, and absence therefore means "written by
-the forward NRT path before 2026-08-05" — the forward path records `product` from now on, so the gap does
-not grow, but it does not retroactively close either.
+**That clamp is currently forked, and the TypeScript half is the one that serves.** `firmsDayRange()`
+(`src/lib/server/services/environmental-time.ts:55,69`) and `fetchActiveFiresNASA`
+(`src/lib/server/services/nasa-firms.ts:96,110`) both still clamp to 10, and `firmsDayRange()` feeds the
+**serving** window through `src/app/api/fires/route.ts`. So `FIRMS_DAY_RANGE=7` today would ingest 5 days
+and serve 7 — the map would ask for a window the ingester never filled. Those files are outside this
+package; the corrective hunks are with the owner of `src/**`. Nothing in production sets the variable, so
+this is latent rather than live, but do not treat `MAX_FIRMS_DAY_RANGE` as the single source of truth
+until the TypeScript half lands.
+
+**Which product answers for a past day is read from the live availability table, never assumed, and
+resolved over the whole span rather than its first day.** `fetch_product_availability` reads
+`/api/data_availability/csv/{key}/all` once per walk. `products_covering` picks per day and
+`products_covering_span` unions that over every day of a span. Resolving from `start_day` alone was a
+silent hole: a span is up to five days wide, so a product whose coverage begins on day three of it was
+never asked for the two days it does cover, and the walk answered `records_seen=0` for them —
+indistinguishable from "no fires that week". Over-asking is safe and cheap; a product asked for a day it
+lacks simply returns fewer rows. A span **no** product covers is now named in a
+`firms_history_spans_uncovered` warning rather than returning a clean empty answer, which is the same
+"gap certified as complete" failure `HistoryCapability` exists to prevent, wearing a date range.
+
+`properties.product` records which product actually answered and is the stored discriminator. Note what
+that means for rows written **before** this landed: they carry no `product` key at all, and absence
+therefore means "written by the forward NRT path before 2026-08-05" — the forward path records `product`
+from now on, so the gap does not grow, but it does not retroactively close either.
+
+**Standard processing supersedes near-real-time for one key, explicitly, and that is a precedence rule
+rather than a de-duplication convenience.** The near-real-time and standard-processing series of one
+satellite **report the same `satellite` token** — `VIIRS_NOAA20_NRT` and `VIIRS_NOAA20_SP` are both `N20`
+— and `product` is deliberately **not** in `build_firms_identity`'s key, because that key is
+contractually byte-identical to the TypeScript `properties->>'id'` and 148,460 stored rows depend on it.
+So the same acquisition delivered by both series keys to one row, and something has to decide which one
+survives. `collapse_history_records` compares `processing_tier` (read off the `_SP`/`_NRT` suffix, never
+off the satellite) and keeps SP, recording `properties.supersededProduct` on the survivor. Equal tiers
+keep the later arrival, which is the forward job's `Map.set` semantics. Relying on `FIRMS_HISTORY_SOURCES`
+order for this was the previous behaviour and it happened to produce the right answer, which is exactly
+why it needed a test: reorder the tuple and the NRT draft silently overwrites the SP reprocessing of the
+same physical detection. Their windows are disjoint upstream today (`VIIRS_NOAA20_SP` ends 2026-05-31,
+the day before `VIIRS_NOAA20_NRT` begins), but `products_covering_span` now deliberately over-asks across
+a span's whole width and every reprocessing campaign moves that boundary, so the overlap is reachable
+rather than hypothetical.
+
+**Measured on production 2026-08-05, that collision has not yet happened, and dropping NRT from
+`FIRMS_HISTORY_SOURCES` would not have prevented it.** Every stored SP row has an acquisition date in
+2022-08-05..2023-01-14 and every stored NRT row 2026-08-05, so the two series share no acquisition day;
+all 115,810 SP rows were created inside the walk window with `updated_at = created_at`, so no pre-existing
+NRT row was rewritten as SP, and no row carries an SP token with a pre-walk `created_at`. Dropping NRT
+products from the history list was the reviewer's proposal and was **not** taken. It buys less than it
+costs: the collision is between what the *walk* writes (SP) and what the *forward job* already wrote
+(NRT) on the same day, so removing NRT from the walk's candidate list removes one entry point and leaves
+the collision itself intact, while making the ~2-month band between the SP frontier and the forward job's
+2-day window unreachable by any path. The trade-off accepted instead: the walk keeps both series, the
+precedence is explicit and tested, and one limitation stands unfixed — across runs, an SP row landing on
+a stored NRT row leaves no record that the row was ever NRT beyond its `product` token changing and
+`updated_at` moving. Recording that properly needs a column `geo.features` does not have.
+
+**MODIS is a different instrument, not a further satellite, and the served layer must not put it on one
+scale with VIIRS.** `MODIS_SP` was added to `FIRMS_HISTORY_SOURCES` for the reach its 2000-11-01 floor
+buys — twelve years further back than `VIIRS_SNPP_SP` — onto a layer the forward path had only ever
+filled from VIIRS. Measured on production 2026-08-05: MODIS_SP's median FRP is **33.10 MW** against
+VIIRS' **4.27**, an ~8x gap that is pixel area (1 km² against 0.14 km²) and not fire intensity, and all
+12,157 MODIS rows write a numeric `"0".."100"` confidence into the same `properties.confidence` that
+136,303 VIIRS rows write `l`/`n`/`h` into. Every FIRMS record now carries
+`properties.spatialSupportMeters` (375 or 1000) and `properties.confidenceNormalized`
+(`low`/`nominal`/`high`, MODIS' percentage banded by FIRMS' own published equivalence: <30 / 30-80 />80),
+so the discriminator is a field rather than prose. The raw `confidence` is kept verbatim beside it —
+MODIS' percentage is a real measurement, not a spelling of the band. An unrecognised product omits
+`spatialSupportMeters` rather than defaulting to VIIRS, because a wrong spatial support is worse than an
+absent one: it makes an incomparable value look comparable. **The serving side is not fixed by this and
+is not in this package**: `environmental-read-model.ts`'s `METRIC_SOURCES` serves `fire-radiative-power`
+on `valueKey: "frp"` with no product filter, so the slider still paints mixed-instrument FRP in one
+symbology. The hunk that gates it is reported to the owner of `src/**`; until it lands, treat the
+`fire-radiative-power` metric as instrument-mixed for any acquisition day before 2023-01-15.
 
 **A product answering with a header and no rows is not evidence the sky was empty.** `VIIRS_SNPP_SP`
 returned a bare header for 2022-08-05..08-09 while `VIIRS_NOAA20_SP` returned 1,650 detections and
@@ -114,17 +175,33 @@ availability table covers and merges, and never reads one product's silence as c
 "gap certified as complete" failure `HistoryCapability` exists to prevent, wearing a product token.
 
 **`max_observation_age=None` removes the age floor and keeps the future-skew guard.** The forward job's
-rolling window is `min(10, max(1, dayRange))` days, which would reject every archive record; a history
+rolling window is `min(5, max(1, dayRange))` days, which would reject every archive record; a history
 walk's window *is* its age bound. `build_fire_detection_write` therefore takes `timedelta | None` and
 substitutes `UNBOUNDED_OBSERVATION_AGE` (a century) rather than skipping `is_fresh_observation`, so an
 acquisition FIRMS dates after the run clock is still refused. An undated record stays refused
 unconditionally, separately from the age check.
 
-**`merge_history_records` is a backstop, not the plan.** `select_writes` does not deduplicate, so several
-rows carrying one `properties->>'id'` in a single batch would reach `_INSERT_FEATURES`, whose
-`ON CONFLICT DO UPDATE` cannot affect one row twice and would fail the whole chunk. Keys come from
-`build_firms_identity` — never re-derived — and a record that cannot be keyed passes through so
-`select_writes` counts it as a rejection rather than this function dropping it silently.
+**`merge_history_records` was renamed `collapse_history_records`, and its old rationale was false in
+every clause.** It read: "`select_writes` does not deduplicate, so several rows carrying one
+`properties->>'id'` in a single batch would reach `_INSERT_FEATURES`, whose `ON CONFLICT DO UPDATE`
+cannot affect one row twice and would fail the whole chunk." `_INSERT_FEATURES` has **no `ON CONFLICT`
+clause at all** — collisions are handled by a prior `_SELECT_EXISTING_EXTERNAL_IDS` plus an in-place
+`_REFRESH_FEATURE` under an advisory lock — and `writer.py`'s `_ingest_resolved_batch` already collapses
+each batch with `{write.external_id: write for write in batch}` before it inserts anything. A repeated
+key inside one batch was never going to fail a chunk. The function survives because the thing it is
+actually needed for is real and is documented above: it is the SP-supersedes-NRT precedence rule. Keys
+still come from `build_firms_identity` — never re-derived — and a record that cannot be keyed passes
+through so `select_writes` counts it as a rejection rather than this function dropping it silently.
+
+**The coverage frontier travels with the record.** The availability table names each product's
+`max_date` and the walk used to discard it. Every archive record now carries
+`properties.productCoverageThrough`, the answering product's published frontier, so a leakage-sensitive
+as-of query gates on a field rather than on this paragraph. This stands in for the governed
+`data_available_at` concept until `geo.features` has a column to model publication lag: the SP series'
+`observedAt` is acquisition time and carries a months-long lag behind the day the product actually
+published, and `max_date` is the only figure upstream gives for that frontier. It is **absent** on a
+forward-path record, where the product's coverage is "now" by construction and the forward job never
+reads the availability table.
 
 `history_day_spans` cuts a chunk on the bounds' **own UTC calendar dates**. A window expressed at `-07:00`
 covers two UTC days and the span says two, which is a superset of what was asked for and every record in it
@@ -149,6 +226,19 @@ frozenset rather than a dropped check: a `GeometryCollection`, a line or a point
 and `tests/test_ingest_usdm.py` pins both directions. The three genuinely absent weeks (2026-02-17,
 2026-02-24, 2026-08-04) answer HTTP 404 and stay reported as `not_published` gaps — a gap USDM never filled
 is data, and is still never fabricated.
+
+**Widening that gate widened what can repair to nothing, so the store now refuses an empty repair.**
+`ST_Multi(ST_CollectionExtract(ST_MakeValid(<zero-area ring>), 3))` yields `MULTIPOLYGON EMPTY`, and
+`geo.drought_areas.geom` is `NOT NULL` — which a `MULTIPOLYGON EMPTY` satisfies. Storing it records
+"this drought class exists and covers nothing": a fabricated coverage claim wearing a valid geometry's
+shape, against which `ST_Intersects` answers false for every point on Earth with nothing looking wrong.
+`_STORE_DROUGHT_AREA_TEMPLATE` now runs the repair chain in a `repaired` CTE so the same expression can
+be both inserted and tested; the insert carries `WHERE NOT ST_IsEmpty(repaired.geom)` and the statement
+returns `repaired_to_empty` alongside the stored-row count, on which `store_release` raises
+`UpstreamPayloadError` and rolls the release back. Rejecting the whole release rather than skipping the
+one class matches this module's existing rule for a repeated DM class: a release with an unusable class
+is ambiguous, not mergeable. Measured on production 2026-08-05, 0 of 1,030 stored areas are empty or
+zero-area, so this guards the exposure the widened gate created rather than repairing damage it caused.
 
 ## open_meteo.py
 
@@ -291,6 +381,8 @@ Nothing on the existing path was rewritten. `_INSERT_FEATURES` and `_REFRESH_FEA
 ## source.py: one truncation rule, and the forward driver that was missing
 
 **A bitten record cap drops the OLDEST observations, never an arrival slice.** `select_writes` is now the single place a fetched window becomes the writes a run persists: it applies `accepted_writes`, and when more survive than `max_records` allows it keeps the newest by `observed_at` — undated below every dated record — while preserving arrival order among the survivors, so only *which* records survive changes and no downstream ordering assumption moves. `_run_backfill_chunk` previously did `accepted[: request.max_records]` on an unsorted list, which for `vegetation` and `sensors` (the two sources actually wired to `run_source_backfill`) silently discarded whichever records happened to arrive last regardless of age. `firms.py` already encoded the correct policy inline with the comment "so truncation drops the oldest detections rather than whichever satellite happened to resolve last"; that rule now lives once, and `ndvi.py` and `sensors.py` call it instead of re-implementing the cap.
+
+**A backfill chunk that hit the cap FAILS and writes nothing; the forward window does not.** Keeping the newest is the right rule and the wrong report. Because `_truncation_rank` keeps the newest, what a bitten cap deletes from a multi-day chunk is not a thinner sample of every day — it is the chunk's **oldest days, whole**. `_run_backfill_chunk` reported that as `status="ingested"` with `details.rejected: 0`, because truncation is not a rejection and nothing else counted it. Measured on production 2026-08-05 against data the FIRMS archive walk itself wrote: the week 2022-09-04..09-10 holds 60,779 published detections, so a `--chunk-days 7` walk under the default 10,000-record cap writes 10,000 and silently discards 50,779. That is the exact "clean run over a thinner record than the publisher served" failure commit `7ebd6c7` set out to end, reintroduced in the new path. `SelectedWrites` now carries `dropped` (a count, not a flag — 50,779 lost and 3 lost are not the same run to look at), the chunk fails, **writes nothing**, and its `reason` names the narrower `--chunk-days` that would fit under the cap. Writing the survivors and failing anyway was considered and rejected: the days that fitted would look complete, and re-walking is idempotent only if it actually happens. The walk continues past a failed chunk — one over-large chunk must not erase the chunks after it — and `merge_backfill_results` folds the run to `failed` with the summed `dropped`. `run_source_job` deliberately keeps reporting `ingested`: a forward window is whatever the producer publishes as "now", there is no narrower window to retry with, and failing there would only turn the hourly cron red on a busy fire day with no action to take. The retry advice is always *strictly* narrower than the chunk that failed, so a one-record overshoot cannot advise the same size back and loop.
 
 **`run_source_job` is the forward half of the contract `run_source_backfill` only served the past half of.** `IngestionSource.fetch_current` had no caller anywhere in the package: the only driver was `run_source_backfill`, which calls `fetch_history`, so every adopting module hand-rolled fetch + accept + truncate and the Protocol member was unreachable. `run_source_job` mirrors the backfill driver exactly — resolve the bounded bbox or skip with `UNCONFIGURED_BBOX_REASON`, fetch the current window, `select_writes`, write through the same `FeatureWriter`.
 

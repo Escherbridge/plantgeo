@@ -33,6 +33,7 @@ from agri_data_service.ingest.identity import (
     build_weather_observation_identity,
 )
 from agri_data_service.ingest.policy import (
+    MAX_MAX_SOURCE_RECORDS,
     UNCONFIGURED_BBOX_REASON,
     resolve_bounded_bbox,
     resolve_max_source_records,
@@ -53,7 +54,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.ingest.geometry import GeometryVersionRequest
-    from agri_data_service.ingest.source import IngestionSource
+    from agri_data_service.ingest.source import IngestionSource, SelectedWrites
     from agri_data_service.ingest.writer import FeatureWriter
 
 logger = structlog.get_logger()
@@ -66,6 +67,9 @@ DEFAULT_HISTORY_CHUNK: Final = timedelta(days=7)
 
 DEFAULT_REPAIR_BATCH_SIZE: Final = 200
 ZERO_UUID: Final = str(UUID(int=0))
+
+# The narrowest chunk a retry can be advised to use; a suggestion of zero days would not be a plan.
+MIN_RETRY_CHUNK_DAYS: Final = 1
 
 LATITUDE_INDEX: Final = 1
 LONGITUDE_INDEX: Final = 0
@@ -136,15 +140,63 @@ def _chunk_label(chunk: HistoryWindow) -> str:
     return f"{chunk.start.isoformat()}..{chunk.end.isoformat()}"
 
 
+def _chunk_days(chunk: HistoryWindow) -> int:
+    """The chunk's span in whole days, rounded up, so a sub-day chunk still counts as one day."""
+    span = chunk.end - chunk.start
+    return max(MIN_RETRY_CHUNK_DAYS, -(-span // timedelta(days=1)))
+
+
+def _retry_chunk_days(chunk: HistoryWindow, selection: SelectedWrites) -> int:
+    """The widest whole-day chunk that would have fitted under the cap, and always narrower than this one.
+
+    Capped at `span_days - 1` so a one-record overshoot cannot advise the same size back and loop; a
+    single-day chunk that still overshoots floors at one day, and the reason text names raising
+    `INGEST_MAX_SOURCE_RECORDS` as the other lever for exactly that case.
+    """
+    span_days = _chunk_days(chunk)
+    accepted = len(selection.writes) + selection.dropped
+    fitted = span_days * len(selection.writes) // accepted if accepted else MIN_RETRY_CHUNK_DAYS
+    return max(MIN_RETRY_CHUNK_DAYS, min(fitted, span_days - 1))
+
+
+def _truncated_chunk_reason(chunk: HistoryWindow, request: FetchRequest, selection: SelectedWrites) -> str:
+    """Say what the cap deleted and name the narrower walk that would not hit it."""
+    return (
+        f"{_chunk_label(chunk)} produced {len(selection.writes) + selection.dropped} records against a "
+        f"{request.max_records}-record cap, so {selection.dropped} were dropped. The cap keeps the newest "
+        f"observations, so what it drops is the OLDEST days of this chunk, whole -- not a thinner sample of "
+        f"all of them. Nothing was written for this chunk. Re-walk it with --chunk-days "
+        f"{_retry_chunk_days(chunk, selection)}, or raise INGEST_MAX_SOURCE_RECORDS "
+        f"(ceiling {MAX_MAX_SOURCE_RECORDS})."
+    )
+
+
 async def _run_backfill_chunk(
     source: IngestionSource,
     write_features: FeatureWriter,
     request: FetchRequest,
     chunk: HistoryWindow,
 ) -> IngestionJobResult:
-    """Fetch, map and write exactly one chunk, holding nothing from any other chunk in memory."""
+    """Fetch, map and write exactly one chunk, holding nothing from any other chunk in memory.
+
+    A bitten record cap fails the chunk and writes nothing. Truncation is not a rejection, so it never
+    reaches `details.rejected`, and `_truncation_rank` keeps the newest -- which means a chunk that
+    silently reported `ingested` had deleted its oldest days entirely while claiming to have walked
+    them. Writing the survivors anyway would be worse than writing nothing: the days that fitted would
+    look complete and the operator would have no reason to re-walk. See ingest/AGENTS.md "backfill.py".
+    """
     records = await source.fetch_history(request, chunk)
     selection = select_writes(source, records, request)
+    if selection.dropped:
+        return IngestionJobResult(
+            source=source.source_name,
+            status="failed",
+            records_seen=len(records),
+            records_written=0,
+            truncated=True,
+            reason=_truncated_chunk_reason(chunk, request, selection),
+            details={"rejected": selection.rejected, "dropped": selection.dropped},
+        )
     return IngestionJobResult(
         source=source.source_name,
         status="ingested",
@@ -152,7 +204,7 @@ async def _run_backfill_chunk(
         records_written=await write_features(selection.writes),
         truncated=selection.truncated,
         reason=_chunk_label(chunk),
-        details={"rejected": selection.rejected},
+        details={"rejected": selection.rejected, "dropped": selection.dropped},
     )
 
 
@@ -163,7 +215,13 @@ async def run_source_job(
     now: datetime | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> IngestionJobResult:
-    """Fetch a source's current window and write it through the one path history and repair already write through."""
+    """Fetch a source's current window and write it through the one path history and repair already write through.
+
+    A bitten cap stays `ingested` here where it fails a backfill chunk, and the asymmetry is deliberate:
+    a forward window is whatever the producer publishes as "now" and there is no narrower window to
+    retry with, so failing would only turn the hourly cron red on a busy day with no action to take.
+    `truncated` plus `details.dropped` is the signal instead.
+    """
     area = resolve_bounded_bbox(bbox)
     if area is None:
         return skipped_result(source.source_name, UNCONFIGURED_BBOX_REASON)
@@ -176,7 +234,7 @@ async def run_source_job(
         records_seen=len(records),
         records_written=await write_features(selection.writes),
         truncated=selection.truncated,
-        details={"rejected": selection.rejected},
+        details={"rejected": selection.rejected, "dropped": selection.dropped},
     )
 
 
@@ -200,10 +258,16 @@ async def run_source_backfill(
     results: list[IngestionJobResult] = []
     for chunk in history_chunks(resolved_plan.window, resolved_plan.chunk):
         try:
-            results.append(await _run_backfill_chunk(source, write_features, request, chunk))
+            result = await _run_backfill_chunk(source, write_features, request, chunk)
         except HistoryUnavailableError as refusal:
             # A typed refusal, surfaced as an operator-visible skip rather than swallowed into an empty run.
             return [*results, skipped_result(source.source_name, str(refusal))]
+        results.append(result)
+        if result.status == "failed":
+            # The walk continues -- one over-large chunk must not erase the chunks after it -- but the
+            # log line must not call a chunk complete that wrote nothing.
+            logger.warning("backfill_chunk_failed", source=source.source_name, chunk=_chunk_label(chunk))
+            continue
         logger.info("backfill_chunk_complete", source=source.source_name, chunk=_chunk_label(chunk))
     return results
 
@@ -228,6 +292,9 @@ def merge_backfill_results(source_name: str, results: Sequence[IngestionJobResul
         details={
             "chunks": len(results),
             "rejected": sum(int(result.details.get("rejected", 0)) for result in results),
+            # Folded rather than reduced to the `truncated` flag: a walk that lost 50,779 published
+            # records to a cap and one that lost 3 are not the same run to look at.
+            "dropped": sum(int(result.details.get("dropped", 0)) for result in results),
         },
     )
 

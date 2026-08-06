@@ -52,7 +52,7 @@ export function parseFirmsObservationTime(
 const STRICT_NONNEGATIVE_INTEGER = /^\d+$/;
 
 /**
- * FIRMS lookback window in days (FIRMS_DAY_RANGE, clamped 1-10, default 2).
+ * FIRMS lookback window in days (FIRMS_DAY_RANGE, clamped 1-5, default 2).
  * VIIRS NRT lags hours behind and day windows roll at UTC midnight, so a
  * 1-day window is empty during early-UTC hours.
  *
@@ -66,7 +66,11 @@ const STRICT_NONNEGATIVE_INTEGER = /^\d+$/;
 export function firmsDayRange(): number {
   const raw = process.env.FIRMS_DAY_RANGE?.trim() ?? "";
   if (!STRICT_NONNEGATIVE_INTEGER.test(raw)) return 2;
-  return Math.min(10, Math.max(1, Number.parseInt(raw, 10)));
+  // 5, not 10: measured against the live API 2026-08-05, day ranges 6/7/10 each answer
+  // `400 Invalid day range. Expects [1..5].`. Must stay equal to firms.py's MAX_FIRMS_DAY_RANGE --
+  // this function feeds the SERVING window via src/app/api/fires/route.ts, so a divergence means
+  // the map asks for a window the ingester never filled.
+  return Math.min(5, Math.max(1, Number.parseInt(raw, 10)));
 }
 
 /** Rejects stale observations and implausible future timestamps. */

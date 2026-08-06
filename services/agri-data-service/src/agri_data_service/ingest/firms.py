@@ -7,6 +7,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
 import structlog
@@ -115,6 +116,55 @@ MIN_CSV_LINES: Final = 2
 MIN_CSV_COLUMNS: Final = 4
 DEFAULT_CONFIDENCE: Final = "nominal"
 
+# The property that records which product's published coverage this record was drawn under, so a
+# leakage-sensitive query gates on a field rather than on prose. `data_available_at` is the governed
+# concept this stands in for until geo.features has a column to model publication lag: the FIRMS
+# archive's SP series carries a months-long lag between `observedAt` (acquisition) and the day the
+# product actually published, and the availability table's `max_date` is the only figure upstream
+# gives for it. Absent on a forward-path record, where the product's coverage is "now" by construction.
+PRODUCT_COVERAGE_THROUGH_PROPERTY: Final = "productCoverageThrough"
+# Names the near-real-time product a standard-processing record displaced, when a walk saw both.
+SUPERSEDED_PRODUCT_PROPERTY: Final = "supersededProduct"
+SPATIAL_SUPPORT_PROPERTY: Final = "spatialSupportMeters"
+NORMALIZED_CONFIDENCE_PROPERTY: Final = "confidenceNormalized"
+
+# FIRMS' standard-processing suffix. Every product token is `<INSTRUMENT>_NRT` or `<INSTRUMENT>_SP`,
+# and the SP series is the authoritative reprocessing of the same physical detections the NRT series
+# already delivered -- which is why it wins a key collision rather than merely arriving later.
+STANDARD_PROCESSING_SUFFIX: Final = "_SP"
+STANDARD_PROCESSING_TIER: Final = 1
+NEAR_REAL_TIME_TIER: Final = 0
+
+# Nominal ground sample distance of the instrument behind each product family, in metres. VIIRS' active
+# fire product is the 375 m I-band; MODIS' is 1 km. It is stored on the record because FRP is integrated
+# over the pixel, so the same fire reads roughly an order of magnitude hotter through MODIS: measured on
+# production 2026-08-05, MODIS_SP's median FRP over the walked window is 33.10 MW against VIIRS' 4.27.
+# A consumer putting both on one colour scale is reading instrument geometry as fire behaviour.
+VIIRS_SPATIAL_SUPPORT_METERS: Final = 375
+MODIS_SPATIAL_SUPPORT_METERS: Final = 1000
+VIIRS_PRODUCT_PREFIX: Final = "VIIRS_"
+MODIS_PRODUCT_PREFIX: Final = "MODIS_"
+
+# FIRMS publishes confidence two incompatible ways into one column: VIIRS emits the categorical
+# `l`/`n`/`h` and MODIS a 0-100 percentage. Production holds 136,303 categorical rows and 12,157
+# numeric ones under one `properties.confidence`. The banding below is FIRMS' own published equivalence
+# for the MODIS percentage, so a consumer has one scale to filter on without re-deriving it per product.
+CONFIDENCE_LOW: Final = "low"
+CONFIDENCE_NOMINAL: Final = "nominal"
+CONFIDENCE_HIGH: Final = "high"
+MODIS_LOW_CONFIDENCE_CEILING: Final = 30.0
+MODIS_NOMINAL_CONFIDENCE_CEILING: Final = 80.0
+_CATEGORICAL_CONFIDENCE: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "l": CONFIDENCE_LOW,
+        "low": CONFIDENCE_LOW,
+        "n": CONFIDENCE_NOMINAL,
+        "nominal": CONFIDENCE_NOMINAL,
+        "h": CONFIDENCE_HIGH,
+        "high": CONFIDENCE_HIGH,
+    }
+)
+
 _STRICT_NONNEGATIVE_INTEGER: Final = re.compile(r"^\d+$")
 
 
@@ -124,7 +174,7 @@ def resolve_firms_layer_name() -> str:
 
 
 def firms_day_range() -> int:
-    """FIRMS lookback window in days, clamped 1-10; anything but a plain integer falls back to the default."""
+    """FIRMS lookback window in days, clamped 1-5; anything but a plain integer falls back to the default."""
     raw = os.environ.get(FIRMS_DAY_RANGE_VARIABLE, "").strip()
     if _STRICT_NONNEGATIVE_INTEGER.match(raw) is None:
         return DEFAULT_FIRMS_DAY_RANGE
@@ -132,7 +182,7 @@ def firms_day_range() -> int:
 
 
 def _clamp_day_range(day_range: int) -> int:
-    """Clamp a requested lookback window to FIRMS' allowed 1-10 day range."""
+    """Clamp a requested lookback window to FIRMS' allowed 1-5 day range."""
     return min(MAX_FIRMS_DAY_RANGE, max(MIN_FIRMS_DAY_RANGE, day_range))
 
 
@@ -158,6 +208,34 @@ def _numeric_column(columns: Sequence[str], index: int) -> float | None:
     if cell is None:
         return None
     return javascript_parse_float(cell)
+
+
+def product_spatial_support_meters(product: str) -> int | None:
+    """The nominal pixel size of the instrument behind a FIRMS product, or None for a product we cannot place.
+
+    Never guessed: an unrecognised product token omits the property rather than defaulting to VIIRS,
+    because a wrong spatial support is worse than an absent one -- it makes an incomparable value look
+    comparable. See ingest/AGENTS.md "firms.py: MODIS is a different instrument, not a further satellite".
+    """
+    if product.startswith(VIIRS_PRODUCT_PREFIX):
+        return VIIRS_SPATIAL_SUPPORT_METERS
+    if product.startswith(MODIS_PRODUCT_PREFIX):
+        return MODIS_SPATIAL_SUPPORT_METERS
+    return None
+
+
+def normalize_confidence(raw: str) -> str | None:
+    """Map either FIRMS confidence spelling onto one low/nominal/high scale, or None when neither reads."""
+    candidate = raw.strip().lower()
+    categorical = _CATEGORICAL_CONFIDENCE.get(candidate)
+    if categorical is not None:
+        return categorical
+    percentage = javascript_parse_float(candidate)
+    if percentage is None:
+        return None
+    if percentage < MODIS_LOW_CONFIDENCE_CEILING:
+        return CONFIDENCE_LOW
+    return CONFIDENCE_NOMINAL if percentage <= MODIS_NOMINAL_CONFIDENCE_CEILING else CONFIDENCE_HIGH
 
 
 def parse_firms_csv(csv_text: str, source: str) -> list[dict[str, object]]:
@@ -190,8 +268,9 @@ def parse_firms_csv(csv_text: str, source: str) -> list[dict[str, object]]:
         longitude = javascript_parse_float(longitude_cell) if longitude_cell is not None else None
         if latitude is None or longitude is None:
             continue
+        confidence = _text_column(columns, confidence_index, DEFAULT_CONFIDENCE)
         properties: dict[str, object] = {
-            "confidence": _text_column(columns, confidence_index, DEFAULT_CONFIDENCE),
+            "confidence": confidence,
             # The TypeScript falls back to the requested product token, not a fixed label,
             # when a row's own satellite column is absent.
             "satellite": _text_column(columns, satellite_index, source),
@@ -202,6 +281,14 @@ def parse_firms_csv(csv_text: str, source: str) -> list[dict[str, object]]:
             # `satellite` column cannot serve: VIIRS_NOAA20_NRT and VIIRS_NOAA20_SP both report `N20`.
             "product": source,
         }
+        # The instrument's pixel and one confidence scale, both carried so a consumer can tell an
+        # incomparable value apart from a comparable one without a product lookup table of its own.
+        spatial_support = product_spatial_support_meters(source)
+        if spatial_support is not None:
+            properties[SPATIAL_SUPPORT_PROPERTY] = spatial_support
+        normalized_confidence = normalize_confidence(confidence)
+        if normalized_confidence is not None:
+            properties[NORMALIZED_CONFIDENCE_PROPERTY] = normalized_confidence
         # A radiometric channel this product did not publish is omitted, never zero-filled.
         brightness = _numeric_column(columns, brightness_index)
         if brightness is not None:
@@ -321,9 +408,33 @@ def products_covering(
     for the same acquisition. Their windows are disjoint upstream today -- VIIRS_NOAA20_SP ended
     2026-05-31 the day before VIIRS_NOAA20_NRT began -- but that boundary moves with every reprocessing
     campaign, so it is read per walk rather than pinned. Both series report the same `satellite` token
-    and would therefore key identically; `properties.product` is what tells them apart once stored.
+    and would therefore key identically; `properties.product` is what tells them apart once stored, and
+    `collapse_history_records` decides which of them wins on the day that boundary moves and their
+    windows genuinely overlap.
     """
     return tuple(product for product in candidates if product in availability and availability[product].covers(day))
+
+
+def products_covering_span(
+    availability: Mapping[str, ProductAvailability],
+    start_day: date,
+    day_range: int,
+    candidates: Sequence[str] = FIRMS_HISTORY_SOURCES,
+) -> tuple[str, ...]:
+    """Name every candidate product publishing ANY day of a span, in candidate order.
+
+    Resolving from `start_day` alone was a silent hole. A span is up to five days wide, so a product
+    whose coverage begins on day three of it was never asked for the two days it does cover, and the
+    walk reported `records_seen=0` for them -- indistinguishable from "no fires that week". Over-asking
+    is safe and cheap: a product asked for a day it lacks simply answers with fewer rows, and every row
+    it does answer with carries the acquisition day FIRMS itself named. See ingest/AGENTS.md "firms.py".
+    """
+    days = tuple(start_day + timedelta(days=offset) for offset in range(max(day_range, 1)))
+    return tuple(
+        product
+        for product in candidates
+        if product in availability and any(availability[product].covers(day) for day in days)
+    )
 
 
 async def _gather_constellation(
@@ -424,9 +535,11 @@ async def run_fire_ingestion_job(
     max_observation_age = timedelta(days=_clamp_day_range(window_days))
     layer_name = resolve_firms_layer_name()
 
-    # The FIRMS `satellite` column (N / N20 / N21) already namespaces the observation id, so the
-    # constellation merge cannot collide across products. Keyed by external id with last-write-wins,
-    # matching the TypeScript `Map<string, IngestFeatureInput>.set` semantics.
+    # Keyed by external id with last-write-wins, matching the TypeScript
+    # `Map<string, IngestFeatureInput>.set` semantics. No tier precedence is applied here and none is
+    # needed: `FIRMS_VIIRS_SOURCES` is near-real-time only, so the three products this job merges carry
+    # three distinct `satellite` tokens and cannot collide. That is a property of THIS product list, not
+    # of the key -- `collapse_history_records` carries the rule for the walk that mixes both series.
     records_seen = 0
     rejected = 0
     merged: dict[str, FeatureWrite] = {}
@@ -459,7 +572,7 @@ async def run_fire_ingestion_job(
         records_written=await write_features(selected),
         truncated=len(fresh) > len(selected),
         reason=reason,
-        details={"rejected": rejected},
+        details={"rejected": rejected, "dropped": len(fresh) - len(selected)},
     )
 
 
@@ -482,17 +595,34 @@ def history_day_spans(window: HistoryWindow) -> tuple[tuple[date, int], ...]:
     return tuple(spans)
 
 
+@dataclass(frozen=True, slots=True)
+class HistorySpanFetch:
+    """One dated span's answer: its records, the products that failed, and whether any product covered it."""
+
+    records: list[dict[str, object]]
+    unavailable: tuple[str, ...]
+    covered: bool
+
+
+def _stamp_product_coverage(records: Sequence[dict[str, object]], coverage_through: date) -> None:
+    """Record the coverage frontier the answering product published under, on every row it answered with."""
+    for record in records:
+        properties = record.get("properties")
+        if isinstance(properties, dict):
+            properties[PRODUCT_COVERAGE_THROUGH_PROPERTY] = coverage_through.isoformat()
+
+
 async def _fetch_history_span(
     client: httpx.AsyncClient,
     area: str,
     availability: Mapping[str, ProductAvailability],
     start_day: date,
     day_range: int,
-) -> tuple[list[dict[str, object]], tuple[str, ...]]:
-    """Fetch one dated span from every product that publishes it, reporting the products that failed."""
-    products = products_covering(availability, start_day)
+) -> HistorySpanFetch:
+    """Fetch one dated span from every product publishing any of its days, reporting what failed and what covered it."""
+    products = products_covering_span(availability, start_day, day_range)
     if not products:
-        return [], ()
+        return HistorySpanFetch(records=[], unavailable=(), covered=False)
     collections = await asyncio.gather(
         *(fetch_active_fires(client, area, day_range, product, start_day) for product in products),
         return_exceptions=True,
@@ -503,8 +633,9 @@ async def _fetch_history_span(
         if isinstance(collection, BaseException):
             unavailable.append(product)
             continue
+        _stamp_product_coverage(collection, availability[product].latest)
         records.extend(collection)
-    return records, tuple(unavailable)
+    return HistorySpanFetch(records=records, unavailable=tuple(unavailable), covered=True)
 
 
 async def fetch_firms_history_records(request: FetchRequest, window: HistoryWindow) -> Sequence[UpstreamRecord]:
@@ -530,27 +661,70 @@ async def _walk_history(
     availability = await fetch_product_availability(client)
     records: list[dict[str, object]] = []
     unavailable: list[str] = []
+    uncovered: list[str] = []
     for start_day, day_range in history_day_spans(window):
-        span_records, span_unavailable = await _fetch_history_span(
-            client, request.bbox, availability, start_day, day_range
-        )
-        records.extend(span_records)
-        unavailable.extend(span_unavailable)
+        span = await _fetch_history_span(client, request.bbox, availability, start_day, day_range)
+        records.extend(span.records)
+        unavailable.extend(span.unavailable)
+        if not span.covered:
+            uncovered.append(f"{start_day.isoformat()}+{day_range}")
     if unavailable:
         logger.warning("firms_history_products_unavailable", unavailable=sorted(set(unavailable)))
-    return merge_history_records(records)
+    if uncovered:
+        # No product publishes these days at all, so the walk answered zero records for a reason that is
+        # NOT "no fires". Unnamed, that reads as a clean empty week -- the "gap certified as complete"
+        # failure the availability table exists to prevent.
+        logger.warning("firms_history_spans_uncovered", spans=uncovered, candidates=list(FIRMS_HISTORY_SOURCES))
+    return collapse_history_records(records)
 
 
-def merge_history_records(records: Sequence[dict[str, object]]) -> list[dict[str, object]]:
-    """Collapse records that key identically, last-write-wins, mirroring the forward job's Map semantics.
+def processing_tier(product: object) -> int:
+    """Rank a FIRMS product's processing tier: standard processing outranks near-real-time."""
+    if isinstance(product, str) and product.endswith(STANDARD_PROCESSING_SUFFIX):
+        return STANDARD_PROCESSING_TIER
+    return NEAR_REAL_TIME_TIER
 
-    `select_writes` does not deduplicate, so without this a walk could hand `writer.py` several rows
-    carrying one `properties->>'id'` in a single batch -- which `_INSERT_FEATURES`' `ON CONFLICT DO
-    UPDATE` cannot apply twice to one row and would fail the whole chunk on. Two products of the SAME
-    satellite are the only way that arises and the per-day availability selection already prevents it,
-    so this is the backstop rather than the plan. Keys come from `build_firms_identity` and are never
-    re-derived here; a record that cannot be keyed passes through untouched so `select_writes` counts it
-    as a rejection instead of this function silently dropping it.
+
+def _product_of(record: Mapping[str, object]) -> str | None:
+    """Read the product token a parsed record was drawn from, or None when it carries none."""
+    properties = record.get("properties")
+    product = properties.get("product") if isinstance(properties, dict) else None
+    return product if isinstance(product, str) else None
+
+
+def _supersede(winner: dict[str, object], loser: Mapping[str, object]) -> dict[str, object]:
+    """Record on the surviving record which other product it displaced, when a different one lost."""
+    winning_product = _product_of(winner)
+    losing_product = _product_of(loser)
+    properties = winner.get("properties")
+    if losing_product is not None and losing_product != winning_product and isinstance(properties, dict):
+        properties[SUPERSEDED_PRODUCT_PROPERTY] = losing_product
+    return winner
+
+
+def collapse_history_records(records: Sequence[dict[str, object]]) -> list[dict[str, object]]:
+    """Collapse records that key identically, standard processing superseding near-real-time, deterministically.
+
+    This is a precedence rule, not a backstop, and the earlier rationale for it was wrong on every
+    count: `_INSERT_FEATURES` has no `ON CONFLICT` clause, and `writer.py`'s `_ingest_resolved_batch`
+    already collapses each batch by `external_id` before it inserts, so a repeated key inside one batch
+    was never going to fail a chunk.
+
+    What is real is the collision the key itself allows. `build_firms_identity` keys on
+    `satellite:acqDate:acqTime:lat4dp:lon4dp` and `product` is deliberately NOT in it -- the key is
+    contractually byte-identical to the TypeScript `properties->>'id'` that 148,460 stored rows depend
+    on, so it cannot be widened. VIIRS_NOAA20_NRT and VIIRS_NOAA20_SP both report satellite `N20`, so
+    the same acquisition delivered by both series keys to one row. Their availability windows are
+    disjoint upstream today, but `products_covering_span` deliberately over-asks across a span's whole
+    width and a reprocessing campaign moves that boundary, so the overlap is reachable rather than
+    hypothetical. When it happens the standard-processing record must win: SP IS the reprocessing of the
+    same physical detection, so keeping the NRT copy would be keeping the draft over the final. The
+    outcome must not depend on `FIRMS_HISTORY_SOURCES` order, which is why the tier is compared rather
+    than relied on -- and the survivor records `supersededProduct` so a row that changed series says so.
+
+    Keys come from `build_firms_identity` and are never re-derived here; a record that cannot be keyed
+    passes through untouched so `select_writes` counts it as a rejection instead of this function
+    silently dropping it.
     """
     merged: dict[str, dict[str, object]] = {}
     unkeyable: list[dict[str, object]] = []
@@ -565,7 +739,16 @@ def merge_history_records(records: Sequence[dict[str, object]]) -> list[dict[str
         except (MissingNativeKeyError, ValueError):
             unkeyable.append(record)
             continue
-        merged[key] = record
+        held = merged.get(key)
+        if held is None:
+            merged[key] = record
+            continue
+        # A strictly lower tier loses regardless of arrival; equal tiers keep the later arrival, which
+        # is the forward job's `Map.set` semantics and the behaviour every existing test pins.
+        if processing_tier(_product_of(record)) < processing_tier(_product_of(held)):
+            merged[key] = _supersede(held, record)
+            continue
+        merged[key] = _supersede(record, held)
     return [*merged.values(), *unkeyable]
 
 

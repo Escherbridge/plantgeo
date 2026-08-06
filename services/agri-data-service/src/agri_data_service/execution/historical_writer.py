@@ -30,6 +30,17 @@ from agri_data_service.execution.historical_era5 import (
     historical_era5_release_manifest,
     require_complete_era5_result,
 )
+from agri_data_service.execution.historical_open_meteo import (
+    OPEN_METEO_ARCHIVE_SCHEMA_VERSION,
+    HistoricalOpenMeteoArchivePlan,
+    HistoricalOpenMeteoCheckpoint,
+    OpenMeteoArchiveChunk,
+    OpenMeteoArchiveChunkResult,
+    historical_open_meteo_plan_checksum,
+    historical_open_meteo_release_manifest,
+    open_meteo_archive_chunk_url,
+    require_accounted_open_meteo_result,
+)
 from agri_data_service.execution.historical_usdm import (
     HistoricalUsdmBackfillPlan,
     HistoricalUsdmCheckpoint,
@@ -60,7 +71,7 @@ from agri_data_service.models.provenance import (
 
 WGS84_SRID = 4326
 HISTORICAL_NASA_OBSERVATION_INSERT_BATCH_SIZE = 1_000
-HISTORICAL_ERA5_INSERT_BATCH_SIZE = 1_000
+HISTORICAL_SIGNAL_INSERT_BATCH_SIZE = 1_000
 
 if TYPE_CHECKING:
     import uuid
@@ -110,6 +121,20 @@ class HistoricalEra5WriteResult:
     artifact_id: uuid.UUID
     observation_count: int
     coverage_count: int
+    crosswalk_count: int
+    idempotent: bool
+
+
+@dataclass(frozen=True)
+class HistoricalOpenMeteoWriteResult:
+    """Identifiers and row counts from one persisted Open-Meteo ERA5-Land archive chunk."""
+
+    source_release_id: uuid.UUID
+    artifact_id: uuid.UUID
+    observation_count: int
+    observed_value_count: int
+    coverage_count: int
+    no_data_series_count: int
     crosswalk_count: int
     idempotent: bool
 
@@ -214,6 +239,48 @@ async def persist_era5_land_month(
     )
 
 
+async def persist_open_meteo_archive_chunk(
+    session: AsyncSession,
+    *,
+    plan: HistoricalOpenMeteoArchivePlan,
+    result: OpenMeteoArchiveChunkResult,
+) -> HistoricalOpenMeteoWriteResult:
+    """Persist one accounted-for Open-Meteo ERA5-Land archive chunk against the existing analysis lattice."""
+    require_accounted_open_meteo_result(plan, result)
+    chunk = _open_meteo_chunk(plan, result.chunk_key)
+    await _advisory_lock(session, f"historical-open-meteo:{historical_open_meteo_plan_checksum(plan)}:{chunk.key}")
+    source = await _ensure_data_source(
+        session,
+        plan.source,
+        configuration={
+            "ingestion_boundary": "local_historical_backfill",
+            "source_kind": "open_meteo_era5_land_archive_daily",
+            "provider_role": "intermediary_redistributor",
+            "upstream_product": "ECMWF ERA5-Land via Copernicus Climate Change Service",
+            "model": plan.model,
+            "native_grid_degrees": str(plan.native_grid_degrees),
+            "native_grid_resolution_m": str(plan.native_grid_resolution_m),
+        },
+    )
+    spatial_cells = await _require_open_meteo_spatial_cells(session, plan, chunk)
+    source_release, release_idempotent = await _ensure_open_meteo_source_release(session, plan, source, chunk, result)
+    artifact, artifact_idempotent = await _ensure_open_meteo_artifact(session, plan, source_release, chunk, result)
+    await _insert_open_meteo_crosswalks(session, source_release, plan, spatial_cells, result)
+    await _insert_open_meteo_observations(session, source_release, plan, spatial_cells, result)
+    await _insert_open_meteo_coverage(session, source_release, plan, spatial_cells, result)
+    await _verify_persisted_open_meteo_release(session, source_release, chunk, result)
+    return HistoricalOpenMeteoWriteResult(
+        source_release_id=source_release.id,
+        artifact_id=artifact.id,
+        observation_count=len(result.observations),
+        observed_value_count=sum(1 for item in result.observations if item.is_observed),
+        coverage_count=len(result.coverage),
+        no_data_series_count=sum(1 for item in result.coverage if item.status == "no_data"),
+        crosswalk_count=len(chunk.cells),
+        idempotent=release_idempotent and artifact_idempotent,
+    )
+
+
 async def finalize_nasa_release_set(
     session: AsyncSession,
     *,
@@ -229,72 +296,14 @@ async def finalize_nasa_release_set(
     source = await _find_active_source(session, plan.source.key)
     source_releases = await _required_source_releases(session, plan, checkpoint, source.id)
     expected_ids = {release.id for release in source_releases}
-    existing = (
-        (
-            await session.execute(
-                select(ReleaseSet).where(
-                    (ReleaseSet.logical_key == plan.release_set_key)
-                    | (ReleaseSet.manifest_checksum == manifest_checksum)
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if len(existing) > 1:
-        raise ValueError("release set key and manifest checksum identify different historical release sets")
-    release_set = existing[0] if existing else None
-    if release_set is None:
-        release_set = ReleaseSet(
-            logical_key=plan.release_set_key,
-            as_of_time=plan.release_set_as_of,
-            manifest_checksum=manifest_checksum,
-            state=ReleaseSetState.DRAFT,
-            description=plan.description,
-        )
-        session.add(release_set)
-        await session.flush()
-        idempotent = False
-    elif (
-        release_set.logical_key != plan.release_set_key
-        or release_set.manifest_checksum != manifest_checksum
-        or release_set.as_of_time != plan.release_set_as_of
-        or release_set.description != plan.description
-    ):
-        raise ValueError("historical release set identity is already governed by different content")
-    elif release_set.state in {ReleaseSetState.VALIDATED, ReleaseSetState.PUBLISHED}:
-        members = await _release_set_member_ids(session, release_set.id)
-        if members != expected_ids:
-            raise ValueError("finalized historical release set has different source membership")
-        return HistoricalReleaseSetResult(
-            release_set_id=release_set.id,
-            manifest_checksum=manifest_checksum,
-            source_release_count=len(expected_ids),
-            idempotent=True,
-        )
-    elif release_set.state != ReleaseSetState.DRAFT:
-        raise ValueError("historical release set is not in a mutable draft state")
-    else:
-        idempotent = False
-
-    existing_members = await _release_set_member_ids(session, release_set.id)
-    unexpected_members = existing_members.difference(expected_ids)
-    if unexpected_members:
-        raise ValueError("historical draft release set contains unexpected source releases")
-    for source_release_id in sorted(expected_ids.difference(existing_members), key=str):
-        session.add(ReleaseSetItem(release_set_id=release_set.id, source_release_id=source_release_id))
-    await session.flush()
-    members = await _release_set_member_ids(session, release_set.id)
-    if members != expected_ids:
-        raise ValueError("historical release set did not retain complete source membership")
-    release_set.state = ReleaseSetState.VALIDATED
-    release_set.validated_at = _utc_now_or_value(validated_at)
-    await session.flush()
-    return HistoricalReleaseSetResult(
-        release_set_id=release_set.id,
+    return await _finalize_release_set(
+        session,
+        release_set_key=plan.release_set_key,
+        as_of_time=plan.release_set_as_of,
+        description=plan.description,
         manifest_checksum=manifest_checksum,
-        source_release_count=len(expected_ids),
-        idempotent=idempotent,
+        expected_ids=expected_ids,
+        validated_at=validated_at,
     )
 
 
@@ -313,72 +322,14 @@ async def finalize_era5_release_set(
     source = await _find_active_source(session, plan.source.key)
     source_releases = await _required_era5_source_releases(session, plan, checkpoint, source.id)
     expected_ids = {release.id for release in source_releases}
-    existing = (
-        (
-            await session.execute(
-                select(ReleaseSet).where(
-                    (ReleaseSet.logical_key == plan.release_set_key)
-                    | (ReleaseSet.manifest_checksum == manifest_checksum)
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if len(existing) > 1:
-        raise ValueError("release set key and manifest checksum identify different historical release sets")
-    release_set = existing[0] if existing else None
-    if release_set is None:
-        release_set = ReleaseSet(
-            logical_key=plan.release_set_key,
-            as_of_time=plan.release_set_as_of,
-            manifest_checksum=manifest_checksum,
-            state=ReleaseSetState.DRAFT,
-            description=plan.description,
-        )
-        session.add(release_set)
-        await session.flush()
-        idempotent = False
-    elif (
-        release_set.logical_key != plan.release_set_key
-        or release_set.manifest_checksum != manifest_checksum
-        or release_set.as_of_time != plan.release_set_as_of
-        or release_set.description != plan.description
-    ):
-        raise ValueError("historical release set identity is already governed by different content")
-    elif release_set.state in {ReleaseSetState.VALIDATED, ReleaseSetState.PUBLISHED}:
-        members = await _release_set_member_ids(session, release_set.id)
-        if members != expected_ids:
-            raise ValueError("finalized historical release set has different source membership")
-        return HistoricalReleaseSetResult(
-            release_set_id=release_set.id,
-            manifest_checksum=manifest_checksum,
-            source_release_count=len(expected_ids),
-            idempotent=True,
-        )
-    elif release_set.state != ReleaseSetState.DRAFT:
-        raise ValueError("historical release set is not in a mutable draft state")
-    else:
-        idempotent = False
-
-    existing_members = await _release_set_member_ids(session, release_set.id)
-    unexpected_members = existing_members.difference(expected_ids)
-    if unexpected_members:
-        raise ValueError("historical draft release set contains unexpected source releases")
-    for source_release_id in sorted(expected_ids.difference(existing_members), key=str):
-        session.add(ReleaseSetItem(release_set_id=release_set.id, source_release_id=source_release_id))
-    await session.flush()
-    members = await _release_set_member_ids(session, release_set.id)
-    if members != expected_ids:
-        raise ValueError("historical release set did not retain complete source membership")
-    release_set.state = ReleaseSetState.VALIDATED
-    release_set.validated_at = _utc_now_or_value(validated_at)
-    await session.flush()
-    return HistoricalReleaseSetResult(
-        release_set_id=release_set.id,
+    return await _finalize_release_set(
+        session,
+        release_set_key=plan.release_set_key,
+        as_of_time=plan.release_set_as_of,
+        description=plan.description,
         manifest_checksum=manifest_checksum,
-        source_release_count=len(expected_ids),
-        idempotent=idempotent,
+        expected_ids=expected_ids,
+        validated_at=validated_at,
     )
 
 
@@ -397,11 +348,59 @@ async def finalize_usdm_release_set(
     source = await _find_active_source(session, plan.source.key)
     source_releases = await _required_usdm_source_releases(session, plan, checkpoint, source.id)
     expected_ids = {release.id for release in source_releases}
+    return await _finalize_release_set(
+        session,
+        release_set_key=plan.release_set_key,
+        as_of_time=plan.release_set_as_of,
+        description=plan.description,
+        manifest_checksum=manifest_checksum,
+        expected_ids=expected_ids,
+        validated_at=validated_at,
+    )
+
+
+async def finalize_open_meteo_release_set(
+    session: AsyncSession,
+    *,
+    plan: HistoricalOpenMeteoArchivePlan,
+    checkpoint: HistoricalOpenMeteoCheckpoint,
+    validated_at: datetime | None = None,
+) -> HistoricalReleaseSetResult:
+    """Atomically validate Open-Meteo archive membership only after every planned chunk is durable."""
+    manifest_checksum = historical_open_meteo_release_manifest(plan, checkpoint)
+    if any(receipt.retrieved_at > plan.release_set_as_of for receipt in checkpoint.receipts):
+        raise ValueError("release_set_as_of must not precede a persisted source receipt")
+    await _advisory_lock(session, f"historical-release-set:{plan.release_set_key}")
+    source = await _find_active_source(session, plan.source.key)
+    source_releases = await _required_open_meteo_source_releases(session, plan, checkpoint, source.id)
+    expected_ids = {release.id for release in source_releases}
+    return await _finalize_release_set(
+        session,
+        release_set_key=plan.release_set_key,
+        as_of_time=plan.release_set_as_of,
+        description=plan.description,
+        manifest_checksum=manifest_checksum,
+        expected_ids=expected_ids,
+        validated_at=validated_at,
+    )
+
+
+async def _finalize_release_set(
+    session: AsyncSession,
+    *,
+    release_set_key: str,
+    as_of_time: datetime,
+    description: str | None,
+    manifest_checksum: str,
+    expected_ids: set[uuid.UUID],
+    validated_at: datetime | None,
+) -> HistoricalReleaseSetResult:
+    """Atomically validate one release set's membership; the warehouse trigger freezes it afterwards."""
     existing = (
         (
             await session.execute(
                 select(ReleaseSet).where(
-                    (ReleaseSet.logical_key == plan.release_set_key)
+                    (ReleaseSet.logical_key == release_set_key)
                     | (ReleaseSet.manifest_checksum == manifest_checksum)
                 )
             )
@@ -414,20 +413,20 @@ async def finalize_usdm_release_set(
     release_set = existing[0] if existing else None
     if release_set is None:
         release_set = ReleaseSet(
-            logical_key=plan.release_set_key,
-            as_of_time=plan.release_set_as_of,
+            logical_key=release_set_key,
+            as_of_time=as_of_time,
             manifest_checksum=manifest_checksum,
             state=ReleaseSetState.DRAFT,
-            description=plan.description,
+            description=description,
         )
         session.add(release_set)
         await session.flush()
         idempotent = False
     elif (
-        release_set.logical_key != plan.release_set_key
+        release_set.logical_key != release_set_key
         or release_set.manifest_checksum != manifest_checksum
-        or release_set.as_of_time != plan.release_set_as_of
-        or release_set.description != plan.description
+        or release_set.as_of_time != as_of_time
+        or release_set.description != description
     ):
         raise ValueError("historical release set identity is already governed by different content")
     elif release_set.state in {ReleaseSetState.VALIDATED, ReleaseSetState.PUBLISHED}:
@@ -914,6 +913,334 @@ async def _ensure_era5_artifact(
     return existing, True
 
 
+async def _ensure_open_meteo_source_release(
+    session: AsyncSession,
+    plan: HistoricalOpenMeteoArchivePlan,
+    source: DataSource,
+    chunk: OpenMeteoArchiveChunk,
+    result: OpenMeteoArchiveChunkResult,
+) -> tuple[SourceRelease, bool]:
+    observed_from = datetime.combine(plan.window.start_date, datetime.min.time(), tzinfo=UTC)
+    observed_to = datetime.combine(plan.window.end_date, datetime.max.time(), tzinfo=UTC)
+    query_parameters = {
+        "request_url": open_meteo_archive_chunk_url(plan, chunk),
+        "model": plan.model,
+        "cell_selection": plan.cell_selection,
+        "time_zone": plan.time_zone,
+        "parameters": plan.parameters,
+        "cell_keys": [cell.cell_key for cell in chunk.cells],
+    }
+    quality_summary = {
+        "requested_series_count": len(chunk.cells) * len(plan.parameters),
+        "expected_daily_rows": len(result.observations),
+        "observed_value_count": sum(1 for item in result.observations if item.is_observed),
+        "coverage_count": len(result.coverage),
+        "no_data_series_count": sum(1 for item in result.coverage if item.status == "no_data"),
+        "partial_series_count": sum(1 for item in result.coverage if item.status == "partial"),
+        "spatial_support_kind": "point_sample",
+        # The warehouse stores a canonical document with the provider's per-request timing metric
+        # removed; this is the digest of the exact bytes that came off the wire.
+        "wire_payload_checksum": result.wire_payload_checksum,
+        "wire_payload_bytes": result.wire_payload_bytes,
+        "provider_role": "intermediary_redistributor",
+    }
+    source_version = _open_meteo_source_version(plan, chunk)
+    existing = (
+        await session.execute(
+            select(SourceRelease).where(
+                SourceRelease.data_source_id == source.id,
+                SourceRelease.source_version == source_version,
+                SourceRelease.payload_checksum == result.payload_checksum,
+                SourceRelease.transform_version == plan.transform_version,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        release = SourceRelease(
+            data_source_id=source.id,
+            source_version=source_version,
+            retrieved_at=result.retrieved_at,
+            data_available_at=result.retrieved_at,
+            observed_from=observed_from,
+            observed_to=observed_to,
+            payload_checksum=result.payload_checksum,
+            payload_bytes=len(result.payload),
+            schema_version=OPEN_METEO_ARCHIVE_SCHEMA_VERSION,
+            transform_version=plan.transform_version,
+            license_snapshot=plan.source.license_name,
+            query_parameters=query_parameters,
+            quality_summary=quality_summary,
+            validation_state=ReleaseValidationState.VALID,
+            validated_at=result.retrieved_at,
+        )
+        session.add(release)
+        await session.flush()
+        return release, False
+    expected = {
+        "observed_from": observed_from,
+        "observed_to": observed_to,
+        "payload_bytes": len(result.payload),
+        "schema_version": OPEN_METEO_ARCHIVE_SCHEMA_VERSION,
+        "transform_version": plan.transform_version,
+        "license_snapshot": plan.source.license_name,
+        "query_parameters": query_parameters,
+        "quality_summary": quality_summary,
+        "validation_state": ReleaseValidationState.VALID,
+    }
+    if any(getattr(existing, field) != value for field, value in expected.items()):
+        raise ValueError("historical Open-Meteo source release identity is already governed by different metadata")
+    if existing.validated_at is None:
+        raise ValueError("historical Open-Meteo source release is valid without a validation timestamp")
+    return existing, True
+
+
+async def _ensure_open_meteo_artifact(
+    session: AsyncSession,
+    plan: HistoricalOpenMeteoArchivePlan,
+    source_release: SourceRelease,
+    chunk: OpenMeteoArchiveChunk,
+    result: OpenMeteoArchiveChunkResult,
+) -> tuple[Artifact, bool]:
+    uri = (
+        f"warehouse://historical-source/open-meteo-era5-land-archive/{chunk.key}/"
+        f"{plan.transform_version}/{result.payload_checksum}.json"
+    )
+    metadata = {
+        "chunk_key": chunk.key,
+        "plan_checksum": historical_open_meteo_plan_checksum(plan),
+        "transform_version": plan.transform_version,
+        "canonicalization": "generationtime_ms removed; keys sorted; UTF-8 compact separators",
+        "wire_payload_checksum": result.wire_payload_checksum,
+        "wire_payload_bytes": result.wire_payload_bytes,
+    }
+    existing = (
+        await session.execute(
+            select(Artifact).where(Artifact.uri == uri, Artifact.checksum_sha256 == result.payload_checksum)
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        artifact = Artifact(
+            source_release_id=source_release.id,
+            kind="source_open_meteo_era5_land_archive_daily_json",
+            uri=uri,
+            media_type="application/json",
+            checksum_sha256=result.payload_checksum,
+            size_bytes=len(result.payload),
+            storage_class="database_inline",
+            metadata_json=metadata,
+            content_bytes=result.payload,
+        )
+        session.add(artifact)
+        await session.flush()
+        return artifact, False
+    if (
+        existing.source_release_id != source_release.id
+        or existing.kind != "source_open_meteo_era5_land_archive_daily_json"
+        or existing.media_type != "application/json"
+        or existing.size_bytes != len(result.payload)
+        or existing.storage_class != "database_inline"
+        or existing.metadata_json != metadata
+        or existing.content_bytes != result.payload
+    ):
+        raise ValueError("historical Open-Meteo source artifact identity is already governed by different content")
+    return existing, True
+
+
+async def _require_open_meteo_spatial_cells(
+    session: AsyncSession,
+    plan: HistoricalOpenMeteoArchivePlan,
+    chunk: OpenMeteoArchiveChunk,
+) -> dict[str, SpatialCell]:
+    """Require the reviewed analysis lattice to already exist; this lane never mints spatial cells."""
+    cell_keys = [cell.cell_key for cell in chunk.cells]
+    existing = (await session.execute(select(SpatialCell).where(SpatialCell.cell_key.in_(cell_keys)))).scalars()
+    cells = {cell.cell_key: cell for cell in existing}
+    missing = [cell.cell_key for cell in chunk.cells if cell.cell_key not in cells]
+    if missing:
+        raise ValueError("Open-Meteo archive persistence requires every reviewed analysis cell in the warehouse")
+    wrong_grid = sorted(key for key, cell in cells.items() if cell.grid_name != plan.grid_name)
+    if wrong_grid:
+        raise ValueError("Open-Meteo archive cell_key resolves to a spatial cell on a different analysis grid")
+    return cells
+
+
+async def _insert_open_meteo_crosswalks(
+    session: AsyncSession,
+    source_release: SourceRelease,
+    plan: HistoricalOpenMeteoArchivePlan,
+    spatial_cells: dict[str, SpatialCell],
+    result: OpenMeteoArchiveChunkResult,
+) -> None:
+    """Record the native grid point the provider actually answered with, not the requested centroid."""
+    rows: list[dict[str, object]] = []
+    for cell_key, latitude, longitude, elevation in result.grid_points:
+        rows.append(
+            {
+                "source_release_id": source_release.id,
+                "cell_id": spatial_cells[cell_key].id,
+                "native_feature_key": cell_key,
+                "native_geometry": WKTElement(f"POINT({longitude:.8f} {latitude:.8f})", srid=WGS84_SRID),
+                "native_resolution_m": plan.native_grid_resolution_m,
+                "spatial_support_kind": "point_sample",
+                "mapping_method": "provider_nearest_native_grid_point",
+                "coverage_fraction": 1,
+                "metadata_json": {
+                    "native_grid_name": plan.native_grid_name,
+                    "native_grid_degrees": plan.native_grid_degrees,
+                    "provider_response_geometry": "point",
+                    "provider_reported_elevation_m": elevation,
+                    # The analysis cell is ~0.25 degrees; one native grid box is sampled inside it.
+                    "analysis_cell_geometry": "sampling_area",
+                    "native_resolution_is_context_only": True,
+                },
+            }
+        )
+        if len(rows) == HISTORICAL_SIGNAL_INSERT_BATCH_SIZE:
+            await _insert_cell_crosswalk_batch(session, rows)
+            rows = []
+    if rows:
+        await _insert_cell_crosswalk_batch(session, rows)
+
+
+async def _insert_open_meteo_observations(
+    session: AsyncSession,
+    source_release: SourceRelease,
+    plan: HistoricalOpenMeteoArchivePlan,
+    spatial_cells: dict[str, SpatialCell],
+    result: OpenMeteoArchiveChunkResult,
+) -> None:
+    """Insert one chunk's daily facts in fixed-size batches under this lane's own spatial support key."""
+    rows: list[dict[str, object]] = []
+    for observation in result.observations:
+        rows.append(
+            {
+                "source_release_id": source_release.id,
+                "cell_id": spatial_cells[observation.cell_key].id,
+                "signal_name": observation.signal_name,
+                "source_parameter": observation.source_parameter,
+                "support_key": plan.support_key,
+                "observed_at": observation.observed_at,
+                "valid_from": observation.observed_at,
+                "valid_to": observation.observed_at,
+                "data_available_at": result.retrieved_at,
+                "original_value": observation.original_value,
+                "original_unit": observation.original_unit,
+                "normalized_value": observation.normalized_value,
+                "normalized_unit": observation.normalized_unit,
+                "quality_flag": observation.quality_flag,
+                "coverage_fraction": 1,
+                "is_observed": observation.is_observed,
+                "metadata_json": {
+                    "source_parameter": observation.source_parameter,
+                    "native_grid_name": plan.native_grid_name,
+                },
+            }
+        )
+        if len(rows) == HISTORICAL_SIGNAL_INSERT_BATCH_SIZE:
+            await _insert_signal_observation_batch(session, rows)
+            rows = []
+    if rows:
+        await _insert_signal_observation_batch(session, rows)
+
+
+async def _insert_open_meteo_coverage(
+    session: AsyncSession,
+    source_release: SourceRelease,
+    plan: HistoricalOpenMeteoArchivePlan,
+    spatial_cells: dict[str, SpatialCell],
+    result: OpenMeteoArchiveChunkResult,
+) -> None:
+    """Insert per-cell/signal coverage evidence, preserving `no_data` and `partial` as themselves."""
+    rows: list[dict[str, object]] = []
+    for coverage in result.coverage:
+        rows.append(
+            {
+                "source_release_id": source_release.id,
+                "cell_id": spatial_cells[coverage.cell_key].id,
+                "signal_name": coverage.signal_name,
+                "source_parameter": coverage.source_parameter,
+                "support_key": plan.support_key,
+                "window_start": coverage.window_start,
+                "window_end": coverage.window_end,
+                "expected_observation_count": coverage.expected_observation_count,
+                "received_observation_count": coverage.received_observation_count,
+                "status": coverage.status,
+                "details": {
+                    "source_parameter": coverage.source_parameter,
+                    "no_data_means": "the provider modelled no value here; it is not a zero measurement",
+                },
+            }
+        )
+        if len(rows) == HISTORICAL_SIGNAL_INSERT_BATCH_SIZE:
+            await _insert_signal_coverage_batch(session, rows)
+            rows = []
+    if rows:
+        await _insert_signal_coverage_batch(session, rows)
+
+
+async def _verify_persisted_open_meteo_release(
+    session: AsyncSession,
+    source_release: SourceRelease,
+    chunk: OpenMeteoArchiveChunk,
+    result: OpenMeteoArchiveChunkResult,
+) -> None:
+    """Prove the chunk retained every fact, audit, and point mapping it claimed to write."""
+    observation_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(SignalObservation)
+            .where(SignalObservation.source_release_id == source_release.id)
+        )
+    ).scalar_one()
+    coverage_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(SignalCoverageAudit)
+            .where(SignalCoverageAudit.source_release_id == source_release.id)
+        )
+    ).scalar_one()
+    crosswalk_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(CellSourceCrosswalk)
+            .where(CellSourceCrosswalk.source_release_id == source_release.id)
+        )
+    ).scalar_one()
+    if (
+        observation_count != len(result.observations)
+        or coverage_count != len(result.coverage)
+        or crosswalk_count != len(chunk.cells)
+    ):
+        raise ValueError("historical Open-Meteo source release did not retain every accounted-for row")
+
+
+async def _required_open_meteo_source_releases(
+    session: AsyncSession,
+    plan: HistoricalOpenMeteoArchivePlan,
+    checkpoint: HistoricalOpenMeteoCheckpoint,
+    source_id: uuid.UUID,
+) -> list[SourceRelease]:
+    """Resolve every validated chunk receipt into its immutable local source release."""
+    releases: list[SourceRelease] = []
+    for receipt in checkpoint.receipts:
+        release = (
+            await session.execute(
+                select(SourceRelease).where(
+                    SourceRelease.data_source_id == source_id,
+                    SourceRelease.source_version
+                    == _open_meteo_source_version(plan, _open_meteo_chunk(plan, receipt.chunk_key)),
+                    SourceRelease.payload_checksum == receipt.payload_checksum,
+                    SourceRelease.transform_version == plan.transform_version,
+                    SourceRelease.validation_state == ReleaseValidationState.VALID,
+                )
+            )
+        ).scalar_one_or_none()
+        if release is None:
+            raise ValueError(f"historical Open-Meteo receipt {receipt.chunk_key!r} is not persisted and valid")
+        releases.append(release)
+    return releases
+
+
 async def _ensure_cell_crosswalk(
     session: AsyncSession,
     source_release: SourceRelease,
@@ -984,15 +1311,15 @@ async def _insert_era5_crosswalks(
                 },
             }
         )
-        if len(rows) == HISTORICAL_ERA5_INSERT_BATCH_SIZE:
-            await _insert_era5_crosswalk_batch(session, rows)
+        if len(rows) == HISTORICAL_SIGNAL_INSERT_BATCH_SIZE:
+            await _insert_cell_crosswalk_batch(session, rows)
             rows = []
     if rows:
-        await _insert_era5_crosswalk_batch(session, rows)
+        await _insert_cell_crosswalk_batch(session, rows)
 
 
-async def _insert_era5_crosswalk_batch(session: AsyncSession, rows: list[dict[str, object]]) -> None:
-    """Insert one bounded idempotent ERA5 crosswalk batch."""
+async def _insert_cell_crosswalk_batch(session: AsyncSession, rows: list[dict[str, object]]) -> None:
+    """Insert one bounded idempotent cell crosswalk batch."""
     await session.execute(
         insert(CellSourceCrosswalk)
         .values(rows)
@@ -1030,15 +1357,15 @@ async def _insert_era5_observations(
                 "metadata_json": {"source_parameter": observation.source_parameter},
             }
         )
-        if len(rows) == HISTORICAL_ERA5_INSERT_BATCH_SIZE:
-            await _insert_era5_observation_batch(session, rows)
+        if len(rows) == HISTORICAL_SIGNAL_INSERT_BATCH_SIZE:
+            await _insert_signal_observation_batch(session, rows)
             rows = []
     if rows:
-        await _insert_era5_observation_batch(session, rows)
+        await _insert_signal_observation_batch(session, rows)
 
 
-async def _insert_era5_observation_batch(session: AsyncSession, rows: list[dict[str, object]]) -> None:
-    """Insert one bounded idempotent ERA5 observation batch."""
+async def _insert_signal_observation_batch(session: AsyncSession, rows: list[dict[str, object]]) -> None:
+    """Insert one bounded idempotent signal observation batch."""
     await session.execute(
         insert(SignalObservation)
         .values(rows)
@@ -1070,15 +1397,15 @@ async def _insert_era5_coverage(
                 "details": {"source_parameter": coverage.source_parameter},
             }
         )
-        if len(rows) == HISTORICAL_ERA5_INSERT_BATCH_SIZE:
-            await _insert_era5_coverage_batch(session, rows)
+        if len(rows) == HISTORICAL_SIGNAL_INSERT_BATCH_SIZE:
+            await _insert_signal_coverage_batch(session, rows)
             rows = []
     if rows:
-        await _insert_era5_coverage_batch(session, rows)
+        await _insert_signal_coverage_batch(session, rows)
 
 
-async def _insert_era5_coverage_batch(session: AsyncSession, rows: list[dict[str, object]]) -> None:
-    """Insert one bounded idempotent ERA5 coverage batch."""
+async def _insert_signal_coverage_batch(session: AsyncSession, rows: list[dict[str, object]]) -> None:
+    """Insert one bounded idempotent signal coverage batch."""
     await session.execute(
         insert(SignalCoverageAudit)
         .values(rows)
@@ -1439,6 +1766,22 @@ def _era5_source_version(period: Era5LandPeriod) -> str:
 
 def _usdm_source_version(issue_date: date) -> str:
     return f"usdm-shapefile-v1:{issue_date:%Y%m%d}"
+
+
+def _open_meteo_chunk(plan: HistoricalOpenMeteoArchivePlan, chunk_key: str) -> OpenMeteoArchiveChunk:
+    """Return one reviewed archive chunk or reject an ungoverned source artifact."""
+    try:
+        return next(chunk for chunk in plan.chunks if chunk.key == chunk_key)
+    except StopIteration as exc:
+        raise ValueError("historical Open-Meteo chunk is not part of the reviewed plan") from exc
+
+
+def _open_meteo_source_version(plan: HistoricalOpenMeteoArchivePlan, chunk: OpenMeteoArchiveChunk) -> str:
+    """Return the stable source version for one immutable archive chunk."""
+    return (
+        f"{OPEN_METEO_ARCHIVE_SCHEMA_VERSION}:{plan.window.start_date:%Y%m%d}-"
+        f"{plan.window.end_date:%Y%m%d}:{plan.grid_name}:{chunk.key}"
+    )
 
 
 def _cell_polygon_wkt(cell: AnalysisGridCell, half_span: float) -> str:

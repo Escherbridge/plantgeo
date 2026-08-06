@@ -99,6 +99,10 @@ def test_the_csv_is_parsed_by_header_name_not_by_column_position() -> None:
         # The product that answered, recorded as provenance and as the near-real-time versus
         # standard-processing discriminator `satellite` cannot supply.
         "product": "VIIRS_SNPP_NRT",
+        # The instrument's pixel and one confidence scale, so a consumer can tell a VIIRS FRP apart
+        # from a MODIS one without a product lookup table of its own.
+        "spatialSupportMeters": 375,
+        "confidenceNormalized": "nominal",
     }
     assert features[0]["geometry"] == {"type": "Point", "coordinates": [-113.26495, 47.83797]}
 

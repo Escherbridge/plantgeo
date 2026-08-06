@@ -295,7 +295,7 @@ def test_merge_backfill_results_sums_seen_and_written_and_folds_the_rejected_cou
     assert merged.status == "ingested"
     assert merged.records_seen == 3
     assert merged.records_written == 3
-    assert merged.details == {"chunks": 2, "rejected": 1}
+    assert merged.details == {"chunks": 2, "rejected": 1, "dropped": 0}
 
 
 def test_merge_backfill_results_reports_the_first_failures_reason() -> None:
@@ -980,27 +980,126 @@ def test_select_writes_still_counts_what_the_sources_freshness_rule_rejected() -
     assert not selection.truncated
 
 
-async def test_a_backfill_chunk_truncates_by_the_same_rule_the_forward_job_uses(
+def _truncating_backfill(
+    monkeypatch: pytest.MonkeyPatch,
+    cap: int,
+    record_count: int,
+    chunk_days: int,
+) -> tuple[DatedSource, RecordingWriter, BackfillPlan]:
+    """A one-chunk walk whose accepted records exceed the cap, oldest record first."""
+    monkeypatch.setenv("INGEST_MAX_SOURCE_RECORDS", str(cap))
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    chunk = HistoryWindow(start, start + timedelta(days=chunk_days))
+    oldest_first = [
+        _dated_record(f"record-{index:04d}", start + timedelta(minutes=index)) for index in range(record_count)
+    ]
+    source = DatedSource(records_by_chunk={(chunk.start.isoformat(), chunk.end.isoformat()): oldest_first})
+    plan = BackfillPlan(
+        window=HistoryWindow(start=chunk.start, end=chunk.end),
+        chunk=timedelta(days=chunk_days),
+        bbox=PACIFIC_NORTHWEST_COVERAGE_BBOX,
+    )
+    return source, RecordingWriter(), plan
+
+
+async def test_a_backfill_chunk_that_hit_the_record_cap_fails_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cap that bit deleted the chunk's OLDEST days whole; reporting that as `ingested` is the bug.
+
+    Measured on production 2026-08-05: the FIRMS week 2022-09-04..09-10 holds 60,779 published
+    detections, and a `--chunk-days 7` walk under the default 10,000-record cap writes 10,000 of them
+    and drops 50,779 -- the oldest first, because `_truncation_rank` keeps the newest. The chunk
+    reported `status="ingested"` with `details.rejected: 0`, because truncation is not a rejection.
+    """
+    source, writer, plan = _truncating_backfill(monkeypatch, cap=1000, record_count=1200, chunk_days=7)
+
+    results = await run_source_backfill(source, writer, plan)
+
+    assert results[0].status == "failed"
+    assert results[0].truncated
+    # Nothing written: the days that fitted would otherwise look complete and nobody would re-walk.
+    assert results[0].records_written == 0
+    assert writer.batches == []
+    assert results[0].details["dropped"] == 200
+    assert results[0].details["rejected"] == 0
+
+
+async def test_a_truncated_chunk_names_the_narrower_chunk_days_that_would_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, writer, plan = _truncating_backfill(monkeypatch, cap=1000, record_count=1200, chunk_days=7)
+
+    results = await run_source_backfill(source, writer, plan)
+    reason = results[0].reason or ""
+
+    assert "1200 records against a 1000-record cap" in reason
+    assert "200 were dropped" in reason
+    # 7 days * 1000/1200 = 5 whole days, which is both under the cap and strictly narrower than 7.
+    assert "--chunk-days 5" in reason
+    assert "Nothing was written for this chunk" in reason
+
+
+async def test_a_truncated_chunk_always_advises_a_strictly_narrower_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A one-record overshoot must not advise the same chunk size back, which would loop forever."""
+    source, writer, plan = _truncating_backfill(monkeypatch, cap=1000, record_count=1001, chunk_days=2)
+
+    results = await run_source_backfill(source, writer, plan)
+
+    assert "--chunk-days 1" in (results[0].reason or "")
+
+
+async def test_a_truncated_chunk_fails_the_fold_without_erasing_the_chunks_after_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("INGEST_MAX_SOURCE_RECORDS", "1000")
-    chunk = HistoryWindow(datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 8, tzinfo=UTC))
-    oldest_first = [
-        _dated_record(f"record-{index:04d}", datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=index))
-        for index in range(1200)
-    ]
-    source = DatedSource(records_by_chunk={(chunk.start.isoformat(), chunk.end.isoformat()): oldest_first})
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    over_cap = HistoryWindow(start, start + timedelta(days=1))
+    under_cap = HistoryWindow(start + timedelta(days=1), start + timedelta(days=2))
+    source = DatedSource(
+        records_by_chunk={
+            (over_cap.start.isoformat(), over_cap.end.isoformat()): [
+                _dated_record(f"big-{index:04d}", start + timedelta(minutes=index)) for index in range(1200)
+            ],
+            (under_cap.start.isoformat(), under_cap.end.isoformat()): [_dated_record("small", start)],
+        }
+    )
     writer = RecordingWriter()
     plan = BackfillPlan(
-        window=HistoryWindow(start=chunk.start, end=chunk.end),
-        chunk=timedelta(days=7),
+        window=HistoryWindow(start=over_cap.start, end=under_cap.end),
+        chunk=timedelta(days=1),
         bbox=PACIFIC_NORTHWEST_COVERAGE_BBOX,
     )
 
     results = await run_source_backfill(source, writer, plan)
+    merged = merge_backfill_results(source.source_name, results)
 
-    assert results[0].truncated
-    assert results[0].records_written == 1000
+    assert [result.status for result in results] == ["failed", "ingested"]
+    assert [write.external_id for write in writer.batches[0]] == ["small"]
+    assert merged.status == "failed"
+    assert merged.details["dropped"] == 200
+
+
+async def test_the_forward_window_reports_a_bitten_cap_rather_than_failing_on_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No narrower window exists for "now", so the forward path surfaces the loss instead of going red."""
+    monkeypatch.setenv("INGEST_MAX_SOURCE_RECORDS", "1000")
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    source = DatedSource()
+    source.current_records = [
+        _dated_record(f"record-{index:04d}", start + timedelta(minutes=index)) for index in range(1200)
+    ]
+    writer = RecordingWriter()
+
+    result = await run_source_job(source, writer, bbox=PACIFIC_NORTHWEST_COVERAGE_BBOX)
+
+    assert result.status == "ingested"
+    assert result.truncated
+    assert result.records_written == 1000
+    assert result.details["dropped"] == 200
     # The 200 dropped records are the 200 oldest, not the 200 that happened to arrive last.
     written_ids = [write.external_id for write in writer.batches[0]]
     assert written_ids[0] == "record-0200"

@@ -226,25 +226,37 @@ async def fetch_latest_drought_release(
     return None
 
 
+# The repair chain runs in a CTE rather than inline so the same expression can be both stored and
+# tested for emptiness in one statement. `geo.drought_areas.geom` is NOT NULL, and a NOT NULL column
+# accepts `MULTIPOLYGON EMPTY` -- which is what `ST_CollectionExtract(ST_MakeValid(<zero-area ring>), 3)`
+# yields. Storing that says "this drought class exists and covers nothing", which is a fabricated
+# coverage claim wearing a valid geometry's shape, and `ST_Intersects` against it silently answers
+# false for every point. Production holds 0 such rows today; the guard exists because widening
+# `DROUGHT_AREA_GEOMETRY_TYPES` widened what can reach this statement. See ingest/AGENTS.md "usdm.py".
 _STORE_DROUGHT_AREA_TEMPLATE: Final = """
-    INSERT INTO geo.drought_areas (valid_date, dm_category, geom, source_url)
-    VALUES (
-        :valid_date,
-        :dm_category,
-        ST_Multi(
-            ST_CollectionExtract(
-                ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(:geometry), 4326)),
-                3
-            )
-        ),
-        :source_url
+    WITH repaired AS (
+        SELECT ST_Multi(
+                   ST_CollectionExtract(
+                       ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(:geometry), 4326)),
+                       3
+                   )
+               ) AS geom
+    ),
+    stored AS (
+        INSERT INTO geo.drought_areas (valid_date, dm_category, geom, source_url)
+        SELECT :valid_date, :dm_category, repaired.geom, :source_url
+        FROM repaired
+        WHERE NOT ST_IsEmpty(repaired.geom)
+        ON CONFLICT (valid_date, dm_category) DO UPDATE
+            SET geom = EXCLUDED.geom,
+                source_url = EXCLUDED.source_url,
+                ingested_at = now()
+            WHERE {replace_predicate}
+        RETURNING id
     )
-    ON CONFLICT (valid_date, dm_category) DO UPDATE
-        SET geom = EXCLUDED.geom,
-            source_url = EXCLUDED.source_url,
-            ingested_at = now()
-        WHERE {replace_predicate}
-    RETURNING id
+    SELECT ST_IsEmpty(repaired.geom) AS repaired_to_empty,
+           (SELECT count(*) FROM stored) AS rows_stored
+    FROM repaired
 """
 
 _PRUNE_DROUGHT_RELEASES = text(
@@ -278,16 +290,23 @@ class PostgresDroughtStore:
                 # Built for its validation and for the Type-2 dimension's key; geo.drought_areas
                 # has no properties->>'id' of its own. See ingest/AGENTS.md "usdm.py".
                 identity = build_drought_area_identity(release.valid_date, area.drought_monitor_category)
-                rows = await self._session.execute(
-                    statement,
-                    {
-                        "valid_date": release.valid_date,
-                        "dm_category": area.drought_monitor_category,
-                        "geometry": json.dumps(area.geometry, allow_nan=False, separators=(",", ":")),
-                        "source_url": release.source_url,
-                    },
-                )
-                stored = len(rows.all())
+                outcome = (
+                    await self._session.execute(
+                        statement,
+                        {
+                            "valid_date": release.valid_date,
+                            "dm_category": area.drought_monitor_category,
+                            "geometry": json.dumps(area.geometry, allow_nan=False, separators=(",", ":")),
+                            "source_url": release.source_url,
+                        },
+                    )
+                ).one()
+                if outcome.repaired_to_empty:
+                    raise UpstreamPayloadError(
+                        f"USDM release {release.valid_date} class D{area.drought_monitor_category} "
+                        f"repaired to an empty geometry"
+                    )
+                stored = int(outcome.rows_stored)
                 written += stored
                 if stored:
                     logger.info("drought_area_stored", natural_key=identity.natural_key)

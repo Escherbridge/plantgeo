@@ -93,7 +93,7 @@ function parseFIRMSCsv(csv: string, source: FirmsSource): FIRMSFirePoint[] {
 /**
  * Fetch active fires from one NASA FIRMS near-real-time product.
  * @param bbox - Optional bounding box "west,south,east,north" (default world)
- * @param dayRange - Number of days back to fetch (1-10, default 1)
+ * @param dayRange - Number of days back to fetch (1-5, default 1)
  * @param source - FIRMS product to query (default VIIRS SNPP NRT)
  */
 export async function fetchActiveFiresNASA(
@@ -107,7 +107,8 @@ export async function fetchActiveFiresNASA(
   }
 
   const area = bbox ?? "-180,-90,180,90";
-  const clampedDayRange = Math.min(10, Math.max(1, dayRange));
+  // The API answers `400 Invalid day range. Expects [1..5].` above 5; measured 2026-08-05.
+  const clampedDayRange = Math.min(5, Math.max(1, dayRange));
 
   const url = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${apiKey}/${source}/${area}/${clampedDayRange}`;
 

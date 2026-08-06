@@ -49,11 +49,19 @@ describe("firmsDayRange", () => {
     expect(firmsDayRange()).toBe(5);
   });
 
-  it("clamps out-of-range integers to 1-10", () => {
+  // 5, not the 10 this asserted until 2026-08-05. Measured against the live FIRMS API that day:
+  // day ranges 1-5 answer HTTP 200, while 6, 7 and 10 each answer `400 Invalid day range.
+  // Expects [1..5].` This value must stay equal to MAX_FIRMS_DAY_RANGE in the Python ingester --
+  // firmsDayRange feeds the SERVING window through src/app/api/fires/route.ts, so a divergence
+  // means the map asks for days the ingester never filled.
+  it("clamps out-of-range integers to the API's real 1-5 range", () => {
     vi.stubEnv("FIRMS_DAY_RANGE", "0");
     expect(firmsDayRange()).toBe(1);
     vi.stubEnv("FIRMS_DAY_RANGE", "99");
-    expect(firmsDayRange()).toBe(10);
+    expect(firmsDayRange()).toBe(5);
+    // 6 is the first value the API rejects, so it is the one a regression would most likely restore.
+    vi.stubEnv("FIRMS_DAY_RANGE", "6");
+    expect(firmsDayRange()).toBe(5);
   });
 
   it("rejects non-numeric strings instead of truncating them", () => {

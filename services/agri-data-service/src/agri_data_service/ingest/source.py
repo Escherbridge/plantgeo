@@ -220,7 +220,12 @@ class SelectedWrites:
 
     writes: list[FeatureWrite]
     rejected: int
-    truncated: bool
+    dropped: int = 0
+
+    @property
+    def truncated(self) -> bool:
+        """True when the record cap bit, so an accepted write was dropped rather than persisted."""
+        return self.dropped > 0
 
 
 def _truncation_rank(entry: tuple[int, FeatureWrite]) -> tuple[int, float, int]:
@@ -237,14 +242,19 @@ def select_writes(
     records: Sequence[UpstreamRecord],
     request: FetchRequest,
 ) -> SelectedWrites:
-    """Map, filter and cap one fetched window; a bitten cap drops the OLDEST records, never an arrival slice."""
+    """Map, filter and cap one fetched window; a bitten cap drops the OLDEST records, never an arrival slice.
+
+    `dropped` is the count the caller must act on rather than log: truncation is not a rejection, so it
+    never reaches `details.rejected`, and a caller that reads only `truncated` learns that something was
+    lost without learning how much. See ingest/AGENTS.md "backfill.py".
+    """
     accepted, rejected = accepted_writes(source, records, request)
     if len(accepted) <= request.max_records:
-        return SelectedWrites(writes=accepted, rejected=rejected, truncated=False)
+        return SelectedWrites(writes=accepted, rejected=rejected, dropped=0)
     survivors = sorted(enumerate(accepted), key=_truncation_rank, reverse=True)[: request.max_records]
     kept_positions = {position for position, _ in survivors}
     return SelectedWrites(
         writes=[write for position, write in enumerate(accepted) if position in kept_positions],
         rejected=rejected,
-        truncated=True,
+        dropped=len(accepted) - len(kept_positions),
     )
