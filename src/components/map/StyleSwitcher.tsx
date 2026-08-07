@@ -20,6 +20,10 @@ export default function StyleSwitcher() {
           key={opt.id}
           onClick={() => setCurrentStyle(opt.id)}
           title={opt.label}
+          // The visible content is an aria-hidden colour swatch, so without this the
+          // button has no accessible name at all.
+          aria-label={`${opt.label} basemap`}
+          aria-pressed={currentStyle === opt.id}
           // The hit area grows to the 44px mobile minimum without the swatch reading as a
           // bigger colour chip than its neighbours: the visible square stays h-8 w-8 and is
           // centred inside a larger tap target, the same "icon smaller than its button"

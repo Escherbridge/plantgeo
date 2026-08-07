@@ -16,7 +16,7 @@ const LEGEND_ITEMS = [
   { color: "#8B4513", label: "Slash / Blowdown" },
   { color: "#DAA520", label: "Shrubland" },
   { color: "#ADFF2F", label: "Grass / Herbaceous" },
-  { color: "#228B22", label: "Timber Understory" },
+  { color: "#9ccc65", label: "Timber Understory" },
   { color: "#808080", label: "Non-burnable" },
 ];
 

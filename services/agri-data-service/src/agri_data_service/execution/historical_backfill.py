@@ -264,6 +264,11 @@ class HistoricalSignalObservation:
     quality_flag: str
     is_observed: bool
     payload_checksum: str
+    # What fraction of the sub-daily observations a daily row was actually reduced from. It maps
+    # onto `agri.signal_observation.coverage_fraction` (CHECK 0..1). Lanes whose provider publishes
+    # one value per day leave it at 1; a lane that reduces hours to a day -- CAMS -- must set it, or
+    # an 18-of-24-hour mean is written as `accepted` with no per-row trace that the day was partial.
+    coverage_fraction: float = 1.0
 
 
 @dataclass(frozen=True)

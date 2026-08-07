@@ -706,7 +706,7 @@ class ForecastReceipt(Base, UUIDMixin):
 
 
 class ForecastValue(Base):
-    """Append-only point and uncertainty values owned by one forecast receipt."""
+    """Append-only point and uncertainty values; see models/AGENTS.md on quantile_values key agreement."""
 
     __tablename__ = "forecast_value"
 

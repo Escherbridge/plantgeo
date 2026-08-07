@@ -1,40 +1,19 @@
 -- Put the observation day on every style-baked tile layer, so the time slider can
--- reach layers that were never on it.
+-- reach layers that were never on it: fire-perimeters, evacuation-zones,
+-- burn-severity and sensors are Martin function sources baked into the map style,
+-- and nothing in that path has ever taken a date. All four drew every published row
+-- at every date on a four-year axis.
 --
--- fire-perimeters, evacuation-zones, burn-severity and sensors are Martin function
--- sources baked into the map style, not React-mounted readers. Nothing in that path
--- has ever taken a date: the functions select every published row in the tile
--- envelope, so scrubbing the slider to 2023 left August-2026 fire perimeters and
--- evacuation zones sitting on the map with nothing saying so. Those four layers hold
--- 388 + 119 + 478 + 15,769 published rows in production and every one of them was
--- drawn at every date on a four-year axis.
+-- The fix is an ATTRIBUTE, not a per-function `query json` parameter, so every
+-- signature stays identical and this is CREATE OR REPLACE with no catalog change and
+-- no Martin restart. The rule lives in ONE place, geo.feature_observation_day,
+-- because the tile filter and the slider's axis MUST agree on the day.
 --
--- The fix is an ATTRIBUTE, not a parameter. Two alternatives were rejected:
---
---   * A `query json` parameter per function, filtered server-side. That means DROP +
---     CREATE on four live functions (Postgres cannot add a parameter with CREATE OR
---     REPLACE) and a Martin restart to re-read the catalog, and a missing function
---     404s the WHOLE composite -- `martin-dynamic` carries six sources in one
---     MapLibre source, so one bad signature blanks every dynamic layer on the map.
---   * Splitting the composite so each layer could carry its own dated URL. Same
---     blast radius, and Martin cannot emit `vector_layers` for function sources, so
---     the composite split has its own constraints (see src/lib/map/sources.ts).
---
--- Emitting the day instead keeps every signature identical, so this is CREATE OR
--- REPLACE with no catalog change and no restart -- Martin's own `tile_expiry: 5m`
--- ages the cached tiles out on its own. The client filters with a MapLibre
--- expression, which also means scrubbing re-filters already-downloaded tiles
--- instead of refetching them: a day-granular scrub over these layers costs zero
--- requests. At this row count shipping every feature and filtering in the browser
--- is the cheaper design, not a compromise.
---
--- The rule lives in ONE place, geo.feature_observation_day, because the tile filter
--- and the slider's axis MUST agree. They are derived from the same
--- COALESCE(observedAt, updatedAt, polygonDateTime) that
--- src/lib/server/services/environmental-read-model.ts uses for
--- OBSERVATION_TIME_TEXT; if these two ever disagree the slider will advertise a day
--- as published and the tiles will draw nothing for it, which reads as a rendering
--- bug and is the hardest class of gap to diagnose.
+-- Why an attribute rather than a parameter or a composite split, why the day is the
+-- PUBLISHER-NAMED day, and why the IMMUTABLE declaration below is a deliberate
+-- promotion: src/lib/server/db/AGENTS.md §tile-observation-day.
+-- src/__tests__/lib/observation-day-contract.test.ts fails if this function and
+-- environmental-read-model.ts's OBSERVATION_DAY ever stop deriving the day alike.
 
 -- Measured against production 2026-08-06: burn-severity and evacuation-zones and
 -- sensors date on `observedAt`, fire-perimeters on `polygonDateTime`, and no row of
@@ -42,37 +21,45 @@
 CREATE OR REPLACE FUNCTION geo.feature_observation_day(feature_properties jsonb)
 RETURNS date
 LANGUAGE sql
+-- Declared IMMUTABLE over two callees PostgreSQL catalogues STABLE. That is a knowing,
+-- safe promotion, not an oversight -- AGENTS.md §tile-observation-day proves both halves.
 IMMUTABLE
 PARALLEL SAFE
 SET search_path = public, pg_catalog
 AS $$
-  -- The regex guard is not decoration. Without it one malformed upstream timestamp
-  -- raises inside ST_AsMVT and 500s the entire tile -- every feature in it, not just
-  -- the bad row -- which is the failure mode 0012 called out for bare numeric casts.
-  -- A row that cannot be dated returns NULL and is then treated as undated by the
-  -- client filter, which shows it at every date rather than hiding it.
+  -- The ten characters the publisher named, read once so the COALESCE order cannot fork.
+  -- NEVER `(...)::timestamptz::date` and never `(... AT TIME ZONE 'UTC')::date`: an
+  -- instant-based conversion moves 6,279 of the 16,743 production water-gauge rows onto
+  -- the day AFTER the one they name, which is the disagreement this function prevents.
+  --
+  -- BOTH guards must hold before to_date runs, and neither is decoration. The regex proves
+  -- the shape; pg_input_is_valid proves the day EXISTS, because `to_date('2026-02-31',
+  -- 'YYYY-MM-DD')` raises "date/time field value out of range" and one raise inside
+  -- ST_AsMVT blanks the entire tile -- every feature in it, not just the bad row. A row
+  -- that cannot be dated returns NULL and is treated as undated by the client filter,
+  -- which shows it at every date rather than hiding it.
   SELECT CASE
-    WHEN COALESCE(
-      feature_properties ->> 'observedAt',
-      feature_properties ->> 'updatedAt',
-      feature_properties ->> 'polygonDateTime'
-    ) ~ '^\d{4}-\d{2}-\d{2}'
-    THEN (
-      COALESCE(
-        feature_properties ->> 'observedAt',
-        feature_properties ->> 'updatedAt',
-        feature_properties ->> 'polygonDateTime'
+           WHEN named.day ~ '^\d{4}-\d{2}-\d{2}$'
+                AND pg_input_is_valid(named.day, 'date')
+             THEN to_date(named.day, 'YYYY-MM-DD')
+         END
+    FROM (
+      SELECT substring(
+        COALESCE(
+          feature_properties ->> 'observedAt',
+          feature_properties ->> 'updatedAt',
+          feature_properties ->> 'polygonDateTime'
+        ),
+        1,
+        10
       )
-    )::timestamptz::date
-  END;
+    ) AS named(day);
 $$;
 --> statement-breakpoint
 
--- Emitted as text rather than as a date so the MVT attribute arrives in the browser
--- as a plain "YYYY-MM-DD" string. MapLibre expressions compare strings
--- lexicographically, and ISO-8601 dates sort correctly that way, so
--- ["<=", ["get","observed_day"], "2024-03-01"] is exactly the "as the record stood
--- on that day" test with no date parsing in the style at all.
+-- `::text`, so the MVT attribute arrives as a plain "YYYY-MM-DD" string that a MapLibre
+-- expression can compare lexicographically with no date parsing in the style at all.
+-- See src/lib/server/db/AGENTS.md §tile-observation-day.
 CREATE OR REPLACE FUNCTION geo.burn_severity_tiles(z integer, x integer, y integer)
 RETURNS bytea
 LANGUAGE plpgsql

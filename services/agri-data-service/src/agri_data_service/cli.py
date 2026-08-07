@@ -34,6 +34,28 @@ from agri_data_service.db.maintenance import (
     maintain_job_event_partitions,
 )
 from agri_data_service.execution.contracts import ExpectedOutput
+from agri_data_service.execution.ensemble_forecast import (
+    ENSEMBLE_WAREHOUSE_PERSISTENCE_STATE,
+    EnsembleForecastCheckpoint,
+    EnsembleForecastChunk,
+    EnsembleForecastFetchError,
+    EnsembleForecastPlan,
+    StagedForecastReceipt,
+    cache_ensemble_forecast_result,
+    ensemble_forecast_checkpoint_path,
+    ensemble_forecast_plan_checksum,
+    ensemble_forecast_release_manifest,
+    ensemble_forecast_staged_document,
+    ensemble_forecast_staged_document_path,
+    initialize_ensemble_forecast_checkpoint,
+    load_cached_ensemble_forecast_result,
+    load_ensemble_forecast_checkpoint,
+    record_ensemble_forecast_result,
+    rederive_ensemble_forecast_checkpoint_state,
+    run_ensemble_forecast_chunks,
+    write_ensemble_forecast_checkpoint,
+    write_ensemble_forecast_staged_document,
+)
 from agri_data_service.execution.historical_backfill import (
     HistoricalNasaBackfillPlan,
     HistoricalNasaCheckpoint,
@@ -49,6 +71,23 @@ from agri_data_service.execution.historical_backfill import (
     record_historical_nasa_result,
     write_historical_nasa_checkpoint,
     write_historical_nasa_release_plan,
+)
+from agri_data_service.execution.historical_cams import (
+    CamsAirQualityChunk,
+    CamsAirQualityFetchError,
+    HistoricalCamsAirQualityPlan,
+    HistoricalCamsCheckpoint,
+    cache_historical_cams_result,
+    historical_cams_checkpoint_path,
+    historical_cams_plan_checksum,
+    historical_cams_release_manifest,
+    initialize_historical_cams_checkpoint,
+    load_cached_historical_cams_result,
+    load_historical_cams_checkpoint,
+    record_historical_cams_result,
+    rederive_historical_cams_checkpoint_state,
+    run_cams_air_quality_chunks,
+    write_historical_cams_checkpoint,
 )
 from agri_data_service.execution.historical_era5 import (
     HistoricalEra5Checkpoint,
@@ -75,6 +114,23 @@ from agri_data_service.execution.historical_export import (
     HistoricalPromotionUploader,
     LocalHistoricalPromotionExporter,
     load_historical_promotion_spool,
+)
+from agri_data_service.execution.historical_glofas import (
+    GlofasFloodChunk,
+    GlofasFloodFetchError,
+    HistoricalGlofasCheckpoint,
+    HistoricalGlofasFloodPlan,
+    cache_historical_glofas_result,
+    historical_glofas_checkpoint_path,
+    historical_glofas_plan_checksum,
+    historical_glofas_release_manifest,
+    initialize_historical_glofas_checkpoint,
+    load_cached_historical_glofas_result,
+    load_historical_glofas_checkpoint,
+    record_historical_glofas_result,
+    rederive_historical_glofas_checkpoint_state,
+    run_glofas_flood_chunks,
+    write_historical_glofas_checkpoint,
 )
 from agri_data_service.execution.historical_open_meteo import (
     HistoricalOpenMeteoArchivePlan,
@@ -1972,6 +2028,534 @@ async def _persist_open_meteo_chunk(
         "observed_value_count": written.observed_value_count,
         "no_data_series_count": written.no_data_series_count,
     }
+
+
+# Both flood and air-quality lanes fetch, validate and cache; neither has a warehouse writer yet, so
+# there is deliberately no `-persist` verb and a validated checkpoint is a local cache, not a release.
+_WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED = "not_implemented"
+
+
+@cli.command("historical-glofas-status")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_glofas_status(plan: Path) -> None:
+    """Report which GloFAS flood chunks are already cached and what a resume would still fetch."""
+    try:
+        value = HistoricalGlofasFloodPlan.model_validate_json(plan.read_bytes())
+        checkpoint_path_value = historical_glofas_checkpoint_path(settings.local_execution_root, value)
+        checkpoint = _load_glofas_checkpoint(value, checkpoint_path_value)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(_historical_glofas_failure_reason(exc)) from exc
+    completed = {receipt.chunk_key for receipt in checkpoint.receipts}
+    pending = [chunk.key for chunk in value.chunks if chunk.key not in completed]
+    click.echo(
+        json.dumps(
+            {
+                "plan_checksum": historical_glofas_plan_checksum(value),
+                "checkpoint": str(checkpoint_path_value),
+                "state": checkpoint.state,
+                "reason": checkpoint.reason,
+                "model": value.model,
+                "support_key": value.support_key,
+                "cell_count": len(value.cells),
+                "chunk_count": len(value.chunks),
+                "completed_chunk_count": len(completed),
+                "pending_chunk_count": len(pending),
+                "pending_chunks": pending[:_OPEN_METEO_PENDING_PREVIEW],
+                "observed_value_count": sum(receipt.observed_value_count for receipt in checkpoint.receipts),
+                "no_data_series_count": sum(receipt.no_data_series_count for receipt in checkpoint.receipts),
+                "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("historical-glofas-backfill")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+@click.option("--max-chunks", type=click.IntRange(min=1), default=None, help="Stop after this many new chunks.")
+@click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
+def historical_glofas_backfill(plan: Path, max_chunks: int | None, concurrency: int) -> None:
+    """Fetch, validate, and cache reviewed GloFAS river-discharge chunks; resumable and bounded."""
+    asyncio.run(_historical_glofas_backfill(plan, max_chunks, concurrency))
+
+
+async def _historical_glofas_backfill(plan_path: Path, max_chunks: int | None, concurrency: int) -> None:
+    failures: list[dict[str, str]] = []
+    try:
+        plan = HistoricalGlofasFloodPlan.model_validate_json(plan_path.read_bytes())
+        checkpoint_path_value = historical_glofas_checkpoint_path(settings.local_execution_root, plan)
+        checkpoint = _load_glofas_checkpoint(plan, checkpoint_path_value)
+        write_historical_glofas_checkpoint(checkpoint_path_value, checkpoint)
+        completed = {receipt.chunk_key for receipt in checkpoint.receipts}
+        outstanding = [chunk for chunk in plan.chunks if chunk.key not in completed]
+        checkpoint, failures = await _fetch_glofas_chunks(
+            plan,
+            checkpoint,
+            checkpoint_path_value,
+            outstanding if max_chunks is None else outstanding[:max_chunks],
+            concurrency,
+        )
+    except Exception as exc:
+        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
+            _write_historical_glofas_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
+        raise click.ClickException(_historical_glofas_failure_reason(exc)) from exc
+    remaining = [chunk.key for chunk in plan.chunks if chunk.key not in {r.chunk_key for r in checkpoint.receipts}]
+    payload = {
+        "checkpoint": str(checkpoint_path_value),
+        "state": checkpoint.state,
+        "completed_chunk_count": len(checkpoint.receipts),
+        "chunk_count": len(plan.chunks),
+        "pending_chunk_count": len(remaining),
+        "failed_chunks": failures,
+        "release_receipt_manifest_checksum": (
+            historical_glofas_release_manifest(plan, checkpoint) if checkpoint.state == "validated" else None
+        ),
+        "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
+    }
+    if failures:
+        # A chunk that dropped records must never read as success: record why, report, exit non-zero.
+        _write_historical_glofas_blocked_checkpoint(
+            checkpoint_path_value,
+            checkpoint,
+            ValueError(f"{len(failures)} chunk(s) failed; first: {failures[0]['reason']}"),
+        )
+        raise click.ClickException(json.dumps({**payload, "error": "glofas_chunks_failed"}, indent=2))
+    click.echo(json.dumps(payload, indent=2))
+
+
+async def _fetch_glofas_chunks(
+    plan: HistoricalGlofasFloodPlan,
+    checkpoint: HistoricalGlofasCheckpoint,
+    checkpoint_path_value: Path,
+    chunks: list[GlofasFloodChunk],
+    concurrency: int,
+) -> tuple[HistoricalGlofasCheckpoint, list[dict[str, str]]]:
+    """Reuse the local cache first, fetch the rest under bounded concurrency, and keep failures visible."""
+    failures: list[dict[str, str]] = []
+    pending: list[GlofasFloodChunk] = []
+    for chunk in chunks:
+        cached = load_cached_historical_glofas_result(settings.local_execution_root, plan, chunk)
+        if cached is None:
+            pending.append(chunk)
+            continue
+        checkpoint = record_historical_glofas_result(plan, checkpoint, cached)
+        write_historical_glofas_checkpoint(checkpoint_path_value, checkpoint)
+    # Harvested in waves of `concurrency` rather than one gather over everything, so an interrupted
+    # long run keeps every chunk that already answered instead of discarding the whole batch.
+    for start in range(0, len(pending), concurrency):
+        wave = pending[start : start + concurrency]
+        results = await run_glofas_flood_chunks(plan, wave, concurrency=concurrency)
+        for chunk, result in zip(wave, results, strict=True):
+            if isinstance(result, BaseException):
+                failures.append({"chunk_key": chunk.key, "reason": _historical_glofas_failure_reason(result)})
+                continue
+            cache_historical_glofas_result(settings.local_execution_root, plan, result)
+            checkpoint = record_historical_glofas_result(plan, checkpoint, result)
+            write_historical_glofas_checkpoint(checkpoint_path_value, checkpoint)
+        if failures:
+            # A quota wall does not clear inside one run; stop rather than burn the remaining waves.
+            break
+    return checkpoint, failures
+
+
+def _load_glofas_checkpoint(
+    plan: HistoricalGlofasFloodPlan,
+    checkpoint_path_value: Path,
+) -> HistoricalGlofasCheckpoint:
+    """Load a plan-bound checkpoint, re-deriving `state` from receipts rather than trusting the file."""
+    if not checkpoint_path_value.exists():
+        return initialize_historical_glofas_checkpoint(plan)
+    return rederive_historical_glofas_checkpoint_state(
+        plan,
+        load_historical_glofas_checkpoint(checkpoint_path_value),
+    )
+
+
+def _historical_glofas_failure_reason(exc: BaseException) -> str:
+    """Name the provider condition an operator must act on rather than collapsing it to a class name."""
+    if isinstance(exc, GlofasFloodFetchError | ValueError):
+        return str(exc)
+    return f"GloFAS flood operation failed ({exc.__class__.__name__})"
+
+
+def _write_historical_glofas_blocked_checkpoint(
+    path: Path,
+    checkpoint: HistoricalGlofasCheckpoint,
+    exc: Exception,
+) -> None:
+    """Record why a run stopped so a resume starts from evidence rather than a rerun of everything."""
+    with suppress(OSError, ValueError):
+        write_historical_glofas_checkpoint(
+            path,
+            checkpoint.model_copy(
+                update={
+                    "state": "blocked",
+                    "updated_at": datetime.now(UTC),
+                    "reason": _historical_glofas_failure_reason(exc),
+                }
+            ),
+        )
+
+
+@cli.command("historical-cams-status")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_cams_status(plan: Path) -> None:
+    """Report which CAMS air-quality chunks are already cached and what a resume would still fetch."""
+    try:
+        value = HistoricalCamsAirQualityPlan.model_validate_json(plan.read_bytes())
+        checkpoint_path_value = historical_cams_checkpoint_path(settings.local_execution_root, value)
+        checkpoint = _load_cams_checkpoint(value, checkpoint_path_value)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(_historical_cams_failure_reason(exc)) from exc
+    completed = {receipt.chunk_key for receipt in checkpoint.receipts}
+    pending = [chunk.key for chunk in value.chunks if chunk.key not in completed]
+    click.echo(
+        json.dumps(
+            {
+                "plan_checksum": historical_cams_plan_checksum(value),
+                "checkpoint": str(checkpoint_path_value),
+                "state": checkpoint.state,
+                "reason": checkpoint.reason,
+                "domain": value.domain,
+                "support_key": value.support_key,
+                "cell_count": len(value.cells),
+                "day_block_count": len(value.day_blocks),
+                "chunk_count": len(value.chunks),
+                "completed_chunk_count": len(completed),
+                "pending_chunk_count": len(pending),
+                "pending_chunks": pending[:_OPEN_METEO_PENDING_PREVIEW],
+                "observed_value_count": sum(receipt.observed_value_count for receipt in checkpoint.receipts),
+                "insufficient_hour_day_count": sum(
+                    receipt.insufficient_hour_day_count for receipt in checkpoint.receipts
+                ),
+                "no_data_series_count": sum(receipt.no_data_series_count for receipt in checkpoint.receipts),
+                "failed_series_count": sum(receipt.failed_series_count for receipt in checkpoint.receipts),
+                "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("historical-cams-backfill")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+@click.option("--max-chunks", type=click.IntRange(min=1), default=None, help="Stop after this many new chunks.")
+@click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
+def historical_cams_backfill(plan: Path, max_chunks: int | None, concurrency: int) -> None:
+    """Fetch, validate, and cache reviewed CAMS air-quality chunks; resumable and bounded."""
+    asyncio.run(_historical_cams_backfill(plan, max_chunks, concurrency))
+
+
+async def _historical_cams_backfill(plan_path: Path, max_chunks: int | None, concurrency: int) -> None:
+    failures: list[dict[str, str]] = []
+    try:
+        plan = HistoricalCamsAirQualityPlan.model_validate_json(plan_path.read_bytes())
+        checkpoint_path_value = historical_cams_checkpoint_path(settings.local_execution_root, plan)
+        checkpoint = _load_cams_checkpoint(plan, checkpoint_path_value)
+        write_historical_cams_checkpoint(checkpoint_path_value, checkpoint)
+        completed = {receipt.chunk_key for receipt in checkpoint.receipts}
+        outstanding = [chunk for chunk in plan.chunks if chunk.key not in completed]
+        checkpoint, failures = await _fetch_cams_chunks(
+            plan,
+            checkpoint,
+            checkpoint_path_value,
+            outstanding if max_chunks is None else outstanding[:max_chunks],
+            concurrency,
+        )
+    except Exception as exc:
+        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
+            _write_historical_cams_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
+        raise click.ClickException(_historical_cams_failure_reason(exc)) from exc
+    remaining = [chunk.key for chunk in plan.chunks if chunk.key not in {r.chunk_key for r in checkpoint.receipts}]
+    payload = {
+        "checkpoint": str(checkpoint_path_value),
+        "state": checkpoint.state,
+        "completed_chunk_count": len(checkpoint.receipts),
+        "chunk_count": len(plan.chunks),
+        "pending_chunk_count": len(remaining),
+        "failed_chunks": failures,
+        "release_receipt_manifest_checksum": (
+            historical_cams_release_manifest(plan, checkpoint) if checkpoint.state == "validated" else None
+        ),
+        "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
+    }
+    if failures:
+        # A chunk that dropped records must never read as success: record why, report, exit non-zero.
+        _write_historical_cams_blocked_checkpoint(
+            checkpoint_path_value,
+            checkpoint,
+            ValueError(f"{len(failures)} chunk(s) failed; first: {failures[0]['reason']}"),
+        )
+        raise click.ClickException(json.dumps({**payload, "error": "cams_chunks_failed"}, indent=2))
+    click.echo(json.dumps(payload, indent=2))
+
+
+async def _fetch_cams_chunks(
+    plan: HistoricalCamsAirQualityPlan,
+    checkpoint: HistoricalCamsCheckpoint,
+    checkpoint_path_value: Path,
+    chunks: list[CamsAirQualityChunk],
+    concurrency: int,
+) -> tuple[HistoricalCamsCheckpoint, list[dict[str, str]]]:
+    """Reuse the local cache first, fetch the rest under bounded concurrency, and keep failures visible."""
+    failures: list[dict[str, str]] = []
+    pending: list[CamsAirQualityChunk] = []
+    for chunk in chunks:
+        cached = load_cached_historical_cams_result(settings.local_execution_root, plan, chunk)
+        if cached is None:
+            pending.append(chunk)
+            continue
+        checkpoint = record_historical_cams_result(plan, checkpoint, cached)
+        write_historical_cams_checkpoint(checkpoint_path_value, checkpoint)
+    # Harvested in waves of `concurrency` rather than one gather over everything, so an interrupted
+    # long run keeps every chunk that already answered instead of discarding the whole batch.
+    for start in range(0, len(pending), concurrency):
+        wave = pending[start : start + concurrency]
+        results = await run_cams_air_quality_chunks(plan, wave, concurrency=concurrency)
+        for chunk, result in zip(wave, results, strict=True):
+            if isinstance(result, BaseException):
+                failures.append({"chunk_key": chunk.key, "reason": _historical_cams_failure_reason(result)})
+                continue
+            cache_historical_cams_result(settings.local_execution_root, plan, result)
+            checkpoint = record_historical_cams_result(plan, checkpoint, result)
+            write_historical_cams_checkpoint(checkpoint_path_value, checkpoint)
+        if failures:
+            # A quota wall does not clear inside one run; stop rather than burn the remaining waves.
+            break
+    return checkpoint, failures
+
+
+def _load_cams_checkpoint(
+    plan: HistoricalCamsAirQualityPlan,
+    checkpoint_path_value: Path,
+) -> HistoricalCamsCheckpoint:
+    """Load a plan-bound checkpoint, re-deriving `state` from receipts rather than trusting the file."""
+    if not checkpoint_path_value.exists():
+        return initialize_historical_cams_checkpoint(plan)
+    return rederive_historical_cams_checkpoint_state(
+        plan,
+        load_historical_cams_checkpoint(checkpoint_path_value),
+    )
+
+
+def _historical_cams_failure_reason(exc: BaseException) -> str:
+    """Name the provider condition an operator must act on rather than collapsing it to a class name."""
+    if isinstance(exc, CamsAirQualityFetchError | ValueError):
+        return str(exc)
+    return f"CAMS air-quality operation failed ({exc.__class__.__name__})"
+
+
+def _write_historical_cams_blocked_checkpoint(
+    path: Path,
+    checkpoint: HistoricalCamsCheckpoint,
+    exc: Exception,
+) -> None:
+    """Record why a run stopped so a resume starts from evidence rather than a rerun of everything."""
+    with suppress(OSError, ValueError):
+        write_historical_cams_checkpoint(
+            path,
+            checkpoint.model_copy(
+                update={
+                    "state": "blocked",
+                    "updated_at": datetime.now(UTC),
+                    "reason": _historical_cams_failure_reason(exc),
+                }
+            ),
+        )
+
+
+@cli.command("forecast-ensemble-status")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def forecast_ensemble_status(plan: Path) -> None:
+    """Report which Open-Meteo Ensemble chunks are already cached and what a resume would still fetch."""
+    try:
+        value = EnsembleForecastPlan.model_validate_json(plan.read_bytes())
+        checkpoint_path_value = ensemble_forecast_checkpoint_path(settings.local_execution_root, value)
+        checkpoint = _load_ensemble_forecast_checkpoint(value, checkpoint_path_value)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(_forecast_ensemble_failure_reason(exc)) from exc
+    completed = {receipt.chunk_key for receipt in checkpoint.receipts}
+    pending = [chunk.key for chunk in value.chunks if chunk.key not in completed]
+    click.echo(
+        json.dumps(
+            {
+                "plan_checksum": ensemble_forecast_plan_checksum(value),
+                "checkpoint": str(checkpoint_path_value),
+                "state": checkpoint.state,
+                "reason": checkpoint.reason,
+                "model": value.model,
+                "member_count": value.member_count,
+                "support_key": value.support_key,
+                "issue_time": value.issue_time.isoformat(),
+                "horizon_step_count": value.step_count,
+                "quantile_levels": value.quantile_levels,
+                "cell_count": len(value.cells),
+                "chunk_count": len(value.chunks),
+                "completed_chunk_count": len(completed),
+                "pending_chunk_count": len(pending),
+                "pending_chunks": pending[:_OPEN_METEO_PENDING_PREVIEW],
+                "staged_receipt_count": sum(receipt.staged_receipt_count for receipt in checkpoint.receipts),
+                "staged_value_count": sum(receipt.staged_value_count for receipt in checkpoint.receipts),
+                "failed_series_count": sum(receipt.failed_series_count for receipt in checkpoint.receipts),
+                "staged_document": str(
+                    ensemble_forecast_staged_document_path(settings.local_execution_root, value)
+                ),
+                "warehouse_persistence": ENSEMBLE_WAREHOUSE_PERSISTENCE_STATE,
+            },
+            indent=2,
+        )
+    )
+
+
+@cli.command("forecast-ensemble-fetch")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+@click.option("--max-chunks", type=click.IntRange(min=1), default=None, help="Stop after this many new chunks.")
+@click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
+def forecast_ensemble_fetch(plan: Path, max_chunks: int | None, concurrency: int) -> None:
+    """Fetch reviewed Open-Meteo Ensemble chunks and stage their quantile receipts; resumable and bounded."""
+    asyncio.run(_forecast_ensemble_fetch(plan, max_chunks, concurrency))
+
+
+async def _forecast_ensemble_fetch(plan_path: Path, max_chunks: int | None, concurrency: int) -> None:
+    failures: list[dict[str, str]] = []
+    try:
+        plan = EnsembleForecastPlan.model_validate_json(plan_path.read_bytes())
+        checkpoint_path_value = ensemble_forecast_checkpoint_path(settings.local_execution_root, plan)
+        checkpoint = _load_ensemble_forecast_checkpoint(plan, checkpoint_path_value)
+        write_ensemble_forecast_checkpoint(checkpoint_path_value, checkpoint)
+        completed = {receipt.chunk_key for receipt in checkpoint.receipts}
+        outstanding = [chunk for chunk in plan.chunks if chunk.key not in completed]
+        checkpoint, failures = await _fetch_ensemble_forecast_chunks(
+            plan,
+            checkpoint,
+            checkpoint_path_value,
+            outstanding if max_chunks is None else outstanding[:max_chunks],
+            concurrency,
+        )
+        staged = _stage_ensemble_forecast_document(plan, checkpoint)
+    except Exception as exc:
+        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
+            _write_forecast_ensemble_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
+        raise click.ClickException(_forecast_ensemble_failure_reason(exc)) from exc
+    remaining = [chunk.key for chunk in plan.chunks if chunk.key not in {r.chunk_key for r in checkpoint.receipts}]
+    payload = {
+        "checkpoint": str(checkpoint_path_value),
+        "state": checkpoint.state,
+        "completed_chunk_count": len(checkpoint.receipts),
+        "chunk_count": len(plan.chunks),
+        "pending_chunk_count": len(remaining),
+        "failed_chunks": failures,
+        "staged_receipt_count": sum(receipt.staged_receipt_count for receipt in checkpoint.receipts),
+        "staged_value_count": sum(receipt.staged_value_count for receipt in checkpoint.receipts),
+        "failed_series_count": sum(receipt.failed_series_count for receipt in checkpoint.receipts),
+        "release_receipt_manifest_checksum": (
+            ensemble_forecast_release_manifest(plan, checkpoint) if checkpoint.state == "validated" else None
+        ),
+        **staged,
+        "warehouse_persistence": ENSEMBLE_WAREHOUSE_PERSISTENCE_STATE,
+    }
+    if failures:
+        # A chunk that dropped records must never read as success: record why, report, exit non-zero.
+        _write_forecast_ensemble_blocked_checkpoint(
+            checkpoint_path_value,
+            checkpoint,
+            ValueError(f"{len(failures)} chunk(s) failed; first: {failures[0]['reason']}"),
+        )
+        raise click.ClickException(json.dumps({**payload, "error": "ensemble_chunks_failed"}, indent=2))
+    click.echo(json.dumps(payload, indent=2))
+
+
+async def _fetch_ensemble_forecast_chunks(
+    plan: EnsembleForecastPlan,
+    checkpoint: EnsembleForecastCheckpoint,
+    checkpoint_path_value: Path,
+    chunks: list[EnsembleForecastChunk],
+    concurrency: int,
+) -> tuple[EnsembleForecastCheckpoint, list[dict[str, str]]]:
+    """Reuse the local cache first, fetch the rest under bounded concurrency, and keep failures visible."""
+    failures: list[dict[str, str]] = []
+    pending: list[EnsembleForecastChunk] = []
+    for chunk in chunks:
+        cached = load_cached_ensemble_forecast_result(settings.local_execution_root, plan, chunk)
+        if cached is None:
+            pending.append(chunk)
+            continue
+        checkpoint = record_ensemble_forecast_result(plan, checkpoint, cached)
+        write_ensemble_forecast_checkpoint(checkpoint_path_value, checkpoint)
+    # Harvested in waves of `concurrency` rather than one gather over everything, so an interrupted
+    # long run keeps every chunk that already answered instead of discarding the whole batch.
+    for start in range(0, len(pending), concurrency):
+        wave = pending[start : start + concurrency]
+        results = await run_ensemble_forecast_chunks(plan, wave, concurrency=concurrency)
+        for chunk, result in zip(wave, results, strict=True):
+            if isinstance(result, BaseException):
+                failures.append({"chunk_key": chunk.key, "reason": _forecast_ensemble_failure_reason(result)})
+                continue
+            cache_ensemble_forecast_result(settings.local_execution_root, plan, result)
+            checkpoint = record_ensemble_forecast_result(plan, checkpoint, result)
+            write_ensemble_forecast_checkpoint(checkpoint_path_value, checkpoint)
+        if failures:
+            # A quota wall does not clear inside one run; stop rather than burn the remaining waves.
+            break
+    return checkpoint, failures
+
+
+def _stage_ensemble_forecast_document(
+    plan: EnsembleForecastPlan,
+    checkpoint: EnsembleForecastCheckpoint,
+) -> dict[str, object]:
+    """Write the staged receipt document only once every reviewed chunk is cached and accounted for."""
+    if checkpoint.state != "validated":
+        return {"staged_document": None, "staged_document_checksum": None}
+    receipts: list[StagedForecastReceipt] = []
+    for chunk in plan.chunks:
+        cached = load_cached_ensemble_forecast_result(settings.local_execution_root, plan, chunk)
+        if cached is None:
+            raise ValueError(f"ensemble forecast chunk {chunk.key} is receipted but no longer cached")
+        receipts.extend(cached.receipts)
+    document_path = ensemble_forecast_staged_document_path(settings.local_execution_root, plan)
+    document = ensemble_forecast_staged_document(plan, receipts)
+    checksum = write_ensemble_forecast_staged_document(document_path, document)
+    return {"staged_document": str(document_path), "staged_document_checksum": checksum}
+
+
+def _load_ensemble_forecast_checkpoint(
+    plan: EnsembleForecastPlan,
+    checkpoint_path_value: Path,
+) -> EnsembleForecastCheckpoint:
+    """Load a plan-bound checkpoint, re-deriving `state` from receipts rather than trusting the file."""
+    if not checkpoint_path_value.exists():
+        return initialize_ensemble_forecast_checkpoint(plan)
+    return rederive_ensemble_forecast_checkpoint_state(
+        plan,
+        load_ensemble_forecast_checkpoint(checkpoint_path_value),
+    )
+
+
+def _forecast_ensemble_failure_reason(exc: BaseException) -> str:
+    """Name the provider condition an operator must act on rather than collapsing it to a class name."""
+    if isinstance(exc, EnsembleForecastFetchError | ValueError):
+        return str(exc)
+    return f"ensemble forecast operation failed ({exc.__class__.__name__})"
+
+
+def _write_forecast_ensemble_blocked_checkpoint(
+    path: Path,
+    checkpoint: EnsembleForecastCheckpoint,
+    exc: Exception,
+) -> None:
+    """Record why a run stopped so a resume starts from evidence rather than a rerun of everything."""
+    with suppress(OSError, ValueError):
+        write_ensemble_forecast_checkpoint(
+            path,
+            checkpoint.model_copy(
+                update={
+                    "state": "blocked",
+                    "updated_at": datetime.now(UTC),
+                    "reason": _forecast_ensemble_failure_reason(exc),
+                }
+            ),
+        )
 
 
 @cli.command("historical-era5-materialize-parquet")

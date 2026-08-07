@@ -75,7 +75,9 @@ export function FireLayer({
                 "interpolate", ["linear"], ["coalesce", ["get", "PercentContained"], 0],
                 0, "#dc2626",    // red = 0% contained
                 50, "#f97316",   // orange = 50%
-                100, "#22c55e",  // green = 100%
+                // Red-green endpoints on one ramp are the worst colorblind case; blue
+                // keeps "resolved" visually distinct from "danger".
+                100, "#2563eb",  // blue = fully contained
               ],
               // Warehouse FIRMS detections: color by brightness.
               [

@@ -16,6 +16,8 @@ export default function GlobeToggle() {
       className="max-sm:h-11 max-sm:w-11"
       onClick={toggleGlobe}
       title={isGlobeView ? "Switch to flat map" : "Switch to globe"}
+      aria-label={isGlobeView ? "Switch to flat map" : "Switch to globe"}
+      aria-pressed={isGlobeView}
     >
       <Globe />
     </Button>

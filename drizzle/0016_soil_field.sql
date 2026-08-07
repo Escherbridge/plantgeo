@@ -7,44 +7,23 @@
 -- `support_key = 'era5-land-0.1deg'`, the same 0.25-degree `sentinel2-ndvi-0p25deg` cells,
 -- the same daily-at-midnight-UTC grain -- and nothing in `src/` could read them.
 --
--- Only ONE of the two 0014 objects actually constrained the measure:
---
---   * `geo.soil_moisture_field(...)` was already measure-agnostic. It takes `target_signal`
---     and `target_support_key` as parameters and reads `agri.signal_observation` directly,
---     so it aggregates temperature correctly today with no change to its body. It is
---     RENAMED here, not rewritten -- `ALTER FUNCTION ... RENAME TO` preserves the body
---     byte-for-byte, which is the point: a DROP + CREATE would fork the Gaussian-blur
---     definition into a second copy that could drift from the one 0014 reviewed.
---   * `geo.soil_moisture_observation` hard-coded the three moisture signal names and
---     `normalized_unit = 'm^3/m^3'` in its WHERE clause. That is what this replaces.
---
--- The replacement is a DROP + CREATE rather than CREATE OR REPLACE because the view gains a
--- column (`measure`) and changes name; PostgreSQL permits neither in place. Nothing but
--- `environmental-read-model.ts` reads it -- verified by grep across `src/`, `docs/`,
--- `infra/` -- so the drop is safe.
---
--- STILL NOT A TILE FUNCTION, and Martin is still unaffected: `infra/martin/martin.yaml`
--- sets `auto_publish: false` and names its function sources explicitly, so nothing here can
--- join a composite source id and no tile server needs restarting.
---
--- STILL NO NEW INDEX, for the reason 0014 gives: the bbox resolves the cell list first and
--- the day is then one index search per cell on the existing
--- `ix_signal_observation_cell_time_signal (cell_id, observed_at, signal_name)`. That index
--- is keyed on `signal_name` without regard to which signal, so the temperature signals ride
--- it exactly as the moisture ones do. Building an index here would lock a table the live
--- backfill is writing to, for no measured gain.
+-- The function was already measure-agnostic and is RENAMED, not rewritten; only the view
+-- hard-coded the measure, and it is replaced. Why the rename must not become a DROP +
+-- CREATE, why the view's drop is safe, why Martin is unaffected, and why no index is added:
+-- src/lib/server/db/AGENTS.md §soil-field-view.
 
 -- The flattened lane, both measures: one row per cell per day per signal, carrying the cell
 -- geometry and the provenance the licence requires.
 --
--- The (signal, unit) pairs are enumerated rather than matched by prefix. A signal arriving
--- in an unexpected unit -- Kelvin instead of Celsius, say -- must be invisible here rather
--- than served alongside comparable values and coloured as if it were one of them.
---
--- `measure` is derived from the signal name so a reader can filter to one quantity without
--- restating the signal list. `is_observed` / `quality_flag = 'accepted'` stay applied HERE
--- rather than at each call site, so no reader can serve a rejected or imputed value as a
--- measurement.
+-- `governed` states the reviewed (signal, measure, unit) triples ONCE. Joining it is what
+-- gates the rows, so the row filter, the `measure` label and the accepted unit cannot
+-- disagree -- widening this list is the whole edit, and there is no second list to forget.
+-- A signal arriving in an unexpected unit (Kelvin instead of Celsius, say) matches nothing
+-- and is invisible here rather than served beside comparable values and coloured as one of
+-- them; a signal absent from the list -- this lane also carries `vapour_pressure_deficit` --
+-- is likewise absent rather than silently relabelled. `is_observed` /
+-- `quality_flag = 'accepted'` stay applied HERE rather than at each call site, so no reader
+-- can serve a rejected or imputed value as a measurement.
 DROP VIEW IF EXISTS geo.soil_moisture_observation;
 --> statement-breakpoint
 
@@ -56,10 +35,7 @@ SELECT
   cell.resolution_m,
   cell.geometry AS cell_geometry,
   cell.centroid AS cell_centroid,
-  CASE
-    WHEN starts_with(observation.signal_name, 'soil_water_content') THEN 'moisture'
-    ELSE 'temperature'
-  END AS measure,
+  governed.measure,
   observation.signal_name,
   observation.support_key,
   observation.observed_at,
@@ -72,29 +48,22 @@ SELECT
   source.license_name,
   source.allowed_client_exposure
 FROM agri.signal_observation AS observation
+JOIN (
+  VALUES
+    ('soil_water_content_layer_1'::text, 'moisture'::text, 'm^3/m^3'::text),
+    ('soil_water_content_layer_2', 'moisture', 'm^3/m^3'),
+    ('soil_water_content_layer_3', 'moisture', 'm^3/m^3'),
+    ('soil_temperature_level_1', 'temperature', 'C'),
+    ('soil_temperature_level_2', 'temperature', 'C'),
+    ('soil_temperature_level_3', 'temperature', 'C'),
+    ('soil_temperature_level_4', 'temperature', 'C')
+) AS governed(signal_name, measure, normalized_unit)
+  ON governed.signal_name = observation.signal_name
+ AND governed.normalized_unit = observation.normalized_unit
 JOIN agri.spatial_cell AS cell ON cell.id = observation.cell_id
 JOIN agri.source_release AS release ON release.id = observation.source_release_id
 JOIN agri.data_source AS source ON source.id = release.data_source_id
-WHERE (
-        (
-          observation.signal_name IN (
-            'soil_water_content_layer_1',
-            'soil_water_content_layer_2',
-            'soil_water_content_layer_3'
-          )
-          AND observation.normalized_unit = 'm^3/m^3'
-        )
-        OR (
-          observation.signal_name IN (
-            'soil_temperature_level_1',
-            'soil_temperature_level_2',
-            'soil_temperature_level_3',
-            'soil_temperature_level_4'
-          )
-          AND observation.normalized_unit = 'C'
-        )
-      )
-  AND observation.is_observed
+WHERE observation.is_observed
   AND observation.quality_flag = 'accepted'
   AND observation.normalized_value IS NOT NULL;
 --> statement-breakpoint
@@ -106,10 +75,9 @@ COMMENT ON VIEW geo.soil_field_observation IS
   'geo.soil_moisture_observation, which covered moisture only.';
 --> statement-breakpoint
 
--- Renamed, not redefined. The body already parameterizes the signal, so the only thing that
+-- Renamed, not redefined: the body already parameterizes the signal, so the only thing that
 -- was ever moisture-specific about it was the name. Guarded so a database that already
--- carries the new name (a re-run, or one built from a later baseline) is a no-op rather
--- than an error.
+-- carries the new name (a re-run, or one built from a later baseline) is a no-op.
 DO $$
 BEGIN
   IF EXISTS (

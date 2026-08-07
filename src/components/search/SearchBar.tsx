@@ -16,6 +16,12 @@ export default function SearchBar() {
   const viewport = useMapStore((s) => s.viewport);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [isExpanded, setIsExpanded] = React.useState(false);
+  // The palette's shortcut, made discoverable: nothing else on screen said it existed. Set
+  // in an effect so the server render and first client paint agree on one label.
+  const [shortcutLabel, setShortcutLabel] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    setShortcutLabel(/Mac|iP(hone|ad|od)/.test(navigator.userAgent) ? "⌘K" : "Ctrl K");
+  }, []);
 
   const { results, isLoading: geocodeLoading } = useGeocode(query, {
     lat: viewport.latitude,
@@ -106,6 +112,19 @@ export default function SearchBar() {
             autoComplete="off"
             spellCheck={false}
           />
+          {shortcutLabel !== null && query.length === 0 && (
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event("plantgeo:open-command-palette"))}
+              title={`Open the command palette (${shortcutLabel})`}
+              aria-label="Open command palette"
+              // Desktop only: the shortcut needs a keyboard, and on a phone this row is
+              // already carrying the clear and close buttons.
+              className="hidden shrink-0 rounded border border-[hsl(var(--border))] px-1.5 py-0.5 text-[0.6875rem] font-medium text-[hsl(var(--muted-foreground))] transition-colors hover:text-[hsl(var(--foreground))] sm:block"
+            >
+              {shortcutLabel}
+            </button>
+          )}
           {query.length > 0 && (
             <button
               onClick={handleClear}

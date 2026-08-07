@@ -83,17 +83,21 @@ export function getGibsNDVITileTemplate(time: string): string {
   return `/api/tiles/vegetation/ndvi/${time}/{z}/{y}/{x}`;
 }
 
-/** NDVI color ramp: -1 (water/bare) → 0 (sparse) → 1 (dense healthy vegetation) */
+/**
+ * NDVI color ramp: BrBG diverging (brown = bare soil, green = dense vegetation, pale
+ * neutral at sparse cover), chosen over RdYlGn because red-green endpoints are
+ * colorblind-hostile.
+ */
 export const NDVI_COLOR_RAMP: NDVIColorStop[] = [
-  { value: -0.2, color: "#d73027", label: "Water / Bare soil" },
-  { value: 0.0, color: "#f46d43", label: "Very sparse" },
-  { value: 0.1, color: "#fdae61", label: "Sparse" },
-  { value: 0.2, color: "#fee08b", label: "Low density" },
-  { value: 0.3, color: "#d9ef8b", label: "Moderate" },
-  { value: 0.4, color: "#a6d96a", label: "Moderate-high" },
-  { value: 0.5, color: "#66bd63", label: "High density" },
-  { value: 0.7, color: "#1a9850", label: "Very dense" },
-  { value: 1.0, color: "#006837", label: "Maximum greenness" },
+  { value: -0.2, color: "#8c510a", label: "Water / Bare soil" },
+  { value: 0.0, color: "#bf812d", label: "Very sparse" },
+  { value: 0.1, color: "#dfc27d", label: "Sparse" },
+  { value: 0.2, color: "#f6e8c3", label: "Low density" },
+  { value: 0.3, color: "#c7eae5", label: "Moderate" },
+  { value: 0.4, color: "#80cdc1", label: "Moderate-high" },
+  { value: 0.5, color: "#35978f", label: "High density" },
+  { value: 0.7, color: "#01665e", label: "Very dense" },
+  { value: 1.0, color: "#003c30", label: "Maximum greenness" },
 ];
 
 /** NDWI color ramp: low water content (red) → high water content (blue) */

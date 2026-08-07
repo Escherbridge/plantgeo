@@ -61,7 +61,11 @@ export default function MapControls() {
   return (
     <FloatingToolbar
       position="bottom"
-      className="left-4 translate-x-0 max-w-[calc(100vw-2rem)] overflow-x-auto"
+      // The edge fade is the scroll affordance: on a phone this toolbar CAN overflow
+      // sideways, and without the fade the controls past the fold simply do not exist
+      // as far as the user can tell. Desktop fits, so the mask stays mobile-only --
+      // a permanent fade on a non-scrolling toolbar reads as a rendering bug.
+      className="left-4 translate-x-0 max-w-[calc(100vw-2rem)] overflow-x-auto max-sm:mask-[linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)]"
     >
       <div className="flex items-center gap-2">
         <StyleSwitcher />
@@ -80,6 +84,8 @@ export default function MapControls() {
           className="max-sm:h-11 max-sm:w-11"
           onClick={toggle3D}
           title="Toggle 3D"
+          aria-label="Toggle 3D"
+          aria-pressed={is3DEnabled}
         >
           <Box />
         </Button>
@@ -89,6 +95,8 @@ export default function MapControls() {
           className="max-sm:h-11 max-sm:w-11"
           onClick={() => toggleLayer("building-footprints")}
           title="Toggle 3D building footprints"
+          aria-label="Toggle 3D building footprints"
+          aria-pressed={buildingFootprintsEnabled}
         >
           <Building2 />
         </Button>

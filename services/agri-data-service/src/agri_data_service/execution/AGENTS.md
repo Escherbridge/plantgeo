@@ -101,6 +101,27 @@ volumetric water content. Until that difference is explained and bounded, temper
 would be a different variable wearing the CDS lane's `soil_temperature_level_1` name. It is not
 ingested.
 
+### VPD is an atmospheric covariate riding the same lane as the soil-state ones
+
+`vapour_pressure_deficit_max` (kPa, `[0.0, 15.0]`) is the first `OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS`
+entry that is not soil state. It has no native ERA5-Land/CDS variable to align its `signal_name`
+to -- Open-Meteo derives it from the same `era5_land` hourly fields, it is not a first-party
+reanalysis output -- so the warehouse name drops only the daily-aggregation suffix, matching the
+`soil_temperature_level_N` precedent: `vapour_pressure_deficit_max` -> `vapor_pressure_deficit`.
+No unit conversion applies (`kPa` in, `kPa` out), same as every other entry in this table.
+
+`plans/open-meteo-era5-land-pnw-vpd-20220430-20260430.json` mirrors the soil-temperature lattice
+plan cell-for-cell (`source`, `model`, `native_grid_*`, `support_key`, `window` are byte-identical)
+and is unrun: `release_set_as_of` is the same far-future placeholder convention as the soil-temperature
+and moisture lattices, not a completion forecast. See plans/AGENTS.md.
+
+`source.key = "open-meteo-era5-land-archive"` is shared identity across every plan in this lane, and
+`_ensure_data_source` in `historical_writer.py` raises "already governed by different metadata" if a
+plan's `source` block disagrees with the `data_source` row an earlier plan already persisted. The
+registered `purpose` text ("...soil-state covariates...") therefore stays byte-identical here even
+though it no longer describes every parameter this lane carries; correcting it is a coordinated edit
+across every sibling plan file's `source` block, not a one-plan change.
+
 ### Two checksums, on purpose
 
 The wire response carries `generationtime_ms`, a per-request server timing metric. Left in, every
@@ -393,3 +414,196 @@ The method lives in Python rather than `db/agri/functions/**` because promoting 
 reusable SQL function requires a new Alembic migration, which this track was scoped out of.
 That is the recommended follow-up; the canonical parameter text and the hash-seeded sampler
 were written to be portable to SQL without changing any digest.
+
+## `open_meteo_lane.py` -- the scaffold the new Open-Meteo lanes share
+
+Three lanes landed in one pass (`historical_glofas.py`, `historical_cams.py`,
+`ensemble_forecast.py`), each about a thousand lines, each originally carrying its own byte-equivalent
+copy of `_atomic_write`, `_require_aware_utc`, `_date_range`, `_nearest_native_grid_point`,
+`_validated_grid_point`, `_required_float`, the canonical-document builder, the location-order guard,
+the bounded numeric reader, the retry/backoff loop plus its `*FetchError`, the raw-cache write/verify
+pair, the checkpoint-state rederivation, the receipt merge, and the release-manifest digest. Counting
+`historical_open_meteo.py` and `historical_era5.py`, some of those existed five times.
+
+`engineering-principles.md` §1 is explicit -- "a checksum/normalization rule lives in one function
+that every caller shares. Duplicated truth is a defect" -- and the concrete failure is easy to state:
+the canonicalizer strips `generationtime_ms` so `payload_checksum` is reproducible, so when
+Open-Meteo adds a second nondeterministic field, every copy must change and missing one leaves that
+lane's checksums silently non-reproducible while the others stay honest, with no test that catches
+the divergence. `NONDETERMINISTIC_RESPONSE_FIELDS` is now named once.
+
+**What a lane still owns:** its plan contract and validators, its per-variable specifications and
+physical ranges, its chunking, its normalization into observations or staged receipts, its coverage
+classification, and its `require_accounted_*` rule. **What it must not own:** anything in this
+module. A lane declares one `OpenMeteoLane` -- a label, a cache directory name, an endpoint -- and
+the scaffold's messages then name that lane, so a failure is still attributable without a traceback.
+
+`fetch_lane_capture` takes the lane's own `fetch_text` and `error_factory` rather than resolving them
+itself. That keeps two properties: each lane raises its own `*FetchError` subclass (so a caller can
+catch one lane's failure), and a test can still monkeypatch that lane's module-level fetch function
+to exercise its wiring. The loop itself -- only `minute` is slept through, an hour/day/unrecognised
+wall breaks out immediately, transport backoff escalates linearly -- is covered scope by scope in
+`tests/test_open_meteo_lane.py`; each lane's test file then proves only that it routes through it.
+
+`historical_open_meteo.py` and `historical_era5.py` are NOT converged onto this scaffold. They were
+mid-backfill when it was written, and converging a live lane's checksum path is not a refactor to do
+under a running job. They remain the fourth and fifth copies of `_atomic_write` / `_require_aware_utc`
+/ `_date_range`; converging them is the follow-up, and it is a behaviour-preserving one because the
+extracted functions were lifted from those lanes unchanged.
+
+## `historical_glofas.py` -- the Open-Meteo GloFAS river-discharge lane
+
+A four-year daily replay of GloFAS reach discharge over an existing analysis lattice, written as
+DATA in `agri.signal_observation`: new `signal_name` values, a new `support_key` per product, a new
+spatial-cell grid, and a `data_source` row. **No new warehouse DDL and no Alembic migration** --
+`signal_name` is a plain `varchar(150)` with no enum, so a new signal needs none.
+
+New `support_key` values are minted deliberately distinct from `era5-land-0.1deg` and
+`sentinel2-ndvi-0p25deg`: `glofas-v3-0.1deg` and `glofas-v4-0.05deg`. `geo.soil_field` and its
+siblings aggregate by support key, so sharing one would let incomparable lattices be averaged
+together.
+
+New signal names: `river_discharge` plus six `river_discharge_ensemble_*` statistics. All stay
+invisible to ML until a new `agri.covariate_feature_schema` version is authored.
+
+**The model drags the lattice.** `GLOFAS_PRODUCTS` is a frozen bundle keyed by model carrying
+`schema_version`, `native_grid_name`/`_degrees`/`_resolution_m`, `support_key` and
+`supported_parameters`; the plan restates them and `require_governed_lattice` rejects any
+disagreement. The reanalysis products publish a single deterministic reach value, so asking a
+`consolidated_*` plan for ensemble statistics is a plan error, not a gap. Adding variable N+1 is one
+dict entry plus one sorted string in the plan.
+
+**Cells may not share a native grid point.** v4 is 0.05 degrees and v3 is 0.1, so a lattice authored
+finer than that would duplicate one modelled value across several analysis cells. The plan validator
+refuses it rather than letting the duplication reach the warehouse.
+
+**It cannot yet write a row.** `persist_glofas_flood_chunk` / `finalize_glofas_release_set` and the
+`_ensure_*` helpers belong in `historical_writer.py`, which this pass did not touch. Until they
+exist, a completed fetch has no path to the warehouse.
+
+**Do NOT add this lane to `durable-backfill.sh`.** That launcher calls `historical-<lane>-persist`
+unconditionally and reads the Open-Meteo lane's `finalization_blocked_by_*` JSON fields for
+completeness; this lane has neither. Lane exit semantics must not be generalized across lanes.
+
+Each plan is its own JSON file, and any later variable addition is a NEW plan file plus a new release
+set -- never an in-place edit, since `plan_checksum` keys both the checkpoint and the whole `raw/`
+cache.
+
+**There is deliberately no `infra/cron-flood/` or `infra/cron-air-quality/`.** Two Railway service
+configs for these lanes were staged and then removed, because a repo file that cannot run is worse
+than no file: it reads as a shipped capability. Every one of the following must land before either
+service is created, and all of them were open when the configs were written:
+
+* a `historical-<lane>-persist` verb -- without it a completed fetch has no path to the warehouse;
+* the plan JSONs committed AND copied into the image -- `infra/cron-ingest/Dockerfile` copies only
+  `pyproject.toml`, `uv.lock` and `src/`, so `--plan /app/plans/...` hits `click.Path(exists=True)`;
+* `ENTRYPOINT []` in that service -- the image pins `ENTRYPOINT ["agri-cli", "ingest-all"]`, which a
+  Railway `startCommand` does not clear;
+* a Railway volume for `settings.local_execution_root` (default `.agri-local-runs`, relative to a
+  root-owned `/app` under uid 10001) -- otherwise the checkpoint and raw cache are unwritable or
+  ephemeral, and `--max-chunks N` re-downloads chunks 0..N-1 against the provider quota every night
+  without ever advancing.
+
+`restartPolicyType: NEVER` makes each of those a SILENT daily failure, which is why the bar is a
+precondition list rather than a follow-up.
+
+## `historical_cams.py` -- the Open-Meteo CAMS air-quality lane
+
+Same shape as the GloFAS lane -- data, not DDL; a product bundle that drags its lattice; a plan that
+restates and is checked -- with three differences that come from CAMS publishing **hourly**.
+
+**Chunks are bounded on two axes.** 24 values per variable per cell per day means the cell block
+alone cannot keep a response under the byte ceiling, so `chunk_day_count` exists and the chunk key
+carries both (`cells-0000-days-0000`).
+
+**A day is a declared reduction, not a passthrough.** Each variable names its daily statistic --
+`mean` for a concentration, `maximum` for an index -- and the reduction is part of
+`transform_version`. Hourly physical bounds are applied BEFORE the reduction, never after, so a
+provider sentinel cannot survive into a mean. A day summarized from fewer than
+`CAMS_MINIMUM_OBSERVED_HOURS_PER_DAY` (18) hours is not a daily statistic: it is written as an
+explicitly unobserved row carrying the new `quality_flag` value `insufficient_hourly_coverage`
+(`String(64)`, no CHECK). **The future CAMS writer must pass that flag through unchanged rather than
+normalizing it to `source_missing`** -- the two mean different things.
+
+**Every daily row carries `coverage_fraction`.** An 18-hour mean and a 24-hour mean are both
+`accepted`, and the chunk receipt's `insufficient_hour_day_count` only counts the days that fell
+below the floor -- it says nothing about a day that cleared it with 19 hours. `coverage_fraction` is
+the per-row trace (`observed_hours / 24`), it maps onto `agri.signal_observation.coverage_fraction`
+(CHECK 0..1, default 1), and it needs no migration. `HistoricalSignalObservation.coverage_fraction`
+defaults to 1.0 so the daily-native lanes are unaffected. **The future CAMS writer must persist it
+rather than hard-coding `coverage_fraction=1` the way the existing writers do** -- that hard-coded 1
+is correct only for a lane whose provider publishes one value per day.
+
+**Coverage status uses `failed`, not `partial`, for a series that never reached the hour floor.**
+`agri.signal_coverage_audit`'s `status_matches_counts` CHECK permits `failed` with a zero received
+count but forbids `partial` with one, and `no_data` is reserved for a series with zero hourly values
+at all. So: nothing published at all is `no_data`; published but never enough hours is `failed`.
+
+`cams_global` is a 0.4-degree lattice, so the plan validator refuses analysis cells that share a
+native grid point -- CAMS lattices must be authored at >= 0.4 degrees (>= 0.1 for `cams_europe`).
+The exact per-domain variable availability encoded in `CAMS_PRODUCTS.supported_parameters` is
+unverified against the live upstream; each correction is one line.
+
+Like the GloFAS lane it has no writer and no plan JSON yet, and it must not be added to
+`durable-backfill.sh` for the same reason.
+
+## `ensemble_forecast.py` -- the Open-Meteo ensemble lane
+
+The only FORECAST lane here, and it is shaped by that. It takes `issue_date` + `horizon_days` (max
+16) instead of a `HistoricalBackfillWindow`, and the horizon is an **hourly** axis
+(`step_count = horizon_days * 24`) compared instant-by-instant against a GMT-pinned axis.
+`chunk_cell_count` is capped at 25, far below the 200-location transport ceiling, because the body is
+one member series per variable per cell: 25 cells x 5 variables x 384 hours x 51 members is already
+~20 MB.
+
+**`member_count` is the quantile denominator.** `EnsembleProduct.member_count` is inherited from the
+product, and `_member_series` requires exactly `member01..memberNN` -- refusing both a missing and an
+extra series. A provider changing its ensemble size must fail the chunk, never silently re-scale
+every derived quantile.
+
+**A step with any null member is dropped, never zero-filled.** `expected_value_count` stays the
+declared horizon so the gap is visible, and a series below `MIN_COMPLETE_STEP_FRACTION` (0.9) is an
+explicit `insufficient_member_coverage` failure rather than a thin receipt -- the same shape as the
+CAMS hour floor.
+
+### Issue time is plan-declared; availability is not
+
+`issue_date` is whatever the plan says, and the provider always answers with its CURRENT model runs.
+Nothing in the payload records when the content became available, so a receipt anchored only on the
+plan would claim to have been issued at a moment its data did not exist -- `python.md`: "A
+forecast/hindcast/iteration may use only data available at its as-of/issue/cutoff time. Simulated
+cutoffs are never written as operational issue times." That matters here even though the lane is
+fail-closed at the warehouse (`ENSEMBLE_WAREHOUSE_PERSISTENCE_STATE = blocked_forecast_method_check`),
+because `staged_forecast_receipt_checksum` exists precisely so a later writer can finalize a receipt
+without recomputing its content: a false issue time would be baked into an artifact a future writer
+is told to trust.
+
+Three rules close it, and `require_consistent_quantile_carriage` stays the authority for all of them:
+
+1. **`require_issue_time_not_ahead_of_retrieval`** refuses a plan whose `issue_time` postdates the
+   retrieval that answered it, on both the fetch path and the cache-reload path. The reverse -- an
+   issue date in the past -- is not refused, because a same-day plan legitimately covers hours that
+   elapsed between midnight and the fetch.
+2. **`StagedForecastReceipt.data_available_at`** stages the retrieval instant on every receipt, as a
+   fact distinct from `issue_time`. `require_accounted_ensemble_forecast_result` requires it to equal
+   the chunk's `retrieved_at`.
+3. **`StagedForecastValue.is_elapsed_at_retrieval`** flags each step whose hour had already passed at
+   retrieval -- analysis carried on a forecast receipt. `quality_summary.elapsed_step_count`
+   aggregates it. The flag defaults to `False` and is then checked against `data_available_at` by
+   `require_consistent_quantile_carriage`, so a writer that omits or forges it fails at the checksum
+   boundary rather than publishing a hindcast hour as a forecast one. A downstream evaluator must not
+   score these steps as forecast skill.
+
+### What blocks warehouse persistence
+
+Not the quantile columns. `ForecastReceipt.quantile_levels` / `ForecastValue.quantile_values` accept
+ensemble output with no migration; every receipt's required `forecast_run_id` does not, because
+`ck_forecast_run_method` admits only `sql_linear` or `ml`. The next actionable step is a migration
+widening `forecast_method` / `model_kind` to an ensemble method in four coordinated places (the DB
+CHECK, `ForecastRun`, `ForecastModel`, and the `Literal` in `routes/forecasts.py:86`), after which the
+staged document maps mechanically onto inserts. Do not record this dataset as "needs no migration"
+without that qualifier.
+
+New signal names introduced here (`air_temperature_2m`, `precipitation_total`,
+`relative_humidity_2m`, `shortwave_radiation`, `wind_speed_10m`) need no migration but stay invisible
+to ML until a new `agri.covariate_feature_schema` version.

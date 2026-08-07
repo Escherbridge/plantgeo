@@ -65,7 +65,7 @@ const PANEL_REGION_CLASSES =
  * mobile tap-target rule every other control follows.
  */
 const TOP_BAR_CONTROL_CLASSES =
-  "pointer-events-auto flex items-center gap-1.5 rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--foreground))] shadow-[var(--shadow-lg)] [backdrop-filter:blur(var(--glass-blur))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--ring))] max-sm:min-h-11";
+  "pointer-events-auto flex items-center gap-1.5 rounded-xl border border-(--glass-border) bg-(--glass-bg) px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--foreground))] shadow-(--shadow-lg) [backdrop-filter:blur(var(--glass-blur))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--ring))] max-sm:min-h-11";
 
 export interface TimeSliderPanelProps {
   /**
@@ -133,7 +133,10 @@ export default function TimeSliderPanel({ children }: TimeSliderPanelProps) {
   const fetchFailed = storeCapabilities === null && storeCapabilitiesUnavailable;
   const serverToday = storeCapabilities?.serverCurrentDate ?? null;
   const isOffToday = hasDay && serverToday !== null && selectedDate !== serverToday;
-  const isFuture = hasDay && isFutureDate(selectedDate, storeCapabilities);
+  const isFuture =
+    storeCapabilities !== null &&
+    isCalendarDate(selectedDate) &&
+    isFutureDate(selectedDate, storeCapabilities);
 
   return (
     <section

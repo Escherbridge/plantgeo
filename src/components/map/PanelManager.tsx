@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useEffect, useState } from "react";
 import {
   Flame,
   Droplets,
@@ -9,6 +10,7 @@ import {
   Users,
   Building2,
   BarChart3,
+  X,
 } from "lucide-react";
 import { panelIdsOwningLayers } from "@/lib/map/layer-registry";
 import { useMap } from "@/lib/map/map-context";
@@ -90,7 +92,9 @@ function PanelButton({ id, icon, label }: { id: PanelId; icon: React.ReactNode; 
   return (
     <button
       title={panelTooltip(id, label)}
-      aria-label={label}
+      // The emerald dot is the visual "this closed panel still governs a live layer"
+      // signal; the name change is its non-visual equivalent.
+      aria-label={hasActive ? `${label} (layers active)` : label}
       onClick={() => togglePanel(id)}
       // h-11 w-11 (44px): the previous h-9 (36px) fell under a comfortable mobile tap
       // target for the rail that opens every data panel.
@@ -108,6 +112,54 @@ function PanelButton({ id, icon, label }: { id: PanelId; icon: React.ReactNode; 
         <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[hsl(var(--background))]" />
       )}
     </button>
+  );
+}
+
+/** Marks the rail hint as seen forever; opening any panel counts as having found the rail. */
+const RAIL_HINT_DISMISSED_KEY = "plantgeo-rail-hint-dismissed";
+
+/**
+ * First-visit pointer at the rail. No data layer is on by default and the rail is seven
+ * unlabeled icons, so a new visitor faces a blank map with nothing saying where the data
+ * lives. Shown once: dismissed by its own close button or by opening any panel, and never
+ * again after that (localStorage). Starts hidden and flips visible in an effect so the
+ * server render and the first client paint agree.
+ */
+function RailHint() {
+  const openPanel = usePanelStore((s) => s.openPanel);
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    setIsVisible(localStorage.getItem(RAIL_HINT_DISMISSED_KEY) === null);
+  }, []);
+
+  useEffect(() => {
+    if (openPanel !== null && isVisible) {
+      localStorage.setItem(RAIL_HINT_DISMISSED_KEY, "1");
+      setIsVisible(false);
+    }
+  }, [openPanel, isVisible]);
+
+  if (!isVisible) return null;
+
+  return (
+    <div
+      className="absolute left-17 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1.5 rounded-xl border border-(--glass-border) bg-(--glass-bg) py-1.5 pl-3 pr-1.5 text-xs text-[hsl(var(--foreground))] shadow-(--shadow-lg) [backdrop-filter:blur(var(--glass-blur))]"
+      data-testid="rail-hint"
+    >
+      Turn on data layers here
+      <button
+        type="button"
+        aria-label="Dismiss"
+        onClick={() => {
+          localStorage.setItem(RAIL_HINT_DISMISSED_KEY, "1");
+          setIsVisible(false);
+        }}
+        className="flex h-6 w-6 items-center justify-center rounded-md text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] max-sm:h-11 max-sm:w-11"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
   );
 }
 
@@ -148,6 +200,7 @@ export default function PanelManager() {
           />
         ))}
       </div>
+      <RailHint />
 
       {/* Panels */}
       <FireDashboard

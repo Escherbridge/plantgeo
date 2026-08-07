@@ -193,6 +193,14 @@ def test_every_moisture_layer_is_bounded_to_the_physical_volumetric_range() -> N
         assert (specification.minimum, specification.maximum) == (0.0, 1.0)
 
 
+def test_vapour_pressure_deficit_is_a_bounded_atmospheric_covariate_not_a_soil_signal() -> None:
+    """VPD is atmospheric dryness, not soil state; it keeps its own name, unit, and physical range."""
+    specification = OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS["vapour_pressure_deficit_max"]
+    assert specification.signal_name == "vapor_pressure_deficit"
+    assert specification.original_unit == specification.normalized_unit == "kPa"
+    assert (specification.minimum, specification.maximum) == (0.0, 15.0)
+
+
 @pytest.mark.parametrize("sentinel", [-999.0, 9.969209968386869e36, 1.5, -0.0001])
 def test_an_out_of_range_value_fails_the_whole_chunk(sentinel: float) -> None:
     """A provider sentinel is a provider failure, not a gap: it must never land as an accepted row.

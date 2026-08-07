@@ -18,6 +18,32 @@ Strategy and companion records default to `draft`. Strategy approval requires a 
 
 `forecasting.py` mirrors the additive SQL forecasting plane. `ForecastSeries` distinguishes exact source variants and raw/native, resampled, or aggregate support; `ForecastEntityState` and observations are append-only. Feature, training, backtest, forecast, and publication rows retain release/job/output checksums so a local ML result cannot serve without a validated local training receipt. `model_purpose='strategy_selection'` records the intended future use, but no strategy candidate model output is represented as an effect claim: that contract remains gated on the strategy-selection requirements interview and reviewed intervention/outcome evidence.
 
+## Ensemble quantile carriage, and why an upstream ensemble cannot yet be a receipt
+
+`ForecastReceipt.quantile_levels` and `ForecastValue.quantile_values` carry an arbitrary quantile
+set as-is: the levels are a `float8[]` guarded by `agri.forecast_quantiles_valid` plus a
+`0.5 = ANY(...)` CHECK, and the values are a JSONB object keyed by the level rendered as a string.
+Nothing in the database ties those two together. `quantile_values` has a `'{}'` server default and
+no CHECK, so a writer bug produces a finalized receipt whose declared levels and stored keys
+disagree and no constraint catches it. That agreement is therefore a writer invariant, enforced in
+`execution/ensemble_forecast.py::require_consistent_quantile_carriage` together with the median
+mirror (`point_value` must equal the `0.5` entry) and the p10/p50/p90 mirrors. One canonical level
+renderer, `format_quantile_level_key`, is the only thing allowed to build those keys; two renderers
+would silently split one level into two objects. `ordered_bands` is pairwise null-tolerant in SQL,
+so an unset mirror never fails there — the lane refuses an unset mirror for a level it declared.
+
+The Open-Meteo Ensemble lane stages receipts but does not write them, and that is a schema blocker,
+not an omission. Every `ForecastReceipt` requires a `forecast_run_id`, and `ForecastRun`'s
+`ck_forecast_run_method` closes `forecast_method` to `('sql_linear', 'ml')` — mirrored in the model
+above and in `routes/forecasts.py`, which returns the value to callers. An upstream numerical
+ensemble reduced to empirical quantiles is neither: declaring `sql_linear` asserts the SQL baseline
+produced the numbers, and `ml` additionally requires a validated local `ForecastTrainingRun` and a
+model artifact that do not exist. Both are false provenance on a serving surface. Until a migration
+widens that CHECK (in the DB, in `ForecastRun`, in `ForecastModel.ck_forecast_model_kind`, and in
+the route's `Literal`), the lane writes a checksummed staged document holding the exact receipt and
+value payloads and reports `warehouse_persistence = blocked_forecast_method_check`. The quantile
+columns themselves need no migration; only the receipt's owner does.
+
 Revision `20260803_0018` retired the hindcast plane (`ForecastHindcastRun`, `ForecastHindcastValue`) and the status-to-checksum evidence CHECKs on `forecast_run`, `forecast_training_run`, `forecast_publication`, and `forecast_iteration`. Only `ck_forecast_receipt_finalized_evidence` survives, because `forecast_receipt.receipt_checksum` gates the ML serving view and has no SQL function behind it. Every plain checksum column and its format CHECK is retained, so the reproducibility record is intact; what is gone is the database-side enforcement that a validated or published row must already carry its digest. Those invariants now belong to the CLI, and a reader of `Base.metadata` alone will over-read what the schema guarantees.
 
 `ForecastIteration` and its value/actual models mirror the generic daily

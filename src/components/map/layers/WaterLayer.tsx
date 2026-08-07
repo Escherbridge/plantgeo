@@ -29,13 +29,17 @@ function finiteNumber(value: unknown): number | null {
   return Number.isFinite(num) ? num : null;
 }
 
-const CONDITION_COLORS: Record<string, string> = {
-  above_normal: "#2196f3",
-  normal: "#009688",
-  below_normal: "#ffeb3b",
-  low: "#ff9800",
-  critically_low: "#f44336",
-  unknown: "#9e9e9e",
+// RdBu diverging: above/below normal is diverging data, so "normal" is the neutral
+// gray midpoint. Exported so WaterPanel doesn't keep its own duplicate.
+export const CONDITION_COLORS: Record<string, string> = {
+  above_normal: "#2166ac",
+  normal: "#9e9e9e",
+  below_normal: "#f4a582",
+  low: "#d6604d",
+  critically_low: "#b2182b",
+  // Darker than the "normal" pivot on purpose: "no reading" and "normal flow" are
+  // different claims and must not share a color.
+  unknown: "#616161",
 };
 
 const TREND_ARROW: Record<string, string> = {

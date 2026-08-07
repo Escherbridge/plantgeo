@@ -19,6 +19,8 @@ export default function TerrainControl() {
         className="max-sm:h-11 max-sm:w-11"
         onClick={toggleTerrain}
         title="Toggle terrain"
+        aria-label="Toggle terrain"
+        aria-pressed={isTerrainEnabled}
       >
         <Mountain />
       </Button>

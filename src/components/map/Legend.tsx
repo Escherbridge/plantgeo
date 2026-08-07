@@ -24,7 +24,13 @@ export function Legend() {
         <span className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
           Legend
         </span>
-        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={toggleLegend}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 max-sm:h-11 max-sm:w-11"
+          aria-label={legendVisible ? "Hide legend entries" : "Show legend entries"}
+          onClick={toggleLegend}
+        >
           {legendVisible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
         </Button>
       </div>
@@ -45,7 +51,9 @@ export function Legend() {
                 <button
                   onClick={() => toggleId && toggleLayer(toggleId)}
                   disabled={toggleId === null}
-                  className="flex items-center gap-2 text-left disabled:cursor-not-allowed"
+                  // min-h keeps adjacent rows from becoming one mis-tap zone; 44px on phones
+                  // per the app-wide rule, a lighter 32px on desktop so the card stays compact.
+                  className="flex min-h-8 w-full items-center gap-2 text-left disabled:cursor-not-allowed max-sm:min-h-11"
                   title={
                     toggleId === null
                       ? "No renderer for this layer"

@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
 import { useLayerToggle, useToggleLayer } from "@/lib/map/layer-toggle-context";
 
@@ -21,6 +22,9 @@ export function LayerToggle({ layerId, label, unavailableReason }: LayerTogglePr
   const reason = unavailableReason ?? LAYER_REGISTRY[layerId].permanentlyUnavailableReason;
   const isUnavailable = reason !== null;
   const isActive = !isUnavailable && isToggledOn;
+  // Links the reason caption to the switch: a screen reader landing on a disabled switch
+  // otherwise hears only "disabled", never why the capability is withheld.
+  const reasonId = useId();
 
   return (
     <div className="flex flex-col gap-1 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--muted)/0.3)] px-3 py-2 select-none">
@@ -34,6 +38,7 @@ export function LayerToggle({ layerId, label, unavailableReason }: LayerTogglePr
           aria-label={`Show ${label} on map`}
           aria-checked={isActive}
           aria-disabled={isUnavailable ? "true" : undefined}
+          aria-describedby={isUnavailable ? reasonId : undefined}
           disabled={isUnavailable}
           onClick={() => toggleLayer(layerId)}
           className={[
@@ -59,7 +64,7 @@ export function LayerToggle({ layerId, label, unavailableReason }: LayerTogglePr
         </button>
       </div>
       {reason !== null && (
-        <p className="text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
+        <p id={reasonId} className="text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
           {reason}
         </p>
       )}

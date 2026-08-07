@@ -249,3 +249,163 @@ throughout for that reason. Production connects as `postgres`, and no `postgres`
 schema exists, so its effective `search_path` is `public` and nothing is shadowed —
 but `docker-compose.yml` connects as `geo`, where `"$user"` does resolve, and the
 `geo.*` plpgsql functions declare locals as bare `geometry`.
+
+## §tile-observation-day
+
+The day a baked tile layer is filtered on. Files: `drizzle/0015_tile_observation_day.sql`
+(`geo.feature_observation_day` and the four Martin function sources that emit it),
+`src/lib/server/services/environmental-read-model.ts` (`PUBLISHER_NAMED_DAY_RULE`,
+`OBSERVATION_DAY`, `resolveRequestedObservationDay`), and the agreement test
+`src/__tests__/lib/observation-day-contract.test.ts`.
+
+### The day is an attribute, not a request parameter
+
+`fire-perimeters`, `evacuation-zones`, `burn-severity` and `sensors` are Martin **function
+sources baked into the map style**, not React-mounted readers. Nothing in that path had ever
+taken a date: each function selected every published row in the tile envelope, so scrubbing
+the slider to 2023 left August-2026 fire perimeters and evacuation zones on the map with
+nothing saying so. Those four layers hold 388 + 119 + 478 + 15,769 published rows in
+production, and every one of them was drawn at every date on a four-year axis.
+
+Two alternatives were rejected:
+
+- **A `query json` parameter per function, filtered server-side.** Postgres cannot add a
+  parameter with `CREATE OR REPLACE`, so that is a `DROP` + `CREATE` on four live functions
+  plus a Martin restart to re-read the catalog — and a missing function 404s the **whole**
+  composite: `martin-dynamic` carries six sources in one MapLibre source, so one bad
+  signature blanks every dynamic layer on the map.
+- **Splitting the composite** so each layer carries its own dated URL. Same blast radius, and
+  Martin cannot emit `vector_layers` for function sources (see `src/lib/map/sources.ts`).
+
+Emitting the day keeps every signature identical, so the migration is `CREATE OR REPLACE`
+with no catalog change and no restart; Martin's own `tile_expiry: 5m` ages cached tiles out.
+The client then filters with a MapLibre expression, which means scrubbing **re-filters
+already-downloaded tiles instead of refetching them** — a day-granular scrub over these
+layers costs zero requests. At this row count, shipping every feature and filtering in the
+browser is the cheaper design, not a compromise. The attribute is emitted `::text` so a
+MapLibre expression can compare it lexicographically: ISO-8601 dates sort correctly as
+strings, so `["<=", ["get","observed_day"], "2024-03-01"]` is exactly the "as the record
+stood on that day" test, with no date parsing in the style.
+
+### One rule, and it is the publisher-named day
+
+The tile filter and the slider's axis MUST bucket a feature onto the same calendar day. If
+they disagree the slider advertises a day as published and the tiles draw nothing for it,
+which renders as a bug in the map rather than as a gap in the data — the hardest class to
+diagnose. Agreement means the SAME rule, not merely the same source keys: both sides read
+`COALESCE(observedAt, updatedAt, polygonDateTime)` and take the **stored ISO string's own
+first ten characters**.
+
+Never an instant-based conversion. Measured against production, 6,279 of the 16,743
+water-gauge rows carry a `-07:00` offset and bucket to the day **after** the one they name
+once converted: `2026-08-03T23:50:00.000-07:00` got axis day 2026-08-03 and tile day
+2026-08-04, so `observed_day <= '2026-08-03'` hid the very feature the slider advertised.
+`PUBLISHER_NAMED_DAY_RULE.forbiddenInstantConversions` names the two spellings, and the
+contract test fails if either side grows one.
+
+### `IMMUTABLE` here is a deliberate promotion over two STABLE callees
+
+`geo.feature_observation_day` is declared `IMMUTABLE` and its body calls `to_date(text, text)`
+and `pg_input_is_valid(text, text)`, both of which PostgreSQL catalogues as **STABLE**
+(`SELECT provolatile FROM pg_proc WHERE proname IN ('to_date','pg_input_is_valid')` returns
+`s` for both, verified on 16.9). That is not an oversight, and it is not a misdeclaration:
+
+- Both are catalogued STABLE because the general case reads session state — `DateStyle`
+  decides whether `03-05-2026` is March or May. This function pins a **fixed `'YYYY-MM-DD'`
+  pattern over a `^\d{4}-\d{2}-\d{2}$`-shaped input**, where the four-digit year is
+  unambiguous, so neither callee's result can move with the session. Verified: under
+  `SET datestyle='DMY'` the guard and the parse return the same values as under ISO.
+- The promotion is **required for the intended use**. PostgreSQL checks the *declared*
+  volatility of the top-level function in an index expression, so
+  `CREATE INDEX ... (geo.feature_observation_day(properties))` is accepted, while the same
+  logic inlined — `CREATE INDEX ... (to_date(substring(properties->>'observedAt',1,10),
+  'YYYY-MM-DD'))` — is rejected with `functions in index expression must be marked
+  IMMUTABLE`. Both halves were run on 16.9. The wrapper is what buys the future index.
+
+What must **not** be done is reach the same declaration through a cast. `text::timestamptz`
+and `text::date` route through input functions that genuinely read `TimeZone` and `DateStyle`
+for these inputs, so `IMMUTABLE` over a cast would be a lie *and* would re-bucket the 37.5%
+of gauge rows above.
+
+### The guard fails closed, because one raise blanks a whole tile
+
+A shape check alone is not enough: `^\d{4}-\d{2}-\d{2}$` admits `2026-02-31`, and
+`to_date('2026-02-31','YYYY-MM-DD')` **raises** `date/time field value out of range` on
+PostgreSQL 16 and later. A raise inside `ST_AsMVT` fails the entire tile — every feature in
+it, not just the bad row — which is precisely the failure the guard exists to prevent, and
+the failure mode 0012 called out for bare numeric casts.
+
+So the guard is two conditions, and `to_date` never sees a day that does not exist:
+the anchored regex proves the **shape**, and `pg_input_is_valid(day, 'date')` proves the day
+**exists** (false for `2026-02-31`, `2026-13-01` and `2023-02-29`; true for `2024-02-29`).
+`pg_input_is_valid` is non-raising by construction — it is the soft-error probe, PostgreSQL
+16+, already relied on by `scripts/backfill-geometry.sql` — so no `EXCEPTION` block and no
+per-row subtransaction is needed, which matters on a 15,769-row layer. A `plpgsql` wrapper
+with `EXCEPTION WHEN others THEN NULL` would work but costs a subtransaction per row and
+swallows unrelated errors.
+
+This is the SQL twin of `resolveRequestedObservationDay`, which pairs
+`CALENDAR_DATE_PATTERN` with `Number.isNaN(Date.parse(...))` for the same reason: a
+well-shaped impossible day must resolve to "nothing is observed here", never to a raise and
+never to a neighbouring day. A row that cannot be dated yields NULL and is treated as undated
+by the client filter, which shows it at every date rather than hiding it.
+
+## §soil-field-view
+
+The ERA5-Land serving surface for soil moisture **and** soil temperature. Files:
+`drizzle/0016_soil_field.sql` (`geo.soil_field_observation`, `geo.soil_field`), read by
+`getPublishedSoilField` in
+`src/lib/server/services/environmental-read-model.ts`. Supersedes 0014's
+`geo.soil_moisture_observation` / `geo.soil_moisture_field`, which covered moisture only.
+
+### The reviewed (signal, measure, unit) triples are stated exactly once
+
+The view's row gate, its `measure` label and its accepted unit all come from **one** joined
+`VALUES` list, `governed(signal_name, measure, normalized_unit)`. They used to be two
+enumerations — a `CASE` for the label and an `OR`-of-`IN` for the `WHERE` — which meant
+widening one without the other served rows with `measure` NULL, and the reader has no way to
+tell that apart from a genuinely unlabelled measurement. Joining the list makes the three
+structurally unable to disagree: widening the list is the whole edit, and there is no second
+place to forget.
+
+The list is enumerated rather than prefix-matched on purpose. A signal arriving in an
+unexpected unit — Kelvin instead of Celsius — matches nothing and is invisible here, rather
+than served beside comparable values and coloured as if it were one of them. A signal absent
+from the list is likewise absent: this same ERA5-Land lane also carries
+`vapour_pressure_deficit`, so a fallback `ELSE 'temperature'` would hand the first person who
+widens the gate a silently mislabelled signal drawn on the temperature ramp. `is_observed`
+and `quality_flag = 'accepted'` are applied HERE rather than at each call site, so no reader
+can serve a rejected or imputed value as a measurement.
+
+Verified against a stand-in schema on 16.9: the joined form returns exactly the row set the
+double-enumerated form did (3 moisture + 4 temperature signals kept; wrong-unit,
+unenumerated, unobserved, rejected and null-valued rows dropped), with no fan-out and with
+`measure` never NULL.
+
+### The function is renamed, the view is replaced
+
+`geo.soil_moisture_field(...)` was already measure-agnostic — it takes `target_signal` and
+`target_support_key` as parameters and reads `agri.signal_observation` directly, so it
+aggregates temperature correctly with no change to its body. It is **renamed**, never
+rewritten: `ALTER FUNCTION … RENAME TO` preserves the body byte-for-byte, whereas a
+`DROP` + `CREATE` would fork the Gaussian-blur definition into a second copy that could drift
+from the one 0014 reviewed. The rename is wrapped in a `DO` block that checks `pg_proc`
+first, so a database already carrying the new name is a no-op rather than an error.
+
+The view, by contrast, gains a column (`measure`) and changes name, and PostgreSQL permits
+neither with `CREATE OR REPLACE` — hence `DROP VIEW` + `CREATE VIEW`. Nothing but
+`environmental-read-model.ts` read the old view (grep across `src/`, `docs/`, `infra/`), so
+the drop is safe.
+
+### Still not a tile function, and still no new index
+
+`infra/martin/martin.yaml` sets `auto_publish: false` and names its function sources
+explicitly, so nothing here can join a composite source id and no tile server needs
+restarting — the restart hazard is `geo.*_tiles` functions only.
+
+No index is added, for 0014's reason: the bbox resolves the cell list first, and the day is
+then one index search per cell on the existing
+`ix_signal_observation_cell_time_signal (cell_id, observed_at, signal_name)`. That index is
+keyed on `signal_name` without regard to *which* signal, so the temperature signals ride it
+exactly as the moisture ones do. Building an index here would lock a table the live backfill
+is writing to, for no measured gain.

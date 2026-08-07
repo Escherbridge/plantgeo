@@ -36,6 +36,27 @@ import {
   type ZoomGranularityTiers,
 } from "./zoom-granularity";
 
+/**
+ * The one publisher-named-day rule, shared by the slider axis and the baked tile layers.
+ *
+ * `OBSERVATION_DAY` (the slider's SQL) and `geo.feature_observation_day` (the tile attribute,
+ * drizzle/0015_tile_observation_day.sql) MUST bucket a feature onto the same calendar day: if
+ * they disagree the slider advertises a day as published and the tiles draw nothing for it,
+ * which reads as a rendering bug. Both read the same JSONB keys in the same order and take the
+ * day from the stored ISO string's own first `prefixLength` characters -- never from the
+ * instant, which moves 37.5% of the stored water-gauge rows one day forward.
+ *
+ * src/__tests__/lib/observation-day-contract.test.ts fails if either side stops doing that.
+ */
+export const PUBLISHER_NAMED_DAY_RULE = {
+  /** JSONB property names, in precedence order, that may name an observation's time. */
+  observationTimeKeys: ["observedAt", "updatedAt", "polygonDateTime"],
+  /** Characters of a stored ISO-8601 string that name the calendar day: `YYYY-MM-DD`. */
+  prefixLength: 10,
+  /** Instant-based conversions neither side may use; each re-buckets offset-bearing rows. */
+  forbiddenInstantConversions: ["AT TIME ZONE", "::timestamptz::date"],
+} as const;
+
 const MAX_ROWS = 2_000;
 const STREAMFLOW_MAX_AGE_MS = 6 * 60 * 60 * 1_000;
 const DROUGHT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1_000;
@@ -161,7 +182,7 @@ export function resolveRequestedObservationDay(
  */
 function publisherNamedDay(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const day = value.slice(0, 10);
+  const day = value.slice(0, PUBLISHER_NAMED_DAY_RULE.prefixLength);
   return CALENDAR_DATE_PATTERN.test(day) ? day : null;
 }
 
@@ -187,7 +208,7 @@ function isObservedWithinNamedDays(
  * own note for the 37.5% of gauge readings that rule is written against.
  */
 function namedDaySql(observationTimeText: SQL): SQL {
-  return sql`substring(${observationTimeText}, 1, 10)::date`;
+  return sql`substring(${observationTimeText}, 1, ${sql.raw(String(PUBLISHER_NAMED_DAY_RULE.prefixLength))})::date`;
 }
 
 export function parseBbox(value: string): [number, number, number, number] {
@@ -2075,7 +2096,9 @@ const FUTURE_AXIS_DAYS = 30;
 
 /** Which upstream payload field dates an observation, in priority order.
  *
- * NEVER add features.created_at or features.updated_at here. Those are "last
+ * Built from PUBLISHER_NAMED_DAY_RULE.observationTimeKeys rather than restated, because
+ * geo.feature_observation_day reads the same keys in the same order and the two must not
+ * drift. NEVER add features.created_at or features.updated_at here. Those are "last
  * touched" columns that the refresh path rewrites, so dating an observation from
  * either would silently re-stamp historical readings to the day of the last run.
  * Verified against production that these three keys never co-occur on one row:
@@ -2083,11 +2106,11 @@ const FUTURE_AXIS_DAYS = 30;
  * updatedAt (the USGS reading time, offset-bearing), fire-perimeters only
  * polygonDateTime. All stored values carry an explicit UTC offset, so the
  * timestamptz cast is deterministic rather than session-dependent. */
-const OBSERVATION_TIME_TEXT = sql`COALESCE(
-  f.properties->>'observedAt',
-  f.properties->>'updatedAt',
-  f.properties->>'polygonDateTime'
-)`;
+const OBSERVATION_TIME_TEXT = sql.raw(
+  `COALESCE(${PUBLISHER_NAMED_DAY_RULE.observationTimeKeys
+    .map((propertyName) => `f.properties->>'${propertyName}'`)
+    .join(", ")})`
+);
 
 /** Instant of an observation. Used for ordering within a day, never for bucketing days. */
 const OBSERVATION_TIME = sql`(${OBSERVATION_TIME_TEXT})::timestamptz`;
@@ -2107,8 +2130,11 @@ const OBSERVATION_TIME = sql`(${OBSERVATION_TIME_TEXT})::timestamptz`;
  * carry an explicit offset, none is offsetless) and, unlike the text->timestamptz cast, it
  * cannot move with the session TimeZone. `serverCurrentDate` stays UTC; every US offset is
  * negative, so a publisher-named day can never exceed the server's UTC today.
+ *
+ * `geo.feature_observation_day` derives the tile attribute from the same PUBLISHER_NAMED_DAY_RULE
+ * and is asserted to agree with this expression by observation-day-contract.test.ts.
  */
-const OBSERVATION_DAY = sql`substring(${OBSERVATION_TIME_TEXT}, 1, 10)::date`;
+const OBSERVATION_DAY = namedDaySql(OBSERVATION_TIME_TEXT);
 
 /** A metric the slider can request, and the stored field that answers it. */
 interface MetricSource {

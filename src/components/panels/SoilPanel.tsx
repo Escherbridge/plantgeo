@@ -166,8 +166,15 @@ function SoilFieldSection({
     <>
       {/* Registry-routed to this panel like the survey below; without a switch here the
           SoilFieldLayer polygons could never be turned on, since the Legend only lists
-          warehouse-backed (geo.layers) feeds and this one reads the agri model plane. */}
-      <LayerToggle layerId={definition.toggleId} label={definition.layerLabel} />
+          warehouse-backed (geo.layers) feeds and this one reads the agri model plane.
+          Two literal branches rather than layerId={definition.toggleId}: the registry
+          contract test reads every rendered layerId out of the source statically, and a
+          computed id is indistinguishable from an absent switch there. */}
+      {measure === "moisture" ? (
+        <LayerToggle layerId="soil-moisture" label={definition.layerLabel} />
+      ) : (
+        <LayerToggle layerId="soil-temperature" label={definition.layerLabel} />
+      )}
 
       {visible && (
         <div className="mt-1.5 flex flex-col gap-1.5">
@@ -302,15 +309,17 @@ function SoilFieldSection({
   );
 }
 
+// Reuses EROSION_COLORS (see erosion.ts) so risk color never disagrees between panels;
+// suitability has one fewer tier than erosion, so very_high is unused here.
 function SuitabilityBar({ score }: { score: number }) {
   const color =
     score >= 75
-      ? "#4caf50"
+      ? EROSION_COLORS.very_low
       : score >= 50
-      ? "#8bc34a"
+      ? EROSION_COLORS.low
       : score >= 30
-      ? "#ff9800"
-      : "#f44336";
+      ? EROSION_COLORS.moderate
+      : EROSION_COLORS.high;
   return (
     <div className="flex items-center gap-2 flex-1">
       <div className="flex-1 h-2 rounded-full bg-[hsl(var(--muted))] overflow-hidden">

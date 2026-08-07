@@ -122,20 +122,24 @@ export function TrendChart({ data, title, color, unit }: TrendChartProps) {
             />
           ))}
 
-          {/* Y-axis labels */}
-          {yTicks.map((tick, i) => (
-            <text
-              key={i}
-              x={PADDING.left - 6}
-              y={yPos(tick) + 4}
-              textAnchor="end"
-              fontSize={9}
-              fill="currentColor"
-              className="text-[hsl(var(--muted-foreground))]"
-            >
-              {tick}
-            </text>
-          ))}
+          {/* Y-axis labels. Unit only appears on the topmost (max) tick -- the others stay bare. */}
+          {yTicks.map((tick, i) => {
+            const label = valRange >= 100 ? String(Math.round(tick)) : tick.toFixed(1);
+            const isTopTick = i === yTicks.length - 1;
+            return (
+              <text
+                key={i}
+                x={PADDING.left - 6}
+                y={yPos(tick) + 4}
+                textAnchor="end"
+                fontSize={9}
+                fill="currentColor"
+                className="text-[hsl(var(--muted-foreground))]"
+              >
+                {isTopTick ? `${label} ${unit}` : label}
+              </text>
+            );
+          })}
 
           {/* X-axis labels */}
           {xTickIndices.map((idx) => (

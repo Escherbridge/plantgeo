@@ -34,8 +34,15 @@ export function CommandPalette() {
         setOpen((prev) => !prev);
       }
     };
+    // SearchBar's shortcut chip opens the palette by mouse; a custom event rather than a
+    // synthetic keydown, so the chip is not coupled to which key this component binds.
+    const openHandler = () => setOpen(true);
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("plantgeo:open-command-palette", openHandler);
+    return () => {
+      window.removeEventListener("keydown", handler);
+      window.removeEventListener("plantgeo:open-command-palette", openHandler);
+    };
   }, []);
 
   const handleSelect = (value: string) => {

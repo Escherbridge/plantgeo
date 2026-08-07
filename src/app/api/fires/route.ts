@@ -28,16 +28,32 @@ const HISTORICAL_DAY_CACHE_CONTROL =
  * anywhere in the four-year axis left the same two days of detections sitting on the map, and
  * nothing said so. `getPublishedFireDetections` has taken a `date` since it was written; only
  * the caller was missing.
+ *
+ * A present-but-malformed day is a 400, never a silent fall-back to the live window: answering
+ * `?date=2023-6-1` with today's detections renders August-2026 fires as June-2023 with nothing
+ * in the body or headers saying the requested day was ignored.
  */
 export async function GET(request: Request) {
   const requestedDate = new URL(request.url).searchParams.get("date")?.trim();
-  // A malformed day is dropped rather than forwarded. The read model answers one with an empty
-  // collection, which on the map is indistinguishable from a day that genuinely recorded no
-  // detections -- so a typo in a URL would read as a gap in the record.
-  const date =
-    requestedDate !== undefined && CALENDAR_DATE_PATTERN.test(requestedDate)
-      ? requestedDate
-      : undefined;
+  if (requestedDate !== undefined && !CALENDAR_DATE_PATTERN.test(requestedDate)) {
+    return NextResponse.json(
+      {
+        type: "FeatureCollection",
+        features: [],
+        availability: "unavailable",
+        reason: "invalid_date_parameter",
+        detail: "The date parameter must be a YYYY-MM-DD calendar day.",
+      },
+      {
+        status: 400,
+        headers: {
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+      }
+    );
+  }
+  const date = requestedDate;
 
   try {
     const data = await getPublishedFireDetections(undefined, firmsDayRange(), date);

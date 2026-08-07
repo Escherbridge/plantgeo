@@ -167,3 +167,16 @@ subscription raises the quota that walls a full lattice crawl; it changes no req
 an environment fact, so setting it does not change `plan_checksum` and does not orphan an existing
 checkpoint or raw cache. Do not add it, or a host field, to a plan file. See
 `execution/AGENTS.md` §historical_open_meteo, "Paid access is environment, not plan".
+
+**Later single-variable lattice plans reuse the same 1,568-cell lattice wholesale, not
+`ndvi_lattice_cells()`.** `open-meteo-era5-land-pnw-soiltemp-20220430-20260430.json` (four soil-
+temperature bands) and `open-meteo-era5-land-pnw-vpd-20220430-20260430.json` (`vapour_pressure_deficit_max`,
+an atmospheric covariate, not soil state) both carry the identical `cells` array as the moisture
+lattice above -- copied, not regenerated -- because the lattice is fixed and re-deriving it per plan
+would risk a silent mismatch this file's own test (`test_open_meteo_artifacts_regenerate_byte_for_byte`)
+would not catch, since that test only covers the two plans `author_pnw_soil_moisture_plans.py` builds.
+`chunk_cell_count` (50), `model`, `native_grid_*`, `support_key`, `time_zone` and the `source` block are
+also byte-identical across all three plans; only `description`, `parameters` and `release_set_key`
+differ, so each is genuinely a different `plan_checksum` and a different release set. Both are unrun:
+`release_set_as_of` uses the same far-future placeholder as the moisture lattice, not a completion
+forecast.

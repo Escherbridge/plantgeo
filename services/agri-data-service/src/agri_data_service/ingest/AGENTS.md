@@ -455,3 +455,89 @@ pins it literally.
 `require_archive_base_url`, which admits only the two reviewed hosts. Persistence replays a local
 cache receipt, so the host must come from the receipt rather than from the current environment;
 that receipt is a file, therefore untrusted, therefore checked before it can become provenance.
+
+## open_meteo_endpoint.py: one transport half, four products
+
+Open-Meteo publishes each product on its own host pair (free + `customer-`), but the *transport*
+contract is identical across all of them: multi-location by comma-joined coordinates, at most 200
+locations per request, `cell_selection=nearest` pinned, a JSON array response, a 429 whose body names
+the exhausted window, and raw text returned so the caller can checksum exactly what arrived. This
+module is that shared half; a product adapter beside it (`open_meteo_flood.py`,
+`open_meteo_air_quality.py`, `open_meteo_ensemble.py`) contributes only its hosts, its byte budget,
+and its own parameter list.
+
+**`OpenMeteoEndpoint` is generic over its base-URL Literal, and `require_base_url` is a method on it.**
+That is not a typing flourish. The rule "only a reviewed host may become provenance" was previously
+restated once per product -- `require_flood_base_url`, `require_air_quality_base_url`,
+`require_ensemble_base_url` -- each identical except for the narrowed return type. Four copies of one
+provenance rule is exactly the duplicated truth `engineering-principles.md` §1 forbids: a correction
+to any one of them would leave three lanes still accepting whatever the old rule accepted. Making the
+endpoint generic lets `OPEN_METEO_FLOOD_ENDPOINT.require_base_url(value)` return
+`OpenMeteoFloodBaseUrl` from the one implementation, so the narrow type survives into a receipt with
+no per-lane copy. The per-product `Literal` aliases stay -- they are the closed host set a receipt
+field is typed by -- and the module constants are annotated with them so the endpoint carries the
+literal type rather than widening to `str`.
+
+**`_rate_limit_scope` is imported from `open_meteo.py`, privately and deliberately.** One 429
+classifier, measured against live bodies (see "open_meteo.py: two endpoints, two contracts"), must
+serve every endpoint. A per-endpoint copy would drift the moment the provider reworded one wall.
+
+**Two URL builders, same rule as the archive lane.** `open_meteo_product_url` is credential-free and
+persistable; `open_meteo_product_request` resolves the key once and returns both the host to record
+and the URL to send. A product adapter wraps these rather than reimplementing them, so a lane cannot
+accidentally persist a credentialed URL.
+
+## open_meteo_flood.py
+
+GloFAS river discharge, daily, from `flood-api.open-meteo.com/v1/flood`. 64 MB / 300 s: a four-year
+daily replay for 200 reaches is roughly 16 MB of JSON and the full seven-variable ensemble-statistic
+set multiplies that, so the ceiling leaves headroom without ever permitting an unbounded body.
+
+**`models` MUST be sent and is threaded from the plan, never defaulted.** v3 and v4 sit on different
+native lattices (0.1 vs 0.05 degrees), so this value decides which grid box a returned reach belongs
+to and therefore which spatial support the row may claim. `flood_daily_parameters` takes the model as
+an argument and validates it against `GLOFAS_MODELS`, which is what makes it impossible for a v3 plan
+to silently fetch v4 -- contrast `_archive_daily_parameters` in `open_meteo.py`, which hard-codes its
+model because that lane serves exactly one product.
+
+**No `timezone` parameter is sent.** The flood endpoint is daily-only, so there is no sub-daily
+instant to place; the lane instead asserts `timezone=GMT` / `utc_offset_seconds=0` in the response.
+Unverified against the live upstream: the multi-location array shape and `location_id` ordering. Both
+fail loudly on the first real chunk rather than silently.
+
+## open_meteo_air_quality.py
+
+CAMS, hourly, from `air-quality-api.open-meteo.com/v1/air-quality`. 32 MB / 300 s bounds **one cell
+block times one day block**; because CAMS answers hourly, 24 values per variable per cell per day
+means the plan's `chunk_day_count`, not the cell block alone, is what keeps a response under the
+ceiling. Tune the plan, never this constant.
+
+**`domains` MUST be sent and is threaded from the plan.** `cams_global` is a 0.4-degree lattice and
+`cams_europe` a 0.1-degree one, so the domain decides which spatial support a returned value may
+claim. `HOURS_PER_DAY` lives here rather than in the execution lane because it is a property of what
+this endpoint returns, and the reduction that consumes it is the lane's.
+
+**`timezone=GMT` is pinned** so a returned hourly stamp needs no session-timezone reasoning; the
+execution lane then buckets by the ISO prefix the publisher named and validates a dense 24-hour axis
+before it reduces anything.
+
+## open_meteo_ensemble.py
+
+Per-member ensemble output, hourly, from `ensemble-api.open-meteo.com/v1/ensemble`. 64 MB / 300 s
+holds a 25-cell, 5-variable, 16-day, 51-member chunk with headroom -- the body is one member series
+per variable per cell, so it is `member_count` times a deterministic response.
+
+**`models` is REQUIRED by this endpoint and is threaded from the plan through
+`ensemble_hourly_parameters` into both `ensemble_hourly_url` and `ensemble_hourly_request`,
+deliberately NOT hard-coded** the way `_archive_daily_parameters` hard-codes
+`OPEN_METEO_ERA5_LAND_MODEL`. Each ensemble sits on its own native lattice AND carries its own member
+count, which is the denominator of every quantile the execution lane derives; a defaulted model would
+silently re-scale every summary.
+
+**`timezone=GMT` is pinned** so a returned instant is compared instant-by-instant against a
+GMT-anchored axis with no timezone arithmetic.
+
+**Member series are named, not pattern-scanned.** `ensemble_member_field_name(variable, number)`
+renders the provider's own two-digit `<variable>_member01` format and refuses a number outside
+1..`MAX_ENSEMBLE_MEMBER_NUMBER`. Under "Deliberate deviations": the execution lane reads members by
+exact name and requires exactly the declared count, rather than summarizing whatever series arrived.

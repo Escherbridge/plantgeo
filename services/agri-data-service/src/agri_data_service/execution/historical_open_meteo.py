@@ -108,6 +108,8 @@ OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS: Final[dict[str, OpenMeteoArchiveSignal
     "soil_temperature_100_to_255cm_mean": OpenMeteoArchiveSignal(
         "soil_temperature_level_4", "C", "C", -100.0, 70.0
     ),
+    # An atmospheric-dryness covariate, not a soil-state one; see execution/AGENTS.md §historical_open_meteo.
+    "vapour_pressure_deficit_max": OpenMeteoArchiveSignal("vapor_pressure_deficit", "kPa", "kPa", 0.0, 15.0),
 }
 
 OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS: Final = (

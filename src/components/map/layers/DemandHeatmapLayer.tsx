@@ -84,6 +84,8 @@ export function DemandHeatmapLayer({
               9,
               3,
             ],
+            // Density is sequential magnitude (not diverging), so the ramp stays one
+            // hue light-to-dark end to end -- the old ramp detoured through amber mid-ramp.
             "heatmap-color": [
               "interpolate",
               ["linear"],
@@ -91,15 +93,15 @@ export function DemandHeatmapLayer({
               0,
               "rgba(0,0,0,0)",
               0.2,
-              "rgba(134,239,172,0.4)",
+              "rgba(209,250,229,0.4)",
               0.4,
-              "rgba(74,222,128,0.6)",
+              "rgba(110,231,183,0.6)",
               0.6,
-              "rgba(234,179,8,0.75)",
+              "rgba(52,211,153,0.75)",
               0.8,
-              "rgba(22,163,74,0.85)",
+              "rgba(5,150,105,0.85)",
               1,
-              "rgba(20,83,45,1)",
+              "rgba(6,78,59,1)",
             ],
             "heatmap-radius": [
               "interpolate",

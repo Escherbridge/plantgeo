@@ -114,22 +114,29 @@ Two details make the projection safe to copy for the next coarse-grained layer:
   disagree by a whole year. Before capabilities land there is no day, so `year`/`month` are
   `null` and no raster is attached — a browser-clock default would draw a period nobody chose.
 
-## The time slider is the right-hand region's header, not a floating card
+## The time slider is a collapsed top-bar pill, expanding to the region's header
 
-`TimeSliderPanel` renders an always-mounted right-hand panel region with the slider pinned
-(`sticky`) at its top; the region's body below it is conditional. This supersedes the earlier
-bottom-centre dock (`absolute bottom-24 left-1/2 -translate-x-1/2`, which lived in
-`TIME_SLIDER_CONTAINER_CLASSES`): the day applies to every layer, so its marker cannot be
-something a user opens a panel to reach, and a card floating over the canvas read as one more
-per-layer widget.
+`TimeSliderPanel` renders an always-mounted right-hand panel region whose sticky top is a
+compact date pill in the top bar (`top-4`, level with `SearchBar`); the full scrubber card
+opens below it behind a disclosure, collapsed by default, and the region's body below that is
+conditional. This supersedes two earlier shapes in turn: the bottom-centre floating card
+(`absolute bottom-24 left-1/2 -translate-x-1/2`), then the always-open card pinned at
+`top-16` (2026-08-05 to 2026-08-06). The invariant that survived both moves: the day applies
+to every layer, so its marker — now the pill, showing the date plus a "Past day" / "Beyond
+record" chip whenever the selection is off the server's today — cannot be something a user
+opens a panel (or a disclosure) to reach. Only the *controls* are behind the disclosure; the
+*claim* never is. The pill also surfaces a bar-level Today reset while collapsed, because an
+off-today date silently filters every layer and the way back must not cost a disclosure.
 
 `TIME_SLIDER_CONTAINER_CLASSES` keeps its invariant — the loaded slider and the
 `time-slider-unavailable` alert render from the same class list, so a fetch that later succeeds
-cannot reposition or resize anything — and now holds no positioning at all. All of it lives in
-`PANEL_REGION_CLASSES` in `TimeSliderPanel.tsx`. The two offsets there are collision avoidance
-against known neighbours (`right-16` for MapLibre's top-right control stack, `top-16` for
-`MapControls`' centred toolbar and `SearchBar`), and the region is the single scroller: a
-scroller nested inside a scroller is how the one drag control becomes unreachable on a phone.
+cannot reposition or resize anything — and holds no positioning at all. All of it lives in
+`PANEL_REGION_CLASSES` in `TimeSliderPanel.tsx`. The offsets there are collision avoidance
+against known neighbours (`right-16` for MapLibre's top-right control stack, `top-4` to sit on
+the `SearchBar` row), and the region is the single scroller: a scroller nested inside a
+scroller is how the one drag control becomes unreachable on a phone. The region itself is
+`pointer-events-none` with each interactive child opting back in — collapsed, it is a mostly
+empty column over the canvas, and without the pass-through it would swallow map drags.
 
 Panel sheets still portal themselves over the whole viewport, so an open panel covers the
 region exactly as it covered the old dock. Docking a panel's body into the region's body slot

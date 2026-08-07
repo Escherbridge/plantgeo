@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc/client";
 import { useWatershedsQuery } from "@/hooks/useViewportProxiedLayers";
 import { DROUGHT_LEGEND } from "@/components/map/layers/DroughtLayer";
+import { CONDITION_COLORS } from "@/components/map/layers/WaterLayer";
 import { LayerToggle } from "@/components/ui/layer-toggle";
 import {
   useDebouncedMapDay,
@@ -18,15 +19,6 @@ interface WaterPanelProps {
   onOpenChange: (open: boolean) => void;
   bbox?: string;
 }
-
-const CONDITION_COLORS: Record<string, string> = {
-  above_normal: "#2196f3",
-  normal: "#009688",
-  below_normal: "#ffeb3b",
-  low: "#ff9800",
-  critically_low: "#f44336",
-  unknown: "#9e9e9e",
-};
 
 const CONDITION_LABEL: Record<string, string> = {
   above_normal: "Above Normal",

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import type { SliderCapabilities } from "@/types/time-slider";
 
@@ -150,7 +150,7 @@ describe("TimeSliderPanel", () => {
     renderWithProviders(<TimeSliderPanel />);
     // A past observed day: the pill must say the map is NOT drawing the live day, because an
     // off-today date silently filters every layer.
-    useTimeSliderStore.getState().setSelectedDate("2026-08-02");
+    act(() => useTimeSliderStore.getState().setSelectedDate("2026-08-02"));
 
     expect(screen.getByText("Past day")).toBeTruthy();
     const barToday = screen.getByTestId("time-slider-bar-today");
@@ -165,9 +165,12 @@ describe("TimeSliderPanel", () => {
     renderWithProviders(<TimeSliderPanel />);
     // The store flag is what the panel's own error effect sets; driving it directly keeps
     // this a render-state test rather than a react-query lifecycle test.
-    useTimeSliderStore.getState().setCapabilitiesUnavailable(true);
+    act(() => useTimeSliderStore.getState().setCapabilitiesUnavailable(true));
 
-    expect(screen.getByText("Time range unavailable")).toBeTruthy();
+    // Asserted on the pill itself: TimeSlider's own (hidden) notice carries the same words.
+    expect(screen.getByTestId("time-slider-toggle").textContent).toContain(
+      "Time range unavailable"
+    );
     // Expanding shows TimeSlider's full notice, which names it a loading failure.
     fireEvent.click(screen.getByTestId("time-slider-toggle"));
     expect(screen.getByTestId("time-slider-unavailable")).toBeTruthy();
