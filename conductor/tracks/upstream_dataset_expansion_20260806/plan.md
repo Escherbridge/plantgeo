@@ -340,3 +340,22 @@ and `_require_aware_utc` exists again in `historical_backfill.py:799`, `contract
 lanes already share) — but **only once those lanes' active backfills complete**: both files are
 being executed by long-running fetches right now, and editing a module under a running four-year
 job risks a restart that re-fetches against provider quota.
+
+**(j) URGENT — Martin auto-publishes the whole database, and 0016's view made that expensive.**
+Measured 2026-08-06 immediately after the c01ed48 deploy + Martin restart: the deployed
+`plantgeo-martin` runs the official image with env-only config (`DATABASE_URL`, `PORT`,
+`TILE_CORS_ORIGIN` — no config file), so `infra/martin/martin.yaml`'s `auto_publish: false`
+allowlist has never applied and the live catalog exposes 35 sources, including raw
+`geo.features`, `geo.geometry`, `agri.spatial_cell` — and now `geo.soil_field_observation`,
+for which one public z6 tile request streams **>27 MB and runs >40 s** (every cell × every
+day; the exact unbounded payload the architect ruling kept out of Martin). The app itself
+never requests these sources (soil is served as tRPC isobands), but each request is an
+unauthenticated multi-GB scan against the production database. Fix is the recorded "Martin
+lockdown" gap, with two traps measured tonight: (1) `infra/martin/martin.yaml` is STALE —
+the live app composes sources the yaml does not allowlist (`fire_detections`,
+`drought_areas`, the OSM layers), so the allowlist must be reconciled against
+`src/lib/map/sources.ts` before it is applied or live layers break; (2) the service has no
+repo source connected, so shipping the config needs `connect_service_source` (Railway MCP —
+re-auth required) or a `railway up` of an `infra/martin/` Dockerfile, with a rollback path
+tested first. Until then every new geometry-bearing table or view added by a migration is
+publicly served the moment it exists.
