@@ -19,6 +19,7 @@ export type LayerToggleId =
   | "soil"
   | "soil-survey"
   | "soil-moisture"
+  | "soil-temperature"
   | "demand-heatmap"
   | "interventions"
   | "evacuation-zones"
@@ -140,13 +141,29 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "soil",
     permanentlyUnavailableReason: null,
   },
-  // ERA5-Land volumetric soil water, read through environmental.getSoilMoisture. The first
+  // ERA5-Land volumetric soil water, read through environmental.getSoilField. The first
   // layer served out of the MODEL plane (agri.signal_observation) rather than geo.features,
   // so it claims no `geo.layers` name and gets no slider capability -- the same shape drought
   // and watersheds have. It still draws the slider's day; it simply makes no claim about
-  // which days the axis should offer. See SoilMoistureLayer in layers/SoilMoistureLayer.tsx.
+  // which days the axis should offer. See SoilFieldLayer in layers/SoilFieldLayer.tsx.
   "soil-moisture": {
     toggleId: "soil-moisture",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "soil",
+    permanentlyUnavailableReason: null,
+  },
+  // ERA5-Land soil temperature, the same lane and the same reader as soil-moisture above
+  // with a different signal family (soil_temperature_level_1..4, degrees Celsius) and a
+  // fourth depth ECMWF publishes for temperature but the moisture lane does not fetch.
+  // A SEPARATE toggle rather than a mode of the moisture one: they are two measurements of
+  // the same ground and a reader may want either, both or neither, and folding them into one
+  // switch would make "off" ambiguous. Not withheld -- the backfill is still filling cells,
+  // and partial coverage is reported as such by the reader rather than gated here, because a
+  // disabled switch would outlast the gap and nothing would reopen it.
+  "soil-temperature": {
+    toggleId: "soil-temperature",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,

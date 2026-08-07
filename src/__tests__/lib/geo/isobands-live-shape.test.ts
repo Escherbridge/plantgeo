@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { buildIsobands, type FieldSample } from '@/lib/geo/isobands'
-import { SOIL_MOISTURE_BAND_BREAKS } from '@/lib/environmental/soil-moisture'
+import { soilFieldMeasureDefinition } from '@/lib/environmental/soil-field'
+
+const SOIL_MOISTURE_BAND_BREAKS = soilFieldMeasureDefinition('moisture').bandBreaks
 
 /**
  * The coarse tier over real data, not a synthetic ramp.
  *
- * These are the 42 nodes `geo.soil_moisture_field` actually returned for the PNW viewport
+ * These are the 42 nodes `geo.soil_field` actually returned for the PNW viewport
  * (-125,41,-110,50) on 2026-04-30 at the 1-degree lattice with sigma 1.0 and a 2-cell
  * kernel, read from production on 2026-08-06. They carry the real spread the layer has to
  * survive -- a wet Coast Range at 0.34, the arid Snake River Plain at 0.09, and a gradient

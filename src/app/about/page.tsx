@@ -160,6 +160,163 @@ const stackIndex = [
   },
 ];
 
+// `note` carries the refresh rate. Every cadence here is quoted from the job that
+// actually sets it — the nine cronSchedule values under `infra/cron-<source>` — or
+// from the upstream's own release cycle where no job polls it.
+const attributionIndex = [
+  {
+    term: "Oregon OEM",
+    description:
+      "Fire evacuation areas, statewide. Oregon only: no government-run aggregator exists for Washington, Idaho or western Montana, and the one vendor feed that reaches them carries no timestamp we could honestly publish.",
+    note: "Every 15 min",
+  },
+  {
+    term: "USGS NWIS",
+    description:
+      "Instantaneous streamflow discharge from active stream gauges.",
+    note: "Every 30 min",
+  },
+  {
+    term: "Open-Meteo",
+    description:
+      "Current conditions — temperature, humidity, wind, precipitation — sampled across the coverage grid, plus the live reading behind a map click.",
+    note: "Hourly",
+  },
+  {
+    term: "NOAA NWS",
+    description: "Ground-station observations from api.weather.gov.",
+    note: "Hourly",
+  },
+  {
+    term: "WFIGS",
+    description:
+      "Interagency wildland fire perimeters, current incidents, published by NIFC.",
+    note: "Hourly",
+  },
+  {
+    term: "NASA FIRMS",
+    description:
+      "Active fire detections from VIIRS and MODIS thermal anomalies.",
+    note: "Every 3 hours",
+  },
+  {
+    term: "Sentinel-2 L2A",
+    description:
+      "Red and near-infrared bands read from the Earth Search STAC catalogue on AWS, reduced to NDVI on a fixed 0.25° lattice anchored to the global origin.",
+    note: "Daily, 05:00 UTC",
+  },
+  {
+    term: "U.S. Drought Monitor",
+    description:
+      "Drought classification polygons from the National Drought Mitigation Center, USDA and NOAA.",
+    note: "Weekly, Thursday",
+  },
+  {
+    term: "ERA5-Land",
+    description:
+      "Reanalysis soil moisture at three depths, read through the Open-Meteo archive across a 1,568-cell Pacific Northwest lattice.",
+    note: "Backfilled",
+  },
+  {
+    term: "NASA POWER",
+    description:
+      "Daily weather and soil-wetness signals on a 0.5° grid, used where the reanalysis lane needs a second opinion.",
+    note: "Backfilled",
+  },
+  {
+    term: "MTBS",
+    description:
+      "Monitoring Trends in Burn Severity perimeters and severity classes, USGS and USDA Forest Service.",
+    note: "Annual release",
+  },
+  {
+    term: "USDA NRCS SSURGO",
+    description:
+      "Soil survey attributes for a queried point, via the Soil Data Access service.",
+    note: "On request",
+  },
+  {
+    term: "LANDFIRE",
+    description:
+      "Fuel model and existing vegetation type identified at a queried point.",
+    note: "On request",
+  },
+  {
+    term: "USGS NHDPlus HR",
+    description: "High-resolution hydrography — flowlines and waterbodies.",
+    note: "On request",
+  },
+  {
+    term: "OpenStreetMap",
+    description:
+      "Every line and label on the basemap, compiled into a Protomaps PMTiles archive. ODbL.",
+    note: "Rebuilt on demand",
+  },
+  {
+    term: "NASA GIBS",
+    description:
+      "MODIS/Terra NDVI raster overlay, proxied first-party so attribution and caching stay ours.",
+    note: "8-day composite",
+  },
+  {
+    term: "Terrarium DEM",
+    description:
+      "Elevation tiles behind terrain exaggeration and hillshade, from the AWS Open Data registry.",
+    note: "Static archive",
+  },
+  {
+    term: "Esri World Imagery",
+    description:
+      "Satellite basemap. © Esri, Maxar, Earthstar Geographics — the one tile service in the stack we do not host.",
+    note: "Served upstream",
+  },
+];
+
+const modelIndex = [
+  {
+    term: "Input release",
+    description:
+      "The exact upstream release a run consumed, checksummed. A separate table records when every input was recorded, so a run cannot reach forward for a value that did not exist at issue time.",
+    note: "Leakage guard",
+  },
+  {
+    term: "Feature snapshot",
+    description:
+      "The features as computed, checksummed and stored rather than recomputed at read time. A feature that cannot be reproduced from its inputs is not servable.",
+    note: "Checksummed",
+  },
+  {
+    term: "Model",
+    description:
+      "Either sql_linear — a statistical baseline that lives in SQL and can be read — or ml, which is refused registration unless it names a stored artifact. Both carry a checksum of the code that produced them.",
+    note: "Two kinds",
+  },
+  {
+    term: "Training run",
+    description:
+      "The run that fit the model, its own code checksum alongside it, so a served number can be walked back to the commit that trained it.",
+    note: "Checksummed",
+  },
+  {
+    term: "Backtest",
+    description:
+      "MAE, RMSE, bias, MAPE, interval coverage, and skill against a naive baseline. NaN and infinity are rejected by the table itself, not by a downstream reader.",
+    note: "Measured",
+  },
+  {
+    term: "Quality policy",
+    description:
+      "Minimum training points, minimum backtest points, minimum coverage, ceilings on error and a floor on skill. A run that misses the active policy does not publish.",
+    note: "Gate",
+  },
+  {
+    term: "Publication receipt",
+    description:
+      "The signed end of the chain. Serving reads publications, never raw run output, so an unpublished run is invisible to the map by construction rather than by convention.",
+    note: "Serving boundary",
+  },
+];
+
 const principles = [
   {
     index: "01",
@@ -350,6 +507,121 @@ export default function AboutPage() {
               service by service.
             </p>
           </EditorialProse>
+        </EditorialSection>
+
+        <EditorialSection
+          index="06"
+          title="Where the data comes from"
+          id="attribution"
+          className="pt-section"
+        >
+          <EditorialProse className="mb-roomy">
+            <p>
+              None of the environmental data on the map is ours. It belongs to
+              the agencies and projects below, and the honest thing to publish
+              alongside a layer is not just who made it but how old it is
+              allowed to get. So each row names the upstream, what it feeds, and
+              the interval at which we go back for more.
+            </p>
+            <p>
+              The cadences in the right column are the real ones, read off the
+              jobs that set them rather than off an intention. Nine scheduled
+              jobs do the polling; a tenth runs hourly to repair geometry that
+              arrived malformed. Where a row says <em>Backfilled</em>, the
+              history was walked once and is not re-polled — the series is a
+              closed window, not a live feed. Where it says{" "}
+              <em>On request</em>, nothing is stored in advance: the upstream is
+              queried for the point you clicked.
+            </p>
+            <p>
+              A cadence is an upper bound on staleness, not a promise of change.
+              Fire perimeters are re-read hourly whether or not a fire moved,
+              and the drought job runs Thursdays because that is when the U.S.
+              Drought Monitor publishes — polling it more often would only
+              produce the same week again.
+            </p>
+          </EditorialProse>
+          <EditorialDefinitionList items={attributionIndex} />
+        </EditorialSection>
+
+        <EditorialSection index="07" title="On forecasts" id="forecasts">
+          <EditorialProse>
+            <p>
+              PlantGeo publishes no forecasts. Every layer reports a forecast
+              horizon of zero days and an empty list of forecast variants, and
+              the map says so in those words when you scrub past today:{" "}
+              <em>not forecast beyond today</em>. That is not a loading state or
+              a gap in coverage. It is the true answer.
+            </p>
+            <p>
+              This is worth stating plainly because the machinery is visibly
+              there. The time slider draws thirty days past today, the read
+              model distinguishes <em>not published</em> from <em>stale</em>{" "}
+              from <em>not forecastable</em>, and the warehouse carries a
+              complete forecasting schema — series, runs, models, values,
+              quantiles, backtests, publications. Any of that could be mistaken
+              for a forecast capability that is merely switched off. It is not
+              switched off. Nothing has produced a forecast row.
+            </p>
+            <p>
+              What the warehouse does hold is observation, and a great deal of
+              it: four years of daily soil moisture at three depths across a
+              1,568-cell lattice, plus weather and vegetation series behind it.
+              Every one of those rows is marked observed, with a timestamp in
+              the past. Millions of rows of history is not a forecast, and the
+              zero horizon is correct even with the warehouse full.
+            </p>
+            <p>
+              The future band on the slider exists so the boundary of today
+              lands somewhere visible instead of at the right edge of the track.
+              Scrubbing into it is allowed, and every layer answers with the
+              reason it cannot serve that day — including that events, like fire
+              detections, are not the kind of thing a forecast has an opinion
+              about. When a producer does land, one constant in one file opens
+              the horizon, and these pages will say what it forecasts and how
+              well.
+            </p>
+          </EditorialProse>
+
+          <EditorialPullQuote className="mt-roomy">
+            An empty map that means &ldquo;we do not know&rdquo; is worth more
+            than a full one that means &ldquo;we guessed.&rdquo;
+          </EditorialPullQuote>
+        </EditorialSection>
+
+        <EditorialSection index="08" title="Models and strategy" id="models">
+          <EditorialProse className="mb-roomy">
+            <p>
+              The same rule governs the model layer. Strategy recommendations —
+              what to plant, where to intervene, which treatment a parcel
+              actually warrants — are refused today with a specific code rather
+              than answered with a plausible list:{" "}
+              <em>validated strategy evidence not published</em>. Partner
+              supplier matching is likewise inactive until there is reviewed
+              directory data, an entitlement to use it, and consent to send a
+              location outward.
+            </p>
+            <p>
+              Refusing is the easy part. The reason it can be lifted safely is
+              the chain below, which every served number has to walk before the
+              application will read it. Two kinds of model are allowed —
+              a statistical baseline expressed in SQL, and a trained artefact —
+              and they are held to the same standard: a machine-learned model
+              cannot even be registered without a stored artefact attached, and
+              cannot serve a daily aggregate unless its series has explicitly
+              opted in.
+            </p>
+            <p>
+              Models are also the place where a subtle failure does the most
+              damage, so the guards are structural rather than procedural. The
+              leakage guard is a table, the error ceilings are constraints, and
+              a run that misses the active quality policy simply has no
+              publication for the map to read. A model that is quietly wrong
+              should be unable to reach you without someone deliberately
+              changing a rule — and that change should be legible in the diff.
+            </p>
+          </EditorialProse>
+          <EditorialDefinitionList items={modelIndex} />
         </EditorialSection>
       </EditorialContainer>
 

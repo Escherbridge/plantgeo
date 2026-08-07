@@ -55,6 +55,9 @@ const sensorLayer: SliderLayerCapability = {
 
 const capabilities: SliderCapabilities = {
   serverCurrentDate: SERVER_CURRENT_DATE,
+  // 0 so every domain assertion below still measures the FORECAST horizon alone; the
+  // future-axis span has its own tests rather than shifting these.
+  futureAxisDays: 0,
   layers: [vegetationLayer, weatherLayer, firePerimeterLayer, sensorLayer],
 };
 
@@ -74,6 +77,9 @@ describe("sliderDomain", () => {
   it("derives both ends from the payload, so a different payload moves both", () => {
     const shallowHistory: SliderCapabilities = {
       serverCurrentDate: SERVER_CURRENT_DATE,
+      // 0 so every domain assertion below still measures the FORECAST horizon alone; the
+      // future-axis span has its own tests rather than shifting these.
+      futureAxisDays: 0,
       layers: [
         { ...vegetationLayer, earliestObservedDate: "2018-02-20", forecastHorizonDays: 3 },
         { ...weatherLayer, earliestObservedDate: "2018-11-05", forecastHorizonDays: 7 },
@@ -104,9 +110,51 @@ describe("sliderDomain", () => {
     expect(domain?.lastDay).not.toBe(addDays(SERVER_CURRENT_DATE, 10));
   });
 
+  it("extends the axis past today by futureAxisDays when no layer forecasts", () => {
+    // Production's exact shape: every horizon 0, so before futureAxisDays existed lastDay
+    // WAS today and there was no future side of the track to colour at all.
+    const nothingForecasts: SliderCapabilities = {
+      serverCurrentDate: SERVER_CURRENT_DATE,
+      futureAxisDays: 30,
+      layers: [
+        { ...vegetationLayer, forecastHorizonDays: 0, forecastVariants: [] },
+        { ...firePerimeterLayer },
+      ],
+    };
+
+    expect(sliderDomain(nothingForecasts)?.lastDay).toBe(addDays(SERVER_CURRENT_DATE, 30));
+    expect(sliderDomain({ ...nothingForecasts, futureAxisDays: 0 })?.lastDay).toBe(
+      SERVER_CURRENT_DATE
+    );
+  });
+
+  it("keeps a forecast horizon that reaches further than the drawn axis span", () => {
+    // The two spans are different claims -- how far a layer can be ANSWERED for, and how far
+    // the axis is DRAWN -- so the axis must contain the horizon rather than truncate it.
+    const longHorizon: SliderCapabilities = {
+      ...capabilities,
+      futureAxisDays: 5,
+      layers: [{ ...weatherLayer, forecastHorizonDays: 30 }],
+    };
+    expect(sliderDomain(longHorizon)?.lastDay).toBe(addDays(SERVER_CURRENT_DATE, 30));
+  });
+
+  it("refuses a negative or absent futureAxisDays rather than inverting the axis", () => {
+    // A payload from a server that predates the field, and a malformed one. Either would put
+    // lastDay before today and make every offset on the track negative.
+    const absent = { ...capabilities, futureAxisDays: undefined } as unknown as SliderCapabilities;
+    expect(sliderDomain(absent)?.lastDay).toBe(addDays(SERVER_CURRENT_DATE, 30));
+    expect(sliderDomain({ ...capabilities, futureAxisDays: -10 })?.lastDay).toBe(
+      addDays(SERVER_CURRENT_DATE, 30)
+    );
+  });
+
   it("ignores layers with no observed history and returns null when none have any", () => {
     const onlySensors: SliderCapabilities = {
       serverCurrentDate: SERVER_CURRENT_DATE,
+      // 0 so every domain assertion below still measures the FORECAST horizon alone; the
+      // future-axis span has its own tests rather than shifting these.
+      futureAxisDays: 0,
       layers: [sensorLayer, { ...firePerimeterLayer, earliestObservedDate: null }],
     };
     expect(sliderDomain(onlySensors)).toBeNull();
@@ -298,6 +346,9 @@ describe("useTimeSliderStore", () => {
     act(() => {
       result.current.setCapabilities({
         serverCurrentDate: SERVER_CURRENT_DATE,
+        // 0 so every domain assertion below still measures the FORECAST horizon alone; the
+        // future-axis span has its own tests rather than shifting these.
+        futureAxisDays: 0,
         layers: [{ ...vegetationLayer, earliestObservedDate: "2018-02-20" }],
       });
     });

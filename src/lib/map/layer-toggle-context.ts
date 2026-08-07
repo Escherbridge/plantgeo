@@ -26,7 +26,7 @@ import {
 } from "@/stores/time-slider-store";
 import { useVegetationStore } from "@/stores/vegetation-store";
 import { resolveGibsNdviDate } from "@/lib/vegetation";
-import type { SoilMoistureDepth } from "@/lib/environmental/soil-moisture";
+import type { SoilFieldDepth, SoilFieldMeasure } from "@/lib/environmental/soil-field";
 import type { SoilProperty } from "@/components/map/layers/SoilLayer";
 import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
 import type {
@@ -357,20 +357,17 @@ export interface SoilDisplayMode {
   property: SoilProperty;
   opacity: number;
   /**
-   * The ECMWF layer the moisture field draws. A depth, never a date -- the moisture layer
-   * takes its day from `useDebouncedMapDay` like every other warehouse-backed feed.
+   * The ECMWF layer each soil field draws, per measure. A depth, never a date -- both fields
+   * take their day from `useDebouncedMapDay` like every other warehouse-backed feed.
    */
-  moistureDepth: SoilMoistureDepth;
+  fieldDepth: Record<SoilFieldMeasure, SoilFieldDepth>;
 }
 
 /** Read-only view of the soil store; the panel keeps the store for its setters. */
 export function useSoilDisplayMode(): SoilDisplayMode {
   const property = useSoilStore((state) => state.property);
   const opacity = useSoilStore((state) => state.opacity);
-  const moistureDepth = useSoilStore((state) => state.moistureDepth);
+  const fieldDepth = useSoilStore((state) => state.fieldDepth);
 
-  return useMemo(
-    () => ({ property, opacity, moistureDepth }),
-    [property, opacity, moistureDepth]
-  );
+  return useMemo(() => ({ property, opacity, fieldDepth }), [property, opacity, fieldDepth]);
 }

@@ -2,7 +2,7 @@
 
 /**
  * The viewport polygon feeds the map AND a panel both read (HUC12 watersheds, SSURGO map
- * units, the ERA5-Land soil-moisture field) as one hook each, so the two issue the *same*
+ * units, the ERA5-Land soil fields) as one hook each, so the two issue the *same*
  * react-query entry rather than two that merely look alike. See `src/lib/server/AGENTS.md`
  * §proxied-viewport-queries.
  *
@@ -16,7 +16,11 @@ import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
 import { viewportBbox } from "@/lib/map/viewport-bbox";
 import { trpc } from "@/lib/trpc/client";
 import { useMapStore } from "@/stores/map-store";
-import type { SoilMoistureDepth } from "@/lib/environmental/soil-moisture";
+import {
+  soilFieldMeasureDefinition,
+  type SoilFieldDepth,
+  type SoilFieldMeasure,
+} from "@/lib/environmental/soil-field";
 
 /** Zoom a viewport is read at before the map has reported one of its own. */
 const DEFAULT_ZOOM = 8;
@@ -42,7 +46,7 @@ const PROXIED_RETRY_COUNT = 1;
  * aggregated and contoured per request, so the hour matches vegetation's rather than the
  * 15-minute observation feeds'. The IndexedDB persister backs it beyond the session.
  */
-const SOIL_MOISTURE_STALE_TIME_MS = 60 * 60 * 1000;
+const SOIL_FIELD_STALE_TIME_MS = 60 * 60 * 1000;
 
 /** The viewport as every viewport-scoped query keys on it. */
 export interface ViewportBounds {
@@ -120,10 +124,12 @@ export function useSoilSurveyQuery(
 }
 
 /** Everything that keys a soil-moisture read; all of it must match across the two callers. */
-export interface SoilMoistureQueryOptions extends ProxiedQueryOptions {
+export interface SoilFieldQueryOptions extends ProxiedQueryOptions {
+  /** Which quantity to read; also selects the toggle whose governance gates the request. */
+  measure: SoilFieldMeasure;
   /** The slider's settled day, or undefined at the server's today. */
   date: string | undefined;
-  depth: SoilMoistureDepth;
+  depth: SoilFieldDepth;
   /**
    * Selects the server-side aggregation tier; zooming out makes the answer smaller.
    *
@@ -136,23 +142,25 @@ export interface SoilMoistureQueryOptions extends ProxiedQueryOptions {
 }
 
 /**
- * ERA5-Land soil moisture for the viewport, read from the warehouse and aggregated
+ * One ERA5-Land soil field for the viewport, read from the warehouse and aggregated
  * server-side by zoom.
  *
  * Every input here is part of the query key, so the map and the panel must pass the same
- * four -- both take `bbox`/`zoom` from the one `useViewportBounds()` derivation, `date` from
- * `useDebouncedMapDay`, and `depth` from the soil store.
+ * five -- both take `bbox`/`zoom` from the one `useViewportBounds()` derivation, `date` from
+ * `useDebouncedMapDay`, and `measure`/`depth` from the soil store. `measure` being in the key
+ * is what lets both fields be on at once without sharing an entry.
  */
-export function useSoilMoistureQuery(
+export function useSoilFieldQuery(
   bbox: string | null | undefined,
-  { enabled, date, depth, zoom }: SoilMoistureQueryOptions
+  { enabled, measure, date, depth, zoom }: SoilFieldQueryOptions
 ) {
   const requested = bbox ?? null;
-  return trpc.environmental.getSoilMoisture.useQuery(
-    { bbox: requested ?? NO_VIEWPORT_BBOX, date, depth, zoom },
+  const { toggleId } = soilFieldMeasureDefinition(measure);
+  return trpc.environmental.getSoilField.useQuery(
+    { bbox: requested ?? NO_VIEWPORT_BBOX, measure, date, depth, zoom },
     {
-      enabled: enabled && requested !== null && !isWithheld("soil-moisture"),
-      staleTime: SOIL_MOISTURE_STALE_TIME_MS,
+      enabled: enabled && requested !== null && !isWithheld(toggleId),
+      staleTime: SOIL_FIELD_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
     }
   );

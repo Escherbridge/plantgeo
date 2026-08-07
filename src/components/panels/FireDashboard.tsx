@@ -4,6 +4,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Flame, Wind, AlertTriangle, MapPin } from "lucide-react";
 import { LayerToggle } from "@/components/ui/layer-toggle";
 import { useFireData } from "@/hooks/useFireData";
+import { useDebouncedMapDay } from "@/lib/map/layer-toggle-context";
 
 interface StatCardProps {
   icon: React.ReactNode;
@@ -50,7 +51,10 @@ export function FireDashboard({
   open,
   onOpenChange,
 }: FireDashboardProps) {
-  const fireData = useFireData(open);
+  // The same settled day the map's own fire layer reads, so the count in this panel can never
+  // describe a different date than the pins beside it -- one query key, one answer.
+  const { requestDate } = useDebouncedMapDay();
+  const fireData = useFireData(open, requestDate);
   const effectiveFireCount = fireData.count;
 
   return (

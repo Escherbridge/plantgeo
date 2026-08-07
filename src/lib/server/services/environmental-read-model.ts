@@ -13,17 +13,15 @@ import type {
 } from "@/types/time-slider";
 import { buildIsobands, type FieldSample } from "@/lib/geo/isobands";
 import {
-  DEFAULT_SOIL_MOISTURE_DEPTH,
-  SOIL_MOISTURE_ATTRIBUTION,
-  SOIL_MOISTURE_BAND_BREAKS,
-  SOIL_MOISTURE_BANDS,
-  SOIL_MOISTURE_SUPPORT_KEY,
-  SOIL_MOISTURE_UNIT,
-  soilMoistureBandFor,
-  soilMoistureDepthDefinition,
-  type SoilMoistureBand,
-  type SoilMoistureDepth,
-} from "@/lib/environmental/soil-moisture";
+  SOIL_FIELD_ATTRIBUTION,
+  SOIL_FIELD_SUPPORT_KEY,
+  soilFieldBandFor,
+  soilFieldDepthDefinition,
+  soilFieldMeasureDefinition,
+  type SoilFieldBand,
+  type SoilFieldDepth,
+  type SoilFieldMeasure,
+} from "@/lib/environmental/soil-field";
 import type { GroundwaterWell, WaterGauge } from "./usgs-water";
 import { DROUGHT_CATEGORY_LABELS } from "./usdm-drought";
 import {
@@ -1370,16 +1368,18 @@ export async function getPublishedVegetationIndex(
 }
 
 /* ---------------------------------------------------------------------------
- * Soil moisture (ERA5-Land)
+ * Soil fields (ERA5-Land): volumetric soil water and soil temperature
  *
- * The first layer served out of the MODEL plane (`agri.signal_observation` joined to
+ * The first layers served out of the MODEL plane (`agri.signal_observation` joined to
  * `agri.spatial_cell`) rather than out of `geo.features`, through the two objects
- * `drizzle/0014_soil_moisture_field.sql` adds to the serving plane. See
- * `src/lib/server/AGENTS.md` §soil-moisture.
+ * `drizzle/0014_soil_moisture_field.sql` added and `drizzle/0016_soil_field.sql` widened.
+ * ONE reader serves both measures: they share a lattice, a grain, a source release and a
+ * staleness rule, and differ only in signal name, unit and band table -- all of which
+ * `lib/environmental/soil-field.ts` holds. See `src/lib/server/AGENTS.md` §soil-field.
  * ------------------------------------------------------------------------- */
 
 /** Native 0.25-degree cells one detail-tier viewport may draw; probed one over to detect truncation. */
-export const SOIL_MOISTURE_MAX_CELLS = 4_000;
+export const SOIL_FIELD_MAX_CELLS = 4_000;
 
 /**
  * How far back the newest reading may be and still be served for a requested day.
@@ -1389,10 +1389,10 @@ export const SOIL_MOISTURE_MAX_CELLS = 4_000;
  * A day older than this is reported as `stale` with the day it found, never drawn wearing
  * the requested date.
  */
-export const SOIL_MOISTURE_MAX_OBSERVATION_AGE_DAYS = 30;
+export const SOIL_FIELD_MAX_OBSERVATION_AGE_DAYS = 30;
 
 /**
- * Where the soil-moisture field puts its two tier boundaries, in the shared vocabulary.
+ * Where a soil field puts its two tier boundaries, in the shared vocabulary.
  *
  * Lower than the SSURGO survey's 13/9 because the two layers become unreadable at different
  * scales: a survey map unit is metres across, while this lattice is 0.25 degrees, so at
@@ -1401,13 +1401,13 @@ export const SOIL_MOISTURE_MAX_OBSERVATION_AGE_DAYS = 30;
  * checkerboard. Zoom 7 spans 11.25 degrees (~45 cells), which is where the finer aggregate
  * gives way to the coarser one.
  */
-export const SOIL_MOISTURE_TIERS: ZoomGranularityTiers = {
+export const SOIL_FIELD_TIERS: ZoomGranularityTiers = {
   detailMinZoom: 9,
   regionalMinZoom: 7,
 };
 
 /** The aggregation lattice and Gaussian kernel each tier asks the SQL function for. */
-interface SoilMoistureTierSettings {
+interface SoilFieldTierSettings {
   /** Degrees per aggregation cell, or null at the detail tier, which draws stored geometry. */
   latticeDegrees: number | null;
   /** Gaussian sigma in degrees; null at the detail tier, which is not smoothed. */
@@ -1424,7 +1424,7 @@ interface SoilMoistureTierSettings {
  * the thing the smoothing exists to remove. Two steps is where the Gaussian weight has
  * fallen to ~0.14, so the terms beyond it cannot move a band edge.
  */
-const SOIL_MOISTURE_TIER_SETTINGS: Readonly<Record<ZoomGranularity, SoilMoistureTierSettings>> = {
+const SOIL_FIELD_TIER_SETTINGS: Readonly<Record<ZoomGranularity, SoilFieldTierSettings>> = {
   detail: { latticeDegrees: null, smoothingSigmaDegrees: null, blurRadiusCells: 0 },
   "regional-average": { latticeDegrees: 0.5, smoothingSigmaDegrees: 0.5, blurRadiusCells: 2 },
   "coarse-average": { latticeDegrees: 1, smoothingSigmaDegrees: 1, blurRadiusCells: 2 },
@@ -1439,7 +1439,7 @@ const SOIL_MOISTURE_TIER_SETTINGS: Readonly<Record<ZoomGranularity, SoilMoisture
  * representative value -- so the map paints both with one fill expression instead of
  * branching on granularity.
  */
-export type SoilMoistureFeatureProperties = {
+export type SoilFieldFeatureProperties = {
   value: number;
   bandIndex: number;
   bandLabel: string;
@@ -1451,7 +1451,7 @@ export type SoilMoistureFeatureProperties = {
   coverageFraction: number | null;
 };
 
-export interface PublishedSoilMoistureCollection
+export interface PublishedSoilFieldCollection
   extends GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon> {
   availability: "published" | "unavailable";
   /**
@@ -1460,7 +1460,9 @@ export interface PublishedSoilMoistureCollection
    */
   reason: "not_published" | "stale" | "not_forecastable" | null;
   granularity: ZoomGranularity;
-  depth: SoilMoistureDepth;
+  /** Which quantity was read; echoed so a client cannot mis-attribute a cached collection. */
+  measure: SoilFieldMeasure;
+  depth: SoilFieldDepth;
   unit: string;
   /** CC-BY obliges us to publish this wherever the values are drawn. */
   attribution: string;
@@ -1480,7 +1482,7 @@ export interface PublishedSoilMoistureCollection
   latticeDegrees: number | null;
   smoothingSigmaDegrees: number | null;
   /** The band table the features were classified with, so the legend cannot drift. */
-  bands: readonly SoilMoistureBand[];
+  bands: readonly SoilFieldBand[];
   /**
    * `agri.data_source.allowed_client_exposure` for the backing source, published rather than
    * enforced. It is `false` for `open-meteo-era5-land-archive`, but that is the server
@@ -1494,7 +1496,7 @@ export interface PublishedSoilMoistureCollection
 }
 
 /** Object type, not an interface: db.execute requires an implicit index signature. */
-type SoilMoistureCellRow = {
+type SoilFieldCellRow = {
   cell_key: string | null;
   geometry: string | null;
   normalized_value: number | string | null;
@@ -1504,7 +1506,7 @@ type SoilMoistureCellRow = {
 };
 
 /** Object type, not an interface: db.execute requires an implicit index signature. */
-type SoilMoistureFieldRow = {
+type SoilFieldNodeRow = {
   observed_day: string | null;
   node_lon: number | string | null;
   node_lat: number | string | null;
@@ -1512,41 +1514,45 @@ type SoilMoistureFieldRow = {
   source_cell_count: number | string | null;
 };
 
-/** How the slider's day and an optional depth reach this reader. */
-export interface SoilMoistureReadOptions {
+/** Which quantity to read, plus the slider's day and an optional depth. */
+export interface SoilFieldReadOptions {
+  measure?: SoilFieldMeasure;
   date?: string;
-  depth?: SoilMoistureDepth;
+  depth?: SoilFieldDepth;
   /** Viewport zoom; selects the aggregation tier. Omitted keeps the detail tier. */
   zoom?: number;
 }
 
-function emptySoilMoistureCollection(
-  reason: NonNullable<PublishedSoilMoistureCollection["reason"]>,
+function emptySoilFieldCollection(
+  reason: NonNullable<PublishedSoilFieldCollection["reason"]>,
   granularity: ZoomGranularity,
-  depth: SoilMoistureDepth,
+  measure: SoilFieldMeasure,
+  depth: SoilFieldDepth,
   requestedDay: string,
   newestAvailableDay: string | null
-): PublishedSoilMoistureCollection {
-  const settings = SOIL_MOISTURE_TIER_SETTINGS[granularity];
+): PublishedSoilFieldCollection {
+  const settings = SOIL_FIELD_TIER_SETTINGS[granularity];
+  const definition = soilFieldMeasureDefinition(measure);
   return {
     type: "FeatureCollection",
     features: [],
     availability: "unavailable",
     reason,
     granularity,
+    measure,
     depth,
-    unit: SOIL_MOISTURE_UNIT,
-    attribution: SOIL_MOISTURE_ATTRIBUTION,
+    unit: definition.unit,
+    attribution: SOIL_FIELD_ATTRIBUTION,
     observedDay: null,
     requestedDay,
     newestAvailableDay,
     cellCount: 0,
     truncated: false,
-    maxCellCount: SOIL_MOISTURE_MAX_CELLS,
-    maxObservationAgeDays: SOIL_MOISTURE_MAX_OBSERVATION_AGE_DAYS,
+    maxCellCount: SOIL_FIELD_MAX_CELLS,
+    maxObservationAgeDays: SOIL_FIELD_MAX_OBSERVATION_AGE_DAYS,
     latticeDegrees: settings.latticeDegrees,
     smoothingSigmaDegrees: settings.smoothingSigmaDegrees,
-    bands: SOIL_MOISTURE_BANDS,
+    bands: definition.bands,
     sourceClientExposureApproved: false,
   };
 }
@@ -1560,7 +1566,7 @@ function emptySoilMoistureCollection(
  * signal -- measured on production 2026-08-06, 16 ms PNW-wide against 207 ms for the
  * aggregate the obvious phrasing plans into.
  */
-async function newestSoilMoistureDay(
+async function newestSoilFieldDay(
   bounds: [number, number, number, number],
   signalName: string,
   throughDay: string
@@ -1579,7 +1585,7 @@ async function newestSoilMoistureDay(
       FROM agri.signal_observation AS reading
       WHERE reading.cell_id = covered_cell.id
         AND reading.signal_name = ${signalName}
-        AND reading.support_key = ${SOIL_MOISTURE_SUPPORT_KEY}
+        AND reading.support_key = ${SOIL_FIELD_SUPPORT_KEY}
         AND reading.observed_at <= (${throughDay}::date + 1)::timestamptz
       ORDER BY reading.observed_at DESC
       LIMIT 1
@@ -1589,16 +1595,16 @@ async function newestSoilMoistureDay(
 }
 
 /** The stored 0.25-degree cells for one day, drawn as themselves. */
-async function readSoilMoistureCells(
+async function readSoilFieldCells(
   bounds: [number, number, number, number],
   signalName: string,
   throughDay: string
-): Promise<SoilMoistureCellRow[]> {
+): Promise<SoilFieldCellRow[]> {
   const [west, south, east, north] = bounds;
   // Cell-first, and the view is referenced exactly once so PostgreSQL inlines it. Reading
   // the view twice (once to resolve the day) makes it a materialized CTE and the same
   // viewport costs 2.3 s instead of 27 ms -- measured on production 2026-08-06.
-  return db.execute<SoilMoistureCellRow>(sql`
+  return db.execute<SoilFieldCellRow>(sql`
     WITH covered_cell AS (
       SELECT cell.id
       FROM agri.spatial_cell AS cell
@@ -1609,10 +1615,10 @@ async function readSoilMoistureCells(
       FROM agri.signal_observation AS candidate
       WHERE candidate.cell_id IN (SELECT id FROM covered_cell)
         AND candidate.signal_name = ${signalName}
-        AND candidate.support_key = ${SOIL_MOISTURE_SUPPORT_KEY}
+        AND candidate.support_key = ${SOIL_FIELD_SUPPORT_KEY}
         AND candidate.observed_at <= (${throughDay}::date + 1)::timestamptz
         AND candidate.observed_at >
-            (${throughDay}::date - ${SOIL_MOISTURE_MAX_OBSERVATION_AGE_DAYS})::timestamptz
+            (${throughDay}::date - ${SOIL_FIELD_MAX_OBSERVATION_AGE_DAYS})::timestamptz
     )
     SELECT
       reading.cell_key,
@@ -1621,79 +1627,99 @@ async function readSoilMoistureCells(
       to_char(reading.observed_day, 'YYYY-MM-DD') AS observed_day,
       reading.coverage_fraction,
       reading.allowed_client_exposure
-    FROM geo.soil_moisture_observation AS reading
+    FROM geo.soil_field_observation AS reading
     CROSS JOIN served
     WHERE reading.cell_id IN (SELECT id FROM covered_cell)
       AND reading.signal_name = ${signalName}
-      AND reading.support_key = ${SOIL_MOISTURE_SUPPORT_KEY}
+      AND reading.support_key = ${SOIL_FIELD_SUPPORT_KEY}
       AND reading.observed_at = served.observed_at
     ORDER BY reading.cell_key
-    LIMIT ${SOIL_MOISTURE_MAX_CELLS + 1}
+    LIMIT ${SOIL_FIELD_MAX_CELLS + 1}
   `);
 }
 
 /** The averaged, Gaussian-smoothed lattice for one day, straight out of the SQL function. */
-async function readSoilMoistureField(
+async function readSoilFieldNodes(
   bounds: [number, number, number, number],
   signalName: string,
   throughDay: string,
-  settings: SoilMoistureTierSettings
-): Promise<SoilMoistureFieldRow[]> {
+  settings: SoilFieldTierSettings
+): Promise<SoilFieldNodeRow[]> {
   const [west, south, east, north] = bounds;
-  return db.execute<SoilMoistureFieldRow>(sql`
+  return db.execute<SoilFieldNodeRow>(sql`
     SELECT
       to_char(field.observed_day, 'YYYY-MM-DD') AS observed_day,
       field.node_lon,
       field.node_lat,
       field.smoothed_value,
       field.source_cell_count
-    FROM geo.soil_moisture_field(
+    FROM geo.soil_field(
       ${west}, ${south}, ${east}, ${north},
-      ${signalName}, ${SOIL_MOISTURE_SUPPORT_KEY},
-      ${throughDay}::date, ${SOIL_MOISTURE_MAX_OBSERVATION_AGE_DAYS},
+      ${signalName}, ${SOIL_FIELD_SUPPORT_KEY},
+      ${throughDay}::date, ${SOIL_FIELD_MAX_OBSERVATION_AGE_DAYS},
       ${settings.latticeDegrees}, ${settings.smoothingSigmaDegrees}, ${settings.blurRadiusCells}
     ) AS field
   `);
 }
 
 /**
- * Reads ERA5-Land volumetric soil water for a viewport, on ONE day, at one depth.
+ * Reads one ERA5-Land soil field -- volumetric water or temperature -- for a viewport, on
+ * ONE day, at one depth.
  *
  * Two shapes, chosen by zoom through the same vocabulary the SSURGO survey uses:
  *
  *   - detail: the stored 0.25-degree cells, one feature each, unaggregated and unsmoothed.
- *   - regional/coarse: `geo.soil_moisture_field` averages the cells onto a coarser lattice
- *     and Gaussian-smooths it IN SQL, then `buildIsobands` turns that small node grid into
+ *   - regional/coarse: `geo.soil_field` averages the cells onto a coarser lattice and
+ *     Gaussian-smooths it IN SQL, then `buildIsobands` turns that small node grid into
  *     dissolved isobands here. A PNW-wide coarse view is ~28 lattice nodes and at most nine
  *     drawn features, against the 1,568 squares the detail tier would have shipped.
  *
+ * ONE function for both measures rather than two: the SQL is measure-agnostic (the caller
+ * names the signal), and everything that differs -- signal name, unit, band table -- comes
+ * from `soilFieldMeasureDefinition`. A second copy would be a second place for the staleness
+ * rule, the tier boundaries and the truncation cap to drift.
+ *
  * Nothing is interpolated across missing coverage: a lattice square with any corner the lane
  * has not filled is skipped, so unfetched ground stays blank rather than being averaged in.
+ * That matters more for temperature than for moisture right now -- the temperature backfill
+ * is mid-flight, so a viewport can legitimately hold measured moisture and no temperature at
+ * all, which must read as `not_published` and never as a value.
  *
  * @param date optional YYYY-MM-DD from the time slider -- the single source of truth for the
  *   day drawn. Omitted means the live edge. A future day returns empty: a reanalysis archive
  *   has not run it. A past day reads the newest reading at or before it, within
- *   `SOIL_MOISTURE_MAX_OBSERVATION_AGE_DAYS`, and reports which day that turned out to be.
+ *   `SOIL_FIELD_MAX_OBSERVATION_AGE_DAYS`, and reports which day that turned out to be.
  */
-export async function getPublishedSoilMoisture(
+export async function getPublishedSoilField(
   bbox: string,
-  options: SoilMoistureReadOptions = {}
-): Promise<PublishedSoilMoistureCollection> {
+  options: SoilFieldReadOptions = {}
+): Promise<PublishedSoilFieldCollection> {
   const bounds = parseBbox(bbox);
-  const depth = options.depth ?? DEFAULT_SOIL_MOISTURE_DEPTH;
-  const { signalName } = soilMoistureDepthDefinition(depth);
-  const granularity = resolveZoomGranularity(options.zoom, SOIL_MOISTURE_TIERS);
-  const settings = SOIL_MOISTURE_TIER_SETTINGS[granularity];
+  const measure = options.measure ?? "moisture";
+  const definition = soilFieldMeasureDefinition(measure);
+  const depth = options.depth ?? definition.defaultDepth;
+  // Resolved through the measure's own depth table, so a depth only the other measure offers
+  // degrades to that measure's first layer rather than querying a signal that cannot exist.
+  const { depth: resolvedDepth, signalName } = soilFieldDepthDefinition(measure, depth);
+  const granularity = resolveZoomGranularity(options.zoom, SOIL_FIELD_TIERS);
+  const settings = SOIL_FIELD_TIER_SETTINGS[granularity];
 
   const day = resolveRequestedObservationDay(options.date);
   if (day.kind === "unobserved") {
-    return emptySoilMoistureCollection("not_forecastable", granularity, depth, day.date, null);
+    return emptySoilFieldCollection(
+      "not_forecastable",
+      granularity,
+      measure,
+      resolvedDepth,
+      day.date,
+      null
+    );
   }
   const throughDay = day.kind === "historical" ? day.date : serverCurrentDate();
 
   if (granularity === "detail") {
-    const rows = await readSoilMoistureCells(bounds, signalName, throughDay);
-    const drawable = rows.slice(0, SOIL_MOISTURE_MAX_CELLS);
+    const rows = await readSoilFieldCells(bounds, signalName, throughDay);
+    const drawable = rows.slice(0, SOIL_FIELD_MAX_CELLS);
     const features: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>[] = [];
     let observedDay: string | null = null;
     let exposureApproved = false;
@@ -1701,10 +1727,10 @@ export async function getPublishedSoilMoisture(
     for (const row of drawable) {
       const value = finiteNumber(row.normalized_value);
       if (row.geometry === null || value === null || row.observed_day === null) continue;
-      const band = soilMoistureBandFor(value);
+      const band = soilFieldBandFor(measure, value);
       observedDay = row.observed_day;
       exposureApproved = row.allowed_client_exposure === true;
-      const properties: SoilMoistureFeatureProperties = {
+      const properties: SoilFieldFeatureProperties = {
         value,
         bandIndex: band.bandIndex,
         bandLabel: band.label,
@@ -1721,11 +1747,12 @@ export async function getPublishedSoilMoisture(
     }
 
     if (features.length === 0) {
-      const newest = await newestSoilMoistureDay(bounds, signalName, throughDay);
-      return emptySoilMoistureCollection(
+      const newest = await newestSoilFieldDay(bounds, signalName, throughDay);
+      return emptySoilFieldCollection(
         newest === null ? "not_published" : "stale",
         granularity,
-        depth,
+        measure,
+        resolvedDepth,
         throughDay,
         newest
       );
@@ -1737,24 +1764,25 @@ export async function getPublishedSoilMoisture(
       availability: "published",
       reason: null,
       granularity,
-      depth,
-      unit: SOIL_MOISTURE_UNIT,
-      attribution: SOIL_MOISTURE_ATTRIBUTION,
+      measure,
+      depth: resolvedDepth,
+      unit: definition.unit,
+      attribution: SOIL_FIELD_ATTRIBUTION,
       observedDay,
       requestedDay: throughDay,
       newestAvailableDay: null,
       cellCount: features.length,
-      truncated: rows.length > SOIL_MOISTURE_MAX_CELLS,
-      maxCellCount: SOIL_MOISTURE_MAX_CELLS,
-      maxObservationAgeDays: SOIL_MOISTURE_MAX_OBSERVATION_AGE_DAYS,
+      truncated: rows.length > SOIL_FIELD_MAX_CELLS,
+      maxCellCount: SOIL_FIELD_MAX_CELLS,
+      maxObservationAgeDays: SOIL_FIELD_MAX_OBSERVATION_AGE_DAYS,
       latticeDegrees: null,
       smoothingSigmaDegrees: null,
-      bands: SOIL_MOISTURE_BANDS,
+      bands: definition.bands,
       sourceClientExposureApproved: exposureApproved,
     };
   }
 
-  const nodes = await readSoilMoistureField(bounds, signalName, throughDay, settings);
+  const nodes = await readSoilFieldNodes(bounds, signalName, throughDay, settings);
   const samples: FieldSample[] = [];
   let observedDay: string | null = null;
   let cellCount = 0;
@@ -1769,23 +1797,25 @@ export async function getPublishedSoilMoisture(
   }
 
   if (samples.length === 0) {
-    const newest = await newestSoilMoistureDay(bounds, signalName, throughDay);
-    return emptySoilMoistureCollection(
+    const newest = await newestSoilFieldDay(bounds, signalName, throughDay);
+    return emptySoilFieldCollection(
       newest === null ? "not_published" : "stale",
       granularity,
-      depth,
+      measure,
+      resolvedDepth,
       throughDay,
       newest
     );
   }
 
   const isobands = buildIsobands(samples, settings.latticeDegrees ?? 1, [
-    ...SOIL_MOISTURE_BAND_BREAKS,
+    ...definition.bandBreaks,
   ]);
   const features: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>[] = [];
   for (const isoband of isobands) {
-    const band = SOIL_MOISTURE_BANDS[isoband.bandIndex] ?? soilMoistureBandFor(samples[0].value);
-    const properties: SoilMoistureFeatureProperties = {
+    const band =
+      definition.bands[isoband.bandIndex] ?? soilFieldBandFor(measure, samples[0].value);
+    const properties: SoilFieldFeatureProperties = {
       value: band.representativeValue,
       bandIndex: band.bandIndex,
       bandLabel: band.label,
@@ -1795,7 +1825,7 @@ export async function getPublishedSoilMoisture(
     };
     features.push({
       type: "Feature",
-      id: `soil-moisture-band-${band.bandIndex}`,
+      id: `soil-${measure}-band-${band.bandIndex}`,
       geometry:
         isoband.polygons.length === 1
           ? { type: "Polygon", coordinates: isoband.polygons[0] }
@@ -1808,7 +1838,14 @@ export async function getPublishedSoilMoisture(
   // nothing to march over. That is a real answer -- a viewport with one node of coverage --
   // and reporting it as `stale` would blame the archive for the viewport's size.
   if (features.length === 0) {
-    return emptySoilMoistureCollection("not_published", granularity, depth, throughDay, observedDay);
+    return emptySoilFieldCollection(
+      "not_published",
+      granularity,
+      measure,
+      resolvedDepth,
+      throughDay,
+      observedDay
+    );
   }
 
   return {
@@ -1817,19 +1854,20 @@ export async function getPublishedSoilMoisture(
     availability: "published",
     reason: null,
     granularity,
-    depth,
-    unit: SOIL_MOISTURE_UNIT,
-    attribution: SOIL_MOISTURE_ATTRIBUTION,
+    measure,
+    depth: resolvedDepth,
+    unit: definition.unit,
+    attribution: SOIL_FIELD_ATTRIBUTION,
     observedDay,
     requestedDay: throughDay,
     newestAvailableDay: null,
     cellCount,
     truncated: false,
-    maxCellCount: SOIL_MOISTURE_MAX_CELLS,
-    maxObservationAgeDays: SOIL_MOISTURE_MAX_OBSERVATION_AGE_DAYS,
+    maxCellCount: SOIL_FIELD_MAX_CELLS,
+    maxObservationAgeDays: SOIL_FIELD_MAX_OBSERVATION_AGE_DAYS,
     latticeDegrees: settings.latticeDegrees,
     smoothingSigmaDegrees: settings.smoothingSigmaDegrees,
-    bands: SOIL_MOISTURE_BANDS,
+    bands: definition.bands,
     // The aggregated tiers never read a single cell's provenance row, so the flag is
     // reported from the one place that does -- see the field's own note on the collection.
     sourceClientExposureApproved: false,
@@ -2014,14 +2052,26 @@ const DEFAULT_TEMPORAL_KIND: TemporalKind = "snapshot";
  * CORRECTED 2026-08-06. This note used to justify the zero by saying
  * "agri.signal_observation and the historical_* tables are empty". That is no longer true
  * and reading it as still true would be a serious mistake: measured against production,
- * `agri.signal_observation` holds the ERA5-Land soil-moisture lane
- * (soil_water_content_layer_1/_2/_3, daily 2022-04-30..2026-04-30 over a 1,568-cell
+ * `agri.signal_observation` holds the ERA5-Land soil lane (soil_water_content_layer_1/_2/_3
+ * and soil_temperature_level_1..4, daily 2022-04-30..2026-04-30 over a 1,568-cell
  * 0.25-degree PNW lattice) plus NASA POWER weather and soil-wetness signals -- millions of
- * rows, served by `getPublishedSoilMoisture` above. None of it is a forecast: every row
+ * rows, served by `getPublishedSoilField` above. None of it is a forecast: every row
  * carries `is_observed = true` and an `observed_at` in the past, which is why the horizon
  * below is still correctly zero. The horizon is about forecasts, not about emptiness.
  */
 const FORECAST_HORIZON_DAYS = 0;
+
+/**
+ * How far past today the slider's axis is drawn. See `futureAxisDays` on SliderCapabilities
+ * for why this is not a forecast horizon and must never be conflated with one.
+ *
+ * 30 days: long enough that the today boundary lands visibly inside the track rather than
+ * within a thumb's width of its right edge, and short enough that it stays a minority of a
+ * ~1,460-day observed axis -- the future band is a boundary marker, not half the control.
+ * Scrubbing into it is allowed and answers `not_forecastable` for every layer, which is
+ * exactly what the record supports.
+ */
+const FUTURE_AXIS_DAYS = 30;
 
 /** Which upstream payload field dates an observation, in priority order.
  *
@@ -2413,6 +2463,7 @@ async function readLayerCapabilities(): Promise<ResolvedSliderLayerCapability[]>
 export async function getSliderCapabilities(): Promise<ResolvedSliderCapabilities> {
   return {
     serverCurrentDate: serverCurrentDate(),
+    futureAxisDays: FUTURE_AXIS_DAYS,
     layers: await readLayerCapabilities(),
   };
 }

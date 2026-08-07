@@ -78,25 +78,25 @@ describe("isPersistableQueryKey", () => {
 
 describe("resolveCacheTtlMs", () => {
   it("gives a long TTL to a date strictly before the server's current date", () => {
-    useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", layers: [] } });
+    useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", futureAxisDays: 0, layers: [] } });
     const key = trpcQueryKey(["environmental", "getDroughtClassification"], { date: "2026-08-01" });
     expect(resolveCacheTtlMs(key)).toBe(HISTORICAL_TTL_MS);
   });
 
   it("gives a short TTL to the server's current date itself", () => {
-    useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", layers: [] } });
+    useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", futureAxisDays: 0, layers: [] } });
     const key = trpcQueryKey(["environmental", "getDroughtClassification"], { date: "2026-08-05" });
     expect(resolveCacheTtlMs(key)).toBe(LIVE_TTL_MS);
   });
 
   it("gives a short TTL to a future forecast date", () => {
-    useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", layers: [] } });
+    useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", futureAxisDays: 0, layers: [] } });
     const key = trpcQueryKey(["environmental", "getDroughtClassification"], { date: "2026-08-09" });
     expect(resolveCacheTtlMs(key)).toBe(LIVE_TTL_MS);
   });
 
   it("gives a short TTL to a query that carries no date at all", () => {
-    useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", layers: [] } });
+    useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", futureAxisDays: 0, layers: [] } });
     const key = trpcQueryKey(["environmental", "getStreamflow"], { bbox: "0,0,1,1" });
     expect(resolveCacheTtlMs(key)).toBe(LIVE_TTL_MS);
   });
@@ -111,7 +111,7 @@ describe("resolveCacheTtlMs", () => {
 describe("indexedDbLayerQueryPersister", () => {
   beforeEach(() => {
     globalThis.indexedDB = createFakeIndexedDb() as unknown as IDBFactory;
-    useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", layers: [] } });
+    useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", futureAxisDays: 0, layers: [] } });
   });
 
   it("on a miss, calls queryFn once and persists the result", async () => {

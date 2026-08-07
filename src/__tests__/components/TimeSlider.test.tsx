@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import TimeSlider from "@/components/map/TimeSlider";
-import { dayOffset, useTimeSliderStore } from "@/stores/time-slider-store";
+import { addDays, dayOffset, useTimeSliderStore } from "@/stores/time-slider-store";
 import { useMetricAtDate, type MetricAtDateFetcher } from "@/stores/useMetricAtDate";
 import type {
   MetricAtDateCollection,
@@ -22,6 +22,9 @@ const LAST_DAY = "2019-03-21";
 /** All eight geo.layers names that exist in production. Nothing invented. */
 const CAPABILITIES: SliderCapabilities = {
   serverCurrentDate: SERVER_CURRENT_DATE,
+  // 0 so every domain assertion below still measures the FORECAST horizon alone; the
+  // future-axis span has its own tests rather than shifting these.
+  futureAxisDays: 0,
   layers: [
     {
       layerName: "vegetation",
@@ -219,7 +222,10 @@ describe("TimeSlider", () => {
     }
 
     // The store moved with the pointer on every tick; the query has not moved at all.
-    expect(screen.getByTestId("time-slider-selected-date").textContent).toBe(SERVER_CURRENT_DATE);
+    // The day is read off the date field, which is where it lives now that it is editable.
+    expect((screen.getByTestId("time-slider-date-input") as HTMLInputElement).value).toBe(
+      SERVER_CURRENT_DATE
+    );
     expect(screen.getByTestId("probe-resolved-date").textContent).toBe(BEFORE_ANY_PROBE_DATA);
     expect(fetchMetricAtDate).toHaveBeenCalledTimes(0);
 
@@ -359,5 +365,162 @@ describe("TimeSlider", () => {
     });
 
     expect(screen.queryByTestId("time-slider-dateless-map-notice")).toBeNull();
+  });
+
+  it("commits a typed date and bounds the field to the domain", () => {
+    renderWithProviders(<TimeSlider />);
+    const field = screen.getByTestId("time-slider-date-input") as HTMLInputElement;
+
+    // The whole reason this field exists: at ~384px wide the track gives a quarter-pixel per
+    // day, so a specific day four years back is unreachable by dragging.
+    expect(field.min).toBe(FIRST_DAY);
+    expect(field.max).toBe(LAST_DAY);
+
+    fireEvent.change(field, { target: { value: "2019-02-14" } });
+    expect(useTimeSliderStore.getState().selectedDate).toBe("2019-02-14");
+    expect((screen.getByTestId("time-slider-date-input") as HTMLInputElement).value).toBe(
+      "2019-02-14"
+    );
+  });
+
+  it("holds a partly typed date without pushing the map anywhere", () => {
+    renderWithProviders(<TimeSlider />);
+    act(() => {
+      useTimeSliderStore.getState().setSelectedDate("2019-02-14");
+    });
+    const field = screen.getByTestId("time-slider-date-input") as HTMLInputElement;
+
+    // A `<input type="date">` reports "" for every incomplete entry. Committing that would
+    // clamp the map to the domain's edge on the first keystroke of a typed date.
+    fireEvent.change(field, { target: { value: "" } });
+    expect(useTimeSliderStore.getState().selectedDate).toBe("2019-02-14");
+
+    // And the field never gets left blank beside a map that is drawing some day.
+    fireEvent.blur(field);
+    expect((screen.getByTestId("time-slider-date-input") as HTMLInputElement).value).toBe(
+      "2019-02-14"
+    );
+  });
+
+  it("clamps a typed day that lies outside the domain", () => {
+    renderWithProviders(<TimeSlider />);
+    const field = screen.getByTestId("time-slider-date-input");
+
+    // min/max are a hint the DOM can be driven around; the domain is not.
+    fireEvent.change(field, { target: { value: "1997-01-01" } });
+    expect(useTimeSliderStore.getState().selectedDate).toBe(FIRST_DAY);
+
+    fireEvent.change(field, { target: { value: "2099-01-01" } });
+    expect(useTimeSliderStore.getState().selectedDate).toBe(LAST_DAY);
+  });
+
+  it("names both halves of the track, and says which side the selection is on", () => {
+    renderWithProviders(<TimeSlider />);
+
+    // The colours are a convention a first-time reader cannot look up, and "is the right-hand
+    // end a prediction?" is the question this control was failing to answer.
+    const key = screen.getByTestId("time-slider-track-key");
+    expect(key.textContent).toContain("Observed");
+    expect(key.textContent).toContain("Forecast");
+
+    act(() => {
+      useTimeSliderStore.getState().setSelectedDate("2019-02-14");
+    });
+    expect(screen.getByTestId("time-slider-day-kind").textContent).toBe("Observed");
+
+    act(() => {
+      useTimeSliderStore.getState().setSelectedDate("2019-03-14");
+    });
+    expect(screen.getByTestId("time-slider-day-kind").textContent).toBe("Beyond the record");
+  });
+
+  it("keeps the observed fill out of the future band", () => {
+    renderWithProviders(<TimeSlider />);
+    act(() => {
+      useTimeSliderStore.getState().setSelectedDate("2019-03-14");
+    });
+
+    // Green means observed. Running it past the today tick would paint the exact claim this
+    // control exists to avoid -- that there is a record over there.
+    const observedFill = screen.getByTestId("time-slider-observed-fill");
+    const todayPercent = (dayOffset(FIRST_DAY, SERVER_CURRENT_DATE) /
+      dayOffset(FIRST_DAY, LAST_DAY)) * 100;
+    expect(observedFill.style.width).toBe(`${todayPercent}%`);
+    expect(screen.getByTestId("time-slider-future-fill")).not.toBeNull();
+  });
+
+  it("jumps back to the server's today, and cannot be pressed while already there", () => {
+    renderWithProviders(<TimeSlider />);
+    act(() => {
+      useTimeSliderStore.getState().setSelectedDate(FIRST_DAY);
+    });
+
+    const todayButton = screen.getByTestId("time-slider-today-button") as HTMLButtonElement;
+    expect(todayButton.disabled).toBe(false);
+    fireEvent.click(todayButton);
+
+    expect(useTimeSliderStore.getState().selectedDate).toBe(SERVER_CURRENT_DATE);
+    expect(
+      (screen.getByTestId("time-slider-today-button") as HTMLButtonElement).disabled
+    ).toBe(true);
+  });
+});
+
+/**
+ * Production's own shape: every layer reports `forecastHorizonDays: 0` and no variants,
+ * because no forecast producer exists anywhere in the warehouse. The fixture above is the
+ * opposite case, so neither covers the other.
+ */
+describe("TimeSlider with nothing forecasting", () => {
+  const NO_FORECAST_CAPABILITIES: SliderCapabilities = {
+    serverCurrentDate: SERVER_CURRENT_DATE,
+    futureAxisDays: 30,
+    layers: CAPABILITIES.layers.map((layer) => ({
+      ...layer,
+      forecastHorizonDays: 0,
+      forecastVariants: [],
+    })),
+  };
+
+  beforeEach(() => {
+    useTimeSliderStore.setState({
+      capabilities: NO_FORECAST_CAPABILITIES,
+      selectedDate: SERVER_CURRENT_DATE,
+      forecastVariant: "monte_carlo",
+      capabilitiesUnavailable: false,
+    });
+  });
+
+  it("shows no forecast picker at all", () => {
+    renderWithProviders(<TimeSlider />);
+
+    // Two permanently inert buttons reading "Monte Carlo" and "ML" were the most prominent
+    // thing in this card, and made a scrubber over four years of measured history read as a
+    // forecast tool. Withholding is now stated in words instead.
+    expect(screen.queryByRole("radiogroup", { name: "Forecast variant" })).toBeNull();
+    expect(screen.queryByTestId("time-slider-variant-hint")).toBeNull();
+  });
+
+  it("still draws a future band, and labels it as publishing nothing", () => {
+    renderWithProviders(<TimeSlider />);
+
+    expect(screen.getByTestId("time-slider-future-hatch")).not.toBeNull();
+    const key = screen.getByTestId("time-slider-track-key");
+    expect(key.textContent).toContain("Nothing published");
+    expect(key.textContent).not.toContain("Forecast");
+  });
+
+  it("replaces the forecast-band key with the truth when the selection is past today", () => {
+    renderWithProviders(<TimeSlider />);
+    act(() => {
+      useTimeSliderStore.getState().setSelectedDate(addDays(SERVER_CURRENT_DATE, 10));
+    });
+
+    // The band key describes median colour and uncertainty opacity for a band no producer
+    // emits, so here it would be a straight falsehood.
+    expect(screen.queryByTestId("forecast-band-key")).toBeNull();
+    expect(screen.getByTestId("time-slider-no-forecast-notice").textContent).toContain(
+      SERVER_CURRENT_DATE
+    );
   });
 });

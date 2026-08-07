@@ -60,7 +60,13 @@ export const DEFAULT_VIEWPORT: Viewport = {
 export const useMapStore = create<MapState>()(
   devtools((set) => ({
     viewport: { ...DEFAULT_VIEWPORT },
-    activeLayers: ["fire", "water", "weather"], // demo-friendly defaults
+    // Deliberately empty. A layer switched on before the map has mounted reads as
+    // enabled while drawing nothing: the dynamically imported layers register their
+    // `style.load` listener only once their chunk resolves, which is later than the
+    // single rAF-scheduled initial style load they need to observe. Starting with
+    // nothing on means every layer is switched on after mount, which is the path that
+    // works. See src/components/map/AGENTS.md.
+    activeLayers: [],
     selectedFeatureId: null,
     queryPoint: null,
     isCapturingQueryPoint: false,

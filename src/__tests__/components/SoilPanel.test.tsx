@@ -53,10 +53,10 @@ type SoilPropertiesResult = {
 };
 
 /**
- * Mirrors `PublishedSoilMoistureCollection`, hand-rolled so the stub pulls in no server
+ * Mirrors `PublishedSoilFieldCollection`, hand-rolled so the stub pulls in no server
  * code. Only the fields the panel actually reads are declared.
  */
-type SoilMoistureResult = {
+type SoilFieldResult = {
   data:
     | (GeoJSON.FeatureCollection & {
         availability: "published" | "unavailable";
@@ -91,8 +91,8 @@ const queries = vi.hoisted(() => ({
   getSoilSurvey: vi.fn(
     (): SoilSurveyResult => ({ data: undefined, isLoading: false, isError: false })
   ),
-  getSoilMoisture: vi.fn(
-    (): SoilMoistureResult => ({ data: undefined, isLoading: false, isError: false })
+  getSoilField: vi.fn(
+    (): SoilFieldResult => ({ data: undefined, isLoading: false, isError: false })
   ),
 }));
 
@@ -102,7 +102,7 @@ vi.mock("@/lib/trpc/client", () => ({
       getSoilProperties: { useQuery: queries.getSoilProperties },
       getInterventionSuitability: { useQuery: queries.getInterventionSuitability },
       getSoilSurvey: { useQuery: queries.getSoilSurvey },
-      getSoilMoisture: { useQuery: queries.getSoilMoisture },
+      getSoilField: { useQuery: queries.getSoilField },
     },
   },
 }));
@@ -156,6 +156,24 @@ function enabledFlagOf(query: { mock: { calls: unknown[][] } }): boolean | undef
   return (lastCall?.[1] as { enabled?: boolean } | undefined)?.enabled;
 }
 
+/**
+ * Both soil fields go through one procedure, so a call has to be matched on `measure`
+ * rather than by taking the last one.
+ */
+function soilFieldCallFor(measure: "moisture" | "temperature"): unknown[] | undefined {
+  return (queries.getSoilField.mock.calls as unknown as unknown[][])
+    .filter((call) => (call[0] as { measure?: string } | undefined)?.measure === measure)
+    .at(-1);
+}
+
+function soilFieldInputOf(measure: "moisture" | "temperature"): Record<string, unknown> {
+  return (soilFieldCallFor(measure)?.[0] ?? {}) as Record<string, unknown>;
+}
+
+function soilFieldEnabledFlagOf(measure: "moisture" | "temperature"): boolean | undefined {
+  return (soilFieldCallFor(measure)?.[1] as { enabled?: boolean } | undefined)?.enabled;
+}
+
 const INITIAL_MAP_STATE = useMapStore.getState();
 const INITIAL_SOIL_STATE = useSoilStore.getState();
 
@@ -180,7 +198,7 @@ beforeEach(() => {
     isLoading: false,
     isError: false,
   });
-  queries.getSoilMoisture.mockReturnValue({
+  queries.getSoilField.mockReturnValue({
     data: undefined,
     isLoading: false,
     isError: false,
@@ -492,16 +510,20 @@ describe("SoilPanel property selector", () => {
 });
 
 /**
- * The soil-moisture field publishes three things the map cannot say on its own: that a
+ * Both ERA5-Land soil fields publish three things the map cannot say on its own: that a
  * zoomed-out view is a smoothed average rather than measured cells, that the day drawn is
- * not always the day asked for (the ERA5-Land archive ends before the live edge), and that
- * an empty view is missing coverage rather than dry soil.
+ * not always the day asked for (the archive ends before the live edge), and that an empty
+ * view is missing coverage rather than a low reading.
+ *
+ * The cases below drive the MOISTURE field because it is the one with a complete backfill;
+ * they exercise the shared `SoilFieldSection`, so temperature inherits every one. The
+ * temperature-specific block after them pins what actually differs.
  */
 describe("SoilPanel soil-moisture field", () => {
   /** A published collection carrying only what the panel reads. */
   function moistureCollection(
-    overrides: Partial<NonNullable<SoilMoistureResult["data"]>> = {}
-  ): NonNullable<SoilMoistureResult["data"]> {
+    overrides: Partial<NonNullable<SoilFieldResult["data"]>> = {}
+  ): NonNullable<SoilFieldResult["data"]> {
     return {
       type: "FeatureCollection",
       features: [],
@@ -522,11 +544,11 @@ describe("SoilPanel soil-moisture field", () => {
   }
 
   function renderWithMoistureOn(
-    data: NonNullable<SoilMoistureResult["data"]> | undefined,
+    data: NonNullable<SoilFieldResult["data"]> | undefined,
     zoom = 10
   ) {
     useMapStore.setState({ activeLayers: ["soil-moisture"] });
-    queries.getSoilMoisture.mockReturnValue({ data, isLoading: false, isError: false });
+    queries.getSoilField.mockReturnValue({ data, isLoading: false, isError: false });
     return renderWithProviders(
       <SoilPanel open onOpenChange={() => {}} bbox={VIEWPORT_BBOX} zoom={zoom} />
     );
@@ -536,20 +558,19 @@ describe("SoilPanel soil-moisture field", () => {
     useMapStore.setState({ activeLayers: [] });
     renderWithProviders(<SoilPanel open onOpenChange={() => {}} bbox={VIEWPORT_BBOX} zoom={10} />);
 
-    expect(enabledFlagOf(queries.getSoilMoisture)).toBe(false);
+    expect(soilFieldEnabledFlagOf("moisture")).toBe(false);
     expect(screen.queryByText(/Volumetric soil water/)).toBeNull();
   });
 
   it("keys on the same zoom and depth the map drew with", () => {
-    useSoilStore.setState({ moistureDepth: "deep" });
+    useSoilStore.setState({ fieldDepth: { moisture: "deep", temperature: "surface" } });
     renderWithMoistureOn(moistureCollection(), 6);
 
-    const [input] = queries.getSoilMoisture.mock.calls.at(-1) as unknown as [
-      { bbox: string; zoom: number; depth: string },
-    ];
+    const input = soilFieldInputOf("moisture");
     expect(input.bbox).toBe(VIEWPORT_BBOX);
     expect(input.zoom).toBe(6);
     expect(input.depth).toBe("deep");
+    expect(input.measure).toBe("moisture");
   });
 
   it("labels a zoomed-out view as a smoothed average over a coarser lattice", () => {
@@ -623,7 +644,88 @@ describe("SoilPanel soil-moisture field", () => {
     renderWithMoistureOn(moistureCollection());
 
     act(() => screen.getByText("Root zone (7-28 cm)").click());
-    expect(useSoilStore.getState().moistureDepth).toBe("root-zone");
+    expect(useSoilStore.getState().fieldDepth.moisture).toBe("root-zone");
+  });
+});
+
+/**
+ * Soil temperature rides the same section, so the honesty notes above already cover it.
+ * What is specific to it: a fourth ECMWF depth the moisture lane does not fetch, its own
+ * unit and legend heading, its own store slot, and a blank-ground caption that says
+ * something true about a temperature field rather than about a dry one.
+ */
+describe("SoilPanel soil-temperature field", () => {
+  function temperatureCollection(
+    overrides: Partial<NonNullable<SoilFieldResult["data"]>> = {}
+  ): NonNullable<SoilFieldResult["data"]> {
+    return {
+      type: "FeatureCollection",
+      features: [],
+      availability: "published",
+      reason: null,
+      granularity: "detail",
+      unit: "C",
+      attribution: "ERA5-Land (Copernicus/ECMWF) via Open-Meteo, CC-BY 4.0",
+      observedDay: "2026-04-30",
+      requestedDay: "2026-04-30",
+      newestAvailableDay: null,
+      cellCount: 9,
+      maxObservationAgeDays: 30,
+      latticeDegrees: null,
+      bands: [{ bandIndex: 0, color: "#4575b4", label: "< -5" }],
+      ...overrides,
+    };
+  }
+
+  function renderWithTemperatureOn(
+    data: NonNullable<SoilFieldResult["data"]> | undefined,
+    zoom = 10
+  ) {
+    useMapStore.setState({ activeLayers: ["soil-temperature"] });
+    queries.getSoilField.mockReturnValue({ data, isLoading: false, isError: false });
+    return renderWithProviders(
+      <SoilPanel open onOpenChange={() => {}} bbox={VIEWPORT_BBOX} zoom={zoom} />
+    );
+  }
+
+  it("asks for the temperature measure, not moisture, on its own toggle", () => {
+    renderWithTemperatureOn(temperatureCollection());
+
+    expect(soilFieldEnabledFlagOf("temperature")).toBe(true);
+    expect(soilFieldEnabledFlagOf("moisture")).toBe(false);
+    expect(soilFieldInputOf("temperature").measure).toBe("temperature");
+  });
+
+  it("offers the fourth ECMWF depth the moisture lane does not fetch", () => {
+    renderWithTemperatureOn(temperatureCollection());
+
+    act(() => screen.getByText("Substratum (100-255 cm)").click());
+    expect(useSoilStore.getState().fieldDepth.temperature).toBe("substratum");
+    // The moisture slot is untouched: the depths are per measure, not one shared selection.
+    expect(useSoilStore.getState().fieldDepth.moisture).toBe("surface");
+  });
+
+  it("legends the field in its own unit", () => {
+    renderWithTemperatureOn(temperatureCollection());
+
+    expect(screen.getByText(/Soil temperature/)).toBeTruthy();
+    expect(screen.queryByText(/Volumetric soil water/)).toBeNull();
+  });
+
+  // The temperature backfill is still filling cells, so an uncovered view is the COMMON
+  // case here, not an edge one. Captioning it with moisture's wording would tell the reader
+  // that measured ground is dry.
+  it("calls an uncovered view missing coverage, not cold soil", () => {
+    renderWithTemperatureOn(
+      temperatureCollection({
+        availability: "unavailable",
+        reason: "not_published",
+        observedDay: null,
+      })
+    );
+
+    expect(screen.getByText(/not cold soil/)).toBeTruthy();
+    expect(screen.queryByText(/not dry soil/)).toBeNull();
   });
 });
 

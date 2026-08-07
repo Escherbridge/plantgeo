@@ -511,28 +511,56 @@ cost boundary. Both go through `cacheGeoJSON`/`getCachedGeoJSON`, which latch of
 dead Redis instead of throwing: the cache is an optimization, and a Redis outage
 must not take two map layers down with an `INTERNAL_SERVER_ERROR`.
 
-## §soil-moisture
+## §soil-field
 
-`services/environmental-read-model.ts#getPublishedSoilMoisture`,
-`drizzle/0014_soil_moisture_field.sql`, `lib/geo/isobands.ts`,
-`lib/environmental/soil-moisture.ts`, `trpc/routers/environmental.ts#getSoilMoisture`,
-`components/map/layers/SoilMoistureLayer.tsx`.
+`services/environmental-read-model.ts#getPublishedSoilField`,
+`drizzle/0014_soil_moisture_field.sql` + `drizzle/0016_soil_field.sql`,
+`lib/geo/isobands.ts`, `lib/environmental/soil-field.ts`,
+`trpc/routers/environmental.ts#getSoilField`,
+`components/map/layers/SoilFieldLayer.tsx`.
 
-**The first layer served out of the model plane.** Everything else on this map reads
-`geo.features`. ERA5-Land volumetric soil water lands in `agri.signal_observation` joined
-to `agri.spatial_cell`: signals `soil_water_content_layer_1/_2/_3` (ECMWF's 0–7 cm,
-7–28 cm and 28–100 cm layers), `normalized_unit = 'm^3/m^3'`, `support_key =
-'era5-land-0.1deg'`, daily at midnight UTC over a 1,568-cell 0.25° PNW lattice for
-2022-04-30..2026-04-30. Before 2026-08-06 there were **zero** references to
+**The first layers served out of the model plane.** Everything else on this map reads
+`geo.features`. Both ERA5-Land soil fields land in `agri.signal_observation` joined to
+`agri.spatial_cell`, on one lattice and one grain:
+
+| Measure | Signals | Unit | Depths |
+| --- | --- | --- | --- |
+| moisture | `soil_water_content_layer_1/_2/_3` | `m^3/m^3` | 0–7, 7–28, 28–100 cm |
+| temperature | `soil_temperature_level_1..4` | `C` | 0–7, 7–28, 28–100, 100–255 cm |
+
+Both carry `support_key = 'era5-land-0.1deg'`, daily at midnight UTC over the 1,568-cell
+0.25° `sentinel2-ndvi-0p25deg` PNW lattice for 2022-04-30..2026-04-30, from the
+`open-meteo-era5-land-archive` source. Before 2026-08-06 there were **zero** references to
 `soil_water_content` or `era5-land` anywhere in `src/`: no reader, no registry entry, no
-toggle, no renderer.
+toggle, no renderer. Temperature was still absent for another day after that.
 
-**Ownership boundary.** 0014 creates `geo.soil_moisture_observation` (a view) and
+**One reader, not two.** `getPublishedSoilField(bbox, { measure, depth, date, zoom })` serves
+both. They share the lattice, the grain, the source release, the staleness rule, the tier
+boundaries and the truncation cap; only the signal name, the unit and the band table differ,
+and those come from `soilFieldMeasureDefinition`. The same goes down the stack — one tRPC
+procedure carrying `measure`, one `useSoilFieldQuery`, one `SoilFieldLayer` component
+instantiated twice, one `SoilFieldSection` in `SoilPanel`. Two registry toggles, though:
+they are two measurements of the same ground and a reader may want either, both or neither,
+so folding them into one switch would make "off" ambiguous.
+
+**Temperature coverage is partial and must read as partial.** The backfill was mid-flight
+when this landed (567 k of the eventual ~6.4 M rows on 2026-08-06, ~15 % of cells at the
+PNW-wide coarse tier: 14 lattice nodes against moisture's 96). A viewport can legitimately
+hold measured moisture and no temperature at all. That is `reason: "not_published"` with the
+panel captioning blank ground as missing coverage — never a drawn value, and never a
+disabled switch, because a switch disabled for a gap outlasts the gap and nothing reopens it.
+
+**Ownership boundary.** 0014 created `geo.soil_moisture_observation` (a view) and
 `geo.soil_moisture_field` (a set-returning function) in the **serving** plane, reading the
-**model** plane. Nothing is created in `agri` and no lock is taken on a table the
-ingestion crawl writes. Martin is unaffected: `infra/martin/martin.yaml` sets
-`auto_publish: false` and names its six function sources explicitly, so a new `geo`
-function cannot join a composite and nothing needs restarting.
+**model** plane. 0016 widens that: the view is replaced by `geo.soil_field_observation`,
+which enumerates the (signal, unit) pairs for both measures and derives a `measure` column,
+and the function is **renamed** to `geo.soil_field` with `ALTER FUNCTION ... RENAME TO`. The
+rename rather than a DROP + CREATE is deliberate — the body was already measure-agnostic
+(it takes `target_signal` as a parameter), so re-authoring it would fork the Gaussian-blur
+definition into a second copy that could drift. Nothing is created in `agri` and no lock is
+taken on a table the ingestion crawl writes. Martin is unaffected: `infra/martin/martin.yaml`
+sets `auto_publish: false` and names its function sources explicitly, so a new `geo` function
+cannot join a composite and nothing needs restarting.
 
 **Where each step runs, and why.**
 
@@ -540,10 +568,10 @@ function cannot join a composite and nothing needs restarting.
 | --- | --- | --- |
 | bbox → covered cells | SQL (GiST on `agri.spatial_cell.geometry`) | — |
 | resolve the served day | SQL | one round trip answers "which day is drawn" and "what does it look like" together |
-| average onto a coarser lattice | SQL (`geo.soil_moisture_field`) | repo rule: geospatial aggregation goes through PostGIS, never the client |
+| average onto a coarser lattice | SQL (`geo.soil_field`) | repo rule: geospatial aggregation goes through PostGIS, never the client |
 | Gaussian blur across that lattice | SQL, as a weighted self-join over neighbours within `blur_radius_cells` | it is a grid convolution, which is a join; moving it out would mean shipping the grid |
 | marching squares → isobands | TypeScript, server-side (`lib/geo/isobands.ts`) | **`postgis_raster` is not installed.** Verified on production 2026-08-05: `pg_available_extensions` lists `postgis_raster` 3.6.4 with `installed_version` NULL, and `pg_extension` holds only postgis, timescaledb, timescaledb_toolkit, vector, pgcrypto, plpgsql. So `ST_Contour` is unavailable, and installing a raster extension is a far larger change than one layer justifies. The node grid it contours is tens of nodes, so this is cheap; the browser still never sees it. |
-| paint | MapLibre `fill` | see §soil-moisture in `src/components/map/AGENTS.md` for why not deck.gl |
+| paint | MapLibre `fill` | see §soil-field in `src/components/map/AGENTS.md` for why not deck.gl |
 
 **No new index.** Measured with `EXPLAIN (ANALYZE)` on production 2026-08-06, against a
 `agri.signal_observation` already past 2 M rows: a PNW-wide coarse aggregation is 15 ms
@@ -553,9 +581,9 @@ resolves the cell list first and the day is then one index search per cell. An i
 here would also lock a table a live crawl is writing to, for no measured gain.
 
 **Two query shapes that look equivalent and are not.** Reading
-`geo.soil_moisture_observation` **twice** in one statement (once to resolve the day, once
+`geo.soil_field_observation` **twice** in one statement (once to resolve the day, once
 to read it) makes PostgreSQL materialize it as a CTE, and the same viewport costs **2.3 s**
-instead of 27 ms. `readSoilMoistureCells` therefore resolves the day from the base tables
+instead of 27 ms. `readSoilFieldCells` therefore resolves the day from the base tables
 and references the view exactly once. The same trap will catch the next reader of this
 view; the comment on that function says so.
 
@@ -563,7 +591,7 @@ view; the comment on that function says so.
 filled is skipped rather than interpolated across, so unfetched ground stays blank. The
 archive ends 2026-04-30 while the slider's today is later, so `observedDay` and
 `requestedDay` routinely differ and both are published — `SoilPanel` names them. Past
-`SOIL_MOISTURE_MAX_OBSERVATION_AGE_DAYS` (30, matching vegetation) nothing is carried
+`SOIL_FIELD_MAX_OBSERVATION_AGE_DAYS` (30, matching vegetation) nothing is carried
 forward: the answer is `reason: "stale"` plus the `newestAvailableDay` the user should
 scrub to. A future day is `not_forecastable`; a reanalysis archive has not run it.
 

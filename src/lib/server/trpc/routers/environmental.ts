@@ -11,12 +11,17 @@ import {
   getMetricAtDate,
   getPublishedDroughtClassification,
   getPublishedGroundwaterWells,
-  getPublishedSoilMoisture,
+  getPublishedSoilField,
   getPublishedStreamflowGauges,
   getPublishedVegetationIndex,
   getSliderCapabilities,
 } from "@/lib/server/services/environmental-read-model";
-import { SOIL_MOISTURE_DEPTHS } from "@/lib/environmental/soil-moisture";
+import {
+  SOIL_FIELD_DEPTHS,
+  SOIL_FIELD_MEASURE_IDS,
+  type SoilFieldDepth,
+  type SoilFieldMeasure,
+} from "@/lib/environmental/soil-field";
 import {
   getWatersheds,
   MAX_WATERSHED_BBOX_SQUARE_DEGREES,
@@ -468,34 +473,40 @@ export const environmentalRouter = router({
     }),
 
   /**
-   * ERA5-Land volumetric soil water for the viewport, on the slider's day, at one depth.
+   * One ERA5-Land soil field -- volumetric water or temperature -- for the viewport, on the
+   * slider's day, at one depth.
+   *
+   * One procedure carrying `measure` rather than two: the two measures share every input,
+   * every bound and every cache rule, and `measure` is part of the query key either way. A
+   * second procedure would be a second place for the depth enum and the zoom contract to
+   * drift.
    *
    * Deliberately NOT wrapped in `areaBoundedBbox`: like `getVegetationIndex` this reads the
    * local warehouse rather than proxying a third party, and zooming OUT is exactly when it
    * gets cheaper -- `zoom` moves it onto a coarser aggregation lattice, so a whole-PNW
    * request returns ~28 lattice nodes and at most nine isobands rather than 1,568 squares.
-   * See `environmental-read-model.ts` §soil-moisture.
+   * See `environmental-read-model.ts` §soil-field.
    */
-  getSoilMoisture: publicProcedure
+  getSoilField: publicProcedure
     .input(
       z.object({
         bbox: bboxSchema,
         date: observationDateSchema.optional(),
-        // Enumerated from the depth table rather than restated, so a depth added there
-        // cannot be rejected here.
-        depth: z
-          .enum(
-            SOIL_MOISTURE_DEPTHS.map((definition) => definition.depth) as [string, ...string[]]
-          )
-          .optional(),
+        // Enumerated from the shared tables rather than restated, so a measure or a depth
+        // added there cannot be rejected here. The depth enum is the UNION across measures;
+        // the reader resolves a depth the chosen measure does not publish to that measure's
+        // first layer rather than querying a signal that cannot exist.
+        measure: z.enum(SOIL_FIELD_MEASURE_IDS as [string, ...string[]]).optional(),
+        depth: z.enum(SOIL_FIELD_DEPTHS as [string, ...string[]]).optional(),
         /** Viewport zoom; selects the aggregation tier. */
         zoom: z.number().finite().optional(),
       })
     )
     .query(({ input }) =>
-      getPublishedSoilMoisture(input.bbox, {
+      getPublishedSoilField(input.bbox, {
         date: input.date,
-        depth: input.depth as (typeof SOIL_MOISTURE_DEPTHS)[number]["depth"] | undefined,
+        measure: input.measure as SoilFieldMeasure | undefined,
+        depth: input.depth as SoilFieldDepth | undefined,
         zoom: input.zoom,
       })
     ),

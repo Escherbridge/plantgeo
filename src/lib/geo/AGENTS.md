@@ -18,7 +18,7 @@ database has *already* aggregated and smoothed, so this is not client-side aggre
 sneaking back in. See `src/lib/server/AGENTS.md` §soil-moisture for the full split.
 
 **Why it is not in the browser.** It could be. It is not, because the whole point of
-`geo.soil_moisture_field` is that the grid never crosses the wire.
+`geo.soil_field` is that the grid never crosses the wire.
 
 **Marching triangles, not the 81-case isoband table.** Each lattice square is split into two
 triangles on a consistent diagonal, and each triangle is clipped against the band interval

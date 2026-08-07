@@ -12,13 +12,17 @@ import {
 } from "@/lib/map/layer-toggle-context";
 import { useFireData } from "@/hooks/useFireData";
 import {
-  useSoilMoistureQuery,
+  useSoilFieldQuery,
   useSoilSurveyQuery,
   useViewportBounds,
   useWatershedsQuery,
 } from "@/hooks/useViewportProxiedLayers";
 import { trpc } from "@/lib/trpc/client";
 import { styleBackedLayerEntries } from "@/lib/map/layer-registry";
+import {
+  dateFilterableStyleLayerIds,
+  tileLayerDateFilter,
+} from "@/lib/map/tile-layer-date-filter";
 import { useMapStore } from "@/stores/map-store";
 import type { WindPoint } from "@/components/map/layers/WeatherLayer";
 
@@ -51,8 +55,8 @@ const SoilSurveyLayer = dynamic(
   () => import("@/components/map/layers/SoilSurveyLayer").then((m) => ({ default: m.SoilSurveyLayer })),
   { ssr: false }
 );
-const SoilMoistureLayer = dynamic(
-  () => import("@/components/map/layers/SoilMoistureLayer").then((m) => ({ default: m.SoilMoistureLayer })),
+const SoilFieldLayer = dynamic(
+  () => import("@/components/map/layers/SoilFieldLayer").then((m) => ({ default: m.SoilFieldLayer })),
   { ssr: false }
 );
 const DemandHeatmapLayer = dynamic(
@@ -75,7 +79,6 @@ export default function LayerManager() {
   const layerVisibility = useLayerVisibility();
   const vegetationMode = useVegetationDisplayMode();
   const soilMode = useSoilDisplayMode();
-  const fireData = useFireData(layerVisibility.fire);
   // Shared with PanelManager: one derivation, so the map and the panels key on one bbox.
   const { zoom, bbox } = useViewportBounds();
   // Written only by PanelManager's capture hook; drawn here because the map owns its layers.
@@ -86,7 +89,11 @@ export default function LayerManager() {
   // server query -- it has always used, so first paint never fetches the same day twice.
   // Settled rather than raw: a day-granular scrub writes on every pointer tick, and this
   // component sits above ~8 layer children.
+  //
+  // Read before the layer feeds below rather than after them, because `useFireData` takes it
+  // too now: fire detections were the one warehouse-backed layer not on the slider at all.
   const { requestDate } = useDebouncedMapDay();
+  const fireData = useFireData(layerVisibility.fire, requestDate);
   // tRPC keys `undefined` input differently from an object, so the dateless case must stay
   // literally undefined here rather than becoming `{ date: undefined }`.
   const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(
@@ -146,20 +153,35 @@ export default function LayerManager() {
   // SoilPanel instead, from this same query key. See src/lib/server/AGENTS.md §soil-survey.
   const soilSurveyGeoJSON = soilSurveyQuery.data ?? EMPTY_FEATURE_COLLECTION;
 
-  // ERA5-Land soil moisture. `zoom` is not a hint here -- it selects the server-side
+  // The two ERA5-Land soil fields. `zoom` is not a hint here -- it selects the server-side
   // aggregation tier, so zooming out makes the answer SMALLER (isobands over a coarse
   // lattice) rather than shipping 1,568 squares. The day is the slider's, settled, like
   // every other warehouse-backed feed; the depth is the panel's, and neither is a second
   // time control. staleTime matches vegetation's: a reanalysis archive day is immutable.
+  //
+  // Two calls rather than a loop: hooks cannot be called from one, and `measure` is in the
+  // query key, so the two fields hold separate cache entries and can both be on at once.
   const soilMoistureVisible = layerVisibility["soil-moisture"];
-  const soilMoistureQuery = useSoilMoistureQuery(bbox, {
+  const soilMoistureQuery = useSoilFieldQuery(bbox, {
     enabled: soilMoistureVisible,
+    measure: "moisture",
     date: requestDate,
-    depth: soilMode.moistureDepth,
+    depth: soilMode.fieldDepth.moisture,
     zoom,
   });
   const soilMoistureGeoJSON: GeoJSON.FeatureCollection =
     soilMoistureQuery.data ?? EMPTY_FEATURE_COLLECTION;
+
+  const soilTemperatureVisible = layerVisibility["soil-temperature"];
+  const soilTemperatureQuery = useSoilFieldQuery(bbox, {
+    enabled: soilTemperatureVisible,
+    measure: "temperature",
+    date: requestDate,
+    depth: soilMode.fieldDepth.temperature,
+    zoom,
+  });
+  const soilTemperatureGeoJSON: GeoJSON.FeatureCollection =
+    soilTemperatureQuery.data ?? EMPTY_FEATURE_COLLECTION;
 
   const weatherEnabled = layerVisibility.weather;
   // Reads every published observation across the viewport bbox -- not just the
@@ -210,12 +232,36 @@ export default function LayerManager() {
     []
   );
 
+  // Puts the style-baked Martin layers on the slider. They are not React-mounted, so they
+  // cannot take a date as a prop the way every layer below does; migration 0015 emits
+  // `observed_day` on each feature and this applies the matching style filter. Re-filtering
+  // costs no requests -- the tiles are already in the browser -- so unlike the queries above
+  // this reads the SETTLED day only because there is no point re-running it per pointer tick.
+  const applyDateFilter = useCallback(
+    (mapInstance: NonNullable<typeof map>, day: string | null) => {
+      const filter = tileLayerDateFilter(day);
+      for (const layerId of dateFilterableStyleLayerIds()) {
+        if (mapInstance.getLayer(layerId)) mapInstance.setFilter(layerId, filter ?? undefined);
+      }
+    },
+    []
+  );
+
   // Read through a ref so the style.load registration below never depends on the toggle
   // state -- see src/components/map/AGENTS.md "Style.load listener order".
   const layerVisibilityRef = useRef(layerVisibility);
   useEffect(() => {
     layerVisibilityRef.current = layerVisibility;
   }, [layerVisibility]);
+
+  // Same ref discipline, and for the same reason: a basemap swap rebuilds every style layer,
+  // so the style.load handler has to reapply the CURRENT day without listing it as a
+  // dependency. Listing it would re-register that handler on every settled scrub and move it
+  // behind ServiceAreaLayer's in the listener queue -- the bug the AGENTS.md note describes.
+  const filterDayRef = useRef(requestDate ?? null);
+  useEffect(() => {
+    filterDayRef.current = requestDate ?? null;
+  }, [requestDate]);
 
   // True once the CURRENT style has actually finished loading, per isStyleLoaded() --
   // not merely "style.load fired". isStyleLoaded() also requires every source's tiles
@@ -240,6 +286,7 @@ export default function LayerManager() {
     const mapInstance = map;
     const onStyleLoad = () => {
       applyVisibility(mapInstance, layerVisibilityRef.current);
+      applyDateFilter(mapInstance, filterDayRef.current);
       // `isStyleLoaded()` is typed `boolean | void`; coerce so this stays a boolean state.
       setStyleReady(!!mapInstance.isStyleLoaded());
     };
@@ -251,7 +298,7 @@ export default function LayerManager() {
       mapInstance.off("style.load", onStyleLoad);
       mapInstance.off("styledata", onStyleData);
     };
-  }, [map, applyVisibility]);
+  }, [map, applyVisibility, applyDateFilter]);
 
   // Apply toggles once the style is actually ready, and again whenever styleReady
   // flips true -- without styleReady in the deps, this ran once on first paint while
@@ -261,6 +308,14 @@ export default function LayerManager() {
     if (!map || !map.isStyleLoaded()) return;
     applyVisibility(map, layerVisibility);
   }, [map, layerVisibility, applyVisibility, styleReady]);
+
+  // Guarded on styleReady for the same reason the visibility sync above is: on first paint
+  // the style layers do not exist yet, so an unguarded pass would setFilter nothing and have
+  // nothing left to re-trigger it once the style caught up.
+  useEffect(() => {
+    if (!map || !map.isStyleLoaded()) return;
+    applyDateFilter(map, requestDate ?? null);
+  }, [map, requestDate, applyDateFilter, styleReady]);
 
   if (!map) return null;
 
@@ -297,11 +352,19 @@ export default function LayerManager() {
         opacity={soilMode.opacity}
       />
       <SoilSurveyLayer map={map} geojson={soilSurveyGeoJSON} visible={soilSurveyVisible} />
-      <SoilMoistureLayer
+      <SoilFieldLayer
         map={map}
+        measure="moisture"
         geojson={soilMoistureGeoJSON}
         opacity={soilMode.opacity}
         visible={soilMoistureVisible}
+      />
+      <SoilFieldLayer
+        map={map}
+        measure="temperature"
+        geojson={soilTemperatureGeoJSON}
+        opacity={soilMode.opacity}
+        visible={soilTemperatureVisible}
       />
       <DemandHeatmapLayer
         map={map}

@@ -91,6 +91,22 @@ export interface SliderLayerCapability {
 export interface SliderCapabilities {
   /** Server UTC today; the ONLY definition of "today". Never read the browser clock. */
   serverCurrentDate: string;
+  /**
+   * Days of axis drawn to the RIGHT of today, so the observed/future boundary is visible
+   * rather than sitting invisibly at the axis's right edge.
+   *
+   * Deliberately NOT a forecast horizon and never to be read as one. `forecastHorizonDays`
+   * is per layer and is 0 everywhere, because this warehouse publishes no forecast series;
+   * scrubbing anywhere in this span therefore makes every layer report `not_forecastable`,
+   * which is the honest answer. The span exists so that a user can SEE where the record
+   * stops -- with the axis ending at today, "everything to the left is observed" was a fact
+   * the UI stated only in words, and the two forecast-variant buttons above it led people to
+   * read the whole track as a forecast.
+   *
+   * Server-published rather than a client literal for the same reason the axis and "today"
+   * are: the client may not invent any part of the domain it draws.
+   */
+  futureAxisDays: number;
   layers: SliderLayerCapability[];
 }
 

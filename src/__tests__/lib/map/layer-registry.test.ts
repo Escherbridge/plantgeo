@@ -15,6 +15,7 @@ import {
 } from '@/lib/map/layer-registry'
 import { STYLE_LAYER_TOGGLE_MAP } from '@/lib/map/layers'
 import { getLayersForPanel } from '@/stores/panel-store'
+import { useMapStore } from '@/stores/map-store'
 
 // Explicit node:url URL, not the ambient global: this file runs under vitest's jsdom
 // environment, which shadows globalThis.URL with a browser polyfill that mis-resolves
@@ -119,7 +120,12 @@ describe('layer registry derivations', () => {
       'watersheds',
     ])
     expect(getLayersForPanel('vegetation')).toEqual(['vegetation'])
-    expect(getLayersForPanel('soil')).toEqual(['soil', 'soil-survey', 'soil-moisture'])
+    expect(getLayersForPanel('soil')).toEqual([
+      'soil',
+      'soil-survey',
+      'soil-moisture',
+      'soil-temperature',
+    ])
     expect(getLayersForPanel('community')).toEqual(['demand-heatmap', 'interventions'])
     expect(getLayersForPanel('team')).toEqual([])
     expect(getLayersForPanel('analytics')).toEqual([])
@@ -178,14 +184,26 @@ describe('layer registry derivations', () => {
   // of geo.features, so it has no geo.layers row to name and no slider capability to look
   // up -- the same shape drought and the proxied collections have. It still draws the
   // slider's day; it simply makes no claim about which days the axis should offer.
-  it('gives the agri-plane soil-moisture field a panel switch and no warehouse feed', () => {
-    const entry = LAYER_REGISTRY['soil-moisture']
-    expect(entry.renderKind).toBe('component')
-    expect(entry.styleLayerIds).toEqual([])
-    expect(entry.warehouseLayerName).toBeNull()
-    expect(entry.permanentlyUnavailableReason).toBeNull()
-    expect(panelIdForLayerToggle('soil-moisture')).toBe('soil')
-    expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty('soil-moisture')
+  it.each(['soil-moisture', 'soil-temperature'] as const)(
+    'gives the agri-plane %s field a panel switch and no warehouse feed',
+    (toggleId) => {
+      const entry = LAYER_REGISTRY[toggleId]
+      expect(entry.renderKind).toBe('component')
+      expect(entry.styleLayerIds).toEqual([])
+      expect(entry.warehouseLayerName).toBeNull()
+      expect(entry.permanentlyUnavailableReason).toBeNull()
+      expect(panelIdForLayerToggle(toggleId)).toBe('soil')
+      expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty(toggleId)
+    }
+  )
+
+  // Both soil fields must be off by default. The mount-time race documented in
+  // src/components/map/AGENTS.md means a default-on dynamically-imported layer registers its
+  // style.load listener after the single rAF-scheduled initial load, so it reads as enabled
+  // and never draws -- worse than being off, because the switch then lies.
+  it('leaves both agri-plane soil fields out of the default active layers', () => {
+    expect(useMapStore.getState().activeLayers).not.toContain('soil-moisture')
+    expect(useMapStore.getState().activeLayers).not.toContain('soil-temperature')
   })
 
   it('treats the upstream-proxied collections as component layers with no warehouse feed', () => {

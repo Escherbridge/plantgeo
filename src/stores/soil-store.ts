@@ -2,31 +2,36 @@ import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import type { SoilProperty } from "@/components/map/layers/SoilLayer";
 import {
-  DEFAULT_SOIL_MOISTURE_DEPTH,
-  type SoilMoistureDepth,
-} from "@/lib/environmental/soil-moisture";
+  DEFAULT_SOIL_FIELD_DEPTHS,
+  type SoilFieldDepth,
+  type SoilFieldMeasure,
+} from "@/lib/environmental/soil-field";
 
 interface SoilState {
   property: SoilProperty;
   opacity: number;
   /**
-   * Which ECMWF soil layer the moisture field draws. A DEPTH selector, not a second time
-   * control: the day always comes from the global slider. See src/components/map/AGENTS.md
-   * "One time control, projected per layer".
+   * Which ECMWF soil layer each field draws, per measure. A DEPTH selector, not a second
+   * time control: the day always comes from the global slider. See
+   * `src/components/map/AGENTS.md` "One time control, projected per layer".
+   *
+   * Keyed by measure rather than held as two flat fields so the panel renders one section
+   * per measure off one shape, and adding a third field cannot forget a setter.
    */
-  moistureDepth: SoilMoistureDepth;
+  fieldDepth: Record<SoilFieldMeasure, SoilFieldDepth>;
   setProperty: (p: SoilProperty) => void;
   setOpacity: (o: number) => void;
-  setMoistureDepth: (depth: SoilMoistureDepth) => void;
+  setFieldDepth: (measure: SoilFieldMeasure, depth: SoilFieldDepth) => void;
 }
 
 export const useSoilStore = create<SoilState>()(
   devtools((set) => ({
     property: "soc",
     opacity: 0.7,
-    moistureDepth: DEFAULT_SOIL_MOISTURE_DEPTH,
+    fieldDepth: DEFAULT_SOIL_FIELD_DEPTHS,
     setProperty: (property) => set({ property }),
     setOpacity: (opacity) => set({ opacity }),
-    setMoistureDepth: (moistureDepth) => set({ moistureDepth }),
+    setFieldDepth: (measure, depth) =>
+      set((state) => ({ fieldDepth: { ...state.fieldDepth, [measure]: depth } })),
   }))
 );

@@ -106,6 +106,20 @@
       "when": 1786600000000,
       "breakpoints": true,
       "tag": "0014_soil_moisture_field"
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1786700000000,
+      "breakpoints": true,
+      "tag": "0015_tile_observation_day"
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786800000000,
+      "breakpoints": true,
+      "tag": "0016_soil_field"
     }
   ]
 }

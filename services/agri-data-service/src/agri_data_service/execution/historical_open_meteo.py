@@ -99,12 +99,29 @@ OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS: Final[dict[str, OpenMeteoArchiveSignal
         "soil_water_content_layer_3", "m^3/m^3", "m^3/m^3", 0.0, 1.0
     ),
     "soil_temperature_0_to_7cm_mean": OpenMeteoArchiveSignal("soil_temperature_level_1", "C", "C", -100.0, 70.0),
+    # The remaining three bands align with ERA5-Land's CDS levels 2-4, so this lane can carry the
+    # soil-state profile the CDS lane was fetching -- at 0.1 degrees instead of 1.0, and keyless.
+    "soil_temperature_7_to_28cm_mean": OpenMeteoArchiveSignal("soil_temperature_level_2", "C", "C", -100.0, 70.0),
+    "soil_temperature_28_to_100cm_mean": OpenMeteoArchiveSignal(
+        "soil_temperature_level_3", "C", "C", -100.0, 70.0
+    ),
+    "soil_temperature_100_to_255cm_mean": OpenMeteoArchiveSignal(
+        "soil_temperature_level_4", "C", "C", -100.0, 70.0
+    ),
 }
 
 OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS: Final = (
     "soil_moisture_0_to_7cm_mean",
     "soil_moisture_28_to_100cm_mean",
     "soil_moisture_7_to_28cm_mean",
+)
+
+# The four ERA5-Land soil-temperature bands, sorted to match the plan validator's ordering rule.
+OPEN_METEO_ARCHIVE_SOIL_TEMPERATURE_PARAMETERS: Final = (
+    "soil_temperature_0_to_7cm_mean",
+    "soil_temperature_100_to_255cm_mean",
+    "soil_temperature_28_to_100cm_mean",
+    "soil_temperature_7_to_28cm_mean",
 )
 
 

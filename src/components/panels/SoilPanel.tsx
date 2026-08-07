@@ -18,13 +18,15 @@ import type { InterventionType } from "@/lib/environmental/intervention";
 import { ENVIRONMENTAL_TILES_CONFIGURED } from "@/lib/vegetation";
 import { useDebouncedMapDay, useLayerVisibility } from "@/lib/map/layer-toggle-context";
 import {
-  useSoilMoistureQuery,
+  useSoilFieldQuery,
   useSoilSurveyQuery,
 } from "@/hooks/useViewportProxiedLayers";
 import {
-  SOIL_MOISTURE_DEPTHS,
-  soilMoistureDepthDefinition,
-} from "@/lib/environmental/soil-moisture";
+  SOIL_FIELD_MEASURE_IDS,
+  soilFieldDepthDefinition,
+  soilFieldMeasureDefinition,
+  type SoilFieldMeasure,
+} from "@/lib/environmental/soil-field";
 
 interface SoilPanelProps {
   open: boolean;
@@ -111,6 +113,195 @@ function ColorLegendRow({ color, label }: { color: string; label: string }) {
   );
 }
 
+/**
+ * One ERA5-Land soil field's switch, depth selector, honesty notes and legend.
+ *
+ * One component rendered once per measure rather than two hand-written blocks: the two
+ * fields share every caption a reader depends on -- that a zoomed-out view is a smoothed
+ * average, that the day drawn is not always the day asked for, that blank ground is missing
+ * coverage -- and a second copy would be a second place for those to rot. Everything that
+ * genuinely differs comes from `soilFieldMeasureDefinition`.
+ *
+ * It owns its own query rather than taking the collection as a prop, on the same key the map
+ * uses, so opening this panel never issues a request the map was not already making.
+ */
+function SoilFieldSection({
+  measure,
+  visible,
+  open,
+  bbox,
+  zoom,
+  requestDate,
+}: {
+  measure: SoilFieldMeasure;
+  visible: boolean;
+  open: boolean;
+  bbox?: string;
+  zoom?: number;
+  requestDate: string | undefined;
+}) {
+  const definition = soilFieldMeasureDefinition(measure);
+  const depth = useSoilStore((state) => state.fieldDepth[measure]);
+  const setFieldDepth = useSoilStore((state) => state.setFieldDepth);
+
+  const query = useSoilFieldQuery(bbox, {
+    enabled: open && visible,
+    measure,
+    date: requestDate,
+    depth,
+    zoom,
+  });
+  const field = query.data;
+  const aggregated = field !== undefined && field.granularity !== "detail";
+  // The archive ends before the live edge, so "the day you asked for" and "the day drawn"
+  // routinely differ. Saying so is the whole point: a field silently drawn from four months
+  // ago while the slider reads today is a lie the map cannot tell on its own.
+  const dayDiffers = field?.observedDay != null && field.observedDay !== field.requestedDay;
+  // Defaulted rather than dereferenced. The server always sends the band table, but a
+  // response replayed from IndexedDB was serialized by whatever schema was current when it
+  // was written -- and a panel that throws is a worse failure than a missing legend.
+  const bands = field?.bands ?? [];
+
+  return (
+    <>
+      {/* Registry-routed to this panel like the survey below; without a switch here the
+          SoilFieldLayer polygons could never be turned on, since the Legend only lists
+          warehouse-backed (geo.layers) feeds and this one reads the agri model plane. */}
+      <LayerToggle layerId={definition.toggleId} label={definition.layerLabel} />
+
+      {visible && (
+        <div className="mt-1.5 flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5">
+            <p className="text-xs text-[hsl(var(--muted-foreground))]">
+              Depth (ECMWF soil layer)
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {definition.depths.map((option) => (
+                <button
+                  key={option.depth}
+                  className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                    depth === option.depth
+                      ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent"
+                      : "border-[hsl(var(--border))] text-[hsl(var(--foreground))] bg-[hsl(var(--card))]"
+                  }`}
+                  onClick={() => setFieldDepth(measure, option.depth)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {query.isLoading && (
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-xs text-[hsl(var(--muted-foreground))]"
+            >
+              Loading the {definition.fieldLabel} field for this view…
+            </p>
+          )}
+
+          {/* Zoomed out past the detail tier: these are contours through a smoothed
+              average over a coarser lattice, not individual 0.25-degree readings. Shown
+              whenever the response says so, never guessed ahead of it. */}
+          {aggregated && field && (
+            <p
+              role="status"
+              aria-live="polite"
+              className="rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+            >
+              Zoomed out: showing smoothed contours over a {field.latticeDegrees}° lattice,
+              averaged from {field.cellCount} measured 0.25° cell
+              {field.cellCount === 1 ? "" : "s"}. These are not individual readings — zoom in
+              past z{9} for the measured cells.
+            </p>
+          )}
+
+          {/* The archive's last day is not today's day. Naming both is the only way the
+              map can be read correctly. */}
+          {dayDiffers && field && (
+            <p
+              role="status"
+              aria-live="polite"
+              className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+            >
+              Drawn for {field.observedDay}, the newest reading at or before{" "}
+              {field.requestedDay} — nothing is carried forward past{" "}
+              {field.maxObservationAgeDays} days.
+            </p>
+          )}
+
+          {field?.reason === "stale" && (
+            <p
+              role="status"
+              aria-live="polite"
+              className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+            >
+              Nothing is drawn for {field.requestedDay}: the newest ERA5-Land reading for this
+              view is {field.newestAvailableDay}, more than {field.maxObservationAgeDays} days
+              earlier. Scrub the time slider to {field.newestAvailableDay} or before to see the
+              field.
+            </p>
+          )}
+
+          {field?.reason === "not_published" && (
+            <p
+              role="status"
+              aria-live="polite"
+              className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+            >
+              The ERA5-Land {definition.fieldLabel} lane does not cover this view yet. Blank
+              ground here is missing coverage on our side, not {definition.blankGroundMisreading}
+              .
+            </p>
+          )}
+
+          {field?.reason === "not_forecastable" && (
+            <p
+              role="status"
+              aria-live="polite"
+              className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+            >
+              {field.requestedDay} is in the future. ERA5-Land is a reanalysis archive, so
+              there is nothing to draw and nothing may be invented for it.
+            </p>
+          )}
+
+          {query.isError && (
+            <p
+              role="alert"
+              className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+            >
+              The {definition.fieldLabel} field could not be loaded for this view. Try again
+              shortly.
+            </p>
+          )}
+
+          {field?.availability === "published" && bands.length > 0 && (
+            <>
+              <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
+                  {definition.quantityLabel} ({definition.unitLabel}) —{" "}
+                  {soilFieldDepthDefinition(measure, depth).label}
+                </p>
+                <div className="flex flex-col gap-1">
+                  {bands.map((band) => (
+                    <ColorLegendRow key={band.bandIndex} color={band.color} label={band.label} />
+                  ))}
+                </div>
+              </div>
+              <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                {field.attribution}
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 function SuitabilityBar({ score }: { score: number }) {
   const color =
     score >= 75
@@ -144,8 +335,6 @@ export function SoilPanel({
   zoom,
 }: SoilPanelProps) {
   const { property: selectedProperty, setProperty } = useSoilStore();
-  const moistureDepth = useSoilStore((state) => state.moistureDepth);
-  const setMoistureDepth = useSoilStore((state) => state.setMoistureDepth);
 
   const soilQuery = trpc.environmental.getSoilProperties.useQuery(
     { lat: queryPoint?.lat ?? 0, lon: queryPoint?.lon ?? 0 },
@@ -174,30 +363,9 @@ export function SoilPanel({
     zoom,
   });
 
-  // The soil-moisture field the map is drawing, read back on the same key so opening this
-  // panel never issues a request the map was not already making. The day comes from the
-  // global slider -- this panel adds a DEPTH control, never a second date control.
-  const soilMoistureVisible = layerVisibility["soil-moisture"];
+  // The day the ERA5-Land sections below draw, from the global slider. They add a DEPTH
+  // control each, never a second date control.
   const { requestDate } = useDebouncedMapDay();
-  const soilMoistureQuery = useSoilMoistureQuery(bbox, {
-    enabled: open && soilMoistureVisible,
-    date: requestDate,
-    depth: moistureDepth,
-    zoom,
-  });
-  const soilMoisture = soilMoistureQuery.data;
-  const soilMoistureAggregated =
-    soilMoisture !== undefined && soilMoisture.granularity !== "detail";
-  // The archive ends before the live edge, so "the day you asked for" and "the day drawn"
-  // routinely differ. Saying so is the whole point: a field silently drawn from four months
-  // ago while the slider reads today is a lie the map cannot tell on its own.
-  const soilMoistureDayDiffers =
-    soilMoisture?.observedDay != null &&
-    soilMoisture.observedDay !== soilMoisture.requestedDay;
-  // Defaulted rather than dereferenced. The server always sends the band table, but a
-  // response replayed from IndexedDB was serialized by whatever schema was current when it
-  // was written -- and a panel that throws is a worse failure than a missing legend.
-  const soilMoistureBands = soilMoisture?.bands ?? [];
   const soilSurvey = soilSurveyQuery.data;
   // USDA holds more map units than it serves for one view and returned a subset; the
   // count below then describes part of the view, not the view.
@@ -250,140 +418,20 @@ export function SoilPanel({
         </SheetHeader>
 
         <LayerToggle layerId="soil" label="Soil Properties" />
-        {/* ERA5-Land volumetric soil water. Registry-routed to this panel like the survey
-            below; without a switch here the SoilMoistureLayer polygons could never be turned
-            on, since the Legend only lists warehouse-backed (geo.layers) feeds and this one
-            reads the agri model plane. */}
-        <LayerToggle layerId="soil-moisture" label="Soil Moisture (ERA5-Land)" />
-
-        {soilMoistureVisible && (
-          <div className="mt-1.5 flex flex-col gap-1.5">
-            <div className="flex flex-col gap-1.5">
-              <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                Depth (ECMWF soil layer)
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {SOIL_MOISTURE_DEPTHS.map((definition) => (
-                  <button
-                    key={definition.depth}
-                    className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
-                      moistureDepth === definition.depth
-                        ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent"
-                        : "border-[hsl(var(--border))] text-[hsl(var(--foreground))] bg-[hsl(var(--card))]"
-                    }`}
-                    onClick={() => setMoistureDepth(definition.depth)}
-                  >
-                    {definition.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {soilMoistureQuery.isLoading && (
-              <p
-                role="status"
-                aria-live="polite"
-                className="text-xs text-[hsl(var(--muted-foreground))]"
-              >
-                Loading the soil-moisture field for this view…
-              </p>
-            )}
-
-            {/* Zoomed out past the detail tier: these are contours through a smoothed
-                average over a coarser lattice, not individual 0.25-degree readings. Shown
-                whenever the response says so, never guessed ahead of it. */}
-            {soilMoistureAggregated && soilMoisture && (
-              <p
-                role="status"
-                aria-live="polite"
-                className="rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
-              >
-                Zoomed out: showing smoothed contours over a{" "}
-                {soilMoisture.latticeDegrees}° lattice, averaged from{" "}
-                {soilMoisture.cellCount} measured 0.25° cell
-                {soilMoisture.cellCount === 1 ? "" : "s"}. These are not individual
-                readings — zoom in past z{9} for the measured cells.
-              </p>
-            )}
-
-            {/* The archive's last day is not today's day. Naming both is the only way the
-                map can be read correctly. */}
-            {soilMoistureDayDiffers && soilMoisture && (
-              <p
-                role="status"
-                aria-live="polite"
-                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
-              >
-                Drawn for {soilMoisture.observedDay}, the newest reading at or before{" "}
-                {soilMoisture.requestedDay} — nothing is carried forward past{" "}
-                {soilMoisture.maxObservationAgeDays} days.
-              </p>
-            )}
-
-            {soilMoisture?.reason === "stale" && (
-              <p
-                role="status"
-                aria-live="polite"
-                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
-              >
-                Nothing is drawn for {soilMoisture.requestedDay}: the newest ERA5-Land
-                reading for this view is {soilMoisture.newestAvailableDay}, more than{" "}
-                {soilMoisture.maxObservationAgeDays} days earlier. Scrub the time slider to{" "}
-                {soilMoisture.newestAvailableDay} or before to see the field.
-              </p>
-            )}
-
-            {soilMoisture?.reason === "not_published" && (
-              <p
-                role="status"
-                aria-live="polite"
-                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
-              >
-                The ERA5-Land lattice does not cover this view yet. Blank ground here is
-                missing coverage on our side, not dry soil.
-              </p>
-            )}
-
-            {soilMoisture?.reason === "not_forecastable" && (
-              <p
-                role="status"
-                aria-live="polite"
-                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
-              >
-                {soilMoisture.requestedDay} is in the future. ERA5-Land is a reanalysis
-                archive, so there is nothing to draw and nothing may be invented for it.
-              </p>
-            )}
-
-            {soilMoistureQuery.isError && (
-              <p
-                role="alert"
-                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
-              >
-                The soil-moisture field could not be loaded for this view. Try again shortly.
-              </p>
-            )}
-
-            {soilMoisture?.availability === "published" && soilMoistureBands.length > 0 && (
-              <>
-                <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                  <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
-                    Volumetric soil water ({soilMoisture.unit}) —{" "}
-                    {soilMoistureDepthDefinition(moistureDepth).label}
-                  </p>
-                  <div className="flex flex-col gap-1">
-                    {soilMoistureBands.map((band) => (
-                      <ColorLegendRow key={band.bandIndex} color={band.color} label={band.label} />
-                    ))}
-                  </div>
-                </div>
-                <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                  {soilMoisture.attribution}
-                </p>
-              </>
-            )}
-          </div>
-        )}
+        {/* The two ERA5-Land soil fields, moisture and temperature, off one component.
+            Rendered unconditionally so each owns its own query on the same key the map uses;
+            each gates its own body on its own switch. */}
+        {SOIL_FIELD_MEASURE_IDS.map((measure) => (
+          <SoilFieldSection
+            key={measure}
+            measure={measure}
+            visible={layerVisibility[soilFieldMeasureDefinition(measure).toggleId]}
+            open={open}
+            bbox={bbox}
+            zoom={zoom}
+            requestDate={requestDate}
+          />
+        ))}
 
         {/* The registry routes "soil-survey" to this panel, and the Legend only lists
             warehouse-backed layers (soil-survey's warehouseLayerName is null) -- so without

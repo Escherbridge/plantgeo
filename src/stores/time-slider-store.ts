@@ -50,7 +50,16 @@ export function dayOffset(fromDate: string, toDate: string): number {
   return Math.round((toMilliseconds - fromMilliseconds) / MILLISECONDS_PER_DAY);
 }
 
-/** Both ends of the slider, derived from the payload; null when no layer has history. */
+/**
+ * Both ends of the slider, derived from the payload; null when no layer has history.
+ *
+ * `lastDay` is the further of the longest forecast horizon and the axis's own future span.
+ * Those are two different claims and the max is deliberate: the horizon says how far a layer
+ * can be ANSWERED for, `futureAxisDays` says how far the axis is DRAWN. Today they disagree --
+ * every horizon is 0 while the axis extends 30 days -- so the band right of today is drawn but
+ * answers nothing, which is the honest state. When a forecast producer lands and raises a
+ * horizon past the axis span, the axis grows to contain it rather than truncating it.
+ */
 export function sliderDomain(capabilities: SliderCapabilities | null): SliderDomain | null {
   if (capabilities === null) return null;
   const observedStarts = capabilities.layers
@@ -64,10 +73,16 @@ export function sliderDomain(capabilities: SliderCapabilities | null): SliderDom
     (longest, layer) => Math.max(longest, layer.forecastHorizonDays),
     0
   );
+  // Guarded rather than trusted: a payload from an older server carries no futureAxisDays at
+  // all, and a negative one would put lastDay before today and invert the whole axis.
+  const futureAxisDays = Math.max(0, capabilities.futureAxisDays ?? 0);
   return {
     firstDay,
     today: capabilities.serverCurrentDate,
-    lastDay: addDays(capabilities.serverCurrentDate, longestHorizonDays),
+    lastDay: addDays(
+      capabilities.serverCurrentDate,
+      Math.max(longestHorizonDays, futureAxisDays)
+    ),
   };
 }
 

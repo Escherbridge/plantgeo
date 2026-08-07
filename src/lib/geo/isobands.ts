@@ -1,7 +1,7 @@
 /**
  * Marching squares over a regular lattice of scalar samples, producing dissolved isobands.
  *
- * Runs on the SERVER, over the small node grid `geo.soil_moisture_field` already averaged
+ * Runs on the SERVER, over the small node grid `geo.soil_field` already averaged
  * and Gaussian-smoothed in SQL -- see `src/lib/geo/AGENTS.md` §isobands for why the
  * contouring is here rather than in PostGIS (`ST_Contour` needs `postgis_raster`, which is
  * available but not installed) and why it is not in the browser (the repo rule is that

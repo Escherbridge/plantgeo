@@ -13,7 +13,6 @@ import { MapFocus } from "./MapFocus";
 import SearchBar from "@/components/search/SearchBar";
 import { ReverseGeocode } from "@/components/search/ReverseGeocode";
 import { CommandPalette } from "@/components/search/CommandPalette";
-import { AlertBell } from "@/components/ui/AlertBell";
 import PanelManager from "./PanelManager";
 import LayerManager from "./LayerManager";
 import HoverTooltip from "./HoverTooltip";

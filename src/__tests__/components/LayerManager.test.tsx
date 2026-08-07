@@ -60,7 +60,7 @@ const viewportQueries = vi.hoisted(() => ({
   // `mock.calls`, which is where the `enabled` flag and the query input are read from.
   getWatersheds: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getSoilSurvey: vi.fn((): ViewportQueryResult => ({ data: undefined })),
-  getSoilMoisture: vi.fn((): ViewportQueryResult => ({ data: undefined })),
+  getSoilField: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   // react-query's `enabled: false` does not evict a cached result -- see the negative
   // test below -- so this is mutable per-test rather than a static `vi.fn(() => ...)`.
   getStreamflow: vi.fn((): StreamflowQueryResult => ({ data: [] })),
@@ -78,7 +78,7 @@ vi.mock("@/lib/trpc/client", () => ({
       getGroundwater: { useQuery: viewportQueries.getGroundwater },
       getWatersheds: { useQuery: viewportQueries.getWatersheds },
       getSoilSurvey: { useQuery: viewportQueries.getSoilSurvey },
-      getSoilMoisture: { useQuery: viewportQueries.getSoilMoisture },
+      getSoilField: { useQuery: viewportQueries.getSoilField },
       getVegetationIndex: { useQuery: viewportQueries.getVegetationIndex },
     },
     wildfire: {
@@ -122,6 +122,25 @@ function inputOf(query: { mock: { calls: unknown[][] } }): unknown {
   return query.mock.calls.at(-1)?.[0];
 }
 
+/**
+ * The input for ONE soil field. Both fields go through the same procedure, so `inputOf`
+ * would always report whichever measure LayerManager renders last.
+ */
+function soilFieldInputOf(measure: "moisture" | "temperature"): Record<string, unknown> {
+  const calls = (viewportQueries.getSoilField.mock.calls as unknown as unknown[][]).filter(
+    (call) => (call[0] as { measure?: string } | undefined)?.measure === measure
+  );
+  return (calls.at(-1)?.[0] ?? {}) as Record<string, unknown>;
+}
+
+/** The `enabled` flag for ONE soil field, matched the same way. */
+function soilFieldEnabledFlagOf(measure: "moisture" | "temperature"): boolean | undefined {
+  const calls = (viewportQueries.getSoilField.mock.calls as unknown as unknown[][]).filter(
+    (call) => (call[0] as { measure?: string } | undefined)?.measure === measure
+  );
+  return (calls.at(-1)?.[1] as { enabled?: boolean } | undefined)?.enabled;
+}
+
 import LayerManager from "@/components/map/LayerManager";
 
 /**
@@ -145,6 +164,9 @@ function createFakeMap() {
     isStyleLoaded: () => styleLoaded,
     getLayer: () => true,
     setLayoutProperty: vi.fn(),
+    // Style-baked Martin layers take the slider's day as a style filter rather than as a
+    // prop, because they are not React-mounted -- see src/lib/map/tile-layer-date-filter.ts.
+    setFilter: vi.fn(),
     setStyleLoaded(value: boolean) {
       styleLoaded = value;
     },
@@ -170,6 +192,9 @@ const INITIAL_SOIL_STATE = useSoilStore.getState();
 const SERVER_CURRENT_DATE = "2026-08-04";
 const sliderCapabilities: SliderCapabilities = {
   serverCurrentDate: SERVER_CURRENT_DATE,
+  // 0 so every domain assertion below still measures the FORECAST horizon alone; the
+  // future-axis span has its own tests rather than shifting these.
+  futureAxisDays: 0,
   layers: [
     {
       layerName: "water-gauges",
@@ -197,7 +222,7 @@ beforeEach(() => {
   dynamicStub.renders.length = 0;
   viewportQueries.getWatersheds.mockReturnValue({ data: undefined });
   viewportQueries.getSoilSurvey.mockReturnValue({ data: undefined });
-  viewportQueries.getSoilMoisture.mockReturnValue({ data: undefined });
+  viewportQueries.getSoilField.mockReturnValue({ data: undefined });
   viewportQueries.getStreamflow.mockReturnValue({ data: [] });
   viewportQueries.getGroundwater.mockReturnValue({ data: [] });
   viewportQueries.getVegetationIndex.mockReturnValue({ data: undefined });
@@ -447,7 +472,7 @@ describe("LayerManager viewport-proxied polygon layers", () => {
     renderLayerManager(fakeMap);
 
     expect(inputOf(viewportQueries.getSoilSurvey)).toMatchObject({ zoom: 6.5 });
-    expect(inputOf(viewportQueries.getSoilMoisture)).toMatchObject({ zoom: 6.5 });
+    expect(soilFieldInputOf("moisture")).toMatchObject({ zoom: 6.5 });
   });
 
   it("moves both zoom-adaptive queries onto a new tier when the viewport zooms", () => {
@@ -467,18 +492,41 @@ describe("LayerManager viewport-proxied polygon layers", () => {
     });
 
     expect(inputOf(viewportQueries.getSoilSurvey)).toMatchObject({ zoom: 14 });
-    expect(inputOf(viewportQueries.getSoilMoisture)).toMatchObject({ zoom: 14 });
+    expect(soilFieldInputOf("moisture")).toMatchObject({ zoom: 14 });
   });
 
-  it("asks for soil moisture at the panel's selected depth", () => {
-    useMapStore.setState({ activeLayers: ["soil-moisture"] });
-    useSoilStore.setState({ moistureDepth: "root-zone" });
+  it("asks for each soil field at that field's own selected depth", () => {
+    useMapStore.setState({ activeLayers: ["soil-moisture", "soil-temperature"] });
+    useSoilStore.setState({
+      fieldDepth: { moisture: "root-zone", temperature: "substratum" },
+    });
 
     const fakeMap = createFakeMap();
     fakeMap.setStyleLoaded(true);
     renderLayerManager(fakeMap);
 
-    expect(inputOf(viewportQueries.getSoilMoisture)).toMatchObject({ depth: "root-zone" });
+    expect(soilFieldInputOf("moisture")).toMatchObject({
+      measure: "moisture",
+      depth: "root-zone",
+    });
+    expect(soilFieldInputOf("temperature")).toMatchObject({
+      measure: "temperature",
+      depth: "substratum",
+    });
+  });
+
+  // The two fields are separate switches over one procedure. If `measure` were not in the
+  // input, one toggle would answer for both and turning temperature on would silently
+  // redraw the moisture field.
+  it("enables only the soil field whose own toggle is on", () => {
+    useMapStore.setState({ activeLayers: ["soil-temperature"] });
+
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    expect(soilFieldEnabledFlagOf("temperature")).toBe(true);
+    expect(soilFieldEnabledFlagOf("moisture")).toBe(false);
   });
 });
 
@@ -495,7 +543,7 @@ describe("LayerManager threads the slider's day into the warehouse-backed querie
     ["getStreamflow", viewportQueries.getStreamflow],
     ["getGroundwater", viewportQueries.getGroundwater],
     ["getVegetationIndex", viewportQueries.getVegetationIndex],
-    ["getSoilMoisture", viewportQueries.getSoilMoisture],
+    ["getSoilField", viewportQueries.getSoilField],
     ["getWeatherForBbox", viewportQueries.getWeatherForBbox],
   ] as const;
 

@@ -21,10 +21,20 @@ import {
 } from "@/stores/time-slider-store";
 
 /**
- * Diagonal stripes over the days after the server's today. Forecast days must never be
- * mistaken for observed ones, so the future half of the track is marked, not just coloured.
+ * The band drawn right of the today tick: a flat grey wash with diagonal stripes over it.
+ *
+ * Colour AND texture, deliberately both. Colour is what the eye reads first and is what makes
+ * the two halves of the track legible at a glance; the stripes are what survives a monochrome
+ * display and the red-green deficiencies that would otherwise flatten this grey against the
+ * green progress fill beside it. Neither alone is sufficient.
+ *
+ * Grey rather than a warning colour: right of today means "the record stops here", which is a
+ * statement about coverage, not a fault. It is also the one hue in the palette that cannot be
+ * confused with the observed fill -- `--accent` resolves to exactly `--primary` in both themes,
+ * so an accent-coloured band would be invisible as a distinction.
  */
-const FUTURE_HATCH_BACKGROUND =
+const FUTURE_BAND_BACKGROUND_COLOR = "hsl(var(--muted-foreground) / 0.35)";
+const FUTURE_BAND_HATCH_IMAGE =
   "repeating-linear-gradient(45deg, hsl(var(--muted-foreground) / 0.55) 0 3px, transparent 3px 6px)";
 
 /**
@@ -95,6 +105,13 @@ const timeSliderStyles = `
   }
   .time-slider-range:focus-visible::-moz-range-thumb {
     box-shadow: 0 0 0 4px hsl(var(--ring) / 0.5);
+  }
+  /* Without this the UA paints the calendar glyph and the spin controls for a light page,
+     which on the default dark theme is a near-black icon on a near-black field -- the picker
+     is there but invisible, so the field reads as plain text and nobody clicks it. The token
+     is the same one the theme already switches on, so this follows light mode too. */
+  .time-slider-date-input {
+    color-scheme: light dark;
   }
 `;
 
@@ -193,6 +210,24 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
   // space this block costs on a short viewport, not a one-shot animation.
   const [bandKeyExpandedOverride, setBandKeyExpandedOverride] = useState<boolean | null>(null);
   const bandKeyId = useId();
+  const dateInputId = useId();
+  const resetToToday = useTimeSliderStore((state) => state.resetToToday);
+  // The date field's own value while it is being edited. A `<input type="date">` reports "" for
+  // every incomplete entry, so a directly-bound store value would push the map to a clamped day
+  // on the first keystroke of a typed date. This holds the in-progress text; only a complete,
+  // in-domain day is committed through to the store.
+  const [draftDate, setDraftDate] = useState(selectedDate);
+  // Adjusted during render rather than in an effect, which is React's own prescription for
+  // state that has to follow an external value: an effect would paint one frame of a stale
+  // field first, and re-running on every pointer tick of a scrub is exactly the cascade the
+  // lint rule warns about. Tracking the last day seen is what makes this fire only on a real
+  // change -- a scrub, the Today button, the clamp a late capabilities payload applies -- and
+  // never on the re-renders caused by editing the field itself.
+  const [lastSeenSelectedDate, setLastSeenSelectedDate] = useState(selectedDate);
+  if (selectedDate !== lastSeenSelectedDate) {
+    setLastSeenSelectedDate(selectedDate);
+    setDraftDate(selectedDate);
+  }
 
   const domain = sliderDomain(capabilities);
 
@@ -246,6 +281,12 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
   const activeVariantLabel =
     FORECAST_VARIANT_OPTIONS.find((option) => option.value === forecastVariant)?.label ??
     forecastVariant;
+  // Whether ANY layer can answer for a future day at all. Both halves are required: a horizon
+  // with no variants and a variant with no horizon are each unreachable, and either alone
+  // would put a picker on screen that can never change what is drawn.
+  const publishesAnyForecast = capabilities.layers.some(
+    (layer) => layer.forecastHorizonDays > 0 && layer.forecastVariants.length > 0
+  );
 
   /** Track position of a day offset, in percent. Guards the single-day domain. */
   const percentOfOffset = (offset: number): number =>
@@ -258,6 +299,20 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
     setSelectedDate(clampDateToDomain(addDays(firstDay, wholeDayOffset), capabilities));
   };
 
+  /**
+   * Commits a typed day, and only a complete in-domain one.
+   *
+   * The draft always takes the keystroke, so the field stays editable; the store only hears
+   * about days that are actually well formed. `min`/`max` on the input already refuse an
+   * out-of-range day in every browser that implements them, but the clamp stays as the
+   * authority -- the attributes are a hint the DOM can be driven around, and the domain is not.
+   */
+  const handleDateInputChange = (nextValue: string) => {
+    setDraftDate(nextValue);
+    if (!isCalendarDate(nextValue)) return;
+    setSelectedDate(clampDateToDomain(nextValue, capabilities));
+  };
+
   return (
     <div
       className={cn(TIME_SLIDER_CONTAINER_CLASSES, className)}
@@ -265,20 +320,68 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
     >
       <style dangerouslySetInnerHTML={{ __html: timeSliderStyles }} />
 
-      <div className="mb-2 flex items-start justify-between gap-3">
-        <div className="flex flex-col">
-          <span className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
-            {isFuture ? "Forecast" : "Observed"}
-          </span>
-          <span
-            className="text-sm font-medium text-[hsl(var(--foreground))]"
-            data-testid="time-slider-selected-date"
-          >
-            {selectedDate}
-          </span>
-        </div>
+      {/* What this control IS, stated before anything else. Until 2026-08-06 the first thing
+          in this card was a "Monte Carlo / ML" button pair, and the owner read the whole
+          widget -- a scrubber over four years of measured history -- as a forecast tool. The
+          heading names the axis, the chip names what the selected day is, and the forecast
+          picker below is now conditional on a forecast actually existing. */}
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--foreground))]">
+          Map date
+        </h2>
+        <span
+          data-testid="time-slider-day-kind"
+          className={`rounded-(--radius) px-1.5 py-0.5 text-[0.6875rem] font-semibold uppercase tracking-wide ${
+            isFuture
+              ? "bg-[hsl(var(--muted-foreground))]/20 text-[hsl(var(--muted-foreground))]"
+              : "bg-[hsl(var(--primary))]/15 text-[hsl(var(--primary))]"
+          }`}
+        >
+          {isFuture ? "Beyond the record" : "Observed"}
+        </span>
+      </div>
 
-        <div className="flex flex-col items-end">
+      <div className="mb-2 flex items-center gap-2">
+        {/* A real date field, not a read-out. Typing a day is the only practical way to reach
+            one four years back: at ~384px wide the track gives roughly a quarter-pixel per
+            day, so the thumb cannot address a specific date at all. `min`/`max` are the
+            domain's own ends, so the browser refuses an out-of-range day before the store has
+            to clamp one. */}
+        <label className="sr-only" htmlFor={dateInputId}>
+          Map date, YYYY-MM-DD
+        </label>
+        <input
+          id={dateInputId}
+          type="date"
+          className="time-slider-date-input min-w-0 flex-1 rounded-(--radius) border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-1 text-sm font-medium text-[hsl(var(--foreground))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--ring))] max-sm:min-h-11"
+          value={draftDate}
+          min={firstDay}
+          max={lastDay}
+          data-testid="time-slider-date-input"
+          onChange={(event) => handleDateInputChange(event.target.value)}
+          // A partially typed day leaves the input empty; restore the committed day on the way
+          // out so the field can never be left blank next to a map that is drawing some date.
+          onBlur={() => setDraftDate(selectedDate)}
+        />
+        <button
+          type="button"
+          onClick={() => resetToToday()}
+          disabled={selectedDate === today}
+          title={`Jump to ${today}`}
+          className="shrink-0 rounded-(--radius) border border-[hsl(var(--border))] px-2 py-1 text-xs text-[hsl(var(--muted-foreground))] disabled:cursor-not-allowed disabled:opacity-50 max-sm:min-h-11 max-sm:px-3"
+          data-testid="time-slider-today-button"
+        >
+          Today
+        </button>
+      </div>
+
+      {/* Hidden entirely when nothing forecasts. Rendering two dead buttons was meant to show
+          the capability being withheld, but it cost more than it bought: in production every
+          layer reports `forecastVariants: []`, so the picker was permanently inert AND was the
+          most prominent thing in the card. The withholding is still stated -- in the future
+          band's key below, in words -- rather than as a control that cannot be operated. */}
+      {publishesAnyForecast && (
+        <div className="mb-2 flex flex-col items-end">
           <div role="radiogroup" aria-label="Forecast variant" className="flex items-center gap-1">
             {FORECAST_VARIANT_OPTIONS.map((option) => {
               const disabledReason = isFuture
@@ -312,17 +415,14 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
             {isFuture ? "ML: no trained model yet" : FORECASTS_ARE_FUTURE_ONLY}
           </span>
         </div>
-      </div>
+      )}
 
       {/* h-7 matches the 28px range hit area; max-sm:h-11 matches the 44px it grows to under
           the (max-width: 640px) rule in globals.css, so the row still contains its own input
           on a phone rather than letting it overflow the track. */}
       <div className="relative flex h-7 items-center max-sm:h-11">
         <div className="absolute inset-x-0 h-1.5 rounded-full bg-[hsl(var(--secondary))]" />
-        <div
-          className="absolute left-0 h-1.5 rounded-full bg-[hsl(var(--primary))]"
-          style={{ width: `${percentOfOffset(selectedOffset)}%` }}
-        />
+        {/* Painted before the progress fills so those draw on top of it. */}
         {todayTickOffset < maxOffset && (
           <div
             aria-hidden="true"
@@ -330,7 +430,31 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
             className="absolute right-0 h-1.5 rounded-r-full"
             style={{
               left: `${percentOfOffset(todayTickOffset)}%`,
-              backgroundImage: FUTURE_HATCH_BACKGROUND,
+              backgroundColor: FUTURE_BAND_BACKGROUND_COLOR,
+              backgroundImage: FUTURE_BAND_HATCH_IMAGE,
+            }}
+          />
+        )}
+        {/* Stops at today even when the selection is past it. The green fill means "observed",
+            so running it into the future band would paint the one claim this control exists to
+            avoid -- that there is a record over there. The scrubbed distance past today is
+            shown by the grey fill below instead, in the band's own colour. */}
+        <div
+          aria-hidden="true"
+          data-testid="time-slider-observed-fill"
+          className="absolute left-0 h-1.5 rounded-l-full bg-[hsl(var(--primary))]"
+          style={{
+            width: `${percentOfOffset(Math.min(selectedOffset, todayTickOffset))}%`,
+          }}
+        />
+        {selectedOffset > todayTickOffset && (
+          <div
+            aria-hidden="true"
+            data-testid="time-slider-future-fill"
+            className="absolute h-1.5 bg-[hsl(var(--muted-foreground))]"
+            style={{
+              left: `${percentOfOffset(todayTickOffset)}%`,
+              width: `${percentOfOffset(selectedOffset) - percentOfOffset(todayTickOffset)}%`,
             }}
           />
         )}
@@ -375,6 +499,40 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
         <span className="map-popup-meta">{firstDay}</span>
         <span className="map-popup-meta">{lastDay}</span>
       </div>
+
+      {/* Names both halves of the track in words. The colours alone are a convention a first-
+          time reader has no way to look up, and "is the right-hand end a prediction?" is
+          precisely the question this control was failing to answer. Rendered whenever a future
+          band exists at all, not only while the selection sits in it: the band is on screen
+          either way, so its meaning has to be too. */}
+      {todayTickOffset < maxOffset && (
+        <div
+          className="mt-1 flex items-center gap-3"
+          data-testid="time-slider-track-key"
+        >
+          <span className="flex items-center gap-1.5">
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-4 shrink-0 rounded-full bg-[hsl(var(--primary))]"
+            />
+            <span className="map-popup-meta">Observed</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-4 shrink-0 rounded-full"
+              style={{
+                backgroundColor: FUTURE_BAND_BACKGROUND_COLOR,
+                backgroundImage: FUTURE_BAND_HATCH_IMAGE,
+              }}
+            />
+            <span className="map-popup-meta">
+              {publishesAnyForecast ? "Forecast" : "Nothing published"}
+            </span>
+          </span>
+        </div>
+      )}
+
       {/* The bucketing rule is stated, not assumed. A tick is the calendar day the PUBLISHER
           stamped an observation with, which for USGS gauges is their own local day and not
           UTC -- 37.5% of stored gauge readings fall on a different UTC day than the one their
@@ -444,7 +602,23 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
         })}
       </ul>
 
-      {isFuture && (
+      {/* Nothing forecasts, and the selection is past today. The forecast-band key below would
+          be a straight falsehood here -- it describes median colour and uncertainty opacity for
+          a band no producer emits -- so this replaces it rather than sitting beside it. Saying
+          it plainly is also the whole reason the two dead variant buttons could be dropped from
+          the header: the capability is still visibly withheld, in a sentence that is true. */}
+      {isFuture && !publishesAnyForecast && (
+        <p
+          className="mt-2 border-t border-[hsl(var(--border))] pt-2 text-xs text-[hsl(var(--muted-foreground))]"
+          data-testid="time-slider-no-forecast-notice"
+        >
+          Nothing is published after {today}. This platform records what was measured and does
+          not forecast, so every layer is empty here — that is the state of the record, not a
+          failure to load.
+        </p>
+      )}
+
+      {isFuture && publishesAnyForecast && (
         <div className="mt-2 border-t border-[hsl(var(--border))] pt-2">
           {/* Real <button>, keyboard- and screen-reader-operable, same as the warehouse
               record disclosure above. It defaults open on a future date (isBandKeyExpanded

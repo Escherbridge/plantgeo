@@ -27,6 +27,9 @@ const waterLayerCapability: SliderLayerCapability = {
 
 const capabilities: SliderCapabilities = {
   serverCurrentDate: SERVER_CURRENT_DATE,
+  // 0 so every domain assertion below still measures the FORECAST horizon alone; the
+  // future-axis span has its own tests rather than shifting these.
+  futureAxisDays: 0,
   layers: [waterLayerCapability],
 };
 

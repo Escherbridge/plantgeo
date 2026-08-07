@@ -21,7 +21,17 @@ interface UseFireDataReturn {
 
 const REFETCH_INTERVAL_MS = 120_000; // 2 minutes
 
-export function useFireData(enabled = true): UseFireDataReturn {
+/**
+ * Published fire detections for one day, or for the live FIRMS lookback window.
+ *
+ * @param enabled the layer's switch position; nothing is fetched while it is off.
+ * @param date the time slider's settled day, or undefined when the selection IS the server's
+ *   today. Undefined is not a default to tidy away: it is what asks for the live window, which
+ *   is the exact request first paint has always made and the only one whose cost is measured.
+ *   Sending today's date explicitly instead would mint a second, colder cache entry for the
+ *   same answer.
+ */
+export function useFireData(enabled = true, date?: string): UseFireDataReturn {
   const [data, setData] = useState<GeoJSON.FeatureCollection>(EMPTY_FIRE_DATA);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +42,9 @@ export function useFireData(enabled = true): UseFireDataReturn {
       setIsLoading(true);
       setError(null);
 
-      const res = await fetch("/api/fires");
+      const res = await fetch(
+        date === undefined ? "/api/fires" : `/api/fires?date=${encodeURIComponent(date)}`
+      );
 
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
@@ -47,21 +59,25 @@ export function useFireData(enabled = true): UseFireDataReturn {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [date]);
 
   useEffect(() => {
     if (!enabled) return;
 
     const initialFetchTimer = setTimeout(() => void fetchFires(), 0);
 
-    // Periodic refetch
-    intervalRef.current = setInterval(fetchFires, REFETCH_INTERVAL_MS);
+    // Polled only on the live window. A past day's detections are settled -- FIRMS does not
+    // revise them -- so re-requesting one every two minutes would be pure load for a byte-
+    // identical answer, and the effect already refetches when the day itself changes.
+    if (date === undefined) {
+      intervalRef.current = setInterval(fetchFires, REFETCH_INTERVAL_MS);
+    }
 
     return () => {
       clearTimeout(initialFetchTimer);
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [enabled, fetchFires]);
+  }, [enabled, date, fetchFires]);
 
   return {
     data,

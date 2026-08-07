@@ -1,0 +1,16 @@
+{
+  "id": "upstream_dataset_expansion_20260806",
+  "description": "Retire the CDS ERA5-Land soil lane for its keyless Open-Meteo equivalent, close the et0-model trap that would silently persist an all-NULL signal, and add four new upstream datasets -- fire-weather VPD, GloFAS river discharge, CAMS air quality, and ensemble forecast uncertainty -- through the durable-backfill and Railway-cron standards already established",
+  "type": "feature",
+  "created_at": "2026-08-06T00:00:00Z",
+  "status": "planned",
+  "informed_by": [
+    "docs/unused-upstream-datasets.md",
+    "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+    "services/agri-data-service/src/agri_data_service/ingest/AGENTS.md",
+    "services/agri-data-service/plans/AGENTS.md",
+    "docs/rebuilding-the-dataset.md"
+  ],
+  "dependency_mode": "Python only inside services/agri-data-service/src/agri_data_service (new OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS entries, new ingest/ and execution/historical_* modules). No Alembic revision for any phase: agri.data_source.key is a free-text unique column registered by DML at ingest/backfill time, not DDL, and the ensemble phase's open schema question is answered inside that same no-DDL ceiling or explicitly deferred. New infra/cron-flood-discharge/, infra/cron-air-quality/, infra/cron-ensemble-forecast/ directories follow the existing infra/cron-*/railway.json pattern (railway.json only, reusing infra/cron-ingest/Dockerfile's shared image). Two things happen outside this repository and outside any agent's authority: unregistering the PlantGeo-ERA5-PNW-backfill Windows scheduled task, and the Railway dashboard Root Directory + config-as-code path pair for each new cron service, which must change together the way plantgeo-ingest-cron's did. Every dataset addition is a new plan file, a new release_set.logical_key, and a new manifest_checksum -- never an edit to an existing plan.",
+  "activation_gate": "Phase 0 lands first: it edits the same OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS block in historical_open_meteo.py that Phase 1's vapour_pressure_deficit_max entry lands in, and its CDS retirement removes the scheduled task and plan files that a Phase-1-only reading of the repo would otherwise still show as live. Phase 1 is verified (3.32 kPa, live) and ready to ship the moment Phase 0 merges -- it needs no probe. Phases 2 through 4 each open with a live-endpoint probe confirming field names and response shape, the same discipline that produced the 3.32 kPa figure, before any checksummed plan is authored -- an unverified variable name in a plan costs a full re-fetch to correct, not an edit. Phase 4 additionally carries an open schema question (whether an ensemble member is a quantile reduction into the existing forecast_receipt/forecast_value quantile columns, or a raw per-member row needing new storage) that the owner must answer before backfill authoring, though the probe and the cron wiring do not wait on it. Phases 1 through 4 touch disjoint files after Phase 0 and may ship in any order or in parallel."
+}
