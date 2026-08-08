@@ -1,0 +1,73 @@
+# Session passoff — 2026-08-07
+
+Clean slate. `main` is at `4dfedd6`, pushed, working tree empty.
+
+## What just landed
+
+Every backfill now runs on `agri.job_*`, a durable execution ledger that was already migrated to
+production and had never been used. One lane → one `JobRun` → one work item per archive window,
+with fenced leases and a per-slice time budget so a one-shot cron container works, checkpoints and
+exits. This replaces a bash driver that skipped 169 failed windows and reported success.
+
+Also: a cross-stream completeness + validity report, the NWIS sentinel fix, watershed persistence,
+and the legend/time-slider frontend work.
+
+**Full detail:** [`docs/reports/backfill-passoff-2026-08-07.md`](reports/backfill-passoff-2026-08-07.md)
+**Operator guide:** [`docs/runbooks/durable-backfill-lanes.md`](runbooks/durable-backfill-lanes.md)
+
+## Where things stand in production
+
+| | |
+|---|---|
+| firms-archive lane | 1,882 windows — 93 done, 1,789 queued, 0 dead-lettered |
+| streamflow-archive lane | 48 windows — 10 done, 38 queued, 0 dead-lettered |
+| Deploy | The push triggers Railway; it applies drizzle `0017` + `0018` and ships the sentinel fix. **Check it went green.** |
+
+## Do these first
+
+1. **Railway dashboard** — create three cron services from `infra/cron-archive-firms/`,
+   `infra/cron-archive-streamflow/`, `infra/cron-validate/`. Root Directory `/` **and**
+   `dockerfilePath` must be set together. Env: `INGEST_BBOX`,
+   `INGEST_MAX_SOURCE_RECORDS=50000`, the `LOCAL_SOURCE_LOADER_DATABASE_URL` / `DATABASE_URL`
+   pair, plus `NASA_FIRMS_KEY` on the FIRMS one. **Until this is done nothing walks the archive
+   except the laptop.**
+2. **Then cut over** — stop and unregister the four Windows scheduled tasks (commands in §8 of
+   the full passoff), and delete `durable-archive-backfill.sh` + `firms-archive-full.sh`. They
+   were committed as-is because they are still running; do not edit them while they run.
+3. **After the deploy is green**, run the reviewed `DELETE` in
+   [`docs/runbooks/usgs-sentinel-cleanup.md`](runbooks/usgs-sentinel-cleanup.md) — 689 rows serving
+   `-999999` as a real flow. Deploy first or the cron rewrites them in 30 minutes.
+
+## Useful commands
+
+```bash
+cd services/agri-data-service
+./run-backfill.sh jobs-status                                  # is it healthy
+./run-backfill.sh jobs-plan-lane      --lane firms-archive     # idempotent
+./run-backfill.sh jobs-reconcile-lane --lane firms-archive     # dry run; --apply to settle
+./run-backfill.sh jobs-run            --lane firms-archive     # one bounded slice
+./run-backfill.sh validate-streams --bbox "-125,42,-111,49" --format markdown --output ../../docs/reports/x.md
+```
+
+There is also a saved workflow: `.claude/workflows/validate-data-streams.js`.
+
+## Still open
+
+- **Admin boundaries** and the **wildfire risk-zone layer** — scoped, never started.
+- **Watershed render path** still proxies; needs a Martin redeploy before `watershed_tiles` can
+  join `DYNAMIC_TILE_SOURCE_IDS` (steps in `src/lib/map/sources.ts`).
+- **3,185 rows outside `INGEST_BBOX`** (soil-survey, drought) — retire or widen the bbox. Also
+  set `INGEST_BBOX` in `services/agri-data-service/.env` so local runs evaluate that check.
+- **20-day USDM gap** 2026-02-11 → 2026-03-02; needs an `ingest-drought-history` pass.
+- **`durable-backfill.sh`** (plan-based ERA5/Open-Meteo lanes) is still its own mechanism — both
+  its lanes are complete, so it is the last non-uniform loader but not urgent.
+- **No real-DB tests for `reconcile.py` / `validation.py`.** Unit tests stub `AsyncSession`, so
+  bind-type errors reach production — one already did. `tests/test_jobs_protocol_agri_db.py` is
+  the pattern to copy (`podman start agri-sweep-db`, port 5443).
+
+## Settled — don't re-open
+
+DBOS Transact was evaluated against its source and declined: recovery is gated on an
+`app_version` source hash that strands in-flight work on any deploy, its system database is a
+sync psycopg3 engine inside our all-asyncio service and self-migrates at launch, and its
+checkpoints can't answer "which windows have landed". Reasoning is in the runbook.
