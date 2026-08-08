@@ -18,7 +18,7 @@ vi.mock("@/lib/server/db", () => ({
 
 import {
   getPublishedWeatherForBbox,
-  isCompleteWeatherObservation,
+  isRenderableWeatherObservation,
   parseBbox,
 } from "@/lib/server/services/environmental-read-model";
 
@@ -50,22 +50,37 @@ describe("parseBbox", () => {
   });
 });
 
-describe("isCompleteWeatherObservation", () => {
-  it("requires every rendered field to be measured", () => {
+describe("isRenderableWeatherObservation", () => {
+  it("accepts a complete wind pair or a temperature, and nothing less", () => {
     expect(
-      isCompleteWeatherObservation({
+      isRenderableWeatherObservation({
         windSpeed: 3,
         windDirection: 180,
         temperature: 20,
-        humidity: 55,
       })
     ).toBe(true);
+    // Temperature alone draws the temperature dots.
     expect(
-      isCompleteWeatherObservation({
+      isRenderableWeatherObservation({
         windSpeed: null,
         windDirection: 180,
         temperature: 20,
-        humidity: 55,
+      })
+    ).toBe(true);
+    // A wind pair alone draws the arrows.
+    expect(
+      isRenderableWeatherObservation({
+        windSpeed: 3,
+        windDirection: 180,
+        temperature: null,
+      })
+    ).toBe(true);
+    // Half a wind pair and no temperature draws nothing.
+    expect(
+      isRenderableWeatherObservation({
+        windSpeed: 3,
+        windDirection: null,
+        temperature: null,
       })
     ).toBe(false);
   });
@@ -100,7 +115,7 @@ describe("getPublishedWeatherForBbox", () => {
         humidity: 60,
       }),
       row({
-        // missing humidity -- must be dropped, not zero-filled
+        // missing humidity -- tooltip-only, so it renders with humidity null
         geometry: { type: "Point", coordinates: [-121, 46] },
         observedAt,
         windSpeed: 5,
@@ -108,11 +123,20 @@ describe("getPublishedWeatherForBbox", () => {
         temperature: 17,
         humidity: null,
       }),
+      row({
+        // no drawable signal at all -- dropped, never zero-filled
+        geometry: { type: "Point", coordinates: [-120, 47] },
+        observedAt,
+        windSpeed: 6,
+        windDirection: null,
+        temperature: null,
+        humidity: 40,
+      }),
     ]);
 
     const result = await getPublishedWeatherForBbox(PNW_BBOX);
 
-    expect(result).toHaveLength(1);
+    expect(result).toHaveLength(2);
     expect(result[0]).toMatchObject({
       lat: 45,
       lon: -122,
@@ -120,6 +144,11 @@ describe("getPublishedWeatherForBbox", () => {
       windDirection: 270,
       temperature: 18,
       humidity: 60,
+    });
+    expect(result[1]).toMatchObject({
+      lat: 46,
+      lon: -121,
+      humidity: null,
     });
   });
 

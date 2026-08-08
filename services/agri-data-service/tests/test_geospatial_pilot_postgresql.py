@@ -4,6 +4,14 @@ Local-dev-only: the plan file's ``capture_base`` (``.agri-local-runs/``) is
 gitignored, so this test only runs where that local capture already exists.
 There is no CI for this suite; it is operator-run via pytest against a live
 PostgreSQL 16 instance.
+
+Gated on ``AGRI_TEST_DATABASE_URL`` plus the local capture, which a fresh clone
+does not have. It used to carry the ``agri_db_manual_grant`` marker because it
+ran the writer under a ``SET LOCAL ROLE plantgeo_loader`` custody scope that
+needed an operator-run grant runbook first; the 2026-08-08 owner ruling retired
+role management and the writer now runs under the owner credential like every
+other command. The role-scoping and ``has_table_privilege`` assertions went with
+it; every functional assertion below is unchanged.
 """
 
 # ruff: noqa: PLR2004
@@ -45,44 +53,27 @@ async def _protected_state(connection: Any) -> dict[str, int]:
     return result
 
 
-@pytest.mark.agri_db_manual_grant
 @pytest.mark.asyncio
-async def test_pilot_writer_is_loader_scoped_idempotent_and_nonpublishing(agri_db_async_dsn: str) -> None:
+async def test_pilot_writer_is_idempotent_and_nonpublishing(agri_db_async_dsn: str) -> None:
     service_root = Path(__file__).resolve().parents[1]
     repository_root = service_root.parents[1]
     plan_path = service_root / "plans" / "boise-intervention-capture-v1.json"
     capture_base = repository_root / ".agri-local-runs" / "north-america-intervention"
+    if not capture_base.is_dir():
+        pytest.skip(f"local pilot capture is absent: {capture_base} (gitignored; not in a fresh clone)")
     engine = create_async_engine(agri_db_async_dsn)
     try:
-        async with engine.begin() as connection:
-            granted = await connection.scalar(
-                text("SELECT has_table_privilege('plantgeo_loader', 'agri.normalized_source_feature', 'INSERT')")
-            )
-            if not granted:
-                pytest.skip(
-                    "agri.normalized_source_feature grants for plantgeo_loader are missing; run "
-                    "infra/local-warehouse/grant-resolution-aware-loader.sql against this database first"
-                )
+        async with engine.connect() as connection:
             before = await _protected_state(connection)
-            await connection.execute(text("SET LOCAL ROLE plantgeo_loader"))
-            assert await connection.scalar(text("SELECT current_user")) == "plantgeo_loader"
-            assert not await connection.scalar(
-                text("SELECT has_table_privilege(current_user, 'agri.source_release', 'UPDATE')")
-            )
-            assert not await connection.scalar(
-                text("SELECT has_table_privilege(current_user, 'agri.artifact', 'UPDATE')")
-            )
 
         async with AsyncSession(bind=engine, expire_on_commit=False) as session:
             async with session.begin():
-                await session.execute(text("SET LOCAL ROLE plantgeo_loader"))
                 first = await ingest_boise_intervention_pilot(
                     session,
                     plan_path=plan_path,
                     capture_base=capture_base,
                 )
             async with session.begin():
-                await session.execute(text("SET LOCAL ROLE plantgeo_loader"))
                 second = await ingest_boise_intervention_pilot(
                     session,
                     plan_path=plan_path,

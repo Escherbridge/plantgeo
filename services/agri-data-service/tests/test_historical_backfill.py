@@ -572,13 +572,15 @@ def test_nasa_finalization_release_plan_is_durable_and_never_overwritten(tmp_pat
         )
 
 
-def test_historical_nasa_cli_fails_closed_without_the_dedicated_local_loader(
+def test_historical_nasa_cli_fails_closed_without_any_database_dsn(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     plan_path = tmp_path / "historical-nasa.json"
     plan_path.write_text(_historical_plan().model_dump_json(), encoding="utf-8")
+    # The loader override falls back to DATABASE_URL since 2026-08-08, so both must be absent.
     monkeypatch.setattr(settings, "local_source_loader_database_url", None)
+    monkeypatch.setattr(settings, "database_url", None)
 
     result = CliRunner().invoke(cli, ["historical-nasa-backfill", "--plan", str(plan_path)])
 

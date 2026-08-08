@@ -271,7 +271,6 @@ _MAX_RUN_PLAN_KEYS = 10_000
 _MAX_RUN_PLAN_KEY_LENGTH = 500
 
 # Runtime query SQL lives in sql/cli/, loaded once per process; see src/agri_data_service/sql/AGENTS.md.
-_FORECAST_MV_REFRESH_ELIGIBILITY = text(load_query_sql("cli/forecast_mv_refresh_eligibility.sql"))
 _MATERIALIZE_FORECAST_ITERATION = text(load_query_sql("cli/materialize_forecast_iteration.sql"))
 _FORECAST_ITERATION_SUMMARY = text(load_query_sql("cli/forecast_iteration_summary.sql"))
 _RECONCILE_FORECAST_ITERATION_ACTUALS = text(load_query_sql("cli/reconcile_forecast_iteration_actuals.sql"))
@@ -445,15 +444,14 @@ def forecast_refresh_ml_daily() -> None:
 
 
 async def _forecast_refresh_ml_daily() -> int:
+    # No capability-role assumption since 20260808_0019 retired the family: the refresher
+    # function and the matview it refreshes now belong to the owner credential that calls
+    # them, so the refresh is an ordinary owner statement. See alembic/versions/20260808_0019.
     database_url = settings.require_forecast_mv_refresh_database_url()
     async with forecast_mv_refresh_session(database_url) as session, session.begin():
-        eligibility = await session.execute(_FORECAST_MV_REFRESH_ELIGIBILITY)
-        if eligibility.scalar_one_or_none() is not True:
-            raise ValueError(
-                "forecast MV refresh requires a dedicated NOINHERIT, non-elevated, non-owner "
-                "operator login whose only role membership is plantgeo_forecast_mv_refresher"
-            )
-        await session.execute(text("SET LOCAL ROLE plantgeo_forecast_mv_refresher"))
+        # Non-concurrent REFRESH takes ACCESS EXCLUSIVE on the matview; the timeout is the
+        # same bound every other CLI verb sets so a wedged refresh cannot hold that lock.
+        await session.execute(text("SET LOCAL statement_timeout = '120s'"))
         await session.execute(text("SELECT agri.refresh_forecast_ml_daily_serving()"))
         result = await session.execute(text("SELECT count(*) FROM agri.mv_forecast_ml_daily_serving"))
         return int(result.scalar_one())

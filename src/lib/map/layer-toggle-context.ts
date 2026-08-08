@@ -14,6 +14,7 @@ import {
   type LayerToggleId,
 } from "@/lib/map/layer-registry";
 import { DEFAULT_LAYER_OPACITY } from "@/lib/map/layer-opacity";
+import { useClimateStore } from "@/stores/climate-store";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
 import { useSoilStore } from "@/stores/soil-store";
@@ -29,6 +30,10 @@ import {
 import { useVegetationStore } from "@/stores/vegetation-store";
 import { resolveGibsNdviDate } from "@/lib/vegetation";
 import type { SoilFieldDepth, SoilFieldMeasure } from "@/lib/environmental/soil-field";
+import type {
+  AirTemperatureVariant,
+  ClimateFieldSignalId,
+} from "@/lib/environmental/climate-field";
 import type { SoilProperty } from "@/components/map/layers/SoilLayer";
 import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
 import type {
@@ -405,4 +410,28 @@ export function useSoilDisplayMode(): SoilDisplayMode {
   const fieldDepth = useSoilStore((state) => state.fieldDepth);
 
   return useMemo(() => ({ property, fieldDepth }), [property, fieldDepth]);
+}
+
+/**
+ * The climate layer's selected mode, as the renderer consumes it.
+ *
+ * A signal and a statistic, never a date: the NASA POWER field takes its day from
+ * `useDebouncedMapDay` like every other warehouse-backed feed.
+ */
+export interface ClimateDisplayMode {
+  signal: ClimateFieldSignalId;
+  airTemperatureVariant: AirTemperatureVariant;
+}
+
+/**
+ * Read-only view of the climate store; the panel keeps the store for its setters.
+ *
+ * Memoized because `LayerManager` sits above ~9 layer children and would otherwise hand
+ * `ClimateFieldLayer` a fresh object on every unrelated re-render.
+ */
+export function useClimateDisplayMode(): ClimateDisplayMode {
+  const signal = useClimateStore((state) => state.signal);
+  const airTemperatureVariant = useClimateStore((state) => state.airTemperatureVariant);
+
+  return useMemo(() => ({ signal, airTemperatureVariant }), [signal, airTemperatureVariant]);
 }

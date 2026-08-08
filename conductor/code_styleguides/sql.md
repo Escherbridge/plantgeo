@@ -72,7 +72,9 @@ procedure, and trigger. PostgreSQL 16 + PostGIS + TimescaleDB. It inherits
   and backed by an appropriate index; verify the plan for hot paths with
   `EXPLAIN (ANALYZE, BUFFERS)`. Use GiST for geometry, btree for lookups/ordering.
 - Materialized serving aggregates are created `WITH NO DATA` and refreshed only
-  through the reviewed refresher role — never auto-refreshed on write.
+  through the explicit operator refresh command — never auto-refreshed on write.
+  (Until `20260808_0019` this named a reviewed refresher *role*; the matview and
+  its `SECURITY DEFINER` refresher now belong to the owner credential.)
 - Apply a transaction-local `statement_timeout` (120 s) to direct SQL runbooks,
   matching the CLI/procedure convention.
 
@@ -154,9 +156,16 @@ there breaks the parity test's assumption that every file is an object definitio
 
 ## Privileges & safety
 
-- Grant least privilege per role; the migration creates no unreviewed grants.
-  Loader/refresher/iteration/reader roles receive only the tables and verbs they
-  need, and never publication or recommendation surfaces.
+- **Role management is retired (2026-08-08 owner ruling, `20260808_0019`).** Do
+  not `CREATE ROLE`, grant a capability role, or write a migration that assumes
+  the retired `plantgeo_loader`/`plantgeo_forecast_*`/`plantgeo_local_*` family;
+  every application path connects with the single owner credential. A migration
+  still creates no unreviewed grants, and `REVOKE ... FROM PUBLIC` on
+  `SECURITY DEFINER` functions stays mandatory — that is object hardening, not
+  role management.
+- Database-level immutability, finalization, and evaluation-only invariants now
+  carry the weight privilege separation used to: enforce them with constraints,
+  triggers, and `SECURITY DEFINER` search-path pinning rather than with grants.
 - All local credentials live in ignored env files, never in tracked SQL or docs.
 
 ## Review checklist
@@ -168,7 +177,8 @@ there breaks the parity test's assumption that every file is an object definitio
 3. Are checksummed outputs deterministic (pinned GUCs, stable order)?
 4. Are evaluation-only artifacts kept out of serving/publication?
 5. Is every serving query release-pinned, time-honest, bounded, and indexed?
-6. Do grants stay least-privilege, with no publication/recommendation exposure?
+6. Does the change create or assume no database role, and does every
+   `SECURITY DEFINER` function revoke `PUBLIC` execute and pin its search path?
 7. Is every non-trivial runtime query in its own `sql/<package>/*.sql` file, loaded
    through `load_query_sql` with bound parameters, and does its header name a
    purpose, its loading module, and its parameters?

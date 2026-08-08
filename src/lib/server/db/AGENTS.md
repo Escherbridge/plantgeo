@@ -352,8 +352,9 @@ by the client filter, which shows it at every date rather than hiding it.
 
 ## §soil-field-view
 
-The ERA5-Land serving surface for soil moisture **and** soil temperature. Files:
-`drizzle/0016_soil_field.sql` (`geo.soil_field_observation`, `geo.soil_field`), read by
+The ERA5-Land serving surface for soil moisture, soil temperature **and** vapor pressure
+deficit. Files: `drizzle/0016_soil_field.sql` (`geo.soil_field_observation`,
+`geo.soil_field`) and `drizzle/0019_soil_field_vpd.sql` (the widened view), read by
 `getPublishedSoilField` in
 `src/lib/server/services/environmental-read-model.ts`. Supersedes 0014's
 `geo.soil_moisture_observation` / `geo.soil_moisture_field`, which covered moisture only.
@@ -371,11 +372,14 @@ place to forget.
 The list is enumerated rather than prefix-matched on purpose. A signal arriving in an
 unexpected unit — Kelvin instead of Celsius — matches nothing and is invisible here, rather
 than served beside comparable values and coloured as if it were one of them. A signal absent
-from the list is likewise absent: this same ERA5-Land lane also carries
-`vapour_pressure_deficit`, so a fallback `ELSE 'temperature'` would hand the first person who
-widens the gate a silently mislabelled signal drawn on the temperature ramp. `is_observed`
-and `quality_flag = 'accepted'` are applied HERE rather than at each call site, so no reader
-can serve a rejected or imputed value as a measurement.
+from the list is likewise absent: `vapor_pressure_deficit` rode this lane unlisted from
+2026-08-06 until 0019 widened the gate with `('vapor_pressure_deficit', 'vpd', 'kPa')`, and
+a fallback `ELSE 'temperature'` would have served it silently mislabelled on the temperature
+ramp for those two days. 0019 is the widening 0016 predicted: one `VALUES` row, a
+`CREATE OR REPLACE` (legal because the output column list is unchanged, unlike 0016's
+rename-and-relabel), and nothing else — `geo.soil_field` parameterizes the signal and has no
+list to widen. `is_observed` and `quality_flag = 'accepted'` are applied HERE rather than at
+each call site, so no reader can serve a rejected or imputed value as a measurement.
 
 Verified against a stand-in schema on 16.9: the joined form returns exactly the row set the
 double-enumerated form did (3 moisture + 4 temperature signals kept; wrong-unit,
@@ -409,3 +413,51 @@ then one index search per cell on the existing
 keyed on `signal_name` without regard to *which* signal, so the temperature signals ride it
 exactly as the moisture ones do. Building an index here would lock a table the live backfill
 is writing to, for no measured gain.
+
+## §climate-field-view
+
+The NASA POWER serving surface. File: `drizzle/0020_climate_field.sql`
+(`geo.climate_field_observation`), read by `getPublishedClimateField` in
+`src/lib/server/services/environmental-read-model.ts`. Same governed-`VALUES` pattern as
+§soil-field-view above, with the same guarantees and the same widening story: one joined list
+of reviewed `(signal_name, signal, normalized_unit)` triples gates the rows, labels them and
+fixes the accepted unit, so a Kelvin temperature or an mm/hour precipitation matches nothing
+rather than being served on a ramp calibrated for something else.
+
+### The lane gate is the source key, not the support key
+
+`WHERE source.key = 'nasa-power-daily'`. The support key does **not** discriminate: this lane's
+is the generic `surface`, which the ERA5-Land writer also emits, so a signal name shared
+between the two lanes would otherwise be served here — on this lane's ramps, against this
+lane's 0.5° grid predicate. The view already joins `data_source` for provenance, so the gate is
+free. `climate-field-sql-contract.test.ts` seeds an ERA5-sourced row carrying a governed
+climate signal name and asserts the view refuses it.
+
+### A second view, not a widened first one
+
+`geo.soil_field_observation` is the ERA5-Land lane: one 0.25° lattice, one support key
+(`era5-land-0.1deg`), and `geo.soil_field()` keyed to it. NASA POWER rides a different lattice
+(`nasa-power-0.5-degree`, 397 cells), a different support key (`surface`) and a different
+source (`nasa-power-daily`), and it is served at ONE tier with no isobands. Folding both lanes
+into one view would make every reader carry a grid predicate to tell them apart, and would put
+an aggregation function's vocabulary in front of a lane that has no aggregation function.
+
+### It publishes `observation_id` and `release_retrieved_at`, and the reader needs both
+
+This lane has DUPLICATES: ~47 k `(cell_id, signal_name, observed_at)` keys carry two rows from
+overlapping archive releases. The reader resolves them with `DISTINCT ON (cell_id)` ordered by
+`release_retrieved_at DESC, observation_id DESC` — newest release wins, id breaks the tie.
+Neither column is derivable downstream, so the view has to carry them; without them the same
+viewport paints differently between runs depending on planner order. The soil-field view needs
+no equivalent because its lane has no overlapping releases.
+
+`DROP VIEW IF EXISTS` + `CREATE VIEW`, so a re-run is a no-op and a database carrying a
+hand-applied earlier shape is replaced rather than rejected on a column-list mismatch.
+
+### Still not a tile function, and still no new index
+
+Same as above: `auto_publish: false` in `infra/martin/martin.yaml` means nothing here joins a
+composite source and no tile server needs restarting. Reads drive from `agri.spatial_cell`
+(`grid_name` + bbox on the GiST index) and probe one day per cell on the existing
+`ix_signal_observation_cell_time_signal`, which is the path measured at 27 ms PNW-wide on the
+ERA5-Land lattice — four times this one's cell count.

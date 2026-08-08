@@ -15,21 +15,27 @@ description: >
 
 Service root: `services/agri-data-service/`. Run everything from there.
 
-## The DSN contract — read this before any command
+## The DSN contract — one credential, one DSN
 
-Every `agri-cli` verb that writes needs **two** variables, and they must differ:
+Since the 2026-08-08 role teardown there is nothing clever here. `DATABASE_URL`
+alone is enough for every `agri-cli` verb:
 
 ```bash
-DATABASE_URL="postgresql+asyncpg://unused:unused@127.0.0.1:1/unused" \
-LOCAL_SOURCE_LOADER_DATABASE_URL="postgresql+asyncpg://<user>:<pw>@<host>:<port>/plantgeo" \
-  uv run agri-cli <verb>
+uv run agri-cli <verb>   # reads DATABASE_URL from services/agri-data-service/.env
 ```
 
-The dummy `DATABASE_URL` is required **locally only**. `Settings` reads
-`services/agri-data-service/.env`, which supplies a real `DATABASE_URL`, and the
-validator rejects a loader URL equal to it
-(`"LOCAL_SOURCE_LOADER_DATABASE_URL must not reuse DATABASE_URL"`). On Railway there
-is no `.env` in the image, so `DATABASE_URL` must simply be **absent** there.
+`LOCAL_SOURCE_LOADER_DATABASE_URL` (and `FORECAST_MV_REFRESH_DATABASE_URL`,
+`FORECAST_ITERATION_DATABASE_URL`) are optional **overrides** for pointing one
+command at a different database. Each falls back to `DATABASE_URL` when unset and
+may be set to the same string; a blank or whitespace-only value counts as unset.
+No host, port, database name, or login is validated. Two things still fail: having
+neither variable set, and a DSN that is not a complete `postgresql+asyncpg://` URL
+(scheme, username, host, port, and database name all present).
+
+The old dummy-`DATABASE_URL` dance is gone — `run-backfill.sh` no longer does it,
+and the "must not reuse DATABASE_URL" / "DATABASE_URL is never a loader fallback"
+errors no longer exist. Nothing in config will catch a wrong target database; that
+is now the operator's responsibility.
 
 ## Verifying results — there is no psql on this machine
 
@@ -138,14 +144,18 @@ Everything else is keyless and open: Sentinel-2 (Earth Search), NASA POWER,
 USGS NWIS, USDM, MTBS (USDA ArcGIS), USDA Soil Data Access, HydroSHEDS,
 ISRIC SoilGrids. `NASA_FIRMS_KEY` is used by the FIRMS path only.
 
-**The CDS gotcha:** `_require_cds_credentials()` reads `os.environ` **directly**.
-`Settings` uses pydantic-settings' `env_file`, which populates the settings object and
-**not** `os.environ`, and there is no CDS field in `Settings`. Listing them in `.env`
-is therefore *inert on its own* — export them:
+**The CDS gotcha is fixed (2026-08-08).** `_require_cds_credentials()` used to read
+`os.environ` **only**, while pydantic-settings' `env_file` populates the `Settings`
+object and never `os.environ` — so listing the pair in `.env` was inert and every
+operator had to `set -a; . ./.env; set +a` first. A missing export then surfaced as
+a refusal that reads like a licence problem. `Settings` now carries `cdsapi_url` and
+`cdsapi_key`, and resolution is: **real `CDSAPI_URL`/`CDSAPI_KEY` in the process
+environment win; otherwise `.env` is used.** Putting them in
+`services/agri-data-service/.env` is enough. A blank or whitespace-only export is
+treated as unset rather than shadowing `.env`.
 
-```bash
-set -a; . ./.env; set +a
-```
+Still true: the key only works once the ERA5-Land dataset licence is accepted in a
+browser for that Copernicus account. No export, retry, or plan edit clears that.
 
 ## Blocked pipelines — know which kind of blocked
 

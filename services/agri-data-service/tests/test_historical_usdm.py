@@ -287,10 +287,12 @@ def test_fetch_usdm_retries_rate_limit_and_requires_zip_content_type() -> None:
     assert attempts == EXPECTED_RETRY_ATTEMPTS
 
 
-def test_usdm_cli_fails_closed_without_local_loader_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_usdm_cli_fails_closed_without_any_database_dsn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plan_path = tmp_path / "usdm-plan.json"
     plan_path.write_text(_plan().model_dump_json(), encoding="utf-8")
+    # The loader override falls back to DATABASE_URL since 2026-08-08, so both must be absent.
     monkeypatch.setattr(settings, "local_source_loader_database_url", None)
+    monkeypatch.setattr(settings, "database_url", None)
 
     result = CliRunner().invoke(cli, ["historical-usdm-backfill", "--plan", str(plan_path)])
 

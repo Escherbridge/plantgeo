@@ -4,7 +4,11 @@ import { useMemo } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLayerStore } from "@/stores/layer-store";
-import { useLayerVisibility, useSoilDisplayMode } from "@/lib/map/layer-toggle-context";
+import {
+  useClimateDisplayMode,
+  useLayerVisibility,
+  useSoilDisplayMode,
+} from "@/lib/map/layer-toggle-context";
 import { useVegetationStore } from "@/stores/vegetation-store";
 import {
   activeLegendEntries,
@@ -26,6 +30,7 @@ export function Legend() {
   const toggleLegend = useLayerStore((state) => state.toggleLegend);
   const layerVisibility = useLayerVisibility();
   const soilDisplayMode = useSoilDisplayMode();
+  const climateDisplayMode = useClimateDisplayMode();
   // The two vegetation display fields are read from the store directly rather than through
   // useVegetationDisplayMode: that hook also projects the slider's settled day, which costs
   // a store subscription and a settle timer per mount and moves nothing on this card.
@@ -38,8 +43,17 @@ export function Legend() {
         vegetationMode,
         ndviMode,
         soilFieldDepth: soilDisplayMode.fieldDepth,
+        climateFieldSignal: climateDisplayMode.signal,
+        climateFieldVariant: climateDisplayMode.airTemperatureVariant,
       }),
-    [layerVisibility, vegetationMode, ndviMode, soilDisplayMode.fieldDepth]
+    [
+      layerVisibility,
+      vegetationMode,
+      ndviMode,
+      soilDisplayMode.fieldDepth,
+      climateDisplayMode.signal,
+      climateDisplayMode.airTemperatureVariant,
+    ]
   );
 
   // The map opens with every layer off, so the card earns its corner only once something

@@ -80,3 +80,44 @@ against a disposable DB → parity test green → drizzle migration for anything
   revision-leakage fix; a schema-version bump, not a patch.
 - `forecast_quality_policy` seeding — `--persist` requires a policy key and there is
   deliberately no seeder; inventing pass thresholds is fabricating governance.
+
+---
+
+## Resolution (2026-08-08)
+
+**The owner chose neither Option A nor Option B: the capability-role family is torn down.**
+Not a new `plantgeo_forecast_trainer` (A), not a widened `plantgeo_forecast_writer` (B) —
+`plantgeo_forecast_writer`, `_publisher`, `_reader`, `_mv_refresher` and
+`_mv_refresh_owner` are dropped, and every application connects with the single owner
+credential. Stated as *"I don't want to maintain any role management code, or the least amount
+possible"*, extending the settled 2026-08-03 "no custom DB roles" ruling to the family that
+predated it. Implemented by
+`services/agri-data-service/alembic/versions/20260808_0019_retire_forecast_capability_roles.py`.
+
+The framing above ("the forecast-role family … is load-bearing (the readiness probe asserts its
+privilege matrix)") did not survive verification. On a head-migrated database all four capability
+roles have **zero members**, no DSN authenticates as any of them, and all four **lack `USAGE` on
+schema `agri`** — `20260803_0018` retired the owner roles through which they reached the schema,
+so every grant they held has been unreachable since. The readiness probe was asserting a matrix
+that governed nobody; it is deleted rather than re-pointed, along with
+`sql/routes/health_forecast_role_contract.sql` and `sql/routes/health_receiver_role_boundary.sql`.
+`/ready` keeps the extension and pinned-revision probes.
+
+**This moots two of the "uncontroversial items" above rather than implementing them:**
+
+- **Item 1 (local loader role grants).** Moot: the path is deleted, not fixed.
+  `infra/local-warehouse/create-loader-role.sql` is gone and the role-name assertion in
+  `Settings.require_local_source_loader_database_url` is removed, so any login is accepted at an
+  allowed host/port. Local work targets production through the proxy DSN. `plantgeo_loader`
+  itself survives in production as a plain login — the deployed cron ingest and the in-flight
+  archive walks authenticate as it right now — but no repository code manages or requires it.
+  `LOCAL_SOURCE_LOADER_DATABASE_URL` and its refusal to fall back to `DATABASE_URL` are
+  unchanged, so those running jobs do not notice this change.
+- **Item 2 (`receiver_writer` dashboard grants).** Moot: with one credential there is no
+  restricted receiver login to grant `SELECT` on `agri.job_work_item` / `job_attempt` /
+  `job_checkpoint` to, and `PUBLICATION_TABLE_PRIVILEGES` — the contract tuple this item asked to
+  add rows to — no longer exists. `/ops/backfill` sees the job ledger because the credential
+  reading it owns the schema.
+
+Items 3 (claim-path index) and 4 (`consecutive_parks`) are untouched by this resolution and
+remain open on their own merits.

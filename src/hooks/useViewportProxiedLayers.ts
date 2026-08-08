@@ -21,6 +21,10 @@ import {
   type SoilFieldDepth,
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
+import type {
+  AirTemperatureVariant,
+  ClimateFieldSignalId,
+} from "@/lib/environmental/climate-field";
 
 /** Zoom a viewport is read at before the map has reported one of its own. */
 const DEFAULT_ZOOM = 8;
@@ -39,7 +43,7 @@ const WATERSHEDS_STALE_TIME_MS = 60 * 60 * 1000;
 const SOIL_SURVEY_STALE_TIME_MS = 24 * 60 * 60 * 1000;
 
 /** One retry, not react-query's default three — each attempt re-pays the full upstream cost. */
-const PROXIED_RETRY_COUNT = 1;
+export const PROXIED_RETRY_COUNT = 1;
 
 /**
  * ERA5-Land: a reanalysis archive day never changes once published, and the answer is
@@ -47,6 +51,13 @@ const PROXIED_RETRY_COUNT = 1;
  * 15-minute observation feeds'. The IndexedDB persister backs it beyond the session.
  */
 const SOIL_FIELD_STALE_TIME_MS = 60 * 60 * 1000;
+
+/**
+ * NASA POWER: an observation archive day never changes once published, and the answer is at
+ * most 397 stored cells, so the hour matches the ERA5-Land fields' rather than the 15-minute
+ * observation feeds'. The IndexedDB persister backs it beyond the session.
+ */
+const CLIMATE_FIELD_STALE_TIME_MS = 60 * 60 * 1000;
 
 /** The viewport as every viewport-scoped query keys on it. */
 export interface ViewportBounds {
@@ -161,6 +172,40 @@ export function useSoilFieldQuery(
     {
       enabled: enabled && requested !== null && !isWithheld(toggleId),
       staleTime: SOIL_FIELD_STALE_TIME_MS,
+      retry: PROXIED_RETRY_COUNT,
+    }
+  );
+}
+
+/** Everything that keys a climate read; all of it must match across the two callers. */
+export interface ClimateFieldQueryOptions extends ProxiedQueryOptions {
+  /** Which quantity to read. */
+  signal: ClimateFieldSignalId;
+  /** Which daily statistic; only `air-temperature` varies, the rest ignore it server-side. */
+  variant: AirTemperatureVariant;
+  /** The slider's settled day, or undefined at the server's today. */
+  date: string | undefined;
+}
+
+/**
+ * One NASA POWER climate field for the viewport, read from the warehouse.
+ *
+ * No `zoom`, unlike `useSoilFieldQuery`: the lane has one serving tier, so zoom is not part of
+ * the answer and must not be part of the key. Every other input here IS part of the key, so
+ * the map and the panel must pass the same three -- both take `bbox` from the one
+ * `useViewportBounds()` derivation, `date` from `useDebouncedMapDay`, and `signal`/`variant`
+ * from the climate store.
+ */
+export function useClimateFieldQuery(
+  bbox: string | null | undefined,
+  { enabled, signal, variant, date }: ClimateFieldQueryOptions
+) {
+  const requested = bbox ?? null;
+  return trpc.environmental.getClimateField.useQuery(
+    { bbox: requested ?? NO_VIEWPORT_BBOX, signal, variant, date },
+    {
+      enabled: enabled && requested !== null && !isWithheld("climate-field"),
+      staleTime: CLIMATE_FIELD_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
     }
   );

@@ -70,21 +70,24 @@ allowed to contact the provider.
 
 ## One-time local warehouse bootstrap
 
-The database owner must perform these gates manually; neither the application
-nor the scheduler may enable extensions or create privileged roles.
+The database owner must perform the extension gate manually; neither the
+application nor the scheduler may enable extensions.
 
 1. Run `infra/local-warehouse/enable-extensions.sql` against the healthy
    Podman database as `plantgeo_owner`.
 2. Apply Alembic through revision `20260720_0004` with the owner/migration DSN.
-3. Run `infra/local-warehouse/create-loader-role.sql` as the owner and store
-   the resulting `plantgeo_loader` DSN only in the local operator environment
-   as `LOCAL_SOURCE_LOADER_DATABASE_URL`.
-4. Verify that `postgis`, `timescaledb`, `vector`, and `pgcrypto` are installed,
-   that the `agri` tables exist, and that the loader role has no database/schema
-   create privilege.
+3. Store the warehouse DSN in the local operator environment as `DATABASE_URL`,
+   or as `LOCAL_SOURCE_LOADER_DATABASE_URL` to override it for loader commands
+   only. There is no role-creation step: the 2026-08-08 teardown
+   (`20260808_0019`) deleted every role bootstrap script under
+   `infra/local-warehouse/`.
+4. Verify that `postgis`, `timescaledb`, `vector`, and `pgcrypto` are installed
+   and that the `agri` tables exist.
 
-The loader role receives only the source-lineage and append-only historical
-tables. It has no schema DDL, ownership, or application-database access.
+The DSN is no longer validated at all — no host, port, database name, scheme, or
+login check, and no distinctness rule between the two variables. Confirm the
+target yourself before running a backfill; nothing in config will catch a wrong
+database.
 
 ## Backfill operating sequence
 

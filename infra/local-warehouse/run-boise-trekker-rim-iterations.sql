@@ -3,7 +3,7 @@
 -- current (cutoff at the latest fully-observed UTC day; no actuals yet since
 -- its horizon extends past the backfilled window). Reconciles actuals against
 -- the retrospective iteration only. Parameterized like run-forecast-iteration.sql.
--- Run as plantgeo_local_developer against the disposable database, e.g.:
+-- Run with the owner credential against the disposable database, e.g.:
 --   psql ... -v as_of_time="'2026-07-25T18:00:00Z'" -f run-boise-trekker-rim-iterations.sql
 
 \set ON_ERROR_STOP on

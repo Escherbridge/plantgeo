@@ -101,15 +101,15 @@ Related docs, so this file doesn't duplicate them:
 >
 > | | `docker-compose.yml`'s `db` service | What `config.py` requires for ingestion |
 > |---|---|---|
-> | Port | `5433` | `5442` (`config.py:14`) |
-> | Database | `agri_data` | `plantgeo` or `plantgeo_*` (`config.py:15,173-176`) |
-> | Role | `plantgeo` | `plantgeo_loader` (`config.py:16,201-203`) |
+> | Port | `5433` | `5442` — the local warehouse |
+> | Database | `agri_data` | a migrated `plantgeo`/`plantgeo_*` database |
+> | Role | `plantgeo` | any login — nothing is asserted since 2026-08-08 (§3.1) |
 > | Image | `postgis/postgis:16-3.4` | needs TimescaleDB too |
 > | Init script | `infra/db/init-extensions.sql` — installs `postgis`, `vector`, `uuid-ossp`, **no `timescaledb`** | `postgis` + `timescaledb` + `vector` + `pgcrypto`, all four, or the Alembic foundation migration refuses to create the `agri` schema (`infra/local-warehouse/AGENTS.md`) |
 >
-> Every mismatched field above raises a distinct, named error out of
-> `Settings.require_local_source_loader_database_url()` (`config.py:158-204`) the first time you
-> try to ingest anything against it. It cannot even complete a migration. Treat
+> Since 2026-08-08 config no longer rejects any of the mismatches above (§3.1), so pointing a
+> DSN at this service now fails *later* — on a missing extension, a missing schema, or a
+> migration that will not complete — instead of on a named validator error. Treat
 > `services/agri-data-service/docker-compose.yml` as the HTTP-service-only dev stack (it does
 > still work for `make dev` against a toy database) and never for ingestion.
 
@@ -215,92 +215,67 @@ one.** Getting this wrong doesn't usually error loudly — it silently targets t
 | `alembic upgrade` / `db-upgrade` / `db-status` (migrations) | `DATABASE_URL_SYNC` | **Never** (`alembic/env.py:14`) |
 | The Sanic HTTP API in `combined_local` profile | `DATABASE_URL` | n/a — this is its own variable |
 
-### 3.1 The loader DSN: `LOCAL_SOURCE_LOADER_DATABASE_URL`
+### 3.1 The loader DSN: `LOCAL_SOURCE_LOADER_DATABASE_URL` (optional since 2026-08-08)
 
 `ingest_session()`, the only session every `ingest-*`/`jobs-*` verb opens, calls
-`settings.require_local_source_loader_database_url()` and nothing else
-(`src/agri_data_service/db/engine.py:133-138`). That validator (`config.py:158-204`) is strict:
+`settings.require_local_source_loader_database_url()` and nothing else. That resolver is now
+two lines: return `LOCAL_SOURCE_LOADER_DATABASE_URL` if set, otherwise `DATABASE_URL`, and
+raise only when neither is set.
 
-- Scheme must be exactly `postgresql+asyncpg`, no query string, no fragment.
-- Database name must be `plantgeo` or `plantgeo_<anything>`.
-- Host/port/role must match one specific allowlisted triple:
-  `(127.0.0.1, 5442, plantgeo_loader)` — the local warehouse — **or**
-  `(switchback.proxy.rlwy.net, 37967, postgres)` — the Railway production proxy.
-- `plantgeo_owner` (the bootstrap role) is refused by name even at an allowed host/port.
-- **It must not equal `DATABASE_URL`, character for character** — if you set both to the same
-  string, ingestion refuses to start.
+Everything that used to be enforced here is gone — the `postgresql+asyncpg`-only scheme check,
+the `plantgeo`/`plantgeo_*` database-name rule, the `127.0.0.1:5442` / Railway-proxy host
+allowlist, the required login, and the "must not equal `DATABASE_URL`" distinctness rule. The
+owner ruling recorded in `20260808_0019` is that every application path connects with the
+single owner credential, and the follow-up change removed the validators built around role
+separation. **Nothing in config will catch a wrong target database now**; that is the
+operator's responsibility.
 
-> [!WARNING]
-> The error message you'll see if `LOCAL_SOURCE_LOADER_DATABASE_URL` is unset says
-> `"source-ingest requires LOCAL_SOURCE_LOADER_DATABASE_URL; DATABASE_URL is never a loader
-> fallback"` (`config.py:163-165`). It names `source-ingest`, but it is raised for **every**
-> ingest verb — `ingest-weather`, `jobs-plan-lane`, all of them, not just the literal
-> `source-ingest` command. Don't go looking for a `source-ingest`-specific bug; set the variable.
+Practically: `DATABASE_URL` in `.env` is enough. Set the loader variable only to point one
+command somewhere else.
 
 ```bash
-export LOCAL_SOURCE_LOADER_DATABASE_URL='postgresql+asyncpg://plantgeo_loader:<loader-password>@127.0.0.1:5442/plantgeo'
-unset DATABASE_URL   # or the "must not reuse DATABASE_URL" guard rejects you
+# Nothing to export — .env's DATABASE_URL is used.
+uv run agri-cli ingest-weather
+
+# Or aim one command at a different database:
+export LOCAL_SOURCE_LOADER_DATABASE_URL='postgresql+asyncpg://plantgeo_owner:<password>@127.0.0.1:5442/plantgeo_scratch'
 ```
 
-```powershell
-$env:LOCAL_SOURCE_LOADER_DATABASE_URL = 'postgresql+asyncpg://plantgeo_loader:<loader-password>@127.0.0.1:5442/plantgeo'
-Remove-Item Env:\DATABASE_URL -ErrorAction SilentlyContinue
-```
+### 3.2 The grant gap — closed by deleting the path, not by granting
 
-### 3.2 The grant gap — read this before you run anything
-
-> [!WARNING]
-> **Critical, verified, and currently unresolved:** the documented `plantgeo_loader` role
-> (created by `infra/local-warehouse/create-loader-role.sql`, the file the setup docs point you
-> to) **cannot execute a single `ingest-*` or `jobs-*` verb against your local warehouse.**
->
-> `create-loader-role.sql:26-49` grants `plantgeo_loader` exactly: `CONNECT` on the database,
-> `USAGE` on schema `agri`, and `SELECT, INSERT` on eleven named `agri.*` lineage tables. There is
-> **no grant on schema `geo`** and **no grant on any `agri.job_*` table.** But every `ingest-*`
-> verb writes `geo.features`/`geo.geometry`/`geo.drought_areas`
-> (`src/agri_data_service/ingest/writer.py:88,111,122`), and every `jobs-*` verb reads and writes
+> [!NOTE]
+> **Resolved 2026-08-08 — the local loader role is retired, not fixed.** The warning that used to
+> live here was accurate: the documented `plantgeo_loader` role could not execute a single
+> `ingest-*` or `jobs-*` verb locally. It had `CONNECT`, `USAGE` on schema `agri`, and
+> `SELECT, INSERT` on eleven `agri.*` lineage tables — **no grant on schema `geo`** and **none on
+> any `agri.job_*` table** — while every `ingest-*` verb writes
+> `geo.features`/`geo.geometry`/`geo.drought_areas` (`src/agri_data_service/ingest/writer.py:88,111,122`)
+> and every `jobs-*` verb reads and writes
 > `agri.job_definition`/`job_run`/`job_work_item`/`job_attempt`/`job_checkpoint`
-> (`src/agri_data_service/ingest/commands.py:545-548`). `grant-resolution-aware-loader.sql`, the
-> one follow-up grant script that exists, adds only three more `agri.*` tables — still nothing on
-> `geo` or `job_*`.
+> (`src/agri_data_service/ingest/commands.py:545-548`). The symptom looked like an application
+> bug: `permission denied for schema geo`, then `permission denied for table job_definition`.
 >
-> **The symptom looks like an application bug, not a permissions problem:** you will see
-> `permission denied for schema geo` on your first `ingest-weather`, and `permission denied for
-> table job_definition` (or similar) on your first `jobs-plan-lane`. There is no code path that
-> explains this to you.
->
-> **The current working path, until a grants migration lands:** `run-backfill.sh`, the script the
-> repo's own historical-backfill workflow uses, does not point the loader at your local
-> warehouse at all — it sources `services/agri-data-service/.env`, takes whatever `DATABASE_URL`
-> is defined there, and passes *that* as `LOCAL_SOURCE_LOADER_DATABASE_URL`
-> (`run-backfill.sh:24-25`). Per that script's own header comment, "*the real prod DSN is passed
-> as the loader*" (`run-backfill.sh:4-5`) — i.e. the DSN in this service's checked-in-locally
-> `.env` is the **production** Railway database, reached over the allowlisted proxy target
-> `(switchback.proxy.rlwy.net, 37967, postgres)`. **Running `run-backfill.sh` writes to
-> production, not to your local warehouse.** This is why the two durable lanes already show real
-> completed windows in production (§7) despite the local loader role being unusable — nobody has
-> actually been running ingestion against `infra/local-warehouse` day to day.
+> The owner's answer was to remove the path rather than write the grants.
+> `infra/local-warehouse/create-loader-role.sql` is deleted, revision `20260808_0019` retired the
+> forecast capability-role family, and the loader DSN asserts nothing at all any more (§3.1).
+> **Local work targets production through the proxy DSN**, which is what was actually happening
+> anyway: `run-backfill.sh` sources `services/agri-data-service/.env` and pins
+> `LOCAL_SOURCE_LOADER_DATABASE_URL` to whatever `DATABASE_URL` is defined there. That is why the
+> durable lanes show real completed windows in production (§7) while the local role was unusable —
+> nobody was running ingestion against `infra/local-warehouse` day to day.
 >
 > **What this means for you, practically:**
 > - `db-status`, `db-upgrade`, and `pipeline-status` are unaffected — they use a different DSN
 >   variable (`DATABASE_URL_SYNC`) or, for `pipeline-status`, only validate the DSN *string* and
->   never open a connection (§6). Those are safe to run locally today.
-> - A genuine local, isolated ingestion write is **not currently a supported, reviewed path**.
->   If you want one anyway for local development, you can grant the missing privileges yourself
->   against your own local warehouse — you already hold `plantgeo_owner` there — but treat this
->   as an unreviewed, personal-sandbox workaround, not the documented practice:
->   ```sql
->   -- run as plantgeo_owner against your own 5442 warehouse only — never against production
->   GRANT USAGE ON SCHEMA geo TO plantgeo_loader;
->   GRANT SELECT ON geo.layers TO plantgeo_loader;
->   GRANT SELECT, INSERT, UPDATE ON geo.features, geo.geometry, geo.drought_areas TO plantgeo_loader;
->   GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA geo TO plantgeo_loader;
->   GRANT SELECT, INSERT, UPDATE ON agri.job_definition, agri.job_run, agri.job_work_item,
->     agri.job_attempt, agri.job_checkpoint TO plantgeo_loader;
->   ```
-> - If you run any ingestion verb through `run-backfill.sh`, remember every window it plans, runs,
->   or reconciles lands in the **production** ledger. Read `jobs-reconcile-lane`'s dry-run output
->   (§7) carefully before ever passing `--apply`.
+>   never open a connection (§6).
+> - A local isolated ingestion write is still not a reviewed path, but it is no longer blocked by
+>   a role: point `DATABASE_URL` (or the loader override) at your own 5442 warehouse with the
+>   owner credential and it is accepted.
+> - **`plantgeo_loader` still exists in production** and the deployed cron and in-flight archive
+>   walks still authenticate as it. Nothing here changes those jobs; the role simply is not
+>   managed or required by any repository code any more.
+> - Every window `run-backfill.sh` plans, runs, or reconciles lands in the **production** ledger.
+>   Read `jobs-reconcile-lane`'s dry-run output (§7) carefully before ever passing `--apply`.
 
 ### 3.3 The migration DSN: `DATABASE_URL_SYNC`, and why overriding `DATABASE_URL` does nothing
 
@@ -355,12 +330,12 @@ long-running container without restarting it (`src/agri_data_service/ingest/AGEN
 
 | Variable | Required? | Default | What breaks without it |
 |---|---|---|---|
-| `LOCAL_SOURCE_LOADER_DATABASE_URL` | **Required** for every `ingest-*`/`jobs-*`/`validate-streams` verb | none | Every ingestion verb refuses to start (§3.1) |
-| `DATABASE_URL` | Must be **absent** during ingestion; required for the `combined_local` HTTP profile | none | Set alongside the loader DSN → "must not reuse DATABASE_URL" |
+| `LOCAL_SOURCE_LOADER_DATABASE_URL` | Optional override for `ingest-*`/`jobs-*`/`validate-streams`; falls back to `DATABASE_URL` (§3.1) | `DATABASE_URL` | Nothing, unless `DATABASE_URL` is also unset |
+| `DATABASE_URL` | Required unless every command carries its own override; also the `combined_local` HTTP profile's DSN | none | Every ingestion verb refuses to start (§3.1) |
 | `DATABASE_URL_SYNC` | Required for migrations | `postgresql://geo:plantgeo@localhost:5432/plantgeo` (not the local warehouse!) | Silently migrates the wrong database (§3.2) |
 | `INGEST_BBOX` | **Effectively required** | none | Unset ⇒ every job reports `skipped`, not `failed` — looks clean, writes nothing (§9) |
 | `NASA_FIRMS_KEY` | Required for `ingest-firms`, `ingest-all`, `jobs-run --lane firms-archive` | none | FIRMS jobs fail; the archive lane permanently dead-letters every window it claims (§5, §9) |
-| `CDSAPI_URL`, `CDSAPI_KEY` | Required for `historical-era5-backfill` only, and must be `export`ed (see §5) | none | ERA5-Land backfill refuses with a clear message |
+| `CDSAPI_URL`, `CDSAPI_KEY` | Required for `historical-era5-backfill` only; `.env` is enough, a real export wins (see §5) | none | ERA5-Land backfill refuses with a clear message |
 | `INGEST_MAX_SOURCE_RECORDS` | Optional — **never set on an archive lane** | `10_000`, clamped `[1_000, 50_000]` | Silently drops the *oldest* days of an over-cap chunk while still reporting success (§9) |
 | `FIRMS_DAY_RANGE` | Optional | `2`, clamped ≤ `5` | Values above 5 get a `400 Invalid day range` from FIRMS |
 | `WEATHER_SAMPLE_SPACING_DEGREES` | Optional | `1.0`, clamped `[0.25, 5.0]`; grid capped at 150 points | Controls Open-Meteo fan-out density |
@@ -436,29 +411,25 @@ doing a first local smoke test, pick one of these — see §6.
 > URL, so the HTTP layer degrades every `httpx.HTTPError` to a generic
 > `UpstreamTransportError` carrying only the exception class name, specifically so a raw
 > exception with the URL in it never gets logged (`src/agri_data_service/ingest/AGENTS.md:82`).
-> `CDSAPI_KEY` must be `export`ed into the shell environment, not just left in `.env` — the CDS
-> client reads `os.environ` directly and pydantic-settings' `env_file` loading never populates
-> `os.environ` (`src/agri_data_service/execution/historical_era5.py:683-684`).
+> `CDSAPI_KEY` is resolved through `Settings` as of 2026-08-08, so leaving it in `.env` is
+> enough; a real `CDSAPI_KEY` export still takes precedence. Neither value is logged,
+> checkpointed, or included in the refusal message.
 
 ---
 
 ## 6. First run
 
-This proves the plumbing — config, DSN, migrations — without needing a credential. Given the
-grant gap in §3.1, expect the last step to either succeed (if you've applied the local grants
-yourself) or fail with a `permission denied for schema geo` error (if you haven't) — both
-outcomes are informative, and the failure is explained in §3.1 and §9, not a sign something else
-is broken.
+This proves the plumbing — config, DSN, migrations — without needing a credential. The
+single owner credential runs all four steps; there are no grants to apply first (§3.2).
 
 ```bash
 cd services/agri-data-service
 export INGEST_BBOX='-125,42,-111,49'    # Pacific Northwest coverage box, ingest/policy.py:17
-export LOCAL_SOURCE_LOADER_DATABASE_URL='postgresql+asyncpg://plantgeo_loader:<loader-password>@127.0.0.1:5442/plantgeo'
-unset DATABASE_URL
+export DATABASE_URL='postgresql+asyncpg://plantgeo_owner:<owner-password>@127.0.0.1:5442/plantgeo'
 export DATABASE_URL_SYNC='postgresql://plantgeo_owner:<owner-password>@127.0.0.1:5442/plantgeo'
 
 uv run agri-cli db-status          # proves DATABASE_URL_SYNC points where you think
-uv run agri-cli pipeline-status    # proves the loader DSN string parses and is allowlisted
+uv run agri-cli pipeline-status    # proves a loader DSN resolves at all
 uv run agri-cli ingest-weather     # no credential needed; ~150 points; the fastest real write
 uv run agri-cli validate-streams --format markdown --output /tmp/streams.md
 ```
@@ -466,8 +437,7 @@ uv run agri-cli validate-streams --format markdown --output /tmp/streams.md
 ```powershell
 Set-Location services/agri-data-service
 $env:INGEST_BBOX = '-125,42,-111,49'
-$env:LOCAL_SOURCE_LOADER_DATABASE_URL = 'postgresql+asyncpg://plantgeo_loader:<loader-password>@127.0.0.1:5442/plantgeo'
-Remove-Item Env:\DATABASE_URL -ErrorAction SilentlyContinue
+$env:DATABASE_URL = 'postgresql+asyncpg://plantgeo_owner:<owner-password>@127.0.0.1:5442/plantgeo'
 $env:DATABASE_URL_SYNC = 'postgresql://plantgeo_owner:<owner-password>@127.0.0.1:5442/plantgeo'
 
 uv run agri-cli db-status
@@ -484,8 +454,8 @@ Expected output, in order:
    and payload"` if the DSN string is well-formed, or `"blocked: <the specific config error>"` if
    not.
 3. `ingest-weather` — one JSON line, `IngestionJobResult.to_summary()`, with
-   `"records_seen"`/`"records_written"` counts. If it errors with `permission denied for schema
-   geo`, that's the grant gap from §3.1, not a broken setup — see the options there.
+   `"records_seen"`/`"records_written"` counts. A `permission denied for schema geo` here means
+   the DSN names a login other than the owner credential (§3.2).
 4. `validate-streams` — writes a markdown report to the given path; the command itself prints one
    JSON summary line to stdout.
 
@@ -524,10 +494,10 @@ window size, and a chunk size:
 **Use `streamflow-archive` for any first attempt at this workflow — it needs no credential.**
 
 > [!WARNING]
-> Everything in this section writes real rows. Per §3.1, the local loader role currently cannot
-> run these verbs, so in practice you are most likely running them through `run-backfill.sh`
-> against **production**. Read every `jobs-reconcile-lane` dry-run output before you ever pass
-> `--apply`, and never plan `firms-archive` before `NASA_FIRMS_KEY` is set (§5).
+> Everything in this section writes real rows, and `.env`'s `DATABASE_URL` points at
+> **production**, so that is what they write to unless you override it (§3.1). Read every
+> `jobs-reconcile-lane` dry-run output before you ever pass `--apply`, and never plan
+> `firms-archive` before `NASA_FIRMS_KEY` is set (§5).
 
 ```bash
 uv run agri-cli jobs-plan-lane      --lane streamflow-archive
@@ -545,7 +515,7 @@ uv run agri-cli jobs-run            --lane streamflow-archive
 uv run agri-cli jobs-status
 ```
 
-**Or, via the repo's own launcher** (sources `.env`, wires the DSNs per §3.1's warning, exports
+**Or, via the repo's own launcher** (sources `.env`, pins the loader DSN to it, exports
 CDS credentials): `./run-backfill.sh jobs-status`, `./run-backfill.sh jobs-plan-lane --lane
 streamflow-archive`, etc.
 
@@ -683,11 +653,10 @@ receiver.
 | Symptom | What it actually means | Fix |
 |---|---|---|
 | Every job reports `skipped`, exit 0, zero rows, nothing looks wrong | `INGEST_BBOX` is unset. `resolve_bounded_bbox()` returns `None` and the job is a **typed skip, not a failure**, deliberately, so an unconfigured deployment doesn't go red (`src/agri_data_service/ingest/policy.py:39,86`) | Set `INGEST_BBOX` or pass `--bbox` |
-| `permission denied for schema geo` / `for table job_definition` | The grant gap (§3.1) — the documented local loader role has no `geo` or `agri.job_*` privileges | See §3.1's options |
-| `source-ingest requires LOCAL_SOURCE_LOADER_DATABASE_URL...` on any ingest verb, not just `source-ingest` | The message names `source-ingest` but is raised for every ingest verb (`config.py:163-165`) | Set the loader DSN (§3.1) |
-| `LOCAL_SOURCE_LOADER_DATABASE_URL must not reuse DATABASE_URL` | Both env vars are the same string | Unset `DATABASE_URL`, or use `run-backfill.sh`'s dummy-DSN trick |
+| `permission denied for schema geo` / `for table job_definition` | You are connecting as the old `plantgeo_loader` login, which never had `geo` or `agri.job_*` privileges (§3.2) | Point the loader DSN at the owner credential, or at production through the proxy |
+| `set LOCAL_SOURCE_LOADER_DATABASE_URL or DATABASE_URL` on any verb | Neither variable is set; the loader DSN falls back to `DATABASE_URL` and there is nothing to fall back to | Set `DATABASE_URL` in `.env` (§3.1) |
 | `alembic upgrade` migrated a database you didn't expect | It read `DATABASE_URL_SYNC` from the CWD's `.env`, not the `DATABASE_URL` you set (§3.2) | Set `DATABASE_URL_SYNC` explicitly and echo it back before upgrading |
-| `ERA5-Land requires accepted CDS web terms plus CDSAPI_URL and CDSAPI_KEY...` even though your `.env` has them | Credentials are in `.env` but not `os.environ` — the CDS client reads `os.environ` directly, and pydantic-settings never populates it (`execution/historical_era5.py:683-684`) | `export`/`$env:` the two variables |
+| `ERA5-Land requires accepted CDS web terms plus CDSAPI_URL and CDSAPI_KEY...` even though your `.env` has them | Was the 2026-08-08 `.env`-is-inert bug; `Settings` now resolves both. If it still fires, one of the two is genuinely blank/whitespace in both the environment and `.env` | Set both non-blank in `.env`, or export both |
 | `400 Invalid day range. Expects [1..5]` from FIRMS | `FIRMS_DAY_RANGE` was set above 5 | Leave it unset (default `2`) |
 | `jobs-run --lane firms-archive` dead-letters every window | `NASA_FIRMS_KEY` unset; the lane dead-letters on purpose rather than parking (§5) | Set the key *before* planning/running the lane |
 | `jobs-run` exits `0` with thousands of windows still `queued` | Correct and healthy — a multi-week backfill is incomplete by definition (§7) | Not an incident |

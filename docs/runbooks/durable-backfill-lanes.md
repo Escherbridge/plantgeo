@@ -398,8 +398,8 @@ is a known dead end recorded for the existing `cron-ingest` service.
 
 | Variable | `cron-archive-firms` | `cron-archive-streamflow` | `cron-validate` | Notes |
 | --- | --- | --- | --- | --- |
-| `LOCAL_SOURCE_LOADER_DATABASE_URL` | **required** | **required** | **required** | The loader DSN, on the public proxy. `ingest_session()` reads only this. |
-| `DATABASE_URL` | **must be ABSENT** | **must be ABSENT** | **must be ABSENT** | `config.py` refuses to fall back to it, and refuses a loader URL that reuses it. Setting it fails the run. |
+| `LOCAL_SOURCE_LOADER_DATABASE_URL` | recommended | recommended | recommended | The loader DSN, on the public proxy. `ingest_session()` reads it, or `DATABASE_URL` when it is unset. |
+| `DATABASE_URL` | optional | optional | optional | Used as the loader DSN when the variable above is unset. Since 2026-08-08 setting both — even to the same string — is accepted; **one of the two must exist**. |
 | `INGEST_BBOX` | **required** | **required** | recommended | An unset box makes the walk a typed skip, which this lane treats as a **failed** window — a window that wrote nothing is not a walked window. For `validate-streams` an unset box only marks the boundary check unevaluated. |
 | `NASA_FIRMS_KEY` | **required** | not used | not used | The lane refuses loudly and dead-letters without it, rather than parking forever on a missing variable. |
 | `REDIS_URL` | optional | optional | not used | Realtime invalidation. Absent is safe; the publisher opens no socket it cannot open. |

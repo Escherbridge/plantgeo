@@ -5,7 +5,7 @@
  * **Opacity here is a MULTIPLIER over each layer's authored paint, never an absolute value.**
  * `1` means "exactly as designed" and cannot regress anything. The code forces this: the
  * watersheds toggle paints its fill at 0.05 (a deliberate boundary wash) and its outline at
- * 0.6, so one absolute slider would need a different neutral position per style layer and
+ * 0.8, so one absolute slider would need a different neutral position per style layer and
  * dragging it to 1 would drop an opaque blue sheet over the map. `published-fire-outlines` is
  * the sharper case -- its `circle-opacity` is deliberately 0 with the visible ring carried on
  * `circle-stroke-opacity`, so an absolute write would fill every fire circle with a second

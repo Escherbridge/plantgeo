@@ -1184,15 +1184,24 @@ describe("a named day is answered by that day, and today's answer is unchanged",
       expect(statement).not.toContain("AT TIME ZONE 'UTC'");
     });
 
-    it("still drops a partial observation rather than zero-filling it", async () => {
+    it("keeps a partial observation's nulls and drops one with no drawable signal", async () => {
       const observations = await atServerToday(async () => {
+        // Half a wind pair, but a temperature: renders (as temperature only).
         const partial = weatherRow(-116.2, 43.6, `${PAST_DAY}T18:00:00.000Z`);
         partial.properties.windDirection = null as unknown as number;
-        dbExecute.mockResolvedValueOnce([partial]);
+        // Neither a complete wind pair nor a temperature: nothing to draw.
+        const undrawable = weatherRow(-115.9, 43.4, `${PAST_DAY}T18:00:00.000Z`);
+        undrawable.properties.windDirection = null as unknown as number;
+        undrawable.properties.temperature = null as unknown as number;
+        dbExecute.mockResolvedValueOnce([partial, undrawable]);
         return getPublishedWeatherForBbox(VIEWPORT, PAST_DAY);
       });
 
-      expect(observations).toEqual([]);
+      expect(observations).toHaveLength(1);
+      expect(observations[0]).toMatchObject({
+        lon: -116.2,
+        windDirection: null,
+      });
     });
 
     it("refuses a future day without touching the warehouse", async () => {

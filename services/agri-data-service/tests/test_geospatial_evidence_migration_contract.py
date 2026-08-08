@@ -89,34 +89,3 @@ def test_migration_keeps_evidence_categories_and_lineage_relational() -> None:
     assert "analysis_run.validation_state = 'validated'" in migration
     assert "agri.job_run" not in migration
     assert "agri.job_output" not in migration
-
-
-def test_manual_loader_upgrade_gate_is_fail_closed_and_plane_scoped() -> None:
-    repository_root = Path(__file__).resolve().parents[3]
-    gate = (repository_root / "infra" / "local-warehouse" / "grant-resolution-aware-loader.sql").read_text(
-        encoding="utf-8"
-    )
-
-    for guard in (
-        "current_user <> 'plantgeo_owner'",
-        "current_database() <> 'plantgeo'",
-        "to_regnamespace('agri') IS NULL",
-        "rolsuper",
-        "rolcreatedb",
-        "rolcreaterole",
-        "rolreplication",
-        "rolbypassrls",
-        "pg_auth_members",
-    ):
-        assert guard in gate
-    for table_name in (
-        "normalized_source_feature",
-        "analysis_subject",
-        "intervention_analysis_run",
-        "intervention_evidence_input",
-        "intervention_evidence_lineage",
-    ):
-        assert f"agri.{table_name}" in gate
-    assert "GRANT SELECT, INSERT ON TABLE" in gate
-    assert "agri.job_run" not in gate
-    assert "agri.job_output" not in gate

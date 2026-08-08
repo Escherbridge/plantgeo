@@ -62,6 +62,7 @@ const viewportQueries = vi.hoisted(() => ({
   getWatersheds: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getSoilSurvey: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getSoilField: vi.fn((): ViewportQueryResult => ({ data: undefined })),
+  getClimateField: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   // react-query's `enabled: false` does not evict a cached result -- see the negative
   // test below -- so this is mutable per-test rather than a static `vi.fn(() => ...)`.
   getStreamflow: vi.fn((): StreamflowQueryResult => ({ data: [] })),
@@ -80,6 +81,7 @@ vi.mock("@/lib/trpc/client", () => ({
       getWatersheds: { useQuery: viewportQueries.getWatersheds },
       getSoilSurvey: { useQuery: viewportQueries.getSoilSurvey },
       getSoilField: { useQuery: viewportQueries.getSoilField },
+      getClimateField: { useQuery: viewportQueries.getClimateField },
       getVegetationIndex: { useQuery: viewportQueries.getVegetationIndex },
     },
     wildfire: {
@@ -238,6 +240,7 @@ beforeEach(() => {
   viewportQueries.getWatersheds.mockReturnValue({ data: undefined });
   viewportQueries.getSoilSurvey.mockReturnValue({ data: undefined });
   viewportQueries.getSoilField.mockReturnValue({ data: undefined });
+  viewportQueries.getClimateField.mockReturnValue({ data: undefined });
   viewportQueries.getStreamflow.mockReturnValue({ data: [] });
   viewportQueries.getGroundwater.mockReturnValue({ data: [] });
   viewportQueries.getVegetationIndex.mockReturnValue({ data: undefined });
@@ -384,11 +387,11 @@ describe("LayerManager applies per-layer opacity", () => {
       fakeMap.emit("style.load");
     });
 
-    // The watershed pair in one toggle: 0.05 for the boundary wash, 0.6 for its outline. An
+    // The watershed pair in one toggle: 0.05 for the boundary wash, 0.8 for its outline. An
     // absolute slider would need a different neutral position for each; a multiplier of 1
     // rewrites exactly what layers.ts declared.
     expect(paintWriteFor(fakeMap, "watersheds-fill", "fill-opacity")).toBe(0.05);
-    expect(paintWriteFor(fakeMap, "watersheds-outline", "line-opacity")).toBe(0.6);
+    expect(paintWriteFor(fakeMap, "watersheds-outline", "line-opacity")).toBe(0.8);
     expect(paintWriteFor(fakeMap, "fire-perimeters", "fill-opacity")).toBe(0.5);
   });
 
@@ -405,7 +408,7 @@ describe("LayerManager applies per-layer opacity", () => {
     });
 
     expect(paintWriteFor(fakeMap, "watersheds-fill", "fill-opacity")).toBeCloseTo(0.025, 6);
-    expect(paintWriteFor(fakeMap, "watersheds-outline", "line-opacity")).toBeCloseTo(0.3, 6);
+    expect(paintWriteFor(fakeMap, "watersheds-outline", "line-opacity")).toBeCloseTo(0.4, 6);
   });
 
   it("uses the property that layer's TYPE carries, not one shared property", () => {
@@ -644,7 +647,7 @@ describe("LayerManager viewport-proxied polygon layers", () => {
   it("asks for each soil field at that field's own selected depth", () => {
     useMapStore.setState({ activeLayers: ["soil-moisture", "soil-temperature"] });
     useSoilStore.setState({
-      fieldDepth: { moisture: "root-zone", temperature: "substratum" },
+      fieldDepth: { moisture: "root-zone", temperature: "substratum", vpd: "surface" },
     });
 
     const fakeMap = createFakeMap();
@@ -690,6 +693,7 @@ describe("LayerManager threads the slider's day into the warehouse-backed querie
     ["getGroundwater", viewportQueries.getGroundwater],
     ["getVegetationIndex", viewportQueries.getVegetationIndex],
     ["getSoilField", viewportQueries.getSoilField],
+    ["getClimateField", viewportQueries.getClimateField],
     ["getWeatherForBbox", viewportQueries.getWeatherForBbox],
   ] as const;
 

@@ -21,6 +21,8 @@ export type LayerToggleId =
   | "soil-survey"
   | "soil-moisture"
   | "soil-temperature"
+  | "soil-vpd"
+  | "climate-field"
   | "demand-heatmap"
   | "interventions"
   | "evacuation-zones"
@@ -135,7 +137,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     permanentlyUnavailableReason: null,
   },
   // Published rows served by geo.sensor_tiles(), live in martin.yaml. See sensorsLayer in
-  // layers.ts; the switch that reaches it is WaterPanel's, added later than the style layer.
+  // layers.ts; the switch that reaches it is WaterDetails', added later than the style layer.
   sensors: {
     toggleId: "sensors",
     label: "Sensor Stations",
@@ -211,9 +213,9 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // which days the axis should offer. See SoilFieldLayer in layers/SoilFieldLayer.tsx.
   "soil-moisture": {
     toggleId: "soil-moisture",
-    // Read off the measure vocabulary rather than restated: SoilPanel already captioned this
-    // switch with `definition.layerLabel`, and two copies of a label is the drift this field
-    // exists to end.
+    // Read off the measure vocabulary rather than restated: SoilDetails already captioned
+    // this switch with `definition.layerLabel`, and two copies of a label is the drift this
+    // field exists to end.
     label: SOIL_FIELD_MEASURES.moisture.layerLabel,
     icon: "droplets",
     renderKind: "component",
@@ -238,6 +240,48 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     styleLayerIds: [],
     warehouseLayerName: null,
     panelId: "soil",
+    permanentlyUnavailableReason: null,
+  },
+  // Daily-max vapor pressure deficit, the same ERA5-Land lane and the same reader as the two
+  // soil-state fields above with one atmospheric signal (vapor_pressure_deficit, kPa) and a
+  // single pseudo-depth -- Open-Meteo derives it from 2 m temperature and humidity, so there
+  // is no profile to select. Grouped under the soil panel because it rides that lane's
+  // lattice and depth vocabulary, not because it measures soil: it is the map's atmospheric-
+  // dryness (fire-weather) field.
+  "soil-vpd": {
+    toggleId: "soil-vpd",
+    label: SOIL_FIELD_MEASURES.vpd.layerLabel,
+    icon: "cloud-sun",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "soil",
+    permanentlyUnavailableReason: null,
+  },
+  // NASA POWER daily meteorology and pilot soil wetness, read through
+  // environmental.getClimateField. The second lane served out of the MODEL plane
+  // (agri.signal_observation), so like the three ERA5-Land fields above it claims no
+  // `geo.layers` name and gets no slider capability -- it draws the slider's day without
+  // making a claim about which days the axis should offer.
+  //
+  // ONE toggle for nine signals, where the ERA5-Land lane has three toggles for three
+  // measures. The difference is what "off" would mean: moisture and temperature are two
+  // measurements of the same ground a reader may want side by side, whereas air temperature
+  // and precipitation are nine answers to "what was the weather", only one of which can be
+  // painted over a cell at a time. The signal picker lives in the Climate section; this switch
+  // decides whether the field is drawn at all. See ClimateFieldLayer in
+  // layers/ClimateFieldLayer.tsx.
+  //
+  // `cloud-sun` is shared with soil-vpd rather than invented for this row: the two are the
+  // map's atmospheric fields and the union stays closed over what layer-icons.tsx resolves.
+  "climate-field": {
+    toggleId: "climate-field",
+    label: "Climate",
+    icon: "cloud-sun",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "climate",
     permanentlyUnavailableReason: null,
   },
   // Served by /api/v1/action-network's k-anonymity-floored activity grid --
@@ -275,7 +319,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     permanentlyUnavailableReason: null,
   },
   // Published Oregon OEM rows, previously with no tile function at all -- see
-  // evacuationZonesLayer/evacuationZonesOutlineLayer in layers.ts; FireDashboard owns the switch.
+  // evacuationZonesLayer/evacuationZonesOutlineLayer in layers.ts; FireDetails owns the switch.
   "evacuation-zones": {
     toggleId: "evacuation-zones",
     label: "Evacuation Zones",
@@ -292,7 +336,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   "burn-severity": {
     toggleId: "burn-severity",
     // "Burn History", not "Burn Severity": the published rows carry burned area and no
-    // severity class, and the fill says so. Kept byte-identical to the switch FireDashboard
+    // severity class, and the fill says so. Kept byte-identical to the switch FireDetails
     // captioned before the label moved here.
     label: "Burn History (MTBS)",
     icon: "flame-kindling",

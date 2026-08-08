@@ -196,68 +196,28 @@ ORDER BY available.name;
   migration DSN and preserve the same revision guard. The current Next.js
   runtime image does not satisfy that requirement.
 
-### 4. Install and audit least-privilege forecast roles
+### 4. Forecast capability roles are retired -- do not provision them
 
-- The current
-  [`create-forecast-roles.sql`](../local-warehouse/create-forecast-roles.sql)
-  is local-warehouse-only: it targets the literal database `plantgeo` and creates
-  cluster-global roles. Never run it unchanged on a shared Railway or disposable
-  rehearsal cluster. First provide a separately reviewed target-validated variant,
-  or rehearse it only in an isolated single-use cluster whose intended database is
-  literally `plantgeo`. The four capability boundaries are forecast writer, publisher,
-  reader, and materialized-view refresher; reviewed application logins receive
-  membership in only the capability they need, with login secrets supplied by
-  the approved secret store rather than source control. They must not use the
-  owner or migration identity.
-- Verify database `CONNECT`, schema `USAGE`, table/view privileges, sequence
-  privileges, and function `EXECUTE` match the reviewed matrix. The reader is
-  read-only; the writer cannot publish; the publisher cannot perform schema DDL;
-  the MV refresher can invoke only the reviewed refresh boundary.
-- Audit ownership and default privileges, including privileges granted to
-  `PUBLIC`. `PUBLIC` must have no database/schema create privilege, no forecast
-  table writes, and no execution path to validation, finalization, publication,
-  pointer advancement, or MV refresh functions.
+Until 2026-08-08 this step installed and audited the four least-privilege
+forecast capability roles from `create-forecast-roles.sql`. Alembic revision
+`20260808_0019` retired that family (the roles had no members and no DSN ever
+authenticated through them), and applications now connect with the single
+owner credential. Following the old provisioning steps would re-create exactly
+what the migration drops and fail the teardown contract test
+(`test_security_definer_lockdown_postgresql.py`).
 
-Representative fail-closed checks:
+What still holds on a rehearsal cluster:
 
-```sql
-SELECT rolname, rolcanlogin, rolsuper, rolcreaterole, rolcreatedb,
-       rolreplication, rolbypassrls, rolinherit
-FROM pg_roles
-WHERE rolname LIKE 'plantgeo_forecast_%'
-ORDER BY rolname;
-
-SELECT 'database' AS object_kind, database.datname AS object_name,
-       acl.privilege_type, acl.is_grantable
-FROM pg_database AS database
-CROSS JOIN LATERAL aclexplode(
-    COALESCE(database.datacl, acldefault('d', database.datdba))
-) AS acl
-WHERE database.datname = current_database() AND acl.grantee = 0
-UNION ALL
-SELECT 'schema', namespace.nspname, acl.privilege_type, acl.is_grantable
-FROM pg_namespace AS namespace
-CROSS JOIN LATERAL aclexplode(
-    COALESCE(namespace.nspacl, acldefault('n', namespace.nspowner))
-) AS acl
-WHERE namespace.nspname = 'agri' AND acl.grantee = 0
-ORDER BY object_kind, object_name, privilege_type;
-
-SELECT procedure.oid::regprocedure AS public_executable_forecast_function
-FROM pg_proc AS procedure
-JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
-CROSS JOIN LATERAL aclexplode(
-    COALESCE(procedure.proacl, acldefault('f', procedure.proowner))
-) AS acl
-WHERE namespace.nspname = 'agri'
-  AND procedure.proname LIKE '%forecast%'
-  AND acl.grantee = 0
-  AND acl.privilege_type = 'EXECUTE'
-ORDER BY procedure.oid::regprocedure::text;
-```
-
-Exercise one allowed and one denied operation for each role on the restored
-rehearsal database, then remove all test rows by discarding that database.
+- `plantgeo_loader` remains a plain production login (deployed cron ingest and
+  the local archive walks authenticate as it); no repo script provisions or
+  audits it any more.
+- `PUBLIC` must still have no database/schema create privilege and no
+  execution path to the covariate functions (`20260802_0016`'s revokes stand);
+  the readiness probe's `serving_surface_ready` conjunct is the surviving
+  capability check.
+- The retired bootstrap scripts in `infra/local-warehouse/` carry
+  `-- RETIRED 2026-08-08 -- DO NOT RUN` headers naming the revision that drops
+  what they create.
 
 ### 5. Require promotion and forecast receipts
 

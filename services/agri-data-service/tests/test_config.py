@@ -11,6 +11,10 @@ from agri_data_service.config import Settings
 _TOKEN = "0123456789abcdefghijklmnopqrstuvwxyzABCDEF"
 
 
+class _EngineFactoryReachedError(Exception):
+    """Raised by the stubbed engine factory so a test can assert the DSN without connecting."""
+
+
 def _settings(**overrides: object) -> Settings:
     return Settings(_env_file=None, **overrides)
 
@@ -83,16 +87,12 @@ def test_production_database_profiles_require_explicit_nonshared_dsns() -> None:
     )
     assert reader_settings.require_published_reader_database_url() == reader
 
-    with pytest.raises(ValidationError, match="must be distinct"):
-        _settings(
-            receiver_writer_database_url=receiver,
-            published_reader_database_url=receiver,
-        )
-    with pytest.raises(ValidationError, match="distinct login roles"):
-        _settings(
-            receiver_writer_database_url=receiver,
-            published_reader_database_url=receiver.replace("database.internal", "reader.internal"),
-        )
+    # Since 20260808_0019 the two profile DSNs may share one login, or be the same DSN outright.
+    shared_dsn_settings = _settings(
+        receiver_writer_database_url=receiver,
+        published_reader_database_url=receiver,
+    )
+    assert shared_dsn_settings.receiver_writer_database_url == receiver
     with pytest.raises(ValidationError, match="must not receive DATABASE_URL"):
         _settings(
             service_profile="published_reader",
@@ -115,221 +115,176 @@ def test_combined_local_database_url_is_explicit_and_profile_bound() -> None:
     assert _settings(database_url=database_url).require_combined_local_database_url() == database_url
 
 
-def test_source_loader_requires_an_explicit_isolated_local_compose_target() -> None:
-    target = "postgresql+asyncpg://plantgeo_loader:password@127.0.0.1:5442/plantgeo"
-
-    with pytest.raises(ValueError, match="LOCAL_SOURCE_LOADER_DATABASE_URL"):
-        _settings().require_local_source_loader_database_url()
-
-    configured = _settings(local_source_loader_database_url=target)
-    assert configured.require_local_source_loader_database_url() == target
-
-    with pytest.raises(ValueError, match="must not reuse DATABASE_URL"):
-        _settings(
-            database_url=target,
-            local_source_loader_database_url=target,
-        ).require_local_source_loader_database_url()
-
-    with pytest.raises(ValueError, match=r"127\.0\.0\.1:5442/plantgeo"):
-        _settings(
-            local_source_loader_database_url="postgresql+asyncpg://plantgeo_loader:password@127.0.0.1:5432/plantgeo"
-        ).require_local_source_loader_database_url()
-
-    with pytest.raises(ValueError, match="must not use the plantgeo_owner"):
-        _settings(
-            local_source_loader_database_url="postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5442/plantgeo"
-        ).require_local_source_loader_database_url()
+# The three command DSNs share one resolver, `Settings._require_command_database_url`: an
+# optional override, DATABASE_URL as the fallback, blank/whitespace treated as unset, and the
+# shared completeness guard as the one remaining rejection. See db/AGENTS.md for the ruling.
+_COMMAND_DSN_RESOLVERS = [
+    ("local_source_loader_database_url", "require_local_source_loader_database_url"),
+    ("forecast_mv_refresh_database_url", "require_forecast_mv_refresh_database_url"),
+    ("forecast_iteration_database_url", "require_forecast_iteration_database_url"),
+]
 
 
-def test_source_loader_accepts_plantgeo_prefixed_disposable_databases() -> None:
-    target = "postgresql+asyncpg://plantgeo_loader:password@127.0.0.1:5442/plantgeo_boise_completion_20260725"
-    assert _settings(local_source_loader_database_url=target).require_local_source_loader_database_url() == target
+@pytest.mark.parametrize(("field_name", "method_name"), _COMMAND_DSN_RESOLVERS)
+def test_command_dsn_falls_back_to_database_url(field_name: str, method_name: str) -> None:
+    del field_name
+    application = "postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5442/plantgeo"
 
-    with pytest.raises(ValueError, match=r"127\.0\.0\.1:5442/plantgeo"):
-        _settings(
-            local_source_loader_database_url=(
-                "postgresql+asyncpg://plantgeo_loader:password@127.0.0.1:5442/plantgeography"
-            )
-        ).require_local_source_loader_database_url()
+    resolved = getattr(_settings(database_url=application), method_name)()
+    assert resolved == application
 
 
+@pytest.mark.parametrize(("field_name", "method_name"), _COMMAND_DSN_RESOLVERS)
+def test_command_dsn_override_wins_over_database_url(field_name: str, method_name: str) -> None:
+    application = "postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5442/plantgeo"
+    override = "postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5442/plantgeo_scratch"
+
+    configured = _settings(database_url=application, **{field_name: override})
+    assert getattr(configured, method_name)() == override
+
+
+@pytest.mark.parametrize(("field_name", "method_name"), _COMMAND_DSN_RESOLVERS)
+def test_command_dsn_accepts_the_same_string_as_database_url(field_name: str, method_name: str) -> None:
+    """`run-backfill.sh` sets the override to `$DATABASE_URL` verbatim; that used to be rejected."""
+    shared = "postgresql://postgres:password@switchback.proxy.rlwy.net:37967/plantgeo"
+    normalized = "postgresql+asyncpg://postgres:password@switchback.proxy.rlwy.net:37967/plantgeo"
+
+    configured = _settings(database_url=shared, **{field_name: shared})
+    assert getattr(configured, method_name)() == normalized
+
+
+@pytest.mark.parametrize(("field_name", "method_name"), _COMMAND_DSN_RESOLVERS)
+def test_command_dsn_requires_at_least_one_of_the_two_variables(field_name: str, method_name: str) -> None:
+    del field_name
+    with pytest.raises(ValueError, match="or DATABASE_URL"):
+        getattr(_settings(), method_name)()
+
+
+@pytest.mark.parametrize(("field_name", "method_name"), _COMMAND_DSN_RESOLVERS)
+@pytest.mark.parametrize("blank", ["", "  ", "\t\n"])
+def test_command_dsn_treats_a_blank_override_as_unset(field_name: str, method_name: str, blank: str) -> None:
+    """`export FOO=` is an empty variable, not a DSN.
+
+    `""` was already falsy and fell through, but `"  "` was truthy: it was returned verbatim and
+    died inside SQLAlchemy's URL parser instead of here. Both now mean the same thing.
+    """
+    application = "postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5442/plantgeo"
+
+    configured = _settings(database_url=application, **{field_name: blank})
+    assert getattr(configured, method_name)() == application
+
+    with pytest.raises(ValueError, match="or DATABASE_URL"):
+        getattr(_settings(**{field_name: blank}), method_name)()
+
+
+@pytest.mark.parametrize(("field_name", "method_name"), _COMMAND_DSN_RESOLVERS)
 @pytest.mark.parametrize(
-    "suffix",
+    ("incomplete", "expected"),
     [
-        "?host=database.internal&port=5432",
-        "#host=database.internal&port=5432",
+        ("postgresql+asyncpg://127.0.0.1:5442/plantgeo", "complete postgresql"),
+        ("postgresql+asyncpg://plantgeo_owner:password@127.0.0.1/plantgeo", "complete postgresql"),
+        ("postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5442", "complete postgresql"),
+        ("mysql://plantgeo_owner:password@127.0.0.1:5442/plantgeo", "complete postgresql"),
+        ("postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:not-a-port/plantgeo", "invalid port"),
     ],
 )
-def test_source_loader_rejects_query_strings_and_fragments(suffix: str) -> None:
-    with pytest.raises(ValueError, match=r"127\.0\.0\.1:5442/plantgeo"):
-        _settings(
-            local_source_loader_database_url=(
-                "postgresql+asyncpg://plantgeo_loader:password@127.0.0.1:5442/plantgeo" + suffix
-            )
-        ).require_local_source_loader_database_url()
+def test_command_dsn_must_still_be_a_complete_database_url(
+    field_name: str,
+    method_name: str,
+    incomplete: str,
+    expected: str,
+) -> None:
+    """The one surviving rejection, shared with the profile DSNs through a single parser."""
+    with pytest.raises(ValueError, match=expected):
+        getattr(_settings(**{field_name: incomplete}), method_name)()
 
 
-def test_source_loader_accepts_the_widened_production_ingest_target() -> None:
-    """The 2026-08-03 widening adds the Railway cron target alongside the local compose loader."""
-    target = "postgresql+asyncpg://postgres:password@switchback.proxy.rlwy.net:37967/plantgeo"
-    assert _settings(local_source_loader_database_url=target).require_local_source_loader_database_url() == target
+@pytest.mark.parametrize(("field_name", "method_name"), _COMMAND_DSN_RESOLVERS)
+def test_command_dsn_reports_the_variable_that_actually_failed(field_name: str, method_name: str) -> None:
+    """A blank override means the fallback is what got parsed, so the message must name it."""
+    with pytest.raises(ValueError, match="DATABASE_URL must be a complete"):
+        getattr(
+            _settings(database_url="postgresql+asyncpg://127.0.0.1:5442/plantgeo", **{field_name: "  "}),
+            method_name,
+        )()
 
 
-def test_source_loader_still_accepts_the_local_compose_loader_after_widening() -> None:
-    target = "postgresql+asyncpg://plantgeo_loader:password@127.0.0.1:5442/plantgeo"
-    assert _settings(local_source_loader_database_url=target).require_local_source_loader_database_url() == target
+@pytest.mark.parametrize(("field_name", "method_name"), _COMMAND_DSN_RESOLVERS)
+@pytest.mark.parametrize(
+    "override",
+    [
+        # Logins that were rejected somewhere before the teardown.
+        "postgresql+asyncpg://plantgeo_owner:password@switchback.proxy.rlwy.net:37967/plantgeo",
+        "postgresql+asyncpg://plantgeo_loader:password@switchback.proxy.rlwy.net:37967/plantgeo",
+        "postgresql+asyncpg://postgres:password@127.0.0.1:5442/plantgeo",
+        # Hosts and ports outside the retired allowlists.
+        "postgresql+asyncpg://postgres:password@postgres.railway.internal:5432/plantgeo",
+        "postgresql+asyncpg://postgres:password@some-other-proxy.rlwy.net:37967/plantgeo",
+        "postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5432/plantgeo",
+        # Database names outside the retired plantgeo/plantgeo_* rule.
+        "postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5442/agri_data",
+        "postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5442/plantgeography",
+        # Query string and fragment, previously refused outright.
+        "postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5442/plantgeo?sslmode=disable",
+        "postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5442/plantgeo#note",
+    ],
+)
+def test_command_dsn_asserts_nothing_about_login_host_port_or_database(
+    field_name: str,
+    method_name: str,
+    override: str,
+) -> None:
+    configured = _settings(**{field_name: override})
+    assert getattr(configured, method_name)() == override
 
 
-def test_source_loader_rejects_a_target_outside_the_widened_allowlist() -> None:
-    """Assume the allowlist does not work until it has been watched reject an out-of-list host."""
-    with pytest.raises(ValueError, match=r"127\.0\.0\.1:5442/plantgeo"):
-        _settings(
-            local_source_loader_database_url=(
-                "postgresql+asyncpg://postgres:password@some-other-proxy.rlwy.net:37967/plantgeo"
-            )
-        ).require_local_source_loader_database_url()
-
-
-def test_source_loader_rejects_the_local_role_at_the_production_host_and_port() -> None:
-    """An allowed host/port with the wrong login must be rejected, not silently accepted."""
-    with pytest.raises(ValueError, match="must authenticate as postgres"):
-        _settings(
-            local_source_loader_database_url=(
-                "postgresql+asyncpg://plantgeo_loader:password@switchback.proxy.rlwy.net:37967/plantgeo"
-            )
-        ).require_local_source_loader_database_url()
-
-
-def test_source_loader_rejects_the_production_role_at_the_local_host_and_port() -> None:
-    with pytest.raises(ValueError, match="must authenticate as plantgeo_loader"):
-        _settings(
-            local_source_loader_database_url=("postgresql+asyncpg://postgres:password@127.0.0.1:5442/plantgeo")
-        ).require_local_source_loader_database_url()
-
-
-def test_forecast_mv_refresh_requires_its_separate_capability_role() -> None:
-    target = "postgresql+asyncpg://forecast_refresh_operator:password@forecast-db.internal:5432/plantgeo"
-
-    with pytest.raises(ValueError, match="FORECAST_MV_REFRESH_DATABASE_URL"):
-        _settings().require_forecast_mv_refresh_database_url()
-
-    configured = _settings(forecast_mv_refresh_database_url=target)
-    assert configured.require_forecast_mv_refresh_database_url() == target
-
-    with pytest.raises(ValueError, match="must not reuse DATABASE_URL"):
-        _settings(
-            database_url=target,
-            forecast_mv_refresh_database_url=target,
-        ).require_forecast_mv_refresh_database_url()
-
-    with pytest.raises(ValueError, match="dedicated operator login"):
-        _settings(
-            database_url="postgresql+asyncpg://forecast_refresh_operator:password@app:5432/plantgeo",
-            forecast_mv_refresh_database_url=target,
-        ).require_forecast_mv_refresh_database_url()
-
-    with pytest.raises(ValueError, match="complete postgresql"):
-        _settings(
-            forecast_mv_refresh_database_url="postgresql+asyncpg://forecast-db.internal:5432/plantgeo"
-        ).require_forecast_mv_refresh_database_url()
-
-
-def test_forecast_iteration_database_url_is_explicit_local_and_profile_separate() -> None:
-    with pytest.raises(ValueError, match="FORECAST_ITERATION_DATABASE_URL"):
-        _settings().require_forecast_iteration_database_url()
-
-    target = "postgresql+asyncpg://plantgeo_local_developer:password@127.0.0.1:5442/plantgeo_forecast_test"
-    assert _settings(forecast_iteration_database_url=target).require_forecast_iteration_database_url() == target
-
-    with pytest.raises(ValueError, match="must not reuse DATABASE_URL"):
-        _settings(
-            database_url=target,
-            forecast_iteration_database_url=target,
-        ).require_forecast_iteration_database_url()
-
-    approved_production = "postgresql+asyncpg://postgres:password@switchback.proxy.rlwy.net:37967/plantgeo"
-    assert (
-        _settings(forecast_iteration_database_url=approved_production).require_forecast_iteration_database_url()
-        == approved_production
-    )
-
-    with pytest.raises(ValueError, match="approved forecast-iteration targets"):
-        _settings(
-            forecast_iteration_database_url=(
-                "postgresql+asyncpg://plantgeo_local_developer:password@db.internal:5432/plantgeo"
-            )
-        ).require_forecast_iteration_database_url()
-
-    with pytest.raises(ValueError, match="plantgeo_local_developer"):
-        _settings(
-            forecast_iteration_database_url=("postgresql+asyncpg://plantgeo_owner:password@127.0.0.1:5442/plantgeo")
-        ).require_forecast_iteration_database_url()
-
-    with pytest.raises(ValueError, match="must authenticate as postgres"):
-        _settings(
-            forecast_iteration_database_url=(
-                "postgresql+asyncpg://plantgeo_local_developer:password@switchback.proxy.rlwy.net:37967/plantgeo"
-            )
-        ).require_forecast_iteration_database_url()
-
-    with pytest.raises(ValueError, match="approved forecast-iteration targets"):
-        _settings(
-            forecast_iteration_database_url=(
-                "postgresql+asyncpg://plantgeo_local_developer:password@127.0.0.1:5442/"
-                "plantgeo?host=database.internal&port=5432"
-            )
-        ).require_forecast_iteration_database_url()
-
-
-def test_ingest_session_resolves_its_dsn_through_the_real_loader_validator(
+def test_ingest_session_uses_database_url_when_no_loader_override_is_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The cron seam itself, not a monkeypatched stand-in.
 
     Every `ingest-*` verb opens `db.engine.ingest_session()`, and `tests/test_ingest_commands.py`
-    replaces that wholesale -- so nothing in the CLI suite ever exercised the DSN it resolves. A
-    container configured the way `docs/deployment.md` and `docs/env-vars.md` used to prescribe
-    (`DATABASE_URL` only) died here with an unhandled `ValueError` outside `run_isolated_job`, on
-    every hourly tick, before a single source was fetched. This test pins the message and, more
-    importantly, pins that the raise happens BEFORE any engine is created -- so the failure can
-    never be mistaken for an unreachable database.
+    replaces that wholesale -- so nothing else in the CLI suite exercises the DSN it resolves. A
+    container carrying only `DATABASE_URL` used to die here with an unhandled `ValueError`
+    outside `run_isolated_job`, on every tick, before a single source was fetched. Since the
+    2026-08-08 teardown that is the supported single-credential deployment, so this pins the
+    exact DSN handed to the engine factory.
     """
+    application = "postgresql+asyncpg://app:password@app-db:5432/plantgeo"
+    built_with: list[str] = []
+
+    def _capture_and_stop(url: str, **_kwargs: object) -> object:
+        built_with.append(url)
+        raise _EngineFactoryReachedError
+
+    monkeypatch.setattr(engine_module, "create_async_engine", _capture_and_stop)
+    monkeypatch.setattr(engine_module, "settings", _settings(database_url=application))
+
+    async def _enter() -> None:
+        async with engine_module.ingest_session():
+            pass  # pragma: no cover - the stub raises before it yields.
+
+    with pytest.raises(_EngineFactoryReachedError):
+        asyncio.run(_enter())
+
+    assert built_with == [application]
+
+
+def test_ingest_session_refuses_before_building_an_engine_when_no_dsn_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins that the one remaining failure raises BEFORE any engine is created, so it can never
+    be mistaken for an unreachable database."""
 
     def _fail_if_an_engine_is_built(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("ingest_session must refuse an unconfigured loader DSN before building an engine")
+        raise AssertionError("ingest_session must refuse an unconfigured DSN before building an engine")
 
     monkeypatch.setattr(engine_module, "create_async_engine", _fail_if_an_engine_is_built)
-    # The container the old docs described: DATABASE_URL present, the loader DSN absent.
-    monkeypatch.setattr(
-        engine_module,
-        "settings",
-        _settings(database_url="postgresql+asyncpg://app:password@app-db:5432/plantgeo"),
-    )
+    monkeypatch.setattr(engine_module, "settings", _settings())
 
     async def _enter() -> None:
         async with engine_module.ingest_session():
             pass  # pragma: no cover - the context manager raises before it yields.
 
-    with pytest.raises(ValueError, match="DATABASE_URL is never a loader fallback"):
+    with pytest.raises(ValueError, match="LOCAL_SOURCE_LOADER_DATABASE_URL"):
         asyncio.run(_enter())
-
-
-def test_the_cron_containers_public_proxy_dsn_is_the_configuration_that_actually_works() -> None:
-    """`DATABASE_URL` set to the same string is NOT a working alternative, and neither is the
-    private-network host: `_INGEST_SOURCE_LOADER_ALLOWED_TARGETS` names the public proxy only."""
-    proxy = "postgresql://postgres:password@switchback.proxy.rlwy.net:37967/plantgeo"
-    normalized = "postgresql+asyncpg://postgres:password@switchback.proxy.rlwy.net:37967/plantgeo"
-
-    assert _settings(local_source_loader_database_url=proxy).require_local_source_loader_database_url() == normalized
-
-    # Both fields normalise to postgresql+asyncpg://, so identical raw strings compare EQUAL here.
-    with pytest.raises(ValueError, match="must not reuse DATABASE_URL"):
-        _settings(
-            database_url=proxy,
-            local_source_loader_database_url=proxy,
-        ).require_local_source_loader_database_url()
-
-    with pytest.raises(ValueError, match="approved"):
-        _settings(
-            local_source_loader_database_url=("postgresql://postgres:password@postgres.railway.internal:5432/plantgeo")
-        ).require_local_source_loader_database_url()

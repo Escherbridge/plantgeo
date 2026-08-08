@@ -97,69 +97,40 @@ Drizzle/Alembic migrations create schemas and `agri-cli source-ingest` load loca
 promotion archive comes from this database; it never comes from `pgt`,
 `postgres`, or another application database.
 
-## Explicit local-loader role gate
+## Role management is retired (2026-08-08)
 
-After the reviewed migrations create the `agri` schema, run the user-controlled
-role script as the bootstrap owner. It creates a new `plantgeo_loader` role and
-fails closed if that role already exists, so an unaudited existing role cannot
-retain unexpected memberships. It never runs from container startup and it does
-not grant schema DDL or ownership. Its narrow data privileges cover the reviewed
-source-lineage and append-only historical-observation tables only.
+This directory no longer provisions any role. `create-loader-role.sql`,
+`create-forecast-roles.sql`, `create-forecast-refresh-operator.sql`,
+`create-local-access-roles.sql`, and `grant-resolution-aware-loader.sql` are all
+deleted, and revision `20260808_0019` dropped the forecast capability-role
+family. Every application path connects with the single owner credential. See
+`docs/reports/migration-decision-packet-2026-08-08.md` § Resolution.
 
-```powershell
-$env:PGPASSWORD = '<local owner password>'
-& 'C:\Program Files\PostgreSQL\16\bin\psql.exe' -h 127.0.0.1 -p 5442 -U plantgeo_owner -d plantgeo -v loader_password='<unique loader password>' -f infra/local-warehouse/create-loader-role.sql
-```
+`plantgeo_loader` and the `plantgeo_local_developer`/`plantgeo_local_viewer`
+convenience logins still exist wherever they were created — the deployed Railway
+cron ingest and the in-flight archive walks authenticate as `plantgeo_loader`
+right now — and DSNs naming them keep working. No repository code manages,
+provisions, or requires them.
 
-Existing constrained loader roles receive the immutable geospatial evidence
-tables only through the separate post-`20260723_0009` grant gate. It rechecks
-the owner, database, schema, role attributes, memberships, and table presence.
-It grants `SELECT`/`INSERT` only on the new plane and `SELECT` on its existing
-lineage parents; the migration creates no sequences.
-
-```powershell
-& 'C:\Program Files\PostgreSQL\16\bin\psql.exe' -h 127.0.0.1 -p 5442 -U plantgeo_owner -d plantgeo -f infra/local-warehouse/grant-resolution-aware-loader.sql
-```
-
-Set `LOCAL_SOURCE_LOADER_DATABASE_URL` to the `plantgeo_loader` async DSN in
-the data-service operator environment. `agri-cli source-ingest` fails closed
-for an unset target, a different host/port/database, `DATABASE_URL`, or the
-`plantgeo_owner` role.
+`LOCAL_SOURCE_LOADER_DATABASE_URL` is now an optional override rather than a
+custody gate: when it is unset, `agri-cli` ingest and loader commands use
+`DATABASE_URL`, and setting both to the same DSN is accepted. No host, port,
+database name, or login is asserted. The same holds for
+`FORECAST_MV_REFRESH_DATABASE_URL` and `FORECAST_ITERATION_DATABASE_URL`.
 
 ## Connection forms
 
 ```text
-# Bootstrap/migration only; never use for normal source loads.
 postgresql://plantgeo_owner:<password>@127.0.0.1:5442/plantgeo
 postgresql+asyncpg://plantgeo_owner:<password>@127.0.0.1:5442/plantgeo
-
-# Normal `source-ingest` connection after the manual role gate.
-postgresql+asyncpg://plantgeo_loader:<loader-password>@127.0.0.1:5442/plantgeo
 ```
 
-## PgAdmin and broad local development access
+## PgAdmin
 
-After the forecast capability roles exist, `create-local-access-roles.sql`
-creates two loopback-only convenience logins. `plantgeo_local_developer` is a
-broad non-superuser warehouse login with DDL/DML/function access in `agri` and
-membership in all four forecast capability roles. `plantgeo_local_viewer` uses
-PostgreSQL's read-all-data and monitoring roles and has no write grant. The
-script fails if either login already exists and reads passwords only from psql
-variables:
-
-```powershell
-$env:PGPASSWORD = '<local owner password>'
-& 'C:\Program Files\PostgreSQL\16\bin\psql.exe' `
-  -h 127.0.0.1 -p 5442 -U plantgeo_owner -d plantgeo `
-  -v developer_password='<unique developer password>' `
-  -v viewer_password='<unique viewer password>' `
-  -f infra/local-warehouse/create-local-access-roles.sql
-```
-
-In PgAdmin, register a server with host `127.0.0.1`, port `5442`, maintenance
-database `plantgeo`, and either local convenience login. Keep SSL mode at
-`Prefer` or `Disable` for this loopback-only container. Real local credentials
-belong in the ignored `infra/local-warehouse/.env`, never in tracked docs.
+Register a server with host `127.0.0.1`, port `5442`, maintenance database
+`plantgeo`, and the owner login. Keep SSL mode at `Prefer` or `Disable` for this
+loopback-only container. Real local credentials belong in the ignored
+`infra/local-warehouse/.env`, never in tracked docs.
 
 The Boise intervention release and the latest evaluation-only v2 forecast
 currently live only in the guarded disposable proof database
@@ -170,7 +141,7 @@ running:
 
 ```powershell
 & 'C:\Program Files\PostgreSQL\16\bin\psql.exe' `
-  -h 127.0.0.1 -p 5442 -U plantgeo_local_viewer `
+  -h 127.0.0.1 -p 5442 -U plantgeo_owner `
   -d plantgeo_geospatial_test_20260723_1421 `
   -X -f infra/local-warehouse/read-pilot-evidence.sql
 ```
@@ -178,15 +149,13 @@ running:
 After a separately authorized migration/promotion, change only `-d` to the
 approved destination database.
 
-The explicit ML materialized-view refresh uses a third login whose only role
-membership is `plantgeo_forecast_mv_refresher`. Create it with
-`create-forecast-refresh-operator.sql`, set
-`FORECAST_MV_REFRESH_DATABASE_URL` to that login, and invoke
-`agri-cli forecast-refresh-ml-daily` manually. The repository defines no refresh
-schedule.
-
-Do not point long-lived application containers at the owner role. Create the
-reviewed least-privilege runtime and migration roles after schema initialization.
+The explicit ML materialized-view refresh runs on
+`FORECAST_MV_REFRESH_DATABASE_URL`, or on `DATABASE_URL` when that is unset.
+Since `20260808_0019` retired `plantgeo_forecast_mv_refresher`, `agri-cli
+forecast-refresh-ml-daily` no longer probes a role or issues `SET LOCAL ROLE`:
+the matview and its `SECURITY DEFINER` refresher belong to the owner credential,
+and a non-concurrent `REFRESH` needs exactly that ownership. The repository
+defines no refresh schedule.
 
 ## Forecasting framework gate
 
@@ -202,13 +171,12 @@ no forecast/model/strategy rows and materializes no serving data. Run the
 contract tests and disposable PostgreSQL execution test before an operator
 applies them here; then take a verified backup before migration.
 
-Do not grant the local loader access to the forecast tables yet. A reviewed
-forecast writer/publisher role, validated source coverage, passing backtests,
-immutable job-output receipts, and a publication pointer are required first.
-The same migration is intended to roll forward to the future private Railway
-database, but no Railway schedule or model worker is authorized by this
-framework. Hindcast outcomes are local evaluation/ML feature evidence and do
-not enter `v_forecast_series_serving` or bypass publication quality gates.
+Validated source coverage, passing backtests, immutable job-output receipts, and
+a publication pointer are required before anything from this framework is
+published. The same migration is intended to roll forward to the future private
+Railway database, but no Railway schedule or model worker is authorized by it.
+Hindcast outcomes are local evaluation/ML feature evidence and do not enter
+`v_forecast_series_serving` or bypass publication quality gates.
 
 Revision `20260723_0010` adds the generic evaluation loop requested for the
 next forecast phase:
@@ -235,11 +203,11 @@ rewriting these receipts.
 
 ### Run and read one iteration
 
-Set the explicit local developer DSN in the operator shell. It must point to an
-already migrated `plantgeo*` database on loopback port 5442:
+Point the iteration DSN at an already migrated database, or leave it unset to use
+`DATABASE_URL`:
 
 ```powershell
-$env:FORECAST_ITERATION_DATABASE_URL = 'postgresql+asyncpg://plantgeo_local_developer:<password>@127.0.0.1:5442/<plantgeo-database>'
+$env:FORECAST_ITERATION_DATABASE_URL = 'postgresql+asyncpg://plantgeo_owner:<password>@127.0.0.1:5442/<plantgeo-database>'
 ```
 
 From `services/agri-data-service`, run the default 30-day deterministic
@@ -286,11 +254,11 @@ Both CLI procedures and the SQL runbook apply a transaction-local 120-second
 statement timeout. Direct SQL callers must set an equivalent local timeout.
 
 Inspect every contract, receipt, low/median/high value, actual, residual, and
-aggregate metric using the read-only viewer:
+aggregate metric; the script keeps its own transaction read-only:
 
 ```powershell
 & 'C:\Program Files\PostgreSQL\16\bin\psql.exe' `
-  -h 127.0.0.1 -p 5442 -U plantgeo_local_viewer `
+  -h 127.0.0.1 -p 5442 -U plantgeo_owner `
   -d <plantgeo-database> -X `
   -f infra/local-warehouse/read-forecast-iterations.sql
 ```
@@ -325,8 +293,8 @@ pwsh -File infra/local-warehouse/backup.ps1 `
   $env:PLANTGEO_BACKUP_ROOT\plantgeo-<timestamp>.dump
 ```
 
-The restore target must already have the required extensions and reviewed
-roles. A full archive is simple and cheap for the first cut; later refreshes
+The restore target must already have the required extensions. A full archive is
+simple and cheap for the first cut; later refreshes
 should use typed promotion receipts or logical replication rather than repeated
 full restores. No upstream or Railway database is modified by these local
 commands or this workstream.

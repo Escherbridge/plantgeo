@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 import xarray as xr
 from click.testing import CliRunner
+from pydantic import SecretStr
 
 from agri_data_service.cli import cli
 from agri_data_service.config import settings
@@ -26,6 +27,7 @@ from agri_data_service.execution.historical_era5 import (
     HistoricalEra5Finalization,
     HistoricalEra5LandBackfillPlan,
     HistoricalEra5Receipt,
+    _require_cds_credentials,  # the credential resolver under test; deliberately private
     cache_historical_era5_result,
     fetch_era5_land_monthly,
     historical_era5_checkpoint_path,
@@ -311,13 +313,76 @@ def test_era5_parquet_materialization_creates_daily_hive_partitions(tmp_path: Pa
     assert (historical_era5_parquet_root(tmp_path, plan) / "source=era5-land-daily").is_dir()
 
 
-def test_era5_fetch_rejects_missing_local_cds_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    plan = _plan()
+def _clear_cds_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Silence both resolution sources: the process environment and Settings/`.env`."""
     monkeypatch.delenv("CDSAPI_URL", raising=False)
     monkeypatch.delenv("CDSAPI_KEY", raising=False)
+    monkeypatch.setattr(settings, "cdsapi_url", None)
+    monkeypatch.setattr(settings, "cdsapi_key", None)
+
+
+def test_era5_fetch_rejects_missing_local_cds_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    plan = _plan()
+    _clear_cds_credentials(monkeypatch)
 
     with pytest.raises(ValueError, match="CDSAPI_URL"):
         run(fetch_era5_land_monthly(plan, plan.periods[0]))
+
+
+def test_cds_credentials_resolve_from_settings_when_the_environment_is_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`.env` entries used to be inert: `Settings` loads env_file, never `os.environ`.
+
+    That gap is what forced `run-backfill.sh`'s `set -a; . ./.env` dance and made a missing
+    export look like a licence refusal. Settings now carries the pair, so an operator who only
+    edits `.env` is served.
+    """
+    _clear_cds_credentials(monkeypatch)
+    monkeypatch.setattr(settings, "cdsapi_url", "https://cds.example.test/api")
+    monkeypatch.setattr(settings, "cdsapi_key", SecretStr("settings-key"))
+
+    assert _require_cds_credentials() == ("https://cds.example.test/api", "settings-key")
+
+
+def test_cds_credentials_prefer_the_process_environment_over_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real export still wins, so a one-off shell override does not need a `.env` edit."""
+    monkeypatch.setattr(settings, "cdsapi_url", "https://cds.example.test/from-dotenv")
+    monkeypatch.setattr(settings, "cdsapi_key", SecretStr("dotenv-key"))
+    monkeypatch.setenv("CDSAPI_URL", "https://cds.example.test/from-environ")
+    monkeypatch.setenv("CDSAPI_KEY", "environ-key")
+
+    assert _require_cds_credentials() == ("https://cds.example.test/from-environ", "environ-key")
+
+
+def test_cds_credentials_fall_back_per_variable_and_ignore_blank_exports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty or whitespace-only export is not a value, so it must not shadow `.env`."""
+    monkeypatch.setattr(settings, "cdsapi_url", "https://cds.example.test/from-dotenv")
+    monkeypatch.setattr(settings, "cdsapi_key", SecretStr("  dotenv-key  "))
+    monkeypatch.setenv("CDSAPI_URL", "   ")
+    monkeypatch.delenv("CDSAPI_KEY", raising=False)
+
+    assert _require_cds_credentials() == ("https://cds.example.test/from-dotenv", "dotenv-key")
+
+
+def test_cds_credential_refusal_names_variables_and_leaks_no_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Half-configured is still refused, and the message carries neither half."""
+    _clear_cds_credentials(monkeypatch)
+    monkeypatch.setattr(settings, "cdsapi_key", SecretStr("secret-key-value"))
+
+    with pytest.raises(ValueError, match="ERA5-Land requires accepted CDS web terms") as refusal:
+        _require_cds_credentials()
+
+    message = str(refusal.value)
+    assert "CDSAPI_URL" in message
+    assert "CDSAPI_KEY" in message
+    assert "secret-key-value" not in message
 
 
 def test_era5_cli_records_a_resumable_redacted_credential_gate(
@@ -328,8 +393,7 @@ def test_era5_cli_records_a_resumable_redacted_credential_gate(
     plan_path = tmp_path / "era5-plan.json"
     plan_path.write_text(plan.model_dump_json(), encoding="utf-8")
     monkeypatch.setattr(settings, "local_execution_root", tmp_path)
-    monkeypatch.delenv("CDSAPI_URL", raising=False)
-    monkeypatch.delenv("CDSAPI_KEY", raising=False)
+    _clear_cds_credentials(monkeypatch)
 
     result = CliRunner().invoke(cli, ["historical-era5-backfill", "--plan", str(plan_path)])
 
@@ -338,17 +402,20 @@ def test_era5_cli_records_a_resumable_redacted_credential_gate(
     checkpoint = load_historical_era5_checkpoint(historical_era5_checkpoint_path(tmp_path, plan))
     assert checkpoint.state == "blocked"
     assert checkpoint.reason == (
-        "ERA5-Land requires accepted CDS web terms plus CDSAPI_URL and CDSAPI_KEY in the local operator environment"
+        "ERA5-Land requires accepted CDS web terms plus CDSAPI_URL and CDSAPI_KEY in the local "
+        "operator environment or services/agri-data-service/.env"
     )
 
 
-def test_era5_persist_fails_closed_without_the_dedicated_local_loader(
+def test_era5_persist_fails_closed_without_any_database_dsn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plan_path = tmp_path / "era5-plan.json"
     plan_path.write_text(_plan().model_dump_json(), encoding="utf-8")
+    # The loader override falls back to DATABASE_URL since 2026-08-08, so both must be absent.
     monkeypatch.setattr(settings, "local_source_loader_database_url", None)
+    monkeypatch.setattr(settings, "database_url", None)
 
     result = CliRunner().invoke(cli, ["historical-era5-persist", "--plan", str(plan_path)])
 

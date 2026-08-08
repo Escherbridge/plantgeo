@@ -77,12 +77,6 @@ MANIFEST_COLUMNS = (
     "max_data_available_at",
     "manifest_checksum",
 )
-FORECAST_PLANE_ROLES = (
-    "plantgeo_forecast_reader",
-    "plantgeo_forecast_writer",
-    "plantgeo_forecast_publisher",
-    "plantgeo_forecast_mv_refresher",
-)
 COVARIATE_FUNCTION_SIGNATURES = (
     "agri.covariate_feature_schema(character varying)",
     "agri.covariate_declared_gap(character varying)",
@@ -456,9 +450,26 @@ def test_covariate_layer_is_evaluation_only_and_least_privilege(
             cursor.execute("SELECT has_function_privilege('public', %s, 'EXECUTE')", (function_oid,))
             assert cursor.fetchone()[0] is False, f"{signature} must be revoked from PUBLIC"
 
-            for role in FORECAST_PLANE_ROLES:
-                cursor.execute("SELECT has_function_privilege(%s, %s, 'EXECUTE')", (role, function_oid))
-                assert cursor.fetchone()[0] is False, f"{signature} must not be granted to {role}"
+            # Until 20260808_0019 this asked has_function_privilege() about each of the four
+            # plantgeo_forecast_* roles by name. Those roles no longer exist, and that function
+            # raises undefined_object rather than returning false for a missing role, so the
+            # question is asked of the catalog instead: nobody but the owner holds a grant. That
+            # is also the stronger assertion -- it catches a grant to a role nobody thought to
+            # name here.
+            cursor.execute(
+                """
+                SELECT coalesce(array_agg(grantee.rolname ORDER BY grantee.rolname), ARRAY[]::text[])
+                FROM pg_catalog.pg_proc AS procedure
+                CROSS JOIN LATERAL aclexplode(procedure.proacl) AS access
+                INNER JOIN pg_catalog.pg_roles AS grantee
+                    ON grantee.oid = access.grantee
+                WHERE procedure.oid = %s
+                  AND access.grantee <> procedure.proowner
+                """,
+                (function_oid,),
+            )
+            (granted_roles,) = cursor.fetchone()
+            assert granted_roles == [], f"{signature} must be owner-only, but is granted to {granted_roles}"
 
             cursor.execute("SELECT pg_get_functiondef(%s)", (function_oid,))
             (definition,) = cursor.fetchone()

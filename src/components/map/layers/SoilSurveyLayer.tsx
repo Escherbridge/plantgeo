@@ -7,11 +7,16 @@ import {
   SOIL_SURVEY_SOURCE,
   soilSurveyLayer,
   soilSurveyOutlineLayer,
+  soilSurveySummaryLayer,
 } from "@/lib/map/layers";
 import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { authoredPaintValue } from "@/lib/map/layer-opacity";
 
-const SOIL_SURVEY_LAYER_IDS = [soilSurveyLayer.id, soilSurveyOutlineLayer.id];
+const SOIL_SURVEY_LAYER_IDS = [
+  soilSurveyLayer.id,
+  soilSurveyOutlineLayer.id,
+  soilSurveySummaryLayer.id,
+];
 
 /**
  * The authored strengths, read off the shared specs rather than restated -- a palette edit in
@@ -26,20 +31,34 @@ const SURVEY_OUTLINE_OPACITY = authoredPaintValue(
   soilSurveyOutlineLayer,
   "line-opacity"
 ) as number;
+const SUMMARY_FILL_OPACITY = authoredPaintValue(
+  soilSurveySummaryLayer,
+  "circle-opacity"
+) as number;
+const SUMMARY_STROKE_OPACITY = authoredPaintValue(
+  soilSurveySummaryLayer,
+  "circle-stroke-opacity"
+) as number;
 
 interface SoilSurveyLayerProps {
   map: MapLibreMap | null;
   /** SSURGO map units for the viewport, from environmental.getSoilSurvey. */
   geojson: GeoJSON.FeatureCollection | null;
   visible?: boolean;
-  /** The reader's MULTIPLIER over both authored strengths. See src/lib/map/layer-opacity.ts. */
+  /** The reader's MULTIPLIER over every authored strength. See src/lib/map/layer-opacity.ts. */
   opacityScale?: number;
 }
 
 /**
- * Draws USDA SSURGO map-unit polygons proxied per viewport through
- * `environmental.getSoilSurvey`. Distinct from `SoilLayer`, which paints the SoilGrids
- * raster: this one is the vector survey.
+ * Draws USDA SSURGO map units for the viewport, served by `environmental.getSoilSurvey`.
+ * Distinct from `SoilLayer`, which paints the SoilGrids raster: this one is the vector
+ * survey.
+ *
+ * Three style layers over ONE source, because the server answers a viewport with one of
+ * three shapes and each needs its own geometry type: real delineations and drainage-class
+ * unions are polygons (the fill + outline pair), and a viewport too wide to union honestly
+ * is a lattice of counted points (the summary circles). The circle layer's own `summary`
+ * filter is what keeps them apart, so nothing here has to branch on which tier answered.
  *
  * Paint and ids come from `src/lib/map/layers.ts` rather than being restated here, so the
  * fill's `drainageClass` arms, the outline, and the hover formatter keyed on
@@ -55,20 +74,49 @@ export function SoilSurveyLayer({
 }: SoilSurveyLayerProps) {
   const fillOpacity = SURVEY_FILL_OPACITY * opacityScale;
   const outlineOpacity = SURVEY_OUTLINE_OPACITY * opacityScale;
+  const summaryFillOpacity = SUMMARY_FILL_OPACITY * opacityScale;
+  const summaryStrokeOpacity = SUMMARY_STROKE_OPACITY * opacityScale;
 
   // The style.load handler must read the newest data without re-registering, or it drops
   // to the back of the listener queue on every viewport query. See AGENTS.md. Synced in an
   // effect rather than assigned during render (as WaterLayer and DroughtLayer still do):
   // both run before any style event can fire, and only this form is free of
   // react-hooks/refs.
-  const propsRef = useRef({ geojson, visible, fillOpacity, outlineOpacity });
+  const propsRef = useRef({
+    geojson,
+    visible,
+    fillOpacity,
+    outlineOpacity,
+    summaryFillOpacity,
+    summaryStrokeOpacity,
+  });
   useEffect(() => {
-    propsRef.current = { geojson, visible, fillOpacity, outlineOpacity };
-  }, [geojson, visible, fillOpacity, outlineOpacity]);
+    propsRef.current = {
+      geojson,
+      visible,
+      fillOpacity,
+      outlineOpacity,
+      summaryFillOpacity,
+      summaryStrokeOpacity,
+    };
+  }, [
+    geojson,
+    visible,
+    fillOpacity,
+    outlineOpacity,
+    summaryFillOpacity,
+    summaryStrokeOpacity,
+  ]);
 
   // Idempotent: every add is guarded, so the two effects below may both call it.
   const addLayers = useCallback((m: MapLibreMap) => {
-    const { geojson, fillOpacity, outlineOpacity } = propsRef.current;
+    const {
+      geojson,
+      fillOpacity,
+      outlineOpacity,
+      summaryFillOpacity,
+      summaryStrokeOpacity,
+    } = propsRef.current;
     if (!geojson) return;
 
     const beforeId = getFirstSymbolLayer(m);
@@ -89,6 +137,18 @@ export function SoilSurveyLayer({
     if (!m.getLayer(soilSurveyOutlineLayer.id)) {
       m.addLayer(soilSurveyOutlineLayer, beforeId);
       m.setPaintProperty(soilSurveyOutlineLayer.id, "line-opacity", outlineOpacity);
+    }
+    // Last, so the lattice dots sit over the polygon pair. In practice a response is all
+    // one tier or all the other, so they never actually overlap -- the ordering is what
+    // makes that assumption unnecessary.
+    if (!m.getLayer(soilSurveySummaryLayer.id)) {
+      m.addLayer(soilSurveySummaryLayer, beforeId);
+      m.setPaintProperty(soilSurveySummaryLayer.id, "circle-opacity", summaryFillOpacity);
+      m.setPaintProperty(
+        soilSurveySummaryLayer.id,
+        "circle-stroke-opacity",
+        summaryStrokeOpacity
+      );
     }
   }, []);
 
@@ -162,7 +222,15 @@ export function SoilSurveyLayer({
     if (map.getLayer(soilSurveyOutlineLayer.id)) {
       map.setPaintProperty(soilSurveyOutlineLayer.id, "line-opacity", outlineOpacity);
     }
-  }, [map, visible, fillOpacity, outlineOpacity]);
+    if (map.getLayer(soilSurveySummaryLayer.id)) {
+      map.setPaintProperty(soilSurveySummaryLayer.id, "circle-opacity", summaryFillOpacity);
+      map.setPaintProperty(
+        soilSurveySummaryLayer.id,
+        "circle-stroke-opacity",
+        summaryStrokeOpacity
+      );
+    }
+  }, [map, visible, fillOpacity, outlineOpacity, summaryFillOpacity, summaryStrokeOpacity]);
 
   return null;
 }

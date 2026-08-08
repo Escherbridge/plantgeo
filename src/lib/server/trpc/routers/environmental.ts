@@ -1,14 +1,11 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, publicProcedure } from "@/lib/server/trpc/init";
-import {
-  UpstreamHttpError,
-  UpstreamPayloadError,
-  UpstreamTimeoutError,
-} from "@/lib/server/http/bounded-upstream";
+import { rethrowUpstreamFault } from "@/lib/server/trpc/upstream-fault";
 import { getInterventionSuitability } from "@/lib/server/services/carbon-potential";
 import {
   getMetricAtDate,
+  getPublishedClimateField,
   getPublishedDroughtClassification,
   getPublishedGroundwaterWells,
   getPublishedSoilField,
@@ -16,6 +13,12 @@ import {
   getPublishedVegetationIndex,
   getSliderCapabilities,
 } from "@/lib/server/services/environmental-read-model";
+import {
+  AIR_TEMPERATURE_VARIANT_IDS,
+  CLIMATE_FIELD_SIGNAL_IDS,
+  type AirTemperatureVariant,
+  type ClimateFieldSignalId,
+} from "@/lib/environmental/climate-field";
 import {
   SOIL_FIELD_DEPTHS,
   SOIL_FIELD_MEASURE_IDS,
@@ -171,27 +174,6 @@ export interface ProxiedSoilSurveyCollection extends ProxiedFeatureCollection {
   coverage: SoilSurveyCoverage;
 }
 
-/**
- * Maps a bounded-fetch transport fault onto the retryable code, mirroring how
- * `getSoilProperties` below treats `SoilUpstreamUnavailableError`. Anything else --
- * a permanent 4xx, a configuration fault, a cache failure -- propagates unchanged
- * rather than being relabelled as a temporary outage the client should retry.
- */
-function rethrowUpstreamFault(error: unknown, provider: string): never {
-  const isTransient =
-    error instanceof UpstreamTimeoutError ||
-    error instanceof UpstreamPayloadError ||
-    (error instanceof UpstreamHttpError &&
-      (error.status === 429 || error.status >= 500));
-  if (isTransient) {
-    throw new TRPCError({
-      code: "SERVICE_UNAVAILABLE",
-      message: `${provider} is temporarily unavailable`,
-    });
-  }
-  throw error;
-}
-
 export const environmentalRouter = router({
   getNDVIMetadata: publicProcedure
     .input(
@@ -273,12 +255,6 @@ export const environmentalRouter = router({
         },
       };
     }),
-
-  getReforestationZones: publicProcedure
-    .input(z.object({ bbox: bboxSchema }))
-    .query(() =>
-      unavailableCollection("validated_reforestation_output_not_published")
-    ),
 
   /**
    * USGS gauge readings for the viewport: the live edge, or one named day's newest reading
@@ -367,16 +343,6 @@ export const environmentalRouter = router({
   getGroundwater: publicProcedure
     .input(z.object({ bbox: bboxSchema, date: observationDateSchema.optional() }))
     .query(({ input }) => getPublishedGroundwaterWells(input.bbox, input.date)),
-
-  getWaterScarcityScore: publicProcedure
-    .input(z.object({ bbox: bboxSchema }))
-    .query(() => ({
-      availability: "unavailable" as const,
-      reason: "validated_water_scarcity_output_not_published" as const,
-      score: null,
-      components: null,
-      revision: null,
-    })),
 
   getSoilProperties: publicProcedure
     .input(pointSchema)
@@ -508,6 +474,38 @@ export const environmentalRouter = router({
         measure: input.measure as SoilFieldMeasure | undefined,
         depth: input.depth as SoilFieldDepth | undefined,
         zoom: input.zoom,
+      })
+    ),
+
+  /**
+   * One NASA POWER climate field for the viewport, on the slider's day.
+   *
+   * No `zoom`, unlike `getSoilField`: this lane has one serving tier. Its lattice is 0.5
+   * degrees and 397 cells in total, so there is nothing a coarser aggregate would save and
+   * the reader draws stored cells at every zoom -- see `environmental-read-model.ts`
+   * §climate-field.
+   *
+   * Deliberately NOT wrapped in `areaBoundedBbox`, for the same reason `getSoilField` is not:
+   * it reads the local warehouse rather than proxying a third party, and the whole-lattice
+   * answer is bounded by the lattice itself rather than by the viewport.
+   */
+  getClimateField: publicProcedure
+    .input(
+      z.object({
+        bbox: bboxSchema,
+        date: observationDateSchema.optional(),
+        // Enumerated from the shared tables rather than restated, so a signal added there
+        // cannot be rejected here. `variant` is the union across signals; the reader resolves
+        // a variant the chosen signal does not publish to that signal's single reading.
+        signal: z.enum(CLIMATE_FIELD_SIGNAL_IDS as [string, ...string[]]).optional(),
+        variant: z.enum(AIR_TEMPERATURE_VARIANT_IDS as [string, ...string[]]).optional(),
+      })
+    )
+    .query(({ input }) =>
+      getPublishedClimateField(input.bbox, {
+        date: input.date,
+        signal: input.signal as ClimateFieldSignalId | undefined,
+        variant: input.variant as AirTemperatureVariant | undefined,
       })
     ),
 

@@ -5,8 +5,7 @@
 -- source_variant_key/metadata_json. Requires a validated/published
 -- nasa-power-daily release set for the Boise cell to already exist (run
 -- historical-nasa-backfill/-finalize first); zero rows insert otherwise.
--- Run as plantgeo_owner or plantgeo_local_developer against the disposable
--- database, e.g.:
+-- Run with the owner credential against the disposable database, e.g.:
 --   psql ... -f register-boise-trekker-rim-series.sql
 
 \set ON_ERROR_STOP on

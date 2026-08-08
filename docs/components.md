@@ -9,7 +9,7 @@ src/components/
 ├── map/
 │   ├── MapView.tsx              # Main map component
 │   ├── MapControls.tsx          # Zoom, fullscreen, compass controls
-│   ├── PanelManager.tsx         # Sidebar panel orchestration
+│   ├── layer-panel/             # The dock: LayerPanel, DockSections, DetailsSection, DockDetails, DockToggle
 │   ├── LayerManager.tsx         # Layer list and reordering
 │   ├── Legend.tsx               # Layer legend display
 │   ├── TerrainControl.tsx       # Terrain exaggeration slider
@@ -40,32 +40,28 @@ src/components/
 │       ├── ModelLayer.tsx
 │       └── ...more layers
 ├── panels/
-│   ├── LayerPanel.tsx           # Layer list and management
 │   ├── LayerItem.tsx            # Individual layer row
 │   ├── LayerFilter.tsx          # Layer filtering UI
 │   ├── LayerStyler.tsx          # Style editor (colors, opacity)
 │   ├── LayerUpload.tsx          # Upload custom layer data
-│   ├── RoutingPanel.tsx         # Route calculator
-│   ├── IsochronePanel.tsx       # Isochrone/accessibility
 │   ├── SearchPanel.tsx          # Geocoding search
 │   ├── TrackingPanel.tsx        # Asset tracking
-│   ├── FireDashboard.tsx        # Fire alerts and stats
-│   ├── WaterPanel.tsx           # Water monitoring
-│   ├── SoilPanel.tsx            # Soil data viewer
-│   ├── VegetationPanel.tsx      # Vegetation analysis
-│   ├── AnalyticsDashboard.tsx   # User metrics
+│   ├── FireDetails.tsx          # Fire alerts and stats
+│   ├── WaterDetails.tsx         # Water monitoring
+│   ├── SoilDetails.tsx          # Soil data viewer
+│   ├── VegetationDetails.tsx    # Vegetation analysis
+│   ├── AnalyticsDetails.tsx     # User metrics
 │   ├── RegionalIntelligencePanel.tsx # AI analysis
 │   ├── StrategyPanel.tsx        # Strategy management
 │   ├── StrategyCard.tsx         # Individual strategy
-│   ├── EcosystemTracker.tsx     # Multi-layer health
-│   ├── AlertPanel.tsx           # Alert list
-│   ├── TeamDashboard.tsx        # Team info
+│   ├── AlertDetails.tsx         # Alert list
+│   ├── TeamDetails.tsx          # Team info
 │   ├── TeamProfilePanel.tsx     # Team editing
 │   ├── UserPanel.tsx            # User profile
-│   ├── CommunityPanel.tsx       # Community features
+│   ├── CommunityDetails.tsx     # Community features
 │   ├── ContributionQueue.tsx    # Pending contributions
 │   ├── RequestSubmitModal.tsx   # Feature request form
-│   └── ...more panels
+│   └── ...more panels, each region a *Details component mounted by DockDetails
 ├── ui/
 │   ├── AlertBell.tsx            # Notification icon
 │   ├── SyncIndicator.tsx        # Data sync status
@@ -455,12 +451,13 @@ export function RoutingPanel() {
 
 ---
 
-### FireDashboard
+### FireDetails
 
-Real-time fire alert and statistics display.
+Real-time fire alert and statistics display, mounted by `DockDetails` while the Fire section
+is expanded.
 
 ```typescript
-export function FireDashboard() {
+export function FireDetails() {
   const { data: fires } = useQuery(
     () => trpc.wildfire.getFireDetections.query({ dayRange: 7 })
   );

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from typing import Literal
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,35 +10,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _MAX_PUBLISH_OUTPUTS = 1_000
 _MIN_TOKEN_LENGTH = 32
 _MIN_TOKEN_DIVERSITY = 10
-_LOCAL_SOURCE_LOADER_HOST = "127.0.0.1"
-_LOCAL_SOURCE_LOADER_PORT = 5442
-_LOCAL_SOURCE_LOADER_DATABASE = "plantgeo"
-_LOCAL_SOURCE_LOADER_ROLE = "plantgeo_loader"
-# The Railway cron container's target: the private-network/proxy host, port and login recorded
-# in services/agri-data-service/.env's DATABASE_URL. Never the password; that stays in the
-# environment. See ingest/AGENTS.md for why the loader allowlist was widened to include it.
-_PRODUCTION_INGEST_HOST = "switchback.proxy.rlwy.net"
-_PRODUCTION_INGEST_PORT = 37967
-_PRODUCTION_INGEST_ROLE = "postgres"
-# Explicit (host, port, role) triples permitted for source-ingest. Widening this list is the
-# only change the 2026-08-03 ingestion-warehouse-consolidation track made to the loader
-# validator; scheme, empty-query-string and database-name guards are unchanged. See
-# ingest/AGENTS.md for the full rationale and the residual coupling this widening accepts.
-_INGEST_SOURCE_LOADER_ALLOWED_TARGETS: tuple[tuple[str, int, str], ...] = (
-    (_LOCAL_SOURCE_LOADER_HOST, _LOCAL_SOURCE_LOADER_PORT, _LOCAL_SOURCE_LOADER_ROLE),
-    (_PRODUCTION_INGEST_HOST, _PRODUCTION_INGEST_PORT, _PRODUCTION_INGEST_ROLE),
-)
-_LOCAL_FORECAST_ITERATION_HOST = "127.0.0.1"
-_LOCAL_FORECAST_ITERATION_PORT = 5442
-_LOCAL_FORECAST_ITERATION_ROLE = "plantgeo_local_developer"
-# Explicit (host, port, role) triples permitted for evaluation-only forecast iteration writes,
-# mirroring the loader allowlist above. The production proxy entry exists because the governed
-# NDVI observation plane and its Monte Carlo iterations were authorized to run against the
-# consolidated warehouse; see execution/AGENTS.md.
-_FORECAST_ITERATION_ALLOWED_TARGETS: tuple[tuple[str, int, str], ...] = (
-    (_LOCAL_FORECAST_ITERATION_HOST, _LOCAL_FORECAST_ITERATION_PORT, _LOCAL_FORECAST_ITERATION_ROLE),
-    (_PRODUCTION_INGEST_HOST, _PRODUCTION_INGEST_PORT, _PRODUCTION_INGEST_ROLE),
-)
 
 
 class Settings(BaseSettings):
@@ -52,12 +23,10 @@ class Settings(BaseSettings):
     database_url: str | None = None
     receiver_writer_database_url: str | None = None
     published_reader_database_url: str | None = None
-    # Never default this to DATABASE_URL: source ingestion has a separate local-only custody target.
-    # Accepts plantgeo_-prefixed disposable databases too, mirroring the iteration guard below.
+    # Optional overrides that let one command target a database other than DATABASE_URL. Each
+    # falls back to DATABASE_URL when unset and may name the same DSN; see the resolver below.
     local_source_loader_database_url: str | None = None
-    # Operator-only refreshes use a separate capability role and never inherit the API DSN.
     forecast_mv_refresh_database_url: str | None = None
-    # Evaluation iterations run only against an explicitly selected local warehouse database.
     forecast_iteration_database_url: str | None = None
 
     @field_validator(
@@ -110,6 +79,11 @@ class Settings(BaseSettings):
             raise ValueError(f"{field_name} is available only for the {required_profile} service profile")
         if not value:
             raise ValueError(f"{required_profile} service profile requires {field_name}")
+        return self._require_complete_database_url(value, field_name)
+
+    @staticmethod
+    def _require_complete_database_url(value: str, field_name: str) -> str:
+        """Reject anything that is not a complete `postgresql+asyncpg` DSN. The only DSN parser."""
         try:
             parsed = urlsplit(value)
             port = parsed.port
@@ -123,8 +97,6 @@ class Settings(BaseSettings):
             or not parsed.username
         ):
             raise ValueError(f"{field_name} must be a complete postgresql+asyncpg database URL")
-        if value == self.database_url:
-            raise ValueError(f"{field_name} must not reuse DATABASE_URL")
         return value
 
     database_url_sync: str = "postgresql://geo:plantgeo@localhost:5432/plantgeo"
@@ -155,129 +127,42 @@ class Settings(BaseSettings):
     cloud_training_enabled: bool = False
     local_execution_root: Path = Path(".agri-local-runs")
 
+    # Copernicus CDS credentials for the ERA5-Land lane. Declared here so `.env` works; a real
+    # CDSAPI_URL/CDSAPI_KEY in the process environment still wins. See execution/AGENTS.md.
+    cdsapi_url: str | None = None
+    cdsapi_key: SecretStr | None = None
+
+    def _require_command_database_url(self, override: str | None, field_name: str) -> str:
+        """Return `override` when set, else DATABASE_URL; blank/whitespace is unset. See db/AGENTS.md."""
+        resolved = (override or "").strip()
+        source = field_name
+        if not resolved:
+            resolved = (self.database_url or "").strip()
+            source = "DATABASE_URL"
+        if not resolved:
+            raise ValueError(f"set {field_name} or DATABASE_URL")
+        return self._require_complete_database_url(resolved, source)
+
     def require_local_source_loader_database_url(self) -> str:
-        """Return the DSN allowed for source-ingest: the local compose loader or the Railway
-        cron target in `_INGEST_SOURCE_LOADER_ALLOWED_TARGETS`. See ingest/AGENTS.md."""
-        value = self.local_source_loader_database_url
-        if not value:
-            raise ValueError(
-                "source-ingest requires LOCAL_SOURCE_LOADER_DATABASE_URL; DATABASE_URL is never a loader fallback"
-            )
-        if value == self.database_url:
-            raise ValueError("LOCAL_SOURCE_LOADER_DATABASE_URL must not reuse DATABASE_URL")
-        try:
-            parsed = urlsplit(value)
-            port = parsed.port
-        except ValueError as exc:
-            raise ValueError("LOCAL_SOURCE_LOADER_DATABASE_URL has an invalid port") from exc
-        database_name = parsed.path.removeprefix("/")
-        valid_database_name = database_name == _LOCAL_SOURCE_LOADER_DATABASE or database_name.startswith(
-            f"{_LOCAL_SOURCE_LOADER_DATABASE}_"
+        """Return the DSN every ingest/loader command connects with."""
+        return self._require_command_database_url(
+            self.local_source_loader_database_url,
+            "LOCAL_SOURCE_LOADER_DATABASE_URL",
         )
-        # Role is deliberately excluded from this lookup: an allowed host/port with the wrong
-        # role must fall through to the more specific role errors below, not this generic one.
-        matching_target = next(
-            (
-                target
-                for target in _INGEST_SOURCE_LOADER_ALLOWED_TARGETS
-                if parsed.hostname == target[0] and port == target[1]
-            ),
-            None,
-        )
-        allowed_hosts = ", ".join(
-            f"{host}:{host_port}" for host, host_port, _role in _INGEST_SOURCE_LOADER_ALLOWED_TARGETS
-        )
-        target_error = (
-            "LOCAL_SOURCE_LOADER_DATABASE_URL must target postgresql+asyncpg://127.0.0.1:5442/plantgeo "
-            "or a plantgeo_-prefixed disposable database there, or one of the other approved "
-            f"source-ingest targets ({allowed_hosts}) with a plantgeo (or plantgeo_-prefixed) database"
-        )
-        if parsed.scheme != "postgresql+asyncpg" or not valid_database_name or parsed.query or parsed.fragment:
-            raise ValueError(target_error)
-        if matching_target is None:
-            raise ValueError(target_error)
-        if parsed.username == "plantgeo_owner":
-            raise ValueError("LOCAL_SOURCE_LOADER_DATABASE_URL must not use the plantgeo_owner bootstrap role")
-        _, _, required_role = matching_target
-        if parsed.username != required_role:
-            raise ValueError(f"LOCAL_SOURCE_LOADER_DATABASE_URL must authenticate as {required_role}")
-        return value
 
     def require_forecast_mv_refresh_database_url(self) -> str:
-        """Return the explicit DSN for the reviewed forecast MV refresh role."""
-        value = self.forecast_mv_refresh_database_url
-        if not value:
-            raise ValueError(
-                "forecast MV refresh requires FORECAST_MV_REFRESH_DATABASE_URL; "
-                "DATABASE_URL is never a refresh fallback"
-            )
-        if value == self.database_url:
-            raise ValueError("FORECAST_MV_REFRESH_DATABASE_URL must not reuse DATABASE_URL")
-        try:
-            parsed = urlsplit(value)
-            port = parsed.port
-        except ValueError as exc:
-            raise ValueError("FORECAST_MV_REFRESH_DATABASE_URL has an invalid port") from exc
-        refresh_username = parsed.username
-        if (
-            parsed.scheme != "postgresql+asyncpg"
-            or not parsed.hostname
-            or port is None
-            or parsed.path in {"", "/"}
-            or not refresh_username
-        ):
-            raise ValueError("FORECAST_MV_REFRESH_DATABASE_URL must be a complete postgresql+asyncpg database URL")
-        application_username = (
-            unquote(urlsplit(self.database_url).username or "") if self.database_url is not None else ""
+        """Return the DSN the forecast materialized-view refresh connects with."""
+        return self._require_command_database_url(
+            self.forecast_mv_refresh_database_url,
+            "FORECAST_MV_REFRESH_DATABASE_URL",
         )
-        if unquote(refresh_username) == application_username:
-            raise ValueError("FORECAST_MV_REFRESH_DATABASE_URL must authenticate a dedicated operator login")
-        return value
 
     def require_forecast_iteration_database_url(self) -> str:
-        """Return the explicit local DSN for evaluation-only forecast iteration writes."""
-        value = self.forecast_iteration_database_url
-        if not value:
-            raise ValueError(
-                "forecast iteration requires FORECAST_ITERATION_DATABASE_URL; "
-                "DATABASE_URL is never an evaluation-writer fallback"
-            )
-        if value == self.database_url:
-            raise ValueError("FORECAST_ITERATION_DATABASE_URL must not reuse DATABASE_URL")
-        try:
-            parsed = urlsplit(value)
-            port = parsed.port
-        except ValueError as exc:
-            raise ValueError("FORECAST_ITERATION_DATABASE_URL has an invalid port") from exc
-        database_name = parsed.path.removeprefix("/")
-        matching_target = next(
-            (
-                target
-                for target in _FORECAST_ITERATION_ALLOWED_TARGETS
-                if parsed.hostname == target[0] and port == target[1]
-            ),
-            None,
+        """Return the DSN the evaluation-only forecast iteration writes connect with."""
+        return self._require_command_database_url(
+            self.forecast_iteration_database_url,
+            "FORECAST_ITERATION_DATABASE_URL",
         )
-        allowed_hosts = ", ".join(
-            f"{host}:{host_port}" for host, host_port, _role in _FORECAST_ITERATION_ALLOWED_TARGETS
-        )
-        target_error = (
-            "FORECAST_ITERATION_DATABASE_URL must target a plantgeo (or plantgeo_-prefixed) database over "
-            f"postgresql+asyncpg on one of the approved forecast-iteration targets ({allowed_hosts})"
-        )
-        if (
-            parsed.scheme != "postgresql+asyncpg"
-            or not (database_name == "plantgeo" or database_name.startswith("plantgeo_"))
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError(target_error)
-        if matching_target is None:
-            raise ValueError(target_error)
-        _, _, required_role = matching_target
-        if unquote(parsed.username or "") != required_role:
-            raise ValueError(f"FORECAST_ITERATION_DATABASE_URL must authenticate as {required_role}")
-        return value
 
     # Local clients need the URL/token; the receiver additionally needs its gate/actor.
     local_publish_api_url: str | None = None
@@ -353,7 +238,7 @@ class Settings(BaseSettings):
         )
 
     @model_validator(mode="after")
-    def enforce_local_phase_one(self) -> "Settings":  # noqa: PLR0912, PLR0915
+    def enforce_local_phase_one(self) -> "Settings":  # noqa: PLR0912
         if self.celery_dispatch_enabled or self.cloud_training_enabled:
             raise ValueError("Celery dispatch and cloud training are disabled for phase one")
         if self.db_pool_min <= 0 or self.db_pool_max < self.db_pool_min:
@@ -428,13 +313,6 @@ class Settings(BaseSettings):
             raise ValueError("published_reader profile must not receive RECEIVER_WRITER_DATABASE_URL")
         if self.service_profile != "combined_local" and self.database_url is not None:
             raise ValueError("production service profiles must not receive DATABASE_URL")
-        if self.receiver_writer_database_url and self.published_reader_database_url:
-            receiver_username = unquote(urlsplit(self.receiver_writer_database_url).username or "")
-            reader_username = unquote(urlsplit(self.published_reader_database_url).username or "")
-            if self.receiver_writer_database_url == self.published_reader_database_url:
-                raise ValueError("receiver/writer and published-reader DSNs must be distinct")
-            if receiver_username == reader_username:
-                raise ValueError("receiver/writer and published-reader DSNs must use distinct login roles")
         return self
 
 

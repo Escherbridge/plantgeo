@@ -22,7 +22,10 @@ import {
 } from "@/components/map/layers/FireLayer";
 import { DROUGHT_DRAWN_CLASSES } from "@/components/map/layers/DroughtLayer";
 import { CONDITION_COLORS, WELL_TREND_COLORS } from "@/components/map/layers/WaterLayer";
-import { WIND_SPEED_CLASSES } from "@/components/map/layers/WeatherLayer";
+import {
+  TEMPERATURE_COLOR_STOPS,
+  WIND_SPEED_CLASSES,
+} from "@/components/map/layers/WeatherLayer";
 import { DEMAND_DENSITY_COLOR_STOPS } from "@/components/map/layers/DemandHeatmapLayer";
 import { NDVI_COLOR_RAMP } from "@/lib/vegetation";
 import {
@@ -32,6 +35,13 @@ import {
   type SoilFieldDepth,
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
+import {
+  CLIMATE_FIELD_SIGNALS,
+  DEFAULT_AIR_TEMPERATURE_VARIANT,
+  DEFAULT_CLIMATE_FIELD_SIGNAL,
+  type AirTemperatureVariant,
+  type ClimateFieldSignalId,
+} from "@/lib/environmental/climate-field";
 import {
   BURN_SEVERITY_ACRES_STOPS,
   BURN_SEVERITY_UNCLASSIFIED_LABEL,
@@ -140,6 +150,10 @@ export interface LegendContext {
   vegetationMode: VegetationMode;
   ndviMode: "absolute" | "anomaly";
   soilFieldDepth: Record<SoilFieldMeasure, SoilFieldDepth>;
+  /** Which of the nine NASA POWER signals the one climate layer is drawing. */
+  climateFieldSignal: ClimateFieldSignalId;
+  /** Only read when that signal is `air-temperature`; the rest publish one value. */
+  climateFieldVariant: AirTemperatureVariant;
 }
 
 /** The modes the stores seed themselves with. */
@@ -147,6 +161,8 @@ export const DEFAULT_LEGEND_CONTEXT: LegendContext = {
   vegetationMode: "ndvi",
   ndviMode: "absolute",
   soilFieldDepth: DEFAULT_SOIL_FIELD_DEPTHS,
+  climateFieldSignal: DEFAULT_CLIMATE_FIELD_SIGNAL,
+  climateFieldVariant: DEFAULT_AIR_TEMPERATURE_VARIANT,
 };
 
 /** Why a registry toggle deliberately has no legend spec. A drawn layer must never appear here. */
@@ -209,6 +225,24 @@ function demandDensityRampStops(): LegendRampStop[] {
   return DEMAND_DENSITY_COLOR_STOPS.map((stop, index) => ({
     color: stop.color,
     label: index === 0 ? "Low" : index === lastIndex ? "High" : undefined,
+  }));
+}
+
+/**
+ * The temperature ramp, captioned at the two ends and the middle -- the three `rampCaptions`
+ * renders. The numbers come from the stop table itself rather than being typed here, so a
+ * palette or range edit in `WeatherLayer` moves the captions with it. Degrees Celsius
+ * because that is what the feed measures in; see `TEMPERATURE_COLOR_STOPS`.
+ */
+function temperatureRampStops(): LegendRampStop[] {
+  const lastIndex = TEMPERATURE_COLOR_STOPS.length - 1;
+  const middleIndex = Math.floor(TEMPERATURE_COLOR_STOPS.length / 2);
+  return TEMPERATURE_COLOR_STOPS.map((stop, index) => ({
+    color: stop.color,
+    label:
+      index === 0 || index === lastIndex || index === middleIndex
+        ? `${stop.celsius}°C`
+        : undefined,
   }));
 }
 
@@ -279,10 +313,13 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
       },
     ],
   },
+  // Two encodings from one toggle and one feed: a temperature dot per station, with the wind
+  // arrow drawn over it. A station measuring only one of the two draws only that one.
   weather: {
-    title: "Wind",
+    title: "Wind & temperature",
     blocks: [
-      { kind: "classes", caption: "Speed", shape: "dot", classes: WIND_SPEED_CLASSES },
+      { kind: "ramp", caption: "Temperature", stops: temperatureRampStops() },
+      { kind: "classes", caption: "Wind speed", shape: "dot", classes: WIND_SPEED_CLASSES },
       {
         kind: "note",
         text: "Arrows point where the wind is blowing to, captioned with the measured speed.",
@@ -310,8 +347,20 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
         outlineColor: WATERSHED_BOUNDARY_COLOR,
       },
       { kind: "note", text: "Boundaries only: the fill carries no measurement." },
+      // Said here because the toggle is reachable at every zoom while the layer is not, and
+      // a switched-on layer drawing nothing is otherwise indistinguishable from a broken
+      // one. The floor is a measured tile-weight bound -- see watershedsLayer in layers.ts.
+      {
+        kind: "note",
+        text: "Drawn from zoom 7 in; below that the HUC12 outlines are too heavy to serve.",
+      },
     ],
   },
+  // One palette across all three of the survey's render shapes -- delineations, unioned
+  // drainage classes, and the zoomed-out lattice dots -- because all three colour on
+  // `drainageClass` off this one table. Only the SHAPE changes with zoom, which is what the
+  // note says; a second class list per tier would be the same colours claiming to be
+  // different encodings.
   "soil-survey": {
     title: "Soil survey (SSURGO)",
     blocks: [
@@ -323,6 +372,12 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
           SOIL_SURVEY_DRAINAGE_CLASSES,
           SOIL_SURVEY_UNCLASSIFIED_LABEL
         ),
+      },
+      {
+        kind: "note",
+        text:
+          "Zoomed out, one dot per grid cell instead of surveyed outlines: its colour is " +
+          "the cell's most common drainage class and its size the map units counted in it.",
       },
     ],
   },
@@ -449,6 +504,37 @@ export function soilFieldLegendSpec(
   };
 }
 
+/**
+ * The NASA POWER field spec for the signal the panel has selected.
+ *
+ * The caption names the air-temperature statistic and nothing else: `mean`, `max` and `min`
+ * share one band table, so a reader looking at the ramp still needs to be told which of the
+ * three the colours are keyed to. The other eight signals publish one value and have no
+ * statistic to name.
+ */
+export function climateFieldLegendSpec(
+  signal: ClimateFieldSignalId,
+  variant: AirTemperatureVariant = DEFAULT_AIR_TEMPERATURE_VARIANT
+): LayerLegendSpec {
+  const definition = CLIMATE_FIELD_SIGNALS[signal];
+  const selectedVariant = definition.variants.find(
+    (candidate) => candidate.variant === variant
+  );
+  const blocks: LegendBlock[] = [
+    {
+      kind: "ramp",
+      caption: selectedVariant?.label,
+      stops: definition.bands.map((band) => ({ color: band.color, label: band.label })),
+    },
+  ];
+  // The three soil-wetness signals cover 4 of the lane's 397 cells. A ramp with no note would
+  // let an almost-blank map read as an outage rather than as the pilot it is.
+  if (definition.coverageNote !== null) {
+    blocks.push({ kind: "note", text: definition.coverageNote });
+  }
+  return { title: `${definition.quantityLabel} (${definition.unitLabel})`, blocks };
+}
+
 /** One layer's legend in the given display modes, or null when it paints nothing to legend. */
 export function layerLegendSpec(
   toggleId: LayerToggleId,
@@ -462,6 +548,12 @@ export function layerLegendSpec(
   }
   if (toggleId === "soil-temperature") {
     return soilFieldLegendSpec("temperature", context.soilFieldDepth.temperature);
+  }
+  if (toggleId === "soil-vpd") {
+    return soilFieldLegendSpec("vpd", context.soilFieldDepth.vpd);
+  }
+  if (toggleId === "climate-field") {
+    return climateFieldLegendSpec(context.climateFieldSignal, context.climateFieldVariant);
   }
   return STATIC_LAYER_LEGENDS[toggleId] ?? null;
 }

@@ -289,7 +289,9 @@ and `forecast_daily_bootstrap` RAISEs on); `guard_strategy_review_change` (sole
 populator of the two strategy checksum columns); `guard_forecast_immutable_rows`;
 the `require_*` family; the four `publish_*`/`validate_*` movers; and
 `plantgeo_forecast_mv_refresh_owner`, kept because it owns the ML matview and
-its `SECURITY DEFINER` refresher and the two must remain the same role.
+its `SECURITY DEFINER` refresher and the two must remain the same role. **That
+last survivor did not survive `20260808_0019`** — see the section below; the
+matview and refresher are reassigned rather than left with a dedicated owner.
 
 Three things this revision changes that no DDL signature reveals:
 
@@ -325,6 +327,57 @@ Like the data-bearing revisions, `0018` has no `downgrade()`: reversing it would
 have to invent the dropped hindcast rows and digests only the dropped finalizers
 could compute. Restore a verified backup into a fresh database.
 
+## `20260808_0019` retires the forecast capability-role family
+
+`0018` cut the role model down to one survivor; `0019` finishes it. All five —
+`plantgeo_forecast_writer`, `_publisher`, `_reader`, `_mv_refresher` and
+`_mv_refresh_owner` — are dropped, and applications connect with the single owner
+credential. This is the 2026-08-03 "no custom DB roles" decision applied to the
+family that predated it, after the morning's per-lane-trainer-role question was
+answered "no" and then superseded by "the family itself goes"
+(`../../../docs/reports/migration-decision-packet-2026-08-08.md` § Resolution).
+
+The evidence, verified on a head-migrated database before the revision was
+written: the four capability roles are `NOLOGIN` bundles with **zero members**,
+no DSN authenticates as any of them, and all four **lack `USAGE` on schema
+`agri`** — they reached it only through the owner roles `0018` retired, so every
+grant they still held has been unreachable since. Separation of duties needs two
+parties; here the researcher, the operator and the DBA are one credential, which
+is the same finding the checksum audit made about the tamper-evidence triggers.
+
+The teardown is per-role and reuses `0018`'s `_RETIRE_OWNER_ROLE` shape exactly:
+`REASSIGN OWNED BY … TO CURRENT_USER`, then `DROP OWNED BY`, then `DROP ROLE`
+with the `dependent_objects_still_exist` NOTICE trap, all inside an existence
+guard. The reassignment is load-bearing for exactly one role —
+`plantgeo_forecast_mv_refresh_owner` owns `mv_forecast_ml_daily_serving`, its
+unique index and `refresh_forecast_ml_daily_serving()`, so a bare `DROP OWNED BY`
+would **delete the ML matview** — and is applied to all five so that an
+unexpected object in an unseen database is handed over rather than dropped. No
+table, function, view or index is otherwise touched; the ML data plane is intact.
+
+Three consequences worth naming. `refresh_forecast_ml_daily_serving()` stays
+`SECURITY DEFINER` but its definer is now the calling owner credential, so the
+bit is inert; matview ownership — which a non-concurrent `REFRESH` requires — is
+preserved by the reassignment. `agri_data_service.cli` drops its
+`SET LOCAL ROLE plantgeo_forecast_mv_refresher` and the catalog eligibility probe
+behind it in the same commit, because the role it assumed no longer exists. And
+the `20260802_0016` `REVOKE EXECUTE … FROM PUBLIC` on the covariate functions is
+deliberately **not** re-granted: under one credential the caller is the owner, so
+those functions stay owner-callable, which is everyone who connects.
+
+Like `0018`, this revision is invisible to the parity test — `--no-owner
+--no-privileges` means a role drop and an ownership change produce no diff in
+`../db/agri/**`, so regenerating the declarative tree after it is a no-op. That
+also means nothing in the parity harness will notice if the family is re-created.
+`tests/test_security_definer_lockdown_postgresql.py` carries that assertion
+instead: no `plantgeo_forecast_*` role may exist, and no `agri` function may be
+owned by one.
+
+No `downgrade()`. Recreating five `NOLOGIN` roles is trivial; reconstructing the
+grant matrix they accumulated across `0014`, `0015`, `0016` and `0018` is not,
+and the readiness contract that consumed that matrix is deleted in the same
+commit. Roll back by deploying the previous build.
+
 ## PostgreSQL 18 portability (rehearsed, not deployed)
 
 Revisions `0001` through `0016` were applied end to end against PostgreSQL 18.4
@@ -341,11 +394,12 @@ cannot see, and `20260803_0017` carries both (above). Neither is a PostgreSQL 18
 problem -- they reproduce identically on 16 -- but the restore one is what makes
 "keep pg16 alive as the rollback" executable, so it gates the migration anyway.
 
-The rehearsal predates `0017` and `20260803_0018`; neither has been replayed on
-pg18. `0018` is the one to re-rehearse there, because its role teardown is
-cluster-wide: the pg18 rehearsal database `plantgeo_boise_pg18` still sits at
-`20260802_0016` and holds objects owned by all three retired roles, so its
-`DROP ROLE` takes the trapped-NOTICE path until that database replays `0018` too.
+The rehearsal predates `0017`, `20260803_0018` and `20260808_0019`; none has been
+replayed on pg18. The two role teardowns are the ones to re-rehearse there,
+because they are cluster-wide: the pg18 rehearsal database `plantgeo_boise_pg18`
+still sits at `20260802_0016` and holds objects owned by the retired roles, so
+every `DROP ROLE` takes the trapped-NOTICE path until that database replays both
+revisions too.
 
 The one genuine catalogue difference is that PostgreSQL 18 stores NOT NULL as
 `pg_constraint` rows and 16 does not. That is a server-version artifact, not

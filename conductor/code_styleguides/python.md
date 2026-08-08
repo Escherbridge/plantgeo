@@ -34,12 +34,21 @@ it does not replace them. It inherits `engineering-principles.md`.
 - Every external value — HTTP/model response, CLI arg, env var, Redis/DB JSON,
   file — is untrusted. Validate once at ingress with a Pydantic model or guard;
   never let raw JSON flow into a query, receipt, or publication.
-- **DSN custody is load-bearing.** Each capability has its own least-privilege
-  role/DSN (`local_source_loader`, `forecast_iteration`,
-  `forecast_mv_refresh`, `receiver_writer`, `published_reader`). A component uses
-  only its DSN and fails closed on a wrong host/port/database/role or on
-  `DATABASE_URL` where a scoped DSN is required. Never widen a role to make code
-  work; add/justify a reviewed role.
+- **DSN custody was retired on 2026-08-08** by owner ruling, recorded in Alembic
+  revision `20260808_0019`. There is one credential: the owner. Do **not** add a
+  least-privilege role, a host/port/database allowlist, a login assertion, or a
+  "must not reuse `DATABASE_URL`" distinctness rule — reintroducing any of them
+  is the violation now. `LOCAL_SOURCE_LOADER_DATABASE_URL`,
+  `FORECAST_MV_REFRESH_DATABASE_URL`, and `FORECAST_ITERATION_DATABASE_URL` are
+  optional *overrides* that fall back to `DATABASE_URL`; blank counts as unset.
+  What a DSN validator may still do is check *shape* — one shared parser
+  (`Settings._require_complete_database_url`) rejects anything that is not a
+  complete `postgresql+asyncpg://` URL. Choosing the right database is an
+  operator responsibility, not a config guarantee.
+- The `receiver_writer`/`published_reader` **service profiles** survive and are
+  still load-bearing: they are about which routes a process mounts and which pool
+  it opens, not about privilege. A production profile must never carry
+  `DATABASE_URL` or the other profile's DSN.
 - Alembic is the **only** component that creates or alters the `agri` schema.
   Runtime/worker code must never call `create_all`, `drop_all`, or extension
   DDL. To change a programmable object, edit the canonical file in `db/agri/**`

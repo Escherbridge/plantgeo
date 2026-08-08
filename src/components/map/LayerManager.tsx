@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useMap } from "@/lib/map/map-context";
 import {
+  useClimateDisplayMode,
   useDebouncedMapDay,
   useLayerOpacities,
   useLayerVisibility,
@@ -14,6 +15,7 @@ import {
 import { scaleOpacityValue, styleLayerOpacityTargets } from "@/lib/map/layer-opacity";
 import { useFireData } from "@/hooks/useFireData";
 import {
+  useClimateFieldQuery,
   useSoilFieldQuery,
   useSoilSurveyQuery,
   useViewportBounds,
@@ -25,7 +27,8 @@ import {
   tileLayerDateFilter,
 } from "@/lib/map/tile-layer-date-filter";
 import { useMapStore } from "@/stores/map-store";
-import type { WindPoint } from "@/components/map/layers/WeatherLayer";
+import { isRenderableWeatherObservation } from "@/lib/environmental/weather";
+import type { WeatherPoint } from "@/components/map/layers/WeatherLayer";
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -60,6 +63,10 @@ const SoilFieldLayer = dynamic(
   () => import("@/components/map/layers/SoilFieldLayer").then((m) => ({ default: m.SoilFieldLayer })),
   { ssr: false }
 );
+const ClimateFieldLayer = dynamic(
+  () => import("@/components/map/layers/ClimateFieldLayer").then((m) => ({ default: m.ClimateFieldLayer })),
+  { ssr: false }
+);
 const DemandHeatmapLayer = dynamic(
   () => import("@/components/map/layers/DemandHeatmapLayer").then((m) => ({ default: m.DemandHeatmapLayer })),
   { ssr: false }
@@ -85,9 +92,12 @@ export default function LayerManager() {
   const layerOpacity = useLayerOpacities();
   const vegetationMode = useVegetationDisplayMode();
   const soilMode = useSoilDisplayMode();
-  // Shared with PanelManager: one derivation, so the map and the panels key on one bbox.
+  const climateMode = useClimateDisplayMode();
+  // Shared with DockDetails: one derivation, so the map and the dock's details regions key on
+  // one bbox.
   const { zoom, bbox } = useViewportBounds();
-  // Written only by PanelManager's capture hook; drawn here because the map owns its layers.
+  // Written only by DockDetails' capture hook (SoilDetailsBody); drawn here because the map
+  // owns its layers.
   const queryPoint = useMapStore((state) => state.queryPoint);
 
   // The slider's day, settled. `requestDate` is undefined whenever the selection IS the
@@ -136,29 +146,29 @@ export default function LayerManager() {
   // warehouse, so they carry no slider day: the endpoint answers for a bbox alone. It is a
   // polygon feed an order of magnitude heavier than the point layers above, which is why it
   // is not fetched unless its own toggle is on. Key, fallback bbox, staleTime and retry live
-  // in the shared hook, which SoilPanel calls too -- see src/lib/server/AGENTS.md
+  // in the shared hook, which SoilDetails calls too -- see src/lib/server/AGENTS.md
   // §proxied-viewport-queries. (HUC12 watersheds used to sit here; they are now style-baked
   // Martin tiles and reach the map through applyVisibility below, like every other tile layer.)
   const soilSurveyVisible = layerVisibility["soil-survey"];
   // `zoom` is what selects the survey's render granularity server-side. Omitting it -- which
   // both call sites did until now -- resolves to the detail tier, whose 0.02 sq-deg ceiling
   // the tRPC input then rejects at any ordinary zoom, so the layer only ever drew when zoomed
-  // in past ~13. Passed from the same `useViewportBounds()` derivation SoilPanel reads it
-  // from, so the map and the panel stay on ONE react-query entry.
+  // in past ~13. Passed from the same `useViewportBounds()` derivation SoilDetails reads it
+  // from, so the map and the details region stay on ONE react-query entry.
   const soilSurveyQuery = useSoilSurveyQuery(bbox, { enabled: soilSurveyVisible, zoom });
   // Only the features are drawable: a truncated view and an upstream fault both reach the
   // map as polygons that stop, so the collection's truncated/availability pair is read by
-  // SoilPanel instead, from this same query key. See src/lib/server/AGENTS.md §soil-survey.
+  // SoilDetails instead, from this same query key. See src/lib/server/AGENTS.md §soil-survey.
   const soilSurveyGeoJSON = soilSurveyQuery.data ?? EMPTY_FEATURE_COLLECTION;
 
-  // The two ERA5-Land soil fields. `zoom` is not a hint here -- it selects the server-side
+  // The three ERA5-Land soil fields. `zoom` is not a hint here -- it selects the server-side
   // aggregation tier, so zooming out makes the answer SMALLER (isobands over a coarse
   // lattice) rather than shipping 1,568 squares. The day is the slider's, settled, like
   // every other warehouse-backed feed; the depth is the panel's, and neither is a second
   // time control. staleTime matches vegetation's: a reanalysis archive day is immutable.
   //
-  // Two calls rather than a loop: hooks cannot be called from one, and `measure` is in the
-  // query key, so the two fields hold separate cache entries and can both be on at once.
+  // Three calls rather than a loop: hooks cannot be called from one, and `measure` is in the
+  // query key, so each field holds a separate cache entry and any subset can be on at once.
   const soilMoistureVisible = layerVisibility["soil-moisture"];
   const soilMoistureQuery = useSoilFieldQuery(bbox, {
     enabled: soilMoistureVisible,
@@ -181,6 +191,32 @@ export default function LayerManager() {
   const soilTemperatureGeoJSON: GeoJSON.FeatureCollection =
     soilTemperatureQuery.data ?? EMPTY_FEATURE_COLLECTION;
 
+  const soilVpdVisible = layerVisibility["soil-vpd"];
+  const soilVpdQuery = useSoilFieldQuery(bbox, {
+    enabled: soilVpdVisible,
+    measure: "vpd",
+    date: requestDate,
+    depth: soilMode.fieldDepth.vpd,
+    zoom,
+  });
+  const soilVpdGeoJSON: GeoJSON.FeatureCollection =
+    soilVpdQuery.data ?? EMPTY_FEATURE_COLLECTION;
+
+  // The NASA POWER climate field. No `zoom`: this lane has one serving tier -- 397 half-degree
+  // cells drawn as themselves at every zoom -- so zoom is not part of the answer and must not
+  // be part of the key. The day is the slider's, settled; the signal is the panel's, and
+  // neither is a second time control. One call for nine signals, because only one is drawn at
+  // a time and the signal is in the query key.
+  const climateFieldVisible = layerVisibility["climate-field"];
+  const climateFieldQuery = useClimateFieldQuery(bbox, {
+    enabled: climateFieldVisible,
+    signal: climateMode.signal,
+    variant: climateMode.airTemperatureVariant,
+    date: requestDate,
+  });
+  const climateFieldGeoJSON: GeoJSON.FeatureCollection =
+    climateFieldQuery.data ?? EMPTY_FEATURE_COLLECTION;
+
   const weatherEnabled = layerVisibility.weather;
   // Reads every published observation across the viewport bbox -- not just the
   // nearest one -- so the wind layer reflects the full spread of
@@ -189,25 +225,31 @@ export default function LayerManager() {
     { bbox: bbox ?? "-180,-90,180,90", date: requestDate },
     { enabled: weatherEnabled && bbox !== null, staleTime: 15 * 60 * 1000 }
   );
-  // Every rendered field must be measured: a partial observation is dropped
-  // rather than back-filled with a zero the upstream never reported. Memoized
-  // because this component re-renders on every viewport tick.
-  const weatherData = useMemo<WindPoint[]>(
+  // Every rendered field must still be measured -- nothing is back-filled with a zero the
+  // upstream never reported -- but completeness is now judged PER DRAWN LAYER rather than
+  // across the whole observation. The toggle paints two things: wind arrows, which need
+  // windSpeed and windDirection, and temperature dots, which need temperature. Humidity is
+  // drawn by neither and only captions the tooltip, so requiring it here (as this filter did
+  // until 2026-08-08) dropped stations that had everything the map actually draws. The nulls
+  // themselves never reach a painted expression: WeatherLayer carries a `hasWind`/
+  // `hasTemperature` flag per feature and each layer filters on its own.
+  //
+  // `isRenderableWeatherObservation` (src/lib/environmental/weather.ts) is the single source
+  // of this rule: `getPublishedWeatherForBbox` applies the exact same relaxed check
+  // server-side, so this is a client-side re-check of an already-complete feed, not a second
+  // opinion that could drift from the server's.
+  // Memoized because this component re-renders on every viewport tick.
+  const weatherData = useMemo<WeatherPoint[]>(
     () =>
       (weatherQuery.data ?? [])
-        .filter(
-          (observation) =>
-            observation.windSpeed !== null &&
-            observation.windDirection !== null &&
-            observation.temperature !== null &&
-            observation.humidity !== null
-        )
+        .filter(isRenderableWeatherObservation)
         .map((observation) => ({
           coordinates: [observation.lon, observation.lat],
-          windSpeed: observation.windSpeed as number,
-          windDirection: observation.windDirection as number,
-          temperature: observation.temperature as number,
-          humidity: observation.humidity as number,
+          windSpeed: observation.windSpeed,
+          windDirection: observation.windDirection,
+          temperature: observation.temperature,
+          humidity: observation.humidity,
+          observedAt: observation.observedAt,
         })),
     [weatherQuery.data]
   );
@@ -433,6 +475,23 @@ export default function LayerManager() {
         opacityScale={layerOpacity["soil-temperature"]}
         visible={soilTemperatureVisible}
       />
+      <SoilFieldLayer
+        map={map}
+        measure="vpd"
+        geojson={soilVpdGeoJSON}
+        opacityScale={layerOpacity["soil-vpd"]}
+        visible={soilVpdVisible}
+      />
+      {/* One instance for nine signals, where the ERA5-Land fields get one instance each:
+          those are three toggles a reader may have on at once, this is one toggle whose
+          signal picker swaps what the single source holds. */}
+      <ClimateFieldLayer
+        map={map}
+        signal={climateMode.signal}
+        geojson={climateFieldGeoJSON}
+        opacityScale={layerOpacity["climate-field"]}
+        visible={climateFieldVisible}
+      />
       <DemandHeatmapLayer
         map={map}
         bbox={bbox}
@@ -447,7 +506,8 @@ export default function LayerManager() {
         opacityScale={layerOpacity.weather}
       />
       {/* Not a data layer and so not in the registry: it marks where the user clicked,
-          and PanelManager's capture hook is the only thing that ever sets it. */}
+          and DockDetails' capture hook (SoilDetailsBody, DockDetails.tsx:100-101) is the
+          only thing that ever sets it. */}
       <QueryPointLayer map={map} point={queryPoint} />
     </>
   );

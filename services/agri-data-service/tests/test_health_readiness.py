@@ -1,4 +1,10 @@
-"""Readiness must describe a configured least-privilege publication plane."""
+"""Readiness must describe a migrated, correctly provisioned database -- and nothing about roles.
+
+Revision ``20260808_0019`` retired the ``plantgeo_forecast_*`` capability family and the
+calling-login privilege matrix that /ready used to assert. The tests that pinned that matrix are
+gone with it; what remains are the two probes that still protect something real (extensions and
+the pinned Alembic revision) plus a guard against the role assertions coming back by accident.
+"""
 
 import json
 from collections.abc import AsyncIterator
@@ -28,8 +34,16 @@ class _Result:
 
 
 class _Session:
-    def __init__(self, *, migration_ready: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        migration_ready: bool = True,
+        extensions_ready: bool = True,
+        serving_surface_ready: bool = True,
+    ) -> None:
         self.migration_ready = migration_ready
+        self.extensions_ready = extensions_ready
+        self.serving_surface_ready = serving_surface_ready
         self.calls = 0
 
     async def execute(self, _statement: object, _parameters: object = None) -> _Result:
@@ -37,11 +51,9 @@ class _Session:
         if self.calls == 1:
             return _Result(
                 {
-                    "extensions_ready": True,
+                    "extensions_ready": self.extensions_ready,
                     "migration_catalog_ready": True,
-                    "tables_ready": True,
-                    "privileges_ready": True,
-                    "forecast_roles_ready": True,
+                    "serving_surface_ready": self.serving_surface_ready,
                 }
             )
         if _parameters is not None:
@@ -57,79 +69,31 @@ def _session_factory(session: _Session) -> Any:
     return factory
 
 
-def test_readiness_contract_covers_exact_publication_surface() -> None:
-    expected = {
-        ("agri", "release_set", "SELECT"),
-        ("agri", "job_definition", "SELECT"),
-        ("agri", "job_definition", "INSERT"),
-        ("agri", "job_run", "SELECT"),
-        ("agri", "job_run", "INSERT"),
-        ("agri", "job_run", "UPDATE"),
-        ("agri", "job_output", "SELECT"),
-        ("agri", "job_output", "INSERT"),
-        ("agri", "job_output", "UPDATE"),
-        ("agri", "artifact", "SELECT"),
-        ("agri", "artifact", "INSERT"),
-        ("agri", "publication_pointer", "SELECT"),
-        ("agri", "publication_pointer", "INSERT"),
-        ("agri", "publication_pointer", "UPDATE"),
-        ("agri", "job_outbox", "SELECT"),
-        ("agri", "job_outbox", "INSERT"),
-    }
-    expected |= {
-        ("agri", "release_set", "INSERT"),
-        ("agri", "release_set", "UPDATE"),
-        ("agri", "data_source", "SELECT"),
-        ("agri", "data_source", "INSERT"),
-        ("agri", "source_release", "SELECT"),
-        ("agri", "source_release", "INSERT"),
-        ("agri", "release_set_item", "SELECT"),
-        ("agri", "release_set_item", "INSERT"),
-        ("agri", "spatial_cell", "SELECT"),
-        ("agri", "spatial_cell", "INSERT"),
-        ("agri", "cell_source_crosswalk", "SELECT"),
-        ("agri", "cell_source_crosswalk", "INSERT"),
-        ("agri", "signal_observation", "SELECT"),
-        ("agri", "signal_observation", "INSERT"),
-        ("agri", "signal_coverage_audit", "SELECT"),
-        ("agri", "signal_coverage_audit", "INSERT"),
-        ("agri", "source_coverage_audit", "SELECT"),
-        ("agri", "source_coverage_audit", "INSERT"),
-        ("agri", "drought_polygon_snapshot", "SELECT"),
-        ("agri", "drought_polygon_snapshot", "INSERT"),
-        ("agri", "historical_promotion_bundle", "SELECT"),
-        ("agri", "historical_promotion_bundle", "INSERT"),
-        ("agri", "historical_promotion_bundle", "UPDATE"),
-        ("agri", "historical_promotion_chunk_receipt", "SELECT"),
-        ("agri", "historical_promotion_chunk_receipt", "INSERT"),
-        ("agri", "historical_promotion_data_source_receipt", "SELECT"),
-        ("agri", "historical_promotion_data_source_receipt", "INSERT"),
-        ("agri", "historical_promotion_source_release_receipt", "SELECT"),
-        ("agri", "historical_promotion_source_release_receipt", "INSERT"),
-        ("agri", "historical_promotion_artifact_receipt", "SELECT"),
-        ("agri", "historical_promotion_artifact_receipt", "INSERT"),
-        ("agri", "historical_promotion_artifact_receipt", "UPDATE"),
-    }
-
-    assert set(health_route.PUBLICATION_TABLE_PRIVILEGES) == expected
-
-
-def test_receiver_readiness_requires_exact_historical_identity_sequences() -> None:
-    assert set(health_route.RECEIVER_SEQUENCE_PRIVILEGES) == {
-        ("agri", "signal_observation_id_seq", "USAGE"),
-        ("agri", "signal_observation_id_seq", "SELECT"),
-        ("agri", "drought_polygon_snapshot_id_seq", "USAGE"),
-        ("agri", "drought_polygon_snapshot_id_seq", "SELECT"),
-    }
-    assert "agri_sequences" in health_route._RECEIVER_ROLE_BOUNDARY_SQL
-    assert "has_any_column_privilege" in health_route._RECEIVER_ROLE_BOUNDARY_SQL
-    assert "agri_functions" in health_route._RECEIVER_ROLE_BOUNDARY_SQL
+def test_readiness_contract_pins_the_extensions_this_build_requires() -> None:
     assert set(health_route.REQUIRED_EXTENSIONS) == {
         "postgis",
         "timescaledb",
         "vector",
         "pgcrypto",
     }
+    assert "pg_extension" in health_route._READINESS_SQL
+    assert "public.alembic_version" in health_route._READINESS_SQL
+
+
+def test_readiness_sql_no_longer_asserts_any_retired_role_contract() -> None:
+    """Non-vacuous: the substrings below are the exact ones the deleted sections contained."""
+    for retired_fragment in (
+        "plantgeo_forecast",
+        "pg_auth_members",
+        "has_column_privilege",
+        "has_sequence_privilege",
+        "has_function_privilege",
+        "aclexplode",
+        "pg_has_role",
+    ):
+        assert retired_fragment not in health_route._READINESS_SQL, retired_fragment
+    assert not hasattr(health_route, "FORECAST_ROLES")
+    assert not hasattr(health_route, "PUBLICATION_TABLE_PRIVILEGES")
 
 
 def test_expected_alembic_revision_matches_migrated_head_database(agri_db_dsn: str) -> None:
@@ -142,65 +106,6 @@ def test_expected_alembic_revision_matches_migrated_head_database(agri_db_dsn: s
     finally:
         connection.close()
     assert revision == health_route.EXPECTED_ALEMBIC_REVISION
-
-
-def test_readiness_contract_enforces_separate_forecast_capabilities() -> None:
-    assert health_route.FORECAST_ROLES == (
-        "plantgeo_forecast_writer",
-        "plantgeo_forecast_publisher",
-        "plantgeo_forecast_reader",
-        "plantgeo_forecast_mv_refresher",
-    )
-    reader_relations = {
-        (schema_name, relation_name, privilege_name)
-        for role_name, schema_name, relation_name, privilege_name in (health_route.FORECAST_ROLE_RELATION_PRIVILEGES)
-        if role_name == "plantgeo_forecast_reader"
-    }
-    assert reader_relations == {
-        ("agri", "v_forecast_series_serving", "SELECT"),
-        ("agri", "mv_forecast_ml_daily_serving", "SELECT"),
-        ("agri", "spatial_cell", "SELECT"),
-    }
-    refresher_relations = {
-        (schema_name, relation_name, privilege_name)
-        for role_name, schema_name, relation_name, privilege_name in (health_route.FORECAST_ROLE_RELATION_PRIVILEGES)
-        if role_name == "plantgeo_forecast_mv_refresher"
-    }
-    assert refresher_relations == {
-        ("agri", "mv_forecast_ml_daily_serving", "SELECT"),
-    }
-    assert set(health_route.FORECAST_ROLE_SEQUENCE_PRIVILEGES) == {
-        ("plantgeo_forecast_writer", "agri", "forecast_observation_id_seq", "USAGE"),
-        ("plantgeo_forecast_writer", "agri", "forecast_observation_id_seq", "SELECT"),
-        ("plantgeo_forecast_writer", "agri", "forecast_value_id_seq", "USAGE"),
-        ("plantgeo_forecast_writer", "agri", "forecast_value_id_seq", "SELECT"),
-    }
-    function_roles = {role_name for role_name, _signature, _privilege in health_route.FORECAST_ROLE_FUNCTION_PRIVILEGES}
-    # The reader is absent: its only EXECUTE was `forecast_hindcast_signal_timeseries`,
-    # which left with the hindcast plane in 20260803_0018. It is now a relation-only role,
-    # and `_READINESS_SQL` asserts it holds EXECUTE on no agri function at all.
-    assert function_roles == {
-        "plantgeo_forecast_writer",
-        "plantgeo_forecast_publisher",
-        "plantgeo_forecast_mv_refresher",
-    }
-    assert "plantgeo_forecast_reader" in health_route.FORECAST_ROLES
-    assert "forecast_hindcast" not in health_route._READINESS_SQL
-    assert (
-        "FROM agri_functions AS function_object\n"
-        "            WHERE has_function_privilege(current_user, function_object.oid, 'EXECUTE')"
-    ) in health_route._READINESS_SQL
-    assert "aclexplode" in health_route._READINESS_SQL
-    assert "has_column_privilege" in health_route._READINESS_SQL
-    assert "pg_auth_members" in health_route._READINESS_SQL
-    assert "WHERE membership.admin_option" in health_route._READINESS_SQL
-    assert "membership.inherit_option" in health_route._READINESS_SQL
-    assert "EXECUTE WITH GRANT OPTION" in health_route._READINESS_SQL
-    assert "candidate.privilege_name || ' WITH GRANT OPTION'" in health_route._READINESS_SQL
-    assert "WHERE role.role_name = 'plantgeo_forecast_reader'" in health_route._READINESS_SQL
-    assert "LEFT JOIN pg_roles AS role" in health_route._READINESS_SQL
-    assert "database.datdba" in health_route._READINESS_SQL
-    assert "namespace.nspowner" in health_route._READINESS_SQL
 
 
 @pytest.mark.asyncio
@@ -248,9 +153,7 @@ async def test_readiness_passes_only_when_every_check_passes(
             "receiver_identity": True,
             "extensions": True,
             "migration": True,
-            "profile_tables": True,
-            "runtime_privileges": True,
-            "forecast_role_contracts": True,
+            "serving_surface": True,
         },
     }
 
@@ -273,7 +176,7 @@ async def test_published_reader_readiness_does_not_require_receiver_identity(
     assert response.status == HTTPStatus.OK
     assert payload["profile"] == "published_reader"
     assert payload["checks"]["receiver_identity"] is True
-    assert payload["checks"]["runtime_privileges"] is True
+    assert payload["checks"]["extensions"] is True
 
 
 @pytest.mark.asyncio
@@ -291,31 +194,10 @@ async def test_combined_local_profile_never_reports_production_readiness(
 
 
 @pytest.mark.asyncio
-async def test_readiness_fails_when_forecast_role_contract_drifts(
+async def test_readiness_fails_when_a_required_extension_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session = _Session()
-
-    async def execute_with_role_drift(
-        _statement: object,
-        _parameters: object = None,
-    ) -> _Result:
-        session.calls += 1
-        if session.calls == 1:
-            return _Result(
-                {
-                    "extensions_ready": True,
-                    "migration_catalog_ready": True,
-                    "tables_ready": True,
-                    "privileges_ready": True,
-                    "forecast_roles_ready": False,
-                }
-            )
-        if _parameters is not None:
-            return _Result(True)
-        return _Result(True)
-
-    session.execute = execute_with_role_drift  # type: ignore[method-assign]
+    session = _Session(extensions_ready=False)
     monkeypatch.setattr(health_route, "published_reader_session", _session_factory(session))
     monkeypatch.setattr(health_route.settings, "service_profile", "published_reader")
 
@@ -323,4 +205,37 @@ async def test_readiness_fails_when_forecast_role_contract_drifts(
     payload = json.loads(response.body)
 
     assert response.status == HTTPStatus.SERVICE_UNAVAILABLE
-    assert payload["checks"]["forecast_role_contracts"] is False
+    assert payload["checks"]["extensions"] is False
+    assert payload["checks"]["migration"] is True
+
+
+@pytest.mark.asyncio
+async def test_readiness_fails_when_the_login_cannot_reach_the_serving_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one capability conjunct kept after 20260808_0019: schema USAGE + the serving view."""
+    session = _Session(serving_surface_ready=False)
+    monkeypatch.setattr(health_route, "published_reader_session", _session_factory(session))
+    monkeypatch.setattr(health_route.settings, "service_profile", "published_reader")
+
+    response = await health_route.readiness_check(None)  # type: ignore[arg-type]
+    payload = json.loads(response.body)
+
+    assert response.status == HTTPStatus.SERVICE_UNAVAILABLE
+    assert payload["checks"]["serving_surface"] is False
+    assert payload["checks"]["extensions"] is True
+
+
+@pytest.mark.asyncio
+async def test_readiness_fails_when_the_pinned_revision_does_not_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(migration_ready=False)
+    monkeypatch.setattr(health_route, "published_reader_session", _session_factory(session))
+    monkeypatch.setattr(health_route.settings, "service_profile", "published_reader")
+
+    response = await health_route.readiness_check(None)  # type: ignore[arg-type]
+    payload = json.loads(response.body)
+
+    assert response.status == HTTPStatus.SERVICE_UNAVAILABLE
+    assert payload["checks"]["migration"] is False

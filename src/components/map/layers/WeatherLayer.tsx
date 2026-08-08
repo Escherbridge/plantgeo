@@ -4,26 +4,38 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 
-export interface WindPoint {
+/**
+ * One published observation. Every measurement is nullable because the two drawn layers
+ * need different ones: a station with wind but no temperature draws an arrow, a station
+ * with temperature but no wind draws a dot, and neither is dropped for lacking the other's
+ * field. Humidity is drawn by neither and only ever captions the tooltip.
+ */
+export interface WeatherPoint {
   coordinates: [number, number];
-  /** Wind speed in m/s */
-  windSpeed: number;
-  /** Wind direction in degrees (0 = North, 90 = East) */
-  windDirection: number;
-  temperature?: number;
-  humidity?: number;
+  /** Wind speed in m/s. */
+  windSpeed: number | null;
+  /** Wind direction in degrees (0 = North, 90 = East). */
+  windDirection: number | null;
+  /** Air temperature in °C, as Open-Meteo's `temperature_2m` reports it. */
+  temperature: number | null;
+  /** Relative humidity, percent. */
+  humidity: number | null;
+  observedAt?: string | null;
 }
 
 interface WeatherLayerProps {
   map: MapLibreMap | null;
-  data: WindPoint[];
+  data: WeatherPoint[];
   visible?: boolean;
+  /** The wind arrows. */
   layerId?: string;
+  /** The temperature dots, drawn under the arrows. */
+  temperatureLayerId?: string;
   sourceId?: string;
   /**
-   * The reader's MULTIPLIER over this layer's authored strength, which is the symbol default
-   * of 1. `text-opacity` only: the layer sets `text-field` and never `icon-image`, so
-   * `icon-opacity` would be a silent no-op here.
+   * The reader's MULTIPLIER over both layers' authored strengths. The symbol layer takes it
+   * on `text-opacity` only -- it sets `text-field` and never `icon-image`, so `icon-opacity`
+   * would be a silent no-op -- and the circle layer on its fill and stroke.
    */
   opacityScale?: number;
 }
@@ -58,34 +70,77 @@ function windSpeedToColor(speed: number): string {
   return (matched ?? WIND_SPEED_CLASSES[WIND_SPEED_CLASSES.length - 1]).color;
 }
 
+/**
+ * The temperature ramp, in °C because that is the unit the feed measures in: `weather.ts`
+ * asks Open-Meteo for `temperature_2m` without a `temperature_unit`, whose default is
+ * Celsius, and nothing converts it between there and here.
+ *
+ * Moreland's cool-warm diverging palette rather than a rainbow. Its two arms separate on the
+ * blue/red axis, which protanopia and deuteranopia both preserve, and its lightness rises to
+ * the neutral middle and falls again, so the ordering survives greyscale and every form of
+ * colour blindness on lightness alone. Stops are evenly spaced 10 °C apart, which is what
+ * lets the legend's bar double as a value axis (see `LegendRampBlock` in layer-legends.ts).
+ */
+export const TEMPERATURE_COLOR_STOPS = [
+  { celsius: -20, color: "#3b4cc0" },
+  { celsius: -10, color: "#6788ee" },
+  { celsius: 0, color: "#9abbff" },
+  { celsius: 10, color: "#dddcdc" },
+  { celsius: 20, color: "#f7b89c" },
+  { celsius: 30, color: "#e26952" },
+  { celsius: 40, color: "#b40426" },
+] as const;
+
+/** The authored strength of the temperature dots' fill; the multiplier scales it. */
+const TEMPERATURE_CIRCLE_OPACITY = 0.8;
+
+/** …and of their stroke, which is what keeps two adjacent stations readable as two. */
+const TEMPERATURE_STROKE_OPACITY = 0.55;
+
 export function WeatherLayer({
   map,
   data,
   visible = true,
   layerId = "weather-wind",
+  temperatureLayerId = "weather-temperature",
   sourceId = "weather-wind-source",
   opacityScale = 1,
 }: WeatherLayerProps) {
   const geojson = useMemo<GeoJSON.FeatureCollection>(
     () => ({
       type: "FeatureCollection",
-      features: data.map((point, i) => ({
-        type: "Feature",
-        id: i,
-        geometry: {
-          type: "Point",
-          coordinates: point.coordinates,
-        },
-        properties: {
-          arrow: directionToArrow(point.windDirection),
-          windSpeed: point.windSpeed,
-          windDirection: point.windDirection,
-          color: windSpeedToColor(point.windSpeed),
-          temperature: point.temperature ?? null,
-          humidity: point.humidity ?? null,
-          label: `${directionToArrow(point.windDirection)} ${point.windSpeed.toFixed(1)} m/s`,
-        },
-      })),
+      features: data.map((point, i) => {
+        // Which of the two layers may draw this station, decided once and carried as a flag
+        // rather than re-derived in a filter expression. Both layers filter on it, which is
+        // what keeps a null out of `windSpeedToColor` and out of the temperature
+        // `interpolate` -- an unmeasured field is never coalesced to a number the upstream
+        // did not report.
+        const hasWind = point.windSpeed !== null && point.windDirection !== null;
+        const hasTemperature = point.temperature !== null;
+        const arrow = hasWind ? directionToArrow(point.windDirection as number) : "";
+        return {
+          type: "Feature" as const,
+          id: i,
+          geometry: {
+            type: "Point" as const,
+            coordinates: point.coordinates,
+          },
+          properties: {
+            hasWind,
+            hasTemperature,
+            arrow,
+            windSpeed: point.windSpeed,
+            windDirection: point.windDirection,
+            color: hasWind ? windSpeedToColor(point.windSpeed as number) : "transparent",
+            temperature: point.temperature,
+            humidity: point.humidity,
+            observedAt: point.observedAt ?? null,
+            label: hasWind
+              ? `${arrow} ${(point.windSpeed as number).toFixed(1)} m/s`
+              : "",
+          },
+        };
+      }),
     }),
     [data]
   );
@@ -106,11 +161,50 @@ export function WeatherLayer({
         m.addSource(sourceId, { type: "geojson", data: propsRef.current.geojson });
       }
 
+      // Added before the arrows so the dots sit under them: MapLibre appends, and an arrow
+      // drawn beneath its own station's dot would be unreadable.
+      if (!m.getLayer(temperatureLayerId)) {
+        m.addLayer({
+          id: temperatureLayerId,
+          type: "circle",
+          source: sourceId,
+          filter: ["==", ["get", "hasTemperature"], true],
+          paint: {
+            "circle-color": [
+              "interpolate",
+              ["linear"],
+              ["get", "temperature"],
+              ...TEMPERATURE_COLOR_STOPS.flatMap((stop) => [stop.celsius, stop.color]),
+            ],
+            // Big enough to read a colour off at a regional view, small enough that a dense
+            // grid of stations stays a grid rather than a sheet.
+            "circle-radius": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              4,
+              4,
+              10,
+              9,
+              14,
+              14,
+            ],
+            "circle-opacity":
+              TEMPERATURE_CIRCLE_OPACITY * propsRef.current.opacityScale,
+            "circle-stroke-width": 1,
+            "circle-stroke-color": "rgba(0,0,0,0.6)",
+            "circle-stroke-opacity":
+              TEMPERATURE_STROKE_OPACITY * propsRef.current.opacityScale,
+          },
+        });
+      }
+
       if (!m.getLayer(layerId)) {
         m.addLayer({
           id: layerId,
           type: "symbol",
           source: sourceId,
+          filter: ["==", ["get", "hasWind"], true],
           layout: {
             "text-field": ["get", "label"],
             "text-font": ["Noto Sans Regular"],
@@ -128,14 +222,14 @@ export function WeatherLayer({
         });
       }
     },
-    [layerId, sourceId]
+    [layerId, temperatureLayerId, sourceId]
   );
 
   const removeAllLayers = useCallback(
     (m: MapLibreMap) => {
-      safeRemoveLayerAndSource(m, [layerId], sourceId);
+      safeRemoveLayerAndSource(m, [layerId, temperatureLayerId], sourceId);
     },
-    [layerId, sourceId]
+    [layerId, temperatureLayerId, sourceId]
   );
 
   // Add/remove and re-add across style swaps, which wipe custom layers.
@@ -172,7 +266,10 @@ export function WeatherLayer({
     }
   }, [map, visible, geojson, sourceId]);
 
-  // The multiplier, applied without a rebuild.
+  // The multiplier, applied without a rebuild. This component is the single writer for both
+  // layers -- the `weather` registry entry is `renderKind: "component"` with no
+  // `styleLayerIds`, so `LayerManager.applyOpacity` structurally cannot reach either. See
+  // src/lib/map/layer-opacity.ts.
   useEffect(() => {
     if (!map || !visible) return;
     try {
@@ -183,7 +280,19 @@ export function WeatherLayer({
     if (map.getLayer(layerId)) {
       map.setPaintProperty(layerId, "text-opacity", opacityScale);
     }
-  }, [map, visible, layerId, opacityScale]);
+    if (map.getLayer(temperatureLayerId)) {
+      map.setPaintProperty(
+        temperatureLayerId,
+        "circle-opacity",
+        TEMPERATURE_CIRCLE_OPACITY * opacityScale
+      );
+      map.setPaintProperty(
+        temperatureLayerId,
+        "circle-stroke-opacity",
+        TEMPERATURE_STROKE_OPACITY * opacityScale
+      );
+    }
+  }, [map, visible, layerId, temperatureLayerId, opacityScale]);
 
   return null;
 }

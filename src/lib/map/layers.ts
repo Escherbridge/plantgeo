@@ -424,22 +424,38 @@ export const buildingFootprintsLayer: FillExtrusionLayerSpecification = {
 // only identity (huc12/name/areasqkm/tohuc/states/hutype), so there is no class or ramp to
 // key a colour to the way "severity" keys evacuation zones.
 //
-// minzoom 8 is a payload floor, not an aesthetic one. There are 9,396 published PNW basins
-// and HUC12 outlines are dense: a measured z6 tile is 1.77 MB, where z8 is 247 KB and z10
-// is 25 KB. Below 8 the boundaries are also finer than the screen can resolve, so the
-// megabytes buy nothing. This is the same reason interventions sits at 6 and building
-// footprints at 13, rather than sharing the z4 floor the sparse incident layers use.
+// The minzoom is a payload floor, not an aesthetic one, and it is a measurement. There are
+// 9,396 published PNW basins and HUC12 outlines are dense. Measured against the production
+// Martin on 2026-08-08, transferred bytes over PNW tiles (lon -122, lat 45.5):
+//
+//   z4 x2 y5   2.54 MB    z6 x10 y22  1.77 MB    z7 x20 y45  727 KB
+//   z5 x5 y11  3.80 MB    z6 x11 y22  1.68 MB    z7 x21 y45  616 KB
+//                         z6 x11 y23  1.41 MB    z8          247 KB
+//
+// So 7 is the floor, not 6: a 1024x512 viewport spans two 512px tiles, which is ~1.3 MB at
+// z7 against ~3.4 MB at z6 for boundaries only ~15px apart on screen. z5 — the default
+// camera — is 7.6 MB a viewport and unreachable from the client side at all; reaching it
+// needs geo.watershed_tiles() to generalize by zoom, which is a migration and out of scope
+// here. Dropping 8 to 7 is what the measurement supports. This is the same kind of floor
+// interventions has at 6 and building footprints at 13, rather than the z4 floor the sparse
+// incident layers use.
 export const WATERSHED_BOUNDARY_COLOR = "#1565c0";
+
+/** The floor both watershed layers share; see the tile-weight measurement above. */
+const WATERSHED_MIN_ZOOM = 7;
 
 export const watershedsLayer: LayerSpecification = {
   id: "watersheds-fill",
   type: "fill",
   source: MARTIN_SOURCE,
   "source-layer": "watersheds",
-  minzoom: 8,
+  minzoom: WATERSHED_MIN_ZOOM,
   layout: { visibility: "none" },
   paint: {
     "fill-color": WATERSHED_BOUNDARY_COLOR,
+    // A deliberate wash, kept at 0.05: the fill exists to be hit-testable (the hover
+    // tooltip queries "watersheds-fill") and to tint a basin, not to be seen as a colour.
+    // The outline is what a reader is meant to read the boundary off.
     "fill-opacity": 0.05,
   },
 };
@@ -449,12 +465,15 @@ export const watershedsOutlineLayer: LayerSpecification = {
   type: "line",
   source: MARTIN_SOURCE,
   "source-layer": "watersheds",
-  minzoom: 8,
+  minzoom: WATERSHED_MIN_ZOOM,
   layout: { visibility: "none" },
   paint: {
     "line-color": WATERSHED_BOUNDARY_COLOR,
-    "line-width": 1,
-    "line-opacity": 0.6,
+    // Strengthened from 1px/0.6 on 2026-08-08. With the fill at a 0.05 wash the outline is
+    // the entire layer, and at the new z7 floor basins are small enough on screen that a
+    // 1px hairline at 0.6 read as a smudge rather than as a boundary.
+    "line-width": 1.4,
+    "line-opacity": 0.8,
   },
 };
 
@@ -546,6 +565,57 @@ export const soilSurveyOutlineLayer: LayerSpecification = {
     "line-color": SOIL_SURVEY_OUTLINE_COLOR,
     "line-width": 0.5,
     "line-opacity": 0.7,
+  },
+};
+
+/**
+ * Graduated radii for the zoomed-out soil-survey lattice: how many real SSURGO delineations
+ * one cell counted, and how big its dot is drawn. Roughly log-spaced because the counts are
+ * — a 1/8-degree cell holds ~650 and a lattice cell can hold tens of thousands — and a
+ * linear scale would collapse every ordinary cell into the same dot.
+ *
+ * No legend ramp reads this: size is not a swatch, so the soil-survey legend describes it
+ * in a `note` block instead. The table is here to keep the expression readable.
+ */
+const SOIL_SURVEY_SUMMARY_COUNT_STOPS = [
+  { count: 1, radius: 4 },
+  { count: 250, radius: 8 },
+  { count: 2_000, radius: 13 },
+  { count: 20_000, radius: 19 },
+] as const;
+
+/**
+ * One counted lattice cell per dot, drawn where the survey is too wide to outline —
+ * `readSummaryFeatures` in usda-soil.ts. Colour is the cell's dominant drainage class, read
+ * off the SAME table the detail fill matches on, so zooming in changes the shape a reader
+ * sees without ever changing what a colour means. Size is the delineation count.
+ *
+ * The filter is what lets one GeoJSON source carry both shapes: a summary point and a
+ * unioned polygon can never be painted by each other's layer. (The fill and line layers
+ * above need no matching filter — MapLibre draws neither on a Point — but this one does,
+ * or a polygon tier's features would each acquire a dot at their centroid.)
+ */
+export const soilSurveySummaryLayer: LayerSpecification = {
+  id: "soil-survey-summary",
+  type: "circle",
+  source: SOIL_SURVEY_SOURCE,
+  filter: ["==", ["get", "summary"], true],
+  paint: {
+    "circle-color": matchClasses(
+      "drainageClass",
+      SOIL_SURVEY_DRAINAGE_CLASSES,
+      UNCLASSIFIED_FILL_COLOR
+    ),
+    "circle-radius": [
+      "interpolate",
+      ["linear"],
+      ["get", "mapUnitCount"],
+      ...SOIL_SURVEY_SUMMARY_COUNT_STOPS.flatMap((stop) => [stop.count, stop.radius]),
+    ] as unknown as DataDrivenPropertyValueSpecification<number>,
+    "circle-opacity": 0.8,
+    "circle-stroke-width": 1,
+    "circle-stroke-color": SOIL_SURVEY_OUTLINE_COLOR,
+    "circle-stroke-opacity": 0.9,
   },
 };
 

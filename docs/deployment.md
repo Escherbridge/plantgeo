@@ -312,8 +312,10 @@ never be exposed as `NEXT_PUBLIC_*`.
 - Config-as-code: `/services/agri-data-service/railway.json`
 - Liveness: `GET /health`
 - Rollout readiness: `GET /ready` (profile-specific identity, exact Alembic
-  revision `20260725_0013`, all four required extensions, route-touched
-  objects, and the exact least-privilege runtime and forecast-role grants)
+  revision `20260808_0019`, all four required extensions, and one capability
+  conjunct: the connected login can see schema `agri` and the serving view
+  exists. The role-grant matrices this probe once asserted were retired with
+  the forecast capability roles in `20260808_0019`.)
 - Runtime port: Railway-provided `PORT`
 
 Deploy the same image as two separately configured service instances. The
@@ -341,7 +343,9 @@ CELERY_DISPATCH_ENABLED=false
 CLOUD_TRAINING_ENABLED=false
 ```
 
-The DSNs must authenticate different login roles. Do not configure
+Both DSNs may authenticate the same login: since `20260808_0019` applications
+connect with the single owner credential, and readiness asks about capability
+(schema visibility, the serving view) rather than identity. Do not configure
 `DATABASE_URL` as a production data-service fallback, and do not inject receiver
 tokens or actors into the published reader. `SERVICE_PROFILE=combined_local` is
 development compatibility only and always fails rollout readiness.
@@ -353,19 +357,19 @@ short-lived Alembic migration context and must use a synchronous PostgreSQL
 driver. Do not inject the migration DSN into either long-lived data-service
 container.
 
-Each runtime login must have only `CONNECT`; `USAGE` (not `CREATE`) on `public`
-and `agri`; `SELECT` on `public.alembic_version`; and the exact route-specific
-grants audited by `/ready`. The receiver login must not inherit the published
-reader capability or read the serving views. It requires `USAGE, SELECT` only on
-`agri.signal_observation_id_seq` and
-`agri.drought_polygon_snapshot_id_seq`; every other `agri` sequence is denied.
-The reader login must inherit only `plantgeo_forecast_reader` and must have no
-writer, publisher, refresher, table write, or sequence privilege. Both profiles
-are audited over every `agri` relation, sequence, and function, including
-column-only grants, memberships, and ownership paths. Neither login may own
-database objects, hold grant options, or have `SUPERUSER`, `CREATEDB`,
-`CREATEROLE`, `REPLICATION`, or `BYPASSRLS`. Revoke prior broad grants before
-applying the reviewed matrices.
+**`/ready` no longer audits a privilege matrix.** Until 2026-08-08 this paragraph
+described one: each runtime login holding only `CONNECT`, `USAGE` (not `CREATE`)
+on `public` and `agri`, `SELECT` on `public.alembic_version`, two named sequences
+for the receiver and nothing else, with the reader inheriting only
+`plantgeo_forecast_reader` and both profiles audited over every `agri` relation,
+sequence and function including column grants, memberships and ownership paths.
+Revision `20260808_0019` retired the `plantgeo_forecast_*` capability family —
+zero members, no DSN, no `USAGE` on `agri` — and applications now connect with
+the single owner credential, so an "exactly these privileges and no more"
+assertion about an owner would be vacuous. `/ready` reports `database_profile`,
+`receiver_identity`, `extensions`, `migration` and `serving_surface`; the pinned
+Alembic revision is still asserted in both directions. See
+`docs/reports/migration-decision-packet-2026-08-08.md` § Resolution.
 
 Set request and aggregate size limits explicitly; the defaults in
 `.env.example` are conservative starting points, not load-test evidence.
@@ -483,23 +487,18 @@ This repoints only `plantgeo-ingest-cron`'s build context; it does not touch the
 this service will fail — its `Dockerfile`'s `COPY services/agri-data-service/...` lines cannot
 resolve from the old root.
 
-**Required variables.** The DSN variable this container reads is
-`LOCAL_SOURCE_LOADER_DATABASE_URL`, **not** `DATABASE_URL`. Every `ingest-*` verb opens
-`db/engine.ingest_session()`, which calls `settings.require_local_source_loader_database_url()`
-(`config.py`), and that reader has no fallback: with only `DATABASE_URL` set the run dies before
-any source is fetched with
-
-```
-ValueError: source-ingest requires LOCAL_SOURCE_LOADER_DATABASE_URL; DATABASE_URL is never a loader fallback
-```
-
-The raise happens outside `run_isolated_job`, so it is an unhandled traceback and a red deployment,
-not a per-source `failed` summary — zero rows ingested on every on-demand run.
+**Required variables.** Every `ingest-*` verb opens `db/engine.ingest_session()`, which calls
+`settings.require_local_source_loader_database_url()` (`config.py`). Since 2026-08-08 that reader
+returns `LOCAL_SOURCE_LOADER_DATABASE_URL` when set and `DATABASE_URL` otherwise, so this
+container works with either variable — or both set to the same string, a blank value counting as
+unset. Having *neither*, or a DSN that is not a complete `postgresql+asyncpg://` URL, raises
+outside `run_isolated_job`, so it is an unhandled traceback and a red deployment rather than a
+per-source `failed` summary.
 
 | Variable | Value on this service |
 | --- | --- |
-| `LOCAL_SOURCE_LOADER_DATABASE_URL` | **Required.** The Railway **public proxy** DSN, scheme `postgresql+asyncpg://` (mandatory — see `docs/env-vars.md`): `postgresql+asyncpg://postgres:<password>@switchback.proxy.rlwy.net:37967/plantgeo`. |
-| `DATABASE_URL` | **Must NOT be set.** `require_local_source_loader_database_url` rejects a loader DSN equal to `DATABASE_URL`, and both fields are normalised to `postgresql+asyncpg://` before comparison, so identical raw strings compare equal and the run fails. |
+| `LOCAL_SOURCE_LOADER_DATABASE_URL` | The Railway **public proxy** DSN, scheme `postgresql+asyncpg://` (see `docs/env-vars.md`): `postgresql+asyncpg://postgres:<password>@switchback.proxy.rlwy.net:37967/plantgeo`. This is what the deployed service sets. |
+| `DATABASE_URL` | Optional. Used as the loader DSN when the variable above is unset; setting both to the same string is accepted. |
 | `REDIS_URL` | Required, for the realtime publisher. |
 | `INGEST_BBOX` | Required. Without it every source returns a `skipped` summary and writes nothing. |
 | `NASA_FIRMS_KEY` | Required for the FIRMS source. |

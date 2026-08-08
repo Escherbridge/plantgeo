@@ -298,7 +298,10 @@ def test_source_ingestion_commands_expose_inactive_status_without_starting_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runner = CliRunner()
+    # Both DSN variables absent: since the 2026-08-08 teardown the loader override falls back to
+    # DATABASE_URL, so clearing only the override no longer blocks anything.
     monkeypatch.setattr(settings, "local_source_loader_database_url", None)
+    monkeypatch.setattr(settings, "database_url", None)
 
     assert runner.invoke(cli, ["source-ingest", "--help"]).exit_code == 0
     status = runner.invoke(cli, ["pipeline-status"])
@@ -310,7 +313,7 @@ def test_source_ingestion_commands_expose_inactive_status_without_starting_work(
     assert "no model, forecast, or waypoint outputs" in status.output
 
 
-def test_source_ingest_fails_closed_without_a_dedicated_loader_target(
+def test_source_ingest_fails_closed_without_any_database_dsn(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -319,6 +322,7 @@ def test_source_ingest_fails_closed_without_a_dedicated_loader_target(
     plan_path.write_text("{}", encoding="utf-8")
     payload_path.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(settings, "local_source_loader_database_url", None)
+    monkeypatch.setattr(settings, "database_url", None)
 
     result = CliRunner().invoke(cli, ["source-ingest", "--plan", str(plan_path), "--payload", str(payload_path)])
 

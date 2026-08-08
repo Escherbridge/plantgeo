@@ -500,7 +500,7 @@ work for the same viewport. A rejected payload raises `WatershedResponseError`,
 which the router reports as `watershed_upstream_returned_no_features` rather than
 as an empty viewport the provider never claimed.
 
-Client-side, `WaterPanel`'s watershed tab and `LayerManager` both call
+Client-side, `WaterDetails`'s watershed tab and `LayerManager` both call
 `useWatershedsQuery` — see §proxied-viewport-queries for why neither may build the query
 itself.
 
@@ -580,6 +580,32 @@ and a PNW-wide detail read 27 ms, both on the existing
 resolves the cell list first and the day is then one index search per cell. An index built
 here would also lock a table a live crawl is writing to, for no measured gain.
 
+**Three rules every day-windowed reader in this file must follow.** All three were violated by
+the original `readSoilFieldCells` and inherited by the climate field; all three are now pinned
+by `src/__tests__/services/climate-field-sql-contract.test.ts`, which executes the real
+statements against a real PostgreSQL because none of them is visible to a mocked `db.execute`.
+
+1. **Cast every numeric bind.** postgres.js sends a JS number with **no type OID**, so
+   PostgreSQL resolves `${day}::date - $n` as `date - date -> integer` and a following
+   `::timestamptz` is illegal — SQLSTATE 42846, at PARSE time, on every call. Write
+   `${AGE}::integer`. A statement can be dead on arrival while the whole unit suite passes.
+2. **Half-open upper bound.** These lanes stamp every row at exactly midnight UTC, so
+   `observed_at <= (day + 1)` admits day+1's own reading and `max()` picks it: the map paints
+   tomorrow under a caption promising "at or before" today, for every archive day but the
+   newest. Use `< ((${day}::date + 1)::timestamp AT TIME ZONE 'UTC')`.
+3. **Pin both bounds to UTC.** `date::timestamptz` resolves through the **session** TimeZone
+   while both views derive `observed_day` `AT TIME ZONE 'UTC'`. On a -06:00 session
+   `'2026-04-30'::date` is 06:00Z and the window disagrees with the day label about where a
+   midnight row falls. `(…)::timestamp AT TIME ZONE 'UTC'` is session-independent.
+
+**A day resolver that reads the base table must mirror the view's gates.** `served` and the
+`newest*Day` helpers read `agri.signal_observation` directly (rule below: the view may be
+referenced only once), so they do not inherit `is_observed`, `quality_flag = 'accepted'`,
+`normalized_value IS NOT NULL` or the unit match. Un-mirrored, one rejected or wrong-unit row
+on the newest day resolves an instant the view holds nothing at — the whole viewport blanks,
+and the panel prints that row's day as "the newest reading for this view", which is false.
+Both readers therefore bind the resolved signal's `normalized_unit` alongside its name.
+
 **Two query shapes that look equivalent and are not.** Reading
 `geo.soil_field_observation` **twice** in one statement (once to resolve the day, once
 to read it) makes PostgreSQL materialize it as a CTE, and the same viewport costs **2.3 s**
@@ -605,47 +631,104 @@ model **publishes** it as `sourceClientExposureApproved` and carries the require
 attribution in `attribution`, rather than silently gating the layer off or silently
 ignoring the flag. Flipping the column in the warehouse is the owner's call.
 
+## §climate-field
+
+`services/environmental-read-model.ts#getPublishedClimateField`,
+`drizzle/0020_climate_field.sql`, `lib/environmental/climate-field.ts`,
+`trpc/routers/environmental.ts#getClimateField`,
+`components/map/layers/ClimateFieldLayer.tsx`.
+
+The **second** lane served out of the model plane. NASA POWER daily: eight meteorology
+signals plus three pilot soil-wetness signals, `support_key = 'surface'`, daily at midnight
+UTC over the 397-cell 0.5° `nasa-power-0.5-degree` lattice for 2022-04-30..2026-04-30, from
+the `nasa-power-daily` source. It reads like §soil-field above and differs in exactly two
+ways, both forced by the data.
+
+**One tier, no isobands, no SQL aggregation function.** The soil field aggregates because a
+0.25° lattice ships 1,568 squares PNW-wide; this lattice holds 397 cells in total, which is
+smaller than that field's *regional* aggregate. There is nothing to aggregate away, and a
+coarser average would only blur the coarsest honest thing the lane holds — so
+`getPublishedClimateField` takes no `zoom`, `getClimateField` has no `zoom` input, and
+`useClimateFieldQuery` keeps it out of the query key. Adding one later would split one answer
+into one cache entry per zoom level for a lane that serves the same cells at every zoom.
+
+**The read dedupes, because the lane has duplicates.** Overlapping archive releases left
+~47 k `(cell_id, signal_name, observed_at)` keys carrying two rows apiece. `DISTINCT ON
+(cell_id)` with `ORDER BY cell_id, release_retrieved_at DESC, observation_id DESC` picks
+exactly one: newest release wins, and the observation id breaks a tie between two releases
+retrieved in the same instant. Without it the same viewport paints differently between runs
+depending on what the planner emitted first — and neither `retrieved_at` nor the observation
+id can be derived downstream, which is why `geo.climate_field_observation` publishes both.
+
+**It obeys the three bind/bound rules and the gate-mirroring rule in §soil-field above**, and
+so does the soil field now — the climate reader was written from the soil reader and inherited
+all four defects from it, which is why they are documented there rather than here. The four
+statements are exported as builders (`climateFieldCellsStatement`,
+`climateFieldNewestDayStatement`, and the soil pair) so the contract test can execute the
+production SQL rather than a paraphrase of it.
+
+Everything else is the soil field's: the same `resolveRequestedObservationDay`, the same
+30-day `MAX_OBSERVATION_AGE_DAYS` with `stale` + `newestAvailableDay` past it,
+`not_forecastable` for a future day, `not_published` for uncovered ground, one probe per
+covered cell for the newest-day answer, and the view referenced **exactly once** so the 2.3 s
+materialized-CTE trap documented above cannot bite the second reader of the same pattern.
+
+**No new index** (`drizzle/0020_climate_field.sql` justifies it): the bbox resolves the cell
+list off the GiST `ix_spatial_cell_geometry` with a `grid_name` predicate, and the day is one
+search per cell on the existing `ix_signal_observation_cell_time_signal`. That is the access
+path measured at 27 ms PNW-wide on a lattice four times this one's size.
+
+**The same unresolved governance question, surfaced the same way.**
+`allowed_client_exposure` is `false` for `nasa-power-daily`, which is the server default every
+generically-ingested source gets. The reader publishes it as `sourceClientExposureApproved`
+rather than gating the layer off or ignoring the flag.
+
 ## §proxied-viewport-queries
 
-`src/hooks/useViewportProxiedLayers.ts`, consumed by `components/map/LayerManager.tsx`,
-`components/map/PanelManager.tsx`, `components/panels/SoilPanel.tsx` and
-`components/panels/WaterPanel.tsx`. Applies to the two proxied feeds above and, since
+`src/hooks/useViewportProxiedLayers.ts`, consumed directly by `components/map/LayerManager.tsx`
+and, via `components/map/layer-panel/DockDetails.tsx`'s per-region bodies
+(`SoilDetailsBody`, `WaterDetailsBody`), by `components/panels/SoilDetails.tsx` and
+`components/panels/WaterDetails.tsx`. Applies to the two proxied feeds above and, since
 2026-08-06, to the warehouse-backed soil-moisture field as well: what the three share is
 not their upstream but the sharing hazard.
 
 **`zoom` is part of the key, and omitting it is not neutral.** `getSoilSurvey` and
 `getSoilMoisture` both resolve their render granularity from `zoom` server-side. Until
 2026-08-06 *neither* soil-survey caller passed one: `LayerManager` called
-`useSoilSurveyQuery(bbox, { enabled })` and `PanelManager` mounted `SoilPanel` without the
-prop it already accepted. `resolveSoilSurveyGranularity(undefined)` falls to `"detail"`,
-whose 0.02 sq-deg ceiling `getSoilSurvey`'s `superRefine` then enforces — so at any
-ordinary zoom the request was rejected and the panel showed its "zoom in" note. The
-server's whole zoom-adaptive path existed and was never once exercised. Both call sites
-now pass `zoom` from the one `useViewportBounds()` derivation, which is also what keeps
-them on a single cache entry.
+`useSoilSurveyQuery(bbox, { enabled })` and the (since-removed) `PanelManager` mounted the
+(since-renamed) `SoilPanel` without the prop it already accepted.
+`resolveSoilSurveyGranularity(undefined)` falls to `"detail"`, whose 0.02 sq-deg ceiling
+`getSoilSurvey`'s `superRefine` then enforces — so at any ordinary zoom the request was
+rejected and the region showed its "zoom in" note. The server's whole zoom-adaptive path
+existed and was never once exercised. Both call sites now pass `zoom` from the one
+`useViewportBounds()` derivation, which is also what keeps them on a single cache entry.
 
-**One query per feed, not one per caller.** A map layer and the panel that describes it
-read the same viewport, so they must produce the *same* react-query entry — not two that
-look alike. Four things have to agree for that to hold: the bbox derivation, the
-placeholder input used when there is no bbox, `staleTime`, and `retry`. Hand-copied
+**One query per feed, not one per caller.** A map layer and the details region that
+describes it read the same viewport, so they must produce the *same* react-query entry —
+not two that look alike. Four things have to agree for that to hold: the bbox derivation,
+the placeholder input used when there is no bbox, `staleTime`, and `retry`. Hand-copied
 across two files they drift silently, and the failure is invisible on first paint: with
-the map on 1 h and a panel inheriting `providers.tsx`'s 60 s default, opening the panel a
+the map on 1 h and a region inheriting `providers.tsx`'s 60 s default, expanding it a
 minute later issues a *second* full upstream fetch (~5 MB / ~7 s for HUC12) of data the
 map considered fresh for another 59 minutes. `staleTime` is per-observer in TanStack v5
 and `refetchOnMount` defaults true, so nothing about a shared key prevents this.
 
 So all four live in `useSoilSurveyQuery` / `useWatershedsQuery`, and the bbox in
-`useViewportBounds` — one derivation, called by `LayerManager` and by `PanelManager`,
-which hands it to the panels as a `bbox` prop exactly as the other viewport-scoped panels
-already receive one. Callers supply only `enabled`, which is genuinely per-caller (a map
-layer is mounted, a panel is open) and can never split one cache entry into two, since it
-is not part of the key.
+`useViewportBounds` — one derivation, called by `LayerManager` and, independently, by each
+`DockDetails` body that needs it, which hands the result to its region as a `bbox` prop
+exactly as the other viewport-scoped regions already receive one. On the map side callers
+supply `enabled`, genuinely per-caller (a map layer is mounted or it is not) and never
+part of the key, so it can never split one cache entry into two. On the dock side there is
+no `enabled` term at all: `DetailsSection` (`components/map/layer-panel/DetailsSection.tsx`)
+mounts `DockDetailsBody` only while its section is expanded, so mounting IS the gate — a
+collapsed region issues nothing, an expanded one issues the same query the map already has
+open.
 
 The hooks also apply the registry's `permanentlyUnavailableReason` guard to the
-*request*, not just to the render, so a panel can never become the sole requester of a
-layer governance withholds from the map. `SoilPanel` reads `useLayerVisibility()` rather
-than `useLayerToggle()` for the same reason — raw `activeLayers` membership bypasses that
-guard.
+*request*, not just to the render, so a details region can never become the sole requester
+of a layer governance withholds from the map. `SoilDetails` reads `useLayerVisibility()`
+rather than `useLayerToggle()` for the same reason — raw `activeLayers` membership
+bypasses that guard.
 
 `retry: 1`, not react-query's default 3. Cache keys are per-exact-bbox and nothing is
 written on failure, so every attempt re-pays in full: at `REQUEST_TIMEOUT_MS` a dense
@@ -784,6 +867,40 @@ Three products remain genuinely unavailable and return empty strings:
 `getVegetationSources` therefore reports availability **per product**. A single
 collapsed flag would either hide the working NDVI layer or overstate the three
 missing ones.
+
+## §agri-forecasts
+
+The `forecasts` router is a bounded proxy over the agri-data-service's published
+forecast serving view (`GET /forecasts/` on `AGRI_DATA_SERVICE_URL`) — the first
+HTTP bridge between this app and that service; everything else the two share
+arrives through the warehouse. The proxy trims the serving record to what the
+band chart draws (quantile points, method, issue identity) but keeps availability
+explicit, in the §proxied-viewport-queries idiom: an unset base URL answers
+`unavailable`/`forecast_service_not_configured` rather than throwing, and an
+empty page stays **published with zero points**, because zero receipts is the
+expected production state until a forecast run publishes. The panel words those
+two states differently on purpose — one is a deployment without the bridge, the
+other is a bridge waiting for data.
+
+One serving page can span several forecast receipts: the publication pointer is
+unique per scope, not per series window, so a fresh run arrives interleaved with
+the run it superseded. `toPublishedSeries` draws exactly one run — the
+latest-issue receipt — and counts what it dropped in
+`staleReceiptPointsDropped` rather than interleaving two runs into a saw-tooth
+whose caption describes neither. A body that fails the zod contract throws
+`ForecastContractError`, which is deliberately NOT transient: the shared
+`trpc/upstream-fault.ts` helper (also used by the environmental router) only
+relabels timeouts, payload bounds, 429/5xx, and network-level fetch failures as
+retryable. The client side pays for this proxy like every other one: one retry,
+a ten-minute stale time, and no fetch until the Forecast tab is on screen.
+
+Series keys are derived client-side in `src/lib/forecast/series-key.ts` from the
+map viewport's centre cell. That file mirrors the Python naming contract
+(`ndvi-daily:sentinel2-ndvi-0p25deg:<lat.toFixed(4)>:<lon.toFixed(4)>`, cells
+anchored at multiples of 0.25° — `execution/vegetation_ndvi_plane.py` and
+`ingest/vegetation.py` in the service). If the grid, prefix, or coordinate
+rendering changes there, that file is the coupling to update; a drifted key does
+not error, it just asks for a series that can never exist.
 
 ## §community-activity
 

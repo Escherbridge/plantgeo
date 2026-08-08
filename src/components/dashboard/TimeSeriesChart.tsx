@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { buildLinearScales, selectXLabelIndices } from "@/components/dashboard/chart-scales";
 
 interface DataPoint {
   time: string;
@@ -29,40 +30,22 @@ export function TimeSeriesChart({ data, width, height, color }: TimeSeriesChartP
   }
 
   const padLeft = 36;
-  const padRight = 12;
   const padTop = 12;
-  const padBottom = 28;
-  const chartW = width - padLeft - padRight;
-  const chartH = height - padTop - padBottom;
-
-  const values = data.map((d) => d.value);
-  const minVal = Math.min(...values);
-  const maxVal = Math.max(...values);
-  const range = maxVal - minVal || 1;
-
-  const scaleX = (i: number) => padLeft + (i / (data.length - 1)) * chartW;
-  const scaleY = (v: number) => padTop + chartH - ((v - minVal) / range) * chartH;
+  const { scaleX, scaleY, chartWidth, chartHeight, ticks, decimals } = buildLinearScales(
+    data.map((d) => d.value),
+    data.length,
+    { width, height, padLeft, padRight: 12, padTop, padBottom: 28 }
+  );
+  const formatValue = (v: number) => v.toFixed(decimals);
 
   const points = data.map((d, i) => `${scaleX(i)},${scaleY(d.value)}`).join(" ");
 
   // Area polygon: line points + bottom-right + bottom-left
   const areaPoints = [
     ...data.map((d, i) => `${scaleX(i)},${scaleY(d.value)}`),
-    `${scaleX(data.length - 1)},${padTop + chartH}`,
-    `${scaleX(0)},${padTop + chartH}`,
+    `${scaleX(data.length - 1)},${padTop + chartHeight}`,
+    `${scaleX(0)},${padTop + chartHeight}`,
   ].join(" ");
-
-  // Y-axis ticks
-  const yTicks = [minVal, minVal + range * 0.5, maxVal].map((v) => ({
-    v,
-    y: scaleY(v),
-  }));
-
-  // X-axis labels — show up to 6 evenly spaced
-  const xLabelCount = Math.min(data.length, 6);
-  const xLabelIndices = Array.from({ length: xLabelCount }, (_, i) =>
-    Math.round((i / (xLabelCount - 1)) * (data.length - 1))
-  );
 
   return (
     <div className="relative w-full" style={{ maxWidth: width }}>
@@ -86,12 +69,12 @@ export function TimeSeriesChart({ data, width, height, color }: TimeSeriesChartP
         />
 
         {/* Grid lines */}
-        {yTicks.map(({ v, y }) => (
+        {ticks.map(({ y }, index) => (
           <line
-            key={v}
+            key={index}
             x1={padLeft}
             y1={y}
-            x2={padLeft + chartW}
+            x2={padLeft + chartWidth}
             y2={y}
             stroke="hsl(var(--border))"
             strokeWidth="1"
@@ -119,8 +102,7 @@ export function TimeSeriesChart({ data, width, height, color }: TimeSeriesChartP
             stroke="hsl(var(--background))"
             strokeWidth="1.5"
             style={{ cursor: "pointer" }}
-            onMouseEnter={(e) => {
-              const rect = e.currentTarget.closest("svg")!.getBoundingClientRect();
+            onMouseEnter={() => {
               setTooltip({
                 x: scaleX(i),
                 y: scaleY(d.value),
@@ -131,25 +113,25 @@ export function TimeSeriesChart({ data, width, height, color }: TimeSeriesChartP
         ))}
 
         {/* Y-axis labels */}
-        {yTicks.map(({ v, y }) => (
+        {ticks.map(({ value, y }, index) => (
           <text
-            key={v}
+            key={index}
             x={padLeft - 4}
             y={y + 4}
             textAnchor="end"
             fontSize="10"
             fill="hsl(var(--muted-foreground))"
           >
-            {Math.round(v)}
+            {formatValue(value)}
           </text>
         ))}
 
         {/* X-axis labels */}
-        {xLabelIndices.map((idx) => (
+        {selectXLabelIndices(data.length).map((idx) => (
           <text
             key={idx}
             x={scaleX(idx)}
-            y={padTop + chartH + 18}
+            y={padTop + chartHeight + 18}
             textAnchor="middle"
             fontSize="10"
             fill="hsl(var(--muted-foreground))"
@@ -165,7 +147,7 @@ export function TimeSeriesChart({ data, width, height, color }: TimeSeriesChartP
               x1={tooltip.x}
               y1={padTop}
               x2={tooltip.x}
-              y2={padTop + chartH}
+              y2={padTop + chartHeight}
               stroke={color}
               strokeWidth="1"
               strokeDasharray="3,3"

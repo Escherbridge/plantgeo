@@ -247,13 +247,17 @@ Two weakenings that no DDL signature reveals: dropping
   (`agri/functions/guard_strategy_review_change.sql:35-36,53-54`), which it
   assigns into `NEW`. Dropping it leaves `definition_checksum` and
   `policy_checksum` permanently NULL.
-- **`plantgeo_forecast_mv_refresh_owner`** — the one owner role kept. It owns
+- **`plantgeo_forecast_mv_refresh_owner`** — the one owner role `0018` kept, and
+  **retired in turn by `20260808_0019`.** It owned
   `agri.mv_forecast_ml_daily_serving` and
   `agri.refresh_forecast_ml_daily_serving()`; non-concurrent `REFRESH` requires
   matview ownership and the refresher is `SECURITY DEFINER`, so **owner and
-  definer must remain the same role**. A bare `DROP ROLE` errors `2BP01`; a
-  `DROP OWNED BY` would delete the ML matview. Its `GRANT EXECUTE` to
-  `plantgeo_forecast_mv_refresher` is untouched and asserted at runtime.
+  definer must remain the same role** — which is why `0019` retires it with
+  `REASSIGN OWNED BY … TO CURRENT_USER` first. A bare `DROP ROLE` errors `2BP01`
+  and a `DROP OWNED BY` would have deleted the ML matview. Both objects now
+  belong to the owner credential; the `GRANT EXECUTE` to
+  `plantgeo_forecast_mv_refresher` left with that role, and the CLI no longer
+  assumes it. See `../alembic/AGENTS.md` § `20260808_0019`.
 - **`guard_forecast_immutable_rows`** (6 triggers) — the one immutability rule
   kept, on the append-only reference tables.
 - **The `require_*` family** (3 functions, 10 triggers) — outside every dropped

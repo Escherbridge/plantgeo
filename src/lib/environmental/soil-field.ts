@@ -1,12 +1,12 @@
 /**
- * The ERA5-Land soil-field value vocabulary -- volumetric soil water AND soil temperature --
- * shared by the server that builds the isobands, the map that paints them and the panel that
- * legends them, so a colour on the map and a colour in the legend cannot drift apart. See
- * `src/lib/environmental/AGENTS.md` §soil-field.
+ * The ERA5-Land soil-field value vocabulary -- volumetric soil water, soil temperature AND
+ * vapor pressure deficit -- shared by the server that builds the isobands, the map that
+ * paints them and the panel that legends them, so a colour on the map and a colour in the
+ * legend cannot drift apart. See `src/lib/environmental/AGENTS.md` §soil-field.
  */
 
 /** Which physical quantity a soil field draws. */
-export type SoilFieldMeasure = "moisture" | "temperature";
+export type SoilFieldMeasure = "moisture" | "temperature" | "vpd";
 
 /**
  * An ECMWF soil layer. ERA5-Land uses the SAME four layer boundaries for temperature as for
@@ -46,7 +46,7 @@ export interface SoilFieldBand {
 export interface SoilFieldMeasureDefinition {
   measure: SoilFieldMeasure;
   /** The `LayerToggleId` this measure renders through. */
-  toggleId: "soil-moisture" | "soil-temperature";
+  toggleId: "soil-moisture" | "soil-temperature" | "soil-vpd";
   /** The panel switch's label. */
   layerLabel: string;
   /** The legend heading, without the unit. */
@@ -169,6 +169,23 @@ const TEMPERATURE_BAND_COLORS: readonly string[] = [
 const MOISTURE_BAND_BREAKS: readonly number[] = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35];
 
 /**
+ * ColorBrewer YlOrBr, 8 classes: pale yellow is humid air, deep brown is desiccating.
+ * SEQUENTIAL where the two soil measures are diverging: VPD has a true zero (saturated air)
+ * and the fire-weather reading is "how strong is the atmospheric drying" -- a monotone
+ * question with no typical-value midpoint to diverge around.
+ */
+const VPD_BAND_COLORS: readonly string[] = [
+  "#ffffe5",
+  "#fff7bc",
+  "#fee391",
+  "#fec44f",
+  "#fe9929",
+  "#ec7014",
+  "#cc4c02",
+  "#8c2d04",
+];
+
+/**
  * Band edges in degrees Celsius.
  *
  * NOT measured against this lane: at the time these were chosen the soil-temperature
@@ -181,12 +198,29 @@ const MOISTURE_BAND_BREAKS: readonly number[] = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3
 const TEMPERATURE_BAND_BREAKS: readonly number[] = [-5, 0, 5, 10, 15, 20, 25];
 
 /**
- * The two measures this lane publishes.
+ * Band edges in kPa (daily maximum).
+ *
+ * Chosen against the measured spread of the lane, the way moisture's were: on production
+ * 2026-08-08 the lattice held 2,149,140 accepted rows spanning 0.00-8.84 kPa, mean 1.29,
+ * median 0.77, p90 3.21, p99 5.27. Uniform 0.5 kPa steps resolve the crowded 0-2 kPa body
+ * of that distribution -- humid coastal winters sit under the first break -- while the open
+ * tail above 3.5 kPa isolates the desiccating heat events the fire-weather reading exists
+ * for; the 3-4 kPa range is where large-fire growth days cluster.
+ */
+const VPD_BAND_BREAKS: readonly number[] = [0.5, 1, 1.5, 2, 2.5, 3, 3.5];
+
+/**
+ * The three measures this lane publishes.
  *
  * ECMWF also defines a fourth volumetric-water layer (100-289 cm); the Open-Meteo archive
  * lane does not fetch it, so it is not offered here rather than being offered and answering
- * empty. Temperature's fourth layer IS fetched, which is why the two measures declare
- * different depth lists off one shared depth vocabulary.
+ * empty. Temperature's fourth layer IS fetched, which is why the two soil-state measures
+ * declare different depth lists off one shared depth vocabulary.
+ *
+ * `vpd` is the lane's one atmospheric covariate: Open-Meteo derives daily-maximum vapour
+ * pressure deficit from the same era5_land reanalysis, so it rides the same lattice, the
+ * same support key and the same provenance as the soil-state measures, and everything that
+ * actually differs -- signal, unit, bands, its single pseudo-depth -- is declared here.
  */
 export const SOIL_FIELD_MEASURES: Readonly<Record<SoilFieldMeasure, SoilFieldMeasureDefinition>> =
   {
@@ -271,15 +305,45 @@ export const SOIL_FIELD_MEASURES: Readonly<Record<SoilFieldMeasure, SoilFieldMea
         value.toFixed(0)
       ),
     },
+    vpd: {
+      measure: "vpd",
+      toggleId: "soil-vpd",
+      layerLabel: "Vapor Pressure Deficit (ERA5-Land)",
+      quantityLabel: "Vapor pressure deficit",
+      fieldLabel: "vapor-pressure-deficit",
+      blankGroundMisreading: "humid air",
+      unit: "kPa",
+      unitLabel: "kPa",
+      depths: [
+        {
+          // Above the ground, not below it: Open-Meteo derives daily-max VPD from 2 m
+          // temperature and humidity. One entry because the signal has one level; the
+          // centimetre fields describe soil depth and have nothing to describe here.
+          depth: "surface",
+          signalName: "vapor_pressure_deficit",
+          label: "Near-surface air (2 m, daily max)",
+          topCentimetres: 0,
+          bottomCentimetres: 0,
+        },
+      ],
+      defaultDepth: "surface",
+      bandBreaks: VPD_BAND_BREAKS,
+      bands: buildBands(VPD_BAND_BREAKS, VPD_BAND_COLORS, (value) => value.toFixed(1)),
+    },
   };
 
-/** Both measures, in declaration order; what the panel and the layer manager iterate. */
-export const SOIL_FIELD_MEASURE_IDS: readonly SoilFieldMeasure[] = ["moisture", "temperature"];
+/** Every measure, in declaration order; what the panel and the layer manager iterate. */
+export const SOIL_FIELD_MEASURE_IDS: readonly SoilFieldMeasure[] = [
+  "moisture",
+  "temperature",
+  "vpd",
+];
 
 /** The default depth for every measure, as the store seeds itself. */
 export const DEFAULT_SOIL_FIELD_DEPTHS: Readonly<Record<SoilFieldMeasure, SoilFieldDepth>> = {
   moisture: SOIL_FIELD_MEASURES.moisture.defaultDepth,
   temperature: SOIL_FIELD_MEASURES.temperature.defaultDepth,
+  vpd: SOIL_FIELD_MEASURES.vpd.defaultDepth,
 };
 
 /** Every depth key any measure offers, for the wire schema that must accept all of them. */

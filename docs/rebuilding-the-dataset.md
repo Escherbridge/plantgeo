@@ -34,7 +34,7 @@ keyed source that fails without its variable set says so explicitly.
 | NIFC fire perimeters (`ingest-fire-perimeters`) | No | — | Public ArcGIS feature service | Nothing |
 | Evacuation zones (`ingest-evacuation-zones`) | No | `EVACUATION_ZONES_LAYER_ID` *(optional)* | Not a key — a layer label override | Nothing; uses a default layer name |
 | **NASA FIRMS active fire** (`ingest-firms`, and `ingest-all`) | **Yes** | `NASA_FIRMS_KEY` | Free MAP_KEY from [firms.modaps.eosdis.nasa.gov](https://firms.modaps.eosdis.nasa.gov/api/area/) | The verb raises `NASA_FIRMS_KEY environment variable is not set` and exits. `ingest-all` fails with it |
-| **ERA5-Land** (`historical-era5-backfill`) | **Yes** | `CDSAPI_URL` **and** `CDSAPI_KEY` | Free account at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu/), then accept the dataset licence in the browser | The command refuses to contact the provider: "ERA5-Land requires accepted CDS web terms plus CDSAPI_URL and CDSAPI_KEY in the local operator environment" |
+| **ERA5-Land** (`historical-era5-backfill`) | **Yes** | `CDSAPI_URL` **and** `CDSAPI_KEY` | Free account at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu/), then accept the dataset licence in the browser | The command refuses to contact the provider: "ERA5-Land requires accepted CDS web terms plus CDSAPI_URL and CDSAPI_KEY in the local operator environment or services/agri-data-service/.env" |
 | ERA5-Land via Open-Meteo (`historical-open-meteo-backfill`) | Optional | `OPEN_METEO_API_KEY` *(optional)* | A paid Open-Meteo subscription; the lane works without one | Nothing breaks. Absent, the lane calls the keyless free host and is subject to its minute/hour/day quotas — a full 1,568-cell crawl walls repeatedly. Present, the request goes to the Professional host instead |
 
 So: two credentials are *required* by a lane, and only one of them needs a
@@ -43,11 +43,10 @@ credential — it buys quota, not access. Everything else on the list is keyless
 
 Two facts about these variables bite every time:
 
-- **`CDSAPI_URL` and `CDSAPI_KEY` must be exported into the process
-  environment, not merely listed in `.env`.** `_require_cds_credentials()` reads
-  `os.environ` directly, while `Settings` loads `.env` through
-  pydantic-settings, which does not populate `os.environ`. Neither
-  `.env.example` currently lists them; add them to your shell:
+- **`CDSAPI_URL` and `CDSAPI_KEY` may live in `.env`** as of 2026-08-08.
+  `_require_cds_credentials()` used to read `os.environ` only, which made a
+  `.env` entry inert; `Settings` now carries both. A real environment variable
+  still wins over `.env`, and a blank export is treated as unset:
 
   ```powershell
   $env:CDSAPI_URL = 'https://cds.climate.copernicus.eu/api'
@@ -91,15 +90,16 @@ including backup and restore, is in
    uv run agri-cli db-status
    ```
 
-4. **Create the loader role** with `infra/local-warehouse/create-loader-role.sql`
-   as the owner, then set the resulting DSN in your operator environment:
+4. **Set the warehouse DSN** in your operator environment. There is no role to
+   create first — the 2026-08-08 role teardown (`20260808_0019`) deleted
+   `create-loader-role.sql` and every DSN assertion with it:
 
    ```text
-   LOCAL_SOURCE_LOADER_DATABASE_URL=postgresql+asyncpg://plantgeo_loader:<loader-password>@127.0.0.1:5442/plantgeo
+   DATABASE_URL=postgresql+asyncpg://plantgeo_owner:<owner-password>@127.0.0.1:5442/plantgeo
    ```
 
-   The loader receives only source-lineage and append-only historical tables. It
-   has no schema DDL, ownership, or application-database access.
+   `LOCAL_SOURCE_LOADER_DATABASE_URL` is an optional override that falls back to
+   the value above. Nothing is validated, so confirm the target yourself.
 
 Confirm the wiring without starting any work:
 

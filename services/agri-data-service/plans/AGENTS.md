@@ -119,14 +119,16 @@ generator hard-fails rather than silently rewriting a plan that is already on di
 
 ## Running the commands
 
-Two environment facts bite every time:
+Two environment facts used to bite every time. Both were removed on 2026-08-08; the notes
+survive because runbooks and older reports still describe the workarounds:
 
-- `_require_cds_credentials()` reads `os.environ` directly, while `Settings` loads `.env`
-  through pydantic-settings, which does *not* populate `os.environ`. Listing `CDSAPI_URL` and
-  `CDSAPI_KEY` in `.env` is not enough; they must be exported into the process.
-- `require_local_source_loader_database_url()` rejects a loader DSN equal to `DATABASE_URL`.
-  Because `.env` already points `DATABASE_URL` at the production proxy, `DATABASE_URL` has to be
-  blanked in the process environment when passing the same target as the loader DSN.
+- `_require_cds_credentials()` read `os.environ` directly while `Settings` loaded `.env`
+  through pydantic-settings, so a `.env` entry was inert and the pair had to be exported.
+  `Settings` now carries `cdsapi_url`/`cdsapi_key`: a real environment variable still wins, and
+  `.env` alone is sufficient.
+- `require_local_source_loader_database_url()` rejected a loader DSN equal to `DATABASE_URL`,
+  so `DATABASE_URL` had to be blanked when passing the same target. It now falls back to
+  `DATABASE_URL` and accepts an identical value, so nothing has to be blanked.
 
 ## The Open-Meteo ERA5-Land archive plans
 

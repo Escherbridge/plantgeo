@@ -100,6 +100,30 @@ export interface AggregatedSoilSurveyProperties {
 }
 
 /**
+ * One lattice cell's delineations COUNTED rather than merged, carried on a point at the
+ * cell's centre. What an aggregate tier serves once the viewport outgrows the polygon-union
+ * budget — see `readSummaryFeatures`.
+ *
+ * `aggregated` as well as `summary`, because everything the aggregate shape promises holds
+ * here too (no mukey, no muname, never captionable as a surveyed unit) and every existing
+ * `aggregated`-keyed consumer — the outline-suppression expressions, the hover formatter's
+ * average branch — stays correct without knowing this shape exists. `summary` is what says
+ * the extra thing: the geometry is a lattice centre, not a boundary anyone surveyed.
+ */
+export interface SoilSurveySummaryProperties {
+  aggregated: true;
+  summary: true;
+  /** The class the most delineations in the cell carry. Not an area-weighted average. */
+  drainageClass: string;
+  /** Real SSURGO delineations counted into this cell. */
+  mapUnitCount: number;
+  /** Share of the counted units SSURGO rated hydric; null when none carried a rating. */
+  hydricFraction: number | null;
+  /** The lattice step in degrees, so a reader is told what ground the count covers. */
+  cellDegrees: number;
+}
+
+/**
  * "detail" draws real per-map-unit SSURGO polygons (unchanged behavior). The two
  * coarser bands draw `AggregatedSoilSurveyProperties` shapes instead — see
  * `resolveSoilSurveyGranularity`.
@@ -192,6 +216,11 @@ export function soilSurveyAreaCeiling(zoom?: number): number | null {
  * a viewport needing more is answered from whatever the ledger already covers with
  * `coverage.covered < coverage.cells` saying so. Backfill is how coverage grows in bulk;
  * a page view is not.
+ *
+ * It bounds WARMING only, never what is drawn. The three reads below all query the whole
+ * viewport envelope, so this cap has never clipped the answer — what it does cap is how
+ * much unfetched ground one page view will go and fetch. Past the cap `getSoilSurvey` skips
+ * warming entirely rather than fetching a window too small to change the view.
  */
 export const MAX_SOIL_AGGREGATION_CELLS_PER_SIDE = 3;
 
@@ -210,6 +239,43 @@ const COARSE_SIMPLIFY_TOLERANCE_DEGREES = 0.005;
  * rather than being allowed to run long.
  */
 const MAX_SOIL_AGGREGATE_INPUT_ROWS = 20_000;
+
+/**
+ * Delineation density, measured rather than assumed: 649 in one 1/8-degree cell over the
+ * Boise foothills on 2026-08-05 (§soil-survey), which is ~41,500 per square degree. It is
+ * the number that converts the row budgets above and below into the viewport areas they
+ * actually correspond to.
+ */
+const MEASURED_DELINEATIONS_PER_SQUARE_DEGREE = 649 / SOIL_SURVEY_CELL_DEGREES ** 2;
+
+/**
+ * The viewport area an `ST_Union` answer stays inside `MAX_SOIL_AGGREGATE_INPUT_ROWS` for,
+ * ~0.48 sq deg — about zoom 10.6 at a 1024x512 viewport.
+ *
+ * Derived from the two measured numbers rather than picked, so raising the union budget
+ * moves this with it. Past it the union would be silently fed a truncated, arbitrary subset
+ * of the view: `LIMIT` inside the CTE decides which delineations are merged, so the drawn
+ * boundary would be a shape nobody surveyed. `readSummaryFeatures` answers instead.
+ */
+export const MAX_SOIL_UNION_SQUARE_DEGREES =
+  MAX_SOIL_AGGREGATE_INPUT_ROWS / MEASURED_DELINEATIONS_PER_SQUARE_DEGREE;
+
+/**
+ * Lattice cells per side one summary read may return. 8x8 = 64 points is a legible density
+ * at any viewport — dense enough to read a pattern off, sparse enough that the dots stay
+ * dots — and it is what bounds the *client's* cost, since the query's cost is one GROUP BY
+ * regardless of how the lattice is cut.
+ */
+export const MAX_SOIL_SUMMARY_CELLS_PER_SIDE = 8;
+
+/**
+ * Delineations one summary read may count. An order of magnitude above the union budget on
+ * purpose: this path runs no `ST_Union` and no `ST_SimplifyPreserveTopology`, only a
+ * bounding-box filter and a GROUP BY over two `floor()`s, so the ceiling that bounds it is
+ * row throughput rather than geometry CPU. It exists so a whole-continent viewport still
+ * returns, and reports itself truncated when it bites.
+ */
+const MAX_SOIL_SUMMARY_INPUT_ROWS = 200_000;
 
 /** Soil Data Access answered, but not with a result table this module can read. */
 export class SoilSurveyResponseError extends Error {}
@@ -254,6 +320,12 @@ export interface SoilSurveyCell {
  * warmed from SDA first, bounded by `MAX_SOIL_AGGREGATION_CELLS_PER_SIDE`; everything
  * else is one local PostGIS query. See `src/lib/server/AGENTS.md`
  * §soil-survey-persistence.
+ *
+ * Something correct is drawn at every zoom, and the three reads are how: real delineations
+ * (detail), drainage-class unions (an aggregate viewport inside
+ * `MAX_SOIL_UNION_SQUARE_DEGREES`), and counted lattice cells (anything wider). The choice
+ * is on measured viewport AREA, not on the zoom tier, because the ceiling that forces it is
+ * a row budget and rows scale with area.
  * @param bbox "west,south,east,north"
  */
 export async function getSoilSurvey(
@@ -264,12 +336,27 @@ export async function getSoilSurvey(
   const granularity = resolveSoilSurveyGranularity(zoom);
   const { cells, budgetExceeded } = soilSurveyCellsForBbox(bounds);
 
-  const coverageBefore = await readCoverage(cells);
-  const missing = cells.filter((cell) => !coverageBefore.has(cell.key));
-  const warmed = await mapWithConcurrency(missing, SDA_CONCURRENCY, ingestSoilSurveyCell);
-  const ingested = warmed.filter((result) => result !== null).length;
+  // Read-through warming exists to complete the view being looked at. Once the cell budget
+  // structurally cannot — a viewport wider than `MAX_SOIL_AGGREGATION_CELLS_PER_SIDE` cells,
+  // which is every zoom below ~12 — nine SDA round trips at a measured 4.3 s each buy a
+  // 0.375-degree patch of a multi-degree view, so they are pure upstream cost and pure
+  // latency on a request whose whole job is to draw what the warehouse already holds. The
+  // backfill is how coverage grows in bulk; a page view is not. Detail-tier requests always
+  // warm: their schema ceiling keeps them inside the budget, so warming always completes them.
+  const warmable = granularity === "detail" || !budgetExceeded;
 
-  const coverage = await readCoverage(cells);
+  const coverageBefore = await readCoverage(cells);
+  let ingested = 0;
+  let coverage = coverageBefore;
+  if (warmable) {
+    const missing = cells.filter((cell) => !coverageBefore.has(cell.key));
+    const warmed = await mapWithConcurrency(missing, SDA_CONCURRENCY, ingestSoilSurveyCell);
+    ingested = warmed.filter((result) => result !== null).length;
+    // Re-read only when something was actually written; otherwise the answer is unchanged
+    // and the second round trip is waste.
+    if (ingested > 0) coverage = await readCoverage(cells);
+  }
+
   const summary: SoilSurveyCoverage = {
     cells: cells.length,
     covered: coverage.size,
@@ -283,15 +370,21 @@ export async function getSoilSurvey(
   }
   const partialCoverage = budgetExceeded || summary.covered < summary.cells;
 
+  // Three reads, one per thing the viewport can honestly be told. Detail draws real
+  // delineations; an aggregate viewport the union budget covers draws merged drainage-class
+  // shapes; anything wider draws counted lattice cells, because a union past its budget
+  // would merge an arbitrary `LIMIT`-selected subset and present the result as a boundary.
   const read =
     granularity === "detail"
       ? await readDetailFeatures(bounds)
-      : await readAggregatedFeatures(
-          bounds,
-          granularity === "regional-average"
-            ? REGIONAL_SIMPLIFY_TOLERANCE_DEGREES
-            : COARSE_SIMPLIFY_TOLERANCE_DEGREES
-        );
+      : boundsAreaSquareDegrees(bounds) <= MAX_SOIL_UNION_SQUARE_DEGREES
+        ? await readAggregatedFeatures(
+            bounds,
+            granularity === "regional-average"
+              ? REGIONAL_SIMPLIFY_TOLERANCE_DEGREES
+              : COARSE_SIMPLIFY_TOLERANCE_DEGREES
+          )
+        : await readSummaryFeatures(bounds);
 
   return {
     type: "FeatureCollection",
@@ -359,6 +452,36 @@ export function soilSurveyCellsForBbox(
     }
   }
   return { cells, budgetExceeded };
+}
+
+/** A viewport's area in square degrees. */
+function boundsAreaSquareDegrees(bounds: [number, number, number, number]): number {
+  const [west, south, east, north] = bounds;
+  return (east - west) * (north - south);
+}
+
+/**
+ * The summary lattice step for a viewport, in degrees: the smallest power-of-two multiple
+ * of `SOIL_SURVEY_CELL_DEGREES` that covers the WHOLE view in at most
+ * `MAX_SOIL_SUMMARY_CELLS_PER_SIDE` cells per side.
+ *
+ * Scaling the cell rather than capping the cell COUNT is the whole point. A fixed 1/8-degree
+ * cell with a 3x3 budget describes a 0.375-degree window of a view that may be 30 degrees
+ * across, and the ~99% of the viewport outside it renders as ground nobody surveyed. A
+ * scaled cell always tiles the full view, and the count stays bounded.
+ *
+ * Doubling keeps every step exactly representable in binary floating point, so
+ * `floor(lon / step)` is exact at every zoom for the same reason `soilSurveyCellKey` is —
+ * a coordinate can never land in two lattice cells or in none.
+ */
+export function soilSummaryCellDegrees(
+  bounds: [number, number, number, number]
+): number {
+  const [west, south, east, north] = bounds;
+  const span = Math.max(east - west, north - south);
+  let step = SOIL_SURVEY_CELL_DEGREES;
+  while (span / step > MAX_SOIL_SUMMARY_CELLS_PER_SIDE) step *= 2;
+  return step;
 }
 
 /**
@@ -976,6 +1099,108 @@ async function readAggregatedFeatures(
     features.push({ type: "Feature", geometry, properties });
   }
   return { features, truncated: inputRows > MAX_SOIL_AGGREGATE_INPUT_ROWS };
+}
+
+/**
+ * Counts the stored delineations intersecting the viewport into a lattice of at most
+ * `MAX_SOIL_SUMMARY_CELLS_PER_SIDE` squared cells, one point feature per non-empty cell.
+ *
+ * The read a viewport too wide to union honestly gets. No `ST_Union`, no
+ * `ST_SimplifyPreserveTopology`, no geometry output at all: an index-backed `&&` filter,
+ * two `floor()`s and a GROUP BY, which is why it can answer for a whole state where the
+ * union path cannot. What it gives up is boundaries — and it must, because at this width
+ * there are no boundaries the union budget could draw truthfully.
+ *
+ * Grouped on the delineation's CENTROID rather than its extent, so each delineation is
+ * counted exactly once. `geo.geometry.centroid` is preferred where the feature carries a
+ * geometry-dimension row (it is precomputed from the validated geometry at ingest, so it is
+ * both cheaper and the exact same point the warehouse stored) and recomputed only for a
+ * feature that has none.
+ *
+ * `step` is cast explicitly: it is a fractional parameter sitting beside bigint counts in
+ * the same statement, and postgres-js resolves such a parameter as the type of its
+ * neighbour — see the `plantgeo-postgres-js-bigint-trap` case. Unlike
+ * `readAggregatedFeatures`'s tolerance, this one lands in a bare division rather than in a
+ * typed PostGIS argument, so nothing else would give it a type.
+ */
+async function readSummaryFeatures(
+  bounds: [number, number, number, number]
+): Promise<{ features: GeoJSON.Feature[]; truncated: boolean }> {
+  const [west, south, east, north] = bounds;
+  const step = soilSummaryCellDegrees(bounds);
+  const rows = await db.execute<{
+    cell_col: string;
+    cell_row: string;
+    drainage_class: string;
+    map_unit_count: string;
+    hydric_count: string;
+    rated_count: string;
+    input_rows: string;
+  }>(sql`
+    WITH summary_input AS (
+      SELECT
+        floor(
+          ST_X(COALESCE(g.centroid, ST_Centroid(f.geom))) / ${step}::double precision
+        ) AS cell_col,
+        floor(
+          ST_Y(COALESCE(g.centroid, ST_Centroid(f.geom))) / ${step}::double precision
+        ) AS cell_row,
+        COALESCE(f.properties->>'drainageClass', 'unknown') AS drainage_class,
+        CASE
+          WHEN jsonb_typeof(f.properties->'hydric') = 'boolean'
+            THEN (f.properties->>'hydric')::boolean
+        END AS hydric
+      FROM geo.features f
+      JOIN geo.layers l ON l.id = f.layer_id
+      LEFT JOIN geo.geometry g ON g.geometry_id = f.geometry_id
+      WHERE l.name = ${SOIL_SURVEY_LAYER_NAME}
+        AND f.status = 'published'
+        AND f.geom IS NOT NULL
+        AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
+      LIMIT ${MAX_SOIL_SUMMARY_INPUT_ROWS + 1}
+    )
+    SELECT
+      cell_col,
+      cell_row,
+      mode() WITHIN GROUP (ORDER BY drainage_class) AS drainage_class,
+      COUNT(*) AS map_unit_count,
+      COUNT(*) FILTER (WHERE hydric) AS hydric_count,
+      COUNT(*) FILTER (WHERE hydric IS NOT NULL) AS rated_count,
+      (SELECT COUNT(*) FROM summary_input) AS input_rows
+    FROM summary_input
+    GROUP BY cell_col, cell_row
+  `);
+
+  const features: GeoJSON.Feature[] = [];
+  let inputRows = 0;
+  for (const row of rows) {
+    inputRows = Number(row.input_rows);
+    const col = Number(row.cell_col);
+    const cellRow = Number(row.cell_row);
+    if (!Number.isFinite(col) || !Number.isFinite(cellRow)) continue;
+    const mapUnitCount = Number(row.map_unit_count);
+    const ratedCount = Number(row.rated_count);
+    const hydricCount = Number(row.hydric_count);
+    const properties: SoilSurveySummaryProperties = {
+      aggregated: true,
+      summary: true,
+      drainageClass: row.drainage_class,
+      mapUnitCount,
+      hydricFraction: ratedCount > 0 ? hydricCount / ratedCount : null,
+      cellDegrees: step,
+    };
+    features.push({
+      type: "Feature",
+      // The lattice cell's centre, which is what the count describes. Deliberately not any
+      // delineation's own position: the point is the square, not a soil unit.
+      geometry: {
+        type: "Point",
+        coordinates: [(col + 0.5) * step, (cellRow + 0.5) * step],
+      },
+      properties,
+    });
+  }
+  return { features, truncated: inputRows > MAX_SOIL_SUMMARY_INPUT_ROWS };
 }
 
 /** A stored JSONB string, or null — never a coerced non-string. */

@@ -23,7 +23,7 @@ function finiteNumber(value: unknown): number | null {
 }
 
 // RdBu diverging: above/below normal is diverging data, so "normal" is the neutral
-// gray midpoint. Exported so WaterPanel doesn't keep its own duplicate.
+// gray midpoint. Exported so WaterDetails doesn't keep its own duplicate.
 export const CONDITION_COLORS: Record<string, string> = {
   above_normal: "#2166ac",
   normal: "#9e9e9e",

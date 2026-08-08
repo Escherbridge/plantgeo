@@ -1,7 +1,12 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { URL as NodeURL, fileURLToPath } from 'node:url'
 import { describe, it, expect } from 'vitest'
+import {
+  DOCK_LAYER_GROUPS,
+  DOCK_PIVOT_SECTIONS,
+  dockReachableLayerToggleIds,
+} from '@/components/map/layer-panel/dock-sections'
 import {
   LAYER_REGISTRY,
   LAYER_TOGGLE_IDS,
@@ -23,36 +28,15 @@ import { useMapStore } from '@/stores/map-store'
 // http://localhost:3000/<tail> instead of the real path).
 const COMPONENTS_DIR = fileURLToPath(new NodeURL('../../../components', import.meta.url))
 
-/** Every .tsx file under a directory, recursively. */
-function componentSourceFiles(directory: string): string[] {
-  const found: string[] = []
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    const fullPath = join(directory, entry.name)
-    if (entry.isDirectory()) found.push(...componentSourceFiles(fullPath))
-    else if (entry.name.endsWith('.tsx')) found.push(fullPath)
-  }
-  return found
-}
-
-/**
- * Every layer id a `<LayerToggle>` under src/components actually renders, read out of the
- * sources. Nothing importable can answer this: a component's JSX is not reachable from the
- * registry, and mounting all seven panels to look for switches would mean standing up the
- * map, tRPC and every store they read.
+/*
+ * Which layers have a switch is answered by import since 2026-08-08:
+ * `dockReachableLayerToggleIds()` below. Before that it took a regex scan for `<LayerToggle>`
+ * across every .tsx under src/components, because a layer's only switch lived in one of seven
+ * right-hand sheets and a sheet's JSX is not reachable from the registry -- mounting all seven
+ * to look for switches would have meant standing up the map, tRPC and every store they read.
+ * The dock derives its rows from the registry in a React-free module, so the question is now a
+ * pure function call whose answer cannot drift from what renders.
  */
-function renderedLayerToggleIds(): string[] {
-  const rendered: string[] = []
-  for (const file of componentSourceFiles(COMPONENTS_DIR)) {
-    const source = readFileSync(file, 'utf8')
-    const usageCount = source.match(/<LayerToggle\b/g)?.length ?? 0
-    const withLayerId = [...source.matchAll(/<LayerToggle\b[^>]*\blayerId="([\w-]+)"/g)]
-    // A usage this regex cannot read would look exactly like an absent switch, which is the
-    // failure the tests below exist to catch -- so it fails here instead of passing quietly.
-    expect(withLayerId.length, `unreadable <LayerToggle> layerId in ${file}`).toBe(usageCount)
-    rendered.push(...withLayerId.map((match) => match[1]))
-  }
-  return rendered
-}
 
 // The registry replaced three hand-written tables that could silently disagree. These
 // assertions pin the derived shapes to what the map actually consumed before the merge,
@@ -144,7 +128,11 @@ describe('layer registry derivations', () => {
       'soil-survey',
       'soil-moisture',
       'soil-temperature',
+      'soil-vpd',
     ])
+    // Climate owns exactly one layer: the NASA POWER lane's nine signals reach the map
+    // through one toggle, because only one of them can be painted over a cell at a time.
+    expect(getLayersForPanel('climate')).toEqual(['climate-field'])
     expect(getLayersForPanel('community')).toEqual(['demand-heatmap', 'interventions'])
     expect(getLayersForPanel('team')).toEqual([])
     expect(getLayersForPanel('analytics')).toEqual([])
@@ -154,35 +142,69 @@ describe('layer registry derivations', () => {
     expect(panelIdForLayerToggle('building-footprints')).toBeNull()
   })
 
-  // PanelManager builds its rail from this order, so a layer-owning panel that is missing
-  // here has no button and everything it governs becomes unreachable from the sidebar.
-  it('orders the rail-bearing panels the way the registry declares them', () => {
-    expect(panelIdsOwningLayers()).toEqual(['fire', 'water', 'vegetation', 'soil', 'community'])
+  // The dock orders its layer groups from this, so a layer-owning category missing here has
+  // no group and everything it governs becomes unreachable from the sidebar.
+  it('orders the layer-owning categories the way the registry declares them', () => {
+    expect(panelIdsOwningLayers()).toEqual([
+      'fire',
+      'water',
+      'vegetation',
+      'soil',
+      'climate',
+      'community',
+    ])
   })
 
-  // The rail is meant to be comprehensive: every toggle reaches a panel unless it is on the
-  // toolbar allowlist. A new entry that forgets its panelId shows up here. Necessary but not
-  // sufficient -- an entry that names a panel rendering no switch for it passes this and is
-  // caught by the source-reading test below instead.
-  it('leaves no layer unreachable from either the rail or the toolbar', () => {
+  // The dock is meant to be comprehensive: every toggle reaches a category unless it is on
+  // the toolbar allowlist. A new entry that forgets its panelId shows up here. Necessary but
+  // not sufficient -- an entry naming a category the dock renders no row for passes this and
+  // is caught by the reachability test below instead.
+  it('leaves no layer unreachable from either the dock or the toolbar', () => {
     expect(TOOLBAR_OWNED_LAYER_TOGGLE_IDS).toEqual(['building-footprints'])
     expect(unreachableLayerToggleIds()).toEqual([])
   })
 
   // The bug this pins: `sensors` and `evacuation-zones` named their panels, served real
-  // tiles, and had no LayerToggle in any panel, so the only way to switch them on did not
-  // exist. The registry-only check above reported zero unreachable layers throughout.
-  // PanelManager's rail tooltip is built from the same ownership, so this is also what keeps
-  // each rail button from naming a control its panel never renders.
-  it('renders a switch somewhere for every layer the registry gives a panel', () => {
-    expect(unreachableLayerToggleIds(renderedLayerToggleIds())).toEqual([])
+  // tiles, and had no switch in any panel, so the only way to turn them on did not exist. The
+  // registry-only check above reported zero unreachable layers throughout. The dock derives
+  // its rows from the registry, so this now also pins that the derivation drops nothing.
+  it('renders a row somewhere in the dock for every layer the registry gives a category', () => {
+    expect(unreachableLayerToggleIds(dockReachableLayerToggleIds())).toEqual([])
   })
 
-  // The same drift the other way round: a panel keeping a switch for a layer whose registry
-  // entry lost its panelId would flip a toggle the rail and the panel store no longer track.
-  it('renders no switch for a layer the registry gives no panel', () => {
-    const orphaned = [...new Set(renderedLayerToggleIds())].filter(
-      (layerId) => panelIdForLayerToggle(layerId) === null
+  // The comprehensiveness claim in the other direction: the dock's own bucket for layers no
+  // category governs is what keeps `building-footprints` -- switched from the MapControls
+  // toolbar -- in the one complete list of layers rather than missing from it.
+  it('files the layer no category governs under the dock’s own bucket', () => {
+    const basemap = DOCK_LAYER_GROUPS.find((group) => group.key === 'Basemap')
+    expect(basemap?.layerIds).toEqual(['building-footprints'])
+    // No report under it: a bucket of ungoverned layers has no panel body to disclose.
+    expect(basemap?.detailsId).toBeNull()
+    // Every registry layer, exactly once. Sorted, because grouping deliberately reorders:
+    // the dock lists a category's layers together, and the registry declares them apart.
+    expect([...dockReachableLayerToggleIds()].sort()).toEqual([...LAYER_TOGGLE_IDS].sort())
+  })
+
+  // Teams and Analytics own no layer, so the registry cannot order them and they get no
+  // group; Alerts is not a registry concept at all. All three are still reachable, as the
+  // dock's three layerless sections -- which is what stopped the rail's removal from
+  // orphaning them.
+  it('keeps the layerless reports reachable as their own dock sections', () => {
+    expect(DOCK_PIVOT_SECTIONS).toEqual(['alerts', 'team', 'analytics'])
+    for (const panelId of ['team', 'analytics'] as const) {
+      expect(getLayersForPanel(panelId)).toEqual([])
+      expect(DOCK_LAYER_GROUPS.some((group) => group.key === panelId)).toBe(false)
+    }
+  })
+
+  // The same drift the other way round: a dock row for a layer whose registry entry lost its
+  // panelId would flip a toggle the panel store no longer tracks. `building-footprints` is
+  // the deliberate exception, filed under the Basemap bucket above.
+  it('renders no category row for a layer the registry gives no category', () => {
+    const orphaned = [...new Set(dockReachableLayerToggleIds())].filter(
+      (layerId) =>
+        panelIdForLayerToggle(layerId) === null &&
+        !TOOLBAR_OWNED_LAYER_TOGGLE_IDS.includes(layerId as (typeof LAYER_TOGGLE_IDS)[number])
     )
     expect(orphaned).toEqual([])
   })
@@ -223,10 +245,14 @@ describe('layer registry derivations', () => {
       vegetation: 'Vegetation (NDVI)',
       soil: 'Soil Properties',
       'soil-survey': 'Soil Survey (SSURGO)',
-      // Read off SOIL_FIELD_MEASURES rather than restated, which is why SoilPanel could drop
-      // its `label={definition.layerLabel}` without changing a single caption.
+      // Read off SOIL_FIELD_MEASURES rather than restated, which is why the soil section
+      // could drop its `label={definition.layerLabel}` without changing a single caption.
       'soil-moisture': 'Soil Moisture (ERA5-Land)',
       'soil-temperature': 'Soil Temperature (ERA5-Land)',
+      'soil-vpd': 'Vapor Pressure Deficit (ERA5-Land)',
+      // The second label with no <LayerToggle> predecessor: the Climate section was added
+      // after the sheets were gone, so this caption was never hand-typed anywhere.
+      'climate-field': 'Climate',
       'demand-heatmap': 'Demand Heatmap',
       interventions: 'Interventions',
       'evacuation-zones': 'Evacuation Zones',
@@ -237,17 +263,20 @@ describe('layer registry derivations', () => {
     })
   })
 
-  // The registry is now the default, so a call site that still passes one is overriding it --
-  // which is legitimate but must be deliberate. None does today.
-  it('leaves every panel switch reading its name from the registry', () => {
-    const overrides: string[] = []
-    for (const file of componentSourceFiles(COMPONENTS_DIR)) {
-      const source = readFileSync(file, 'utf8')
-      for (const match of source.matchAll(/<LayerToggle\b[^>]*/g)) {
-        if (/\blabel=/.test(match[0])) overrides.push(`${file}: ${match[0]}`)
-      }
-    }
-    expect(overrides).toEqual([])
+  /**
+   * The registry is the ONLY place a layer is named, and the last surface that could have
+   * held a second copy is gone: `<LayerToggle>` -- whose optional `label` prop this used to
+   * scan every component source for overrides of -- was deleted with the seven sheets on
+   * 2026-08-08. The dock's rows read `LAYER_REGISTRY[toggleId].label` through `layerLabel()`
+   * and have no override to pass.
+   *
+   * Asserting the file's absence rather than re-scanning the sources, because with the
+   * component gone a `<LayerToggle>` anywhere is an unresolved import and fails at `tsc`
+   * before it can reach a test -- while a regex over source text cannot tell a real usage
+   * from the several comments in `*Details.tsx` that name the switches they lost.
+   */
+  it('leaves the registry as the only place a layer is named', () => {
+    expect(existsSync(join(COMPONENTS_DIR, 'ui', 'layer-toggle.tsx'))).toBe(false)
   })
 
   it('treats a user-uploaded layer id as outside the registry', () => {
@@ -266,7 +295,7 @@ describe('layer registry derivations', () => {
   // of geo.features, so it has no geo.layers row to name and no slider capability to look
   // up -- the same shape drought and the proxied collections have. It still draws the
   // slider's day; it simply makes no claim about which days the axis should offer.
-  it.each(['soil-moisture', 'soil-temperature'] as const)(
+  it.each(['soil-moisture', 'soil-temperature', 'soil-vpd'] as const)(
     'gives the agri-plane %s field a panel switch and no warehouse feed',
     (toggleId) => {
       const entry = LAYER_REGISTRY[toggleId]
@@ -279,13 +308,28 @@ describe('layer registry derivations', () => {
     }
   )
 
-  // Both soil fields must be off by default. The mount-time race documented in
+  // The same shape as the three ERA5-Land fields above, with two deliberate differences: it
+  // is the only agri-plane layer under the Climate category, and the NASA POWER lane's nine
+  // signals share this one toggle rather than getting one each -- see the entry's own note.
+  it('gives the agri-plane climate field a panel switch and no warehouse feed', () => {
+    const entry = LAYER_REGISTRY['climate-field']
+    expect(entry.renderKind).toBe('component')
+    expect(entry.styleLayerIds).toEqual([])
+    expect(entry.warehouseLayerName).toBeNull()
+    expect(entry.permanentlyUnavailableReason).toBeNull()
+    expect(panelIdForLayerToggle('climate-field')).toBe('climate')
+    expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty('climate-field')
+  })
+
+  // Every warehouse-backed field must be off by default. The mount-time race documented in
   // src/components/map/AGENTS.md means a default-on dynamically-imported layer registers its
   // style.load listener after the single rAF-scheduled initial load, so it reads as enabled
   // and never draws -- worse than being off, because the switch then lies.
-  it('leaves both agri-plane soil fields out of the default active layers', () => {
+  it('leaves the agri-plane fields out of the default active layers', () => {
     expect(useMapStore.getState().activeLayers).not.toContain('soil-moisture')
     expect(useMapStore.getState().activeLayers).not.toContain('soil-temperature')
+    expect(useMapStore.getState().activeLayers).not.toContain('soil-vpd')
+    expect(useMapStore.getState().activeLayers).not.toContain('climate-field')
   })
 
   it('treats the upstream-proxied collection as a component layer with no warehouse feed', () => {

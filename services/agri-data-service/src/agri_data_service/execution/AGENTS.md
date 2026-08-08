@@ -4,11 +4,13 @@
 
 Source-ingestion checkpoint v2 binds both the complete reviewed plan and the release-set content checksum. New release sets must be populated while `draft` and transition to `validated` only after their membership is flushed, because the warehouse trigger freezes membership after validation.
 
-`source-ingest` requires `LOCAL_SOURCE_LOADER_DATABASE_URL` to name `plantgeo_loader` on the dedicated local Compose target at `127.0.0.1:5442/plantgeo`; it rejects the `plantgeo_owner` bootstrap role and never falls back to the service `DATABASE_URL`. Before any checksum, checkpoint, or artifact write, it performs a bounded whole-document GeoJSON custody scan (50,000 JSON nodes, depth 32) and rejects canonicalized credential field names/suffixes plus Bearer/Basic authorization strings. It does not silently redact an immutable source artifact.
+`source-ingest` connects with `LOCAL_SOURCE_LOADER_DATABASE_URL` when it is set and `DATABASE_URL` otherwise; the two may be the same string. **No identity or target enforcement remains** — the 2026-08-08 owner ruling (recorded in `20260808_0019`) retired the role family and then the DSN validators with it, so no login, host, port, or database name is asserted and there is no dedicated-loader requirement to satisfy. Choosing the right database is the operator's responsibility now, not the config layer's. What the command still enforces is payload custody: before any checksum, checkpoint, or artifact write it performs a bounded whole-document GeoJSON custody scan (50,000 JSON nodes, depth 32) and rejects canonicalized credential field names/suffixes plus Bearer/Basic authorization strings. It does not silently redact an immutable source artifact.
 
 `promotion.py` is an offline semantic lineage bundle contract for already validated phase-one release sets. It re-applies the same bounded GeoJSON custody validation to embedded source artifacts, verifies hashes and supersession closure, and creates only a trigger-safe draft → membership → validated restore plan. It is not a general `pg_restore` wrapper, database exporter, restore CLI, or Railway job; those remain a separately reviewed private-control-plane integration.
 
 `historical_backfill.py` owns deterministic, bounded NASA POWER daily request and response contracts for the initial four-year meteorology baseline. It validates the exact four-calendar-year window, canonical sampling-point plan, per-source query, response payload size, UTC observation timestamps, missing values, coverage accounting, a checksum-bound complete local receipt checkpoint, and raw response cache. The cache is written only after complete validation and before a warehouse transaction, so retried writes never re-request a successful source response. A later NASA finalization can only rebind a complete source replay to an advanced release-set as-of time; it never refetches or rewrites source receipts. It never carries credentials, opens a database connection, selects an ingestion geography, or publishes to Railway.
+
+`_require_cds_credentials` (`historical_era5.py`) resolves `CDSAPI_URL`/`CDSAPI_KEY` **environment-first, then `Settings`/`.env`**, and reads both at call time rather than import time. Until 2026-08-08 it read `os.environ` only while `Settings` loaded `.env` through pydantic-settings — which populates the settings object and never `os.environ` — so a `.env` entry was silently inert, every operator had to run `set -a; . ./.env; set +a` first, and forgetting it produced a refusal that reads like a licence problem. `Settings.cdsapi_key` is a `SecretStr`; the pair goes straight to `cdsapi.Client` and is never logged, checkpointed, persisted, or named in the refusal, which lists only the two variable names. A blank or whitespace-only export is treated as unset rather than shadowing `.env`, so a stale empty shell variable cannot re-create the original bug. Accepting the dataset licence is still a browser action for the account behind the key; no resolution order changes that.
 
 `NASA_POWER_SIGNAL_SPECIFICATIONS` carries the three POWER soil-wetness parameters (`GWETTOP`, `GWETROOT`, `GWETPROF`) alongside the meteorology baseline because POWER is keyless, whereas the ERA5-Land soil path in `historical_era5.py` is gated on a Copernicus dataset licence that only the account holder can accept in a browser. The two soil streams are complementary, not interchangeable, and must never be unit-mixed: POWER reports a MERRA-2 **degree of saturation** in `fraction_of_saturation` (0 = dry, 1 = saturated), while ERA5 `soil_water_content_layer_1` reports a **volumetric** water content in `m^3/m^3`. Depth support is named in the signal (`soil_wetness_surface` = top 5 cm, `soil_wetness_root_zone` = top 100 cm, `soil_wetness_profile` = the full modelled column), matching the existing ERA5 `soil_temperature_level_1` convention. `support_key` is not a depth discriminator: the NASA, CDS and USDM lanes all write `surface`, and the one lane that writes something else (`historical_open_meteo.py`, `era5-land-0.1deg`) uses it to distinguish *spatial* support, not depth. Adding a signal name needs no migration: `agri.signal_observation.signal_name` is a plain `varchar(150)` with no enum or check constraint. Extending the ML covariate vector is a separate, reviewed change — `agri.covariate_feature_schema` pins its signal list to the immutable `agri_covariates_v1` version, so new signals are deliberately invisible to training until a new schema version is authored.
 
@@ -448,13 +450,17 @@ receipt instead of resolving the first.
 
 ### Known gaps in this lane
 
-- **No DSN exists for the least-privilege forecast roles.** The lane runs on
-  `FORECAST_ITERATION_DATABASE_URL`. `plantgeo_forecast_writer` holds INSERT on the
-  forecast tables but has no `artifact` privilege at all and no EXECUTE on either
-  validator; `plantgeo_forecast_publisher` holds those EXECUTEs but no INSERT. No
-  single existing role can complete this chain. See the GRANT statements recorded in
-  the delivery report; widening a role is a reviewed migration, not something this
-  lane does for itself.
+- **~~No DSN exists for the least-privilege forecast roles.~~ Closed by the 2026-08-08
+  teardown, not by a grant.** This bullet used to read that no single role could complete
+  the `forecast-train-wind --persist` chain — the writer held INSERT but no validator
+  EXECUTE, the publisher the reverse. Revision `20260808_0019` dropped the whole family
+  (`plantgeo_forecast_writer`/`_publisher`/`_reader`/`_mv_refresher`/`_mv_refresh_owner`)
+  after verifying it had zero members, no DSN, and no `USAGE` on schema `agri`, and the
+  follow-up change stripped the DSN validators that asserted a login. The lane still runs
+  on `FORECAST_ITERATION_DATABASE_URL` — now an optional override that falls back to
+  `DATABASE_URL` — with the single owner credential, which can complete the chain because
+  it owns the objects. Do not re-create a role to "restore separation of duties" here: see
+  `docs/reports/migration-decision-packet-2026-08-08.md` § Resolution.
 - **No ablation.** The teardown's "is the covariate layer earning its keep" question
   -- fit once with the target's own lags (features 31-35) and once without -- is not
   answered here. `leading_standardized_coefficients` in the receipt is a hint, not

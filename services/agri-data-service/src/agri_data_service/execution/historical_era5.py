@@ -18,6 +18,7 @@ import cdsapi  # type: ignore[import-untyped]
 import xarray as xr
 from pydantic import Field, field_validator, model_validator
 
+from agri_data_service.config import settings
 from agri_data_service.execution.contracts import ContractModel, canonical_json_bytes
 from agri_data_service.execution.historical_backfill import (
     AnalysisGridCell,
@@ -682,12 +683,22 @@ def _reject_unaccepted_era5_licences(exc: BaseException, dataset: str) -> None:
 
 
 def _require_cds_credentials() -> tuple[str, str]:
-    """Fail closed before a CDS client can make a request without explicit local credentials."""
-    url = os.environ.get("CDSAPI_URL", "").strip()
-    key = os.environ.get("CDSAPI_KEY", "").strip()
+    """Resolve CDS credentials -- process environment first, then Settings/`.env` -- or fail closed.
+
+    Both halves are read at call time, not import time, so an operator who exports after the
+    process starts is still honoured and a `.env` entry is no longer silently inert. The pair
+    goes straight to `cdsapi.Client`; neither value is logged, checkpointed, or persisted, and
+    the refusal below names only the variables. See execution/AGENTS.md.
+    """
+    configured_key = settings.cdsapi_key
+    url = os.environ.get("CDSAPI_URL", "").strip() or (settings.cdsapi_url or "").strip()
+    key = os.environ.get("CDSAPI_KEY", "").strip() or (
+        configured_key.get_secret_value().strip() if configured_key is not None else ""
+    )
     if not url or not key:
         raise ValueError(
-            "ERA5-Land requires accepted CDS web terms plus CDSAPI_URL and CDSAPI_KEY in the local operator environment"
+            "ERA5-Land requires accepted CDS web terms plus CDSAPI_URL and CDSAPI_KEY in the local "
+            "operator environment or services/agri-data-service/.env"
         )
     return url, key
 

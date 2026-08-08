@@ -59,7 +59,7 @@ does not update the client.
 | `INGEST_SECRET` | Dedicated bearer secret for authenticated ingestion routes. Required in production for those routes. |
 | `INGEST_BBOX` | Required for scheduled acquisition; `west,south,east,north`, capped at 30° longitude by 20° latitude. Read by the authenticated `/api/ingest/*` routes and by every ingestion cron container — `plantgeo-ingest-cron`'s `agri-cli ingest-all` and each per-layer service's single verb. Start with one reviewed region and set it identically on every cron service; a mismatched bbox across services silently narrows one source's coverage relative to the others. |
 | `NASA_FIRMS_KEY` | Server-only; required only when running the FIRMS acquisition path — the web routes, `plantgeo-ingest-cron`'s `ingest-all`, and `plantgeo-ingest-firms`'s `ingest-firms` all read it. No other per-layer service needs it. |
-| `CDSAPI_URL` / `CDSAPI_KEY` | Server-only; required only by `agri-cli historical-era5-backfill` (ERA5-Land volumetric soil moisture). Read from `os.environ` directly rather than through pydantic-settings, so a `.env` entry does NOT reach it — export both into the shell running the command. Needs a free Copernicus CDS account with the ERA5-Land dataset licence accepted in a browser; no API retry clears an unaccepted licence. |
+| `CDSAPI_URL` / `CDSAPI_KEY` | Server-only; required only by `agri-cli historical-era5-backfill` (ERA5-Land volumetric soil moisture). Resolved environment-first, then `Settings`/`.env` — since 2026-08-08 a `.env` entry is enough and the old export-only requirement is gone; a blank export is treated as unset. Needs a free Copernicus CDS account with the ERA5-Land dataset licence accepted in a browser; no API retry clears an unaccepted licence. |
 | `OPEN_METEO_API_KEY` | **Optional.** Server-only; read only by `agri-cli historical-open-meteo-backfill` (the ERA5-Land archive lane). Absent is fully supported and is the default: the lane calls the keyless free host `archive-api.open-meteo.com`, which is what the published repo and the existing 16-cell probe use. Present switches the real request to the Professional host `customer-archive-api.open-meteo.com` and appends `apikey=<key>`. Read from `os.environ` directly, not through pydantic-settings, so a `.env` entry does NOT reach it — export it into the shell running the command. It is not part of any plan and does not change `plan_checksum`, so setting or clearing it never orphans a checkpoint or the local raw cache. The key is never written to a plan, checkpoint, cache receipt, log line, or the warehouse; the persisted `source_release.query_parameters.request_url` records the host that answered and nothing else. |
 | `FIRMS_DAY_RANGE` | Optional, cron container only. FIRMS lookback window in days; must be a plain non-negative integer string or it silently falls back to the default. Clamped to 1-5 (the API answers 400 above 5), default 2. |
 | `INGEST_MAX_SOURCE_RECORDS` | Optional, cron container only. Caps the number of records accepted from a single ingestion source per run. Clamped to 1,000-50,000, default 10,000. |
@@ -83,28 +83,29 @@ Postgres and Redis directly, instead of calling an HTTP route with an `x-cron-se
 is no cron ingress secret left to configure once `src/app/api/cron/ingest/route.ts` is removed, on
 any of them.
 
-**Every ingestion cron container's database variable is `LOCAL_SOURCE_LOADER_DATABASE_URL`, not
-`DATABASE_URL`.** This applies identically whether the container runs `ingest-all` or a single
-per-layer verb: every `ingest-*` verb opens `ingest_session()`, which calls
-`settings.require_local_source_loader_database_url()`; that reader has no fallback and raises
-`source-ingest requires LOCAL_SOURCE_LOADER_DATABASE_URL; DATABASE_URL is never a loader fallback`
-outside any per-source isolation, so a container configured with `DATABASE_URL` alone dies with an
-unhandled traceback on its first tick and ingests nothing. `DATABASE_URL` must **not** be set on
-any of these services: the validator rejects a loader DSN equal to it, and both fields are
-normalised to `postgresql+asyncpg://` before the comparison, so the "obvious" fix of setting them to
-the same string fails too. The scheme itself is effectively mandatory: `config.py`'s
-`fix_database_url_schema` rewrites a bare `postgres://` or `postgresql://` prefix to
-`postgresql+asyncpg://` before validation, but the final check
-(`require_local_source_loader_database_url`) still requires `parsed.scheme == "postgresql+asyncpg"`
-— write the DSN as `postgresql+asyncpg://` explicitly rather than relying on the silent rewrite. The
-value must be the Railway **public proxy** DSN (`postgresql+asyncpg://postgres:<password>@switchback.proxy.rlwy.net:37967/plantgeo`)
-— `_INGEST_SOURCE_LOADER_ALLOWED_TARGETS` does not accept the `postgres.railway.internal`
-private-network host. `REDIS_URL` is still required, for the realtime publisher. See
+**Every ingestion cron container needs a database DSN in either
+`LOCAL_SOURCE_LOADER_DATABASE_URL` or `DATABASE_URL`.** This applies identically whether the
+container runs `ingest-all` or a single per-layer verb: every `ingest-*` verb opens
+`ingest_session()`, which calls `settings.require_local_source_loader_database_url()`. Since the
+2026-08-08 role teardown that reader returns the loader variable when set and `DATABASE_URL`
+otherwise — the host/port allowlist, the database-name rule, the login assertion, and the "must
+not equal `DATABASE_URL`" rule are all gone. Setting both to the same string is accepted, and a
+blank or whitespace-only value counts as unset. Two failures remain: having *neither* variable
+set, and a DSN that is not a complete `postgresql+asyncpg://` URL (scheme, username, host, port,
+and database name all present). Either raises outside any per-source isolation, so such a
+container dies with an unhandled traceback on its first tick and ingests nothing.
+
+The deployed services set `LOCAL_SOURCE_LOADER_DATABASE_URL` to the Railway **public proxy** DSN
+(`postgresql+asyncpg://postgres:<password>@switchback.proxy.rlwy.net:37967/plantgeo`). Prefer the
+public proxy host over `postgres.railway.internal`, and write the `postgresql+asyncpg://` scheme
+explicitly rather than relying on `config.py`'s `postgres://`/`postgresql://` auto-rewrite —
+neither is enforced any more, but both are what the working configuration uses. `REDIS_URL` is
+still required, for the realtime publisher. See
 `services/agri-data-service/src/agri_data_service/ingest/AGENTS.md`.
 
 | Variable | Policy |
 | --- | --- |
-| `LOCAL_SOURCE_LOADER_DATABASE_URL` | **Required on every ingestion cron service** — `plantgeo-ingest-cron` and each per-layer service in `docs/deployment.md`'s "Per-layer ingestion cron services" — and on any local `agri-cli ingest-*`/`source-ingest` run. The only new variable with no default. Allowed targets: `127.0.0.1:5442/plantgeo` as `plantgeo_loader`, or `switchback.proxy.rlwy.net:37967/plantgeo` as `postgres`. Rejects the `plantgeo_owner` bootstrap role, a query string, and any DSN equal to `DATABASE_URL`. Scheme must resolve to `postgresql+asyncpg://` — write it explicitly rather than relying on the `postgres://`/`postgresql://` auto-rewrite. |
+| `LOCAL_SOURCE_LOADER_DATABASE_URL` | Optional override for `agri-cli ingest-*`/`jobs-*`/`source-ingest`; defaults to `DATABASE_URL`. Nothing about it is validated since the 2026-08-08 role teardown (`20260808_0019`) — any host, port, database name, and login are accepted, as is a value identical to `DATABASE_URL`. Set it on the ingestion cron services (which is what they do today) or set `DATABASE_URL` instead; one of the two must exist. |
 | `FIRE_PERIMETERS_LAYER_ID` | Optional, cron container only. Existing layer name/UUID for WFIGS perimeters; default `fire-perimeters`. This is the variable the Python `wfigs` module reads — `FIRES_LAYER_ID` below is read only by the web route `POST /api/ingest/fires`. Set both if you repoint the layer, or the two writers silently diverge. |
 | `VEGETATION_LAYER_ID` | Optional, cron container only. Layer for Sentinel-2 NDVI grid samples; default `vegetation`. |
 | `EVACUATION_ZONES_LAYER_ID` | Optional, cron container only. Layer for Oregon OEM evacuation areas; default `evacuation-zones`. |
@@ -215,12 +216,12 @@ CLOUD_TRAINING_ENABLED=false
 LOCAL_EXECUTION_ROOT=.agri-local-runs
 ```
 
-The 30-day Monte Carlo iteration commands require an explicit loopback-only
-evaluation writer. It never falls back to the API DSN and may target a named
-`plantgeo*` disposable clone:
+The 30-day Monte Carlo iteration commands use `DATABASE_URL` unless this optional
+override is set. Set it to aim them at a disposable clone instead; no host, port,
+database name, or login is asserted:
 
 ```dotenv
-FORECAST_ITERATION_DATABASE_URL=postgresql+asyncpg://plantgeo_local_developer:<password>@127.0.0.1:5442/plantgeo_forecast_test
+FORECAST_ITERATION_DATABASE_URL=postgresql+asyncpg://plantgeo_owner:<password>@127.0.0.1:5442/plantgeo_forecast_test
 ```
 
 Iteration rows are evaluation/ML-signal evidence only. This credential does not

@@ -20,6 +20,8 @@ export const HOVERABLE_LAYER_IDS: string[] = [
   "interventions-points",
   "watersheds-fill",
   "soil-survey-fill",
+  "soil-survey-summary",
+  "weather-temperature",
   "building-footprints",
   "osm-roads",
   "osm-waterways",
@@ -226,8 +228,32 @@ function formatWatershed(props: Properties): HoverContent | null {
  * mukey/muname/soilSeries at all, and must be captioned as an average, not a surveyed
  * unit, or this tooltip would be the one place the honesty that field-naming enforces
  * everywhere else in this formatter quietly breaks.
+ *
+ * Zoomed out FURTHER still, past what the polygon-union budget covers, it draws one point
+ * per lattice cell (`summary: true`). That is a third thing again -- neither a surveyed unit
+ * nor a merged shape, but a count over a square of ground whose position is the square's
+ * centre and not any delineation's -- so it gets its own caption rather than borrowing the
+ * average's, which would claim a boundary was drawn where none was.
  */
 function formatSoilSurvey(props: Properties): HoverContent | null {
+  if (props.summary === true) {
+    const drainage = stringField(props.drainageClass);
+    const mapUnitCount = typeof props.mapUnitCount === "number" ? props.mapUnitCount : null;
+    const hydricFraction =
+      typeof props.hydricFraction === "number" ? props.hydricFraction : null;
+    const cellDegrees = typeof props.cellDegrees === "number" ? props.cellDegrees : null;
+    return buildContent("Soil survey coverage", [
+      mapUnitCount === null
+        ? null
+        : `${mapUnitCount.toLocaleString()} map unit${mapUnitCount === 1 ? "" : "s"} surveyed in this cell`,
+      drainage
+        ? `Most common drainage: ${humanizeSnakeCase(drainage.replace(/-/g, "_"))}`
+        : null,
+      hydricFraction === null ? null : `Hydric share: ${Math.round(hydricFraction * 100)}%`,
+      cellDegrees === null ? null : `Cell: ${cellDegrees}° square`,
+    ]);
+  }
+
   if (props.aggregated === true) {
     const drainage = stringField(props.drainageClass);
     const mapUnitCount =
@@ -257,6 +283,35 @@ function formatSoilSurvey(props: Properties): HoverContent | null {
     capability ? `Land capability: ${capability}` : null,
     hydric === null ? null : `Hydric: ${hydric ? "Yes" : "No"}`,
     mapUnitKey ? `Map unit: ${mapUnitKey}` : null,
+  ]);
+}
+
+/**
+ * One published Open-Meteo observation, hovered on its temperature dot rather than on its
+ * wind arrow: `weather-wind` is a `text-field` symbol, whose hit area is the glyph run and
+ * whose placement collides away at density, so the circle under it is the only shape here
+ * that can be reliably pointed at.
+ *
+ * The feed carries no station identity -- it is a grid sample, not a named site -- so the
+ * title is generic rather than inventing one. Units are the ones measured: m/s (weather.ts
+ * asks Open-Meteo for `wind_speed_unit=ms`), °C (`temperature_2m`, whose default unit is
+ * Celsius), and percent relative humidity. Every field is optional because the layer now
+ * draws a station that measured only some of them.
+ */
+function formatWeatherObservation(props: Properties): HoverContent | null {
+  const windSpeed = formatFixed(props.windSpeed, 1, " m/s");
+  const windDirection = formatInteger(props.windDirection, "°");
+  const temperature = formatFixed(props.temperature, 1, " °C");
+  const humidity = formatInteger(props.humidity, "%");
+  const observed = formatTimestampWithRelative(toIsoTimestamp(props.observedAt));
+
+  return buildContent("Weather observation", [
+    temperature ? `Temperature: ${temperature}` : null,
+    windSpeed
+      ? `Wind: ${windSpeed}${windDirection ? ` from ${windDirection}` : ""}`
+      : null,
+    humidity ? `Humidity: ${humidity}` : null,
+    observed ? `Observed: ${observed}` : null,
   ]);
 }
 
@@ -306,6 +361,10 @@ const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
   "interventions-points": formatIntervention,
   "watersheds-fill": formatWatershed,
   "soil-survey-fill": formatSoilSurvey,
+  // The same formatter: the summary dots are the same collection's features, told apart by
+  // their own `summary` flag rather than by which layer drew them.
+  "soil-survey-summary": formatSoilSurvey,
+  "weather-temperature": formatWeatherObservation,
   "building-footprints": formatBuildingFootprint,
   "osm-roads": formatRoad,
   "osm-waterways": formatWaterway,

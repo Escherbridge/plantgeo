@@ -40,6 +40,8 @@ import {
   MAX_SOIL_BBOX_SQUARE_DEGREES,
   MAX_SOIL_INGEST_POLYGONS_PER_CELL,
   MAX_SOIL_POLYGONS,
+  MAX_SOIL_SUMMARY_CELLS_PER_SIDE,
+  MAX_SOIL_UNION_SQUARE_DEGREES,
   parseSoilSurveyRows,
   resolveSoilSurveyGranularity,
   SOIL_SURVEY_CELL_DEGREES,
@@ -47,6 +49,7 @@ import {
   SOIL_SURVEY_LAYER_NAME,
   SOIL_SURVEY_PRODUCER,
   SOIL_SURVEY_REGIONAL_MIN_ZOOM,
+  soilSummaryCellDegrees,
   soilSurveyAreaCeiling,
   soilSurveyCellKey,
   soilSurveyCellsCovering,
@@ -145,6 +148,7 @@ function stubDatabase(handlers: {
   coverage?: unknown[];
   detail?: unknown[];
   aggregate?: unknown[];
+  summary?: unknown[];
   storedCount?: string;
 }) {
   mocks.dbExecute.mockImplementation(async (statement: unknown) => {
@@ -157,6 +161,7 @@ function stubDatabase(handlers: {
         ? []
         : [{ stored: handlers.storedCount }];
     }
+    if (text.includes("WITH summary_input AS")) return handlers.summary ?? [];
     if (text.includes("WITH candidate AS")) return handlers.aggregate ?? [];
     if (text.includes("ST_AsGeoJSON(f.geom)")) return handlers.detail ?? [];
     return [];
@@ -884,12 +889,193 @@ describe("the warehouse read", () => {
 
   it("never rejects an oversized viewport once zoom selects an averaged tier", async () => {
     mocks.fetchBoundedJson.mockResolvedValue({});
-    stubDatabase({ coverage: [], aggregate: [], storedCount: "0" });
+    stubDatabase({ coverage: [], summary: [], storedCount: "0" });
 
     await expect(getSoilSurvey("-120,42,-112,48", 4)).resolves.toMatchObject({
       granularity: "coarse-average",
       truncated: true,
     });
+  });
+});
+
+/**
+ * The zoomed-out half of "something correct renders at every zoom". The union path is bounded
+ * at `MAX_SOIL_AGGREGATE_INPUT_ROWS`, and past that bound its own `LIMIT` would choose which
+ * delineations get merged — so a wide viewport must not draw a union at all, because the
+ * boundary it produced would be a shape nobody surveyed.
+ */
+describe("the wide-viewport summary read", () => {
+  /** A lattice-cell row as the GROUP BY returns it, counts as bigint text. */
+  function summaryRow(
+    overrides: Partial<Record<string, string>> = {}
+  ): Record<string, string> {
+    return {
+      cell_col: "-233",
+      cell_row: "87",
+      drainage_class: "well-drained",
+      map_unit_count: "1240",
+      hydric_count: "62",
+      rated_count: "248",
+      input_rows: "1240",
+      ...overrides,
+    };
+  }
+
+  it("scales the lattice so it tiles the WHOLE viewport, bounded per side", () => {
+    // The failure this replaces: a fixed 1/8-degree cell described 0.375 degrees of a
+    // multi-degree view and the rest rendered as ground nobody surveyed.
+    const cellsPerSide = (span: number) => span / soilSummaryCellDegrees([0, 0, span, span]);
+
+    for (const span of [0.5, 4, 14, 60, 180]) {
+      expect(cellsPerSide(span)).toBeLessThanOrEqual(MAX_SOIL_SUMMARY_CELLS_PER_SIDE);
+    }
+    // Never finer than the persistence grid, and every step a doubling of it, so
+    // floor(lon / step) stays exact for the same reason soilSurveyCellKey does.
+    for (const span of [0.01, 0.5, 4, 60]) {
+      const step = soilSummaryCellDegrees([0, 0, span, span]);
+      expect(step).toBeGreaterThanOrEqual(SOIL_SURVEY_CELL_DEGREES);
+      expect(Math.log2(step / SOIL_SURVEY_CELL_DEGREES) % 1).toBe(0);
+    }
+  });
+
+  it("counts delineations into lattice points once the viewport outgrows the union budget", async () => {
+    stubDatabase({ coverage: [coverageRow()], summary: [summaryRow()] });
+
+    const collection = await getSoilSurvey("-125,42,-111,49", 6);
+
+    const feature = collection.features[0];
+    expect(feature.geometry.type).toBe("Point");
+    expect(feature.properties).toMatchObject({
+      aggregated: true,
+      summary: true,
+      drainageClass: "well-drained",
+      mapUnitCount: 1240,
+      hydricFraction: 0.25,
+    });
+    // Structurally unable to pass as a surveyed unit, exactly as the union tier is.
+    expect((feature.properties as Record<string, unknown>).mukey).toBeUndefined();
+    expect((feature.properties as Record<string, unknown>).muname).toBeUndefined();
+  });
+
+  it("places the point at the lattice cell's centre, not at any delineation", async () => {
+    stubDatabase({
+      coverage: [coverageRow()],
+      summary: [summaryRow({ cell_col: "-31", cell_row: "10" })],
+    });
+
+    const collection = await getSoilSurvey("-125,42,-111,49", 6);
+    const step = soilSummaryCellDegrees([-125, 42, -111, 49]);
+
+    expect(collection.features[0].geometry).toEqual({
+      type: "Point",
+      coordinates: [(-31 + 0.5) * step, (10 + 0.5) * step],
+    });
+    expect(
+      (collection.features[0].properties as Record<string, unknown>).cellDegrees
+    ).toBe(step);
+  });
+
+  it("switches on measured area, not on the zoom tier", async () => {
+    // Both calls resolve the same "regional-average" tier. What decides the read is the
+    // viewport's AREA against the union budget, because the ceiling that forces the choice
+    // is a row budget and rows scale with area.
+    stubDatabase({
+      coverage: [coverageRow()],
+      summary: [summaryRow()],
+      aggregate: [
+        {
+          drainage_class: "well-drained",
+          geometry: JSON.stringify({
+            type: "MultiPolygon",
+            coordinates: [[[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]],
+          }),
+          map_unit_count: "6",
+          hydric_count: "0",
+          rated_count: "0",
+          input_rows: "6",
+        },
+      ],
+    });
+    const squareAt = (area: number) => {
+      const side = Math.sqrt(area);
+      return `-116.5,43.5,${-116.5 + side},${43.5 + side}`;
+    };
+
+    const unioned = await getSoilSurvey(
+      squareAt(MAX_SOIL_UNION_SQUARE_DEGREES * 0.8),
+      SOIL_SURVEY_REGIONAL_MIN_ZOOM
+    );
+    const summarized = await getSoilSurvey(
+      squareAt(MAX_SOIL_UNION_SQUARE_DEGREES * 1.2),
+      SOIL_SURVEY_REGIONAL_MIN_ZOOM
+    );
+
+    expect(unioned.granularity).toBe(summarized.granularity);
+    expect(unioned.features[0].geometry.type).toBe("MultiPolygon");
+    expect(
+      (unioned.features[0].properties as Record<string, unknown>).summary
+    ).toBeUndefined();
+    expect(summarized.features[0].geometry.type).toBe("Point");
+    expect((summarized.features[0].properties as Record<string, unknown>).summary).toBe(
+      true
+    );
+  });
+
+  it("always reports a summarized view as partial, because it always is", async () => {
+    // Not incidental: any viewport wide enough to outgrow the union budget is by
+    // construction wider than the cell budget too, so `covered < cells` holds on every
+    // summary answer. The dots are a description of what the warehouse holds, never a claim
+    // that the ground under them was surveyed and found empty.
+    stubDatabase({ coverage: [coverageRow()], summary: [summaryRow()] });
+
+    const collection = await getSoilSurvey("-125,42,-111,49", 6);
+
+    expect(collection.features).toHaveLength(1);
+    expect(collection.coverage.covered).toBeLessThan(collection.coverage.cells);
+    expect(collection.truncated).toBe(true);
+  });
+
+  it("reports the lattice itself truncated once readSummaryFeatures' own row read hits its LIMIT", async () => {
+    // `MAX_SOIL_SUMMARY_INPUT_ROWS` (200_000, private to usda-soil.ts) bounds the
+    // `summary_input` CTE's `LIMIT`. `input_rows` is that CTE's own count, echoed back on
+    // every grouped row -- one row over the constant is what "the LIMIT bit" looks like on
+    // the wire. Coverage is already always partial at this tier (the case above), so this
+    // pins `readSummaryFeatures`' own truncation source specifically: without it, a lattice
+    // silently clipped mid-scan would carry no signal that further delineations exist
+    // uncounted, and would present itself as a complete summary of the rows it did see.
+    stubDatabase({
+      coverage: [coverageRow()],
+      summary: [summaryRow({ input_rows: "200001" })],
+    });
+
+    const collection = await getSoilSurvey("-125,42,-111,49", 6);
+
+    expect(collection.features).toHaveLength(1);
+    expect(collection.truncated).toBe(true);
+  });
+
+  it("asks SDA nothing for a viewport its cell budget could never complete", async () => {
+    // Nine round trips at a measured 4.3 s each would warm 0.375 degrees of a 14-degree
+    // view: pure upstream cost and pure latency. Backfill grows coverage in bulk, not a
+    // page view. The gap is still REPORTED, which is what keeps the answer honest.
+    mocks.fetchBoundedJson.mockResolvedValue({});
+    stubDatabase({ coverage: [], summary: [], storedCount: "0" });
+
+    const collection = await getSoilSurvey("-125,42,-111,49", 6);
+
+    expect(mocks.fetchBoundedJson).not.toHaveBeenCalled();
+    expect(collection.coverage.ingested).toBe(0);
+    expect(collection.truncated).toBe(true);
+  });
+
+  it("still warms a detail-tier viewport, which its budget does cover", async () => {
+    mocks.fetchBoundedJson.mockResolvedValue({});
+    stubDatabase({ coverage: [], detail: [], storedCount: "0" });
+
+    const collection = await getSoilSurvey(BBOX, SOIL_SURVEY_DETAIL_MIN_ZOOM);
+
+    expect(mocks.fetchBoundedJson).toHaveBeenCalledTimes(1);
+    expect(collection.coverage.ingested).toBe(1);
   });
 });
 

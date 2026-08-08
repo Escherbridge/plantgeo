@@ -30,7 +30,7 @@ export const SOIL_PROPERTY_LABELS: Record<SoilProperty, string> = {
 /**
  * The point-query field (`SoilProperties` in `soilgrids.ts`) each raster property
  * corresponds to -- restated as literals rather than imported, since soilgrids.ts
- * pulls in the server DB and this is a client component. Lets SoilPanel highlight the
+ * pulls in the server DB and this is a client component. Lets SoilDetails highlight the
  * one point-query row that actually matches the selected raster property, instead of
  * always showing the same six fields no matter what is selected.
  */

@@ -34,11 +34,10 @@ local source ingestion begin.
    an image startup script or a long-running application service.
 3. Run reviewed Drizzle and Alembic migrations using a short-lived migration
    identity. Drizzle owns `public`, `geo`, and `tracking`; Alembic owns `agri`.
-4. As `plantgeo_owner`, manually run
-   `infra/local-warehouse/create-loader-role.sql` with a unique
-   `loader_password`; then configure `LOCAL_SOURCE_LOADER_DATABASE_URL` for
-   `plantgeo_loader@127.0.0.1:5442/plantgeo`. The CLI rejects the owner role,
-   `DATABASE_URL`, and every other host, port, or database.
+4. Point `DATABASE_URL` (or the `LOCAL_SOURCE_LOADER_DATABASE_URL` override) at
+   `127.0.0.1:5442/plantgeo`. There is no loader-role bootstrap step any more:
+   the 2026-08-08 role teardown (`20260808_0019`) deleted `create-loader-role.sql`
+   and every DSN assertion with it, so confirm the target yourself.
 5. Run `agri-cli source-ingest` for reviewed bounded captures. It produces
    governed `agri.data_source`, `source_release`, `artifact`, `release_set`,
    and `release_set_item` records. It does not create models, forecasts, or

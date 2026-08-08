@@ -7,11 +7,7 @@ from datetime import UTC, datetime, timedelta
 import psycopg2
 import pytest
 
-from agri_data_service.routes.health import (
-    _FORECAST_ROLE_CONTRACT_SQL,
-    _READINESS_SQL,
-    _RECEIVER_ROLE_BOUNDARY_SQL,
-)
+from agri_data_service.routes.health import _READINESS_SQL
 
 OBSERVATION_COUNT = 45
 ROLLING_WINDOW = 5
@@ -26,7 +22,16 @@ def _expect_database_error(cursor: psycopg2.extensions.cursor, statement: str, p
     cursor.execute("ROLLBACK TO SAVEPOINT expected_database_error")
 
 
-def test_forecast_readiness_sql_reports_missing_role_gate_without_error(agri_db_dsn: str) -> None:
+def test_forecast_readiness_sql_answers_both_questions_on_a_migrated_database(agri_db_dsn: str) -> None:
+    """The probe runs and answers exactly three columns; the role-contract columns are gone.
+
+    Since 20260808_0019 there is no forecast capability family to assert a matrix about. The
+    statement returns `extensions_ready`, `migration_catalog_ready` and the one surviving
+    capability conjunct, `serving_surface_ready` (schema USAGE plus the serving view, asked of
+    whoever is connected -- capability, not identity). All three must be true on the migrated
+    fixture database -- unlike the retired role columns, these are not expected to be false
+    locally.
+    """
     connection = psycopg2.connect(agri_db_dsn)
     try:
         with connection.cursor() as cursor:
@@ -34,11 +39,14 @@ def test_forecast_readiness_sql_reports_missing_role_gate_without_error(agri_db_
             columns = [column.name for column in cursor.description]
             readiness = dict(zip(columns, cursor.fetchone(), strict=True))
 
-            assert readiness["forecast_roles_ready"] is False
-            cursor.execute(_FORECAST_ROLE_CONTRACT_SQL)
-            assert cursor.fetchone()[0] is False
-            cursor.execute(_RECEIVER_ROLE_BOUNDARY_SQL)
-            assert cursor.fetchone()[0] is False
+            assert set(columns) == {
+                "extensions_ready",
+                "migration_catalog_ready",
+                "serving_surface_ready",
+            }
+            assert readiness["extensions_ready"] is True
+            assert readiness["migration_catalog_ready"] is True
+            assert readiness["serving_surface_ready"] is True
     finally:
         connection.close()
 

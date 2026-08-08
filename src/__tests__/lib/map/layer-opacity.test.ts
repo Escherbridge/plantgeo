@@ -15,7 +15,7 @@ import { LAYER_REGISTRY, styleBackedLayerEntries } from '@/lib/map/layer-registr
  * The one decision everything else follows from: opacity is a MULTIPLIER over each layer's
  * authored paint, so 1 is a no-op that cannot regress anything and an intentional zero
  * survives. `watersheds-fill` is authored at 0.05 (a boundary wash) while its own outline is
- * at 0.6, so an absolute slider would need a different neutral position per style layer --
+ * at 0.8, so an absolute slider would need a different neutral position per style layer --
  * these cases pin the multiplier semantics rather than any particular value.
  */
 describe('scaleOpacityValue', () => {
@@ -149,11 +149,14 @@ describe('styleLayerOpacityTargets', () => {
       'published-fire-outlines',
       'soil-moisture-field-outline',
       'soil-temperature-field-outline',
+      'soil-vpd-field-outline',
       'soil-survey-fill',
+      'soil-survey-summary',
       'ndvi-overlay-layer',
       'soilgrids-layer',
       'demand-heatmap-layer',
       'weather-wind',
+      'weather-temperature',
     ]) {
       expect(reachable, layerId).not.toContain(layerId)
     }
@@ -181,9 +184,10 @@ describe('styleLayerOpacityTargets', () => {
       targets.find((target) => target.layerId === layerId && target.property === property)?.base
 
     // The watershed pair is the argument for multiplier semantics in one toggle: a 0.05
-    // boundary wash and a 0.6 outline, both correct, with no single absolute neutral.
+    // boundary wash and a 0.8 outline, both correct, with no single absolute neutral. The
+    // gap widened on 2026-08-08 when the outline was strengthened and the fill was not.
     expect(baseOf('watersheds-fill', 'fill-opacity')).toBe(0.05)
-    expect(baseOf('watersheds-outline', 'line-opacity')).toBe(0.6)
+    expect(baseOf('watersheds-outline', 'line-opacity')).toBe(0.8)
     expect(baseOf('fire-perimeters', 'fill-opacity')).toBe(0.5)
     expect(baseOf('evacuation-zones', 'fill-opacity')).toBe(0.45)
     expect(baseOf('burn-severity-outline', 'line-opacity')).toBe(0.8)

@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { act, fireEvent, screen } from "@testing-library/react";
+import { QueryClient } from "@tanstack/react-query";
+import { httpBatchLink } from "@trpc/client";
+import superjson from "superjson";
 import { renderWithProviders } from "@/test/utils";
+import { trpc } from "@/lib/trpc/client";
 
 import { LayerPanel } from "@/components/map/layer-panel/LayerPanel";
 import {
@@ -29,11 +33,39 @@ function classListOf(element: Element): string {
   return element.getAttribute("class") ?? "";
 }
 
+/**
+ * The dock inside a tRPC provider, because its Alerts row reads the unread count from
+ * `alerts.getUnreadCount` -- the same query the toolbar bell observes, so the badge and the
+ * bell can never disagree. The query is disabled without a session cookie, and jsdom has
+ * none, so nothing here reaches the link.
+ *
+ * Wrapped here rather than in `renderWithProviders`: several suites replace
+ * `@/lib/trpc/client` wholesale with `vi.mock`, and a shared helper importing `trpc` would
+ * break in every one of them.
+ */
+function renderDock() {
+  const trpcClient = trpc.createClient({
+    // superjson because the router is built with it: an untransformed link is a type error,
+    // and would decode a real response wrongly if one ever arrived.
+    links: [httpBatchLink({ url: "http://localhost/api/trpc", transformer: superjson })],
+  });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderWithProviders(
+    <trpc.Provider client={trpcClient} queryClient={queryClient}>
+      <LayerPanel />
+    </trpc.Provider>
+  );
+}
+
 function openPanel(): HTMLElement {
   act(() => {
     usePanelStore.getState().toggleLayerPanel();
   });
   return screen.getByTestId("layer-panel");
+}
+
+function detailsToggleFor(label: string): HTMLElement {
+  return screen.getByRole("button", { name: label });
 }
 
 function rowFor(layerId: string): HTMLElement {
@@ -43,7 +75,11 @@ function rowFor(layerId: string): HTMLElement {
 beforeEach(() => {
   useMapStore.setState({ activeLayers: [] });
   useLayerStore.setState({ legendVisible: true, layerOpacity: {} });
-  usePanelStore.setState({ layerPanelOpen: false });
+  usePanelStore.setState({
+    layerPanelOpen: false,
+    expandedDetails: [],
+    pendingScrollSection: null,
+  });
   useSoilStore.setState({ fieldDepth: DEFAULT_SOIL_FIELD_DEPTHS });
   useVegetationStore.setState({ mode: "ndvi", ndviMode: "absolute", showNDWI: false });
 });
@@ -59,7 +95,7 @@ describe("LayerPanel scroll contract", () => {
    * was switched on.
    */
   it("has exactly one scrolling descendant", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
     const panel = openPanel();
 
     const scrollers = Array.from(panel.querySelectorAll("*")).filter((element) =>
@@ -78,7 +114,7 @@ describe("LayerPanel scroll contract", () => {
    * squeeze -- which is exactly how the rail silently lost its 44px tap target.
    */
   it("gives every non-scrolling direct child of the shell shrink-0", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
     const panel = openPanel();
 
     for (const child of Array.from(panel.children)) {
@@ -115,7 +151,7 @@ describe("LayerPanel scroll contract", () => {
 
 describe("LayerPanel layer tree", () => {
   it("renders one row per registry layer, named from the registry", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
     openPanel();
 
     for (const toggleId of LAYER_TOGGLE_IDS) {
@@ -127,15 +163,17 @@ describe("LayerPanel layer tree", () => {
   // `building-footprints` is switched from the MapControls toolbar and belongs to no panel, so
   // without a home in the tree the one comprehensive list of layers would be missing one.
   it("files the layer no panel governs under its own group", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
     openPanel();
 
     const basemap = screen.getByTestId("layer-group-Basemap");
     expect(basemap.textContent).toContain(LAYER_REGISTRY["building-footprints"].label);
   });
 
-  it("writes the same activeLayers the panel switches write", () => {
-    renderWithProviders(<LayerPanel />);
+  // `map-store.activeLayers` is the single source of layer visibility, and since the dock
+  // absorbed the sheets it is also the only surface writing it.
+  it("writes layer visibility to activeLayers and nowhere else", () => {
+    renderDock();
     openPanel();
 
     fireEvent.click(screen.getByRole("switch", { name: "Show Sensor Stations on map" }));
@@ -144,7 +182,7 @@ describe("LayerPanel layer tree", () => {
   });
 
   it("reflects a layer switched on from anywhere else", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
     openPanel();
     const eye = screen.getByRole("switch", { name: "Show Sensor Stations on map" });
     expect(eye.getAttribute("aria-checked")).toBe("false");
@@ -159,7 +197,7 @@ describe("LayerPanel layer tree", () => {
   // Governance, not a rendering accident: a withheld layer reads false in useLayerVisibility
   // whatever activeLayers says, so its eye must be disabled rather than merely off.
   it("disables the eye of a withheld layer and says why", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
     openPanel();
 
     const row = rowFor("building-footprints");
@@ -173,7 +211,7 @@ describe("LayerPanel layer tree", () => {
    * prevent, so the slider appears only once the layer is actually drawing.
    */
   it("offers no opacity slider until the layer is switched on", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
     openPanel();
 
     expect(rowFor("sensors").querySelector('input[type="range"]')).toBeNull();
@@ -193,7 +231,7 @@ describe("LayerPanel layer tree", () => {
   // queryRenderedFeatures, so it would swallow clicks meant for the ground beneath it; the
   // eye, which sets layout visibility, is how a layer is turned off.
   it("floors the slider above zero and caps it at 'as authored'", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
     openPanel();
     act(() => {
       useMapStore.getState().toggleLayer("sensors");
@@ -210,7 +248,7 @@ describe("LayerPanel layer tree", () => {
    * dimming the SoilGrids raster necessarily dimmed both ERA5-Land measurements.
    */
   it("keeps each layer's opacity to itself", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
     openPanel();
 
     act(() => {
@@ -231,7 +269,7 @@ describe("LayerPanel layer tree", () => {
    * for a layer nobody can switch on would describe a gap that is really a decision.
    */
   it("reports a partly-on group as mixed and clears it in one click", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
     openPanel();
     const groupEye = screen.getByRole("switch", { name: "Show all Water layers on map" });
     expect(groupEye.getAttribute("aria-checked")).toBe("false");
@@ -248,7 +286,7 @@ describe("LayerPanel layer tree", () => {
   });
 
   it("turns a whole group on when none of it is on", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
     openPanel();
 
     fireEvent.click(screen.getByRole("switch", { name: "Show all Water layers on map" }));
@@ -262,7 +300,7 @@ describe("LayerPanel layer tree", () => {
   // One boolean, two controls: the corner legend card and this header button. Two surfaces
   // over one value cannot contradict each other.
   it("shares the legend's own visibility flag rather than keeping a second one", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
     openPanel();
 
     fireEvent.click(screen.getByRole("button", { name: "Hide legend entries" }));
@@ -271,8 +309,144 @@ describe("LayerPanel layer tree", () => {
   });
 
   it("renders nothing while it is undocked", () => {
-    renderWithProviders(<LayerPanel />);
+    renderDock();
 
     expect(screen.queryByTestId("layer-panel")).toBeNull();
+  });
+});
+
+/**
+ * The dock absorbed seven right-hand sheets on 2026-08-08, and the property that made that
+ * affordable is the one these cases pin: a report is MOUNTED only while its own disclosure is
+ * open, so opening the dock costs the layer rows and nothing else.
+ *
+ * The two carets in this panel are not the same control and must not be conflated. A group's
+ * caret shows layer rows, which is free and therefore open by default; a report's caret mounts
+ * a component with its own warehouse queries, and is closed until asked for.
+ */
+describe("LayerPanel dock sections", () => {
+  it("collapses every report while showing every layer row", () => {
+    renderDock();
+    openPanel();
+
+    // The layer list is fully expanded...
+    expect(rowFor("sensors")).toBeTruthy();
+    // ...and not one report is mounted with it. Eight expanded reports on every dock open
+    // would issue eight panels' worth of warehouse queries before anyone asked a question.
+    expect(usePanelStore.getState().expandedDetails).toEqual([]);
+    for (const section of ["fire", "water", "vegetation", "soil", "community", "alerts"]) {
+      const disclosure = screen
+        .getByTestId(`dock-section-${section}`)
+        .querySelector("button");
+      expect(disclosure?.getAttribute("aria-expanded"), section).toBe("false");
+      // The DOM-level statement of "not mounted": the body carries its own testid, queried
+      // directly rather than through `aria-controls`, which names nothing while collapsed
+      // (see the next assertion).
+      expect(screen.queryByTestId(`dock-section-body-${section}`), section).toBeNull();
+      // A collapsed disclosure must not claim to control a region that is not in the
+      // document -- that dangling reference is exactly what an assistive technology cannot
+      // resolve.
+      expect(disclosure?.hasAttribute("aria-controls"), section).toBe(false);
+    }
+  });
+
+  it("names its body with aria-controls once expanded, and only once expanded", () => {
+    renderDock();
+    openPanel();
+
+    const disclosure = screen
+      .getByTestId("dock-section-fire")
+      .querySelector("button") as HTMLButtonElement;
+    expect(disclosure.hasAttribute("aria-controls")).toBe(false);
+
+    fireEvent.click(disclosure);
+
+    const bodyId = disclosure.getAttribute("aria-controls") ?? "";
+    expect(bodyId).not.toBe("");
+    expect(document.getElementById(bodyId)).not.toBeNull();
+    expect(document.getElementById(bodyId)).toBe(
+      screen.getByTestId("dock-section-body-fire")
+    );
+  });
+
+  it("gives every category its report and every layerless report its own section", () => {
+    renderDock();
+    openPanel();
+
+    for (const label of [
+      "Fire Dashboard",
+      "Water Scarcity",
+      "Vegetation & Land Cover",
+      "Soil Health & Carbon",
+      "Strategy Requests",
+      "Environmental Alerts",
+      "Team Dashboard",
+      "Environmental Analytics",
+    ]) {
+      expect(detailsToggleFor(label), label).toBeTruthy();
+    }
+  });
+
+  // The ungoverned bucket carries layers, not a report: there is no panel body behind it.
+  it("gives the Basemap bucket no report to disclose", () => {
+    renderDock();
+    openPanel();
+
+    const basemap = screen.getByTestId("layer-group-Basemap");
+    expect(basemap.querySelector('[data-testid^="dock-section-"]')).toBeNull();
+  });
+
+  // JSX drops whitespace that spans a newline between two children, so the label and the
+  // count ran together and this header announced as "Water0 of 5".
+  it("speaks a group header's count as a separate word", () => {
+    renderDock();
+    openPanel();
+
+    expect(screen.getByRole("button", { name: "Water 0 of 5" })).toBeTruthy();
+  });
+
+  it("expands one report without expanding any other", () => {
+    renderDock();
+    openPanel();
+
+    fireEvent.click(detailsToggleFor("Water Scarcity"));
+
+    expect(usePanelStore.getState().expandedDetails).toEqual(["water"]);
+    expect(detailsToggleFor("Water Scarcity").getAttribute("aria-expanded")).toBe("true");
+    expect(detailsToggleFor("Soil Health & Carbon").getAttribute("aria-expanded")).toBe(
+      "false"
+    );
+  });
+
+  // What the toolbar's alert bell does. The dock is closed at that moment, so this is also
+  // what proves the shortcut does not merely expand a section nobody can see.
+  it("opens the dock at the section a shortcut focuses", () => {
+    renderDock();
+    expect(screen.queryByTestId("layer-panel")).toBeNull();
+
+    act(() => {
+      usePanelStore.getState().focusDockSection("alerts");
+    });
+
+    expect(screen.getByTestId("layer-panel")).toBeTruthy();
+    expect(detailsToggleFor("Environmental Alerts").getAttribute("aria-expanded")).toBe(
+      "true"
+    );
+    // Consumed on arrival, so a later expansion by hand does not re-scroll the dock.
+    expect(usePanelStore.getState().pendingScrollSection).toBeNull();
+  });
+
+  // A group's caret governs its rows and NOT its report: collapsing a category leaves an
+  // index of reports behind rather than hiding them.
+  it("keeps a category's report reachable while its rows are collapsed", () => {
+    renderDock();
+    openPanel();
+
+    // The group's own caret is the first button in its header row.
+    const waterGroup = screen.getByTestId("layer-group-water");
+    fireEvent.click(waterGroup.querySelector("button")!);
+
+    expect(screen.queryByTestId("layer-row-sensors")).toBeNull();
+    expect(detailsToggleFor("Water Scarcity")).toBeTruthy();
   });
 });

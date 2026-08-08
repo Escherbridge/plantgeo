@@ -162,7 +162,7 @@ graph TD
 
     subgraph Components["UI Components"]
         MapView[MapView]
-        Panels[PanelManager]
+        Panels[LayerPanel dock]
         Layers[LayerManager]
         AlertBell[AlertBell]
         RIPanel[AI Panel]
@@ -174,24 +174,27 @@ graph TD
 
 ### 2c. Panel System
 
+Since 2026-08-08 there is one dock (`LayerPanel`), not a toolbar of right-hand sheets: each
+category's report is a `*Details` component, dynamically imported and mounted by
+`DockDetails` only while its `DetailsSection` is expanded.
+
 ```mermaid
 graph LR
-    PM[PanelManager<br/>Toolbar] -->|click| Panels
+    DT[DockToggle] -->|click| Dock
 
-    subgraph Panels["Side Panels"]
-        FD[FireDashboard]
-        WP[WaterPanel]
-        VP[VegetationPanel]
-        SP[SoilPanel]
-        CP[CommunityPanel]
-        StP[StrategyPanel]
-        TD[TeamDashboard]
-        AD[AnalyticsDashboard]
-        RI[AI Intelligence Panel]
+    subgraph Dock["LayerPanel: DockSections + DetailsSection x8 -> DockDetails"]
+        FD[FireDetails]
+        WD[WaterDetails]
+        VD[VegetationDetails]
+        SD[SoilDetails]
+        CD[CommunityDetails]
+        TD[TeamDetails]
+        AD[AnalyticsDetails]
+        ALD[AlertDetails]
     end
 
-    Panels -->|tRPC queries| API[tRPC Routers]
-    RI -->|SSE stream| AIRoute[/api/ai/regional-intelligence]
+    Dock -->|tRPC queries, one region at a time as it expands| API[tRPC Routers]
+    RI[AI Intelligence Panel] -->|SSE stream| AIRoute[/api/ai/regional-intelligence]
 ```
 
 ---

@@ -19,38 +19,14 @@ from sanic.response import HTTPResponse
 from agri_data_service.config import settings
 from agri_data_service.db.engine import published_reader_session, receiver_writer_session
 from agri_data_service.routes.health.contracts import (
-    COLUMN_PRIVILEGE_UNIVERSE,
     EXPECTED_ALEMBIC_REVISION,
-    FORECAST_ROLE_COLUMN_PRIVILEGES,
-    FORECAST_ROLE_FUNCTION_PRIVILEGES,
-    FORECAST_ROLE_RELATION_PRIVILEGES,
-    FORECAST_ROLE_SEQUENCE_PRIVILEGES,
-    FORECAST_ROLES,
-    MIGRATION_TABLE_PRIVILEGES,
-    PUBLICATION_TABLE_PRIVILEGES,
-    RECEIVER_SEQUENCE_PRIVILEGES,
     REQUIRED_EXTENSIONS,
-    SEQUENCE_PRIVILEGE_UNIVERSE,
-    TABLE_PRIVILEGE_UNIVERSE,
 )
 from agri_data_service.routes.health.probes import apply_database_probes, initial_checks
 from agri_data_service.routes.health.queries import (
-    _COLUMN_PRIVILEGE_VALUES,
     _EXTENSION_VALUES,
-    _FORECAST_COLUMN_PRIVILEGE_VALUES,
-    _FORECAST_FUNCTION_PRIVILEGE_VALUES,
-    _FORECAST_RELATION_PRIVILEGE_VALUES,
-    _FORECAST_ROLE_CONTRACT_SQL,
-    _FORECAST_ROLE_VALUES,
-    _FORECAST_SEQUENCE_PRIVILEGE_VALUES,
     _MIGRATION_SQL,
-    _PRIVILEGE_VALUES,
     _READINESS_SQL,
-    _RECEIVER_RELATION_PRIVILEGE_VALUES,
-    _RECEIVER_ROLE_BOUNDARY_SQL,
-    _RECEIVER_SEQUENCE_PRIVILEGE_VALUES,
-    _SEQUENCE_PRIVILEGE_VALUES,
-    _TABLE_PRIVILEGE_VALUES,
     _sql_values,
 )
 
@@ -77,7 +53,7 @@ async def readiness_check(_request: Request) -> HTTPResponse:
     try:
         async with asyncio.timeout(2):
             async with session_factory() as session:
-                await apply_database_probes(session, profile, checks)
+                await apply_database_probes(session, checks)
     except Exception:
         logger.warning("readiness_check_failed")
 
@@ -89,35 +65,11 @@ async def readiness_check(_request: Request) -> HTTPResponse:
 
 
 __all__ = [
-    "COLUMN_PRIVILEGE_UNIVERSE",
     "EXPECTED_ALEMBIC_REVISION",
-    "FORECAST_ROLES",
-    "FORECAST_ROLE_COLUMN_PRIVILEGES",
-    "FORECAST_ROLE_FUNCTION_PRIVILEGES",
-    "FORECAST_ROLE_RELATION_PRIVILEGES",
-    "FORECAST_ROLE_SEQUENCE_PRIVILEGES",
-    "MIGRATION_TABLE_PRIVILEGES",
-    "PUBLICATION_TABLE_PRIVILEGES",
-    "RECEIVER_SEQUENCE_PRIVILEGES",
     "REQUIRED_EXTENSIONS",
-    "SEQUENCE_PRIVILEGE_UNIVERSE",
-    "TABLE_PRIVILEGE_UNIVERSE",
-    "_COLUMN_PRIVILEGE_VALUES",
     "_EXTENSION_VALUES",
-    "_FORECAST_COLUMN_PRIVILEGE_VALUES",
-    "_FORECAST_FUNCTION_PRIVILEGE_VALUES",
-    "_FORECAST_RELATION_PRIVILEGE_VALUES",
-    "_FORECAST_ROLE_CONTRACT_SQL",
-    "_FORECAST_ROLE_VALUES",
-    "_FORECAST_SEQUENCE_PRIVILEGE_VALUES",
     "_MIGRATION_SQL",
-    "_PRIVILEGE_VALUES",
     "_READINESS_SQL",
-    "_RECEIVER_RELATION_PRIVILEGE_VALUES",
-    "_RECEIVER_ROLE_BOUNDARY_SQL",
-    "_RECEIVER_SEQUENCE_PRIVILEGE_VALUES",
-    "_SEQUENCE_PRIVILEGE_VALUES",
-    "_TABLE_PRIVILEGE_VALUES",
     "_sql_values",
     "apply_database_probes",
     "health_bp",

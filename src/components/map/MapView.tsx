@@ -14,7 +14,7 @@ import { MapFocus } from "./MapFocus";
 import SearchBar from "@/components/search/SearchBar";
 import { ReverseGeocode } from "@/components/search/ReverseGeocode";
 import { CommandPalette } from "@/components/search/CommandPalette";
-import PanelManager from "./PanelManager";
+import { DockToggle } from "./layer-panel/DockToggle";
 import { LayerPanel } from "./layer-panel/LayerPanel";
 import LayerManager from "./LayerManager";
 import HoverTooltip from "./HoverTooltip";
@@ -297,10 +297,10 @@ export default function MapView() {
       {/*
         `--layer-panel-inset` is how the left-edge dock keeps out of the way of the chrome it
         would otherwise cover: 0 while it is closed, its own width while it is open. Its only
-        consumers are the icon rail and the bottom-left toolbar, both of which anchor to
-        `calc(var(--layer-panel-inset) + …)`, so one variable replaces prop drilling through
-        two component trees. The panel itself is an overlay in this same box and never reflows
-        the canvas -- see LayerPanel.tsx for why the camera takes padding instead.
+        consumers are the dock's own toggle button and the bottom-left toolbar, both of which
+        anchor to `calc(var(--layer-panel-inset) + …)`, so one variable replaces prop drilling
+        through two component trees. The panel itself is an overlay in this same box and never
+        reflows the canvas -- see LayerPanel.tsx for why the camera takes padding instead.
       */}
       <div
         className="relative h-full w-full"
@@ -324,11 +324,12 @@ export default function MapView() {
             <SearchBar />
             <ReverseGeocode />
             <CommandPalette />
-            <PanelManager />
-            {/* The left-edge layer tree. Mounted after PanelManager so it paints over the
-                rail's shadow rather than under it, and additive to the right-hand sheets:
-                both surfaces write map-store.activeLayers, which is the single source of
-                layer visibility, so they cannot disagree. */}
+            {/* The button that opens the dock, mounted before it so the dock paints over
+                the button's shadow rather than under it. */}
+            <DockToggle />
+            {/* The one panel surface on this map: every layer switch, every opacity slider
+                and every former right-hand sheet, in one left-edge dock. See
+                src/components/map/AGENTS.md "One dock, no sheets". */}
             <LayerPanel />
             {/* Mounted before LayerManager so its style.load handler registers
                 first -- see the ordering note in ServiceAreaLayer.tsx. */}

@@ -137,7 +137,7 @@ export function getNDWITileUrl(_year: number, _month: number): string {
 
 /**
  * Why NDWI is offered as a mode but never renders anything -- shown next to the control in
- * VegetationPanel, not only in a title attribute, because a disabled control isn't
+ * VegetationDetails, not only in a title attribute, because a disabled control isn't
  * focusable. Restates getNDWITileUrl's doc comment; keep the two in sync.
  */
 export const NDWI_UNAVAILABLE_REASON =
@@ -145,7 +145,7 @@ export const NDWI_UNAVAILABLE_REASON =
 
 /**
  * Why NDVI "anomaly" mode is offered but never renders anything -- shown next to the
- * control in VegetationPanel, not only in a title attribute. Restates getNDVITileUrl's
+ * control in VegetationDetails, not only in a title attribute. Restates getNDVITileUrl's
  * doc comment; keep the two in sync.
  */
 export const NDVI_ANOMALY_UNAVAILABLE_REASON =

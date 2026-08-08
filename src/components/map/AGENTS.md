@@ -8,19 +8,19 @@ Location selection is a privacy boundary. `AgentInteraction` requires an explici
 
 Two rules follow. First, projection changes set the projection and nothing else: `MapView`'s globe effect used to clamp zoom to ≤5 on entry and ≥3 on exit, which crossed the `minzoom` thresholds in `src/lib/map/layers.ts` (interventions 6, `osm-roads` 10, `building-footprints` 13, `buildings-3d` 14, `osm-waterways` 8) and made toggled-on layers vanish; the exit clamp also never restored the pre-globe zoom, so the round trip was lossy. Second, an empty data feed is not the same as a toggle being off: a layer whose feed returns nothing renders an empty source and stays mounted, so a later style swap cannot be mistaken for the user having hidden it.
 
-The legend is a consumer of this vocabulary, not a second source of it — see below. So is the left-edge layer tree (`src/components/map/layer-panel/`): its eyes call the same `useToggleLayer` the right-hand sheets' switches call, so the two surfaces are two views of one value and cannot disagree.
+The legend is a consumer of this vocabulary, not a second source of it — see below. So is the left-edge dock (`src/components/map/layer-panel/`), which since 2026-08-08 owns the only switch a layer has: its eyes call `useToggleLayer`, and the sixteen `<LayerToggle>` switches that used to call it from seven right-hand sheets went with the sheets.
 
 ## Opacity is a multiplier, applied per layer type
 
 **A layer's opacity is a MULTIPLIER over its authored paint, never an absolute value.** `1` means "exactly as designed" and cannot regress anything. `src/lib/map/layer-opacity.ts` owns the rule; `layer-store.layerOpacity` (sparse, keyed by `LayerToggleId`, persisted) holds the numbers.
 
-Two layers make the case on their own. `watersheds` paints its fill at `0.05` — a deliberate boundary wash — and its own outline at `0.6`, so an absolute slider would need a different neutral position per style layer, and dragging it to 1 would drop an opaque blue sheet over the map. `published-fire-outlines` is worse: its `circle-opacity` is deliberately `0`, with the visible ring carried on `circle-stroke-opacity`, so an absolute write would fill every fire circle with a second opaque disc. Under a multiplier, `0 × f = 0` preserves both intentions for free.
+Two layers make the case on their own. `watersheds` paints its fill at `0.05` — a deliberate boundary wash — and its own outline at `0.8`, so an absolute slider would need a different neutral position per style layer, and dragging it to 1 would drop an opaque blue sheet over the map. `published-fire-outlines` is worse: its `circle-opacity` is deliberately `0`, with the visible ring carried on `circle-stroke-opacity`, so an absolute write would fill every fire circle with a second opaque disc. Under a multiplier, `0 × f = 0` preserves both intentions for free.
 
 **Three style layers carry a data-driven opacity expression a scalar write would destroy**, and nothing re-adds a layer except a basemap swap, so destroying one is permanent for the session. `soil-moisture-field-outline` and `soil-temperature-field-outline` carry `["case", ["==", ["get","aggregated"], true], 0, 0.25]` — the rule that stops isoband contours being stroked (see §soil-field) — and `buildings-3d` carries a zoom `interpolate` fade-in. `scaleOpacityValue` multiplies a number in JS and wraps anything else as `["*", base, factor]`, which is legal for every opacity property and keeps a zoom-dependent value zoom-dependent. **Never branch on an expression's shape**; read the base off the module that paints it and wrap it.
 
 **One writer per (layer, paint property), split on the registry's `renderKind`.** Style-baked layers have no component, so `LayerManager.applyOpacity` is their single writer, reaching only the pairs `styleLayerOpacityTargets()` derives from `styleBackedLayerEntries()` crossed with `getLayers()` — basemap decoration, the service-area mask and every component-added layer are structurally out of reach. Component-mounted layers take an `opacityScale` prop and fold it into whatever they already compute, because five of them already own `setPaintProperty` on the same properties and two of those rewrite on every pan; an external writer would be silently reverted the next time the user panned. For `VegetationLayer` the multiplier must thread *through* the component for a second reason: its layout-visibility gating is semantic (it is how the layer switches between the measured cells and the GIBS composite), and an outside writer would fight it.
 
-**The property is per layer TYPE**: fill→`fill-opacity`, line→`line-opacity`, circle→`circle-opacity` + `circle-stroke-opacity`, symbol→`icon-opacity` + `text-opacity` (`weather-wind` sets no `icon-image`, so only the text one means anything), raster→`raster-opacity`, fill-extrusion→`fill-extrusion-opacity`, heatmap→`heatmap-opacity`. **`hillshade` is absent from that table on purpose** — the MapLibre style spec defines no `hillshade-opacity`, and a rejected paint property surfaces through `MapView`'s `error` handler, which hard-codes a PMTiles-expiry message and would blame the basemap for it.
+**The property is per layer TYPE**: fill→`fill-opacity`, line→`line-opacity`, circle→`circle-opacity` + `circle-stroke-opacity`, symbol→`icon-opacity` + `text-opacity` (`weather-wind` sets no `icon-image`, so only the text one means anything — that is still true, but the `weather` toggle now also owns a `circle` layer, `weather-temperature`, and `WeatherLayer` writes both layers' properties itself), raster→`raster-opacity`, fill-extrusion→`fill-extrusion-opacity`, heatmap→`heatmap-opacity`. **`hillshade` is absent from that table on purpose** — the MapLibre style spec defines no `hillshade-opacity`, and a rejected paint property surfaces through `MapView`'s `error` handler, which hard-codes a PMTiles-expiry message and would blame the basemap for it.
 
 **Opacity 0 is unreachable** (`MIN_LAYER_OPACITY`, clamped in the store on write and on persist-rehydrate). `visibility: "none"` — what the eye sets — excludes a layer from `queryRenderedFeatures`; an opacity-0 layer is *not* excluded, so it would still swallow the "did the user click empty ground" check in `MapView` and still fire the fire/gauge/well popups for features nobody can see. The eye turns a layer off; the slider only makes it recede. Do not couple them.
 
@@ -32,21 +32,51 @@ Two layers make the case on their own. `watersheds` paints its fill at `0.05` �
 
 Two invariants keep it honest, both enforced in `layer-legends.ts`. First, **no colour is written in the legend**: every swatch, class row and ramp stop is imported from the module whose paint expression uses it, and where a ramp was inline in a renderer the renderer now reads an exported constant (`FIRE_CONTAINMENT_COLOR_STOPS`, `DEMAND_DENSITY_COLOR_STOPS`, `BURN_SEVERITY_ACRES_STOPS`, the `StyleClass` tables in `layers.ts`), so the two cannot drift. Second, **a toggle earns a spec only if switching it on paints something**: `soil` has none because `getEnvironmentalTileTemplate` returns `""` and `SoilLayer` adds no source at all; `vegetation` legends NDVI only, because `getNDWITileUrl` returns `""` unconditionally and NBR is unpublished for the same reason; `building-footprints` has none because the registry withholds it. `LEGENDLESS_TOGGLE_REASONS` records each. Legending a colour the map never draws is the failure this module exists to prevent, so an entry that "looks missing" is a claim to check against the renderer, not a gap to fill.
 
-Where the inventory of encodings and the map disagree, the map wins: `burn-severity` is a ramp over **acres**, not MTBS severity classes (that column is null on every published row), and the class tables in `BurnHistoryLayer`/`LandFireLayer` are legended nowhere because `LayerManager` mounts neither component.
+Where the inventory of encodings and the map disagree, the map wins: `burn-severity` is a ramp over **acres**, not MTBS severity classes (that column is null on every published row). The unmounted `BurnHistoryLayer`/`LandFireLayer` components, whose class tables were legended nowhere for that reason, were deleted 2026-08-08 with the rest of the never-mounted layer files.
 
 ## The layer registry and the toggle context
 
-`src/lib/map/layer-registry.ts` is the single declaration of what a toggle id *is*: its style layer ids, its `geo.layers` name, the panel that owns its switch, and any reason governance withholds it. Three tables used to carry overlapping halves of that — `STYLE_LAYER_TOGGLE_MAP` in `layers.ts`, `TOGGLE_ID_BY_LAYER_NAME` in `Legend`, `PANEL_LAYER_MAP` in `panel-store` — keyed by the same untyped strings with nothing making them agree, so adding a layer meant three hand-edits and forgetting one failed silently (a legend row that toggles nothing, a panel that under-reports itself active). All three are now derived from the registry, and `LayerToggleId` makes a typo a compile error rather than an inert string in `activeLayers`. The registry/`layer-toggle-context` pairing above is the only layer-visibility system: a second, unmounted toggle system (the old `src/components/panels/LayerPanel.tsx` with `LayerItem`/`LayerStyler`/`LayerFilter`, plus the `styleOverrides`/`filterExpressions` fields they alone read on `layer-store`) sat dormant and dead since it predated the registry; it was deleted 2026-08-07 rather than kept as a second source of the same vocabulary. The `LayerPanel` in `src/components/map/layer-panel/` is a different, mounted component built on the registry — see "The layer tree is an additional surface" below.
+`src/lib/map/layer-registry.ts` is the single declaration of what a toggle id *is*: its style layer ids, its `geo.layers` name, the panel that owns its switch, and any reason governance withholds it. Three tables used to carry overlapping halves of that — `STYLE_LAYER_TOGGLE_MAP` in `layers.ts`, `TOGGLE_ID_BY_LAYER_NAME` in `Legend`, `PANEL_LAYER_MAP` in `panel-store` — keyed by the same untyped strings with nothing making them agree, so adding a layer meant three hand-edits and forgetting one failed silently (a legend row that toggles nothing, a panel that under-reports itself active). All three are now derived from the registry, and `LayerToggleId` makes a typo a compile error rather than an inert string in `activeLayers`. The registry/`layer-toggle-context` pairing above is the only layer-visibility system: a second, unmounted toggle system (the old `src/components/panels/LayerPanel.tsx` with `LayerItem`/`LayerStyler`/`LayerFilter`, plus the `styleOverrides`/`filterExpressions` fields they alone read on `layer-store`) sat dormant and dead since it predated the registry; it was deleted 2026-08-07 rather than kept as a second source of the same vocabulary. The `LayerPanel` in `src/components/map/layer-panel/` is a different, mounted component built on the registry — see "One dock, no sheets" below.
 
 `src/lib/map/layer-toggle-context.ts` is the composition layer over that registry — what is switched on, the mode each layer draws in, and the slider's day, in one place both the map and the panels read. It owns **no state**: `activeLayers` stays in `map-store`, the day stays in `time-slider-store`, per-layer mode stays in `vegetation-store`/`soil-store`. There is no React Provider and there must not be one. A provider broadcasting `selectedDate` would re-render the whole map subtree on every pointer tick of a scrub, which is the exact storm the ref discipline below exists to prevent; Zustand stores are already ambient, so a provider would buy scoping nobody needs and cost a second subscription path.
 
-The registry also owns the **label** and the **icon** a reader sees. Until 2026-08-08 every layer name was a hand-typed `label` prop at one of sixteen `<LayerToggle>` call sites, so nothing that was not one of those five panels could name a layer — the layer tree would have had to duplicate all sixteen strings or import five panels to render a list. `LayerToggle`'s `label` prop is now an optional override defaulting to `layerLabel(toggleId)`, and no call site passes one; `layer-registry.test.ts` pins the exact strings, so a silent rewording fails there. The icon is a NAME (`LayerIconName`), not a component: this module is imported by stores, by `layers.ts` and by node-run tests, and `src/components/map/layer-panel/layer-icons.tsx` is the one place it becomes React.
+The registry also owns the **label** and the **icon** a reader sees. Until 2026-08-08 every layer name was a hand-typed `label` prop at one of sixteen `<LayerToggle>` call sites, so nothing that was not one of those five panels could name a layer — the dock would have had to duplicate all sixteen strings or import five panels to render a list. The labels moved here, `LayerToggle`'s `label` prop became an optional override that no call site passed, and later the same day `LayerToggle` itself was deleted with the sheets: a hand-typed layer name is now inexpressible rather than merely discouraged. `layer-registry.test.ts` pins the exact strings, so a silent rewording fails there. The icon is a NAME (`LayerIconName`), not a component: this module is imported by stores, by `layers.ts` and by node-run tests, and `src/components/map/layer-panel/layer-icons.tsx` is the one place it becomes React.
 
-## The layer tree is an additional surface, not a replacement
+## One dock, no sheets
 
-`src/components/map/layer-panel/` is the left-edge dock: every switchable layer grouped by `panelId` in registry declaration order, each row carrying an eye, a colour chip read from `layerLegendSpec()`, the registry's name, and an opacity slider. The right-hand sheets keep their switches. Both write `map-store.activeLayers`, which the section above makes the single source of visibility, so the two cannot disagree by construction — that is what made adding the surface safe without migrating the sheets in the same change.
+**Superseded 2026-08-08.** This section used to be titled "The layer tree is an additional surface, not a replacement" and described a left-edge dock living alongside seven right-hand sheets. The sheets are gone. `src/components/map/layer-panel/` is now the only panel surface on the map, and everything the sheets rendered is a section of it.
 
-It is an **overlay inside `MapView`**, never a `MapLayout` side panel: reflowing the canvas would force a MapLibre `resize()` and a tile refetch on every collapse. The map's reaction is camera `padding` instead, which shifts the optical centre without touching canvas size and composes with `resetView` and `MapFocus`. Chrome that would sit under the dock reads `--layer-panel-inset` (set on `MapView`'s root, `0px`/`19rem`) — the icon rail and the bottom-left toolbar are its only consumers. `SearchBar` does not read it; the dock starts below it (`top-20`) instead.
+What was removed, and why each removal was a fix rather than a tidy-up:
+
+- **`PanelManager.tsx` and its icon rail.** Seven unlabeled 44px buttons, one per sheet, each opening a full-height overlay over the map you were reading. `panel-store.openPanel` made them mutually exclusive, so comparing the fire counts with the water gauges meant closing one report to open the other. The dock stacks all eight, and the map stays visible beside them.
+- **Every `<Sheet side="right">`.** A sheet portals a `fixed inset-0` scrim over the whole viewport (`src/components/ui/sheet.tsx`) and sets `document.body.style.overflow = "hidden"`. That covered `TimeSliderPanel`'s region — the app's one time control — whenever any data panel was open.
+- **`src/components/ui/layer-toggle.tsx`.** Sixteen switches across five sheets, each writing the same `activeLayers` entry the dock's own eye writes, half of them out of sight behind a closed sheet. Two controls over one value, and the one you could see did not always look like the one you had used. Deleted with its last call site; the dock's `LayerRow` eye is the only switch for a layer now.
+- **Four never-mounted panels** (`RoutingPanel`, `IsochronePanel`, `EcosystemTracker`, `TeamProfilePanel`), which nothing had rendered in any tree.
+
+The dock's shape:
+
+```
+LayerPanel            shell: header (legend eye, close), the one scroller, footer
+  DockSections        the scroller's only child
+    LayerGroupSection ×6   caret + group eye + "n of m" + LayerRow list
+      DetailsSection       ×5 (Basemap has none) — the category's report
+    DetailsSection    ×3   alerts, team, analytics — the reports that own no layer
+      DockDetailsBody      dynamic()-imported region + the map props it needs
+```
+
+**Two carets, and they are not the same control.** A group's caret shows its layer rows: free, and open by default, because this is a layer manager first. A `DetailsSection`'s caret MOUNTS a report — `FireDetails`, `WaterDetails`, `VegetationDetails`, `SoilDetails`, `CommunityDetails`, `TeamDetails`, `AnalyticsDetails`, `AlertDetails` — each with its own warehouse queries, and is closed until asked for. One caret over both would have had to choose, and either choice is wrong for half the dock. A group's caret deliberately does not hide the report under it, so a collapsed dock reads as an index of reports.
+
+**Mounting is what "open" means now.** Every one of those regions used to take an `open` prop and gate its queries on it (`enabled: open && …`), staying mounted-but-disabled while its sheet was shut. A collapsed section is not mounted at all, so each region dropped the prop and the `open &&` term with it. This is load-bearing, not cosmetic: eight regions mounted on every dock open would fire eight panels' worth of queries before anyone had asked a question. `panel-store.expandedDetails` is therefore not a rename of `openPanel` — it is a list, several may be open at once, and it decides which queries exist. `viewport-proxied-query-sharing.test.tsx` pins both halves: one shared query entry when a section is expanded, and **no observer at all** when it is not.
+
+**The one scroller survived the merge.** Each sheet body arrived carrying its own `overflow-y-auto max-h-[calc(100vh-8rem)]` wrapper, plus two `max-h-64` list boxes in the water report. Nested inside the dock's scroller those are exactly the second-scrollbar defect `panel-scroll.ts` rule 2 names, so they were stripped on the way in; the lists were already capped upstream (`WATERSHED_LIST_LIMIT`) and the dock scrolls them now.
+
+**What is left outside the dock.** `DockToggle` — one 44px button, all that remains of the rail, because a closed dock still needs a way back. `AlertBell` in the toolbar keeps its unread count and calls `focusDockSection("alerts")`, which docks the panel, expands Alerts and queues `pendingScrollSection` for the section to consume on arrival; both surfaces read the count through `useUnreadAlertCount`, so they observe one query rather than polling one number twice. Marking alerts read invalidates that key rather than calling back through an `onMarkRead` prop, which a lazily-mounted section has no parent to receive.
+
+**Reachability is now answerable by import.** `dock-sections.ts` derives the groups from the registry and is deliberately React-free, so `layer-registry.test.ts` can assert that every layer has a row by calling `dockReachableLayerToggleIds()`. It used to answer the same question by regex-scanning `<LayerToggle>` out of the panel sources — the only handle available when a layer's sole switch was buried in a sheet's JSX.
+
+Both surfaces wrote `map-store.activeLayers` while they coexisted, which the section above makes the single source of visibility. That is what made the merge safe to do in stages: the dock could ship beside the sheets without either one becoming authoritative, and the sheets could then be deleted without a visibility migration.
+
+It is an **overlay inside `MapView`**, never a `MapLayout` side panel: reflowing the canvas would force a MapLibre `resize()` and a tile refetch on every collapse. The map's reaction is camera `padding` instead, which shifts the optical centre without touching canvas size and composes with `resetView` and `MapFocus`. Chrome that would sit under the dock reads `--layer-panel-inset` (set on `MapView`'s root, `0px`/`19rem`) — `DockToggle` and the bottom-left toolbar are its only consumers. `SearchBar` does not read it; the dock starts below it (`top-20`) instead. **Its width did not change when it absorbed the seven sheets**: one 19rem column, eight sections scrolling inside it, and no further pixel taken from the map.
 
 `panel-scroll.ts` states the scroll contract once and `LayerPanel.test.tsx` asserts it: exactly one scrolling descendant, `min-h-0 flex-1` on it, `shrink-0` on every other direct child, and height from the container rather than from `vh`. Each rule is a fix for a defect on the surfaces this panel joins. The sharpest: **`overflow-y-auto` alone makes an element a scroll container on BOTH axes** (CSS Overflow 3 §3.1 — when one axis is not `visible`, the other's `visible` computes to `auto`). The icon rail carried it on an absolutely-positioned box whose shrink-to-fit width was its widest child, 44px, and the active-layer badge at `-right-0.5` pushed the scrollable region 2px past that — so Chrome drew a full horizontal scrollbar across a 44px column, appearing exactly when the first data layer was switched on. The vertical cap it was paired with never fired either: without `shrink-0` the buttons squashed toward their 16px icons long before 344px of content could overflow a 70vh box, silently trading away the 44px tap target.
 
@@ -77,9 +107,7 @@ A component that adds its own sources/layers (rather than toggling visibility on
 The fix is `src/components/map/layers/use-style-ready.ts` — `useStyleReady(map)` subscribes with `on` (never `once`) to both `style.load` and `styledata`, recomputes `map.isStyleLoaded()` on each, and returns that boolean. Consumers don't gate on the returned value directly (mid-render it can be one tick stale); they put it in a `useEffect` dependency array purely to force a re-run, then re-read `map.isStyleLoaded()` live inside the effect — the same decoupled trigger-vs-gate shape `LayerManager`'s `styleReady` state already uses. `FireLayer` and `WaterLayer` now run two effects: one registers a persistent, unconditional `on("style.load", addAllLayers)` (safe because `addLayer`/`addSource` only require the style's `_loaded` flag, which is set at the same moment `style.load` fires — see `node_modules/maplibre-gl/src/style/style.ts` `_load()`/`setState()` — so this is also the primary mechanism that survives a basemap swap); the other depends on `useStyleReady`'s output and re-checks `map.isStyleLoaded()` live, which is what catches the mount-time race where no further `style.load` will ever arrive. Both call the same `addAllLayers`, which is idempotent — every `addSource`/`addLayer` call is guarded by `getSource`/`getLayer` — so redundant invocations from the two effects, or from a rapid style-catch-up, are no-ops rather than throws.
 
 **Remaining files with the same class of bug (not fixed in this pass — do not assume they are safe):**
-- `ErosionLayer.tsx`, `CarbonPotentialLayer.tsx`, `BurnHistoryLayer.tsx`, `ReforestationLayer.tsx`, `LandFireLayer.tsx`, `RecoveryLayer.tsx`, `LandCoverLayer.tsx` (two call sites) — all use `map.once("styledata", addLayers)`.
-- `SoilLayer.tsx`, `DroughtLayer.tsx`, `RouteLayer.tsx`, `IsochroneLayer.tsx` — use `map.once("style.load", ...)`, the exact shape this section fixes in Fire/Water.
-- `ModelLayer.tsx`, `AnimatedBeacon.tsx`, `ThreeLayer.tsx` — use `map.once("load", addLayer)`. `"load"` is the map's own one-time init event rather than a per-style event, so these don't retry across a basemap swap at all; whether that is a live bug depends on whether the map is ever re-created versus just re-styled.
+- `SoilLayer.tsx`, `DroughtLayer.tsx` — use `map.once("style.load", ...)`, the exact shape this section fixes in Fire/Water. (The other files this list named — `ErosionLayer`, `CarbonPotentialLayer`, `BurnHistoryLayer`, `ReforestationLayer`, `LandFireLayer`, `RecoveryLayer`, `LandCoverLayer`, `RouteLayer`, `IsochroneLayer`, `ModelLayer`, `AnimatedBeacon`, `ThreeLayer` — were never mounted and were deleted 2026-08-08; recover them from git history if a producer ever ships.)
 - `VegetationLayer.tsx`, `WeatherLayer.tsx`, `DemandHeatmapLayer.tsx` — already dropped `once()` in favor of `if (map.isStyleLoaded()) addAllLayers(map); map.on("style.load", onStyleLoad);`, which fixes the basemap-swap case but **not** the mount-time race: if `isStyleLoaded()` reads `false` on mount and no later `style.load` arrives (because the current style already finished loading before this component mounted), nothing retries. These are the closest candidates for a follow-up `useStyleReady` adoption since the persistent-listener half is already in place.
 
 Adopting `useStyleReady` in the files above is a known, deliberately deferred follow-up — each has its own layer/source ids and idempotency assumptions to verify individually rather than a mechanical find-replace.
@@ -176,27 +204,33 @@ scroller is how the one drag control becomes unreachable on a phone. The region 
 `pointer-events-none` with each interactive child opting back in — collapsed, it is a mostly
 empty column over the canvas, and without the pass-through it would swallow map drags.
 
-Panel sheets still portal themselves over the whole viewport, so an open panel covers the
-region exactly as it covered the old dock. Docking a panel's body into the region's body slot
-instead would mean giving `src/components/ui/sheet.tsx` a top offset for the time section —
-deliberately not done here, because that file is shared by every sheet in the app.
+**Resolved 2026-08-08.** This paragraph used to note that panel sheets portal themselves over
+the whole viewport, so an open panel covered this region and its time marker whole — and that
+fixing it would have meant giving `src/components/ui/sheet.tsx` a top offset, a file shared by
+every sheet in the app. The data panels are now sections of the left dock (see "One dock, no
+sheets"), which is a 19rem overlay on the opposite edge and never covers this region at all.
+`src/components/ui/sheet.tsx` reached zero call sites anywhere in `src/` when the panels
+merged into the dock, and was deleted the same day under the clean-up-as-you-go rule (owner
+call, 2026-08-08 — the "least amount possible" session).
 
 ## Picking a point to query
 
-`SoilPanel` has accepted a `queryPoint` prop since it was written, and nothing ever passed
-one: `PanelManager` mounted the panel without it and no `map.on("click")` handler anywhere
-in `src/` produced one. The point query — SoilGrids properties and intervention
-suitability at a place — was unreachable from the UI.
+`SoilDetails` (then `SoilPanel`) has accepted a `queryPoint` prop since it was written, and
+nothing ever passed one: `PanelManager` mounted the panel without it and no `map.on("click")`
+handler anywhere in `src/` produced one. The point query — SoilGrids properties and
+intervention suitability at a place — was unreachable from the UI.
 
 The wiring is deliberately split three ways rather than put in one component:
 
 - **`map-store` holds the point** (`queryPoint`, `isCapturingQueryPoint`), beside
   `selectedFeatureId`. It is map interaction state, and a store is what lets the click
-  handler, the panel and the pin layer see it without prop-drilling through `MapView`.
-- **`PanelManager` arms capture**, through `useMapQueryPoint(map, isSoilPanelOpen)`. The
-  panel that has a point query to answer is the one that turns clicks into points; capture
-  is not always on, because a click on the map means different things depending on what is
-  open.
+  handler, the section and the pin layer see it without prop-drilling through `MapView`.
+- **The dock's Soil section arms capture**, through `useMapQueryPoint(map, true)` in
+  `DockDetails.tsx`'s `SoilDetailsBody` — mounted only while that section is expanded, so the
+  hook's `active` argument is a constant and the *mounting* is the arming. (`PanelManager`
+  passed `isSoilPanelOpen` for the same reason before the merge.) The section that has a point
+  query to answer is the one that turns clicks into points; capture is not always on, because
+  a click on the map means different things depending on what is open.
 - **`LayerManager` draws the pin**, via `QueryPointLayer`. The map owns its layers, and a
   GeoJSON source rather than a `maplibregl.Marker` so the pin re-attaches on `style.load`
   and survives a basemap swap like every other layer here.
@@ -208,11 +242,11 @@ the store imperatively rather than taking a prop, because that handler is regist
 for the life of the map and must not be re-registered as panels open and close.
 Right-click still reaches the agent popup, so nothing becomes unreachable.
 
-**Three ways to cancel.** Clicking the pin again, pressing Escape, and closing the panel
-(`setCapturingQueryPoint(false)` clears the point as well as disarming). Clicking anywhere
-else *moves* the pin — that is a second question about a second place, not a cancellation.
-`SoilPanel` also renders an explicit "Clear queried point" button, because a pin the user
-cannot obviously get rid of is worse than no pin.
+**Three ways to cancel.** Clicking the pin again, pressing Escape, and unmounting the section —
+collapsing Soil, or closing the dock (`setCapturingQueryPoint(false)` clears the point as well
+as disarming). Clicking anywhere else *moves* the pin — that is a second question about a
+second place, not a cancellation. `SoilDetails` also renders an explicit "Clear queried point"
+button, because a pin the user cannot obviously get rid of is worse than no pin.
 
 ## §soil-moisture
 
@@ -229,8 +263,7 @@ stroking it would draw a hard edge the data does not have.
 
 **Why not deck.gl.** `@deck.gl/core`, `/layers`, `/geo-layers`, `/mapbox` and `/react` are
 dependencies; **`@deck.gl/aggregation-layers` is not**, so `ContourLayer`, `ScreenGridLayer`
-and `HeatmapLayer` are not available without adding one (this is also why
-`layers/HeatmapLayer.tsx` is a `ScatterplotLayer` under the hood). Adding it would not help
+and `HeatmapLayer` are not available without adding one. Adding it would not help
 anyway: those layers aggregate *on the client*, which is the thing the repo rule forbids
 and the thing `geo.soil_moisture_field` exists to avoid. By the time geometry reaches the
 browser it is at most nine polygons, which a MapLibre `fill` — already WebGL — draws for
@@ -238,3 +271,87 @@ free. No custom shader was needed and none was written.
 
 The depth selector in `SoilPanel` is a **depth**, not a second clock: the day always comes
 from the global time slider, as "One time control, projected per layer" above requires.
+
+## §climate-field
+
+`ClimateFieldLayer` draws the NASA POWER lane the same way `SoilFieldLayer` draws ERA5-Land —
+one geojson source, one `fill`, one `line`, plain MapLibre rather than deck.gl — with three
+differences worth knowing before editing it.
+
+**One mounted instance for nine signals**, where the soil fields get one instance per measure.
+Moisture and temperature are two measurements of the same ground a reader may want side by
+side; air temperature and precipitation are nine answers to "what was the weather", only one
+of which can be painted over a cell at a time. So `climate-field` is one registry toggle with
+a signal picker in the dock's Climate section, and nine sources would each hold a stale copy
+of the same lattice.
+
+**The fill colour is written on update, not only at add time.** The ramp is per SIGNAL and one
+instance switches between nine of them in place; `addLayers` short-circuits on an existing
+layer, so without the `setPaintProperty("fill-color", …)` in the update effect a signal switch
+would repaint nothing and leave the previous signal's ramp over the new values. The soil layer
+does not need this because its measure is fixed for the life of the instance.
+
+**The outline opacity is a scalar, not a `case`.** Every feature this lane serves is an
+unaggregated cell, so there is no isoband contour to suppress — the `["case", …, 0, 0.25]`
+expression in the two soil-field outlines has nothing to guard here, and this layer is
+therefore *not* one of the three data-driven-opacity layers listed under "Opacity is a
+multiplier" above. It still goes through `scaleOpacityValue`, so the multiplier rule has one
+implementation rather than two.
+
+The signal picker in `ClimateDetails` is a **signal**, not a second clock, for the same reason
+the soil depth selector is not one.
+
+## §weather
+
+**One toggle, two style layers, one source.** `WeatherLayer` paints `weather-temperature`
+(circles, coloured on the observation's `temperature`) and `weather-wind` (a `text-field`
+symbol: an arrow glyph plus the measured speed) from a single GeoJSON source. The circles are
+added first so the arrows draw over them. Until 2026-08-08 only the arrows existed, so a
+toggle labelled "Wind & Weather" drew wind and nothing else while `temperature` and `humidity`
+were already on every feature and simply never painted.
+
+**Completeness is judged per drawn layer, not per observation.** Each layer filters on its own
+`hasWind` / `hasTemperature` flag, computed once when the collection is built. That is what
+keeps a null out of `windSpeedToColor` and out of the temperature `interpolate` without
+coalescing it to a number the upstream never reported — the flag is the guard, not a
+fallback value. `LayerManager` correspondingly admits an observation that measures wind *or*
+temperature; it used to require windSpeed **and** windDirection **and** temperature **and**
+humidity, which dropped stations that had everything the map draws for the sake of a field
+nothing draws. `getPublishedWeatherForBbox` still applies the stricter all-four rule
+server-side, so today the client rule only ever widens what an already-complete feed can
+draw — it is what lets a relaxation there reach the map without a second edit here.
+
+**The hoverable layer is the circle, not the arrow.** A `text-field` symbol's hit area is the
+glyph run, and `text-allow-overlap: false` collides arrows away exactly where stations are
+dense, so hovering the wind layer would be unreliable precisely where there is most to read.
+`weather-temperature` is in `HOVERABLE_LAYER_IDS`; `weather-wind` is not.
+
+**Units are the ones measured**, and the legend says so: m/s (`weather.ts` sends
+`wind_speed_unit=ms`) and °C (Open-Meteo's `temperature_2m` defaults to Celsius, and nothing
+converts it in between). The ramp is Moreland cool-warm — its arms separate on the blue/red
+axis, which protanopia and deuteranopia both preserve, and its lightness peaks at the neutral
+middle, so the ordering survives greyscale too.
+
+## §soil-survey render shapes
+
+**The survey answers one viewport with one of three shapes, and `SoilSurveyLayer` adds a
+style layer for each**: real SSURGO delineations and unioned drainage-class polygons share the
+`soil-survey-fill`/`soil-survey-outline` pair, and a viewport too wide to union honestly
+arrives as a lattice of counted points drawn by `soil-survey-summary` (circles). One source
+carries all three; the circle layer's `["==", ["get","summary"], true]` filter is what keeps
+them apart, so nothing on the client branches on which tier answered. The fill and line layers
+need no matching filter because MapLibre draws neither on a `Point`.
+
+**All three colour on `drainageClass` off the one `SOIL_SURVEY_DRAINAGE_CLASSES` table**, so
+zooming changes the shape a reader sees and never what a colour means — which is why the
+legend carries one class list plus a `note` about the dots, rather than a second class list
+per tier. Dot *size* is the delineation count; size is not a swatch, so it is legended as
+prose.
+
+Why a lattice at all, rather than more polygons: the union path is bounded at 20,000 input
+rows, and past that its `LIMIT` decides which delineations get merged — so a wider viewport
+would draw a boundary assembled from an arbitrary subset, which is a shape nobody surveyed.
+The service picks on measured viewport *area* (`MAX_SOIL_UNION_SQUARE_DEGREES`, derived from
+the measured ~41,500 delineations per square degree) rather than on the zoom tier, because the
+ceiling that forces the choice is a row budget and rows scale with area. See
+`src/lib/server/services/usda-soil.ts`.

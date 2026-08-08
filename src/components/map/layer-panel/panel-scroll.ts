@@ -23,6 +23,13 @@
  *    padding box.
  * 5. **`overscroll-contain`,** so reaching the end of the list does not chain the scroll into
  *    the map or the document.
+ *
+ * The contract got sharper on 2026-08-08, when the dock absorbed seven right-hand sheets: each
+ * of those bodies arrived with its own `overflow-y-auto max-h-[calc(100vh-8rem)]` wrapper, and
+ * the water report with two `max-h-*` list boxes inside that. Every one was stripped on the way
+ * in. Rule 2 is now a rule about the whole dock, not just its shell -- there is exactly one
+ * scrolling element with eight reports inside it, and `dockSectionDomId` is how a section is
+ * addressed for scrolling within that one element rather than growing a scroller of its own.
  */
 
 /** The dock itself: fixed to the container's edges, and never a scroll container. */

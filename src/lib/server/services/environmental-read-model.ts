@@ -13,6 +13,19 @@ import type {
 } from "@/types/time-slider";
 import { buildIsobands, type FieldSample } from "@/lib/geo/isobands";
 import {
+  CLIMATE_FIELD_ATTRIBUTION,
+  CLIMATE_FIELD_GRID_NAME,
+  CLIMATE_FIELD_SUPPORT_KEY,
+  climateFieldBandFor,
+  climateFieldSignalDefinition,
+  climateFieldSignalName,
+  DEFAULT_AIR_TEMPERATURE_VARIANT,
+  DEFAULT_CLIMATE_FIELD_SIGNAL,
+  type AirTemperatureVariant,
+  type ClimateFieldBand,
+  type ClimateFieldSignalId,
+} from "@/lib/environmental/climate-field";
+import {
   SOIL_FIELD_ATTRIBUTION,
   SOIL_FIELD_SUPPORT_KEY,
   soilFieldBandFor,
@@ -22,6 +35,7 @@ import {
   type SoilFieldDepth,
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
+import { isRenderableWeatherObservation } from "@/lib/environmental/weather";
 import type { GroundwaterWell, WaterGauge } from "./usgs-water";
 import { DROUGHT_CATEGORY_LABELS } from "./usdm-drought";
 import {
@@ -607,20 +621,14 @@ export async function getPublishedWeatherForPoint(
   return null;
 }
 
-/** True when every rendered field was actually measured -- never zero-filled. */
-export function isCompleteWeatherObservation(
-  observation: Pick<
-    PublishedWeatherObservation,
-    "windSpeed" | "windDirection" | "temperature" | "humidity"
-  >
-): boolean {
-  return (
-    observation.windSpeed !== null &&
-    observation.windDirection !== null &&
-    observation.temperature !== null &&
-    observation.humidity !== null
-  );
-}
+/**
+ * Re-exported from the browser-safe rule in `src/lib/environmental/weather.ts` -- the map's
+ * client-side filter shares this exact function, so kept here too because
+ * `src/__tests__/services/weather-read-model.test.ts` imports it from this module. Partial
+ * observations keep their nulls -- the client filters per paint layer; nothing is ever
+ * zero-filled.
+ */
+export { isRenderableWeatherObservation };
 
 /** Object type, not an interface: db.execute requires an implicit index signature. */
 type WeatherDayRow = {
@@ -684,9 +692,9 @@ function toWeatherObservation(
     windDirection: finiteNumber(properties.windDirection),
     precipitation: finiteNumber(properties.precipitation),
   };
-  // Every rendered field must be measured: a partial observation is dropped rather than
+  // A drawable signal must be measured; the rest stay null rather than
   // back-filled with a zero the upstream never reported.
-  return isCompleteWeatherObservation(observation) ? observation : null;
+  return isRenderableWeatherObservation(observation) ? observation : null;
 }
 
 /**
@@ -1586,14 +1594,19 @@ function emptySoilFieldCollection(
  * all predate the window. One index probe per covered cell rather than an aggregate over the
  * signal -- measured on production 2026-08-06, 16 ms PNW-wide against 207 ms for the
  * aggregate the obvious phrasing plans into.
+ *
+ * `normalizedUnit` is bound because this statement reads the BASE table, which the governed
+ * view's gates do not reach -- see the note on `readSoilFieldCells`. Reporting a "newest
+ * reading" the drawing read would then refuse is worse than reporting none.
  */
-async function newestSoilFieldDay(
+export function soilFieldNewestDayStatement(
   bounds: [number, number, number, number],
   signalName: string,
+  normalizedUnit: string,
   throughDay: string
-): Promise<string | null> {
+): SQL {
   const [west, south, east, north] = bounds;
-  const rows = await db.execute<{ newest_day: string | null }>(sql`
+  return sql`
     WITH covered_cell AS (
       SELECT cell.id
       FROM agri.spatial_cell AS cell
@@ -1607,25 +1620,64 @@ async function newestSoilFieldDay(
       WHERE reading.cell_id = covered_cell.id
         AND reading.signal_name = ${signalName}
         AND reading.support_key = ${SOIL_FIELD_SUPPORT_KEY}
-        AND reading.observed_at <= (${throughDay}::date + 1)::timestamptz
+        AND reading.normalized_unit = ${normalizedUnit}
+        AND reading.is_observed
+        AND reading.quality_flag = 'accepted'
+        AND reading.normalized_value IS NOT NULL
+        AND reading.observed_at < ((${throughDay}::date + 1)::timestamp AT TIME ZONE 'UTC')
       ORDER BY reading.observed_at DESC
       LIMIT 1
     ) AS newest
-  `);
+  `;
+}
+
+async function newestSoilFieldDay(
+  bounds: [number, number, number, number],
+  signalName: string,
+  normalizedUnit: string,
+  throughDay: string
+): Promise<string | null> {
+  const rows = await db.execute<{ newest_day: string | null }>(
+    soilFieldNewestDayStatement(bounds, signalName, normalizedUnit, throughDay)
+  );
   return rows[0]?.newest_day ?? null;
 }
 
-/** The stored 0.25-degree cells for one day, drawn as themselves. */
-async function readSoilFieldCells(
+/**
+ * The stored 0.25-degree cells for one day, drawn as themselves.
+ *
+ * THE DAY WINDOW IS HALF-OPEN AND PINNED TO UTC, and both halves of that are load-bearing.
+ * Every row in this lane is stamped at exactly midnight UTC, so an inclusive
+ * `<= (day + 1)` upper bound admits day+1's own reading and `max()` then picks it -- the map
+ * would paint tomorrow's field under a caption promising "at or before" today, for every
+ * archive day except the newest. And `date::timestamptz` resolves through the SESSION
+ * TimeZone, which the view's `observed_day` (derived `AT TIME ZONE 'UTC'`) does not: on a
+ * -06:00 session `'2026-04-30'::date` lands at 06:00Z and the two disagree about which day a
+ * midnight-stamped row belongs to. `(… )::timestamp AT TIME ZONE 'UTC'` is session-independent.
+ *
+ * The age bind carries an explicit `::integer` for a third reason: postgres.js sends a JS
+ * number with no type OID, so PostgreSQL resolves `date - $n` as `date - date -> integer` and
+ * the `::timestamptz` that used to follow was then illegal (SQLSTATE 42846) -- this statement
+ * could not parse at all through the real driver.
+ *
+ * The four governed gates (`is_observed`, `quality_flag`, `normalized_value IS NOT NULL`,
+ * `normalized_unit`) are mirrored into `served` because `served` reads the BASE table while
+ * the SELECT below reads the gated view. Without the mirror, one rejected or wrong-unit row on
+ * the newest day resolves an instant the view holds nothing at, and the whole viewport blanks.
+ */
+export function soilFieldCellsStatement(
   bounds: [number, number, number, number],
   signalName: string,
+  normalizedUnit: string,
   throughDay: string
-): Promise<SoilFieldCellRow[]> {
+): SQL {
   const [west, south, east, north] = bounds;
   // Cell-first, and the view is referenced exactly once so PostgreSQL inlines it. Reading
-  // the view twice (once to resolve the day) makes it a materialized CTE and the same
-  // viewport costs 2.3 s instead of 27 ms -- measured on production 2026-08-06.
-  return db.execute<SoilFieldCellRow>(sql`
+  // the view twice (once to resolve the day) makes it a materialized CTE, which measured
+  // 2.3 s against 27 ms on production 2026-08-06 -- that measurement predates the bound and
+  // gate fixes above, so treat the ratio as the durable finding and the absolute numbers as
+  // needing a re-measure against this statement.
+  return sql`
     WITH covered_cell AS (
       SELECT cell.id
       FROM agri.spatial_cell AS cell
@@ -1637,9 +1689,14 @@ async function readSoilFieldCells(
       WHERE candidate.cell_id IN (SELECT id FROM covered_cell)
         AND candidate.signal_name = ${signalName}
         AND candidate.support_key = ${SOIL_FIELD_SUPPORT_KEY}
-        AND candidate.observed_at <= (${throughDay}::date + 1)::timestamptz
-        AND candidate.observed_at >
-            (${throughDay}::date - ${SOIL_FIELD_MAX_OBSERVATION_AGE_DAYS})::timestamptz
+        AND candidate.normalized_unit = ${normalizedUnit}
+        AND candidate.is_observed
+        AND candidate.quality_flag = 'accepted'
+        AND candidate.normalized_value IS NOT NULL
+        AND candidate.observed_at < ((${throughDay}::date + 1)::timestamp AT TIME ZONE 'UTC')
+        AND candidate.observed_at >=
+            ((${throughDay}::date - ${SOIL_FIELD_MAX_OBSERVATION_AGE_DAYS}::integer)::timestamp
+             AT TIME ZONE 'UTC')
     )
     SELECT
       reading.cell_key,
@@ -1656,7 +1713,18 @@ async function readSoilFieldCells(
       AND reading.observed_at = served.observed_at
     ORDER BY reading.cell_key
     LIMIT ${SOIL_FIELD_MAX_CELLS + 1}
-  `);
+  `;
+}
+
+async function readSoilFieldCells(
+  bounds: [number, number, number, number],
+  signalName: string,
+  normalizedUnit: string,
+  throughDay: string
+): Promise<SoilFieldCellRow[]> {
+  return db.execute<SoilFieldCellRow>(
+    soilFieldCellsStatement(bounds, signalName, normalizedUnit, throughDay)
+  );
 }
 
 /** The averaged, Gaussian-smoothed lattice for one day, straight out of the SQL function. */
@@ -1739,7 +1807,7 @@ export async function getPublishedSoilField(
   const throughDay = day.kind === "historical" ? day.date : serverCurrentDate();
 
   if (granularity === "detail") {
-    const rows = await readSoilFieldCells(bounds, signalName, throughDay);
+    const rows = await readSoilFieldCells(bounds, signalName, definition.unit, throughDay);
     const drawable = rows.slice(0, SOIL_FIELD_MAX_CELLS);
     const features: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>[] = [];
     let observedDay: string | null = null;
@@ -1768,7 +1836,7 @@ export async function getPublishedSoilField(
     }
 
     if (features.length === 0) {
-      const newest = await newestSoilFieldDay(bounds, signalName, throughDay);
+      const newest = await newestSoilFieldDay(bounds, signalName, definition.unit, throughDay);
       return emptySoilFieldCollection(
         newest === null ? "not_published" : "stale",
         granularity,
@@ -1818,7 +1886,7 @@ export async function getPublishedSoilField(
   }
 
   if (samples.length === 0) {
-    const newest = await newestSoilFieldDay(bounds, signalName, throughDay);
+    const newest = await newestSoilFieldDay(bounds, signalName, definition.unit, throughDay);
     return emptySoilFieldCollection(
       newest === null ? "not_published" : "stale",
       granularity,
@@ -1892,6 +1960,428 @@ export async function getPublishedSoilField(
     // The aggregated tiers never read a single cell's provenance row, so the flag is
     // reported from the one place that does -- see the field's own note on the collection.
     sourceClientExposureApproved: false,
+  };
+}
+
+/* ---------------------------------------------------------------------------
+ * Climate field (NASA POWER): daily meteorology and pilot soil wetness
+ *
+ * The second lane served out of the MODEL plane, through `geo.climate_field_observation`
+ * (`drizzle/0020_climate_field.sql`). It reads like the soil field above and differs in
+ * exactly two ways, both forced by the data:
+ *
+ *   - ONE tier, no isobands, no SQL aggregation function. The lattice is 0.5 degrees --
+ *     already coarser than the soil field's regional aggregate -- and 397 cells is a trivial
+ *     payload at any zoom. Aggregating it would smooth a grid that is already the coarsest
+ *     honest thing we hold.
+ *   - The read DEDUPES. Overlapping archive releases left ~47 k (cell, signal, day) keys with
+ *     two rows apiece; newest `retrieved_at` wins, tiebroken on the observation id.
+ *
+ * `lib/environmental/climate-field.ts` holds everything that varies by signal. See
+ * `src/lib/server/AGENTS.md` §climate-field.
+ * ------------------------------------------------------------------------- */
+
+/** Cells one viewport may draw; probed one over to detect truncation. */
+export const CLIMATE_FIELD_MAX_CELLS = 512;
+
+/**
+ * How far back the newest reading may be and still be served for a requested day.
+ *
+ * The same 30 days the soil field and vegetation use, and for the same reason: an archive
+ * lands in batches, so refusing anything but an exact day-match would blank the layer between
+ * runs. A day older than this is reported as `stale` with the day it found, never drawn
+ * wearing the requested date.
+ */
+export const CLIMATE_FIELD_MAX_OBSERVATION_AGE_DAYS = 30;
+
+/**
+ * One drawn cell's properties. A type alias rather than an interface, for the same reason
+ * `SoilFieldFeatureProperties` is one: only an alias picks up the implicit index signature
+ * GeoJSON's `properties` slot needs.
+ */
+export type ClimateFieldFeatureProperties = {
+  value: number;
+  unit: string;
+  bandIndex: number;
+  bandLabel: string;
+  /** The day this cell's reading was taken; the collection's `observedDay` echoes it. */
+  observedDay: string;
+  /**
+   * Always false. Carried anyway so a client reading a climate feature and a soil feature can
+   * ask the same question of both -- this lane has no aggregated tier to answer `true` from.
+   */
+  aggregated: boolean;
+  /** The producer's grid key. */
+  cellKey: string | null;
+  /** Fraction of the cell the reading covers. */
+  coverageFraction: number | null;
+};
+
+export interface PublishedClimateFieldCollection
+  extends GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon> {
+  availability: "published" | "unavailable";
+  /**
+   * `stale` means the lane covers this viewport but its newest reading predates the window
+   * ending at the requested day; `not_forecastable` means the day itself is in the future.
+   */
+  reason: "not_published" | "stale" | "not_forecastable" | null;
+  /**
+   * Always `"detail"`: stored cells are served as themselves at every zoom. Published in the
+   * shared vocabulary anyway, so a client can read this collection and a soil one alike.
+   */
+  granularity: ZoomGranularity;
+  /** Which quantity was read; echoed so a client cannot mis-attribute a cached collection. */
+  signal: ClimateFieldSignalId;
+  /** Which daily statistic; only `air-temperature` varies, the rest echo the default. */
+  variant: AirTemperatureVariant;
+  unit: string;
+  /** Published wherever the values are drawn. */
+  attribution: string;
+  /** The day actually drawn, which is not always the day asked for. */
+  observedDay: string | null;
+  /** The day asked for, so the client can say when the two differ. */
+  requestedDay: string;
+  /** The newest day the lane holds here, published only when nothing could be drawn. */
+  newestAvailableDay: string | null;
+  /** Cells behind the answer. */
+  cellCount: number;
+  /** More cells intersect the viewport than the cap allows. */
+  truncated: boolean;
+  maxCellCount: number;
+  maxObservationAgeDays: number;
+  /** The band table the features were classified with, so the legend cannot drift. */
+  bands: readonly ClimateFieldBand[];
+  /**
+   * `agri.data_source.allowed_client_exposure` for `nasa-power-daily`, published rather than
+   * enforced -- exactly as `PublishedSoilFieldCollection` publishes ERA5-Land's. It is
+   * `false`, but that is the server DEFAULT every generically-ingested source gets, not a
+   * decision anybody made about this lane. Surfacing it keeps the disagreement visible
+   * instead of resolving it silently in either direction; flipping the column in the
+   * warehouse is the owner's call, not this reader's.
+   */
+  sourceClientExposureApproved: boolean;
+}
+
+/** Object type, not an interface: db.execute requires an implicit index signature. */
+type ClimateFieldCellRow = {
+  cell_key: string | null;
+  geometry: string | null;
+  normalized_value: number | string | null;
+  observed_day: string | null;
+  coverage_fraction: number | string | null;
+  allowed_client_exposure: boolean | null;
+};
+
+/** Which quantity to read, which daily statistic of it, and the slider's day. */
+export interface ClimateFieldReadOptions {
+  signal?: ClimateFieldSignalId;
+  variant?: AirTemperatureVariant;
+  date?: string;
+}
+
+function emptyClimateFieldCollection(
+  reason: NonNullable<PublishedClimateFieldCollection["reason"]>,
+  signal: ClimateFieldSignalId,
+  variant: AirTemperatureVariant,
+  requestedDay: string,
+  newestAvailableDay: string | null
+): PublishedClimateFieldCollection {
+  const definition = climateFieldSignalDefinition(signal);
+  return {
+    type: "FeatureCollection",
+    features: [],
+    availability: "unavailable",
+    reason,
+    granularity: "detail",
+    signal,
+    variant,
+    unit: definition.unit,
+    attribution: CLIMATE_FIELD_ATTRIBUTION,
+    observedDay: null,
+    requestedDay,
+    newestAvailableDay,
+    cellCount: 0,
+    truncated: false,
+    maxCellCount: CLIMATE_FIELD_MAX_CELLS,
+    maxObservationAgeDays: CLIMATE_FIELD_MAX_OBSERVATION_AGE_DAYS,
+    bands: definition.bands,
+    sourceClientExposureApproved: false,
+  };
+}
+
+/**
+ * The newest day the lane holds for this viewport at or before `throughDay`.
+ *
+ * Paid for only when nothing could be drawn, and only to tell two very different answers
+ * apart: a viewport the lattice does not cover at all, versus one it covers whose readings all
+ * predate the window. One index probe per covered cell rather than an aggregate over the
+ * signal -- the same shape, and for the same measured reason, as `newestSoilFieldDay`.
+ *
+ * Half-open, UTC-pinned and gated for the reasons spelled out on `readClimateFieldCells`. The
+ * gates matter most HERE: this is the statement whose answer the panel prints as "the newest
+ * reading for this view is <day>", and an ungated read would name a day the drawing read
+ * provably refuses.
+ */
+export function climateFieldNewestDayStatement(
+  bounds: [number, number, number, number],
+  signalName: string,
+  normalizedUnit: string,
+  throughDay: string
+): SQL {
+  const [west, south, east, north] = bounds;
+  return sql`
+    WITH covered_cell AS (
+      SELECT cell.id
+      FROM agri.spatial_cell AS cell
+      WHERE cell.grid_name = ${CLIMATE_FIELD_GRID_NAME}
+        AND cell.geometry && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
+    )
+    SELECT to_char(max((newest.observed_at AT TIME ZONE 'UTC')::date), 'YYYY-MM-DD') AS newest_day
+    FROM covered_cell
+    CROSS JOIN LATERAL (
+      SELECT reading.observed_at
+      FROM agri.signal_observation AS reading
+      WHERE reading.cell_id = covered_cell.id
+        AND reading.signal_name = ${signalName}
+        AND reading.support_key = ${CLIMATE_FIELD_SUPPORT_KEY}
+        AND reading.normalized_unit = ${normalizedUnit}
+        AND reading.is_observed
+        AND reading.quality_flag = 'accepted'
+        AND reading.normalized_value IS NOT NULL
+        AND reading.observed_at < ((${throughDay}::date + 1)::timestamp AT TIME ZONE 'UTC')
+      ORDER BY reading.observed_at DESC
+      LIMIT 1
+    ) AS newest
+  `;
+}
+
+async function newestClimateFieldDay(
+  bounds: [number, number, number, number],
+  signalName: string,
+  normalizedUnit: string,
+  throughDay: string
+): Promise<string | null> {
+  const rows = await db.execute<{ newest_day: string | null }>(
+    climateFieldNewestDayStatement(bounds, signalName, normalizedUnit, throughDay)
+  );
+  return rows[0]?.newest_day ?? null;
+}
+
+/**
+ * The stored 0.5-degree cells for one day, one per cell.
+ *
+ * Cell-first, and `geo.climate_field_observation` is referenced exactly once so PostgreSQL
+ * inlines it. Reading the view twice in one statement (once to resolve the day, once to read
+ * it) makes it a materialized CTE, which cost the soil field 2.3 s against 27 ms on the same
+ * viewport -- see `src/lib/server/AGENTS.md` §soil-field. The day therefore comes from the
+ * base table.
+ *
+ * `DISTINCT ON (cell_id)` is what resolves this lane's duplicates: overlapping archive
+ * releases left two rows on ~47 k (cell, signal, day) keys, and drawing whichever the planner
+ * emitted first would make the same viewport paint differently between runs. Newest
+ * `retrieved_at` wins; the observation id breaks a tie between two releases retrieved in the
+ * same instant.
+ *
+ * THE DAY WINDOW IS HALF-OPEN AND PINNED TO UTC. Every NASA POWER row is stamped at exactly
+ * midnight UTC, so an inclusive `<= (day + 1)` upper bound admits day+1's own reading and
+ * `max()` picks it -- the slider on 2026-04-29 would paint 2026-04-30's field under a caption
+ * promising "the newest reading at or before 2026-04-29", for every archive day except the
+ * newest. Strict `<` is what makes the caption true. And `date::timestamptz` resolves through
+ * the SESSION TimeZone while this lane's `observed_day` is derived `AT TIME ZONE 'UTC'`: on a
+ * -06:00 session `'2026-04-30'::date - 30` lands at 2026-03-31T06:00Z, so the window and the
+ * day label disagree about where a midnight-stamped row falls. `(…)::timestamp AT TIME ZONE
+ * 'UTC'` is session-independent and matches the view.
+ *
+ * The age bind carries an explicit `::integer` because postgres.js sends a JS number with NO
+ * type OID: PostgreSQL then resolves `date - $n` as `date - date -> integer`, and the
+ * `::timestamptz` this used to end in was illegal on that integer (SQLSTATE 42846). The
+ * statement did not parse at all through the real driver stack.
+ *
+ * The four governed gates are mirrored into `served` because `served` reads the BASE table
+ * while `deduped` reads the gated view. Un-mirrored, a single rejected, imputed, null-valued
+ * or wrong-unit row on the newest day resolves an instant the view holds nothing at, and the
+ * entire viewport blanks while the panel reports a "newest reading" that cannot be drawn.
+ */
+export function climateFieldCellsStatement(
+  bounds: [number, number, number, number],
+  signalName: string,
+  normalizedUnit: string,
+  throughDay: string
+): SQL {
+  const [west, south, east, north] = bounds;
+  return sql`
+    WITH covered_cell AS (
+      SELECT cell.id
+      FROM agri.spatial_cell AS cell
+      WHERE cell.grid_name = ${CLIMATE_FIELD_GRID_NAME}
+        AND cell.geometry && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
+    ),
+    served AS (
+      SELECT max(candidate.observed_at) AS observed_at
+      FROM agri.signal_observation AS candidate
+      WHERE candidate.cell_id IN (SELECT id FROM covered_cell)
+        AND candidate.signal_name = ${signalName}
+        AND candidate.support_key = ${CLIMATE_FIELD_SUPPORT_KEY}
+        AND candidate.normalized_unit = ${normalizedUnit}
+        AND candidate.is_observed
+        AND candidate.quality_flag = 'accepted'
+        AND candidate.normalized_value IS NOT NULL
+        AND candidate.observed_at < ((${throughDay}::date + 1)::timestamp AT TIME ZONE 'UTC')
+        AND candidate.observed_at >=
+            ((${throughDay}::date - ${CLIMATE_FIELD_MAX_OBSERVATION_AGE_DAYS}::integer)::timestamp
+             AT TIME ZONE 'UTC')
+    ),
+    deduped AS (
+      SELECT DISTINCT ON (reading.cell_id)
+        reading.cell_key,
+        ST_AsGeoJSON(reading.cell_geometry) AS geometry,
+        reading.normalized_value,
+        to_char(reading.observed_day, 'YYYY-MM-DD') AS observed_day,
+        reading.coverage_fraction,
+        reading.allowed_client_exposure
+      FROM geo.climate_field_observation AS reading
+      CROSS JOIN served
+      WHERE reading.cell_id IN (SELECT id FROM covered_cell)
+        AND reading.signal_name = ${signalName}
+        AND reading.support_key = ${CLIMATE_FIELD_SUPPORT_KEY}
+        AND reading.observed_at = served.observed_at
+      ORDER BY
+        reading.cell_id,
+        reading.release_retrieved_at DESC,
+        reading.observation_id DESC
+    )
+    SELECT
+      deduped.cell_key,
+      deduped.geometry,
+      deduped.normalized_value,
+      deduped.observed_day,
+      deduped.coverage_fraction,
+      deduped.allowed_client_exposure
+    FROM deduped
+    ORDER BY deduped.cell_key
+    LIMIT ${CLIMATE_FIELD_MAX_CELLS + 1}
+  `;
+}
+
+async function readClimateFieldCells(
+  bounds: [number, number, number, number],
+  signalName: string,
+  normalizedUnit: string,
+  throughDay: string
+): Promise<ClimateFieldCellRow[]> {
+  return db.execute<ClimateFieldCellRow>(
+    climateFieldCellsStatement(bounds, signalName, normalizedUnit, throughDay)
+  );
+}
+
+/**
+ * Reads one NASA POWER climate field -- a meteorology signal or one of the three pilot
+ * soil-wetness signals -- for a viewport, on ONE day.
+ *
+ * ONE shape at every zoom: the stored 0.5-degree cells, one feature each, unaggregated and
+ * unsmoothed. The soil field's isoband tiers exist because a 0.25-degree lattice ships 1,568
+ * squares PNW-wide; this lattice holds 397 cells in total, so there is nothing to aggregate
+ * away and a coarser average would only blur a grid that is already the coarsest honest thing
+ * the lane holds. That is why this procedure takes no `zoom`.
+ *
+ * Nothing is interpolated across missing coverage: a cell the lane has not filled is absent
+ * rather than averaged in. That matters most for the three soil-wetness signals, which cover
+ * 4 cells of the 397 -- a viewport can legitimately hold measured air temperature and no soil
+ * wetness at all, which must read as `not_published` and never as a value.
+ *
+ * @param date optional YYYY-MM-DD from the time slider -- the single source of truth for the
+ *   day drawn. Omitted means the live edge. A future day returns empty: an observation archive
+ *   has not run it. A past day reads the newest reading at or before it, within
+ *   `CLIMATE_FIELD_MAX_OBSERVATION_AGE_DAYS`, and reports which day that turned out to be.
+ */
+export async function getPublishedClimateField(
+  bbox: string,
+  options: ClimateFieldReadOptions = {}
+): Promise<PublishedClimateFieldCollection> {
+  const bounds = parseBbox(bbox);
+  const signal = options.signal ?? DEFAULT_CLIMATE_FIELD_SIGNAL;
+  const variant = options.variant ?? DEFAULT_AIR_TEMPERATURE_VARIANT;
+  const definition = climateFieldSignalDefinition(signal);
+  // Resolved through the signal's own variant table, so a variant only air temperature offers
+  // degrades to that signal's single reading rather than querying a name that cannot exist.
+  const signalName = climateFieldSignalName(signal, variant);
+
+  const day = resolveRequestedObservationDay(options.date);
+  if (day.kind === "unobserved") {
+    return emptyClimateFieldCollection("not_forecastable", signal, variant, day.date, null);
+  }
+  const throughDay = day.kind === "historical" ? day.date : serverCurrentDate();
+
+  const rows = await readClimateFieldCells(
+    bounds,
+    signalName,
+    definition.unit,
+    throughDay
+  );
+  const drawable = rows.slice(0, CLIMATE_FIELD_MAX_CELLS);
+  const features: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>[] = [];
+  let observedDay: string | null = null;
+  let exposureApproved = false;
+
+  for (const row of drawable) {
+    const value = finiteNumber(row.normalized_value);
+    if (row.geometry === null || value === null || row.observed_day === null) continue;
+    const band = climateFieldBandFor(signal, value);
+    observedDay = row.observed_day;
+    exposureApproved = row.allowed_client_exposure === true;
+    const properties: ClimateFieldFeatureProperties = {
+      value,
+      unit: definition.unit,
+      bandIndex: band.bandIndex,
+      bandLabel: band.label,
+      observedDay: row.observed_day,
+      aggregated: false,
+      cellKey: row.cell_key,
+      coverageFraction: finiteNumber(row.coverage_fraction),
+    };
+    features.push({
+      type: "Feature",
+      id: row.cell_key ?? undefined,
+      geometry: JSON.parse(row.geometry) as GeoJSON.Polygon | GeoJSON.MultiPolygon,
+      properties,
+    });
+  }
+
+  if (features.length === 0) {
+    const newest = await newestClimateFieldDay(
+      bounds,
+      signalName,
+      definition.unit,
+      throughDay
+    );
+    return emptyClimateFieldCollection(
+      newest === null ? "not_published" : "stale",
+      signal,
+      variant,
+      throughDay,
+      newest
+    );
+  }
+
+  return {
+    type: "FeatureCollection",
+    features,
+    availability: "published",
+    reason: null,
+    granularity: "detail",
+    signal,
+    variant,
+    unit: definition.unit,
+    attribution: CLIMATE_FIELD_ATTRIBUTION,
+    observedDay,
+    requestedDay: throughDay,
+    newestAvailableDay: null,
+    cellCount: features.length,
+    truncated: rows.length > CLIMATE_FIELD_MAX_CELLS,
+    maxCellCount: CLIMATE_FIELD_MAX_CELLS,
+    maxObservationAgeDays: CLIMATE_FIELD_MAX_OBSERVATION_AGE_DAYS,
+    bands: definition.bands,
+    sourceClientExposureApproved: exposureApproved,
   };
 }
 
@@ -2070,15 +2560,21 @@ const DEFAULT_TEMPORAL_KIND: TemporalKind = "snapshot";
  * the resulting empty map would read as a bug rather than as an absent capability.
  * When a forecast producer lands, this is the single place that opens the horizon.
  *
- * CORRECTED 2026-08-06. This note used to justify the zero by saying
- * "agri.signal_observation and the historical_* tables are empty". That is no longer true
- * and reading it as still true would be a serious mistake: measured against production,
- * `agri.signal_observation` holds the ERA5-Land soil lane (soil_water_content_layer_1/_2/_3
- * and soil_temperature_level_1..4, daily 2022-04-30..2026-04-30 over a 1,568-cell
- * 0.25-degree PNW lattice) plus NASA POWER weather and soil-wetness signals -- millions of
- * rows, served by `getPublishedSoilField` above. None of it is a forecast: every row
- * carries `is_observed = true` and an `observed_at` in the past, which is why the horizon
- * below is still correctly zero. The horizon is about forecasts, not about emptiness.
+ * CORRECTED 2026-08-06, and again 2026-08-08. This note once justified the zero by saying
+ * "agri.signal_observation and the historical_* tables are empty". That is not true and
+ * reading it as still true would be a serious mistake: measured against production,
+ * `agri.signal_observation` holds two lanes -- the ERA5-Land soil lane
+ * (soil_water_content_layer_1/_2/_3, soil_temperature_level_1..4 and
+ * vapor_pressure_deficit, daily 2022-04-30..2026-04-30 over a 1,568-cell 0.25-degree PNW
+ * lattice), served by `getPublishedSoilField` above; and the NASA POWER lane (eight
+ * meteorology signals plus three pilot soil-wetness signals, daily over a 397-cell
+ * 0.5-degree lattice), served by `getPublishedClimateField` above. The 2026-08-06 revision
+ * of this note claimed the second lane was served by the first reader; it never was, and
+ * could not be -- `geo.soil_field_observation`'s governed VALUES list structurally excludes
+ * every NASA POWER signal, which is exactly why `geo.climate_field_observation` had to
+ * exist. None of either lane is a forecast: every row carries `is_observed = true` and an
+ * `observed_at` in the past, which is why the horizon below is still correctly zero. The
+ * horizon is about forecasts, not about emptiness.
  */
 const FORECAST_HORIZON_DAYS = 0;
 

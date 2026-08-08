@@ -1,0 +1,12 @@
+{
+  "id": "ml_recommendation_models_20260808",
+  "description": "Expert-label plane, k-NN analog forecasting, conformal self-correction, and two literature-grounded recommendation models (species fit, strategy selection)",
+  "type": "feature",
+  "created_at": "2026-08-08T00:00:00Z",
+  "status": "active",
+  "depends_on": [
+    "seasonal_forecast_feedback_20260726",
+    "strategy_selection_governance_20260726",
+    "rag_recommendation_engine_20260324"
+  ]
+}

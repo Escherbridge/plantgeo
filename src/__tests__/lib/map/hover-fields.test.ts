@@ -28,6 +28,13 @@ describe("HOVERABLE_LAYER_IDS", () => {
       "interventions-points",
       "watersheds-fill",
       "soil-survey-fill",
+      // The survey's zoomed-out shape is a lattice of counted points, and a fill layer
+      // cannot hit-test a Point -- the same reason "interventions-points" is listed above.
+      "soil-survey-summary",
+      // The weather toggle's hoverable layer is the temperature circle, not the wind
+      // arrows: "weather-wind" is a text symbol whose hit area is the glyph run and whose
+      // placement collides away at density.
+      "weather-temperature",
       "building-footprints",
       "osm-roads",
       "osm-waterways",
@@ -450,10 +457,84 @@ describe("formatHoverContent: osm-waterways", () => {
   });
 });
 
+describe("formatHoverContent: weather-temperature", () => {
+  it("formats a full observation in the units the feed measures in", () => {
+    const content = formatHoverContent("weather-temperature", {
+      temperature: 21.37,
+      windSpeed: 3.42,
+      windDirection: 214.6,
+      humidity: 48.2,
+      observedAt: new Date(Date.now() - 2 * 3600_000).toISOString(),
+    });
+    // No station name: the feed is a grid sample, not a named site.
+    expect(content?.title).toBe("Weather observation");
+    expect(content?.lines).toContain("Temperature: 21.4 °C");
+    expect(content?.lines).toContain("Wind: 3.4 m/s from 215°");
+    expect(content?.lines).toContain("Humidity: 48%");
+    expect(content?.lines.find((l) => l.startsWith("Observed"))).toMatch(/2h ago/);
+    assertNoSentinels(content);
+  });
+
+  it("captions a station that measured only temperature, without inventing a wind", () => {
+    const content = formatHoverContent("weather-temperature", {
+      temperature: -4.2,
+      windSpeed: null,
+      windDirection: null,
+      humidity: null,
+    });
+    expect(content?.lines).toEqual(["Temperature: -4.2 °C"]);
+    assertNoSentinels(content);
+  });
+
+  it("omits a direction the observation did not carry rather than the whole wind", () => {
+    const content = formatHoverContent("weather-temperature", {
+      temperature: 10,
+      windSpeed: 2,
+      windDirection: null,
+    });
+    expect(content?.lines).toContain("Wind: 2.0 m/s");
+  });
+
+  it("shows nothing for a feature carrying no measurement at all", () => {
+    expect(formatHoverContent("weather-temperature", {})).toBeNull();
+  });
+});
+
+describe("formatHoverContent: soil-survey-summary", () => {
+  it("captions a lattice cell as a count over ground, never as a surveyed unit", () => {
+    const content = formatHoverContent("soil-survey-summary", {
+      aggregated: true,
+      summary: true,
+      drainageClass: "somewhat-poorly-drained",
+      mapUnitCount: 1240,
+      hydricFraction: 0.25,
+      cellDegrees: 0.5,
+    });
+    expect(content?.title).toBe("Soil survey coverage");
+    expect(content?.lines).toContain("1,240 map units surveyed in this cell");
+    expect(content?.lines).toContain("Most common drainage: Somewhat poorly drained");
+    expect(content?.lines).toContain("Hydric share: 25%");
+    expect(content?.lines).toContain("Cell: 0.5° square");
+    // Structurally unable to pass as a surveyed unit, exactly as the union tier is.
+    expect(content?.title).not.toBe("Soil map unit");
+    assertNoSentinels(content);
+  });
+
+  it("still reads an averaged polygon through the same formatter", () => {
+    const content = formatHoverContent("soil-survey-summary", {
+      aggregated: true,
+      drainageClass: "well-drained",
+      mapUnitCount: 6,
+    });
+    expect(content?.title).toBe("Soil drainage average");
+  });
+});
+
 describe("formatHoverContent: unknown layers", () => {
   it("returns null for any layer id not in the hover contract", () => {
     expect(formatHoverContent("buildings-3d", { height: 10 })).toBeNull();
-    expect(formatHoverContent("weather-temperature", { temp: 70 })).toBeNull();
+    // The wind arrows are drawn but not hoverable; the temperature dot under them is.
+    expect(formatHoverContent("weather-wind", { windSpeed: 3 })).toBeNull();
     expect(formatHoverContent("", {})).toBeNull();
   });
 });
