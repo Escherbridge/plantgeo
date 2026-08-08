@@ -42,6 +42,18 @@ export const CONDITION_COLORS: Record<string, string> = {
   unknown: "#616161",
 };
 
+/**
+ * Groundwater wells are coloured by water-level trend, not by the condition vocabulary
+ * above: a well reports a direction of change, a stream gauge reports a flow percentile.
+ * The last entry is the fallback every unrecognised trend takes.
+ */
+export const WELL_TREND_COLORS = {
+  rising: "#2196f3",
+  stable: "#4caf50",
+  declining: "#ff9800",
+  unknown: "#f44336",
+} as const;
+
 const TREND_ARROW: Record<string, string> = {
   rising: "\u2191",
   stable: "\u2192",
@@ -104,12 +116,12 @@ function buildWellGeoJSON(wells: GroundwaterWell[]): GeoJSON.FeatureCollection {
         trend: w.trend,
         color:
           w.trend === "rising"
-            ? "#2196f3"
+            ? WELL_TREND_COLORS.rising
             : w.trend === "stable"
-              ? "#4caf50"
+              ? WELL_TREND_COLORS.stable
               : w.trend === "declining"
-                ? "#ff9800"
-                : "#f44336",
+                ? WELL_TREND_COLORS.declining
+                : WELL_TREND_COLORS.unknown,
         updatedAt: w.updatedAt,
       },
     })),

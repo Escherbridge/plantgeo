@@ -1,8 +1,62 @@
 import type {
   LayerSpecification,
   FillExtrusionLayerSpecification,
+  DataDrivenPropertyValueSpecification,
 } from "@maplibre/maplibre-gl-style-spec";
 import { styleBackedLayerEntries } from "@/lib/map/layer-registry";
+
+/**
+ * One arm of a `match` paint expression: the feature value it matches, the colour it
+ * paints and the caption the legend gives that colour. Exported alongside each class table
+ * below so `src/lib/map/layer-legends.ts` legends the colours the map actually draws,
+ * rather than a second hand-kept copy of them.
+ */
+export interface StyleClass {
+  /** The property value this arm matches. */
+  value: string;
+  color: string;
+  label: string;
+}
+
+/** One stop of an `interpolate` paint ramp, with the caption for its end of the bar. */
+export interface StyleRampStop {
+  value: number;
+  color: string;
+  label: string;
+}
+
+/**
+ * The neutral grey every classified fill falls back to. Shared rather than repeated: it
+ * means "the producer reported no class", and each layer captions that in its own words.
+ */
+export const UNCLASSIFIED_FILL_COLOR = "#9ca3af";
+
+/** A `match` on one property, built from a class table so the legend reads what is painted. */
+function matchClasses(
+  property: string,
+  classes: readonly StyleClass[],
+  fallbackColor: string
+): DataDrivenPropertyValueSpecification<string> {
+  return [
+    "match",
+    ["get", property],
+    ...classes.flatMap((styleClass) => [styleClass.value, styleClass.color]),
+    fallbackColor,
+  ] as unknown as DataDrivenPropertyValueSpecification<string>;
+}
+
+/** A linear `interpolate` over one numeric property, built from a stop table. */
+function interpolateStops(
+  property: string,
+  stops: readonly StyleRampStop[]
+): DataDrivenPropertyValueSpecification<string> {
+  return [
+    "interpolate",
+    ["linear"],
+    ["get", property],
+    ...stops.flatMap((stop) => [stop.value, stop.color]),
+  ] as unknown as DataDrivenPropertyValueSpecification<string>;
+}
 
 const MARTIN_SOURCE = "martin-dynamic";
 // Table-backed OSM tiles live in a separate composite: mixing them with the
@@ -66,6 +120,21 @@ export function buildings3dLayer(
 
 // Layers below are hidden by default and revealed via their activeLayers
 // toggles (see STYLE_LAYER_TOGGLE_MAP, synced in LayerManager).
+// "severity" is derived from the WFIGS percentContained field at ingestion (wfigs.py
+// perimeter_severity, whose cut points these captions restate: <25 / <50 / <75 / the rest).
+// Perimeters whose containment is not reported render neutral grey rather than borrowing a
+// severity colour, which is what the fallback caption below names.
+export const FIRE_PERIMETER_SEVERITY_CLASSES: readonly StyleClass[] = [
+  { value: "critical", color: "#dc2626", label: "Critical — under 25% contained" },
+  { value: "high", color: "#ea580c", label: "High — 25 to 50%" },
+  { value: "moderate", color: "#f59e0b", label: "Moderate — 50 to 75%" },
+  { value: "low", color: "#fbbf24", label: "Low — 75% or more" },
+];
+
+export const FIRE_PERIMETER_UNCLASSIFIED_LABEL = "Containment not reported";
+
+export const FIRE_PERIMETER_OUTLINE_COLOR = "#dc2626";
+
 export const firePerimetersLayer: LayerSpecification = {
   id: "fire-perimeters",
   type: "fill",
@@ -74,22 +143,11 @@ export const firePerimetersLayer: LayerSpecification = {
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
-    // "severity" is derived from the WFIGS percentContained field at ingestion
-    // (see runFirePerimetersIngestionJob). Perimeters whose containment is not
-    // reported render neutral grey rather than borrowing a severity colour.
-    "fill-color": [
-      "match",
-      ["get", "severity"],
-      "critical",
-      "#dc2626",
-      "high",
-      "#ea580c",
-      "moderate",
-      "#f59e0b",
-      "low",
-      "#fbbf24",
-      "#9ca3af",
-    ],
+    "fill-color": matchClasses(
+      "severity",
+      FIRE_PERIMETER_SEVERITY_CLASSES,
+      UNCLASSIFIED_FILL_COLOR
+    ),
     "fill-opacity": 0.5,
   },
 };
@@ -102,7 +160,7 @@ export const firePerimetersOutlineLayer: LayerSpecification = {
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
-    "line-color": "#dc2626",
+    "line-color": FIRE_PERIMETER_OUTLINE_COLOR,
     "line-width": 2,
   },
 };
@@ -116,6 +174,16 @@ export const firePerimetersOutlineLayer: LayerSpecification = {
 // migration runs, the live function still emits sensor_type/status/name, none
 // of which any producer populates, and this layer keeps rendering every
 // station in the neutral grey fallback. See src/components/map/AGENTS.md.
+export const SENSOR_NETWORK_CLASSES: readonly StyleClass[] = [
+  { value: "ASOS", color: "#0ea5e9", label: "ASOS" },
+  { value: "ASOS-HFM", color: "#0284c7", label: "ASOS-HFM" },
+  { value: "RAWS", color: "#f59e0b", label: "RAWS" },
+  { value: "NonFedAWOS", color: "#22c55e", label: "NonFedAWOS" },
+];
+
+/** Every station reads this until 0010 reaches production -- see the note above. */
+export const SENSOR_UNCLASSIFIED_LABEL = "Network not reported";
+
 export const sensorsLayer: LayerSpecification = {
   id: "sensors",
   type: "circle",
@@ -124,19 +192,7 @@ export const sensorsLayer: LayerSpecification = {
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
-    "circle-color": [
-      "match",
-      ["get", "network"],
-      "ASOS",
-      "#0ea5e9",
-      "ASOS-HFM",
-      "#0284c7",
-      "RAWS",
-      "#f59e0b",
-      "NonFedAWOS",
-      "#22c55e",
-      "#9ca3af",
-    ],
+    "circle-color": matchClasses("network", SENSOR_NETWORK_CLASSES, UNCLASSIFIED_FILL_COLOR),
     "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 2, 8, 4, 12, 6],
     "circle-stroke-width": 1,
     "circle-stroke-color": "#ffffff",
@@ -145,9 +201,20 @@ export const sensorsLayer: LayerSpecification = {
 };
 
 // Oregon OEM fire-evacuation areas. "severity" is deterministically derived from
-// evacuationLevel at ingestion (evacuation_zones.py EVACUATION_LEVEL_SEVERITIES)
-// and reuses fire-perimeters' vocabulary minus "low" -- Oregon's scale has three
-// levels, not four.
+// evacuationLevel at ingestion (evacuation_zones.py EVACUATION_LEVEL_SEVERITIES) and
+// reuses fire-perimeters' vocabulary minus "low" -- Oregon's scale has three levels, not
+// four. The captions run the mapping back the other way (3 -> critical, 2 -> high, 1 ->
+// moderate) because the level number is what a reader sees on a road sign.
+export const EVACUATION_SEVERITY_CLASSES: readonly StyleClass[] = [
+  { value: "critical", color: "#dc2626", label: "Level 3 — Go now" },
+  { value: "high", color: "#ea580c", label: "Level 2 — Be set" },
+  { value: "moderate", color: "#f59e0b", label: "Level 1 — Be ready" },
+];
+
+export const EVACUATION_UNCLASSIFIED_LABEL = "Level not reported";
+
+export const EVACUATION_OUTLINE_COLOR = "#dc2626";
+
 export const evacuationZonesLayer: LayerSpecification = {
   id: "evacuation-zones",
   type: "fill",
@@ -156,17 +223,11 @@ export const evacuationZonesLayer: LayerSpecification = {
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
-    "fill-color": [
-      "match",
-      ["get", "severity"],
-      "critical",
-      "#dc2626",
-      "high",
-      "#ea580c",
-      "moderate",
-      "#f59e0b",
-      "#9ca3af",
-    ],
+    "fill-color": matchClasses(
+      "severity",
+      EVACUATION_SEVERITY_CLASSES,
+      UNCLASSIFIED_FILL_COLOR
+    ),
     "fill-opacity": 0.45,
   },
 };
@@ -179,7 +240,7 @@ export const evacuationZonesOutlineLayer: LayerSpecification = {
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
-    "line-color": "#dc2626",
+    "line-color": EVACUATION_OUTLINE_COLOR,
     "line-width": 1.5,
   },
 };
@@ -200,6 +261,18 @@ export const evacuationZonesOutlineLayer: LayerSpecification = {
 // first bucket. Ramp runs amber to deep maroon, reading as scar depth, and shares its
 // palette with fire-perimeters above without reusing that layer's containment vocabulary.
 // Scars with no reported acreage stay neutral grey rather than borrowing the low end.
+export const BURN_SEVERITY_ACRES_STOPS: readonly StyleRampStop[] = [
+  { value: 1000, color: "#fbbf24", label: "1k acres" },
+  { value: 5000, color: "#f59e0b", label: "5k" },
+  { value: 25000, color: "#ea580c", label: "25k" },
+  { value: 100000, color: "#b91c1c", label: "100k" },
+  { value: 400000, color: "#7f1d1d", label: "400k acres" },
+];
+
+export const BURN_SEVERITY_UNCLASSIFIED_LABEL = "Acreage not reported";
+
+export const BURN_SEVERITY_OUTLINE_COLOR = "#7f1d1d";
+
 export const burnSeverityLayer: LayerSpecification = {
   id: "burn-severity",
   type: "fill",
@@ -211,23 +284,9 @@ export const burnSeverityLayer: LayerSpecification = {
     "fill-color": [
       "case",
       ["has", "acres"],
-      [
-        "interpolate",
-        ["linear"],
-        ["get", "acres"],
-        1000,
-        "#fbbf24",
-        5000,
-        "#f59e0b",
-        25000,
-        "#ea580c",
-        100000,
-        "#b91c1c",
-        400000,
-        "#7f1d1d",
-      ],
-      "#9ca3af",
-    ],
+      interpolateStops("acres", BURN_SEVERITY_ACRES_STOPS),
+      UNCLASSIFIED_FILL_COLOR,
+    ] as unknown as DataDrivenPropertyValueSpecification<string>,
     "fill-opacity": 0.4,
   },
 };
@@ -242,11 +301,24 @@ export const burnSeverityOutlineLayer: LayerSpecification = {
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
-    "line-color": "#7f1d1d",
+    "line-color": BURN_SEVERITY_OUTLINE_COLOR,
     "line-width": 1,
     "line-opacity": 0.8,
   },
 };
+
+// Styled on "priority" because that is the only classification createIntervention
+// actually persists; "intervention_type" is never written, so colouring by it painted
+// every zone the same fabricated hue.
+export const INTERVENTION_PRIORITY_CLASSES: readonly StyleClass[] = [
+  { value: "High", color: "#b45309", label: "High priority" },
+  { value: "Medium", color: "#6d28d9", label: "Medium priority" },
+  { value: "Low", color: "#0369a1", label: "Low priority" },
+];
+
+export const INTERVENTION_UNCLASSIFIED_LABEL = "Priority not set";
+
+export const INTERVENTION_OUTLINE_COLOR = "#4b5563";
 
 export const interventionsLayer: LayerSpecification = {
   id: "interventions",
@@ -256,20 +328,11 @@ export const interventionsLayer: LayerSpecification = {
   minzoom: 6,
   layout: { visibility: "none" },
   paint: {
-    // Styled on "priority" because that is the only classification
-    // createIntervention actually persists; "intervention_type" is never
-    // written, so colouring by it painted every zone the same fabricated hue.
-    "fill-color": [
-      "match",
-      ["get", "priority"],
-      "High",
-      "#b45309",
-      "Medium",
-      "#6d28d9",
-      "Low",
-      "#0369a1",
-      "#9ca3af",
-    ],
+    "fill-color": matchClasses(
+      "priority",
+      INTERVENTION_PRIORITY_CLASSES,
+      UNCLASSIFIED_FILL_COLOR
+    ),
     "fill-opacity": 0.4,
   },
 };
@@ -282,7 +345,7 @@ export const interventionsOutlineLayer: LayerSpecification = {
   minzoom: 6,
   layout: { visibility: "none" },
   paint: {
-    "line-color": "#4b5563",
+    "line-color": INTERVENTION_OUTLINE_COLOR,
     "line-width": 1,
     "line-dasharray": [2, 1],
   },
@@ -348,12 +411,14 @@ export const waterwaysLayer: LayerSpecification = {
 // is proxied straight from the provider, so no attribute is guaranteed on every
 // feature the way "severity" is on evacuation zones. Colour and opacity match the
 // watershed fill WaterLayer already draws for the same source id.
+export const WATERSHED_BOUNDARY_COLOR = "#1565c0";
+
 export const watershedsLayer: LayerSpecification = {
   id: "watersheds-fill",
   type: "fill",
   source: WATERSHEDS_SOURCE,
   paint: {
-    "fill-color": "#1565c0",
+    "fill-color": WATERSHED_BOUNDARY_COLOR,
     "fill-opacity": 0.05,
   },
 };
@@ -363,7 +428,7 @@ export const watershedsOutlineLayer: LayerSpecification = {
   type: "line",
   source: WATERSHEDS_SOURCE,
   paint: {
-    "line-color": "#1565c0",
+    "line-color": WATERSHED_BOUNDARY_COLOR,
     "line-width": 1,
     "line-opacity": 0.6,
   },
@@ -381,30 +446,34 @@ export const watershedsOutlineLayer: LayerSpecification = {
 // Anything the function can't classify falls through as the raw SSURGO string or
 // "unknown" and hits the neutral grey default -- a degraded but honest fallback rather
 // than a wrong colour.
+export const SOIL_SURVEY_DRAINAGE_CLASSES: readonly StyleClass[] = [
+  { value: "excessively-drained", color: "#d97706", label: "Excessively drained" },
+  {
+    value: "somewhat-excessively-drained",
+    color: "#ca8a04",
+    label: "Somewhat excessively drained",
+  },
+  { value: "well-drained", color: "#65a30d", label: "Well drained" },
+  { value: "moderately-well-drained", color: "#0d9488", label: "Moderately well drained" },
+  { value: "somewhat-poorly-drained", color: "#0284c7", label: "Somewhat poorly drained" },
+  { value: "poorly-drained", color: "#1d4ed8", label: "Poorly drained" },
+  { value: "very-poorly-drained", color: "#1e3a8a", label: "Very poorly drained" },
+];
+
+export const SOIL_SURVEY_UNCLASSIFIED_LABEL = "Drainage not classified";
+
+export const SOIL_SURVEY_OUTLINE_COLOR = "#78716c";
+
 export const soilSurveyLayer: LayerSpecification = {
   id: "soil-survey-fill",
   type: "fill",
   source: SOIL_SURVEY_SOURCE,
   paint: {
-    "fill-color": [
-      "match",
-      ["get", "drainageClass"],
-      "excessively-drained",
-      "#d97706",
-      "somewhat-excessively-drained",
-      "#ca8a04",
-      "well-drained",
-      "#65a30d",
-      "moderately-well-drained",
-      "#0d9488",
-      "somewhat-poorly-drained",
-      "#0284c7",
-      "poorly-drained",
-      "#1d4ed8",
-      "very-poorly-drained",
-      "#1e3a8a",
-      "#9ca3af",
-    ],
+    "fill-color": matchClasses(
+      "drainageClass",
+      SOIL_SURVEY_DRAINAGE_CLASSES,
+      UNCLASSIFIED_FILL_COLOR
+    ),
     "fill-opacity": 0.35,
   },
 };
@@ -414,7 +483,7 @@ export const soilSurveyOutlineLayer: LayerSpecification = {
   type: "line",
   source: SOIL_SURVEY_SOURCE,
   paint: {
-    "line-color": "#78716c",
+    "line-color": SOIL_SURVEY_OUTLINE_COLOR,
     "line-width": 0.5,
     "line-opacity": 0.7,
   },

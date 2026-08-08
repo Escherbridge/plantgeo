@@ -100,10 +100,21 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "water",
     permanentlyUnavailableReason: null,
   },
-  // USGS NHD+ HR HUC12 boundaries, proxied per viewport through
-  // environmental.getWatersheds. A live upstream feed rather than a geo.layers
-  // release, so it claims no warehouse layer name and gets no slider capability --
-  // the same shape drought has. See watershedsLayer in layers.ts.
+  // USGS NHD+ HR HUC12 boundaries, still RENDERED by proxying environmental.getWatersheds per
+  // viewport -- but no longer only that. 0017_watershed_persistence gave them a geo.layers row,
+  // geo.watershed_tiles(), and `agri-cli ingest-watersheds` persists 9,396 PNW basins keyed by
+  // HUC12 code, so the warehouse now holds what this toggle draws.
+  //
+  // `warehouseLayerName` stays null until the render path actually moves. It names the layer a
+  // toggle DRAWS, not one that merely exists, and this one still draws proxied GeoJSON: claiming
+  // the name now would caption a live upstream feed with the warehouse's availability. The switch
+  // is blocked on the Martin service redeploying to pick up watershed_tiles from martin.yaml --
+  // see the note on DYNAMIC_TILE_SOURCE_IDS in src/lib/map/sources.ts for why the composite cannot
+  // list the source before then, and for the exact remaining steps.
+  //
+  // Note the layer already appears in the slider's per-layer record list regardless, because
+  // capabilities are derived from geo.layers rather than from this registry. Its 2013 WBD loaddate
+  // does not drag the axis: sliderDomain excludes snapshot layers from the axis start.
   watersheds: {
     toggleId: "watersheds",
     renderKind: "component",

@@ -62,9 +62,27 @@ export function dayOffset(fromDate: string, toDate: string): number {
  */
 export function sliderDomain(capabilities: SliderCapabilities | null): SliderDomain | null {
   if (capabilities === null) return null;
-  const observedStarts = capabilities.layers
-    .map((layer) => layer.earliestObservedDate)
-    .filter((date): date is string => date !== null && isCalendarDate(date));
+  const startsOf = (layers: SliderLayerCapability[]): string[] =>
+    layers
+      .map((layer) => layer.earliestObservedDate)
+      .filter((date): date is string => date !== null && isCalendarDate(date));
+
+  // A snapshot does not define a time axis. It is one state of the world that happens to carry a
+  // publication date, so the date says when it was PUBLISHED, not that anything was observed
+  // changing from then on -- and letting it set the axis start advertises years the slider cannot
+  // actually show anything moving across.
+  //
+  // Measured when `watersheds` was persisted (0017): 96% of the HUC12 basins carry a single WBD
+  // loaddate of 2013-01-18 and the rest are scattered ones and twos through 2018. Counting those
+  // would have pulled the axis from 2022-08-05 back past 2018 -- roughly doubling it -- for a
+  // static boundary set that draws identically on every one of those days.
+  //
+  // Falls back to every layer when nothing varies over time, because a domain derived from
+  // snapshots alone is still better than no slider at all.
+  const timeVaryingStarts = startsOf(
+    capabilities.layers.filter((layer) => layer.temporalKind !== "snapshot")
+  );
+  const observedStarts = timeVaryingStarts.length > 0 ? timeVaryingStarts : startsOf(capabilities.layers);
   if (observedStarts.length === 0) return null;
   const firstDay = observedStarts.reduce((earliest, candidate) =>
     candidate < earliest ? candidate : earliest

@@ -34,13 +34,22 @@ function directionToArrow(degrees: number): string {
 }
 
 /**
- * Wind speed to color: calm (blue) -> moderate (green) -> strong (red)
+ * Wind speed classes: calm (blue) -> moderate (green) -> strong (red). Ordered by
+ * ascending `below`, with the open top class last, so the lookup below and the legend read
+ * the one table.
  */
+export const WIND_SPEED_CLASSES = [
+  { below: 5, color: "#3b82f6", label: "< 5 m/s — calm" },
+  { below: 10, color: "#22c55e", label: "5–10 m/s — light" },
+  { below: 20, color: "#f59e0b", label: "10–20 m/s — moderate" },
+  { below: null, color: "#ef4444", label: "≥ 20 m/s — strong" },
+] as const;
+
 function windSpeedToColor(speed: number): string {
-  if (speed < 5) return "#3b82f6";
-  if (speed < 10) return "#22c55e";
-  if (speed < 20) return "#f59e0b";
-  return "#ef4444";
+  const matched = WIND_SPEED_CLASSES.find(
+    (windClass) => windClass.below === null || speed < windClass.below
+  );
+  return (matched ?? WIND_SPEED_CLASSES[WIND_SPEED_CLASSES.length - 1]).color;
 }
 
 export function WeatherLayer({

@@ -17,6 +17,7 @@ import PanelManager from "./PanelManager";
 import LayerManager from "./LayerManager";
 import HoverTooltip from "./HoverTooltip";
 import TimeSliderPanel from "./TimeSliderPanel";
+import { Legend } from "./Legend";
 import { ServiceAreaLayer } from "./ServiceAreaLayer";
 import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
 import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
@@ -317,6 +318,9 @@ export default function MapView() {
                 from that payload alone) and pins the global time marker at its top, so the
                 selected day is reachable without opening any panel. */}
             <TimeSliderPanel />
+            {/* Legends whatever LayerManager is drawing, panels open or closed. Renders
+                nothing while every layer is off, which is how the map starts. */}
+            <Legend />
             <HoverTooltip map={mapInstance} />
             {isAIOpen && <RegionalIntelligencePanel />}
             {agentCoords && (

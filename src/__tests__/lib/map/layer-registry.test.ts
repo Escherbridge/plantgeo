@@ -169,7 +169,7 @@ describe('layer registry derivations', () => {
   })
 
   it('treats a user-uploaded layer id as outside the registry', () => {
-    // LayerItem toggles database ids that cannot be a static union; they must not
+    // User-uploaded layers toggle database ids that cannot be a static union; they must not
     // resolve to a registry entry or claim a panel.
     expect(isLayerToggleId('3f6c1e2a-0000-4000-8000-000000000000')).toBe(false)
     expect(panelIdForLayerToggle('3f6c1e2a-0000-4000-8000-000000000000')).toBeNull()

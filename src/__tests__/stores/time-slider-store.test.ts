@@ -139,6 +139,47 @@ describe("sliderDomain", () => {
     expect(sliderDomain(longHorizon)?.lastDay).toBe(addDays(SERVER_CURRENT_DATE, 30));
   });
 
+  it("does not let a snapshot layer's publication date define the axis start", () => {
+    // The case this exists for: `watersheds` persisted 9,396 HUC12 basins whose WBD loaddate is
+    // 2013-01-18 for 96% of them. Counting that would pull the axis back past 2018 for a boundary
+    // set that draws identically on every one of those days.
+    const withSnapshot: SliderCapabilities = {
+      ...capabilities,
+      layers: [
+        vegetationLayer,
+        {
+          ...sensorLayer,
+          layerName: "watersheds",
+          temporalKind: "snapshot",
+          earliestObservedDate: "2013-01-18",
+        },
+      ],
+    };
+
+    expect(sliderDomain(withSnapshot)?.firstDay).toBe(vegetationLayer.earliestObservedDate);
+    // An EVENT layer that far back is a different claim -- things really did happen on those days.
+    const withEvent: SliderCapabilities = {
+      ...withSnapshot,
+      layers: [
+        vegetationLayer,
+        { ...firePerimeterLayer, temporalKind: "event", earliestObservedDate: "2013-01-18" },
+      ],
+    };
+    expect(sliderDomain(withEvent)?.firstDay).toBe("2013-01-18");
+  });
+
+  it("falls back to snapshots when nothing on the map varies over time", () => {
+    // A domain derived from snapshots alone still beats no slider at all.
+    const snapshotsOnly: SliderCapabilities = {
+      ...capabilities,
+      layers: [
+        { ...sensorLayer, temporalKind: "snapshot", earliestObservedDate: "2019-03-01" },
+        { ...sensorLayer, layerName: "watersheds", temporalKind: "snapshot", earliestObservedDate: "2013-01-18" },
+      ],
+    };
+    expect(sliderDomain(snapshotsOnly)?.firstDay).toBe("2013-01-18");
+  });
+
   it("refuses a negative or absent futureAxisDays rather than inverting the axis", () => {
     // A payload from a server that predates the field, and a malformed one. Either would put
     // lastDay before today and make every offset on the track negative.

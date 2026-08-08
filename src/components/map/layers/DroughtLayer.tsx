@@ -14,6 +14,21 @@ export const DROUGHT_COLORS: Record<string, string> = {
   D4: "#730000",
 };
 
+/**
+ * The classes the fill expression below actually paints, ordered, reading their colours
+ * from DROUGHT_COLORS so a palette edit reaches the map and the legend at once.
+ *
+ * Deliberately without the "None" row DROUGHT_LEGEND carries: the fill's fallback arm is
+ * `transparent`, so a "None" swatch would legend a colour the map never draws.
+ */
+export const DROUGHT_DRAWN_CLASSES = [
+  { color: DROUGHT_COLORS.D0, label: "D0 — Abnormally dry" },
+  { color: DROUGHT_COLORS.D1, label: "D1 — Moderate drought" },
+  { color: DROUGHT_COLORS.D2, label: "D2 — Severe drought" },
+  { color: DROUGHT_COLORS.D3, label: "D3 — Extreme drought" },
+  { color: DROUGHT_COLORS.D4, label: "D4 — Exceptional drought" },
+] as const;
+
 /** Ordered legend entries for UI display. */
 export const DROUGHT_LEGEND = [
   { label: "None", color: "#f0f0f0" },

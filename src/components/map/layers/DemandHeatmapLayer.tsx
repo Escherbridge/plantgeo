@@ -7,9 +7,32 @@ import {
   useActionNetworkFeatures,
 } from "@/hooks/useActionNetworkFeatures";
 import { safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
+import type { ExpressionSpecification } from "@/types/map";
 
 const SOURCE_ID = "demand-heatmap-source";
 const LAYER_ID = "demand-heatmap-layer";
+
+/**
+ * Density is sequential magnitude (not diverging), so the ramp stays one hue light-to-dark
+ * end to end -- the old ramp detoured through amber mid-ramp. Keyed on heatmap-density,
+ * which MapLibre normalises to 0..1, so the stops carry no unit of their own.
+ */
+export const DEMAND_DENSITY_COLOR_STOPS: readonly { density: number; color: string }[] = [
+  { density: 0, color: "rgba(0,0,0,0)" },
+  { density: 0.2, color: "rgba(209,250,229,0.4)" },
+  { density: 0.4, color: "rgba(110,231,183,0.6)" },
+  { density: 0.6, color: "rgba(52,211,153,0.75)" },
+  { density: 0.8, color: "rgba(5,150,105,0.85)" },
+  { density: 1, color: "rgba(6,78,59,1)" },
+];
+
+/** Derived from the stops above so the drawn ramp and the legend cannot drift. */
+const DEMAND_HEATMAP_COLOR = [
+  "interpolate",
+  ["linear"],
+  ["heatmap-density"],
+  ...DEMAND_DENSITY_COLOR_STOPS.flatMap((stop) => [stop.density, stop.color]),
+] as unknown as ExpressionSpecification;
 
 interface DemandHeatmapLayerProps {
   map: MapLibreMap | null;
@@ -84,25 +107,7 @@ export function DemandHeatmapLayer({
               9,
               3,
             ],
-            // Density is sequential magnitude (not diverging), so the ramp stays one
-            // hue light-to-dark end to end -- the old ramp detoured through amber mid-ramp.
-            "heatmap-color": [
-              "interpolate",
-              ["linear"],
-              ["heatmap-density"],
-              0,
-              "rgba(0,0,0,0)",
-              0.2,
-              "rgba(209,250,229,0.4)",
-              0.4,
-              "rgba(110,231,183,0.6)",
-              0.6,
-              "rgba(52,211,153,0.75)",
-              0.8,
-              "rgba(5,150,105,0.85)",
-              1,
-              "rgba(6,78,59,1)",
-            ],
+            "heatmap-color": DEMAND_HEATMAP_COLOR,
             "heatmap-radius": [
               "interpolate",
               ["linear"],

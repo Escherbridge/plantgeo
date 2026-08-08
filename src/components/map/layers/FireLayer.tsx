@@ -10,11 +10,62 @@ import {
   resolveObservationIso,
   toIsoTimestamp,
 } from "@/lib/map/time-format";
+import type { ExpressionSpecification } from "@/types/map";
 
 const EMPTY_FIRE_DATA: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
+
+/** One interpolation stop of a fire circle's colour ramp. */
+export interface FireColorStop {
+  value: number;
+  color: string;
+  label: string;
+}
+
+/**
+ * NIFC incidents: colour by reported containment.
+ *
+ * Red-green endpoints on one ramp are the worst colorblind case; blue keeps "resolved"
+ * visually distinct from "danger".
+ */
+export const FIRE_CONTAINMENT_COLOR_STOPS: readonly FireColorStop[] = [
+  { value: 0, color: "#dc2626", label: "0% contained" },
+  { value: 50, color: "#f97316", label: "50%" },
+  { value: 100, color: "#2563eb", label: "100% contained" },
+];
+
+/**
+ * Warehouse FIRMS detections: colour by brightness temperature, not by containment -- a
+ * satellite detection reports no containment at all, so the two feeds share one circle
+ * layer but never one ramp.
+ */
+export const FIRE_BRIGHTNESS_COLOR_STOPS: readonly FireColorStop[] = [
+  { value: 300, color: "#fbbf24", label: "300 K" },
+  { value: 400, color: "#f97316", label: "400 K" },
+  { value: 500, color: "#dc2626", label: "500 K" },
+];
+
+/**
+ * Derived from the exported stops rather than restated, so the map and the legend cannot
+ * drift. The assertion is forced by the same typing MapLibre imposes on VegetationLayer's
+ * NDVI fill: spreading a mapped array widens the fixed-length expression tuple.
+ */
+const FIRE_CIRCLE_COLOR = [
+  "case",
+  // NIFC data: color by containment
+  ["has", "PercentContained"],
+  [
+    "interpolate", ["linear"], ["coalesce", ["get", "PercentContained"], 0],
+    ...FIRE_CONTAINMENT_COLOR_STOPS.flatMap((stop) => [stop.value, stop.color]),
+  ],
+  // Warehouse FIRMS detections: color by brightness.
+  [
+    "interpolate", ["linear"], ["coalesce", ["get", "brightness"], 350],
+    ...FIRE_BRIGHTNESS_COLOR_STOPS.flatMap((stop) => [stop.value, stop.color]),
+  ],
+] as unknown as ExpressionSpecification;
 
 const FIRE_SOURCE = "published-fire-source";
 const FIRE_CIRCLES = "published-fire-circles";
@@ -67,26 +118,7 @@ export function FireLayer({
           type: "circle",
           source: FIRE_SOURCE,
           paint: {
-            "circle-color": [
-              "case",
-              // NIFC data: color by containment
-              ["has", "PercentContained"],
-              [
-                "interpolate", ["linear"], ["coalesce", ["get", "PercentContained"], 0],
-                0, "#dc2626",    // red = 0% contained
-                50, "#f97316",   // orange = 50%
-                // Red-green endpoints on one ramp are the worst colorblind case; blue
-                // keeps "resolved" visually distinct from "danger".
-                100, "#2563eb",  // blue = fully contained
-              ],
-              // Warehouse FIRMS detections: color by brightness.
-              [
-                "interpolate", ["linear"], ["coalesce", ["get", "brightness"], 350],
-                300, "#fbbf24",
-                400, "#f97316",
-                500, "#dc2626",
-              ],
-            ],
+            "circle-color": FIRE_CIRCLE_COLOR,
             "circle-radius": [
               "interpolate", ["linear"], ["zoom"],
               4, ["*", 0.45, [

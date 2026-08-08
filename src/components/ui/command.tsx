@@ -13,6 +13,9 @@ interface CommandContextValue {
   onSelect: (value: string) => void;
   registerItem: (id: string, label: string) => void;
   unregisterItem: (id: string) => void;
+  listboxId: string;
+  activeDescendantId: string | undefined;
+  setActiveDescendantId: React.Dispatch<React.SetStateAction<string | undefined>>;
 }
 
 const CommandContext = React.createContext<CommandContextValue | null>(null);
@@ -31,8 +34,12 @@ const Command = React.forwardRef<HTMLDivElement, CommandProps>(
   ({ className, onSelect, children, ...props }, ref) => {
     const [search, setSearch] = React.useState("");
     const [selectedIndex, setSelectedIndex] = React.useState(0);
+    const [activeDescendantId, setActiveDescendantId] = React.useState<string | undefined>(
+      undefined
+    );
     const filteredCount = React.useRef(0);
     const itemsRef = React.useRef<Map<string, string>>(new Map());
+    const listboxId = React.useId();
 
     const registerItem = React.useCallback((id: string, label: string) => {
       itemsRef.current.set(id, label);
@@ -51,6 +58,7 @@ const Command = React.forwardRef<HTMLDivElement, CommandProps>(
 
     React.useEffect(() => {
       setSelectedIndex(0);
+      setActiveDescendantId(undefined);
     }, [search]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -87,6 +95,9 @@ const Command = React.forwardRef<HTMLDivElement, CommandProps>(
           onSelect: handleSelect,
           registerItem,
           unregisterItem,
+          listboxId,
+          activeDescendantId,
+          setActiveDescendantId,
         }}
       >
         <div
@@ -134,7 +145,7 @@ const CommandInput = React.forwardRef<
   HTMLInputElement,
   React.InputHTMLAttributes<HTMLInputElement>
 >(({ className, ...props }, ref) => {
-  const { search, onSearchChange } = useCommandContext();
+  const { search, onSearchChange, listboxId, activeDescendantId } = useCommandContext();
 
   return (
     <div className="flex items-center border-b border-[hsl(var(--border))] px-3">
@@ -153,6 +164,11 @@ const CommandInput = React.forwardRef<
       </svg>
       <input
         ref={ref}
+        role="combobox"
+        aria-expanded={true}
+        aria-controls={listboxId}
+        aria-autocomplete="list"
+        aria-activedescendant={activeDescendantId}
         value={search}
         onChange={(e) => onSearchChange(e.target.value)}
         className={cn(
@@ -168,9 +184,13 @@ CommandInput.displayName = "CommandInput";
 
 const CommandList = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => {
+    const { listboxId } = useCommandContext();
     return (
       <div
         ref={ref}
+        id={listboxId}
+        role="listbox"
+        aria-label="Commands"
         className={cn("max-h-[300px] overflow-y-auto overflow-x-hidden p-1", className)}
         {...props}
       />
@@ -199,14 +219,19 @@ interface CommandGroupProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 function CommandGroup({ heading, className, children, ...props }: CommandGroupProps) {
+  const headingId = React.useId();
   return (
     <div
       role="group"
+      aria-labelledby={heading ? headingId : undefined}
       className={cn("overflow-hidden p-1 text-[hsl(var(--foreground))]", className)}
       {...props}
     >
       {heading && (
-        <div className="px-2 py-1.5 text-xs font-medium text-[hsl(var(--muted-foreground))]">
+        <div
+          id={headingId}
+          className="px-2 py-1.5 text-xs font-medium text-[hsl(var(--muted-foreground))]"
+        >
           {heading}
         </div>
       )}
@@ -251,8 +276,23 @@ function CommandItem({
     ctx.filteredCount.current = arr.length;
   });
 
+  const allVisible = document.querySelectorAll
+    ? Array.from(document.querySelectorAll("[data-command-item]:not([data-hidden])"))
+    : [];
+  const myIndex = allVisible.indexOf(itemRef.current!);
+  const isSelected = myIndex === ctx.selectedIndex;
+
+  // Report this item as the active descendant and keep it in view while it is highlighted.
+  React.useEffect(() => {
+    if (!isSelected) return;
+    ctx.setActiveDescendantId(id);
+    itemRef.current?.scrollIntoView({ block: "nearest" });
+  }, [isSelected, id, ctx.setActiveDescendantId]);
+
   if (!matchesSearch) {
-    return <div ref={itemRef} data-command-item data-hidden data-value={itemValue} className="hidden" />;
+    return (
+      <div ref={itemRef} id={id} data-command-item data-hidden data-value={itemValue} className="hidden" />
+    );
   }
 
   const handleSelect = () => {
@@ -261,15 +301,10 @@ function CommandItem({
     ctx.onSelect(itemValue);
   };
 
-  const allVisible = document.querySelectorAll
-    ? Array.from(document.querySelectorAll("[data-command-item]:not([data-hidden])"))
-    : [];
-  const myIndex = allVisible.indexOf(itemRef.current!);
-  const isSelected = myIndex === ctx.selectedIndex;
-
   return (
     <div
       ref={itemRef}
+      id={id}
       data-command-item
       data-value={itemValue}
       role="option"
