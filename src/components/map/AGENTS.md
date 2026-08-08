@@ -28,7 +28,7 @@ Two layers make the case on their own. `watersheds` paints its fill at `0.05` �
 
 ## The legend legends what is drawn
 
-`Legend` renders one section per switched-on layer, resolved from `useLayerVisibility()` against the specs in `src/lib/map/layer-legends.ts`, and renders nothing while every toggle is off. It is mounted in `MapView` beside `TimeSliderPanel`, so an encoding stays readable with every panel closed. It used to list `trpc.layers.list` rows — `geo.layers` names, one flat `stylePresets`/`styleOverrides` swatch each — which named warehouse publications rather than drawn encodings: a fill keyed to a `severity` match showed as one arbitrary colour, a ramp showed as nothing at all, and the card needed a network round-trip before it could say anything. The 2026-08-07 rewrite dropped tRPC and every `layer-store` field but `legendVisible` from it.
+`Legend` renders one section per switched-on layer, resolved from `useLayerVisibility()` against the specs in `src/lib/map/layer-legends.ts`, and renders nothing while every toggle is off. It is mounted in `MapView` beside `TimeDatePill`, so an encoding stays readable with every panel closed. It used to list `trpc.layers.list` rows — `geo.layers` names, one flat `stylePresets`/`styleOverrides` swatch each — which named warehouse publications rather than drawn encodings: a fill keyed to a `severity` match showed as one arbitrary colour, a ramp showed as nothing at all, and the card needed a network round-trip before it could say anything. The 2026-08-07 rewrite dropped tRPC and every `layer-store` field but `legendVisible` from it.
 
 Two invariants keep it honest, both enforced in `layer-legends.ts`. First, **no colour is written in the legend**: every swatch, class row and ramp stop is imported from the module whose paint expression uses it, and where a ramp was inline in a renderer the renderer now reads an exported constant (`FIRE_CONTAINMENT_COLOR_STOPS`, `DEMAND_DENSITY_COLOR_STOPS`, `BURN_SEVERITY_ACRES_STOPS`, the `StyleClass` tables in `layers.ts`), so the two cannot drift. Second, **a toggle earns a spec only if switching it on paints something**: `soil` has none because `getEnvironmentalTileTemplate` returns `""` and `SoilLayer` adds no source at all; `vegetation` legends NDVI only, because `getNDWITileUrl` returns `""` unconditionally and NBR is unpublished for the same reason; `building-footprints` has none because the registry withholds it. `LEGENDLESS_TOGGLE_REASONS` records each. Legending a colour the map never draws is the failure this module exists to prevent, so an entry that "looks missing" is a claim to check against the renderer, not a gap to fill.
 
@@ -49,7 +49,7 @@ The registry also owns the **label** and the **icon** a reader sees. Until 2026-
 What was removed, and why each removal was a fix rather than a tidy-up:
 
 - **`PanelManager.tsx` and its icon rail.** Seven unlabeled 44px buttons, one per sheet, each opening a full-height overlay over the map you were reading. `panel-store.openPanel` made them mutually exclusive, so comparing the fire counts with the water gauges meant closing one report to open the other. The dock stacks all eight, and the map stays visible beside them.
-- **Every `<Sheet side="right">`.** A sheet portals a `fixed inset-0` scrim over the whole viewport (`src/components/ui/sheet.tsx`) and sets `document.body.style.overflow = "hidden"`. That covered `TimeSliderPanel`'s region — the app's one time control — whenever any data panel was open.
+- **Every `<Sheet side="right">`.** A sheet portals a `fixed inset-0` scrim over the whole viewport (`src/components/ui/sheet.tsx`) and sets `document.body.style.overflow = "hidden"`. That covered the then-`TimeSliderPanel` region — the app's one time control — whenever any data panel was open.
 - **`src/components/ui/layer-toggle.tsx`.** Sixteen switches across five sheets, each writing the same `activeLayers` entry the dock's own eye writes, half of them out of sight behind a closed sheet. Two controls over one value, and the one you could see did not always look like the one you had used. Deleted with its last call site; the dock's `LayerRow` eye is the only switch for a layer now.
 - **Four never-mounted panels** (`RoutingPanel`, `IsochronePanel`, `EcosystemTracker`, `TeamProfilePanel`), which nothing had rendered in any tree.
 
@@ -57,20 +57,31 @@ The dock's shape:
 
 ```
 LayerPanel            shell: header (legend eye, close), the one scroller, footer
-  DockSections        the scroller's only child
+  TimeDockSection     first in the scroller — caret + "Map date" + the TimeSlider card
+  DockSections        the rest of the scroller
     LayerGroupSection ×6   caret + group eye + "n of m" + LayerRow list
       DetailsSection       ×5 (Basemap has none) — the category's report
     DetailsSection    ×3   alerts, team, analytics — the reports that own no layer
       DockDetailsBody      dynamic()-imported region + the map props it needs
 ```
 
+The Time section joined on 2026-08-08 and sits above every category on purpose: one date applies
+to every warehouse-backed layer, so a control filed among the categories would read as belonging
+to whichever one it landed beside. It is the one section open by default
+(`INITIALLY_EXPANDED_SECTIONS` in `panel-store`), which does not weaken the mounting rule below —
+it is the exception that rule is stated for. `DetailsSection` and `TimeDockSection` share their
+caret's class list and their `pendingScrollSection` handshake through `dock-disclosure.ts`, so
+the dock has one disclosure vocabulary rather than two that merely look alike.
+
 **Two carets, and they are not the same control.** A group's caret shows its layer rows: free, and open by default, because this is a layer manager first. A `DetailsSection`'s caret MOUNTS a report — `FireDetails`, `WaterDetails`, `VegetationDetails`, `SoilDetails`, `CommunityDetails`, `TeamDetails`, `AnalyticsDetails`, `AlertDetails` — each with its own warehouse queries, and is closed until asked for. One caret over both would have had to choose, and either choice is wrong for half the dock. A group's caret deliberately does not hide the report under it, so a collapsed dock reads as an index of reports.
 
 **Mounting is what "open" means now.** Every one of those regions used to take an `open` prop and gate its queries on it (`enabled: open && …`), staying mounted-but-disabled while its sheet was shut. A collapsed section is not mounted at all, so each region dropped the prop and the `open &&` term with it. This is load-bearing, not cosmetic: eight regions mounted on every dock open would fire eight panels' worth of queries before anyone had asked a question. `panel-store.expandedDetails` is therefore not a rename of `openPanel` — it is a list, several may be open at once, and it decides which queries exist. `viewport-proxied-query-sharing.test.tsx` pins both halves: one shared query entry when a section is expanded, and **no observer at all** when it is not.
 
+Which is exactly why the Time section may be seeded open and no report may: its body issues nothing. The capabilities payload it draws from is fetched by `TimeSliderCapabilitiesLoader`, mounted in `MapView` and independent of the dock, so expanding this one section costs a card's worth of store subscriptions and zero requests. The id vocabulary widened to say that in the type system rather than in a comment: `DockDetailsId` still means "a section with a report behind it" and stays exhaustive over `DETAILS_LABELS` and `DETAILS_BODIES`, while `DockSectionId` — `DockDetailsId | "time"` — is what `expandedDetails`, `pendingScrollSection` and `focusDockSection` speak. Adding "time" to the report union instead would have forced a title and a dynamically-imported body for something that is neither.
+
 **The one scroller survived the merge.** Each sheet body arrived carrying its own `overflow-y-auto max-h-[calc(100vh-8rem)]` wrapper, plus two `max-h-64` list boxes in the water report. Nested inside the dock's scroller those are exactly the second-scrollbar defect `panel-scroll.ts` rule 2 names, so they were stripped on the way in; the lists were already capped upstream (`WATERSHED_LIST_LIMIT`) and the dock scrolls them now.
 
-**What is left outside the dock.** `DockToggle` — one 44px button, all that remains of the rail, because a closed dock still needs a way back. `AlertBell` in the toolbar keeps its unread count and calls `focusDockSection("alerts")`, which docks the panel, expands Alerts and queues `pendingScrollSection` for the section to consume on arrival; both surfaces read the count through `useUnreadAlertCount`, so they observe one query rather than polling one number twice. Marking alerts read invalidates that key rather than calling back through an `onMarkRead` prop, which a lazily-mounted section has no parent to receive.
+**What is left outside the dock.** `DockToggle` — one 44px button, all that remains of the rail, because a closed dock still needs a way back. `AlertBell` in the toolbar keeps its unread count and calls `focusDockSection("alerts")`, which docks the panel, expands Alerts and queues `pendingScrollSection` for the section to consume on arrival; both surfaces read the count through `useUnreadAlertCount`, so they observe one query rather than polling one number twice. Marking alerts read invalidates that key rather than calling back through an `onMarkRead` prop, which a lazily-mounted section has no parent to receive. `TimeDatePill` in the top bar is the third, and calls the same `focusDockSection` with `"time"` — see below for why the pill itself cannot move in here.
 
 **Reachability is now answerable by import.** `dock-sections.ts` derives the groups from the registry and is deliberately React-free, so `layer-registry.test.ts` can assert that every layer has a row by calling `dockReachableLayerToggleIds()`. It used to answer the same question by regex-scanning `<LayerToggle>` out of the panel sources — the only handle available when a layer's sole switch was buried in a sheet's JSX.
 
@@ -180,38 +191,97 @@ Two details make the projection safe to copy for the next coarse-grained layer:
   disagree by a whole year. Before capabilities land there is no day, so `year`/`month` are
   `null` and no raster is attached — a browser-clock default would draw a period nobody chose.
 
-## The time slider is a collapsed top-bar pill, expanding to the region's header
+**Per-resource focus re-ranges the AXIS, never the map.** `time-slider-store.focusedLayerName`
+(2026-08-08, from the owner request "the range should transform based on the actuals and
+forecasts available for a selected resource") narrows the track to one `geo.layers` publication:
+its own `earliestObservedDate` on the left, `serverCurrentDate + forecastHorizonDays` on the
+right. It is a view over the control and not a filter over the map — `selectedDate` still applies
+to every layer, exactly as this section requires, and nothing about `activeLayers` or any query
+changes. That is easy to misread off a track that suddenly spans three months instead of four
+years, so the card states it in words beside the ends (`time-slider-focus-caption`: "Range shown
+for X. The selected date still applies to every layer."), and the caption is the reason the
+picker was safe to ship at all.
 
-`TimeSliderPanel` renders an always-mounted right-hand panel region whose sticky top is a
-compact date pill in the top bar (`top-4`, level with `SearchBar`); the full scrubber card
-opens below it behind a disclosure, collapsed by default, and the region's body below that is
-conditional. This supersedes two earlier shapes in turn: the bottom-centre floating card
-(`absolute bottom-24 left-1/2 -translate-x-1/2`), then the always-open card pinned at
-`top-16` (2026-08-05 to 2026-08-06). The invariant that survived both moves: the day applies
-to every layer, so its marker — now the pill, showing the date plus a "Past day" / "Beyond
-record" chip whenever the selection is off the server's today — cannot be something a user
-opens a panel (or a disclosure) to reach. Only the *controls* are behind the disclosure; the
-*claim* never is. The pill also surfaces a bar-level Today reset while collapsed, because an
-off-today date silently filters every layer and the way back must not cost a disclosure.
+Three details make the focused axis honest. It takes **no `futureAxisDays` padding**: that span
+exists to make the observed/future boundary visible on an axis assembled from every layer at
+once, and padding a single resource's axis would redraw the very band the focus exists to size —
+a horizon of 0 therefore ends the track at today and draws no future band. `publishesAnyForecast`
+is computed **from the focused layer alone whenever that layer's axis is the one drawn**, so the
+band beside it is never legended "Forecast" off some other layer's capability — and never
+legended "Nothing published" off the focused layer's while the track has fallen back to the
+global band, which is the whole warehouse's. And a focus the payload does not carry, or one on a
+layer that defines no axis of its own, **falls back to the global domain** rather than emptying
+the track: a stale name is not a claim that nothing was measured. Two kinds define no axis, and
+`focusedResourceDomain` excludes both — a layer that has observed nothing, and a **snapshot**,
+which may carry a perfectly real `earliestObservedDate` and still be one state of the world
+rather than a record (`watersheds`' 2013-01-18 WBD loaddate, the same date `sliderDomain` keeps
+out of the global axis start). The caption's second branch is worded for both: "X has no
+day-by-day record of its own, so the full range is shown." Switching resource clamps
+`selectedDate` into the new domain inside the same `set()`, because a two-step would publish one
+render with the thumb outside its own axis.
+
+The picker's option labels come from the **layer registry** (`toggleIdForWarehouseLayerName` →
+`layerLabel`), not from humanizing the `geo.layers` name, so a resource is called the same thing
+here as in the layer rows inches below; the humanizer survives only as the fallback for a
+publication no renderer carries. Option *values* stay the raw warehouse names, which is the one
+vocabulary the capabilities payload speaks.
+
+## The scrubber is a dock section; the pill is a marker, not a disclosure
+
+**Superseded 2026-08-08.** This section used to be titled "The time slider is a collapsed
+top-bar pill, expanding to the region's header" and described `TimeSliderPanel`: an
+always-mounted 24rem right-hand region, `pointer-events-none`, scrolling, whose sticky top was
+the pill and whose disclosure opened the full scrubber card beneath it. That region is gone,
+and the file with it. Three components replaced it, each owning one of the three things it did:
+
+- **`TimeSliderCapabilitiesLoader`** — the fetch. Headless, renders `null`, mounted in `MapView`
+  and never unmounted. Still the ONE read of `environmental.getSliderCapabilities` and the one
+  writer of `setCapabilities` / `setCapabilitiesUnavailable`; that single-writer rule carried
+  over verbatim from the region's header, along with the 5-minute `staleTime`/`refetchInterval`
+  pair (a UTC-midnight rollover is a date change no user action coincides with, and the poll is
+  a server-side cache hit) and the "only never-succeeded-and-errored counts as unavailable"
+  rule. It cannot live in the dock: the day it supplies keys every warehouse-backed query on the
+  map through `useDebouncedMapDay()`, and a closed dock is an unmounted dock.
+- **`TimeDockSection`** — the controls, at the top of the dock's one scroller. See "One dock, no
+  sheets" above. Its caret row is also the card's TITLE (`TIME_SECTION_LABEL`, "Map date"), so
+  `TimeSlider` renders no heading of its own — it kept an `<h2>Map date</h2>` through the move and
+  printed the same title twice, one line apart. The Observed / Beyond-the-record chip that shared
+  that row stayed, right-aligned: it is live state about the selected day, not a title.
+- **`TimeDatePill`** — the claim, still `absolute right-16 top-4 z-10` over the canvas,
+  `pointer-events-none` with each control opting back in, still shrink-to-fit and capped against
+  the viewport. `right-16` clears MapLibre's top-right control stack; `top-4` sits it on the
+  `SearchBar` row.
+
+**The invariant that survived every move is the pill.** The day applies to every layer, so an
+off-today date silently filters the whole map, and the marker for that — the date plus a
+"Past day" / "Beyond record" chip, plus a bar-level Today reset when off-today — cannot be
+something a reader opens a panel to reach. It is mounted unconditionally, whatever the dock is
+doing. Four shapes have now carried it: the bottom-centre floating card
+(`absolute bottom-24 left-1/2 -translate-x-1/2`), the always-open card at `top-16` (2026-08-05),
+the top-right region with the pill as its sticky head (2026-08-06), and the dock section with a
+marker-only pill (2026-08-08).
+
+**The pill is no longer a disclosure.** Its click calls `focusDockSection("time")` — the same
+three-fact handshake `AlertBell` uses — so its `aria-expanded` went away rather than becoming a
+claim about a region on the opposite edge that this button does not contain. The chevron went
+with it, replaced by the mirror of the `PanelLeftClose` the dock's own header wears. There is one
+scrubber now, in one place, instead of a card that could be open here and a section open there.
 
 `TIME_SLIDER_CONTAINER_CLASSES` keeps its invariant — the loaded slider and the
 `time-slider-unavailable` alert render from the same class list, so a fetch that later succeeds
-cannot reposition or resize anything — and holds no positioning at all. All of it lives in
-`PANEL_REGION_CLASSES` in `TimeSliderPanel.tsx`. The offsets there are collision avoidance
-against known neighbours (`right-16` for MapLibre's top-right control stack, `top-4` to sit on
-the `SearchBar` row), and the region is the single scroller: a scroller nested inside a
-scroller is how the one drag control becomes unreachable on a phone. The region itself is
-`pointer-events-none` with each interactive child opting back in — collapsed, it is a mostly
-empty column over the canvas, and without the pass-through it would swallow map drags.
+cannot reposition or resize anything — and still holds no positioning, no `overflow-*` and no
+`max-h-*`. That last part became load-bearing rather than incidental when the card moved into the
+dock: either would be the second-scrollbar defect `panel-scroll.ts` rule 2 names, and this card
+holds the dock's only drag control, which is exactly what a nested scroller makes unreachable on
+a phone.
 
-**Resolved 2026-08-08.** This paragraph used to note that panel sheets portal themselves over
-the whole viewport, so an open panel covered this region and its time marker whole — and that
-fixing it would have meant giving `src/components/ui/sheet.tsx` a top offset, a file shared by
-every sheet in the app. The data panels are now sections of the left dock (see "One dock, no
-sheets"), which is a 19rem overlay on the opposite edge and never covers this region at all.
-`src/components/ui/sheet.tsx` reached zero call sites anywhere in `src/` when the panels
-merged into the dock, and was deleted the same day under the clean-up-as-you-go rule (owner
-call, 2026-08-08 — the "least amount possible" session).
+**Resolved 2026-08-08.** This section used to note that panel sheets portal themselves over the
+whole viewport, so an open panel covered the time region and its marker whole — and that fixing
+it would have meant giving `src/components/ui/sheet.tsx` a top offset, a file shared by every
+sheet in the app. The data panels are sections of the left dock now, and so is the scrubber.
+`src/components/ui/sheet.tsx` reached zero call sites anywhere in `src/` when the panels merged
+into the dock, and was deleted the same day under the clean-up-as-you-go rule (owner call,
+2026-08-08 — the "least amount possible" session).
 
 ## Picking a point to query
 

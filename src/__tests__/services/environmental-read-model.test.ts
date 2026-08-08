@@ -428,7 +428,7 @@ describe("getSliderCapabilities -- the 36-year trap", () => {
 describe("the capability scan is typed for Postgres, not only for TypeScript", () => {
   /**
    * getSliderCapabilities answered 500 in production with
-   * `invalid input syntax for type bigint: "0.01"`, so TimeSliderPanel's query stayed
+   * `invalid input syntax for type bigint: "0.01"`, so the client's capabilities query stayed
    * rejected, `capabilities` stayed undefined, and the time slider never mounted at all.
    *
    * postgres-js sends a plain JS number as an UNTYPED parameter -- its `inferType` answers

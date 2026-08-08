@@ -2480,7 +2480,7 @@ const OBSERVATION_CLUSTER_GAP_DAYS = 21;
  * Multiplied against `MAX(observation_count)`, which is a `COUNT(*)` bigint, operator
  * resolution picks `bigint * bigint` and tries to read "0.01" as a bigint. That is exactly
  * how getSliderCapabilities answered 500 in production with
- * `invalid input syntax for type bigint: "0.01"`, which left TimeSliderPanel's capabilities
+ * `invalid input syntax for type bigint: "0.01"`, which left the client's capabilities
  * query rejected and the time slider permanently unmounted. No other fractional parameter in
  * this file needs the cast: every one of them lands in a PostGIS function argument whose
  * signature already declares `double precision`, so there is nothing for Postgres to guess.

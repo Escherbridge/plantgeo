@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import TimeSlider from "@/components/map/TimeSlider";
+import { layerLabel } from "@/lib/map/layer-registry";
 import { addDays, dayOffset, useTimeSliderStore } from "@/stores/time-slider-store";
 import { useMetricAtDate, type MetricAtDateFetcher } from "@/stores/useMetricAtDate";
 import type {
@@ -129,6 +130,9 @@ describe("TimeSlider", () => {
       // Explicit, because one test below drives the failure branch: leaving it to whatever the
       // previous test left behind would make the in-flight and failed states swap silently.
       capabilitiesUnavailable: false,
+      // Likewise explicit: a focus left behind by an earlier case re-ranges the axis, and every
+      // domain assertion here is about the whole-warehouse one.
+      focusedLayerName: null,
     });
   });
 
@@ -351,11 +355,14 @@ describe("TimeSlider", () => {
     // The documented invariant: a fetch that later succeeds must not reposition or resize
     // anything, so both states render from one shared class list.
     expect(screen.getByTestId("time-slider-unavailable").className).toBe(loadedClassName);
-    // Positioning now belongs to the panel-region shell in TimeSliderPanel. The old
-    // bottom-centre dock (`absolute bottom-24 left-1/2 -translate-x-1/2`) is gone: the slider
-    // fills the region's column instead of anchoring itself over the canvas.
+    // Positioning belongs to the dock's one scroller, which the Time section sits at the top
+    // of. The old bottom-centre dock (`absolute bottom-24 left-1/2 -translate-x-1/2`) is gone,
+    // and so is the top-right region that replaced it: the card fills a column it does not own.
     expect(loadedClassName).toContain("w-full");
     expect(loadedClassName).not.toMatch(/absolute|bottom-24|left-1\/2/);
+    // Nested in the dock's scroller, an overflow or a height cap here is the second-scrollbar
+    // defect panel-scroll.ts rule 2 names -- and this card holds the one drag control.
+    expect(loadedClassName).not.toMatch(/overflow-|max-h-/);
   });
 
   it("no longer claims the map itself is dateless -- a sibling change made that untrue", () => {
@@ -449,6 +456,234 @@ describe("TimeSlider", () => {
     expect(screen.getByTestId("time-slider-future-fill")).not.toBeNull();
   });
 
+  /**
+   * The per-resource axis (2026-08-08). Before it, the track was assembled from every published
+   * layer at once, so "how far back does fire-perimeters go?" was unanswerable from a control
+   * showing every layer's history merged into one line.
+   */
+  it("offers every published resource, plus the whole-warehouse axis it defaults to", () => {
+    renderWithProviders(<TimeSlider />);
+    const select = screen.getByTestId("time-slider-resource-select") as HTMLSelectElement;
+
+    expect(select.value).toBe("");
+    expect(select.options[0].textContent).toBe("All resources");
+    expect(select.options).toHaveLength(CAPABILITIES.layers.length + 1);
+    // Named exactly as the dock's layer rows name them -- one display vocabulary, read from the
+    // registry -- rather than humanized off the warehouse name into a second one.
+    const optionLabels = Array.from(select.options).map((option) => option.textContent);
+    expect(optionLabels).toContain(layerLabel("water"));
+    // Pinned as a literal too, so a label that drifts apart from the tree's is a failure here
+    // rather than two assertions agreeing with each other about a changed string.
+    expect(optionLabels).toContain("Active Fire Perimeters");
+    expect(optionLabels).not.toContain("Fire perimeters");
+    // Values stay the raw geo.layers names, which is the vocabulary the payload speaks.
+    const optionValues = Array.from(select.options).map((option) => option.value);
+    expect(optionValues).toEqual([
+      "",
+      ...CAPABILITIES.layers.map((layer) => layer.layerName),
+    ]);
+  });
+
+  it("still names a published layer that no renderer carries", () => {
+    // The registry answers for a layer only when something draws it. A `geo.layers` publication
+    // with no toggle is still on the axis and still has to be selectable, so the humanizer stays
+    // as the fallback rather than leaving an option blank.
+    useTimeSliderStore.setState({
+      capabilities: {
+        ...CAPABILITIES,
+        layers: [
+          CAPABILITIES.layers[0],
+          {
+            layerName: "streamflow-forecast",
+            temporalKind: "daily_series",
+            forecastHorizonDays: 0,
+            forecastVariants: [],
+            earliestObservedDate: FIRST_DAY,
+          },
+        ],
+      },
+    });
+    renderWithProviders(<TimeSlider />);
+
+    const labels = Array.from(
+      (screen.getByTestId("time-slider-resource-select") as HTMLSelectElement).options
+    ).map((option) => option.textContent);
+    expect(labels).toContain("Streamflow forecast");
+  });
+
+  it("re-ranges both ends of the axis to the chosen resource", () => {
+    renderWithProviders(<TimeSlider />);
+    const field = () => screen.getByTestId("time-slider-date-input") as HTMLInputElement;
+
+    // The global axis: earliest observation anywhere, longest horizon anywhere.
+    expect(field().min).toBe(FIRST_DAY);
+    expect(field().max).toBe(LAST_DAY);
+
+    fireEvent.change(screen.getByTestId("time-slider-resource-select"), {
+      target: { value: "water-gauges" },
+    });
+
+    // water-gauges observed from 2019-01-01 and forecasts 5 days -- its own record, with no
+    // futureAxisDays padding and no other layer's horizon in it.
+    expect(field().min).toBe(FIRST_DAY);
+    expect(field().max).toBe(addDays(SERVER_CURRENT_DATE, 5));
+    expect(screen.getAllByText(addDays(SERVER_CURRENT_DATE, 5)).length).toBeGreaterThan(0);
+
+    // A zero-horizon resource ends the axis at today, so no future band is drawn at all.
+    fireEvent.change(screen.getByTestId("time-slider-resource-select"), {
+      target: { value: "fire-perimeters" },
+    });
+    expect(field().min).toBe("2019-01-05");
+    expect(field().max).toBe(SERVER_CURRENT_DATE);
+    expect(screen.queryByTestId("time-slider-future-hatch")).toBeNull();
+  });
+
+  it("pulls an out-of-range selection onto the new axis as the resource changes", () => {
+    renderWithProviders(<TimeSlider />);
+    act(() => {
+      useTimeSliderStore.getState().setSelectedDate("2019-01-02");
+    });
+
+    // Legal on the global axis, four days before fire-perimeters observed anything.
+    fireEvent.change(screen.getByTestId("time-slider-resource-select"), {
+      target: { value: "fire-perimeters" },
+    });
+
+    expect(useTimeSliderStore.getState().selectedDate).toBe("2019-01-05");
+    expect((screen.getByTestId("time-slider-date-input") as HTMLInputElement).value).toBe(
+      "2019-01-05"
+    );
+  });
+
+  it("says the range narrowed and the map's day did not", () => {
+    renderWithProviders(<TimeSlider />);
+    // Unfocused, there is no range to qualify and no caption.
+    expect(screen.queryByTestId("time-slider-focus-caption")).toBeNull();
+
+    fireEvent.change(screen.getByTestId("time-slider-resource-select"), {
+      target: { value: "fire-perimeters" },
+    });
+
+    // The second sentence is the point of the line: without it a narrowed axis reads as a
+    // filter, and there is exactly one day on this map that every layer draws as of.
+    const caption = screen.getByTestId("time-slider-focus-caption");
+    expect(caption.textContent).toBe(
+      "Range shown for Active Fire Perimeters. The selected date still applies to every layer."
+    );
+
+    fireEvent.change(screen.getByTestId("time-slider-resource-select"), {
+      target: { value: "" },
+    });
+    expect(screen.queryByTestId("time-slider-focus-caption")).toBeNull();
+  });
+
+  it("says a snapshot narrowed nothing, without calling its publication date a record", () => {
+    renderWithProviders(<TimeSlider />);
+    const field = () => screen.getByTestId("time-slider-date-input") as HTMLInputElement;
+
+    // `sensors` is a snapshot carrying a perfectly real date. That date is when it was
+    // PUBLISHED, not a day-by-day record, so it defines no axis -- the same exclusion
+    // sliderDomain makes for watersheds' 2013 WBD loaddate.
+    fireEvent.change(screen.getByTestId("time-slider-resource-select"), {
+      target: { value: "sensors" },
+    });
+
+    expect(field().min).toBe(FIRST_DAY);
+    expect(field().max).toBe(LAST_DAY);
+    // "Has no observed record" would be a falsehood here; this wording is true of a snapshot
+    // and of a layer that has observed nothing alike.
+    expect(screen.getByTestId("time-slider-focus-caption").textContent).toBe(
+      "Sensor Stations has no day-by-day record of its own, so the full range is shown. The selected date still applies to every layer."
+    );
+  });
+
+  it("legends the band it actually drew when the focused resource defines no axis", () => {
+    // One layer that can answer a future day, and one focused layer that has observed nothing --
+    // so the focus falls back to the GLOBAL axis, and the band on screen is the warehouse's.
+    // Scoping the forecast claim to the focused layer here would legend a real, publishable
+    // future band "Nothing published" and print the no-forecast notice under it.
+    useTimeSliderStore.setState({
+      capabilities: {
+        serverCurrentDate: SERVER_CURRENT_DATE,
+        futureAxisDays: 0,
+        layers: [
+          {
+            layerName: "vegetation",
+            temporalKind: "daily_series",
+            forecastHorizonDays: 10,
+            forecastVariants: ["monte_carlo"],
+            earliestObservedDate: FIRST_DAY,
+          },
+          {
+            layerName: "interventions",
+            temporalKind: "daily_series",
+            forecastHorizonDays: 0,
+            forecastVariants: [],
+            earliestObservedDate: null,
+          },
+        ],
+      },
+      selectedDate: addDays(SERVER_CURRENT_DATE, 5),
+    });
+    renderWithProviders(<TimeSlider />);
+
+    fireEvent.change(screen.getByTestId("time-slider-resource-select"), {
+      target: { value: "interventions" },
+    });
+
+    // The global axis is still drawn -- and vegetation's horizon is what makes its future band
+    // answerable, whatever the picker says.
+    expect((screen.getByTestId("time-slider-date-input") as HTMLInputElement).max).toBe(
+      addDays(SERVER_CURRENT_DATE, 10)
+    );
+    const key = screen.getByTestId("time-slider-track-key");
+    expect(key.textContent).toContain("Forecast");
+    expect(key.textContent).not.toContain("Nothing published");
+    expect(screen.queryByTestId("time-slider-no-forecast-notice")).toBeNull();
+  });
+
+  it("legends the future band from the focused resource's own capability", () => {
+    // Purpose-built: one layer that can answer a future day, and one whose horizon draws a band
+    // it has no variant to fill. Nothing in the main fixture separates those two.
+    const mixedCapabilities: SliderCapabilities = {
+      serverCurrentDate: SERVER_CURRENT_DATE,
+      futureAxisDays: 0,
+      layers: [
+        {
+          layerName: "vegetation",
+          temporalKind: "daily_series",
+          forecastHorizonDays: 10,
+          forecastVariants: ["monte_carlo"],
+          earliestObservedDate: FIRST_DAY,
+        },
+        {
+          layerName: "water-gauges",
+          temporalKind: "daily_series",
+          forecastHorizonDays: 7,
+          forecastVariants: [],
+          earliestObservedDate: FIRST_DAY,
+        },
+      ],
+    };
+    useTimeSliderStore.setState({
+      capabilities: mixedCapabilities,
+      selectedDate: SERVER_CURRENT_DATE,
+    });
+    renderWithProviders(<TimeSlider />);
+
+    // Unfocused, vegetation's variant is what makes the band answerable anywhere on the map.
+    expect(screen.getByTestId("time-slider-track-key").textContent).toContain("Forecast");
+
+    // Focused on water-gauges the band is still drawn -- it has a horizon -- but nothing can
+    // answer inside it, and legending it from vegetation's capability would be a fabrication.
+    fireEvent.change(screen.getByTestId("time-slider-resource-select"), {
+      target: { value: "water-gauges" },
+    });
+    const key = screen.getByTestId("time-slider-track-key");
+    expect(key.textContent).toContain("Nothing published");
+    expect(key.textContent).not.toContain("Forecast");
+  });
+
   it("jumps back to the server's today, and cannot be pressed while already there", () => {
     renderWithProviders(<TimeSlider />);
     act(() => {
@@ -488,6 +723,7 @@ describe("TimeSlider with nothing forecasting", () => {
       selectedDate: SERVER_CURRENT_DATE,
       forecastVariant: "monte_carlo",
       capabilitiesUnavailable: false,
+      focusedLayerName: null,
     });
   });
 

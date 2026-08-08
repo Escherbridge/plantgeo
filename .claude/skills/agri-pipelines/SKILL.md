@@ -39,8 +39,20 @@ is now the operator's responsibility.
 
 ## Verifying results — there is no psql on this machine
 
-Use asyncpg, and note the scheme differs from the loader URL: **`postgresql://`**, not
-`postgresql+asyncpg://`.
+**For the full data-readiness picture, run the dedicated report first** — it covers every
+signal stream (rows/date-range/cells), spatial grids, release sets, the forecast
+observation/iteration planes with actuals counts, the ML receipt chain, the serving
+matview's population state, the covariate schema, the strategy plane, the job ledger,
+`geo.features` per layer, migration head vs the readiness pin, plus local walk state
+(scheduled tasks and checkpoint DONE markers):
+
+```bash
+uv run python scripts/readiness.py            # human-readable; --json for machines
+```
+
+Every check is fault-isolated, so a partially migrated database yields a partial report.
+For one-off queries beyond it, use asyncpg, and note the scheme differs from the loader
+URL: **`postgresql://`**, not `postgresql+asyncpg://`.
 
 ```bash
 uv run python -c "

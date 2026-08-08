@@ -6,6 +6,7 @@ import {
   clampDateToDomain,
   dayOffset,
   findLayerCapability,
+  focusedResourceDomain,
   isFutureDate,
   layerAvailabilityAt,
   resolveVariant,
@@ -213,6 +214,107 @@ describe("sliderDomain", () => {
   });
 });
 
+/**
+ * The per-resource axis (2026-08-08). The global domain above is assembled from every published
+ * layer at once -- earliest observation anywhere on the left, longest horizon anywhere on the
+ * right -- so it can never answer "how far back does THIS resource go?". Focusing one does.
+ */
+describe("sliderDomain with a focused resource", () => {
+  it("draws the focused layer's own record, not the warehouse's", () => {
+    // vegetation observed from 2015-06-01 and forecasts 10 days; the global axis starts on the
+    // same day but ends 30 days out, on weather-observations' horizon.
+    expect(sliderDomain(capabilities, "vegetation")).toEqual({
+      firstDay: "2015-06-01",
+      today: SERVER_CURRENT_DATE,
+      lastDay: addDays(SERVER_CURRENT_DATE, 10),
+    });
+    // Both ends move with the resource: fire-perimeters starts three years later and ends today.
+    expect(sliderDomain(capabilities, "fire-perimeters")).toEqual({
+      firstDay: "2018-07-04",
+      today: SERVER_CURRENT_DATE,
+      lastDay: SERVER_CURRENT_DATE,
+    });
+  });
+
+  it("adds no futureAxisDays padding to a focused axis", () => {
+    // The padding exists to make the observed/future boundary visible on an axis assembled from
+    // every layer at once. A focused axis states one layer's own horizon, so padding it would
+    // redraw the very band the focus exists to size honestly.
+    const padded: SliderCapabilities = { ...capabilities, futureAxisDays: 45 };
+    expect(sliderDomain(padded, "vegetation")?.lastDay).toBe(addDays(SERVER_CURRENT_DATE, 10));
+    // ...while the unfocused axis still takes the padding, unchanged.
+    expect(sliderDomain(padded)?.lastDay).toBe(addDays(SERVER_CURRENT_DATE, 45));
+  });
+
+  it("ends a zero-horizon resource's axis at today, drawing no future band", () => {
+    const domain = sliderDomain(capabilities, "fire-perimeters");
+    if (domain === null) throw new Error("expected a domain");
+    // todayOffset === maxOffset is what the render reads as "no future band at all".
+    expect(todayOffset(domain)).toBe(sliderMaxOffset(domain));
+    expect(domain.lastDay).toBe(SERVER_CURRENT_DATE);
+  });
+
+  it("falls back to the global axis for an unknown or unobserved resource", () => {
+    const global = sliderDomain(capabilities);
+    // Not in this payload at all: a stale name must never empty the track or throw.
+    expect(sliderDomain(capabilities, "evacuation-zones")).toEqual(global);
+    // Published, but has observed nothing -- there is no record to range over.
+    expect(sliderDomain(capabilities, "sensors")).toEqual(global);
+    // An absurd payload whose first observed day is after the server's today would invert the
+    // axis, so it falls back too rather than drawing firstDay past lastDay.
+    const observedInTheFuture: SliderCapabilities = {
+      ...capabilities,
+      layers: [{ ...vegetationLayer, earliestObservedDate: "2020-01-01" }],
+    };
+    expect(sliderDomain(observedInTheFuture, "vegetation")).toEqual(
+      sliderDomain(observedInTheFuture)
+    );
+  });
+
+  it("refuses a focused snapshot's publication date as an axis, however real that date is", () => {
+    // The fallback case above only covers `earliestObservedDate === null`, which never reaches
+    // the snapshot guard at all. This is the case the guard exists for: `watersheds` carries a
+    // real 2013-01-18 WBD loaddate, so without the exclusion focusing it would draw six years of
+    // axis for a boundary set that is identical on every one of those days -- the very range
+    // sliderDomain already refuses to take from it.
+    const withWatersheds: SliderCapabilities = {
+      ...capabilities,
+      layers: [
+        ...capabilities.layers,
+        {
+          layerName: "watersheds",
+          temporalKind: "snapshot",
+          forecastHorizonDays: 0,
+          forecastVariants: [],
+          earliestObservedDate: "2013-01-18",
+        },
+      ],
+    };
+
+    expect(focusedResourceDomain(withWatersheds, "watersheds")).toBeNull();
+    expect(sliderDomain(withWatersheds, "watersheds")).toEqual(sliderDomain(withWatersheds));
+    expect(sliderDomain(withWatersheds, "watersheds")?.firstDay).toBe("2015-06-01");
+    // The same date on an EVENT layer is a different claim -- things really did happen on those
+    // days -- and does range the focused axis, which is what makes this a snapshot rule and not
+    // a rule about old dates.
+    const withOldEvents: SliderCapabilities = {
+      ...capabilities,
+      layers: [
+        ...capabilities.layers,
+        { ...firePerimeterLayer, layerName: "burn-severity", earliestObservedDate: "2013-01-18" },
+      ],
+    };
+    expect(sliderDomain(withOldEvents, "burn-severity")?.firstDay).toBe("2013-01-18");
+  });
+
+  it("leaves the global domain untouched when no resource is focused", () => {
+    const global = sliderDomain(capabilities);
+    expect(sliderDomain(capabilities, null)).toEqual(global);
+    expect(sliderDomain(capabilities, undefined)).toEqual(global);
+    expect(sliderDomain(null, "vegetation")).toBeNull();
+  });
+});
+
 describe("isFutureDate", () => {
   it("compares against the server's date, never the machine's", () => {
     // Every date here is years in the past for the test runner's own clock.
@@ -339,6 +441,21 @@ describe("clampDateToDomain", () => {
     expect(clampDateToDomain("2018-08-08", capabilities)).toBe("2018-08-08");
     expect(clampDateToDomain("2018-08-08", null)).toBe("2018-08-08");
   });
+
+  it("clamps to the focused resource's axis, not the global one", () => {
+    // 2016-04-09 is inside the global axis and years before fire-perimeters observed anything;
+    // clamping to the global domain while the focused axis is drawn would leave the thumb off
+    // its own track.
+    expect(clampDateToDomain("2016-04-09", capabilities, "fire-perimeters")).toBe("2018-07-04");
+    // Past a zero-horizon resource's right end, which is the server's today.
+    expect(clampDateToDomain("2019-04-01", capabilities, "fire-perimeters")).toBe(
+      SERVER_CURRENT_DATE
+    );
+    // The same date under the global axis is untouched, which is what makes the two differ.
+    expect(clampDateToDomain("2016-04-09", capabilities)).toBe("2016-04-09");
+    // A focus that defines no axis clamps exactly as no focus does.
+    expect(clampDateToDomain("2016-04-09", capabilities, "sensors")).toBe("2016-04-09");
+  });
 });
 
 describe("findLayerCapability", () => {
@@ -355,6 +472,7 @@ describe("useTimeSliderStore", () => {
       selectedDate: UNINITIALIZED_DATE,
       forecastVariant: "monte_carlo",
       capabilities: null,
+      focusedLayerName: null,
     });
   });
 
@@ -363,6 +481,8 @@ describe("useTimeSliderStore", () => {
     expect(result.current.selectedDate).toBe(UNINITIALIZED_DATE);
     expect(result.current.capabilities).toBeNull();
     expect(result.current.forecastVariant).toBe("monte_carlo");
+    // "All resources": the whole-warehouse axis this control has always drawn.
+    expect(result.current.focusedLayerName).toBeNull();
   });
 
   it("takes its first real selectedDate from the server's date", () => {
@@ -422,5 +542,71 @@ describe("useTimeSliderStore", () => {
     });
 
     expect(result.current.forecastVariant).toBe("ml");
+  });
+
+  it("setFocusedLayerName pulls the selection onto the new axis in the same update", () => {
+    const { result } = renderHook(() => useTimeSliderStore());
+
+    act(() => {
+      result.current.setCapabilities(capabilities);
+      result.current.setSelectedDate("2016-04-09");
+    });
+    expect(result.current.selectedDate).toBe("2016-04-09");
+
+    // fire-perimeters observed nothing before 2018-07-04, so the day that was legal a moment
+    // ago now sits left of the track. A two-step (focus now, clamp later) would publish one
+    // render with the thumb outside its own axis.
+    act(() => {
+      result.current.setFocusedLayerName("fire-perimeters");
+    });
+    expect(result.current.focusedLayerName).toBe("fire-perimeters");
+    expect(result.current.selectedDate).toBe("2018-07-04");
+
+    // Widening back to every resource clamps nothing away: the day is already inside.
+    act(() => {
+      result.current.setFocusedLayerName(null);
+    });
+    expect(result.current.focusedLayerName).toBeNull();
+    expect(result.current.selectedDate).toBe("2018-07-04");
+  });
+
+  it("setFocusedLayerName is a view over the axis, never a claim about the map", () => {
+    const { result } = renderHook(() => useTimeSliderStore());
+
+    act(() => {
+      result.current.setCapabilities(capabilities);
+      result.current.setSelectedDate("2018-08-08");
+      result.current.setFocusedLayerName("vegetation");
+    });
+
+    // Inside vegetation's axis already, so the day is untouched -- and it is still the day
+    // EVERY layer draws as of. Focus changes the range, not what is drawn.
+    expect(result.current.selectedDate).toBe("2018-08-08");
+  });
+
+  it("setCapabilities clamps against the focus that is on screen", () => {
+    const { result } = renderHook(() => useTimeSliderStore());
+
+    act(() => {
+      result.current.setCapabilities(capabilities);
+      result.current.setFocusedLayerName("weather-observations");
+      result.current.setSelectedDate("2017-06-01");
+    });
+    expect(result.current.selectedDate).toBe("2017-06-01");
+
+    // A refreshed payload moves weather-observations' record forward. The clamp must follow the
+    // FOCUSED axis; against the global one 2017-06-01 is still legal and nothing would move.
+    act(() => {
+      result.current.setCapabilities({
+        ...capabilities,
+        layers: [
+          vegetationLayer,
+          { ...weatherLayer, earliestObservedDate: "2018-01-15" },
+          firePerimeterLayer,
+          sensorLayer,
+        ],
+      });
+    });
+    expect(result.current.selectedDate).toBe("2018-01-15");
   });
 });

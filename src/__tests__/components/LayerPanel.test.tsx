@@ -18,7 +18,9 @@ import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSoilStore } from "@/stores/soil-store";
+import { useTimeSliderStore } from "@/stores/time-slider-store";
 import { useVegetationStore } from "@/stores/vegetation-store";
+import type { SliderCapabilities } from "@/types/time-slider";
 
 /**
  * Every class that makes an element a scroll container. `overflow-y-auto` is in here on its
@@ -72,15 +74,52 @@ function rowFor(layerId: string): HTMLElement {
   return screen.getByTestId(`layer-row-${layerId}`);
 }
 
+/**
+ * Enough of a payload for the dock's Time section to draw a card. The section renders nothing
+ * without one -- the server's date is the only source of "today" here -- so a test about the
+ * scrubber's place in the dock has to seed it.
+ */
+const SLIDER_CAPABILITIES: SliderCapabilities = {
+  serverCurrentDate: "2026-08-04",
+  futureAxisDays: 30,
+  layers: [
+    {
+      layerName: "water-gauges",
+      temporalKind: "daily_series",
+      forecastHorizonDays: 0,
+      forecastVariants: [],
+      earliestObservedDate: "2026-06-17",
+    },
+  ],
+};
+
+/** The one scrolling element in the dock, found the same way the contract test finds it. */
+function scrollerWithin(panel: HTMLElement): Element {
+  const scrollers = Array.from(panel.querySelectorAll("*")).filter((element) =>
+    SCROLLING_CLASS.test(classListOf(element))
+  );
+  expect(scrollers).toHaveLength(1);
+  return scrollers[0];
+}
+
 beforeEach(() => {
   useMapStore.setState({ activeLayers: [] });
   useLayerStore.setState({ legendVisible: true, layerOpacity: {} });
   usePanelStore.setState({
     layerPanelOpen: false,
+    // Reset to nothing rather than to the store's own seed: these cases are about the reports,
+    // and the Time section has its own describe below that opens it deliberately.
     expandedDetails: [],
     pendingScrollSection: null,
   });
   useSoilStore.setState({ fieldDepth: DEFAULT_SOIL_FIELD_DEPTHS });
+  useTimeSliderStore.setState({
+    selectedDate: "2026-08-04",
+    forecastVariant: "monte_carlo",
+    capabilities: SLIDER_CAPABILITIES,
+    capabilitiesUnavailable: false,
+    focusedLayerName: null,
+  });
   useVegetationStore.setState({ mode: "ndvi", ndviMode: "absolute", showNDWI: false });
 });
 
@@ -448,5 +487,81 @@ describe("LayerPanel dock sections", () => {
 
     expect(screen.queryByTestId("layer-row-sensors")).toBeNull();
     expect(detailsToggleFor("Water Scarcity")).toBeTruthy();
+  });
+});
+
+/**
+ * The time scrubber joined the dock on 2026-08-08, at the top of the one scroller and above
+ * every category, because the day governs all of them. What is left of the floating top-right
+ * region it came from is the date pill, which now opens this section.
+ *
+ * Its economics are the exception the two-caret rule already allows for: a report's caret mounts
+ * a component with its own warehouse queries, this caret mounts a card that issues none -- its
+ * capabilities arrive from the always-mounted TimeSliderCapabilitiesLoader whether the dock is
+ * open or not. That is why it is the one section `INITIALLY_EXPANDED_SECTIONS` seeds.
+ */
+describe("LayerPanel time section", () => {
+  it("puts the map date first, inside the one scroller, above every category", () => {
+    renderDock();
+    const panel = openPanel();
+
+    const timeSection = screen.getByTestId("dock-section-time");
+    expect(scrollerWithin(panel).contains(timeSection)).toBe(true);
+
+    // Ordered before the first layer group: a date control filed among the categories would
+    // read as belonging to whichever one it landed beside, and it governs all of them.
+    const firstGroup = screen.getByTestId("layer-group-fire");
+    expect(
+      timeSection.compareDocumentPosition(firstGroup) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("keeps the scroll contract with the scrubber card mounted", () => {
+    renderDock();
+    const panel = openPanel();
+    act(() => {
+      usePanelStore.getState().toggleDetails("time");
+    });
+
+    // The card arrived carrying no `overflow-y-auto` and no `max-h-*` wrapper of its own --
+    // the second-scrollbar defect panel-scroll.ts rule 2 names, and the one this card would
+    // hurt most, since it holds the dock's only drag control.
+    expect(screen.getByTestId("time-slider")).toBeTruthy();
+    expect(scrollerWithin(panel)).toBeTruthy();
+  });
+
+  it("carets open and shut like every other section in the dock", () => {
+    renderDock();
+    openPanel();
+
+    const disclosure = detailsToggleFor("Map date");
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    expect(disclosure.hasAttribute("aria-controls")).toBe(false);
+    expect(screen.queryByTestId("dock-section-body-time")).toBeNull();
+
+    fireEvent.click(disclosure);
+
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+    expect(usePanelStore.getState().expandedDetails).toEqual(["time"]);
+    expect(document.getElementById(disclosure.getAttribute("aria-controls") ?? "")).toBe(
+      screen.getByTestId("dock-section-body-time")
+    );
+  });
+
+  // What the top-bar date pill does. The dock is closed at that moment, so this also proves the
+  // shortcut does not merely expand a section nobody can see.
+  it("opens the dock at the Time section when the date pill focuses it", () => {
+    renderDock();
+    expect(screen.queryByTestId("layer-panel")).toBeNull();
+
+    act(() => {
+      usePanelStore.getState().focusDockSection("time");
+    });
+
+    expect(screen.getByTestId("layer-panel")).toBeTruthy();
+    expect(detailsToggleFor("Map date").getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId("time-slider")).toBeTruthy();
+    // Consumed on arrival, so a later expansion by hand does not re-scroll the dock.
+    expect(usePanelStore.getState().pendingScrollSection).toBeNull();
   });
 });

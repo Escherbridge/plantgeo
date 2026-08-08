@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
+import { layerLabel, toggleIdForWarehouseLayerName } from "@/lib/map/layer-registry";
 import { cn } from "@/lib/utils";
 import type {
   ForecastVariant,
@@ -11,6 +12,8 @@ import {
   addDays,
   clampDateToDomain,
   dayOffset,
+  findLayerCapability,
+  focusedResourceDomain,
   isCalendarDate,
   isFutureDate,
   layerAvailabilityAt,
@@ -44,9 +47,14 @@ const FUTURE_BAND_HATCH_IMAGE =
  * Carries no positioning of its own any more. This was `absolute bottom-24 left-1/2
  * -translate-x-1/2` -- a card floating over the middle of the canvas -- until 2026-08-05,
  * when the slider became the global time marker pinned at the top of the right-hand panel
- * region. The anchor now belongs to that region's shell (`TimeSliderPanel`), which is also
- * what makes the invariant above hold: both states are `w-full` inside one anchored column,
- * so neither can be positioned independently of the other by accident.
+ * region. Since 2026-08-08 the card lives in the left dock's Time section, at the top of the
+ * dock's one scroller; the anchor belongs to that scroller, which is also what makes the
+ * invariant above hold: both states are `w-full` inside one column, so neither can be
+ * positioned independently of the other by accident.
+ *
+ * No `overflow-*` and no `max-h-*`, deliberately: nested in the dock either would be the
+ * second-scrollbar defect `layer-panel/panel-scroll.ts` rule 2 names, and the one drag control
+ * on this card is exactly what a nested scroller makes unreachable on a phone.
  */
 const TIME_SLIDER_CONTAINER_CLASSES =
   "w-full rounded-(--radius) border border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 p-3 shadow-lg backdrop-blur-sm";
@@ -150,6 +158,24 @@ function humanizeLayerName(layerName: string): string {
 }
 
 /**
+ * The name a reader already knows a resource by, resolved through the layer registry.
+ *
+ * The picker below sits inches above the dock's own layer tree, which reads every row's name
+ * from `LAYER_REGISTRY[toggleId].label`. Humanizing the warehouse name here instead would put
+ * "Fire perimeters" in this list beside "Active Fire Perimeters" in that one, for the same
+ * layer -- a second display vocabulary for a thing that already has a canonical name.
+ *
+ * `humanizeLayerName` stays as the fallback rather than being dropped: a capability row is a
+ * `geo.layers` publication, and not every publication has a renderer to carry a registry label
+ * (`toggleIdForWarehouseLayerName` returns null for those). Such a layer is still on the axis
+ * and must still be nameable.
+ */
+function resourceLabel(layerName: string): string {
+  const toggleId = toggleIdForWarehouseLayerName(layerName);
+  return toggleId === null ? humanizeLayerName(layerName) : layerLabel(toggleId);
+}
+
+/**
  * Row-scoped copy, deliberately not the store's `describeAvailability`: the row already
  * names the layer, and the horizon line has to quote that layer's own forecast horizon.
  */
@@ -189,6 +215,13 @@ export interface TimeSliderProps {
  * value is an integer day offset from the domain's first day; it becomes a YYYY-MM-DD string
  * only at the edges, because a fractional position would name a day nothing was observed on.
  * There is no play button and no tweening for the same reason.
+ *
+ * Since 2026-08-08 the axis is optionally per resource: the picker at the top re-ranges the
+ * track to one layer's actuals plus that layer's own forecast horizon. It is a view over the
+ * CONTROL, never a filter over the map -- `selectedDate` still applies to every layer, and the
+ * caption beside the ends says so. The card is presentational and holds no tRPC of its own, so
+ * it renders against a fixture without a provider; `TimeSliderCapabilitiesLoader` is the one
+ * component that reads capabilities and the one writer of them.
  */
 export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
   const selectedDate = useTimeSliderStore((state) => state.selectedDate);
@@ -197,6 +230,11 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
   const capabilitiesUnavailable = useTimeSliderStore((state) => state.capabilitiesUnavailable);
   const setSelectedDate = useTimeSliderStore((state) => state.setSelectedDate);
   const setForecastVariant = useTimeSliderStore((state) => state.setForecastVariant);
+  // Which resource's record the axis is drawn for; null is "All resources", the whole-warehouse
+  // axis this control has always drawn. It re-ranges the TRACK and nothing else -- see the
+  // caption below, and the store field's own doc comment.
+  const focusedLayerName = useTimeSliderStore((state) => state.focusedLayerName);
+  const setFocusedLayerName = useTimeSliderStore((state) => state.setFocusedLayerName);
   // Collapsed by default: the always-visible part is the date, observed/forecast state, the
   // track and the today tick. The per-layer record is real but secondary detail, and living
   // behind a disclosure is what keeps this a compact top section of the right-hand panel
@@ -211,6 +249,7 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
   const [bandKeyExpandedOverride, setBandKeyExpandedOverride] = useState<boolean | null>(null);
   const bandKeyId = useId();
   const dateInputId = useId();
+  const resourceSelectId = useId();
   const resetToToday = useTimeSliderStore((state) => state.resetToToday);
   // The date field's own value while it is being edited. A `<input type="date">` reports "" for
   // every incomplete entry, so a directly-bound store value would push the map to a clamped day
@@ -229,7 +268,13 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
     setDraftDate(selectedDate);
   }
 
-  const domain = sliderDomain(capabilities);
+  const domain = sliderDomain(capabilities, focusedLayerName);
+  // Resolved rather than trusted: a focus can name a layer this payload no longer carries (an
+  // ingest run dropped it, or a stale session held the name across a redeploy), in which case
+  // the axis is already back on the global domain and the picker must read "All resources"
+  // rather than showing a blank <select> for an option that does not exist.
+  const focusedLayer =
+    focusedLayerName === null ? null : findLayerCapability(capabilities, focusedLayerName);
 
   const layerRows = useMemo(() => {
     if (capabilities === null || !isCalendarDate(selectedDate)) return [];
@@ -281,10 +326,26 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
   const activeVariantLabel =
     FORECAST_VARIANT_OPTIONS.find((option) => option.value === forecastVariant)?.label ??
     forecastVariant;
-  // Whether ANY layer can answer for a future day at all. Both halves are required: a horizon
-  // with no variants and a variant with no horizon are each unreachable, and either alone
-  // would put a picker on screen that can never change what is drawn.
-  const publishesAnyForecast = capabilities.layers.some(
+  // Whether the focus actually moved the ends, asked of the one function that decides it rather
+  // than by re-testing its conditions here -- a resource that defines no axis of its own (a
+  // snapshot, one with no observed record, or, absurdly, one whose first day is after the
+  // server's today) leaves the global axis drawn, and neither the caption nor the band key below
+  // may claim otherwise. Computed after the guard above, where `capabilities` is known non-null.
+  const focusedAxisApplies =
+    focusedLayerName !== null && focusedResourceDomain(capabilities, focusedLayerName) !== null;
+  // Whether a future day can be answered at all. Both halves are required: a horizon with no
+  // variants and a variant with no horizon are each unreachable, and either alone would put a
+  // picker on screen that can never change what is drawn.
+  //
+  // Scoped to the focused resource only when that resource's axis is the one drawn, because this
+  // claim legends the band ON SCREEN: with the focused axis applied the band is that layer's own
+  // horizon, so answering "Forecast" from some OTHER layer's capability would legend a band the
+  // focused resource does not publish. When the focus defined no axis the track fell back to the
+  // global domain, and the band drawn there is the whole warehouse's -- scoping the claim to the
+  // focused layer would then legend a real, publishable future band "Nothing published".
+  const forecastCandidates =
+    focusedAxisApplies && focusedLayer !== null ? [focusedLayer] : capabilities.layers;
+  const publishesAnyForecast = forecastCandidates.some(
     (layer) => layer.forecastHorizonDays > 0 && layer.forecastVariants.length > 0
   );
 
@@ -296,7 +357,9 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
   const handleOffsetChange = (nextOffset: number) => {
     // Whole days only. A fractional position would name a day nothing was observed on.
     const wholeDayOffset = Math.round(nextOffset);
-    setSelectedDate(clampDateToDomain(addDays(firstDay, wholeDayOffset), capabilities));
+    setSelectedDate(
+      clampDateToDomain(addDays(firstDay, wholeDayOffset), capabilities, focusedLayerName)
+    );
   };
 
   /**
@@ -310,7 +373,7 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
   const handleDateInputChange = (nextValue: string) => {
     setDraftDate(nextValue);
     if (!isCalendarDate(nextValue)) return;
-    setSelectedDate(clampDateToDomain(nextValue, capabilities));
+    setSelectedDate(clampDateToDomain(nextValue, capabilities, focusedLayerName));
   };
 
   return (
@@ -320,15 +383,14 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
     >
       <style dangerouslySetInnerHTML={{ __html: timeSliderStyles }} />
 
-      {/* What this control IS, stated before anything else. Until 2026-08-06 the first thing
-          in this card was a "Monte Carlo / ML" button pair, and the owner read the whole
-          widget -- a scrubber over four years of measured history -- as a forecast tool. The
-          heading names the axis, the chip names what the selected day is, and the forecast
-          picker below is now conditional on a forecast actually existing. */}
-      <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--foreground))]">
-          Map date
-        </h2>
+      {/* What the selected day IS, and nothing else. This row carried an `<h2>Map date</h2>`
+          until the card moved into the dock on 2026-08-08; the Time section's own header now
+          says exactly that, one line above, so the heading was the same title printed twice.
+          The chip stays because it is not a title: it is live state -- whether the day on this
+          map is inside the record or past the end of it -- and it keeps the top-right corner
+          it has always been read from. Right-aligned on its own row rather than folded beside
+          the date field, which at 19rem already holds the field and the Today button. */}
+      <div className="mb-2 flex items-baseline justify-end gap-2">
         <span
           data-testid="time-slider-day-kind"
           className={`rounded-(--radius) px-1.5 py-0.5 text-[0.6875rem] font-semibold uppercase tracking-wide ${
@@ -339,6 +401,43 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
         >
           {isFuture ? "Beyond the record" : "Observed"}
         </span>
+      </div>
+
+      {/* Which resource's record the track spans. Before this, the axis was assembled from
+          every published layer at once -- earliest observation anywhere on the left, longest
+          horizon anywhere on the right -- so a reader asking "how far back does soil moisture
+          go?" was shown four years of vegetation history with no way to tell the two apart.
+          Picking a resource re-ranges the axis to that layer's own actuals plus its own
+          forecast horizon; the caption below states, in the card, that this changes the RANGE
+          and not what the map draws. */}
+      <div className="mb-2 flex items-center gap-2">
+        <label className="sr-only" htmlFor={resourceSelectId}>
+          Resource
+        </label>
+        <select
+          id={resourceSelectId}
+          // Styled off the date field beside it, because they are two halves of one act:
+          // which record, and which day of it. `color-scheme` comes along for the same reason
+          // -- a UA-painted dropdown arrow drawn for a light page is invisible on the dark theme.
+          className="time-slider-date-input min-w-0 flex-1 rounded-(--radius) border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-1 text-sm font-medium text-[hsl(var(--foreground))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--ring))] max-sm:min-h-11"
+          // The resolved layer, never the raw store value: a focus this payload does not carry
+          // is already drawing the global axis, so the picker has to say "All resources" too.
+          value={focusedLayer?.layerName ?? ""}
+          data-testid="time-slider-resource-select"
+          onChange={(event) =>
+            setFocusedLayerName(event.target.value === "" ? null : event.target.value)
+          }
+        >
+          <option value="">All resources</option>
+          {capabilities.layers.map((layer) => (
+            // Labelled off the registry, valued off the payload: the option text is the name the
+            // dock's layer rows use for the same layer, while the value stays the raw
+            // geo.layers name, which is the only vocabulary the capabilities payload speaks.
+            <option key={layer.layerName} value={layer.layerName}>
+              {resourceLabel(layer.layerName)}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="mb-2 flex items-center gap-2">
@@ -499,6 +598,24 @@ export default function TimeSlider({ layerNames, className }: TimeSliderProps) {
         <span className="map-popup-meta">{firstDay}</span>
         <span className="map-popup-meta">{lastDay}</span>
       </div>
+
+      {/* Says what the picker did, next to the ends it moved. Without it a narrowed axis reads
+          as a filter -- "I picked soil moisture, so the map is showing me soil moisture" --
+          which is exactly the claim this control must not make: there is one day on this map
+          and every layer draws as of it. The second sentence is the whole point of the line.
+
+          The second branch covers every resource that narrows nothing, and there are two kinds:
+          one that has observed nothing at all, and a SNAPSHOT, which may carry a perfectly real
+          publication date and still define no axis (watersheds' 2013 WBD loaddate is one state
+          of the world, not six years of record). "No day-by-day record of its own" is true of
+          both, where "has not observed anything" would be a falsehood about the second. */}
+      {focusedLayer !== null && (
+        <p className="map-popup-meta" data-testid="time-slider-focus-caption">
+          {focusedAxisApplies
+            ? `Range shown for ${resourceLabel(focusedLayer.layerName)}. The selected date still applies to every layer.`
+            : `${resourceLabel(focusedLayer.layerName)} has no day-by-day record of its own, so the full range is shown. The selected date still applies to every layer.`}
+        </p>
+      )}
 
       {/* Names both halves of the track in words. The colours alone are a convention a first-
           time reader has no way to look up, and "is the right-hand end a prediction?" is

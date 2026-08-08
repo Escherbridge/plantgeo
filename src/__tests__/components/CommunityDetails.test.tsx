@@ -7,7 +7,7 @@ import { renderWithProviders } from "@/test/utils";
  * returns status/reviewNote per row -- this asserts the RENDERING, that a
  * submitter sees pending / published / rejected and the reviewer's note on
  * rejection. tRPC is stubbed rather than driven over a link, same rationale as
- * TimeSliderPanel.test.tsx.
+ * TimeSliderCapabilitiesLoader.test.tsx.
  */
 const listMySubmissionsQuery = vi.hoisted(() =>
   vi.fn((..._args: unknown[]) => ({ data: undefined as unknown }))

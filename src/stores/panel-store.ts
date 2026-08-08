@@ -31,8 +31,40 @@ export type PanelId =
  *
  * The seven categories plus "alerts", which owns no layer and no registry entry: it is the
  * warnings surface the toolbar bell used to open in its own sheet.
+ *
+ * Every member has a REPORT behind it -- `DETAILS_LABELS` and `DETAILS_BODIES` are both
+ * exhaustive over this union, so a new member is a compile error in two files until it has a
+ * title and a body. That is why "time" is not in here: see `DockSectionId`.
  */
 export type DockDetailsId = PanelId | "alerts";
+
+/**
+ * Anything the dock can expand and scroll to, which is a wider set than the reports.
+ *
+ * "time" joined on 2026-08-08, when the scrubber moved out of the top-right region and into
+ * the top of the dock's scroller. It is a section by every behaviour that matters here -- it
+ * expands, it collapses, and `focusDockSection("time")` is what the top-bar date pill calls --
+ * but it is not a `DockDetailsId`, because it has no dynamically-imported report and no
+ * warehouse queries of its own. Widening the id vocabulary rather than the report vocabulary
+ * is what keeps `DockDetailsBody`'s exhaustive record honest about what a report is.
+ */
+export type DockSectionId = DockDetailsId | "time";
+
+/**
+ * The sections a cold load opens, and the only ones that may be seeded.
+ *
+ * "time" alone, and the reason is the same economics that keep every report shut: expanding a
+ * report MOUNTS it and fires its warehouse queries, while the Time section's body is the
+ * scrubber card, whose capabilities arrive from the always-mounted
+ * `TimeSliderCapabilitiesLoader` whether the dock is open or not. It therefore costs nothing to
+ * have open, and the map date is what a reader most often came to the dock to change.
+ *
+ * `readonly`, because this is a declaration and not a working list: the store seeds a COPY of it
+ * (`[...INITIALLY_EXPANDED_SECTIONS]`), and a mutable export would let any importer push a
+ * section into the cold-load set from the far side of the module -- silently mounting a report
+ * and firing its warehouse queries before anyone asked.
+ */
+export const INITIALLY_EXPANDED_SECTIONS: readonly DockSectionId[] = ["time"] as const;
 
 /**
  * Maps each category to the layer IDs it governs, inverted from the layer registry so a
@@ -76,7 +108,7 @@ interface PanelState {
   layerPanelOpen: boolean;
 
   /**
-   * Details regions currently expanded, by section.
+   * Dock sections currently expanded.
    *
    * Load-bearing rather than cosmetic: a details region is where every panel query lives, and
    * it is MOUNTED only while its id is in here. Opening the dock therefore costs nothing, the
@@ -84,10 +116,13 @@ interface PanelState {
    * every panel's queries at once on the first click. Several may be open at a time; that is
    * the reader's call, not a limit worth enforcing.
    *
+   * Seeded with `INITIALLY_EXPANDED_SECTIONS`, which is "time" and nothing else -- the one
+   * section whose body owns no query, so the rule above has nothing to say about it.
+   *
    * Deliberately not persisted: a section left open a week ago would re-issue its warehouse
    * queries on the next cold load, before anyone had asked for them.
    */
-  expandedDetails: DockDetailsId[];
+  expandedDetails: DockSectionId[];
 
   /**
    * A section asked to be brought into view, consumed by the section that scrolls itself.
@@ -97,21 +132,21 @@ interface PanelState {
    * state the section merely renders from. Cleared by the section on arrival so a later
    * expansion by hand does not re-scroll.
    */
-  pendingScrollSection: DockDetailsId | null;
+  pendingScrollSection: DockSectionId | null;
 
   // --- Actions ---
   /** Dock or undock the panel. */
   toggleLayerPanel: () => void;
   /** Undock without touching any layer. */
   closeLayerPanel: () => void;
-  /** Expand or collapse one section's details region. */
-  toggleDetails: (id: DockDetailsId) => void;
+  /** Expand or collapse one section. */
+  toggleDetails: (id: DockSectionId) => void;
   /**
    * Open the dock at a section: dock it, expand that section, and ask it to scroll into view.
-   * The one call a shortcut outside the dock makes -- the toolbar's alert bell is the only
-   * one today.
+   * The one call a shortcut outside the dock makes -- the toolbar's alert bell and, since
+   * 2026-08-08, the top-bar date pill, which is the whole of what that pill's click does.
    */
-  focusDockSection: (id: DockDetailsId) => void;
+  focusDockSection: (id: DockSectionId) => void;
   /** Marks the scroll request served; called by the section that scrolled. */
   clearPendingScroll: () => void;
 }
@@ -120,7 +155,7 @@ export const usePanelStore = create<PanelState>()(
   devtools(
     (set) => ({
       layerPanelOpen: false,
-      expandedDetails: [],
+      expandedDetails: [...INITIALLY_EXPANDED_SECTIONS],
       pendingScrollSection: null,
 
       toggleLayerPanel: () => set((s) => ({ layerPanelOpen: !s.layerPanelOpen })),
@@ -185,7 +220,7 @@ export function usePanelHasActiveLayers(panelId: PanelId): boolean {
   return PANEL_LAYER_MAP[panelId].some((id) => activeLayers.includes(id));
 }
 
-/** Hook: is one section's details region expanded, and so mounted? */
-export function useDetailsExpanded(id: DockDetailsId): boolean {
+/** Hook: is one section expanded -- and, for a report section, therefore mounted? */
+export function useDetailsExpanded(id: DockSectionId): boolean {
   return usePanelStore((s) => s.expandedDetails.includes(id));
 }

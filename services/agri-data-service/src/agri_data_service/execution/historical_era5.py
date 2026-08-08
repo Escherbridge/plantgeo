@@ -1,4 +1,17 @@
-"""Cache-first contracts for the reviewed ERA5-Land monthly historical replay."""
+"""Cache-first contracts for the reviewed ERA5-Land monthly historical replay.
+
+SUPERSEDED FOR SOIL STATE (2026-08-06), NOT RETIRED. Soil moisture and soil temperature
+now come from `historical_open_meteo.py`, which reads the same ERA5-Land product at its
+native 0.1 degrees rather than this lane's 1.0-degree output grid, needs no credential,
+and completed in an afternoon while this lane managed 2 of 49 periods against repeated
+502s and SSL errors. Nothing here was deleted and no data was dropped: this lane never
+persisted a warehouse row, so `agri.data_source` has no `era5-land` entry at all.
+
+Do not re-run the soil plans. Do keep this module: it is the working CDS integration
+template -- `_require_cds_credentials`, monthly batching, checkpointing, raw-cache reuse --
+that the genuinely CDS-only products reuse, since Open-Meteo redistributes none of them.
+See conductor/tracks/cds_only_products_20260808/ and docs/unused-upstream-datasets.md.
+"""
 
 from __future__ import annotations
 

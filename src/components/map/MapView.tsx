@@ -18,7 +18,8 @@ import { DockToggle } from "./layer-panel/DockToggle";
 import { LayerPanel } from "./layer-panel/LayerPanel";
 import LayerManager from "./LayerManager";
 import HoverTooltip from "./HoverTooltip";
-import TimeSliderPanel from "./TimeSliderPanel";
+import TimeSliderCapabilitiesLoader from "./TimeSliderCapabilitiesLoader";
+import TimeDatePill from "./TimeDatePill";
 import { Legend } from "./Legend";
 import { ServiceAreaLayer } from "./ServiceAreaLayer";
 import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
@@ -335,11 +336,16 @@ export default function MapView() {
                 first -- see the ordering note in ServiceAreaLayer.tsx. */}
             <ServiceAreaLayer map={mapInstance} />
             <LayerManager />
-            {/* The right-hand panel region, always mounted: it owns the only read of
-                environmental.getSliderCapabilities (the store's day and the whole axis come
-                from that payload alone) and pins the global time marker at its top, so the
-                selected day is reachable without opening any panel. */}
-            <TimeSliderPanel />
+            {/* Headless and always mounted: the only read of
+                environmental.getSliderCapabilities, whose payload is the store's day and the
+                whole axis. It cannot live in the dock's Time section, because the dock can be
+                closed -- and a closed dock unmounts -- while the day it supplies keys every
+                warehouse-backed query on this map. */}
+            <TimeSliderCapabilitiesLoader />
+            {/* The scrubber itself is a section of the dock above. What stays out here is the
+                claim: the map draws one day, every layer draws as of it, so its marker must
+                never leave the screen. Clicking the pill opens the dock at that section. */}
+            <TimeDatePill />
             {/* Legends whatever LayerManager is drawing, panels open or closed. Renders
                 nothing while every layer is off, which is how the map starts. */}
             <Legend />

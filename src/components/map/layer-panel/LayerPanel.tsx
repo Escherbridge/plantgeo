@@ -8,6 +8,7 @@ import {
   PANEL_SCROLLER,
   PANEL_SHELL,
 } from "@/components/map/layer-panel/panel-scroll";
+import { TimeDockSection } from "@/components/map/layer-panel/TimeDockSection";
 import { Button } from "@/components/ui/button";
 import { useMap } from "@/lib/map/map-context";
 import { useLayerStore } from "@/stores/layer-store";
@@ -62,6 +63,11 @@ function useMapPaddingForPanel(isOpen: boolean): void {
  * colour chip, its name and its opacity -- and under each category, the report that used to
  * open as a right-hand sheet. The seven sheets and the icon rail that opened them are gone;
  * see src/components/map/AGENTS.md "One dock, no sheets" for what that fixed.
+ *
+ * The map's date joined it at the top on 2026-08-08, above every category, because the day is
+ * the one setting all of them share. What is left of the old floating time region is the date
+ * pill in the top bar, which now opens this dock at that section instead of expanding a
+ * scrubber over the canvas.
  *
  * Deliberately not shipped here, and each for a reason rather than for time:
  * - **Drag reordering.** Paint order in this app is code, not data: it is the `beforeId` at
@@ -134,8 +140,15 @@ export function LayerPanel() {
           contract and not a preference. It matters more now than it did with a tree in it:
           every former sheet's body scrolls in HERE, and each one arrived carrying its own
           `overflow-y-auto max-h-[calc(100vh-8rem)]` wrapper, which is the second-scrollbar
-          defect rule 2 was written against. Those wrappers were stripped on the way in. */}
+          defect rule 2 was written against. Those wrappers were stripped on the way in, and
+          the time scrubber arrived on 2026-08-08 carrying none -- see TimeDockSection. */}
       <div className={PANEL_SCROLLER}>
+        {/* First, and above every category, because the day governs all of them: one date
+            applies to every warehouse-backed layer on the map, so a control filed among the
+            categories would read as belonging to whichever one it landed beside. It scrolls
+            with the rest -- pinning it would be a second fixed row competing with the header
+            for a 19rem column's height. */}
+        <TimeDockSection />
         <DockSections />
       </div>
 

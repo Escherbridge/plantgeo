@@ -12,7 +12,7 @@
  */
 
 import { layerRegistryEntries, type LayerToggleId } from "@/lib/map/layer-registry";
-import type { DockDetailsId, PanelId } from "@/stores/panel-store";
+import type { DockDetailsId, DockSectionId, PanelId } from "@/stores/panel-store";
 
 /**
  * The name each group of layers carries in the dock.
@@ -62,8 +62,15 @@ export const DETAILS_LABELS: Record<DockDetailsId, string> = {
   alerts: "Environmental Alerts",
 };
 
-/** Every section the dock can render: the categories, the ungoverned bucket, the alerts pivot. */
-export type DockSectionKey = PanelId | typeof UNGOVERNED_GROUP_KEY | DockDetailsId;
+/**
+ * Every section the dock can render: the categories, the ungoverned bucket, the alerts pivot,
+ * and the Time section at the top of the scroller.
+ *
+ * Wider than `DockDetailsId` because a section is not the same thing as a report -- "Basemap"
+ * carries layers and no report, "time" carries the scrubber and no report. `DockSectionId`
+ * brings "time" in; the ungoverned bucket is a local sentinel and joins from here.
+ */
+export type DockSectionKey = DockSectionId | typeof UNGOVERNED_GROUP_KEY;
 
 /** One category of layers, with the details region filed under it. */
 export interface DockLayerGroup {

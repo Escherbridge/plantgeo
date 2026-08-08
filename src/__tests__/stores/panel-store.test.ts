@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { useMapStore, DEFAULT_VIEWPORT } from '@/stores/map-store'
 import {
+  INITIALLY_EXPANDED_SECTIONS,
   usePanelHasActiveLayers,
   getPanelForLayer,
   getAllManagedLayerIds,
@@ -148,6 +149,29 @@ describe('map dock state', () => {
     })
 
     expect(usePanelStore.getState().expandedDetails).toEqual(['alerts'])
+  })
+
+  // What the top-bar date pill calls (2026-08-08). The scrubber lives in the dock now, so the
+  // pill is a shortcut to a section rather than a disclosure over a card of its own.
+  it('docks, expands and queues a scroll for the Time section too', () => {
+    act(() => {
+      usePanelStore.getState().focusDockSection('time')
+    })
+
+    const state = usePanelStore.getState()
+    expect(state.layerPanelOpen).toBe(true)
+    expect(state.expandedDetails).toContain('time')
+    expect(state.pendingScrollSection).toBe('time')
+  })
+
+  /**
+   * "time" is the only seeded section, and the exception proves the rule rather than weakening
+   * it: expanding a REPORT mounts it and fires its warehouse queries, while the Time section's
+   * body is the scrubber card, whose capabilities arrive from the always-mounted
+   * TimeSliderCapabilitiesLoader whether the dock is open or not.
+   */
+  it('seeds only the section that costs no query', () => {
+    expect(INITIALLY_EXPANDED_SECTIONS).toEqual(['time'])
   })
 
   // The section clears its own request on arrival, so a later expansion by hand does not

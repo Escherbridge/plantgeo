@@ -4,6 +4,7 @@ import {
   BarChart3,
   Bell,
   Building2,
+  CalendarDays,
   CloudSun,
   Droplets,
   Flame,
@@ -63,6 +64,9 @@ export function LayerIcon({ name, className }: { name: LayerIconName; className?
  * gutter beside its name.
  */
 const DOCK_SECTION_ICON_COMPONENTS: Record<DockSectionKey, LucideIcon> = {
+  // The same calendar the top-bar date pill wears, so the pill and the section it opens are
+  // visibly one control split across two places.
+  time: CalendarDays,
   fire: Flame,
   water: Droplets,
   vegetation: Leaf,

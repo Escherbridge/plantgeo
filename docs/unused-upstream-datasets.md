@@ -112,9 +112,42 @@ every `ingest-backfill` / `ingest-firms` batch). The remaining gates before laun
 
 ## Copernicus CDS
 
-The CDS ERA5-Land lane is being retired for soil state: Open-Meteo redistributes the same
-reanalysis at 0.1° (finer than the 1.0° CDS output grid the plans use), keyless, and moved
-6.4M rows in an afternoon while CDS managed 2 of 49 periods against repeated 502s and dropped
-connections. CDS remains the only route to genuinely CDS-only products — AgERA5
-agrometeorological indicators, CEMS fire danger indices, and seasonal forecasts — none of which
-Open-Meteo redistributes. Reach for it only for those.
+### The soil lane is SUPERSEDED, not retired — nothing deleted, nothing dropped
+
+Open-Meteo redistributes the same ERA5-Land reanalysis at 0.1° (finer than the 1.0° output grid
+the CDS plans request), keyless, and moved 6.4M rows in an afternoon while CDS managed 2 of 49
+periods against repeated 502s and SSL errors. Soil moisture and soil temperature are served from
+Open-Meteo today and verified rendering to users.
+
+No data was dropped because **this lane never persisted a warehouse row**: `agri.data_source`
+holds no `era5-land` key, and the only residue is a git-ignored `.agri-local-runs/historical-era5/`
+cache whose two checkpoints never reached `validated`. The code stays too — `historical_era5.py`
+is the one working CDS integration template, and every product below reuses its shape.
+
+Artifacts kept and marked rather than removed: `plans/era5-land-pnw-soil-*.json`,
+`plans/era5-land-western-na-soil-*.json`, `infra/local-warehouse/plans/era5-land-na-sampling-*.json`,
+their two generators, `execution/historical_era5.py`, `historical_era5_parquet.py`,
+`execution/historical_writer/era5.py`, and the four `historical-era5-*` CLI verbs.
+
+### What CDS is still the only route to
+
+Tracked in `conductor/tracks/cds_only_products_20260808/`.
+
+| Product | Dataset id | Host | Notes |
+| --- | --- | --- | --- |
+| AgERA5 agrometeorological indicators | `sis-agrometeorological-indicators` (pin `version: 2_0`) | `cds.climate.copernicus.eu` | 0.1° native — already matches our lattice. Daily, 1979→present, CC-BY. **Zero new credential plumbing.** Evaluate the `-timeseries` sibling first; it may avoid gridded NetCDF entirely. |
+| CEMS fire danger indices | `cems-fire-historical-v1`, `cems-fire-seasonal` | **`ewds.climate.copernicus.eu`** | Closes a real gap: we have fire detections, perimeters and burn severity but no fire *danger* index. FWI/FFMC/DMC/DC/ISI/BUI/DSR plus US NFDRS and Australian McArthur, 1940→present. |
+| Seasonal forecasts | SEAS5 / C3S originating-centre datasets | `cds.climate.copernicus.eu` | Long horizon. Ids not verified to the same standard as the two above. |
+
+**CEMS blocker, surface it before planning:** EWDS is a 2024+ split-off from the classic CDS with
+its own accounts, terms and API keys. The existing `CDSAPI_URL`/`CDSAPI_KEY` are scoped to the
+classic host only, so CEMS needs a second registered key and a second URL/key pair through
+`Settings`. The known failure mode — `dataset cems-fire-historical-v1 not found` — is really the
+classic client pointed at the wrong host.
+
+**Two traps that carry over from the retired lane:** the four-calendar-year window validator plus
+exact day-for-day period coverage make time-splitting a plan impossible, and cell-splitting buys no
+wall clock because retrievals are per-period. Intra-plan period concurrency is the only real lever.
+AgERA5 adds one of its own: it appears to retrieve one variable + one statistic per call rather than
+bundling a list, so N variables × statistics multiplies queue latency. Confirm cardinality on the
+live request form before checksumming any plan.
