@@ -22,7 +22,8 @@
     "docker:logs": "podman compose logs -f",
     "tiles:serve": "podman compose up -d martin",
     "tiles:logs": "podman compose logs -f martin",
-    "routing:serve": "podman compose up valhalla -d"
+    "routing:serve": "podman compose up valhalla -d",
+    "warm:soilgrids": "node scripts/warm-soilgrids.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
