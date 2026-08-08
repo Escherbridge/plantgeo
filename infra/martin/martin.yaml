@@ -43,6 +43,9 @@ postgres:
     burn_severity_tiles:
       schema: geo
       function: burn_severity_tiles
+    watershed_tiles:
+      schema: geo
+      function: watershed_tiles
   tables:
     osm_roads:
       schema: geo
