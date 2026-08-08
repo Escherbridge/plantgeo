@@ -9,6 +9,7 @@ import {
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
 import { useStyleReady } from "@/components/map/layers/use-style-ready";
+import { scaleOpacityValue } from "@/lib/map/layer-opacity";
 import type { ExpressionSpecification } from "@/types/map";
 
 /**
@@ -79,7 +80,15 @@ interface SoilFieldLayerProps {
    * viewport holds none, so `setData` has something to clear with.
    */
   geojson?: GeoJSON.FeatureCollection | null;
+  /** The fill's authored strength. The design value, not a control. */
   opacity?: number;
+  /**
+   * The reader's MULTIPLIER, per measure. `soil-moisture` and `soil-temperature` are separate
+   * registry toggles and each instance of this component gets its own scalar -- they shared
+   * one `soil-store.opacity` until 2026-08-08, which made per-layer opacity impossible for
+   * them and coupled both to the SoilGrids raster besides.
+   */
+  opacityScale?: number;
   visible?: boolean;
 }
 
@@ -88,18 +97,36 @@ export function SoilFieldLayer({
   measure,
   geojson = null,
   opacity = 0.7,
+  opacityScale = 1,
   visible = true,
 }: SoilFieldLayerProps) {
   const ids = useMemo(() => layerIdsFor(measure), [measure]);
   const fillColor = useMemo(() => fillColorFor(measure), [measure]);
+  const fillOpacity = opacity * opacityScale;
+  /**
+   * The one place in production where the expression path is exercised.
+   *
+   * `OUTLINE_OPACITY` is `["case", ["==", ["get","aggregated"], true], 0, 0.25]` -- the rule
+   * that stops isoband contours being stroked. A scalar write would erase it permanently for
+   * the session; wrapping it as `["*", <case>, factor]` keeps every arm, and `0 * f = 0`
+   * preserves the aggregated-cell zero exactly.
+   */
+  const outlineOpacity = useMemo(
+    () => scaleOpacityValue(OUTLINE_OPACITY, opacityScale),
+    [opacityScale]
+  );
   // Latest props behind a ref so the style.load handler re-attaches with current values.
-  const propsRef = useRef({ geojson, opacity });
-  propsRef.current = { geojson, opacity };
+  const propsRef = useRef({ geojson, fillOpacity, outlineOpacity });
+  propsRef.current = { geojson, fillOpacity, outlineOpacity };
   const styleReady = useStyleReady(map);
 
   const addLayers = useCallback(
     (mapInstance: MapLibreMap) => {
-      const { geojson: currentGeoJson, opacity: currentOpacity } = propsRef.current;
+      const {
+        geojson: currentGeoJson,
+        fillOpacity: currentFillOpacity,
+        outlineOpacity: currentOutlineOpacity,
+      } = propsRef.current;
       const beforeId = getFirstSymbolLayer(mapInstance);
 
       if (!mapInstance.getSource(ids.source)) {
@@ -115,7 +142,7 @@ export function SoilFieldLayer({
             id: ids.fill,
             type: "fill",
             source: ids.source,
-            paint: { "fill-color": fillColor, "fill-opacity": currentOpacity },
+            paint: { "fill-color": fillColor, "fill-opacity": currentFillOpacity },
           },
           beforeId
         );
@@ -129,7 +156,7 @@ export function SoilFieldLayer({
             paint: {
               "line-color": "#3f3f46",
               "line-width": 0.5,
-              "line-opacity": OUTLINE_OPACITY,
+              "line-opacity": currentOutlineOpacity as ExpressionSpecification,
             },
           },
           beforeId
@@ -188,9 +215,12 @@ export function SoilFieldLayer({
     const source = map.getSource(ids.source) as GeoJSONSource | undefined;
     if (source) source.setData(geojson ?? EMPTY_COLLECTION);
     if (map.getLayer(ids.fill)) {
-      map.setPaintProperty(ids.fill, "fill-opacity", opacity);
+      map.setPaintProperty(ids.fill, "fill-opacity", fillOpacity);
     }
-  }, [map, ids, geojson, opacity, visible]);
+    if (map.getLayer(ids.outline)) {
+      map.setPaintProperty(ids.outline, "line-opacity", outlineOpacity);
+    }
+  }, [map, ids, geojson, fillOpacity, outlineOpacity, visible]);
 
   return null;
 }

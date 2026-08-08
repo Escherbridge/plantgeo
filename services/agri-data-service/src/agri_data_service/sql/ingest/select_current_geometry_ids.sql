@@ -1,0 +1,67 @@
+-- Purpose: re-read the currently-open version of each named place after the batch's writes have
+--          been applied, so the identifier a caller goes on to link is the one the database
+--          actually kept rather than the one this run hoped to write.
+-- Loaded by: agri_data_service.ingest.geometry
+-- Params: natural_keys (text[]) -- every place the batch touched, whatever the adapter did to
+--         it: opened, confirmed, superseded, or left alone as undatable.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap"
+-- in sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too, and would
+-- mint a bind parameter nobody supplies.
+--
+-- What this returns: one row per place that has an open version, pairing the place key with
+-- that version's identifier. A place with no open version simply does not appear, which is how
+-- the caller learns not to link anything for it.
+--
+-- Why the identifiers are re-read instead of remembered
+--
+--   This run minted the identifiers it inserted, so it could in principle just reuse them. It
+--   deliberately does not. Two of the paths through a batch do not end with this run's own
+--   identifier being the current one:
+--
+--     - A place classified as unchanged was only confirmed. Its open version is one some
+--       earlier run wrote, and this run never held that identifier at all.
+--     - A place whose insert lost a race was skipped by the ON CONFLICT ... DO NOTHING in
+--       insert_geometry_versions.sql. The open version is the winner's, not this run's, and
+--       using the minted-but-never-written identifier would point a feature row at a version
+--       that does not exist -- a foreign key violation at COMMIT if it were caught, and a
+--       dangling reference if it were not.
+--
+--   Asking the database is the one answer that is correct on every path, and it costs a single
+--   round trip for the whole batch. It is safe to trust because the caller still holds the
+--   advisory lock over every one of these places for the life of the transaction, so no other
+--   run can move a chain between this read and the write that follows it.
+--
+-- How this query works, clause by clause:
+--
+--   SELECT natural_key, geometry_id
+--     The pairing the caller needs and nothing else. The geometry itself is deliberately not
+--     selected: shapes are large, this runs once per batch, and no caller of it looks at
+--     coordinates.
+--
+--   WHERE natural_key = ANY(CAST(natural_keys AS text[]))
+--     ANY applied to an array is "equal to any element of this array" -- the array form of IN.
+--     It is used here rather than IN because IN needs a list written into the SQL text, one
+--     placeholder per value, so the statement's shape would change with the size of the batch
+--     and the database would have to plan it afresh every time. ANY takes the whole batch as a
+--     single parameter, so one prepared statement serves a batch of one and a batch of ten
+--     thousand alike.
+--
+--     The CAST exists purely to pin the parameter's type. A bind parameter arrives with no type
+--     of its own, and the database will not guess which array type is meant. The Python call
+--     site declares the same type again with bindparam(...); both halves are needed for a
+--     Python list to arrive as a real PostgreSQL text array.
+--
+--   AND version_valid_to IS NULL
+--     Picks the open version out of the chain. geo.geometry holds the whole history of a
+--     place's shape as a chain of rows -- each valid from version_valid_from until
+--     version_valid_to, with the newest row ending in NULL to mean "still true, no end known".
+--     Without this condition the query would return every version a place has ever had, and the
+--     caller, keeping one row per key, would keep an arbitrary historical one.
+--
+--     A partial unique index enforces that at most one row per place satisfies this condition,
+--     which is what makes "one row per place" a guarantee here rather than an assumption.
+SELECT natural_key, geometry_id
+FROM geo.geometry
+WHERE natural_key = ANY(CAST(:natural_keys AS text[]))
+  AND version_valid_to IS NULL

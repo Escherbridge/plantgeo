@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import { MapProvider } from "@/lib/map/map-context";
+import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
 import { useSoilStore } from "@/stores/soil-store";
 import { UNINITIALIZED_DATE, useTimeSliderStore } from "@/stores/time-slider-store";
@@ -151,19 +152,29 @@ import LayerManager from "@/components/map/LayerManager";
  */
 function createFakeMap() {
   const listeners = new Map<string, Set<() => void>>();
+  // Counted cumulatively, never decremented: the property under test is that a handler is
+  // registered ONCE per map and keeps its place in the queue, so an off/on pair is exactly
+  // the regression to catch, not an even trade.
+  const registrations = new Map<string, number>();
   let styleLoaded = false;
 
   return {
     on: (type: string, handler: () => void) => {
       if (!listeners.has(type)) listeners.set(type, new Set());
       listeners.get(type)!.add(handler);
+      registrations.set(type, (registrations.get(type) ?? 0) + 1);
     },
+    registrationCountFor: (type: string) => registrations.get(type) ?? 0,
     off: (type: string, handler: () => void) => {
       listeners.get(type)?.delete(handler);
     },
     isStyleLoaded: () => styleLoaded,
     getLayer: () => true,
     setLayoutProperty: vi.fn(),
+    // The single writer of every style-baked layer's opacity -- see
+    // src/lib/map/layer-opacity.ts. It is always written as the AUTHORED base scaled, never as
+    // an absolute, so a factor of 1 rewrites exactly what the style declared.
+    setPaintProperty: vi.fn(),
     // Style-baked Martin layers take the slider's day as a style filter rather than as a
     // prop, because they are not React-mounted -- see src/lib/map/tile-layer-date-filter.ts.
     setFilter: vi.fn(),
@@ -188,6 +199,7 @@ function renderLayerManager(fakeMap: FakeMap) {
 
 const INITIAL_MAP_STATE = useMapStore.getState();
 const INITIAL_SOIL_STATE = useSoilStore.getState();
+const INITIAL_LAYER_STATE = useLayerStore.getState();
 
 const SERVER_CURRENT_DATE = "2026-08-04";
 const sliderCapabilities: SliderCapabilities = {
@@ -218,6 +230,9 @@ function resetSliderStore() {
 beforeEach(() => {
   useMapStore.setState(INITIAL_MAP_STATE, true);
   useSoilStore.setState(INITIAL_SOIL_STATE, true);
+  // Sparse and empty by default -- an absent key means "as authored", so no case here starts
+  // with a layer already dimmed by a previous one.
+  useLayerStore.setState({ ...INITIAL_LAYER_STATE, layerOpacity: {} }, true);
   resetSliderStore();
   dynamicStub.renders.length = 0;
   viewportQueries.getWatersheds.mockReturnValue({ data: undefined });
@@ -235,6 +250,7 @@ afterEach(() => {
   dynamicStub.renders.length = 0;
   useMapStore.setState(INITIAL_MAP_STATE, true);
   useSoilStore.setState(INITIAL_SOIL_STATE, true);
+  useLayerStore.setState({ ...INITIAL_LAYER_STATE, layerOpacity: {} }, true);
   // The slider store is reset in beforeEach only: writing it here would fire
   // useDebouncedMapDay's subscription while the tree is still mounted, scheduling a settle
   // timer that lands after the test and outside act().
@@ -345,31 +361,179 @@ describe("LayerManager style readiness", () => {
 });
 
 /**
- * `watersheds` and `soil-survey` are component-rendered toggles (renderKind "component",
- * no style layer ids), so `applyVisibility` above can never draw them -- only a mounted,
- * fed sub-layer can. Both endpoints existed with no consumer at all, which is exactly the
- * failure these cases pin down: a registry entry and a live tRPC procedure that nothing
- * ever reads still render nothing.
+ * Per-layer opacity is a MULTIPLIER over each layer's authored paint, applied by LayerManager
+ * for style-baked layers and threaded as `opacityScale` into every component-mounted one --
+ * one writer per (layer, paint property). See src/lib/map/layer-opacity.ts.
+ */
+describe("LayerManager applies per-layer opacity", () => {
+  /** The value written for one (style layer, property) pair, or undefined if never written. */
+  function paintWriteFor(fakeMap: FakeMap, layerId: string, property: string): unknown {
+    const calls = fakeMap.setPaintProperty.mock.calls.filter(
+      ([writtenLayerId, writtenProperty]) =>
+        writtenLayerId === layerId && writtenProperty === property
+    );
+    return calls.at(-1)?.[2];
+  }
+
+  it("writes each style-baked layer's AUTHORED base when nothing has been dimmed", () => {
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    act(() => {
+      fakeMap.emit("style.load");
+    });
+
+    // The watershed pair in one toggle: 0.05 for the boundary wash, 0.6 for its outline. An
+    // absolute slider would need a different neutral position for each; a multiplier of 1
+    // rewrites exactly what layers.ts declared.
+    expect(paintWriteFor(fakeMap, "watersheds-fill", "fill-opacity")).toBe(0.05);
+    expect(paintWriteFor(fakeMap, "watersheds-outline", "line-opacity")).toBe(0.6);
+    expect(paintWriteFor(fakeMap, "fire-perimeters", "fill-opacity")).toBe(0.5);
+  });
+
+  it("scales the authored base, rather than writing the reader's number as an absolute", () => {
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    act(() => {
+      useLayerStore.getState().setLayerOpacity("watersheds", 0.5);
+    });
+    act(() => {
+      fakeMap.emit("style.load");
+    });
+
+    expect(paintWriteFor(fakeMap, "watersheds-fill", "fill-opacity")).toBeCloseTo(0.025, 6);
+    expect(paintWriteFor(fakeMap, "watersheds-outline", "line-opacity")).toBeCloseTo(0.3, 6);
+  });
+
+  it("uses the property that layer's TYPE carries, not one shared property", () => {
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    act(() => {
+      fakeMap.emit("style.load");
+    });
+
+    const written = new Set(
+      fakeMap.setPaintProperty.mock.calls.map(([layerId, property]) => `${layerId}|${property}`)
+    );
+    // fill / line / circle / fill-extrusion, each on the layer whose type defines it.
+    expect(written).toContain("interventions|fill-opacity");
+    expect(written).toContain("interventions-outline|line-opacity");
+    expect(written).toContain("interventions-points|circle-opacity");
+    expect(written).toContain("building-footprints|fill-extrusion-opacity");
+    // ...and never a property the layer's type does not define.
+    expect(written).not.toContain("interventions|circle-opacity");
+    expect(written).not.toContain("interventions-points|fill-opacity");
+  });
+
+  /**
+   * The trap this pins: LayerManager's `style.load` handler is registered ONCE per map so it
+   * keeps its place in the listener queue -- ServiceAreaLayer mounts first so its dimming mask
+   * stays beneath the data pins (src/components/map/AGENTS.md "Style.load listener order").
+   * Putting the opacity record in that effect's deps would re-register the handler on nearly
+   * every pointer tick of a slider drag and drop the mask on top of everything.
+   */
+  it("does not re-register the style.load listener when a layer is dimmed", () => {
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    const registrationsBefore = fakeMap.registrationCountFor("style.load");
+
+    act(() => {
+      useLayerStore.getState().setLayerOpacity("watersheds", 0.4);
+    });
+    act(() => {
+      useLayerStore.getState().setLayerOpacity("watersheds", 0.35);
+    });
+
+    expect(fakeMap.registrationCountFor("style.load")).toBe(registrationsBefore);
+  });
+
+  // Every component-mounted layer folds the multiplier in itself, because five of them
+  // already own setPaintProperty on the same properties and two rewrite on every pan. The
+  // three soil toggles take three independent scalars where one `soil-store.opacity` used to
+  // drive the SoilGrids raster and both ERA5-Land fields at once.
+  it("threads a separate scalar into every component-mounted layer", () => {
+    useMapStore.setState({
+      activeLayers: ["fire", "soil", "soil-moisture", "soil-temperature"],
+    });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    act(() => {
+      useLayerStore.getState().setLayerOpacity("soil-moisture", 0.4);
+    });
+
+    const soilFieldRenders = dynamicStub.renders.filter(
+      (render) => render.component === "SoilFieldLayer"
+    );
+    const moisture = soilFieldRenders.filter((r) => r.props.measure === "moisture").at(-1);
+    const temperature = soilFieldRenders.filter((r) => r.props.measure === "temperature").at(-1);
+
+    expect(moisture?.props.opacityScale).toBe(0.4);
+    expect(temperature?.props.opacityScale).toBe(1);
+    expect(lastRenderOf("SoilLayer")?.opacityScale).toBe(1);
+    // Both props LayerManager declared but never passed before this landed, so FireLayer's
+    // and DroughtLayer's live opacity effects were inert.
+    expect(lastRenderOf("FireLayer")?.opacityScale).toBe(1);
+    expect(lastRenderOf("DroughtLayer")?.opacityScale).toBe(1);
+    // And never an absolute `opacity` -- the component owns its authored base.
+    expect(lastRenderOf("FireLayer")).not.toHaveProperty("opacity");
+    expect(moisture?.props).not.toHaveProperty("opacity");
+  });
+});
+
+/**
+ * `soil-survey` is a component-rendered toggle (renderKind "component", no style layer
+ * ids), so `applyVisibility` above can never draw it -- only a mounted, fed sub-layer can.
+ * Its endpoint existed with no consumer at all, which is exactly the failure these cases
+ * pin down: a registry entry and a live tRPC procedure that nothing ever reads still render
+ * nothing. `watersheds` sat here too until it moved onto geo.watershed_tiles(); it is now
+ * style-backed and its case below asserts the setLayoutProperty path instead.
  */
 describe("LayerManager viewport-proxied polygon layers", () => {
-  it("hands WaterLayer the watershed collection when the watersheds toggle is on", () => {
-    const collection = polygonCollection();
-    viewportQueries.getWatersheds.mockReturnValue({ data: collection });
+  // The bug this pins: while watersheds was proxied, environmental.getWatersheds capped a
+  // request at 1 square degree against a ~767 sq-deg viewport bbox, so every request 400d
+  // and the layer drew an empty collection at every ordinary zoom. It is now baked into the
+  // style, so LayerManager must reach it with setLayoutProperty and must not proxy it at all.
+  it("flips the baked watershed style layers on instead of proxying a collection", () => {
     useMapStore.setState({ activeLayers: ["watersheds"] });
 
     const fakeMap = createFakeMap();
     fakeMap.setStyleLoaded(true);
     renderLayerManager(fakeMap);
 
-    const waterProps = lastRenderOf("WaterLayer");
-    expect(waterProps).not.toBeNull();
-    // WaterLayer owns the watershed source, so it must stay mounted even though the
-    // separate "water" gauge toggle is off -- but `visible` (which gates the gauge/well
-    // points) must stay false: only `watershedsVisible` may be true here.
-    expect(waterProps?.visible).toBe(false);
-    expect(waterProps?.watershedsVisible).toBe(true);
-    expect(waterProps?.watershedsGeoJSON).toBe(collection);
-    expect(enabledFlagOf(viewportQueries.getWatersheds)).toBe(true);
+    for (const layerId of ["watersheds-fill", "watersheds-outline"]) {
+      expect(fakeMap.setLayoutProperty).toHaveBeenCalledWith(layerId, "visibility", "visible");
+    }
+    // The proxy is no longer on the map's path at all -- not merely disabled.
+    expect(viewportQueries.getWatersheds).not.toHaveBeenCalled();
+    // WaterLayer stays mounted for the gauge/well points, but the separate "water" toggle
+    // is off, so it must not draw them.
+    expect(lastRenderOf("WaterLayer")?.visible).toBe(false);
+  });
+
+  it("leaves the baked watershed style layers hidden while the toggle is off", () => {
+    useMapStore.setState({ activeLayers: ["water"] });
+
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    for (const layerId of ["watersheds-fill", "watersheds-outline"]) {
+      expect(fakeMap.setLayoutProperty).toHaveBeenCalledWith(layerId, "visibility", "none");
+      expect(fakeMap.setLayoutProperty).not.toHaveBeenCalledWith(
+        layerId,
+        "visibility",
+        "visible"
+      );
+    }
   });
 
   it("does not render gauge points when watersheds is on and water is off, even if the streamflow cache still holds a gauge fetched earlier", () => {
@@ -378,7 +542,8 @@ describe("LayerManager viewport-proxied polygon layers", () => {
     // was previously on. Before the fix, LayerManager passed WaterLayer
     // `visible={waterEnabled || watershedsVisible}`, which read true here purely because
     // watersheds is on -- rendering gauge circles for measurements the user had
-    // explicitly turned off, with no toggle claiming them.
+    // explicitly turned off, with no toggle claiming them. Watersheds no longer touches
+    // WaterLayer at all, which is the structural version of the same guarantee.
     viewportQueries.getStreamflow.mockReturnValue({
       data: [
         {
@@ -405,24 +570,6 @@ describe("LayerManager viewport-proxied polygon layers", () => {
     // ...but `visible` -- the prop that actually gates whether WaterLayer draws gauge
     // circles -- must be false, since the "water" toggle itself is off.
     expect(waterProps?.visible).toBe(false);
-    expect(waterProps?.watershedsVisible).toBe(true);
-  });
-
-  it("empties the watershed source rather than stranding polygons when the toggle is off", () => {
-    viewportQueries.getWatersheds.mockReturnValue({ data: polygonCollection() });
-    useMapStore.setState({ activeLayers: ["water"] });
-
-    const fakeMap = createFakeMap();
-    fakeMap.setStyleLoaded(true);
-    renderLayerManager(fakeMap);
-
-    const waterProps = lastRenderOf("WaterLayer");
-    // Not null/undefined: WaterLayer only creates the source when this prop is a
-    // collection, and only a collection can be set back to empty once it exists.
-    const watersheds = waterProps?.watershedsGeoJSON as GeoJSON.FeatureCollection;
-    expect(watersheds.type).toBe("FeatureCollection");
-    expect(watersheds.features).toHaveLength(0);
-    expect(enabledFlagOf(viewportQueries.getWatersheds)).toBe(false);
   });
 
   it("mounts SoilSurveyLayer with the SSURGO collection when the soil-survey toggle is on", () => {
@@ -441,14 +588,13 @@ describe("LayerManager viewport-proxied polygon layers", () => {
     expect(enabledFlagOf(viewportQueries.getSoilSurvey)).toBe(true);
   });
 
-  it("neither queries nor draws the polygon feeds while both toggles are off", () => {
+  it("neither queries nor draws the polygon feed while every toggle is off", () => {
     useMapStore.setState({ activeLayers: [] });
 
     const fakeMap = createFakeMap();
     fakeMap.setStyleLoaded(true);
     renderLayerManager(fakeMap);
 
-    expect(enabledFlagOf(viewportQueries.getWatersheds)).toBe(false);
     expect(enabledFlagOf(viewportQueries.getSoilSurvey)).toBe(false);
     expect(lastRenderOf("WaterLayer")?.visible).toBe(false);
     expect(lastRenderOf("SoilSurveyLayer")?.visible).toBe(false);

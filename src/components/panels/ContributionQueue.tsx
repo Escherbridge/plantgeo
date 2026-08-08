@@ -1,11 +1,70 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
+import { buildMapFocusHref } from "@/lib/map/focus-params";
 import { trpc } from "@/lib/trpc/client";
 
 /** A rejection with no reason can't be acted on by the submitter — see src/app/moderation/page.tsx. */
 function hasRejectReason(note: string): boolean {
   return note.trim().length > 0;
+}
+
+/**
+ * What a reviewer needs to see, read out of the untyped `properties` bag.
+ *
+ * Nothing here is trusted: `properties` is jsonb, and while
+ * `interventions.submitIntervention` writes a known shape, the machine-ingress route at
+ * `src/app/api/ingest/interventions/route.ts` and any future writer share this column and
+ * this queue filters on status alone, not on layer. Every field narrows or falls away.
+ */
+interface SubmissionSummary {
+  name: string | null;
+  category: string | null;
+  description: string | null;
+  longitude: number | null;
+  latitude: number | null;
+}
+
+/** The first coordinate position of any GeoJSON geometry — enough to fly the camera there. */
+function firstPosition(coordinates: unknown): [number, number] | null {
+  if (!Array.isArray(coordinates)) return null;
+  const [first, second] = coordinates;
+  if (typeof first === "number" && typeof second === "number") {
+    return [first, second];
+  }
+  return firstPosition(first);
+}
+
+function readSubmissionSummary(properties: unknown): SubmissionSummary {
+  const bag = (properties ?? {}) as Record<string, unknown>;
+  const geometry = (bag.geometry ?? {}) as { coordinates?: unknown };
+  const position = firstPosition(geometry.coordinates);
+  return {
+    name: typeof bag.name === "string" && bag.name.trim() !== "" ? bag.name : null,
+    category: typeof bag.type === "string" && bag.type.trim() !== "" ? bag.type : null,
+    description:
+      typeof bag.description === "string" && bag.description.trim() !== ""
+        ? bag.description
+        : null,
+    longitude: position?.[0] ?? null,
+    latitude: position?.[1] ?? null,
+  };
+}
+
+/**
+ * "cover_cropping" → "Cover cropping". Deliberately a transform rather than a fourth copy of
+ * the intervention label table: this queue serves whatever layer has rows in review, so it
+ * cannot assume the intervention vocabulary.
+ */
+function humanizeCategory(category: string): string {
+  const spaced = category.replace(/[_-]+/g, " ").trim();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/** Four decimals is ~11 m — enough to place a site, short enough to read in a queue row. */
+function formatCoordinates(longitude: number, latitude: number): string {
+  return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
 }
 
 export function ContributionQueue() {
@@ -56,15 +115,55 @@ export function ContributionQueue() {
       {pending.map((feature) => {
         const note = rejectNote[feature.id] ?? "";
         const canReject = hasRejectReason(note);
+        const summary = readSubmissionSummary(feature.properties);
+        const focusHref =
+          summary.longitude !== null && summary.latitude !== null
+            ? buildMapFocusHref(summary.longitude, summary.latitude)
+            : null;
         return (
           <div
             key={feature.id}
+            // The row shows what is being approved; the id stays available for support
+            // lookups without spending a line of the card on a UUID nobody reads.
+            title={`Feature ${feature.id}`}
             className="rounded-md border border-zinc-700 bg-zinc-800 p-3 flex flex-col gap-2"
           >
-            <div className="text-xs text-zinc-400 font-mono">{feature.id}</div>
-            <div className="text-xs text-zinc-300">
-              Layer: {feature.layerId}
+            <div className="flex flex-col gap-1">
+              <p className="text-sm font-medium text-zinc-100">
+                {summary.name ?? "Untitled submission"}
+              </p>
+              <p className="text-xs text-zinc-400">
+                {summary.category ? `${humanizeCategory(summary.category)} · ` : ""}
+                {feature.layerName}
+                {feature.createdAt && (
+                  <> · submitted {new Date(feature.createdAt).toLocaleDateString()}</>
+                )}
+              </p>
             </div>
+
+            {summary.description && (
+              <p className="text-xs text-zinc-300 line-clamp-3">{summary.description}</p>
+            )}
+
+            {/* Approving publishes a location to the public map, so the reviewer gets to
+                look at it first — same camera deep-link contract /feed writes. */}
+            {summary.longitude !== null && summary.latitude !== null ? (
+              focusHref ? (
+                <Link
+                  href={focusHref}
+                  className="text-xs font-mono text-emerald-400 hover:text-emerald-300 hover:underline w-fit"
+                >
+                  {formatCoordinates(summary.longitude, summary.latitude)} — view on map
+                </Link>
+              ) : (
+                <p className="text-xs font-mono text-amber-400">
+                  Coordinates out of range — inspect before publishing
+                </p>
+              )
+            ) : (
+              <p className="text-xs text-zinc-500">No location on this submission</p>
+            )}
+
             <input
               type="text"
               placeholder="Rejection note (required to reject)"

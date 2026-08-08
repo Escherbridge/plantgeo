@@ -3,16 +3,57 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, GeoJSONSource, RasterTileSource } from "maplibre-gl";
 import {
+  GIBS_NDVI_PRODUCT,
   getEnvironmentalTileTemplate,
   getNDVITileUrl,
   getNDWITileUrl,
   NDVI_COLOR_RAMP,
-  NDWI_COLOR_RAMP,
 } from "@/lib/vegetation";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
+import { useVegetationStore } from "@/stores/vegetation-store";
 import type { ExpressionSpecification } from "@/types/map";
 
 export type VegetationMode = "ndvi" | "ndwi" | "nbr";
+
+/**
+ * Which of the two NDVI encodings draws. They are alternative views of the SAME quantity at
+ * different provenance and resolution -- the 0.25-degree cells this platform measured, or the
+ * global MODIS/Terra 8-day composite proxied from NASA GIBS -- so they are radio-selectable,
+ * never independently checkable. Painting both stacked the measured grid over the composite at
+ * the same alpha, which is what made the layer read as a double-render glitch.
+ */
+export type VegetationSource = "measured" | "satellite";
+
+type LayerVisibility = "visible" | "none";
+
+interface NdviEncodingVisibility {
+  satelliteRaster: LayerVisibility;
+  measuredCells: LayerVisibility;
+}
+
+/**
+ * The one place the exclusivity rule is written, so the attach path and the update effect
+ * cannot drift apart -- the first style change is exactly where a duplicated predicate would
+ * have desynced them.
+ *
+ * Layout visibility rather than a zeroed opacity is the gate on purpose: MapLibre requests no
+ * tiles for a source whose every layer is hidden, so the unselected encoding costs no
+ * bandwidth, and `opacity` is left meaning only "how strong" -- which is what the panel's
+ * slider moves. The switch is exhaustive: a third source member fails to compile here rather
+ * than silently drawing nothing.
+ */
+function ndviEncodingVisibility(
+  mode: VegetationMode,
+  source: VegetationSource
+): NdviEncodingVisibility {
+  if (mode !== "ndvi") return { satelliteRaster: "none", measuredCells: "none" };
+  switch (source) {
+    case "satellite":
+      return { satelliteRaster: "visible", measuredCells: "none" };
+    case "measured":
+      return { satelliteRaster: "none", measuredCells: "visible" };
+  }
+}
 
 interface VegetationLayerProps {
   map: MapLibreMap | null;
@@ -33,7 +74,18 @@ interface VegetationLayerProps {
   month?: number | null;
   ndviMode?: "absolute" | "anomaly";
   showNDWI?: boolean;
+  /** The authored strength of every raster and the measured-cell fill. Not a control. */
   opacity?: number;
+  /**
+   * The reader's MULTIPLIER over `opacity`, from `layer-store.layerOpacity.vegetation`.
+   *
+   * It threads THROUGH this component rather than being written from outside because the
+   * layout-visibility gating in `ndviEncodingVisibility` is semantic: it is how the layer
+   * switches between the measured cells and the GIBS composite without adding and removing
+   * sources. An external writer walking every style layer would fight that gating and could
+   * not know which encoding is meant to be dark.
+   */
+  opacityScale?: number;
   visible?: boolean;
 }
 
@@ -43,6 +95,9 @@ const NBR_LAYER_ID = "nbr-recovery-layer";
 const NDVI_CELL_SOURCE_ID = "vegetation-ndvi-cells";
 const NDVI_CELL_FILL_LAYER_ID = "vegetation-ndvi-cells-fill";
 const NDVI_CELL_OUTLINE_LAYER_ID = "vegetation-ndvi-cells-outline";
+
+/** Cell-boundary cue, deliberately independent of the reader's opacity. */
+const CELL_OUTLINE_OPACITY = 0.35;
 
 const EMPTY_CELL_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -80,39 +135,6 @@ const NDVI_CELL_FILL_COLOR = [
   ...NDVI_COLOR_RAMP.flatMap((stop) => [stop.value, stop.color]),
 ] as unknown as ExpressionSpecification;
 
-const NBR_COLOR_RAMP = [
-  { value: -1.0, color: "#7a0000", label: "Severely burned" },
-  { value: -0.5, color: "#c0392b", label: "Moderately burned" },
-  { value: -0.1, color: "#e67e22", label: "Low severity" },
-  { value: 0.1, color: "#27ae60", label: "Unburned" },
-  { value: 0.5, color: "#1abc9c", label: "Enhanced greenness" },
-];
-
-function ColorLegend({
-  title,
-  ramp,
-}: {
-  title: string;
-  ramp: { color: string; label: string }[];
-}) {
-  return (
-    <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 text-xs">
-      <p className="font-semibold mb-2 text-[hsl(var(--foreground))]">{title}</p>
-      <div className="flex flex-col gap-1">
-        {ramp.map((stop) => (
-          <div key={stop.color} className="flex items-center gap-2">
-            <span
-              className="w-4 h-3 rounded-sm shrink-0"
-              style={{ backgroundColor: stop.color }}
-            />
-            <span className="text-[hsl(var(--muted-foreground))]">{stop.label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 export function VegetationLayer({
   map,
   geojson = null,
@@ -124,15 +146,48 @@ export function VegetationLayer({
   ndviMode = "absolute",
   showNDWI = false,
   opacity = 0.75,
+  opacityScale = 1,
   visible = true,
 }: VegetationLayerProps) {
+  // Read straight from the store rather than as a prop: the chosen encoding is display state
+  // only this renderer consumes, and `LayerManager` has nothing to add to it on the way past.
+  // Same shape as RouteLayer's `useRoutingStore`. When the layer-pivot panel lands, this can
+  // move onto `useVegetationDisplayMode` beside `mode`/`opacity` if a second consumer appears.
+  const source = useVegetationStore((state) => state.source);
+
+  // The one value every paint below is written from: the authored strength times the reader's
+  // multiplier. Computed once here so the attach path and the update effect cannot drift.
+  const drawnOpacity = opacity * opacityScale;
+
   // Keep latest prop values in refs so the style.load handler always uses current values
-  const propsRef = useRef({ geojson, mode, year, month, ndviMode, showNDWI, opacity, visible });
-  propsRef.current = { geojson, mode, year, month, ndviMode, showNDWI, opacity, visible };
+  const propsRef = useRef({
+    geojson,
+    mode,
+    source,
+    year,
+    month,
+    ndviMode,
+    showNDWI,
+    drawnOpacity,
+    visible,
+  });
+  propsRef.current = {
+    geojson,
+    mode,
+    source,
+    year,
+    month,
+    ndviMode,
+    showNDWI,
+    drawnOpacity,
+    visible,
+  };
 
   const addAllLayers = useCallback((m: MapLibreMap) => {
-    const { geojson, mode, year, month, ndviMode, showNDWI, opacity } = propsRef.current;
+    const { geojson, mode, source, year, month, ndviMode, showNDWI, drawnOpacity } =
+      propsRef.current;
     const beforeId = getFirstSymbolLayer(m);
+    const { satelliteRaster, measuredCells } = ndviEncodingVisibility(mode, source);
     const ndviTileUrl = ndviTemplateFor(year, month, ndviMode);
     const ndwiTileUrl = year === null || month === null ? "" : getNDWITileUrl(year, month);
     const nbrTileUrl = getEnvironmentalTileTemplate(
@@ -149,6 +204,12 @@ export function VegetationLayer({
         type: "raster",
         tiles: [ndviTileUrl],
         tileSize: 256,
+        // GIBS publishes this product no deeper than z9 and the proxy 404s past it. Without
+        // an explicit maxzoom MapLibre assumes 22 and requests z10+ tiles, so the raster
+        // silently vanished the moment you zoomed past 9 while the measured cells kept
+        // drawing -- the same toggle showing two different pictures depending on zoom.
+        // Declaring it makes MapLibre overzoom the z9 tile instead.
+        maxzoom: GIBS_NDVI_PRODUCT.maxZoom,
         attribution: "NASA GIBS / Copernicus",
       });
     }
@@ -157,7 +218,8 @@ export function VegetationLayer({
         id: NDVI_LAYER_ID,
         type: "raster",
         source: "ndvi-overlay",
-        paint: { "raster-opacity": mode === "ndvi" ? opacity : 0 },
+        layout: { visibility: satelliteRaster },
+        paint: { "raster-opacity": drawnOpacity },
       }, beforeId);
     }
 
@@ -175,7 +237,8 @@ export function VegetationLayer({
         id: NDWI_LAYER_ID,
         type: "raster",
         source: "ndwi-overlay",
-        paint: { "raster-opacity": showNDWI && mode === "ndwi" ? opacity : 0 },
+        layout: { visibility: showNDWI && mode === "ndwi" ? "visible" : "none" },
+        paint: { "raster-opacity": drawnOpacity },
       }, beforeId);
     }
 
@@ -192,17 +255,19 @@ export function VegetationLayer({
         id: NBR_LAYER_ID,
         type: "raster",
         source: "nbr-recovery",
-        paint: { "raster-opacity": mode === "nbr" ? opacity : 0 },
+        layout: { visibility: mode === "nbr" ? "visible" : "none" },
+        paint: { "raster-opacity": drawnOpacity },
       }, beforeId);
     }
 
     // --- Measured NDVI grid cells (environmental.getVegetationIndex) ---
-    // Added last so it draws ABOVE the rasters: these are the readings this platform
-    // ingested and can cite a scene for, while the NDVI raster underneath is a global
-    // composite proxied from GIBS. Where the grid has been sampled the measurement wins;
-    // everywhere else the raster shows through unchanged. The outline is deliberate --
-    // it keeps the cells legible as discrete 0.25-degree samples rather than as a
-    // continuous surface the sampling never produced.
+    // These are the readings this platform ingested and can cite a scene for; the GIBS raster
+    // above is a global composite it merely proxies. They are ALTERNATIVES, not a stack:
+    // `ndviEncodingVisibility` shows exactly one, so the ordering below no longer decides what
+    // a reader sees. It is kept last only so that a future "both" option -- if one is ever
+    // justified -- would still put the measurements above the composite rather than under it.
+    // The outline is deliberate: it keeps the cells legible as discrete 0.25-degree samples
+    // rather than as a continuous surface the sampling never produced.
     if (!m.getSource(NDVI_CELL_SOURCE_ID)) {
       m.addSource(NDVI_CELL_SOURCE_ID, {
         type: "geojson",
@@ -214,9 +279,10 @@ export function VegetationLayer({
         id: NDVI_CELL_FILL_LAYER_ID,
         type: "fill",
         source: NDVI_CELL_SOURCE_ID,
+        layout: { visibility: measuredCells },
         paint: {
           "fill-color": NDVI_CELL_FILL_COLOR,
-          "fill-opacity": mode === "ndvi" ? opacity : 0,
+          "fill-opacity": drawnOpacity,
         },
       }, beforeId);
     }
@@ -225,10 +291,13 @@ export function VegetationLayer({
         id: NDVI_CELL_OUTLINE_LAYER_ID,
         type: "line",
         source: NDVI_CELL_SOURCE_ID,
+        layout: { visibility: measuredCells },
         paint: {
           "line-color": "#1b3a1b",
           "line-width": 0.5,
-          "line-opacity": mode === "ndvi" ? 0.35 : 0,
+          // Fixed, not tied to the slider: the outline is a cell-boundary cue, so it has to
+          // stay readable at the low end of the opacity range the fill follows.
+          "line-opacity": CELL_OUTLINE_OPACITY,
         },
       }, beforeId);
     }
@@ -272,9 +341,10 @@ export function VegetationLayer({
     };
   }, [map, visible, addAllLayers, removeAllLayers]);
 
-  // Update tile URLs and opacity when the composite period, mode or opacity change. `year`
-  // and `month` move only when the slider's day crosses a month boundary (they are memoized
-  // on that pair upstream), so a day-granular scrub inside one month never re-requests tiles.
+  // Update tile URLs, visibility and opacity when the composite period, the selected source,
+  // the mode or the opacity change. `year` and `month` move only when the slider's day crosses
+  // a month boundary (they are memoized on that pair upstream), so a day-granular scrub inside
+  // one month never re-requests tiles.
   useEffect(() => {
     if (!map || !visible) return;
     try {
@@ -283,63 +353,58 @@ export function VegetationLayer({
       return;
     }
 
-    // NDVI tile URL + opacity
+    // Same resolver the attach path uses, so a style swap cannot leave the two encodings
+    // disagreeing about which one is on.
+    const { satelliteRaster, measuredCells } = ndviEncodingVisibility(mode, source);
+
+    // NDVI tile URL + visibility + opacity
     const ndviSource = map.getSource("ndvi-overlay") as RasterTileSource | undefined;
     const ndviTileUrl = ndviTemplateFor(year, month, ndviMode);
     if (ndviSource && ndviTileUrl) {
       ndviSource.setTiles([ndviTileUrl]);
     }
     if (map.getLayer(NDVI_LAYER_ID)) {
-      map.setPaintProperty(NDVI_LAYER_ID, "raster-opacity", mode === "ndvi" ? opacity : 0);
+      map.setLayoutProperty(NDVI_LAYER_ID, "visibility", satelliteRaster);
+      map.setPaintProperty(NDVI_LAYER_ID, "raster-opacity", drawnOpacity);
     }
 
-    // NDWI tile URL + opacity
+    // NDWI tile URL + visibility + opacity
     const ndwiSource = map.getSource("ndwi-overlay") as RasterTileSource | undefined;
     const ndwiTileUrl = year === null || month === null ? "" : getNDWITileUrl(year, month);
     if (ndwiSource && ndwiTileUrl) {
       ndwiSource.setTiles([ndwiTileUrl]);
     }
     if (map.getLayer(NDWI_LAYER_ID)) {
-      map.setPaintProperty(
+      map.setLayoutProperty(
         NDWI_LAYER_ID,
-        "raster-opacity",
-        showNDWI && mode === "ndwi" ? opacity : 0
+        "visibility",
+        showNDWI && mode === "ndwi" ? "visible" : "none"
       );
+      map.setPaintProperty(NDWI_LAYER_ID, "raster-opacity", drawnOpacity);
     }
 
-    // NBR opacity (tile URL is static)
+    // NBR visibility + opacity (tile URL is static)
     if (map.getLayer(NBR_LAYER_ID)) {
-      map.setPaintProperty(NBR_LAYER_ID, "raster-opacity", mode === "nbr" ? opacity : 0);
+      map.setLayoutProperty(NBR_LAYER_ID, "visibility", mode === "nbr" ? "visible" : "none");
+      map.setPaintProperty(NBR_LAYER_ID, "raster-opacity", drawnOpacity);
     }
 
-    // Measured NDVI cells: new viewport data, then per-mode opacity. setData rather than a
-    // re-add, so panning swaps the cells without tearing the source down under the map. The
-    // source can legitimately be missing here on the first pass -- the style had not loaded
-    // when this ran -- and addAllLayers then creates it from propsRef with this same data.
+    // Measured NDVI cells: new viewport data, then the source gate and opacity. setData
+    // rather than a re-add, so panning swaps the cells without tearing the source down under
+    // the map. The source can legitimately be missing here on the first pass -- the style had
+    // not loaded when this ran -- and addAllLayers then creates it from propsRef with the
+    // same data.
     const cellSource = map.getSource(NDVI_CELL_SOURCE_ID) as GeoJSONSource | undefined;
     if (cellSource) cellSource.setData(geojson ?? EMPTY_CELL_COLLECTION);
     if (map.getLayer(NDVI_CELL_FILL_LAYER_ID)) {
-      map.setPaintProperty(
-        NDVI_CELL_FILL_LAYER_ID,
-        "fill-opacity",
-        mode === "ndvi" ? opacity : 0
-      );
+      map.setLayoutProperty(NDVI_CELL_FILL_LAYER_ID, "visibility", measuredCells);
+      map.setPaintProperty(NDVI_CELL_FILL_LAYER_ID, "fill-opacity", drawnOpacity);
     }
     if (map.getLayer(NDVI_CELL_OUTLINE_LAYER_ID)) {
-      map.setPaintProperty(
-        NDVI_CELL_OUTLINE_LAYER_ID,
-        "line-opacity",
-        mode === "ndvi" ? 0.35 : 0
-      );
+      map.setLayoutProperty(NDVI_CELL_OUTLINE_LAYER_ID, "visibility", measuredCells);
+      map.setPaintProperty(NDVI_CELL_OUTLINE_LAYER_ID, "line-opacity", CELL_OUTLINE_OPACITY);
     }
-  }, [map, geojson, year, month, ndviMode, mode, showNDWI, opacity, visible]);
+  }, [map, geojson, year, month, ndviMode, mode, source, showNDWI, drawnOpacity, visible]);
 
   return null;
-}
-
-/** Inline color legend for the active vegetation mode */
-export function VegetationLegend({ mode }: { mode: VegetationMode }) {
-  if (mode === "nbr") return <ColorLegend title="Burn Recovery (NBR)" ramp={NBR_COLOR_RAMP} />;
-  if (mode === "ndwi") return <ColorLegend title="Water Stress (NDWI)" ramp={NDWI_COLOR_RAMP} />;
-  return <ColorLegend title="Vegetation Health (NDVI)" ramp={NDVI_COLOR_RAMP} />;
 }

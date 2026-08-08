@@ -116,7 +116,7 @@ and is unrun: `release_set_as_of` is the same far-future placeholder convention 
 and moisture lattices, not a completion forecast. See plans/AGENTS.md.
 
 `source.key = "open-meteo-era5-land-archive"` is shared identity across every plan in this lane, and
-`_ensure_data_source` in `historical_writer.py` raises "already governed by different metadata" if a
+`_ensure_data_source` in `historical_writer/_shared.py` raises "already governed by different metadata" if a
 plan's `source` block disagrees with the `data_source` row an earlier plan already persisted. The
 registered `purpose` text ("...soil-state covariates...") therefore stays byte-identical here even
 though it no longer describes every parameter this lane carries; correcting it is a coordinated edit
@@ -126,7 +126,8 @@ across every sibling plan file's `source` block, not a one-plan change.
 
 The wire response carries `generationtime_ms`, a per-request server timing metric. Left in, every
 refetch would produce a new `payload_checksum` and therefore a second source release for identical
-content. `_canonical_archive_document` removes exactly that key and canonicalizes the rest; the
+content. The shared `open_meteo_lane.canonical_location_document` removes exactly that key -- named
+once in `NONDETERMINISTIC_RESPONSE_FIELDS` -- and canonicalizes the rest; the
 result is the artifact's bytes and `source_release.payload_checksum`. The **exact wire bytes'**
 digest and length are preserved in `quality_summary.wire_payload_checksum`, in the artifact's
 `metadata_json`, and in the local raw-cache receipt, so custody of what actually arrived is not lost.
@@ -158,7 +159,8 @@ Open-Meteo's free tier weights a request by locations x variables x timesteps, s
 request count but **not** total quota cost. A refusal is classified from the 429 body:
 
 - `minute` -> retried up to `MAX_FETCH_ATTEMPTS` with a 70 s wait. It is the only scope in
-  `RATE_LIMIT_BACKOFF_SECONDS`.
+  `RATE_LIMIT_BACKOFF_SECONDS`. Both live in `open_meteo_lane.py` and are obeyed by every lane; this
+  one no longer keeps its own copy.
 - `hour` / `day` / **unrecognised** -> not retried. Sleeping through an hourly wall turns a quota
   refusal into an unexplained hang; the chunk fails immediately carrying the provider's own wording.
 
@@ -254,7 +256,7 @@ a separate reviewed change, not a silent edit to an already-persisted shape.
 `_open_meteo_source_version` is a window/grid/chunk-ordinal **label**, not an identity: it omits
 `chunk_cell_count`, so a 50-cell plan and an 8-cell plan both emit `...:cells-0000` for disjoint
 cell sets. Identity is the `uq_source_release_identity` composite (data source, source version,
-payload checksum, transform version), which every lookup in `historical_writer.py` binds. Folding
+payload checksum, transform version), which every lookup in `historical_writer/open_meteo.py` binds. Folding
 the chunk size into the label would rename already-persisted releases and orphan a finalized
 release set, so the label stays and the docstring says what it is.
 
@@ -262,7 +264,9 @@ release set, so the label stays and the docstring says what it is.
 
 `historical_usdm.py` owns bounded U.S. Drought Monitor medium-resolution ZIP capture. It accepts only reviewed Tuesday releases in the four-year plan, verifies the exact WGS84 shapefile package/schema, preserves only native D0–D4 polygons without inferring absent classes or normal conditions, and writes checksum-bound weekly checkpoints. It is not an analysis-grid interpolation or local-condition source.
 
-`historical_writer.py` persists only complete, checkpointed NASA POWER source cells, ERA5-Land monthly point samples, and USDM weekly vectors through the dedicated local loader session. It owns lineage, raw receipts, crosswalks, normalized observations, complete coverage audits, and release-set finalization, but commits nothing itself. ERA5 artifacts retain a checksum-bound local-cache pointer rather than inlining large ZIPs; its 9-km source resolution is context metadata and its response remains a requested point sample. USDM keeps the raw canonical geometry checksum while its reviewed transform may use PostGIS `MakeValid` to store a valid serving multipolygon; that behavior must be reflected in the immutable transform version. The caller owns transaction boundaries and advances a checkpoint only after commit. It is not a Railway receiver or a scheduler.
+`historical_writer/` persists only complete, checkpointed NASA POWER source cells, ERA5-Land monthly point samples, and USDM weekly vectors through the dedicated local loader session. It owns lineage, raw receipts, crosswalks, normalized observations, complete coverage audits, and release-set finalization, but commits nothing itself. ERA5 artifacts retain a checksum-bound local-cache pointer rather than inlining large ZIPs; its 9-km source resolution is context metadata and its response remains a requested point sample. USDM keeps the raw canonical geometry checksum while its reviewed transform may use PostGIS `MakeValid` to store a valid serving multipolygon; that behavior must be reflected in the immutable transform version. The caller owns transaction boundaries and advances a checkpoint only after commit. It is not a Railway receiver or a scheduler.
+
+**Three performance properties in this lane are load-bearing, not incidental.** (1) `_INSERT_USDM_POLYGONS` is the one raw-SQL statement in `historical_writer/` (it lives in `historical_writer/usdm.py`) — its text now lives in `sql/execution/insert_usdm_polygons.sql`, loaded at import time — and it is raw *because* of `WITH candidate AS MATERIALIZED`: the repair chain `ST_GeomFromGeoJSON → ST_MakeValid → ST_CollectionExtract → ST_Multi` is by far the most expensive operation in the USDM lane, `MATERIALIZED` is what guarantees Postgres evaluates it exactly once per polygon rather than once per predicate that reads the result, and SQLAlchemy Core has no way to emit that keyword. The statement replaced a per-polygon validation SELECT plus a per-polygon INSERT that embedded the identical expression a second time — two round trips and two `ST_MakeValid` evaluations per polygon. It still fails closed: `accepted` counts the polygons that passed the validity predicates, and a batch where that count is short of the batch size raises the same `ValueError` the per-polygon check raised. (2) The artifact idempotency checks in `_ensure_artifact` (nasa.py), `_ensure_usdm_artifact` and `_ensure_open_meteo_artifact` **defer `content_bytes` and do not compare it** — they pass `defer_content_bytes=True` to `provenance.ensure_artifact`. The `uri`/`checksum_sha256` predicate plus the `inline_artifact_checksum_matches` and `inline_artifact_size_matches` CHECKs already prove content identity, so re-reading a 64 MB blob to re-prove it was pure waste on exactly the resume path these lanes are built around. `_ensure_era5_artifact` is deliberately *not* deferred (`defer_content_bytes=False`): its check is `content_bytes IS NOT NULL`, an assertion that the ERA5 artifact stores no inline blob at all, and that column is NULL there by construction. (3) `fetch_era5_land_monthly` offloads **both** halves — download and parse — with `asyncio.to_thread`, and `historical_usdm._fetch_with_client` does the same for `parse_usdm_shapefile_zip`. Offloading only the download, as the ERA5 lane originally did, left the larger blocking half (unzip, HDF5 decompression, one xarray point selection per reviewed cell) on the event loop. The per-cell `.sel` in `_era5_values_by_cell_and_date` is deliberately *not* vectorised: each iteration also enforces the reviewed-cell distance guard, the post-selection dimensionality check and the per-cell time-coordinate check, and each raises a cell-named error — a pointwise vectorised `.sel` would change which failure surfaces first and what it says.
 
 `historical_promotion.py` carries only typed, content-addressed historical lineage across the local-to-Railway boundary. Its 8 MB chunk and raw-artifact limits are deliberately aligned with the reviewed USDM acquisition ceiling; a 50-million-record, 20,000-chunk root remains bounded but must be streamed/spooled rather than materialized in memory. Grid crosswalks declare immutable `spatial_support_kind`; a caller must preserve that support and native resolution so regional cells cannot be represented as acre-scale observations.
 
@@ -316,10 +320,8 @@ pinned covariate vector and the WS2M target through their own availability-gated
 SQL functions, fits one standardized closed-form ridge per horizon step, and
 calibrates a p10-p90 band from residuals on a held-out calibration window that
 ends strictly before the forecast origin. The split is temporal only -- fit
-window, then calibration window, then a single held-out origin -- so no target
-day ever appears in the window that produced the model scoring it. It never
-writes to the warehouse, never joins a serving or publication surface, and never
-produces a receipt: its output is a JSON report labelled `evaluation_only`.
+window, then calibration window, then the held-out origin -- so no target day
+ever appears in the window that produced the model scoring it.
 
 Its scores prove the framework runs end to end; they are not an operational or
 life-safety forecast. Interval coverage is an empirical residual band, not a
@@ -327,6 +329,142 @@ calibrated confidence bound. The comparison baseline is the existing
 `daily_increment_bootstrap_v1` iteration read through
 `agri.forecast_iteration_evaluation`, at exactly the same origin and horizon
 steps.
+
+`covariate_wind_persist.py` is the receipt writer and, as of 2026-08-08, the
+**first production writer of `agri.forecast_training_run` and
+`agri.forecast_backtest_metric`** -- both tables previously had no writer outside
+the test suite, which made the whole ML receipt chain structurally empty. It is
+reached through `agri-cli forecast-train-wind --persist`, and `--persist` is OFF
+by default: without it the verb reads, scores and prints one JSON line exactly as
+the module always did, and rolls the session back. `covariate_wind_lane.py` runs
+the same work as a durable lane on the `agri.job_*` ledger.
+
+### What a persisted run writes, and what it deliberately does not
+
+One transaction, in lineage order, because every validator inspects rows that must
+already exist and already be in the state it demands: a `job_definition` (upserted
+once), a `job_run` inserted already `succeeded` and pinned to a governed release
+set, an `artifact` holding the canonical model JSON inline (so the database's own
+CHECK recomputes the digest), a `forecast_model` (`ml` / `metric_forecast`), a
+`job_output` for the model, a `forecast_feature_snapshot` promoted by
+`agri.validate_forecast_feature_snapshot`, the `forecast_training_run` promoted by
+`agri.validate_forecast_training_run`, a second `job_output` for the backtest, a
+`forecast_run`, and one `forecast_backtest_metric` per rolling origin.
+
+It writes **no `forecast_receipt`, no `forecast_value` and no
+`forecast_publication`**, and it never calls `agri.validate_forecast_run`. The
+forecast run therefore stays `staged` forever. That is the structural guarantee
+that evaluation evidence cannot reach a serving surface:
+`mv_forecast_ml_daily_serving` is built over published receipts and values, and
+this lane produces neither -- the guarantee is the absence of a row, not a WHERE
+clause someone could forget.
+
+The lane binds an **existing** validated release set and an **existing** active
+`forecast_quality_policy` (named by `--quality-policy-key`, required with
+`--persist`). It mints neither. A release set certifies which governed inputs a
+model saw and a quality policy encodes the thresholds a forecast must clear;
+a training lane that created its own would be certifying itself. When either is
+absent the run fails loudly and names what is missing.
+
+### Rolling origins, and the sample size the headline number needs
+
+`--origins N` refits the WHOLE model at each of N origins, walking back from
+`--origin-date` by `--origin-stride-days` (default: the horizon count, so two
+origins' target spans never overlap). Each origin recomputes its own fit and
+calibration boundaries from its own cutoff, so an earlier origin never sees a
+later one's days. Per-origin metrics land as `forecast_backtest_metric` rows keyed
+by that origin's cutoff; the pooled aggregate and the per-horizon breakdown land
+in `forecast_run.quality_summary` and `forecast_training_run.validation_metrics`.
+
+The aggregate is deliberately **not** an extra metric row. That table is unique on
+`(forecast_run_id, series_id, cutoff_time)`, so an "aggregate" row would need a
+`cutoff_time` no origin actually had, and inventing that instant to satisfy a
+unique index would be fabricating provenance.
+
+**Sample size, honestly.** The horizons scored from one origin are consecutive
+daily values of an autocorrelated variable: their effective sample size is closer
+to 1-3 than to the horizon count. `origin_count` is the figure that grows the
+sample; `evaluated_count` is not. Both travel in the receipt, and the caveat is
+carried inside `validation_metrics.caveats` as well as here, because a number read
+out of a JSONB column travels without the document that qualified it. Horizon 0 is
+a nowcast, so N horizons are days 0..N-1 -- one day shorter in lead time than the
+SQL baseline's steps, which start at 1. `horizon_origin_offset` records that.
+
+### Feature-coverage accounting: the shrinkage is reported, not silent
+
+The covariate completeness mask is whole-row: one short feature discards that day's
+other thirty-nine present ones. That is the SQL function's contract and `db/agri`
+is frozen, so the fix here is visibility rather than behaviour. Every run reports,
+in `validation_metrics.feature_coverage`, the candidate day count from the spine,
+how many days were feature-complete, how many were excluded, how many were
+feature-complete but had no target, the usable count that actually trained, and
+`blocking_features` -- which feature blocked how many days. A thin training set now
+says why it is thin instead of just being small. A run whose usable count reaches
+zero refuses to write a receipt rather than recording an empty training set.
+
+### as_of_mode is `global`, and that is a known leakage
+
+Every receipt carries `"as_of_mode": "global"`. The vocabulary across this plane --
+`data_available_at`, `p_as_of_time`, "availability-gated" -- reads as point-in-time
+correctness, and it is not that. It is **one** knowledge cutoff applied uniformly
+to the whole history: a feature row for 2023-01-01 is assembled from whatever
+version of that observation is visible at the run's single as-of instant, including
+NASA POWER reprocessings and re-issued USDM polygons that did not exist in 2023.
+For revised products this is revision leakage and it inflates apparent backtest
+skill in a way no unit test can catch. The correct fix is a per-issue-date as-of --
+`covariate_daily_features` deriving its gate per `observed_date` (e.g.
+`spine.observed_date + interval '<n> days'`) rather than taking a scalar -- and
+under the immutability rule at `covariate_feature_schema.sql` that is a new schema
+version, `agri_covariates_v2`, not an edit. It was deliberately not attempted here;
+recording it in the receipt is what stops the current numbers being read as
+point-in-time honest.
+
+### The durable lane
+
+`covariate_wind_lane.py` registers `execution.covariate_wind_train` with
+`@job_handler` at import time, the same mechanism `ingest/archive_walk.py` uses,
+and `cli.py` importing the module is what performs the registration. **One work
+item is one (cell, origin batch)** -- `shard_key` is `<cell_id>:<batch newest
+origin>` -- so "which batches are still missing" is a `GROUP BY` over `shard_key`.
+`agri-cli forecast-train-wind-plan` fans the shards out idempotently and
+`agri-cli forecast-train-wind-run` drives one bounded slice.
+
+It is **not** `jobs-run`, and that is custody rather than taste: `jobs-run` opens
+`ingest_session()`, which is the source-loader DSN, and a governed forecast receipt
+must not be written through the ingestion role. The session is bound through a
+contextvar for the length of one slice, so a `jobs-run` pointed at this definition
+raises `CovariateWindContextError` instead of writing through the wrong role.
+
+A batch is indivisible -- fit, score and receipt are one transaction -- so the only
+budget decision available is whether to START it, which the handler makes with
+`has_budget_for` before it touches the session, and records the measured duration
+in its cursor so the next tick estimates from evidence. A batch that cannot be
+evaluated **fails** rather than completing: completing it would make a shard that
+produced no receipt indistinguishable from one that produced a receipt, which is
+the silence the ledger exists to prevent. The plan pins `as_of_time`, and it must:
+every identity key a batch derives folds the as-of instant in through the parameter
+checksum, so an unpinned instant would make a re-claimed shard write a second
+receipt instead of resolving the first.
+
+### Known gaps in this lane
+
+- **No DSN exists for the least-privilege forecast roles.** The lane runs on
+  `FORECAST_ITERATION_DATABASE_URL`. `plantgeo_forecast_writer` holds INSERT on the
+  forecast tables but has no `artifact` privilege at all and no EXECUTE on either
+  validator; `plantgeo_forecast_publisher` holds those EXECUTEs but no INSERT. No
+  single existing role can complete this chain. See the GRANT statements recorded in
+  the delivery report; widening a role is a reviewed migration, not something this
+  lane does for itself.
+- **No ablation.** The teardown's "is the covariate layer earning its keep" question
+  -- fit once with the target's own lags (features 31-35) and once without -- is not
+  answered here. `leading_standardized_coefficients` in the receipt is a hint, not
+  an answer.
+- **The target is its own feature.** `wind_speed` is `signal_ordinal 7`, so features
+  31-35 are its lags and rolling means. This is a legitimate autoregressive setup,
+  and it is not what "a 40-feature covariate model" conveys. The target is also NASA
+  POWER WS2M, a MERRA-2-derived reanalysis, so a good score means "we can reproduce
+  MERRA-2's wind field from its own recent history", not "we can forecast wind".
+  There is no ground-truth station series in this warehouse to validate against.
 
 ## Vegetation NDVI Monte Carlo (`vegetation_ndvi_forecast.py`, `vegetation_ndvi_plane.py`)
 
@@ -445,11 +583,28 @@ to exercise its wiring. The loop itself -- only `minute` is slept through, an ho
 wall breaks out immediately, transport backoff escalates linearly -- is covered scope by scope in
 `tests/test_open_meteo_lane.py`; each lane's test file then proves only that it routes through it.
 
-`historical_open_meteo.py` and `historical_era5.py` are NOT converged onto this scaffold. They were
-mid-backfill when it was written, and converging a live lane's checksum path is not a refactor to do
-under a running job. They remain the fourth and fifth copies of `_atomic_write` / `_require_aware_utc`
-/ `_date_range`; converging them is the follow-up, and it is a behaviour-preserving one because the
-extracted functions were lifted from those lanes unchanged.
+`historical_open_meteo.py` converged onto this scaffold after the fact; `historical_era5.py` has not,
+and remains the last independent copy of `_atomic_write` / `_require_aware_utc` / `_date_range`.
+
+The archive lane's convergence was proven byte-identical before the private copies were deleted --
+`canonical_location_document` was diffed against the deleted `_canonical_archive_document` on a real
+payload and on every malformed shape, because a changed canonicalization moves `payload_checksum` and
+would orphan every cached chunk receipt on disk and every persisted `source_release.payload_checksum`.
+`tests/test_historical_open_meteo.py` pins that equality. Two messages did change, deliberately, so
+one wording lives in one place: the bounded reader now says "does not align with its time axis"
+rather than "its daily time axis", and the manifest guard says "required for a Open-Meteo archive
+release manifest" (the shared string cannot pick an article per lane). Nothing else moved.
+
+Two seams the archive lane still cannot share, both rooted in `ingest/open_meteo.py` predating
+`OpenMeteoEndpoint`: it assembles its own `OPEN_METEO_ARCHIVE_ENDPOINT` from that module's host and
+bounds constants, and it restates `archive_daily_request`'s two fields as an `OpenMeteoProductRequest`
+before calling `fetch_lane_capture`. Moving the archive endpoint into `ingest/open_meteo.py` alongside
+the air-quality and flood ones deletes both, and is the remaining follow-up.
+
+What a lane may still keep privately is a genuine behavioural difference, not a copy:
+`_validated_grid_point` here is a four-line wrapper around the shared guard that additionally reads
+`elevation`, because only this lane persists one. Widening the shared function for it would push an
+unused return value onto three lanes that do not record elevation.
 
 ## `historical_glofas.py` -- the Open-Meteo GloFAS river-discharge lane
 
@@ -478,7 +633,7 @@ finer than that would duplicate one modelled value across several analysis cells
 refuses it rather than letting the duplication reach the warehouse.
 
 **It cannot yet write a row.** `persist_glofas_flood_chunk` / `finalize_glofas_release_set` and the
-`_ensure_*` helpers belong in `historical_writer.py`, which this pass did not touch. Until they
+`_ensure_*` helpers belong in `historical_writer/`, which this pass did not touch. Until they
 exist, a completed fetch has no path to the warehouse.
 
 **Do NOT add this lane to `durable-backfill.sh`.** That launcher calls `historical-<lane>-persist`
@@ -607,3 +762,118 @@ without that qualifier.
 New signal names introduced here (`air_temperature_2m`, `precipitation_total`,
 `relative_humidity_2m`, `shortwave_radiation`, `wind_speed_10m`) need no migration but stay invisible
 to ML until a new `agri.covariate_feature_schema` version.
+
+## `historical_writer/` -- four lanes over one governed core
+
+`execution/historical_writer.py` was a 1859-line module holding four near-identical per-source
+persistence pipelines. It is now a package. Nothing about what reaches the warehouse changed; the
+public surface (`persist_*`, `finalize_*`, the five result dataclasses, `ReleaseSetIdentity`) is
+re-exported from `historical_writer/__init__.py`, so `cli.py` and the tests import exactly what they
+imported before.
+
+| Module | Holds |
+|---|---|
+| `__init__.py` | the re-export surface, including private `_insert_era5_observations` (imported by name in `tests/test_historical_era5.py`) |
+| `_results.py` | `ReleaseSetIdentity` and the five write-result dataclasses |
+| `_shared.py` | the three bounded batch inserts, `_require_spatial_cells`, the WKT builders, `_utc_now_or_value`, and `_ensure_data_source` (the one all four lanes call with only a different `configuration`) |
+| `_release_sets.py` | `_finalize_historical_release_set` (the receipt guard + advisory lock + source lookup all four `finalize_*` wrappers copied) and `_finalize_release_set` |
+| `nasa.py`, `usdm.py`, `era5.py`, `open_meteo.py` | one lane each: its `persist_*`, `finalize_*`, `_ensure_*`, `_insert_*`, `_verify_persisted_*`, `_required_*_source_releases`, and its source-version builder |
+
+**The divergences that were NOT merged, and where each now lives.** These are the reasons the four
+copies could not simply collapse; each is now a visible per-lane argument rather than an invisible
+copy-paste difference.
+
+- **`schema_version` source.** NASA reads `plan.nasa.schema_version`; USDM pins the lane constant
+  `usdm-shapefile-v1` (`usdm.py:_SCHEMA_VERSION`, which also builds `_usdm_source_version`); ERA5 and
+  Open-Meteo pin their module-level schema constants. Kept per-lane.
+- **Artifact `storage_class` and blob policy.** ERA5 alone writes `local_raw_cache` /
+  `content_bytes=None`, asserts `content_bytes IS NULL` on replay, and therefore must pass
+  `defer_content_bytes=False`. The other three write `database_inline` and defer. Kept per-lane.
+- **Error phrasing.** Every lane's conflict / unvalidated / artifact messages are byte-identical to
+  what they raised before, held as module constants (`_RELEASE_CONFLICT_MESSAGE` and friends) so a
+  grep for a production error string still lands on one lane.
+- **Spatial cells.** NASA is the only lane that *mints* a `SpatialCell`
+  (`nasa.py:_ensure_spatial_cell`, with its `ST_Equals` geometry re-check). ERA5 and Open-Meteo
+  *require* the lattice (`_shared.py:_require_spatial_cells`); Open-Meteo adds a grid-name check on
+  top. USDM has no cells at all.
+- **Verification counts.** Open-Meteo counts all coverage rows; NASA and ERA5 count only
+  `status == "complete"`; USDM counts polygons plus exactly one source-coverage row. Kept per-lane.
+- **`_insert_observations`.** NASA slices a fully materialized list by
+  `HISTORICAL_NASA_OBSERVATION_INSERT_BATCH_SIZE`; ERA5 and Open-Meteo accumulate into a bounded
+  buffer and flush at `HISTORICAL_SIGNAL_INSERT_BATCH_SIZE`. The Open-Meteo lane also writes
+  `metadata_json={}` on purpose (see its own comment). Kept per-lane.
+
+`ingest/writer.py` and `historical_writer/` remain two disjoint warehouse planes and share no code.
+`ingest/writer.py` writes the **serving** plane (`geo.features`, Type-2 geometry versions, the
+realtime publish channel). `historical_writer/` writes the **governed provenance** plane in `agri.*`
+(`SourceRelease`, `Artifact`, `ReleaseSet`, `SpatialCell`, `SignalObservation`,
+`SignalCoverageAudit`, `DroughtPolygonSnapshot`) and touches neither `geo.features` nor the realtime
+channel. Their only shared vocabulary is the word "writer". Do not fuse them: the `db/agri/**` vs
+`geo.*` separation exists to keep the plane that governs evidence away from the plane that serves it.
+The new module names (`_release_sets.py`, `_shared.py`, per-source lanes) are deliberate, so the
+distinction reads as structure rather than as a naming accident.
+
+## The governed provenance upsert
+
+`execution/provenance.py` is the one implementation of "idempotently upsert DataSource ->
+SourceRelease -> Artifact -> ReleaseSet, refusing a governed-identity mismatch". Its shape:
+
+```
+assert_contract_fields(record, expected, *, conflict_message)
+advisory_lock(session, key)
+find_data_source(session, source_key)
+require_active_data_source(session, source_key, *, inactive_message)
+ensure_data_source(session, candidate, *, expected, inactive_message, conflict_message)
+ensure_source_release(session, candidate, *, expected, conflict_message)
+require_validation_timestamp(release, *, message)
+ensure_artifact(session, candidate, *, expected, defer_content_bytes, conflict_message)
+find_release_set(session, *, logical_key, manifest_checksum, conflict_message)
+release_set_member_ids(session, release_set_id)
+```
+
+Each `ensure_*` returns `(record, found)` -- `found` is False when this call created the row, which is
+what every caller's `idempotent` flag is built from.
+
+Two design rules make it safe to share across governed planes. **(a) The candidate carries the
+identity.** Each `ensure_*` reads its WHERE clause off the ORM instance the caller is proposing --
+`ensure_source_release` selects on the candidate's own `(data_source_id, source_version,
+payload_checksum, transform_version)` -- so a caller cannot search under one identity and then insert
+another. **(b) `expected` is a required argument, not a fixed field list.** The replay comparison is
+genuinely different per caller and unifying it would silently loosen one refusal or tighten another:
+the historical lanes pin `configuration` on the data source and do not compare `data_available_at` on
+the release, while `source_ingestion` does the exact opposite; `source_ingestion` compares the
+artifact `content_bytes` and the historical lanes deliberately do not. Nothing has a default, so an
+omitted governance field is a type error rather than a weaker row.
+
+**Who calls it.** The four historical lanes (via `historical_writer/_shared.py:_ensure_data_source`,
+`_release_sets.py`, and each lane's `_ensure_*_source_release` / `_ensure_*_artifact`) and
+`source_ingestion.publish_source_release`, whose `# noqa: PLR0912, PLR0915` disappeared with the
+inlined copies.
+
+**Who deliberately does not, and why.**
+
+- `geospatial_pilot.py` -- FROZEN. Its release-set lifecycle is a different contract: it writes
+  `ReleaseSetItem(source_role="evidence_input")` and validates in the same call, where the historical
+  lanes carry no source role and refuse a non-DRAFT set. Its checksummed SQL and receipt shape are
+  pinned by its own fixtures. There is a comment above `_get_or_create_data_source` saying so.
+  Migrating it needs an explicit `source_role` parameter, a `validate_immediately` flag, and its own
+  real-DB review.
+- `routes/historical_promotion.py` -- its `_ensure_data_source` / `_ensure_source_release` /
+  `_ensure_artifact_receipt` do not issue a SELECT at all. They read from the `_ChunkIndex` the
+  performance lane prefetches once per chunk, and they abort with HTTP status codes rather than
+  raising `ValueError`. Calling the shared select-per-row helpers would reintroduce exactly the N+1
+  that the prefetch removed. Left alone on purpose.
+- `vegetation_ndvi_plane.py` -- writes provenance through `sql/execution/insert_*.sql` with
+  `ON CONFLICT DO NOTHING` and no field-by-field refusal at all. It is a different mechanism, not a
+  copy; routing it through `ensure_*` would make it start raising on drift it currently tolerates.
+  That is a behaviour change and needs its own decision, not a refactor.
+- `execution/promotion.py` and `execution/geospatial_capture.py` were named as provenance copies in
+  the split plan and are **not**. `promotion.py` has no `AsyncSession` anywhere: it plans
+  `RestoreStep(kind=ENSURE_DATA_SOURCE | ENSURE_SOURCE_RELEASE | ENSURE_ARTIFACT)` over pydantic
+  records, and `routes/historical_promotion.py` is what applies them. `geospatial_capture.py` is
+  HTTP-capture-to-disk with no database access at all. Recorded so the next audit does not re-open it.
+
+**Follow-up migrations,** in the order they become safe: `historical_open_meteo.py` /
+`open_meteo_lane.py` once the lane-adoption pass lands (check them for provenance copies then);
+`vegetation_ndvi_plane.py` behind an explicit decision about `ON CONFLICT DO NOTHING` vs governed
+refusal; `geospatial_pilot.py` last, with the `source_role` / `validate_immediately` parameters.

@@ -1,4 +1,4 @@
-.PHONY: dev test lint format migrate migration-status seed local-status maintain-job-logs install
+.PHONY: dev test lint format check migrate migration-status seed local-status maintain-job-logs install
 
 install:
 	uv sync --locked --all-extras
@@ -12,6 +12,9 @@ test:
 lint:
 	uv run ruff check src/ tests/
 	uv run mypy src/
+
+check:
+	uv run python scripts/check.py
 
 format:
 	uv run ruff format src/ tests/

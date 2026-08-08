@@ -40,11 +40,13 @@ from agri_data_service.jobs.worker import (
     JobRunRollup,
     JobSliceSummary,
     OpenedJobRun,
+    ShutdownSignal,
     ensure_job_definition,
     load_job_definition,
     open_job_run,
     refresh_job_run_rollup,
     run_job_slice,
+    shutdown_signal,
 )
 
 __all__ = [
@@ -69,6 +71,7 @@ __all__ = [
     "OpenedJobRun",
     "ReclaimSummary",
     "RetryPolicy",
+    "ShutdownSignal",
     "UnknownJobHandlerError",
     "WorkItemFailure",
     "claim_work_item",
@@ -88,4 +91,5 @@ __all__ = [
     "refresh_job_run_rollup",
     "release_lost_attempt",
     "run_job_slice",
+    "shutdown_signal",
 ]

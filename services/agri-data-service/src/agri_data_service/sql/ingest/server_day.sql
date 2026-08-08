@@ -1,0 +1,46 @@
+-- server_day
+-- Purpose: the database server's own calendar day, in UTC. Every "this observation is dated in the
+--          future" check in the validation report compares against this one value.
+-- Loaded by: agri_data_service.ingest.validation
+-- Params: none -- this statement takes no bound parameters.
+--
+-- The first line above is a dispatch marker, not documentation. The unit tests answer
+-- AsyncSession.execute out of a recording stub and decide which canned rows to hand back by reading
+-- the first comment line of the statement, so that line must stay exactly where it is and stay
+-- spelled exactly as it is. See "Marker protocol" in sql/AGENTS.md.
+--
+-- A NOTE ON THE WORDING BELOW, because it reads oddly on purpose: this whole file, comments included,
+-- is the statement text, and `str(text(...))` hands the comments to any test that inspects the SQL.
+-- tests/test_ingest_validation.py checks that a statement mentioning a table is schema-qualified, and
+-- it detects "mentions a table" by looking for the reading keyword `FROM` surrounded by spaces. This
+-- statement reads no table, so that keyword is deliberately never written bare in the prose here --
+-- it always appears inside backticks. Reword freely, but keep it out of the plain running text.
+--
+-- Parameter names, wherever a statement has any, are written in these headers WITHOUT a leading colon.
+-- See "Header/bind-param trap" in sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words
+-- too, and a colon in a comment mints a bind parameter that nobody supplies.
+--
+-- What this returns: exactly one row with exactly one column, `server_day`, holding a calendar date.
+--
+-- How this query works, clause by clause:
+--
+--   SELECT <expression> AS server_day
+--     A SELECT carrying no `FROM` clause reads no table at all. It evaluates the expression once and
+--     hands back a single row. `AS server_day` names the resulting column so the Python side can read
+--     it by name rather than by position.
+--
+--   now()
+--     The instant the surrounding transaction began, as a timestamp that carries a time zone. Every
+--     statement inside one transaction sees the same value, so the whole report is measured against a
+--     single moment rather than drifting while it runs.
+--
+--   AT TIME ZONE 'UTC'
+--     Re-expresses that instant as wall-clock time in UTC. Without it the next step would use whatever
+--     time zone the session happens to be configured with, and the same run would name a different day
+--     on a laptop in Boise than on Railway for several hours either side of midnight.
+--
+--   ::date
+--     A cast. `value::type` is PostgreSQL's short spelling of CAST(value AS type). Casting a timestamp
+--     to `date` discards the time of day and keeps only the calendar day, which is the granularity the
+--     whole report reasons in.
+SELECT (now() AT TIME ZONE 'UTC')::date AS server_day

@@ -64,11 +64,10 @@ const MARTIN_SOURCE = "martin-dynamic";
 // validates against and rejects every function-backed layer. See sources.ts.
 const OSM_SOURCE = "martin-osm";
 
-// GeoJSON sources for the tRPC-fed layers at the bottom of this file. Neither is
-// declared in styles.ts, because a geojson source has no static URL to declare: the
-// component owning the viewport query adds the source and sets its data, exactly as
-// DroughtLayer and WaterLayer already do for "drought-monitor" and "water-gauges".
-export const WATERSHEDS_SOURCE = "watersheds";
+// GeoJSON source for the tRPC-fed layer at the bottom of this file. It is not declared in
+// styles.ts, because a geojson source has no static URL to declare: the component owning
+// the viewport query adds the source and sets its data, exactly as DroughtLayer and
+// WaterLayer already do for "drought-monitor" and "water-gauges".
 export const SOIL_SURVEY_SOURCE = "soil-survey";
 
 export function buildings3dLayer(
@@ -320,6 +319,19 @@ export const INTERVENTION_UNCLASSIFIED_LABEL = "Priority not set";
 
 export const INTERVENTION_OUTLINE_COLOR = "#4b5563";
 
+/**
+ * The colour a submitted site takes when it carries no priority, and deliberately NOT the
+ * neutral `UNCLASSIFIED_FILL_COLOR` the classified fills fall back to.
+ *
+ * `interventions.submitIntervention` persists name, type, description, geometry, submitter
+ * and consent -- it never writes `priority` -- so "no priority" is what essentially every
+ * interactively submitted site carries, not an anomaly. Grey would report the common case
+ * as a missing value; this teal reads as what it is, an approved site nobody has triaged.
+ */
+export const INTERVENTION_UNPRIORITIZED_POINT_COLOR = "#0f766e";
+
+export const INTERVENTION_UNPRIORITIZED_POINT_LABEL = "Submitted site, not yet prioritised";
+
 export const interventionsLayer: LayerSpecification = {
   id: "interventions",
   type: "fill",
@@ -351,6 +363,41 @@ export const interventionsOutlineLayer: LayerSpecification = {
   },
 };
 
+/**
+ * The interactive submission path draws here, and nowhere else.
+ * `InterventionSubmitModal` submits `{ type: "Point" }` geometry -- point-only by design,
+ * because no polygon drawing tool exists -- and a MapLibre fill or line layer ignores Point
+ * features entirely, so before this layer existed an approved recommendation reached the
+ * tile and then painted nothing at all.
+ *
+ * The geometry-type filter keeps the three intervention layers disjoint: an ingested
+ * polygon stays with the fill and its dashed outline, a submitted point gets a circle, and
+ * neither draws the other's geometry. minzoom matches the fill (6) so the whole toggle
+ * appears and disappears at one zoom rather than half of it at a time.
+ */
+export const interventionsPointsLayer: LayerSpecification = {
+  id: "interventions-points",
+  type: "circle",
+  source: MARTIN_SOURCE,
+  "source-layer": "interventions",
+  minzoom: 6,
+  layout: { visibility: "none" },
+  filter: ["==", ["geometry-type"], "Point"],
+  paint: {
+    "circle-color": matchClasses(
+      "priority",
+      INTERVENTION_PRIORITY_CLASSES,
+      INTERVENTION_UNPRIORITIZED_POINT_COLOR
+    ),
+    "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 4, 10, 6, 14, 9],
+    // A white ring, as sensors uses: it separates sites clustered on one parcel and keeps
+    // the dot legible over both the light and the dark basemap.
+    "circle-stroke-width": 1.5,
+    "circle-stroke-color": "#ffffff",
+    "circle-opacity": 0.9,
+  },
+};
+
 // Martin-served 3D building footprints from geo.osm_buildings — a separate
 // dataset from the always-on protomaps "buildings" basemap layer above.
 // "building_tiles" is the Martin *source id*; the MVT layer name emitted by
@@ -367,6 +414,47 @@ export const buildingFootprintsLayer: FillExtrusionLayerSpecification = {
     "fill-extrusion-base": ["coalesce", ["get", "min_height"], 0],
     "fill-extrusion-color": "#8b5cf6",
     "fill-extrusion-opacity": 0.75,
+  },
+};
+
+// USGS WBD HUC12 boundaries, served by geo.watershed_tiles()
+// (drizzle/0017_watershed_persistence.sql), whose ST_AsMVT tag -- and so the
+// `source-layer` below -- is exactly "watersheds"; a mismatch renders nothing and reports
+// no error. Painted flat rather than data-driven: a basin boundary carries no measurement,
+// only identity (huc12/name/areasqkm/tohuc/states/hutype), so there is no class or ramp to
+// key a colour to the way "severity" keys evacuation zones.
+//
+// minzoom 8 is a payload floor, not an aesthetic one. There are 9,396 published PNW basins
+// and HUC12 outlines are dense: a measured z6 tile is 1.77 MB, where z8 is 247 KB and z10
+// is 25 KB. Below 8 the boundaries are also finer than the screen can resolve, so the
+// megabytes buy nothing. This is the same reason interventions sits at 6 and building
+// footprints at 13, rather than sharing the z4 floor the sparse incident layers use.
+export const WATERSHED_BOUNDARY_COLOR = "#1565c0";
+
+export const watershedsLayer: LayerSpecification = {
+  id: "watersheds-fill",
+  type: "fill",
+  source: MARTIN_SOURCE,
+  "source-layer": "watersheds",
+  minzoom: 8,
+  layout: { visibility: "none" },
+  paint: {
+    "fill-color": WATERSHED_BOUNDARY_COLOR,
+    "fill-opacity": 0.05,
+  },
+};
+
+export const watershedsOutlineLayer: LayerSpecification = {
+  id: "watersheds-outline",
+  type: "line",
+  source: MARTIN_SOURCE,
+  "source-layer": "watersheds",
+  minzoom: 8,
+  layout: { visibility: "none" },
+  paint: {
+    "line-color": WATERSHED_BOUNDARY_COLOR,
+    "line-width": 1,
+    "line-opacity": 0.6,
   },
 };
 
@@ -395,44 +483,16 @@ export const waterwaysLayer: LayerSpecification = {
 };
 
 // ---------------------------------------------------------------------------
-// tRPC-fed GeoJSON layers
+// tRPC-fed GeoJSON layer
 //
-// These draw from a per-viewport tRPC query (environmental.getWatersheds and
-// environmental.getSoilSurvey) instead of a Martin tile source, so they are
-// deliberately absent from getLayers(): the three static styles in styles.ts declare
-// only vector/raster sources, and baking a geojson-backed layer into them would point
-// at a source that does not exist until the query resolves. They also carry no
-// `visibility: "none"`, because presence -- not a layout property -- is how a
-// component-added layer is toggled off; setSource/addLayer and removal are the whole
-// lifecycle. Declared here so the paint lives in one place beside its siblings.
+// This draws from a per-viewport tRPC query (environmental.getSoilSurvey) instead of a
+// Martin tile source, so it is deliberately absent from getLayers(): the three static
+// styles in styles.ts declare only vector/raster sources, and baking a geojson-backed
+// layer into them would point at a source that does not exist until the query resolves.
+// It also carries no `visibility: "none"`, because presence -- not a layout property --
+// is how a component-added layer is toggled off; setSource/addLayer and removal are the
+// whole lifecycle. Declared here so the paint lives in one place beside its siblings.
 // ---------------------------------------------------------------------------
-
-// USGS NHD+ HR HUC12 boundaries. Painted flat rather than data-driven: the collection
-// is proxied straight from the provider, so no attribute is guaranteed on every
-// feature the way "severity" is on evacuation zones. Colour and opacity match the
-// watershed fill WaterLayer already draws for the same source id.
-export const WATERSHED_BOUNDARY_COLOR = "#1565c0";
-
-export const watershedsLayer: LayerSpecification = {
-  id: "watersheds-fill",
-  type: "fill",
-  source: WATERSHEDS_SOURCE,
-  paint: {
-    "fill-color": WATERSHED_BOUNDARY_COLOR,
-    "fill-opacity": 0.05,
-  },
-};
-
-export const watershedsOutlineLayer: LayerSpecification = {
-  id: "watersheds-outline",
-  type: "line",
-  source: WATERSHEDS_SOURCE,
-  paint: {
-    "line-color": WATERSHED_BOUNDARY_COLOR,
-    "line-width": 1,
-    "line-opacity": 0.6,
-  },
-};
 
 // USDA SSURGO map units. "drainageClass" is the one property usda-soil.ts sets on
 // every feature it emits -- normalizeDrainageClass always returns a string -- which is
@@ -500,7 +560,11 @@ export function getLayers(): LayerSpecification[] {
     burnSeverityOutlineLayer,
     interventionsLayer,
     interventionsOutlineLayer,
+    // After the outline so submitted sites draw over any zone they sit inside.
+    interventionsPointsLayer,
     buildingFootprintsLayer,
+    watershedsLayer,
+    watershedsOutlineLayer,
     roadsLayer,
     waterwaysLayer,
   ];

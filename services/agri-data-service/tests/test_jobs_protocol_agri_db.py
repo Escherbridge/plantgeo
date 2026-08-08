@@ -170,7 +170,7 @@ RETURNING total_work_items
 """)
 
 _ATTEMPT_STATUS: Final = text("""
-SELECT status FROM agri.job_attempt WHERE id = :attempt_id
+SELECT status, failure_class FROM agri.job_attempt WHERE id = :attempt_id
 """)
 
 _DELETE_RUNS: Final = text("""
@@ -556,20 +556,24 @@ async def test_a_worker_that_lost_its_lease_cannot_checkpoint_or_complete_and_th
     assert await complete_work_item(session_a, claim_a) is False
 
     # Observed, not assumed, and the belt to the rollback's braces: `close_attempt_succeeded` fences
-    # through the ITEM row, so inside A's own still-open transaction A's attempt is still 'running'. It
-    # used to read 'succeeded' here -- a terminal verdict on a shard another worker owns, one layer below
-    # the item, held back only by every caller remembering to roll back. A caller that committed at this
-    # point now leaves the ledger intact rather than corrupting it.
+    # through the ITEM row, so inside A's own still-open transaction A has written NO verdict of its own.
+    # It used to read 'succeeded' here -- a terminal verdict on a shard another worker owns, one layer
+    # below the item, held back only by every caller remembering to roll back. A caller that committed at
+    # this point now leaves the ledger intact rather than corrupting it.
+    #
+    # The row reads 'lost'/'lease_expired' rather than 'running' because B's claim reaped this superseded
+    # attempt as it took the expired lease (`close_superseded_attempts`). That verdict is B's, and the
+    # failure_class is what distinguishes it from anything A could have written here.
     inside = await fetch_row(session_a, _ATTEMPT_STATUS, {"attempt_id": claim_a.attempt_id})
     assert inside is not None
-    assert inside["status"] == "running"
+    assert (inside["status"], inside["failure_class"]) == ("lost", "lease_expired")
     await _rollback(session_a)
 
     # The braces are still expected of callers, so this pins that the rollback changes nothing rather
     # than that it repairs something: `worker.py::_abandon` rolls back before closing the attempt as lost.
     after_rollback = await fetch_row(session_a, _ATTEMPT_STATUS, {"attempt_id": claim_a.attempt_id})
     assert after_rollback is not None
-    assert after_rollback["status"] == "running"
+    assert (after_rollback["status"], after_rollback["failure_class"]) == ("lost", "lease_expired")
 
     await release_lost_attempt(session_a, claim_a)
     await _commit(session_a)
@@ -627,12 +631,14 @@ async def test_a_fenced_out_worker_cannot_write_any_terminal_attempt_state_not_j
     else:
         assert await defer_work_item(session_a, claim_a, resume_at=None, reason="upstream had nothing") is False
 
-    # Inside A's own uncommitted transaction, before any rollback: the attempt has not moved. A terminal
+    # Inside A's own uncommitted transaction, before any rollback: A has written no verdict. A terminal
     # 'failed' or 'deferred' here would be a verdict on a shard B owns, and it would survive a caller
-    # that committed instead of rolling back.
+    # that committed instead of rolling back. The row carries B's claim-time reap instead
+    # ('lost'/'lease_expired', from `close_superseded_attempts`), never the close_path A attempted.
     inside = await fetch_row(session_a, _ATTEMPT_STATUS, {"attempt_id": claim_a.attempt_id})
     assert inside is not None
-    assert inside["status"] == "running"
+    assert (inside["status"], inside["failure_class"]) == ("lost", "lease_expired")
+    assert inside["status"] != close_path
     await _rollback(session_a)
 
     # B still holds the shard, and nothing about A's refused close reached it.
@@ -641,7 +647,7 @@ async def test_a_fenced_out_worker_cannot_write_any_terminal_attempt_state_not_j
     assert held["fencing_token"] == claim_b.fencing_token
     assert held["last_error_class"] is None
     attempts = await _attempts(operator, claim_a.work_item_id)
-    assert [row["status"] for row in attempts] == ["running", "running"]
+    assert [row["status"] for row in attempts] == ["lost", "running"]
 
 
 async def test_two_concurrent_claimers_get_different_work_items_and_neither_blocks_on_the_other(
@@ -867,6 +873,40 @@ async def test_the_run_counter_clamp_survives_a_total_that_is_behind_the_work_it
     assert repaired.total_work_items == 1
     assert repaired.succeeded_work_items == 1
     assert repaired.status == "succeeded"
+
+
+async def test_a_claim_on_an_expired_lease_closes_the_attempt_its_dead_owner_left_running(
+    ledger: Ledger,
+) -> None:
+    session = await ledger.open_session()
+    _, opened = await _open_definition_and_run(session, ledger, _shards("firms:2003-09-01"))
+
+    stranded = await claim_work_item(
+        session, job_run_id=opened.job_run_id, worker_id=WORKER_A, lease_seconds=LEASE_SECONDS
+    )
+    assert stranded is not None
+    await _commit(session)
+
+    # Exactly what a SIGKILLed container leaves behind: a live 'running' attempt whose owner is gone.
+    await fetch_row(session, _EXPIRE_LEASE, {"work_item_id": stranded.work_item_id})
+    await _commit(session)
+
+    taken = await claim_work_item(
+        session, job_run_id=opened.job_run_id, worker_id=WORKER_B, lease_seconds=LEASE_SECONDS
+    )
+    assert taken is not None
+    assert taken.fencing_token > stranded.fencing_token
+    await _commit(session)
+
+    attempts = {row["id"]: row for row in await _attempts(session, stranded.work_item_id)}
+    # The reaper never ran, and `release_lost_attempt` runs on the worker that died, so without the
+    # claim's own close this row sits in 'running' for ever and every query that counts live work lies.
+    superseded = attempts[stranded.attempt_id]
+    assert superseded["status"] == "lost"
+    assert superseded["failure_class"] == "lease_expired"
+    assert superseded["finished_at"] is not None
+    # And the attempt the claim just opened is untouched: the close is bounded by a strictly older token.
+    assert attempts[taken.attempt_id]["status"] == "running"
 
 
 async def test_the_reaper_requeues_one_expired_lease_dead_letters_an_exhausted_one_and_closes_both_attempts(

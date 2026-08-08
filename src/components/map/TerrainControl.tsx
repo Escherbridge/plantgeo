@@ -26,12 +26,17 @@ export default function TerrainControl() {
       </Button>
       {isTerrainEnabled && (
         <div className="flex w-28 flex-col gap-1 px-1">
+          {/* The name and the spoken value are separate: the caption below reads "1.5x",
+              which is the value, not what the control is. Without both this announced as an
+              unnamed slider whose value was the bare number "1.5". */}
           <Slider
             min={0}
             max={3}
             step={0.1}
             value={terrainExaggeration}
             onValueChange={setTerrainExaggeration}
+            aria-label="Terrain exaggeration"
+            aria-valuetext={`${terrainExaggeration.toFixed(1)} times`}
           />
           <span className="text-center text-xs text-[hsl(var(--muted-foreground))]">
             {terrainExaggeration.toFixed(1)}x

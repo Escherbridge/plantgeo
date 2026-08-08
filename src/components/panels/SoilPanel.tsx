@@ -171,9 +171,9 @@ function SoilFieldSection({
           contract test reads every rendered layerId out of the source statically, and a
           computed id is indistinguishable from an absent switch there. */}
       {measure === "moisture" ? (
-        <LayerToggle layerId="soil-moisture" label={definition.layerLabel} />
+        <LayerToggle layerId="soil-moisture" />
       ) : (
-        <LayerToggle layerId="soil-temperature" label={definition.layerLabel} />
+        <LayerToggle layerId="soil-temperature" />
       )}
 
       {visible && (
@@ -426,7 +426,7 @@ export function SoilPanel({
           </SheetTitle>
         </SheetHeader>
 
-        <LayerToggle layerId="soil" label="Soil Properties" />
+        <LayerToggle layerId="soil" />
         {/* The two ERA5-Land soil fields, moisture and temperature, off one component.
             Rendered unconditionally so each owns its own query on the same key the map uses;
             each gates its own body on its own switch. */}
@@ -446,7 +446,7 @@ export function SoilPanel({
             warehouse-backed layers (soil-survey's warehouseLayerName is null) -- so without
             a switch here the SSURGO polygons SoilSurveyLayer renders could never be turned
             on. Same pattern as the "watersheds" toggle in WaterPanel.tsx. */}
-        <LayerToggle layerId="soil-survey" label="Soil Survey (SSURGO)" />
+        <LayerToggle layerId="soil-survey" />
 
         {/* What the survey layer is actually drawing. Both dishonest cases -- a subset
             served past USDA's row ceiling, and an upstream fault -- reach the map as

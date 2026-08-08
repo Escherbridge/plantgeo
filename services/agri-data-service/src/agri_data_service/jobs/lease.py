@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Final, Literal
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.jobs.registry import EMPTY_JSON_OBJECT
 
 if TYPE_CHECKING:
@@ -41,6 +42,21 @@ LEASE_EXPIRED_FAILURE_CLASS: Final = "lease_expired"
 LEASE_EXPIRED_SUMMARY: Final = "lease expired before the worker reported back"
 FENCE_LOST_FAILURE_CLASS: Final = "fence_lost"
 FENCE_LOST_SUMMARY: Final = "another worker claimed this shard while this attempt was running"
+SUPERSEDED_SUMMARY: Final = "this attempt's lease expired and another worker claimed the shard"
+
+# How many consecutive parks a shard may serve before the runtime stops protecting its retry budget.
+# A park is normally correct -- `defer_work_item` raises `max_attempts` precisely so that waiting on a
+# weekly source polled hourly never dead-letters it -- but nothing bounded it, so a window that parks on
+# every tick forever climbed `max_attempts` without limit while `jobs-status` reported it as a healthy
+# `deferred`. `jobs-run --budget-seconds` set under a handler's own next-chunk estimate is the concrete
+# way to mint one. 24 is half a day of the deployed 30-minute archive cadence with no checkpoint to show
+# for it; past that the ceiling stops rising, the retry budget starts closing, and the shard eventually
+# dead-letters into a report that says it is missing rather than parking silently for ever.
+#
+# The count is CONSECUTIVE and resets on progress: only parked attempts whose fencing token is newer than
+# the newest checkpoint are counted, so a window that walks a chunk and then yields for the clock -- the
+# normal shape of a multi-tick window -- starts again from zero every tick.
+MAX_CONSECUTIVE_PARKS: Final = 24
 
 REDACTED_PLACEHOLDER: Final = "[redacted]"
 
@@ -66,429 +82,53 @@ class JobCursorError(TypeError):
     """Raised when a checkpoint cursor holds a value that cannot be stored as deterministic JSON."""
 
 
+# Stays inline rather than moving to sql/jobs/: `SET LOCAL` cannot take a bind parameter, so the
+# seconds must be interpolated, and the whole statement is one line already visible at its call site.
 _STATEMENT_TIMEOUT: Final = text(
     f"-- statement_timeout\nSET LOCAL statement_timeout = '{LEASE_STATEMENT_TIMEOUT_SECONDS}s'"
 )
 
-# One statement, because every constraint on these tables is NOT DEFERRABLE and fails at statement
-# execution rather than at COMMIT. `status`, `lease_owner`, `lease_expires_at` and `fencing_token` must
-# therefore move together (ck_job_work_item_complete_lease_pair and
-# ck_job_work_item_active_item_has_fenced_lease), and `attempt_count` with them so the attempt row
-# below can use it as its attempt_number.
-#
-# `attempt_count < max_attempts` is not optional. Without it an exhausted item that is still in a
-# claimable state makes `attempt_count + 1` violate ck_job_work_item_attempt_count_within_limit, which
-# aborts the whole claim: the worker gets an error where it should have got "no work".
-#
-# The expired-lease arm is what makes a killed container resumable with no filesystem state -- the next
-# tick claims its own abandoned lease straight out of the ledger.
-_CLAIM_WORK_ITEM: Final = text("""
--- claim_work_item
-WITH candidate AS (
-    SELECT item.id
-    FROM agri.job_work_item AS item
-    WHERE item.job_run_id = :job_run_id
-      AND item.attempt_count < item.max_attempts
-      AND item.available_at <= now()
-      AND (
-            (
-                item.status IN ('queued', 'retry_wait', 'deferred')
-                AND (item.next_attempt_at IS NULL OR item.next_attempt_at <= now())
-            )
-            OR (
-                item.status IN ('leased', 'running')
-                AND item.lease_expires_at IS NOT NULL
-                AND item.lease_expires_at <= now()
-            )
-      )
-    ORDER BY item.priority DESC, item.available_at, item.id
-    FOR UPDATE SKIP LOCKED
-    LIMIT 1
-)
-UPDATE agri.job_work_item AS item
-SET status = 'leased',
-    fencing_token = item.fencing_token + 1,
-    attempt_count = item.attempt_count + 1,
-    lease_owner = :worker_id,
-    lease_expires_at = now() + make_interval(secs => :lease_seconds),
-    heartbeat_at = now(),
-    next_attempt_at = NULL,
-    started_at = COALESCE(item.started_at, now())
-FROM candidate
-WHERE item.id = candidate.id
-RETURNING item.id,
-          item.job_run_id,
-          item.shard_key,
-          item.kind,
-          item.payload,
-          item.fencing_token,
-          item.attempt_count,
-          item.max_attempts,
-          item.checkpoint_sequence,
-          item.progress_fraction,
-          item.lease_expires_at
-""")
+_CLAIM_WORK_ITEM: Final = text(load_query_sql("jobs/claim_work_item.sql"))
 
-_LATEST_CHECKPOINT_CURSOR: Final = text("""
--- latest_checkpoint_cursor
-SELECT checkpoint.cursor
-FROM agri.job_checkpoint AS checkpoint
-WHERE checkpoint.job_work_item_id = :work_item_id
-ORDER BY checkpoint.sequence DESC
-LIMIT 1
-""")
+_CLOSE_SUPERSEDED_ATTEMPTS: Final = text(load_query_sql("jobs/close_superseded_attempts.sql"))
 
-# attempt_number equals the item's post-increment attempt_count so uq_job_attempt_item_number and
-# job_work_item.attempt_count can never diverge, and fencing_token equals the item's post-increment
-# token so uq_job_attempt_item_fence is satisfied by construction -- the token only ever grows, is
-# never reset on completion, and is therefore never reusable.
-_OPEN_ATTEMPT: Final = text("""
--- open_attempt
-INSERT INTO agri.job_attempt (job_work_item_id, attempt_number, fencing_token, status, worker_id, started_at)
-VALUES (:work_item_id, :attempt_number, :fencing_token, 'running', :worker_id, now())
-RETURNING id
-""")
+_LATEST_CHECKPOINT_CURSOR: Final = text(load_query_sql("jobs/latest_checkpoint_cursor.sql"))
 
-_MARK_WORK_ITEM_RUNNING: Final = text("""
--- mark_work_item_running
-UPDATE agri.job_work_item
-SET status = 'running',
-    lease_expires_at = now() + make_interval(secs => :lease_seconds),
-    heartbeat_at = now()
-WHERE id = :work_item_id
-  AND fencing_token = :fencing_token
-  AND lease_owner = :lease_owner
-  AND status IN ('leased', 'running')
-RETURNING id
-""")
+_OPEN_ATTEMPT: Final = text(load_query_sql("jobs/open_attempt.sql"))
 
-# `lease_owner` is deliberately left untouched so ck_job_work_item_complete_lease_pair still holds.
-# Zero rows back means the fence moved: another worker owns this shard now and this one must stop.
-_EXTEND_WORK_ITEM_LEASE: Final = text("""
--- extend_work_item_lease
-UPDATE agri.job_work_item
-SET heartbeat_at = now(),
-    lease_expires_at = now() + make_interval(secs => :lease_seconds)
-WHERE id = :work_item_id
-  AND fencing_token = :fencing_token
-  AND lease_owner = :lease_owner
-  AND status IN ('leased', 'running')
-RETURNING id
-""")
+_MARK_WORK_ITEM_RUNNING: Final = text(load_query_sql("jobs/mark_work_item_running.sql"))
 
-_EXTEND_ATTEMPT_HEARTBEAT: Final = text("""
--- extend_attempt_heartbeat
-UPDATE agri.job_attempt
-SET heartbeat_at = now()
-WHERE id = :attempt_id AND status = 'running'
-RETURNING id
-""")
+_EXTEND_WORK_ITEM_LEASE: Final = text(load_query_sql("jobs/extend_work_item_lease.sql"))
 
-# The sequence is taken from the item row under its own lock, never from `SELECT max(sequence)`: two
-# writers reading a max derive the same N and one dies on uq_job_checkpoint_item_sequence. This UPDATE
-# must precede the INSERT for the same reason.
-#
-# GREATEST holds the item's progress monotonic. A parked outcome may carry a cursor and still default
-# its fraction to zero -- a deferral or a budget yield states where it resumes, not how far it got -- and
-# assigning that raw would rewind the shard's progress every time it waits. The checkpoint row keeps the
-# raw per-step value; the item column is the high-water mark.
-_ADVANCE_CHECKPOINT_SEQUENCE: Final = text("""
--- advance_checkpoint_sequence
-UPDATE agri.job_work_item
-SET checkpoint_sequence = checkpoint_sequence + 1,
-    progress_fraction = GREATEST(progress_fraction, CAST(:progress_fraction AS double precision)),
-    heartbeat_at = now(),
-    lease_expires_at = now() + make_interval(secs => :lease_seconds)
-WHERE id = :work_item_id
-  AND fencing_token = :fencing_token
-  AND lease_owner = :lease_owner
-  AND status IN ('leased', 'running')
-RETURNING checkpoint_sequence
-""")
+_EXTEND_ATTEMPT_HEARTBEAT: Final = text(load_query_sql("jobs/extend_attempt_heartbeat.sql"))
 
-_APPEND_CHECKPOINT: Final = text("""
--- append_checkpoint
-INSERT INTO agri.job_checkpoint (
-    job_work_item_id, job_attempt_id, sequence, fencing_token, cursor, cursor_checksum, progress_fraction
-)
-VALUES (
-    :work_item_id,
-    :attempt_id,
-    :sequence,
-    :fencing_token,
-    CAST(:cursor AS jsonb),
-    :cursor_checksum,
-    :progress_fraction
-)
-RETURNING id
-""")
+_ADVANCE_CHECKPOINT_SEQUENCE: Final = text(load_query_sql("jobs/advance_checkpoint_sequence.sql"))
 
-# THE FENCE LIVES ON THE ITEM, NOT ON THE ATTEMPT, so this locks the item row and closes the attempt only
-# while the claim still owns it. Read the CTE before changing any of the three `close_attempt_*` writes
-# below, because the obvious cheaper spelling does not work:
-#
-# `AND job_attempt.fencing_token = :fencing_token` is a TAUTOLOGY here. `_OPEN_ATTEMPT` stamps the attempt
-# row with exactly `claim.fencing_token` and nothing ever updates that column, so the predicate matches its
-# own row forever and fences nothing. The only column that moves when another worker takes the shard is
-# `job_work_item.fencing_token`, so that is the column every fenced write must compare against.
-#
-# `FOR UPDATE` and not a plain join. Under READ COMMITTED each statement takes its own snapshot, so a bare
-# `UPDATE ... FROM job_work_item` could read the item as it was before a competing claim committed and
-# close the attempt anyway. Locking the row makes PostgreSQL block on the competing claim, re-evaluate this
-# WHERE against the row it committed, and match zero -- and the item UPDATE that follows wants that same
-# lock one statement later regardless, so this moves the wait rather than adding one. The transaction-local
-# `statement_timeout` bounds the block.
-#
-# Callers still roll back on a False/None return; see jobs/AGENTS.md "The fence guards the attempt too".
-_CLOSE_ATTEMPT_SUCCEEDED: Final = text("""
--- close_attempt_succeeded
-WITH fence AS (
-    SELECT item.id
-    FROM agri.job_work_item AS item
-    WHERE item.id = :work_item_id
-      AND item.fencing_token = :fencing_token
-      AND item.lease_owner = :lease_owner
-      AND item.status IN ('leased', 'running')
-    FOR UPDATE
-)
-UPDATE agri.job_attempt AS attempt
-SET status = 'succeeded', finished_at = now(), metrics = CAST(:metrics AS jsonb)
-FROM fence
-WHERE attempt.id = :attempt_id
-  AND attempt.job_work_item_id = fence.id
-  AND attempt.status = 'running'
-RETURNING attempt.id
-""")
+_APPEND_CHECKPOINT: Final = text(load_query_sql("jobs/append_checkpoint.sql"))
 
-_COMPLETE_WORK_ITEM: Final = text("""
--- complete_work_item
-UPDATE agri.job_work_item
-SET status = 'succeeded',
-    completed_at = now(),
-    progress_fraction = 1,
-    lease_owner = NULL,
-    lease_expires_at = NULL,
-    next_attempt_at = NULL,
-    heartbeat_at = now()
-WHERE id = :work_item_id
-  AND fencing_token = :fencing_token
-  AND lease_owner = :lease_owner
-  AND status IN ('leased', 'running')
-RETURNING id
-""")
+_CLOSE_ATTEMPT_SUCCEEDED: Final = text(load_query_sql("jobs/close_attempt_succeeded.sql"))
 
-# GREATEST/LEAST rather than a bare +1. ck_job_run_work_item_counts_within_total is IMMEDIATE, so a
-# counter bump past `total_work_items` aborts the completion transaction and loses a shard that
-# actually succeeded. Clamping never decreases the counter and never crosses the total; the slice's
-# closing rollup recomputes the true value from the work items themselves.
-_INCREMENT_RUN_SUCCEEDED: Final = text("""
--- increment_run_succeeded
-UPDATE agri.job_run
-SET succeeded_work_items = GREATEST(
-        succeeded_work_items,
-        LEAST(succeeded_work_items + 1, total_work_items - failed_work_items)
-    )
-WHERE id = :job_run_id
-RETURNING succeeded_work_items
-""")
+_COMPLETE_WORK_ITEM: Final = text(load_query_sql("jobs/complete_work_item.sql"))
 
-# `metrics` travels with the failure. What a dead-lettered window actually managed -- chunks walked,
-# records seen, records written -- is exactly what an operator needs to tell "upstream had nothing" from
-# "we never reached upstream", and dropping it on the failure path leaves that question unanswerable
-# from the ledger alone. The column is NOT NULL DEFAULT '{}', so an empty object is always legal.
-#
-# Fenced through the item exactly as `_CLOSE_ATTEMPT_SUCCEEDED` is, and for the same reason: 'failed' is a
-# terminal attempt state, so writing it on a shard another worker owns records a verdict this worker had
-# no authority to reach. See that statement's comment for why the item row and not the attempt row.
-_CLOSE_ATTEMPT_FAILED: Final = text("""
--- close_attempt_failed
-WITH fence AS (
-    SELECT item.id
-    FROM agri.job_work_item AS item
-    WHERE item.id = :work_item_id
-      AND item.fencing_token = :fencing_token
-      AND item.lease_owner = :lease_owner
-      AND item.status IN ('leased', 'running')
-    FOR UPDATE
-)
-UPDATE agri.job_attempt AS attempt
-SET status = 'failed',
-    finished_at = now(),
-    failure_class = :failure_class,
-    error_summary = :error_summary,
-    metrics = CAST(:metrics AS jsonb)
-FROM fence
-WHERE attempt.id = :attempt_id
-  AND attempt.job_work_item_id = fence.id
-  AND attempt.status = 'running'
-RETURNING attempt.id
-""")
+_INCREMENT_RUN_SUCCEEDED: Final = text(load_query_sql("jobs/increment_run_succeeded.sql"))
 
-_RETRY_WORK_ITEM: Final = text("""
--- retry_work_item
-UPDATE agri.job_work_item
-SET status = 'retry_wait',
-    next_attempt_at = now() + make_interval(secs => :backoff_seconds),
-    lease_owner = NULL,
-    lease_expires_at = NULL,
-    heartbeat_at = now(),
-    last_error_class = :failure_class,
-    last_error_summary = :error_summary
-WHERE id = :work_item_id
-  AND fencing_token = :fencing_token
-  AND lease_owner = :lease_owner
-  AND status IN ('leased', 'running')
-RETURNING id
-""")
+_CLOSE_ATTEMPT_FAILED: Final = text(load_query_sql("jobs/close_attempt_failed.sql"))
 
-_DEAD_LETTER_WORK_ITEM: Final = text("""
--- dead_letter_work_item
-UPDATE agri.job_work_item
-SET status = 'dead_letter',
-    completed_at = now(),
-    next_attempt_at = NULL,
-    lease_owner = NULL,
-    lease_expires_at = NULL,
-    heartbeat_at = now(),
-    last_error_class = :failure_class,
-    last_error_summary = :error_summary
-WHERE id = :work_item_id
-  AND fencing_token = :fencing_token
-  AND lease_owner = :lease_owner
-  AND status IN ('leased', 'running')
-RETURNING id
-""")
+_RETRY_WORK_ITEM: Final = text(load_query_sql("jobs/retry_work_item.sql"))
 
-_INCREMENT_RUN_FAILED: Final = text("""
--- increment_run_failed
-UPDATE agri.job_run
-SET failed_work_items = GREATEST(
-        failed_work_items,
-        LEAST(failed_work_items + :increment, total_work_items - succeeded_work_items)
-    )
-WHERE id = :job_run_id
-RETURNING failed_work_items
-""")
+_DEAD_LETTER_WORK_ITEM: Final = text(load_query_sql("jobs/dead_letter_work_item.sql"))
 
-# A deferral is not a failure, so its reason goes in the attempt's free-form `metrics` rather than in
-# `error_summary`, which an operator scanning for real failures reads.
-#
-# Fenced through the item exactly as `_CLOSE_ATTEMPT_SUCCEEDED` is. 'deferred' is terminal for the attempt
-# even though it is not terminal for the item, so a fenced-out worker parking someone else's shard still
-# writes a verdict it had no authority to reach.
-_CLOSE_ATTEMPT_DEFERRED: Final = text("""
--- close_attempt_deferred
-WITH fence AS (
-    SELECT item.id
-    FROM agri.job_work_item AS item
-    WHERE item.id = :work_item_id
-      AND item.fencing_token = :fencing_token
-      AND item.lease_owner = :lease_owner
-      AND item.status IN ('leased', 'running')
-    FOR UPDATE
-)
-UPDATE agri.job_attempt AS attempt
-SET status = 'deferred', finished_at = now(), metrics = CAST(:metrics AS jsonb)
-FROM fence
-WHERE attempt.id = :attempt_id
-  AND attempt.job_work_item_id = fence.id
-  AND attempt.status = 'running'
-RETURNING attempt.id
-""")
+_INCREMENT_RUN_FAILED: Final = text(load_query_sql("jobs/increment_run_failed.sql"))
 
-# `max_attempts + 1` is the load-bearing part. The claim already spent an attempt on this item, and a
-# deferral means upstream had nothing to give -- charging the item's failure budget for that would
-# dead-letter a weekly source polled hourly after five hours of perfectly correct waiting. Raising the
-# ceiling is legal (ck_job_work_item_positive_work_item_max_attempts and attempt_count_within_limit
-# are both satisfied) and it keeps attempt_number dense-unique, which decrementing attempt_count would
-# not. See jobs/AGENTS.md "A deferral must not spend the retry budget".
-_DEFER_WORK_ITEM: Final = text("""
--- defer_work_item
-UPDATE agri.job_work_item
-SET status = 'deferred',
-    next_attempt_at = COALESCE(CAST(:resume_at AS timestamptz), now()),
-    max_attempts = max_attempts + 1,
-    lease_owner = NULL,
-    lease_expires_at = NULL,
-    heartbeat_at = now()
-WHERE id = :work_item_id
-  AND fencing_token = :fencing_token
-  AND lease_owner = :lease_owner
-  AND status IN ('leased', 'running')
-RETURNING id
-""")
+_CLOSE_ATTEMPT_DEFERRED: Final = text(load_query_sql("jobs/close_attempt_deferred.sql"))
 
-# Nothing in the schema reaps an abandoned attempt: without this, a fenced-out worker's attempt row
-# sits in 'running' forever and every incident query that counts running attempts lies.
-#
-# THE ONE ATTEMPT CLOSE THAT MUST NOT CARRY A FENCE, and the exception is the whole point: this statement
-# runs precisely when the fence has already moved, so fencing it the way the three closes above are fenced
-# would match zero rows and leave the dangling 'running' attempt it exists to reap. It is safe unfenced
-# because 'lost' is the only verdict a superseded worker is ever entitled to reach about its own attempt,
-# and `id = :attempt_id` addresses that attempt and no other.
-_CLOSE_ATTEMPT_LOST: Final = text("""
--- close_attempt_lost
-UPDATE agri.job_attempt
-SET status = 'lost',
-    finished_at = now(),
-    failure_class = :failure_class,
-    error_summary = :error_summary
-WHERE id = :attempt_id AND status = 'running'
-RETURNING id
-""")
+_DEFER_WORK_ITEM: Final = text(load_query_sql("jobs/defer_work_item.sql"))
 
-# The reaper runs without a fence, because there is no fence to hold: every candidate row's owner is
-# by definition gone. It deliberately does NOT bump `fencing_token` -- the token is bumped only by the
-# next successful claim, so a zombie's token is already permanently stale, and bumping here would burn
-# a token with no attempt row behind it and break the fk_job_checkpoint_attempt_fence invariant.
-# It reclaims to 'retry_wait' rather than 'queued' because 'queued' with a stale lease pair passes
-# every CHECK and produces a row that lies about who owns it.
-_RECLAIM_EXPIRED_LEASES: Final = text("""
--- reclaim_expired_leases
-WITH expired AS (
-    SELECT item.id
-    FROM agri.job_work_item AS item
-    WHERE item.status IN ('leased', 'running')
-      AND item.lease_expires_at IS NOT NULL
-      AND item.lease_expires_at < now()
-      AND (CAST(:job_run_id AS uuid) IS NULL OR item.job_run_id = CAST(:job_run_id AS uuid))
-    FOR UPDATE SKIP LOCKED
-), reclaimed AS (
-    UPDATE agri.job_work_item AS item
-    SET status = CASE
-            WHEN item.attempt_count >= item.max_attempts THEN 'dead_letter'
-            ELSE 'retry_wait'
-        END,
-        next_attempt_at = CASE
-            WHEN item.attempt_count >= item.max_attempts THEN NULL
-            ELSE now() + make_interval(secs => :backoff_seconds)
-        END,
-        completed_at = CASE
-            WHEN item.attempt_count >= item.max_attempts THEN COALESCE(item.completed_at, now())
-            ELSE item.completed_at
-        END,
-        lease_owner = NULL,
-        lease_expires_at = NULL,
-        last_error_class = :failure_class,
-        last_error_summary = :error_summary
-    FROM expired
-    WHERE item.id = expired.id
-    RETURNING item.id, item.job_run_id, item.status
-)
-SELECT id, job_run_id, status FROM reclaimed
-""")
+_CLOSE_ATTEMPT_LOST: Final = text(load_query_sql("jobs/close_attempt_lost.sql"))
 
-_CLOSE_LOST_ATTEMPTS: Final = text("""
--- close_lost_attempts
-UPDATE agri.job_attempt
-SET status = 'lost',
-    finished_at = now(),
-    failure_class = :failure_class,
-    error_summary = :error_summary
-WHERE status = 'running'
-  AND job_work_item_id = ANY(CAST(:work_item_ids AS uuid[]))
-RETURNING id
-""")
+_RECLAIM_EXPIRED_LEASES: Final = text(load_query_sql("jobs/reclaim_expired_leases.sql"))
+
+_CLOSE_LOST_ATTEMPTS: Final = text(load_query_sql("jobs/close_lost_attempts.sql"))
 
 
 def clamp_text(value: str, limit: int) -> str:
@@ -682,6 +322,20 @@ async def claim_work_item(
     work_item_id = required_column(row, "id", uuid.UUID)
     attempt_number = required_column(row, "attempt_count", int)
     fencing_token = required_column(row, "fencing_token", int)
+    # Before opening this claim's attempt, close whatever the previous owner left behind. The claim's
+    # expired-lease arm is the only path that can supersede a live attempt without the superseded worker
+    # participating, and it holds the item's row lock in this very transaction, so this is the one cheap
+    # place the orphan can be reaped at all. On a first claim it matches nothing.
+    await fetch_rows(
+        session,
+        _CLOSE_SUPERSEDED_ATTEMPTS,
+        {
+            "work_item_id": work_item_id,
+            "fencing_token": fencing_token,
+            "failure_class": LEASE_EXPIRED_FAILURE_CLASS,
+            "error_summary": SUPERSEDED_SUMMARY,
+        },
+    )
     cursor_row = await fetch_row(session, _LATEST_CHECKPOINT_CURSOR, {"work_item_id": work_item_id})
     attempt_row = await fetch_row(
         session,
@@ -885,7 +539,11 @@ async def defer_work_item(
     row = await fetch_row(
         session,
         _DEFER_WORK_ITEM,
-        {**claim.fence_predicate(), "resume_at": resume_at},
+        {
+            **claim.fence_predicate(),
+            "resume_at": resume_at,
+            "max_consecutive_parks": MAX_CONSECUTIVE_PARKS,
+        },
     )
     return row is not None
 
@@ -908,13 +566,20 @@ async def reclaim_expired_leases(
     *,
     backoff_seconds: float,
     job_run_id: uuid.UUID | None = None,
+    job_definition_id: uuid.UUID | None = None,
 ) -> ReclaimSummary:
-    """Return every expired lease to the queue (or dead-letter an exhausted one) and close its dangling attempt."""
+    """Return every expired lease to the queue (or dead-letter an exhausted one) and close its dangling attempt.
+
+    Both scopes are optional and are ANDed. Pass `job_definition_id` to cover every non-terminal run of a
+    lane, which is what a slice wants: it drives only the oldest open run, so a run-scoped reaper leaves an
+    expired lease in a sibling run unreclaimable by any tick.
+    """
     rows = await fetch_rows(
         session,
         _RECLAIM_EXPIRED_LEASES,
         {
             "job_run_id": job_run_id,
+            "job_definition_id": job_definition_id,
             "backoff_seconds": backoff_seconds,
             "failure_class": LEASE_EXPIRED_FAILURE_CLASS,
             "error_summary": LEASE_EXPIRED_SUMMARY,

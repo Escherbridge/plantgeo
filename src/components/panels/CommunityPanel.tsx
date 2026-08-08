@@ -144,8 +144,8 @@ export function CommunityPanel({
           </SheetHeader>
 
           {/* demand-heatmap's withheld reason lives in the layer registry, not here. */}
-          <LayerToggle layerId="demand-heatmap" label="Demand Heatmap" />
-          <LayerToggle layerId="interventions" label="Interventions" />
+          <LayerToggle layerId="demand-heatmap" />
+          <LayerToggle layerId="interventions" />
 
           {/* Intervention recommendations */}
           <section className="mt-4 mb-5 rounded-lg border border-[hsl(var(--border))] p-3">
@@ -168,9 +168,12 @@ export function CommunityPanel({
               </button>
             </div>
 
+            {/* The two submit paths in this panel write to different tables with different
+                fates, and only this one can ever reach the map. Each says which it is. */}
             <p className="text-xs text-[hsl(var(--muted-foreground))] mb-2">
-              Recommendations are held for expert review and only reach the
-              public map once a reviewer approves them.
+              Proposes a site for the public map. Recommendations are held for
+              expert review and only appear on the map once a reviewer approves
+              them.
             </p>
 
             {!interventionSubmissions || interventionSubmissions.length === 0 ? (
@@ -211,6 +214,19 @@ export function CommunityPanel({
             )}
           </section>
 
+          {/* Strategy requests: the private ledger. A request is written to
+              `strategy_requests`, which nothing ever promotes into `geo.features` — so
+              unlike a recommendation above, it has no path to the map by design. */}
+          <div className="mb-2">
+            <h3 className="text-sm font-medium text-[hsl(var(--foreground))]">
+              Strategy requests
+            </h3>
+            <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
+              Logs a private community request. It is never shown on the map —
+              use &ldquo;+ Recommend&rdquo; above to propose a site for one.
+            </p>
+          </div>
+
           {/* Filter + Submit */}
           <div className="flex gap-2 mb-4">
             <select
@@ -236,7 +252,7 @@ export function CommunityPanel({
               }
               className="px-3 py-2 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-sm font-medium hover:opacity-90 transition-opacity whitespace-nowrap disabled:opacity-50"
             >
-              + Submit
+              + Request
             </button>
           </div>
 
@@ -246,8 +262,8 @@ export function CommunityPanel({
                   activeTeam?.name ?? "the selected partner workspace"
                 }.`
               : "Requests are private to your account."}{" "}
-            Submitting one does not publish its location or create a public
-            waypoint.
+            Submitting one never publishes its location, creates a public
+            waypoint, or draws anything on the map.
           </p>
 
           {activeTeamId && !canSubmitToActiveTeam && (

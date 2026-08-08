@@ -133,6 +133,20 @@ def _collapse_whitespace(sql: str) -> str:
     return " ".join(sql.split())
 
 
+def _statement_body(sql: str) -> str:
+    """Drop the documentation header a `sql/ingest/*.sql` file opens with, leaving the statement itself.
+
+    The whole file is the statement text -- `str(text(...))` hands back the header comments too -- so an
+    assertion that the statement STARTS with a particular clause has to skip the header first. Only the
+    leading run of comment and blank lines is removed; comments inside the statement stay.
+    """
+    lines = sql.splitlines()
+    first = 0
+    while first < len(lines) and (not lines[first].strip() or lines[first].lstrip().startswith("--")):
+        first += 1
+    return "\n".join(lines[first:])
+
+
 def _feature(drought_class: object, geometry_type: str = "MultiPolygon") -> dict[str, object]:
     return {
         "type": "Feature",
@@ -459,7 +473,7 @@ async def test_the_prune_keeps_the_newest_releases_and_counts_releases_not_rows(
     # Two rows share a valid_date; the operator is told two releases went, not three rows.
     assert pruned == 2
     rendered, parameters = session.statements[0]
-    collapsed = _collapse_whitespace(rendered)
+    collapsed = _collapse_whitespace(_statement_body(rendered))
     assert collapsed.startswith("DELETE FROM geo.drought_areas WHERE valid_date NOT IN (")
     assert "SELECT valid_date FROM geo.drought_areas GROUP BY valid_date ORDER BY valid_date DESC" in collapsed
     assert "LIMIT :retain" in collapsed

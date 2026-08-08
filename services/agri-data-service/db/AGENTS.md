@@ -326,7 +326,8 @@ never produced a row — but `0018` puts it on the critical path.
   `agri/**`. Dropping a role produces **no tree diff**, and a forgotten `REVOKE`
   is not caught by `test_declarative_tree_matches_migrations`. Privilege changes
   are reviewed in the migration and asserted by behavioural tests
-  (`routes/health.py`, the role contract tests) — never by regenerating.
+  (`routes/health/` and `sql/routes/health_*.sql`, the role contract tests) —
+  never by regenerating.
 
 ## Assignment-time covariate layer
 

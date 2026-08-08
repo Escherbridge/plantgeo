@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { router, contributorProcedure, expertProcedure } from "@/lib/server/trpc/init";
-import { features } from "@/lib/server/db/schema";
-import { eq, and } from "drizzle-orm";
+import { features, layers } from "@/lib/server/db/schema";
+import { eq } from "drizzle-orm";
 
 export const contributionsRouter = router({
   submitObservation: contributorProcedure
@@ -65,10 +65,34 @@ export const contributionsRouter = router({
       return updated;
     }),
 
+  /**
+   * The review queue.
+   *
+   * Projected rather than `select()`-ed whole, and joined to the layer, for one reason: a
+   * reviewer has to be able to tell what they are approving. The bare select surfaced two
+   * UUIDs and a PostGIS `geom` blob no surface reads, while everything that identifies a
+   * submission -- name, type, description and the GeoJSON geometry that
+   * `interventions.submitIntervention` writes -- sat unread inside `properties`. Read-only
+   * widening: same gate, same rows, no column or status change.
+   *
+   * The join is inner because `features.layer_id` is NOT NULL with a foreign key to
+   * `geo.layers`, so it can drop nothing. The query stays layer-agnostic -- it filters on
+   * status alone -- which is why the layer name is carried per row rather than assumed.
+   */
   listPendingReview: expertProcedure.query(async ({ ctx }) => {
     return ctx.db
-      .select()
+      .select({
+        id: features.id,
+        layerId: features.layerId,
+        layerName: layers.name,
+        properties: features.properties,
+        status: features.status,
+        createdAt: features.createdAt,
+      })
       .from(features)
-      .where(eq(features.status, "pending_review"));
+      .innerJoin(layers, eq(layers.id, features.layerId))
+      .where(eq(features.status, "pending_review"))
+      // Oldest first: a queue nobody has reached is the thing a reviewer should see.
+      .orderBy(features.createdAt);
   }),
 });

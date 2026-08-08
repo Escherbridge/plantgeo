@@ -20,6 +20,12 @@ interface WeatherLayerProps {
   visible?: boolean;
   layerId?: string;
   sourceId?: string;
+  /**
+   * The reader's MULTIPLIER over this layer's authored strength, which is the symbol default
+   * of 1. `text-opacity` only: the layer sets `text-field` and never `icon-image`, so
+   * `icon-opacity` would be a silent no-op here.
+   */
+  opacityScale?: number;
 }
 
 /**
@@ -58,6 +64,7 @@ export function WeatherLayer({
   visible = true,
   layerId = "weather-wind",
   sourceId = "weather-wind-source",
+  opacityScale = 1,
 }: WeatherLayerProps) {
   const geojson = useMemo<GeoJSON.FeatureCollection>(
     () => ({
@@ -84,10 +91,10 @@ export function WeatherLayer({
   );
 
   // Keep latest props in refs so the style.load handler uses current values.
-  const propsRef = useRef({ visible, geojson });
+  const propsRef = useRef({ visible, geojson, opacityScale });
   useEffect(() => {
-    propsRef.current = { visible, geojson };
-  }, [visible, geojson]);
+    propsRef.current = { visible, geojson, opacityScale };
+  }, [visible, geojson, opacityScale]);
 
   const addAllLayers = useCallback(
     (m: MapLibreMap) => {
@@ -116,6 +123,7 @@ export function WeatherLayer({
             "text-color": ["get", "color"],
             "text-halo-color": "rgba(0,0,0,0.6)",
             "text-halo-width": 1,
+            "text-opacity": propsRef.current.opacityScale,
           },
         });
       }
@@ -163,6 +171,19 @@ export function WeatherLayer({
       (source as maplibregl.GeoJSONSource).setData(geojson);
     }
   }, [map, visible, geojson, sourceId]);
+
+  // The multiplier, applied without a rebuild.
+  useEffect(() => {
+    if (!map || !visible) return;
+    try {
+      if (!map.getStyle()) return;
+    } catch {
+      return;
+    }
+    if (map.getLayer(layerId)) {
+      map.setPaintProperty(layerId, "text-opacity", opacityScale);
+    }
+  }, [map, visible, layerId, opacityScale]);
 
   return null;
 }

@@ -1,0 +1,90 @@
+-- Purpose: ask PostGIS to parse one incoming GeoJSON string and report three facts about
+--          the result -- is it a valid geometry, what coordinate system did it end up in,
+--          and what shape is it -- so the promotion receiver can reject bad geometry
+--          before it is ever written to a table.
+-- Loaded by: agri_data_service.routes.historical_promotion
+-- Params: geometry (text) -- the raw GeoJSON geometry object, as a string, exactly as it
+--         arrived in the promotion chunk. It is a bound parameter, never pasted into the
+--         statement text, so a hostile payload is data to the parser and can never become
+--         SQL.
+--
+-- Parameter names appear above WITHOUT a leading colon, and the clause quotes in the
+-- walkthrough below drop their colons too. See "Header/bind-param trap" in
+-- sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words as well as real SQL,
+-- and would mint a bind parameter nobody supplies. The statement itself writes them with
+-- the colon as normal.
+--
+-- What this returns: exactly one row with three columns -- valid (boolean), srid
+-- (integer), geometry_type (text). The caller compares all three against what it expects
+-- for the record being promoted and rejects the whole chunk with a 422 if any disagrees.
+-- Nothing is read from or written to any table; this is a pure computation the database
+-- performs on the supplied string.
+--
+-- Why this exists at all: geometry that is merely parseable is not geometry that is safe
+-- to store. A self-intersecting polygon, a ring that does not close, or a shape that is
+-- secretly a MultiPolygon where a Polygon was promised will each be accepted by a naive
+-- insert and then break every spatial query that later touches the row. Asking PostGIS --
+-- the same engine that will store and index the value -- to judge it first means the
+-- check and the storage agree by construction.
+--
+-- How this query works, clause by clause:
+--
+--   SELECT ... (with no FROM clause)
+--     A SELECT with no table behind it returns exactly one row, built entirely from the
+--     expressions listed. There is nothing to scan, filter, or join -- the database is
+--     being used here purely as a calculator with a geometry library attached.
+--
+--   CAST(geometry AS json)
+--     A cast that exists only to pin the bound parameter's type. ST_GeomFromGeoJSON has
+--     several overloads, one taking text and one taking json; handed an untyped
+--     parameter the database cannot tell which was meant and refuses the statement as
+--     ambiguous. Naming json resolves the overload. It also parses the string as JSON
+--     first, so structurally broken input fails here, with a JSON syntax error, rather
+--     than deeper inside the geometry parser.
+--
+--   ST_GeomFromGeoJSON(...)
+--     Turns the parsed GeoJSON object into a PostGIS geometry value. This is where a
+--     payload that is valid JSON but not valid GeoJSON -- wrong "type", missing
+--     "coordinates", coordinates of the wrong depth -- is rejected.
+--
+--   ST_SetSRID(..., 4326)
+--     Stamps a spatial reference identifier onto the geometry. An SRID names the
+--     coordinate system the numbers are expressed in; without one, a pair like
+--     (-105.5, 39.0) is just two numbers and the database has no way to know whether
+--     they are degrees of longitude and latitude, metres on some national grid, or
+--     something else entirely. 4326 is WGS84 -- longitude/latitude in degrees, the system
+--     GPS and GeoJSON both use. It matters because PostGIS refuses to compare or combine
+--     geometries with different SRIDs: declaring it here is what makes this shape
+--     comparable with everything already stored.
+--     ST_GeomFromGeoJSON does not reliably set an SRID itself, which is why it is applied
+--     explicitly rather than assumed.
+--
+--   ST_IsValid(...) AS valid
+--     True when the geometry satisfies the OGC rules for its type -- polygon rings
+--     closed, rings not self-intersecting, no repeated or degenerate segments. This is
+--     the substantive check of the three: an invalid polygon parses fine and then makes
+--     intersection, area, and containment queries return wrong answers or error out.
+--
+--   ST_SRID(...) AS srid
+--     Reads back the SRID that ST_SetSRID just applied, and is therefore not an
+--     independent judgement of the input -- it will be 4326 whenever the stamping
+--     succeeded. It is a self-check that the stamping happened at all, so a future edit
+--     that drops or changes the ST_SetSRID call is caught by the caller's assertion
+--     instead of silently writing unreferenced coordinates.
+--
+--   ST_GeometryType(...) AS geometry_type
+--     The shape's actual type, returned in PostGIS' own spelling with an ST_ prefix:
+--     'ST_Point', 'ST_Polygon', 'ST_MultiPolygon'. The caller maps the type it expected
+--     for this record onto that spelling and compares, which is what stops a
+--     MultiPolygon from being promoted into a column that promised single polygons.
+--
+--   the same expression written out three times
+--     Each column re-parses and re-stamps the identical geometry rather than sharing one
+--     computed value. That is deliberate and cheap -- the input is a single geometry from
+--     a single record, parsed three times instead of once -- and it keeps the statement a
+--     flat SELECT with no subquery or lateral join to read past. Correctness does not
+--     depend on it: parsing is deterministic, so all three columns describe the same
+--     geometry.
+SELECT ST_IsValid(ST_SetSRID(ST_GeomFromGeoJSON(CAST(:geometry AS json)), 4326)) AS valid,
+       ST_SRID(ST_SetSRID(ST_GeomFromGeoJSON(CAST(:geometry AS json)), 4326)) AS srid,
+       ST_GeometryType(ST_SetSRID(ST_GeomFromGeoJSON(CAST(:geometry AS json)), 4326)) AS geometry_type

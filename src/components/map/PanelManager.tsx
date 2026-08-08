@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import {
   Flame,
@@ -10,10 +11,12 @@ import {
   Users,
   Building2,
   BarChart3,
+  Layers,
   X,
 } from "lucide-react";
 import { panelIdsOwningLayers } from "@/lib/map/layer-registry";
 import { useMap } from "@/lib/map/map-context";
+import { useAuthStore } from "@/stores/auth-store";
 import { useMapStore } from "@/stores/map-store";
 import {
   usePanelStore,
@@ -99,7 +102,10 @@ function PanelButton({ id, icon, label }: { id: PanelId; icon: React.ReactNode; 
       // h-11 w-11 (44px): the previous h-9 (36px) fell under a comfortable mobile tap
       // target for the rail that opens every data panel.
       className={[
-        "relative flex h-11 w-11 items-center justify-center rounded-md shadow-md transition-colors",
+        // shrink-0 is load-bearing: as a flex item with `min-height: auto` this button
+        // otherwise squashes toward its 16px icon on a short viewport instead of letting the
+        // rail overflow, silently trading away the 44px tap target the h-11 exists for.
+        "relative flex h-11 w-11 shrink-0 items-center justify-center rounded-md shadow-md transition-colors",
         "bg-[hsl(var(--background))] text-[hsl(var(--foreground))]",
         "hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--accent-foreground))]",
         openPanel === id
@@ -111,6 +117,33 @@ function PanelButton({ id, icon, label }: { id: PanelId; icon: React.ReactNode; 
       {hasActive && (
         <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[hsl(var(--background))]" />
       )}
+    </button>
+  );
+}
+
+/**
+ * The rail's own button for the left-edge layer tree, kept at the top so the surface that
+ * governs EVERY layer sits above the seven that each report on one category.
+ */
+function LayerPanelButton() {
+  const layerPanelOpen = usePanelStore((s) => s.layerPanelOpen);
+  const toggleLayerPanel = usePanelStore((s) => s.toggleLayerPanel);
+
+  return (
+    <button
+      type="button"
+      title="Layers"
+      aria-label="Layers"
+      aria-expanded={layerPanelOpen}
+      onClick={toggleLayerPanel}
+      className={[
+        "flex h-11 w-11 shrink-0 items-center justify-center rounded-md shadow-md transition-colors",
+        "bg-[hsl(var(--background))] text-[hsl(var(--foreground))]",
+        "hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--accent-foreground))]",
+        layerPanelOpen ? "ring-2 ring-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)]" : "",
+      ].join(" ")}
+    >
+      <Layers className="h-4 w-4" />
     </button>
   );
 }
@@ -144,7 +177,7 @@ function RailHint() {
 
   return (
     <div
-      className="absolute left-17 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1.5 rounded-xl border border-(--glass-border) bg-(--glass-bg) py-1.5 pl-3 pr-1.5 text-xs text-[hsl(var(--foreground))] shadow-(--shadow-lg) [backdrop-filter:blur(var(--glass-blur))]"
+      className="absolute left-[calc(var(--layer-panel-inset,0px)+4.25rem)] top-1/2 z-10 flex -translate-y-1/2 items-center gap-1.5 rounded-xl border border-(--glass-border) bg-(--glass-bg) py-1.5 pl-3 pr-1.5 text-xs text-[hsl(var(--foreground))] shadow-(--shadow-lg) [backdrop-filter:blur(var(--glass-blur))]"
       data-testid="rail-hint"
     >
       Turn on data layers here
@@ -167,6 +200,18 @@ export default function PanelManager() {
   const openPanel = usePanelStore((s) => s.openPanel);
   const closePanel = usePanelStore((s) => s.closePanel);
   const viewport = useMapStore((s) => s.viewport);
+  // TeamDashboard was mounted with a hardcoded `teamId={null}`, which permanently disabled
+  // its query: the Teams rail button opened a sheet that could only ever say it had failed
+  // to load, for every account including one that owns an organization.
+  //
+  // Resolved the way TeamSwitcher resolves it, store first and session second, rather than
+  // from the store alone as CommunityPanel does. The store is seeded by TeamSwitcher, which
+  // mounts inside UserMenu on /dashboard and never on the map -- so on this page the store
+  // is still null for a user whose session carries an active organization, and reading it
+  // alone would tell an org owner they have no org.
+  const { activeTeamId: storeActiveTeamId } = useAuthStore();
+  const { data: session } = useSession();
+  const activeTeamId = storeActiveTeamId ?? session?.user?.activeTeamId ?? null;
 
   function handleOpenChange(id: PanelId, open: boolean) {
     if (!open && openPanel === id) {
@@ -189,8 +234,25 @@ export default function PanelManager() {
 
   return (
     <>
-      {/* Floating toolbar on the left side */}
-      <div className="absolute left-3 top-1/2 z-10 flex max-h-[70vh] -translate-y-1/2 flex-col gap-1.5 overflow-y-auto">
+      {/*
+        The left icon rail.
+
+        No `overflow-y-auto` and no `max-h-[70vh]`, and both removals are fixes rather than
+        simplifications. `overflow-y-auto` emits only `overflow-y`, and per CSS Overflow 3
+        §3.1 the other axis's `visible` then computes to `auto` -- so this became a scroll
+        container on BOTH axes. The container is absolutely positioned with no width, so its
+        shrink-to-fit width is its widest child (44px), and the active-layer badge below is
+        `-right-0.5`, putting its border box 2px past that. Chrome drew a full horizontal
+        scrollbar across a 44px column for those 2px, appearing exactly when the first data
+        layer was switched on. `pr-1` now gives the badge's outset somewhere to land.
+
+        The vertical cap it was paired with never worked either: seven 44px buttons and six
+        gaps is 344px, so a scrollbar needed a viewport under ~212px -- and without `shrink-0`
+        the buttons squashed toward their icons long before that. Height is bounded by the
+        container's own edges instead, which also ends the `vh`-inside-`dvh` mismatch.
+      */}
+      <div className="absolute left-[calc(var(--layer-panel-inset,0px)+0.75rem)] top-1/2 z-10 flex -translate-y-1/2 flex-col gap-1.5 pr-1 transition-[left] duration-200">
+        <LayerPanelButton />
         {RAIL_PANEL_IDS.map((id) => (
           <PanelButton
             key={id}
@@ -234,7 +296,7 @@ export default function PanelManager() {
         bbox={bbox ?? undefined}
       />
       <TeamDashboard
-        teamId={null}
+        teamId={activeTeamId}
         open={openPanel === "team"}
         onOpenChange={(o) => handleOpenChange("team", o)}
       />

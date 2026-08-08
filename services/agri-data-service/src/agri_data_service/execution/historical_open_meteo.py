@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
-import json
-import math
-import os
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
 from functools import cached_property
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple
 
@@ -21,26 +17,52 @@ from agri_data_service.execution.historical_backfill import (
     HistoricalCoverageAudit,
     HistoricalSignalObservation,
 )
+from agri_data_service.execution.open_meteo_lane import (
+    DEFAULT_CHUNK_CONCURRENCY,
+    ISO_DATE_LENGTH,
+    OpenMeteoLane,
+    OpenMeteoLaneFetchError,
+    atomic_write,
+    bounded_numeric_series,
+    date_range,
+    derived_checkpoint_state,
+    fetch_lane_capture,
+    lane_checkpoint_path,
+    lane_raw_cache_paths,
+    lane_release_manifest,
+    max_grid_offset_degrees,
+    merged_chunk_receipts,
+    nearest_native_grid_point,
+    ordered_locations,
+    require_aware_utc,
+    require_complete_raw_cache_pair,
+    run_lane_chunks,
+    validated_grid_point,
+    verified_cached_payload,
+    write_raw_cache_pair,
+)
 from agri_data_service.execution.source_ingestion import SourceDefinition  # noqa: TC001
-from agri_data_service.ingest.http import UpstreamError, upstream_client
 from agri_data_service.ingest.open_meteo import (
     OPEN_METEO_ARCHIVE_BASE_URL,
     OPEN_METEO_ARCHIVE_BOUNDS,
     OPEN_METEO_ARCHIVE_CELL_SELECTION,
+    OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL,
     OPEN_METEO_ERA5_LAND_MODEL,
     OpenMeteoArchiveBaseUrl,
-    OpenMeteoRateLimitError,
     archive_daily_request,
     archive_daily_url,
     fetch_archive_daily,
     require_archive_base_url,
 )
+from agri_data_service.ingest.open_meteo_endpoint import OpenMeteoEndpoint, OpenMeteoProductRequest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
     from pathlib import Path
 
     import httpx
+
+    from agri_data_service.ingest.http import UpstreamError
 
 OPEN_METEO_ARCHIVE_SCHEMA_VERSION: Literal["open-meteo-era5-land-archive-daily-v1"] = (
     "open-meteo-era5-land-archive-daily-v1"
@@ -54,25 +76,31 @@ OPEN_METEO_ARCHIVE_NATIVE_GRID_NAME: Final = "era5-land-0.1-degree"
 OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES: Final = 0.1
 OPEN_METEO_ARCHIVE_NATIVE_RESOLUTION_M: Final = 9_000
 
+# Assembled here rather than imported because `ingest/open_meteo.py` predates `OpenMeteoEndpoint`;
+# both hosts and the byte budget are still its constants. See execution/AGENTS.md §historical_open_meteo.
+OPEN_METEO_ARCHIVE_ENDPOINT: Final[OpenMeteoEndpoint[OpenMeteoArchiveBaseUrl]] = OpenMeteoEndpoint(
+    free_base_url=OPEN_METEO_ARCHIVE_BASE_URL,
+    customer_base_url=OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL,
+    bounds=OPEN_METEO_ARCHIVE_BOUNDS,
+)
+
+# Retrieval, caching, checksums and checkpoint state are the shared scaffold's, not this lane's:
+# `OPEN_METEO_ARCHIVE_LANE.label` is what prefixes every message they raise. See execution/AGENTS.md.
+OPEN_METEO_ARCHIVE_LANE: Final = OpenMeteoLane(
+    label="Open-Meteo archive",
+    cache_directory_name="historical-open-meteo",
+    endpoint=OPEN_METEO_ARCHIVE_ENDPOINT,
+)
+
 # Half the native grid spacing plus a float-comparison epsilon. A returned point further than this
 # from the requested centroid is a different grid box and must fail rather than be attributed.
-OPEN_METEO_ARCHIVE_MAX_GRID_OFFSET_DEGREES: Final = 0.05 + 1e-6
+OPEN_METEO_ARCHIVE_MAX_GRID_OFFSET_DEGREES: Final = max_grid_offset_degrees(OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES)
 
 OPEN_METEO_ARCHIVE_MAX_RESPONSE_BYTES: Final = OPEN_METEO_ARCHIVE_BOUNDS.max_bytes
 OPEN_METEO_ARCHIVE_MAX_CELLS: Final = 10_000
 OPEN_METEO_ARCHIVE_MAX_CHUNKS: Final = 2_000
 OPEN_METEO_ARCHIVE_CHECKPOINT_SCHEMA_VERSION: Literal[1] = 1
 OPEN_METEO_ARCHIVE_RAW_CACHE_SCHEMA_VERSION: Literal[1] = 1
-
-# Only a minutely refusal is waited out; every other scope, including an unrecognised body, fails
-# closed. See execution/AGENTS.md §historical_open_meteo.
-RATE_LIMIT_BACKOFF_SECONDS: Final = {"minute": 70.0}
-TRANSPORT_BACKOFF_SECONDS: Final = 15.0
-MAX_FETCH_ATTEMPTS: Final = 4
-DEFAULT_CHUNK_CONCURRENCY: Final = 2
-MAX_CHUNK_CONCURRENCY: Final = 4
-
-ISO_DATE_LENGTH: Final = 10
 
 
 class OpenMeteoArchiveSignal(NamedTuple):
@@ -186,7 +214,7 @@ class HistoricalOpenMeteoArchivePlan(ContractModel):
     @field_validator("release_set_as_of")
     @classmethod
     def require_aware_release_set_time(cls, value: datetime) -> datetime:
-        return _require_aware_utc(value, "release_set_as_of")
+        return require_aware_utc(value, "release_set_as_of")
 
     @model_validator(mode="after")
     def require_governed_lattice(self) -> HistoricalOpenMeteoArchivePlan:
@@ -196,7 +224,9 @@ class HistoricalOpenMeteoArchivePlan(ContractModel):
             raise ValueError("Open-Meteo archive plans must record the product's 0.1-degree native grid")
         if self.native_grid_resolution_m != OPEN_METEO_ARCHIVE_NATIVE_RESOLUTION_M:
             raise ValueError("Open-Meteo archive plans must record the product's documented 9-km resolution")
-        nearest_points = {_nearest_native_grid_point(cell) for cell in self.cells}
+        nearest_points = {
+            nearest_native_grid_point(cell, OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES) for cell in self.cells
+        }
         if len(nearest_points) != len(self.cells):
             raise ValueError("Open-Meteo archive cells must not share a native grid point")
         if len(self.chunks) > OPEN_METEO_ARCHIVE_MAX_CHUNKS:
@@ -234,7 +264,7 @@ class HistoricalOpenMeteoReceipt(ContractModel):
     @field_validator("retrieved_at")
     @classmethod
     def require_aware_retrieval_time(cls, value: datetime) -> datetime:
-        return _require_aware_utc(value, "retrieved_at")
+        return require_aware_utc(value, "retrieved_at")
 
 
 class HistoricalOpenMeteoRawCacheReceipt(ContractModel):
@@ -255,7 +285,7 @@ class HistoricalOpenMeteoRawCacheReceipt(ContractModel):
     @field_validator("retrieved_at")
     @classmethod
     def require_aware_retrieval_time(cls, value: datetime) -> datetime:
-        return _require_aware_utc(value, "retrieved_at")
+        return require_aware_utc(value, "retrieved_at")
 
 
 class HistoricalOpenMeteoCheckpoint(ContractModel):
@@ -271,7 +301,7 @@ class HistoricalOpenMeteoCheckpoint(ContractModel):
     @field_validator("updated_at")
     @classmethod
     def require_aware_update_time(cls, value: datetime) -> datetime:
-        return _require_aware_utc(value, "updated_at")
+        return require_aware_utc(value, "updated_at")
 
     @field_validator("receipts")
     @classmethod
@@ -325,7 +355,7 @@ def historical_open_meteo_plan_checksum(plan: HistoricalOpenMeteoArchivePlan) ->
 
 def historical_open_meteo_checkpoint_path(root: Path, plan: HistoricalOpenMeteoArchivePlan) -> Path:
     """Return a plan-bound durable checkpoint file path."""
-    return root / "historical-open-meteo" / f"{historical_open_meteo_plan_checksum(plan)}.json"
+    return lane_checkpoint_path(root, OPEN_METEO_ARCHIVE_LANE, historical_open_meteo_plan_checksum(plan))
 
 
 def historical_open_meteo_raw_cache_paths(
@@ -335,8 +365,7 @@ def historical_open_meteo_raw_cache_paths(
 ) -> tuple[Path, Path]:
     """Return canonical-document and receipt locations for one chunk beneath the local run root."""
     _plan_chunk(plan, chunk.key)
-    directory = root / "historical-open-meteo" / historical_open_meteo_plan_checksum(plan) / "raw"
-    return directory / f"{chunk.key}.json", directory / f"{chunk.key}.receipt.json"
+    return lane_raw_cache_paths(root, OPEN_METEO_ARCHIVE_LANE, historical_open_meteo_plan_checksum(plan), chunk.key)
 
 
 def initialize_historical_open_meteo_checkpoint(
@@ -348,7 +377,7 @@ def initialize_historical_open_meteo_checkpoint(
     return HistoricalOpenMeteoCheckpoint(
         state="initialized",
         plan_checksum=historical_open_meteo_plan_checksum(plan),
-        updated_at=_require_aware_utc(updated_at or datetime.now(UTC), "updated_at"),
+        updated_at=require_aware_utc(updated_at or datetime.now(UTC), "updated_at"),
     )
 
 
@@ -359,7 +388,7 @@ def load_historical_open_meteo_checkpoint(path: Path) -> HistoricalOpenMeteoChec
 
 def write_historical_open_meteo_checkpoint(path: Path, checkpoint: HistoricalOpenMeteoCheckpoint) -> None:
     """Atomically update credential-free archive checkpoint metadata."""
-    _atomic_write(path, canonical_json_bytes(checkpoint.model_dump(mode="json")))
+    atomic_write(path, canonical_json_bytes(checkpoint.model_dump(mode="json")))
 
 
 def rederive_historical_open_meteo_checkpoint_state(
@@ -372,13 +401,10 @@ def rederive_historical_open_meteo_checkpoint_state(
     """
     if checkpoint.plan_checksum != historical_open_meteo_plan_checksum(plan):
         raise ValueError("Open-Meteo archive checkpoint does not bind the reviewed plan")
-    receipted = {receipt.chunk_key for receipt in checkpoint.receipts}
-    if not receipted:
-        derived = "initialized"
-    elif all(chunk.key in receipted for chunk in plan.chunks):
-        derived = "validated"
-    else:
-        derived = "running"
+    derived = derived_checkpoint_state(
+        {receipt.chunk_key for receipt in checkpoint.receipts},
+        [chunk.key for chunk in plan.chunks],
+    )
     if derived == checkpoint.state:
         return checkpoint
     return checkpoint.model_copy(update={"state": derived})
@@ -407,18 +433,13 @@ def record_historical_open_meteo_result(
         no_data_series_count=sum(1 for item in result.coverage if item.status == "no_data"),
         retrieved_at=result.retrieved_at,
     )
-    prior = {item.chunk_key: item for item in checkpoint.receipts}
-    existing = prior.get(receipt.chunk_key)
-    if existing is not None and existing != receipt:
-        raise ValueError("Open-Meteo archive checkpoint already binds this chunk to different source content")
-    prior[receipt.chunk_key] = receipt
-    receipts = [prior[key] for key in sorted(prior)]
+    receipts = merged_chunk_receipts(OPEN_METEO_ARCHIVE_LANE, checkpoint.receipts, receipt)
     complete = [item.key for item in plan.chunks] == [item.chunk_key for item in receipts]
     return checkpoint.model_copy(
         update={
             "state": "validated" if complete else "running",
             "receipts": receipts,
-            "updated_at": _require_aware_utc(updated_at or datetime.now(UTC), "updated_at"),
+            "updated_at": require_aware_utc(updated_at or datetime.now(UTC), "updated_at"),
             "reason": None,
         }
     )
@@ -429,21 +450,15 @@ def historical_open_meteo_release_manifest(
     checkpoint: HistoricalOpenMeteoCheckpoint,
 ) -> str:
     """Hash the complete ordered chunk receipt set a release must pin."""
-    expected_checksum = historical_open_meteo_plan_checksum(plan)
-    if checkpoint.plan_checksum != expected_checksum or checkpoint.state != "validated":
-        raise ValueError("a complete validated checkpoint is required for an Open-Meteo archive release manifest")
-    expected_chunks = [chunk.key for chunk in plan.chunks]
-    if [receipt.chunk_key for receipt in checkpoint.receipts] != expected_chunks:
-        raise ValueError("Open-Meteo archive receipt coverage does not match the reviewed chunk plan")
-    return hashlib.sha256(
-        canonical_json_bytes(
-            {
-                "plan_checksum": expected_checksum,
-                "transform_version": plan.transform_version,
-                "receipts": [receipt.model_dump(mode="json") for receipt in checkpoint.receipts],
-            }
-        )
-    ).hexdigest()
+    return lane_release_manifest(
+        OPEN_METEO_ARCHIVE_LANE,
+        plan_checksum=historical_open_meteo_plan_checksum(plan),
+        transform_version=plan.transform_version,
+        checkpoint_plan_checksum=checkpoint.plan_checksum,
+        checkpoint_state=checkpoint.state,
+        expected_chunk_keys=[chunk.key for chunk in plan.chunks],
+        receipts=checkpoint.receipts,
+    )
 
 
 def cache_historical_open_meteo_result(
@@ -472,8 +487,12 @@ def cache_historical_open_meteo_result(
         if cached.payload_checksum != result.payload_checksum:
             raise ValueError("Open-Meteo archive raw cache already binds this chunk to different source content")
         return HistoricalOpenMeteoRawCacheReceipt.model_validate_json(receipt_path.read_bytes())
-    _atomic_write(payload_path, result.payload)
-    _atomic_write(receipt_path, canonical_json_bytes(receipt.model_dump(mode="json")))
+    write_raw_cache_pair(
+        payload_path,
+        receipt_path,
+        result.payload,
+        canonical_json_bytes(receipt.model_dump(mode="json")),
+    )
     return receipt
 
 
@@ -484,16 +503,17 @@ def load_cached_historical_open_meteo_result(
 ) -> OpenMeteoArchiveChunkResult | None:
     """Re-parse one validated local chunk document, never contacting the provider."""
     payload_path, receipt_path = historical_open_meteo_raw_cache_paths(root, plan, chunk)
-    if not payload_path.exists() and not receipt_path.exists():
+    if not require_complete_raw_cache_pair(OPEN_METEO_ARCHIVE_LANE, payload_path, receipt_path):
         return None
-    if not payload_path.exists() or not receipt_path.exists():
-        raise ValueError("Open-Meteo archive raw cache has incomplete content or receipt")
     receipt = HistoricalOpenMeteoRawCacheReceipt.model_validate_json(receipt_path.read_bytes())
     if receipt.plan_checksum != historical_open_meteo_plan_checksum(plan) or receipt.chunk_key != chunk.key:
         raise ValueError("Open-Meteo archive raw cache receipt does not bind this reviewed plan and chunk")
-    payload = payload_path.read_bytes()
-    if len(payload) != receipt.payload_bytes or hashlib.sha256(payload).hexdigest() != receipt.payload_checksum:
-        raise ValueError("Open-Meteo archive raw cache payload does not match its receipt")
+    payload = verified_cached_payload(
+        OPEN_METEO_ARCHIVE_LANE,
+        payload_path,
+        expected_bytes=receipt.payload_bytes,
+        expected_checksum=receipt.payload_checksum,
+    )
     result = parse_open_meteo_archive_payload(
         plan,
         chunk,
@@ -507,6 +527,14 @@ def load_cached_historical_open_meteo_result(
     )
     require_accounted_open_meteo_result(plan, result)
     return result
+
+
+class OpenMeteoArchiveFetchError(OpenMeteoLaneFetchError):
+    """Raised when a chunk stopped for good; carries the chunk so a resume is unambiguous."""
+
+    def __init__(self, chunk_key: str, cause: UpstreamError | None, attempts: int) -> None:
+        """Name the chunk, how many attempts it really made, and the provider condition that stopped it."""
+        super().__init__(OPEN_METEO_ARCHIVE_LANE.label, chunk_key, cause, attempts)
 
 
 async def fetch_open_meteo_archive_chunk(
@@ -526,51 +554,29 @@ async def fetch_open_meteo_archive_chunk(
         plan.window.start_date,
         plan.window.end_date,
     )
-    waiter = sleep if callable(sleep) else asyncio.sleep
-    last_error: UpstreamError | None = None
-    attempt = 0
-    for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
-        try:
-            body = await fetch_archive_daily(client, request.request_url)
-        except OpenMeteoRateLimitError as error:
-            last_error = error
-            backoff = RATE_LIMIT_BACKOFF_SECONDS.get(error.scope)
-            if backoff is None or attempt == MAX_FETCH_ATTEMPTS:
-                break
-            await waiter(backoff)
-            continue
-        except UpstreamError as error:
-            last_error = error
-            if attempt == MAX_FETCH_ATTEMPTS:
-                break
-            await waiter(TRANSPORT_BACKOFF_SECONDS * attempt)
-            continue
-        wire_payload = body.encode("utf-8")
-        return parse_open_meteo_archive_payload(
-            plan,
-            chunk,
-            _canonical_archive_document(wire_payload),
-            OpenMeteoArchiveCapture(
-                retrieved_at=_require_aware_utc(retrieved_at or datetime.now(UTC), "retrieved_at"),
-                wire_payload_bytes=len(wire_payload),
-                wire_payload_checksum=hashlib.sha256(wire_payload).hexdigest(),
-                request_base_url=request.base_url,
-            ),
-        )
-    raise OpenMeteoArchiveFetchError(chunk.key, last_error, attempt)
-
-
-class OpenMeteoArchiveFetchError(RuntimeError):
-    """Raised when a chunk stopped for good; carries the chunk so a resume is unambiguous."""
-
-    def __init__(self, chunk_key: str, cause: UpstreamError | None, attempts: int) -> None:
-        """Name the chunk, how many attempts it really made, and the provider condition that stopped it."""
-        detail = "no upstream response" if cause is None else str(cause)
-        plural = "attempt" if attempts == 1 else "attempts"
-        super().__init__(f"Open-Meteo archive chunk {chunk_key} failed after {attempts} {plural}: {detail}")
-        self.chunk_key = chunk_key
-        self.cause = cause
-        self.attempts = attempts
+    capture = await fetch_lane_capture(
+        OPEN_METEO_ARCHIVE_LANE,
+        chunk.key,
+        # The archive builder predates `OpenMeteoProductRequest`; restating the two fields it already
+        # resolved is the whole adaptation, and no credential crosses it that `request_url` did not.
+        OpenMeteoProductRequest(base_url=request.base_url, request_url=request.request_url),
+        client=client,
+        fetch_text=fetch_archive_daily,
+        error_factory=OpenMeteoArchiveFetchError,
+        retrieved_at=retrieved_at,
+        sleep=sleep,
+    )
+    return parse_open_meteo_archive_payload(
+        plan,
+        chunk,
+        capture.canonical_payload,
+        OpenMeteoArchiveCapture(
+            retrieved_at=capture.retrieved_at,
+            wire_payload_bytes=capture.wire_payload_bytes,
+            wire_payload_checksum=capture.wire_payload_checksum,
+            request_base_url=require_archive_base_url(capture.request_base_url),
+        ),
+    )
 
 
 async def run_open_meteo_archive_chunks(
@@ -581,18 +587,11 @@ async def run_open_meteo_archive_chunks(
     client: httpx.AsyncClient | None = None,
 ) -> list[OpenMeteoArchiveChunkResult | BaseException]:
     """Fetch several chunks under a bounded semaphore, preserving each chunk's own failure."""
-    if not 1 <= concurrency <= MAX_CHUNK_CONCURRENCY:
-        raise ValueError("Open-Meteo archive chunk concurrency must be between 1 and 4")
-    semaphore = asyncio.Semaphore(concurrency)
 
     async def one(active: httpx.AsyncClient, chunk: OpenMeteoArchiveChunk) -> OpenMeteoArchiveChunkResult:
-        async with semaphore:
-            return await fetch_open_meteo_archive_chunk(plan, chunk, client=active)
+        return await fetch_open_meteo_archive_chunk(plan, chunk, client=active)
 
-    if client is None:
-        async with upstream_client(OPEN_METEO_ARCHIVE_BOUNDS) as owned:
-            return await asyncio.gather(*(one(owned, chunk) for chunk in chunks), return_exceptions=True)
-    return await asyncio.gather(*(one(client, chunk) for chunk in chunks), return_exceptions=True)
+    return await run_lane_chunks(OPEN_METEO_ARCHIVE_LANE, chunks, one, concurrency=concurrency, client=client)
 
 
 def parse_open_meteo_archive_payload(
@@ -603,11 +602,11 @@ def parse_open_meteo_archive_payload(
 ) -> OpenMeteoArchiveChunkResult:
     """Validate one canonical archive document and normalize every reviewed cell/signal/day."""
     _plan_chunk(plan, chunk.key)
-    timestamp = _require_aware_utc(capture.retrieved_at, "retrieved_at")
+    timestamp = require_aware_utc(capture.retrieved_at, "retrieved_at")
     if not payload or len(payload) > OPEN_METEO_ARCHIVE_MAX_RESPONSE_BYTES:
         raise ValueError("Open-Meteo archive response exceeds the reviewed byte boundary")
-    locations = _archive_locations(payload, len(chunk.cells))
-    expected_dates = list(_date_range(plan.window.start_date, plan.window.end_date))
+    locations = ordered_locations(OPEN_METEO_ARCHIVE_LANE, payload, len(chunk.cells))
+    expected_dates = list(date_range(plan.window.start_date, plan.window.end_date))
     payload_checksum = hashlib.sha256(payload).hexdigest()
 
     observations: list[HistoricalSignalObservation] = []
@@ -730,52 +729,14 @@ def _coverage_status(observed_count: int, expected_count: int) -> str:
     return "complete" if observed_count == expected_count else "partial"
 
 
-def _canonical_archive_document(wire_payload: bytes) -> bytes:
-    """Strip only `generationtime_ms` so identical content yields an identical checksum.
-
-    Two checksums, on purpose; see execution/AGENTS.md §historical_open_meteo.
-    """
-    try:
-        parsed = json.loads(wire_payload)
-    except ValueError as exc:
-        raise ValueError("Open-Meteo archive response contained invalid JSON") from exc
-    if not isinstance(parsed, list):
-        raise ValueError("Open-Meteo archive multi-location response must be a JSON array")
-    stripped: list[object] = []
-    for location in parsed:
-        if not isinstance(location, dict):
-            raise ValueError("Open-Meteo archive response must contain only location objects")
-        stripped.append({key: value for key, value in location.items() if key != "generationtime_ms"})
-    return canonical_json_bytes(stripped)
-
-
-def _archive_locations(payload: bytes, expected_count: int) -> list[dict[str, object]]:
-    parsed = json.loads(payload)
-    if not isinstance(parsed, list) or len(parsed) != expected_count:
-        raise ValueError("Open-Meteo archive response does not carry one entry per requested cell")
-    locations: list[dict[str, object]] = []
-    for index, location in enumerate(parsed):
-        if not isinstance(location, dict):
-            raise ValueError("Open-Meteo archive response must contain only location objects")
-        location_id = location.get("location_id")
-        # The provider omits `location_id` on the first entry and numbers the rest from 1.
-        if index and (isinstance(location_id, bool) or not isinstance(location_id, int) or location_id != index):
-            raise ValueError("Open-Meteo archive response locations are not in the requested order")
-        locations.append(location)
-    return locations
-
-
 def _validated_grid_point(cell: AnalysisGridCell, location: dict[str, object]) -> tuple[float, float, float | None]:
-    """Bind one returned native grid point to its reviewed analysis cell or refuse the attribution."""
-    latitude = _required_float(location, "latitude")
-    longitude = _required_float(location, "longitude")
-    if (
-        abs(latitude - cell.latitude) > OPEN_METEO_ARCHIVE_MAX_GRID_OFFSET_DEGREES
-        or abs(longitude - cell.longitude) > OPEN_METEO_ARCHIVE_MAX_GRID_OFFSET_DEGREES
-    ):
-        raise ValueError(f"Open-Meteo archive returned a grid point outside the reviewed cell {cell.cell_key}")
-    if location.get("timezone") != "GMT" or location.get("utc_offset_seconds") != 0:
-        raise ValueError("Open-Meteo archive response is not on the reviewed GMT time base")
+    """Bind the point through the shared attribution guard, then read the elevation only this lane keeps."""
+    latitude, longitude = validated_grid_point(
+        OPEN_METEO_ARCHIVE_LANE,
+        cell,
+        location,
+        OPEN_METEO_ARCHIVE_MAX_GRID_OFFSET_DEGREES,
+    )
     elevation = location.get("elevation")
     if elevation is not None and (isinstance(elevation, bool) or not isinstance(elevation, int | float)):
         raise ValueError("Open-Meteo archive elevation must be numeric when present")
@@ -816,43 +777,21 @@ def _archive_values(
     specification: OpenMeteoArchiveSignal,
     day_count: int,
 ) -> list[float | None]:
-    """Read one variable's daily series; a value outside its physical range fails the whole chunk.
+    """Read one variable's daily series through the shared bounded reader, before any row is built.
 
     A sentinel is a provider failure, not a gap: downgrading it to `no_data` would assert the
     provider modelled nothing here, which is a different and unevidenced claim. See
     execution/AGENTS.md §historical_open_meteo.
     """
-    raw = daily.get(parameter)
-    if not isinstance(raw, list) or len(raw) != day_count:
-        raise ValueError(f"Open-Meteo archive variable {parameter} does not align with its daily time axis")
-    values: list[float | None] = []
-    for value in raw:
-        if value is None:
-            values.append(None)
-            continue
-        if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
-            raise ValueError(f"Open-Meteo archive variable {parameter} carries a non-numeric value")
-        numeric = float(value)
-        if not specification.minimum <= numeric <= specification.maximum:
-            raise ValueError(
-                f"Open-Meteo archive variable {parameter} carries a value outside its reviewed physical "
-                f"range [{specification.minimum}, {specification.maximum}]"
-            )
-        values.append(numeric)
-    return values
-
-
-def _required_float(location: dict[str, object], field_name: str) -> float:
-    value = location.get(field_name)
-    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
-        raise ValueError(f"Open-Meteo archive location is missing a numeric {field_name}")
-    return float(value)
-
-
-def _nearest_native_grid_point(cell: AnalysisGridCell) -> tuple[int, int]:
-    """Return the integer index of the 0.1-degree grid node a cell centroid resolves to."""
-    step = OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES
-    return round(cell.latitude / step), round(cell.longitude / step)
+    return bounded_numeric_series(
+        OPEN_METEO_ARCHIVE_LANE,
+        daily,
+        parameter,
+        minimum=specification.minimum,
+        maximum=specification.maximum,
+        expected_count=day_count,
+        subject="variable",
+    )
 
 
 def _plan_chunk(plan: HistoricalOpenMeteoArchivePlan, chunk_key: str) -> OpenMeteoArchiveChunk:
@@ -860,25 +799,3 @@ def _plan_chunk(plan: HistoricalOpenMeteoArchivePlan, chunk_key: str) -> OpenMet
         return next(chunk for chunk in plan.chunks if chunk.key == chunk_key)
     except StopIteration as exc:
         raise ValueError("Open-Meteo archive chunk is not part of the reviewed plan") from exc
-
-
-def _date_range(start: date, end: date) -> Iterator[date]:
-    """Yield an inclusive date range with no timezone-dependent arithmetic."""
-    current = start
-    while current <= end:
-        yield current
-        current += timedelta(days=1)
-
-
-def _require_aware_utc(value: datetime, field_name: str) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError(f"{field_name} must include a timezone")
-    return value.astimezone(UTC)
-
-
-def _atomic_write(path: Path, payload: bytes) -> None:
-    """Write one local source object atomically so retries never accept a partial cache file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(f"{path.suffix}.tmp")
-    temporary.write_bytes(payload)
-    os.replace(temporary, path)

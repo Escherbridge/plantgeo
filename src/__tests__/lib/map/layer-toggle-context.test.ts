@@ -258,11 +258,12 @@ describe("useDebouncedMapDay", () => {
 describe("useVegetationDisplayMode", () => {
   beforeEach(() => {
     resetStores();
+    // No `opacity` here: it moved out of this store to `layer-store.layerOpacity`, keyed per
+    // LayerToggleId, so the vegetation raster no longer shares a scalar with anything.
     useVegetationStore.setState({
       mode: "ndvi",
       ndviMode: "absolute",
       showNDWI: false,
-      opacity: 0.75,
     });
   });
 

@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Regenerative agriculture data warehouse and API for PlantGeo"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=0.121",
     "sanic>=24.6",
     "sanic-ext>=23.12",
     "pydantic>=2.7",

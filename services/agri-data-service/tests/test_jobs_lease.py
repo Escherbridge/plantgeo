@@ -21,6 +21,7 @@ from sqlalchemy.exc import OperationalError
 from agri_data_service.ingest.results import failure_reason, redact_secrets
 from agri_data_service.jobs.lease import (
     FAILURE_CLASS_MAX_LENGTH,
+    MAX_CONSECUTIVE_PARKS,
     ClaimedWorkItem,
     JobCursorError,
     canonical_json,
@@ -263,6 +264,31 @@ async def test_a_resumed_claim_carries_the_cursor_its_last_checkpoint_left_behin
     assert claim.cursor == {"day": "2003-04-11"}
 
 
+async def test_a_claim_on_an_expired_lease_closes_the_attempt_its_dead_owner_left_running() -> None:
+    session = _claimable_session()
+    await claim_work_item(session, job_run_id=JOB_RUN_ID, worker_id="agri-worker-1", lease_seconds=300)
+    # Nothing else can reach this row: release_lost_attempt runs on the worker that died, and the
+    # reaper's close_lost_attempts is bound only to the items it reclaimed in its own single pass.
+    parameters = session.parameters_for("close_superseded_attempts")
+    assert parameters["work_item_id"] == WORK_ITEM_ID
+    assert parameters["failure_class"] == "lease_expired"
+    # The token the claim just minted, so the predicate closes only STRICTLY older attempts.
+    assert parameters["fencing_token"] == 7
+    superseded_sql = session.sql_for("close_superseded_attempts")
+    assert "status = 'lost'" in superseded_sql
+    assert "fencing_token < :fencing_token" in superseded_sql
+    # Unfenced for the same reason close_attempt_lost is: it runs precisely when the fence has moved.
+    assert "lease_owner" not in superseded_sql
+
+
+async def test_the_superseded_close_runs_before_the_new_attempt_so_it_can_never_reap_the_live_one() -> None:
+    session = _claimable_session()
+    await claim_work_item(session, job_run_id=JOB_RUN_ID, worker_id="agri-worker-1", lease_seconds=300)
+    markers = session.markers()
+    assert markers.index("claim_work_item") < markers.index("close_superseded_attempts")
+    assert markers.index("close_superseded_attempts") < markers.index("open_attempt")
+
+
 async def test_a_first_claim_carries_no_cursor_rather_than_an_empty_one() -> None:
     session = _claimable_session()
     claim = await claim_work_item(session, job_run_id=JOB_RUN_ID, worker_id="agri-worker-1", lease_seconds=300)
@@ -480,8 +506,27 @@ async def test_a_deferral_raises_the_attempt_ceiling_so_waiting_never_spends_the
     resume_at = datetime(2026, 8, 13, 14, 0, tzinfo=UTC)
     assert await defer_work_item(session, _claim(), resume_at=resume_at, reason="publishes Thursdays") is True
     defer_sql = session.sql_for("defer_work_item")
-    assert "max_attempts = max_attempts + 1" in defer_sql
+    assert "max_attempts = item.max_attempts + CASE" in defer_sql
+    assert "THEN 1" in defer_sql
     assert session.parameters_for("defer_work_item")["resume_at"] == resume_at
+
+
+async def test_the_park_budget_is_bounded_by_the_parks_a_shard_has_served_since_its_last_checkpoint() -> None:
+    session = RecordingSession()
+    session.answer("close_attempt_deferred", [{"id": ATTEMPT_ID}])
+    session.answer("defer_work_item", [{"id": WORK_ITEM_ID}])
+    await defer_work_item(session, _claim(), resume_at=None, reason="upstream had nothing")
+    defer_sql = session.sql_for("defer_work_item")
+    # Consecutive, not cumulative: only parked attempts newer than the newest checkpoint count, so a
+    # window that walks a chunk and then yields for the clock starts again from zero every tick.
+    assert "parked.status = 'deferred'" in defer_sql
+    assert "parked.fencing_token > COALESCE(" in defer_sql
+    assert "FROM agri.job_checkpoint AS progress" in defer_sql
+    # Past the bound the ceiling stops rising while the claim keeps charging attempt_count, so a shard
+    # that can only ever park eventually dead-letters instead of parking silently for ever.
+    assert "< :max_consecutive_parks THEN 1" in defer_sql
+    assert "ELSE 0" in defer_sql
+    assert session.parameters_for("defer_work_item")["max_consecutive_parks"] == MAX_CONSECUTIVE_PARKS
 
 
 async def test_a_deferral_records_its_reason_on_the_attempt_metrics_not_in_the_items_error_summary() -> None:
@@ -545,6 +590,24 @@ async def test_reclaiming_nothing_touches_no_further_statement() -> None:
     assert session.emitted("increment_run_failed") is False
 
 
+async def test_the_reaper_can_be_scoped_to_every_non_terminal_run_of_a_definition_not_only_to_one_run() -> None:
+    session = RecordingSession()
+    session.answer("reclaim_expired_leases", [{"id": WORK_ITEM_ID, "job_run_id": JOB_RUN_ID, "status": "retry_wait"}])
+    session.answer("close_lost_attempts", [{"id": ATTEMPT_ID}])
+    definition_id = uuid.UUID("55555555-5555-4555-8555-555555555555")
+    summary = await reclaim_expired_leases(session, backoff_seconds=30.0, job_definition_id=definition_id)
+    assert summary.requeued == 1
+    parameters = session.parameters_for("reclaim_expired_leases")
+    # A slice drives only the oldest open run, and a lane mints a second run every time its floor is
+    # lowered, so a run-scoped reaper leaves a shard stranded in a sibling run unreclaimable by any tick.
+    assert parameters["job_definition_id"] == definition_id
+    assert parameters["job_run_id"] is None
+    reclaim_sql = session.sql_for("reclaim_expired_leases")
+    assert "run.job_definition_id = CAST(:job_definition_id AS uuid)" in reclaim_sql
+    # Terminal runs are out of scope: a run reaches a terminal status only once every shard is settled.
+    assert "run.status IN ('queued', 'running')" in reclaim_sql
+
+
 async def test_reclaiming_never_bumps_the_fencing_token_because_only_the_next_claim_may_mint_one() -> None:
     session = RecordingSession()
     session.answer("reclaim_expired_leases", [{"id": WORK_ITEM_ID, "job_run_id": JOB_RUN_ID, "status": "retry_wait"}])
@@ -553,8 +616,12 @@ async def test_reclaiming_never_bumps_the_fencing_token_because_only_the_next_cl
     reclaim_sql = session.sql_for("reclaim_expired_leases")
     assert "fencing_token" not in reclaim_sql
     # 'queued' plus a stale non-NULL lease pair passes every CHECK and produces a row that lies about
-    # who owns it, so the reaper lands on 'retry_wait', which forces next_attempt_at instead.
-    assert "'queued'" not in reclaim_sql
+    # who owns it, so the reaper lands on 'retry_wait', which forces next_attempt_at instead. The word
+    # appears once, in the definition-scope predicate that names which sibling runs are still open, and
+    # never in the CASE that assigns a status -- hence the split rather than a bare substring check.
+    assigned_status = reclaim_sql.split("SET status = CASE", 1)[1]
+    assert "'queued'" not in assigned_status
+    assert "ELSE 'retry_wait'" in assigned_status
     assert "lease_owner = NULL" in reclaim_sql
 
 

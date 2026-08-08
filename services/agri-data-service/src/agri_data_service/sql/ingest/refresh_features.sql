@@ -1,0 +1,138 @@
+-- Purpose: update the geo.features rows whose upstream record already existed, writing the new
+--          payload only onto the rows whose meaningful content actually changed, and reporting
+--          which ones those were.
+-- Loaded by: agri_data_service.ingest.writer
+-- Params: layer_id (uuid, passed as text) -- the layer every row in this batch belongs to.
+--         Scalar, not an array: a batch is already grouped by layer before it gets here.
+--         external_ids (text[]) -- the producer-local id of each record being refreshed.
+--         next_properties (text[]) -- the new JSON document for each of those records, already
+--         serialised by the caller.
+--
+-- The two arrays are positional and must be exactly the same length: element 3 of each one
+-- describes the same record. Nothing in the SQL can check that, so the caller builds both from
+-- the same sequence in the same pass.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap"
+-- in sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too, and would
+-- mint a bind parameter nobody supplies.
+--
+-- What this returns: the warehouse id and producer-local id of every row genuinely rewritten.
+-- Rows whose content was unchanged are absent. That absence is the whole point: the caller
+-- counts these rows as work done and publishes one realtime map-invalidation per row, so a
+-- quiet hour upstream produces no writes and no messages at all.
+--
+-- Why the change test strips the geometry key
+--
+--   The stored payload is not the payload that was sent. A trigger rewrites the geometry inside
+--   properties through ST_AsGeoJSON on every write, and may add a geometry_repaired key of its
+--   own, so the stored copy is never byte-equal to the raw upstream text a fresh candidate
+--   carries. Comparing the two documents whole would therefore report "changed" for every row
+--   on every hourly run: endless rewrite churn, and a realtime storm telling every connected
+--   map to redraw something that has not moved.
+--
+--   Removing the geometry from both sides leaves the producer's own scalar revision fields as
+--   the change signal, which is sound for these feeds because a producer that redraws a
+--   perimeter also advances the fields that describe it.
+--
+-- Why the two sides of the test are not symmetric
+--
+--   This asymmetry is load-bearing, not an oversight, and it must not be tidied. See
+--   ingest/AGENTS.md "writer.py".
+--
+--   The stored side removes two keys, geometry and geometry_repaired, because this service
+--   wrote both of them itself and neither says anything about what upstream published. The
+--   candidate side removes only geometry. A freshly built candidate never carries
+--   geometry_repaired today, so removing it there would change nothing -- and that is exactly
+--   why it must not be done. On the day a producer starts publishing a key by that name, the
+--   asymmetric test sees a real difference and writes it, while a symmetric one would strip the
+--   new key out of the comparison and silently ignore the change forever.
+--
+--   The known limit, inherited rather than introduced: because geometry is removed from both
+--   sides, a change that moves *only* the shape and no other field is invisible here and the
+--   row is not rewritten. If that ever stops being acceptable the fix is a geometry-aware
+--   predicate in this statement, not a tolerance in the geometry dimension.
+--
+-- How this query works, clause by clause:
+--
+--   UPDATE geo.features AS feature
+--     The rows being modified, given the short name "feature" so the clauses below can tell
+--     them apart from the batch of instructions joined in.
+--
+--   SET properties = CAST(pending.next_properties AS jsonb), updated_at = now()
+--     Writes the new document, parsed from text into jsonb -- the binary JSON type -- so the
+--     database validates it and stores it normalised. Writing properties is also what fires the
+--     trigger described above, which re-derives the row's geometry column from the document, so
+--     an accepted update does write the new shape even though the shape is not what decided the
+--     update.
+--
+--     updated_at is deliberately "when we last touched this row", not "when upstream last
+--     changed it", and now() is the current transaction's clock. It is only meaningful because
+--     of the change test below: without it every row would be touched every hour and the column
+--     would say nothing at all.
+--
+--   FROM unnest(CAST(external_ids AS text[]), CAST(next_properties AS text[]))
+--        AS pending(external_id, next_properties)
+--     An UPDATE ... FROM joins the target table to something else and updates each matched row
+--     using values from the match -- it is how one statement applies a different value to each
+--     of many rows, instead of one statement per row. This statement used to run once per
+--     already-existing feature inside the batch loop, which cost one network round trip per row
+--     against a remote database; as one set-based statement it costs one per batch, and which
+--     rows change is character-for-character what it was.
+--
+--     unnest with two arrays at once zips them: one row per position, taking one element from
+--     each. That is what makes the arrays positional, and what makes equal lengths a
+--     requirement -- a short array is padded with NULLs rather than rejected, so a length
+--     mismatch would write a NULL payload instead of failing. The AS clause names the zipped
+--     table and its columns in array order.
+--
+--     Each CAST exists purely to pin its parameter's type. A bind parameter arrives with no
+--     type of its own and unnest is overloaded for every array type, so without the cast the
+--     database cannot tell which one is meant. The Python call site declares the same types
+--     again with bindparam(...); both halves are needed for a Python list to arrive as a real
+--     PostgreSQL text array.
+--
+--   WHERE feature.layer_id = CAST(layer_id AS uuid)
+--     Scopes the update to one layer. It is not an optimisation: producer-local ids are only
+--     unique within the producer that minted them, so without this an unrelated layer's record
+--     carrying the same id would be overwritten with this layer's payload.
+--
+--   AND feature.properties ->> 'id' = pending.external_id
+--     The join condition: each instruction finds the row it names. properties is the jsonb
+--     column and ->> reads one key out of it as text; the related -> operator would return the
+--     value still as jsonb, quotes and all, and would not compare equal to a plain text value.
+--     In an UPDATE ... FROM the join lives in the WHERE clause rather than in an ON clause, and
+--     omitting it would not be an error -- it would match every row against every instruction
+--     and rewrite the entire layer. It is the single most load-bearing line here.
+--
+--     Note this can match more than one row per instruction, because nothing prevents a layer
+--     from holding two rows with the same producer-local id. That is intentional: every
+--     duplicate is brought up to date, while the caller counts and publishes the id once.
+--
+--   AND (feature.properties - 'geometry' - 'geometry_repaired')
+--       IS DISTINCT FROM (CAST(pending.next_properties AS jsonb) - 'geometry')
+--     The change test, and the reason most rows are left alone. The minus operator on a jsonb
+--     value returns that value with the named key removed; chaining it removes several. Neither
+--     side is stored -- both are computed for the comparison and discarded.
+--
+--     IS DISTINCT FROM is used rather than the ordinary <> because of NULL. A row whose
+--     properties were somehow NULL would make <> yield "unknown" rather than true, and the row
+--     would never be updated. IS DISTINCT FROM treats NULL as a value that can be compared:
+--     NULL is distinct from any non-NULL, and not distinct from NULL. It is "are these two
+--     genuinely different", which is the question actually being asked.
+--
+--   RETURNING feature.id, pending.external_id AS external_id
+--     RETURNING makes a writing statement also produce rows, describing what it just changed --
+--     the same trip that performs the write reports its result, with no second query and no
+--     window in which another transaction could change the answer. Returning the
+--     producer-local id from the instruction side rather than re-reading it out of the stored
+--     document is what lets the caller match each changed row back to the record it came from
+--     without a second lookup.
+UPDATE geo.features AS feature
+SET properties = CAST(pending.next_properties AS jsonb), updated_at = now()
+FROM unnest(CAST(:external_ids AS text[]), CAST(:next_properties AS text[]))
+     AS pending(external_id, next_properties)
+WHERE feature.layer_id = CAST(:layer_id AS uuid)
+  AND feature.properties ->> 'id' = pending.external_id
+  AND (feature.properties - 'geometry' - 'geometry_repaired')
+      IS DISTINCT FROM (CAST(pending.next_properties AS jsonb) - 'geometry')
+RETURNING feature.id, pending.external_id AS external_id

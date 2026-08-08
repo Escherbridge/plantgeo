@@ -26,6 +26,11 @@ const DYNAMIC_TILES_URL =
 // 404 risk to the rest of the composite. What's withheld is the *switch* --
 // LAYER_REGISTRY["building-footprints"].permanentlyUnavailableReason in layer-registry.ts
 // -- not the source, so populating the table needs no change here.
+// An id may only be listed once Martin actually answers for it: this is a SINGLE MapLibre
+// source over every member, so a 404 on any one of them fails the whole TileJSON and blanks
+// every dynamic layer at once, not just the missing one. Martin runs `auto_publish: false`
+// and reads its function catalogue from infra/martin/martin.yaml at startup, so a new
+// function is served only after the Martin service itself redeploys.
 const DYNAMIC_TILE_SOURCE_IDS = [
   "fire_risk_tiles",
   "sensor_tiles",
@@ -33,22 +38,8 @@ const DYNAMIC_TILE_SOURCE_IDS = [
   "burn_severity_tiles",
   "intervention_tiles",
   "building_tiles",
+  "watershed_tiles",
 ] as const;
-
-// `watershed_tiles` is deliberately NOT in the list above yet, even though
-// 0017_watershed_persistence created geo.watershed_tiles() and infra/martin/martin.yaml already
-// declares it.
-//
-// Martin runs `auto_publish: false` and reads its function catalogue from that YAML at startup, so
-// it does not serve the new source until the Martin service itself redeploys. This composite is a
-// single MapLibre source over six ids: a 404 on ANY member fails the whole TileJSON and blanks every
-// dynamic layer on the map -- fire perimeters, sensors, evacuation zones, burn severity,
-// interventions -- not just the missing one. The app and Martin deploy as separate Railway services
-// with no ordering between them, so listing it here first is exactly how that outage happens.
-//
-// To finish the switch: redeploy Martin, confirm `/watershed_tiles` answers, then add the id here
-// and repoint watershedsLayer/watershedsOutlineLayer in src/lib/map/layers.ts from the GeoJSON
-// source to MARTIN_SOURCE with `"source-layer": "watersheds"`.
 
 // Both are Martin *table* sources, and both geo.osm_roads and geo.osm_waterways also have
 // 0 rows in production -- but unlike building-footprints, neither has a LayerRegistry
@@ -125,12 +116,17 @@ export function getSources(
       tiles: [""],
       tileSize: 256,
       attribution: "NASA GIBS / Copernicus",
+      // GIBS serves nothing past z9; VegetationLayer's own addSource carries the same cap.
+      // If this inert entry is ever wired into a style, the layer's `!getSource` guard will
+      // skip its addSource — so the cap must live here too or it silently vanishes.
+      maxzoom: 9,
     },
     "ndwi-overlay": {
       type: "raster",
       tiles: [""],
       tileSize: 256,
       attribution: "NASA GIBS",
+      maxzoom: 9,
     },
   };
 }

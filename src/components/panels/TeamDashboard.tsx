@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { trpc } from "@/lib/trpc/client";
@@ -226,7 +227,26 @@ export function TeamDashboard({
           </div>
         )}
 
-        {!isLoading && !dashboard && (
+        {/* Two distinct empty states, because they need two different actions. Having no
+            organization at all is the ordinary case for a new account and is answered by
+            creating or joining one; a load failure with a team selected is the only case
+            where "unable to load" is true. Collapsing them told everyone without an org
+            that something had broken. */}
+        {!isLoading && !dashboard && !teamId && (
+          <div className="flex flex-col items-center gap-3 py-8 text-center">
+            <p className="text-sm text-[hsl(var(--muted-foreground))]">
+              No active organization — create or join one to see its dashboard.
+            </p>
+            <Link
+              href="/onboarding?create=1"
+              className="text-sm text-[hsl(var(--primary))] hover:underline"
+            >
+              Create or join an organization →
+            </Link>
+          </div>
+        )}
+
+        {!isLoading && !dashboard && teamId && (
           <p className="text-sm text-[hsl(var(--muted-foreground))] text-center py-8">
             Unable to load team dashboard.
           </p>

@@ -1,0 +1,73 @@
+-- Purpose: take one transaction-scoped advisory lock per feature row this batch is about to
+--          write, in a fixed sorted order, so two ingestion runs carrying the same upstream
+--          records serialise against each other instead of deadlocking or double-inserting.
+-- Loaded by: agri_data_service.ingest.writer
+-- Params: event_keys (text[]) -- one key per feature row, each the row's layer id and its
+--         producer-local external id joined by a colon, already de-duplicated and sorted by the
+--         caller. The layer id is part of the key because the same external id can legitimately
+--         appear in two different layers and those are different rows.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap"
+-- in sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too, and would
+-- mint a bind parameter nobody supplies.
+--
+-- What this returns: one row per key, each holding a NULL. The rows are thrown away. This
+-- statement is run for its side effect, which is that by the time it returns, this transaction
+-- holds a lock on every one of those keys and no other transaction can hold them.
+--
+-- How this query works, clause by clause:
+--
+--   unnest(CAST(event_keys AS text[]))
+--     unnest takes one array and turns it into a set of rows, one row per element, so the array
+--     can be used anywhere a table can. It is how a whole batch of keys travels to the database
+--     as a single parameter in a single round trip instead of one statement per key.
+--
+--     The CAST is not a conversion anyone needs at runtime -- the value is already an array of
+--     text. It exists purely to pin the parameter's type. A bind parameter arrives with no
+--     declared type of its own, and unnest is overloaded for every array type, so without the
+--     cast the database cannot tell which unnest is meant and refuses to plan the statement.
+--     The Python call site declares the same type again with bindparam(...), which is what
+--     makes a Python list travel as a real PostgreSQL text array rather than as a string; both
+--     halves are required.
+--
+--   AS locks(event_key)
+--     Names the derived table and its single column, so the rest of the statement can refer to
+--     each element by name instead of by position.
+--
+--   pg_advisory_xact_lock(hashtext(event_key))
+--     An advisory lock is a lock on a number of the application's own choosing, rather than on
+--     a row or a table. The database enforces only that two transactions cannot hold the same
+--     number at once; what the number *means* is a convention, upheld by every writer agreeing
+--     to take the same lock before touching the same record. hashtext turns the text key into
+--     the integer the lock function takes. The "xact" in the name means the lock is released
+--     automatically when the transaction ends, on COMMIT or ROLLBACK alike -- there is no
+--     unlock call to forget, and a process that dies mid-run cannot leave a record locked.
+--
+--     Why an advisory lock and not the ordinary row lock, FOR UPDATE? FOR UPDATE locks rows
+--     that already exist, and the decision this lock protects is taken when the row may not
+--     exist yet. The writer reads which external ids are already present, splits the batch into
+--     rows to insert and rows to refresh, and only then writes. Two runs both finding a record
+--     absent and both inserting it is exactly the race that has to be prevented, and no row
+--     lock can prevent it, because at the moment of the decision there is no row to lock.
+--     Locking the key itself covers the not-yet-existing case and the already-existing case
+--     with one mechanism.
+--
+--   ORDER BY event_key
+--     The reason this statement exists as a statement rather than as a loop, and not cosmetic.
+--     A deadlock is two transactions each holding a lock the other one is waiting for: run A
+--     holds key "alpha" and wants "beta" while run B holds "beta" and wants "alpha". Neither
+--     can proceed, and the database resolves it by killing one of them with error 40P01 --
+--     which in this service means an hourly ingestion run turns red, or a repair pass dies part
+--     way through. Acquiring the locks in one fixed order removes the possibility entirely:
+--     whichever run takes "alpha" first also takes "beta" first, and the other simply waits.
+--     Sorting the keys is that fixed order, and the caller sorts as well so the guarantee holds
+--     end to end.
+--
+--     There is a second ordering discipline this statement participates in, described at its
+--     Python call site: these feature-row locks are always taken *before* the place-level locks
+--     in lock_geometry_keys.sql, by the forward writer and by the repair pass alike. Two lock
+--     spaces acquired in opposite orders by two code paths would deadlock exactly as two keys
+--     acquired in opposite orders would.
+SELECT pg_advisory_xact_lock(hashtext(event_key))
+FROM unnest(CAST(:event_keys AS text[])) AS locks(event_key)
+ORDER BY event_key

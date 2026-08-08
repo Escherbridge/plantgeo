@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import func, or_, select
 
 from agri_data_service.execution.contracts import (
     MAX_SOURCE_GEOJSON_BYTES,
@@ -17,6 +16,13 @@ from agri_data_service.execution.contracts import (
     reject_credential_url,
     reject_sensitive_fields,
     validate_phase_one_geojson_payload,
+)
+from agri_data_service.execution.provenance import (
+    advisory_lock,
+    ensure_artifact,
+    ensure_data_source,
+    ensure_source_release,
+    find_release_set,
 )
 from agri_data_service.models.provenance import (
     Artifact,
@@ -31,6 +37,8 @@ from agri_data_service.models.provenance import (
 
 SOURCE_INGESTION_CHECKPOINT_SCHEMA_VERSION: Literal[2] = 2
 SOURCE_INGESTION_TRANSFORM_VERSION = "source-native"
+ARTIFACT_KIND = "source_geojson"
+ARTIFACT_MEDIA_TYPE = "application/geo+json"
 
 if TYPE_CHECKING:
     import uuid
@@ -223,7 +231,7 @@ def source_ingestion_plan_checksum(plan: SourceIngestionPlan) -> str:
     return hashlib.sha256(canonical_json_bytes(plan.model_dump(mode="json"))).hexdigest()
 
 
-async def publish_source_release(  # noqa: PLR0912, PLR0915
+async def publish_source_release(
     session: AsyncSession,
     plan: SourceIngestionPlan,
     payload: bytes,
@@ -232,10 +240,9 @@ async def publish_source_release(  # noqa: PLR0912, PLR0915
     """Idempotently persist governed provenance, the raw release, and a validated release set."""
     payload_checksum = hashlib.sha256(payload).hexdigest()
     await _acquire_source_ingestion_locks(session, plan, payload_checksum)
-    source = (await session.execute(select(DataSource).where(DataSource.key == plan.source.key))).scalar_one_or_none()
-    idempotent = source is not None
-    if source is None:
-        source = DataSource(
+    source, idempotent = await ensure_data_source(
+        session,
+        DataSource(
             key=plan.source.key,
             name=plan.source.name,
             owner=plan.source.owner,
@@ -250,40 +257,31 @@ async def publish_source_release(  # noqa: PLR0912, PLR0915
             reviewed_at=plan.source.reviewed_at,
             reviewed_by=plan.source.reviewed_by,
             configuration={"ingestion_boundary": "local_capture_then_warehouse_publication"},
-        )
-        session.add(source)
-        await session.flush()
-    elif source.review_state != SourceReviewState.APPROVED or not source.is_active:
-        raise ValueError("source is not approved and active for publication")
-    elif any(
-        getattr(source, field) != getattr(plan.source, field)
-        for field in (
-            "name",
-            "owner",
-            "purpose",
-            "base_url",
-            "license_name",
-            "license_url",
-            "citation",
-            "retention_days",
-            "reviewed_at",
-            "reviewed_by",
-        )
-    ):
-        raise ValueError("source key is already governed by different source metadata")
-
-    release = (
-        await session.execute(
-            select(SourceRelease).where(
-                SourceRelease.data_source_id == source.id,
-                SourceRelease.source_version == plan.release.source_version,
-                SourceRelease.payload_checksum == payload_checksum,
-                SourceRelease.transform_version == SOURCE_INGESTION_TRANSFORM_VERSION,
+        ),
+        # `configuration` is deliberately absent, exactly as this lane has always compared. The
+        # historical lanes DO pin it; adding it here would newly refuse sources this lane accepts today.
+        expected={
+            field: getattr(plan.source, field)
+            for field in (
+                "name",
+                "owner",
+                "purpose",
+                "base_url",
+                "license_name",
+                "license_url",
+                "citation",
+                "retention_days",
+                "reviewed_at",
+                "reviewed_by",
             )
-        )
-    ).scalar_one_or_none()
-    if release is None:
-        release = SourceRelease(
+        },
+        inactive_message="source is not approved and active for publication",
+        conflict_message="source key is already governed by different source metadata",
+    )
+
+    release, release_found = await ensure_source_release(
+        session,
+        SourceRelease(
             data_source_id=source.id,
             source_version=plan.release.source_version,
             retrieved_at=datetime.now(UTC),
@@ -299,13 +297,8 @@ async def publish_source_release(  # noqa: PLR0912, PLR0915
             quality_summary=quality_summary,
             validation_state=ReleaseValidationState.VALID,
             validated_at=datetime.now(UTC),
-        )
-        session.add(release)
-        await session.flush()
-        idempotent = False
-    elif any(
-        getattr(release, field) != value
-        for field, value in {
+        ),
+        expected={
             "data_available_at": plan.release.data_available_at,
             "observed_from": plan.release.observed_from,
             "observed_to": plan.release.observed_to,
@@ -315,60 +308,48 @@ async def publish_source_release(  # noqa: PLR0912, PLR0915
             "query_parameters": plan.release.query_parameters,
             "quality_summary": quality_summary,
             "validation_state": ReleaseValidationState.VALID,
-        }.items()
-    ):
-        raise ValueError("source release identity is already governed by different release metadata")
+        },
+        conflict_message="source release identity is already governed by different release metadata",
+    )
+    idempotent = idempotent and release_found
 
     artifact_uri = f"warehouse://source-releases/{plan.source.key}/{plan.release.source_version}/{payload_checksum}"
-    artifact = (
-        await session.execute(
-            select(Artifact).where(Artifact.uri == artifact_uri, Artifact.checksum_sha256 == payload_checksum)
-        )
-    ).scalar_one_or_none()
-    if artifact is None:
-        artifact = Artifact(
+    artifact, artifact_found = await ensure_artifact(
+        session,
+        Artifact(
             source_release_id=release.id,
-            kind="source_geojson",
+            kind=ARTIFACT_KIND,
             uri=artifact_uri,
-            media_type="application/geo+json",
+            media_type=ARTIFACT_MEDIA_TYPE,
             checksum_sha256=payload_checksum,
             size_bytes=len(payload),
             storage_class="database_inline",
             metadata_json=quality_summary,
             content_bytes=payload,
-        )
-        session.add(artifact)
-        await session.flush()
-        idempotent = False
-    elif (
-        artifact.source_release_id != release.id
-        or artifact.kind != "source_geojson"
-        or artifact.media_type != "application/geo+json"
-        or artifact.size_bytes != len(payload)
-        or artifact.storage_class != "database_inline"
-        or artifact.metadata_json != quality_summary
-        or artifact.content_bytes != payload
-    ):
-        raise ValueError("artifact identity is already governed by different immutable content")
+        ),
+        expected={
+            "source_release_id": release.id,
+            "kind": ARTIFACT_KIND,
+            "media_type": ARTIFACT_MEDIA_TYPE,
+            "size_bytes": len(payload),
+            "storage_class": "database_inline",
+            "metadata_json": quality_summary,
+            "content_bytes": payload,
+        },
+        # This lane compares the stored bytes themselves, so they have to be read back. The historical
+        # lanes deliberately do not; see `ensure_artifact`.
+        defer_content_bytes=False,
+        conflict_message="artifact identity is already governed by different immutable content",
+    )
+    idempotent = idempotent and artifact_found
 
     manifest_checksum = release_set_manifest(plan, payload_checksum)
-    release_sets = (
-        (
-            await session.execute(
-                select(ReleaseSet).where(
-                    or_(
-                        ReleaseSet.logical_key == plan.release_set_key,
-                        ReleaseSet.manifest_checksum == manifest_checksum,
-                    )
-                )
-            )
-        )
-        .scalars()
-        .all()
+    release_set = await find_release_set(
+        session,
+        logical_key=plan.release_set_key,
+        manifest_checksum=manifest_checksum,
+        conflict_message="release set key and manifest checksum identify different existing release sets",
     )
-    if len(release_sets) > 1:
-        raise ValueError("release set key and manifest checksum identify different existing release sets")
-    release_set = release_sets[0] if release_sets else None
     if release_set is None:
         release_set = ReleaseSet(
             logical_key=plan.release_set_key,
@@ -427,4 +408,4 @@ async def _acquire_source_ingestion_locks(
         f"release-set:{plan.release_set_key}",
     )
     for lock_key in lock_keys:
-        await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_key, 0))))
+        await advisory_lock(session, lock_key)

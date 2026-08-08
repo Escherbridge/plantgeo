@@ -12,6 +12,7 @@ from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates han
 from sqlalchemy import text
 
 from agri_data_service.db.engine import published_reader_session
+from agri_data_service.db.sql_queries import load_query_sql
 
 forecasts_bp = Blueprint("forecasts", url_prefix="/forecasts")
 
@@ -126,148 +127,11 @@ class ForecastServingRecord(BaseModel):
 
 
 _FORECAST_SERVING_SQL = text(
-    f"""
-    WITH serving_page AS MATERIALIZED (
-        SELECT
-            serving.publication_id,
-            serving.publication_key,
-            serving.scope_key,
-            serving.publication_manifest_checksum,
-            serving.published_at,
-            serving.forecast_receipt_id,
-            serving.receipt_checksum,
-            serving.series_id,
-            serving.series_key,
-            serving.source_variant_key,
-            serving.entity_type,
-            serving.entity_key,
-            serving.metric_name,
-            serving.metric_unit,
-            serving.representation_kind,
-            serving.spatial_support_kind,
-            serving.source_spatial_resolution_m,
-            serving.output_spatial_resolution_m,
-            serving.source_temporal_support,
-            serving.output_temporal_support,
-            serving.aggregation_method,
-            serving.release_set_id,
-            serving.forecast_run_id,
-            serving.forecast_method,
-            serving.input_release_checksum,
-            serving.feature_checksum,
-            serving.model_checksum,
-            serving.parameter_checksum,
-            serving.training_run_id,
-            serving.training_code_checksum,
-            serving.validation_checksum,
-            serving.issue_time,
-            serving.valid_time,
-            serving.horizon_step,
-            serving.point_value,
-            serving.p10_value,
-            serving.p50_value,
-            serving.p90_value,
-            serving.spatial_cell_id,
-            cell.id AS joined_spatial_cell_id,
-            cell.centroid AS cell_centroid,
-            cell.geometry AS cell_geometry
-        FROM agri.v_forecast_series_serving AS serving
-        LEFT JOIN agri.spatial_cell AS cell ON cell.id = serving.spatial_cell_id
-        WHERE serving.series_key = :series_key
-          AND (CAST(:valid_from AS timestamptz) IS NULL OR serving.valid_time >= CAST(:valid_from AS timestamptz))
-          AND (CAST(:valid_to AS timestamptz) IS NULL OR serving.valid_time < CAST(:valid_to AS timestamptz))
-        ORDER BY
-            serving.valid_time,
-            serving.forecast_receipt_id,
-            serving.horizon_step
-        LIMIT :fetch_limit
-        OFFSET :offset
-    ),
-    spatial_page AS MATERIALIZED (
-        SELECT
-            serving_page.*,
-            CASE
-                WHEN :spatial_mode IN ('centroid', 'geojson')
-                    THEN ST_AsGeoJSON(serving_page.cell_centroid, 6, 0)
-                ELSE NULL
-            END AS centroid_candidate,
-            CASE
-                WHEN :spatial_mode = 'geojson' THEN
-                    CASE
-                        WHEN pg_column_size(serving_page.cell_geometry) <= {_MAX_CELL_GEOMETRY_STORAGE_BYTES} THEN
-                            CASE
-                                WHEN ST_NPoints(serving_page.cell_geometry) <= {_MAX_CELL_GEOMETRY_POINTS}
-                                    THEN ST_AsGeoJSON(serving_page.cell_geometry, 6, 0)
-                                ELSE NULL
-                            END
-                        ELSE NULL
-                    END
-                ELSE NULL
-            END AS cell_geojson_candidate
-        FROM serving_page
+    load_query_sql("routes/forecast_serving.sql").format(
+        max_cell_geometry_storage_bytes=_MAX_CELL_GEOMETRY_STORAGE_BYTES,
+        max_cell_geometry_points=_MAX_CELL_GEOMETRY_POINTS,
+        max_cell_geojson_bytes=_MAX_CELL_GEOJSON_BYTES,
     )
-    SELECT
-        spatial_page.publication_id,
-        spatial_page.publication_key,
-        spatial_page.scope_key,
-        spatial_page.publication_manifest_checksum,
-        spatial_page.published_at,
-        spatial_page.forecast_receipt_id,
-        spatial_page.receipt_checksum,
-        spatial_page.series_id,
-        spatial_page.series_key,
-        spatial_page.source_variant_key,
-        spatial_page.entity_type,
-        spatial_page.entity_key,
-        spatial_page.metric_name,
-        spatial_page.metric_unit,
-        spatial_page.representation_kind,
-        spatial_page.spatial_support_kind,
-        spatial_page.source_spatial_resolution_m,
-        spatial_page.output_spatial_resolution_m,
-        spatial_page.source_temporal_support,
-        spatial_page.output_temporal_support,
-        spatial_page.aggregation_method,
-        spatial_page.release_set_id,
-        spatial_page.forecast_run_id,
-        spatial_page.forecast_method,
-        spatial_page.input_release_checksum,
-        spatial_page.feature_checksum,
-        spatial_page.model_checksum,
-        spatial_page.parameter_checksum,
-        spatial_page.training_run_id,
-        spatial_page.training_code_checksum,
-        spatial_page.validation_checksum,
-        spatial_page.issue_time,
-        spatial_page.valid_time,
-        spatial_page.horizon_step,
-        spatial_page.point_value,
-        spatial_page.p10_value,
-        spatial_page.p50_value,
-        spatial_page.p90_value,
-        spatial_page.spatial_cell_id,
-        spatial_page.centroid_candidate::jsonb AS centroid_geojson,
-        CASE
-            WHEN octet_length(spatial_page.cell_geojson_candidate) <= {_MAX_CELL_GEOJSON_BYTES}
-                THEN spatial_page.cell_geojson_candidate::jsonb
-            ELSE NULL
-        END AS cell_geojson,
-        CASE
-            WHEN :spatial_mode = 'geojson'
-             AND spatial_page.joined_spatial_cell_id IS NOT NULL
-             AND (
-                 spatial_page.cell_geojson_candidate IS NULL
-                 OR octet_length(spatial_page.cell_geojson_candidate) > {_MAX_CELL_GEOJSON_BYTES}
-             )
-                THEN true
-            ELSE false
-        END AS geometry_omitted
-    FROM spatial_page
-    ORDER BY
-        spatial_page.valid_time,
-        spatial_page.forecast_receipt_id,
-        spatial_page.horizon_step
-    """
 )
 
 

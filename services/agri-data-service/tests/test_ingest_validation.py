@@ -289,6 +289,99 @@ def test_ranking_gaps_with_a_negative_limit_is_refused_rather_than_silently_empt
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# Publication cadence. The gap walk runs on the grid the stream declared it publishes on, not on the calendar:
+# a daily grid called the six ordinary days between two weekly USDM releases missing, so a stream that had
+# published every single release it owed reported roughly 6/7 of the calendar absent.
+# ---------------------------------------------------------------------------------------------------------------
+
+WEEKLY = StreamDefinition(
+    stream="drought_areas",
+    kind="time_series",
+    store="drought_areas",
+    publication_cadence_days=7,
+    cadence_basis="USDM publishes one release every Tuesday",
+)
+
+FIVE_DAY = StreamDefinition(
+    stream="vegetation",
+    kind="time_series",
+    store="features",
+    publication_cadence_days=5,
+    cadence_basis="Sentinel-2 L2A revisits mid-latitudes about every five days",
+)
+
+
+def weekly_issues(start: str, length: int, count: int = 40) -> list[ObservedDay]:
+    """Build `length` consecutive weekly releases from `start`, the rhythm USDM actually publishes on."""
+    first = day(start)
+    return [ObservedDay(date.fromordinal(first.toordinal() + 7 * index), count) for index in range(length)]
+
+
+def test_a_weekly_stream_holding_every_release_it_owed_reports_no_missing_day_at_all() -> None:
+    report = build_stream_report(
+        WEEKLY,
+        observations(days=weekly_issues("2026-06-02", 10)),
+        (),
+        bbox=None,
+        server_day=day("2026-08-04"),
+    )
+
+    assert report.completeness.missing_day_count == 0
+    assert report.completeness.gap_count == 0
+    assert report.verdict == "complete"
+
+
+def test_the_daily_grid_called_that_same_complete_weekly_stream_54_days_short() -> None:
+    """The defect in one assertion: nine six-day holes between ten releases that were all published on time."""
+    assert sum(gap.days for gap in find_observation_gaps(weekly_issues("2026-06-02", 10))) == 54
+
+
+def test_a_weekly_stream_missing_one_release_reports_exactly_one_missing_publication() -> None:
+    without_a_release = [entry for entry in weekly_issues("2026-06-02", 10) if entry.day != day("2026-07-07")]
+
+    report = build_stream_report(
+        WEEKLY, observations(days=without_a_release), (), bbox=None, server_day=day("2026-08-04")
+    )
+    gap = report.completeness.worst_gaps[0]
+
+    assert report.completeness.missing_day_count == 1
+    assert report.completeness.gap_count == 1
+    # The silence is still measured in calendar days, because that is the number `decide_verdict` compares
+    # against the declared cadence -- and 13 days of silence on a 7-day cadence is what makes this incomplete.
+    assert (gap.gap_from, gap.gap_to, gap.days, gap.missed_publications) == (
+        day("2026-07-01"),
+        day("2026-07-13"),
+        13,
+        1,
+    )
+    assert gap.to_summary() == {"from": "2026-07-01", "to": "2026-07-13", "days": 13, "missed_publications": 1}
+    assert report.verdict == "incomplete"
+
+
+def test_a_weekly_stream_owes_nothing_at_the_tail_until_a_whole_cadence_period_has_passed() -> None:
+    published = weekly_issues("2026-06-02", 2)
+
+    assert find_observation_gaps(published, through_day=day("2026-06-15"), publication_cadence_days=7) == ()
+    # 2026-06-16 is one full cadence past the release on 2026-06-09, so exactly one release is now owed.
+    due = find_observation_gaps(published, through_day=day("2026-06-16"), publication_cadence_days=7)
+    assert [gap.missed_publications for gap in due] == [1]
+    assert [gap.days for gap in due] == [7]
+
+
+def test_a_five_day_cadence_walks_the_five_day_grid_so_a_sentinel_revisit_is_not_four_missing_days() -> None:
+    on_revisit = [observed("2026-06-01"), observed("2026-06-06"), observed("2026-06-11")]
+
+    assert find_observation_gaps(on_revisit, publication_cadence_days=5) == ()
+    report = build_stream_report(FIVE_DAY, observations(days=on_revisit), (), bbox=None, server_day=day("2026-06-11"))
+    assert report.completeness.missing_day_count == 0
+
+
+def test_a_cadence_shorter_than_a_day_is_refused_by_the_walk_as_well_as_by_the_catalog() -> None:
+    with pytest.raises(ValueError, match="at least one day"):
+        find_observation_gaps(run_of_days("2026-03-01", 3), publication_cadence_days=0)
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # The expected-floor clip. A day below the declared floor is a real observation, but it is neither a gap nor
 # coverage, so it leaves the gap walk and is reported on its own.
 # ---------------------------------------------------------------------------------------------------------------

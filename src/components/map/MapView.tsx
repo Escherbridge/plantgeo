@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import { useMapStore } from "@/stores/map-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { getStyle, skyThemes } from "@/lib/map/styles";
 import { MapProvider } from "@/lib/map/map-context";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,6 +15,7 @@ import SearchBar from "@/components/search/SearchBar";
 import { ReverseGeocode } from "@/components/search/ReverseGeocode";
 import { CommandPalette } from "@/components/search/CommandPalette";
 import PanelManager from "./PanelManager";
+import { LayerPanel } from "./layer-panel/LayerPanel";
 import LayerManager from "./LayerManager";
 import HoverTooltip from "./HoverTooltip";
 import TimeSliderPanel from "./TimeSliderPanel";
@@ -47,6 +49,9 @@ export default function MapView() {
   } = useMapStore();
 
   const prevStyleRef = useRef(currentStyle);
+  // Per-field selector: this component destructures map-store wholesale above, so adding a
+  // whole-store read here would re-render the map shell on every panel-store write.
+  const layerPanelOpen = usePanelStore((state) => state.layerPanelOpen);
   const { isOpen: isAIOpen } = useRegionalIntelligenceStore();
   const { queryLocation } = useRegionalIntelligence();
 
@@ -289,7 +294,18 @@ export default function MapView() {
 
   return (
     <MapProvider value={mapInstance}>
-      <div className="relative h-full w-full">
+      {/*
+        `--layer-panel-inset` is how the left-edge dock keeps out of the way of the chrome it
+        would otherwise cover: 0 while it is closed, its own width while it is open. Its only
+        consumers are the icon rail and the bottom-left toolbar, both of which anchor to
+        `calc(var(--layer-panel-inset) + …)`, so one variable replaces prop drilling through
+        two component trees. The panel itself is an overlay in this same box and never reflows
+        the canvas -- see LayerPanel.tsx for why the camera takes padding instead.
+      */}
+      <div
+        className="relative h-full w-full"
+        style={{ "--layer-panel-inset": layerPanelOpen ? "19rem" : "0px" } as React.CSSProperties}
+      >
         {isLoading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center">
             <Skeleton className="h-full w-full" />
@@ -309,6 +325,11 @@ export default function MapView() {
             <ReverseGeocode />
             <CommandPalette />
             <PanelManager />
+            {/* The left-edge layer tree. Mounted after PanelManager so it paints over the
+                rail's shadow rather than under it, and additive to the right-hand sheets:
+                both surfaces write map-store.activeLayers, which is the single source of
+                layer visibility, so they cannot disagree. */}
+            <LayerPanel />
             {/* Mounted before LayerManager so its style.load handler registers
                 first -- see the ordering note in ServiceAreaLayer.tsx. */}
             <ServiceAreaLayer map={mapInstance} />

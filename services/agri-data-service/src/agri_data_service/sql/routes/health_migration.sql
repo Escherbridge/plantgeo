@@ -1,0 +1,53 @@
+-- Purpose: prove the database is at exactly the one Alembic migration revision this
+--          build was written against -- not ahead of it, not behind it, and not on a
+--          branched history with two heads.
+-- Loaded by: agri_data_service.routes.health.queries
+-- Params: expected_revision (text) -- the revision string this build pins, supplied by
+--         the route from EXPECTED_ALEMBIC_REVISION in
+--         agri_data_service.routes.health.contracts.
+--
+-- The parameter name appears above WITHOUT a leading colon; the statement below writes
+-- it with one, as normal. See "Header/bind-param trap" in sql/AGENTS.md: SQLAlchemy
+-- scans comments for colon-prefixed words as well as real SQL, so a name written with
+-- its colon in a comment would mint a second, unsupplied bind parameter and every
+-- execution would fail.
+--
+-- Why the pin exists: the running code and the database schema are two halves of one
+-- release. A process whose queries reference a column the database has not gained yet,
+-- or a process still expecting a column the database has already dropped, fails at
+-- request time in ways that look like data corruption rather than a version mismatch.
+-- Comparing against an exact revision rather than a lower bound catches both
+-- directions, so a rollback that leaves the database ahead of the code is refused just
+-- as loudly as a deploy that ran before its migration.
+--
+-- public.alembic_version is Alembic's own bookkeeping table. It holds one row, whose
+-- single column version_num names the migration currently applied. The route runs this
+-- statement only when the readiness probe has already confirmed the table exists and
+-- this login may read it, so a missing table is reported as its own distinct failure
+-- rather than as a revision mismatch.
+--
+-- What this returns: exactly one row, one boolean column migration_ready.
+--
+-- How this query works, clause by clause:
+--
+--   count(*) = 1
+--     Requires exactly one row. Alembic writes one row per migration head, so two rows
+--     means the history has branched and no single revision describes the schema. Zero
+--     rows means the table exists but no migration has ever been stamped. Both are
+--     refusals, and neither would be caught by comparing a revision string alone.
+--
+--   min(version_num) = expected_revision
+--     The applied revision equals the pinned one. This clause is quoted here without
+--     its colon, though the statement below writes it with one -- a comment quoting SQL
+--     is still a comment that text() will scan. min is an aggregate, used here only
+--     because count(*) above is one too -- a SELECT that aggregates any column must
+--     aggregate all of them, and with exactly one row guaranteed by the count, min is
+--     simply "that row's value". Writing version_num bare would be a grouping error.
+--     The expected revision arrives as a bound parameter, never spliced into the text.
+--
+--   AND ... AS migration_ready
+--     Both halves must hold, and the pair is returned as one named boolean column so
+--     the route can read it with scalar_one and fold it straight into the checks it
+--     reports.
+SELECT count(*) = 1 AND min(version_num) = :expected_revision AS migration_ready
+FROM public.alembic_version

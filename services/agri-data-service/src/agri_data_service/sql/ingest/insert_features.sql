@@ -1,0 +1,85 @@
+-- Purpose: create the geo.features rows for the records in this batch that had no row yet, in
+--          one statement, and report the warehouse id each one was given.
+-- Loaded by: agri_data_service.ingest.writer
+-- Params: layer_id (uuid, passed as text) -- the layer every row in this batch belongs to.
+--         Scalar, not an array: a batch is already grouped by layer before it gets here, so one
+--         value covers every row.
+--         payloads (text[]) -- one JSON document per new record, already serialised by the
+--         caller with its producer-local id pinned into the document.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap"
+-- in sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too, and would
+-- mint a bind parameter nobody supplies.
+--
+-- What this returns: one row per feature created, pairing the warehouse id the database
+-- generated with the producer-local id read back out of the stored document. The caller needs
+-- both: the warehouse id to link the row to its place in the geometry dimension, and the
+-- producer-local id to match the row back to the record it came from.
+--
+-- Why there is no ON CONFLICT clause
+--
+--   ON CONFLICT is how an insert survives colliding with a unique constraint, and there is no
+--   unique constraint here to collide with -- geo.features does not enforce uniqueness on the
+--   producer-local id. Adding a DO NOTHING clause would therefore protect nothing and would
+--   quietly suggest a guarantee the table does not make.
+--
+--   What actually stops this statement from creating a duplicate is upstream of it: the caller
+--   holds an advisory lock over every record in the batch (see lock_event_keys.sql), reads
+--   which ones already exist (select_existing_external_ids.sql), and only sends the remainder
+--   here. Because the lock is held for the whole transaction, no other run can create one of
+--   these records between that read and this write. The protection is the lock and the split,
+--   not a clause on the insert.
+--
+-- How this query works, clause by clause:
+--
+--   INSERT INTO geo.features (layer_id, properties) SELECT ... FROM unnest(...)
+--     An insert whose rows come from a query rather than from a VALUES list. That is what makes
+--     this one statement for the whole batch: the SELECT produces as many rows as the payload
+--     array had elements, and all of them are written in a single pass. Only two columns are
+--     named; everything else on the row -- the primary key, the timestamps -- is filled by the
+--     table's own defaults, which is why the generated id has to be read back rather than
+--     chosen in advance.
+--
+--   unnest(CAST(payloads AS text[])) AS pending(payload)
+--     unnest takes one array and turns it into a set of rows, one row per element, so the array
+--     can be used anywhere a table can. It is how a whole batch travels to the database as a
+--     single parameter in a single round trip instead of one insert per record. The AS clause
+--     names the derived table and its single column so the SELECT can refer to it.
+--
+--     The CAST exists purely to pin the parameter's type. A bind parameter arrives with no type
+--     of its own, and unnest is overloaded for every array type, so without the cast the
+--     database cannot tell which one is meant and refuses to plan the statement. The Python
+--     call site declares the same type again with bindparam(...); both halves are needed for a
+--     Python list to arrive as a real PostgreSQL text array.
+--
+--   CAST(layer_id AS uuid)
+--     A scalar in the SELECT list, so the same layer id is written onto every row the unnest
+--     produced. The cast is there because the value travels from Python as a plain string and
+--     the column is a real uuid; it also has to satisfy the foreign key to geo.layers, which is
+--     what keeps a typo in a layer name from creating orphan features.
+--
+--   CAST(payload AS jsonb)
+--     Parses each document from text into jsonb, the binary JSON type. Parsing here rather than
+--     in Python means the database validates the document -- malformed JSON fails the write
+--     rather than being stored -- and that it is stored in its normalised binary form, which is
+--     what makes the key lookups elsewhere in this package cheap.
+--
+--     Writing properties is also what fires the trigger geo_features_sync_geom, declared BEFORE
+--     INSERT OR UPDATE OF properties: it reads the geometry out of the document and populates
+--     the row's geometry column, so a feature's shape and its payload cannot disagree. That is
+--     why the shape is never sent as a separate parameter.
+--
+--   RETURNING id, properties ->> 'id' AS external_id
+--     RETURNING makes a writing statement also produce rows, describing what it just wrote --
+--     the same trip that performs the write reports its result, with no second query and no
+--     window in which another transaction could change the answer. It is the only way to learn
+--     database-generated ids for a set-based insert.
+--
+--     properties is the jsonb column and ->> reads one key out of it as text. The related ->
+--     operator would return the value still as jsonb, quotes and all; ->> unwraps it. Reading
+--     the id back out of the *stored* document, rather than trusting the order of the input
+--     array, means the pairing is what the database actually holds.
+INSERT INTO geo.features (layer_id, properties)
+SELECT CAST(:layer_id AS uuid), CAST(payload AS jsonb)
+FROM unnest(CAST(:payloads AS text[])) AS pending(payload)
+RETURNING id, properties ->> 'id' AS external_id

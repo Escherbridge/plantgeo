@@ -4,6 +4,7 @@
  * layer visibility".
  */
 
+import { SOIL_FIELD_MEASURES } from "@/lib/environmental/soil-field";
 import type { PanelId } from "@/stores/panel-store";
 
 /** Every toggle id the registry knows. `activeLayers` may also hold user-uploaded layer ids. */
@@ -29,10 +30,43 @@ export type LayerToggleId =
 /** How a toggle reaches the map: a React-mounted layer component, or baked style layers. */
 export type LayerRenderKind = "component" | "style";
 
+/**
+ * The glyph a layer row draws, named rather than imported.
+ *
+ * This module is plain TypeScript that panels, stores and node-run tests all import, so it
+ * must not pull a React component in. The names are resolved to `lucide-react` icons by
+ * `src/components/map/layer-panel/layer-icons.tsx`, which is exhaustive over this union --
+ * a new member fails to compile there rather than rendering nothing.
+ */
+export type LayerIconName =
+  | "flame"
+  | "flame-kindling"
+  | "shield-alert"
+  | "droplets"
+  | "waves"
+  | "wind"
+  | "radio-tower"
+  | "cloud-sun"
+  | "leaf"
+  | "mountain"
+  | "layers"
+  | "thermometer"
+  | "sprout"
+  | "users"
+  | "building-2";
+
 /** Identity and wiring for one switchable layer. */
 export interface LayerRegistryEntry {
   /** The id carried in map-store's `activeLayers`. */
   toggleId: LayerToggleId;
+  /**
+   * The layer's name as a reader knows it. The single source of truth: until 2026-08-08 it
+   * existed only as a hand-typed `label` prop at each `<LayerToggle>` call site, so a tree
+   * grouped by category had no way to name a layer without duplicating sixteen strings.
+   */
+  label: string;
+  /** The glyph the layer tree draws beside `label`. */
+  icon: LayerIconName;
   renderKind: LayerRenderKind;
   /** Style layer ids flipped with setLayoutProperty; empty for React-mounted layers. */
   styleLayerIds: string[];
@@ -50,6 +84,8 @@ export interface LayerRegistryEntry {
 export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   fire: {
     toggleId: "fire",
+    label: "Fire Detections",
+    icon: "flame",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: "fire-detections",
@@ -58,6 +94,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   },
   "fire-perimeters": {
     toggleId: "fire-perimeters",
+    label: "Active Fire Perimeters",
+    icon: "flame-kindling",
     renderKind: "style",
     styleLayerIds: ["fire-perimeters", "fire-perimeters-outline"],
     warehouseLayerName: "fire-perimeters",
@@ -66,6 +104,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   },
   water: {
     toggleId: "water",
+    label: "Water Gauges",
+    icon: "droplets",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: "water-gauges",
@@ -76,6 +116,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // so it claims no warehouse layer name and gets no slider capability.
   drought: {
     toggleId: "drought",
+    label: "Drought Monitor",
+    icon: "sprout",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,
@@ -84,6 +126,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   },
   weather: {
     toggleId: "weather",
+    label: "Wind & Weather",
+    icon: "wind",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: "weather-observations",
@@ -94,37 +138,41 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // layers.ts; the switch that reaches it is WaterPanel's, added later than the style layer.
   sensors: {
     toggleId: "sensors",
+    label: "Sensor Stations",
+    icon: "radio-tower",
     renderKind: "style",
     styleLayerIds: ["sensors"],
     warehouseLayerName: "sensors",
     panelId: "water",
     permanentlyUnavailableReason: null,
   },
-  // USGS NHD+ HR HUC12 boundaries, still RENDERED by proxying environmental.getWatersheds per
-  // viewport -- but no longer only that. 0017_watershed_persistence gave them a geo.layers row,
-  // geo.watershed_tiles(), and `agri-cli ingest-watersheds` persists 9,396 PNW basins keyed by
-  // HUC12 code, so the warehouse now holds what this toggle draws.
+  // USGS WBD HUC12 boundaries, drawn from geo.watershed_tiles() rather than by proxying
+  // environmental.getWatersheds per viewport. 0017_watershed_persistence gave them a geo.layers
+  // row and the tile function, and `agri-cli ingest-watersheds` persists 9,396 PNW basins keyed
+  // by HUC12 code, so the name claimed here is the layer this toggle actually draws.
   //
-  // `warehouseLayerName` stays null until the render path actually moves. It names the layer a
-  // toggle DRAWS, not one that merely exists, and this one still draws proxied GeoJSON: claiming
-  // the name now would caption a live upstream feed with the warehouse's availability. The switch
-  // is blocked on the Martin service redeploying to pick up watershed_tiles from martin.yaml --
-  // see the note on DYNAMIC_TILE_SOURCE_IDS in src/lib/map/sources.ts for why the composite cannot
-  // list the source before then, and for the exact remaining steps.
+  // The proxy could never draw at an ordinary zoom: it caps a request at 1 square degree
+  // (MAX_WATERSHED_BBOX_SQUARE_DEGREES in src/lib/server/services/hydrosheds.ts) while the
+  // viewport bbox is ~767 at the default zoom, so every request was rejected and the layer fell
+  // back to an empty collection. The tile path has no bbox ceiling -- see watershedsLayer in
+  // layers.ts for the minzoom that bounds payload instead.
   //
-  // Note the layer already appears in the slider's per-layer record list regardless, because
-  // capabilities are derived from geo.layers rather than from this registry. Its 2013 WBD loaddate
-  // does not drag the axis: sliderDomain excludes snapshot layers from the axis start.
+  // Its 2013 WBD loaddate does not drag the slider axis: sliderDomain excludes snapshot layers
+  // from the axis start.
   watersheds: {
     toggleId: "watersheds",
-    renderKind: "component",
-    styleLayerIds: [],
-    warehouseLayerName: null,
+    label: "Watershed Boundaries",
+    icon: "waves",
+    renderKind: "style",
+    styleLayerIds: ["watersheds-fill", "watersheds-outline"],
+    warehouseLayerName: "watersheds",
     panelId: "water",
     permanentlyUnavailableReason: null,
   },
   vegetation: {
     toggleId: "vegetation",
+    label: "Vegetation (NDVI)",
+    icon: "leaf",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: "vegetation",
@@ -134,6 +182,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // Rendered from raster tiles, not from a geo.layers feed.
   soil: {
     toggleId: "soil",
+    label: "Soil Properties",
+    icon: "mountain",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,
@@ -146,6 +196,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // See soilSurveyLayer in layers.ts.
   "soil-survey": {
     toggleId: "soil-survey",
+    label: "Soil Survey (SSURGO)",
+    icon: "layers",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,
@@ -159,6 +211,11 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // which days the axis should offer. See SoilFieldLayer in layers/SoilFieldLayer.tsx.
   "soil-moisture": {
     toggleId: "soil-moisture",
+    // Read off the measure vocabulary rather than restated: SoilPanel already captioned this
+    // switch with `definition.layerLabel`, and two copies of a label is the drift this field
+    // exists to end.
+    label: SOIL_FIELD_MEASURES.moisture.layerLabel,
+    icon: "droplets",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,
@@ -175,6 +232,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // disabled switch would outlast the gap and nothing would reopen it.
   "soil-temperature": {
     toggleId: "soil-temperature",
+    label: SOIL_FIELD_MEASURES.temperature.layerLabel,
+    icon: "thermometer",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,
@@ -192,16 +251,25 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // satisfied. DemandHeatmapLayer/useActionNetworkFeatures/the worker needed no changes.
   "demand-heatmap": {
     toggleId: "demand-heatmap",
+    label: "Demand Heatmap",
+    icon: "users",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,
     panelId: "community",
     permanentlyUnavailableReason: null,
   },
+  // Three style layers, not two: the fill and its dashed outline draw ingested zones, and
+  // "interventions-points" draws the Point geometry every interactive submission carries.
+  // A fill layer cannot render a Point, so before the circle layer existed this toggle was
+  // switched on, served its tile and painted nothing for approved recommendations. All
+  // three must be listed here or applyVisibility flips only part of the layer.
   interventions: {
     toggleId: "interventions",
+    label: "Interventions",
+    icon: "sprout",
     renderKind: "style",
-    styleLayerIds: ["interventions", "interventions-outline"],
+    styleLayerIds: ["interventions", "interventions-outline", "interventions-points"],
     warehouseLayerName: "interventions",
     panelId: "community",
     permanentlyUnavailableReason: null,
@@ -210,6 +278,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // evacuationZonesLayer/evacuationZonesOutlineLayer in layers.ts; FireDashboard owns the switch.
   "evacuation-zones": {
     toggleId: "evacuation-zones",
+    label: "Evacuation Zones",
+    icon: "shield-alert",
     renderKind: "style",
     styleLayerIds: ["evacuation-zones", "evacuation-zones-outline"],
     warehouseLayerName: "evacuation-zones",
@@ -221,6 +291,11 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // invisible by construction rather than switched off. See burnSeverityLayer in layers.ts.
   "burn-severity": {
     toggleId: "burn-severity",
+    // "Burn History", not "Burn Severity": the published rows carry burned area and no
+    // severity class, and the fill says so. Kept byte-identical to the switch FireDashboard
+    // captioned before the label moved here.
+    label: "Burn History (MTBS)",
+    icon: "flame-kindling",
     renderKind: "style",
     styleLayerIds: ["burn-severity", "burn-severity-outline"],
     warehouseLayerName: "burn-severity",
@@ -235,6 +310,10 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // the import has run and the table is populated; nothing else needs to change.
   "building-footprints": {
     toggleId: "building-footprints",
+    // The one label with no `<LayerToggle>` predecessor to preserve: this layer is switched
+    // from the MapControls toolbar, whose button is captioned "Toggle 3D building footprints".
+    label: "3D Building Footprints",
+    icon: "building-2",
     renderKind: "style",
     styleLayerIds: ["building-footprints"],
     warehouseLayerName: null,
@@ -254,6 +333,11 @@ export function layerRegistryEntries(): LayerRegistryEntry[] {
 /** True when the string names a registry layer rather than a user-uploaded one. */
 export function isLayerToggleId(value: string): value is LayerToggleId {
   return Object.prototype.hasOwnProperty.call(LAYER_REGISTRY, value);
+}
+
+/** The layer's name as a reader knows it. The only place a switch or a row may read it from. */
+export function layerLabel(toggleId: LayerToggleId): string {
+  return LAYER_REGISTRY[toggleId].label;
 }
 
 /** Entries whose visibility is flipped with setLayoutProperty instead of mount/unmount. */

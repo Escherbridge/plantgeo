@@ -153,15 +153,21 @@ describe("Legend", () => {
     expect(screen.queryByTestId("legend")).toBeNull();
 
     // NDWI is the same story one level down: the mode exists, the tiles never do.
+    //
+    // Driven with setState rather than a setter because the store deliberately has none:
+    // NDWI, NBR and the NDVI anomaly have no published upstream at all, so `mode` is a
+    // constant the renderer still branches on rather than a control a reader can reach, and
+    // its setter existed only to be called from permanently disabled checkboxes. The renderer
+    // branch is still real, which is what this case exercises.
     toggleLayerOn("vegetation");
     act(() => {
-      useVegetationStore.getState().setMode("ndwi");
+      useVegetationStore.setState({ mode: "ndwi" });
     });
 
     expect(screen.queryByTestId("legend-entry-vegetation")).toBeNull();
 
     act(() => {
-      useVegetationStore.getState().setMode("ndvi");
+      useVegetationStore.setState({ mode: "ndvi" });
     });
 
     expect(screen.getByTestId("legend-entry-vegetation")).toBeTruthy();

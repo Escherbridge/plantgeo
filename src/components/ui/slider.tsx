@@ -11,7 +11,38 @@ interface SliderProps {
   onValueChange: (value: number) => void;
   className?: string;
   disabled?: boolean;
+  /** Forwarded so a caption elsewhere can point at this control with `htmlFor`. */
+  id?: string;
+  /**
+   * A slider MUST carry one of these. A bare `<input type="range">` announces as an unnamed
+   * slider, which is what every use of this component did before the layer tree needed
+   * seventeen of them on one screen.
+   */
+  "aria-label"?: string;
+  "aria-labelledby"?: string;
+  /**
+   * What the value MEANS, spoken. Without it a 0-to-1 opacity reads as "0.6"; with it, "60
+   * percent". Never fold the reading into the name -- the name must stay stable as the thumb
+   * moves.
+   */
+  "aria-valuetext"?: string;
+  /** Extra description (a percentage caption, a unit) that is not part of the name. */
+  "aria-describedby"?: string;
 }
+
+/**
+ * Injected once per document rather than once per instance.
+ *
+ * This block used to render inside the component body, so N sliders emitted N identical
+ * `<style>` elements -- and the layer tree puts one slider on every switched-on layer.
+ *
+ * `height` deliberately sets only a floor via the `plantgeo-slider` class being overridable:
+ * the rule below is what a bare slider looks like, and any caller may raise the box with a
+ * `className` height (the layer rows use `max-sm:h-11` for the 44px mobile tap target the
+ * rest of this codebase enforces). Tailwind utilities win over this rule's single class
+ * specificity, so no `!important` and no inline style is needed.
+ */
+const SLIDER_STYLE_ELEMENT_ID = "plantgeo-slider-styles";
 
 const sliderStyles = `
   .plantgeo-slider {
@@ -68,6 +99,25 @@ const sliderStyles = `
   }
 `;
 
+/**
+ * Appends the stylesheet the first time any slider mounts and leaves it in place.
+ *
+ * Guarded on the element id rather than a module flag so a second bundle instance, or a
+ * remount after a fast-refresh, still resolves to one `<style>`. It is never removed: the
+ * rules are static, so tearing them down on the last unmount would only risk a flash of an
+ * unstyled control when the next one mounts.
+ */
+function useSliderStyles(): void {
+  React.useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (document.getElementById(SLIDER_STYLE_ELEMENT_ID) !== null) return;
+    const style = document.createElement("style");
+    style.id = SLIDER_STYLE_ELEMENT_ID;
+    style.textContent = sliderStyles;
+    document.head.appendChild(style);
+  }, []);
+}
+
 function Slider({
   min = 0,
   max = 100,
@@ -76,26 +126,35 @@ function Slider({
   onValueChange,
   className,
   disabled = false,
+  id,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
+  "aria-valuetext": ariaValueText,
+  "aria-describedby": ariaDescribedBy,
 }: SliderProps) {
+  useSliderStyles();
+
   const percentage = ((value - min) / (max - min)) * 100;
 
   const trackBackground = `linear-gradient(to right, hsl(var(--primary)) ${percentage}%, hsl(var(--secondary)) ${percentage}%)`;
 
   return (
-    <>
-      <style dangerouslySetInnerHTML={{ __html: sliderStyles }} />
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onValueChange(Number(e.target.value))}
-        className={cn("plantgeo-slider w-full", className)}
-        style={{ background: trackBackground }}
-      />
-    </>
+    <input
+      type="range"
+      id={id}
+      min={min}
+      max={max}
+      step={step}
+      value={value}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledBy}
+      aria-valuetext={ariaValueText}
+      aria-describedby={ariaDescribedBy}
+      onChange={(e) => onValueChange(Number(e.target.value))}
+      className={cn("plantgeo-slider w-full", className)}
+      style={{ background: trackBackground }}
+    />
   );
 }
 Slider.displayName = "Slider";

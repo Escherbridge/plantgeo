@@ -113,8 +113,15 @@ async def dispose_combined_local_engine() -> None:
 
 
 @asynccontextmanager
-async def local_source_loader_session(database_url: str) -> AsyncIterator[AsyncSession]:
-    """Yield one isolated session for an explicitly approved local source loader DSN."""
+async def local_source_loader_engine(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """Yield one session factory for a whole loader command, so a per-cell loop pays one handshake, not thousands.
+
+    `local_source_loader_session` below is the single-shot form and builds its engine per `async with` on
+    purpose: `ingest/commands.py` and `ingest/archive_walk.py` both bind once per slice *because* that is
+    expensive. A command that persists once per cell or once per chunk should hold this factory across its
+    loop and open a session per unit of work from it -- the per-unit transaction boundary is unchanged, but
+    the TCP+TLS+auth handshake and asyncpg's prepared-statement cache are paid for once instead of per unit.
+    """
     loader_engine = create_async_engine(
         database_url,
         pool_size=1,
@@ -122,12 +129,17 @@ async def local_source_loader_session(database_url: str) -> AsyncIterator[AsyncS
         pool_pre_ping=True,
         echo=False,
     )
-    loader_session = async_sessionmaker(loader_engine, class_=AsyncSession, expire_on_commit=False)
     try:
-        async with loader_session() as session:
-            yield session
+        yield async_sessionmaker(loader_engine, class_=AsyncSession, expire_on_commit=False)
     finally:
         await loader_engine.dispose()
+
+
+@asynccontextmanager
+async def local_source_loader_session(database_url: str) -> AsyncIterator[AsyncSession]:
+    """Yield one isolated session for an explicitly approved local source loader DSN."""
+    async with local_source_loader_engine(database_url) as loader_session, loader_session() as session:
+        yield session
 
 
 @asynccontextmanager

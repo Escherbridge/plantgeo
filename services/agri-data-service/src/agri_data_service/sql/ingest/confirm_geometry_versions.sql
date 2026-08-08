@@ -1,0 +1,68 @@
+-- Purpose: stamp the open version of each named place with this run's clock, recording that
+--          the shape upstream still agrees with the version already stored.
+-- Loaded by: agri_data_service.ingest.geometry
+-- Params: run_clock (timestamptz) -- when this ingestion run happened. One clock is used for
+--         the whole call, so every version a single run confirms carries the same value and a
+--         run reads as one event rather than as a smear of per-row timestamps. Unlike the array
+--         parameters elsewhere in this package it is bound as a real timestamp, not as text.
+--         natural_keys (text[]) -- every place whose open version was classified as unchanged.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap"
+-- in sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too, and would
+-- mint a bind parameter nobody supplies.
+--
+-- What this returns: nothing. It is executed purely for its effect on last_confirmed_at.
+--
+-- What last_confirmed_at is, and what it is not
+--
+--   It answers "when did a run last see this version still agreeing with upstream" -- a
+--   staleness signal, and nothing more. It is deliberately NOT a validity bound. The instants
+--   that say when a shape was true are version_valid_from and version_valid_to, and those come
+--   from what a producer says it observed, never from when this service happened to run.
+--
+--   Keeping the two apart is what makes the history trustworthy. If a confirmation moved a
+--   validity bound, then an ingestion schedule -- a cron that fired late, a backfill replayed
+--   out of order -- would be rewriting when shapes were true on the ground. Instead a
+--   confirmation says only "still current as of this run", which is exactly the question an
+--   operator asks when a place has not been heard from in a month. See the geo.geometry DDL,
+--   which documents the column the same way, and ingest/AGENTS.md "geometry.py".
+--
+--   The consequence worth knowing: a place whose shape moved but could not be dated is
+--   deliberately NOT confirmed here. Its last_confirmed_at stays where it was, so the
+--   divergence shows up as staleness instead of being papered over by a fresh timestamp.
+--
+-- How this query works, clause by clause:
+--
+--   UPDATE geo.geometry SET last_confirmed_at = CAST(run_clock AS timestamptz)
+--     Writes the one column. Nothing else about the row is touched: not the geometry, not the
+--     validity bounds, not the successor pointer. A confirmation is not a change of shape, and
+--     the whole design rests on it not being recorded as one.
+--
+--     The CAST is belt and braces rather than a real conversion -- the parameter is already
+--     bound as a timestamp -- but naming the type in the SQL means the database never has to
+--     infer it from context, and the statement reads the same as its siblings in this package.
+--
+--   WHERE natural_key = ANY(CAST(natural_keys AS text[]))
+--     ANY applied to an array is "equal to any element of this array" -- the array form of IN.
+--     It is used here rather than IN because IN needs a list written into the SQL text, one
+--     placeholder per value, so the statement's shape would change with the size of the batch
+--     and the database would have to plan it afresh every time. ANY takes the whole batch as a
+--     single parameter, so one prepared statement serves a batch of one and a batch of ten
+--     thousand alike, in one round trip.
+--
+--     The CAST exists purely to pin the parameter's type. A bind parameter arrives with no type
+--     of its own, and the database will not guess which array type is meant. The Python call
+--     site declares the same type again with bindparam(...); both halves are needed for a
+--     Python list to arrive as a real PostgreSQL text array.
+--
+--   AND version_valid_to IS NULL
+--     Restricts the update to the single open version of each place. geo.geometry holds the
+--     whole history of a place's shape as a chain of rows -- each valid from
+--     version_valid_from until version_valid_to, with the newest row ending in NULL to mean
+--     "still true, no end known". Without this condition every historical version in the chain
+--     would have its confirmation stamp rewritten, which would claim that shapes retired years
+--     ago were seen upstream this morning.
+UPDATE geo.geometry
+SET last_confirmed_at = CAST(:run_clock AS timestamptz)
+WHERE natural_key = ANY(CAST(:natural_keys AS text[]))
+  AND version_valid_to IS NULL

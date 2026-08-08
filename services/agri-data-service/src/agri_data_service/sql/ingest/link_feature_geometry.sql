@@ -1,0 +1,102 @@
+-- Purpose: repoint geo.features rows at the geometry versions just resolved for them, touching
+--          only the rows that are not already pointing there.
+-- Loaded by: agri_data_service.ingest.geometry
+-- Params: feature_ids (text[]) -- the geo.features rows to repoint, as uuid text.
+--         geometry_ids (text[]) -- the version each of those rows should point at, as uuid text.
+--
+-- Both arrays are positional and must be exactly the same length: element 3 of each one
+-- describes the same link. Nothing in the SQL can check that, so the caller builds both from
+-- the same sequence in the same pass.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap"
+-- in sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too, and would
+-- mint a bind parameter nobody supplies.
+--
+-- What this returns: the id of every feature row this statement genuinely moved. Rows already
+-- pointing at the right version are absent. The caller counts the rows, so the number it
+-- reports is features actually repointed rather than links requested.
+--
+-- What the link is for
+--
+--   geo.features holds the observations -- a fire detection, a soil sample, a reading -- and
+--   geo.geometry holds the versioned history of the *places* those observations are about.
+--   geometry_id is the pointer between them. It is deliberately not unique on the feature side:
+--   ten thousand raster samples falling in five hundred grid cells resolve to five hundred
+--   geometry rows, and every sample in a cell points at that cell's version.
+--
+--   The pointer has to be maintained rather than set once, because a place's shape can change.
+--   When it does, a new version is opened and the old one is ended, and the features that are
+--   about that place must be moved onto the new version -- otherwise they would keep referring
+--   to a shape that is no longer current. This statement is that move, run once per batch after
+--   the versions themselves have been settled.
+--
+-- How this query works, clause by clause:
+--
+--   UPDATE geo.features AS feature
+--     The rows being modified, given the short name "feature" so the clauses below can tell
+--     them apart from the batch of instructions joined in.
+--
+--   SET geometry_id = CAST(link.geometry_id AS uuid)
+--     Writes the pointer, and nothing else. In particular it does not touch properties, and
+--     that omission is load-bearing rather than incidental: the trigger geo_features_sync_geom
+--     that keeps a feature's geometry in step with its stored payload is declared BEFORE INSERT
+--     OR UPDATE *OF properties*, so an update that leaves properties alone does not fire it.
+--     Repointing therefore costs no GeoJSON re-parse, however many rows are involved.
+--
+--     The cast is needed because the value arrives as text. An array holds a single type, and
+--     text is the one spelling that carries a UUID over the wire alongside everything else this
+--     package sends the same way.
+--
+--   FROM unnest(CAST(feature_ids AS text[]), CAST(geometry_ids AS text[]))
+--     An UPDATE ... FROM joins the target table to something else and updates each matched row
+--     using values from the match -- it is how one statement applies a different value to each
+--     of many rows, instead of one statement per row.
+--
+--     unnest turns an array into a set of rows, one row per element, so an array can be used
+--     where a table can. Given two arrays at once it zips them: one row per position, taking
+--     one element from each. That is what makes the arrays positional, and what makes equal
+--     lengths a requirement -- a short array is padded with NULLs rather than rejected, so a
+--     length mismatch would quietly clear a pointer instead of failing.
+--
+--     Each CAST exists purely to pin its parameter's type. A bind parameter arrives with no
+--     type of its own and unnest is overloaded for every array type, so without the cast the
+--     database cannot tell which one is meant. The Python call site declares the same types
+--     again with bindparam(...); both halves are needed for a Python list to arrive as a real
+--     PostgreSQL text array.
+--
+--   AS link(feature_id, geometry_id)
+--     Names the zipped table and its columns in array order, so they can be referred to by name
+--     in the SET and WHERE clauses.
+--
+--   WHERE feature.id = CAST(link.feature_id AS uuid)
+--     The join condition: each instruction finds the one row it names. In an UPDATE ... FROM
+--     the join lives in the WHERE clause rather than in an ON clause, and omitting it would not
+--     be an error -- it would match every row against every instruction and repoint the entire
+--     table. It is the single most load-bearing line here.
+--
+--   AND feature.geometry_id IS DISTINCT FROM CAST(link.geometry_id AS uuid)
+--     Skips the rows already pointing at the right version, which on a steady tick is nearly
+--     all of them. That is worth doing for three reasons: no write means no new row version for
+--     the database to store and later clean up, no write means no lock held on a row nothing is
+--     changing, and no write means the row is absent from the RETURNING output so the reported
+--     count stays honest.
+--
+--     IS DISTINCT FROM is used rather than the ordinary <> because of NULL. A feature that has
+--     never been linked has geometry_id NULL, and NULL <> anything is not true but "unknown",
+--     which fails the condition and would leave that row unlinked forever -- exactly the row
+--     most in need of the update. IS DISTINCT FROM treats NULL as a value that can be compared:
+--     NULL is distinct from any non-NULL, and not distinct from NULL. It is "are these two
+--     genuinely different", which is the question actually being asked.
+--
+--   RETURNING feature.id
+--     RETURNING makes a writing statement also produce rows, describing what it just changed --
+--     the same trip that performs the write reports its result, with no second query and no
+--     window in which another transaction could change the answer. Together with the condition
+--     above it is what turns "how many links did we request" into "how many features did we
+--     actually move".
+UPDATE geo.features AS feature
+SET geometry_id = CAST(link.geometry_id AS uuid)
+FROM unnest(CAST(:feature_ids AS text[]), CAST(:geometry_ids AS text[])) AS link(feature_id, geometry_id)
+WHERE feature.id = CAST(link.feature_id AS uuid)
+  AND feature.geometry_id IS DISTINCT FROM CAST(link.geometry_id AS uuid)
+RETURNING feature.id

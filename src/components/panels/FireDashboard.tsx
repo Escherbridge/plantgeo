@@ -67,15 +67,15 @@ export function FireDashboard({
           </SheetTitle>
         </SheetHeader>
 
-        <LayerToggle layerId="fire" label="Fire Detections" />
-        <LayerToggle layerId="fire-perimeters" label="Active Fire Perimeters" />
+        <LayerToggle layerId="fire" />
+        <LayerToggle layerId="fire-perimeters" />
         {/* The registry gives "evacuation-zones" to this panel and the rail's tooltip
             names it, but no switch was ever added here -- so geo.evacuation_zone_tiles()'
             published Oregon OEM zones served correctly and could be turned on by nothing. */}
-        <LayerToggle layerId="evacuation-zones" label="Evacuation Zones" />
+        <LayerToggle layerId="evacuation-zones" />
         {/* MTBS burn scars, labelled "Burn History" rather than "Burn Severity": the
             published rows carry burned area and no severity class, and the fill says so. */}
-        <LayerToggle layerId="burn-severity" label="Burn History (MTBS)" />
+        <LayerToggle layerId="burn-severity" />
 
         <div className="flex flex-col gap-4 mt-4 overflow-y-auto max-h-[calc(100vh-8rem)]">
           {fireData.error && !fireData.isLoading && (

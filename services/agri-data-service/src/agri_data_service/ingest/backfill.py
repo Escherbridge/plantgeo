@@ -11,6 +11,7 @@ from uuid import UUID
 import structlog
 from sqlalchemy import text
 
+from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.ingest.geometry import (
     GEOMETRY_VERSION_ACTIONS,
     FeatureGeometryLink,
@@ -299,21 +300,7 @@ def merge_backfill_results(source_name: str, results: Sequence[IngestionJobResul
     )
 
 
-_SELECT_UNVERSIONED_FEATURES = text(
-    """
-    SELECT feature.id AS feature_id,
-           feature.layer_id AS layer_id,
-           layer.name AS layer_name,
-           feature.properties::text AS properties_json
-    FROM geo.features AS feature
-    JOIN geo.layers AS layer ON layer.id = feature.layer_id
-    WHERE feature.geometry_id IS NULL
-      AND feature.geom IS NOT NULL
-      AND feature.id > CAST(:cursor AS uuid)
-    ORDER BY feature.id
-    LIMIT :batch_size
-    """
-)
+_SELECT_UNVERSIONED_FEATURES = text(load_query_sql("ingest/select_unversioned_features.sql"))
 
 
 def _stored_coordinates(properties: Mapping[str, object]) -> Sequence[object] | None:

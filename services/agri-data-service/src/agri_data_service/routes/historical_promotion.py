@@ -4,17 +4,22 @@ import hashlib
 import json as json_parser
 import secrets
 import uuid
+from collections.abc import Sequence
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
-from typing import Any, NoReturn
+from itertools import batched
+from typing import Any, Final, NoReturn
 
 from sanic import Blueprint, Request, json
 from sanic.response import HTTPResponse
-from sqlalchemy import func, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import receiver_writer_session
+from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.execution.historical_promotion import (
     ERA5_LAND_SOURCE_KEY,
     NASA_POWER_SOURCE_KEY,
@@ -38,6 +43,7 @@ from agri_data_service.execution.historical_promotion import (
     HistoricalUsdmCoverageAuditRecord,
     HistoricalUsdmPolygonRecord,
     historical_source_release_key,
+    historical_source_release_sort_key,
     historical_source_release_token,
 )
 from agri_data_service.models.historical import (
@@ -70,10 +76,41 @@ from agri_data_service.models.provenance import (
 historical_promotion_bp = Blueprint("historical_promotion", url_prefix="/historical-promotions")
 WGS84_SRID = 4326
 
+# One IN-list is one round trip, so the only reason to bound it is Postgres' bind-parameter ceiling.
+PREFETCH_KEYS_PER_QUERY: Final = 500
+
+_REQUIRE_VALID_GEOMETRY = text(load_query_sql("routes/require_valid_geometry.sql"))
+
 type GridCellRecord = HistoricalNasaCellRecord | HistoricalEra5CellRecord
 type GridCrosswalkRecord = HistoricalNasaCrosswalkRecord | HistoricalEra5CrosswalkRecord
 type GridObservationRecord = HistoricalNasaObservationRecord | HistoricalEra5ObservationRecord
 type GridCoverageRecord = HistoricalNasaCoverageAuditRecord | HistoricalEra5CoverageAuditRecord
+
+type ReleaseIdentityKey = tuple[str, str, str, str]
+type CrosswalkKey = tuple[uuid.UUID, str, uuid.UUID]
+type ObservationKey = tuple[uuid.UUID, uuid.UUID, str, str, str, datetime]
+type GridCoverageKey = tuple[uuid.UUID, uuid.UUID, str, str, str, datetime, datetime]
+type UsdmPolygonKey = tuple[uuid.UUID, int, str, str]
+type UsdmCoverageKey = tuple[uuid.UUID, str, datetime, datetime]
+
+
+@dataclass(slots=True)
+class _ChunkIndex:
+    """Every row one chunk could collide with, read once before the import loop and kept current as records add rows.
+
+    Each map is keyed by exactly the natural key the per-record probe it replaces compared on, so a lookup
+    answers the same question the SELECT did. See routes/AGENTS.md "historical_promotion.py".
+    """
+
+    data_sources: dict[str, DataSource] = dataclass_field(default_factory=dict)
+    releases: dict[ReleaseIdentityKey, SourceRelease] = dataclass_field(default_factory=dict)
+    cells: dict[str, SpatialCell] = dataclass_field(default_factory=dict)
+    artifact_receipts: dict[uuid.UUID, HistoricalPromotionArtifactReceipt] = dataclass_field(default_factory=dict)
+    crosswalks: dict[CrosswalkKey, CellSourceCrosswalk] = dataclass_field(default_factory=dict)
+    observations: dict[ObservationKey, SignalObservation] = dataclass_field(default_factory=dict)
+    grid_coverage: dict[GridCoverageKey, SignalCoverageAudit] = dataclass_field(default_factory=dict)
+    usdm_polygons: dict[UsdmPolygonKey, DroughtPolygonSnapshot] = dataclass_field(default_factory=dict)
+    usdm_coverage: dict[UsdmCoverageKey, SourceCoverageAudit] = dataclass_field(default_factory=dict)
 
 
 class _PromotionAbortError(Exception):
@@ -193,8 +230,9 @@ async def receive_chunk(  # noqa: PLR0911
             if sequence > 1 and await session.get(HistoricalPromotionChunkReceipt, (bundle_id, sequence - 1)) is None:
                 _abort("chunk_sequence_gap", 409)
             _validate_chunk_membership(manifest.release_set, chunk.records)
+            index = await _build_chunk_index(session, bundle, chunk.records)
             for record in chunk.records:
-                await _import_record(session, bundle, record)
+                await _import_record(session, index, bundle, record)
             session.add(
                 HistoricalPromotionChunkReceipt(
                     bundle_id=bundle.id,
@@ -412,35 +450,230 @@ def _expected_source_key(record: HistoricalPromotionRecord) -> str | None:
     return None
 
 
-async def _import_record(
-    session: AsyncSession, bundle: HistoricalPromotionBundle, record: HistoricalPromotionRecord
+def _crosswalk_key(row: CellSourceCrosswalk) -> CrosswalkKey:
+    return (row.source_release_id, row.native_feature_key, row.cell_id)
+
+
+def _observation_key(row: SignalObservation) -> ObservationKey:
+    return (
+        row.source_release_id,
+        row.cell_id,
+        row.signal_name,
+        row.source_parameter,
+        row.support_key,
+        row.observed_at,
+    )
+
+
+def _grid_coverage_key(row: SignalCoverageAudit) -> GridCoverageKey:
+    return (
+        row.source_release_id,
+        row.cell_id,
+        row.signal_name,
+        row.source_parameter,
+        row.support_key,
+        row.window_start,
+        row.window_end,
+    )
+
+
+def _usdm_polygon_key(row: DroughtPolygonSnapshot) -> UsdmPolygonKey:
+    return (row.source_release_id, row.severity_class, row.impact_type, row.geometry_checksum)
+
+
+def _usdm_coverage_key(row: SourceCoverageAudit) -> UsdmCoverageKey:
+    return (row.source_release_id, row.scope_key, row.window_start, row.window_end)
+
+
+def _chunk_cell_keys(records: Sequence[HistoricalPromotionRecord]) -> set[str]:
+    """Every cell_key the chunk names, whatever record type names it."""
+    return {
+        record.cell_key
+        for record in records
+        if isinstance(
+            record,
+            (
+                HistoricalNasaCellRecord,
+                HistoricalEra5CellRecord,
+                HistoricalNasaCrosswalkRecord,
+                HistoricalEra5CrosswalkRecord,
+                HistoricalNasaObservationRecord,
+                HistoricalEra5ObservationRecord,
+                HistoricalNasaCoverageAuditRecord,
+                HistoricalEra5CoverageAuditRecord,
+            ),
+        )
+    }
+
+
+async def _build_chunk_index(
+    session: AsyncSession, bundle: HistoricalPromotionBundle, records: Sequence[HistoricalPromotionRecord]
+) -> _ChunkIndex:
+    """Read every row the chunk could collide with up front, so importing a record costs no round trip of its own."""
+    index = _ChunkIndex()
+    identities = {
+        historical_source_release_sort_key(release): release
+        for release in (_record_release(record) for record in records)
+        if release is not None
+    }
+    source_keys = {record.source_key for record in records if isinstance(record, HistoricalDataSourceRecord)}
+    source_keys |= {identity_key[0] for identity_key in identities}
+    for batch in batched(sorted(source_keys), PREFETCH_KEYS_PER_QUERY):
+        sources = (await session.execute(select(DataSource).where(DataSource.key.in_(batch)))).scalars()
+        index.data_sources.update({source.key: source for source in sources})
+    await _load_source_releases(session, index, list(identities.values()))
+    for batch in batched(sorted(_chunk_cell_keys(records)), PREFETCH_KEYS_PER_QUERY):
+        cells = (await session.execute(select(SpatialCell).where(SpatialCell.cell_key.in_(batch)))).scalars()
+        index.cells.update({cell.cell_key: cell for cell in cells})
+    if any(isinstance(record, HistoricalArtifactRecord) for record in records):
+        receipts = (
+            await session.execute(
+                select(HistoricalPromotionArtifactReceipt).where(
+                    HistoricalPromotionArtifactReceipt.bundle_id == bundle.id
+                )
+            )
+        ).scalars()
+        index.artifact_receipts.update({receipt.source_release_id: receipt for receipt in receipts})
+    await _load_collision_rows(session, index, records)
+    return index
+
+
+async def _load_source_releases(
+    session: AsyncSession, index: _ChunkIndex, identities: Sequence[HistoricalSourceReleaseIdentity]
 ) -> None:
+    """Resolve the chunk's distinct release identities in one query, keyed the way the per-record probe keyed them."""
+    for batch in batched(identities, PREFETCH_KEYS_PER_QUERY):
+        rows = await session.execute(
+            select(SourceRelease, DataSource.key)
+            .join(DataSource, DataSource.id == SourceRelease.data_source_id)
+            .where(
+                or_(
+                    *[
+                        and_(
+                            DataSource.key == identity.source_key,
+                            SourceRelease.source_version == identity.source_version,
+                            SourceRelease.payload_checksum == identity.payload_checksum,
+                            SourceRelease.transform_version == identity.transform_version,
+                        )
+                        for identity in batch
+                    ]
+                )
+            )
+        )
+        for release, source_key in rows.tuples():
+            index.releases[
+                (source_key, release.source_version, release.payload_checksum, release.transform_version)
+            ] = release
+
+
+async def _load_collision_rows(
+    session: AsyncSession, index: _ChunkIndex, records: Sequence[HistoricalPromotionRecord]
+) -> None:
+    """Read the existing children of the releases and cells the chunk names; a row created here has none to read."""
+    release_ids = [release.id for release in index.releases.values()]
+    if not release_ids:
+        return
+    cell_ids = [cell.id for cell in index.cells.values()]
+    observed_ats = [
+        record.observed_at
+        for record in records
+        if isinstance(record, (HistoricalNasaObservationRecord, HistoricalEra5ObservationRecord))
+    ]
+    has_crosswalks = any(
+        isinstance(record, (HistoricalNasaCrosswalkRecord, HistoricalEra5CrosswalkRecord)) for record in records
+    )
+    has_grid_coverage = any(
+        isinstance(record, (HistoricalNasaCoverageAuditRecord, HistoricalEra5CoverageAuditRecord)) for record in records
+    )
+    observed_window = (min(observed_ats), max(observed_ats)) if observed_ats else None
+    for batch in batched(cell_ids, PREFETCH_KEYS_PER_QUERY):
+        if has_crosswalks:
+            crosswalks = (
+                await session.execute(
+                    select(CellSourceCrosswalk).where(
+                        CellSourceCrosswalk.source_release_id.in_(release_ids),
+                        CellSourceCrosswalk.cell_id.in_(batch),
+                    )
+                )
+            ).scalars()
+            index.crosswalks.update({_crosswalk_key(row): row for row in crosswalks})
+        if observed_window is not None:
+            # An instant range rather than an IN-list of every instant: a superset of the rows the
+            # per-record probes could have matched, which is all an exact-key dict lookup needs.
+            observed_from, observed_to = observed_window
+            observations = (
+                await session.execute(
+                    select(SignalObservation).where(
+                        SignalObservation.source_release_id.in_(release_ids),
+                        SignalObservation.cell_id.in_(batch),
+                        SignalObservation.observed_at >= observed_from,
+                        SignalObservation.observed_at <= observed_to,
+                    )
+                )
+            ).scalars()
+            index.observations.update({_observation_key(row): row for row in observations})
+        if has_grid_coverage:
+            coverage = (
+                await session.execute(
+                    select(SignalCoverageAudit).where(
+                        SignalCoverageAudit.source_release_id.in_(release_ids),
+                        SignalCoverageAudit.cell_id.in_(batch),
+                    )
+                )
+            ).scalars()
+            index.grid_coverage.update({_grid_coverage_key(row): row for row in coverage})
+    checksums = sorted(
+        {record.geometry_checksum for record in records if isinstance(record, HistoricalUsdmPolygonRecord)}
+    )
+    for checksum_batch in batched(checksums, PREFETCH_KEYS_PER_QUERY):
+        polygons = (
+            await session.execute(
+                select(DroughtPolygonSnapshot).where(
+                    DroughtPolygonSnapshot.source_release_id.in_(release_ids),
+                    DroughtPolygonSnapshot.geometry_checksum.in_(checksum_batch),
+                )
+            )
+        ).scalars()
+        index.usdm_polygons.update({_usdm_polygon_key(row): row for row in polygons})
+    if any(isinstance(record, HistoricalUsdmCoverageAuditRecord) for record in records):
+        usdm_coverage = (
+            await session.execute(
+                select(SourceCoverageAudit).where(SourceCoverageAudit.source_release_id.in_(release_ids))
+            )
+        ).scalars()
+        index.usdm_coverage.update({_usdm_coverage_key(row): row for row in usdm_coverage})
+
+
+async def _import_record(
+    session: AsyncSession, index: _ChunkIndex, bundle: HistoricalPromotionBundle, record: HistoricalPromotionRecord
+) -> None:
+    """Import one record. Only the record types that must reach PostGIS or claim a surrogate key still await."""
     if isinstance(record, HistoricalDataSourceRecord):
-        await _ensure_data_source(session, bundle, record)
+        await _ensure_data_source(session, index, bundle, record)
     elif isinstance(record, HistoricalSourceReleaseRecord):
-        await _ensure_source_release(session, bundle, record)
+        await _ensure_source_release(session, index, bundle, record)
     elif isinstance(record, HistoricalArtifactRecord):
-        await _ensure_artifact_receipt(session, bundle, record)
+        _ensure_artifact_receipt(session, index, bundle, record)
     elif isinstance(record, (HistoricalNasaCellRecord, HistoricalEra5CellRecord)):
-        await _ensure_cell(session, record)
+        await _ensure_cell(session, index, record)
     elif isinstance(record, (HistoricalNasaCrosswalkRecord, HistoricalEra5CrosswalkRecord)):
-        await _ensure_crosswalk(session, record)
+        await _ensure_crosswalk(session, index, record)
     elif isinstance(record, (HistoricalNasaObservationRecord, HistoricalEra5ObservationRecord)):
-        await _ensure_observation(session, record)
+        _ensure_observation(session, index, record)
     elif isinstance(record, (HistoricalNasaCoverageAuditRecord, HistoricalEra5CoverageAuditRecord)):
-        await _ensure_grid_coverage(session, record)
+        _ensure_grid_coverage(session, index, record)
     elif isinstance(record, HistoricalUsdmPolygonRecord):
-        await _ensure_usdm_polygon(session, record)
+        await _ensure_usdm_polygon(session, index, record)
     elif isinstance(record, HistoricalUsdmCoverageAuditRecord):
-        await _ensure_usdm_coverage(session, record)
+        _ensure_usdm_coverage(session, index, record)
     else:  # pragma: no cover - discriminated union exhaustiveness guard
         raise ValueError(f"unsupported historical record type {record.record_type}")
 
 
 async def _ensure_data_source(
-    session: AsyncSession, bundle: HistoricalPromotionBundle, record: HistoricalDataSourceRecord
+    session: AsyncSession, index: _ChunkIndex, bundle: HistoricalPromotionBundle, record: HistoricalDataSourceRecord
 ) -> DataSource:
-    source = (await session.execute(select(DataSource).where(DataSource.key == record.source_key))).scalar_one_or_none()
+    source = index.data_sources.get(record.source_key)
     expected = {
         "name": record.name,
         "owner": record.owner,
@@ -464,6 +697,7 @@ async def _ensure_data_source(
         )
         session.add(source)
         await session.flush()
+        index.data_sources[record.source_key] = source
     elif (
         source.review_state != SourceReviewState.APPROVED
         or not source.is_active
@@ -477,23 +711,13 @@ async def _ensure_data_source(
 
 
 async def _ensure_source_release(
-    session: AsyncSession, bundle: HistoricalPromotionBundle, record: HistoricalSourceReleaseRecord
+    session: AsyncSession, index: _ChunkIndex, bundle: HistoricalPromotionBundle, record: HistoricalSourceReleaseRecord
 ) -> SourceRelease:
-    source = (
-        await session.execute(select(DataSource).where(DataSource.key == record.release.source_key))
-    ).scalar_one_or_none()
+    source = index.data_sources.get(record.release.source_key)
     if source is None:
         _abort("source_release_before_data_source", 409)
-    release = (
-        await session.execute(
-            select(SourceRelease).where(
-                SourceRelease.data_source_id == source.id,
-                SourceRelease.source_version == record.release.source_version,
-                SourceRelease.payload_checksum == record.release.payload_checksum,
-                SourceRelease.transform_version == record.release.transform_version,
-            )
-        )
-    ).scalar_one_or_none()
+    identity_key = historical_source_release_sort_key(record.release)
+    release = index.releases.get(identity_key)
     expected = {
         "retrieved_at": record.retrieved_at,
         "data_available_at": record.data_available_at,
@@ -517,6 +741,7 @@ async def _ensure_source_release(
         )
         session.add(release)
         await session.flush()
+        index.releases[identity_key] = release
     elif any(getattr(release, field) != value for field, value in expected.items()):
         _abort("source_release_conflict", 409)
     receipt = await session.get(HistoricalPromotionSourceReleaseReceipt, (bundle.id, release.id))
@@ -543,20 +768,29 @@ async def _source_release(session: AsyncSession, identity: HistoricalSourceRelea
     return release
 
 
-async def _ensure_artifact_receipt(
-    session: AsyncSession, bundle: HistoricalPromotionBundle, record: HistoricalArtifactRecord
+def _indexed_source_release(index: _ChunkIndex, identity: HistoricalSourceReleaseIdentity) -> SourceRelease:
+    """The chunk-path resolve: the same row `_source_release` would have selected, read once for the whole chunk."""
+    release = index.releases.get(historical_source_release_sort_key(identity))
+    if release is None:
+        _abort("referenced_source_release_missing", 409)
+    return release
+
+
+def _indexed_cell(index: _ChunkIndex, cell_key: str, missing_code: str) -> SpatialCell:
+    """The chunk-path cell resolve, aborting with the caller's own code so the error contract is unchanged."""
+    cell = index.cells.get(cell_key)
+    if cell is None:
+        _abort(missing_code, 409)
+    return cell
+
+
+def _ensure_artifact_receipt(
+    session: AsyncSession, index: _ChunkIndex, bundle: HistoricalPromotionBundle, record: HistoricalArtifactRecord
 ) -> None:
-    release = await _source_release(session, record.release)
+    release = _indexed_source_release(index, record.release)
     if record.checksum_sha256 != release.payload_checksum or record.size_bytes != release.payload_bytes:
         _abort("artifact_source_payload_mismatch", 422)
-    receipt = (
-        await session.execute(
-            select(HistoricalPromotionArtifactReceipt).where(
-                HistoricalPromotionArtifactReceipt.bundle_id == bundle.id,
-                HistoricalPromotionArtifactReceipt.source_release_id == release.id,
-            )
-        )
-    ).scalar_one_or_none()
+    receipt = index.artifact_receipts.get(release.id)
     expected = {
         "uri": record.uri,
         "media_type": record.media_type,
@@ -565,17 +799,17 @@ async def _ensure_artifact_receipt(
         "metadata_json": record.metadata,
     }
     if receipt is None:
-        session.add(HistoricalPromotionArtifactReceipt(bundle_id=bundle.id, source_release_id=release.id, **expected))
+        receipt = HistoricalPromotionArtifactReceipt(bundle_id=bundle.id, source_release_id=release.id, **expected)
+        session.add(receipt)
+        index.artifact_receipts[release.id] = receipt
     elif any(getattr(receipt, field) != value for field, value in expected.items()):
         _abort("artifact_descriptor_conflict", 409)
 
 
-async def _ensure_cell(session: AsyncSession, record: GridCellRecord) -> SpatialCell:
+async def _ensure_cell(session: AsyncSession, index: _ChunkIndex, record: GridCellRecord) -> SpatialCell:
     await _require_valid_geometry(session, record.geometry_json, "POLYGON")
     await _require_valid_geometry(session, record.centroid_json, "POINT")
-    cell = (
-        await session.execute(select(SpatialCell).where(SpatialCell.cell_key == record.cell_key))
-    ).scalar_one_or_none()
+    cell = index.cells.get(record.cell_key)
     if cell is None:
         cell = SpatialCell(
             cell_key=record.cell_key,
@@ -587,6 +821,7 @@ async def _ensure_cell(session: AsyncSession, record: GridCellRecord) -> Spatial
         )
         session.add(cell)
         await session.flush()
+        index.cells[record.cell_key] = cell
     elif (
         cell.grid_name != record.grid_name
         or cell.resolution_m != record.resolution_m
@@ -598,23 +833,12 @@ async def _ensure_cell(session: AsyncSession, record: GridCellRecord) -> Spatial
     return cell
 
 
-async def _ensure_crosswalk(session: AsyncSession, record: GridCrosswalkRecord) -> None:
-    release = await _source_release(session, record.release)
-    cell = (
-        await session.execute(select(SpatialCell).where(SpatialCell.cell_key == record.cell_key))
-    ).scalar_one_or_none()
-    if cell is None:
-        _abort("crosswalk_before_cell", 409)
+async def _ensure_crosswalk(session: AsyncSession, index: _ChunkIndex, record: GridCrosswalkRecord) -> None:
+    release = _indexed_source_release(index, record.release)
+    cell = _indexed_cell(index, record.cell_key, "crosswalk_before_cell")
     await _require_valid_geometry(session, record.native_geometry_json, "POINT")
-    existing = (
-        await session.execute(
-            select(CellSourceCrosswalk).where(
-                CellSourceCrosswalk.source_release_id == release.id,
-                CellSourceCrosswalk.native_feature_key == record.native_feature_key,
-                CellSourceCrosswalk.cell_id == cell.id,
-            )
-        )
-    ).scalar_one_or_none()
+    key = (release.id, record.native_feature_key, cell.id)
+    existing = index.crosswalks.get(key)
     expected = {
         "native_resolution_m": record.native_resolution_m,
         "spatial_support_kind": record.spatial_support_kind,
@@ -623,37 +847,33 @@ async def _ensure_crosswalk(session: AsyncSession, record: GridCrosswalkRecord) 
         "metadata_json": record.metadata,
     }
     if existing is None:
-        session.add(
-            CellSourceCrosswalk(
-                source_release_id=release.id,
-                cell_id=cell.id,
-                native_feature_key=record.native_feature_key,
-                native_geometry=_geojson_geometry(record.native_geometry_json),
-                **expected,
-            )
+        crosswalk = CellSourceCrosswalk(
+            source_release_id=release.id,
+            cell_id=cell.id,
+            native_feature_key=record.native_feature_key,
+            native_geometry=_geojson_geometry(record.native_geometry_json),
+            **expected,
         )
+        session.add(crosswalk)
+        index.crosswalks[key] = crosswalk
     elif any(getattr(existing, field) != value for field, value in expected.items()) or not await _geometry_matches(
         session, CellSourceCrosswalk.native_geometry, existing.id, record.native_geometry_json
     ):
         _abort("crosswalk_conflict", 409)
 
 
-async def _ensure_observation(session: AsyncSession, record: GridObservationRecord) -> None:
-    release = await _source_release(session, record.release)
-    cell = (
-        await session.execute(select(SpatialCell).where(SpatialCell.cell_key == record.cell_key))
-    ).scalar_one_or_none()
-    if cell is None:
-        _abort("observation_before_cell", 409)
-    filters = (
-        SignalObservation.source_release_id == release.id,
-        SignalObservation.cell_id == cell.id,
-        SignalObservation.signal_name == record.signal_name,
-        SignalObservation.source_parameter == record.source_parameter,
-        SignalObservation.support_key == record.support_key,
-        SignalObservation.observed_at == record.observed_at,
+def _ensure_observation(session: AsyncSession, index: _ChunkIndex, record: GridObservationRecord) -> None:
+    release = _indexed_source_release(index, record.release)
+    cell = _indexed_cell(index, record.cell_key, "observation_before_cell")
+    key = (
+        release.id,
+        cell.id,
+        record.signal_name,
+        record.source_parameter,
+        record.support_key,
+        record.observed_at,
     )
-    existing = (await session.execute(select(SignalObservation).where(*filters))).scalar_one_or_none()
+    existing = index.observations.get(key)
     expected = {
         "valid_from": record.valid_from,
         "valid_to": record.valid_to,
@@ -668,38 +888,34 @@ async def _ensure_observation(session: AsyncSession, record: GridObservationReco
         "metadata_json": record.metadata,
     }
     if existing is None:
-        session.add(
-            SignalObservation(
-                source_release_id=release.id,
-                cell_id=cell.id,
-                signal_name=record.signal_name,
-                source_parameter=record.source_parameter,
-                support_key=record.support_key,
-                observed_at=record.observed_at,
-                **expected,
-            )
+        observation = SignalObservation(
+            source_release_id=release.id,
+            cell_id=cell.id,
+            signal_name=record.signal_name,
+            source_parameter=record.source_parameter,
+            support_key=record.support_key,
+            observed_at=record.observed_at,
+            **expected,
         )
+        session.add(observation)
+        index.observations[key] = observation
     elif any(getattr(existing, field) != value for field, value in expected.items()):
         _abort("observation_conflict", 409)
 
 
-async def _ensure_grid_coverage(session: AsyncSession, record: GridCoverageRecord) -> None:
-    release = await _source_release(session, record.release)
-    cell = (
-        await session.execute(select(SpatialCell).where(SpatialCell.cell_key == record.cell_key))
-    ).scalar_one_or_none()
-    if cell is None:
-        _abort("coverage_before_cell", 409)
-    filters = (
-        SignalCoverageAudit.source_release_id == release.id,
-        SignalCoverageAudit.cell_id == cell.id,
-        SignalCoverageAudit.signal_name == record.signal_name,
-        SignalCoverageAudit.source_parameter == record.source_parameter,
-        SignalCoverageAudit.support_key == record.support_key,
-        SignalCoverageAudit.window_start == record.window_start,
-        SignalCoverageAudit.window_end == record.window_end,
+def _ensure_grid_coverage(session: AsyncSession, index: _ChunkIndex, record: GridCoverageRecord) -> None:
+    release = _indexed_source_release(index, record.release)
+    cell = _indexed_cell(index, record.cell_key, "coverage_before_cell")
+    key = (
+        release.id,
+        cell.id,
+        record.signal_name,
+        record.source_parameter,
+        record.support_key,
+        record.window_start,
+        record.window_end,
     )
-    existing = (await session.execute(select(SignalCoverageAudit).where(*filters))).scalar_one_or_none()
+    existing = index.grid_coverage.get(key)
     expected = {
         "expected_observation_count": record.expected_observation_count,
         "received_observation_count": record.received_observation_count,
@@ -707,66 +923,53 @@ async def _ensure_grid_coverage(session: AsyncSession, record: GridCoverageRecor
         "details": record.details,
     }
     if existing is None:
-        session.add(
-            SignalCoverageAudit(
-                source_release_id=release.id,
-                cell_id=cell.id,
-                signal_name=record.signal_name,
-                source_parameter=record.source_parameter,
-                support_key=record.support_key,
-                window_start=record.window_start,
-                window_end=record.window_end,
-                **expected,
-            )
+        coverage = SignalCoverageAudit(
+            source_release_id=release.id,
+            cell_id=cell.id,
+            signal_name=record.signal_name,
+            source_parameter=record.source_parameter,
+            support_key=record.support_key,
+            window_start=record.window_start,
+            window_end=record.window_end,
+            **expected,
         )
+        session.add(coverage)
+        index.grid_coverage[key] = coverage
     elif any(getattr(existing, field) != value for field, value in expected.items()):
         _abort("grid_coverage_conflict", 409)
 
 
-async def _ensure_usdm_polygon(session: AsyncSession, record: HistoricalUsdmPolygonRecord) -> None:
-    release = await _source_release(session, record.release)
+async def _ensure_usdm_polygon(session: AsyncSession, index: _ChunkIndex, record: HistoricalUsdmPolygonRecord) -> None:
+    release = _indexed_source_release(index, record.release)
     await _require_valid_geometry(session, record.geometry_json, "MULTIPOLYGON")
-    existing = (
-        await session.execute(
-            select(DroughtPolygonSnapshot).where(
-                DroughtPolygonSnapshot.source_release_id == release.id,
-                DroughtPolygonSnapshot.severity_class == record.severity_class,
-                DroughtPolygonSnapshot.impact_type == record.impact_type,
-                DroughtPolygonSnapshot.geometry_checksum == record.geometry_checksum,
-            )
-        )
-    ).scalar_one_or_none()
+    key = (release.id, record.severity_class, record.impact_type, record.geometry_checksum)
+    existing = index.usdm_polygons.get(key)
     expected = {
         "issue_date": record.issue_date,
         "data_available_at": record.data_available_at,
         "metadata_json": {**record.metadata, "feature_key": record.feature_key},
     }
     if existing is None:
-        session.add(
-            DroughtPolygonSnapshot(
-                source_release_id=release.id,
-                severity_class=record.severity_class,
-                impact_type=record.impact_type,
-                geometry_checksum=record.geometry_checksum,
-                geometry=_geojson_geometry(record.geometry_json),
-                **expected,
-            )
+        polygon = DroughtPolygonSnapshot(
+            source_release_id=release.id,
+            severity_class=record.severity_class,
+            impact_type=record.impact_type,
+            geometry_checksum=record.geometry_checksum,
+            geometry=_geojson_geometry(record.geometry_json),
+            **expected,
         )
+        session.add(polygon)
+        index.usdm_polygons[key] = polygon
     elif any(getattr(existing, field) != value for field, value in expected.items()) or not await _geometry_matches(
         session, DroughtPolygonSnapshot.geometry, existing.id, record.geometry_json
     ):
         _abort("usdm_polygon_conflict", 409)
 
 
-async def _ensure_usdm_coverage(session: AsyncSession, record: HistoricalUsdmCoverageAuditRecord) -> None:
-    release = await _source_release(session, record.release)
-    filters = (
-        SourceCoverageAudit.source_release_id == release.id,
-        SourceCoverageAudit.scope_key == record.scope_key,
-        SourceCoverageAudit.window_start == record.window_start,
-        SourceCoverageAudit.window_end == record.window_end,
-    )
-    existing = (await session.execute(select(SourceCoverageAudit).where(*filters))).scalar_one_or_none()
+def _ensure_usdm_coverage(session: AsyncSession, index: _ChunkIndex, record: HistoricalUsdmCoverageAuditRecord) -> None:
+    release = _indexed_source_release(index, record.release)
+    key = (release.id, record.scope_key, record.window_start, record.window_end)
+    existing = index.usdm_coverage.get(key)
     expected = {
         "expected_feature_count": record.expected_feature_count,
         "received_feature_count": record.received_feature_count,
@@ -774,15 +977,15 @@ async def _ensure_usdm_coverage(session: AsyncSession, record: HistoricalUsdmCov
         "details": record.details,
     }
     if existing is None:
-        session.add(
-            SourceCoverageAudit(
-                source_release_id=release.id,
-                scope_key=record.scope_key,
-                window_start=record.window_start,
-                window_end=record.window_end,
-                **expected,
-            )
+        coverage = SourceCoverageAudit(
+            source_release_id=release.id,
+            scope_key=record.scope_key,
+            window_start=record.window_start,
+            window_end=record.window_end,
+            **expected,
         )
+        session.add(coverage)
+        index.usdm_coverage[key] = coverage
     elif any(getattr(existing, field) != value for field, value in expected.items()):
         _abort("usdm_coverage_conflict", 409)
 
@@ -792,16 +995,7 @@ def _geojson_geometry(value: str) -> Any:
 
 
 async def _require_valid_geometry(session: AsyncSession, geometry_json: str, expected_type: str) -> None:
-    result = await session.execute(
-        text(
-            """
-            SELECT ST_IsValid(ST_SetSRID(ST_GeomFromGeoJSON(CAST(:geometry AS json)), 4326)) AS valid,
-                   ST_SRID(ST_SetSRID(ST_GeomFromGeoJSON(CAST(:geometry AS json)), 4326)) AS srid,
-                   ST_GeometryType(ST_SetSRID(ST_GeomFromGeoJSON(CAST(:geometry AS json)), 4326)) AS geometry_type
-            """
-        ),
-        {"geometry": geometry_json},
-    )
+    result = await session.execute(_REQUIRE_VALID_GEOMETRY, {"geometry": geometry_json})
     valid, srid, geometry_type = result.one()
     expected_geometry_type = {
         "POINT": "ST_Point",

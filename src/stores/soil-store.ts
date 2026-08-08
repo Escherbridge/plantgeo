@@ -7,9 +7,14 @@ import {
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
 
+/**
+ * Soil DISPLAY state. There is deliberately no `opacity` here: one scalar reached the
+ * SoilGrids raster AND both ERA5-Land fields, so dimming the raster necessarily dimmed the
+ * two measurements. Opacity is per `LayerToggleId` in `layer-store.layerOpacity` now, which
+ * gives `soil`, `soil-moisture` and `soil-temperature` three independent values.
+ */
 interface SoilState {
   property: SoilProperty;
-  opacity: number;
   /**
    * Which ECMWF soil layer each field draws, per measure. A DEPTH selector, not a second
    * time control: the day always comes from the global slider. See
@@ -20,17 +25,14 @@ interface SoilState {
    */
   fieldDepth: Record<SoilFieldMeasure, SoilFieldDepth>;
   setProperty: (p: SoilProperty) => void;
-  setOpacity: (o: number) => void;
   setFieldDepth: (measure: SoilFieldMeasure, depth: SoilFieldDepth) => void;
 }
 
 export const useSoilStore = create<SoilState>()(
   devtools((set) => ({
     property: "soc",
-    opacity: 0.7,
     fieldDepth: DEFAULT_SOIL_FIELD_DEPTHS,
     setProperty: (property) => set({ property }),
-    setOpacity: (opacity) => set({ opacity }),
     setFieldDepth: (measure, depth) =>
       set((state) => ({ fieldDepth: { ...state.fieldDepth, [measure]: depth } })),
   }))

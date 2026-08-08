@@ -13,6 +13,8 @@ import {
   LAYER_TOGGLE_IDS,
   type LayerToggleId,
 } from "@/lib/map/layer-registry";
+import { DEFAULT_LAYER_OPACITY } from "@/lib/map/layer-opacity";
+import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
 import { useSoilStore } from "@/stores/soil-store";
 import { SCRUB_SETTLE_MS } from "@/stores/useMetricAtDate";
@@ -68,6 +70,37 @@ export function useLayerVisibility(): LayerVisibility {
     }
     return visibility;
   }, [activeLayers]);
+}
+
+/**
+ * One layer's opacity multiplier. Subscribes to that number alone, so dragging one row's
+ * slider re-renders one row rather than the whole tree.
+ */
+export function useLayerOpacity(layerId: LayerToggleId): number {
+  return useLayerStore((state) => state.layerOpacity[layerId] ?? DEFAULT_LAYER_OPACITY);
+}
+
+/**
+ * The multiplier for every registry layer, dense and memoized -- LayerManager's single read.
+ *
+ * Dense rather than sparse so consumers never repeat the `?? 1` fallback, and memoized on the
+ * sparse record so a toggle that no one has moved hands back a referentially stable object
+ * and does not re-run the applier effect.
+ */
+export function useLayerOpacities(): Record<LayerToggleId, number> {
+  const layerOpacity = useLayerStore((state) => state.layerOpacity);
+  return useMemo(() => {
+    const opacities = {} as Record<LayerToggleId, number>;
+    for (const toggleId of LAYER_TOGGLE_IDS) {
+      opacities[toggleId] = layerOpacity[toggleId] ?? DEFAULT_LAYER_OPACITY;
+    }
+    return opacities;
+  }, [layerOpacity]);
+}
+
+/** The one writer of layer opacity. Clamps in the store, never at the call site. */
+export function useSetLayerOpacity(): (layerId: LayerToggleId, opacity: number) => void {
+  return useLayerStore((state) => state.setLayerOpacity);
 }
 
 /** The day the map draws as of, and which series that day reads from. */
@@ -305,7 +338,6 @@ export interface VegetationDisplayMode {
   compositeUnavailableReason: string | null;
   ndviMode: "absolute" | "anomaly";
   showNDWI: boolean;
-  opacity: number;
 }
 
 /**
@@ -322,7 +354,6 @@ export function useVegetationDisplayMode(): VegetationDisplayMode {
   const mode = useVegetationStore((state) => state.mode);
   const ndviMode = useVegetationStore((state) => state.ndviMode);
   const showNDWI = useVegetationStore((state) => state.showNDWI);
-  const opacity = useVegetationStore((state) => state.opacity);
   const { settledDate, serverCurrentDate } = useDebouncedMapDay();
 
   // Plain slices of a YYYY-MM-DD string the store already validated with `isCalendarDate`;
@@ -347,15 +378,20 @@ export function useVegetationDisplayMode(): VegetationDisplayMode {
           : describeCompositeGap(compositePeriod, year, month, serverCurrentDate),
       ndviMode,
       showNDWI,
-      opacity,
     };
-  }, [mode, year, month, serverCurrentDate, ndviMode, showNDWI, opacity]);
+  }, [mode, year, month, serverCurrentDate, ndviMode, showNDWI]);
 }
 
-/** The soil layer's selected mode, as the renderer consumes it. */
+/**
+ * The soil layer's selected mode, as the renderer consumes it.
+ *
+ * No `opacity`: one scalar here drove the SoilGrids raster AND both ERA5-Land fields
+ * (LayerManager passed `soilMode.opacity` to all three), which made per-layer opacity
+ * structurally impossible for them. Each of `soil`, `soil-moisture` and `soil-temperature`
+ * now carries its own multiplier in `layer-store.layerOpacity`.
+ */
 export interface SoilDisplayMode {
   property: SoilProperty;
-  opacity: number;
   /**
    * The ECMWF layer each soil field draws, per measure. A depth, never a date -- both fields
    * take their day from `useDebouncedMapDay` like every other warehouse-backed feed.
@@ -366,8 +402,7 @@ export interface SoilDisplayMode {
 /** Read-only view of the soil store; the panel keeps the store for its setters. */
 export function useSoilDisplayMode(): SoilDisplayMode {
   const property = useSoilStore((state) => state.property);
-  const opacity = useSoilStore((state) => state.opacity);
   const fieldDepth = useSoilStore((state) => state.fieldDepth);
 
-  return useMemo(() => ({ property, opacity, fieldDepth }), [property, opacity, fieldDepth]);
+  return useMemo(() => ({ property, fieldDepth }), [property, fieldDepth]);
 }

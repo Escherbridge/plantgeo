@@ -23,6 +23,17 @@ import type { AppRouter } from "@/lib/server/trpc/router";
  * not drift.
  */
 
+/**
+ * PanelManager resolves the active team from the auth store first and the session second, so
+ * `useSession` throws here without a `<SessionProvider>`. Mocked rather than wrapped: nothing
+ * in these cases depends on a session, and a real provider would add a network-shaped
+ * dependency to a file whose whole point is that the only network stand-in is the tRPC link
+ * below. A null session is the signed-out case, and the store answers for the team either way.
+ */
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({ data: null, status: "unauthenticated" }),
+}));
+
 const panelRegistry = vi.hoisted(
   () => ({}) as Record<string, (props: Record<string, unknown>) => React.ReactNode>
 );
@@ -126,6 +137,9 @@ function createFakeMap() {
     isStyleLoaded: () => true,
     getLayer: () => true,
     setLayoutProperty: () => {},
+    // LayerManager's opacity applier writes every style-baked layer on style.load and again
+    // once the style settles; without this the fake map throws before any query runs.
+    setPaintProperty: () => {},
     setFilter: () => {},
   };
 }
@@ -215,24 +229,25 @@ describe("viewport-proxied feeds are fetched once for the map and its panel", ()
     expect(operationsFor("environmental.getSoilSurvey")).toHaveLength(1);
   });
 
-  it("gives the HUC12 boundaries one query entry, one request and one set of options", async () => {
+  // The HUC12 boundaries left this file's premise behind: the map draws them from
+  // geo.watershed_tiles() now, so the panel's list is the ONLY caller of the proxy and
+  // there is nothing left to share. That is not a weaker guarantee than the two-observer
+  // one above -- the map's copy of the request is the one that could never succeed, since
+  // environmental.getWatersheds caps a request at 1 square degree against a ~767 sq-deg
+  // viewport bbox. A second observer reappearing here means the map went back to proxying.
+  it("leaves the HUC12 proxy to the panel alone, now that the map draws it from tiles", async () => {
     useMapStore.setState({ activeLayers: ["watersheds"] });
     usePanelStore.setState({ openPanel: "water" });
 
     const queryClient = await renderMapAndPanels();
 
     await settle(queryClient);
-    expect(operationsFor("environmental.getWatersheds").length).toBeGreaterThan(0);
 
     const entries = cacheEntriesFor(queryClient, "getWatersheds");
     expect(entries).toHaveLength(1);
-    expect(entries[0].observers).toHaveLength(2);
-    expect(new Set(entries[0].observers.map((o) => o.options.staleTime))).toEqual(
-      new Set([60 * 60 * 1000])
-    );
-    expect(new Set(entries[0].observers.map((o) => o.options.retry))).toEqual(
-      new Set([1])
-    );
+    expect(entries[0].observers).toHaveLength(1);
+    expect(entries[0].observers[0].options.staleTime).toBe(60 * 60 * 1000);
+    expect(entries[0].observers[0].options.retry).toBe(1);
     // The ~5 MB HUC12 viewport is fetched once, however many surfaces read it.
     expect(operationsFor("environmental.getWatersheds")).toHaveLength(1);
   });

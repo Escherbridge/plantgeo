@@ -1,0 +1,70 @@
+-- Purpose: find which of the batch's upstream records already have a row in this layer, and
+--          what those rows' ids are, so the writer can split the batch into records to create
+--          and records to update.
+-- Loaded by: agri_data_service.ingest.writer
+-- Params: layer_id (uuid, passed as text) -- the layer being written into, already resolved
+--         from the operator-facing name or id before this runs.
+--         external_ids (text[]) -- every producer-local record id in the batch.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap"
+-- in sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too, and would
+-- mint a bind parameter nobody supplies.
+--
+-- What this returns: one row per existing feature, pairing the warehouse row id with the
+-- producer-local id it was stored under. Records with no row yet are simply absent, and their
+-- absence is the signal to create them.
+--
+-- Why the batch is split this way
+--
+--   geo.features has no unique constraint on the producer-local id, so the database cannot be
+--   asked to sort creates from updates with an ON CONFLICT clause the way a table with a
+--   natural key could be. The writer does it explicitly instead: read what exists, subtract,
+--   then create the remainder with insert_features.sql and update the rest with
+--   refresh_features.sql.
+--
+--   That read-then-write is only sound because the caller already holds an advisory lock over
+--   every one of these records for the life of the transaction -- see lock_event_keys.sql.
+--   Without it, two runs could both read "this record does not exist" and both create it. The
+--   lock, not this query, is what makes the answer still true by the time it is acted on.
+--
+-- How this query works, clause by clause:
+--
+--   properties ->> 'id' AS external_id
+--     properties is a jsonb column holding the record's whole payload, and ->> reads one key
+--     out of it as text. The related -> operator would return the value still as jsonb, which
+--     for a string would come back wrapped in quotes and would not compare equal to a plain
+--     text value; ->> is the one that unwraps it. The producer-local id is stored inside the
+--     payload rather than in a column of its own because the payload is passed through to map
+--     clients unchanged, and the id has to be part of what they receive.
+--
+--   FROM geo.features WHERE layer_id = CAST(layer_id AS uuid)
+--     Scopes the question to a single layer. It is not an optimisation: producer-local ids are
+--     only unique within the producer that minted them, so the same id can legitimately name a
+--     different record in another layer. Without this condition the writer would treat an
+--     unrelated layer's record as an existing row and update it.
+--
+--     The cast is there because the value travels from Python as a plain string. Naming the
+--     type in the SQL lets the comparison use the column's index instead of forcing every row
+--     to be converted to text first.
+--
+--   AND properties ->> 'id' = ANY(CAST(external_ids AS text[]))
+--     ANY applied to an array is "equal to any element of this array" -- the array form of IN.
+--     It is used here rather than IN because IN needs a list written into the SQL text, one
+--     placeholder per value, so the statement's shape would change with the size of the batch
+--     and the database would have to plan it afresh every time. ANY takes the whole batch as a
+--     single parameter, so one prepared statement serves every batch size, in one round trip.
+--
+--     The CAST exists purely to pin the parameter's type. A bind parameter arrives with no type
+--     of its own, and the database will not guess which array type is meant. The Python call
+--     site declares the same type again with bindparam(...); both halves are needed for a
+--     Python list to arrive as a real PostgreSQL text array.
+--
+--   (no LIMIT, and duplicates are possible)
+--     Because nothing prevents two rows in one layer from carrying the same producer-local id,
+--     this can return more rows than there were ids. The caller keeps the first row it sees per
+--     id and lets the update statement touch all of them, so a layer that has accumulated
+--     duplicates still converges instead of half-updating.
+SELECT id, properties ->> 'id' AS external_id
+FROM geo.features
+WHERE layer_id = CAST(:layer_id AS uuid)
+  AND properties ->> 'id' = ANY(CAST(:external_ids AS text[]))

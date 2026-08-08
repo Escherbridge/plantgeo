@@ -83,7 +83,15 @@ function escapeHtml(val: unknown): string {
 interface FireLayerProps {
   map: MapLibreMap | null;
   visible?: boolean;
+  /** The layer's authored strength. The design value, not a control. */
   opacity?: number;
+  /**
+   * The reader's per-layer MULTIPLIER over `opacity`, from `layer-store.layerOpacity`. 1 is
+   * "exactly as authored". This component is the only writer of both circle opacity
+   * properties, which is why the multiplier arrives rather than a replacement value -- see
+   * src/lib/map/layer-opacity.ts.
+   */
+  opacityScale?: number;
   /** Verified fire GeoJSON. Missing data renders an empty layer. */
   geojson?: GeoJSON.FeatureCollection;
 }
@@ -92,20 +100,22 @@ export function FireLayer({
   map,
   visible = true,
   opacity = 0.85,
+  opacityScale = 1,
   geojson,
 }: FireLayerProps) {
   const popupRef = useRef<Popup | null>(null);
 
   const fireData = geojson ?? EMPTY_FIRE_DATA;
+  const drawnOpacity = opacity * opacityScale;
 
   // Keep latest props in refs so style.load handler uses current values
-  const propsRef = useRef({ visible, opacity, fireData });
+  const propsRef = useRef({ visible, drawnOpacity, fireData });
   useEffect(() => {
-    propsRef.current = { visible, opacity, fireData };
-  }, [visible, opacity, fireData]);
+    propsRef.current = { visible, drawnOpacity, fireData };
+  }, [visible, drawnOpacity, fireData]);
 
   const addAllLayers = useCallback((m: MapLibreMap) => {
-    const { opacity, fireData } = propsRef.current;
+    const { drawnOpacity, fireData } = propsRef.current;
     const beforeId = getFirstSymbolLayer(m);
 
     if (!m.getSource(FIRE_SOURCE)) {
@@ -181,7 +191,7 @@ export function FireLayer({
                 ],
               ],
             ],
-            "circle-opacity": opacity,
+            "circle-opacity": drawnOpacity,
             "circle-stroke-width": 1.5,
             "circle-stroke-color": "#ffffff",
           },
@@ -259,8 +269,12 @@ export function FireLayer({
             "circle-color": "transparent",
             "circle-stroke-width": 1.5,
             "circle-stroke-color": "#ffffff",
+            // Deliberately 0, and it stays 0 at every multiplier: the ring this layer exists
+            // to draw is on circle-stroke-opacity below. This is the worked example for why
+            // opacity is a multiplier -- an absolute writer would fill every fire circle with
+            // a second opaque disc over the coloured one.
             "circle-opacity": 0,
-            "circle-stroke-opacity": opacity,
+            "circle-stroke-opacity": drawnOpacity,
           },
         },
         beforeId,
@@ -339,12 +353,13 @@ export function FireLayer({
     }
 
     if (map.getLayer(FIRE_CIRCLES)) {
-      map.setPaintProperty(FIRE_CIRCLES, "circle-opacity", opacity);
+      map.setPaintProperty(FIRE_CIRCLES, "circle-opacity", drawnOpacity);
     }
+    // The outline's circle-opacity is never written here: it is authored 0 and must stay 0.
     if (map.getLayer(FIRE_OUTLINES)) {
-      map.setPaintProperty(FIRE_OUTLINES, "circle-stroke-opacity", opacity);
+      map.setPaintProperty(FIRE_OUTLINES, "circle-stroke-opacity", drawnOpacity);
     }
-  }, [map, opacity, visible]);
+  }, [map, drawnOpacity, visible]);
 
   // Click popup for fire circles
   useEffect(() => {

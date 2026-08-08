@@ -9,6 +9,7 @@ from uuid import uuid4
 from sqlalchemy import Text, bindparam, text
 from sqlalchemy.dialects.postgresql import ARRAY
 
+from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.ingest.identity import MAX_NATURAL_KEY_LENGTH
 
 if TYPE_CHECKING:
@@ -167,145 +168,24 @@ class _VersionPlan:
     undatable: list[str] = field(default_factory=list)
 
 
-_LOCK_GEOMETRY_KEYS = text(
-    """
-    SELECT pg_advisory_xact_lock(hashtext(:lock_namespace || ':' || natural_key))
-    FROM unnest(CAST(:natural_keys AS text[])) AS locks(natural_key)
-    ORDER BY natural_key
-    """
-).bindparams(bindparam("natural_keys", type_=ARRAY(Text)))
+_LOCK_GEOMETRY_KEYS = text(load_query_sql("ingest/lock_geometry_keys.sql")).bindparams(
+    bindparam("natural_keys", type_=ARRAY(Text))
+)
 
-# `open_version.geom = resolved.geom` is PostGIS exact equality (same coordinates in the same order), the
-# cheap path that carries virtually every tick. ST_Equals is the topological fallback that stops a
-# re-encoded but identical shape from minting a version. See ingest/AGENTS.md "geometry.py".
-_CLASSIFY_GEOMETRY_VERSIONS = text(
-    """
-    WITH request AS (
-        SELECT requested.natural_key,
-               NULLIF(requested.feature_id, '') AS feature_id,
-               NULLIF(requested.geojson, '') AS geojson,
-               CAST(requested.observed_at AS timestamptz) AS observed_at
-        FROM unnest(
-                 CAST(:natural_keys AS text[]),
-                 CAST(:feature_ids AS text[]),
-                 CAST(:geojsons AS text[]),
-                 CAST(:observed_ats AS text[])
-             ) AS requested(natural_key, feature_id, geojson, observed_at)
-    ),
-    resolved AS (
-        SELECT request.natural_key,
-               request.observed_at,
-               CASE
-                   WHEN request.feature_id IS NOT NULL THEN feature.geom
-                   ELSE ST_SetSRID(ST_GeomFromGeoJSON(request.geojson), 4326)
-               END AS geom
-        FROM request
-        LEFT JOIN geo.features AS feature ON feature.id = CAST(request.feature_id AS uuid)
-    )
-    SELECT resolved.natural_key AS natural_key,
-           resolved.geom IS NULL AS geometry_missing,
-           open_version.geometry_id AS open_geometry_id,
-           ((open_version.geom = resolved.geom) OR ST_Equals(open_version.geom, resolved.geom))
-               AS geometry_unchanged,
-           (resolved.observed_at > open_version.version_valid_from) AS successor_is_datable
-    FROM resolved
-    LEFT JOIN geo.geometry AS open_version
-      ON open_version.natural_key = resolved.natural_key
-     AND open_version.version_valid_to IS NULL
-    """
-).bindparams(
+_CLASSIFY_GEOMETRY_VERSIONS = text(load_query_sql("ingest/classify_geometry_versions.sql")).bindparams(
     bindparam("natural_keys", type_=ARRAY(Text)),
     bindparam("feature_ids", type_=ARRAY(Text)),
     bindparam("geojsons", type_=ARRAY(Text)),
     bindparam("observed_ats", type_=ARRAY(Text)),
 )
 
-# ck_geometry_supersede is immediate, so version_valid_to and superseded_by are written together and the
-# successor's identifier is minted before its row exists; the DEFERRABLE FK validates it at COMMIT.
-_CLOSE_GEOMETRY_VERSIONS = text(
-    """
-    UPDATE geo.geometry AS closing
-    SET version_valid_to = CAST(supersession.closed_at AS timestamptz),
-        superseded_by = CAST(supersession.successor_id AS uuid)
-    FROM unnest(
-             CAST(:natural_keys AS text[]),
-             CAST(:closed_ats AS text[]),
-             CAST(:successor_ids AS text[])
-         ) AS supersession(natural_key, closed_at, successor_id)
-    WHERE closing.natural_key = supersession.natural_key
-      AND closing.version_valid_to IS NULL
-    RETURNING closing.geometry_id
-    """
-).bindparams(
+_CLOSE_GEOMETRY_VERSIONS = text(load_query_sql("ingest/close_geometry_versions.sql")).bindparams(
     bindparam("natural_keys", type_=ARRAY(Text)),
     bindparam("closed_ats", type_=ARRAY(Text)),
     bindparam("successor_ids", type_=ARRAY(Text)),
 )
 
-# An unmapped GeometryType yields a NULL geom_kind and trips the NOT NULL, which is the same refusal
-# scripts/backfill-geometry.sql makes: never store a version whose kind the dimension does not name.
-_INSERT_GEOMETRY_VERSIONS = text(
-    """
-    WITH request AS (
-        SELECT requested.geometry_id,
-               requested.natural_key,
-               requested.producer,
-               CAST(requested.version_valid_from AS timestamptz) AS version_valid_from,
-               NULLIF(requested.feature_id, '') AS feature_id,
-               NULLIF(requested.geojson, '') AS geojson,
-               NULLIF(requested.grid_name, '') AS grid_name,
-               NULLIF(requested.cell_key, '') AS cell_key,
-               CAST(NULLIF(requested.resolution_metres, '') AS integer) AS resolution_metres
-        FROM unnest(
-                 CAST(:geometry_ids AS text[]),
-                 CAST(:natural_keys AS text[]),
-                 CAST(:producers AS text[]),
-                 CAST(:version_valid_froms AS text[]),
-                 CAST(:feature_ids AS text[]),
-                 CAST(:geojsons AS text[]),
-                 CAST(:grid_names AS text[]),
-                 CAST(:cell_keys AS text[]),
-                 CAST(:resolution_metres AS text[])
-             ) AS requested(
-                 geometry_id, natural_key, producer, version_valid_from,
-                 feature_id, geojson, grid_name, cell_key, resolution_metres
-             )
-    ),
-    resolved AS (
-        SELECT request.*,
-               CASE
-                   WHEN request.feature_id IS NOT NULL THEN feature.geom
-                   ELSE ST_SetSRID(ST_GeomFromGeoJSON(request.geojson), 4326)
-               END AS geom
-        FROM request
-        LEFT JOIN geo.features AS feature ON feature.id = CAST(request.feature_id AS uuid)
-    )
-    INSERT INTO geo.geometry (
-        geometry_id, natural_key, version_valid_from, version_valid_to,
-        geom_kind, geom, centroid, grid_name, cell_key, resolution_m, producer, last_confirmed_at
-    )
-    SELECT CAST(resolved.geometry_id AS uuid),
-           resolved.natural_key,
-           resolved.version_valid_from,
-           NULL,
-           CASE
-               WHEN resolved.grid_name IS NOT NULL THEN 'grid_cell'
-               WHEN GeometryType(resolved.geom) IN ('POINT', 'MULTIPOINT') THEN 'point'
-               WHEN GeometryType(resolved.geom) IN ('POLYGON', 'MULTIPOLYGON') THEN 'polygon'
-               WHEN GeometryType(resolved.geom) IN ('LINESTRING', 'MULTILINESTRING') THEN 'line'
-           END,
-           resolved.geom,
-           ST_Centroid(resolved.geom),
-           resolved.grid_name,
-           resolved.cell_key,
-           resolved.resolution_metres,
-           resolved.producer,
-           CAST(:run_clock AS timestamptz)
-    FROM resolved
-    ON CONFLICT (natural_key) WHERE version_valid_to IS NULL DO NOTHING
-    RETURNING geometry_id, natural_key
-    """
-).bindparams(
+_INSERT_GEOMETRY_VERSIONS = text(load_query_sql("ingest/insert_geometry_versions.sql")).bindparams(
     bindparam("geometry_ids", type_=ARRAY(Text)),
     bindparam("natural_keys", type_=ARRAY(Text)),
     bindparam("producers", type_=ARRAY(Text)),
@@ -317,36 +197,15 @@ _INSERT_GEOMETRY_VERSIONS = text(
     bindparam("resolution_metres", type_=ARRAY(Text)),
 )
 
-# Staleness only: "the last run that saw this version unchanged upstream", never a validity bound.
-_CONFIRM_GEOMETRY_VERSIONS = text(
-    """
-    UPDATE geo.geometry
-    SET last_confirmed_at = CAST(:run_clock AS timestamptz)
-    WHERE natural_key = ANY(CAST(:natural_keys AS text[]))
-      AND version_valid_to IS NULL
-    """
-).bindparams(bindparam("natural_keys", type_=ARRAY(Text)))
+_CONFIRM_GEOMETRY_VERSIONS = text(load_query_sql("ingest/confirm_geometry_versions.sql")).bindparams(
+    bindparam("natural_keys", type_=ARRAY(Text))
+)
 
-_SELECT_CURRENT_GEOMETRY_IDS = text(
-    """
-    SELECT natural_key, geometry_id
-    FROM geo.geometry
-    WHERE natural_key = ANY(CAST(:natural_keys AS text[]))
-      AND version_valid_to IS NULL
-    """
-).bindparams(bindparam("natural_keys", type_=ARRAY(Text)))
+_SELECT_CURRENT_GEOMETRY_IDS = text(load_query_sql("ingest/select_current_geometry_ids.sql")).bindparams(
+    bindparam("natural_keys", type_=ARRAY(Text))
+)
 
-# geo_features_sync_geom is BEFORE INSERT OR UPDATE *OF properties*, so repointing costs no re-parse.
-_LINK_FEATURE_GEOMETRY = text(
-    """
-    UPDATE geo.features AS feature
-    SET geometry_id = CAST(link.geometry_id AS uuid)
-    FROM unnest(CAST(:feature_ids AS text[]), CAST(:geometry_ids AS text[])) AS link(feature_id, geometry_id)
-    WHERE feature.id = CAST(link.feature_id AS uuid)
-      AND feature.geometry_id IS DISTINCT FROM CAST(link.geometry_id AS uuid)
-    RETURNING feature.id
-    """
-).bindparams(
+_LINK_FEATURE_GEOMETRY = text(load_query_sql("ingest/link_feature_geometry.sql")).bindparams(
     bindparam("feature_ids", type_=ARRAY(Text)),
     bindparam("geometry_ids", type_=ARRAY(Text)),
 )

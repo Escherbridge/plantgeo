@@ -8,6 +8,7 @@ import math
 import os
 import zipfile
 from asyncio import sleep as async_sleep
+from asyncio import to_thread
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
@@ -464,7 +465,12 @@ async def _fetch_with_client(  # noqa: PLR0913
                         payload.extend(chunk)
                         if len(payload) > USDM_MAX_RESPONSE_BYTES:
                             raise ValueError(f"USDM response exceeds {USDM_MAX_RESPONSE_BYTES} bytes")
-                    return parse_usdm_shapefile_zip(plan, issue_date, bytes(payload), retrieved_at=retrieved_at)
+                    # Up to USDM_MAX_UNCOMPRESSED_BYTES of decompression plus one canonical-JSON
+                    # serialisation and sha256 per feature: pure CPU with no yield point, so it belongs
+                    # off the loop for the same reason the ERA5 parse does.
+                    return await to_thread(
+                        parse_usdm_shapefile_zip, plan, issue_date, bytes(payload), retrieved_at=retrieved_at
+                    )
         except httpx.TransportError:
             if attempt == max_attempts:
                 raise

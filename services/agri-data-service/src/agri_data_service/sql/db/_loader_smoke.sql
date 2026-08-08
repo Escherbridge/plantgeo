@@ -1,0 +1,18 @@
+-- Purpose: prove load_query_sql can read a packaged .sql file; the canonical header example.
+-- Loaded by: tests.test_sql_queries_loader
+-- Params: (none). A query that does take binds lists them here by bare name --
+--         series_key (text), valid_from/valid_to (timestamptz, nullable) -- never
+--         with a leading colon, because SQLAlchemy's text() scans comments too and
+--         would mint a phantom bind parameter out of the header itself.
+--
+-- How this query works, clause by clause:
+--
+--   SELECT 1 AS loader_smoke
+--     A SELECT with no FROM. PostgreSQL still returns exactly one row, because a
+--     query with no table to read from has one implicit row of "nothing" to
+--     project over. The 1 is a constant expression evaluated for that row, and
+--     `AS loader_smoke` names the resulting column so callers address it by name
+--     rather than by position. Nothing is read, locked, or written -- this file
+--     exists so a test can assert the loader returned this text verbatim and so
+--     the wheel build can be checked for a non-.py file under the sql/ tree.
+SELECT 1 AS loader_smoke

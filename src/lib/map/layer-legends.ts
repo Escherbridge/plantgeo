@@ -43,6 +43,8 @@ import {
   INTERVENTION_OUTLINE_COLOR,
   INTERVENTION_PRIORITY_CLASSES,
   INTERVENTION_UNCLASSIFIED_LABEL,
+  INTERVENTION_UNPRIORITIZED_POINT_COLOR,
+  INTERVENTION_UNPRIORITIZED_POINT_LABEL,
   SENSOR_NETWORK_CLASSES,
   SENSOR_UNCLASSIFIED_LABEL,
   SOIL_SURVEY_DRAINAGE_CLASSES,
@@ -158,14 +160,22 @@ export const LEGENDLESS_TOGGLE_REASONS: Partial<Record<LayerToggleId, string>> =
     "it false at every toggle state and it can never be drawn.",
 };
 
-/** A class list plus the neutral row every unclassified feature falls to. */
+/**
+ * A class list plus the row every unclassified feature falls to.
+ *
+ * `fallbackColor` defaults to the shared neutral because that is what every classified fill
+ * falls back to. It is a parameter for the one layer whose renderer deliberately chose a
+ * different fallback -- interventions' submitted points, where "unclassified" is the normal
+ * state rather than a gap -- so the legend still reads its colour off the renderer.
+ */
 function classesWithFallback(
   classes: readonly StyleClass[],
-  fallbackLabel: string
+  fallbackLabel: string,
+  fallbackColor: string = UNCLASSIFIED_FILL_COLOR
 ): LegendClass[] {
   return [
     ...classes.map(({ color, label }) => ({ color, label })),
-    { color: UNCLASSIFIED_FILL_COLOR, label: fallbackLabel },
+    { color: fallbackColor, label: fallbackLabel },
   ];
 }
 
@@ -322,11 +332,16 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
       { kind: "ramp", caption: "Request density", stops: demandDensityRampStops() },
     ],
   },
+  // Two shapes, because the toggle draws two geometries from one tile: ingested zones as
+  // filled polygons, and interactively submitted sites as points. They share the priority
+  // palette but not its fallback -- see INTERVENTION_UNPRIORITIZED_POINT_COLOR in layers.ts
+  // for why a submitted site's "no priority" is a normal state and not a missing value.
   interventions: {
     title: "Interventions",
     blocks: [
       {
         kind: "classes",
+        caption: "Zones",
         shape: "swatch",
         classes: classesWithFallback(
           INTERVENTION_PRIORITY_CLASSES,
@@ -334,6 +349,20 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
         ),
       },
       { kind: "swatch", label: "Zone outline (dashed)", outlineColor: INTERVENTION_OUTLINE_COLOR },
+      {
+        kind: "classes",
+        caption: "Submitted sites",
+        shape: "dot",
+        classes: classesWithFallback(
+          INTERVENTION_PRIORITY_CLASSES,
+          INTERVENTION_UNPRIORITIZED_POINT_LABEL,
+          INTERVENTION_UNPRIORITIZED_POINT_COLOR
+        ),
+      },
+      {
+        kind: "note",
+        text: "Submitted sites appear only after a reviewer publishes them.",
+      },
     ],
   },
   "evacuation-zones": {

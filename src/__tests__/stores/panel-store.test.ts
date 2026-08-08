@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { useMapStore, DEFAULT_VIEWPORT } from '@/stores/map-store'
-import { usePanelHasActiveLayers, getPanelForLayer, getAllManagedLayerIds } from '@/stores/panel-store'
+import {
+  usePanelHasActiveLayers,
+  getPanelForLayer,
+  getAllManagedLayerIds,
+  usePanelStore,
+} from '@/stores/panel-store'
 import { STYLE_LAYER_TOGGLE_MAP } from '@/lib/map/layers'
 
 describe('usePanelHasActiveLayers', () => {
@@ -71,5 +76,61 @@ describe('PANEL_LAYER_MAP exhaustiveness', () => {
 
   it('"building-footprints" is deliberately not panel-governed (MapControls toolbar toggle)', () => {
     expect(getPanelForLayer('building-footprints')).toBeNull()
+  })
+})
+
+/**
+ * The left-edge layer tree's dock state.
+ *
+ * It is deliberately independent of `openPanel`: the tree governs every layer at once while
+ * the right-hand sheets report on one category each, so both may be open and closing either
+ * must leave the other alone. It is also NOT layer visibility -- `map-store.activeLayers`
+ * stays the single source of that, and the tree's eyes write it exactly as the sheets do.
+ */
+describe('layer panel dock state', () => {
+  beforeEach(() => {
+    usePanelStore.setState({ openPanel: null, layerPanelOpen: false })
+  })
+
+  // The map opens with every layer off, so a 19rem dock over the canvas is not what a
+  // first-time visitor is owed before they have asked for anything.
+  it('starts undocked', () => {
+    expect(usePanelStore.getState().layerPanelOpen).toBe(false)
+  })
+
+  it('docks and undocks without touching the open sheet', () => {
+    act(() => {
+      usePanelStore.getState().togglePanel('water')
+      usePanelStore.getState().toggleLayerPanel()
+    })
+    expect(usePanelStore.getState().layerPanelOpen).toBe(true)
+    expect(usePanelStore.getState().openPanel).toBe('water')
+
+    act(() => {
+      usePanelStore.getState().closeLayerPanel()
+    })
+    expect(usePanelStore.getState().layerPanelOpen).toBe(false)
+    expect(usePanelStore.getState().openPanel).toBe('water')
+  })
+
+  it('leaves the dock alone when a sheet closes', () => {
+    act(() => {
+      usePanelStore.getState().toggleLayerPanel()
+      usePanelStore.getState().togglePanel('fire')
+      usePanelStore.getState().closePanel()
+    })
+
+    expect(usePanelStore.getState().openPanel).toBeNull()
+    expect(usePanelStore.getState().layerPanelOpen).toBe(true)
+  })
+
+  it('never changes what is drawn', () => {
+    act(() => {
+      useMapStore.setState({ activeLayers: ['sensors'] })
+      usePanelStore.getState().toggleLayerPanel()
+      usePanelStore.getState().closeLayerPanel()
+    })
+
+    expect(useMapStore.getState().activeLayers).toEqual(['sensors'])
   })
 })

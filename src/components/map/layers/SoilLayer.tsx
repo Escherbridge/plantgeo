@@ -56,7 +56,16 @@ interface SoilLayerProps {
   map: MapLibreMap | null;
   visible?: boolean;
   property?: SoilProperty;
+  /** The raster's authored strength. The design value, not a control. */
   opacity?: number;
+  /**
+   * The reader's per-layer MULTIPLIER over `opacity`. Wired even though the layer is never
+   * created today -- `getEnvironmentalTileTemplate` returns "" until a first-party SoilGrids
+   * release exists, so `addAllLayers` returns before the source is added. It works the day
+   * the tiles land; until then the layer tree renders this row's slider as inert rather than
+   * offering a control that adjusts nothing.
+   */
+  opacityScale?: number;
 }
 
 export function SoilLayer({
@@ -64,13 +73,15 @@ export function SoilLayer({
   visible = true,
   property = "soc",
   opacity = 0.7,
+  opacityScale = 1,
 }: SoilLayerProps) {
+  const drawnOpacity = opacity * opacityScale;
   // Keep latest prop values in refs so the style.load handler always uses current values
-  const propsRef = useRef({ visible, property, opacity });
-  propsRef.current = { visible, property, opacity };
+  const propsRef = useRef({ visible, property, drawnOpacity });
+  propsRef.current = { visible, property, drawnOpacity };
 
   const addAllLayers = useCallback((m: MapLibreMap) => {
-    const { property, opacity } = propsRef.current;
+    const { property, drawnOpacity } = propsRef.current;
     const beforeId = getFirstSymbolLayer(m);
     const tileUrl = getSoilTileUrl(property);
     if (!tileUrl) return;
@@ -90,7 +101,7 @@ export function SoilLayer({
           id: SOIL_LAYER_ID,
           type: "raster",
           source: SOIL_SOURCE_ID,
-          paint: { "raster-opacity": opacity },
+          paint: { "raster-opacity": drawnOpacity },
         },
         beforeId,
       );
@@ -149,10 +160,10 @@ export function SoilLayer({
       rasterSource.setTiles([tileUrl]);
     }
     if (map.getLayer(SOIL_LAYER_ID)) {
-      map.setPaintProperty(SOIL_LAYER_ID, "raster-opacity", opacity);
+      map.setPaintProperty(SOIL_LAYER_ID, "raster-opacity", drawnOpacity);
     }
 
-  }, [map, property, opacity, visible]);
+  }, [map, property, drawnOpacity, visible]);
 
   return null;
 }

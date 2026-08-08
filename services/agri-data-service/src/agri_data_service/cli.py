@@ -8,10 +8,12 @@ import json
 import math
 import os
 import tempfile
+import uuid
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, Self, cast
 
 import click
 import httpx
@@ -27,17 +29,38 @@ from agri_data_service.db.engine import (
     combined_local_engine,
     forecast_iteration_session,
     forecast_mv_refresh_session,
+    local_source_loader_engine,
     local_source_loader_session,
 )
 from agri_data_service.db.maintenance import (
     MaintenanceBusyError,
     maintain_job_event_partitions,
 )
+from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.execution.contracts import ExpectedOutput
+
+# Importing the covariate wind lane is also what REGISTERS its durable handler: `@job_handler`
+# binds `execution.covariate_wind_train` into `JOB_HANDLERS` at import time, and a slice resolves
+# a stored `job_definition.handler` token through that registry. See execution/AGENTS.md.
+from agri_data_service.execution.covariate_wind_lane import (
+    CovariateWindLaneContext,
+    CovariateWindLanePlan,
+    covariate_wind_lane_context,
+    covariate_wind_targets,
+    plan_covariate_wind_lane,
+)
+from agri_data_service.execution.covariate_wind_model import OriginNotEvaluableError
+from agri_data_service.execution.covariate_wind_persist import (
+    TRAINING_DEFINITION_NAME,
+    ForecastTrainingPersistError,
+    WindTrainingRequest,
+    run_covariate_wind_training,
+)
 from agri_data_service.execution.ensemble_forecast import (
     ENSEMBLE_WAREHOUSE_PERSISTENCE_STATE,
     EnsembleForecastCheckpoint,
     EnsembleForecastChunk,
+    EnsembleForecastChunkResult,
     EnsembleForecastFetchError,
     EnsembleForecastPlan,
     StagedForecastReceipt,
@@ -74,6 +97,7 @@ from agri_data_service.execution.historical_backfill import (
 )
 from agri_data_service.execution.historical_cams import (
     CamsAirQualityChunk,
+    CamsAirQualityChunkResult,
     CamsAirQualityFetchError,
     HistoricalCamsAirQualityPlan,
     HistoricalCamsCheckpoint,
@@ -117,6 +141,7 @@ from agri_data_service.execution.historical_export import (
 )
 from agri_data_service.execution.historical_glofas import (
     GlofasFloodChunk,
+    GlofasFloodChunkResult,
     GlofasFloodFetchError,
     HistoricalGlofasCheckpoint,
     HistoricalGlofasFloodPlan,
@@ -224,6 +249,15 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
     summarize_holdout,
 )
 from agri_data_service.ingest.commands import register_ingest_commands
+from agri_data_service.jobs import (
+    JobDefinitionNotFoundError,
+    JobLedgerRowError,
+    JobRunError,
+    JobSpecificationError,
+    UnknownJobHandlerError,
+    run_job_slice,
+    shutdown_signal,
+)
 from agri_data_service.models.strategy import Strategy
 from agri_data_service.seed.strategies import STRATEGY_SEEDS
 from alembic import command
@@ -236,10 +270,20 @@ _MAX_RUN_PLAN_OUTPUTS = 1_000
 _MAX_RUN_PLAN_KEYS = 10_000
 _MAX_RUN_PLAN_KEY_LENGTH = 500
 
+# Runtime query SQL lives in sql/cli/, loaded once per process; see src/agri_data_service/sql/AGENTS.md.
+_FORECAST_MV_REFRESH_ELIGIBILITY = text(load_query_sql("cli/forecast_mv_refresh_eligibility.sql"))
+_MATERIALIZE_FORECAST_ITERATION = text(load_query_sql("cli/materialize_forecast_iteration.sql"))
+_FORECAST_ITERATION_SUMMARY = text(load_query_sql("cli/forecast_iteration_summary.sql"))
+_RECONCILE_FORECAST_ITERATION_ACTUALS = text(load_query_sql("cli/reconcile_forecast_iteration_actuals.sql"))
+_FORECAST_ITERATION_OUTCOME_TOTALS = text(load_query_sql("cli/forecast_iteration_outcome_totals.sql"))
+
 if TYPE_CHECKING:
-    import uuid
+    from collections.abc import Callable, Mapping, Sequence
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from agri_data_service.execution.vegetation_ndvi_forecast import SeasonalHistory
+    from agri_data_service.jobs import JobSliceSummary
 
 
 @click.group()
@@ -403,130 +447,7 @@ def forecast_refresh_ml_daily() -> None:
 async def _forecast_refresh_ml_daily() -> int:
     database_url = settings.require_forecast_mv_refresh_database_url()
     async with forecast_mv_refresh_session(database_url) as session, session.begin():
-        eligibility = await session.execute(
-            text(
-                """
-                SELECT
-                    role.rolcanlogin
-                    AND NOT role.rolinherit
-                    AND NOT role.rolsuper
-                    AND NOT role.rolcreatedb
-                    AND NOT role.rolcreaterole
-                    AND NOT role.rolreplication
-                    AND NOT role.rolbypassrls
-                    AND EXISTS (
-                        SELECT 1
-                        FROM pg_auth_members AS membership
-                        INNER JOIN pg_roles AS capability
-                            ON capability.oid = membership.roleid
-                        WHERE membership.member = role.oid
-                          AND capability.rolname = 'plantgeo_forecast_mv_refresher'
-                          AND NOT membership.admin_option
-                          AND NOT membership.inherit_option
-                          AND membership.set_option
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM pg_auth_members AS membership
-                        INNER JOIN pg_roles AS capability
-                            ON capability.oid = membership.roleid
-                        WHERE membership.member = role.oid
-                          AND capability.rolname <> 'plantgeo_forecast_mv_refresher'
-                    )
-                    AND NOT has_database_privilege(
-                        current_user,
-                        current_database(),
-                        'CREATE'
-                    )
-                    AND NOT pg_has_role(
-                        current_user,
-                        (SELECT database.datdba FROM pg_database AS database
-                         WHERE database.datname = current_database()),
-                        'MEMBER'
-                    )
-                    AND NOT pg_has_role(
-                        current_user,
-                        (SELECT namespace.nspowner FROM pg_namespace AS namespace
-                         WHERE namespace.nspname = 'agri'),
-                        'MEMBER'
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM pg_class AS class
-                        INNER JOIN pg_namespace AS namespace
-                            ON namespace.oid = class.relnamespace
-                        WHERE namespace.nspname = 'agri'
-                          AND pg_has_role(current_user, class.relowner, 'MEMBER')
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM pg_proc AS procedure
-                        INNER JOIN pg_namespace AS namespace
-                            ON namespace.oid = procedure.pronamespace
-                        WHERE namespace.nspname = 'agri'
-                          AND pg_has_role(current_user, procedure.proowner, 'MEMBER')
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM pg_class AS class
-                        INNER JOIN pg_namespace AS namespace
-                            ON namespace.oid = class.relnamespace
-                        CROSS JOIN LATERAL aclexplode(
-                            coalesce(
-                                class.relacl,
-                                acldefault(
-                                    CASE WHEN class.relkind = 'S' THEN 'S'::"char" ELSE 'r'::"char" END,
-                                    class.relowner
-                                )
-                            )
-                        ) AS access
-                        WHERE namespace.nspname = 'agri'
-                          AND access.grantee = role.oid
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM pg_proc AS procedure
-                        INNER JOIN pg_namespace AS namespace
-                            ON namespace.oid = procedure.pronamespace
-                        CROSS JOIN LATERAL aclexplode(
-                            coalesce(
-                                procedure.proacl,
-                                acldefault('f', procedure.proowner)
-                            )
-                        ) AS access
-                        WHERE namespace.nspname = 'agri'
-                          AND access.grantee = role.oid
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM pg_attribute AS attribute
-                        INNER JOIN pg_class AS class
-                            ON class.oid = attribute.attrelid
-                        INNER JOIN pg_namespace AS namespace
-                            ON namespace.oid = class.relnamespace
-                        CROSS JOIN LATERAL aclexplode(attribute.attacl) AS access
-                        WHERE namespace.nspname = 'agri'
-                          AND attribute.attnum > 0
-                          AND NOT attribute.attisdropped
-                          AND access.grantee = role.oid
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM pg_namespace AS namespace
-                        CROSS JOIN LATERAL aclexplode(
-                            coalesce(
-                                namespace.nspacl,
-                                acldefault('n', namespace.nspowner)
-                            )
-                        ) AS access
-                        WHERE namespace.nspname = 'agri'
-                          AND access.grantee = role.oid
-                    )
-                FROM pg_roles AS role
-                WHERE role.rolname = current_user
-                """
-            )
-        )
+        eligibility = await session.execute(_FORECAST_MV_REFRESH_ELIGIBILITY)
         if eligibility.scalar_one_or_none() is not True:
             raise ValueError(
                 "forecast MV refresh requires a dedicated NOINHERIT, non-elevated, non-owner "
@@ -645,58 +566,10 @@ async def _forecast_run_iteration(  # noqa: PLR0913
     }
     async with forecast_iteration_session(database_url) as session, session.begin():
         await session.execute(text("SET LOCAL statement_timeout = '120s'"))
-        call_result = await session.execute(
-            text(
-                """
-                CALL agri.materialize_forecast_iteration(
-                    CAST(NULL AS uuid),
-                    CAST(:iteration_key AS varchar),
-                    CAST(:series_id AS uuid),
-                    CAST(:release_set_id AS uuid),
-                    CAST(:as_of_time AS timestamptz),
-                    CAST(:cutoff_time AS timestamptz),
-                    CAST(:history_start AS timestamptz),
-                    :horizon_days,
-                    :simulation_count,
-                    :seed,
-                    CAST(:gap_policy AS varchar),
-                    CAST(:lower_bound AS double precision),
-                    CAST(:upper_bound AS double precision)
-                )
-                """
-            ),
-            parameters,
-        )
+        call_result = await session.execute(_MATERIALIZE_FORECAST_ITERATION, parameters)
         iteration_id = call_result.scalar_one()
         summary_result = await session.execute(
-            text(
-                """
-                SELECT
-                    iteration.id,
-                    iteration.iteration_key,
-                    iteration.status,
-                    iteration.method,
-                    iteration.purpose,
-                    iteration.availability_mode,
-                    iteration.series_id,
-                    iteration.release_set_id,
-                    iteration.cutoff_time,
-                    iteration.horizon_days,
-                    iteration.simulation_count,
-                    iteration.simulation_seed,
-                    iteration.gap_policy,
-                    iteration.training_day_count,
-                    iteration.increment_count,
-                    iteration.receipt_checksum,
-                    iteration.recorded_at,
-                    count(value.id)::integer AS value_count
-                FROM agri.forecast_iteration AS iteration
-                INNER JOIN agri.forecast_iteration_value AS value
-                    ON value.iteration_id = iteration.id
-                WHERE iteration.id = :iteration_id
-                GROUP BY iteration.id
-                """
-            ),
+            _FORECAST_ITERATION_SUMMARY,
             {"iteration_id": iteration_id},
         )
         row = summary_result.mappings().one()
@@ -765,16 +638,7 @@ async def _forecast_reconcile_actuals(
     async with forecast_iteration_session(database_url) as session, session.begin():
         await session.execute(text("SET LOCAL statement_timeout = '120s'"))
         call_result = await session.execute(
-            text(
-                """
-                CALL agri.reconcile_forecast_iteration_actuals(
-                    0,
-                    CAST(:iteration_id AS uuid),
-                    CAST(:actual_release_set_id AS uuid),
-                    CAST(:as_of_time AS timestamptz)
-                )
-                """
-            ),
+            _RECONCILE_FORECAST_ITERATION_ACTUALS,
             {
                 "iteration_id": iteration_id,
                 "actual_release_set_id": actual_release_set_id,
@@ -783,19 +647,7 @@ async def _forecast_reconcile_actuals(
         )
         inserted_count = int(call_result.scalar_one())
         result = await session.execute(
-            text(
-                """
-                SELECT
-                    count(*)::integer AS forecast_value_count,
-                    count(outcome.actual_checksum)::integer AS actual_count,
-                    avg(outcome.absolute_error) AS mean_absolute_error,
-                    avg(
-                        CASE WHEN outcome.interval_covered THEN 1.0 ELSE 0.0 END
-                    ) AS interval_coverage
-                FROM agri.v_forecast_iteration_outcome AS outcome
-                WHERE outcome.iteration_id = :iteration_id
-                """
-            ),
+            _FORECAST_ITERATION_OUTCOME_TOTALS,
             {"iteration_id": iteration_id},
         )
         row = result.mappings().one()
@@ -1200,6 +1052,318 @@ async def _forecast_vegetation_evaluate(
     return payload
 
 
+@cli.command("forecast-train-wind")
+@click.option("--cell-id", type=click.UUID, required=True, help="Spatial cell whose covariate vectors train the fit.")
+@click.option("--series-id", type=click.UUID, required=True, help="Forecast series the metrics are filed under.")
+@click.option("--history-start", required=True, help="First covariate day to read, as YYYY-MM-DD.")
+@click.option("--history-end", required=True, help="Last covariate day to read, as YYYY-MM-DD.")
+@click.option("--origin-date", required=True, help="Newest rolling origin, as YYYY-MM-DD.")
+@click.option(
+    "--origins",
+    "origin_count",
+    type=click.IntRange(1, 60),
+    default=1,
+    show_default=True,
+    help="Rolling origins to refit and score, walking back from --origin-date.",
+)
+@click.option(
+    "--origin-stride-days",
+    type=click.IntRange(1, 366),
+    default=None,
+    help="Days between rolling origins; defaults to --horizon-count so their target spans do not overlap.",
+)
+@click.option("--horizon-count", type=click.IntRange(1, 366), default=30, show_default=True)
+@click.option("--calibration-days", type=click.IntRange(1, 3660), default=180, show_default=True)
+@click.option("--alpha", type=float, default=10.0, show_default=True, help="Ridge penalty on standardized features.")
+@click.option(
+    "--as-of-time",
+    default=None,
+    help="Availability gate fed to p_as_of_time; defaults to now(). Pin it to reproduce a manifest checksum.",
+)
+@click.option(
+    "--quality-policy-key",
+    default=None,
+    help="Existing agri.forecast_quality_policy the backtest run references. Required with --persist.",
+)
+@click.option(
+    "--persist",
+    is_flag=True,
+    default=False,
+    help="Write the training/backtest receipt chain. OFF by default; without it nothing is written.",
+)
+@click.option("--json", "as_json", is_flag=True, default=True, show_default=True, help="Emit one JSON line.")
+def forecast_train_wind(  # noqa: PLR0913 - one parameter per click option, as this file's own verbs are
+    cell_id: uuid.UUID,
+    series_id: uuid.UUID,
+    history_start: str,
+    history_end: str,
+    origin_date: str,
+    origin_count: int,
+    origin_stride_days: int | None,
+    horizon_count: int,
+    calibration_days: int,
+    alpha: float,
+    as_of_time: str | None,
+    quality_policy_key: str | None,
+    persist: bool,
+    as_json: bool,
+) -> None:
+    """Fit and score the evaluation-only covariate wind ridge over rolling origins; optionally record it.
+
+    READ-ONLY BY DEFAULT. Without `--persist` this opens no write transaction at all: it reads the
+    pinned covariate vectors and the availability-gated target, refits the model at every origin,
+    and prints one JSON line. That is the behaviour this module has always had.
+
+    With `--persist` it additionally writes ONE governed training receipt chain -- a job run, a
+    model artifact, a forecast model, a validated feature snapshot, a validated training run, a
+    STAGED forecast run and one backtest metric row per origin -- through
+    `agri.validate_forecast_feature_snapshot` and `agri.validate_forecast_training_run`, which
+    re-derive every lineage check server-side. It writes no forecast receipt, no forecast value
+    and no publication, so nothing it records can reach a serving surface.
+
+    EVALUATION ONLY. The metrics prove the framework runs end to end. They are not an operational
+    forecast and are not life-safety validated. Read `origin_count` before `evaluated_count`: the
+    horizons scored from one origin are consecutive days of an autocorrelated variable.
+    """
+    if persist and not quality_policy_key:
+        raise click.BadParameter(
+            "--persist requires --quality-policy-key: a forecast run must reference a reviewed "
+            "quality policy, and this lane will not invent one",
+            param_hint="--quality-policy-key",
+        )
+    try:
+        request = WindTrainingRequest(
+            cell_id=str(cell_id),
+            series_id=str(series_id),
+            history_start=_forecast_cli_day(history_start, "history-start"),
+            history_end=_forecast_cli_day(history_end, "history-end"),
+            origin_date=_forecast_cli_day(origin_date, "origin-date"),
+            as_of_time=(
+                _forecast_cli_timestamp(as_of_time, "as-of-time") if as_of_time is not None else datetime.now(tz=UTC)
+            ),
+            horizon_count=horizon_count,
+            calibration_days=calibration_days,
+            origin_count=origin_count,
+            origin_stride_days=origin_stride_days,
+            alpha=alpha,
+            quality_policy_key=quality_policy_key,
+        )
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+    try:
+        summary = asyncio.run(_forecast_train_wind(request, persist=persist))
+    except (SQLAlchemyError, OriginNotEvaluableError, ForecastTrainingPersistError, ValueError) as exc:
+        reason = (
+            f"covariate wind training failed ({exc.__class__.__name__})"
+            if isinstance(exc, SQLAlchemyError)
+            else str(exc)
+        )
+        raise click.ClickException(reason) from exc
+    click.echo(json.dumps(summary, sort_keys=True) if as_json else json.dumps(summary, indent=2, sort_keys=True))
+
+
+async def _forecast_train_wind(request: WindTrainingRequest, *, persist: bool) -> dict[str, Any]:
+    """Open the evaluation-writer session, run the fit, and commit only when persistence was asked for."""
+    database_url = settings.require_forecast_iteration_database_url()
+    async with forecast_iteration_session(database_url) as session:
+        report = await run_covariate_wind_training(session, request, persist=persist)
+        if persist:
+            await session.commit()
+        else:
+            # An explicit rollback rather than trusting the session's close: a read-only run must
+            # leave nothing behind even if a future edit starts writing on a path it does not today.
+            await session.rollback()
+    return report.to_summary()
+
+
+@cli.command("forecast-train-wind-plan")
+@click.option(
+    "--target",
+    "targets",
+    multiple=True,
+    required=True,
+    help="A cell and its series as CELL_UUID:SERIES_UUID; repeatable, one per trained entity.",
+)
+@click.option("--history-start", required=True, help="First covariate day each batch reads, as YYYY-MM-DD.")
+@click.option("--history-end", required=True, help="Last covariate day each batch reads, as YYYY-MM-DD.")
+@click.option("--newest-origin", required=True, help="Frontier origin the newest batch ends at, as YYYY-MM-DD.")
+@click.option("--batches", "batch_count", type=click.IntRange(1, 200), default=1, show_default=True)
+@click.option("--origins-per-batch", type=click.IntRange(1, 60), default=4, show_default=True)
+@click.option("--origin-stride-days", type=click.IntRange(1, 366), default=None)
+@click.option("--horizon-count", type=click.IntRange(1, 366), default=30, show_default=True)
+@click.option("--calibration-days", type=click.IntRange(1, 3660), default=180, show_default=True)
+@click.option("--alpha", type=float, default=10.0, show_default=True)
+@click.option("--quality-policy-key", required=True, help="Existing agri.forecast_quality_policy each batch cites.")
+@click.option(
+    "--as-of-time",
+    required=True,
+    help="PINNED availability gate for the whole run. Not optional: an unpinned gate moves under a run in flight.",
+)
+def forecast_train_wind_plan(  # noqa: PLR0913 - one parameter per click option, as this file's own verbs are
+    targets: tuple[str, ...],
+    history_start: str,
+    history_end: str,
+    newest_origin: str,
+    batch_count: int,
+    origins_per_batch: int,
+    origin_stride_days: int | None,
+    horizon_count: int,
+    calibration_days: int,
+    alpha: float,
+    quality_policy_key: str,
+    as_of_time: str,
+) -> None:
+    """Declare the covariate wind training lane and fan its (cell, origin batch) shards out, idempotently.
+
+    Safe to re-run. `open_job_run` inserts the run `ON CONFLICT (logical_run_key) DO NOTHING` and
+    each shard `ON CONFLICT (job_run_id, shard_key) DO NOTHING`, and the shard keys come from the
+    plan's own pinned grid, so replanning the same declared shape adds nothing and re-keys nothing.
+
+    `agri-cli forecast-train-wind-run` is what then works the shards, one bounded slice per tick,
+    on the same lease/fence/budget runtime the archive lanes use. Note it is NOT `jobs-run`: that
+    verb opens the source-loader DSN, and a forecast receipt must be written through the
+    evaluation-writer DSN instead. A `jobs-run` pointed at this definition fails loudly with an
+    unbound-context error rather than writing through the wrong role.
+
+    EXIT CODES -- always 0 unless the plan itself could not be written. A lane that owes every one
+    of its batches the moment it is planned is the normal, healthy state.
+    """
+    try:
+        plan = CovariateWindLanePlan(
+            targets=covariate_wind_targets([_parse_wind_target(entry) for entry in targets]),
+            history_start=_forecast_cli_day(history_start, "history-start"),
+            history_end=_forecast_cli_day(history_end, "history-end"),
+            newest_origin=_forecast_cli_day(newest_origin, "newest-origin"),
+            as_of_time=_forecast_cli_timestamp(as_of_time, "as-of-time"),
+            quality_policy_key=quality_policy_key,
+            batch_count=batch_count,
+            origins_per_batch=origins_per_batch,
+            origin_stride_days=origin_stride_days,
+            horizon_count=horizon_count,
+            calibration_days=calibration_days,
+            alpha=alpha,
+        )
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+    try:
+        summary = asyncio.run(_forecast_train_wind_plan(plan))
+    except (SQLAlchemyError, JobRunError, JobSpecificationError, JobLedgerRowError) as exc:
+        reason = (
+            f"planning the covariate wind lane failed ({exc.__class__.__name__})"
+            if isinstance(exc, SQLAlchemyError)
+            else str(exc)
+        )
+        raise click.ClickException(reason) from exc
+    click.echo(json.dumps(summary, sort_keys=True))
+
+
+def _parse_wind_target(entry: str) -> tuple[str, str]:
+    """Read one `CELL_UUID:SERIES_UUID` pair, refusing anything that is not two UUIDs."""
+    cell_text, separator, series_text = entry.partition(":")
+    if not separator:
+        raise click.BadParameter(f"{entry!r} must be CELL_UUID:SERIES_UUID", param_hint="--target")
+    try:
+        return str(uuid.UUID(cell_text.strip())), str(uuid.UUID(series_text.strip()))
+    except ValueError as exc:
+        raise click.BadParameter(f"{entry!r} must name two UUIDs", param_hint="--target") from exc
+
+
+async def _forecast_train_wind_plan(plan: CovariateWindLanePlan) -> dict[str, Any]:
+    """Open one session for the definition upsert and the fan-out, and commit them together."""
+    database_url = settings.require_forecast_iteration_database_url()
+    async with forecast_iteration_session(database_url) as session:
+        await session.execute(text("SET LOCAL statement_timeout = '120s'"))
+        opened = await plan_covariate_wind_lane(session, plan, requested_by="agri-cli forecast-train-wind-plan")
+        await session.commit()
+    return {
+        "definition": TRAINING_DEFINITION_NAME,
+        "run_key": opened.logical_run_key,
+        "job_run_id": str(opened.job_run_id),
+        "created": opened.created,
+        "added_work_items": opened.added_work_items,
+        "total_work_items": opened.total_work_items,
+        "run_status": opened.status,
+        "target_count": len(plan.targets),
+        "batch_count": plan.batch_count,
+        "origins_per_batch": plan.origins_per_batch,
+        "origin_stride_days": plan.effective_stride_days,
+        "newest_origin": plan.newest_origin.isoformat(),
+        "as_of_time": plan.as_of_time.isoformat(),
+    }
+
+
+@cli.command("forecast-train-wind-run")
+@click.option("--budget-seconds", type=float, default=None, help="Override the definition's own slice budget.")
+@click.option("--worker-id", default=None, help="Label this lease owner; defaults to a per-process id.")
+@click.pass_context
+def forecast_train_wind_run(context: click.Context, budget_seconds: float | None, worker_id: str | None) -> None:
+    """Run ONE bounded slice of the covariate wind training lane: claim, train, record, exit.
+
+    This is the forecast lane's own slice runner and not `jobs-run`, for one reason that is not
+    cosmetic: `jobs-run` opens `ingest_session()`, which is the source-loader DSN, and a forecast
+    receipt must be written through the evaluation-writer DSN. Sharing the runner would mean
+    writing governed forecast rows through the ingestion role.
+
+    EXIT CODES, matching `jobs-run`:
+
+      0 -- the slice ran. Work may remain, the budget may be spent, nothing may have been
+           claimable: all three are healthy multi-tick states and none is an incident.
+      1 -- a work item DEAD-LETTERED during this slice, or the slice itself raised.
+
+    A dead-lettered batch means every attempt failed and no receipt exists for that (cell, origin
+    batch) until someone requeues it. That is the one outcome that needs a human, and it stays
+    visible as missing rather than being quietly marked done.
+    """
+    try:
+        summary = asyncio.run(
+            _forecast_train_wind_slice(
+                worker_id=(worker_id or "").strip() or f"forecast-train-wind:{uuid.uuid4()}",
+                budget_seconds=budget_seconds,
+            )
+        )
+    except (
+        JobDefinitionNotFoundError,
+        JobLedgerRowError,
+        JobRunError,
+        JobSpecificationError,
+        UnknownJobHandlerError,
+        SQLAlchemyError,
+    ) as exc:
+        reason = (
+            f"covariate wind training slice failed ({exc.__class__.__name__})"
+            if isinstance(exc, SQLAlchemyError)
+            else str(exc)
+        )
+        raise click.ClickException(reason) from exc
+    click.echo(json.dumps(summary.to_summary(), sort_keys=True))
+    if summary.dead_lettered:
+        context.exit(1)
+
+
+async def _forecast_train_wind_slice(*, worker_id: str, budget_seconds: float | None) -> JobSliceSummary:
+    """Open one evaluation-writer session for the whole tick and drive one bounded slice through it.
+
+    ONE session for the slice and never one per work item: `forecast_iteration_session` builds a
+    new engine per `async with` and disposes it in its `finally`, so a per-shard binding would be
+    a full handshake per batch. `shutdown_signal()` is installed HERE because this is the process
+    boundary -- without it a SIGTERM strands the batch in hand behind a lease no living process
+    owns. See jobs/AGENTS.md "Shutdown and heartbeat semantics".
+    """
+    database_url = settings.require_forecast_iteration_database_url()
+    async with (
+        forecast_iteration_session(database_url) as session,
+        shutdown_signal() as stop,
+        covariate_wind_lane_context(CovariateWindLaneContext(session=session)),
+    ):
+        return await run_job_slice(
+            session,
+            definition_name=TRAINING_DEFINITION_NAME,
+            worker_id=worker_id,
+            budget_seconds=budget_seconds,
+            stop=stop,
+        )
+
+
 @cli.command("job-logs-maintain")
 @click.option(
     "--retention-days",
@@ -1580,24 +1744,27 @@ async def _historical_nasa_backfill(plan_path: Path) -> None:
             )
         write_historical_nasa_checkpoint(checkpoint_path_value, checkpoint)
         completed_cells = {receipt.cell_key for receipt in checkpoint.receipts}
-        for cell in plan.nasa.cells:
-            if cell.cell_key in completed_cells:
-                continue
-            result = load_cached_historical_nasa_result(settings.local_execution_root, plan, cell)
-            if result is None:
-                result = await fetch_nasa_power_daily(plan.nasa, cell)
-                cache_historical_nasa_result(settings.local_execution_root, plan, result)
-            async with local_source_loader_session(loader_database_url) as session, session.begin():
-                await persist_nasa_power_cell(session, plan=plan, result=result)
-            checkpoint = record_historical_nasa_result(plan, checkpoint, result)
-            write_historical_nasa_checkpoint(checkpoint_path_value, checkpoint)
-            completed_cells.add(cell.cell_key)
-        if checkpoint.state != "validated":
-            raise ValueError("historical backfill did not produce complete source-cell coverage")
-        release_set = None
-        if all(receipt.retrieved_at <= plan.release_set_as_of for receipt in checkpoint.receipts):
-            async with local_source_loader_session(loader_database_url) as session, session.begin():
-                release_set = await finalize_nasa_release_set(session, plan=plan, checkpoint=checkpoint)
+        # One engine for the whole verb, one session and one transaction per cell: the per-cell
+        # write boundary is unchanged, but the connect handshake is paid once instead of per cell.
+        async with local_source_loader_engine(loader_database_url) as loader_session:
+            for cell in plan.nasa.cells:
+                if cell.cell_key in completed_cells:
+                    continue
+                result = load_cached_historical_nasa_result(settings.local_execution_root, plan, cell)
+                if result is None:
+                    result = await fetch_nasa_power_daily(plan.nasa, cell)
+                    cache_historical_nasa_result(settings.local_execution_root, plan, result)
+                async with loader_session() as session, session.begin():
+                    await persist_nasa_power_cell(session, plan=plan, result=result)
+                checkpoint = record_historical_nasa_result(plan, checkpoint, result)
+                write_historical_nasa_checkpoint(checkpoint_path_value, checkpoint)
+                completed_cells.add(cell.cell_key)
+            if checkpoint.state != "validated":
+                raise ValueError("historical backfill did not produce complete source-cell coverage")
+            release_set = None
+            if all(receipt.retrieved_at <= plan.release_set_as_of for receipt in checkpoint.receipts):
+                async with loader_session() as session, session.begin():
+                    release_set = await finalize_nasa_release_set(session, plan=plan, checkpoint=checkpoint)
     except (OSError, SQLAlchemyError, ValueError, httpx.HTTPError) as exc:
         if "checkpoint_path_value" in locals() and "checkpoint" in locals():
             _write_historical_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
@@ -1740,7 +1907,10 @@ async def _historical_era5_backfill(plan_path: Path) -> None:
         for period in plan.periods:
             if period.key in completed_period_keys:
                 continue
-            result = load_cached_historical_era5_result(
+            # Off-thread: the cached replay parses a whole month's GRIB payload, and doing it inline
+            # blocks the event loop for the entire parse on every period.
+            result = await asyncio.to_thread(
+                load_cached_historical_era5_result,
                 settings.local_execution_root,
                 plan,
                 period,
@@ -1788,7 +1958,10 @@ async def _historical_era5_persist(plan_path: Path) -> None:
         if checkpoint.plan_checksum != historical_era5_plan_checksum(plan) or checkpoint.state != "validated":
             raise ValueError("ERA5 persistence requires a complete validated matching checkpoint")
         for period in plan.periods:
-            result = load_cached_historical_era5_result(
+            # Off-thread: see the note in the backfill verb -- the same month-sized parse, and here
+            # it sits directly in front of an awaited warehouse write.
+            result = await asyncio.to_thread(
+                load_cached_historical_era5_result,
                 settings.local_execution_root,
                 plan,
                 period,
@@ -1820,36 +1993,264 @@ async def _historical_era5_persist(plan_path: Path) -> None:
     )
 
 
+class LaneChunk(Protocol):
+    """One bounded unit of work a chunked lane fetches; `key` is the token its receipt cites."""
+
+    @property
+    def key(self) -> str: ...
+
+
+class LaneReceipt(Protocol):
+    """One chunk a lane already completed, as recorded in its checkpoint."""
+
+    @property
+    def chunk_key(self) -> str: ...
+
+
+class LanePlan[ChunkT: LaneChunk](Protocol):
+    """The reviewed-plan surface the shared chunked-lane driver reads."""
+
+    @property
+    def cells(self) -> Sequence[object]: ...
+
+    @property
+    def chunks(self) -> Sequence[ChunkT]: ...
+
+
+class LaneCheckpoint(Protocol):
+    """The durable resumable state a chunked lane rewrites after every recorded chunk."""
+
+    @property
+    def state(self) -> str: ...
+
+    @property
+    def reason(self) -> str | None: ...
+
+    @property
+    def receipts(self) -> Sequence[LaneReceipt]: ...
+
+    def model_copy(self, *, update: Mapping[str, Any]) -> Self: ...
+
+
+class LaneChunkRunner[PlanT, ChunkT, ResultT](Protocol):
+    """The bounded-concurrency wave runner a chunked lane exposes."""
+
+    async def __call__(
+        self,
+        plan: PlanT,
+        chunks: Sequence[ChunkT],
+        *,
+        concurrency: int,
+    ) -> Sequence[ResultT | BaseException]: ...
+
+
+@dataclass(frozen=True)
+class ChunkedLane[ChunkT: LaneChunk, PlanT: LanePlan[Any], CheckpointT: LaneCheckpoint, ResultT]:
+    """One chunked fetch lane's bindings, so status, resume, wave fetch and blocked-write exist once.
+
+    Open-Meteo, GloFAS, CAMS and Ensemble ran four hand-copied versions of the methods below, which
+    had already drifted; a fix to resume semantics now lands in one place. The per-lane differences
+    that are real -- the failure-reason ladder, the payload keys, the error token -- stay per-lane
+    fields rather than being unified away.
+
+    Every field is filled by a factory called from inside a verb body, never at import, so the
+    module-level name each one names is resolved at call time. That is what keeps a test's
+    `monkeypatch.setattr(agri_data_service.cli, ...)` intercepting: an import-time binding would
+    capture the original function and make the patch a silent no-op.
+
+    The four type parameters are not decoration. They are what makes mypy refuse a cams `record_*`
+    bound into the glofas lane -- exactly the copy-paste mistake this collapse exists to prevent.
+    """
+
+    error_token: str
+    parse_plan: Callable[[bytes], PlanT]
+    plan_checksum: Callable[[PlanT], str]
+    checkpoint_path: Callable[[Path, PlanT], Path]
+    initialize_checkpoint: Callable[[PlanT], CheckpointT]
+    read_checkpoint: Callable[[Path], CheckpointT]
+    rederive_checkpoint: Callable[[PlanT, CheckpointT], CheckpointT]
+    write_checkpoint: Callable[[Path, CheckpointT], None]
+    load_cached_result: Callable[[Path, PlanT, ChunkT], ResultT | None]
+    cache_result: Callable[[Path, PlanT, ResultT], object]
+    record_result: Callable[[PlanT, CheckpointT, ResultT], CheckpointT]
+    run_chunks: LaneChunkRunner[PlanT, ChunkT, ResultT]
+    release_manifest: Callable[[PlanT, CheckpointT], str]
+    failure_reason: Callable[[BaseException], str]
+    status_identity: Callable[[PlanT], dict[str, Any]]
+    status_totals: Callable[[PlanT, CheckpointT], dict[str, Any]]
+    backfill_extras: Callable[[PlanT, CheckpointT], dict[str, Any]]
+
+    def load_checkpoint(self, plan: PlanT, checkpoint_path_value: Path) -> CheckpointT:
+        """Load a plan-bound checkpoint, re-deriving `state` from receipts rather than trusting the file.
+
+        A `blocked` checkpoint whose chunks are all receipted has nothing left to fetch, so trusting
+        the stored value would strand it: nothing would ever move it off `blocked`.
+        """
+        if not checkpoint_path_value.exists():
+            return self.initialize_checkpoint(plan)
+        return self.rederive_checkpoint(plan, self.read_checkpoint(checkpoint_path_value))
+
+    def write_blocked_checkpoint(self, path: Path, checkpoint: CheckpointT, exc: Exception) -> None:
+        """Record why a run stopped so a resume starts from evidence rather than a rerun of everything."""
+        with suppress(OSError, ValueError):
+            self.write_checkpoint(
+                path,
+                checkpoint.model_copy(
+                    update={
+                        "state": "blocked",
+                        "updated_at": datetime.now(UTC),
+                        "reason": self.failure_reason(exc),
+                    }
+                ),
+            )
+
+    async def fetch_chunks(
+        self,
+        plan: PlanT,
+        checkpoint: CheckpointT,
+        checkpoint_path_value: Path,
+        chunks: Sequence[ChunkT],
+        concurrency: int,
+    ) -> tuple[CheckpointT, list[dict[str, str]]]:
+        """Reuse the local cache first, fetch the rest under bounded concurrency, and keep failures visible."""
+        failures: list[dict[str, str]] = []
+        pending: list[ChunkT] = []
+        for chunk in chunks:
+            cached = self.load_cached_result(settings.local_execution_root, plan, chunk)
+            if cached is None:
+                pending.append(chunk)
+                continue
+            checkpoint = self.record_result(plan, checkpoint, cached)
+            self.write_checkpoint(checkpoint_path_value, checkpoint)
+        # Harvested in waves of `concurrency` rather than one gather over everything, so an interrupted
+        # long run keeps every chunk that already answered instead of discarding the whole batch.
+        for start in range(0, len(pending), concurrency):
+            wave = pending[start : start + concurrency]
+            results = await self.run_chunks(plan, wave, concurrency=concurrency)
+            for chunk, result in zip(wave, results, strict=True):
+                if isinstance(result, BaseException):
+                    failures.append({"chunk_key": chunk.key, "reason": self.failure_reason(result)})
+                    continue
+                self.cache_result(settings.local_execution_root, plan, result)
+                checkpoint = self.record_result(plan, checkpoint, result)
+                self.write_checkpoint(checkpoint_path_value, checkpoint)
+            if failures:
+                # A quota wall does not clear inside one run; stop rather than burn the remaining waves.
+                break
+        return checkpoint, failures
+
+    def report_status(self, plan_path: Path) -> None:
+        """Report which chunks are already cached and what a resume would still fetch."""
+        try:
+            plan = self.parse_plan(plan_path.read_bytes())
+            checkpoint_path_value = self.checkpoint_path(settings.local_execution_root, plan)
+            checkpoint = self.load_checkpoint(plan, checkpoint_path_value)
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(self.failure_reason(exc)) from exc
+        completed = {receipt.chunk_key for receipt in checkpoint.receipts}
+        pending = [chunk.key for chunk in plan.chunks if chunk.key not in completed]
+        click.echo(
+            json.dumps(
+                {
+                    "plan_checksum": self.plan_checksum(plan),
+                    "checkpoint": str(checkpoint_path_value),
+                    "state": checkpoint.state,
+                    "reason": checkpoint.reason,
+                    **self.status_identity(plan),
+                    "cell_count": len(plan.cells),
+                    "chunk_count": len(plan.chunks),
+                    "completed_chunk_count": len(completed),
+                    "pending_chunk_count": len(pending),
+                    "pending_chunks": pending[:_OPEN_METEO_PENDING_PREVIEW],
+                    **self.status_totals(plan, checkpoint),
+                },
+                indent=2,
+            )
+        )
+
+    async def run_backfill(self, plan_path: Path, max_chunks: int | None, concurrency: int) -> None:
+        """Resume from the checkpoint, fetch a bounded batch, and never report a partial run as success."""
+        failures: list[dict[str, str]] = []
+        try:
+            plan = self.parse_plan(plan_path.read_bytes())
+            checkpoint_path_value = self.checkpoint_path(settings.local_execution_root, plan)
+            checkpoint = self.load_checkpoint(plan, checkpoint_path_value)
+            self.write_checkpoint(checkpoint_path_value, checkpoint)
+            completed = {receipt.chunk_key for receipt in checkpoint.receipts}
+            outstanding = [chunk for chunk in plan.chunks if chunk.key not in completed]
+            checkpoint, failures = await self.fetch_chunks(
+                plan,
+                checkpoint,
+                checkpoint_path_value,
+                outstanding if max_chunks is None else outstanding[:max_chunks],
+                concurrency,
+            )
+            extras = self.backfill_extras(plan, checkpoint)
+        except Exception as exc:
+            if "checkpoint_path_value" in locals() and "checkpoint" in locals():
+                self.write_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
+            raise click.ClickException(self.failure_reason(exc)) from exc
+        receipted = {receipt.chunk_key for receipt in checkpoint.receipts}
+        remaining = [chunk.key for chunk in plan.chunks if chunk.key not in receipted]
+        payload = {
+            "checkpoint": str(checkpoint_path_value),
+            "state": checkpoint.state,
+            "completed_chunk_count": len(checkpoint.receipts),
+            "chunk_count": len(plan.chunks),
+            "pending_chunk_count": len(remaining),
+            "failed_chunks": failures,
+            "release_receipt_manifest_checksum": (
+                self.release_manifest(plan, checkpoint) if checkpoint.state == "validated" else None
+            ),
+            **extras,
+        }
+        if failures:
+            # A chunk that dropped records must never read as success: record why, report, exit non-zero.
+            self.write_blocked_checkpoint(
+                checkpoint_path_value,
+                checkpoint,
+                ValueError(f"{len(failures)} chunk(s) failed; first: {failures[0]['reason']}"),
+            )
+            raise click.ClickException(json.dumps({**payload, "error": self.error_token}, indent=2))
+        click.echo(json.dumps(payload, indent=2))
+
+
+def _open_meteo_lane() -> ChunkedLane[
+    OpenMeteoArchiveChunk,
+    HistoricalOpenMeteoArchivePlan,
+    HistoricalOpenMeteoCheckpoint,
+    OpenMeteoArchiveChunkResult,
+]:
+    """Bind the Open-Meteo ERA5-Land archive lane, reading every module-level name at call time."""
+    return ChunkedLane(
+        error_token="open_meteo_chunks_failed",
+        parse_plan=HistoricalOpenMeteoArchivePlan.model_validate_json,
+        plan_checksum=historical_open_meteo_plan_checksum,
+        checkpoint_path=historical_open_meteo_checkpoint_path,
+        initialize_checkpoint=initialize_historical_open_meteo_checkpoint,
+        read_checkpoint=load_historical_open_meteo_checkpoint,
+        rederive_checkpoint=rederive_historical_open_meteo_checkpoint_state,
+        write_checkpoint=write_historical_open_meteo_checkpoint,
+        load_cached_result=load_cached_historical_open_meteo_result,
+        cache_result=cache_historical_open_meteo_result,
+        record_result=record_historical_open_meteo_result,
+        run_chunks=run_open_meteo_archive_chunks,
+        release_manifest=historical_open_meteo_release_manifest,
+        failure_reason=_historical_open_meteo_failure_reason,
+        status_identity=lambda _plan: {},
+        status_totals=lambda _plan, checkpoint: {
+            "observed_value_count": sum(receipt.observed_value_count for receipt in checkpoint.receipts),
+            "no_data_series_count": sum(receipt.no_data_series_count for receipt in checkpoint.receipts),
+        },
+        backfill_extras=lambda _plan, _checkpoint: {"next_steps": ["historical-open-meteo-persist"]},
+    )
+
+
 @cli.command("historical-open-meteo-status")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_open_meteo_status(plan: Path) -> None:
     """Report which archive chunks are already cached and what a resume would still fetch."""
-    try:
-        value = HistoricalOpenMeteoArchivePlan.model_validate_json(plan.read_bytes())
-        checkpoint_path_value = historical_open_meteo_checkpoint_path(settings.local_execution_root, value)
-        checkpoint = _load_open_meteo_checkpoint(value, checkpoint_path_value)
-    except (OSError, ValueError) as exc:
-        raise click.ClickException(_historical_open_meteo_failure_reason(exc)) from exc
-    completed = {receipt.chunk_key for receipt in checkpoint.receipts}
-    pending = [chunk.key for chunk in value.chunks if chunk.key not in completed]
-    click.echo(
-        json.dumps(
-            {
-                "plan_checksum": historical_open_meteo_plan_checksum(value),
-                "checkpoint": str(checkpoint_path_value),
-                "state": checkpoint.state,
-                "reason": checkpoint.reason,
-                "cell_count": len(value.cells),
-                "chunk_count": len(value.chunks),
-                "completed_chunk_count": len(completed),
-                "pending_chunk_count": len(pending),
-                "pending_chunks": pending[:_OPEN_METEO_PENDING_PREVIEW],
-                "observed_value_count": sum(receipt.observed_value_count for receipt in checkpoint.receipts),
-                "no_data_series_count": sum(receipt.no_data_series_count for receipt in checkpoint.receipts),
-            },
-            indent=2,
-        )
-    )
+    _open_meteo_lane().report_status(plan)
 
 
 @cli.command("historical-open-meteo-backfill")
@@ -1858,86 +2259,7 @@ def historical_open_meteo_status(plan: Path) -> None:
 @click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
 def historical_open_meteo_backfill(plan: Path, max_chunks: int | None, concurrency: int) -> None:
     """Fetch, validate, and cache reviewed Open-Meteo ERA5-Land archive chunks; resumable and bounded."""
-    asyncio.run(_historical_open_meteo_backfill(plan, max_chunks, concurrency))
-
-
-async def _historical_open_meteo_backfill(plan_path: Path, max_chunks: int | None, concurrency: int) -> None:
-    failures: list[dict[str, str]] = []
-    try:
-        plan = HistoricalOpenMeteoArchivePlan.model_validate_json(plan_path.read_bytes())
-        checkpoint_path_value = historical_open_meteo_checkpoint_path(settings.local_execution_root, plan)
-        checkpoint = _load_open_meteo_checkpoint(plan, checkpoint_path_value)
-        write_historical_open_meteo_checkpoint(checkpoint_path_value, checkpoint)
-        completed = {receipt.chunk_key for receipt in checkpoint.receipts}
-        outstanding = [chunk for chunk in plan.chunks if chunk.key not in completed]
-        checkpoint, failures = await _fetch_open_meteo_chunks(
-            plan,
-            checkpoint,
-            checkpoint_path_value,
-            outstanding if max_chunks is None else outstanding[:max_chunks],
-            concurrency,
-        )
-    except Exception as exc:
-        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
-            _write_historical_open_meteo_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
-        raise click.ClickException(_historical_open_meteo_failure_reason(exc)) from exc
-    remaining = [chunk.key for chunk in plan.chunks if chunk.key not in {r.chunk_key for r in checkpoint.receipts}]
-    payload = {
-        "checkpoint": str(checkpoint_path_value),
-        "state": checkpoint.state,
-        "completed_chunk_count": len(checkpoint.receipts),
-        "chunk_count": len(plan.chunks),
-        "pending_chunk_count": len(remaining),
-        "failed_chunks": failures,
-        "release_receipt_manifest_checksum": (
-            historical_open_meteo_release_manifest(plan, checkpoint) if checkpoint.state == "validated" else None
-        ),
-        "next_steps": ["historical-open-meteo-persist"],
-    }
-    if failures:
-        # A chunk that dropped records must never read as success: record why, report, exit non-zero.
-        _write_historical_open_meteo_blocked_checkpoint(
-            checkpoint_path_value,
-            checkpoint,
-            ValueError(f"{len(failures)} chunk(s) failed; first: {failures[0]['reason']}"),
-        )
-        raise click.ClickException(json.dumps({**payload, "error": "open_meteo_chunks_failed"}, indent=2))
-    click.echo(json.dumps(payload, indent=2))
-
-
-async def _fetch_open_meteo_chunks(
-    plan: HistoricalOpenMeteoArchivePlan,
-    checkpoint: HistoricalOpenMeteoCheckpoint,
-    checkpoint_path_value: Path,
-    chunks: list[OpenMeteoArchiveChunk],
-    concurrency: int,
-) -> tuple[HistoricalOpenMeteoCheckpoint, list[dict[str, str]]]:
-    """Reuse the local cache first, fetch the rest under bounded concurrency, and keep failures visible."""
-    failures: list[dict[str, str]] = []
-    pending: list[OpenMeteoArchiveChunk] = []
-    for chunk in chunks:
-        cached = load_cached_historical_open_meteo_result(settings.local_execution_root, plan, chunk)
-        if cached is None:
-            pending.append(chunk)
-            continue
-        checkpoint = record_historical_open_meteo_result(plan, checkpoint, cached)
-        write_historical_open_meteo_checkpoint(checkpoint_path_value, checkpoint)
-    # Harvested in waves of `concurrency` rather than one gather over everything, so an interrupted
-    # long run keeps every chunk that already answered instead of discarding the whole batch.
-    for start in range(0, len(pending), concurrency):
-        wave = pending[start : start + concurrency]
-        results = await run_open_meteo_archive_chunks(plan, wave, concurrency=concurrency)
-        for chunk, result in zip(wave, results, strict=True):
-            if isinstance(result, BaseException):
-                failures.append({"chunk_key": chunk.key, "reason": _historical_open_meteo_failure_reason(result)})
-                continue
-            cache_historical_open_meteo_result(settings.local_execution_root, plan, result)
-            checkpoint = record_historical_open_meteo_result(plan, checkpoint, result)
-            write_historical_open_meteo_checkpoint(checkpoint_path_value, checkpoint)
-        if failures:
-            # A quota wall does not clear inside one run; stop rather than burn the remaining waves.
-            break
-    return checkpoint, failures
+    asyncio.run(_open_meteo_lane().run_backfill(plan, max_chunks, concurrency))
 
 
 @cli.command("historical-open-meteo-persist")
@@ -1954,25 +2276,28 @@ async def _historical_open_meteo_persist(plan_path: Path) -> None:
         checkpoint_path_value = historical_open_meteo_checkpoint_path(settings.local_execution_root, plan)
         if not checkpoint_path_value.exists():
             raise ValueError("Open-Meteo archive persistence requires a matching checkpoint")
-        checkpoint = _load_open_meteo_checkpoint(plan, checkpoint_path_value)
+        checkpoint = _open_meteo_lane().load_checkpoint(plan, checkpoint_path_value)
         receipted = {receipt.chunk_key for receipt in checkpoint.receipts}
         persisted: list[dict[str, object]] = []
-        for chunk in plan.chunks:
-            if chunk.key not in receipted:
-                continue
-            result = load_cached_historical_open_meteo_result(settings.local_execution_root, plan, chunk)
-            if result is None:
-                raise ValueError("Open-Meteo archive persistence requires every receipted local chunk document")
-            persisted.append(await _persist_open_meteo_chunk(loader_database_url, plan, result))
-        # Coverage complete but the as-of time predates a receipt is a governance failure, not a
-        # wait-and-resume state: the chunks an operator would be sent to fetch do not exist.
-        stale_chunk_keys = sorted(
-            receipt.chunk_key for receipt in checkpoint.receipts if receipt.retrieved_at > plan.release_set_as_of
-        )
-        release_set = None
-        if checkpoint.state == "validated" and not stale_chunk_keys:
-            async with local_source_loader_session(loader_database_url) as session, session.begin():
-                release_set = await finalize_open_meteo_release_set(session, plan=plan, checkpoint=checkpoint)
+        # One engine for the whole verb, one session and one transaction per chunk: the per-chunk
+        # write boundary is unchanged, but the connect handshake is paid once instead of per chunk.
+        async with local_source_loader_engine(loader_database_url) as loader_session:
+            for chunk in plan.chunks:
+                if chunk.key not in receipted:
+                    continue
+                result = load_cached_historical_open_meteo_result(settings.local_execution_root, plan, chunk)
+                if result is None:
+                    raise ValueError("Open-Meteo archive persistence requires every receipted local chunk document")
+                persisted.append(await _persist_open_meteo_chunk(loader_session, plan, result))
+            # Coverage complete but the as-of time predates a receipt is a governance failure, not a
+            # wait-and-resume state: the chunks an operator would be sent to fetch do not exist.
+            stale_chunk_keys = sorted(
+                receipt.chunk_key for receipt in checkpoint.receipts if receipt.retrieved_at > plan.release_set_as_of
+            )
+            release_set = None
+            if checkpoint.state == "validated" and not stale_chunk_keys:
+                async with loader_session() as session, session.begin():
+                    release_set = await finalize_open_meteo_release_set(session, plan=plan, checkpoint=checkpoint)
     except (OSError, SQLAlchemyError, ValueError) as exc:
         raise click.ClickException(_historical_open_meteo_failure_reason(exc)) from exc
     payload = {
@@ -1997,30 +2322,13 @@ async def _historical_open_meteo_persist(plan_path: Path) -> None:
     click.echo(json.dumps(payload, indent=2))
 
 
-def _load_open_meteo_checkpoint(
-    plan: HistoricalOpenMeteoArchivePlan,
-    checkpoint_path_value: Path,
-) -> HistoricalOpenMeteoCheckpoint:
-    """Load a plan-bound checkpoint, re-deriving `state` from receipts rather than trusting the file.
-
-    A `blocked` checkpoint whose chunks are all receipted has nothing left to fetch, so trusting the
-    stored value would strand it: nothing would ever move it off `blocked`.
-    """
-    if not checkpoint_path_value.exists():
-        return initialize_historical_open_meteo_checkpoint(plan)
-    return rederive_historical_open_meteo_checkpoint_state(
-        plan,
-        load_historical_open_meteo_checkpoint(checkpoint_path_value),
-    )
-
-
 async def _persist_open_meteo_chunk(
-    loader_database_url: str,
+    loader_session: async_sessionmaker[AsyncSession],
     plan: HistoricalOpenMeteoArchivePlan,
     result: OpenMeteoArchiveChunkResult,
 ) -> dict[str, object]:
     """Persist one chunk in its own transaction so a later chunk's failure never rolls back an earlier one."""
-    async with local_source_loader_session(loader_database_url) as session, session.begin():
+    async with loader_session() as session, session.begin():
         written = await persist_open_meteo_archive_chunk(session, plan=plan, result=result)
     return {
         "chunk_key": result.chunk_key,
@@ -2035,39 +2343,45 @@ async def _persist_open_meteo_chunk(
 _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED = "not_implemented"
 
 
+def _glofas_lane() -> ChunkedLane[
+    GlofasFloodChunk,
+    HistoricalGlofasFloodPlan,
+    HistoricalGlofasCheckpoint,
+    GlofasFloodChunkResult,
+]:
+    """Bind the GloFAS river-discharge lane, reading every module-level name at call time."""
+    return ChunkedLane(
+        error_token="glofas_chunks_failed",
+        parse_plan=HistoricalGlofasFloodPlan.model_validate_json,
+        plan_checksum=historical_glofas_plan_checksum,
+        checkpoint_path=historical_glofas_checkpoint_path,
+        initialize_checkpoint=initialize_historical_glofas_checkpoint,
+        read_checkpoint=load_historical_glofas_checkpoint,
+        rederive_checkpoint=rederive_historical_glofas_checkpoint_state,
+        write_checkpoint=write_historical_glofas_checkpoint,
+        load_cached_result=load_cached_historical_glofas_result,
+        cache_result=cache_historical_glofas_result,
+        record_result=record_historical_glofas_result,
+        run_chunks=run_glofas_flood_chunks,
+        release_manifest=historical_glofas_release_manifest,
+        failure_reason=_historical_glofas_failure_reason,
+        status_identity=lambda plan: {"model": plan.model, "support_key": plan.support_key},
+        status_totals=lambda _plan, checkpoint: {
+            "observed_value_count": sum(receipt.observed_value_count for receipt in checkpoint.receipts),
+            "no_data_series_count": sum(receipt.no_data_series_count for receipt in checkpoint.receipts),
+            "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
+        },
+        backfill_extras=lambda _plan, _checkpoint: {
+            "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
+        },
+    )
+
+
 @cli.command("historical-glofas-status")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_glofas_status(plan: Path) -> None:
     """Report which GloFAS flood chunks are already cached and what a resume would still fetch."""
-    try:
-        value = HistoricalGlofasFloodPlan.model_validate_json(plan.read_bytes())
-        checkpoint_path_value = historical_glofas_checkpoint_path(settings.local_execution_root, value)
-        checkpoint = _load_glofas_checkpoint(value, checkpoint_path_value)
-    except (OSError, ValueError) as exc:
-        raise click.ClickException(_historical_glofas_failure_reason(exc)) from exc
-    completed = {receipt.chunk_key for receipt in checkpoint.receipts}
-    pending = [chunk.key for chunk in value.chunks if chunk.key not in completed]
-    click.echo(
-        json.dumps(
-            {
-                "plan_checksum": historical_glofas_plan_checksum(value),
-                "checkpoint": str(checkpoint_path_value),
-                "state": checkpoint.state,
-                "reason": checkpoint.reason,
-                "model": value.model,
-                "support_key": value.support_key,
-                "cell_count": len(value.cells),
-                "chunk_count": len(value.chunks),
-                "completed_chunk_count": len(completed),
-                "pending_chunk_count": len(pending),
-                "pending_chunks": pending[:_OPEN_METEO_PENDING_PREVIEW],
-                "observed_value_count": sum(receipt.observed_value_count for receipt in checkpoint.receipts),
-                "no_data_series_count": sum(receipt.no_data_series_count for receipt in checkpoint.receipts),
-                "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
-            },
-            indent=2,
-        )
-    )
+    _glofas_lane().report_status(plan)
 
 
 @cli.command("historical-glofas-backfill")
@@ -2076,99 +2390,7 @@ def historical_glofas_status(plan: Path) -> None:
 @click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
 def historical_glofas_backfill(plan: Path, max_chunks: int | None, concurrency: int) -> None:
     """Fetch, validate, and cache reviewed GloFAS river-discharge chunks; resumable and bounded."""
-    asyncio.run(_historical_glofas_backfill(plan, max_chunks, concurrency))
-
-
-async def _historical_glofas_backfill(plan_path: Path, max_chunks: int | None, concurrency: int) -> None:
-    failures: list[dict[str, str]] = []
-    try:
-        plan = HistoricalGlofasFloodPlan.model_validate_json(plan_path.read_bytes())
-        checkpoint_path_value = historical_glofas_checkpoint_path(settings.local_execution_root, plan)
-        checkpoint = _load_glofas_checkpoint(plan, checkpoint_path_value)
-        write_historical_glofas_checkpoint(checkpoint_path_value, checkpoint)
-        completed = {receipt.chunk_key for receipt in checkpoint.receipts}
-        outstanding = [chunk for chunk in plan.chunks if chunk.key not in completed]
-        checkpoint, failures = await _fetch_glofas_chunks(
-            plan,
-            checkpoint,
-            checkpoint_path_value,
-            outstanding if max_chunks is None else outstanding[:max_chunks],
-            concurrency,
-        )
-    except Exception as exc:
-        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
-            _write_historical_glofas_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
-        raise click.ClickException(_historical_glofas_failure_reason(exc)) from exc
-    remaining = [chunk.key for chunk in plan.chunks if chunk.key not in {r.chunk_key for r in checkpoint.receipts}]
-    payload = {
-        "checkpoint": str(checkpoint_path_value),
-        "state": checkpoint.state,
-        "completed_chunk_count": len(checkpoint.receipts),
-        "chunk_count": len(plan.chunks),
-        "pending_chunk_count": len(remaining),
-        "failed_chunks": failures,
-        "release_receipt_manifest_checksum": (
-            historical_glofas_release_manifest(plan, checkpoint) if checkpoint.state == "validated" else None
-        ),
-        "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
-    }
-    if failures:
-        # A chunk that dropped records must never read as success: record why, report, exit non-zero.
-        _write_historical_glofas_blocked_checkpoint(
-            checkpoint_path_value,
-            checkpoint,
-            ValueError(f"{len(failures)} chunk(s) failed; first: {failures[0]['reason']}"),
-        )
-        raise click.ClickException(json.dumps({**payload, "error": "glofas_chunks_failed"}, indent=2))
-    click.echo(json.dumps(payload, indent=2))
-
-
-async def _fetch_glofas_chunks(
-    plan: HistoricalGlofasFloodPlan,
-    checkpoint: HistoricalGlofasCheckpoint,
-    checkpoint_path_value: Path,
-    chunks: list[GlofasFloodChunk],
-    concurrency: int,
-) -> tuple[HistoricalGlofasCheckpoint, list[dict[str, str]]]:
-    """Reuse the local cache first, fetch the rest under bounded concurrency, and keep failures visible."""
-    failures: list[dict[str, str]] = []
-    pending: list[GlofasFloodChunk] = []
-    for chunk in chunks:
-        cached = load_cached_historical_glofas_result(settings.local_execution_root, plan, chunk)
-        if cached is None:
-            pending.append(chunk)
-            continue
-        checkpoint = record_historical_glofas_result(plan, checkpoint, cached)
-        write_historical_glofas_checkpoint(checkpoint_path_value, checkpoint)
-    # Harvested in waves of `concurrency` rather than one gather over everything, so an interrupted
-    # long run keeps every chunk that already answered instead of discarding the whole batch.
-    for start in range(0, len(pending), concurrency):
-        wave = pending[start : start + concurrency]
-        results = await run_glofas_flood_chunks(plan, wave, concurrency=concurrency)
-        for chunk, result in zip(wave, results, strict=True):
-            if isinstance(result, BaseException):
-                failures.append({"chunk_key": chunk.key, "reason": _historical_glofas_failure_reason(result)})
-                continue
-            cache_historical_glofas_result(settings.local_execution_root, plan, result)
-            checkpoint = record_historical_glofas_result(plan, checkpoint, result)
-            write_historical_glofas_checkpoint(checkpoint_path_value, checkpoint)
-        if failures:
-            # A quota wall does not clear inside one run; stop rather than burn the remaining waves.
-            break
-    return checkpoint, failures
-
-
-def _load_glofas_checkpoint(
-    plan: HistoricalGlofasFloodPlan,
-    checkpoint_path_value: Path,
-) -> HistoricalGlofasCheckpoint:
-    """Load a plan-bound checkpoint, re-deriving `state` from receipts rather than trusting the file."""
-    if not checkpoint_path_value.exists():
-        return initialize_historical_glofas_checkpoint(plan)
-    return rederive_historical_glofas_checkpoint_state(
-        plan,
-        load_historical_glofas_checkpoint(checkpoint_path_value),
-    )
+    asyncio.run(_glofas_lane().run_backfill(plan, max_chunks, concurrency))
 
 
 def _historical_glofas_failure_reason(exc: BaseException) -> str:
@@ -2178,63 +2400,51 @@ def _historical_glofas_failure_reason(exc: BaseException) -> str:
     return f"GloFAS flood operation failed ({exc.__class__.__name__})"
 
 
-def _write_historical_glofas_blocked_checkpoint(
-    path: Path,
-    checkpoint: HistoricalGlofasCheckpoint,
-    exc: Exception,
-) -> None:
-    """Record why a run stopped so a resume starts from evidence rather than a rerun of everything."""
-    with suppress(OSError, ValueError):
-        write_historical_glofas_checkpoint(
-            path,
-            checkpoint.model_copy(
-                update={
-                    "state": "blocked",
-                    "updated_at": datetime.now(UTC),
-                    "reason": _historical_glofas_failure_reason(exc),
-                }
-            ),
-        )
+def _cams_lane() -> ChunkedLane[
+    CamsAirQualityChunk,
+    HistoricalCamsAirQualityPlan,
+    HistoricalCamsCheckpoint,
+    CamsAirQualityChunkResult,
+]:
+    """Bind the CAMS air-quality lane, reading every module-level name at call time."""
+    return ChunkedLane(
+        error_token="cams_chunks_failed",
+        parse_plan=HistoricalCamsAirQualityPlan.model_validate_json,
+        plan_checksum=historical_cams_plan_checksum,
+        checkpoint_path=historical_cams_checkpoint_path,
+        initialize_checkpoint=initialize_historical_cams_checkpoint,
+        read_checkpoint=load_historical_cams_checkpoint,
+        rederive_checkpoint=rederive_historical_cams_checkpoint_state,
+        write_checkpoint=write_historical_cams_checkpoint,
+        load_cached_result=load_cached_historical_cams_result,
+        cache_result=cache_historical_cams_result,
+        record_result=record_historical_cams_result,
+        run_chunks=run_cams_air_quality_chunks,
+        release_manifest=historical_cams_release_manifest,
+        failure_reason=_historical_cams_failure_reason,
+        status_identity=lambda plan: {
+            "domain": plan.domain,
+            "support_key": plan.support_key,
+            "day_block_count": len(plan.day_blocks),
+        },
+        status_totals=lambda _plan, checkpoint: {
+            "observed_value_count": sum(receipt.observed_value_count for receipt in checkpoint.receipts),
+            "insufficient_hour_day_count": sum(receipt.insufficient_hour_day_count for receipt in checkpoint.receipts),
+            "no_data_series_count": sum(receipt.no_data_series_count for receipt in checkpoint.receipts),
+            "failed_series_count": sum(receipt.failed_series_count for receipt in checkpoint.receipts),
+            "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
+        },
+        backfill_extras=lambda _plan, _checkpoint: {
+            "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
+        },
+    )
 
 
 @cli.command("historical-cams-status")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_cams_status(plan: Path) -> None:
     """Report which CAMS air-quality chunks are already cached and what a resume would still fetch."""
-    try:
-        value = HistoricalCamsAirQualityPlan.model_validate_json(plan.read_bytes())
-        checkpoint_path_value = historical_cams_checkpoint_path(settings.local_execution_root, value)
-        checkpoint = _load_cams_checkpoint(value, checkpoint_path_value)
-    except (OSError, ValueError) as exc:
-        raise click.ClickException(_historical_cams_failure_reason(exc)) from exc
-    completed = {receipt.chunk_key for receipt in checkpoint.receipts}
-    pending = [chunk.key for chunk in value.chunks if chunk.key not in completed]
-    click.echo(
-        json.dumps(
-            {
-                "plan_checksum": historical_cams_plan_checksum(value),
-                "checkpoint": str(checkpoint_path_value),
-                "state": checkpoint.state,
-                "reason": checkpoint.reason,
-                "domain": value.domain,
-                "support_key": value.support_key,
-                "cell_count": len(value.cells),
-                "day_block_count": len(value.day_blocks),
-                "chunk_count": len(value.chunks),
-                "completed_chunk_count": len(completed),
-                "pending_chunk_count": len(pending),
-                "pending_chunks": pending[:_OPEN_METEO_PENDING_PREVIEW],
-                "observed_value_count": sum(receipt.observed_value_count for receipt in checkpoint.receipts),
-                "insufficient_hour_day_count": sum(
-                    receipt.insufficient_hour_day_count for receipt in checkpoint.receipts
-                ),
-                "no_data_series_count": sum(receipt.no_data_series_count for receipt in checkpoint.receipts),
-                "failed_series_count": sum(receipt.failed_series_count for receipt in checkpoint.receipts),
-                "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
-            },
-            indent=2,
-        )
-    )
+    _cams_lane().report_status(plan)
 
 
 @cli.command("historical-cams-backfill")
@@ -2243,99 +2453,7 @@ def historical_cams_status(plan: Path) -> None:
 @click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
 def historical_cams_backfill(plan: Path, max_chunks: int | None, concurrency: int) -> None:
     """Fetch, validate, and cache reviewed CAMS air-quality chunks; resumable and bounded."""
-    asyncio.run(_historical_cams_backfill(plan, max_chunks, concurrency))
-
-
-async def _historical_cams_backfill(plan_path: Path, max_chunks: int | None, concurrency: int) -> None:
-    failures: list[dict[str, str]] = []
-    try:
-        plan = HistoricalCamsAirQualityPlan.model_validate_json(plan_path.read_bytes())
-        checkpoint_path_value = historical_cams_checkpoint_path(settings.local_execution_root, plan)
-        checkpoint = _load_cams_checkpoint(plan, checkpoint_path_value)
-        write_historical_cams_checkpoint(checkpoint_path_value, checkpoint)
-        completed = {receipt.chunk_key for receipt in checkpoint.receipts}
-        outstanding = [chunk for chunk in plan.chunks if chunk.key not in completed]
-        checkpoint, failures = await _fetch_cams_chunks(
-            plan,
-            checkpoint,
-            checkpoint_path_value,
-            outstanding if max_chunks is None else outstanding[:max_chunks],
-            concurrency,
-        )
-    except Exception as exc:
-        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
-            _write_historical_cams_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
-        raise click.ClickException(_historical_cams_failure_reason(exc)) from exc
-    remaining = [chunk.key for chunk in plan.chunks if chunk.key not in {r.chunk_key for r in checkpoint.receipts}]
-    payload = {
-        "checkpoint": str(checkpoint_path_value),
-        "state": checkpoint.state,
-        "completed_chunk_count": len(checkpoint.receipts),
-        "chunk_count": len(plan.chunks),
-        "pending_chunk_count": len(remaining),
-        "failed_chunks": failures,
-        "release_receipt_manifest_checksum": (
-            historical_cams_release_manifest(plan, checkpoint) if checkpoint.state == "validated" else None
-        ),
-        "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
-    }
-    if failures:
-        # A chunk that dropped records must never read as success: record why, report, exit non-zero.
-        _write_historical_cams_blocked_checkpoint(
-            checkpoint_path_value,
-            checkpoint,
-            ValueError(f"{len(failures)} chunk(s) failed; first: {failures[0]['reason']}"),
-        )
-        raise click.ClickException(json.dumps({**payload, "error": "cams_chunks_failed"}, indent=2))
-    click.echo(json.dumps(payload, indent=2))
-
-
-async def _fetch_cams_chunks(
-    plan: HistoricalCamsAirQualityPlan,
-    checkpoint: HistoricalCamsCheckpoint,
-    checkpoint_path_value: Path,
-    chunks: list[CamsAirQualityChunk],
-    concurrency: int,
-) -> tuple[HistoricalCamsCheckpoint, list[dict[str, str]]]:
-    """Reuse the local cache first, fetch the rest under bounded concurrency, and keep failures visible."""
-    failures: list[dict[str, str]] = []
-    pending: list[CamsAirQualityChunk] = []
-    for chunk in chunks:
-        cached = load_cached_historical_cams_result(settings.local_execution_root, plan, chunk)
-        if cached is None:
-            pending.append(chunk)
-            continue
-        checkpoint = record_historical_cams_result(plan, checkpoint, cached)
-        write_historical_cams_checkpoint(checkpoint_path_value, checkpoint)
-    # Harvested in waves of `concurrency` rather than one gather over everything, so an interrupted
-    # long run keeps every chunk that already answered instead of discarding the whole batch.
-    for start in range(0, len(pending), concurrency):
-        wave = pending[start : start + concurrency]
-        results = await run_cams_air_quality_chunks(plan, wave, concurrency=concurrency)
-        for chunk, result in zip(wave, results, strict=True):
-            if isinstance(result, BaseException):
-                failures.append({"chunk_key": chunk.key, "reason": _historical_cams_failure_reason(result)})
-                continue
-            cache_historical_cams_result(settings.local_execution_root, plan, result)
-            checkpoint = record_historical_cams_result(plan, checkpoint, result)
-            write_historical_cams_checkpoint(checkpoint_path_value, checkpoint)
-        if failures:
-            # A quota wall does not clear inside one run; stop rather than burn the remaining waves.
-            break
-    return checkpoint, failures
-
-
-def _load_cams_checkpoint(
-    plan: HistoricalCamsAirQualityPlan,
-    checkpoint_path_value: Path,
-) -> HistoricalCamsCheckpoint:
-    """Load a plan-bound checkpoint, re-deriving `state` from receipts rather than trusting the file."""
-    if not checkpoint_path_value.exists():
-        return initialize_historical_cams_checkpoint(plan)
-    return rederive_historical_cams_checkpoint_state(
-        plan,
-        load_historical_cams_checkpoint(checkpoint_path_value),
-    )
+    asyncio.run(_cams_lane().run_backfill(plan, max_chunks, concurrency))
 
 
 def _historical_cams_failure_reason(exc: BaseException) -> str:
@@ -2345,64 +2463,65 @@ def _historical_cams_failure_reason(exc: BaseException) -> str:
     return f"CAMS air-quality operation failed ({exc.__class__.__name__})"
 
 
-def _write_historical_cams_blocked_checkpoint(
-    path: Path,
-    checkpoint: HistoricalCamsCheckpoint,
-    exc: Exception,
-) -> None:
-    """Record why a run stopped so a resume starts from evidence rather than a rerun of everything."""
-    with suppress(OSError, ValueError):
-        write_historical_cams_checkpoint(
-            path,
-            checkpoint.model_copy(
-                update={
-                    "state": "blocked",
-                    "updated_at": datetime.now(UTC),
-                    "reason": _historical_cams_failure_reason(exc),
-                }
-            ),
-        )
+def _ensemble_forecast_lane() -> ChunkedLane[
+    EnsembleForecastChunk,
+    EnsembleForecastPlan,
+    EnsembleForecastCheckpoint,
+    EnsembleForecastChunkResult,
+]:
+    """Bind the Open-Meteo Ensemble forecast lane, reading every module-level name at call time."""
+    return ChunkedLane(
+        error_token="ensemble_chunks_failed",
+        parse_plan=EnsembleForecastPlan.model_validate_json,
+        plan_checksum=ensemble_forecast_plan_checksum,
+        checkpoint_path=ensemble_forecast_checkpoint_path,
+        initialize_checkpoint=initialize_ensemble_forecast_checkpoint,
+        read_checkpoint=load_ensemble_forecast_checkpoint,
+        rederive_checkpoint=rederive_ensemble_forecast_checkpoint_state,
+        write_checkpoint=write_ensemble_forecast_checkpoint,
+        load_cached_result=load_cached_ensemble_forecast_result,
+        cache_result=cache_ensemble_forecast_result,
+        record_result=record_ensemble_forecast_result,
+        run_chunks=run_ensemble_forecast_chunks,
+        release_manifest=ensemble_forecast_release_manifest,
+        failure_reason=_forecast_ensemble_failure_reason,
+        status_identity=lambda plan: {
+            "model": plan.model,
+            "member_count": plan.member_count,
+            "support_key": plan.support_key,
+            "issue_time": plan.issue_time.isoformat(),
+            "horizon_step_count": plan.step_count,
+            "quantile_levels": plan.quantile_levels,
+        },
+        status_totals=lambda plan, checkpoint: {
+            **_ensemble_forecast_receipt_totals(checkpoint),
+            "staged_document": str(ensemble_forecast_staged_document_path(settings.local_execution_root, plan)),
+            "warehouse_persistence": ENSEMBLE_WAREHOUSE_PERSISTENCE_STATE,
+        },
+        # Staging runs here rather than after the driver returns so a staging failure still lands in
+        # the blocked checkpoint, exactly as it did when this lane had its own backfill body.
+        backfill_extras=lambda plan, checkpoint: {
+            **_ensemble_forecast_receipt_totals(checkpoint),
+            **_stage_ensemble_forecast_document(plan, checkpoint),
+            "warehouse_persistence": ENSEMBLE_WAREHOUSE_PERSISTENCE_STATE,
+        },
+    )
+
+
+def _ensemble_forecast_receipt_totals(checkpoint: EnsembleForecastCheckpoint) -> dict[str, Any]:
+    """Sum the per-chunk staging counters both the status and fetch payloads report."""
+    return {
+        "staged_receipt_count": sum(receipt.staged_receipt_count for receipt in checkpoint.receipts),
+        "staged_value_count": sum(receipt.staged_value_count for receipt in checkpoint.receipts),
+        "failed_series_count": sum(receipt.failed_series_count for receipt in checkpoint.receipts),
+    }
 
 
 @cli.command("forecast-ensemble-status")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def forecast_ensemble_status(plan: Path) -> None:
     """Report which Open-Meteo Ensemble chunks are already cached and what a resume would still fetch."""
-    try:
-        value = EnsembleForecastPlan.model_validate_json(plan.read_bytes())
-        checkpoint_path_value = ensemble_forecast_checkpoint_path(settings.local_execution_root, value)
-        checkpoint = _load_ensemble_forecast_checkpoint(value, checkpoint_path_value)
-    except (OSError, ValueError) as exc:
-        raise click.ClickException(_forecast_ensemble_failure_reason(exc)) from exc
-    completed = {receipt.chunk_key for receipt in checkpoint.receipts}
-    pending = [chunk.key for chunk in value.chunks if chunk.key not in completed]
-    click.echo(
-        json.dumps(
-            {
-                "plan_checksum": ensemble_forecast_plan_checksum(value),
-                "checkpoint": str(checkpoint_path_value),
-                "state": checkpoint.state,
-                "reason": checkpoint.reason,
-                "model": value.model,
-                "member_count": value.member_count,
-                "support_key": value.support_key,
-                "issue_time": value.issue_time.isoformat(),
-                "horizon_step_count": value.step_count,
-                "quantile_levels": value.quantile_levels,
-                "cell_count": len(value.cells),
-                "chunk_count": len(value.chunks),
-                "completed_chunk_count": len(completed),
-                "pending_chunk_count": len(pending),
-                "pending_chunks": pending[:_OPEN_METEO_PENDING_PREVIEW],
-                "staged_receipt_count": sum(receipt.staged_receipt_count for receipt in checkpoint.receipts),
-                "staged_value_count": sum(receipt.staged_value_count for receipt in checkpoint.receipts),
-                "failed_series_count": sum(receipt.failed_series_count for receipt in checkpoint.receipts),
-                "staged_document": str(ensemble_forecast_staged_document_path(settings.local_execution_root, value)),
-                "warehouse_persistence": ENSEMBLE_WAREHOUSE_PERSISTENCE_STATE,
-            },
-            indent=2,
-        )
-    )
+    _ensemble_forecast_lane().report_status(plan)
 
 
 @cli.command("forecast-ensemble-fetch")
@@ -2411,91 +2530,7 @@ def forecast_ensemble_status(plan: Path) -> None:
 @click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
 def forecast_ensemble_fetch(plan: Path, max_chunks: int | None, concurrency: int) -> None:
     """Fetch reviewed Open-Meteo Ensemble chunks and stage their quantile receipts; resumable and bounded."""
-    asyncio.run(_forecast_ensemble_fetch(plan, max_chunks, concurrency))
-
-
-async def _forecast_ensemble_fetch(plan_path: Path, max_chunks: int | None, concurrency: int) -> None:
-    failures: list[dict[str, str]] = []
-    try:
-        plan = EnsembleForecastPlan.model_validate_json(plan_path.read_bytes())
-        checkpoint_path_value = ensemble_forecast_checkpoint_path(settings.local_execution_root, plan)
-        checkpoint = _load_ensemble_forecast_checkpoint(plan, checkpoint_path_value)
-        write_ensemble_forecast_checkpoint(checkpoint_path_value, checkpoint)
-        completed = {receipt.chunk_key for receipt in checkpoint.receipts}
-        outstanding = [chunk for chunk in plan.chunks if chunk.key not in completed]
-        checkpoint, failures = await _fetch_ensemble_forecast_chunks(
-            plan,
-            checkpoint,
-            checkpoint_path_value,
-            outstanding if max_chunks is None else outstanding[:max_chunks],
-            concurrency,
-        )
-        staged = _stage_ensemble_forecast_document(plan, checkpoint)
-    except Exception as exc:
-        if "checkpoint_path_value" in locals() and "checkpoint" in locals():
-            _write_forecast_ensemble_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
-        raise click.ClickException(_forecast_ensemble_failure_reason(exc)) from exc
-    remaining = [chunk.key for chunk in plan.chunks if chunk.key not in {r.chunk_key for r in checkpoint.receipts}]
-    payload = {
-        "checkpoint": str(checkpoint_path_value),
-        "state": checkpoint.state,
-        "completed_chunk_count": len(checkpoint.receipts),
-        "chunk_count": len(plan.chunks),
-        "pending_chunk_count": len(remaining),
-        "failed_chunks": failures,
-        "staged_receipt_count": sum(receipt.staged_receipt_count for receipt in checkpoint.receipts),
-        "staged_value_count": sum(receipt.staged_value_count for receipt in checkpoint.receipts),
-        "failed_series_count": sum(receipt.failed_series_count for receipt in checkpoint.receipts),
-        "release_receipt_manifest_checksum": (
-            ensemble_forecast_release_manifest(plan, checkpoint) if checkpoint.state == "validated" else None
-        ),
-        **staged,
-        "warehouse_persistence": ENSEMBLE_WAREHOUSE_PERSISTENCE_STATE,
-    }
-    if failures:
-        # A chunk that dropped records must never read as success: record why, report, exit non-zero.
-        _write_forecast_ensemble_blocked_checkpoint(
-            checkpoint_path_value,
-            checkpoint,
-            ValueError(f"{len(failures)} chunk(s) failed; first: {failures[0]['reason']}"),
-        )
-        raise click.ClickException(json.dumps({**payload, "error": "ensemble_chunks_failed"}, indent=2))
-    click.echo(json.dumps(payload, indent=2))
-
-
-async def _fetch_ensemble_forecast_chunks(
-    plan: EnsembleForecastPlan,
-    checkpoint: EnsembleForecastCheckpoint,
-    checkpoint_path_value: Path,
-    chunks: list[EnsembleForecastChunk],
-    concurrency: int,
-) -> tuple[EnsembleForecastCheckpoint, list[dict[str, str]]]:
-    """Reuse the local cache first, fetch the rest under bounded concurrency, and keep failures visible."""
-    failures: list[dict[str, str]] = []
-    pending: list[EnsembleForecastChunk] = []
-    for chunk in chunks:
-        cached = load_cached_ensemble_forecast_result(settings.local_execution_root, plan, chunk)
-        if cached is None:
-            pending.append(chunk)
-            continue
-        checkpoint = record_ensemble_forecast_result(plan, checkpoint, cached)
-        write_ensemble_forecast_checkpoint(checkpoint_path_value, checkpoint)
-    # Harvested in waves of `concurrency` rather than one gather over everything, so an interrupted
-    # long run keeps every chunk that already answered instead of discarding the whole batch.
-    for start in range(0, len(pending), concurrency):
-        wave = pending[start : start + concurrency]
-        results = await run_ensemble_forecast_chunks(plan, wave, concurrency=concurrency)
-        for chunk, result in zip(wave, results, strict=True):
-            if isinstance(result, BaseException):
-                failures.append({"chunk_key": chunk.key, "reason": _forecast_ensemble_failure_reason(result)})
-                continue
-            cache_ensemble_forecast_result(settings.local_execution_root, plan, result)
-            checkpoint = record_ensemble_forecast_result(plan, checkpoint, result)
-            write_ensemble_forecast_checkpoint(checkpoint_path_value, checkpoint)
-        if failures:
-            # A quota wall does not clear inside one run; stop rather than burn the remaining waves.
-            break
-    return checkpoint, failures
+    asyncio.run(_ensemble_forecast_lane().run_backfill(plan, max_chunks, concurrency))
 
 
 def _stage_ensemble_forecast_document(
@@ -2517,43 +2552,11 @@ def _stage_ensemble_forecast_document(
     return {"staged_document": str(document_path), "staged_document_checksum": checksum}
 
 
-def _load_ensemble_forecast_checkpoint(
-    plan: EnsembleForecastPlan,
-    checkpoint_path_value: Path,
-) -> EnsembleForecastCheckpoint:
-    """Load a plan-bound checkpoint, re-deriving `state` from receipts rather than trusting the file."""
-    if not checkpoint_path_value.exists():
-        return initialize_ensemble_forecast_checkpoint(plan)
-    return rederive_ensemble_forecast_checkpoint_state(
-        plan,
-        load_ensemble_forecast_checkpoint(checkpoint_path_value),
-    )
-
-
 def _forecast_ensemble_failure_reason(exc: BaseException) -> str:
     """Name the provider condition an operator must act on rather than collapsing it to a class name."""
     if isinstance(exc, EnsembleForecastFetchError | ValueError):
         return str(exc)
     return f"ensemble forecast operation failed ({exc.__class__.__name__})"
-
-
-def _write_forecast_ensemble_blocked_checkpoint(
-    path: Path,
-    checkpoint: EnsembleForecastCheckpoint,
-    exc: Exception,
-) -> None:
-    """Record why a run stopped so a resume starts from evidence rather than a rerun of everything."""
-    with suppress(OSError, ValueError):
-        write_ensemble_forecast_checkpoint(
-            path,
-            checkpoint.model_copy(
-                update={
-                    "state": "blocked",
-                    "updated_at": datetime.now(UTC),
-                    "reason": _forecast_ensemble_failure_reason(exc),
-                }
-            ),
-        )
 
 
 @cli.command("historical-era5-materialize-parquet")
@@ -2608,7 +2611,9 @@ async def _historical_era5_finalize(
         write_historical_era5_checkpoint(checkpoint_path_value, checkpoint)
         write_historical_era5_release_plan(output_plan_path, release_plan)
         for period in release_plan.periods:
-            result = load_cached_historical_era5_result(
+            # Off-thread: see the note in the backfill verb -- the same month-sized parse.
+            result = await asyncio.to_thread(
+                load_cached_historical_era5_result,
                 settings.local_execution_root,
                 release_plan,
                 period,
@@ -2978,25 +2983,6 @@ def _historical_open_meteo_failure_reason(exc: BaseException) -> str:
     if isinstance(exc, SQLAlchemyError):
         return f"Open-Meteo archive warehouse operation failed ({exc.__class__.__name__})"
     return f"Open-Meteo archive operation failed ({exc.__class__.__name__})"
-
-
-def _write_historical_open_meteo_blocked_checkpoint(
-    path: Path,
-    checkpoint: HistoricalOpenMeteoCheckpoint,
-    exc: Exception,
-) -> None:
-    """Record why a run stopped so a resume starts from evidence rather than a rerun of everything."""
-    with suppress(OSError, ValueError):
-        write_historical_open_meteo_checkpoint(
-            path,
-            checkpoint.model_copy(
-                update={
-                    "state": "blocked",
-                    "updated_at": datetime.now(UTC),
-                    "reason": _historical_open_meteo_failure_reason(exc),
-                }
-            ),
-        )
 
 
 def _historical_promotion_failure_reason(exc: Exception) -> str:

@@ -294,6 +294,10 @@ class Settings(BaseSettings):
     local_publish_retry_attempts: int = 5
     local_publish_retry_base_seconds: float = 0.5
 
+    # The location-analysis agent is opt-in: absent this key /agent/analyze answers 503 and
+    # every other route is unaffected. See agent/AGENTS.md for the deploy note.
+    anthropic_api_key: SecretStr | None = None
+
     # Typed historical promotion is a distinct, private receiver from phase-one publication.
     historical_promotion_api_url: str | None = None
     historical_promotion_token: SecretStr | None = None

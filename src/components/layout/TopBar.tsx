@@ -152,6 +152,23 @@ function SignedInActions({
         Dashboard
       </Link>
 
+      {/* The org tree was reachable only from onboarding and invite-accept redirects: once a
+          signed-in user navigated away, /dashboard/org could only be reached by typing the
+          URL. Signed-in-only by construction, since SignedInActions renders for no one else. */}
+      <Link
+        href="/dashboard/org"
+        className={cn(
+          "flex items-center px-comfortable text-ink transition-colors hover:text-accent",
+          navType,
+          compact
+            ? "h-11 rule-top-hairline border-t-rule-faint px-page-inset"
+            : "h-full rule-left-hairline border-l-rule-faint",
+          editorialFocusRing
+        )}
+      >
+        Organization
+      </Link>
+
       <button
         type="button"
         onClick={handleSignOut}

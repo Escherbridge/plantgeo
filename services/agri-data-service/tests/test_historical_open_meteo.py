@@ -12,16 +12,15 @@ import pytest
 from agri_data_service.execution.contracts import canonical_json_bytes, reject_sensitive_fields
 from agri_data_service.execution.historical_backfill import AnalysisGridCell  # noqa: TC001
 from agri_data_service.execution.historical_open_meteo import (
+    OPEN_METEO_ARCHIVE_LANE,
     OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS,
     OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS,
     OPEN_METEO_ARCHIVE_SUPPORT_KEY,
-    RATE_LIMIT_BACKOFF_SECONDS,
     HistoricalOpenMeteoArchivePlan,
     HistoricalOpenMeteoRawCacheReceipt,
     OpenMeteoArchiveCapture,
     OpenMeteoArchiveChunk,
     OpenMeteoArchiveFetchError,
-    _canonical_archive_document,
     cache_historical_open_meteo_result,
     fetch_open_meteo_archive_chunk,
     historical_open_meteo_plan_checksum,
@@ -33,6 +32,10 @@ from agri_data_service.execution.historical_open_meteo import (
     record_historical_open_meteo_result,
     rederive_historical_open_meteo_checkpoint_state,
     require_accounted_open_meteo_result,
+)
+from agri_data_service.execution.open_meteo_lane import (
+    RATE_LIMIT_BACKOFF_SECONDS,
+    canonical_location_document,
 )
 from agri_data_service.ingest.open_meteo import (
     OPEN_METEO_API_KEY_VARIABLE,
@@ -420,8 +423,22 @@ def test_the_canonical_document_ignores_the_provider_timing_metric() -> None:
     assert _canonicalized(document) == first
 
 
+def test_the_shared_canonicalizer_reproduces_the_bytes_this_lane_already_checksummed() -> None:
+    """The seam must be byte-identical to the private canonicalizer it replaced.
+
+    A different canonicalization changes `payload_checksum`, which would orphan every cached chunk
+    receipt on disk and every `source_release.payload_checksum` already in the warehouse.
+    """
+    plan = _plan()
+    document = json.loads(_payload(plan, plan.chunks[0]))
+    pre_seam = canonical_json_bytes(
+        [{key: value for key, value in location.items() if key != "generationtime_ms"} for location in document]
+    )
+    assert _canonicalized(document) == pre_seam
+
+
 def _canonicalized(document: list[dict[str, object]]) -> bytes:
-    return _canonical_archive_document(json.dumps(document).encode("utf-8"))
+    return canonical_location_document(OPEN_METEO_ARCHIVE_LANE, json.dumps(document).encode("utf-8"))
 
 
 def test_chunk_url_matches_the_url_the_fetcher_would_request() -> None:
@@ -646,11 +663,8 @@ def test_a_daily_wall_is_never_slept_through() -> None:
     assert "tomorrow" in reason
 
 
-def test_only_a_minutely_refusal_is_ever_waited_out() -> None:
-    """An unrecognised 429 body is more likely a reworded wall than a blip, so it fails closed."""
-    assert RATE_LIMIT_BACKOFF_SECONDS == {"minute": 70.0}
-    for scope in ("hour", "day", "unknown"):
-        assert scope not in RATE_LIMIT_BACKOFF_SECONDS
+# The backoff policy itself is proved scope by scope in `tests/test_open_meteo_lane.py`; from here on
+# this file proves only that this lane routes through it. See execution/AGENTS.md §open_meteo_lane.
 
 
 @pytest.mark.asyncio

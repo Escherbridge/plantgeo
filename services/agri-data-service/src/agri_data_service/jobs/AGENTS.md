@@ -209,6 +209,31 @@ has waited four times", not "someone edited it". A budget yield uses the same pr
 straddles many ticks accumulates the same drift. A handler that defers forever is a handler bug, and
 `next_attempt_at` makes it visible.
 
+### …but the protection is bounded, at `MAX_CONSECUTIVE_PARKS`
+
+Nothing bounded it originally, and unbounded is wrong in one specific shape: a shard that parks on
+*every* tick without ever advancing. `jobs-run --lane firms-archive --budget-seconds 600` run once
+against a window that has already measured a 350s chunk mints exactly that — `budget_stop_outcome` yields
+before every chunk, the window never advances, never spends an attempt, never dead-letters, `max_attempts`
+climbs without limit, `jobs-run` exits 0 and `jobs-status` reports it as a healthy `deferred` forever.
+The answer to "is a poison item guaranteed to stop retrying?" was yes for a *failing* item and no for a
+*parking* one.
+
+`_DEFER_WORK_ITEM` therefore raises the ceiling only while the shard's **consecutive** park count is
+under `MAX_CONSECUTIVE_PARKS` (24 — half a day of the deployed 30-minute cadence). Past that the ceiling
+stops rising while the claim keeps charging `attempt_count`, so the budget closes and the shard finally
+dead-letters into a report that says it is *missing*, which is the honest answer.
+
+There is **no park-count column and this runtime adds none.** The count is derived inside the same
+statement: `job_attempt` rows for this item with `status = 'deferred'` whose `fencing_token` is newer than
+the newest `job_checkpoint`'s. That makes it consecutive-since-progress rather than cumulative, which is
+the distinction that matters — a window that walks a chunk and *then* yields for the clock checkpointed
+under this very token, so its count is zero and it is never penalised for taking many ticks. Only a park
+that recorded nothing counts. `close_attempt_deferred` has already run when the item `UPDATE` fires, so a
+park is included in its own count.
+
+If a `parked_count` column is ever added, this derivation is what it should replace.
+
 **A park checkpoints its cursor first.** `deferred()` and `yielded()` both accept a `cursor`, and both
 have it written through `record_checkpoint` before the item is parked, exactly as a completion's final
 cursor is. Accepting a cursor and then discarding it would be the worst of both: a lane that walked four
@@ -237,12 +262,26 @@ getting any of it wrong is silent:
 - **No lease-reclaim mechanism.** `ix_job_work_item_lease_expiry` exists to support one and nothing used
   it. `reclaim_expired_leases` is it. It reclaims to `retry_wait`, never to `queued`: `queued` with a
   stale non-NULL lease pair passes every CHECK and produces a row that lies about who owns it, while
-  `retry_wait` *forces* `next_attempt_at`.
+  `retry_wait` *forces* `next_attempt_at`. **A slice scopes it to the DEFINITION, not to the run it
+  drives.** `_select_open_job_run` picks exactly one run per tick — the oldest open one — while a lane
+  mints a second run every time its floor is lowered, because the floor is part of `logical_run_key`.
+  Scoped to the driven run, a shard stranded behind a dead lease in a sibling run was reclaimable by no
+  tick at all and sat there until someone hand-`UPDATE`d it. The `job_run_id` scope still exists and is
+  what an operator or a test drives directly; the two are ANDed, and only non-terminal sibling runs are
+  in scope, since a terminal run reached its status by having every shard settled.
 - **Nothing reaps an orphaned attempt.** There is no FK, CHECK or trigger connecting
   `job_attempt.status` to `job_work_item.status` — you can have five `running` attempts on one
   `succeeded` item and the database is happy. `release_lost_attempt` and the reaper's `close_lost_attempts`
   are what stop an abandoned attempt sitting in `running` forever and poisoning every incident query
-  that counts live work.
+  that counts live work. **So is `_CLOSE_SUPERSEDED_ATTEMPTS`, and it closes the hole the other two
+  cannot reach**: the claim's expired-lease arm supersedes an attempt without the superseded worker
+  participating at all, `release_lost_attempt` runs on that worker (which in the crash case is the
+  process that died), and `close_lost_attempts` is bound only to the items the reaper reclaimed in its
+  own single pass at the top of the slice. Any lease that expires *after* that pass and is then taken by
+  the claim leaked its attempt permanently. The claim now closes it as `lost` in the same transaction,
+  under the item lock it already holds. Unfenced for the same reason `_CLOSE_ATTEMPT_LOST` is — it runs
+  precisely when the fence has moved — and bounded instead by `fencing_token < :fencing_token`, so it can
+  only ever reach *strictly* superseded attempts and never the one the claim is about to open.
 - **The claim index does not serve the claim, and the `next_attempt_at` seeding is a convenience.**
   `ix_job_work_item_claim` is `(status, next_attempt_at, available_at, priority)`. It leads with neither
   `job_run_id` — which `_CLAIM_WORK_ITEM` filters on — nor `priority DESC` — which it sorts by — so the
@@ -265,10 +304,69 @@ getting any of it wrong is silent:
 - **No concurrency-key enforcement.** `job_definition.concurrency_key` and `queue_name` are plain
   strings with no index and no advisory-lock machinery. Per-key serialisation is still unbuilt. Today
   the fence makes concurrent workers *safe*; it does not make them *excluded*.
-- **`job_event` is partitioned `RANGE (occurred_at)` with exactly one partition (`job_event_default`)
-  and no partition manager.** This runtime deliberately writes no `job_event` rows: every row would land
-  in the default partition and nothing prunes it. Operational telemetry goes to structlog on stderr
-  until a partition manager exists. See `models/AGENTS.md` §job_event.
+- **`job_event` is partitioned `RANGE (occurred_at)`, and a partition manager now exists.**
+  `db/maintenance.py::maintain_job_event_partitions` creates hot daily partitions, drains
+  `job_event_default` and prunes expired ones, with the `job-logs-maintain` CLI verb in front of it. The
+  old rule here — *this runtime deliberately writes no `job_event` rows until a partition manager
+  exists* — is therefore retired. **The runtime writes exactly one row per tick** (see "Shutdown and
+  heartbeat semantics" below) and nothing else; per-chunk detail still goes to structlog on stderr,
+  because that is genuinely high-volume and genuinely disposable. `job_incident` and `job_outbox` are
+  still written by nothing. See `models/AGENTS.md` §job_event.
+
+## Shutdown and heartbeat semantics
+
+Two things every operator of this runtime has to know, because both change what a row in the ledger means.
+
+### A SIGTERM releases the lease
+
+`shutdown_signal()` binds SIGTERM and SIGINT to a stop flag for the length of one slice, and
+`ingest/commands.py::_run_archive_slice` installs it — at the process boundary, because that is the only
+scope that knows this is a one-shot container rather than a library call. `run_job_slice` reads the flag
+in two places: before claiming another shard, and between two handler steps of the shard it already
+holds. On the second, the shard is **released** on the same fenced `defer_work_item` path a budget yield
+uses (`_release_in_hand`), so it is immediately claimable, costs no retry budget, and the slice ends with
+`stop_reason: shutdown_requested` and a `released` count in its summary.
+
+What this buys: before it, a SIGTERM had no Python-level handler at all, so the container simply ended
+and left its shard `status = 'running'` behind a lease of up to `lease_seconds` — 2400s on the archive
+lanes against a 30-minute cron. The next tick could neither claim it (`lease_expires_at <= now()` is
+false) nor reap it (`lease_expires_at < now()` is false); it worked a different window and exited 0
+looking healthy, and only the tick *after* that recovered the shard. Up to an hour of a lane's frontier,
+lost per redeploy or per container eviction, with nothing recording that it happened.
+
+What it does **not** buy: the flag is read between units of work, not inside one. A SIGTERM that lands
+mid-chunk is still followed by SIGKILL before that chunk returns, and that case still relies on the
+reaper. Signals are *not* wired to `task.cancel()` — cancelling a handler mid-write is a worse trade
+than waiting for it to return.
+
+`asyncio.CancelledError` is handled for the same reason and lands in the same place. It derives from
+`BaseException`, so `_invoke_handler`'s `except Exception` never saw it and an externally-cancelled slice
+unwound leaving exactly the stranded-`running` shard above. It now releases the shard first and then
+**re-raises**: a swallowed cancellation is worse than the leak it would fix.
+
+### The heartbeat is one `job_event` row per tick
+
+Every return path of `run_job_slice` writes exactly one `agri.job_event` row,
+`event_code = 'slice_finished'`, in the same transaction as the closing rollup. `progress` carries the
+slice summary verbatim — the same object the cron log line carries — and `detail` carries a queue-depth
+snapshot the INSERT computes for itself, so the heartbeat stays a single statement. Severity is `info`,
+or `warning` when the tick dead-lettered something.
+
+**`max(occurred_at) WHERE event_code = 'slice_finished'` is the lane's liveness signal, and it is the
+only honest one.** A tick that claims nothing writes nothing else at all: `no_open_run` rolls back,
+`no_claimable_work` breaks, and the rollup's counters do not move when nothing happened. `updated_at`
+cannot substitute — it is ORM `onupdate` only, every runtime write is a raw `text()` UPDATE, and there
+are no triggers, so it is frozen at insert time on both `job_work_item` and `job_run`. Do not reach for
+it as a last-touched axis anywhere. `max(job_attempt.started_at)` is a fallback that reads "dead" for a
+lane that is merely finished.
+
+The no-open-run tick is deliberately the one that still writes: it is emitted identically by a lane that
+finished, a lane whose windows were never fanned out and a lane whose definition name drifted, and
+without a durable row all three also read the same as a cron container that never started.
+
+Retention is `db/maintenance.py`'s job (`job-logs-maintain`), which creates the hot daily partitions and
+prunes past its window. A row written when no hot partition exists lands in `job_event_default` and is
+picked up by the next maintenance pass, so a heartbeat is never lost for want of a partition.
 
 ## Sessions, transactions and who commits
 
@@ -381,19 +479,30 @@ The one path that still writes no metrics is `close_attempt_lost`: a fenced-out 
 describe work whose durability now belongs to another worker, and reporting them would invite reading
 them as this shard's progress.
 
-## Known deviation: the SQL is inline, not extracted
+## The SQL lives in sql/jobs/, not inline
 
-`conductor/code_styleguides/sql.md` §"Runtime query SQL lives in dedicated files" requires a non-trivial
-runtime query to live in `src/agri_data_service/sql/<package>/<name>.sql`, loaded through
-`agri_data_service.db.sql_queries.load_query_sql`. **Neither that directory nor that loader exists yet**
-— `src/agri_data_service/sql/` is absent and `db/sql_queries.py` is absent (only `db/sql_objects.py`, the
-*declarative* loader, exists). Creating the loader means editing `db/`, which is outside this package's
-file boundary. The statements here are therefore inline `text()` constants, each opening with a
-`-- <statement_name>` marker comment that serves as both documentation and the handle the unit tests
-match on. **Extracting them to `sql/jobs/*.sql` is the follow-up**, and it is mechanical: the constant
-names already map one-to-one onto the file names the styleguide prescribes. Note when doing it that
-SQLAlchemy's `text()` bind-parameter regex matches `:word` anywhere in the string, comments included, so
-no comment in these statements may contain a colon.
+Every non-trivial statement in `lease.py` and `worker.py` lives in
+`src/agri_data_service/sql/jobs/<name>.sql`, loaded at module import time through
+`agri_data_service.db.sql_queries.load_query_sql`. The constant name is the file name, lowercased
+and stripped of its leading underscore, and each file opens with the same `-- <statement_name>`
+marker comment the unit tests dispatch on. The one statement still inline is `_STATEMENT_TIMEOUT`:
+`SET LOCAL` cannot take a bind parameter, so its seconds must be interpolated, and it is one line.
+
+Three rules bind anyone editing those files:
+
+1. **The marker stays line 1, byte-identical.** `tests/test_jobs_lease.py` and
+   `tests/test_jobs_worker.py` match `^--\s+(\w+)\s*$` against the statement text and route stub
+   rows and ordering assertions on the captured name. No other comment line in a file may be a bare
+   `-- singleword`, or it becomes a second marker candidate.
+2. **No comment may contain a colon immediately followed by a word character.** SQLAlchemy's
+   `text()` scans the whole string for `:word`, comments included, and would mint a bind parameter
+   nobody supplies. Write `work_item_id (uuid)` in a header, never the colon-led form.
+3. **The comments are part of the statement text.** `str(text(load_query_sql(...)))` returns the
+   walkthrough too, so prose alone can break an assertion that inspects SQL. Three spots are
+   deliberately paraphrased rather than quoted for exactly this reason — the rejected aggregate in
+   `advance_checkpoint_sequence.sql`, the fencing column name in `reclaim_expired_leases.sql`, and
+   the availability fallback in `insert_job_work_items.sql`. Each carries an in-file note; do not
+   paste the literal spelling back.
 
 ## The DBOS Transact evaluation, and why we did not adopt it
 

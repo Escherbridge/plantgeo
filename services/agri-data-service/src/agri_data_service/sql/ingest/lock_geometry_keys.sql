@@ -1,0 +1,75 @@
+-- Purpose: take one transaction-scoped advisory lock per place this batch is about to version,
+--          in a fixed sorted order, so two ingestion runs touching overlapping places serialise
+--          against each other instead of deadlocking or forking a version chain.
+-- Loaded by: agri_data_service.ingest.geometry
+-- Params: lock_namespace (text) -- a constant prefix, supplied by the module rather than by a
+--         request, that keeps this lock space disjoint from the feature-row lock space in
+--         writer.py. Two different kinds of key could otherwise hash to the same number and
+--         block each other for no reason.
+--         natural_keys (text[]) -- every place key in the batch, already de-duplicated and
+--         sorted by the caller.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap"
+-- in sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too, and would
+-- mint a bind parameter nobody supplies.
+--
+-- What this returns: one row per key, each holding a NULL. The rows are thrown away. This
+-- statement is run for its side effect, which is that by the time it returns, this transaction
+-- holds a lock on every one of those keys and no other transaction can hold them.
+--
+-- How this query works, clause by clause:
+--
+--   unnest(CAST(natural_keys AS text[]))
+--     unnest takes one array and turns it into a set of rows, one row per element, so the
+--     array can be used anywhere a table can. It is how a whole batch of keys travels to the
+--     database as a single parameter in a single round trip instead of one statement per key.
+--
+--     The CAST is not a conversion anyone needs at runtime -- the value is already an array of
+--     text. It exists purely to pin the parameter's type. A bind parameter arrives with no
+--     declared type of its own, and unnest is overloaded for every array type, so without the
+--     cast the database cannot tell which unnest is meant and refuses to plan the statement.
+--     Naming the type in the SQL settles it. The Python call site declares the same type again
+--     with bindparam(...), which is what makes a Python list travel as a real PostgreSQL text
+--     array rather than as a string; both halves are required.
+--
+--   AS locks(natural_key)
+--     Names the derived table and its single column, so the rest of the statement can refer to
+--     each element by name instead of by position.
+--
+--   pg_advisory_xact_lock(hashtext(...))
+--     An advisory lock is a lock on a number of the application's own choosing, rather than on
+--     a row or a table. The database enforces only that two transactions cannot hold the same
+--     number at once; what the number *means* is a convention, upheld by every writer agreeing
+--     to take the same lock before touching the same place. hashtext turns the composed text
+--     key into the integer the lock function takes. The "xact" in the name means the lock is
+--     released automatically when the transaction ends, on COMMIT or ROLLBACK alike -- there is
+--     no unlock call to forget, and a process that dies mid-run cannot leave a place locked.
+--
+--     Why an advisory lock and not the ordinary row lock, FOR UPDATE? FOR UPDATE locks rows
+--     that already exist; it has nothing to attach to when the very thing at issue is a place
+--     that may have no version row yet. Two runs both seeing "no open version for this key"
+--     and both inserting one is exactly the race that has to be prevented, and no row lock can
+--     prevent it because at the moment of the decision there is no row. Locking the key itself
+--     covers the not-yet-existing case and the already-existing case with one mechanism.
+--
+--     The lock is needed because versioning a place is a read, a decision, and then a write:
+--     the run reads the currently-open version, compares shapes, and only then closes that
+--     version and opens a successor. Two runs interleaving those steps would both read the
+--     same open version and both try to close it, and the chain would fork into two open
+--     versions for one place. The unique index on the open version is the backstop that makes
+--     a lost race fail loudly rather than corrupt quietly; this lock is what keeps the race
+--     from happening at all.
+--
+--   ORDER BY natural_key
+--     The reason this statement exists as a statement rather than as a loop, and not cosmetic.
+--     A deadlock is two transactions each holding a lock the other one is waiting for: run A
+--     holds "boise" and wants "denver" while run B holds "denver" and wants "boise". Neither
+--     can proceed, and the database resolves it by killing one of them with error 40P01 --
+--     which in this service means an hourly ingestion run turns red, or a repair pass dies part
+--     way through. Acquiring the locks in one fixed order removes the possibility entirely:
+--     whichever run takes "boise" first also takes "denver" first, and the other simply waits
+--     its turn. Sorting the keys is that fixed order. The guarantee only holds while every
+--     writer of this dimension sorts the same way, which is why the caller sorts as well.
+SELECT pg_advisory_xact_lock(hashtext(:lock_namespace || ':' || natural_key))
+FROM unnest(CAST(:natural_keys AS text[])) AS locks(natural_key)
+ORDER BY natural_key

@@ -8,6 +8,7 @@ answers each statement by the `-- <name>` marker it opens with.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import uuid
@@ -27,8 +28,13 @@ from agri_data_service.jobs.registry import (
     UnknownJobHandlerError,
 )
 from agri_data_service.jobs.worker import (
+    CANCELLED_RELEASE_REASON,
+    JOB_EVENT_SERVICE,
+    SHUTDOWN_RELEASE_REASON,
+    SLICE_FINISHED_EVENT_CODE,
     JobDefinitionNotFoundError,
     JobDefinitionRecord,
+    ShutdownSignal,
     ensure_job_definition,
     open_job_run,
     run_job_slice,
@@ -629,8 +635,9 @@ async def test_a_handler_that_yields_for_budget_parks_the_shard_without_charging
     )
     assert summary.yielded == 1
     assert (summary.retried, summary.dead_lettered, summary.deferred) == (0, 0, 0)
-    # Stopping for the clock is not failing: the park raises the ceiling rather than spending it.
-    assert "max_attempts = max_attempts + 1" in session.sql_for("defer_work_item")
+    # Stopping for the clock is not failing: the park raises the ceiling rather than spending it, up to
+    # the consecutive-park bound past which a shard that can only ever park stops being protected.
+    assert "max_attempts = item.max_attempts + CASE" in session.sql_for("defer_work_item")
     assert session.emitted("close_attempt_failed") is False
     assert session.parameters_for("defer_work_item")["resume_at"] is None
 
@@ -798,6 +805,140 @@ async def test_a_slice_reclaims_expired_leases_before_it_claims_anything_of_its_
     assert summary.reclaimed == 1
     markers = session.markers()
     assert markers.index("reclaim_expired_leases") < markers.index("claim_work_item")
+    # Scoped to the DEFINITION and not to the one run this tick drives: a lane mints a second run every
+    # time its floor is lowered, and a shard stranded behind a dead lease in that sibling run could
+    # otherwise never be reaped by any tick at all, because every tick reaps only the run it drives.
+    reclaim_parameters = session.parameters_for("reclaim_expired_leases")
+    assert reclaim_parameters["job_definition_id"] == DEFINITION_ID
+    assert reclaim_parameters["job_run_id"] is None
+
+
+async def test_every_tick_writes_one_durable_heartbeat_so_an_idle_lane_reads_differently_from_a_dead_one() -> None:
+    session = _slice_session(claims=0)
+
+    async def handler(invocation: JobInvocation) -> JobHandlerOutcome:
+        return JobHandlerOutcome.completed()
+
+    await run_job_slice(
+        session,
+        definition_name=DEFINITION_NAME,
+        worker_id="agri-worker-1",
+        registry=_registry(handler),
+        monotonic=ManualClock(),
+    )
+    # Exactly one, because a tick that claims nothing is precisely the tick that must still leave a row:
+    # without it a finished lane, a lane whose cron was never created and a container that crashes on
+    # startup are the same silence. More than one would make the heartbeat chatty rather than useful.
+    assert session.markers().count("write_slice_event") == 1
+    parameters = session.parameters_for("write_slice_event")
+    assert parameters["event_code"] == SLICE_FINISHED_EVENT_CODE
+    assert parameters["service"] == JOB_EVENT_SERVICE
+    assert parameters["job_run_id"] == JOB_RUN_ID
+    assert json.loads(str(parameters["progress"]))["stop_reason"] == "no_claimable_work"
+    # The queue depth is computed inside the INSERT, so the heartbeat stays a single statement.
+    event_sql = session.sql_for("write_slice_event")
+    assert "jsonb_build_object(" in event_sql
+    assert "outstanding_work_items" in event_sql
+    markers = session.markers()
+    assert markers.index("refresh_job_run_rollup") < markers.index("write_slice_event")
+
+
+async def test_a_tick_with_no_open_run_still_writes_its_heartbeat_because_that_is_the_case_that_needs_one() -> None:
+    session = RecordingSession()
+    session.answer("load_job_definition", [_definition_row()])
+
+    async def handler(invocation: JobInvocation) -> JobHandlerOutcome:
+        return JobHandlerOutcome.completed()
+
+    summary = await run_job_slice(
+        session,
+        definition_name=DEFINITION_NAME,
+        worker_id="agri-worker-1",
+        registry=_registry(handler),
+        monotonic=ManualClock(),
+    )
+    assert summary.stop_reason == "no_open_run"
+    assert session.markers().count("write_slice_event") == 1
+    # A NULL run id still writes its row: an aggregate with no GROUP BY returns one row over no rows.
+    assert session.parameters_for("write_slice_event")["job_run_id"] is None
+    assert session.commits == 1
+
+
+async def test_a_stop_signal_releases_the_shard_in_hand_rather_than_stranding_it_behind_a_live_lease() -> None:
+    session = _slice_session(claims=2)
+    session.answer("advance_checkpoint_sequence", [{"checkpoint_sequence": 4}])
+    session.answer("append_checkpoint", [{"id": uuid.uuid4()}])
+    session.answer("close_attempt_deferred", [{"id": ATTEMPT_ID}])
+    session.answer("defer_work_item", [{"id": WORK_ITEM_ID}])
+    stop = ShutdownSignal()
+
+    async def handler(invocation: JobInvocation) -> JobHandlerOutcome:
+        stop.request(SHUTDOWN_RELEASE_REASON)
+        return JobHandlerOutcome.progressed({"chunk": 3}, progress_fraction=0.6)
+
+    summary = await run_job_slice(
+        session,
+        definition_name=DEFINITION_NAME,
+        worker_id="agri-worker-1",
+        registry=_registry(handler),
+        monotonic=ManualClock(),
+        stop=stop,
+    )
+    assert (summary.released, summary.claimed) == (1, 1)
+    assert summary.stop_reason == "shutdown_requested"
+    # Parked to now() and fenced, so the NEXT container claims it immediately instead of waiting out a
+    # lease no living process owns -- and it is not a failure, so no attempt budget is spent on it.
+    assert session.parameters_for("defer_work_item")["resume_at"] is None
+    assert SHUTDOWN_RELEASE_REASON in str(session.parameters_for("close_attempt_deferred")["metrics"])
+    assert session.emitted("close_attempt_failed") is False
+
+
+async def test_a_stop_signal_between_shards_claims_nothing_more_and_names_why_the_tick_ended() -> None:
+    session = _slice_session(claims=1)
+    stop = ShutdownSignal()
+    stop.request(SHUTDOWN_RELEASE_REASON)
+
+    async def handler(invocation: JobInvocation) -> JobHandlerOutcome:
+        raise AssertionError("no shard may be claimed once the container has been told to stop")
+
+    summary = await run_job_slice(
+        session,
+        definition_name=DEFINITION_NAME,
+        worker_id="agri-worker-1",
+        registry=_registry(handler),
+        monotonic=ManualClock(),
+        stop=stop,
+    )
+    assert summary.claimed == 0
+    assert summary.stop_reason == "shutdown_requested"
+    assert session.emitted("claim_work_item") is False
+    # The rollup and the heartbeat still run: a tick that stopped early is still a tick that happened.
+    assert session.emitted("write_slice_event") is True
+
+
+async def test_a_cancelled_handler_releases_its_shard_before_the_cancellation_finishes_unwinding() -> None:
+    session = _slice_session()
+    session.answer("close_attempt_deferred", [{"id": ATTEMPT_ID}])
+    session.answer("defer_work_item", [{"id": WORK_ITEM_ID}])
+
+    async def handler(invocation: JobInvocation) -> JobHandlerOutcome:
+        raise asyncio.CancelledError
+
+    # CancelledError derives from BaseException, so `except Exception` never saw it and the slice used to
+    # unwind with the shard still 'running' behind a live lease.
+    with pytest.raises(asyncio.CancelledError):
+        await run_job_slice(
+            session,
+            definition_name=DEFINITION_NAME,
+            worker_id="agri-worker-1",
+            registry=_registry(handler),
+            monotonic=ManualClock(),
+        )
+    assert session.emitted("defer_work_item") is True
+    assert session.parameters_for("defer_work_item")["resume_at"] is None
+    assert CANCELLED_RELEASE_REASON in str(session.parameters_for("close_attempt_deferred")["metrics"])
+    # Released, never failed -- and never swallowed: the cancellation still propagates.
+    assert session.emitted("close_attempt_failed") is False
 
 
 async def test_a_definition_whose_handler_token_resolves_to_nothing_fails_loudly() -> None:

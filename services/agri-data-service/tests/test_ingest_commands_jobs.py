@@ -45,7 +45,7 @@ from agri_data_service.ingest.validation import (
     ValidationReport,
     build_stream_report,
 )
-from agri_data_service.jobs import JobDefinitionNotFoundError, JobSliceSummary, OpenedJobRun
+from agri_data_service.jobs import JobDefinitionNotFoundError, JobSliceSummary, OpenedJobRun, ShutdownSignal
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
@@ -308,6 +308,7 @@ def slice_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
         definition_name: str,
         worker_id: str,
         budget_seconds: float | None = None,
+        stop: ShutdownSignal | None = None,
     ) -> JobSliceSummary:
         # A slice runs with the tick's write path already bound; a handler that had to open its own would
         # mean a full TCP+TLS+auth handshake per window. This raises if `jobs-run` forgot to install it.
@@ -320,6 +321,7 @@ def slice_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
                 "budget_seconds": budget_seconds,
                 "write_features": context.write_features,
                 "client": context.client,
+                "stop": stop,
             }
         )
         return _slice_summary(definition_name=definition_name, worker_id=worker_id)
@@ -407,6 +409,11 @@ def test_a_slice_opens_exactly_one_session_and_binds_the_ticks_write_path_around
     # Deliberately no shared client: each archive source owns one per chunk under its own measured bounds,
     # and one handed down from here would impose one lane's timeout on the other.
     assert slice_calls[0]["client"] is None
+    # The stop flag is installed HERE, at the process boundary, and handed down. Without one a Railway
+    # SIGTERM ends the container mid-shard and strands that window behind a lease no living process owns.
+    stop = slice_calls[0]["stop"]
+    assert isinstance(stop, ShutdownSignal)
+    assert not stop.requested
 
 
 def test_the_walk_context_is_released_once_the_slice_ends_so_it_cannot_leak_into_another_verb(

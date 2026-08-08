@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Final, Protocol
 import structlog
 from sqlalchemy import text
 
+from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.ingest.http import (
     HTTP_NOT_FOUND,
     UpstreamBounds,
@@ -226,52 +227,13 @@ async def fetch_latest_drought_release(
     return None
 
 
-# The repair chain runs in a CTE rather than inline so the same expression can be both stored and
-# tested for emptiness in one statement. `geo.drought_areas.geom` is NOT NULL, and a NOT NULL column
-# accepts `MULTIPOLYGON EMPTY` -- which is what `ST_CollectionExtract(ST_MakeValid(<zero-area ring>), 3)`
-# yields. Storing that says "this drought class exists and covers nothing", which is a fabricated
-# coverage claim wearing a valid geometry's shape, and `ST_Intersects` against it silently answers
-# false for every point. Production holds 0 such rows today; the guard exists because widening
-# `DROUGHT_AREA_GEOMETRY_TYPES` widened what can reach this statement. See ingest/AGENTS.md "usdm.py".
-_STORE_DROUGHT_AREA_TEMPLATE: Final = """
-    WITH repaired AS (
-        SELECT ST_Multi(
-                   ST_CollectionExtract(
-                       ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(:geometry), 4326)),
-                       3
-                   )
-               ) AS geom
-    ),
-    stored AS (
-        INSERT INTO geo.drought_areas (valid_date, dm_category, geom, source_url)
-        SELECT :valid_date, :dm_category, repaired.geom, :source_url
-        FROM repaired
-        WHERE NOT ST_IsEmpty(repaired.geom)
-        ON CONFLICT (valid_date, dm_category) DO UPDATE
-            SET geom = EXCLUDED.geom,
-                source_url = EXCLUDED.source_url,
-                ingested_at = now()
-            WHERE {replace_predicate}
-        RETURNING id
-    )
-    SELECT ST_IsEmpty(repaired.geom) AS repaired_to_empty,
-           (SELECT count(*) FROM stored) AS rows_stored
-    FROM repaired
-"""
+# Held as unformatted text rather than as a finished `text(...)`, because its one `{replace_predicate}` slot is
+# filled per call from the operator's `--replace` flag. The file is still read once, at import. Everything about
+# what the statement does, why the repair runs in a CTE, and why the conflict predicate must not be "simplified"
+# away lives in the .sql file's header.
+_STORE_DROUGHT_AREA_TEMPLATE: Final = load_query_sql("ingest/store_drought_area.sql")
 
-_PRUNE_DROUGHT_RELEASES = text(
-    """
-    DELETE FROM geo.drought_areas
-    WHERE valid_date NOT IN (
-        SELECT valid_date
-        FROM geo.drought_areas
-        GROUP BY valid_date
-        ORDER BY valid_date DESC
-        LIMIT :retain
-    )
-    RETURNING valid_date
-    """
-)
+_PRUNE_DROUGHT_RELEASES = text(load_query_sql("ingest/prune_drought_releases.sql"))
 
 
 class PostgresDroughtStore:

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import text
 
+from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.execution.vegetation_ndvi_forecast import (
     GAP_POLICY,
     METHOD_NAME,
@@ -60,6 +61,28 @@ DETERMINISM_GUCS: Final = (
     "SET LOCAL extra_float_digits = 1",
     f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'",
 )
+
+_SELECT_CANDIDATE_CELL_KEYS = text(load_query_sql("execution/select_candidate_cell_keys.sql"))
+_INSERT_DATA_SOURCE = text(load_query_sql("execution/insert_data_source.sql"))
+_CORPUS_DIGEST = text(load_query_sql("execution/corpus_digest.sql"))
+_INSERT_SOURCE_RELEASE = text(load_query_sql("execution/insert_source_release.sql"))
+_SELECT_SOURCE_RELEASE = text(load_query_sql("execution/select_source_release.sql"))
+_RELEASE_SET_MANIFEST_CHECKSUM = text(load_query_sql("execution/release_set_manifest_checksum.sql"))
+_INSERT_RELEASE_SET = text(load_query_sql("execution/insert_release_set.sql"))
+_INSERT_RELEASE_SET_ITEM = text(load_query_sql("execution/insert_release_set_item.sql"))
+_INSERT_SPATIAL_CELLS = text(load_query_sql("execution/insert_spatial_cells.sql"))
+_INSERT_FORECAST_SERIES = text(load_query_sql("execution/insert_forecast_series.sql"))
+_LOAD_OBSERVATIONS = text(load_query_sql("execution/load_observations.sql"))
+_LOAD_GOVERNED_PLANE = text(load_query_sql("execution/load_governed_plane.sql"))
+_LOAD_SERIES_IDENTITIES = text(load_query_sql("execution/load_series_identities.sql"))
+_LOAD_GOVERNED_HISTORY = text(load_query_sql("execution/load_governed_history.sql"))
+_LOAD_LICENSE_SNAPSHOTS = text(load_query_sql("execution/load_license_snapshots.sql"))
+_SELECT_EXISTING_ITERATION = text(load_query_sql("execution/select_existing_iteration.sql"))
+_INSERT_FORECAST_ITERATION = text(load_query_sql("execution/insert_forecast_iteration.sql"))
+_INSERT_FORECAST_ITERATION_VALUE = text(load_query_sql("execution/insert_forecast_iteration_value.sql"))
+_SEAL_ITERATION_RECEIPT = text(load_query_sql("execution/seal_iteration_receipt.sql"))
+_RECONCILE_FORECAST_ITERATION_ACTUALS = text(load_query_sql("execution/reconcile_forecast_iteration_actuals.sql"))
+_LOAD_OUTCOME_ROWS = text(load_query_sql("execution/load_outcome_rows.sql"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +187,7 @@ class IterationEvidenceConflictError(ValueError):
 async def pin_determinism(session: AsyncSession) -> None:
     """Pin UTC, rendering and the transaction-local statement timeout before any checksummed read."""
     for statement in DETERMINISM_GUCS:
+        # Stays inline per sql/AGENTS.md: the argument is a loop variable, and SET LOCAL takes no binds.
         await session.execute(text(statement))
 
 
@@ -188,26 +212,7 @@ def _midnight(day: date) -> datetime:
 async def select_candidate_cell_keys(session: AsyncSession, *, cutoff_day: date, cell_limit: int) -> tuple[str, ...]:
     """Return a deterministic, spatially spread sample of vegetation cell keys with usable depth."""
     result = await session.execute(
-        text(
-            """
-            WITH observed AS (
-                SELECT
-                    feature.properties->>'cellKey' AS entity_key,
-                    substring(feature.properties->>'observedAt', 1, 10)::date AS observed_day
-                FROM geo.features AS feature
-                INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
-                WHERE layer.name = :layer_name
-                  AND substring(feature.properties->>'observedAt', 1, 10)::date <= :cutoff_day
-                GROUP BY 1, 2
-            )
-            SELECT observed.entity_key
-            FROM observed
-            GROUP BY observed.entity_key
-            HAVING count(*) >= :min_observed_days
-            ORDER BY md5(observed.entity_key)
-            LIMIT :cell_limit
-            """
-        ),
+        _SELECT_CANDIDATE_CELL_KEYS,
         {
             "layer_name": SOURCE_LAYER_NAME,
             "cutoff_day": cutoff_day,
@@ -220,21 +225,7 @@ async def select_candidate_cell_keys(session: AsyncSession, *, cutoff_day: date,
 
 async def _register_data_source(session: AsyncSession, *, reviewed_at: datetime) -> uuid.UUID:
     await session.execute(
-        text(
-            """
-            INSERT INTO agri.data_source (
-                key, name, owner, purpose, base_url, license_name, license_url, citation,
-                refresh_policy, allowed_client_exposure, review_state, reviewed_at, reviewed_by,
-                is_active, configuration
-            )
-            VALUES (
-                :key, :name, :owner, :purpose, :base_url, :license_name, :license_url, :citation,
-                CAST(:refresh_policy AS jsonb), true, 'approved', :reviewed_at, :reviewed_by,
-                true, CAST(:configuration AS jsonb)
-            )
-            ON CONFLICT (key) DO NOTHING
-            """
-        ),
+        _INSERT_DATA_SOURCE,
         {
             "key": DATA_SOURCE_KEY,
             "name": "Sentinel-2 L2A NDVI (Copernicus)",
@@ -260,6 +251,7 @@ async def _register_data_source(session: AsyncSession, *, reviewed_at: datetime)
             ),
         },
     )
+    # One-line lookup: stays inline per sql/AGENTS.md, since the whole statement is already visible here.
     result = await session.execute(
         text("SELECT id FROM agri.data_source WHERE key = :key"),
         {"key": DATA_SOURCE_KEY},
@@ -279,40 +271,7 @@ class _CorpusDigest:
 
 async def _corpus_digest(session: AsyncSession, *, cutoff_day: date) -> _CorpusDigest:
     result = await session.execute(
-        text(
-            """
-            WITH corpus AS (
-                SELECT
-                    feature.properties->>'cellKey' AS entity_key,
-                    substring(feature.properties->>'observedAt', 1, 10)::date AS observed_day,
-                    avg((feature.properties->>'ndvi')::double precision) AS metric_value,
-                    count(*) AS source_row_count
-                FROM geo.features AS feature
-                INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
-                WHERE layer.name = :layer_name
-                  AND substring(feature.properties->>'observedAt', 1, 10)::date <= :cutoff_day
-                GROUP BY 1, 2
-            )
-            SELECT
-                encode(
-                    digest(
-                        string_agg(
-                            concat_ws('|', corpus.entity_key, corpus.observed_day::text, corpus.metric_value::text),
-                            '|'
-                            ORDER BY corpus.entity_key, corpus.observed_day
-                        ),
-                        'sha256'
-                    ),
-                    'hex'
-                ) AS payload_checksum,
-                count(*)::integer AS cell_day_count,
-                count(DISTINCT corpus.entity_key)::integer AS cell_count,
-                coalesce(sum(corpus.source_row_count), 0)::integer AS row_count,
-                min(corpus.observed_day) AS first_observed_day,
-                max(corpus.observed_day) AS last_observed_day
-            FROM corpus
-            """
-        ),
+        _CORPUS_DIGEST,
         {"layer_name": SOURCE_LAYER_NAME, "cutoff_day": cutoff_day},
     )
     row = result.mappings().one()
@@ -337,22 +296,7 @@ async def _register_source_release(
     recorded_at: datetime,
 ) -> uuid.UUID:
     await session.execute(
-        text(
-            """
-            INSERT INTO agri.source_release (
-                data_source_id, source_version, retrieved_at, data_available_at,
-                observed_from, observed_to, payload_checksum, schema_version, license_snapshot,
-                query_parameters, quality_summary, validation_state, validated_at, transform_version
-            )
-            VALUES (
-                :data_source_id, :source_version, :retrieved_at, :data_available_at,
-                :observed_from, :observed_to, :payload_checksum, :schema_version, :license_snapshot,
-                CAST(:query_parameters AS jsonb), CAST(:quality_summary AS jsonb),
-                'valid', :validated_at, :transform_version
-            )
-            ON CONFLICT (data_source_id, source_version, payload_checksum, transform_version) DO NOTHING
-            """
-        ),
+        _INSERT_SOURCE_RELEASE,
         {
             "data_source_id": data_source_id,
             "source_version": SOURCE_VERSION,
@@ -386,16 +330,7 @@ async def _register_source_release(
         },
     )
     result = await session.execute(
-        text(
-            """
-            SELECT id
-            FROM agri.source_release
-            WHERE data_source_id = :data_source_id
-              AND source_version = :source_version
-              AND payload_checksum = :payload_checksum
-              AND transform_version = :transform_version
-            """
-        ),
+        _SELECT_SOURCE_RELEASE,
         {
             "data_source_id": data_source_id,
             "source_version": SOURCE_VERSION,
@@ -416,22 +351,7 @@ async def _register_release_set(
 ) -> tuple[uuid.UUID, str]:
     logical_key = release_set_logical_key(cutoff_day)
     manifest_result = await session.execute(
-        text(
-            """
-            SELECT encode(
-                digest(
-                    concat_ws(
-                        '|',
-                        CAST(:prefix AS text),
-                        CAST(:logical_key AS text),
-                        CAST(:payload_checksum AS text)
-                    ),
-                    'sha256'
-                ),
-                'hex'
-            )
-            """
-        ),
+        _RELEASE_SET_MANIFEST_CHECKSUM,
         {
             "prefix": "sentinel2_ndvi_release_manifest_v1",
             "logical_key": logical_key,
@@ -439,15 +359,7 @@ async def _register_release_set(
         },
     )
     await session.execute(
-        text(
-            """
-            INSERT INTO agri.release_set (
-                logical_key, as_of_time, manifest_checksum, state, description, created_at
-            )
-            VALUES (:logical_key, :as_of_time, :manifest_checksum, 'draft', :description, :created_at)
-            ON CONFLICT (logical_key) DO NOTHING
-            """
-        ),
+        _INSERT_RELEASE_SET,
         {
             "logical_key": logical_key,
             "as_of_time": recorded_at,
@@ -459,6 +371,7 @@ async def _register_release_set(
             "created_at": recorded_at,
         },
     )
+    # One-line lookup: stays inline per sql/AGENTS.md, since the whole statement is already visible here.
     release_set_result = await session.execute(
         text("SELECT id, state, manifest_checksum FROM agri.release_set WHERE logical_key = :logical_key"),
         {"logical_key": logical_key},
@@ -466,16 +379,11 @@ async def _register_release_set(
     release_set_row = release_set_result.mappings().one()
     release_set_id = uuid.UUID(str(release_set_row["id"]))
     await session.execute(
-        text(
-            """
-            INSERT INTO agri.release_set_item (release_set_id, source_release_id, source_role, added_at)
-            VALUES (:release_set_id, :source_release_id, 'primary_observation', :added_at)
-            ON CONFLICT DO NOTHING
-            """
-        ),
+        _INSERT_RELEASE_SET_ITEM,
         {"release_set_id": release_set_id, "source_release_id": source_release_id, "added_at": recorded_at},
     )
     if str(release_set_row["state"]) == "draft":
+        # One-line update by primary key: stays inline per sql/AGENTS.md, for the same reason.
         await session.execute(
             text("UPDATE agri.release_set SET state = 'validated', validated_at = :validated_at WHERE id = :id"),
             {"id": release_set_id, "validated_at": recorded_at},
@@ -487,34 +395,7 @@ async def _register_spatial_cells(session: AsyncSession, *, cell_keys: tuple[str
     inserted = 0
     for batch in _batched(cell_keys, CELL_BATCH_SIZE):
         result = await session.execute(
-            text(
-                """
-                WITH selected AS (
-                    SELECT
-                        feature.properties->>'cellKey' AS entity_key,
-                        ST_Force2D(ST_Envelope(ST_Collect(feature.geom))) AS geometry,
-                        min((feature.properties->>'resolutionMetres')::integer) AS resolution_m
-                    FROM geo.features AS feature
-                    INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
-                    WHERE layer.name = :layer_name
-                      AND feature.properties->>'cellKey' = ANY(CAST(:cell_keys AS text[]))
-                    GROUP BY 1
-                )
-                INSERT INTO agri.spatial_cell (
-                    cell_key, grid_name, resolution_m, geometry, centroid, coverage_fraction
-                )
-                SELECT
-                    :grid_name || ':' || selected.entity_key,
-                    :grid_name,
-                    selected.resolution_m,
-                    selected.geometry,
-                    ST_Centroid(selected.geometry),
-                    1.0
-                FROM selected
-                ON CONFLICT DO NOTHING
-                RETURNING id
-                """
-            ),
+            _INSERT_SPATIAL_CELLS,
             {"layer_name": SOURCE_LAYER_NAME, "cell_keys": list(batch), "grid_name": GRID_NAME},
         )
         inserted += len(result.all())
@@ -525,41 +406,7 @@ async def _register_series(session: AsyncSession, *, data_source_id: uuid.UUID, 
     inserted = 0
     for batch in _batched(cell_keys, CELL_BATCH_SIZE):
         result = await session.execute(
-            text(
-                """
-                INSERT INTO agri.forecast_series (
-                    series_key, source_variant_key, input_adapter, data_source_id,
-                    source_transform_version, entity_type, entity_key, metric_name, metric_unit,
-                    spatial_cell_id, representation_kind, spatial_support_kind,
-                    source_spatial_resolution_m, output_spatial_resolution_m,
-                    source_temporal_support, output_temporal_support, aggregation_method, metadata_json
-                )
-                SELECT
-                    :series_key_prefix || ':' || cell.cell_key,
-                    :source_variant_key,
-                    'forecast_observation',
-                    :data_source_id,
-                    :transform_version,
-                    :entity_type,
-                    right(cell.cell_key, length(cell.cell_key) - length(:grid_name) - 1),
-                    :metric_name,
-                    :metric_unit,
-                    cell.id,
-                    'aggregate',
-                    'native_grid_cell',
-                    cell.resolution_m,
-                    cell.resolution_m,
-                    interval '1 day',
-                    interval '1 day',
-                    'daily_mean',
-                    CAST(:metadata_json AS jsonb)
-                FROM agri.spatial_cell AS cell
-                WHERE cell.grid_name = :grid_name
-                  AND cell.cell_key = ANY(CAST(:prefixed_cell_keys AS text[]))
-                ON CONFLICT DO NOTHING
-                RETURNING id
-                """
-            ),
+            _INSERT_FORECAST_SERIES,
             {
                 "series_key_prefix": SERIES_KEY_PREFIX,
                 "source_variant_key": TRANSFORM_VERSION,
@@ -594,73 +441,7 @@ async def _load_observations(
     inserted = 0
     for batch in _batched(cell_keys, CELL_BATCH_SIZE):
         result = await session.execute(
-            text(
-                """
-                WITH daily AS (
-                    SELECT
-                        feature.properties->>'cellKey' AS entity_key,
-                        substring(feature.properties->>'observedAt', 1, 10)::date AS observed_day,
-                        avg((feature.properties->>'ndvi')::double precision) AS metric_value,
-                        count(*)::integer AS source_row_count,
-                        max(feature.created_at) AS data_available_at,
-                        sum((feature.properties->>'sampleCount')::integer)::integer AS pixel_sample_count,
-                        max((feature.properties->>'cloudCover')::double precision) AS max_cloud_cover,
-                        array_agg(DISTINCT feature.properties->>'sceneId') AS scene_ids
-                    FROM geo.features AS feature
-                    INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
-                    WHERE layer.name = :layer_name
-                      AND feature.properties->>'cellKey' = ANY(CAST(:cell_keys AS text[]))
-                      AND substring(feature.properties->>'observedAt', 1, 10)::date <= :cutoff_day
-                    GROUP BY 1, 2
-                )
-                INSERT INTO agri.forecast_observation (
-                    series_id, source_release_id, observed_at, valid_from, valid_to,
-                    data_available_at, metric_value, quality_flag, source_event_key,
-                    observation_checksum, metadata_json
-                )
-                SELECT
-                    series.id,
-                    :source_release_id,
-                    daily.observed_day::timestamptz,
-                    daily.observed_day::timestamptz,
-                    (daily.observed_day + 1)::timestamptz,
-                    daily.data_available_at,
-                    daily.metric_value,
-                    'accepted',
-                    concat_ws(':', daily.entity_key, daily.observed_day::text),
-                    encode(
-                        digest(
-                            concat_ws(
-                                '|',
-                                'sentinel2_ndvi_daily_cell_mean_v1',
-                                daily.entity_key,
-                                daily.observed_day::text,
-                                daily.metric_value::text,
-                                daily.source_row_count::text,
-                                array_to_string(daily.scene_ids, ',')
-                            ),
-                            'sha256'
-                        ),
-                        'hex'
-                    ),
-                    jsonb_build_object(
-                        'dayBucketRule', CAST(:day_bucket_rule AS text),
-                        'sourceRowCount', daily.source_row_count,
-                        'pixelSampleCount', daily.pixel_sample_count,
-                        'maxSceneCloudCoverPercent', daily.max_cloud_cover,
-                        'sceneIds', to_jsonb(daily.scene_ids)
-                    )
-                FROM daily
-                INNER JOIN agri.spatial_cell AS cell
-                    ON cell.cell_key = CAST(:grid_name AS text) || ':' || daily.entity_key
-                INNER JOIN agri.forecast_series AS series
-                    ON series.spatial_cell_id = cell.id
-                   AND series.metric_name = CAST(:metric_name AS varchar)
-                   AND series.source_transform_version = CAST(:transform_version AS varchar)
-                ON CONFLICT DO NOTHING
-                RETURNING id
-                """
-            ),
+            _LOAD_OBSERVATIONS,
             {
                 "layer_name": SOURCE_LAYER_NAME,
                 "cell_keys": list(batch),
@@ -735,26 +516,7 @@ async def load_governed_plane(session: AsyncSession, *, cutoff_day: date) -> Gov
     """Return the already registered governed plane for one publisher-day cutoff."""
     logical_key = release_set_logical_key(cutoff_day)
     result = await session.execute(
-        text(
-            """
-            SELECT
-                source.id AS data_source_id,
-                release.id AS source_release_id,
-                release.payload_checksum,
-                release.observed_from,
-                release.observed_to,
-                release.quality_summary,
-                release_set.id AS release_set_id,
-                release_set.manifest_checksum,
-                release_set.state
-            FROM agri.release_set AS release_set
-            INNER JOIN agri.release_set_item AS member ON member.release_set_id = release_set.id
-            INNER JOIN agri.source_release AS release ON release.id = member.source_release_id
-            INNER JOIN agri.data_source AS source ON source.id = release.data_source_id
-            WHERE release_set.logical_key = :logical_key
-              AND source.key = :data_source_key
-            """
-        ),
+        _LOAD_GOVERNED_PLANE,
         {"logical_key": logical_key, "data_source_key": DATA_SOURCE_KEY},
     )
     row = result.mappings().one_or_none()
@@ -787,29 +549,7 @@ async def load_series_identities(
 ) -> tuple[SeriesIdentity, ...]:
     """Return registered NDVI series with their pinned contract snapshots and geometry links."""
     result = await session.execute(
-        text(
-            """
-            SELECT
-                contract.series_id,
-                contract.series_key,
-                contract.entity_key,
-                contract.spatial_cell_id,
-                contract.contract_checksum,
-                contract.contract_snapshot::text AS contract_snapshot,
-                contract.data_source_review_state,
-                contract.license_name,
-                contract.license_url,
-                contract.citation
-            FROM agri.v_forecast_timeseries_contract AS contract
-            WHERE contract.data_source_key = :data_source_key
-              AND contract.metric_name = :metric_name
-              AND (
-                    CAST(:cell_keys AS text[]) IS NULL
-                    OR contract.entity_key = ANY(CAST(:cell_keys AS text[]))
-              )
-            ORDER BY contract.series_key
-            """
-        ),
+        _LOAD_SERIES_IDENTITIES,
         {
             "data_source_key": DATA_SOURCE_KEY,
             "metric_name": METRIC_NAME,
@@ -847,21 +587,7 @@ async def load_governed_history(
 ) -> dict[uuid.UUID, tuple[ObservedDay, ...]]:
     """Return every registered series' leakage-free history in one governed pass."""
     result = await session.execute(
-        text(
-            """
-            SELECT
-                contract.series_id,
-                contract.observed_at,
-                contract.metric_value,
-                contract.observation_checksum,
-                contract.source_release_license_snapshot,
-                contract.license_name
-            FROM agri.forecast_timeseries_contract(:release_set_id, :as_of_time) AS contract
-            WHERE contract.metric_name = :metric_name
-              AND contract.observed_at < :cutoff_exclusive
-            ORDER BY contract.series_id, contract.observed_at
-            """
-        ),
+        _LOAD_GOVERNED_HISTORY,
         {
             "release_set_id": release_set_id,
             "as_of_time": as_of_time,
@@ -894,29 +620,7 @@ async def load_license_snapshots(
 ) -> dict[uuid.UUID, str]:
     """Return each series' governed license snapshots in one pass, mirroring the shipped procedure."""
     result = await session.execute(
-        text(
-            """
-            SELECT
-                governed.series_id,
-                jsonb_agg(
-                    jsonb_build_object(
-                        'source_release_id', governed.source_release_id,
-                        'license_snapshot', governed.source_release_license_snapshot
-                    )
-                    ORDER BY governed.source_release_id
-                )::text AS snapshots
-            FROM (
-                SELECT DISTINCT
-                    contract.series_id,
-                    contract.source_release_id,
-                    contract.source_release_license_snapshot
-                FROM agri.forecast_timeseries_contract(:release_set_id, :as_of_time) AS contract
-                WHERE contract.metric_name = :metric_name
-                  AND contract.observed_at < :cutoff_exclusive
-            ) AS governed
-            GROUP BY governed.series_id
-            """
-        ),
+        _LOAD_LICENSE_SNAPSHOTS,
         {
             "release_set_id": release_set_id,
             "as_of_time": as_of_time,
@@ -936,13 +640,7 @@ async def _existing_iteration_id(
 ) -> uuid.UUID:
     """Return an already finalized iteration only when its immutable evidence still matches."""
     result = await session.execute(
-        text(
-            """
-            SELECT iteration.id, iteration.status, iteration.parameter_checksum, iteration.history_checksum
-            FROM agri.forecast_iteration AS iteration
-            WHERE iteration.iteration_key = :iteration_key
-            """
-        ),
+        _SELECT_EXISTING_ITERATION,
         {"iteration_key": iteration_key},
     )
     row = result.mappings().one()
@@ -976,26 +674,7 @@ async def _write_iteration(  # noqa: PLR0913
     )
     iteration_id = uuid.uuid4()
     insert_result = await session.execute(
-        text(
-            """
-            INSERT INTO agri.forecast_iteration (
-                id, iteration_key, series_id, release_set_id, purpose, availability_mode, method,
-                as_of_time, cutoff_time, history_start, horizon_days, simulation_count, simulation_seed,
-                gap_policy, lower_bound, upper_bound, input_release_checksum, input_license_snapshots,
-                contract_snapshot, contract_checksum, history_checksum, parameter_checksum,
-                training_day_count, increment_count, expected_value_count
-            )
-            VALUES (
-                :iteration_id, :iteration_key, :series_id, :release_set_id, :purpose, :availability_mode, :method,
-                :as_of_time, :cutoff_time, :history_start, :horizon_days, :simulation_count, :simulation_seed,
-                :gap_policy, :lower_bound, :upper_bound, :input_release_checksum,
-                CAST(:input_license_snapshots AS jsonb), CAST(:contract_snapshot AS jsonb), :contract_checksum,
-                :history_checksum, :parameter_checksum, :training_day_count, :increment_count, :expected_value_count
-            )
-            ON CONFLICT (iteration_key) DO NOTHING
-            RETURNING id
-            """
-        ),
+        _INSERT_FORECAST_ITERATION,
         {
             "iteration_id": iteration_id,
             "iteration_key": iteration_key,
@@ -1033,40 +712,7 @@ async def _write_iteration(  # noqa: PLR0913
             governed_history_checksum=governed_history_checksum,
         )
     await session.execute(
-        text(
-            """
-            INSERT INTO agri.forecast_iteration_value (
-                iteration_id, valid_time, horizon_step, low_value, median_value, high_value,
-                increment_count, parameter_checksum, value_checksum
-            )
-            SELECT
-                :iteration_id,
-                simulated.valid_time,
-                simulated.horizon_step,
-                simulated.low_value,
-                simulated.median_value,
-                simulated.high_value,
-                simulated.increment_count,
-                :parameter_checksum,
-                agri.forecast_iteration_value_checksum(
-                    simulated.valid_time,
-                    simulated.horizon_step,
-                    simulated.low_value,
-                    simulated.median_value,
-                    simulated.high_value,
-                    simulated.increment_count,
-                    CAST(:parameter_checksum AS varchar)
-                )
-            FROM unnest(
-                CAST(:valid_times AS timestamptz[]),
-                CAST(:horizon_steps AS integer[]),
-                CAST(:low_values AS double precision[]),
-                CAST(:median_values AS double precision[]),
-                CAST(:high_values AS double precision[]),
-                CAST(:increment_counts AS integer[])
-            ) AS simulated(valid_time, horizon_step, low_value, median_value, high_value, increment_count)
-            """
-        ),
+        _INSERT_FORECAST_ITERATION_VALUE,
         {
             "iteration_id": iteration_id,
             "parameter_checksum": checksum,
@@ -1079,15 +725,7 @@ async def _write_iteration(  # noqa: PLR0913
         },
     )
     await session.execute(
-        text(
-            """
-            UPDATE agri.forecast_iteration
-            SET receipt_checksum = agri.forecast_iteration_receipt_checksum(:iteration_id),
-                recorded_at = clock_timestamp(),
-                status = 'finalized'
-            WHERE id = :iteration_id
-            """
-        ),
+        _SEAL_ITERATION_RECEIPT,
         {"iteration_id": iteration_id},
     )
     return iteration_id
@@ -1204,16 +842,7 @@ async def reconcile_actuals(
     inserted = 0
     for iteration_id in iteration_ids:
         result = await session.execute(
-            text(
-                """
-                CALL agri.reconcile_forecast_iteration_actuals(
-                    CAST(NULL AS integer),
-                    CAST(:iteration_id AS uuid),
-                    CAST(:release_set_id AS uuid),
-                    CAST(:as_of_time AS timestamptz)
-                )
-                """
-            ),
+            _RECONCILE_FORECAST_ITERATION_ACTUALS,
             {"iteration_id": iteration_id, "release_set_id": release_set_id, "as_of_time": as_of_time},
         )
         inserted += int(result.scalar_one() or 0)
@@ -1223,24 +852,7 @@ async def reconcile_actuals(
 async def load_outcome_rows(session: AsyncSession, *, iteration_ids: tuple[uuid.UUID, ...]) -> tuple[OutcomeRow, ...]:
     """Return reconciled forecast-versus-actual rows from the shipped iteration outcome view."""
     result = await session.execute(
-        text(
-            """
-            SELECT
-                outcome.series_id,
-                outcome.cutoff_time,
-                outcome.horizon_step,
-                outcome.valid_time,
-                outcome.low_value,
-                outcome.median_value,
-                outcome.high_value,
-                outcome.actual_value,
-                outcome.interval_covered
-            FROM agri.v_forecast_iteration_outcome AS outcome
-            WHERE outcome.iteration_id = ANY(CAST(:iteration_ids AS uuid[]))
-              AND outcome.actual_value IS NOT NULL
-            ORDER BY outcome.series_id, outcome.cutoff_time, outcome.valid_time
-            """
-        ),
+        _LOAD_OUTCOME_ROWS,
         {"iteration_ids": [str(value) for value in iteration_ids]},
     )
     rows: list[OutcomeRow] = []

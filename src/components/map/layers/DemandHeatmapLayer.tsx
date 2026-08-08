@@ -34,12 +34,21 @@ const DEMAND_HEATMAP_COLOR = [
   ...DEMAND_DENSITY_COLOR_STOPS.flatMap((stop) => [stop.density, stop.color]),
 ] as unknown as ExpressionSpecification;
 
+/**
+ * The heatmap's authored strength. Only `heatmap-opacity` carries the reader's multiplier --
+ * `heatmap-color`'s stops carry their own alpha, and scaling those would change the density
+ * ENCODING rather than how strongly the whole layer draws.
+ */
+const DEMAND_HEATMAP_OPACITY = 0.85;
+
 interface DemandHeatmapLayerProps {
   map: MapLibreMap | null;
   bbox: string | null;
   zoom: number;
   visible: boolean;
   filters?: ActionNetworkFilters;
+  /** The reader's MULTIPLIER over DEMAND_HEATMAP_OPACITY. See src/lib/map/layer-opacity.ts. */
+  opacityScale?: number;
 }
 
 export function DemandHeatmapLayer({
@@ -48,8 +57,16 @@ export function DemandHeatmapLayer({
   zoom,
   visible,
   filters,
+  opacityScale = 1,
 }: DemandHeatmapLayerProps) {
   const addedRef = useRef(false);
+  const heatmapOpacity = DEMAND_HEATMAP_OPACITY * opacityScale;
+  // Read inside the add path, which must not re-run when the multiplier moves: re-running it
+  // would tear the source down and refetch the viewport on every slider tick.
+  const heatmapOpacityRef = useRef(heatmapOpacity);
+  useEffect(() => {
+    heatmapOpacityRef.current = heatmapOpacity;
+  }, [heatmapOpacity]);
   const actionNetwork = useActionNetworkFeatures(
     bbox,
     zoom,
@@ -117,7 +134,7 @@ export function DemandHeatmapLayer({
               9,
               20,
             ],
-            "heatmap-opacity": 0.85,
+            "heatmap-opacity": heatmapOpacityRef.current,
           },
         });
       }
@@ -148,6 +165,19 @@ export function DemandHeatmapLayer({
       geoJsonSource.setData(actionNetwork.data);
     }
   }, [actionNetwork.data, map]);
+
+  // The multiplier, applied without a rebuild.
+  useEffect(() => {
+    if (!map || !visible) return;
+    try {
+      if (!map.getStyle()) return;
+    } catch {
+      return;
+    }
+    if (map.getLayer(LAYER_ID)) {
+      map.setPaintProperty(LAYER_ID, "heatmap-opacity", heatmapOpacity);
+    }
+  }, [map, visible, heatmapOpacity]);
 
   const status = actionNetwork.isLoading
     ? "Loading action-network data."

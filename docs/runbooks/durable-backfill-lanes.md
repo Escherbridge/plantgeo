@@ -1,5 +1,8 @@
 # Runbook: Durable archive backfill lanes (`agri.job_*` ledger)
 
+> New operator? Start at
+> [`services/agri-data-service/README.md`](../../services/agri-data-service/README.md).
+
 ## Why this exists
 
 A bash driver walked the NASA FIRMS fire archive. It hit `ConnectError` on **169 of 298
@@ -217,6 +220,42 @@ agri-cli jobs-status --lane firms-archive
 This replaces grepping a log file. When a lane has more than one run (because its floor was
 lowered), read the per-run breakdown: the top-level `states` counts **ledger rows**, and two runs
 of one lane hold overlapping calendar days.
+
+`jobs-status` carries no timestamp of any kind, so it cannot tell you a rate, an ETA, or whether
+anything has moved since yesterday. For that, use the live dashboard.
+
+### Live dashboard
+
+The `agri-data-service` Sanic app serves an operator console at **`/ops/backfill`**. Locally:
+
+```bash
+cd services/agri-data-service && make dev
+# then open http://localhost:8000/ops/backfill
+```
+
+It exists on the deployed service too, at `https://<agri-data-service-host>/ops/backfill`.
+
+Per lane run it shows the eight work-item state counts, completion percentage, windows-per-hour,
+a naive ETA, the number of leases that have already expired while their window is still `leased`
+or `running` (stall candidates), the newest dead-lettered and retry-waiting windows with their
+error text, and a daily dead-letter trend with a running total. The page renders server-side and
+then refreshes itself over server-sent events every five seconds; `?interval=` accepts 2–30
+seconds and `?window=` changes the trailing window the rate is measured over (default 24 hours).
+`GET /ops/backfill.json` returns the same snapshot for scripting.
+
+Two things to read correctly:
+
+- **`eta` shows an em dash when the rate is zero.** No windows succeeded in the trailing window,
+  so the remaining time is not derivable — that is a stalled lane, not an instant one.
+- **The activity column is "last recorded activity", not "last cron run".** It is the newest
+  durable timestamp across the run's work items, attempts and checkpoints. A tick that claims
+  nothing writes *nothing* to the ledger, so a healthy finished lane and a cron service that has
+  not fired in three days look identical here. To tell those apart you still need the Railway
+  deployment log for the cron service.
+
+> **`/ops` is not authenticated yet.** It leaks lane names, shard keys and redacted error
+> summaries to anyone who can reach the service. Gate it (bearer token or Cloudflare Access)
+> before the service is publicly reachable — tracked as a follow-up.
 
 ### What a dead-lettered window means, and how to requeue one
 

@@ -65,7 +65,10 @@ export default function MapControls() {
       // sideways, and without the fade the controls past the fold simply do not exist
       // as far as the user can tell. Desktop fits, so the mask stays mobile-only --
       // a permanent fade on a non-scrolling toolbar reads as a rendering bug.
-      className="left-4 translate-x-0 max-w-[calc(100vw-2rem)] overflow-x-auto max-sm:mask-[linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)]"
+      // `--layer-panel-inset` is set on MapView's root: 0 while the layer dock is closed, the
+      // dock's width while it is open. One variable, and this toolbar and the icon rail are
+      // its only consumers -- no prop drilling and no MapLayout change.
+      className="left-[calc(var(--layer-panel-inset,0px)+1rem)] translate-x-0 max-w-[calc(100vw-2rem)] overflow-x-auto transition-[left] duration-200 max-sm:mask-[linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)]"
     >
       <div className="flex items-center gap-2">
         <StyleSwitcher />

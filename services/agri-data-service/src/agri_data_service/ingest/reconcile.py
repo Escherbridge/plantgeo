@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Final, Literal
 
 from sqlalchemy import text
 
+from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.ingest.archive_walk import (
     ArchiveWalkPayloadError,
     ArchiveWindowRequest,
@@ -325,78 +326,17 @@ def reconciliation_marker(coverage: WindowCoverage, *, layer_reference: str) -> 
 # ---------------------------------------------------------------------------------------------------------------
 # SQL. Schema-qualified (nothing in this service sets `search_path`), parameterised, and opening with a
 # `-- <name>` marker the unit tests match on -- the same convention `jobs/lease.py` and `validation.py` use.
-# No comment inside a statement may contain a colon: SQLAlchemy's `text()` bind regex matches `:word`
-# anywhere in the string, comments included.
-#
-# Deliberate deviation from sql.md's "runtime query SQL lives in sql/<package>/*.sql", identical to the one
-# jobs/AGENTS.md already records: neither `src/agri_data_service/sql/` nor `db/sql_queries.py` exists yet.
+# Each statement lives in its own file under `sql/ingest/`, where its parameters, its rationale and a
+# clause-by-clause walkthrough are documented. The file is named after the constant below while the marker keeps
+# its `reconcile_` prefix, because `tests/test_ingest_reconcile.py` hard-codes the marker strings; each file's
+# header records that divergence. The "no colon in a comment" rule now lives in sql/AGENTS.md and in every file.
 # ---------------------------------------------------------------------------------------------------------------
 
-_OBSERVED_LAYER_DAYS: Final = text("""
--- reconcile_observed_layer_days
-SELECT geo.feature_observation_day(features.properties) AS observed_day
-FROM geo.features AS features
-WHERE features.layer_id = CAST(:layer_id AS uuid)
-  AND features.status = :published_status
-  AND features.geometry_id IS NOT NULL
-  AND geo.feature_observation_day(features.properties) IS NOT NULL
-GROUP BY geo.feature_observation_day(features.properties)
-ORDER BY 1
-LIMIT :row_limit
-""")
+_OBSERVED_LAYER_DAYS: Final = text(load_query_sql("ingest/observed_layer_days.sql"))
 
-_LANE_RUN_WINDOWS: Final = text("""
--- reconcile_lane_run_windows
-SELECT runs.id           AS job_run_id,
-       items.shard_key   AS shard_key,
-       items.status      AS status,
-       items.payload     AS payload
-FROM agri.job_run AS runs
-JOIN agri.job_work_item AS items
-  ON items.job_run_id = runs.id
-WHERE runs.logical_run_key = :logical_run_key
-ORDER BY items.shard_key
-LIMIT :row_limit
-""")
+_LANE_RUN_WINDOWS: Final = text(load_query_sql("ingest/lane_run_windows.sql"))
 
-# The landing `complete_work_item` produces, minus the attempt -- because there was no attempt. Every column
-# it touches is one `_COMPLETE_WORK_ITEM` touches, for the same constraint reasons: `completed_at` because
-# ck_job_work_item_terminal_item_has_completion_time is IMMEDIATE and would abort the statement without it,
-# and the lease pair together because ck_job_work_item_complete_lease_pair moves both or neither.
-# `attempt_count` is left where it was (0 for a window nothing ever claimed) -- inventing an attempt count
-# would be the same fabrication as inventing an attempt row.
-#
-# The status filter is repeated here and not only in Python. Between the read and this write a cron tick can
-# claim the very window being settled, and the predicate is what makes that race a no-op instead of a
-# terminal status written behind a live lease. A shard that moved is simply not in the RETURNING set.
-_MARK_WINDOWS_RECONCILED: Final = text("""
--- reconcile_mark_windows_succeeded
-UPDATE agri.job_work_item AS item
-SET status = 'succeeded',
-    completed_at = now(),
-    progress_fraction = 1,
-    next_attempt_at = NULL,
-    lease_owner = NULL,
-    lease_expires_at = NULL,
-    payload = item.payload || jsonb_build_object(
-        -- The cast is load-bearing, not decoration. `jsonb_build_object` is `variadic "any"`, so an
-        -- untyped bind in the key position gives PostgreSQL nothing to resolve and it refuses the whole
-        -- statement with `IndeterminateDatatypeError: could not determine data type of parameter $1`.
-        -- Measured 2026-08-07 against production: this failed on the first `--apply` while the dry run,
-        -- which opens no write transaction, passed. It cannot be caught by the unit tests either -- they
-        -- answer `AsyncSession.execute` from a recording stub, so no bind ever reaches a type resolver.
-        -- psycopg2 hides it as well, because it substitutes literals client-side; only asyncpg, which
-        -- sends a real parameter, tells the truth. See jobs/AGENTS.md on real-database coverage.
-        CAST(:marker_key AS text),
-        CAST(marked.marker AS jsonb) || jsonb_build_object('reconciled_at', now())
-    )
-FROM jsonb_to_recordset(CAST(:marked AS jsonb)) AS marked(shard_key text, marker text)
-WHERE item.job_run_id = CAST(:job_run_id AS uuid)
-  AND item.shard_key = marked.shard_key
-  AND item.status IN ('queued', 'retry_wait', 'deferred')
-  AND item.lease_owner IS NULL
-RETURNING item.shard_key AS shard_key
-""")
+_MARK_WINDOWS_RECONCILED: Final = text(load_query_sql("ingest/mark_windows_reconciled.sql"))
 
 
 # ---------------------------------------------------------------------------------------------------------------

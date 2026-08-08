@@ -7,9 +7,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc/client";
 import {
   ENVIRONMENTAL_TILES_CONFIGURED,
+  GIBS_NDVI_PRODUCT,
   NDVI_ANOMALY_UNAVAILABLE_REASON,
   NDVI_COLOR_RAMP,
-  NDWI_COLOR_RAMP,
   NDWI_UNAVAILABLE_REASON,
 } from "@/lib/vegetation";
 import { NLCD_CATEGORY_CLASSES, NLCD_CLASSES, type NLCDCategory } from "@/lib/environmental/nlcd";
@@ -20,19 +20,45 @@ import {
   useVegetationDisplayMode,
 } from "@/lib/map/layer-toggle-context";
 import { LayerToggle } from "@/components/ui/layer-toggle";
-import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
+import { LayerOpacitySlider } from "@/components/ui/layer-opacity-slider";
+import type { VegetationSource } from "@/components/map/layers/VegetationLayer";
 import type { LandCoverMode } from "@/components/map/layers/LandCoverLayer";
 
 const ALL_CATEGORIES = Object.keys(NLCD_CATEGORY_CLASSES) as NLCDCategory[];
+
+/**
+ * The two NDVI encodings, named by provenance rather than by style. Each carries the sentence
+ * a reader needs to know WHICH one they are looking at -- the pair draws the same quantity, so
+ * without the description the choice is arbitrary. Exhaustive over `VegetationSource` by
+ * construction: the picker maps this list, so a new member appears the moment it is added.
+ */
+const VEGETATION_SOURCE_OPTIONS: ReadonlyArray<{
+  value: VegetationSource;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "measured",
+    label: "Measured grid",
+    description:
+      "The NDVI readings this platform ingested, drawn as the discrete 0.25° cells they were " +
+      "sampled on. Present only where the grid has been sampled.",
+  },
+  {
+    value: "satellite",
+    label: "Satellite (MODIS)",
+    description:
+      `NASA GIBS ${GIBS_NDVI_PRODUCT.layerIdentifier.replace(/_/g, " ")}: global and gap-free, ` +
+      `but a proxied composite rather than a reading with a scene behind it. GIBS publishes it ` +
+      `no deeper than zoom ${GIBS_NDVI_PRODUCT.maxZoom}, so it softens as you zoom past that.`,
+  },
+];
 
 interface VegetationPanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   bbox?: string;
   // Callbacks to drive the map layers
-  onVegetationModeChange?: (mode: VegetationMode) => void;
-  onNDVIModeChange?: (mode: "absolute" | "anomaly") => void;
-  onShowNDWIChange?: (show: boolean) => void;
   onLandCoverModeChange?: (mode: LandCoverMode) => void;
   onEnabledCategoriesChange?: (cats: NLCDCategory[]) => void;
 }
@@ -53,15 +79,17 @@ export function VegetationPanel({
   open,
   onOpenChange,
   bbox,
-  onVegetationModeChange,
-  onNDVIModeChange,
-  onShowNDWIChange,
   onLandCoverModeChange,
   onEnabledCategoriesChange,
 }: VegetationPanelProps) {
   const vegStore = useVegetationStore();
-  const anomalyMode = vegStore.ndviMode === "anomaly";
-  const showNDWI = vegStore.showNDWI;
+  const source = vegStore.source;
+  const activeSource = VEGETATION_SOURCE_OPTIONS.find((option) => option.value === source);
+  // Everything the GIBS composite implies -- a monthly period, a gap where GIBS publishes
+  // nothing -- is true only while the composite is the encoding on screen. The measured cells
+  // take the slider's day directly, so saying "NDVI draws the Aug 2026 composite" over them
+  // would describe a raster the reader is not looking at.
+  const showsComposite = source === "satellite";
   const [landCoverMode, setLandCoverMode] = useState<LandCoverMode>("2021");
   const [enabledCategories, setEnabledCategories] = useState<NLCDCategory[]>([...ALL_CATEGORIES]);
 
@@ -93,21 +121,6 @@ export function VegetationPanel({
     (f) => (f.properties as Record<string, unknown>).suitability === "Low"
   ).length;
 
-  function handleAnomalyToggle() {
-    const next = !anomalyMode;
-    vegStore.setNDVIMode(next ? "anomaly" : "absolute");
-    onNDVIModeChange?.(next ? "anomaly" : "absolute");
-  }
-
-  function handleNDWIToggle() {
-    const next = !showNDWI;
-    vegStore.setShowNDWI(next);
-    vegStore.setMode(next ? "ndwi" : "ndvi");
-    onShowNDWIChange?.(next);
-    if (next) onVegetationModeChange?.("ndwi");
-    else onVegetationModeChange?.("ndvi");
-  }
-
   function handleLandCoverModeChange(mode: LandCoverMode) {
     setLandCoverMode(mode);
     onLandCoverModeChange?.(mode);
@@ -131,7 +144,7 @@ export function VegetationPanel({
           </SheetTitle>
         </SheetHeader>
 
-        <LayerToggle layerId="vegetation" label="Vegetation (NDVI)" />
+        <LayerToggle layerId="vegetation" />
 
         {/* This panel has no time control of its own -- the slider at the top of the
             right-hand region is the one clock for every layer. What it does owe the reader is
@@ -145,10 +158,11 @@ export function VegetationPanel({
           >
             Map date{" "}
             <span className="font-medium text-[hsl(var(--foreground))]">{selectedDate}</span>
-            {/* Only claims a composite is drawn when one exists -- the gap notice below owns
-                the other case, and saying "NDVI draws Jul 2024" for a period GIBS never
-                published would be exactly the silent substitution this readout prevents. */}
-            {compositePeriod !== null && compositeUnavailableReason === null && (
+            {/* Only claims a composite is drawn when one exists AND is the selected encoding --
+                the gap notice below owns the other case, and saying "NDVI draws Jul 2024" for a
+                period GIBS never published would be exactly the silent substitution this
+                readout prevents. */}
+            {showsComposite && compositePeriod !== null && compositeUnavailableReason === null && (
               <>
                 {" — NDVI draws the "}
                 <span className="font-medium text-[hsl(var(--foreground))]">
@@ -157,14 +171,17 @@ export function VegetationPanel({
                 {" composite; the period follows the map date, month by month."}
               </>
             )}
+            {!showsComposite && " — the measured cells are the readings sampled up to that day."}
           </p>
         )}
 
         {/* Outside the tabs on purpose: the day is outside what GIBS publishes, so the raster
             is genuinely absent rather than switched off or still loading, and that must be
             legible the moment the panel opens rather than only on the NDVI tab. On the page,
-            not in a title -- there is no focusable control here to hang one on. */}
-        {compositeUnavailableReason !== null && (
+            not in a title -- there is no focusable control here to hang one on. Gated on the
+            composite being the selected encoding: it is a gap in GIBS, not in the measured
+            cells, so over the grid it would warn about a raster nobody asked for. */}
+        {showsComposite && compositeUnavailableReason !== null && (
           <p
             className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
             data-testid="vegetation-composite-unavailable"
@@ -200,75 +217,102 @@ export function VegetationPanel({
                 </p>
               )}
 
-              {!ENVIRONMENTAL_TILES_CONFIGURED && (
-                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
-                  Vegetation tiles are paused until a versioned first-party
-                  warehouse release is published.
+              {/* The one real choice this tab offers. NDVI is drawn EITHER as the measured
+                  cells OR as the GIBS composite -- both used to paint at once, stacked at the
+                  same alpha, which is what made the layer look broken. Radio-style buttons,
+                  not checkboxes: they are two views of one quantity, so "both off" would be
+                  the toggle above, and "both on" is the bug. */}
+              <div className="flex flex-col gap-2">
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">NDVI source</p>
+                <div className="flex gap-2" role="group" aria-label="NDVI source">
+                  {VEGETATION_SOURCE_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={source === option.value}
+                      data-testid={`vegetation-source-${option.value}`}
+                      className={`flex-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                        source === option.value
+                          ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent"
+                          : "border-[hsl(var(--border))] text-[hsl(var(--foreground))] bg-[hsl(var(--card))]"
+                      }`}
+                      onClick={() => vegStore.setSource(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
+                  {activeSource?.description}
                 </p>
-              )}
-
-              <div className="flex items-center justify-between">
-                <label
-                  htmlFor="ndvi-anomaly-toggle"
-                  className="text-xs text-[hsl(var(--foreground))] cursor-not-allowed opacity-60"
-                >
-                  Anomaly mode
-                  {/* The reason is on the page, not only in a title: a disabled control
-                      isn't focusable. See TimeSlider's forecast-variant hint. */}
-                  <span className="block text-[10px] text-amber-600 dark:text-amber-400">
-                    {NDVI_ANOMALY_UNAVAILABLE_REASON}
-                  </span>
-                </label>
-                <input
-                  id="ndvi-anomaly-toggle"
-                  type="checkbox"
-                  checked={anomalyMode}
-                  onChange={handleAnomalyToggle}
-                  disabled
-                  aria-disabled="true"
-                  title={NDVI_ANOMALY_UNAVAILABLE_REASON}
-                  className="rounded disabled:cursor-not-allowed disabled:opacity-50"
-                />
               </div>
 
-              <div className="flex items-center justify-between">
-                <label
-                  htmlFor="ndvi-ndwi-toggle"
-                  className="text-xs text-[hsl(var(--foreground))] cursor-not-allowed opacity-60"
-                >
-                  Show NDWI (water stress)
-                  {/* The reason is on the page, not only in a title: a disabled control
-                      isn't focusable. See TimeSlider's forecast-variant hint. */}
-                  <span className="block text-[10px] text-amber-600 dark:text-amber-400">
-                    {NDWI_UNAVAILABLE_REASON}
-                  </span>
-                </label>
-                <input
-                  id="ndvi-ndwi-toggle"
-                  type="checkbox"
-                  checked={showNDWI}
-                  onChange={handleNDWIToggle}
-                  disabled
-                  aria-disabled="true"
-                  title={NDWI_UNAVAILABLE_REASON}
-                  className="rounded disabled:cursor-not-allowed disabled:opacity-50"
-                />
+              {/* With one encoding drawn at a time the basemap underneath still needs to be
+                  readable through it. The same control the layer tree renders, over the same
+                  `layer-store.layerOpacity.vegetation` value -- two surfaces, one number, so
+                  they cannot disagree. It used to write `vegetation-store.opacity`, which no
+                  other layer could reach and no other surface could read. */}
+              <div className="flex flex-col gap-2">
+                <span className="text-xs text-[hsl(var(--foreground))]">Layer opacity</span>
+                <LayerOpacitySlider layerId="vegetation" />
               </div>
 
               <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
                 <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
-                  {showNDWI ? "NDWI Legend" : "NDVI Legend"}
+                  NDVI Legend
                 </p>
                 <div className="flex flex-col gap-1">
-                  {(showNDWI ? NDWI_COLOR_RAMP : NDVI_COLOR_RAMP).map((stop) => (
+                  {NDVI_COLOR_RAMP.map((stop) => (
                     <ColorLegendRow key={stop.color} color={stop.color} label={stop.label} />
                   ))}
                 </div>
+                {/* The composite arrives already shaded by GIBS's server-side palette, so this
+                    ramp describes the cells and only approximates the raster. Saying so is
+                    cheaper than implying the two are the same scale. */}
+                {source === "satellite" && (
+                  <p className="mt-2 text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
+                    The MODIS composite is shaded by NASA GIBS&apos;s own palette; this ramp
+                    describes the measured cells and only approximates the raster.
+                  </p>
+                )}
+              </div>
+
+              {/* Stated, not offered. These were checkboxes wired to store setters and
+                  permanently `disabled`, so they could never fire -- a control that cannot act
+                  is worse than a sentence that explains why. Same wording pattern as the
+                  registry's permanentlyUnavailableReason. */}
+              <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 flex flex-col gap-2">
+                <p className="text-xs font-semibold text-[hsl(var(--foreground))]">
+                  No data source yet
+                </p>
+                <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
+                  <span className="font-medium text-[hsl(var(--foreground))]">Anomaly mode</span>
+                  {" — "}
+                  {NDVI_ANOMALY_UNAVAILABLE_REASON}
+                </p>
+                <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
+                  <span className="font-medium text-[hsl(var(--foreground))]">
+                    NDWI (water stress)
+                  </span>
+                  {" — "}
+                  {NDWI_UNAVAILABLE_REASON}
+                </p>
               </div>
             </TabsContent>
 
             {/* Land Cover Tab */}
             <TabsContent value="landcover" className="flex flex-col gap-4 mt-4">
+              {/* This notice belongs here, not on the NDVI tab: NDVI is served -- either from
+                  the warehouse cells or the GIBS proxy -- while land cover is exactly what
+                  ENVIRONMENTAL_TILES_CONFIGURED gates, so on the NDVI tab it contradicted a
+                  layer the reader could plainly see drawing. */}
+              {!ENVIRONMENTAL_TILES_CONFIGURED && (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                  Land-cover tiles are paused until a versioned first-party warehouse release
+                  is published; the controls below change nothing yet.
+                </p>
+              )}
+
               <div className="flex gap-2">
                 <button
                   className={`flex-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${

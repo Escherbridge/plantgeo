@@ -12,6 +12,7 @@ import structlog
 from sqlalchemy import Text, bindparam, text
 from sqlalchemy.dialects.postgresql import ARRAY
 
+from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.ingest.geometry import (
     GEOMETRY_VERSION_ACTIONS,
     FeatureGeometryLink,
@@ -85,48 +86,27 @@ class FeatureWriter(Protocol):
         ...
 
 
+# One line, one WHERE, no binds beyond the reference itself: extracting these buys no traceability,
+# since the whole statement is already visible at its call site. See sql/AGENTS.md.
 _RESOLVE_LAYER_BY_ID = text("SELECT id FROM geo.layers WHERE id = CAST(:layer_reference AS uuid) LIMIT 1")
 
 _RESOLVE_LAYER_BY_NAME = text("SELECT id FROM geo.layers WHERE name = :layer_reference LIMIT 1")
 
-_LOCK_EVENT_KEYS = text(
-    """
-    SELECT pg_advisory_xact_lock(hashtext(event_key))
-    FROM unnest(CAST(:event_keys AS text[])) AS locks(event_key)
-    ORDER BY event_key
-    """
-).bindparams(bindparam("event_keys", type_=ARRAY(Text)))
+_LOCK_EVENT_KEYS = text(load_query_sql("ingest/lock_event_keys.sql")).bindparams(
+    bindparam("event_keys", type_=ARRAY(Text))
+)
 
-_SELECT_EXISTING_EXTERNAL_IDS = text(
-    """
-    SELECT id, properties ->> 'id' AS external_id
-    FROM geo.features
-    WHERE layer_id = CAST(:layer_id AS uuid)
-      AND properties ->> 'id' = ANY(CAST(:external_ids AS text[]))
-    """
-).bindparams(bindparam("external_ids", type_=ARRAY(Text)))
+_SELECT_EXISTING_EXTERNAL_IDS = text(load_query_sql("ingest/select_existing_external_ids.sql")).bindparams(
+    bindparam("external_ids", type_=ARRAY(Text))
+)
 
-_INSERT_FEATURES = text(
-    """
-    INSERT INTO geo.features (layer_id, properties)
-    SELECT CAST(:layer_id AS uuid), CAST(payload AS jsonb)
-    FROM unnest(CAST(:payloads AS text[])) AS pending(payload)
-    RETURNING id, properties ->> 'id' AS external_id
-    """
-).bindparams(bindparam("payloads", type_=ARRAY(Text)))
+_INSERT_FEATURES = text(load_query_sql("ingest/insert_features.sql")).bindparams(
+    bindparam("payloads", type_=ARRAY(Text))
+)
 
-# The stored side strips both keys while the candidate side strips only 'geometry'. This asymmetry is
-# load-bearing, not an oversight: see ingest/AGENTS.md "writer.py".
-_REFRESH_FEATURE = text(
-    """
-    UPDATE geo.features
-    SET properties = CAST(:next_properties AS jsonb), updated_at = now()
-    WHERE layer_id = CAST(:layer_id AS uuid)
-      AND properties ->> 'id' = :external_id
-      AND (properties - 'geometry' - 'geometry_repaired')
-          IS DISTINCT FROM (CAST(:next_properties AS jsonb) - 'geometry')
-    RETURNING id
-    """
+_REFRESH_FEATURES = text(load_query_sql("ingest/refresh_features.sql")).bindparams(
+    bindparam("external_ids", type_=ARRAY(Text)),
+    bindparam("next_properties", type_=ARRAY(Text)),
 )
 
 
@@ -265,19 +245,26 @@ async def _ingest_resolved_batch(
                     feature_id_by_external_id[str(row.external_id)] = str(row.id)
                     written.append((str(row.id), write))
 
-        for write in refreshable:
-            updated = (
-                await session.execute(
-                    _REFRESH_FEATURE,
-                    {
-                        "layer_id": layer_id,
-                        "external_id": write.external_id,
-                        "next_properties": encode_stored_properties(write),
-                    },
-                )
-            ).first()
-            if updated is not None:
-                written.append((str(updated.id), write))
+        if refreshable:
+            refreshed = await session.execute(
+                _REFRESH_FEATURES,
+                {
+                    "layer_id": layer_id,
+                    "external_ids": [write.external_id for write in refreshable],
+                    "next_properties": [encode_stored_properties(write) for write in refreshable],
+                },
+            )
+            # One counted row per changed external id, in `refreshable` order: a layer holding duplicate
+            # rows for one external id still updates every one of them, and still counts and publishes
+            # once, exactly as the per-row statement's `.first()` did.
+            refreshed_id_by_external_id: dict[str, str] = {}
+            for row in refreshed.all():
+                refreshed_id_by_external_id.setdefault(str(row.external_id), str(row.id))
+            written.extend(
+                (refreshed_id_by_external_id[write.external_id], write)
+                for write in refreshable
+                if write.external_id in refreshed_id_by_external_id
+            )
 
         geometry_actions = await _maintain_batch_geometry(session, batch, feature_id_by_external_id, run_clock)
         await session.commit()

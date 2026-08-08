@@ -1,0 +1,40 @@
+-- Purpose: read back the recorded forecast iteration for one iteration key, together with the
+--          immutable evidence the caller must verify before reusing it.
+-- Loaded by: agri_data_service.execution.vegetation_ndvi_plane
+-- Params: iteration_key (text) -- the deterministic idempotency key of one simulated iteration,
+--         built from the method, series, cutoff day, horizon, simulation count and seed.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap" in
+-- sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too, and a colon-prefixed word
+-- inside a comment would mint a bind parameter that no caller supplies.
+--
+-- What this returns: exactly one row -- the iteration's id, its status, and the two checksums that
+-- say what it was computed from. The caller reads it as strictly-one, so a missing row is an error
+-- rather than something to work around.
+--
+-- When this runs and why: only after an attempt to insert the iteration reported that a row with
+-- this key already existed. The question at that point is not "does it exist" but "is the existing
+-- row the SAME computation" -- so the statement returns the evidence rather than a yes or no. The
+-- caller reuses the existing iteration only if it is finalized and both checksums match what this run
+-- would have produced; otherwise it raises a conflict, because the same key describing different
+-- evidence means something upstream changed while the key did not.
+--
+-- How this query works, clause by clause:
+--
+--   WHERE iteration.iteration_key = iteration_key
+--     iteration_key is unique on this table, which is what makes at most one row possible and what
+--     makes the insert-then-check pattern above sound. The key itself is derived from every input
+--     that would change the result, so two runs agreeing on the key should agree on the evidence too.
+--
+--   iteration.status
+--     Selected because a row can exist without being usable. An iteration that was written but never
+--     sealed is not evidence of anything, and reusing it would attach a half-written forecast to a
+--     later report; the caller therefore accepts only the finalized status.
+--
+--   iteration.parameter_checksum and iteration.history_checksum
+--     The two fingerprints that pin an iteration to its inputs: everything the simulation was
+--     configured with, and the exact governed history it was trained on. Comparing both is what turns
+--     "a row with this key exists" into "this row is the same computation".
+SELECT iteration.id, iteration.status, iteration.parameter_checksum, iteration.history_checksum
+FROM agri.forecast_iteration AS iteration
+WHERE iteration.iteration_key = :iteration_key

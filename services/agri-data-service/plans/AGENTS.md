@@ -26,7 +26,7 @@ hand-edit of either file fails the suite.
 ## The real prerequisite is spatial cells, not the checksum
 
 The checksum is unenforced metadata. The *enforced* prerequisite lives in the writer:
-`_require_era5_spatial_cells` (`execution/historical_writer.py`) raises "ERA5 persistence
+`_require_era5_spatial_cells` (`execution/historical_writer/era5.py`) raises "ERA5 persistence
 requires the complete matching NASA sampling lattice in the warehouse" unless an
 `agri.spatial_cell` row already exists for every `cell_key` in the ERA5 plan. Those rows are
 created only by the NASA POWER persist path (`_ensure_spatial_cell`). So a NASA lattice plan

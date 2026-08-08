@@ -587,6 +587,13 @@ async def ingest_boise_intervention_pilot(
     )
 
 
+# FROZEN provenance copy. The consolidated governed upsert now lives in `execution/provenance.py`, and
+# the historical lanes plus `source_ingestion.publish_source_release` call it. This pilot deliberately
+# did NOT migrate: its release-set lifecycle differs (it writes `ReleaseSetItem(source_role=
+# "evidence_input")` and validates in the same call, where the historical lanes carry no source role and
+# refuse a non-DRAFT set), and its checksummed SQL and receipt shape are pinned by the pilot's own
+# fixtures. Migrating it is a separate, separately reviewed pass -- see `execution/AGENTS.md`
+# §"The governed provenance upsert". Do not edit the helpers below to "match" provenance.py.
 async def _get_or_create_data_source(
     session: AsyncSession,
     source: GeospatialCaptureSource,

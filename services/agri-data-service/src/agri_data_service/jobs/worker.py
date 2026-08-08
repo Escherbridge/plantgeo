@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
+import signal
 import sys
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal
 
 import structlog
 from sqlalchemy import text
 
+from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.jobs.lease import (
     apply_statement_timeout,
     canonical_json,
@@ -39,7 +44,7 @@ from agri_data_service.jobs.registry import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import AsyncIterator, Callable, Mapping, Sequence
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,9 +65,39 @@ logger = structlog.wrap_logger(structlog.PrintLogger(file=sys.stderr))
 
 BUDGET_YIELD_REASON: Final = "worker time budget exhausted mid-shard"
 
-SliceStopReason = Literal["no_open_run", "no_claimable_work", "time_budget_exhausted"]
+SHUTDOWN_RELEASE_REASON: Final = "the container was signalled to stop mid-shard"
+CANCELLED_RELEASE_REASON: Final = "the slice task was cancelled mid-shard"
 
-ItemLanding = Literal["succeeded", "retried", "dead_lettered", "deferred", "yielded", "abandoned"]
+# The signals a one-shot cron container is actually stopped with. SIGTERM is what Railway sends before it
+# kills a container -- on a redeploy, on an eviction, on a manual restart -- and SIGINT is the same event
+# at a developer's terminal. Neither has a Python-level handler by default, so the process simply ended
+# and left its shard 'running' behind a lease no living process owned. See jobs/AGENTS.md
+# "Shutdown and heartbeat semantics".
+_STOP_SIGNALS: Final = (signal.SIGTERM, signal.SIGINT)
+
+# `job_event.environment` and `job_event.service` are both NOT NULL and nothing else in this service names
+# either. Railway sets the environment name per container; off Railway the honest answer is "local", not a
+# guess. Both columns are VARCHAR(100), and an over-long value aborts the INSERT rather than truncating.
+JOB_EVENT_SERVICE: Final = "agri-data-service"
+JOB_EVENT_ENVIRONMENT_VARIABLE: Final = "RAILWAY_ENVIRONMENT_NAME"
+DEFAULT_JOB_EVENT_ENVIRONMENT: Final = "local"
+JOB_EVENT_TEXT_MAX_LENGTH: Final = 100
+
+# One event code, written once per tick. `max(occurred_at) WHERE event_code = 'slice_finished'` is then a
+# true per-lane heartbeat, which is the single fact the ledger could not previously produce.
+SLICE_FINISHED_EVENT_CODE: Final = "slice_finished"
+
+SliceStopReason = Literal["no_open_run", "no_claimable_work", "time_budget_exhausted", "shutdown_requested"]
+
+ItemLanding = Literal[
+    "succeeded",
+    "retried",
+    "dead_lettered",
+    "deferred",
+    "yielded",
+    "released",
+    "abandoned",
+]
 
 
 class JobDefinitionNotFoundError(LookupError):
@@ -73,151 +108,87 @@ class JobRunError(RuntimeError):
     """Raised when a run row the runtime just wrote cannot be read back, so the ledger contradicts itself."""
 
 
-_UPSERT_JOB_DEFINITION: Final = text("""
--- upsert_job_definition
-INSERT INTO agri.job_definition (
-    name, version, handler, queue_name, schedule, schedule_timezone, enabled,
-    concurrency_key, max_attempts, lease_seconds, time_budget_seconds, retry_policy, parameters
-)
-VALUES (
-    :name, :version, :handler, :queue_name, :schedule, :schedule_timezone, :enabled,
-    :concurrency_key, :max_attempts, :lease_seconds, :time_budget_seconds,
-    CAST(:retry_policy AS jsonb), CAST(:parameters AS jsonb)
-)
-ON CONFLICT (name, version) DO UPDATE
-SET handler = EXCLUDED.handler,
-    queue_name = EXCLUDED.queue_name,
-    schedule = EXCLUDED.schedule,
-    schedule_timezone = EXCLUDED.schedule_timezone,
-    enabled = EXCLUDED.enabled,
-    concurrency_key = EXCLUDED.concurrency_key,
-    max_attempts = EXCLUDED.max_attempts,
-    lease_seconds = EXCLUDED.lease_seconds,
-    time_budget_seconds = EXCLUDED.time_budget_seconds,
-    retry_policy = EXCLUDED.retry_policy,
-    parameters = EXCLUDED.parameters,
-    updated_at = now()
-RETURNING id, name, version, handler, queue_name, concurrency_key,
-          max_attempts, lease_seconds, time_budget_seconds, retry_policy, parameters
-""")
+_UPSERT_JOB_DEFINITION: Final = text(load_query_sql("jobs/upsert_job_definition.sql"))
 
-# `ORDER BY version DESC` picks the newest version of a name when the caller pinned none. `version` is
-# free-text VARCHAR(100), so this is a string sort -- a lane that wants predictable ordering versions
-# with a sortable scheme (a date, or zero-padded numbers), because "10" sorts before "2".
-_LOAD_JOB_DEFINITION: Final = text("""
--- load_job_definition
-SELECT id, name, version, handler, queue_name, concurrency_key,
-       max_attempts, lease_seconds, time_budget_seconds, retry_policy, parameters
-FROM agri.job_definition
-WHERE name = :name
-  AND enabled
-  AND (CAST(:version AS text) IS NULL OR version = CAST(:version AS text))
-ORDER BY version DESC
-LIMIT 1
-""")
+_LOAD_JOB_DEFINITION: Final = text(load_query_sql("jobs/load_job_definition.sql"))
 
-# `logical_run_key` is UNIQUE and is the run-level idempotency key. DO NOTHING plus a follow-up SELECT
-# is the only shape that stays correct when two schedulers race -- the loser gets zero rows back and
-# reads the winner's row instead of minting a duplicate run.
-_INSERT_JOB_RUN: Final = text("""
--- insert_job_run
-INSERT INTO agri.job_run (
-    job_definition_id, logical_run_key, scheduled_for, status, requested_by, target_partitions
-)
-VALUES (
-    :job_definition_id,
-    :logical_run_key,
-    COALESCE(CAST(:scheduled_for AS timestamptz), now()),
-    'queued',
-    :requested_by,
-    CAST(:target_partitions AS jsonb)
-)
-ON CONFLICT (logical_run_key) DO NOTHING
-RETURNING id
-""")
+_INSERT_JOB_RUN: Final = text(load_query_sql("jobs/insert_job_run.sql"))
 
-_SELECT_JOB_RUN: Final = text("""
--- select_job_run
-SELECT id, status, total_work_items FROM agri.job_run WHERE logical_run_key = :logical_run_key
-""")
+_SELECT_JOB_RUN: Final = text(load_query_sql("jobs/select_job_run.sql"))
 
-# One statement for any number of shards. A per-shard INSERT would be one round trip each against the
-# Railway proxy, and the ingest session opens exactly one connection, so a thousand-shard fan-out
-# would be a thousand serial round trips. `ON CONFLICT (job_run_id, shard_key) DO NOTHING` is what
-# makes re-planning a run a no-op instead of a duplicate fan-out.
-#
-# `next_attempt_at` is seeded to `available_at` even though 'queued' does not require it, so that every
-# row carries the same claim-eligibility shape the 'retry_wait' and 'deferred' rows are forced into.
-# This is a convenience, NOT a correctness requirement: _CLAIM_WORK_ITEM spells the NULL case out as
-# `(item.next_attempt_at IS NULL OR item.next_attempt_at <= now())`, so an unseeded row is claimable
-# either way. It matters only to a query written without that disjunction -- an operator's ad-hoc
-# completeness check, or a future claim variant -- where a NULL would make the comparison UNKNOWN and
-# hide the row. Nothing here rides on the index: ix_job_work_item_claim is
-# (status, next_attempt_at, available_at, priority), which leads with neither job_run_id (the claim
-# filters on it) nor priority DESC (the claim sorts by it), so the claim is a filter-and-sort at any
-# seeding. Harmless at this scale; do not quote it as load-bearing.
-_INSERT_JOB_WORK_ITEMS: Final = text("""
--- insert_job_work_items
-INSERT INTO agri.job_work_item (
-    job_run_id, shard_key, kind, payload, priority, available_at, next_attempt_at, max_attempts
-)
-SELECT :job_run_id,
-       item.shard_key,
-       item.kind,
-       CAST(item.payload AS jsonb),
-       item.priority,
-       COALESCE(item.available_at, now()),
-       COALESCE(item.available_at, now()),
-       :max_attempts
-FROM jsonb_to_recordset(CAST(:items AS jsonb))
-     AS item(shard_key text, kind text, payload text, priority integer, available_at timestamptz)
-ON CONFLICT (job_run_id, shard_key) DO NOTHING
-RETURNING id
-""")
+_INSERT_JOB_WORK_ITEMS: Final = text(load_query_sql("jobs/insert_job_work_items.sql"))
 
-_SELECT_OPEN_JOB_RUN: Final = text("""
--- select_open_job_run
-SELECT id
-FROM agri.job_run
-WHERE job_definition_id = :job_definition_id AND status IN ('queued', 'running')
-ORDER BY scheduled_for, created_at
-LIMIT 1
-""")
+_SELECT_OPEN_JOB_RUN: Final = text(load_query_sql("jobs/select_open_job_run.sql"))
 
-# Every counter is assigned an absolute value recomputed from the work items themselves, in ONE
-# statement, so ck_job_run_work_item_counts_within_total never sees a half-updated triple -- these
-# constraints are IMMEDIATE and abort the statement, not the commit. The terminal status and
-# `completed_at` move together for ck_job_run_terminal_run_has_completion_time. Nothing in the database
-# maintains these counters; this statement is the only thing that makes them true.
-_REFRESH_JOB_RUN_ROLLUP: Final = text("""
--- refresh_job_run_rollup
-UPDATE agri.job_run AS run
-SET total_work_items = tally.total,
-    succeeded_work_items = tally.succeeded,
-    failed_work_items = tally.failed,
-    started_at = COALESCE(run.started_at, now()),
-    status = CASE
-        WHEN tally.total = 0 THEN run.status
-        WHEN tally.succeeded + tally.failed < tally.total THEN 'running'
-        WHEN tally.failed = 0 THEN 'succeeded'
-        WHEN tally.succeeded = 0 THEN 'failed'
-        ELSE 'partial'
-    END,
-    completed_at = CASE
-        WHEN tally.total > 0 AND tally.succeeded + tally.failed = tally.total
-            THEN COALESCE(run.completed_at, now())
-        ELSE run.completed_at
-    END
-FROM (
-    SELECT count(*) AS total,
-           count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
-           count(*) FILTER (WHERE status IN ('dead_letter', 'cancelled')) AS failed
-    FROM agri.job_work_item
-    WHERE job_run_id = :job_run_id
-) AS tally
-WHERE run.id = :job_run_id
-RETURNING run.status, run.total_work_items, run.succeeded_work_items, run.failed_work_items
-""")
+_REFRESH_JOB_RUN_ROLLUP: Final = text(load_query_sql("jobs/refresh_job_run_rollup.sql"))
+
+_WRITE_SLICE_EVENT: Final = text(load_query_sql("jobs/write_slice_event.sql"))
+
+
+class ShutdownSignal:
+    """A stop flag a container-stop signal sets and the slice loop reads between units of work."""
+
+    def __init__(self) -> None:
+        """Start un-signalled; `reason` is both the flag and the text a released shard records."""
+        self.reason: str | None = None
+
+    @property
+    def requested(self) -> bool:
+        """True once a stop signal has arrived and the slice should hand its shard back and finish."""
+        return self.reason is not None
+
+    def request(self, reason: str) -> None:
+        """Record the first stop reason; a second signal must not overwrite what the first will report."""
+        if self.reason is None:
+            self.reason = reason
+
+
+def _no_restore() -> None:
+    """Undo nothing, for a platform on which no stop-signal handler could be installed in the first place."""
+
+
+def _bind_stop_signal(
+    loop: asyncio.AbstractEventLoop,
+    number: int,
+    stop: ShutdownSignal,
+) -> Callable[[], None]:
+    """Route one signal number into the stop flag and return the callable that puts the old handler back."""
+    reason = f"{SHUTDOWN_RELEASE_REASON} ({signal.Signals(number).name})"
+    try:
+        loop.add_signal_handler(number, stop.request, reason)
+    except (NotImplementedError, RuntimeError, ValueError):
+        # Windows' proactor loop implements no signal handlers at all, and neither API works off the main
+        # thread. Production is Linux, so this is the developer machine's branch: `signal.signal` runs the
+        # callback between bytecodes rather than through the loop, which is all a flag nobody awaits needs.
+        try:
+            previous = signal.signal(number, lambda _number, _frame: stop.request(reason))
+        except (OSError, ValueError):
+            # No signal handling is available here at all. A slice that cannot be told to stop is exactly
+            # the behaviour that shipped before this existed, so degrade to it rather than refusing to run.
+            return _no_restore
+
+        def restore_previous_handler() -> None:
+            signal.signal(number, previous)
+
+        return restore_previous_handler
+
+    def restore_loop_handler() -> None:
+        loop.remove_signal_handler(number)
+
+    return restore_loop_handler
+
+
+@asynccontextmanager
+async def shutdown_signal() -> AsyncIterator[ShutdownSignal]:
+    """Bind SIGTERM/SIGINT to a stop flag for the length of one slice, restoring the previous handlers after."""
+    stop = ShutdownSignal()
+    loop = asyncio.get_running_loop()
+    restore = [_bind_stop_signal(loop, number, stop) for number in _STOP_SIGNALS]
+    try:
+        yield stop
+    finally:
+        for undo in restore:
+            undo()
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +244,7 @@ class JobSliceSummary:
     dead_lettered: int = 0
     deferred: int = 0
     yielded: int = 0
+    released: int = 0
     abandoned: int = 0
     reclaimed: int = 0
     elapsed_seconds: float = 0.0
@@ -291,6 +263,7 @@ class JobSliceSummary:
             "dead_lettered": self.dead_lettered,
             "deferred": self.deferred,
             "yielded": self.yielded,
+            "released": self.released,
             "abandoned": self.abandoned,
             "reclaimed": self.reclaimed,
             "elapsed_seconds": round(self.elapsed_seconds, 3),
@@ -343,6 +316,33 @@ class _LeaseGuard:
         await _reset(self._session)
         self.fence_held = False
         return False
+
+
+def _job_event_environment() -> str:
+    """Name the deployment this tick ran in, because job_event.environment is NOT NULL and nothing else names it."""
+    named = os.environ.get(JOB_EVENT_ENVIRONMENT_VARIABLE, "").strip()
+    return (named or DEFAULT_JOB_EVENT_ENVIRONMENT)[:JOB_EVENT_TEXT_MAX_LENGTH]
+
+
+async def _write_slice_event(session: AsyncSession, summary: JobSliceSummary) -> None:
+    """Write this tick's single durable heartbeat row, so an idle lane reads differently from a dead one."""
+    # Severity, not a second event code: an operator filtering job_event on severity gets the ticks that
+    # dead-lettered something without having to know a second vocabulary word. The slice summary goes in
+    # `progress` verbatim -- it is already the operator-facing shape the cron log carries -- and the queue
+    # depth the statement computes for itself goes in `detail`.
+    await fetch_row(
+        session,
+        _WRITE_SLICE_EVENT,
+        {
+            "job_run_id": summary.job_run_id,
+            "severity": "warning" if summary.dead_lettered else "info",
+            "event_code": SLICE_FINISHED_EVENT_CODE,
+            "environment": _job_event_environment(),
+            "service": JOB_EVENT_SERVICE,
+            "duration_ms": int(summary.elapsed_seconds * 1000),
+            "progress": canonical_json(summary.to_summary()),
+        },
+    )
 
 
 async def _commit(session: AsyncSession) -> None:
@@ -530,6 +530,27 @@ async def _release_abandoned(session: AsyncSession, claim: ClaimedWorkItem) -> I
     return "abandoned"
 
 
+async def _release_in_hand(
+    session: AsyncSession,
+    claim: ClaimedWorkItem,
+    metrics: Mapping[str, object],
+    *,
+    reason: str,
+    landing: ItemLanding,
+) -> ItemLanding:
+    """Hand back a shard this worker still holds, on the fenced park path, so the next tick claims it at once.
+
+    The one primitive behind three stops -- the time budget, a container-stop signal and a cancellation --
+    because all three mean the same thing to the ledger: this worker is done, the shard is not, and nobody
+    failed. `resume_at=None` parks to `now()`, which is claimable immediately, rather than leaving the lease
+    to rot for the rest of `lease_seconds` before a later tick's reaper may touch it.
+    """
+    if not await defer_work_item(session, claim, resume_at=None, reason=reason, metrics=metrics):
+        return await _abandon(session, claim)
+    await _commit(session)
+    return landing
+
+
 async def _record_failure(  # noqa: PLR0913 - the claim, its policy, its metrics and both failure fields
     session: AsyncSession,
     definition: JobDefinitionRecord,
@@ -672,15 +693,16 @@ async def _apply_outcome(
     )
 
 
-async def _drive_work_item(  # noqa: PLR0913 - the handler, its policy, its claim and the budget are all needed
+async def _drive_work_item(  # noqa: PLR0913 - the handler, its policy, its claim, the budget and the stop flag
     session: AsyncSession,
     definition: JobDefinitionRecord,
     handler: JobHandler,
     claim: ClaimedWorkItem,
     deadline: float,
     monotonic: Callable[[], float],
+    stop: ShutdownSignal,
 ) -> ItemLanding:
-    """Run one claimed shard to a landing: completed, failed, deferred, budget-yielded, or fenced out."""
+    """Run one claimed shard to a landing: completed, failed, deferred, yielded, released, or fenced out."""
     guard = _LeaseGuard(session, claim, definition.lease_seconds)
     if not await mark_work_item_running(session, claim, lease_seconds=definition.lease_seconds):
         return await _abandon(session, claim)
@@ -692,19 +714,29 @@ async def _drive_work_item(  # noqa: PLR0913 - the handler, its policy, its clai
     # winning, which is why a handler reports cumulative figures rather than per-step deltas.
     metrics: Mapping[str, object] = EMPTY_JSON_OBJECT
     while True:
+        if stop.requested:
+            # The boundary between two handler steps is the only place a shard can be handed back
+            # cleanly, so it is where the stop flag is read. Without this the container simply died and
+            # left the shard 'running' behind a lease of up to `lease_seconds` that the next tick cannot
+            # claim and the reaper may not touch -- an hour of a lane's frontier lost per redeploy, with
+            # nothing anywhere recording that it happened.
+            return await _release_in_hand(
+                session,
+                claim,
+                metrics,
+                reason=stop.reason or SHUTDOWN_RELEASE_REASON,
+                landing="released",
+            )
         if monotonic() >= deadline:
             # The budget is the durability primitive: park the shard so the NEXT tick resumes it from
             # its checkpoint, rather than leaving the lease to rot until the reaper notices.
-            if not await defer_work_item(
+            return await _release_in_hand(
                 session,
                 claim,
-                resume_at=None,
+                metrics,
                 reason=BUDGET_YIELD_REASON,
-                metrics=metrics,
-            ):
-                return await _abandon(session, claim)
-            await _commit(session)
-            return "yielded"
+                landing="yielded",
+            )
         invocation = JobInvocation(
             shard_key=claim.shard_key,
             kind=claim.kind,
@@ -764,6 +796,23 @@ async def _fail_after_error(  # noqa: PLR0913 - the claim, its definition, its g
     )
 
 
+async def _release_after_cancellation(
+    session: AsyncSession,
+    claim: ClaimedWorkItem,
+    guard: _LeaseGuard,
+    metrics: Mapping[str, object],
+) -> None:
+    """Hand a cancelled shard back before the cancellation finishes unwinding, on a possibly-aborted session."""
+    # `_reset` first and unconditionally, exactly as `_fail_after_error` opens: the handler shares this
+    # session and a cancellation delivered mid-statement can leave it in InFailedSQLTransaction, in which
+    # the release below would raise a second exception and strand the shard after all.
+    await _reset(session)
+    if not guard.fence_held:
+        await _release_abandoned(session, claim)
+        return
+    await _release_in_hand(session, claim, metrics, reason=CANCELLED_RELEASE_REASON, landing="released")
+
+
 async def _invoke_handler(  # noqa: PLR0913 - one parameter per collaborator this single step needs
     session: AsyncSession,
     definition: JobDefinitionRecord,
@@ -789,6 +838,14 @@ async def _invoke_handler(  # noqa: PLR0913 - one parameter per collaborator thi
             return _HandlerStep(landing=await _abandon(session, claim))
         merged: Mapping[str, object] = {**metrics, **outcome.metrics}
         applied = await _apply_outcome(session, definition, claim, outcome, merged)
+    except asyncio.CancelledError:
+        # CancelledError derives from BaseException, so the `except Exception` below never saw it. A
+        # cancelled slice therefore unwound with its shard still 'running' behind a live lease -- the
+        # same stranded-window failure a killed container produces, reached by a different door. Release
+        # it on the same fenced path a signalled shutdown takes, then let the cancellation finish: a
+        # swallowed cancellation is worse than the leak it would fix.
+        await _release_after_cancellation(session, claim, guard, metrics)
+        raise
     except Exception as error:
         return _HandlerStep(landing=await _fail_after_error(session, definition, claim, guard, error, metrics))
     return _HandlerStep(
@@ -810,14 +867,20 @@ async def run_job_slice(  # noqa: PLR0913 - one parameter per operator-tunable k
     registry: JobHandlerRegistry = JOB_HANDLERS,
     reclaim_expired: bool = True,
     monotonic: Callable[[], float] = time.monotonic,
+    stop: ShutdownSignal | None = None,
 ) -> JobSliceSummary:
-    """Claim and drive shards until the work or the time budget runs out, then report what this tick did.
+    """Claim and drive shards until the work, the time budget or the container runs out, then report the tick.
 
     This is the whole durability model for a one-shot Railway cron container: do as much as fits inside
     `budget_seconds`, checkpoint every step, park whatever did not finish, exit 0. The next tick claims
     the same shards straight out of the ledger and resumes each from its last cursor. Nothing is kept
     on the container's filesystem, so a killed container loses only the work since its last checkpoint.
+
+    Pass `stop` -- from `shutdown_signal()`, which the CLI entrypoint installs -- to make a SIGTERM hand
+    the shard in hand back to the queue instead of stranding it behind a lease. Without one the loop
+    behaves exactly as before. Every return path writes one `job_event` heartbeat row.
     """
+    shutdown = ShutdownSignal() if stop is None else stop
     started = monotonic()
     await apply_statement_timeout(session)
     definition = await load_job_definition(session, definition_name, version=version)
@@ -827,25 +890,39 @@ async def run_job_slice(  # noqa: PLR0913 - one parameter per operator-tunable k
     deadline = started + budget
     run_id = job_run_id if job_run_id is not None else await _select_open_job_run(session, definition.id)
     if run_id is None:
-        await session.rollback()
-        return JobSliceSummary(
+        # This tick still writes its heartbeat. `no_open_run` is emitted identically by a lane that
+        # finished, a lane whose windows were never fanned out and a lane whose definition name drifted,
+        # and without a durable row all three are also indistinguishable from a cron that never ran.
+        await _reset(session)
+        idle = JobSliceSummary(
             definition_name=definition.name,
             worker_id=worker_id,
             job_run_id=None,
             stop_reason="no_open_run",
             elapsed_seconds=monotonic() - started,
         )
+        await _write_slice_event(session, idle)
+        await _commit(session)
+        return idle
     tally = _SliceTally()
     if reclaim_expired:
+        # Scoped to the DEFINITION, not to the run this tick drives. Only the oldest open run is ever
+        # driven, and a lane mints a second run whenever its floor is lowered, so a run-scoped reaper
+        # leaves a shard stranded behind a dead lease in a sibling run unreclaimable by any tick at all.
         reclaimed = await reclaim_expired_leases(
             session,
-            job_run_id=run_id,
+            job_definition_id=definition.id,
             backoff_seconds=definition.retry_policy.backoff_seconds(1),
         )
         tally.reclaimed = reclaimed.total
         await _commit(session)
     stop_reason: SliceStopReason = "time_budget_exhausted"
     while monotonic() < deadline:
+        if shutdown.requested:
+            # Nothing is in hand here, so there is nothing to release -- just stop claiming work this
+            # container has been told it will not live long enough to finish.
+            stop_reason = "shutdown_requested"
+            break
         claim = await claim_work_item(
             session,
             job_run_id=run_id,
@@ -858,8 +935,11 @@ async def run_job_slice(  # noqa: PLR0913 - one parameter per operator-tunable k
             break
         await _commit(session)
         tally.claimed += 1
-        landing = await _drive_work_item(session, definition, handler, claim, deadline, monotonic)
+        landing = await _drive_work_item(session, definition, handler, claim, deadline, monotonic, shutdown)
         tally.record(landing)
+        if landing == "released":
+            stop_reason = "shutdown_requested"
+            break
         if landing == "yielded":
             # Either the loop's own deadline check parked the shard -- in which case the `while` is
             # already false -- or the handler said it had no clock for its next unit of work. Claiming
@@ -867,8 +947,7 @@ async def run_job_slice(  # noqa: PLR0913 - one parameter per operator-tunable k
             stop_reason = "time_budget_exhausted"
             break
     rollup = await refresh_job_run_rollup(session, run_id)
-    await _commit(session)
-    return JobSliceSummary(
+    summary = JobSliceSummary(
         definition_name=definition.name,
         worker_id=worker_id,
         job_run_id=run_id,
@@ -879,8 +958,14 @@ async def run_job_slice(  # noqa: PLR0913 - one parameter per operator-tunable k
         dead_lettered=tally.count("dead_lettered"),
         deferred=tally.count("deferred"),
         yielded=tally.count("yielded"),
+        released=tally.count("released"),
         abandoned=tally.count("abandoned"),
         reclaimed=tally.reclaimed,
         elapsed_seconds=monotonic() - started,
         run_status=rollup.status,
     )
+    # The heartbeat rides the rollup's transaction rather than opening its own: one commit per tick, as
+    # before, and a tick whose rollup could not be written writes no heartbeat claiming that it ran.
+    await _write_slice_event(session, summary)
+    await _commit(session)
+    return summary

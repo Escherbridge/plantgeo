@@ -1,0 +1,114 @@
+-- Purpose: end the currently-open version of each superseded place, stamping it with the
+--          instant it stopped being true and pointing it at the successor version that replaces
+--          it, in one statement for the whole batch.
+-- Loaded by: agri_data_service.ingest.geometry
+-- Params: natural_keys (text[]) -- the places whose open version is being closed.
+--         closed_ats (text[]) -- the instant each chain is cut at, as timestamptz text. This is
+--         the producer's observation time for the new shape, so the old version ends at exactly
+--         the moment the new one begins and the history has no gap and no overlap.
+--         successor_ids (text[]) -- the identifier of the version that replaces each one.
+--
+-- All three arrays are positional and must be exactly the same length: element 3 of each one
+-- describes the same supersession. Nothing in the SQL can check that, so the caller builds all
+-- three from the same sequence in the same pass.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap"
+-- in sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too, and would
+-- mint a bind parameter nobody supplies.
+--
+-- What this returns: the identifier of every version row it actually closed. The caller does
+-- not use the values; the count is the honest answer to "how many chains did this cut", which
+-- an UPDATE cannot otherwise report per row.
+--
+-- Background: what "Type-2 versioning" means here
+--
+--   geo.geometry keeps the whole history of a place's shape as a chain of rows rather than one
+--   row it overwrites. Each row is valid from version_valid_from until version_valid_to, and
+--   the newest row of a chain has version_valid_to set to NULL, meaning "still true, no end
+--   known". That NULL-ended row is the open version, and a place must never have two. This
+--   statement performs half of a change of shape: it ends the old version. The other half --
+--   writing the new open version -- is insert_geometry_versions.sql, and both halves run inside
+--   one transaction, so a reader never sees a place with no open version or with two.
+--
+-- Why the successor identifier can be written before the successor exists
+--
+--   The check constraint ck_geometry_supersede is immediate, meaning it is enforced the instant
+--   this row is written: it insists that version_valid_to and superseded_by are set together,
+--   so a closed version can never be left without a forward pointer. That forces this statement
+--   to name the successor now, before the successor's row has been written.
+--
+--   That is legal because the successor's identifier is minted in Python, as a fresh UUID,
+--   before either statement runs -- so the value is known ahead of the write it names -- and
+--   because the foreign key from superseded_by is DEFERRABLE, which means the database
+--   postpones checking that the referenced row exists until COMMIT instead of checking it at
+--   statement time. By COMMIT the successor has been written by the sibling statement and the
+--   reference resolves. If it had not been, the whole transaction would fail at COMMIT and
+--   neither half would land. See ingest/AGENTS.md "geometry.py".
+--
+-- How this query works, clause by clause:
+--
+--   UPDATE geo.geometry AS closing
+--     The rows being modified, given the short name "closing" so the WHERE clause can tell them
+--     apart from the batch of instructions joined in below.
+--
+--   SET version_valid_to = CAST(supersession.closed_at AS timestamptz),
+--       superseded_by = CAST(supersession.successor_id AS uuid)
+--     The two columns that together mean "this version ended, and here is what replaced it".
+--     Both values arrive as text and are cast to their real types here: the arrays carrying
+--     them can only hold one type, and text is the one spelling that can carry a timestamp, a
+--     UUID and the literal minus-infinity alike.
+--
+--   FROM unnest(CAST(natural_keys AS text[]), CAST(closed_ats AS text[]), ...)
+--     An UPDATE ... FROM joins the target table to something else and updates each matched row
+--     using values from the match -- it is how one statement applies a different value to each
+--     of many rows, instead of one statement per row.
+--
+--     unnest with several arrays at once zips them: it produces one row per position, taking
+--     one element from each array. That is what makes the arrays positional, and what makes
+--     equal lengths a requirement -- a short array is padded with NULLs rather than rejected,
+--     so a length mismatch would quietly close a chain with a NULL successor rather than fail.
+--
+--     Each CAST exists purely to pin its parameter's type. A bind parameter arrives with no
+--     type of its own and unnest is overloaded for every array type, so without the cast the
+--     database cannot tell which one is meant. The Python call site declares the same types
+--     again with bindparam(...); both halves are needed for a Python list to arrive as a real
+--     PostgreSQL text array.
+--
+--   AS supersession(natural_key, closed_at, successor_id)
+--     Names the zipped table and its columns in array order, so they can be referred to by name
+--     in the SET and WHERE clauses above and below.
+--
+--   WHERE closing.natural_key = supersession.natural_key
+--     The join condition: each instruction finds the versions of the place it names. In an
+--     UPDATE ... FROM the join lives in the WHERE clause rather than in an ON clause, and
+--     forgetting it would not be an error -- it would match every row against every
+--     instruction and rewrite the entire table. It is the single most load-bearing line here.
+--
+--   AND closing.version_valid_to IS NULL
+--     Restricts the update to the one open version of that place. Without it the statement
+--     would re-close every historical version in the chain, rewriting their end instants and
+--     their forward pointers and destroying the history this table exists to keep.
+--
+--     It is also what makes the statement safe to run concurrently with another run that has
+--     already closed the same chain: the second one matches nothing and reports zero rather
+--     than corrupting anything. In practice the advisory lock taken by lock_geometry_keys.sql
+--     means two runs never reach this point for the same place at the same time; this condition
+--     is the backstop, not the plan.
+--
+--   RETURNING closing.geometry_id
+--     RETURNING makes a writing statement also produce rows, describing what it just changed --
+--     the same trip that performs the write reports its result, with no second query and no
+--     window in which another transaction could change the answer. Here it names each version
+--     actually closed, so the caller can count real supersessions rather than assume its
+--     instructions all matched.
+UPDATE geo.geometry AS closing
+SET version_valid_to = CAST(supersession.closed_at AS timestamptz),
+    superseded_by = CAST(supersession.successor_id AS uuid)
+FROM unnest(
+         CAST(:natural_keys AS text[]),
+         CAST(:closed_ats AS text[]),
+         CAST(:successor_ids AS text[])
+     ) AS supersession(natural_key, closed_at, successor_id)
+WHERE closing.natural_key = supersession.natural_key
+  AND closing.version_valid_to IS NULL
+RETURNING closing.geometry_id

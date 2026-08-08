@@ -174,7 +174,8 @@ export function RequestSubmitModal({
                     workspaceName ?? "the selected partner workspace"
                   }.`
                 : " private request."}{" "}
-              It is not published as a shared waypoint.
+              It is never shown on the map. To propose a site that can appear
+              on the map after review, use &ldquo;+ Recommend&rdquo; instead.
             </span>
           </label>
 

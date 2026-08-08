@@ -39,10 +39,16 @@ export const DROUGHT_LEGEND = [
   { label: "D4 – Exceptional Drought", color: "#730000" },
 ] as const;
 
+/** The outline's authored strength, darker than the fill so class edges stay readable. */
+const DROUGHT_OUTLINE_OPACITY = 0.8;
+
 interface DroughtLayerProps {
   map: MapLibreMap | null;
   geojson: GeoJSON.FeatureCollection | null;
+  /** The fill's authored strength. The design value, not a control. */
   opacity?: number;
+  /** The reader's per-layer MULTIPLIER over both authored values. See layer-opacity.ts. */
+  opacityScale?: number;
   visible?: boolean;
 }
 
@@ -50,12 +56,20 @@ interface DroughtLayerProps {
  * Renders USDM drought GeoJSON as a fill-color choropleth using MapLibre GL JS.
  * The USDM GeoJSON features carry a numeric `DM` property (0=D0 ... 4=D4).
  */
-export function DroughtLayer({ map, geojson, opacity = 0.6, visible = true }: DroughtLayerProps) {
-  const propsRef = useRef({ geojson, opacity, visible });
-  propsRef.current = { geojson, opacity, visible };
+export function DroughtLayer({
+  map,
+  geojson,
+  opacity = 0.6,
+  opacityScale = 1,
+  visible = true,
+}: DroughtLayerProps) {
+  const fillOpacity = opacity * opacityScale;
+  const outlineOpacity = DROUGHT_OUTLINE_OPACITY * opacityScale;
+  const propsRef = useRef({ geojson, fillOpacity, outlineOpacity, visible });
+  propsRef.current = { geojson, fillOpacity, outlineOpacity, visible };
 
   const addLayers = useCallback((m: MapLibreMap) => {
-    const { geojson, opacity } = propsRef.current;
+    const { geojson, fillOpacity, outlineOpacity } = propsRef.current;
     if (!geojson) return;
 
     const beforeId = getFirstSymbolLayer(m);
@@ -82,7 +96,7 @@ export function DroughtLayer({ map, geojson, opacity = 0.6, visible = true }: Dr
             4, DROUGHT_COLORS.D4,
             "transparent",
           ],
-          "fill-opacity": opacity,
+          "fill-opacity": fillOpacity,
         },
       }, beforeId);
     }
@@ -104,7 +118,7 @@ export function DroughtLayer({ map, geojson, opacity = 0.6, visible = true }: Dr
             "#888888",
           ],
           "line-width": 0.5,
-          "line-opacity": 0.8,
+          "line-opacity": outlineOpacity,
         },
       }, beforeId);
     }
@@ -142,14 +156,18 @@ export function DroughtLayer({ map, geojson, opacity = 0.6, visible = true }: Dr
     };
   }, [map, geojson, visible, addLayers, removeLayers]);
 
-  // Update opacity without rebuilding layers
+  // Update opacity without rebuilding layers. Both layers, not just the fill: an outline left
+  // at its authored 0.8 while the fill recedes reads as the layer never having dimmed.
   useEffect(() => {
     if (!map || !visible) return;
     try { if (!map.getStyle()) return; } catch { return; }
     if (map.getLayer("drought-fill")) {
-      map.setPaintProperty("drought-fill", "fill-opacity", opacity);
+      map.setPaintProperty("drought-fill", "fill-opacity", fillOpacity);
     }
-  }, [map, opacity, visible]);
+    if (map.getLayer("drought-outline")) {
+      map.setPaintProperty("drought-outline", "line-opacity", outlineOpacity);
+    }
+  }, [map, fillOpacity, outlineOpacity, visible]);
 
   return null;
 }

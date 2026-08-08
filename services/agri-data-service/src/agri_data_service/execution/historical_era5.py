@@ -513,7 +513,10 @@ async def fetch_era5_land_monthly(
     _require_cds_credentials()
     timestamp = _require_aware_utc(retrieved_at or datetime.now(UTC), "retrieved_at")
     payload = await asyncio.to_thread(_download_era5_land_monthly, plan, period)
-    return parse_era5_land_monthly_payload(plan, period, payload, retrieved_at=timestamp)
+    # The parse is the larger of the two blocking halves -- unzip, HDF5 decompression and one xarray point
+    # selection per reviewed cell over a payload capped at ERA5_LAND_DAILY_MAX_RESPONSE_BYTES -- so offloading
+    # only the download left the event loop stalled for the expensive part. See execution/AGENTS.md.
+    return await asyncio.to_thread(parse_era5_land_monthly_payload, plan, period, payload, retrieved_at=timestamp)
 
 
 def parse_era5_land_monthly_payload(

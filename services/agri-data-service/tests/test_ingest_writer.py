@@ -34,6 +34,19 @@ LAYER_UUID = "3f7a1c2e-5b6d-4e8f-9a0b-1c2d3e4f5a6b"
 FIRE_CHANNEL = "layer:fire-detections"
 
 
+def _body_only(statement: str) -> str:
+    """The statement's SQL body, on one line: full-line ``--`` comments dropped, whitespace collapsed.
+
+    Runtime SQL now lives in documented ``.sql`` files whose headers name the very tables and clauses
+    the body touches -- ``refresh_features.sql`` quotes its own ``UPDATE geo.features AS feature``, and
+    several headers mention ``geo.layers``. Matching the whole text would therefore count a statement
+    that merely *documents* a table as one that queries it, and would reach the ``geo.layers`` catch-all
+    below for a statement whose body never touches that table.
+    """
+    body = "\n".join("" if line.lstrip().startswith("--") else line for line in statement.splitlines())
+    return " ".join(body.split())
+
+
 def build_identity(producer_local_id: str, producer: str = "firms") -> FeatureIdentity:
     """A real FeatureIdentity, so the writer is exercised against the shipped identity contract."""
     return FeatureIdentity(producer=producer, producer_local_id=producer_local_id, observed_at=None)
@@ -110,7 +123,7 @@ class FakeSession:
 
     async def execute(self, statement: object, parameters: dict[str, Any] | None = None) -> FakeResult:
         """Answer one statement the way Postgres would, recording it for assertions."""
-        statement_text = " ".join(str(statement).split())
+        statement_text = _body_only(str(statement))
         arguments = parameters or {}
         self.executions.append((statement_text, dict(arguments)))
         if self.fail_on is not None and self.fail_on in statement_text:
@@ -118,9 +131,9 @@ class FakeSession:
 
         if "pg_advisory_xact_lock" in statement_text:
             return FakeResult([])
-        # The geometry branches must be tested before the geo.features branches below: the classify
-        # statement joins geo.features and the link statement is `UPDATE geo.features AS feature ...`,
-        # both of which are substrings of the plainer `geo.features` / `UPDATE geo.features` checks.
+        # The geometry branches must be tested before the geo.features branches below, because the classify
+        # statement joins geo.features. The refresh and the geometry link are both `UPDATE geo.features AS
+        # feature ...` and are told apart only by the column each one SETs, so neither prefix may be shortened.
         if "AS geometry_unchanged" in statement_text:
             return FakeResult(self._classify_geometry(arguments))
         if "INSERT INTO geo.geometry" in statement_text:
@@ -132,19 +145,16 @@ class FakeSession:
             return FakeResult([])
         if "SELECT natural_key, geometry_id FROM geo.geometry" in statement_text:
             return FakeResult(self._select_current_geometry(arguments))
-        if "UPDATE geo.features AS feature" in statement_text:
+        if "UPDATE geo.features AS feature SET geometry_id" in statement_text:
             return FakeResult(self._link_feature_geometry(arguments))
+        if "UPDATE geo.features AS feature SET properties" in statement_text:
+            return FakeResult(self._refresh_features(arguments))
         if "INSERT INTO geo.features" in statement_text:
             rows = []
             for payload in arguments["payloads"]:
                 external_id = json.loads(payload)["id"]
                 rows.append(SimpleNamespace(id=f"row-{external_id}", external_id=external_id))
             return FakeResult(rows)
-        if "UPDATE geo.features" in statement_text:
-            external_id = arguments["external_id"]
-            if self.changed is None or external_id in self.changed:
-                return FakeResult([SimpleNamespace(id=f"row-{external_id}")])
-            return FakeResult([])
         if "AS external_id" in statement_text:
             matched = [
                 SimpleNamespace(id=f"row-{external_id}", external_id=external_id)
@@ -165,7 +175,7 @@ class FakeSession:
         self.rollbacks += 1
 
     def statements_matching(self, fragment: str) -> list[tuple[str, dict[str, Any]]]:
-        """Every recorded execution whose SQL contains the fragment."""
+        """Every recorded execution whose statement body contains the fragment; headers are already stripped."""
         return [execution for execution in self.executions if fragment in execution[0]]
 
     def _open_geometry_version(self, natural_key: str) -> _StoredGeometryVersion | None:
@@ -272,6 +282,14 @@ class FakeSession:
                 rows.append(SimpleNamespace(natural_key=natural_key, geometry_id=version.geometry_id))
         return rows
 
+    def _refresh_features(self, arguments: Mapping[str, Any]) -> list[SimpleNamespace]:
+        """Return one row per external id the refresh diff accepted, as the batched UPDATE ... RETURNING does."""
+        return [
+            SimpleNamespace(id=f"row-{external_id}", external_id=external_id)
+            for external_id, _ in zip(arguments["external_ids"], arguments["next_properties"], strict=True)
+            if self.changed is None or external_id in self.changed
+        ]
+
     def _link_feature_geometry(self, arguments: Mapping[str, Any]) -> list[SimpleNamespace]:
         """Repoint every feature named in the link batch, skipping one already pointing at its target."""
         rows = []
@@ -299,15 +317,22 @@ class RecordingPublisher:
 
 def test_refresh_predicate_strips_geometry_repaired_on_the_stored_side_only() -> None:
     """The stored side strips both geometry keys; the candidate side strips only 'geometry'."""
-    statement = " ".join(str(writer_module._REFRESH_FEATURE).split())
-    assert "(properties - 'geometry' - 'geometry_repaired')" in statement
-    assert "IS DISTINCT FROM (CAST(:next_properties AS jsonb) - 'geometry')" in statement
+    statement = " ".join(str(writer_module._REFRESH_FEATURES).split())
+    assert "(feature.properties - 'geometry' - 'geometry_repaired')" in statement
+    assert "IS DISTINCT FROM (CAST(pending.next_properties AS jsonb) - 'geometry')" in statement
 
 
 def test_refresh_predicate_is_not_symmetric() -> None:
     """Tidying the candidate side into a symmetric strip breaks the day a producer emits geometry_repaired."""
-    statement = " ".join(str(writer_module._REFRESH_FEATURE).split())
-    assert "CAST(:next_properties AS jsonb) - 'geometry' - 'geometry_repaired'" not in statement
+    statement = " ".join(str(writer_module._REFRESH_FEATURES).split())
+    assert "CAST(pending.next_properties AS jsonb) - 'geometry' - 'geometry_repaired'" not in statement
+
+
+def test_refresh_is_one_set_based_statement_per_batch() -> None:
+    """The refresh unnests its arrays like the insert beside it: one round trip per batch, not per row."""
+    statement = " ".join(str(writer_module._REFRESH_FEATURES).split())
+    assert "FROM unnest(CAST(:external_ids AS text[]), CAST(:next_properties AS text[]))" in statement
+    assert "RETURNING feature.id, pending.external_id AS external_id" in statement
 
 
 async def test_unchanged_rows_are_not_rewritten_and_publish_nothing() -> None:
@@ -319,10 +344,12 @@ async def test_unchanged_rows_are_not_rewritten_and_publish_nothing() -> None:
 
     assert written == 0
     assert publisher.messages == []
-    # "UPDATE geo.features SET properties" is the refresh statement; the geometry link statement is
-    # also `UPDATE geo.features ...` but carries a distinct `AS feature SET geometry_id` shape, so it
-    # is asserted separately below rather than folded into this count.
-    assert len(session.statements_matching("UPDATE geo.features SET properties")) == 2
+    # `AS feature SET properties` is the refresh statement; the geometry link statement is also an
+    # `UPDATE geo.features AS feature ...` but sets `geometry_id`, so it is asserted separately below
+    # rather than folded into this count. Two unchanged rows now cost one statement, not two.
+    refreshes = session.statements_matching("UPDATE geo.features AS feature SET properties")
+    assert len(refreshes) == 1
+    assert refreshes[0][1]["external_ids"] == ["alpha", "beta"]
     assert session.statements_matching("INSERT INTO geo.features") == []
 
 
@@ -526,6 +553,21 @@ async def test_writes_are_batched_at_the_insert_batch_size() -> None:
     inserts = session.statements_matching("INSERT INTO geo.features")
     assert [len(arguments["payloads"]) for _, arguments in inserts] == [INSERT_BATCH_SIZE, 1]
     assert session.commits == 2
+
+
+async def test_refreshes_cost_one_statement_per_batch_not_one_per_row() -> None:
+    """A re-walked window is the hot path: its refreshes collapse into one statement per batch."""
+    external_ids = [f"key-{index:04d}" for index in range(INSERT_BATCH_SIZE + 1)]
+    session = FakeSession(existing=external_ids)
+    publisher = RecordingPublisher()
+
+    written = await ingest_features(session, [build_write(external_id) for external_id in external_ids], publisher)
+
+    assert written == INSERT_BATCH_SIZE + 1
+    refreshes = session.statements_matching("UPDATE geo.features AS feature SET properties")
+    assert [len(arguments["external_ids"]) for _, arguments in refreshes] == [INSERT_BATCH_SIZE, 1]
+    # Every accepted row is still counted and published exactly once, in the order the batch held it.
+    assert [message["id"] for _, message in publisher.messages] == [f"row-{key}" for key in external_ids]
 
 
 async def test_each_layer_is_resolved_before_its_own_writes() -> None:

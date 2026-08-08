@@ -51,6 +51,19 @@ interface PanelState {
   /** Currently open sidebar panel (null = all closed). */
   openPanel: PanelId | null;
 
+  /**
+   * Whether the left-edge layer tree is docked open.
+   *
+   * Independent of `openPanel`: the tree governs every layer at once and the right-hand
+   * sheets report on one category, so both may be open, and closing one must not close the
+   * other. It is NOT visibility state -- `map-store.activeLayers` remains the single source of
+   * that, and the tree's eyes write it exactly as the sheets' switches do.
+   *
+   * Starts closed: the map opens with every layer off, and a 19rem dock over the canvas is
+   * not what a first-time visitor is owed before they have asked for anything.
+   */
+  layerPanelOpen: boolean;
+
   /** Layers whose data has been prefetched / initialized. */
   prefetchedLayers: Set<string>;
 
@@ -59,6 +72,10 @@ interface PanelState {
   togglePanel: (id: PanelId) => void;
   /** Close the currently open panel without touching layers. */
   closePanel: () => void;
+  /** Dock or undock the layer tree. */
+  toggleLayerPanel: () => void;
+  /** Undock the layer tree without touching any layer. */
+  closeLayerPanel: () => void;
   /** Mark a layer as prefetched (data loaded, ready for instant toggle). */
   markPrefetched: (layerId: string) => void;
 }
@@ -67,12 +84,17 @@ export const usePanelStore = create<PanelState>()(
   devtools(
     (set) => ({
       openPanel: null,
+      layerPanelOpen: false,
       prefetchedLayers: new Set(),
 
       togglePanel: (id) =>
         set((s) => ({ openPanel: s.openPanel === id ? null : id })),
 
       closePanel: () => set({ openPanel: null }),
+
+      toggleLayerPanel: () => set((s) => ({ layerPanelOpen: !s.layerPanelOpen })),
+
+      closeLayerPanel: () => set({ layerPanelOpen: false }),
 
       markPrefetched: (layerId) =>
         set((s) => {

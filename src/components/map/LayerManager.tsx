@@ -5,20 +5,21 @@ import dynamic from "next/dynamic";
 import { useMap } from "@/lib/map/map-context";
 import {
   useDebouncedMapDay,
+  useLayerOpacities,
   useLayerVisibility,
   useSoilDisplayMode,
   useVegetationDisplayMode,
   type LayerVisibility,
 } from "@/lib/map/layer-toggle-context";
+import { scaleOpacityValue, styleLayerOpacityTargets } from "@/lib/map/layer-opacity";
 import { useFireData } from "@/hooks/useFireData";
 import {
   useSoilFieldQuery,
   useSoilSurveyQuery,
   useViewportBounds,
-  useWatershedsQuery,
 } from "@/hooks/useViewportProxiedLayers";
 import { trpc } from "@/lib/trpc/client";
-import { styleBackedLayerEntries } from "@/lib/map/layer-registry";
+import { styleBackedLayerEntries, type LayerToggleId } from "@/lib/map/layer-registry";
 import {
   dateFilterableStyleLayerIds,
   tileLayerDateFilter,
@@ -77,6 +78,11 @@ export default function LayerManager() {
   // One read of the toggle context covers every layer below: which are switched on, and
   // the mode each draws in. Nothing here reads a toggle id as a bare string.
   const layerVisibility = useLayerVisibility();
+  // The per-layer opacity MULTIPLIER for every registry layer. Style-baked layers are applied
+  // from here (nothing else owns them); component-mounted layers take theirs as an
+  // `opacityScale` prop and fold it into whatever they already compute -- one writer per
+  // (layer, paint property), always. See src/lib/map/layer-opacity.ts.
+  const layerOpacity = useLayerOpacities();
   const vegetationMode = useVegetationDisplayMode();
   const soilMode = useSoilDisplayMode();
   // Shared with PanelManager: one derivation, so the map and the panels key on one bbox.
@@ -126,21 +132,13 @@ export default function LayerManager() {
   const vegetationGeoJSON: GeoJSON.FeatureCollection =
     vegetationQuery.data ?? EMPTY_FEATURE_COLLECTION;
 
-  // HUC12 boundaries and SSURGO map units are proxied live from USGS/USDA per viewport
-  // rather than published to the warehouse, so they carry no slider day: both endpoints
-  // answer for a bbox alone. Both are polygon feeds an order of magnitude heavier than
-  // the point layers above, which is why neither is fetched unless its own toggle is on.
-  // Key, fallback bbox, staleTime and retry live in the shared hooks, which WaterPanel
-  // and SoilPanel call too -- see src/lib/server/AGENTS.md §proxied-viewport-queries.
-  const watershedsVisible = layerVisibility.watersheds;
-  const watershedQuery = useWatershedsQuery(bbox, { enabled: watershedsVisible });
-  // WaterLayer owns the "watersheds" source and creates it whenever this prop is a
-  // collection, so an empty one -- not null -- is what a switched-off watershed layer
-  // sends: `setData([])` empties the polygons, whereas null would leave the last
-  // viewport's boundaries stranded on the map with nothing to clear them.
-  const watershedsGeoJSON =
-    watershedsVisible && watershedQuery.data ? watershedQuery.data : EMPTY_FEATURE_COLLECTION;
-
+  // SSURGO map units are proxied live from USDA per viewport rather than published to the
+  // warehouse, so they carry no slider day: the endpoint answers for a bbox alone. It is a
+  // polygon feed an order of magnitude heavier than the point layers above, which is why it
+  // is not fetched unless its own toggle is on. Key, fallback bbox, staleTime and retry live
+  // in the shared hook, which SoilPanel calls too -- see src/lib/server/AGENTS.md
+  // §proxied-viewport-queries. (HUC12 watersheds used to sit here; they are now style-baked
+  // Martin tiles and reach the map through applyVisibility below, like every other tile layer.)
   const soilSurveyVisible = layerVisibility["soil-survey"];
   // `zoom` is what selects the survey's render granularity server-side. Omitting it -- which
   // both call sites did until now -- resolves to the detail tier, whose 0.02 sq-deg ceiling
@@ -232,6 +230,30 @@ export default function LayerManager() {
     []
   );
 
+  // The opacity sibling of applyVisibility, and for the same reason: a style-baked layer has
+  // no React component to fold a multiplier into, so this is its single writer. It reaches
+  // ONLY the (layer, property) pairs styleLayerOpacityTargets() derives from the registry
+  // crossed with getLayers() -- basemap chrome, the service-area mask and every
+  // component-added layer are structurally out of reach. The value is always the AUTHORED
+  // base scaled, never an absolute, so re-running it is idempotent and a factor of 1 rewrites
+  // exactly what the style declared.
+  const applyOpacity = useCallback(
+    (
+      mapInstance: NonNullable<typeof map>,
+      currentOpacity: Record<LayerToggleId, number>
+    ) => {
+      for (const target of styleLayerOpacityTargets()) {
+        if (!mapInstance.getLayer(target.layerId)) continue;
+        mapInstance.setPaintProperty(
+          target.layerId,
+          target.property,
+          scaleOpacityValue(target.base, currentOpacity[target.toggleId] ?? 1)
+        );
+      }
+    },
+    []
+  );
+
   // Puts the style-baked Martin layers on the slider. They are not React-mounted, so they
   // cannot take a date as a prop the way every layer below does; migration 0015 emits
   // `observed_day` on each feature and this applies the matching style filter. Re-filtering
@@ -263,6 +285,16 @@ export default function LayerManager() {
     filterDayRef.current = requestDate ?? null;
   }, [requestDate]);
 
+  // The third instance of the same discipline, and the one it matters most for: an opacity
+  // slider fires far more often than a settled scrub, so listing the record in the style.load
+  // deps below would re-register that handler on nearly every pointer tick and move it behind
+  // ServiceAreaLayer's -- dropping the dimming mask on top of the data pins. See
+  // src/components/map/AGENTS.md "Style.load listener order".
+  const layerOpacityRef = useRef(layerOpacity);
+  useEffect(() => {
+    layerOpacityRef.current = layerOpacity;
+  }, [layerOpacity]);
+
   // True once the CURRENT style has actually finished loading, per isStyleLoaded() --
   // not merely "style.load fired". isStyleLoaded() also requires every source's tiles
   // to be in, so it can still read false the instant style.load fires; styledata fires
@@ -287,6 +319,9 @@ export default function LayerManager() {
     const onStyleLoad = () => {
       applyVisibility(mapInstance, layerVisibilityRef.current);
       applyDateFilter(mapInstance, filterDayRef.current);
+      // A basemap swap rebuilds every style layer from its authored paint, so the multiplier
+      // has to be re-applied here or a dimmed layer silently snaps back to full strength.
+      applyOpacity(mapInstance, layerOpacityRef.current);
       // `isStyleLoaded()` is typed `boolean | void`; coerce so this stays a boolean state.
       setStyleReady(!!mapInstance.isStyleLoaded());
     };
@@ -298,7 +333,8 @@ export default function LayerManager() {
       mapInstance.off("style.load", onStyleLoad);
       mapInstance.off("styledata", onStyleData);
     };
-  }, [map, applyVisibility, applyDateFilter]);
+    // applyOpacity is a stable useCallback; the opacity RECORD must never appear here.
+  }, [map, applyVisibility, applyDateFilter, applyOpacity]);
 
   // Apply toggles once the style is actually ready, and again whenever styleReady
   // flips true -- without styleReady in the deps, this ran once on first paint while
@@ -317,23 +353,46 @@ export default function LayerManager() {
     applyDateFilter(map, requestDate ?? null);
   }, [map, requestDate, applyDateFilter, styleReady]);
 
+  // Same shape as the two effects above, plus one animation-frame of coalescing: MapLibre
+  // repaints once per frame regardless, so more than one write per frame is pure waste -- and
+  // the expression path (`["*", ...]`) recompiles the expression on every set, which is the
+  // expensive case. Deliberately NOT the slider's settle constant: that one exists to
+  // coalesce network requests, and opacity issues none, so borrowing it would leave the map
+  // visibly trailing the thumb.
+  useEffect(() => {
+    if (!map || !map.isStyleLoaded()) return;
+    const frame = requestAnimationFrame(() => applyOpacity(map, layerOpacity));
+    return () => cancelAnimationFrame(frame);
+  }, [map, layerOpacity, applyOpacity, styleReady]);
+
   if (!map) return null;
 
   return (
     <>
-      <FireLayer map={map} visible={layerVisibility.fire} geojson={fireData.data} />
-      {/* One component owns both the gauge points and the watershed polygons, so it stays
-          mounted while either toggle is on; each feed is emptied independently when its
-          own switch is off. */}
+      {/* Every child below takes `opacityScale`, never an absolute opacity: the component
+          keeps owning its authored base (and, for vegetation, its mode gating) and folds the
+          reader's multiplier into it, so nothing outside ever writes these paint properties.
+          The scalar is passed per child, so moving `fire` cannot re-run VegetationLayer's
+          effects. */}
+      <FireLayer
+        map={map}
+        visible={layerVisibility.fire}
+        geojson={fireData.data}
+        opacityScale={layerOpacity.fire}
+      />
       <WaterLayer
         map={map}
         gauges={streamflowQuery.data ?? []}
         wells={groundwaterQuery.data ?? []}
-        watershedsGeoJSON={watershedsGeoJSON}
         visible={waterEnabled}
-        watershedsVisible={watershedsVisible}
+        opacityScale={layerOpacity.water}
       />
-      <DroughtLayer map={map} geojson={droughtGeoJSON} visible={layerVisibility.drought} />
+      <DroughtLayer
+        map={map}
+        geojson={droughtGeoJSON}
+        visible={layerVisibility.drought}
+        opacityScale={layerOpacity.drought}
+      />
       <VegetationLayer
         map={map}
         visible={vegetationEnabled}
@@ -343,27 +402,35 @@ export default function LayerManager() {
         month={vegetationMode.month}
         ndviMode={vegetationMode.ndviMode}
         showNDWI={vegetationMode.showNDWI}
-        opacity={vegetationMode.opacity}
+        opacityScale={layerOpacity.vegetation}
       />
       <SoilLayer
         map={map}
         visible={layerVisibility.soil}
         property={soilMode.property}
-        opacity={soilMode.opacity}
+        opacityScale={layerOpacity.soil}
       />
-      <SoilSurveyLayer map={map} geojson={soilSurveyGeoJSON} visible={soilSurveyVisible} />
+      <SoilSurveyLayer
+        map={map}
+        geojson={soilSurveyGeoJSON}
+        visible={soilSurveyVisible}
+        opacityScale={layerOpacity["soil-survey"]}
+      />
+      {/* Three independent multipliers where there used to be one `soilMode.opacity` shared
+          by the raster and both fields -- dimming the SoilGrids raster necessarily dimmed
+          both ERA5-Land measurements. */}
       <SoilFieldLayer
         map={map}
         measure="moisture"
         geojson={soilMoistureGeoJSON}
-        opacity={soilMode.opacity}
+        opacityScale={layerOpacity["soil-moisture"]}
         visible={soilMoistureVisible}
       />
       <SoilFieldLayer
         map={map}
         measure="temperature"
         geojson={soilTemperatureGeoJSON}
-        opacity={soilMode.opacity}
+        opacityScale={layerOpacity["soil-temperature"]}
         visible={soilTemperatureVisible}
       />
       <DemandHeatmapLayer
@@ -371,8 +438,14 @@ export default function LayerManager() {
         bbox={bbox}
         zoom={zoom}
         visible={layerVisibility["demand-heatmap"] && bbox !== null}
+        opacityScale={layerOpacity["demand-heatmap"]}
       />
-      <WeatherLayer map={map} data={weatherData} visible={weatherEnabled} />
+      <WeatherLayer
+        map={map}
+        data={weatherData}
+        visible={weatherEnabled}
+        opacityScale={layerOpacity.weather}
+      />
       {/* Not a data layer and so not in the registry: it marks where the user clicked,
           and PanelManager's capture hook is the only thing that ever sets it. */}
       <QueryPointLayer map={map} point={queryPoint} />

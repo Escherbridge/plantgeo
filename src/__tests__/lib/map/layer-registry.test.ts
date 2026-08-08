@@ -13,7 +13,7 @@ import {
   toggleIdForWarehouseLayerName,
   unreachableLayerToggleIds,
 } from '@/lib/map/layer-registry'
-import { STYLE_LAYER_TOGGLE_MAP } from '@/lib/map/layers'
+import { STYLE_LAYER_TOGGLE_MAP, getLayers } from '@/lib/map/layers'
 import { getLayersForPanel } from '@/stores/panel-store'
 import { useMapStore } from '@/stores/map-store'
 
@@ -63,8 +63,9 @@ describe('layer registry derivations', () => {
     expect(STYLE_LAYER_TOGGLE_MAP).toEqual({
       'fire-perimeters': ['fire-perimeters', 'fire-perimeters-outline'],
       sensors: ['sensors'],
+      watersheds: ['watersheds-fill', 'watersheds-outline'],
       'evacuation-zones': ['evacuation-zones', 'evacuation-zones-outline'],
-      interventions: ['interventions', 'interventions-outline'],
+      interventions: ['interventions', 'interventions-outline', 'interventions-points'],
       'burn-severity': ['burn-severity', 'burn-severity-outline'],
       'building-footprints': ['building-footprints'],
     })
@@ -75,6 +76,7 @@ describe('layer registry derivations', () => {
     expect(styleBackedIds).toEqual([
       'fire-perimeters',
       'sensors',
+      'watersheds',
       'interventions',
       'evacuation-zones',
       'burn-severity',
@@ -82,6 +84,20 @@ describe('layer registry derivations', () => {
     ])
     for (const entry of styleBackedLayerEntries()) {
       expect(entry.renderKind).toBe('style')
+    }
+  })
+
+  // A style-backed toggle whose ids are not baked flips a layer that does not exist and
+  // draws nothing, reporting no error; an id baked twice throws a MapLibre duplicate-layer
+  // error at style build. "Exactly once" is the only safe count, and it is what the move of
+  // watersheds off the component-added path had to preserve.
+  it('bakes every style-backed layer id into the style exactly once', () => {
+    const bakedIds = getLayers().map((layer) => layer.id)
+    expect(new Set(bakedIds).size, 'a duplicate id in getLayers()').toBe(bakedIds.length)
+    for (const entry of styleBackedLayerEntries()) {
+      for (const layerId of entry.styleLayerIds) {
+        expect(bakedIds, `${entry.toggleId} -> ${layerId}`).toContain(layerId)
+      }
     }
   })
 
@@ -96,6 +112,9 @@ describe('layer registry derivations', () => {
     // nothing. Row counts stay out of here deliberately -- ingestion moves them.
     expect(toggleIdForWarehouseLayerName('evacuation-zones')).toBe('evacuation-zones')
     expect(toggleIdForWarehouseLayerName('sensors')).toBe('sensors')
+    // Claimed only once the render path moved off the tRPC proxy and onto
+    // geo.watershed_tiles(): the name is a claim about what the toggle DRAWS.
+    expect(toggleIdForWarehouseLayerName('watersheds')).toBe('watersheds')
   })
 
   it('gives each warehouse-backed toggle a distinct geo.layers name', () => {
@@ -168,6 +187,69 @@ describe('layer registry derivations', () => {
     expect(orphaned).toEqual([])
   })
 
+  /**
+   * Labels moved into the registry on 2026-08-08. Before that every name a user read was a
+   * hand-typed `label` prop at one of sixteen `<LayerToggle>` call sites, so a tree grouped by
+   * category had nowhere to read a layer's name from without importing five panels.
+   *
+   * The exact strings are pinned, not merely their presence: the migration's whole claim is
+   * that no visible caption changed, and a silent rewording here is the one way that claim
+   * fails without anything else breaking.
+   */
+  it('names every layer, with no blanks and no duplicates', () => {
+    for (const toggleId of LAYER_TOGGLE_IDS) {
+      const entry = LAYER_REGISTRY[toggleId]
+      expect(entry.label.trim(), toggleId).not.toBe('')
+      // A row shows an icon beside the name; the resolver in
+      // src/components/map/layer-panel/layer-icons.tsx is exhaustive over the union.
+      expect(entry.icon, toggleId).toBeTypeOf('string')
+    }
+    const labels = LAYER_TOGGLE_IDS.map((toggleId) => LAYER_REGISTRY[toggleId].label)
+    expect(new Set(labels).size, 'two layers sharing one name').toBe(labels.length)
+  })
+
+  it('carries the exact captions the panel switches used to hand-type', () => {
+    const labels = Object.fromEntries(
+      LAYER_TOGGLE_IDS.map((toggleId) => [toggleId, LAYER_REGISTRY[toggleId].label])
+    )
+    expect(labels).toEqual({
+      fire: 'Fire Detections',
+      'fire-perimeters': 'Active Fire Perimeters',
+      water: 'Water Gauges',
+      drought: 'Drought Monitor',
+      weather: 'Wind & Weather',
+      sensors: 'Sensor Stations',
+      watersheds: 'Watershed Boundaries',
+      vegetation: 'Vegetation (NDVI)',
+      soil: 'Soil Properties',
+      'soil-survey': 'Soil Survey (SSURGO)',
+      // Read off SOIL_FIELD_MEASURES rather than restated, which is why SoilPanel could drop
+      // its `label={definition.layerLabel}` without changing a single caption.
+      'soil-moisture': 'Soil Moisture (ERA5-Land)',
+      'soil-temperature': 'Soil Temperature (ERA5-Land)',
+      'demand-heatmap': 'Demand Heatmap',
+      interventions: 'Interventions',
+      'evacuation-zones': 'Evacuation Zones',
+      'burn-severity': 'Burn History (MTBS)',
+      // The one label with no <LayerToggle> predecessor: this layer is switched from the
+      // MapControls toolbar, never from a panel.
+      'building-footprints': '3D Building Footprints',
+    })
+  })
+
+  // The registry is now the default, so a call site that still passes one is overriding it --
+  // which is legitimate but must be deliberate. None does today.
+  it('leaves every panel switch reading its name from the registry', () => {
+    const overrides: string[] = []
+    for (const file of componentSourceFiles(COMPONENTS_DIR)) {
+      const source = readFileSync(file, 'utf8')
+      for (const match of source.matchAll(/<LayerToggle\b[^>]*/g)) {
+        if (/\blabel=/.test(match[0])) overrides.push(`${file}: ${match[0]}`)
+      }
+    }
+    expect(overrides).toEqual([])
+  })
+
   it('treats a user-uploaded layer id as outside the registry', () => {
     // User-uploaded layers toggle database ids that cannot be a static union; they must not
     // resolve to a registry entry or claim a panel.
@@ -175,11 +257,11 @@ describe('layer registry derivations', () => {
     expect(panelIdForLayerToggle('3f6c1e2a-0000-4000-8000-000000000000')).toBeNull()
   })
 
-  // watersheds and soil-survey are proxied live from USGS NHD+ HR and the USDA Soil Data
-  // Mart through environmental.getWatersheds/getSoilSurvey. Nothing publishes them into
-  // geo.layers, so claiming a warehouse layer name would make useLayerRenderState look up
-  // a slider capability that can never exist and caption the layer with a history nobody
-  // measured. Their governance stubs are lifted, so neither may carry a withheld reason.
+  // soil-survey is proxied live from the USDA Soil Data Mart through
+  // environmental.getSoilSurvey. Nothing publishes it into geo.layers, so claiming a
+  // warehouse layer name would make useLayerRenderState look up a slider capability that
+  // can never exist and caption the layer with a history nobody measured. Its governance
+  // stub is lifted, so it may not carry a withheld reason either.
   // soil-moisture is served out of the agri MODEL plane (agri.signal_observation), not out
   // of geo.features, so it has no geo.layers row to name and no slider capability to look
   // up -- the same shape drought and the proxied collections have. It still draws the
@@ -206,20 +288,50 @@ describe('layer registry derivations', () => {
     expect(useMapStore.getState().activeLayers).not.toContain('soil-temperature')
   })
 
-  it('treats the upstream-proxied collections as component layers with no warehouse feed', () => {
-    for (const toggleId of ['watersheds', 'soil-survey'] as const) {
-      const entry = LAYER_REGISTRY[toggleId]
-      expect(entry.renderKind).toBe('component')
-      expect(entry.styleLayerIds).toEqual([])
-      expect(entry.warehouseLayerName).toBeNull()
-      expect(entry.permanentlyUnavailableReason).toBeNull()
-    }
-    expect(panelIdForLayerToggle('watersheds')).toBe('water')
+  it('treats the upstream-proxied collection as a component layer with no warehouse feed', () => {
+    const entry = LAYER_REGISTRY['soil-survey']
+    expect(entry.renderKind).toBe('component')
+    expect(entry.styleLayerIds).toEqual([])
+    expect(entry.warehouseLayerName).toBeNull()
+    expect(entry.permanentlyUnavailableReason).toBeNull()
     expect(panelIdForLayerToggle('soil-survey')).toBe('soil')
-    // Their style layer ids stay out of the setLayoutProperty path: a component-added
+    // Its style layer ids stay out of the setLayoutProperty path: a component-added
     // layer is toggled by presence, and LayerManager would flip a layer nobody added.
-    expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty('watersheds')
     expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty('soil-survey')
+  })
+
+  // The bug this pins: watersheds rendered nothing at any ordinary zoom while it was
+  // proxied, because environmental.getWatersheds caps a request at 1 square degree and the
+  // viewport bbox is ~767 at the default zoom -- every request 400d and the layer fell back
+  // to an empty collection. The tile path has no bbox ceiling, so the entry must stay
+  // style-backed with a warehouse name, and its style layer ids must be the ones layers.ts
+  // bakes into every style -- a mismatch flips a layer that does not exist and draws nothing
+  // while reporting no error.
+  it('draws watersheds from the warehouse tile function, not from the tRPC proxy', () => {
+    const entry = LAYER_REGISTRY.watersheds
+    expect(entry.renderKind).toBe('style')
+    expect(entry.styleLayerIds).toEqual(['watersheds-fill', 'watersheds-outline'])
+    expect(entry.warehouseLayerName).toBe('watersheds')
+    expect(entry.permanentlyUnavailableReason).toBeNull()
+    expect(panelIdForLayerToggle('watersheds')).toBe('water')
+    expect(STYLE_LAYER_TOGGLE_MAP.watersheds).toEqual(entry.styleLayerIds)
+  })
+
+  // The bug this pins: InterventionSubmitModal submits Point geometry, and the toggle's only
+  // style layers were a fill and a line -- neither of which renders a Point. Approving a
+  // recommendation therefore put it in the tile and painted nothing, with no error anywhere.
+  // A circle layer over the same source-layer is the only thing that draws it, and it has to
+  // be in styleLayerIds too or applyVisibility leaves it hidden when the toggle goes on.
+  it('draws submitted point interventions with a circle layer the toggle controls', () => {
+    const entry = LAYER_REGISTRY.interventions
+    expect(entry.styleLayerIds).toContain('interventions-points')
+    expect(STYLE_LAYER_TOGGLE_MAP.interventions).toEqual(entry.styleLayerIds)
+
+    const pointLayer = getLayers().find((layer) => layer.id === 'interventions-points')
+    expect(pointLayer?.type).toBe('circle')
+    expect(pointLayer && 'source-layer' in pointLayer ? pointLayer['source-layer'] : null).toBe(
+      'interventions'
+    )
   })
 
   // demand-heatmap's stub was lifted 2026-08-03: /api/v1/action-network's k-anonymity

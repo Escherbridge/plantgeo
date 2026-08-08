@@ -1,6 +1,18 @@
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
+
+/**
+ * next/link needs the App Router context to mount, which nothing here stands up. The
+ * assertion below is about the href the queue builds, so a plain anchor is the honest
+ * double: it preserves exactly the contract under test and nothing else.
+ */
+vi.mock("next/link", () => ({
+  default: ({ href, children }: { href: string; children: ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
+}));
 
 /**
  * The tRPC hooks are stubbed rather than driven over a link -- this asserts the
@@ -41,7 +53,20 @@ vi.mock("@/lib/trpc/client", () => ({
 
 import { ContributionQueue } from "@/components/panels/ContributionQueue";
 
-const PENDING_FEATURE = { id: "feature-1", layerId: "layer-uuid", status: "pending_review" };
+/** The shape listPendingReview projects: identity plus the properties bag a reviewer reads. */
+const PENDING_FEATURE = {
+  id: "feature-1",
+  layerId: "layer-uuid",
+  layerName: "interventions",
+  status: "pending_review",
+  createdAt: "2026-08-04T00:00:00Z",
+  properties: {
+    name: "Ridge silvopasture plot",
+    type: "silvopasture",
+    description: "South-facing slope above the creek.",
+    geometry: { type: "Point", coordinates: [-116.2023, 43.6150] },
+  },
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -49,6 +74,40 @@ beforeEach(() => {
     data: [PENDING_FEATURE],
     isLoading: false,
     error: undefined,
+  });
+});
+
+// The bug this pins: the row rendered a feature UUID and a layer UUID and nothing else, so
+// a reviewer approving a submission onto the public map could not tell what it was or where
+// it was. Everything asserted here is already carried by listPendingReview's projection.
+describe("ContributionQueue row identification", () => {
+  it("names the submission, its category, its layer and when it arrived", () => {
+    renderWithProviders(<ContributionQueue />);
+
+    expect(screen.getByText("Ridge silvopasture plot")).toBeTruthy();
+    expect(screen.getByText(/Silvopasture/)).toBeTruthy();
+    expect(screen.getByText(/interventions/)).toBeTruthy();
+    expect(screen.getByText("South-facing slope above the creek.")).toBeTruthy();
+  });
+
+  it("links the location to the map's focus deep link instead of printing a UUID", () => {
+    renderWithProviders(<ContributionQueue />);
+
+    const link = screen.getByRole("link", { name: /43\.6150, -116\.2023/ }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toContain("focusLng=-116.202300");
+    expect(link.getAttribute("href")).toContain("focusLat=43.615000");
+    expect(screen.queryByText("feature-1")).toBeNull();
+  });
+
+  it("says so plainly when a submission carries no geometry", () => {
+    mocks.listPendingReviewQuery.mockReturnValue({
+      data: [{ ...PENDING_FEATURE, properties: { name: "Locationless" } }],
+      isLoading: false,
+      error: undefined,
+    });
+    renderWithProviders(<ContributionQueue />);
+
+    expect(screen.getByText("No location on this submission")).toBeTruthy();
   });
 });
 

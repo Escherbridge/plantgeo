@@ -9,14 +9,31 @@ import {
   soilSurveyOutlineLayer,
 } from "@/lib/map/layers";
 import { useStyleReady } from "@/components/map/layers/use-style-ready";
+import { authoredPaintValue } from "@/lib/map/layer-opacity";
 
 const SOIL_SURVEY_LAYER_IDS = [soilSurveyLayer.id, soilSurveyOutlineLayer.id];
+
+/**
+ * The authored strengths, read off the shared specs rather than restated -- a palette edit in
+ * layers.ts reaches the multiplier without a second hand-kept copy.
+ *
+ * They are read here, never written: `soilSurveyLayer` and `soilSurveyOutlineLayer` are
+ * module singletons that `addLayer` receives by reference, so mutating their `paint` would
+ * change the authored base for every later add and make the multiplier compound.
+ */
+const SURVEY_FILL_OPACITY = authoredPaintValue(soilSurveyLayer, "fill-opacity") as number;
+const SURVEY_OUTLINE_OPACITY = authoredPaintValue(
+  soilSurveyOutlineLayer,
+  "line-opacity"
+) as number;
 
 interface SoilSurveyLayerProps {
   map: MapLibreMap | null;
   /** SSURGO map units for the viewport, from environmental.getSoilSurvey. */
   geojson: GeoJSON.FeatureCollection | null;
   visible?: boolean;
+  /** The reader's MULTIPLIER over both authored strengths. See src/lib/map/layer-opacity.ts. */
+  opacityScale?: number;
 }
 
 /**
@@ -30,20 +47,28 @@ interface SoilSurveyLayerProps {
  * required by `src/components/map/AGENTS.md` -- never `map.once(...)`, which the diff path
  * of `setStyle()` can fire past before this component ever registers.
  */
-export function SoilSurveyLayer({ map, geojson, visible = true }: SoilSurveyLayerProps) {
+export function SoilSurveyLayer({
+  map,
+  geojson,
+  visible = true,
+  opacityScale = 1,
+}: SoilSurveyLayerProps) {
+  const fillOpacity = SURVEY_FILL_OPACITY * opacityScale;
+  const outlineOpacity = SURVEY_OUTLINE_OPACITY * opacityScale;
+
   // The style.load handler must read the newest data without re-registering, or it drops
   // to the back of the listener queue on every viewport query. See AGENTS.md. Synced in an
   // effect rather than assigned during render (as WaterLayer and DroughtLayer still do):
   // both run before any style event can fire, and only this form is free of
   // react-hooks/refs.
-  const propsRef = useRef({ geojson, visible });
+  const propsRef = useRef({ geojson, visible, fillOpacity, outlineOpacity });
   useEffect(() => {
-    propsRef.current = { geojson, visible };
-  }, [geojson, visible]);
+    propsRef.current = { geojson, visible, fillOpacity, outlineOpacity };
+  }, [geojson, visible, fillOpacity, outlineOpacity]);
 
   // Idempotent: every add is guarded, so the two effects below may both call it.
   const addLayers = useCallback((m: MapLibreMap) => {
-    const { geojson } = propsRef.current;
+    const { geojson, fillOpacity, outlineOpacity } = propsRef.current;
     if (!geojson) return;
 
     const beforeId = getFirstSymbolLayer(m);
@@ -54,11 +79,16 @@ export function SoilSurveyLayer({ map, geojson, visible = true }: SoilSurveyLaye
       (m.getSource(SOIL_SURVEY_SOURCE) as GeoJSONSource).setData(geojson);
     }
 
+    // The shared spec goes in unmodified and the multiplier is applied afterwards, rather
+    // than spreading a patched copy in: `addLayer` keeps a reference to what it is given, and
+    // a spread would also fork the paint away from layers.ts on every future edit.
     if (!m.getLayer(soilSurveyLayer.id)) {
       m.addLayer(soilSurveyLayer, beforeId);
+      m.setPaintProperty(soilSurveyLayer.id, "fill-opacity", fillOpacity);
     }
     if (!m.getLayer(soilSurveyOutlineLayer.id)) {
       m.addLayer(soilSurveyOutlineLayer, beforeId);
+      m.setPaintProperty(soilSurveyOutlineLayer.id, "line-opacity", outlineOpacity);
     }
   }, []);
 
@@ -116,6 +146,23 @@ export function SoilSurveyLayer({ map, geojson, visible = true }: SoilSurveyLaye
       // Style torn down mid-swap; the persistent style.load listener re-adds from the ref.
     }
   }, [map, geojson, visible, addLayers]);
+
+  // The multiplier, applied without a rebuild. Separate from the viewport effect above so a
+  // pan does not rewrite the paint the reader just set, and vice versa.
+  useEffect(() => {
+    if (!map || !visible) return;
+    try {
+      if (!map.getStyle()) return;
+    } catch {
+      return;
+    }
+    if (map.getLayer(soilSurveyLayer.id)) {
+      map.setPaintProperty(soilSurveyLayer.id, "fill-opacity", fillOpacity);
+    }
+    if (map.getLayer(soilSurveyOutlineLayer.id)) {
+      map.setPaintProperty(soilSurveyOutlineLayer.id, "line-opacity", outlineOpacity);
+    }
+  }, [map, visible, fillOpacity, outlineOpacity]);
 
   return null;
 }

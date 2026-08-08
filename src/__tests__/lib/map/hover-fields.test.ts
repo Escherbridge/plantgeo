@@ -21,6 +21,11 @@ describe("HOVERABLE_LAYER_IDS", () => {
       "fire-perimeters",
       "evacuation-zones",
       "interventions",
+      // The interventions toggle draws two geometries from one tile: a fill and its dashed
+      // outline for ingested zones, and a circle layer for the Point geometry every
+      // interactively submitted site carries. A fill layer cannot hit-test a Point, so
+      // without this id a submitted site was on the map and hovered as empty ground.
+      "interventions-points",
       "watersheds-fill",
       "soil-survey-fill",
       "building-footprints",

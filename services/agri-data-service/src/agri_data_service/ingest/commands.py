@@ -84,6 +84,7 @@ from agri_data_service.jobs import (
     JobSpecificationError,
     UnknownJobHandlerError,
     run_job_slice,
+    shutdown_signal,
 )
 from agri_data_service.jobs.lease import apply_statement_timeout, fetch_rows, optional_column, required_column
 
@@ -573,6 +574,43 @@ ORDER BY definitions.name, items.shard_key
 LIMIT :row_limit
 """)
 
+# The clock columns `jobs-status` had none of. Every one of these already existed and was unused, so five
+# of an operator's six questions -- is the cron alive, is this lane stalled, how fast is it going, how long
+# is left, when did this window last move -- were unanswerable from the tool built to answer them.
+#
+# `max(attempts.started_at)` is the per-lane heartbeat of last resort and reads "dead" for a lane that is
+# merely finished; the `job_event` row `jobs-run` now writes on every tick is the honest one. Grouping is
+# per RUN because a lane whose floor was lowered has two, and the aggregates are min/max only, so the
+# LEFT JOIN's fan-out over attempts cannot distort them the way a count(*) would.
+#
+# `observed_at` rides this statement rather than a `SELECT now()` of its own. It is the DATABASE's clock and
+# not the operator's laptop, for the same reason every lease timestamp is -- a staleness figure is only
+# trustworthy when the "now" it is subtracted from came from the same clock as the instants themselves --
+# and it needs no separate round trip, because a definition with no rows here has no rows in the state pass
+# either and is therefore never printed at all.
+_JOB_LANE_TIMESTAMPS: Final = text("""
+-- job_lane_timestamps
+SELECT definitions.name     AS definition,
+       runs.logical_run_key AS run_key,
+       now()                AS observed_at,
+       max(attempts.started_at)  AS last_attempt_started_at,
+       max(attempts.finished_at) AS last_attempt_finished_at,
+       max(items.completed_at) FILTER (WHERE items.status = 'succeeded') AS last_succeeded_at,
+       min(items.created_at) FILTER (WHERE items.status = 'queued')      AS oldest_queued_created_at,
+       min(items.lease_expires_at)                                       AS next_lease_expiry
+FROM agri.job_definition AS definitions
+JOIN agri.job_run AS runs
+  ON runs.job_definition_id = definitions.id
+JOIN agri.job_work_item AS items
+  ON items.job_run_id = runs.id
+LEFT JOIN agri.job_attempt AS attempts
+  ON attempts.job_work_item_id = items.id
+WHERE (CAST(:definition AS text) IS NULL OR definitions.name = CAST(:definition AS text))
+GROUP BY definitions.name, runs.logical_run_key
+ORDER BY definitions.name, runs.logical_run_key
+LIMIT :row_limit
+""")
+
 
 def _lane_day(value: str, option_name: str) -> datetime:
     """Parse a lane boundary as a plain UTC calendar day, refusing a time the floor-anchored grid would drop."""
@@ -767,8 +805,14 @@ async def _run_archive_slice(
     new engine per `async with` and disposes it in its `finally`, so a per-shard binding would be a full
     TCP+TLS+auth handshake against the Railway proxy for every window. jobs/AGENTS.md states the same rule,
     and `archive_walk_context` exists precisely so the handler can never open its own.
+
+    `shutdown_signal()` is installed HERE and not inside the runtime, because this is the process boundary:
+    it is the only scope that knows this is a one-shot container rather than a library call, and handlers
+    installed for the length of one slice are restored when the slice ends. Without it a Railway SIGTERM --
+    a redeploy, an eviction, a manual restart -- ends the container mid-shard and strands that window
+    behind a lease no living process owns. See jobs/AGENTS.md "Shutdown and heartbeat semantics".
     """
-    async with ingest_session() as session, RealtimePublisher() as publisher:
+    async with ingest_session() as session, RealtimePublisher() as publisher, shutdown_signal() as stop:
         write_features = bind_feature_writer(session, publisher)
         # No shared httpx client is offered, deliberately. Each archive source opens its own for the length
         # of one chunk under its OWN measured bounds -- FIRMS 15s/16MB, NWIS 90s/32MB -- and a client handed
@@ -783,6 +827,7 @@ async def _run_archive_slice(
                 definition_name=definition_name,
                 worker_id=worker_id,
                 budget_seconds=budget_seconds,
+                stop=stop,
             )
         logger.info("realtime_publish_totals", delivered=publisher.delivered, dropped=publisher.dropped)
     return summary
@@ -802,6 +847,12 @@ def jobs_status(definition_name: str | None, lane_name: str | None) -> None:
     over overlapping calendar days. The aggregate counts LEDGER ROWS, not calendar days -- read the per-run
     breakdown when a lane has more than one run.
 
+    Every line carries the database's `observed_at` and five instants read against it: when this lane last
+    claimed (`last_attempt_started_at`), last closed an attempt, last landed a window, how long its oldest
+    still-queued window has been waiting, and when its next lease expires. A `last_attempt_started_at` far
+    behind `observed_at` is a stalled lane; a `next_lease_expiry` already in the past is a shard the next
+    tick's reaper owes. None of these judge -- see `jobs-run`'s exit codes for the thing that does.
+
     EXIT CODES -- always 0. This verb answers a question; it does not judge. A dead letter is reported, and
     `jobs-run` is what turns one into a failed cron run at the moment it happens.
     """
@@ -815,7 +866,7 @@ def jobs_status(definition_name: str | None, lane_name: str | None) -> None:
 
 
 async def _read_job_status(definition: str | None) -> list[dict[str, object]]:
-    """Read the two ledger passes and fold them into one printable object per definition."""
+    """Read the ledger passes in one transaction and fold them into one printable object per definition."""
     async with ingest_session() as session:
         await apply_statement_timeout(session)
         state_rows = await fetch_rows(
@@ -828,7 +879,78 @@ async def _read_job_status(definition: str | None) -> list[dict[str, object]]:
             _JOB_DEAD_LETTERED_WINDOWS,
             {"definition": definition, "row_limit": MAX_DEAD_LETTER_ROWS},
         )
-    return _fold_job_status(state_rows, dead_letter_rows)
+        timestamp_rows = await fetch_rows(
+            session,
+            _JOB_LANE_TIMESTAMPS,
+            {"definition": definition, "row_limit": MAX_JOB_STATUS_ROWS},
+        )
+    return _fold_job_status(state_rows, dead_letter_rows, timestamp_rows)
+
+
+def _instant(value: datetime | None) -> str | None:
+    """Render one ledger timestamp for a JSON line, keeping NULL distinguishable from the epoch."""
+    return None if value is None else value.isoformat()
+
+
+def _newest(left: datetime | None, right: datetime | None) -> datetime | None:
+    """The later of two optional instants, treating absence as "no evidence" rather than as long ago."""
+    if left is None or right is None:
+        return left or right
+    return max(left, right)
+
+
+def _oldest(left: datetime | None, right: datetime | None) -> datetime | None:
+    """The earlier of two optional instants, treating absence as "no evidence" rather than as just now."""
+    if left is None or right is None:
+        return left or right
+    return min(left, right)
+
+
+@dataclass(frozen=True, slots=True)
+class _RunTimestamps:
+    """When a run last moved and when it next expects to: the clock this report had no column for.
+
+    Read against the `observed_at` on the same line. `last_attempt_started_at` far behind it means nothing
+    has claimed in this lane; a `next_lease_expiry` in the past means a shard is stranded and the next
+    tick's reaper owes it; `oldest_queued_created_at` is how long the lane's frontier has been waiting.
+    """
+
+    last_attempt_started_at: datetime | None = None
+    last_attempt_finished_at: datetime | None = None
+    last_succeeded_at: datetime | None = None
+    oldest_queued_created_at: datetime | None = None
+    next_lease_expiry: datetime | None = None
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, object]) -> _RunTimestamps:
+        """Read one grouped timestamp row, refusing a column that came back as something other than an instant."""
+        return cls(
+            last_attempt_started_at=optional_column(row, "last_attempt_started_at", datetime),
+            last_attempt_finished_at=optional_column(row, "last_attempt_finished_at", datetime),
+            last_succeeded_at=optional_column(row, "last_succeeded_at", datetime),
+            oldest_queued_created_at=optional_column(row, "oldest_queued_created_at", datetime),
+            next_lease_expiry=optional_column(row, "next_lease_expiry", datetime),
+        )
+
+    def merge(self, other: _RunTimestamps) -> _RunTimestamps:
+        """Fold a sibling run's clock into this one: newest for what has happened, oldest for what is owed."""
+        return _RunTimestamps(
+            last_attempt_started_at=_newest(self.last_attempt_started_at, other.last_attempt_started_at),
+            last_attempt_finished_at=_newest(self.last_attempt_finished_at, other.last_attempt_finished_at),
+            last_succeeded_at=_newest(self.last_succeeded_at, other.last_succeeded_at),
+            oldest_queued_created_at=_oldest(self.oldest_queued_created_at, other.oldest_queued_created_at),
+            next_lease_expiry=_oldest(self.next_lease_expiry, other.next_lease_expiry),
+        )
+
+    def to_summary(self) -> dict[str, object]:
+        """Render the five instants as ISO-8601 strings beside the counts they explain."""
+        return {
+            "last_attempt_started_at": _instant(self.last_attempt_started_at),
+            "last_attempt_finished_at": _instant(self.last_attempt_finished_at),
+            "last_succeeded_at": _instant(self.last_succeeded_at),
+            "oldest_queued_created_at": _instant(self.oldest_queued_created_at),
+            "next_lease_expiry": _instant(self.next_lease_expiry),
+        }
 
 
 @dataclass(slots=True)
@@ -838,6 +960,7 @@ class _RunTally:
     run_key: str
     states: dict[str, int] = field(default_factory=dict)
     oldest_outstanding_window: str | None = None
+    timestamps: _RunTimestamps = field(default_factory=_RunTimestamps)
 
     def record(self, status: str, window_count: int, oldest_shard_key: str | None) -> None:
         """Fold in one grouped (status, count) row, tracking the oldest shard key among the unsettled statuses."""
@@ -867,14 +990,19 @@ class _RunTally:
             "total_windows": self.total_windows,
             "outstanding_windows": self.outstanding_windows,
             "oldest_outstanding_window": self.oldest_outstanding_window,
+            **self.timestamps.to_summary(),
         }
 
 
 def _fold_job_status(
     state_rows: Sequence[Mapping[str, object]],
     dead_letter_rows: Sequence[Mapping[str, object]],
+    timestamp_rows: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:
     """Fold the grouped rows into one object per definition, with the per-run breakdown nested inside it."""
+    # Every timestamp row carries the same `now()` from the one statement that produced them all, so the
+    # first is as good as any: one clock for the whole report, not one per line.
+    observed_at = None if not timestamp_rows else optional_column(timestamp_rows[0], "observed_at", datetime)
     runs: dict[tuple[str, str], _RunTally] = {}
     for row in state_rows:
         definition = required_column(row, "definition", str)
@@ -885,6 +1013,13 @@ def _fold_job_status(
             required_column(row, "window_count", int),
             optional_column(row, "oldest_shard_key", str),
         )
+
+    for row in timestamp_rows:
+        # Keyed the same way the state rows are, so a run that both passes report lands on one tally. The
+        # two statements are read in the same transaction, so they cannot disagree about which runs exist.
+        key = (required_column(row, "definition", str), required_column(row, "run_key", str))
+        timed = runs.setdefault(key, _RunTally(run_key=key[1]))
+        timed.timestamps = _RunTimestamps.from_row(row)
 
     listed_dead_letters: dict[str, list[dict[str, object]]] = {}
     for row in dead_letter_rows:
@@ -900,7 +1035,7 @@ def _fold_job_status(
     for (definition, _run_key), tally in runs.items():
         definitions.setdefault(definition, []).append(tally)
     return [
-        _definition_entry(definition, tallies, listed_dead_letters.get(definition, ()))
+        _definition_entry(definition, tallies, listed_dead_letters.get(definition, ()), observed_at)
         for definition, tallies in sorted(definitions.items())
     ]
 
@@ -909,6 +1044,7 @@ def _definition_entry(
     definition: str,
     tallies: Sequence[_RunTally],
     dead_letters: Sequence[Mapping[str, object]],
+    observed_at: datetime | None,
 ) -> dict[str, object]:
     """Aggregate one definition's runs into the single line an operator reads, keeping the runs beside it."""
     states: dict[str, int] = {}
@@ -918,8 +1054,15 @@ def _definition_entry(
     oldest = [tally.oldest_outstanding_window for tally in tallies if tally.oldest_outstanding_window is not None]
     dead_letter_count = states.get(DEAD_LETTER_WORK_ITEM_STATE, 0)
     shown = list(dead_letters[:MAX_REPORTED_DEAD_LETTER_WINDOWS])
+    clock = _RunTimestamps()
+    for tally in tallies:
+        clock = clock.merge(tally.timestamps)
     return {
         "definition": definition,
+        # The database's clock, on the same line as the instants it is read against, so staleness is a
+        # subtraction an operator can do by eye rather than one that needs their laptop to agree.
+        "observed_at": _instant(observed_at),
+        **clock.to_summary(),
         "run_count": len(tallies),
         "states": dict(sorted(states.items())),
         "total_windows": sum(states.values()),

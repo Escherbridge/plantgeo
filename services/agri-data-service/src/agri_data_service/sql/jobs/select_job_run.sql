@@ -1,0 +1,29 @@
+-- select_job_run
+-- Purpose: read one run back by its logical key -- the second half of the idempotent run-open,
+--          run when the insert reported that somebody else had already created it.
+-- Loaded by: agri_data_service.jobs.worker
+-- Params: logical_run_key (text) -- the run-level idempotency key, UNIQUE on the table.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap" in
+-- sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too.
+--
+-- What this returns: at most one row -- the run's id, its status, and how many shards it holds.
+-- Because logical_run_key is UNIQUE there can never be two. No rows at all would mean the run was
+-- neither inserted a moment ago nor readable now, which the caller treats as the ledger
+-- contradicting itself and raises on, rather than proceeding without a run.
+--
+-- It lives in its own file rather than inline despite being short, because it is one half of a
+-- two-statement protocol whose other half is insert_job_run.sql -- the pair is only correct read
+-- together, and keeping them side by side in the same tree is what makes that visible.
+--
+-- How this query works, clause by clause:
+--
+--   WHERE logical_run_key = logical_run_key
+--     A lookup on the unique key, so this is an index probe returning one row or none. No ORDER BY
+--     or LIMIT is needed or wanted: uniqueness already guarantees there is nothing to choose
+--     between.
+--
+--   SELECT id, status, total_work_items
+--     Exactly the three facts the caller needs about a run it did not create: which run it is,
+--     whether it is still open, and how much work it already carries.
+SELECT id, status, total_work_items FROM agri.job_run WHERE logical_run_key = :logical_run_key

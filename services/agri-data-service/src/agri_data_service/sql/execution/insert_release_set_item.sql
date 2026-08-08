@@ -1,0 +1,39 @@
+-- Purpose: record that one source release is a member of one release set, in its primary-observation
+--          role.
+-- Loaded by: agri_data_service.execution.vegetation_ndvi_plane
+-- Params: release_set_id (uuid) -- the set gaining a member; source_release_id (uuid) -- the release
+--         being added; added_at (timestamptz) -- when the membership was recorded.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap" in
+-- sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too, and a colon-prefixed word
+-- inside a comment would mint a bind parameter that no caller supplies.
+--
+-- What this returns: nothing. It either writes one membership row or does nothing at all.
+--
+-- Why membership is its own table: a release set can hold several source releases, and the same
+-- source release can belong to several sets. That is a many-to-many relationship, which neither
+-- table can express on its own, so it lives in a third table with one row per pairing. The role
+-- column records what a member contributes, so a reader can tell an observation input apart from a
+-- reference or covariate input without inspecting the release itself.
+--
+-- How this query works, clause by clause:
+--
+--   INSERT INTO agri.release_set_item (...) VALUES (...)
+--     A single-row insert naming its target columns explicitly, so the statement stays correct if
+--     the table later gains a column rather than shifting every value one place along.
+--
+--   'primary_observation'  (the source_role column)
+--     A literal, because this lane only ever adds the one release that carries the NDVI observations
+--     the forecasts are trained on. Any other role would be a different lane adding a different kind
+--     of input.
+--
+--   ON CONFLICT DO NOTHING
+--     Idempotency. Written without naming columns or a constraint, which means "if this row would
+--     violate ANY uniqueness constraint on the table, skip it silently". Re-running registration for
+--     an unchanged cutoff day therefore re-offers the same membership and writes nothing, instead of
+--     failing on the uniqueness constraint and aborting the surrounding transaction. The unqualified
+--     form is safe here because there is exactly one thing a duplicate can be: the same release
+--     already in the same set.
+INSERT INTO agri.release_set_item (release_set_id, source_release_id, source_role, added_at)
+VALUES (:release_set_id, :source_release_id, 'primary_observation', :added_at)
+ON CONFLICT DO NOTHING
