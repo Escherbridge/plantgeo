@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from html import escape
 from pathlib import Path
@@ -26,6 +26,7 @@ ops_bp = Blueprint("ops", url_prefix="/ops")
 _LANES_SQL: Final = text(load_query_sql("routes/ops_backfill_lanes.sql"))
 _FAILURES_SQL: Final = text(load_query_sql("routes/ops_backfill_failures.sql"))
 _DEAD_LETTER_TREND_SQL: Final = text(load_query_sql("routes/ops_backfill_dead_letter_trend.sql"))
+_DATA_STREAMS_SQL: Final = text(load_query_sql("routes/ops_data_streams.sql"))
 
 _DATASTAR_PATH: Final = Path(__file__).resolve().parents[1] / "static" / "datastar.js"
 _DATASTAR_URL: Final = "/ops/static/datastar.js"
@@ -41,6 +42,29 @@ _MAX_STREAM_INTERVAL_SECONDS: Final = 30
 _FAILURE_ROW_LIMIT: Final = 40
 _ERROR_SUMMARY_CHARACTERS: Final = 260
 _DEAD_LETTER_TREND_DAYS: Final = 21
+
+# Freshness bands for the data-loads table. Deliberately generous: a daily upstream that
+# published this morning and one that published yesterday are both healthy, and a band that
+# called the second one late would cry wolf every night.
+_STREAM_FRESH_DAYS: Final = 2
+_STREAM_AGING_DAYS: Final = 30
+
+# The data-loads query aggregates every row of agri.signal_observation (~16M) and
+# geo.features, which costs ~26 s against the production proxy. The lane query is cheap and
+# wants the 5 s refresh; this one does not -- a backfill's landed coverage does not change
+# meaningfully inside a minute -- so it is cached independently rather than being dragged
+# along by the stream's cadence. Without this the SSE loop would re-run a 26 s scan every
+# 5 s and each connected operator would hold a permanent scan open against prod.
+_STREAMS_CACHE_SECONDS: Final = 300
+_STREAMS_CACHE: dict[str, Any] = {}
+
+# A stream missing more than a month of interior days is reported as severe rather than
+# merely notable: at that size the hole is a lane that stopped, not an upstream that skipped
+# a few publications.
+_GAP_SEVERE_DAYS: Final = 30
+# Below one day the median step is a rounding artefact of sub-daily observations, not a
+# cadence in days, so it is named rather than printed as a misleading "0d".
+_CADENCE_SUBDAY: Final = 1.0
 
 _SECONDS_PER_MINUTE: Final = 60
 _MINUTES_PER_HOUR: Final = 60
@@ -67,6 +91,8 @@ class _Snapshot:
     lanes: list[dict[str, Any]]
     failures: list[dict[str, Any]]
     dead_letter_trend: list[dict[str, Any]]
+    # Every load's landed state, including the lanes that never touch the ledger.
+    streams: list[dict[str, Any]]
     error: str | None
 
 
@@ -161,6 +187,7 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
                 {"trend_days": _DEAD_LETTER_TREND_DAYS},
             )
             trend_rows = [dict(row) for row in trend_result.mappings().all()]
+            stream_rows = await _load_data_streams(session, generated_at)
     except Exception as error:
         logger.warning("ops_backfill_snapshot_failed", error=str(error))
         return _Snapshot(
@@ -169,6 +196,7 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
             lanes=[],
             failures=[],
             dead_letter_trend=[],
+            streams=[],
             error=f"{type(error).__name__}: {error}",
         )
     return _Snapshot(
@@ -177,8 +205,24 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
         lanes=[_lane_record(row, generated_at, throughput_window_hours) for row in lane_rows],
         failures=failure_rows,
         dead_letter_trend=trend_rows,
+        streams=stream_rows,
         error=None,
     )
+
+
+async def _load_data_streams(session: Any, now: datetime) -> list[dict[str, Any]]:
+    """Return the data-load states, re-reading only once the cached copy has aged out."""
+    computed_at = _STREAMS_CACHE.get("computed_at")
+    if computed_at is not None and (now - computed_at).total_seconds() < _STREAMS_CACHE_SECONDS:
+        cached_rows: list[dict[str, Any]] = _STREAMS_CACHE["rows"]
+        return cached_rows
+    # Empty mapping rather than no argument: this query binds nothing, but every other
+    # caller in this module passes parameters and the session contract expects them.
+    result = await session.execute(_DATA_STREAMS_SQL, {})
+    rows = [dict(row) for row in result.mappings().all()]
+    _STREAMS_CACHE["computed_at"] = now
+    _STREAMS_CACHE["rows"] = rows
+    return rows
 
 
 def _lane_record(row: dict[str, Any], generated_at: datetime, throughput_window_hours: int) -> dict[str, Any]:
@@ -212,12 +256,17 @@ def _json_snapshot(snapshot: _Snapshot) -> dict[str, Any]:
         "lanes": [_json_safe(lane) for lane in snapshot.lanes],
         "failures": [_json_safe(failure) for failure in snapshot.failures],
         "dead_letter_trend": [_json_safe(entry) for entry in snapshot.dead_letter_trend],
+        "data_streams": [_json_safe(stream) for stream in snapshot.streams],
     }
 
 
 def _json_safe(value: Any) -> Any:
     """Convert database scalars Sanic's JSON encoder cannot serialize."""
-    if isinstance(value, datetime):
+    # One branch covers both: datetime subclasses date, and each one's isoformat() already
+    # renders itself correctly -- a timestamp keeps its time, a bare day stays a bare day.
+    # The data-load rows carry bare dates, which a datetime-only check would let through to
+    # the encoder and 500 the response.
+    if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, uuid.UUID):
         return str(value)
@@ -258,6 +307,7 @@ def _regions(snapshot: _Snapshot, *, interval_seconds: int) -> list[tuple[str, s
     return [
         ("#ops-meta", _render_meta(snapshot, interval_seconds=interval_seconds)),
         ("#ops-lanes", _render_lanes(snapshot)),
+        ("#ops-streams", _render_streams(snapshot)),
         ("#ops-failures", _render_failures(snapshot)),
         ("#ops-deadletters", _render_dead_letter_trend(snapshot)),
     ]
@@ -385,6 +435,108 @@ def _render_lane_row(lane: dict[str, Any], generated_at: datetime) -> str:
         f'<td class="dim">{escape(str(lane["oldest_outstanding_shard_key"] or "—"))}</td>'
         "</tr>"
     )
+
+
+def _render_streams(snapshot: _Snapshot) -> str:
+    """Render every data load's landed state, ledger-backed or not."""
+    if not snapshot.streams:
+        return '<section id="ops-streams"><h2>data loads</h2><p class="empty">no streams readable</p></section>'
+    rows = "".join(_render_stream_row(stream) for stream in snapshot.streams)
+    return (
+        '<section id="ops-streams"><h2>data loads</h2>'
+        '<p class="note">what actually landed, across the warehouse, the map layers and the '
+        "on-demand caches. A stream absent from <em>lanes</em> above is not idle: most loads "
+        "write straight to their store without ever enqueuing a ledger item. "
+        f"Recomputed at most every {_STREAMS_CACHE_SECONDS // _SECONDS_PER_MINUTE} min "
+        f"(full-table scan); measured {_streams_cache_age(snapshot.generated_at)}.</p>"
+        '<div class="scroll"><table>'
+        "<thead><tr>"
+        "<th>kind</th><th>stream</th>"
+        '<th class="n">rows</th><th class="n">coverage</th>'
+        "<th>from</th><th>through</th>"
+        '<th class="n">days</th><th class="n">missing</th><th class="n">largest gap</th>'
+        '<th class="n">cadence</th><th>freshness</th>'
+        "</tr></thead>"
+        f"<tbody>{rows}</tbody></table></div></section>"
+    )
+
+
+def _streams_cache_age(now: datetime) -> str:
+    """Say how old the cached scan is, so a stale number is never read as a live one."""
+    computed_at = _STREAMS_CACHE.get("computed_at")
+    if computed_at is None:
+        return "just now"
+    return _format_age(computed_at, now)
+
+
+def _render_stream_row(stream: dict[str, Any]) -> str:
+    """Render one stream, tinting freshness rather than declaring a stream broken."""
+    rows = int(stream["rows"] or 0)
+    coverage = int(stream["coverage"] or 0)
+    stale_days = stream["stale_days"]
+    return (
+        "<tr>"
+        f'<td class="dim">{escape(str(stream["kind"]))}</td>'
+        f"<td><b>{escape(str(stream['stream']))}</b></td>"
+        f'<td class="n">{rows:,}</td>'
+        f'<td class="n">{coverage:,} <span class="dim">{escape(str(stream["coverage_label"]))}</span></td>'
+        f"<td>{_format_day(stream['from_day'])}</td>"
+        f"<td>{_format_day(stream['to_day'])}</td>"
+        f'<td class="n">{_format_count(stream["observed_days"])}'
+        f'<span class="dim">/{_format_count(stream["span_days"])}</span></td>'
+        f'<td class="n">{_gap_cell(stream["missing_days"])}</td>'
+        f'<td class="n">{_gap_cell(stream["largest_gap_days"])}</td>'
+        f'<td class="n">{_format_cadence(stream["median_step_days"])}</td>'
+        f"<td>{_freshness_pill(rows, stale_days)}</td>"
+        "</tr>"
+    )
+
+
+def _gap_cell(value: Any) -> str:
+    """Tint a gap count. Zero is the good case and must read as such, not as absence."""
+    if value is None:
+        return _EMPTY
+    missing = int(value)
+    if missing == 0:
+        return '<span class="ok">0</span>'
+    tone = "bad" if missing >= _GAP_SEVERE_DAYS else "warn"
+    return f'<span class="{tone}">{missing:,}</span>'
+
+
+def _format_count(value: Any) -> str:
+    """Render a day count, or an em dash for a stream with no time axis at all."""
+    return _EMPTY if value is None else f"{int(value):,}"
+
+
+def _format_cadence(value: Any) -> str:
+    """Render the observed refresh interval in days, the median step between present days."""
+    if value is None:
+        return _EMPTY
+    cadence = float(value)
+    if cadence < _CADENCE_SUBDAY:
+        return '<span class="dim">sub-daily</span>'
+    return f"{cadence:g}d"
+
+
+def _freshness_pill(rows: int, stale_days: int | None) -> str:
+    """Tone a stream by age. Empty and undated are distinct states, not both 'no data'."""
+    if rows == 0:
+        return '<span class="pill bad">empty</span>'
+    if stale_days is None:
+        # Reference layers (soil survey, gauge sites) carry no observation day at all;
+        # that is their nature, not a fault, so it must not read as a failure.
+        return '<span class="pill dim">undated</span>'
+    days = int(stale_days)
+    if days <= _STREAM_FRESH_DAYS:
+        return f'<span class="pill ok">{days}d</span>'
+    if days <= _STREAM_AGING_DAYS:
+        return f'<span class="pill warn">{days}d</span>'
+    return f'<span class="pill bad">{days}d</span>'
+
+
+def _format_day(value: Any) -> str:
+    """Render a date column, distinguishing a missing day from an empty stream."""
+    return _EMPTY if value is None else escape(str(value)[:10])
 
 
 def _render_failures(snapshot: _Snapshot) -> str:
@@ -536,6 +688,9 @@ position:sticky;top:0;background:var(--panel)}
 tbody tr:last-child td{border-bottom:0}
 tbody tr:hover{background:#151d2b}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok)}
+.warn{color:var(--warn)}
+.bad{color:var(--bad)}
 td.n.ok{color:var(--ok)}
 td.n.warn{color:var(--warn)}
 td.n.bad{color:var(--bad)}
@@ -543,6 +698,7 @@ td.err{white-space:normal;max-width:520px;color:#e0b3b3;font-size:11px;line-heig
 .lane{color:#e6edf6}
 .dim{color:var(--dim)}
 .empty{color:var(--dim);margin:0;padding:10px 0}
+.note{color:var(--dim);margin:0 0 10px;max-width:80ch;font-size:.9em}
 .pill{display:inline-block;padding:1px 7px;border-radius:9px;font-size:11px;
 border:1px solid currentColor;line-height:1.5}
 .pill.ok{color:var(--ok)}

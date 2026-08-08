@@ -7,7 +7,7 @@
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -40,6 +40,16 @@ class _Result:
         return _Mappings(self.rows)
 
 
+@pytest.fixture(autouse=True)
+def _clear_streams_cache() -> None:
+    """Drop the data-loads cache between tests.
+
+    It is a module global that deliberately outlives a request, so without this a test
+    would read whatever the previous test left behind and pass for the wrong reason.
+    """
+    ops_route._STREAMS_CACHE.clear()
+
+
 class _Session:
     """Answer each ops query by matching a fragment unique to its statement."""
 
@@ -49,10 +59,12 @@ class _Session:
         lanes: list[dict[str, Any]],
         failures: list[dict[str, Any]],
         trend: list[dict[str, Any]],
+        streams: list[dict[str, Any]] | None = None,
     ) -> None:
         self.lanes = lanes
         self.failures = failures
         self.trend = trend
+        self.streams = streams if streams is not None else []
         self.parameters: list[dict[str, Any]] = []
 
     async def execute(self, statement: object, parameters: dict[str, Any]) -> _Result:
@@ -64,6 +76,8 @@ class _Session:
             return _Result(self.failures)
         if "WITH daily_dead_letters AS" in rendered:
             return _Result(self.trend)
+        if "'warehouse signal' as kind" in rendered:
+            return _Result(self.streams)
         raise AssertionError(f"unexpected statement: {rendered[:120]}")
 
 
@@ -152,6 +166,25 @@ def _trend() -> dict[str, Any]:
     }
 
 
+def _stream() -> dict[str, Any]:
+    """One data-load row shaped like ops_data_streams.sql returns it, dates included."""
+    return {
+        "kind": "warehouse signal",
+        "stream": "soil_water_content_layer_1",
+        "rows": 2172532,
+        "coverage": 1470,
+        "coverage_label": "cells",
+        "from_day": date(2022, 4, 30),
+        "to_day": date(2026, 4, 30),
+        "observed_days": 1462,
+        "span_days": 1462,
+        "missing_days": 0,
+        "largest_gap_days": 0,
+        "median_step_days": 1.0,
+        "stale_days": 100,
+    }
+
+
 def _request(**query: str) -> Any:
     return SimpleNamespace(args=query)
 
@@ -166,7 +199,15 @@ async def test_snapshot_json_derives_rate_and_eta_and_stays_json_serializable(
         succeeded_in_window=0,
         outstanding_items=5,
     )
-    session = _Session(lanes=[_lane(), stalled_lane], failures=[_failure()], trend=[_trend()])
+    # The stream rows carry bare `date` objects, which is the whole point of including them
+    # here: datetime subclasses date, so a serializer that handles only datetime passes every
+    # other test in this file and still 500s the moment a data-load row reaches it.
+    session = _Session(
+        lanes=[_lane(), stalled_lane],
+        failures=[_failure()],
+        trend=[_trend()],
+        streams=[_stream()],
+    )
     monkeypatch.setattr(ops_route, "receiver_writer_session", _session_factory(session))
 
     response = await ops_route.backfill_snapshot_json(_request())
@@ -174,6 +215,8 @@ async def test_snapshot_json_derives_rate_and_eta_and_stays_json_serializable(
 
     assert response.status == _HTTP_OK
     assert payload["error"] is None
+    assert payload["data_streams"][0]["from_day"] == "2022-04-30"
+    assert payload["data_streams"][0]["to_day"] == "2026-04-30"
     assert payload["throughput_window_hours"] == ops_route._DEFAULT_THROUGHPUT_WINDOW_HOURS
     moving, stalled = payload["lanes"]
     assert moving["throughput_per_hour"] == 1.0

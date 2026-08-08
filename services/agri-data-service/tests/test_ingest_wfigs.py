@@ -10,8 +10,11 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 
+from agri_data_service.ingest import wfigs
 from agri_data_service.ingest.http import UpstreamHttpError, UpstreamPayloadError
 from agri_data_service.ingest.wfigs import (
+    MAX_RECORD_COUNT,
+    WFIGS_GEOMETRY_PRECISION,
     WFIGS_SOURCE,
     build_perimeter_write,
     build_query_url,
@@ -48,6 +51,11 @@ class RecordingWriter:
 
 async def _no_sleep(_delay: float) -> None:
     """Skip the backoff wait so a retry test runs at full speed."""
+
+
+def _json_response(payload: dict[str, object]) -> httpx.Response:
+    """Build a 200 JSON response from a payload dict, so a page fixture fits on one call site line."""
+    return httpx.Response(200, content=json.dumps(payload).encode(), headers={"content-type": "application/json"})
 
 
 def _collection(**property_overrides: object) -> dict[str, object]:
@@ -110,11 +118,14 @@ def test_an_absent_or_unreal_epoch_field_becomes_null() -> None:
     assert epoch_milliseconds_to_iso(9e15) is None
 
 
-def test_the_query_url_asks_for_bounded_geojson() -> None:
+def test_the_query_url_asks_for_a_bounded_geojson_page() -> None:
     url = build_query_url("-125,42,-111,49")
     assert "f=geojson" in url
-    assert "resultRecordCount=2000" in url
+    assert f"resultRecordCount={MAX_RECORD_COUNT}" in url
+    assert "resultOffset=0" in url
+    assert f"geometryPrecision={WFIGS_GEOMETRY_PRECISION}" in url
     assert "spatialRel=esriSpatialRelIntersects" in url
+    assert "resultOffset=100" in build_query_url("-125,42,-111,49", offset=100)
 
 
 def test_an_arcgis_error_payload_answered_with_http_200_is_still_a_failure() -> None:
@@ -128,14 +139,22 @@ def test_an_unexpected_collection_shape_is_refused() -> None:
 
 
 def test_a_perimeter_parses_into_the_stored_property_shape() -> None:
-    perimeters = parse_perimeter_collection(_collection())
+    page = parse_perimeter_collection(_collection())
+    assert page.exceeded_transfer_limit is False
+    perimeters = page.perimeters
     assert perimeters[0]["uniqueFireIdentifier"] == RECORDED_FIRE_IDENTIFIER
     assert perimeters[0]["polygonDateTime"] == "2026-07-15T03:56:00.000Z"
     assert perimeters[0]["gisAcres"] == 1234.5
 
 
+def test_a_page_that_exceeded_the_transfer_limit_reports_it() -> None:
+    collection = _collection()
+    collection["properties"] = {"exceededTransferLimit": True}
+    assert parse_perimeter_collection(collection).exceeded_transfer_limit is True
+
+
 def test_a_recorded_production_perimeter_still_keys_to_the_bare_fire_identifier() -> None:
-    perimeter = parse_perimeter_collection(_collection())[0]
+    perimeter = parse_perimeter_collection(_collection()).perimeters[0]
     write = build_perimeter_write(perimeter, "fire-perimeters")
     assert write is not None
     assert write.external_id == RECORDED_FIRE_IDENTIFIER
@@ -146,7 +165,7 @@ def test_a_recorded_production_perimeter_still_keys_to_the_bare_fire_identifier(
 
 
 def test_a_perimeter_with_no_containment_stores_a_null_severity() -> None:
-    perimeter = parse_perimeter_collection(_collection(attr_PercentContained=None))[0]
+    perimeter = parse_perimeter_collection(_collection(attr_PercentContained=None)).perimeters[0]
     write = build_perimeter_write(perimeter, "fire-perimeters")
     assert write is not None
     assert write.properties["severity"] is None
@@ -175,9 +194,10 @@ async def test_a_transient_failure_is_retried_and_then_succeeds() -> None:
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        perimeters = await fetch_fire_perimeters(client, "-125,42,-111,49", _no_sleep)
+        perimeters, more_remaining = await fetch_fire_perimeters(client, "-125,42,-111,49", _no_sleep)
     assert len(attempts) == 2
     assert len(perimeters) == 1
+    assert more_remaining is False
 
 
 async def test_a_non_transient_failure_is_not_retried() -> None:
@@ -191,6 +211,45 @@ async def test_a_non_transient_failure_is_not_retried() -> None:
         with pytest.raises(UpstreamHttpError):
             await fetch_fire_perimeters(client, "-125,42,-111,49", _no_sleep)
     assert len(attempts) == 1
+
+
+async def test_a_second_page_is_fetched_only_when_the_upstream_says_more_remain() -> None:
+    requested_offsets: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_offsets.append(request.url.params.get("resultOffset"))
+        collection = _collection(attr_UniqueFireIdentifier=f"2026-ID1AX-{len(requested_offsets):06d}")
+        collection["properties"] = {"exceededTransferLimit": len(requested_offsets) == 1}
+        return _json_response(collection)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        perimeters, more_remaining = await fetch_fire_perimeters(client, "-125,42,-111,49", _no_sleep)
+
+    assert requested_offsets == ["0", "1"]
+    assert len(perimeters) == 2
+    assert more_remaining is False
+
+
+async def test_the_ceiling_stops_paging_even_when_the_upstream_says_more_remain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Pin the record ceiling well below one page so this test does not need a real 100-row page to
+    # observe the stop-at-the-ceiling behaviour resolve_max_source_records() drives in production.
+    monkeypatch.setattr(wfigs, "resolve_max_source_records", lambda: 1)
+    attempts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(str(request.url))
+        collection = _collection()
+        collection["properties"] = {"exceededTransferLimit": True}
+        return _json_response(collection)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        perimeters, more_remaining = await fetch_fire_perimeters(client, "-125,42,-111,49", _no_sleep)
+
+    assert len(attempts) == 1
+    assert len(perimeters) == 1
+    assert more_remaining is True
 
 
 async def test_an_unset_bbox_is_skipped_and_never_failed() -> None:
@@ -215,3 +274,21 @@ async def test_the_job_writes_the_perimeters_it_fetched() -> None:
     assert result.records_written == 1
     assert result.truncated is False
     assert [write.external_id for write in writer.writes] == [RECORDED_FIRE_IDENTIFIER]
+
+
+async def test_the_job_reports_truncation_when_the_upstream_says_more_perimeters_remain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(wfigs, "resolve_max_source_records", lambda: 1)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        collection = _collection()
+        collection["properties"] = {"exceededTransferLimit": True}
+        return _json_response(collection)
+
+    writer = RecordingWriter()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await run_fire_perimeters_ingestion_job(writer, bbox="-125,42,-111,49", client=client)
+
+    assert result.status == "ingested"
+    assert result.truncated is True

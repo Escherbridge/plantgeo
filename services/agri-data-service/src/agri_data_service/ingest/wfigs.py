@@ -1,4 +1,4 @@
-"""WFIGS interagency fire-perimeter ingestion: the ArcGIS FeatureServer adapter and its retrying, bounded job."""
+"""WFIGS interagency fire-perimeter ingestion: the ArcGIS FeatureServer adapter and its retrying, bounded, paged job."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import math
 import os
 import random
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 from urllib.parse import urlencode
@@ -70,7 +71,20 @@ WFIGS_OUT_FIELDS: Final = ",".join(
 )
 
 WFIGS_BOUNDS: Final = UpstreamBounds(max_bytes=16 * 1024 * 1024, timeout_seconds=20.0)
-MAX_RECORD_COUNT: Final = 2_000
+# Measured live against production 2026-08-08: one unpaged query over the PNW extent (114 current
+# perimeters, an ordinary day, not even peak season) answered 18,091,373 bytes -- already over
+# WFIGS_BOUNDS.max_bytes on its own. geometryPrecision=5 (~1.1 m; plenty for a perimeter drawn on a
+# map) cut that to 10,950,562 bytes, and a single 50-record page at that precision measured
+# 3,713,460 bytes (~74 KB/feature). MAX_RECORD_COUNT is sized so an average page (~96 KB/feature
+# across the full sample) stays near 9.6 MB -- well inside the cap, with room for a fire season
+# denser than today's. The per-request byte cap stays the backstop: a single page that is still too
+# heavy (one pathologically complex perimeter) fails that page rather than silently growing the cap.
+WFIGS_GEOMETRY_PRECISION: Final = 5
+MAX_RECORD_COUNT: Final = 100
+# Circuit breaker against an upstream that reports exceededTransferLimit forever; 200 * 100 = 20,000
+# records is double DEFAULT_MAX_SOURCE_RECORDS, so the configured ceiling is what stops an ordinary
+# run, not this bound.
+MAX_PAGES: Final = 200
 MAX_ATTEMPTS: Final = 3
 RETRY_BASE_DELAYS_SECONDS: Final = (1.0, 2.0)
 BUSY_MESSAGE_PATTERN: Final = re.compile(r"too many requests|busy|try again", re.IGNORECASE)
@@ -124,8 +138,8 @@ def epoch_milliseconds_to_iso(value: object) -> str | None:
         return None
 
 
-def build_query_url(bbox: str, max_record_count: int = MAX_RECORD_COUNT) -> str:
-    """Build the bounded ArcGIS GeoJSON query URL for one bbox."""
+def build_query_url(bbox: str, offset: int = 0, max_record_count: int = MAX_RECORD_COUNT) -> str:
+    """Build the bounded ArcGIS GeoJSON query URL for one page of one bbox."""
     query = urlencode(
         {
             "where": "1=1",
@@ -135,7 +149,9 @@ def build_query_url(bbox: str, max_record_count: int = MAX_RECORD_COUNT) -> str:
             "inSR": "4326",
             "outSR": "4326",
             "spatialRel": "esriSpatialRelIntersects",
+            "resultOffset": str(offset),
             "resultRecordCount": str(max_record_count),
+            "geometryPrecision": str(WFIGS_GEOMETRY_PRECISION),
             "f": "geojson",
         }
     )
@@ -181,8 +197,24 @@ def _optional_number(properties: Mapping[str, object], field_name: str) -> float
     return float(value)
 
 
-def parse_perimeter_collection(payload: object) -> list[dict[str, object]]:
-    """Parse an ArcGIS GeoJSON answer into perimeter records, rejecting its HTTP-200 error payload."""
+@dataclass(frozen=True, slots=True)
+class WfigsPerimeterPage:
+    """One page of fire perimeters plus whether the upstream said more of them remain."""
+
+    perimeters: list[dict[str, object]]
+    exceeded_transfer_limit: bool
+
+
+def _exceeded_transfer_limit(payload: Mapping[str, object]) -> bool:
+    """True when ArcGIS reported it clipped this page; GeoJSON nests the flag, the JSON form keeps it at the top."""
+    properties = payload.get("properties")
+    if isinstance(properties, dict) and properties.get("exceededTransferLimit") is True:
+        return True
+    return payload.get("exceededTransferLimit") is True
+
+
+def parse_perimeter_collection(payload: object) -> WfigsPerimeterPage:
+    """Parse an ArcGIS GeoJSON answer into one page of perimeter records, rejecting its HTTP-200 error payload."""
     if not isinstance(payload, dict):
         raise UpstreamPayloadError("WFIGS API returned an unexpected feature collection shape")
     error = payload.get("error")
@@ -220,7 +252,7 @@ def parse_perimeter_collection(payload: object) -> list[dict[str, object]]:
                 "geometry": _validate_geometry(feature.get("geometry")),
             }
         )
-    return perimeters
+    return WfigsPerimeterPage(perimeters=perimeters, exceeded_transfer_limit=_exceeded_transfer_limit(payload))
 
 
 def is_retryable_failure(error: Exception) -> bool:
@@ -237,22 +269,43 @@ def jittered_retry_delay_seconds(attempt_index: int) -> float:
     return RETRY_BASE_DELAYS_SECONDS[attempt_index] * (0.5 + random.random())
 
 
-async def fetch_fire_perimeters(
+async def fetch_fire_perimeters_page(
     client: httpx.AsyncClient,
     bbox: str,
+    offset: int = 0,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-) -> list[dict[str, object]]:
-    """Fetch bounded WFIGS perimeters, retrying only a busy or transient upstream."""
-    url = build_query_url(bbox)
+) -> WfigsPerimeterPage:
+    """Fetch one bounded page of WFIGS perimeters, retrying only a busy or transient upstream."""
+    url = build_query_url(bbox, offset)
     for attempt in range(MAX_ATTEMPTS):
         try:
             return parse_perimeter_collection(await fetch_bounded_json(client, url, WFIGS_BOUNDS))
         except (UpstreamHttpError, UpstreamPayloadError) as error:
             if attempt == MAX_ATTEMPTS - 1 or not is_retryable_failure(error):
                 raise
-            logger.info("wfigs_upstream_retry", attempt=attempt + 1, error=str(error))
+            logger.info("wfigs_upstream_retry", attempt=attempt + 1, offset=offset, error=str(error))
             await sleep(jittered_retry_delay_seconds(attempt))
     raise UpstreamPayloadError("WFIGS retry loop ended without a response")  # pragma: no cover - unreachable.
+
+
+async def fetch_fire_perimeters(
+    client: httpx.AsyncClient,
+    bbox: str,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> tuple[list[dict[str, object]], bool]:
+    """Page bounded WFIGS perimeters until the upstream stops clipping, reporting whether more were left behind."""
+    ceiling = resolve_max_source_records()
+    perimeters: list[dict[str, object]] = []
+    offset = 0
+    for _ in range(MAX_PAGES):
+        page = await fetch_fire_perimeters_page(client, bbox, offset, sleep)
+        perimeters.extend(page.perimeters)
+        if not page.perimeters or not page.exceeded_transfer_limit:
+            return perimeters, False
+        offset += len(page.perimeters)
+        if len(perimeters) >= ceiling:
+            return perimeters, True
+    return perimeters, True
 
 
 def build_perimeter_write(perimeter: Mapping[str, object], layer_name: str) -> FeatureWrite | None:
@@ -296,9 +349,9 @@ async def run_fire_perimeters_ingestion_job(
 
     if client is None:
         async with upstream_client(WFIGS_BOUNDS) as owned_client:
-            perimeters = await fetch_fire_perimeters(owned_client, area)
+            perimeters, more_remaining = await fetch_fire_perimeters(owned_client, area)
     else:
-        perimeters = await fetch_fire_perimeters(client, area)
+        perimeters, more_remaining = await fetch_fire_perimeters(client, area)
 
     selected = perimeters[: resolve_max_source_records()]
     layer_name = resolve_fire_perimeters_layer_name()
@@ -311,6 +364,6 @@ async def run_fire_perimeters_ingestion_job(
         status="ingested",
         records_seen=len(perimeters),
         records_written=await write_features(writes),
-        truncated=len(perimeters) > len(selected),
+        truncated=more_remaining or len(perimeters) > len(selected),
         details={"rejected": len(selected) - len(writes)},
     )
