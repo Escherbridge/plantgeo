@@ -95,3 +95,6 @@ martin-data/
 
 # Captured command output from conductor lane runs: machine-specific paths, never history.
 conductor/tracks/**/*.out
+
+# Raw research captures (fetched docs, HTML/log dumps) -- scratch, not source.
+.omc/research/

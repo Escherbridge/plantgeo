@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from agri_data_service.ingest.http import (
+    TRANSPORT_RETRY_ATTEMPTS,
     BoundedResponse,
     UpstreamBounds,
     UpstreamHttpError,
@@ -208,3 +209,81 @@ async def test_upstream_client_applies_the_caller_bounds_as_its_default_timeout(
     async with upstream_client(UpstreamBounds(max_bytes=1024, timeout_seconds=2.5)) as client:
         assert client.timeout.read == 2.5
         assert client.timeout.connect == 2.5
+
+
+class _FlakyTransport(httpx.AsyncBaseTransport):
+    """Fails with a transport error for the first `failures` calls, then answers normally."""
+
+    def __init__(self, failures: int, error: Exception | None = None) -> None:
+        self.failures = failures
+        self.calls = 0
+        self.error = error or httpx.ConnectError("connection refused")
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:  # noqa: ARG002 - httpx's own signature
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise self.error
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+
+@pytest.mark.asyncio
+async def test_a_transient_connect_error_is_retried_rather_than_failing_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The measured fault: 169 of 298 FIRMS windows and 46 of 95 streamflow windows died on
+    # ConnectError during one walk, costing 2023-12 through 2026-06 of fire history entirely.
+    # The same days succeed on a later attempt, so the fault is the local connection path.
+    monkeypatch.setattr("agri_data_service.ingest.http.TRANSPORT_RETRY_BASE_SECONDS", 0.0)
+    transport = _FlakyTransport(failures=2)
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        payload = await fetch_bounded_json(client, "https://example.test/x", UpstreamBounds(1024, 5.0))
+
+    assert payload == {"ok": True}
+    assert transport.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_a_persistent_transport_fault_still_raises_the_same_typed_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Retrying must not swallow a real outage: a caller that exhausts the attempts sees exactly
+    # what it saw before the retry existed, only later.
+    monkeypatch.setattr("agri_data_service.ingest.http.TRANSPORT_RETRY_BASE_SECONDS", 0.0)
+    transport = _FlakyTransport(failures=99)
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(UpstreamTransportError):
+            await fetch_bounded_json(client, "https://example.test/x", UpstreamBounds(1024, 5.0))
+
+    assert transport.calls == TRANSPORT_RETRY_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_a_timeout_keeps_its_own_type_after_the_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("agri_data_service.ingest.http.TRANSPORT_RETRY_BASE_SECONDS", 0.0)
+    transport = _FlakyTransport(failures=99, error=httpx.ConnectTimeout("slow"))
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(UpstreamTimeoutError):
+            await fetch_bounded_json(client, "https://example.test/x", UpstreamBounds(1024, 5.0))
+
+
+@pytest.mark.asyncio
+async def test_a_non_2xx_status_is_answered_once_and_never_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agri_data_service.ingest.http.TRANSPORT_RETRY_BASE_SECONDS", 0.0)
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(503, json={}, headers={"content-type": "application/json"})
+
+    # A status is the upstream's considered answer. Retrying it here would hammer a service that
+    # has already replied AND would pre-empt the per-source 429/503 backoff policies.
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(UpstreamHttpError):
+            await fetch_bounded_json(client, "https://example.test/x", UpstreamBounds(1024, 5.0))
+
+    assert calls["n"] == 1

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -69,6 +70,28 @@ class BoundedResponse:
         return SUCCESS_STATUS_MINIMUM <= self.status < SUCCESS_STATUS_MAXIMUM
 
 
+# How many times a transport-level failure is re-attempted, and the base delay between attempts.
+#
+# Measured 2026-08-07 over the first full archive walk: 169 of 298 FIRMS windows and 46 of 95
+# streamflow windows failed, almost entirely `ConnectError` with a couple of `getaddrinfo failed`.
+# The same days succeed on a later attempt, so what failed was the local connection and DNS path
+# under sustained load, not the upstream. Left unhandled that cost 2.5 years of fire history --
+# 2023-12 through 2026-06 had no detections at all, which read as sparse fire seasons rather than
+# as lost work.
+#
+# Retrying HERE rather than only in the shell driver is what makes every source benefit: the
+# forward cron jobs hit the same transient faults and had no retry at all, they simply reported a
+# failed run. Only GETs go through this module, so a re-attempt is always safe.
+TRANSPORT_RETRY_ATTEMPTS: Final = 3
+TRANSPORT_RETRY_BASE_SECONDS: Final = 2.0
+
+# Ceiling on simultaneous sockets per client. httpx defaults to 100, which is precisely how a
+# tiled fetch exhausts the local connection table; every caller here fans out over at most a
+# handful of tiles at a time, so this is a bound on the failure mode rather than on throughput.
+MAX_UPSTREAM_CONNECTIONS: Final = 10
+MAX_KEEPALIVE_CONNECTIONS: Final = 5
+
+
 @asynccontextmanager
 async def upstream_client(bounds: UpstreamBounds) -> AsyncIterator[httpx.AsyncClient]:
     """Yield one client whose default timeout is the caller's bound and whose redirects are capped."""
@@ -76,6 +99,10 @@ async def upstream_client(bounds: UpstreamBounds) -> AsyncIterator[httpx.AsyncCl
         timeout=httpx.Timeout(bounds.timeout_seconds),
         follow_redirects=True,
         max_redirects=MAX_REDIRECTS,
+        limits=httpx.Limits(
+            max_connections=MAX_UPSTREAM_CONNECTIONS,
+            max_keepalive_connections=MAX_KEEPALIVE_CONNECTIONS,
+        ),
     ) as client:
         yield client
 
@@ -110,20 +137,43 @@ async def fetch_bounded(
     bounds: UpstreamBounds,
     headers: Mapping[str, str] | None = None,
 ) -> BoundedResponse:
-    """Fetch a URL under a byte cap and timeout, never raising on a non-2xx status or an unreadable body."""
-    try:
-        async with client.stream("GET", url, headers=dict(headers or {}), timeout=bounds.timeout_seconds) as response:
-            body, payload_error = await _read_bounded_body(response, bounds)
-            return BoundedResponse(
-                status=response.status_code,
-                content_type=response.headers.get("content-type"),
-                text=body.decode("utf-8", errors="replace"),
-                payload_error=payload_error,
-            )
-    except httpx.TimeoutException as error:
-        raise UpstreamTimeoutError("upstream request timed out") from error
-    except httpx.HTTPError as error:
-        raise UpstreamTransportError(f"upstream request failed ({error.__class__.__name__})") from error
+    """Fetch a URL under a byte cap and timeout, never raising on a non-2xx status or an unreadable body.
+
+    A transport fault is re-attempted before it becomes a failure; a non-2xx status is not. The
+    distinction is deliberate: a connect error or a timeout says nothing about the request, whereas
+    a status is the upstream's considered answer and retrying it would hammer a service that has
+    already replied. Status handling stays entirely with the caller, which is what lets a source
+    treat 429 and 503 with its own backoff policy.
+
+    The raised exception types are unchanged, so a caller that exhausts the retries sees exactly
+    what it saw before -- only later, and only after the fault proved persistent.
+    """
+    last_error: httpx.HTTPError | None = None
+    for attempt in range(1, TRANSPORT_RETRY_ATTEMPTS + 1):
+        try:
+            async with client.stream(
+                "GET", url, headers=dict(headers or {}), timeout=bounds.timeout_seconds
+            ) as response:
+                body, payload_error = await _read_bounded_body(response, bounds)
+                return BoundedResponse(
+                    status=response.status_code,
+                    content_type=response.headers.get("content-type"),
+                    text=body.decode("utf-8", errors="replace"),
+                    payload_error=payload_error,
+                )
+        except httpx.HTTPError as error:
+            last_error = error
+            if attempt == TRANSPORT_RETRY_ATTEMPTS:
+                break
+            # Exponential, because a connection table that is full drains on its own and the point
+            # is to stop adding to it. Nothing is retried after the body has begun streaming: a
+            # partial read raises inside _read_bounded_body as an UpstreamPayloadError, which is
+            # returned rather than raised and so never reaches here.
+            await asyncio.sleep(TRANSPORT_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
+
+    if isinstance(last_error, httpx.TimeoutException):
+        raise UpstreamTimeoutError("upstream request timed out") from last_error
+    raise UpstreamTransportError(f"upstream request failed ({last_error.__class__.__name__})") from last_error
 
 
 async def fetch_bounded_json(

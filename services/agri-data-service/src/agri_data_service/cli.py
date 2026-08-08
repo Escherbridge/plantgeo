@@ -2397,9 +2397,7 @@ def forecast_ensemble_status(plan: Path) -> None:
                 "staged_receipt_count": sum(receipt.staged_receipt_count for receipt in checkpoint.receipts),
                 "staged_value_count": sum(receipt.staged_value_count for receipt in checkpoint.receipts),
                 "failed_series_count": sum(receipt.failed_series_count for receipt in checkpoint.receipts),
-                "staged_document": str(
-                    ensemble_forecast_staged_document_path(settings.local_execution_root, value)
-                ),
+                "staged_document": str(ensemble_forecast_staged_document_path(settings.local_execution_root, value)),
                 "warehouse_persistence": ENSEMBLE_WAREHOUSE_PERSISTENCE_STATE,
             },
             indent=2,

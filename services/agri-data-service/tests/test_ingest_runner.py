@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 EXPECTED_VERBS = (
     "ingest-firms",
     "ingest-streamflow",
+    "ingest-watersheds",
     "ingest-weather",
     "ingest-fire-perimeters",
     "ingest-drought",
@@ -40,6 +41,14 @@ EXPECTED_VERBS = (
     "ingest-geometry-repair",
     "ingest-drought-history",
     "ingest-all",
+    # The durable archive lanes. They ride the same registration function but not the same exit rule:
+    # `emit`/`finish` fail a run when any source failed, which is wrong for a slice that legitimately
+    # ends with work remaining. Their own contract is pinned in tests/test_ingest_commands_jobs.py.
+    "jobs-plan-lane",
+    "jobs-run",
+    "jobs-status",
+    "jobs-reconcile-lane",
+    "validate-streams",
 )
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
@@ -18,6 +19,19 @@ JobStatus = Literal["ingested", "skipped", "failed"]
 
 NO_DETAILS: Final[Mapping[str, int]] = MappingProxyType({})
 UNKNOWN_FAILURE_REASON: Final = "unknown ingestion failure"
+REDACTED_PLACEHOLDER: Final = "[redacted]"
+FAILURE_REASON_MAX_LENGTH: Final = 500
+
+# FIRMS embeds its API key in the request PATH (/api/area/csv/<MAP_KEY>/...), not in a query string, and
+# a DSN embeds its password, so an httpx error carrying either publishes a live credential to every
+# operator who reads a cron log. Each alternative substitutes a whole whitespace-delimited token rather
+# than parsing it, because a partial match leaves the secret in the half that survived: scheme-shaped,
+# user@host-shaped, and a bare query tail for a message that names a key without naming its scheme.
+#
+# Kept deliberately identical to jobs/lease.py::_SECRET_SHAPED and NOT shared with it: `jobs` is the
+# reusable primitive `ingest` builds on, so importing back the other way would invert the layering.
+# Change both together.
+_SECRET_SHAPED = re.compile(r"[a-z][a-z0-9+.\-]*://\S+|\S+@\S+|\?\S+", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,11 +68,18 @@ def skipped_result(source: str, reason: str) -> IngestionJobResult:
     return IngestionJobResult(source=source, status="skipped", records_seen=0, records_written=0, reason=reason)
 
 
+def redact_secrets(value: str) -> str:
+    """Substitute every URL-shaped, user@host-shaped and query-shaped token, whole, before it is reported."""
+    return _SECRET_SHAPED.sub(REDACTED_PLACEHOLDER, value)
+
+
 def failure_reason(error: Exception) -> str:
-    """Describe a job failure without echoing a statement, a payload, or an API-keyed URL."""
+    """Describe a job failure without echoing a statement, a payload, a DSN, or an API-keyed URL."""
     if isinstance(error, SQLAlchemyError):
+        # The SQLAlchemy message carries the whole statement and its bound parameters.
         return f"ingest write failed ({error.__class__.__name__})"
-    message = str(error).strip()
+    # Redact before clamping, so a clamp can never be what spares a secret from substitution.
+    message = redact_secrets(str(error).strip())[:FAILURE_REASON_MAX_LENGTH].strip()
     return message or UNKNOWN_FAILURE_REASON
 
 
