@@ -89,9 +89,7 @@ class OpenMeteoArchiveSignal(NamedTuple):
 # The bounds are the only thing standing between a provider sentinel (-999, a netCDF `_FillValue`)
 # and 1,462 accepted rows per cell. See execution/AGENTS.md §historical_open_meteo.
 OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS: Final[dict[str, OpenMeteoArchiveSignal]] = {
-    "soil_moisture_0_to_7cm_mean": OpenMeteoArchiveSignal(
-        "soil_water_content_layer_1", "m^3/m^3", "m^3/m^3", 0.0, 1.0
-    ),
+    "soil_moisture_0_to_7cm_mean": OpenMeteoArchiveSignal("soil_water_content_layer_1", "m^3/m^3", "m^3/m^3", 0.0, 1.0),
     "soil_moisture_7_to_28cm_mean": OpenMeteoArchiveSignal(
         "soil_water_content_layer_2", "m^3/m^3", "m^3/m^3", 0.0, 1.0
     ),
@@ -102,12 +100,8 @@ OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS: Final[dict[str, OpenMeteoArchiveSignal
     # The remaining three bands align with ERA5-Land's CDS levels 2-4, so this lane can carry the
     # soil-state profile the CDS lane was fetching -- at 0.1 degrees instead of 1.0, and keyless.
     "soil_temperature_7_to_28cm_mean": OpenMeteoArchiveSignal("soil_temperature_level_2", "C", "C", -100.0, 70.0),
-    "soil_temperature_28_to_100cm_mean": OpenMeteoArchiveSignal(
-        "soil_temperature_level_3", "C", "C", -100.0, 70.0
-    ),
-    "soil_temperature_100_to_255cm_mean": OpenMeteoArchiveSignal(
-        "soil_temperature_level_4", "C", "C", -100.0, 70.0
-    ),
+    "soil_temperature_28_to_100cm_mean": OpenMeteoArchiveSignal("soil_temperature_level_3", "C", "C", -100.0, 70.0),
+    "soil_temperature_100_to_255cm_mean": OpenMeteoArchiveSignal("soil_temperature_level_4", "C", "C", -100.0, 70.0),
     # An atmospheric-dryness covariate, not a soil-state one; see execution/AGENTS.md §historical_open_meteo.
     "vapour_pressure_deficit_max": OpenMeteoArchiveSignal("vapor_pressure_deficit", "kPa", "kPa", 0.0, 15.0),
 }

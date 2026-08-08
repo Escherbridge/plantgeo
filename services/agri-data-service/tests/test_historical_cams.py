@@ -1,6 +1,5 @@
 """Contract tests for the CAMS air-quality lane: two-axis chunking, hourly reduction, and coverage honesty."""
 
-
 from __future__ import annotations
 
 import hashlib
@@ -243,8 +242,7 @@ def test_a_day_below_the_hour_floor_is_unobserved_but_still_written() -> None:
     chunk = plan.chunks[0]
     thin_hours = CAMS_MINIMUM_OBSERVED_HOURS_PER_DAY - 1
     series: list[float | None] = [
-        5.0 if (index % HOURS_PER_DAY) < thin_hours else None
-        for index in range(chunk.day_count * HOURS_PER_DAY)
+        5.0 if (index % HOURS_PER_DAY) < thin_hours else None for index in range(chunk.day_count * HOURS_PER_DAY)
     ]
     result = _parse(plan, chunk, _payload(plan, chunk, values={chunk.cells[0].cell_key: {"pm10": series}}))
 
@@ -466,9 +464,7 @@ async def test_a_recovered_refusal_still_produces_an_accounted_result(monkeypatc
         return None
 
     monkeypatch.setattr(FETCH_TARGET, flaky)
-    result = await fetch_cams_air_quality_chunk(
-        plan, chunk, client=None, retrieved_at=RETRIEVED_AT, sleep=no_wait
-    )
+    result = await fetch_cams_air_quality_chunk(plan, chunk, client=None, retrieved_at=RETRIEVED_AT, sleep=no_wait)
 
     assert calls == 2  # noqa: PLR2004
     require_accounted_cams_result(plan, result)

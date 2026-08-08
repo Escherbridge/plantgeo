@@ -417,8 +417,7 @@ async def _finalize_release_set(
         (
             await session.execute(
                 select(ReleaseSet).where(
-                    (ReleaseSet.logical_key == release_set_key)
-                    | (ReleaseSet.manifest_checksum == manifest_checksum)
+                    (ReleaseSet.logical_key == release_set_key) | (ReleaseSet.manifest_checksum == manifest_checksum)
                 )
             )
         )

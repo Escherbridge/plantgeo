@@ -102,7 +102,6 @@ class ChunkReceipt(Protocol):
     chunk_key: str
 
 
-
 def require_aware_utc(value: datetime, field_name: str) -> datetime:
     """Refuse a naive timestamp and normalize an aware one to UTC."""
     if value.tzinfo is None or value.utcoffset() is None:
@@ -138,9 +137,7 @@ def canonical_location_document(lane: OpenMeteoLane, wire_payload: bytes) -> byt
     for location in parsed:
         if not isinstance(location, dict):
             raise ValueError(f"{lane.label} response must contain only location objects")
-        stripped.append(
-            {key: value for key, value in location.items() if key not in NONDETERMINISTIC_RESPONSE_FIELDS}
-        )
+        stripped.append({key: value for key, value in location.items() if key not in NONDETERMINISTIC_RESPONSE_FIELDS})
     return canonical_json_bytes(stripped)
 
 

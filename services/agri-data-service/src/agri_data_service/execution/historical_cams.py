@@ -142,9 +142,7 @@ CAMS_AIR_QUALITY_SIGNAL_SPECIFICATIONS: Final[dict[str, CamsAirQualitySignal]] =
 
 # The regional index and the two aerosol fields are domain-specific; asking the wrong domain for one
 # is a plan error, not a gap, so each domain names exactly what it serves.
-CAMS_GLOBAL_PARAMETERS: Final = tuple(
-    sorted(set(CAMS_AIR_QUALITY_SIGNAL_SPECIFICATIONS).difference({"european_aqi"}))
-)
+CAMS_GLOBAL_PARAMETERS: Final = tuple(sorted(set(CAMS_AIR_QUALITY_SIGNAL_SPECIFICATIONS).difference({"european_aqi"})))
 CAMS_EUROPE_PARAMETERS: Final = tuple(
     sorted(set(CAMS_AIR_QUALITY_SIGNAL_SPECIFICATIONS).difference({"aerosol_optical_depth", "dust"}))
 )
@@ -712,9 +710,7 @@ def parse_cams_air_quality_payload(
         _require_hourly_axis(hourly, expected_dates)
         for parameter in plan.parameters:
             specification = CAMS_AIR_QUALITY_SIGNAL_SPECIFICATIONS[parameter]
-            hourly_values = _air_quality_values(
-                hourly, parameter, specification, len(expected_dates) * HOURS_PER_DAY
-            )
+            hourly_values = _air_quality_values(hourly, parameter, specification, len(expected_dates) * HOURS_PER_DAY)
             reduced = _reduce_to_daily(hourly_values, len(expected_dates), specification)
             observed_count = sum(1 for item in reduced if item.quality_flag == QUALITY_FLAG_ACCEPTED)
             hourly_observed_count = sum(1 for value in hourly_values if value is not None)

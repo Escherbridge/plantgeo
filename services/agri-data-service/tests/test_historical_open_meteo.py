@@ -137,9 +137,7 @@ def _payload(
     *,
     values: dict[str, list[float | None]] | None = None,
 ) -> bytes:
-    return canonical_json_bytes(
-        [_location(plan, cell, index, values=values) for index, cell in enumerate(chunk.cells)]
-    )
+    return canonical_json_bytes([_location(plan, cell, index, values=values) for index, cell in enumerate(chunk.cells)])
 
 
 def _capture(payload: bytes) -> OpenMeteoArchiveCapture:
@@ -279,9 +277,9 @@ def test_a_partial_series_stays_partial_with_an_explicit_missing_row() -> None:
     gapped[5] = None
     payload = canonical_json_bytes(
         [
-            _location(plan, cell, index, values={plan.parameters[0]: gapped}) if index == 0 else _location(
-                plan, cell, index
-            )
+            _location(plan, cell, index, values={plan.parameters[0]: gapped})
+            if index == 0
+            else _location(plan, cell, index)
             for index, cell in enumerate(chunk.cells)
         ]
     )
@@ -465,9 +463,7 @@ def test_the_keyless_canonical_url_is_byte_identical_to_the_pre_paid_tier_builde
 
 
 @pytest.mark.parametrize("blank", ["", "   "])
-def test_a_blank_key_is_the_free_tier_not_a_credentialed_request(
-    monkeypatch: pytest.MonkeyPatch, blank: str
-) -> None:
+def test_a_blank_key_is_the_free_tier_not_a_credentialed_request(monkeypatch: pytest.MonkeyPatch, blank: str) -> None:
     """An exported-but-empty variable must not send `apikey=` to a host that would reject it."""
     monkeypatch.setenv(OPEN_METEO_API_KEY_VARIABLE, blank)
     request = archive_daily_request([(43.125, -116.375)], ["soil_moisture_0_to_7cm_mean"], WINDOW_START, WINDOW_END)
@@ -529,9 +525,7 @@ def test_the_plan_checksum_ignores_the_key_environment(monkeypatch: pytest.Monke
 
 
 @pytest.mark.asyncio
-async def test_the_key_reaches_the_wire_and_nothing_durable(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+async def test_the_key_reaches_the_wire_and_nothing_durable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """End to end: the credential is in the request, and in no receipt, checkpoint, or release field."""
     monkeypatch.setenv(OPEN_METEO_API_KEY_VARIABLE, TEST_API_KEY)
     plan = _plan()

@@ -468,8 +468,17 @@ def test_an_unrecognised_product_omits_the_pixel_rather_than_defaulting_to_one()
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
-    [("l", "low"), ("n", "nominal"), ("h", "high"), ("0", "low"), ("29", "low"), ("30", "nominal"),
-     ("80", "nominal"), ("81", "high"), ("100", "high")],
+    [
+        ("l", "low"),
+        ("n", "nominal"),
+        ("h", "high"),
+        ("0", "low"),
+        ("29", "low"),
+        ("30", "nominal"),
+        ("80", "nominal"),
+        ("81", "high"),
+        ("100", "high"),
+    ],
 )
 def test_the_two_confidence_spellings_normalise_onto_one_scale(raw: str, expected: str) -> None:
     """VIIRS writes l/n/h and MODIS a 0-100 percentage into one `properties.confidence`."""

@@ -31,9 +31,7 @@ OpenMeteoFloodBaseUrl = Literal[
 ]
 
 OPEN_METEO_FLOOD_BASE_URL: Final[OpenMeteoFloodBaseUrl] = "https://flood-api.open-meteo.com/v1/flood"
-OPEN_METEO_FLOOD_CUSTOMER_BASE_URL: Final[OpenMeteoFloodBaseUrl] = (
-    "https://customer-flood-api.open-meteo.com/v1/flood"
-)
+OPEN_METEO_FLOOD_CUSTOMER_BASE_URL: Final[OpenMeteoFloodBaseUrl] = "https://customer-flood-api.open-meteo.com/v1/flood"
 
 # A four-year daily replay for 200 reaches is roughly 16 MB of JSON; the ceiling leaves headroom for
 # the full ensemble-statistic variable set without ever allowing an unbounded body.

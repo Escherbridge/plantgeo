@@ -1,6 +1,5 @@
 """Contract tests for the GloFAS flood lane: product inheritance, accounting, nulls, and bounded values."""
 
-
 from __future__ import annotations
 
 import hashlib
@@ -267,9 +266,7 @@ def test_a_value_outside_its_reviewed_physical_range_fails_the_whole_chunk() -> 
 def test_a_grid_point_outside_the_reviewed_cell_is_refused() -> None:
     plan = _plan()
     chunk = plan.chunks[0]
-    document = [
-        _location(plan, cell, index) for index, cell in enumerate(chunk.cells)
-    ]
+    document = [_location(plan, cell, index) for index, cell in enumerate(chunk.cells)]
     document[0]["latitude"] = 45.0
     with pytest.raises(ValueError, match="outside the reviewed cell"):
         _parse(plan, chunk, canonical_json_bytes(document))
@@ -441,9 +438,7 @@ async def test_a_recovered_refusal_still_produces_an_accounted_result(monkeypatc
         return None
 
     monkeypatch.setattr(FETCH_TARGET, flaky)
-    result = await fetch_glofas_flood_chunk(
-        plan, chunk, client=None, retrieved_at=RETRIEVED_AT, sleep=no_wait
-    )
+    result = await fetch_glofas_flood_chunk(plan, chunk, client=None, retrieved_at=RETRIEVED_AT, sleep=no_wait)
 
     assert calls == 2  # noqa: PLR2004
     require_accounted_glofas_result(plan, result)

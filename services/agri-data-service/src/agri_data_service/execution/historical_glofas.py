@@ -93,16 +93,10 @@ class GlofasFloodSignal(NamedTuple):
 # Amazon peaks near 300,000 m^3/s, so the ceiling is generous, finite, and still rejects a fill value.
 GLOFAS_FLOOD_SIGNAL_SPECIFICATIONS: Final[dict[str, GlofasFloodSignal]] = {
     "river_discharge": GlofasFloodSignal("river_discharge", "m^3/s", "m^3/s", 0.0, 1_000_000.0),
-    "river_discharge_max": GlofasFloodSignal(
-        "river_discharge_ensemble_maximum", "m^3/s", "m^3/s", 0.0, 1_000_000.0
-    ),
+    "river_discharge_max": GlofasFloodSignal("river_discharge_ensemble_maximum", "m^3/s", "m^3/s", 0.0, 1_000_000.0),
     "river_discharge_mean": GlofasFloodSignal("river_discharge_ensemble_mean", "m^3/s", "m^3/s", 0.0, 1_000_000.0),
-    "river_discharge_median": GlofasFloodSignal(
-        "river_discharge_ensemble_median", "m^3/s", "m^3/s", 0.0, 1_000_000.0
-    ),
-    "river_discharge_min": GlofasFloodSignal(
-        "river_discharge_ensemble_minimum", "m^3/s", "m^3/s", 0.0, 1_000_000.0
-    ),
+    "river_discharge_median": GlofasFloodSignal("river_discharge_ensemble_median", "m^3/s", "m^3/s", 0.0, 1_000_000.0),
+    "river_discharge_min": GlofasFloodSignal("river_discharge_ensemble_minimum", "m^3/s", "m^3/s", 0.0, 1_000_000.0),
     "river_discharge_p25": GlofasFloodSignal(
         "river_discharge_ensemble_percentile_25", "m^3/s", "m^3/s", 0.0, 1_000_000.0
     ),
@@ -272,8 +266,7 @@ class HistoricalGlofasFloodPlan(ContractModel):
         disagreeing = sorted(field for field, value in inherited.items() if getattr(self, field) != value)
         if disagreeing:
             raise ValueError(
-                f"GloFAS flood plan restates its product incorrectly for model '{self.model}': "
-                f"{', '.join(disagreeing)}"
+                f"GloFAS flood plan restates its product incorrectly for model '{self.model}': {', '.join(disagreeing)}"
             )
         unserved = sorted(set(self.parameters).difference(product.supported_parameters))
         if unserved:

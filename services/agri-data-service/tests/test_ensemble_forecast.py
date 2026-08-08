@@ -124,9 +124,7 @@ def _payload(
 ) -> bytes:
     """Build a canonical multi-location document; `member_values` overrides one (member, step) cell."""
     overrides = member_values or {}
-    times = [
-        (plan.issue_time + timedelta(hours=step)).strftime("%Y-%m-%dT%H:%M") for step in range(plan.step_count)
-    ]
+    times = [(plan.issue_time + timedelta(hours=step)).strftime("%Y-%m-%dT%H:%M") for step in range(plan.step_count)]
     locations: list[dict[str, object]] = []
     for index, cell in enumerate(chunk.cells):
         hourly: dict[str, object] = {"time": times}
@@ -572,9 +570,7 @@ async def test_a_recovered_refusal_still_produces_an_accounted_result(monkeypatc
         return None
 
     monkeypatch.setattr(FETCH_TARGET, flaky)
-    result = await fetch_ensemble_forecast_chunk(
-        plan, chunk, client=None, retrieved_at=RETRIEVED_AT, sleep=no_wait
-    )
+    result = await fetch_ensemble_forecast_chunk(plan, chunk, client=None, retrieved_at=RETRIEVED_AT, sleep=no_wait)
 
     assert calls == 2
     require_accounted_ensemble_forecast_result(plan, result)

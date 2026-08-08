@@ -1,6 +1,5 @@
 """Open-Meteo GloFAS adapter: model threading, parameter ordering, host provenance, and quota typing."""
 
-
 from __future__ import annotations
 
 import json

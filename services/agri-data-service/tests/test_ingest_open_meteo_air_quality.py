@@ -36,8 +36,7 @@ def _query(url: str) -> dict[str, list[str]]:
 
 def test_air_quality_parameters_carry_the_requested_domain_and_pin_gmt() -> None:
     sent = {
-        domain: air_quality_hourly_parameters(COORDINATES, VARIABLES, START, END, domain)
-        for domain in CAMS_DOMAINS
+        domain: air_quality_hourly_parameters(COORDINATES, VARIABLES, START, END, domain) for domain in CAMS_DOMAINS
     }
 
     # The domain reaches the wire for every reviewed product; nothing downstream may substitute a default.
@@ -92,8 +91,7 @@ def test_the_endpoints_own_host_rule_refuses_an_unreviewed_host() -> None:
     endpoint = OPEN_METEO_AIR_QUALITY_ENDPOINT
     assert endpoint.require_base_url(OPEN_METEO_AIR_QUALITY_BASE_URL) == OPEN_METEO_AIR_QUALITY_BASE_URL
     assert (
-        endpoint.require_base_url(OPEN_METEO_AIR_QUALITY_CUSTOMER_BASE_URL)
-        == OPEN_METEO_AIR_QUALITY_CUSTOMER_BASE_URL
+        endpoint.require_base_url(OPEN_METEO_AIR_QUALITY_CUSTOMER_BASE_URL) == OPEN_METEO_AIR_QUALITY_CUSTOMER_BASE_URL
     )
     with pytest.raises(ValueError, match="not a reviewed endpoint"):
         endpoint.require_base_url("https://air-quality-api.open-meteo.example/v1/air-quality")

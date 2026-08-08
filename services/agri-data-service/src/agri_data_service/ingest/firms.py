@@ -68,9 +68,7 @@ FIRMS_AREA_CSV_TEMPLATE: Final = (
 # The same endpoint with a trailing start date, which is the whole of FIRMS' archive access: there is
 # no separate archive host, only products whose availability window reaches further back.
 FIRMS_AREA_CSV_DATED_TEMPLATE: Final = f"{FIRMS_AREA_CSV_TEMPLATE}/{{start_date}}"
-FIRMS_AVAILABILITY_CSV_TEMPLATE: Final = (
-    "https://firms.modaps.eosdis.nasa.gov/api/data_availability/csv/{api_key}/all"
-)
+FIRMS_AVAILABILITY_CSV_TEMPLATE: Final = "https://firms.modaps.eosdis.nasa.gov/api/data_availability/csv/{api_key}/all"
 
 # The full VIIRS NRT constellation, matching `nasa-firms.ts` FIRMS_VIIRS_SOURCES. Querying a single
 # satellite silently zeroes the layer whenever that satellite stops publishing -- see ingest/AGENTS.md
