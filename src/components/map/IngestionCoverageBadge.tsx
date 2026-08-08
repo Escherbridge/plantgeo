@@ -13,8 +13,11 @@ import {
  * so an empty layer outside that box means "not ingested here", not "nothing
  * happening here" -- a distinction the map itself cannot express.
  *
- * Renders as an inline strip, hosted inside the search panel (see SearchBar),
- * so it never overlaps the map toolbar.
+ * Renders as an inline strip at the foot of the manager's Search section, so it never overlaps
+ * the map and never competes with the field above it. That section is collapsible, which makes
+ * this the one query in the manager that is not a report's: it is an hour-stale descriptor the
+ * old always-mounted search field issued on every map load, so hosting it in a section that can
+ * be shut strictly reduces requests.
  */
 export function IngestionCoverageBadge() {
   const coverage = trpc.layers.getIngestionCoverage.useQuery(undefined, {

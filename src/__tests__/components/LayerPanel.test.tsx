@@ -12,6 +12,7 @@ import {
   PANEL_SCROLLER,
   PANEL_SHELL,
 } from "@/components/map/layer-panel/panel-scroll";
+import { SEARCH_INPUT_DOM_ID } from "@/components/map/layer-panel/SearchDockSection";
 import { LAYER_REGISTRY, LAYER_TOGGLE_IDS } from "@/lib/map/layer-registry";
 import { DEFAULT_SOIL_FIELD_DEPTHS } from "@/lib/environmental/soil-field";
 import { useLayerStore } from "@/stores/layer-store";
@@ -104,7 +105,7 @@ function scrollerWithin(panel: HTMLElement): Element {
 
 beforeEach(() => {
   useMapStore.setState({ activeLayers: [] });
-  useLayerStore.setState({ legendVisible: true, layerOpacity: {} });
+  useLayerStore.setState({ layerOpacity: {} });
   usePanelStore.setState({
     layerPanelOpen: false,
     // Reset to nothing rather than to the store's own seed: these cases are about the reports,
@@ -181,10 +182,42 @@ describe("LayerPanel scroll contract", () => {
 
   // Height derives from the container, not from `vh`: the map shell is sized in `dvh`, and on
   // a mobile browser with a retracting toolbar a `vh` cap can exceed the box it is capping.
+  //
+  // `top-4`, not `top-20`: the 5rem gap existed solely to clear the floating search field that
+  // overlaid this panel's header, and that field is a section inside it since 2026-08-09.
   it("takes its height from the container rather than the viewport", () => {
     expect(PANEL_SHELL).not.toMatch(/\bmax-h-\[.*vh/);
-    expect(PANEL_SHELL).toContain("top-20");
+    expect(PANEL_SHELL).toContain("top-4");
+    expect(PANEL_SHELL).not.toContain("top-20");
     expect(PANEL_SHELL).toContain("bottom-4");
+  });
+
+  /**
+   * The scrollbar is unpainted; the scrolling is not. `scrollbar-hidden` (globals.css) sets
+   * `scrollbar-width: none` and zeroes the WebKit pseudo-element, and touches nothing else --
+   * so this asserts the pair, because the failure mode of "hide the scrollbar" is reaching for
+   * `overflow-hidden` and taking the scrolling with it.
+   */
+  it("hides the scrollbar without giving up the scrolling", () => {
+    expect(PANEL_SCROLLER).toContain("scrollbar-hidden");
+    expect(PANEL_SCROLLER).toContain("overflow-y-auto");
+    expect(PANEL_SCROLLER).not.toContain("overflow-hidden");
+  });
+
+  /**
+   * Mobile is the same tree in a different box: a full-screen overlay, because a 19rem drawer
+   * on a 360px screen leaves a 56px strip that is neither a usable map nor a usable panel. The
+   * z-lift is part of it -- the date pill and the hover tooltip are both z-10 and would
+   * otherwise paint through an overlay that covers the whole viewport.
+   */
+  it("becomes a full-screen overlay on a phone", () => {
+    expect(PANEL_SHELL).toContain("max-sm:inset-0");
+    expect(PANEL_SHELL).toContain("max-sm:w-full");
+    expect(PANEL_SHELL).toContain("max-sm:z-30");
+    // Square-cornered and borderless: a rounded edge against the viewport edge reads as a
+    // rendering fault rather than as a panel.
+    expect(PANEL_SHELL).toContain("max-sm:rounded-none");
+    expect(PANEL_SHELL).toContain("max-sm:border-0");
   });
 });
 
@@ -199,7 +232,7 @@ describe("LayerPanel layer tree", () => {
     }
   });
 
-  // `building-footprints` is switched from the MapControls toolbar and belongs to no panel, so
+  // `building-footprints` belongs to no category, so
   // without a home in the tree the one comprehensive list of layers would be missing one.
   it("files the layer no panel governs under its own group", () => {
     renderDock();
@@ -336,15 +369,20 @@ describe("LayerPanel layer tree", () => {
     }
   });
 
-  // One boolean, two controls: the corner legend card and this header button. Two surfaces
-  // over one value cannot contradict each other.
-  it("shares the legend's own visibility flag rather than keeping a second one", () => {
+  /**
+   * The header carried a second legend eye until 2026-08-09, over a corner card the reader
+   * could not see while using the control that hid it. The legend is the collapsed state of
+   * this panel now, so there is one control left in this header and it is "put it away".
+   */
+  it("leaves one control in its header, and it is the close button", () => {
     renderDock();
-    openPanel();
+    const panel = openPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide legend entries" }));
-
-    expect(useLayerStore.getState().legendVisible).toBe(false);
+    const header = panel.querySelector("header") as HTMLElement;
+    const headerButtons = Array.from(header.querySelectorAll("button"));
+    expect(headerButtons).toHaveLength(1);
+    expect(headerButtons[0].getAttribute("aria-label")).toBe("Close map manager");
+    expect(screen.queryByRole("button", { name: "Hide legend entries" })).toBeNull();
   });
 
   it("renders nothing while it is undocked", () => {
@@ -563,5 +601,110 @@ describe("LayerPanel time section", () => {
     expect(screen.getByTestId("time-slider")).toBeTruthy();
     // Consumed on arrival, so a later expansion by hand does not re-scroll the dock.
     expect(usePanelStore.getState().pendingScrollSection).toBeNull();
+  });
+});
+
+/**
+ * The floating search field and the bottom toolbar became sections on 2026-08-09. Both had been
+ * competing surfaces: the field overlapped this panel's own header, and the toolbar's fifth
+ * button wrote the same `activeLayers` entry the layer tree's Basemap row writes.
+ *
+ * These cases pin the two properties that make the merge a fix rather than a move -- the
+ * sections lead the scroller because each governs every layer, and the View section owns no
+ * layer switch at all.
+ */
+describe("LayerPanel control sections", () => {
+  it("leads the scroller with where, when and how, above every category", () => {
+    renderDock();
+    const panel = openPanel();
+
+    const search = screen.getByTestId("dock-section-search");
+    const time = screen.getByTestId("dock-section-time");
+    const view = screen.getByTestId("dock-section-view");
+    const firstGroup = screen.getByTestId("layer-group-fire");
+
+    for (const section of [search, time, view]) {
+      expect(scrollerWithin(panel).contains(section)).toBe(true);
+    }
+    // A control that governs every layer, filed among the categories, would read as belonging
+    // to whichever one it landed beside.
+    expect(search.compareDocumentPosition(time) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(time.compareDocumentPosition(view) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      view.compareDocumentPosition(firstGroup) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("puts the search field in the panel, with the Ctrl+K shortcut's handle on it", () => {
+    renderDock();
+    openPanel();
+    fireEvent.click(detailsToggleFor("Search places"));
+
+    const field = screen.getByRole("combobox", { name: "Search places" });
+    // The shortcut cannot hold a ref into a section that is unmounted while collapsed, so the
+    // handle it focuses is a DOM id -- see MapKeyboardShortcuts.
+    expect(field.id).toBe(SEARCH_INPUT_DOM_ID);
+  });
+
+  // Photon answers names, not numbers, so a typed coordinate pair is the one thing the deleted
+  // command palette could do that geocoding cannot. It is bounds-checked because MapLibre
+  // throws on a non-finite centre rather than ignoring it.
+  it("offers a coordinate jump for a typed lat/lon pair, and only for a valid one", () => {
+    renderDock();
+    openPanel();
+    fireEvent.click(detailsToggleFor("Search places"));
+    const field = screen.getByRole("combobox", { name: "Search places" });
+
+    fireEvent.change(field, { target: { value: "45.52, -122.68" } });
+    expect(screen.getByText(/Go to 45\.5200, -122\.6800/)).toBeTruthy();
+
+    fireEvent.change(field, { target: { value: "145.52, -122.68" } });
+    expect(screen.queryByText(/^Go to /)).toBeNull();
+  });
+
+  /**
+   * The whole reason render mode is its own section. Changing how the map is lit must never add
+   * or drop a layer, and the toolbar this replaced broke that with a building-footprints button
+   * sitting between the globe and the 3D toggles.
+   */
+  it("gives render mode no layer switch of its own", () => {
+    renderDock();
+    openPanel();
+    fireEvent.click(detailsToggleFor("Map view"));
+
+    const view = screen.getByTestId("dock-section-body-view");
+    const switchNames = Array.from(view.querySelectorAll('[role="switch"]')).map((control) =>
+      control.textContent
+    );
+    expect(switchNames).toEqual(["Terrain", "Globe", "3D tilt"]);
+    expect(view.textContent).not.toContain(LAYER_REGISTRY["building-footprints"].label);
+  });
+
+  it("keeps the layer no category governs switchable from its Basemap row alone", () => {
+    renderDock();
+    openPanel();
+
+    // Withheld, so the eye is disabled -- but it exists, and it is the only one. The toolbar
+    // button that used to be the second is gone.
+    const eyes = screen.getAllByRole("switch", { name: "Show 3D Building Footprints on map" });
+    expect(eyes).toHaveLength(1);
+  });
+
+  it("changes render mode without touching what is drawn", () => {
+    renderDock();
+    openPanel();
+    act(() => {
+      useMapStore.getState().toggleLayer("sensors");
+    });
+    fireEvent.click(detailsToggleFor("Map view"));
+
+    fireEvent.click(screen.getByRole("switch", { name: "Terrain" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Globe" }));
+    fireEvent.click(screen.getByRole("switch", { name: "3D tilt" }));
+
+    expect(useMapStore.getState().isTerrainEnabled).toBe(true);
+    expect(useMapStore.getState().isGlobeView).toBe(true);
+    expect(useMapStore.getState().is3DEnabled).toBe(true);
+    expect(useMapStore.getState().activeLayers).toEqual(["sensors"]);
   });
 });

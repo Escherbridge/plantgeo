@@ -10,7 +10,7 @@ import {
 import {
   LAYER_REGISTRY,
   LAYER_TOGGLE_IDS,
-  TOOLBAR_OWNED_LAYER_TOGGLE_IDS,
+  UNCATEGORISED_LAYER_TOGGLE_IDS,
   isLayerToggleId,
   panelIdForLayerToggle,
   panelIdsOwningLayers,
@@ -138,7 +138,7 @@ describe('layer registry derivations', () => {
     expect(getLayersForPanel('analytics')).toEqual([])
   })
 
-  it('keeps "building-footprints" toolbar-owned rather than panel-owned', () => {
+  it('keeps "building-footprints" uncategorised rather than panel-owned', () => {
     expect(panelIdForLayerToggle('building-footprints')).toBeNull()
   })
 
@@ -155,12 +155,12 @@ describe('layer registry derivations', () => {
     ])
   })
 
-  // The dock is meant to be comprehensive: every toggle reaches a category unless it is on
-  // the toolbar allowlist. A new entry that forgets its panelId shows up here. Necessary but
-  // not sufficient -- an entry naming a category the dock renders no row for passes this and
-  // is caught by the reachability test below instead.
-  it('leaves no layer unreachable from either the dock or the toolbar', () => {
-    expect(TOOLBAR_OWNED_LAYER_TOGGLE_IDS).toEqual(['building-footprints'])
+  // The manager is meant to be comprehensive: every toggle reaches a category unless it is on
+  // the uncategorised allowlist. A new entry that forgets its panelId shows up here. Necessary
+  // but not sufficient -- an entry naming a category the manager renders no row for passes this
+  // and is caught by the reachability test below instead.
+  it('leaves no layer unreachable from the manager', () => {
+    expect(UNCATEGORISED_LAYER_TOGGLE_IDS).toEqual(['building-footprints'])
     expect(unreachableLayerToggleIds()).toEqual([])
   })
 
@@ -172,9 +172,10 @@ describe('layer registry derivations', () => {
     expect(unreachableLayerToggleIds(dockReachableLayerToggleIds())).toEqual([])
   })
 
-  // The comprehensiveness claim in the other direction: the dock's own bucket for layers no
-  // category governs is what keeps `building-footprints` -- switched from the MapControls
-  // toolbar -- in the one complete list of layers rather than missing from it.
+  // The comprehensiveness claim in the other direction: the manager's own bucket for layers no
+  // category governs is what keeps `building-footprints` in the one complete list of layers
+  // rather than missing from it. Since the bottom toolbar went on 2026-08-09 that bucket's row
+  // is also its ONLY switch, so a regression here would make the layer unreachable outright.
   it('files the layer no category governs under the dock’s own bucket', () => {
     const basemap = DOCK_LAYER_GROUPS.find((group) => group.key === 'Basemap')
     expect(basemap?.layerIds).toEqual(['building-footprints'])
@@ -204,7 +205,7 @@ describe('layer registry derivations', () => {
     const orphaned = [...new Set(dockReachableLayerToggleIds())].filter(
       (layerId) =>
         panelIdForLayerToggle(layerId) === null &&
-        !TOOLBAR_OWNED_LAYER_TOGGLE_IDS.includes(layerId as (typeof LAYER_TOGGLE_IDS)[number])
+        !UNCATEGORISED_LAYER_TOGGLE_IDS.includes(layerId as (typeof LAYER_TOGGLE_IDS)[number])
     )
     expect(orphaned).toEqual([])
   })
@@ -258,7 +259,7 @@ describe('layer registry derivations', () => {
       'evacuation-zones': 'Evacuation Zones',
       'burn-severity': 'Burn History (MTBS)',
       // The one label with no <LayerToggle> predecessor: this layer is switched from the
-      // MapControls toolbar, never from a panel.
+      // manager's own Basemap bucket, never from a category's report.
       'building-footprints': '3D Building Footprints',
     })
   })
@@ -277,6 +278,28 @@ describe('layer registry derivations', () => {
    */
   it('leaves the registry as the only place a layer is named', () => {
     expect(existsSync(join(COMPONENTS_DIR, 'ui', 'layer-toggle.tsx'))).toBe(false)
+  })
+
+  /**
+   * The same claim for the 2026-08-09 wave, and the same reason for asserting absence rather
+   * than scanning: each of these files held a control that WROTE state the manager owns --
+   * `MapControls` a second `building-footprints` switch beside four render-mode buttons,
+   * `CommandPalette` a `toggleLayer('fire-perimeters')` command plus the basemap/terrain/globe/
+   * 3D commands, `SearchBar` the field that overlapped the manager's own header. Deleting them
+   * is what makes the manager authoritative; hiding them would have left every one of those
+   * writers live.
+   */
+  it.each([
+    ['map', 'MapControls.tsx'],
+    ['map', 'TerrainControl.tsx'],
+    ['map', 'GlobeToggle.tsx'],
+    ['map', 'Legend.tsx'],
+    ['search', 'SearchBar.tsx'],
+    ['search', 'SearchResults.tsx'],
+    ['search', 'RecentSearches.tsx'],
+    ['search', 'CommandPalette.tsx'],
+  ] as const)('leaves no floating %s/%s surface writing map state', (directory, file) => {
+    expect(existsSync(join(COMPONENTS_DIR, directory, file))).toBe(false)
   })
 
   it('treats a user-uploaded layer id as outside the registry', () => {

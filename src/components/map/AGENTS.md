@@ -8,7 +8,7 @@ Location selection is a privacy boundary. `AgentInteraction` requires an explici
 
 Two rules follow. First, projection changes set the projection and nothing else: `MapView`'s globe effect used to clamp zoom to ≤5 on entry and ≥3 on exit, which crossed the `minzoom` thresholds in `src/lib/map/layers.ts` (interventions 6, `osm-roads` 10, `building-footprints` 13, `buildings-3d` 14, `osm-waterways` 8) and made toggled-on layers vanish; the exit clamp also never restored the pre-globe zoom, so the round trip was lossy. Second, an empty data feed is not the same as a toggle being off: a layer whose feed returns nothing renders an empty source and stays mounted, so a later style swap cannot be mistaken for the user having hidden it.
 
-The legend is a consumer of this vocabulary, not a second source of it — see below. So is the left-edge dock (`src/components/map/layer-panel/`), which since 2026-08-08 owns the only switch a layer has: its eyes call `useToggleLayer`, and the sixteen `<LayerToggle>` switches that used to call it from seven right-hand sheets went with the sheets.
+The legend is a consumer of this vocabulary, not a second source of it — see below. So is the left-edge manager (`src/components/map/layer-panel/`), which since 2026-08-08 owns the only switch a layer has: its eyes call `useToggleLayer`, and the sixteen `<LayerToggle>` switches that used to call it from seven right-hand sheets went with the sheets. The last competing writer went on 2026-08-09 with the bottom toolbar, whose building-footprints button wrote the same `activeLayers` entry the manager's own Basemap row writes — and whose other five controls (basemap, terrain, globe, tilt) were render mode, which this rule says must never touch a layer. They are now a section that owns no layer switch at all, so the separation is structural rather than remembered.
 
 ## Opacity is a multiplier, applied per layer type
 
@@ -26,13 +26,21 @@ Two layers make the case on their own. `watersheds` paints its fill at `0.05` �
 
 **The opacity record must never enter the `style.load` handler's dependency array.** It is read through `layerOpacityRef`, exactly as `layerVisibility` and the slider day are — see "Style.load listener order" below for what re-registering that handler does to the service-area mask. A slider fires far more often than a settled scrub, so this is the likeliest place to hit that trap.
 
-## The legend legends what is drawn
+## The legend IS the active-layer chips
 
-`Legend` renders one section per switched-on layer, resolved from `useLayerVisibility()` against the specs in `src/lib/map/layer-legends.ts`, and renders nothing while every toggle is off. It is mounted in `MapView` beside `TimeDatePill`, so an encoding stays readable with every panel closed. It used to list `trpc.layers.list` rows — `geo.layers` names, one flat `stylePresets`/`styleOverrides` swatch each — which named warehouse publications rather than drawn encodings: a fill keyed to a `severity` match showed as one arbitrary colour, a ramp showed as nothing at all, and the card needed a network round-trip before it could say anything. The 2026-08-07 rewrite dropped tRPC and every `layer-store` field but `legendVisible` from it.
+`LayerLegend` (`src/components/map/layer-panel/LayerLegend.tsx`) resolves the drawn layers once from `useLayerVisibility()` against the specs in `src/lib/map/layer-legends.ts`, and renders that one resolution in two states of itself. **Collapsed it is a chip row** — a swatch and the registry label per drawn layer, scrolling sideways with no painted scrollbar. **Expanded it is the taxonomy** — the same layers grouped under the same category headings the layer tree uses, each with the blocks that say what its colours mean. It opens on hover, on focus and on click, because a pointer, a keyboard and a touch screen each have exactly one of those; Escape closes a pinned one.
+
+**One component, because it is one fact.** The alternative shipped in most map UIs — a chip strip naming the drawn layers plus a legend card explaining their colours — is two renderings of `activeLayers` that have to be kept in step, and the failure mode is silent: a layer appears in one and not the other. Here `entries` is computed once and the collapsed state is a projection of it, so there is nothing to synchronise.
+
+It renders nothing while every toggle is off, which is how the map starts, and nothing while the manager is open: the layer tree in there already carries a swatch, a name and a category heading per layer. It is mounted inside `ManagerRail`, which is the whole of the collapsed manager.
+
+Two shapes preceded it. Until 2026-08-07 it listed `trpc.layers.list` rows — `geo.layers` names, one flat `stylePresets`/`styleOverrides` swatch each — which named warehouse publications rather than drawn encodings: a fill keyed to a `severity` match showed as one arbitrary colour, a ramp showed as nothing at all, and the card needed a network round-trip before it could say anything. That rewrite dropped tRPC and every `layer-store` field but `legendVisible`. `legendVisible` itself went on 2026-08-09: it was a global boolean with two controls over it (the card's own eye and a second one in the manager's header, the latter governing a card the reader could not see while using it), and disclosure here is now local to the component that owns it.
 
 Two invariants keep it honest, both enforced in `layer-legends.ts`. First, **no colour is written in the legend**: every swatch, class row and ramp stop is imported from the module whose paint expression uses it, and where a ramp was inline in a renderer the renderer now reads an exported constant (`FIRE_CONTAINMENT_COLOR_STOPS`, `DEMAND_DENSITY_COLOR_STOPS`, `BURN_SEVERITY_ACRES_STOPS`, the `StyleClass` tables in `layers.ts`), so the two cannot drift. Second, **a toggle earns a spec only if switching it on paints something**: `soil` has none because `getEnvironmentalTileTemplate` returns `""` and `SoilLayer` adds no source at all; `vegetation` legends NDVI only, because `getNDWITileUrl` returns `""` unconditionally and NBR is unpublished for the same reason; `building-footprints` has none because the registry withholds it. `LEGENDLESS_TOGGLE_REASONS` records each. Legending a colour the map never draws is the failure this module exists to prevent, so an entry that "looks missing" is a claim to check against the renderer, not a gap to fill.
 
-Where the inventory of encodings and the map disagree, the map wins: `burn-severity` is a ramp over **acres**, not MTBS severity classes (that column is null on every published row). The unmounted `BurnHistoryLayer`/`LandFireLayer` components, whose class tables were legended nowhere for that reason, were deleted 2026-08-08 with the rest of the never-mounted layer files.
+Where the inventory of encodings and the map disagree, the map wins: `burn-severity` is a ramp over **acres**, not MTBS severity classes (that column is null on every published row). The unmounted `BurnHistoryLayer`/`LandFireLayer` components, whose class tables were legended nowhere for that reason, were deleted 2026-08-08 with the rest of the never-mounted layer files. `src/lib/server/services/landfire.ts` is a *server* module with the same name and is **not** dead in the same sense — it is the read-model side and out of a control-surface refactor's reach; check its callers before assuming.
+
+The chip in a layer row and the chip in the legend are the same `LayerSwatch`, and it decides its own shape from the toggle id (`POINT_LAYER_TOGGLE_IDS` lives in that file). It took an `isRound` prop until 2026-08-09, which meant the point-layer set was written out at each call site — two copies of one classification, in two files, with nothing making them agree.
 
 ## The layer registry and the toggle context
 
@@ -42,22 +50,43 @@ Where the inventory of encodings and the map disagree, the map wins: `burn-sever
 
 The registry also owns the **label** and the **icon** a reader sees. Until 2026-08-08 every layer name was a hand-typed `label` prop at one of sixteen `<LayerToggle>` call sites, so nothing that was not one of those five panels could name a layer — the dock would have had to duplicate all sixteen strings or import five panels to render a list. The labels moved here, `LayerToggle`'s `label` prop became an optional override that no call site passed, and later the same day `LayerToggle` itself was deleted with the sheets: a hand-typed layer name is now inexpressible rather than merely discouraged. `layer-registry.test.ts` pins the exact strings, so a silent rewording fails there. The icon is a NAME (`LayerIconName`), not a component: this module is imported by stores, by `layers.ts` and by node-run tests, and `src/components/map/layer-panel/layer-icons.tsx` is the one place it becomes React.
 
-## One dock, no sheets
+## One manager, no floating surfaces
 
-**Superseded 2026-08-08.** This section used to be titled "The layer tree is an additional surface, not a replacement" and described a left-edge dock living alongside seven right-hand sheets. The sheets are gone. `src/components/map/layer-panel/` is now the only panel surface on the map, and everything the sheets rendered is a section of it.
+**Superseded 2026-08-09.** This section was "The layer tree is an additional surface, not a replacement" (a dock beside seven sheets), then "One dock, no sheets" (2026-08-08). `src/components/map/layer-panel/` is now the only **control** surface on the map: every setting a reader can change is a section of one left-edge column, and what is left outside it collapses with it.
 
-What was removed, and why each removal was a fix rather than a tidy-up:
+### The 2026-08-09 wave: search, the toolbar, the legend card
+
+Three floating surfaces went. Each removal answers a specific defect, not a taste:
+
+- **`SearchBar` (+ `SearchResults`, `RecentSearches`) → the Search section.** The field was a glass card at `top-4 left-4`, which is exactly where the manager's own header sits: the two overlapped, and search was the only control in the app that was neither in the manager nor reachable from it. The two result lists were the *same list rendered twice* — a `ZOOM_BY_TYPE` table, a `ResultIcon` switch and a `max-h-[300px] overflow-y-auto` in each — so they became one list told which rows to draw, and the nested scroller went with them (`panel-scroll.ts` rule 2). Its arrow-key handler was bound to the `<ul>` behind `tabIndex={-1}`, which cannot receive keys while someone is typing in the field above it, so arrow selection had never actually worked; it is bound to the field now.
+- **`MapControls` (+ `TerrainControl`, `GlobeToggle`) → the View section.** A floating bar across the bottom of the canvas. Four of its controls are render mode, and the fifth was a **building-footprints switch writing the same `activeLayers` entry the layer tree's own row writes**, with one of the two always out of sight — the identical defect the sixteen `<LayerToggle>`s had. The View section carries no layer switch at all, which turns "render mode never touches a layer" from a rule into a structural property. `StyleSwitcher` survived the move (a swatch row is a swatch row); the two icon-button files did not, because an unlabelled 40px icon button is toolbar chrome and a sidebar row wants its name visible.
+- **`CommandPalette` (+ `src/components/ui/command.tsx`) → nothing, and Ctrl/Cmd+K repointed.** The palette duplicated basemap, terrain, globe, 3D and one layer toggle as *commands*, i.e. a second writer for every one of them. Ctrl/Cmd+K was never advertised as a palette shortcut — the chip that named it sat inside the search field — so it now opens the manager at the Search section and focuses the field. The one capability the palette had that geocoding does not is a jump to a typed coordinate pair (Photon answers names, not numbers); that is preserved as `parseCoordinatePair` in the Search section, bounds-checked, because MapLibre throws on a non-finite centre.
+- **`Legend` → `LayerLegend`, inside the collapsed manager.** See "The legend IS the active-layer chips" above.
+- **`DockToggle` → `ManagerRail`.** The button did not disappear; it moved into the one row that is the collapsed manager, alongside `AlertBell` and the legend.
+
+**What the collapsed state is.** One row at the bottom-left — where the toolbar used to be, deliberately **not** where the search field used to be, since the top-left corner is what the manager's header claims. Its three parts each have a fuller form inside the open manager: the button becomes the header's close control, the bell becomes the Alerts section's badge, the legend becomes the layer tree. `ManagerRail` therefore returns `null` while the manager is open rather than repositioning, and `--layer-panel-inset` — the variable that used to slide the toolbar and the toggle out from under the panel — was deleted with its last two consumers.
+
+**Mobile is the same tree in a different box.** Under `max-sm` the shell is `inset-0 z-30`, square-cornered and borderless: a full-screen overlay. A 19rem drawer on a 360px screen leaves a 56px strip that is neither a usable map nor a usable panel. Nothing about the content branches on viewport — the sections, the reports and the one scroller are identical — and `useMapPaddingForPanel` skips the camera shift there, because there is no remaining map to re-centre and moving it would leave the reader somewhere else on dismissal. A bottom sheet with detents was considered and rejected: it needs a second scroll story (sheet drag versus content scroll) for the one surface that has exactly one scroller by contract.
+
+**Keyboard bindings cannot live in a collapsing surface.** `MapControls` held r/t/g/1/2/3 and `CommandPalette` held Ctrl/Cmd+K, and both were mounted unconditionally. A section is unmounted while collapsed — that is the whole point of the mounting rule below — so the same `useEffect` inside `ViewDockSection` would silently unbind `t` the moment someone shut it. `MapKeyboardShortcuts` is headless, renders `null` and never unmounts, exactly as `TimeSliderCapabilitiesLoader` does and for the same reason. It reads `useMapStore.getState()` imperatively rather than through selectors, so the listener registers once.
+
+### The 2026-08-08 wave: the sheets
+
+What was removed then, and why each removal was a fix rather than a tidy-up:
 
 - **`PanelManager.tsx` and its icon rail.** Seven unlabeled 44px buttons, one per sheet, each opening a full-height overlay over the map you were reading. `panel-store.openPanel` made them mutually exclusive, so comparing the fire counts with the water gauges meant closing one report to open the other. The dock stacks all eight, and the map stays visible beside them.
 - **Every `<Sheet side="right">`.** A sheet portals a `fixed inset-0` scrim over the whole viewport (`src/components/ui/sheet.tsx`) and sets `document.body.style.overflow = "hidden"`. That covered the then-`TimeSliderPanel` region — the app's one time control — whenever any data panel was open.
 - **`src/components/ui/layer-toggle.tsx`.** Sixteen switches across five sheets, each writing the same `activeLayers` entry the dock's own eye writes, half of them out of sight behind a closed sheet. Two controls over one value, and the one you could see did not always look like the one you had used. Deleted with its last call site; the dock's `LayerRow` eye is the only switch for a layer now.
 - **Four never-mounted panels** (`RoutingPanel`, `IsochronePanel`, `EcosystemTracker`, `TeamProfilePanel`), which nothing had rendered in any tree.
 
-The dock's shape:
+The manager's shape:
 
 ```
-LayerPanel            shell: header (legend eye, close), the one scroller, footer
-  TimeDockSection     first in the scroller — caret + "Map date" + the TimeSlider card
+ManagerRail           collapsed: [manager button | AlertBell] + LayerLegend + hint
+LayerPanel            open: header (close), the one scroller, footer
+  SearchDockSection   ┐ ControlDockSection ×3 — caret + name + a card that issues no
+  TimeDockSection     │ warehouse query. Where, when, and how it is drawn: all three
+  ViewDockSection     ┘ govern the whole map rather than one category.
   DockSections        the rest of the scroller
     LayerGroupSection ×6   caret + group eye + "n of m" + LayerRow list
       DetailsSection       ×5 (Basemap has none) — the category's report
@@ -65,29 +94,38 @@ LayerPanel            shell: header (legend eye, close), the one scroller, foote
       DockDetailsBody      dynamic()-imported region + the map props it needs
 ```
 
-The Time section joined on 2026-08-08 and sits above every category on purpose: one date applies
-to every warehouse-backed layer, so a control filed among the categories would read as belonging
-to whichever one it landed beside. It is the one section open by default
-(`INITIALLY_EXPANDED_SECTIONS` in `panel-store`), which does not weaken the mounting rule below —
-it is the exception that rule is stated for. `DetailsSection` and `TimeDockSection` share their
-caret's class list and their `pendingScrollSection` handshake through `dock-disclosure.ts`, so
-the dock has one disclosure vocabulary rather than two that merely look alike.
+The three control sections lead on purpose: each governs *every* layer, so one filed among the
+categories would read as belonging to whichever it landed beside. Search and Time are open on a
+cold load (`INITIALLY_EXPANDED_SECTIONS` in `panel-store`); View is not, because a basemap is
+picked once a session. That does not weaken the mounting rule below — it is the exception that
+rule is stated for, and `ControlDockSection` is the type-level statement of it: a section whose
+body issues nothing. `DetailsSection` and `ControlDockSection` share their caret's class list and
+their `pendingScrollSection` handshake through `dock-disclosure.ts`, so the manager has one
+disclosure vocabulary rather than several that merely look alike.
+
+Search's single query is the honest edge case: `IngestionCoverageBadge` calls
+`layers.getIngestionCoverage` with an hour's `staleTime`. It is not a report's query — the
+always-mounted search field used to issue it on every map load, so hosting it in a section that
+can be shut strictly *reduces* requests. `useGeocode` itself issues nothing below two characters,
+so a seeded-open Search section costs no request until someone types.
 
 **Two carets, and they are not the same control.** A group's caret shows its layer rows: free, and open by default, because this is a layer manager first. A `DetailsSection`'s caret MOUNTS a report — `FireDetails`, `WaterDetails`, `VegetationDetails`, `SoilDetails`, `CommunityDetails`, `TeamDetails`, `AnalyticsDetails`, `AlertDetails` — each with its own warehouse queries, and is closed until asked for. One caret over both would have had to choose, and either choice is wrong for half the dock. A group's caret deliberately does not hide the report under it, so a collapsed dock reads as an index of reports.
 
 **Mounting is what "open" means now.** Every one of those regions used to take an `open` prop and gate its queries on it (`enabled: open && …`), staying mounted-but-disabled while its sheet was shut. A collapsed section is not mounted at all, so each region dropped the prop and the `open &&` term with it. This is load-bearing, not cosmetic: eight regions mounted on every dock open would fire eight panels' worth of queries before anyone had asked a question. `panel-store.expandedDetails` is therefore not a rename of `openPanel` — it is a list, several may be open at once, and it decides which queries exist. `viewport-proxied-query-sharing.test.tsx` pins both halves: one shared query entry when a section is expanded, and **no observer at all** when it is not.
 
-Which is exactly why the Time section may be seeded open and no report may: its body issues nothing. The capabilities payload it draws from is fetched by `TimeSliderCapabilitiesLoader`, mounted in `MapView` and independent of the dock, so expanding this one section costs a card's worth of store subscriptions and zero requests. The id vocabulary widened to say that in the type system rather than in a comment: `DockDetailsId` still means "a section with a report behind it" and stays exhaustive over `DETAILS_LABELS` and `DETAILS_BODIES`, while `DockSectionId` — `DockDetailsId | "time"` — is what `expandedDetails`, `pendingScrollSection` and `focusDockSection` speak. Adding "time" to the report union instead would have forced a title and a dynamically-imported body for something that is neither.
+Which is exactly why a control section may be seeded open and no report may: its body issues nothing. The Time section's capabilities payload is fetched by `TimeSliderCapabilitiesLoader`, mounted in `MapView` and independent of the manager, so expanding it costs a card's worth of store subscriptions and zero requests. The id vocabulary widened to say that in the type system rather than in a comment: `DockDetailsId` still means "a section with a report behind it" and stays exhaustive over `DETAILS_LABELS` and `DETAILS_BODIES`, while `DockSectionId` — `DockDetailsId | "search" | "time" | "view"` — is what `expandedDetails`, `pendingScrollSection` and `focusDockSection` speak. Adding those three to the report union instead would have forced a title and a dynamically-imported body for something that is neither.
 
 **The one scroller survived the merge.** Each sheet body arrived carrying its own `overflow-y-auto max-h-[calc(100vh-8rem)]` wrapper, plus two `max-h-64` list boxes in the water report. Nested inside the dock's scroller those are exactly the second-scrollbar defect `panel-scroll.ts` rule 2 names, so they were stripped on the way in; the lists were already capped upstream (`WATERSHED_LIST_LIMIT`) and the dock scrolls them now.
 
-**What is left outside the dock.** `DockToggle` — one 44px button, all that remains of the rail, because a closed dock still needs a way back. `AlertBell` in the toolbar keeps its unread count and calls `focusDockSection("alerts")`, which docks the panel, expands Alerts and queues `pendingScrollSection` for the section to consume on arrival; both surfaces read the count through `useUnreadAlertCount`, so they observe one query rather than polling one number twice. Marking alerts read invalidates that key rather than calling back through an `onMarkRead` prop, which a lazily-mounted section has no parent to receive. `TimeDatePill` in the top bar is the third, and calls the same `focusDockSection` with `"time"` — see below for why the pill itself cannot move in here.
+**What is left outside the manager.** Two things, and only one of them is a control. `ManagerRail` is the collapsed manager itself — a 44px button back in, `AlertBell`, and `LayerLegend` — and it unmounts the moment the manager opens. `TimeDatePill` in the top bar is the other, and it is a marker rather than a control; see below for why the pill cannot move in here.
+
+Both shortcuts speak `focusDockSection`, which docks the panel, expands the section and queues `pendingScrollSection` for that section to consume on arrival: `AlertBell` with `"alerts"`, the pill with `"time"`, and Ctrl/Cmd+K with `"search"`. The bell and the Alerts badge read the unread count through `useUnreadAlertCount`, so they observe one query rather than polling one number twice, and marking alerts read invalidates that key rather than calling back through an `onMarkRead` prop, which a lazily-mounted section has no parent to receive.
 
 **Reachability is now answerable by import.** `dock-sections.ts` derives the groups from the registry and is deliberately React-free, so `layer-registry.test.ts` can assert that every layer has a row by calling `dockReachableLayerToggleIds()`. It used to answer the same question by regex-scanning `<LayerToggle>` out of the panel sources — the only handle available when a layer's sole switch was buried in a sheet's JSX.
 
 Both surfaces wrote `map-store.activeLayers` while they coexisted, which the section above makes the single source of visibility. That is what made the merge safe to do in stages: the dock could ship beside the sheets without either one becoming authoritative, and the sheets could then be deleted without a visibility migration.
 
-It is an **overlay inside `MapView`**, never a `MapLayout` side panel: reflowing the canvas would force a MapLibre `resize()` and a tile refetch on every collapse. The map's reaction is camera `padding` instead, which shifts the optical centre without touching canvas size and composes with `resetView` and `MapFocus`. Chrome that would sit under the dock reads `--layer-panel-inset` (set on `MapView`'s root, `0px`/`19rem`) — `DockToggle` and the bottom-left toolbar are its only consumers. `SearchBar` does not read it; the dock starts below it (`top-20`) instead. **Its width did not change when it absorbed the seven sheets**: one 19rem column, eight sections scrolling inside it, and no further pixel taken from the map.
+It is an **overlay inside `MapView`**, never a `MapLayout` side panel: reflowing the canvas would force a MapLibre `resize()` and a tile refetch on every collapse. The map's reaction is camera `padding` instead, which shifts the optical centre without touching canvas size and composes with `resetView` and `MapFocus`. `--layer-panel-inset` used to let the chrome that would sit under it slide out of the way; it was deleted on 2026-08-09 with its only two consumers (the toolbar, absorbed; the toggle button, now inside a rail that unmounts). The shell moved from `top-20` to `top-4` in the same pass, `top-20` having existed solely to clear the floating search field. **Its width did not change through either merge**: one 19rem column, eleven sections scrolling inside it, and no further pixel taken from the map.
 
 `panel-scroll.ts` states the scroll contract once and `LayerPanel.test.tsx` asserts it: exactly one scrolling descendant, `min-h-0 flex-1` on it, `shrink-0` on every other direct child, and height from the container rather than from `vh`. Each rule is a fix for a defect on the surfaces this panel joins. The sharpest: **`overflow-y-auto` alone makes an element a scroll container on BOTH axes** (CSS Overflow 3 §3.1 — when one axis is not `visible`, the other's `visible` computes to `auto`). The icon rail carried it on an absolutely-positioned box whose shrink-to-fit width was its widest child, 44px, and the active-layer badge at `-right-0.5` pushed the scrollable region 2px past that — so Chrome drew a full horizontal scrollbar across a 44px column, appearing exactly when the first data layer was switched on. The vertical cap it was paired with never fired either: without `shrink-0` the buttons squashed toward their 16px icons long before 344px of content could overflow a 70vh box, silently trading away the 44px tap target.
 
@@ -103,7 +141,7 @@ The day must never enter a `style.load` handler's dependency array. Listing it t
 
 ## Style swaps and render-mode state
 
-`map.setStyle(styleObject)` defaults to `diff: true`, and for an object (rather than a URL) the diff path runs with no await: `Style.setState` applies the operations and fires `style.load` **synchronously, inside the `setStyle()` call**. A `once("style.load", …)` registered *after* `setStyle` therefore never runs. This matters because the diff serializes the live terrain/projection/sky and the target style declares none, so it emits `setTerrain(undefined)`, `setProjection(undefined)` and `setSky(undefined)` — a basemap switch silently kills terrain and reverts globe to mercator while `TerrainControl` and `GlobeToggle` still report "on". Register the restore handler before calling `setStyle`, and re-assert projection and terrain explicitly in both directions rather than only on the enabled branch.
+`map.setStyle(styleObject)` defaults to `diff: true`, and for an object (rather than a URL) the diff path runs with no await: `Style.setState` applies the operations and fires `style.load` **synchronously, inside the `setStyle()` call**. A `once("style.load", …)` registered *after* `setStyle` therefore never runs. This matters because the diff serializes the live terrain/projection/sky and the target style declares none, so it emits `setTerrain(undefined)`, `setProjection(undefined)` and `setSky(undefined)` — a basemap switch silently kills terrain and reverts globe to mercator while the View section's Terrain and Globe rows still report "on". Register the restore handler before calling `setStyle`, and re-assert projection and terrain explicitly in both directions rather than only on the enabled branch.
 
 ## Style.load listener order
 
@@ -242,15 +280,17 @@ and the file with it. Three components replaced it, each owning one of the three
   a server-side cache hit) and the "only never-succeeded-and-errored counts as unavailable"
   rule. It cannot live in the dock: the day it supplies keys every warehouse-backed query on the
   map through `useDebouncedMapDay()`, and a closed dock is an unmounted dock.
-- **`TimeDockSection`** — the controls, at the top of the dock's one scroller. See "One dock, no
-  sheets" above. Its caret row is also the card's TITLE (`TIME_SECTION_LABEL`, "Map date"), so
+- **`TimeDockSection`** — the controls, near the top of the manager's one scroller. See "One
+  manager, no floating surfaces" above. Its caret row (a `ControlDockSection` since 2026-08-09)
+  is also the card's TITLE (`TIME_SECTION_LABEL`, "Map date"), so
   `TimeSlider` renders no heading of its own — it kept an `<h2>Map date</h2>` through the move and
   printed the same title twice, one line apart. The Observed / Beyond-the-record chip that shared
   that row stayed, right-aligned: it is live state about the selected day, not a title.
 - **`TimeDatePill`** — the claim, still `absolute right-16 top-4 z-10` over the canvas,
   `pointer-events-none` with each control opting back in, still shrink-to-fit and capped against
-  the viewport. `right-16` clears MapLibre's top-right control stack; `top-4` sits it on the
-  `SearchBar` row.
+  the viewport. `right-16` clears MapLibre's top-right control stack; `top-4` puts it on the top
+  row, which since 2026-08-09 it has to itself — the search field that shared it is a section of
+  the manager now, and on a phone the manager's full-screen overlay covers the pill outright.
 
 **The invariant that survived every move is the pill.** The day applies to every layer, so an
 off-today date silently filters the whole map, and the marker for that — the date plus a

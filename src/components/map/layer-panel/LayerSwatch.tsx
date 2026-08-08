@@ -1,6 +1,7 @@
 "use client";
 
 import type { LayerLegendSpec } from "@/lib/map/layer-legends";
+import type { LayerToggleId } from "@/lib/map/layer-registry";
 
 /**
  * The 12px chip in a layer row's gutter: what this layer looks like on the map, at a glance.
@@ -50,15 +51,29 @@ function swatchPaintFor(spec: LayerLegendSpec | null): SwatchPaint {
   return { backgroundImage: HATCHED };
 }
 
+/**
+ * Toggles whose features are points, so their chip reads as a dot rather than an area.
+ *
+ * Declared here rather than at each call site: the layer tree's rows and the legend's chips
+ * both draw this chip, and a set copied into both is a set that drifts in one of them.
+ */
+const POINT_LAYER_TOGGLE_IDS: ReadonlySet<LayerToggleId> = new Set<LayerToggleId>([
+  "fire",
+  "water",
+  "weather",
+  "sensors",
+  "demand-heatmap",
+]);
+
 export function LayerSwatch({
+  layerId,
   spec,
-  isRound = false,
 }: {
+  layerId: LayerToggleId;
   spec: LayerLegendSpec | null;
-  /** Point layers read as dots on the map; the chip says so. */
-  isRound?: boolean;
 }) {
   const paint = swatchPaintFor(spec);
+  const isRound = POINT_LAYER_TOGGLE_IDS.has(layerId);
   return (
     <span
       aria-hidden="true"

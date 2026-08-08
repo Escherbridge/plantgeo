@@ -5,22 +5,18 @@ import dynamic from "next/dynamic";
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import { useMapStore } from "@/stores/map-store";
-import { usePanelStore } from "@/stores/panel-store";
 import { getStyle, skyThemes } from "@/lib/map/styles";
 import { MapProvider } from "@/lib/map/map-context";
 import { Skeleton } from "@/components/ui/skeleton";
-import MapControls from "./MapControls";
 import { MapFocus } from "./MapFocus";
-import SearchBar from "@/components/search/SearchBar";
 import { ReverseGeocode } from "@/components/search/ReverseGeocode";
-import { CommandPalette } from "@/components/search/CommandPalette";
-import { DockToggle } from "./layer-panel/DockToggle";
+import MapKeyboardShortcuts from "./MapKeyboardShortcuts";
+import { ManagerRail } from "./layer-panel/ManagerRail";
 import { LayerPanel } from "./layer-panel/LayerPanel";
 import LayerManager from "./LayerManager";
 import HoverTooltip from "./HoverTooltip";
 import TimeSliderCapabilitiesLoader from "./TimeSliderCapabilitiesLoader";
 import TimeDatePill from "./TimeDatePill";
-import { Legend } from "./Legend";
 import { ServiceAreaLayer } from "./ServiceAreaLayer";
 import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
 import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
@@ -50,9 +46,6 @@ export default function MapView() {
   } = useMapStore();
 
   const prevStyleRef = useRef(currentStyle);
-  // Per-field selector: this component destructures map-store wholesale above, so adding a
-  // whole-store read here would re-render the map shell on every panel-store write.
-  const layerPanelOpen = usePanelStore((state) => state.layerPanelOpen);
   const { isOpen: isAIOpen } = useRegionalIntelligenceStore();
   const { queryLocation } = useRegionalIntelligence();
 
@@ -296,17 +289,15 @@ export default function MapView() {
   return (
     <MapProvider value={mapInstance}>
       {/*
-        `--layer-panel-inset` is how the left-edge dock keeps out of the way of the chrome it
-        would otherwise cover: 0 while it is closed, its own width while it is open. Its only
-        consumers are the dock's own toggle button and the bottom-left toolbar, both of which
-        anchor to `calc(var(--layer-panel-inset) + …)`, so one variable replaces prop drilling
-        through two component trees. The panel itself is an overlay in this same box and never
-        reflows the canvas -- see LayerPanel.tsx for why the camera takes padding instead.
+        No `--layer-panel-inset` since 2026-08-09. That variable existed so the chrome the
+        manager would cover could slide out from under it; the only two consumers were the
+        manager's own toggle button and the bottom toolbar, and both are gone -- the toolbar
+        into the manager, the button into `ManagerRail`, which unmounts while the manager is
+        open and therefore has nothing to keep clear of. The panel is an overlay in this same
+        box and never reflows the canvas -- see LayerPanel.tsx for why the camera takes padding
+        instead.
       */}
-      <div
-        className="relative h-full w-full"
-        style={{ "--layer-panel-inset": layerPanelOpen ? "19rem" : "0px" } as React.CSSProperties}
-      >
+      <div className="relative h-full w-full">
         {isLoading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center">
             <Skeleton className="h-full w-full" />
@@ -321,16 +312,19 @@ export default function MapView() {
             <Suspense fallback={null}>
               <MapFocus />
             </Suspense>
-            <MapControls />
-            <SearchBar />
             <ReverseGeocode />
-            <CommandPalette />
-            {/* The button that opens the dock, mounted before it so the dock paints over
-                the button's shadow rather than under it. */}
-            <DockToggle />
-            {/* The one panel surface on this map: every layer switch, every opacity slider
-                and every former right-hand sheet, in one left-edge dock. See
-                src/components/map/AGENTS.md "One dock, no sheets". */}
+            {/* Headless and always mounted: r/t/g/1/2/3 and Ctrl/Cmd+K. The surfaces that
+                used to bind these collapse now, and a collapsed section is an unmounted
+                section, so the bindings cannot live inside one. */}
+            <MapKeyboardShortcuts />
+            {/* The collapsed manager: the way back in, the unread alert count and the legend,
+                in one row. Mounted before the panel so the panel paints over its shadow
+                rather than under it; it renders nothing while the panel is open. */}
+            <ManagerRail />
+            {/* The one control surface on this map: search, the map date, render mode, every
+                layer switch, every opacity slider and every former right-hand sheet, in one
+                left-edge column. See src/components/map/AGENTS.md "One manager, no floating
+                surfaces". */}
             <LayerPanel />
             {/* Mounted before LayerManager so its style.load handler registers
                 first -- see the ordering note in ServiceAreaLayer.tsx. */}
@@ -342,13 +336,10 @@ export default function MapView() {
                 closed -- and a closed dock unmounts -- while the day it supplies keys every
                 warehouse-backed query on this map. */}
             <TimeSliderCapabilitiesLoader />
-            {/* The scrubber itself is a section of the dock above. What stays out here is the
-                claim: the map draws one day, every layer draws as of it, so its marker must
-                never leave the screen. Clicking the pill opens the dock at that section. */}
+            {/* The scrubber itself is a section of the manager above. What stays out here is
+                the claim: the map draws one day, every layer draws as of it, so its marker must
+                never leave the screen. Clicking the pill opens the manager at that section. */}
             <TimeDatePill />
-            {/* Legends whatever LayerManager is drawing, panels open or closed. Renders
-                nothing while every layer is off, which is how the map starts. */}
-            <Legend />
             <HoverTooltip map={mapInstance} />
             {isAIOpen && <RegionalIntelligencePanel />}
             {agentCoords && (

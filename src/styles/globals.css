@@ -516,6 +516,19 @@ body {
   background-image: none;
 }
 
+/* Scrolls, paints no scrollbar. See src/components/map/AGENTS.md "One manager, no
+   floating surfaces" -- the complaint is the painted chrome, never the scrolling, so
+   every affordance a scroll container owes a reader survives: wheel, drag, touch, the
+   arrow keys and Page Up/Down (the element still takes focus and still scrolls). */
+@utility scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+}
+
 /* ------------------------------------------------------------
    Global shell geometry
    The top bar is a block in normal flow, so any page root that asked for the

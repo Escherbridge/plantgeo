@@ -346,7 +346,9 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "fire",
     permanentlyUnavailableReason: null,
   },
-  // Toggled from the MapControls toolbar, so no panel governs it. Withheld: the Martin
+  // No category's report describes it, so `panelId` is null and the manager files it under
+  // its own Basemap bucket -- which since 2026-08-09 is its ONLY switch, the bottom toolbar's
+  // building button having been a second control over this same entry. Withheld: the Martin
   // function (building_tiles) is live, but its backing table geo.osm_buildings has 0 rows
   // in production -- the osm2pgsql import (infra/db/import/osm-flex-config.lua) has not
   // been run for the covered region -- so the switch would toggle a capability that can
@@ -354,8 +356,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // the import has run and the table is populated; nothing else needs to change.
   "building-footprints": {
     toggleId: "building-footprints",
-    // The one label with no `<LayerToggle>` predecessor to preserve: this layer is switched
-    // from the MapControls toolbar, whose button is captioned "Toggle 3D building footprints".
+    // The one label with no `<LayerToggle>` predecessor to preserve: it was taken from the
+    // toolbar button captioned "Toggle 3D building footprints" that used to switch it.
     label: "3D Building Footprints",
     icon: "building-2",
     renderKind: "style",
@@ -397,19 +399,24 @@ export function toggleIdForWarehouseLayerName(layerName: string): LayerToggleId 
   return entry?.toggleId ?? null;
 }
 
-/** The panel that owns a toggle's switch, or null for user-uploaded and toolbar layers. */
+/** The panel that owns a toggle's switch, or null for user-uploaded and uncategorised layers. */
 export function panelIdForLayerToggle(layerId: string): PanelId | null {
   if (!isLayerToggleId(layerId)) return null;
   return LAYER_REGISTRY[layerId].panelId;
 }
 
 /**
- * Toggles reachable from the MapControls toolbar instead of the sidebar rail. See
- * src/components/map/AGENTS.md "The layer registry and the toggle context".
+ * Toggles no category governs, which the manager files under its own Basemap bucket.
+ *
+ * Called `TOOLBAR_OWNED_LAYER_TOGGLE_IDS` until 2026-08-09, when the bottom toolbar it named
+ * was deleted: `building-footprints` was never really toolbar-owned, it was CATEGORY-less, and
+ * the toolbar was merely where its second switch happened to live. The set is the same one and
+ * still exists for one reason -- to keep `unreachableLayerToggleIds()` from reporting a layer
+ * that has a row as missing one just because no report describes it.
  */
-export const TOOLBAR_OWNED_LAYER_TOGGLE_IDS: readonly LayerToggleId[] = ["building-footprints"];
+export const UNCATEGORISED_LAYER_TOGGLE_IDS: readonly LayerToggleId[] = ["building-footprints"];
 
-/** Panels owning at least one layer, in registry declaration order; the rail's layer buttons. */
+/** Panels owning at least one layer, in registry declaration order. */
 export function panelIdsOwningLayers(): PanelId[] {
   const ordered: PanelId[] = [];
   for (const entry of layerRegistryEntries()) {
@@ -428,12 +435,12 @@ export function panelIdsOwningLayers(): PanelId[] {
  * src/__tests__/lib/map/layer-registry.test.ts, which reads them out of src/components.
  */
 export function unreachableLayerToggleIds(renderedToggleIds?: Iterable<string>): LayerToggleId[] {
-  // Toolbar layers are switched by bespoke controls (MapControls), never by a LayerToggle,
-  // so they are exempt from both the panel claim and the rendered-switch check.
+  // Uncategorised layers claim no panel by design, so they are exempt from the panel claim;
+  // the rendered-switch check still catches them, because the manager gives them a row.
   const rendered = renderedToggleIds === undefined ? null : new Set(renderedToggleIds);
   return layerRegistryEntries()
     .filter((entry) => {
-      if (TOOLBAR_OWNED_LAYER_TOGGLE_IDS.includes(entry.toggleId)) return false;
+      if (UNCATEGORISED_LAYER_TOGGLE_IDS.includes(entry.toggleId)) return false;
       if (entry.panelId === null) return true;
       return rendered !== null && !rendered.has(entry.toggleId);
     })

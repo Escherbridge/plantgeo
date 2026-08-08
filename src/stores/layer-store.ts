@@ -4,17 +4,21 @@ import { isLayerToggleId, type LayerToggleId } from "@/lib/map/layer-registry";
 import { clampLayerOpacity } from "@/lib/map/layer-opacity";
 
 /**
- * Layer PRESENTATION state: how strongly each layer draws, and whether the legend card is
- * expanded. Deliberately not visibility -- `map-store.activeLayers` is the single source of
- * that (see src/components/map/AGENTS.md) and the two must never be able to disagree.
+ * Layer PRESENTATION state: how strongly each layer draws. Deliberately not visibility --
+ * `map-store.activeLayers` is the single source of that (see src/components/map/AGENTS.md) and
+ * the two must never be able to disagree.
  *
- * Not map-store, because MapControls uses per-field selectors precisely to avoid re-rendering
- * on viewport ticks and MapView destructures map-store wholesale: a record that moves on
- * every slider tick would re-render the entire map chrome. Not layer-toggle-context either --
- * that module owns no state by rule and must stay a pure composition layer.
+ * It held one more field until 2026-08-09: `legendVisible`, the corner legend card's collapsed
+ * flag, with two controls over it (the card's own eye and a second one in the manager's header).
+ * The legend is the collapsed state of the manager now -- `LayerLegend` opens on hover, focus
+ * and click, all of which are local to the component that owns them -- so a global boolean for
+ * it would be state nothing outside that component could act on.
+ *
+ * Not map-store, because MapView destructures map-store wholesale: a record that moves on every
+ * slider tick would re-render the entire map chrome. Not layer-toggle-context either -- that
+ * module owns no state by rule and must stay a pure composition layer.
  */
 interface LayerStoreState {
-  legendVisible: boolean;
   /**
    * Per-layer opacity MULTIPLIER over each layer's authored paint -- see
    * src/lib/map/layer-opacity.ts for why a multiplier and not an absolute value.
@@ -25,7 +29,6 @@ interface LayerStoreState {
    */
   layerOpacity: Partial<Record<LayerToggleId, number>>;
 
-  toggleLegend: () => void;
   setLayerOpacity: (layerId: LayerToggleId, opacity: number) => void;
   /** Deletes the key rather than writing 1: "unset" and "explicitly full" are different facts. */
   resetLayerOpacity: (layerId: LayerToggleId) => void;
@@ -53,10 +56,7 @@ export const useLayerStore = create<LayerStoreState>()(
   devtools(
     persist(
       (set) => ({
-        legendVisible: true,
         layerOpacity: {},
-
-        toggleLegend: () => set((s) => ({ legendVisible: !s.legendVisible })),
 
         // Clamped here rather than at the call site: this is the one writer, so nothing
         // downstream -- including a rehydrated blob replayed through it -- can reach 0.
@@ -74,11 +74,10 @@ export const useLayerStore = create<LayerStoreState>()(
           }),
       }),
       {
-        // Follows search-store, the only persistence precedent in this repo: devtools(persist)
-        // with an explicit `partialize`. `legendVisible` stays unpersisted -- it is a
-        // per-session view preference, not a setting.
+        // Follows search-store, the only other persistence precedent in this repo:
+        // devtools(persist) with an explicit `partialize`.
         //
-        // No SSR hydration risk: Legend and the layer panel render only inside
+        // No SSR hydration risk: the legend and the manager render only inside
         // `{mapInstance && ...}` in MapView, i.e. after client map init, so persisted state
         // never participates in a server render and no `skipHydration` is needed.
         name: "plantgeo-layer-opacity",

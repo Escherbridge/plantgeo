@@ -10,11 +10,17 @@ const styleOptions: { id: MapStyle; label: string; color: string }[] = [
   { id: "satellite", label: "Satellite", color: "bg-emerald-800" },
 ];
 
+/**
+ * The three basemap swatches, now the first control in the manager's View section rather than
+ * the left end of a floating bottom toolbar. Per-field selectors: it reads no viewport field,
+ * so a whole-store destructure would re-render it on every pan and zoom tick.
+ */
 export default function StyleSwitcher() {
-  const { currentStyle, setCurrentStyle } = useMapStore();
+  const currentStyle = useMapStore((state) => state.currentStyle);
+  const setCurrentStyle = useMapStore((state) => state.setCurrentStyle);
 
   return (
-    <div className="flex gap-1.5">
+    <div className="flex shrink-0 gap-1.5">
       {styleOptions.map((opt) => (
         <button
           key={opt.id}
@@ -25,15 +31,15 @@ export default function StyleSwitcher() {
           aria-label={`${opt.label} basemap`}
           aria-pressed={currentStyle === opt.id}
           // The hit area grows to the 44px mobile minimum without the swatch reading as a
-          // bigger colour chip than its neighbours: the visible square stays h-8 w-8 and is
+          // bigger colour chip than its neighbours: the visible square stays h-7 w-7 and is
           // centred inside a larger tap target, the same "icon smaller than its button"
-          // proportion the icon buttons elsewhere in this toolbar already use.
-          className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-md max-sm:h-11 max-sm:w-11"
+          // proportion every other control in the manager uses.
+          className="group flex h-7 w-7 shrink-0 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] max-sm:h-11 max-sm:w-11"
         >
           <span
             aria-hidden="true"
             className={cn(
-              "h-8 w-8 rounded-md border-2 transition-all",
+              "h-7 w-7 rounded-md border-2 transition-all",
               opt.color,
               currentStyle === opt.id
                 ? "border-[hsl(var(--primary))] ring-2 ring-[hsl(var(--primary)/0.3)]"

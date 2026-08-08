@@ -13,8 +13,10 @@ import {
   Leaf,
   Mountain,
   RadioTower,
+  Search,
   ShieldAlert,
   Sprout,
+  SunMoon,
   Thermometer,
   Users,
   Waves,
@@ -56,17 +58,23 @@ export function LayerIcon({ name, className }: { name: LayerIconName; className?
 }
 
 /**
- * The glyph each dock section carries.
+ * The glyph each manager section carries.
  *
- * Inherited from the icon rail this dock replaced, so a reader who knew the rail's seven
- * buttons finds the same seven marks in the same order down the dock. Exhaustive over
+ * Inherited from the icon rail this panel replaced, so a reader who knew the rail's seven
+ * buttons finds the same seven marks in the same order down the column. Exhaustive over
  * `DockSectionKey`, so a new section fails to compile here rather than rendering a blank
  * gutter beside its name.
  */
 const DOCK_SECTION_ICON_COMPONENTS: Record<DockSectionKey, LucideIcon> = {
+  // The magnifier the floating search field wore before it became this section, so the
+  // control a reader is looking for is marked the way they last saw it.
+  search: Search,
   // The same calendar the top-bar date pill wears, so the pill and the section it opens are
   // visibly one control split across two places.
   time: CalendarDays,
+  // Render mode -- basemap, terrain, globe, tilt -- is how the same data is LIT, which is the
+  // one thing every control in that section has in common.
+  view: SunMoon,
   fire: Flame,
   water: Droplets,
   vegetation: Leaf,

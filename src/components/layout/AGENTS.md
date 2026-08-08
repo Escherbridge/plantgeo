@@ -25,8 +25,9 @@ layout is byte-for-byte what it was before the bar existed.
 
 ## Why the bar is in normal flow, not an overlay
 
-The map is a full-viewport canvas whose floating UI starts at `top-4 left-4`
-(`SearchBar`, `MapControls`). A full-width opaque overlay would sit on top of
+The map is a full-viewport canvas whose floating UI starts at `top-4`
+(`TimeDatePill`, and the map manager's own column at `top-4 left-0`). A full-width
+opaque overlay would sit on top of
 both. So the bar occupies a real `3.5rem` band and the page below it measures the
 remainder.
 

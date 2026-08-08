@@ -3,23 +3,34 @@
 ## These are dock sections, not panels
 
 **2026-08-08.** Every `*Details.tsx` in this directory is the body of one section of the map's
-left-edge dock (`src/components/map/layer-panel/`), rendered by `DockDetails.tsx` and mounted
+left-edge manager (`src/components/map/layer-panel/`), rendered by `DockDetails.tsx` and mounted
 only while that section is expanded. None of them owns a `Sheet`, an `open` prop, a close
-button or a layer switch any more — the dock's shell, its disclosure state and its layer rows
+button or a layer switch any more — the manager's shell, its disclosure state and its layer rows
 own those. The rationale for the merge, and for each thing it deleted, is in
-`src/components/map/AGENTS.md` §"One dock, no sheets"; the rule that matters when editing one
-of these files is short:
+`src/components/map/AGENTS.md` §"One manager, no floating surfaces"; the rule that matters when
+editing one of these files is short:
 
 - **Mounted means open.** Do not add an `open` prop or an `enabled: open && …` gate back. A
   collapsed section is unmounted, so a query written here runs exactly when the reader is
-  looking at it.
-- **No scroll container.** The dock's body is the one scroller (`panel-scroll.ts` rule 2).
-  A `max-h-*` + `overflow-y-auto` wrapper in here is a second scrollbar inside the first.
-- **No layer switch.** `map-store.activeLayers` is written by the dock's `LayerRow` eyes.
+  looking at it. The same rule is why no keyboard shortcut may be registered from a section —
+  see `MapKeyboardShortcuts`.
+- **No scroll container.** The manager's body is the one scroller (`panel-scroll.ts` rule 2).
+  A `max-h-*` + `overflow-y-auto` wrapper in here is a second scrollbar inside the first. Its
+  scrollbar is unpainted (`scrollbar-hidden`), which is a paint decision only: every scroll
+  gesture and key still reaches it, so nothing in here needs to compensate.
+- **No layer switch.** `map-store.activeLayers` is written by the manager's `LayerRow` eyes.
   A switch here would be a second control over one value, and half of it would be out of sight.
+- **No render-mode control either.** Basemap, terrain, projection and tilt are the View
+  section's, and it deliberately owns no layer switch; putting one on either side of that line
+  in a report re-opens the "render mode never touches a layer" rule.
 
 `RegionalIntelligencePanel`, `ContributionQueue`, `LayerUpload`, `UserPanel` and the two submit
-modals are not dock sections; they are mounted by routes or by other components.
+modals are not manager sections; they are mounted by routes or by other components.
+
+`src/components/search/` kept only `ReverseGeocode` after 2026-08-09: `SearchBar`,
+`SearchResults`, `RecentSearches` and `CommandPalette` became
+`src/components/map/layer-panel/SearchDockSection.tsx`. `ReverseGeocode` stays because it is not
+a control surface — it is a right-click/long-press popup anchored to a point on the canvas.
 
 ## ContributionQueue is mounted by a route, not a panel
 

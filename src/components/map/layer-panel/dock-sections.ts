@@ -1,5 +1,5 @@
 /**
- * The dock's structure, derived once and free of React.
+ * The map manager's structure, derived once and free of React.
  *
  * Free of React on purpose: `src/__tests__/lib/map/layer-registry.test.ts` asserts that every
  * registry layer is reachable from the dock, and it must be able to ask that question without
@@ -33,10 +33,11 @@ export const GROUP_LABELS: Record<PanelId, string> = {
 };
 
 /**
- * Where a layer that no category governs is filed. Only `building-footprints` lands here: it
- * is switched from the MapControls toolbar rather than from any section, which is precisely
- * why the dock has to carry it -- otherwise the one comprehensive list of layers would be
- * missing one.
+ * Where a layer that no category governs is filed. Only `building-footprints` lands here: no
+ * category's report describes it, and this bucket is what keeps the one comprehensive list of
+ * layers complete. Its row is also its ONLY switch since 2026-08-09 -- the bottom toolbar's
+ * building button was a second control over the same `activeLayers` entry, and went with the
+ * toolbar.
  */
 export const UNGOVERNED_GROUP_KEY = "Basemap";
 
@@ -63,12 +64,13 @@ export const DETAILS_LABELS: Record<DockDetailsId, string> = {
 };
 
 /**
- * Every section the dock can render: the categories, the ungoverned bucket, the alerts pivot,
- * and the Time section at the top of the scroller.
+ * Every section the manager can render: the categories, the ungoverned bucket, the alerts
+ * pivot, and the three query-free sections at the top of the scroller.
  *
  * Wider than `DockDetailsId` because a section is not the same thing as a report -- "Basemap"
- * carries layers and no report, "time" carries the scrubber and no report. `DockSectionId`
- * brings "time" in; the ungoverned bucket is a local sentinel and joins from here.
+ * carries layers and no report; "search", "time" and "view" carry a control and no report.
+ * `DockSectionId` brings those three in; the ungoverned bucket is a local sentinel and joins
+ * from here.
  */
 export type DockSectionKey = DockSectionId | typeof UNGOVERNED_GROUP_KEY;
 

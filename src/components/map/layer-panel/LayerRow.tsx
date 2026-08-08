@@ -18,15 +18,6 @@ import {
   useToggleLayer,
 } from "@/lib/map/layer-toggle-context";
 
-/** Toggles whose features are points, so their chip should read as a dot rather than an area. */
-const POINT_LAYER_TOGGLE_IDS: ReadonlySet<LayerToggleId> = new Set<LayerToggleId>([
-  "fire",
-  "water",
-  "weather",
-  "sensors",
-  "demand-heatmap",
-]);
-
 interface LayerRowProps {
   layerId: LayerToggleId;
   /** The display modes that decide what this layer paints, and so what its chip shows. */
@@ -103,7 +94,7 @@ export function LayerRow({ layerId, legendContext }: LayerRowProps) {
           )}
         </button>
 
-        <LayerSwatch spec={spec} isRound={POINT_LAYER_TOGGLE_IDS.has(layerId)} />
+        <LayerSwatch layerId={layerId} spec={spec} />
 
         <span
           className={[

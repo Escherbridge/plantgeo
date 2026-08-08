@@ -39,32 +39,39 @@ export type PanelId =
 export type DockDetailsId = PanelId | "alerts";
 
 /**
- * Anything the dock can expand and scroll to, which is a wider set than the reports.
+ * Anything the manager can expand and scroll to, which is a wider set than the reports.
  *
  * "time" joined on 2026-08-08, when the scrubber moved out of the top-right region and into
- * the top of the dock's scroller. It is a section by every behaviour that matters here -- it
- * expands, it collapses, and `focusDockSection("time")` is what the top-bar date pill calls --
- * but it is not a `DockDetailsId`, because it has no dynamically-imported report and no
- * warehouse queries of its own. Widening the id vocabulary rather than the report vocabulary
- * is what keeps `DockDetailsBody`'s exhaustive record honest about what a report is.
+ * the top of the manager's scroller. "search" and "view" joined the same way on 2026-08-09,
+ * when the floating search field and the bottom toolbar were absorbed. None of the three is a
+ * `DockDetailsId`, because none has a dynamically-imported report or warehouse queries of its
+ * own. Widening the id vocabulary rather than the report vocabulary is what keeps
+ * `DockDetailsBody`'s exhaustive record honest about what a report is.
  */
-export type DockSectionId = DockDetailsId | "time";
+export type DockSectionId = DockDetailsId | "search" | "time" | "view";
 
 /**
  * The sections a cold load opens, and the only ones that may be seeded.
  *
- * "time" alone, and the reason is the same economics that keep every report shut: expanding a
- * report MOUNTS it and fires its warehouse queries, while the Time section's body is the
- * scrubber card, whose capabilities arrive from the always-mounted
- * `TimeSliderCapabilitiesLoader` whether the dock is open or not. It therefore costs nothing to
- * have open, and the map date is what a reader most often came to the dock to change.
+ * Never a report, and the reason is economics: expanding a report MOUNTS it and fires its
+ * warehouse queries. These two bodies fire none. The Time section's card reads capabilities the
+ * always-mounted `TimeSliderCapabilitiesLoader` fetches whether the manager is open or not, and
+ * the Search section issues nothing until someone types two characters -- its one query, the
+ * ingestion-coverage strip, is an hour-stale descriptor the floating search field used to issue
+ * unconditionally on every map load, so seeding it here strictly reduces requests.
+ *
+ * Both are seeded because both are what a reader most often came here to use: where am I, and
+ * when. "view" is not, because a basemap is picked once a session.
  *
  * `readonly`, because this is a declaration and not a working list: the store seeds a COPY of it
  * (`[...INITIALLY_EXPANDED_SECTIONS]`), and a mutable export would let any importer push a
  * section into the cold-load set from the far side of the module -- silently mounting a report
  * and firing its warehouse queries before anyone asked.
  */
-export const INITIALLY_EXPANDED_SECTIONS: readonly DockSectionId[] = ["time"] as const;
+export const INITIALLY_EXPANDED_SECTIONS: readonly DockSectionId[] = [
+  "search",
+  "time",
+] as const;
 
 /**
  * Maps each category to the layer IDs it governs, inverted from the layer registry so a
@@ -96,11 +103,12 @@ const PANEL_LAYER_MAP: Record<PanelId, LayerToggleId[]> = buildPanelLayerMap();
 
 interface PanelState {
   /**
-   * Whether the left-edge dock is open. The dock is the ONLY panel surface: the seven
-   * right-hand sheets and the icon rail that opened them were removed on 2026-08-08 -- see
-   * src/components/map/AGENTS.md "One dock, no sheets".
+   * Whether the left-edge map manager is open. It is the ONLY control surface on the map: the
+   * seven right-hand sheets and their icon rail went on 2026-08-08, and the floating search
+   * field, the bottom toolbar and the corner legend card went on 2026-08-09 -- see
+   * src/components/map/AGENTS.md "One manager, no floating surfaces".
    *
-   * Starts closed: the map opens with every layer off, and a 19rem dock over the canvas is
+   * Starts closed: the map opens with every layer off, and a 19rem column over the canvas is
    * not what a first-time visitor is owed before they have asked for anything.
    *
    * It is NOT visibility state -- `map-store.activeLayers` remains the single source of that.
@@ -116,8 +124,8 @@ interface PanelState {
    * every panel's queries at once on the first click. Several may be open at a time; that is
    * the reader's call, not a limit worth enforcing.
    *
-   * Seeded with `INITIALLY_EXPANDED_SECTIONS`, which is "time" and nothing else -- the one
-   * section whose body owns no query, so the rule above has nothing to say about it.
+   * Seeded with `INITIALLY_EXPANDED_SECTIONS`, which names only sections whose bodies own no
+   * warehouse query, so the rule above has nothing to say about them.
    *
    * Deliberately not persisted: a section left open a week ago would re-issue its warehouse
    * queries on the next cold load, before anyone had asked for them.
@@ -142,9 +150,9 @@ interface PanelState {
   /** Expand or collapse one section. */
   toggleDetails: (id: DockSectionId) => void;
   /**
-   * Open the dock at a section: dock it, expand that section, and ask it to scroll into view.
-   * The one call a shortcut outside the dock makes -- the toolbar's alert bell and, since
-   * 2026-08-08, the top-bar date pill, which is the whole of what that pill's click does.
+   * Open the manager at a section: dock it, expand that section, and ask it to scroll into
+   * view. The one call every shortcut outside the manager makes -- the rail's alert bell, the
+   * top-bar date pill, and the Ctrl/Cmd+K search shortcut.
    */
   focusDockSection: (id: DockSectionId) => void;
   /** Marks the scroll request served; called by the section that scrolled. */

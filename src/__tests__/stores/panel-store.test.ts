@@ -63,7 +63,7 @@ describe('PANEL_LAYER_MAP exhaustiveness', () => {
     const managedIds = getAllManagedLayerIds()
 
     for (const id of Object.keys(STYLE_LAYER_TOGGLE_MAP)) {
-      // "building-footprints" is toggled from the MapControls toolbar, not
+      // "building-footprints" is toggled from the manager's own Basemap bucket, not
       // from any sidebar panel — it has no owning PanelId and is intentionally
       // excluded from PANEL_LAYER_MAP. Assert that exclusion explicitly below
       // instead of silently skipping it.
@@ -75,7 +75,7 @@ describe('PANEL_LAYER_MAP exhaustiveness', () => {
     }
   })
 
-  it('"building-footprints" is deliberately not panel-governed (MapControls toolbar toggle)', () => {
+  it('"building-footprints" is deliberately not panel-governed (no report describes it)', () => {
     expect(getPanelForLayer('building-footprints')).toBeNull()
   })
 })
@@ -165,13 +165,17 @@ describe('map dock state', () => {
   })
 
   /**
-   * "time" is the only seeded section, and the exception proves the rule rather than weakening
-   * it: expanding a REPORT mounts it and fires its warehouse queries, while the Time section's
-   * body is the scrubber card, whose capabilities arrive from the always-mounted
-   * TimeSliderCapabilitiesLoader whether the dock is open or not.
+   * Only CONTROL sections are seeded, and the exception proves the rule rather than weakening
+   * it: expanding a REPORT mounts it and fires its warehouse queries, while these two bodies
+   * issue nothing. The Time card's capabilities arrive from the always-mounted
+   * TimeSliderCapabilitiesLoader whether the manager is open or not, and the Search field's
+   * geocode is silent below two characters.
+   *
+   * "view" is deliberately not seeded -- a basemap is picked once a session -- which is what
+   * keeps this an assertion about cost rather than about which union a section belongs to.
    */
-  it('seeds only the section that costs no query', () => {
-    expect(INITIALLY_EXPANDED_SECTIONS).toEqual(['time'])
+  it('seeds only sections that cost no query', () => {
+    expect(INITIALLY_EXPANDED_SECTIONS).toEqual(['search', 'time'])
   })
 
   // The section clears its own request on arrival, so a later expansion by hand does not

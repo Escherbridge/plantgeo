@@ -10,8 +10,9 @@ import {
 } from "@/stores/time-slider-store";
 
 /**
- * The pill row's anchor, forming the right end of the top bar: `SearchBar` holds `top-4 left-4`,
- * this holds `top-4` on the right, and MapLibre's own control stack keeps the far right edge.
+ * The pill row's anchor, forming the right end of the top bar: the map manager claims
+ * `top-4 left-0`, this holds `top-4` on the right, and MapLibre's own control stack keeps the
+ * far right edge.
  * `right-16` clears that stack (29px wide, 44px under the (max-width: 640px) rule in
  * globals.css). Width is shrink-to-fit growing leftwards, capped against the viewport so a long
  * date-plus-chip can never run off the screen or under the search field.

@@ -1,5 +1,5 @@
 /**
- * The layer panel's scroll contract, stated once.
+ * The map manager's scroll contract, stated once.
  *
  * Every rule here is a fix for a defect the audit found on the surfaces this panel replaces,
  * and `src/__tests__/components/LayerPanel.test.tsx` asserts them against the rendered tree so
@@ -23,24 +23,50 @@
  *    padding box.
  * 5. **`overscroll-contain`,** so reaching the end of the list does not chain the scroll into
  *    the map or the document.
+ * 6. **The scrollbar is not painted, and the scrolling is untouched.** `scrollbar-hidden`
+ *    (src/styles/globals.css) sets `scrollbar-width: none` and zeroes the WebKit pseudo-element
+ *    and nothing else, so wheel, drag, touch, arrow keys and Page Up/Down all still work and
+ *    the element still takes focus. The complaint this answers is the painted chrome in a 19rem
+ *    column, never the ability to scroll -- an `overflow: hidden` "fix" would have taken the
+ *    second thing to get the first.
  *
- * The contract got sharper on 2026-08-08, when the dock absorbed seven right-hand sheets: each
+ * The contract got sharper on 2026-08-08, when the panel absorbed seven right-hand sheets: each
  * of those bodies arrived with its own `overflow-y-auto max-h-[calc(100vh-8rem)]` wrapper, and
  * the water report with two `max-h-*` list boxes inside that. Every one was stripped on the way
- * in. Rule 2 is now a rule about the whole dock, not just its shell -- there is exactly one
- * scrolling element with eight reports inside it, and `dockSectionDomId` is how a section is
- * addressed for scrolling within that one element rather than growing a scroller of its own.
+ * in, and the two geocoding result lists that arrived with the search field on 2026-08-09 went
+ * the same way. Rule 2 is now a rule about the whole manager, not just its shell -- there is
+ * exactly one scrolling element with eleven sections inside it, and `dockSectionDomId` is how a
+ * section is addressed for scrolling within that one element rather than growing a scroller of
+ * its own.
  */
 
-/** The dock itself: fixed to the container's edges, and never a scroll container. */
+/**
+ * The manager itself: fixed to the container's edges, and never a scroll container.
+ *
+ * `top-4` since 2026-08-09. It used to start at `top-20` to clear the floating search field
+ * that overlaid its header -- the collision this consolidation began with. The field is a
+ * section inside it now, so the column takes the full height of the map.
+ *
+ * On a phone (`max-sm`) it is a full-screen overlay instead of a column: `inset-0`, square
+ * corners, no border. A 19rem drawer on a 360px screen leaves a 56px strip of map, which is
+ * neither a usable map nor a usable panel, and the same tree renders in both -- the layer
+ * groups, the reports and the three control sections are identical, only the box changes.
+ * A bottom sheet with detents was considered and rejected: it would have needed a second
+ * scroll story (sheet drag versus content scroll) for the one surface that already has
+ * exactly one scroller by contract.
+ */
 export const PANEL_SHELL =
-  "pointer-events-auto absolute bottom-4 left-0 top-20 z-10 flex w-[19rem] max-w-[calc(100vw-1rem)] " +
+  "pointer-events-auto absolute bottom-4 left-0 top-4 z-10 flex w-[19rem] max-w-[calc(100vw-1rem)] " +
   "flex-col overflow-hidden rounded-r-(--radius) border border-l-0 border-(--glass-border) " +
-  "bg-(--glass-bg) shadow-(--shadow-lg) [backdrop-filter:blur(var(--glass-blur))]";
+  "bg-(--glass-bg) shadow-(--shadow-lg) [backdrop-filter:blur(var(--glass-blur))] " +
+  // z-30 only on the phone layout: a full-screen overlay has to cover the date pill and the
+  // hover tooltip, both z-10, while the desktop column must not start outranking the map
+  // popups it sits beside.
+  "max-sm:inset-0 max-sm:z-30 max-sm:w-full max-sm:max-w-none max-sm:rounded-none max-sm:border-0";
 
 /** Header, footer, and anything else that must keep its height when the list is long. */
 export const PANEL_FIXED_ROW = "shrink-0";
 
 /** The one scrolling element in the panel. `pr-1` is rule 4's landing space. */
 export const PANEL_SCROLLER =
-  "min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-2 pr-1";
+  "min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-hidden px-2 pb-2 pr-1";
