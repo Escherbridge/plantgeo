@@ -1,11 +1,66 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useRegionalIntelligenceStore } from '@/stores/regional-intelligence-store';
+import { useViewedLayerDays } from '@/lib/map/layer-toggle-context';
+import {
+  findLayerCapability,
+  isDayDescribed,
+  isWithinCoverageGap,
+  useTimeSliderStore,
+} from '@/stores/time-slider-store';
 import type { RegionalIntelligenceResponse } from '@/lib/regional-intelligence';
+import type { SliderCapabilities } from '@/types/time-slider';
 import type { LocationPrecision } from '@/stores/regional-intelligence-store';
 
 const DEFAULT_QUESTION = 'Analyze this location';
+
+/**
+ * The most layer rows one request posts. Mirrors MAX_VIEWED_LAYERS in the route.
+ *
+ * The list is sliced here rather than left to the server's bound, because the server answers
+ * an oversized array with a 400 and the user loses the whole analysis over a reporting detail.
+ * The registry holds 20 toggles, so this can only ever bite a registry that grew past the
+ * server's bound before both halves redeployed.
+ */
+const MAX_VIEWED_LAYERS_POSTED = 24;
+
+/** One layer row's own day, as posted with the analysis request. */
+interface ViewedLayerReport {
+  layer: string;
+  date: string;
+  hasDataOnDate: boolean;
+}
+
+/**
+ * Whether this layer's own coverage record affirms that day as published.
+ *
+ * False means "the client cannot affirm it", which is NOT the same claim as "the warehouse
+ * published nothing" -- a toggle no warehouse stream backs at all (the SoilGrids raster, the
+ * SSURGO proxy) can never be affirmed from here. The server treats this as a claim rather than
+ * a fact and re-derives coverage from the same record server-side; nothing downstream may turn
+ * a false here into a stated absence.
+ *
+ * The `isDayDescribed` gate is the client half of the same fix `coverageOnDay` carries
+ * server-side, and it has to be here too or the two halves disagree in the one direction that
+ * hurts. `coverageGaps` is capped at its newest entries, so on a day below the reported boundary
+ * "not in the gap list" means nothing at all -- and this function was reading that silence as a
+ * yes. The server would then answer its own (now correct) "coverage unknown" while the client's
+ * posted claim said the day had data, and because `clientClaimContradicted` is only computed on
+ * the published and not-published branches, the disagreement was flagged nowhere.
+ */
+function reportsDataOnDate(
+  capabilities: SliderCapabilities | null,
+  warehouseLayerName: string | null,
+  date: string
+): boolean {
+  if (warehouseLayerName === null) return false;
+  const capability = findLayerCapability(capabilities, warehouseLayerName);
+  if (capability === null || capability.earliestObservedDate === null) return false;
+  if (date < capability.earliestObservedDate) return false;
+  if (!isDayDescribed(capability, date)) return false;
+  return !isWithinCoverageGap(capability, date);
+}
 
 class RegionalIntelligenceRequestError extends Error {
   constructor(
@@ -37,6 +92,27 @@ function isRegionalIntelligenceResponse(
 
 export function useRegionalIntelligence() {
   const store = useRegionalIntelligenceStore();
+  const viewedLayerDays = useViewedLayerDays();
+  const capabilities = useTimeSliderStore((state) => state.capabilities);
+
+  // Held in a ref and read at SEND time rather than closed over, for two reasons: the user can
+  // scrub between opening the panel and asking a follow-up, so the answer must describe the map
+  // as it is at the moment they ask; and `queryLocation` must stay referentially stable because
+  // MapView carries it in a useCallback dependency list.
+  const viewedLayersRef = useRef<ViewedLayerReport[]>([]);
+  useEffect(() => {
+    viewedLayersRef.current = viewedLayerDays
+      .slice(0, MAX_VIEWED_LAYERS_POSTED)
+      .map((viewed) => ({
+        layer: viewed.layerId,
+        date: viewed.date,
+        hasDataOnDate: reportsDataOnDate(
+          capabilities,
+          viewed.warehouseLayerName,
+          viewed.date
+        ),
+      }));
+  }, [viewedLayerDays, capabilities]);
 
   const queryLocation = useCallback(
     async (
@@ -80,6 +156,13 @@ export function useRegionalIntelligence() {
         isStreaming: true,
       });
 
+      // Omitted rather than sent empty when nothing is visible: an empty array and an absent
+      // field mean the same thing to the server, and the absent field is the one an older
+      // client sends, so the two paths stay identical instead of nearly identical.
+      const viewedLayers = viewedLayersRef.current.length
+        ? viewedLayersRef.current
+        : undefined;
+
       try {
         // Prior turns live server-side under conversationId; the client never
         // supplies conversation history.
@@ -94,6 +177,7 @@ export function useRegionalIntelligence() {
             lon,
             question,
             conversationId: conversationId ?? undefined,
+            viewedLayers,
             locationConsent: { precision, confirmed: true },
           }),
           signal: controller.signal,

@@ -26,11 +26,38 @@ import {
 const MAX_BODY_BYTES = 16 * 1024;
 const DEFAULT_QUESTION = 'Analyze this location';
 
-const requestSchema = z.object({
+/**
+ * The most layer rows one request may report a day for.
+ *
+ * The layer registry holds 20 toggles and the map cannot draw a row that is not one of them,
+ * so an honest client never reaches this. 24 leaves headroom for a registry that grows before
+ * both halves redeploy, and still keeps the array far under MAX_BODY_BYTES: 24 entries at
+ * roughly 70 bytes of JSON each is about 1.7 KB of a 16 KB budget, which leaves `question`
+ * its full 1000 characters. The bound is here rather than left to the byte cap alone because
+ * a body that fits in 16 KB can still carry thousands of tiny entries, and every one of them
+ * would become a line of prompt.
+ */
+export const MAX_VIEWED_LAYERS = 24;
+
+const CALENDAR_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** One layer row's own day. `hasDataOnDate` is the client's claim, cross-checked server-side. */
+const viewedLayerSchema = z
+  .object({
+    layer: z.string().trim().min(1).max(64),
+    date: z.string().regex(CALENDAR_DATE_PATTERN),
+    hasDataOnDate: z.boolean(),
+  })
+  .strict();
+
+export const requestSchema = z.object({
   lat: z.number().min(-90).max(90),
   lon: z.number().min(-180).max(180),
   question: z.string().max(1000).optional(),
   conversationId: z.string().uuid().optional(),
+  // Optional on purpose: a client built before per-layer dates, and a map with every layer
+  // switched off, both send nothing, and both must still get an answer.
+  viewedLayers: z.array(viewedLayerSchema).max(MAX_VIEWED_LAYERS).optional(),
   locationConsent: z
     .object({
       precision: z.enum(['approximate', 'exact']),
@@ -190,7 +217,7 @@ export async function POST(request: NextRequest) {
   try {
     let context: Awaited<ReturnType<typeof assembleRegionalContext>>;
     try {
-      context = await assembleRegionalContext(lat, lon);
+      context = await assembleRegionalContext(lat, lon, body.viewedLayers ?? []);
     } catch (error) {
       console.error('[AI] context assembly failed', error);
       return jsonResponse(
@@ -199,7 +226,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { payload, dataFreshness, contextIsEmpty } = context;
+    const { payload, dataFreshness, contextIsEmpty, temporalContext } = context;
     const question = body.question?.trim() || DEFAULT_QUESTION;
 
     let conversation: Awaited<ReturnType<typeof openConversation>>;
@@ -246,6 +273,7 @@ export async function POST(request: NextRequest) {
             payload,
             dataFreshness,
             contextIsEmpty,
+            temporalContext,
             conversation.history,
             question,
             abortController.signal
