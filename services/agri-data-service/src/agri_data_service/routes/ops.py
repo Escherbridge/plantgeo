@@ -39,6 +39,11 @@ _DATA_STREAMS_SQL: Final = text(load_query_sql("routes/ops_data_streams.sql"))
 _LANE_EVIDENCE_SQL: Final = text(load_query_sql("routes/ops_lane_landed_evidence.sql")).bindparams(
     bindparam("stream_names", type_=ARRAY(Text))
 )
+# The three backend-health panels. Each reads tables no ledger row describes, so each is loaded
+# through `_optional_rows` rather than beside the ledger statements: see the savepoint note there.
+_FORECAST_STATE_SQL: Final = text(load_query_sql("routes/ops_forecast_state.sql"))
+_PLATFORM_ACTIVITY_SQL: Final = text(load_query_sql("routes/ops_platform_activity.sql"))
+_UNARMED_SOURCES_SQL: Final = text(load_query_sql("routes/ops_unarmed_sources.sql"))
 
 # Every statement this page issues is bounded by the transaction-local timeout sql.md prescribes
 # for direct SQL. Three of them scan whole tables and those tables only grow -- finishing the FIRMS
@@ -62,6 +67,7 @@ _LANE_STREAMS: Final[Mapping[str, str]] = MappingProxyType(
     {lane_name: definition.stream for definition in DEFAULT_STREAM_DEFINITIONS for lane_name in definition.lane_names}
 )
 _NO_LANE_EVIDENCE: Final[Mapping[str, dict[str, Any]]] = MappingProxyType({})
+_NO_PANEL_ERRORS: Final[Mapping[str, str]] = MappingProxyType({})
 
 _DATASTAR_PATH: Final = Path(__file__).resolve().parents[1] / "static" / "datastar.js"
 _DATASTAR_URL: Final = "/ops/static/datastar.js"
@@ -98,10 +104,33 @@ _STREAM_AGING_DAYS: Final = 30
 #   lane evidence ~1.5 s -- scans the two archive layers of geo.features (~2.4M rows). A
 #                 minute is far short of the six hours that make a lane's ledger read stale,
 #                 so the cross-check never flips on cache age alone.
+#
+# The three backend-health panels are the same argument at smaller cost. Measured server-side
+# against production 2026-08-09 on warm buffers: forecast state 82 ms (nineteen scalar aggregates
+# over tables no larger than 184k rows), platform activity 102 ms, unarmed sources 247 ms (one
+# index probe per source release, 1,811 of them). None of that is expensive per read and all of it
+# is pointless twelve times a minute per connected operator, which is the only reason they are
+# cached at all. Their windows are chosen by how long each answer may lag before it misleads:
+#
+#   forecast state ~90 s -- the plane's newest write is days old. Nothing here moves inside a
+#                  minute, and the panel exists to report exactly that.
+#   platform       ~60 s -- this one is a liveness signal, so it is the panel that most needs to
+#                  change soon after the world does; a minute is the shortest window worth the
+#                  scan.
+#   sources        ~60 s -- a zero-landing release must become visible while the lane that wrote
+#                  it is still running, not after it finishes.
 _STREAMS_CACHE_SECONDS: Final = 300
 _WALKS_CACHE_SECONDS: Final = 60
 _LANE_EVIDENCE_CACHE_SECONDS: Final = 60
+_FORECAST_CACHE_SECONDS: Final = 90
+_PLATFORM_CACHE_SECONDS: Final = 60
+_SOURCES_CACHE_SECONDS: Final = 60
 _STREAMS_CACHE_KEY: Final = "data-streams"
+# Each panel's cache key doubles as its name in `panel_errors`, so a failed read is reported
+# against the same identity the cache and the log entry use.
+_FORECAST_CACHE_KEY: Final = "forecast-state"
+_PLATFORM_CACHE_KEY: Final = "platform-activity"
+_SOURCES_CACHE_KEY: Final = "unarmed-sources"
 # Keyed by statement (and by the window it was bound with, where that changes the answer), so
 # two operators watching different rate windows never read each other's numbers.
 _QUERY_CACHE: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
@@ -140,6 +169,31 @@ _CADENCE_SUBDAY: Final = 1.0
 # the page keeps claiming a walk is moving, and a quieter walk reads idle with the exact age
 # of its last chunk in the column beside the pill.
 _WALK_ACTIVE_MINUTES: Final = 15
+
+# How recently a forecast-plane stage must have written to still read as running. The bands are
+# deliberately coarse, in days rather than hours, because nothing in this plane is scheduled: it
+# is driven by hand, so an overnight gap is normal and only a multi-day one says anything. A stage
+# with zero rows never reaches these bands at all -- it has demonstrably never executed, which is
+# a different statement from "has not run lately" and gets its own state.
+_FORECAST_LIVE_HOURS: Final = 24
+_FORECAST_STALE_DAYS: Final = 7
+
+# What share of iterations must carry a scored actual before the coverage reads as sound rather
+# than as a gap. Half is a low bar on purpose: production sits at 7% (118 of 1,676 iterations,
+# measured 2026-08-09), so anything stricter would be tuned to a number nobody has tried to move.
+_SCORED_COVERAGE_HEALTHY_PERCENT: Final = 50.0
+
+# Stage, state, rows, last write, frontier, scored. Named because the plane-band header spans them
+# all, and a colspan that drifts out of step with the header row silently breaks the table layout.
+_FORECAST_TABLE_COLUMNS: Final = 6
+
+# How long since a source last wrote a release that CARRIED DATA before the page stops calling it
+# fed. Two days is the fresh band because the daily upstreams here publish on a daily cadence and
+# a load that ran yesterday is healthy; a week is the outer band because every remaining reading
+# -- a finished archive walk, a stopped scheduled task, an upstream that has published nothing --
+# looks identical from here, and the panel says so rather than picking one.
+_SOURCE_FED_HOURS: Final = 48
+_SOURCE_LAGGING_DAYS: Final = 7
 
 _SECONDS_PER_MINUTE: Final = 60
 _MINUTES_PER_HOUR: Final = 60
@@ -191,6 +245,73 @@ _WALK_NOTE: Final = (
     "in their source key are exactly that pair."
 )
 
+# The forecast plane has no job definition, no lane and no ledger row, so every other panel on
+# this page is structurally blind to it and only a direct count can say what has run.
+_FORECAST_NOTE: Final = (
+    "the forecast and ML plane, counted from the tables themselves. Nothing here enqueues a ledger "
+    "item, so the lanes table above cannot see this plane at all and a stage that has never "
+    "executed is otherwise indistinguishable from one nobody has looked at. A stage showing zero "
+    "rows HAS NEVER RUN, whatever a plan or a handoff note says about it. Two clocks travel with "
+    "each stage and they are not the same question: last write is when a row was written, frontier "
+    "is the newest point in time the stage reasons about, and the label under the frontier says "
+    "which quantity it is because a newest as-of and a newest valid time are not comparable. "
+    "scored is the share of ITERATIONS carrying at least one actual, not the share of predicted "
+    "values -- the two readings differ by a factor of four here, because one actual is recorded "
+    "per predicted point and one iteration holds many points. Nothing on this row of the page is a "
+    "claim that any forecast is operational or life-safety-valid: a plane with no backtest metric "
+    "has never had a prediction compared against what actually happened, which makes its output "
+    "unfalsifiable rather than merely unvalidated."
+)
+
+# Owner decision, and the reason this panel is counts-only. It is repeated on the page rather than
+# left in the SQL header because the page is the surface a reader can actually check it against.
+_PLATFORM_NOTE: Final = (
+    "aggregate counts and timestamps only. /ops is unauthenticated, so by owner decision no email, "
+    "name, organization, slug, id, address or coordinate is read by this panel or reachable from "
+    "it, and no most-active or recent-activity list may be added to it. THIS DATABASE RECORDS NO "
+    "REQUEST LOG, ACCESS LOG OR AUDIT TABLE, so there is no request-volume number here and any "
+    "that appeared would be invented: ai messages counts assistant traffic only, and a user "
+    "browsing the map all day writes nothing anywhere. Every row names the column its windows are "
+    "measured on, because they are not all creation stamps -- api keys is measured on last use, so "
+    "its windows count keys USED in the window rather than keys issued in it, and verified "
+    "accounts is measured on the email-verification stamp rather than on the unrelated boolean "
+    "beside it that no auth path ever writes. Every newest column is truncated to the hour: these "
+    "are aggregates and name nobody, but at a population of one an aggregate instant is a single "
+    "subject's registration time to the microsecond, and no question this panel answers turns on "
+    "a sub-hour difference. Unexpired sessions "
+    "is the row with no windows at all: the table holds only a token, a user and an expiry and "
+    "records no creation time, so how many people signed in this week is not a question this "
+    "schema can answer, and blank is the honest answer rather than zero."
+)
+
+# The same honesty convention as the walk note, for the half of a source's state that lives in an
+# infrastructure config this database cannot read.
+_SOURCE_NOTE: Final = (
+    "every catalogued upstream, judged on what it landed rather than on its is_active flag -- that "
+    "flag is a hand-written policy statement and is not evidence that anything is loading the "
+    "source. LANDED MEANS THREE TABLES, and which one a source uses is a property of that source, "
+    "not a fallback: the warehouse signal plane, the normalized feature plane, and the governed "
+    "forecast-input plane the Sentinel-2 NDVI registration path writes to and which never touches "
+    "the signal plane at all. The line under each source name says which planes it actually lands "
+    "in, because an audit that checks the wrong one reports a healthy lane as stone dead -- that "
+    "mistake was made on this data, and this column is what makes it self-correcting. "
+    "What a row here measures is the GOVERNED path, releases and the rows behind them, not raw "
+    "ingest: a promotion step can be unarmed while the ingest beneath it is perfectly healthy, and "
+    "a source going stale here while its upstream is current is exactly that shape. "
+    "THIS PANEL CANNOT SEE A SCHEDULER: no table here records which crons or scheduled tasks "
+    "exist, so unarmed means only that no release carrying data has been written recently, and an "
+    "unscheduled promotion step, a scheduled task that stopped firing, a finished archive walk and "
+    "an upstream that simply published nothing all look identical from here. The reverse direction "
+    "is solid and is the useful one: a recent landed release proves something is feeding this "
+    "source, whatever that something is. zero-landing counts releases that published provenance "
+    "and wrote no row in ANY of the three planes -- a load that ran clean and landed nothing. "
+    "Those releases are immutable provenance and are deliberately never deleted, so counting them "
+    "is the only thing that stops them reading as healthy work, and the age beside the count is "
+    "what separates a closed chapter from a lane failing right now. Nothing here arms anything: "
+    "registering a forward load is an infrastructure decision with a human owner and is out of "
+    "this page's scope."
+)
+
 
 @dataclass(frozen=True, slots=True)
 class _ScanQuery:
@@ -215,7 +336,16 @@ class _Snapshot:
     dead_letter_trend: list[dict[str, Any]]
     # Every load's landed state, including the lanes that never touch the ledger.
     streams: list[dict[str, Any]]
+    # What the forecast/ML plane has actually executed, one row per pipeline stage.
+    forecast_stages: list[dict[str, Any]]
+    # Aggregate-only product usage. Counts and timestamps, never identity; see _PLATFORM_NOTE.
+    platform_activity: list[dict[str, Any]]
+    # Every catalogued upstream and whether anything is still feeding it.
+    sources: list[dict[str, Any]]
     error: str | None
+    # Keyed by panel cache key. A panel whose own statement failed reports itself here and leaves
+    # the rest of the page intact; `error` above stays reserved for a read that failed wholesale.
+    panel_errors: Mapping[str, str] = _NO_PANEL_ERRORS
 
 
 # --- Routes -----------------------------------------------------------------------
@@ -336,7 +466,48 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
                 ),
                 generated_at,
             )
+            panel_errors: dict[str, str] = {}
+            forecast_rows = await _optional_rows(
+                session,
+                _ScanQuery(
+                    cache_key=_FORECAST_CACHE_KEY,
+                    statement=_FORECAST_STATE_SQL,
+                    parameters={},
+                    ttl_seconds=_FORECAST_CACHE_SECONDS,
+                ),
+                generated_at,
+                panel_errors,
+            )
+            platform_rows = await _optional_rows(
+                session,
+                _ScanQuery(
+                    cache_key=_PLATFORM_CACHE_KEY,
+                    statement=_PLATFORM_ACTIVITY_SQL,
+                    parameters={},
+                    ttl_seconds=_PLATFORM_CACHE_SECONDS,
+                ),
+                generated_at,
+                panel_errors,
+            )
+            source_rows = await _optional_rows(
+                session,
+                _ScanQuery(
+                    cache_key=_SOURCES_CACHE_KEY,
+                    statement=_UNARMED_SOURCES_SQL,
+                    parameters={},
+                    ttl_seconds=_SOURCES_CACHE_SECONDS,
+                ),
+                generated_at,
+                panel_errors,
+            )
     except Exception as error:
+        # The same security boundary as the panel path, for the same reason. This string is
+        # rendered into the page banner by `_render_meta` and mirrored into `/backfill.json`, and
+        # the statements that reach here carry their own clause-by-clause headers -- publishing the
+        # message published the whole lane statement plus `[parameters: (24,)]`. Nothing exotic is
+        # needed to trigger it: one unreadable agri.job_* relation on a partially migrated or
+        # permission-restricted database, or a statement timeout on the 46M-row lane read. Full
+        # text goes to the log line above, which is private; only the class is published.
         logger.warning("ops_backfill_snapshot_failed", error=str(error))
         return _Snapshot(
             generated_at=generated_at,
@@ -346,7 +517,10 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
             failures=[],
             dead_letter_trend=[],
             streams=[],
-            error=f"{type(error).__name__}: {error}",
+            forecast_stages=[],
+            platform_activity=[],
+            sources=[],
+            error=_panel_error_summary(error),
         )
     current_run_ids = _current_run_ids(lane_rows)
     return _Snapshot(
@@ -366,19 +540,124 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
         failures=failure_rows,
         dead_letter_trend=trend_rows,
         streams=stream_rows,
+        forecast_stages=[_forecast_stage_record(row, generated_at) for row in forecast_rows],
+        platform_activity=platform_rows,
+        sources=[_source_record(row, generated_at) for row in source_rows],
         error=None,
+        panel_errors=panel_errors,
     )
+
+
+def _cached_entry(query: _ScanQuery, now: datetime) -> list[dict[str, Any]] | None:
+    """Return this statement's cached answer while it is still inside its own TTL, else None.
+
+    The single definition of "is the cached copy still good". Both readers below consult it, so the
+    TTL rule cannot come to mean two different things depending on which one a panel goes through.
+    """
+    entry = _QUERY_CACHE.get(query.cache_key)
+    if entry is None or (now - entry[0]).total_seconds() >= query.ttl_seconds:
+        return None
+    return entry[1]
 
 
 async def _cached_rows(session: Any, query: _ScanQuery, now: datetime) -> list[dict[str, Any]]:
     """Run one scanning statement, re-reading only once the cached copy has aged past its own TTL."""
-    entry = _QUERY_CACHE.get(query.cache_key)
-    if entry is not None and (now - entry[0]).total_seconds() < query.ttl_seconds:
-        return entry[1]
+    cached = _cached_entry(query, now)
+    if cached is not None:
+        return cached
     result = await session.execute(query.statement, query.parameters)
     rows = [dict(row) for row in result.mappings().all()]
     _QUERY_CACHE[query.cache_key] = (now, rows)
     return rows
+
+
+async def _optional_rows(
+    session: Any,
+    query: _ScanQuery,
+    now: datetime,
+    panel_errors: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Run one panel's statement inside a savepoint, so its failure costs only that panel.
+
+    Caching is `_cached_rows`' contract exactly; the difference is the blast radius of a failure.
+    The ledger statements above read tables this service's own migrations create, so a failure
+    there means the read is broken and the whole page should say so. These three do not: the
+    platform panel reads `public` tables another application's migrations own and which need not
+    exist on an agri-only database at all, and the forecast and source panels read planes that a
+    partially migrated environment may be missing. Letting an UndefinedTable on one of those blank
+    the lanes, walks, streams and failures panels would trade a small honest gap for a total
+    outage of the page an operator opened to diagnose something else.
+
+    The savepoint is what makes that possible rather than merely desirable. A failed statement
+    poisons its whole transaction -- every following read returns InFailedSqlTransaction instead
+    of data -- so catching the exception alone would still lose every panel after it. `begin_nested`
+    issues SAVEPOINT, and rolling back to it leaves the outer transaction usable. The
+    transaction-local statement_timeout was pinned BEFORE this savepoint, so it survives the
+    rollback and still bounds everything after it.
+
+    A failed panel is recorded rather than swallowed. An empty table and an unreadable one look
+    identical on the page otherwise, and those are opposite findings. What is recorded is the
+    failure's CLASS and nothing else; `_panel_error_summary` says why.
+
+    The TTL check is `_cached_entry` and the read itself is `_cached_rows`, so this function adds a
+    savepoint and an except clause to the shared path rather than restating it. The guard runs
+    before the savepoint deliberately: a cache hit is a dictionary lookup and must not buy the
+    connection a SAVEPOINT/RELEASE round trip on every five-second tick.
+    """
+    cached = _cached_entry(query, now)
+    if cached is not None:
+        return cached
+    try:
+        async with session.begin_nested():
+            return await _cached_rows(session, query, now)
+    except Exception as error:
+        # The full text -- driver message, failing relation, and the entire statement -- goes to
+        # the log, which is private. Only the class reaches `panel_errors`, which is not.
+        logger.warning("ops_backfill_panel_read_failed", panel=query.cache_key, error=str(error))
+        panel_errors[query.cache_key] = _panel_error_summary(error)
+        return []
+
+
+def _panel_error_summary(error: Exception) -> str:
+    """Name the KIND of failure without publishing one byte of the statement that failed.
+
+    The single sink for every error string this page publishes -- the per-panel banners and the
+    whole-read banner both come through here. This is a security boundary, not a formatting
+    preference. `/ops/backfill` is unauthenticated, and SQLAlchemy's StatementError.__str__ appends
+    `[SQL: <the entire statement>]` and `[parameters: ...]` to its message. Rendering that verbatim
+    published roughly 11,800 characters of internal SQL to anonymous visitors -- including this
+    service's own header comments, which enumerate exactly which tables hold email addresses,
+    names, slugs and coordinates. Neither trigger is exotic: for the panels it is the environment
+    `_optional_rows` exists for, an agri-only database with no `public` application tables, where
+    the leak was the page's DEFAULT rendering; for the whole read it is one unreadable agri.job_*
+    relation or a statement timeout on the lane query.
+
+    WHAT THIS FUNCTION MAY EVALUATE, WHICH IS THE ENTIRE SECURITY ARGUMENT
+
+    Every expression below is `type(x).__name__`. A Python class name is an identifier -- letters,
+    digits and underscores -- so nothing this returns can carry a statement, a parameter, a row or
+    a message, whatever it is handed. It never reads `str()`, `repr()`, `.statement`, `.params`,
+    `.detail`, `.args` or `__context__`. The guarantee is therefore structural rather than a
+    property of the exception shapes anyone here has happened to see, and it keeps holding against
+    driver classes nobody has met. Any future edit that reads a VALUE off an exception rather than
+    its type breaks that argument and needs the same scrutiny this function got.
+
+    WHY IT UNWRAPS EXACTLY ONE LEVEL
+
+    `orig` is SQLAlchemy's handle on the driver exception, but for asyncpg it is the DIALECT's own
+    wrapper rather than the condition. Measured against the live driver, a missing relation arrives
+    as ProgrammingError whose `orig` is asyncpg's ProgrammingError, so the pair read
+    "ProgrammingError: ProgrammingError" -- a tautology saying nothing `type(error).__name__` alone
+    did not. The real condition, UndefinedTableError, hangs off that wrapper's `__cause__`. One
+    level is unwrapped and no more: one level is what the dialect adds, and a loop would chase a
+    chain of unknown depth for no gain. An error raised outside the driver has no `orig` at all and
+    reports its own class alone.
+    """
+    origin = getattr(error, "orig", None)
+    if origin is None:
+        return type(error).__name__
+    condition = getattr(origin, "__cause__", None) or origin
+    return f"{type(error).__name__}: {type(condition).__name__}"
 
 
 async def _load_lane_evidence(
@@ -583,6 +862,80 @@ def _walk_state(
     return "idle"
 
 
+def _forecast_stage_record(row: dict[str, Any], generated_at: datetime) -> dict[str, Any]:
+    """Add the executed/stale state and the scored-coverage share to one pipeline stage."""
+    covered = row["covered_count"]
+    coverage_of = row["coverage_of_count"]
+    return {
+        **row,
+        "state": _forecast_stage_state(row, generated_at),
+        # None rather than zero for every stage that carries no ratio at all: a stage with nothing
+        # to divide has no coverage, which is not the same statement as coverage of nothing.
+        "coverage_percent": (
+            (100.0 * int(covered) / int(coverage_of)) if covered is not None and coverage_of else None
+        ),
+    }
+
+
+def _forecast_stage_state(row: dict[str, Any], now: datetime) -> str:
+    """Name a stage's state from its own rows alone; zero rows is never a staleness question.
+
+    `never` is the load-bearing one and it is tested first: a stage holding no rows has not merely
+    gone quiet, it has never executed once, and collapsing that into "stale" would let a plane
+    nothing has ever run read as a plane that is simply between runs.
+    """
+    if int(row["row_count"]) == 0:
+        return "never"
+    last_activity_at: datetime | None = row["last_activity_at"]
+    if last_activity_at is None:
+        # Rows with no write stamp: the table cannot say when it last moved, so nothing is claimed.
+        return "undated"
+    age = now - last_activity_at.astimezone(UTC)
+    if age <= timedelta(hours=_FORECAST_LIVE_HOURS):
+        return "live"
+    if age <= timedelta(days=_FORECAST_STALE_DAYS):
+        return "stale"
+    return "dormant"
+
+
+def _source_record(row: dict[str, Any], generated_at: datetime) -> dict[str, Any]:
+    """Add the fed/unarmed state to one catalogued source, derived from landed releases only."""
+    return {
+        **row,
+        "has_ever_landed": int(row["landed_release_count"]) > 0,
+        "state": _source_state(row, generated_at),
+    }
+
+
+def _source_state(row: dict[str, Any], now: datetime) -> str:
+    """Name a source's state from landed evidence; see the source note for what unarmed omits.
+
+    Order is the whole design. `inactive` comes first because a source policy has withdrawn is not
+    a fault however long it stays silent, and flagging it would put a permanent warning on the page.
+    `never` comes before any age test for the same reason it does in the forecast panel: a source
+    that has published releases and landed nothing in ANY observation plane is not stale, it has
+    never worked. Everything past those gates is a question about age alone, which is why it lives
+    in its own function rather than lengthening the ladder here.
+    """
+    if not row["is_active"]:
+        return "inactive"
+    if int(row["release_count"]) == 0:
+        return "no_releases"
+    if int(row["landed_release_count"]) == 0:
+        return "never"
+    return _source_feed_state(row["last_landed_release_at"], now)
+
+
+def _source_feed_state(last_landed_at: datetime | None, now: datetime) -> str:
+    """Band a fed source by how long ago it last wrote a release that actually carried data."""
+    if last_landed_at is None:
+        return "undated"
+    age = now - last_landed_at.astimezone(UTC)
+    if age <= timedelta(hours=_SOURCE_FED_HOURS):
+        return "fed"
+    return "lagging" if age <= timedelta(days=_SOURCE_LAGGING_DAYS) else "unarmed"
+
+
 def _json_snapshot(snapshot: _Snapshot) -> dict[str, Any]:
     """Render the snapshot as JSON-safe primitives."""
     return {
@@ -592,12 +945,22 @@ def _json_snapshot(snapshot: _Snapshot) -> dict[str, Any]:
         "ledger_stale_note": _LANE_STALE_NOTE,
         "ledger_stale_hours": _LEDGER_STALE_HOURS,
         "historical_walk_note": _WALK_NOTE,
+        "forecast_state_note": _FORECAST_NOTE,
+        "platform_activity_note": _PLATFORM_NOTE,
+        "source_note": _SOURCE_NOTE,
         "error": snapshot.error,
+        # A panel that failed its own read reports itself here rather than as an empty list, so a
+        # scripted reader can tell "nothing to report" from "could not be read" the same way the
+        # page can.
+        "panel_errors": dict(snapshot.panel_errors),
         "lanes": [_json_safe(lane) for lane in snapshot.lanes],
         "historical_walks": [_json_safe(walk) for walk in snapshot.walks],
         "failures": [_json_safe(failure) for failure in snapshot.failures],
         "dead_letter_trend": [_json_safe(entry) for entry in snapshot.dead_letter_trend],
         "data_streams": [_json_safe(stream) for stream in snapshot.streams],
+        "forecast_state": [_json_safe(stage) for stage in snapshot.forecast_stages],
+        "platform_activity": [_json_safe(metric) for metric in snapshot.platform_activity],
+        "sources": [_json_safe(source) for source in snapshot.sources],
     }
 
 
@@ -650,6 +1013,9 @@ def _regions(snapshot: _Snapshot, *, interval_seconds: int) -> list[tuple[str, s
         ("#ops-lanes", _render_lanes(snapshot)),
         ("#ops-walks", _render_walks(snapshot)),
         ("#ops-streams", _render_streams(snapshot)),
+        ("#ops-unarmed", _render_sources(snapshot)),
+        ("#ops-forecast", _render_forecast(snapshot)),
+        ("#ops-activity", _render_activity(snapshot)),
         ("#ops-failures", _render_failures(snapshot)),
         ("#ops-deadletters", _render_dead_letter_trend(snapshot)),
     ]
@@ -993,6 +1359,320 @@ def _format_day(value: Any) -> str:
     return _EMPTY if value is None else escape(str(value)[:10])
 
 
+def _panel_banner(snapshot: _Snapshot, panel: str) -> str:
+    """Say that one panel's own read failed, so an unreadable table never renders as an empty one."""
+    error = snapshot.panel_errors.get(panel)
+    if error is None:
+        return ""
+    return f'<div class="banner bad">{escape(panel)} read failed &mdash; {escape(error)}</div>'
+
+
+def _render_sources(snapshot: _Snapshot) -> str:
+    """Render every catalogued upstream and whether landed evidence says anything still feeds it."""
+    banner = _panel_banner(snapshot, _SOURCES_CACHE_KEY)
+    if not snapshot.sources:
+        return (
+            '<section id="ops-unarmed"><h2>upstream sources</h2>'
+            f'{banner}<p class="empty">no catalogued sources readable</p></section>'
+        )
+    rows = "".join(_render_source_row(source, snapshot.generated_at) for source in snapshot.sources)
+    return (
+        '<section id="ops-unarmed"><h2>upstream sources</h2>'
+        f'{banner}<p class="note">{escape(_SOURCE_NOTE)}</p>'
+        '<div class="scroll"><table>'
+        "<thead><tr>"
+        "<th>source</th><th>state</th>"
+        '<th class="n">releases</th><th class="n">landed</th><th class="n">zero-landing</th>'
+        "<th>last landed release</th><th>newest observation</th>"
+        "</tr></thead>"
+        f"<tbody>{rows}</tbody></table></div></section>"
+    )
+
+
+def _render_source_row(source: dict[str, Any], generated_at: datetime) -> str:
+    """Render one source. A source that has never landed anything must read louder than a stale one."""
+    landed_releases = int(source["landed_release_count"])
+    inactive_mark = "" if source["is_active"] else ' <span class="pill dim">inactive</span>'
+    return (
+        "<tr>"
+        f'<td><span class="lane">{escape(str(source["source_key"]))}</span>{inactive_mark}'
+        f'<br><span class="dim">{escape(str(source["source_name"]))}</span>'
+        f'<br><span class="dim">review {escape(str(source["review_state"]))}</span>'
+        f"{_render_landing_planes(source)}</td>"
+        f"<td>{_status_pill(str(source['state']))}</td>"
+        f'<td class="n">{int(source["release_count"]):,}</td>'
+        f'<td class="n{"" if landed_releases else " bad"}">{landed_releases:,}</td>'
+        f'<td class="n">{_zero_landing_cell(source, generated_at)}</td>'
+        f"<td>{_format_age(source['last_landed_release_at'], generated_at)}"
+        f'<br><span class="dim">{escape(_format_stamp(source["last_landed_release_at"]))}</span></td>'
+        f'<td class="dim">{_format_day(source["newest_observation_at"])}</td>'
+        "</tr>"
+    )
+
+
+def _render_landing_planes(source: dict[str, Any]) -> str:
+    """Name the observation planes this source lands in, because "landed" is not one table.
+
+    A source that lands nowhere prints nothing here: its state pill already says `never`, and a
+    second empty statement beside it would only dilute the first. What this line is for is the
+    opposite case -- a source that IS healthy but lands somewhere an audit did not think to look.
+    """
+    planes = source["landing_planes"] or []
+    if not planes:
+        return ""
+    listed = ", ".join(str(plane) for plane in planes)
+    return f'<br><span class="dim">lands in {escape(listed)}</span>'
+
+
+def _zero_landing_cell(source: dict[str, Any], generated_at: datetime) -> str:
+    """Tint the zero-landing count and date it, because age is what separates the two readings.
+
+    Zero is the good case and must read as such rather than as absence. Any non-zero count is a
+    confirmed instance of the ran-clean-and-wrote-nothing bug class, so it tones bad outright with
+    no warning band: one is already one too many, and the age beneath it is what says whether it is
+    a closed chapter or a lane failing right now.
+    """
+    zero_landing = int(source["zero_landing_releases"])
+    if zero_landing == 0:
+        return '<span class="ok">0</span>'
+    newest = _format_age(source["newest_zero_landing_release_at"], generated_at)
+    return f'<span class="bad">{zero_landing:,}</span><br><span class="dim">newest {newest}</span>'
+
+
+def _render_forecast(snapshot: _Snapshot) -> str:
+    """Render one row per forecast/ML stage, with the never-executed count as the headline."""
+    banner = _panel_banner(snapshot, _FORECAST_CACHE_KEY)
+    if not snapshot.forecast_stages:
+        return (
+            '<section id="ops-forecast"><h2>forecast / ml plane</h2>'
+            f'{banner}<p class="empty">no forecast plane readable</p></section>'
+        )
+    never_executed = sum(1 for stage in snapshot.forecast_stages if int(stage["row_count"]) == 0)
+    tiles = f'<div class="tiles">{_render_forecast_tiles(snapshot, never_executed)}</div>'
+    return (
+        '<section id="ops-forecast"><h2>forecast / ml plane</h2>'
+        f'{banner}<p class="note">{escape(_FORECAST_NOTE)}</p>{tiles}'
+        '<div class="scroll"><table>'
+        "<thead><tr>"
+        "<th>stage</th><th>state</th>"
+        '<th class="n">rows</th><th>last write</th><th>frontier</th><th class="n">scored</th>'
+        "</tr></thead>"
+        f"<tbody>{_render_forecast_bands(snapshot)}</tbody></table></div></section>"
+    )
+
+
+def _render_forecast_bands(snapshot: _Snapshot) -> str:
+    """Break the stage table into one band per plane, headed by that plane's own tally.
+
+    The nineteen stages are four coherent waves -- the evidence that feeds the plane, the iteration
+    method that actually runs, the governed pipeline above it, and the recommendation plane above
+    that -- and the whole finding is WHERE the boundary between "has run" and "has never run"
+    falls. Flat, with the plane repeated in a column, a reader has to scan all nineteen rows to
+    locate a waterline that a band header states outright.
+    """
+    fragments: list[str] = []
+    for plane, stages in _stages_by_plane(snapshot.forecast_stages):
+        fragments.append(_render_plane_band(plane, stages))
+        fragments.extend(_render_forecast_row(stage, snapshot.generated_at) for stage in stages)
+    return "".join(fragments)
+
+
+def _stages_by_plane(stages: Sequence[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Group stages into RUNS of the same plane, in statement order, without re-sorting them.
+
+    Contiguous runs rather than a dictionary of planes, deliberately. The statement returns its
+    stages in pipeline order and its planes already fall in contiguous blocks; grouping by key
+    would impose Python's insertion or alphabetical order on top of the pipeline's own, and would
+    silently stitch two separated blocks of one plane into a single band. Grouping by run keeps
+    the page a faithful picture of what the statement said: if a plane ever does appear in two
+    places, it renders as two bands, which is the honest way to show it.
+    """
+    grouped: list[tuple[str, list[dict[str, Any]]]] = []
+    for stage in stages:
+        plane = str(stage["plane"])
+        if not grouped or grouped[-1][0] != plane:
+            grouped.append((plane, []))
+        grouped[-1][1].append(stage)
+    return grouped
+
+
+def _render_plane_band(plane: str, stages: list[dict[str, Any]]) -> str:
+    """Head one plane's rows with how many of its stages have ever executed.
+
+    Toned on the tally rather than on the plane's name: a plane where nothing has ever run is the
+    finding and reads bad, a fully executed one reads ok, and a partially executed one warns. That
+    is what puts the waterline on the page instead of leaving it to be counted by eye.
+    """
+    executed = sum(1 for stage in stages if int(stage["row_count"]) > 0)
+    if executed == 0:
+        tone = "bad"
+    elif executed == len(stages):
+        tone = "ok"
+    else:
+        tone = "warn"
+    return (
+        f'<tr class="band"><td colspan="{_FORECAST_TABLE_COLUMNS}">'
+        f"<b>{escape(plane)}</b> "
+        f'<span class="{tone}">{executed} of {len(stages)} stages have ever run</span>'
+        "</td></tr>"
+    )
+
+
+def _render_forecast_tiles(snapshot: _Snapshot, never_executed: int) -> str:
+    """Put the two numbers that are the finding above the table that evidences them."""
+    scored = _scored_stage(snapshot)
+    coverage = None if scored is None else scored["coverage_percent"]
+    return "".join(
+        [
+            _tile("pipeline stages", str(len(snapshot.forecast_stages)), ""),
+            _tile("never executed", f"{never_executed:,}", "bad" if never_executed else ""),
+            _tile(
+                "iterations scored",
+                _EMPTY if coverage is None else f"{coverage:.1f}%",
+                "" if coverage is None else _coverage_tone(coverage),
+            ),
+        ]
+    )
+
+
+def _scored_stage(snapshot: _Snapshot) -> dict[str, Any] | None:
+    """Find the one stage that carries a coverage ratio, without naming it in Python.
+
+    The stage list lives in the SQL, so hunting for the row that HAS a ratio keeps this side from
+    holding a second, silently divergent copy of which stage that is. That search is only sound
+    while exactly one stage carries a ratio, which is an invariant of the statement rather than
+    something this side can enforce -- so a second ratio row is logged rather than ignored. It is
+    logged and not raised on purpose: this is a display path on a page whose entire value is
+    staying up during an incident, and a 500 over an ambiguous tile would be a worse outcome than
+    a tile showing the first of two. The table below still renders both rows in full either way.
+    """
+    scored = [stage for stage in snapshot.forecast_stages if stage["coverage_percent"] is not None]
+    if not scored:
+        return None
+    if len(scored) > 1:
+        logger.warning(
+            "ops_forecast_multiple_coverage_stages",
+            stages=[str(stage["stage"]) for stage in scored],
+        )
+    return scored[0]
+
+
+def _coverage_tone(coverage: float) -> str:
+    """Tone a coverage share. Nothing scored at all is a different finding from a thin sample."""
+    if coverage <= 0.0:
+        return "bad"
+    return "warn" if coverage < _SCORED_COVERAGE_HEALTHY_PERCENT else "ok"
+
+
+def _render_forecast_row(stage: dict[str, Any], generated_at: datetime) -> str:
+    """Render one stage. A zero row count is tinted bad, because it is the finding, not a gap."""
+    row_count = int(stage["row_count"])
+    return (
+        "<tr>"
+        f'<td><span class="lane">{escape(str(stage["stage"]))}</span>'
+        f'<br><span class="dim">{escape(str(stage["relation"]))}</span>'
+        f"{_render_stage_breadth(stage)}</td>"
+        # No plane column: the band header above this row already names it, and repeating it on
+        # every row is what made the waterline between the planes invisible.
+        f"<td>{_status_pill(str(stage['state']))}</td>"
+        f'<td class="n{"" if row_count else " bad"}">{row_count:,}</td>'
+        f"<td>{_format_age(stage['last_activity_at'], generated_at)}"
+        f'<br><span class="dim">{escape(_format_stamp(stage["last_activity_at"]))}</span></td>'
+        f"<td>{_render_stage_frontier(stage)}</td>"
+        f'<td class="n">{_render_scored_cell(stage)}</td>'
+        "</tr>"
+    )
+
+
+def _render_stage_breadth(stage: dict[str, Any]) -> str:
+    """Say how broad a stage is, and nothing at all where the answer is not defined.
+
+    The list is capped in the statement, so a stage that one day holds hundreds of methods puts a
+    handful on the page beside its real count rather than all of them.
+    """
+    values = stage["breadth"] or []
+    label = stage["breadth_label"]
+    if not values or label is None:
+        return ""
+    listed = ", ".join(str(value) for value in values)
+    return f'<br><span class="dim">{escape(str(label))}: {escape(listed)}</span>'
+
+
+def _render_stage_frontier(stage: dict[str, Any]) -> str:
+    """Print the newest time a stage reasons about, always labelled with which time that is."""
+    frontier_at = stage["frontier_at"]
+    if frontier_at is None:
+        return _EMPTY
+    return f'{escape(_format_stamp(frontier_at))}<br><span class="dim">{escape(str(stage["frontier_label"]))}</span>'
+
+
+def _render_scored_cell(stage: dict[str, Any]) -> str:
+    """Render the actuals-coverage share, with its two terms under it so the ratio is checkable."""
+    coverage = stage["coverage_percent"]
+    if coverage is None:
+        return _EMPTY
+    covered = int(stage["covered_count"])
+    coverage_of = int(stage["coverage_of_count"])
+    return (
+        f'<span class="{_coverage_tone(coverage)}">{coverage:.1f}%</span>'
+        f'<br><span class="dim">{covered:,}/{coverage_of:,} {escape(str(stage["coverage_label"]))}</span>'
+    )
+
+
+def _render_activity(snapshot: _Snapshot) -> str:
+    """Render the aggregate platform counters. Counts and timestamps only; see _PLATFORM_NOTE."""
+    banner = _panel_banner(snapshot, _PLATFORM_CACHE_KEY)
+    if not snapshot.platform_activity:
+        return (
+            '<section id="ops-activity"><h2>platform activity</h2>'
+            f'{banner}<p class="empty">no platform tables readable</p></section>'
+        )
+    rows = "".join(_render_activity_row(metric, snapshot.generated_at) for metric in snapshot.platform_activity)
+    return (
+        '<section id="ops-activity"><h2>platform activity</h2>'
+        f'{banner}<p class="note">{escape(_PLATFORM_NOTE)}</p>'
+        '<div class="scroll"><table>'
+        "<thead><tr>"
+        "<th>area</th><th>metric</th>"
+        '<th class="n">total</th><th class="n">24h</th><th class="n">7d</th>'
+        "<th>newest</th><th>measured on</th>"
+        "</tr></thead>"
+        f"<tbody>{rows}</tbody></table></div></section>"
+    )
+
+
+def _render_activity_row(metric: dict[str, Any], generated_at: datetime) -> str:
+    """Render one aggregate counter. No column here identifies a person or an organization."""
+    total = int(metric["total_count"] or 0)
+    basis = metric["window_basis"]
+    # A row with no basis has no creation stamp behind it at all, which is why its windows are
+    # blank. Saying so in the row keeps the reason next to the blank instead of only in the note.
+    basis_cell = '<span class="warn">no creation stamp</span>' if basis is None else escape(str(basis))
+    return (
+        "<tr>"
+        f'<td class="dim">{escape(str(metric["section"]))}</td>'
+        f"<td><b>{escape(str(metric['metric']))}</b>"
+        f'<br><span class="dim">{escape(str(metric["relation"]))}</span></td>'
+        f'<td class="n{"" if total else " dim"}">{total:,}</td>'
+        f'<td class="n">{_window_cell(metric["last_24h"])}</td>'
+        f'<td class="n">{_window_cell(metric["last_7d"])}</td>'
+        f"<td>{_format_age(metric['last_activity_at'], generated_at)}"
+        f'<br><span class="dim">{escape(_format_stamp(metric["last_activity_at"]))}</span></td>'
+        f'<td class="dim">{basis_cell}</td>'
+        "</tr>"
+    )
+
+
+def _window_cell(value: Any) -> str:
+    """Tint a trailing-window count. An unmeasurable window is blank, never zero."""
+    if value is None:
+        return _EMPTY
+    count = int(value)
+    if count == 0:
+        return '<span class="dim">0</span>'
+    return f'<span class="ok">{count:,}</span>'
+
+
 def _render_failures(snapshot: _Snapshot) -> str:
     """Render the newest dead-lettered and retry-waiting windows with their error text."""
     if not snapshot.failures:
@@ -1060,8 +1740,11 @@ def _render_trend_row(entry: dict[str, Any], peak: int) -> str:
 
 
 def _status_pill(status: str) -> str:
-    # Ledger run/item statuses and the three historical-walk states share one map because
-    # their vocabularies are disjoint; an unknown status tones dim rather than raising.
+    # Ledger run/item statuses, the historical-walk states, the forecast-stage states and the
+    # source states all share one map because their vocabularies are disjoint -- no word below is
+    # produced by more than one of them, which is what lets one tone table serve all four without
+    # a state from one panel silently borrowing another's colour. An unknown status tones dim
+    # rather than raising, so a state added upstream degrades to grey instead of a 500.
     tone = {
         "succeeded": "ok",
         "complete": "ok",
@@ -1076,6 +1759,20 @@ def _status_pill(status: str) -> str:
         "failed": "bad",
         "dead_letter": "bad",
         "cancelled": "dim",
+        # Forecast-plane stages. `never` is bad and not merely warn: it is the finding.
+        "never": "bad",
+        "live": "ok",
+        "stale": "warn",
+        "dormant": "bad",
+        "undated": "dim",
+        # Catalogued sources. `unarmed` is warn rather than bad because this page cannot see a
+        # scheduler, so it is an inference; `never` and `no_releases` are read straight off what
+        # landed and are not.
+        "fed": "ok",
+        "lagging": "warn",
+        "unarmed": "warn",
+        "no_releases": "bad",
+        "inactive": "dim",
     }.get(status, "dim")
     return f'<span class="pill {tone}">{escape(status)}</span>'
 
@@ -1147,6 +1844,10 @@ th{color:var(--dim);font-weight:600;font-size:11px;letter-spacing:.06em;text-tra
 position:sticky;top:0;background:var(--panel)}
 tbody tr:last-child td{border-bottom:0}
 tbody tr:hover{background:#151d2b}
+tr.band td{background:#0d131d;color:var(--dim);font-size:11px;letter-spacing:.06em;
+text-transform:uppercase;border-top:1px solid var(--line)}
+tr.band:hover td{background:#0d131d}
+tr.band b{color:var(--ink);font-weight:600}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .ok{color:var(--ok)}
 .warn{color:var(--warn)}
