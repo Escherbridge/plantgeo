@@ -119,6 +119,70 @@ plan cell-for-cell (`source`, `model`, `native_grid_*`, `support_key`, `window` 
 and is unrun: `release_set_as_of` is the same far-future placeholder convention as the soil-temperature
 and moisture lattices, not a completion forecast. See plans/AGENTS.md.
 
+### Shortwave radiation is a SECOND upstream for a signal NASA POWER already writes
+
+`shortwave_radiation_sum` -> `surface_shortwave_radiation`, `MJ/m^2/day`, `[0.0, 60.0]`. It is the
+first entry in this table whose `signal_name` is one an **existing, running lane already produces**:
+`historical_backfill.py:49` maps NASA POWER's `ALLSKY_SFC_SW_DWN` to exactly that name and unit. That
+collision is the entire point. NASA's radiation lane
+(`plans/nasa-power-western-na-weather-radiation-20220531-20260531.json`) is COMPLETE at 397/397 cells
+and permanently capped at **2026-05-31**, because `ALLSKY_SFC_SW_DWN` carries a hard ~2-month
+publication lag that no amount of re-running fixes. Open-Meteo republishes the same daily quantity
+from ERA5-Land with roughly six days of lag, so a second producer on the same `signal_name` is how
+the ceiling moves.
+
+**No conversion is applied, and applying one would be the bug.** Both quantities are a daily *sum of
+megajoules per square metre*: Open-Meteo's daily-variable table publishes `shortwave_radiation_sum`
+in `MJ/m2`, and `historical_backfill.py` applies no scaling to `ALLSKY_SFC_SW_DWN`. Confirmed against
+production 2026-08-08: 1,166,676 stored NASA rows, min 0.41, **mean 16.65**, max 35.10 — a
+kWh/m^2/day series would sit near a mean of 4.6. `original_unit` and `normalized_unit` are therefore
+both the NASA spelling `MJ/m^2/day` rather than the provider's `MJ/m2`, because `normalized_unit` is a
+**join key**: `geo.climate_field_observation` gates radiation on
+`('surface_shortwave_radiation', 'shortwave-radiation', 'MJ/m^2/day')`, so a re-spelled unit matches
+nothing and is silently invisible instead of wrongly served.
+
+**This plan rides the NASA lattice, not this lane's usual one.**
+`plans/open-meteo-era5-land-nasa-power-lattice-radiation-20220802-20260802.json` declares
+`grid_name = "nasa-power-0.5-degree"` and carries the NASA plan's 397 `na-sample:1deg:*` cells
+verbatim. Nothing in this lane hardcodes the NDVI lattice — `grid_name`/`grid_resolution_m` are plain
+plan fields and `_require_open_meteo_spatial_cells` compares against `plan.grid_name` — so the
+retarget is a plan change with no code change. Keeping the signal on the lattice NASA established for
+it is what keeps one signal's coverage definition single-valued, and it is also what lets
+`getPublishedClimateField`'s `cell.grid_name = 'nasa-power-0.5-degree'` predicate still address the
+rows. The 1-degree cell spacing clears `require_governed_lattice`'s "cells must not share a native
+grid point" rule with an order of magnitude to spare.
+
+**`support_key` stays `era5-land-0.1deg`, and that currently blocks serving.** It is pinned as a
+`Literal` and it is honest: it records *spatial* support, and it is the only thing that lets a reader
+tell a 0.1-degree ERA5-Land sample from the 0.5-degree NASA POWER sample of the same cell-day.
+Writing `surface` here to make the rows serve would erase that distinction for every variable this
+lane carries. The consequence, stated plainly so nobody discovers it by seeing an unmoved map: **three
+serving-side predicates exclude these rows today**, and each is a deliberate gate somebody wrote, not
+an oversight —
+
+| Reader | Predicate | Effect |
+|---|---|---|
+| `db/agri/functions/covariate_daily_features.sql` | `signal.support_key = 'surface'` | ML covariate layer never sees them |
+| `drizzle/0020_climate_field.sql` (`geo.climate_field_observation`) | `source.key = 'nasa-power-daily'` | view excludes them |
+| `environmental-read-model.ts` `getPublishedClimateField` | `reading.support_key = 'surface'` | reader excludes them |
+
+Only the fourth predicate, `cell.grid_name = 'nasa-power-0.5-degree'`, is already satisfied — by the
+lattice choice above. Widening the other three is a **separate reviewed change** with a real design
+question attached (0.5-degree and 0.1-degree support drawn on one ramp is exactly what
+`0020_climate_field.sql`'s own header argues against), so the producer landed first and alone. The
+`DISTINCT ON (signal_name, day) ORDER BY data_available_at DESC` precedence those readers use is
+sound and needs nothing; it is the support/source gates in front of it that decide whether the merge
+is reachable at all.
+
+The plan's `source` block is byte-identical to the three sibling lane plans, including a `purpose`
+that names the Sentinel-2 NDVI lattice and now describes neither this plan's lattice nor its
+parameter. That is forced: `_ensure_data_source` raises "already governed by different metadata" on
+any disagreement, so correcting the wording is a coordinated edit across all four files.
+`transform_version` is likewise the shared `...daily-mean-normalization-v1`, which already carries a
+non-mean aggregation (VPD's daily max) — it names this lane's passthrough normalization, not the
+provider's reduction, since Open-Meteo performs the daily reduction upstream and this lane applies
+none.
+
 `source.key = "open-meteo-era5-land-archive"` is shared identity across every plan in this lane, and
 `_ensure_data_source` in `historical_writer/_shared.py` raises "already governed by different metadata" if a
 plan's `source` block disagrees with the `data_source` row an earlier plan already persisted. The

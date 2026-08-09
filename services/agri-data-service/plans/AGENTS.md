@@ -182,3 +182,31 @@ also byte-identical across all three plans; only `description`, `parameters` and
 differ, so each is genuinely a different `plan_checksum` and a different release set. Both are unrun:
 `release_set_as_of` uses the same far-future placeholder as the moisture lattice, not a completion
 forecast.
+
+## The radiation plan is the one Open-Meteo plan that does NOT ride the NDVI lattice
+
+`open-meteo-era5-land-nasa-power-lattice-radiation-20220802-20260802.json` requests
+`shortwave_radiation_sum` over the **397-cell `nasa-power-0.5-degree` lattice** — the
+`na-sample:1deg:*` cells, copied verbatim from
+`nasa-power-western-na-weather-radiation-20220531-20260531.json` rather than regenerated, for the same
+reason the soil-temperature and VPD plans copy the NDVI lattice.
+
+It exists to raise a ceiling, not to add a signal. NASA POWER's `ALLSKY_SFC_SW_DWN` lane is complete
+at 397/397 cells and permanently stuck at **2026-05-31** behind that parameter's ~2-month publication
+lag; Open-Meteo republishes the same daily quantity with ~6 days of lag under the **same
+`signal_name` and the same unit, with no conversion**. Full rationale, the measured unit evidence, and
+the three serving-side predicates that still exclude these rows live in
+`execution/AGENTS.md` §"Shortwave radiation is a SECOND upstream".
+
+Two consequences for authoring:
+
+- **The lattice choice is load-bearing, not cosmetic.** Putting this signal on the NDVI lattice would
+  give one `signal_name` two different coverage definitions, and would also miss
+  `getPublishedClimateField`'s `cell.grid_name = 'nasa-power-0.5-degree'` predicate. Nothing in the
+  lane hardcodes a lattice: `grid_name` and `grid_resolution_m` (55660 here, 27830 on the NDVI plans)
+  are plain plan fields, and the writer compares spatial cells against `plan.grid_name`.
+- **`window`, `release_set_as_of`, `chunk_cell_count`, `support_key`, `time_zone`,
+  `transform_version` and `source` stay byte-identical to the three 2026-08-08 continuation plans.**
+  The window's `end_date` (2026-08-02) is the upstream frontier measured for this lane that day; it is
+  shared rather than re-measured, so all four continuation plans cover one span. 397 cells at 50 per
+  chunk is 8 chunks against the 2,000 ceiling.

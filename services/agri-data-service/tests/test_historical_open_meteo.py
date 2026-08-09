@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from agri_data_service.execution.contracts import canonical_json_bytes, reject_sensitive_fields
-from agri_data_service.execution.historical_backfill import AnalysisGridCell  # noqa: TC001
+from agri_data_service.execution.historical_backfill import (
+    NASA_POWER_SIGNAL_SPECIFICATIONS,
+    AnalysisGridCell,
+)
 from agri_data_service.execution.historical_open_meteo import (
     OPEN_METEO_ARCHIVE_LANE,
     OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS,
@@ -113,6 +116,7 @@ def _location(
     index: int,
     *,
     values: dict[str, list[float | None]] | None = None,
+    daily_units: dict[str, str] | None = None,
 ) -> dict[str, object]:
     days = _window_days(plan)
     daily: dict[str, object] = {"time": days}
@@ -129,6 +133,8 @@ def _location(
         "elevation": 923.0,
         "daily": daily,
     }
+    if daily_units is not None:
+        location["daily_units"] = daily_units
     if index:
         location["location_id"] = index
     return location
@@ -139,8 +145,11 @@ def _payload(
     chunk: OpenMeteoArchiveChunk,
     *,
     values: dict[str, list[float | None]] | None = None,
+    daily_units: dict[str, str] | None = None,
 ) -> bytes:
-    return canonical_json_bytes([_location(plan, cell, index, values=values) for index, cell in enumerate(chunk.cells)])
+    return canonical_json_bytes(
+        [_location(plan, cell, index, values=values, daily_units=daily_units) for index, cell in enumerate(chunk.cells)]
+    )
 
 
 def _capture(payload: bytes) -> OpenMeteoArchiveCapture:
@@ -200,6 +209,57 @@ def test_vapour_pressure_deficit_is_a_bounded_atmospheric_covariate_not_a_soil_s
     assert specification.signal_name == "vapor_pressure_deficit"
     assert specification.original_unit == specification.normalized_unit == "kPa"
     assert (specification.minimum, specification.maximum) == (0.0, 15.0)
+
+
+def test_shortwave_radiation_shares_nasa_power_s_name_and_unit_with_no_conversion() -> None:
+    """The second radiation upstream must land unit-identical to NASA POWER's, or it is a different series.
+
+    `ALLSKY_SFC_SW_DWN` and `shortwave_radiation_sum` are both a daily sum of MJ per square metre,
+    so a 3.6x kWh conversion here would be the bug, not the fix. The unit string is also the join
+    key `geo.climate_field_observation` gates radiation on, so a re-spelling silently serves nothing.
+    """
+    specification = OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS["shortwave_radiation_sum"]
+    assert specification.signal_name == "surface_shortwave_radiation"
+    assert specification.original_unit == specification.normalized_unit == "MJ/m^2/day"
+    assert NASA_POWER_SIGNAL_SPECIFICATIONS["ALLSKY_SFC_SW_DWN"] == (
+        specification.signal_name,
+        specification.normalized_unit,
+    )
+    # Generous against the ~45 MJ/m^2 ceiling of a 24-hour polar summer day, and far below any
+    # provider sentinel; a negative daily irradiation sum is unphysical rather than merely unlikely.
+    assert (specification.minimum, specification.maximum) == (0.0, 60.0)
+
+
+def test_shortwave_radiation_rejects_a_payload_reporting_a_different_unit() -> None:
+    """A provider unit drift must fail loudly, not merge silently under NASA's signal_name.
+
+    The hardcoded MJ/m^2/day mapping is only correct as long as the provider keeps reporting
+    MJ/m^2 in its own `daily_units` block; this is what turns a drift into a rejected chunk
+    instead of 1,462 silently mis-scaled rows.
+    """
+    plan = _plan(parameters=("shortwave_radiation_sum",))
+    chunk = plan.chunks[0]
+    payload = _payload(plan, chunk, daily_units={"shortwave_radiation_sum": "kWh/m²"})
+    with pytest.raises(ValueError, match="reported unit"):
+        parse_open_meteo_archive_payload(plan, chunk, payload, _capture(payload))
+
+
+def test_shortwave_radiation_rejects_a_payload_missing_daily_units_entirely() -> None:
+    """The guard cannot pass by omission -- a payload shaped without daily_units must also fail."""
+    plan = _plan(parameters=("shortwave_radiation_sum",))
+    chunk = plan.chunks[0]
+    payload = _payload(plan, chunk)
+    with pytest.raises(ValueError, match="missing its daily_units block"):
+        parse_open_meteo_archive_payload(plan, chunk, payload, _capture(payload))
+
+
+def test_shortwave_radiation_accepts_a_payload_reporting_the_verified_unit() -> None:
+    """The positive case: a payload that reports the verified unit parses normally."""
+    plan = _plan(parameters=("shortwave_radiation_sum",))
+    chunk = plan.chunks[0]
+    payload = _payload(plan, chunk, daily_units={"shortwave_radiation_sum": "MJ/m²"})
+    result = parse_open_meteo_archive_payload(plan, chunk, payload, _capture(payload))
+    assert result.observations
 
 
 @pytest.mark.parametrize("sentinel", [-999.0, 9.969209968386869e36, 1.5, -0.0001])

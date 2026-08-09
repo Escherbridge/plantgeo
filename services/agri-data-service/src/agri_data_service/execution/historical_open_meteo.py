@@ -111,6 +111,12 @@ class OpenMeteoArchiveSignal(NamedTuple):
     normalized_unit: str
     minimum: float
     maximum: float
+    # The provider's own `daily_units` spelling for this variable, verified live against the API
+    # (e.g. "MJ/m²", not the warehouse's "MJ/m^2/day"). Checked against every payload in
+    # `_archive_daily_block` when set; None for the seven variables whose provider spelling has
+    # not been independently confirmed, rather than guessing a Unicode string that would reject
+    # every valid payload if the guess were wrong.
+    provider_unit: str | None = None
 
 
 # Open-Meteo daily variable -> warehouse signal, units, and the range a value must fall inside.
@@ -132,6 +138,17 @@ OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS: Final[dict[str, OpenMeteoArchiveSignal
     "soil_temperature_100_to_255cm_mean": OpenMeteoArchiveSignal("soil_temperature_level_4", "C", "C", -100.0, 70.0),
     # An atmospheric-dryness covariate, not a soil-state one; see execution/AGENTS.md §historical_open_meteo.
     "vapour_pressure_deficit_max": OpenMeteoArchiveSignal("vapor_pressure_deficit", "kPa", "kPa", 0.0, 15.0),
+    # A SECOND upstream for the signal NASA POWER already writes, deliberately sharing its name AND
+    # its unit with NO conversion: `ALLSKY_SFC_SW_DWN` and `shortwave_radiation_sum` are both a daily
+    # sum of megajoules per square metre. See execution/AGENTS.md §historical_open_meteo.
+    #
+    # provider_unit is set (unlike every sibling above) because this is the one variable in this
+    # table whose plausible wrong-unit failure -- a kWh/m^2/day series, 0-10 -- lands entirely
+    # inside the [0.0, 60.0] acceptance range below and would merge silently under the NASA
+    # series' own signal_name. Verified live against the archive API 2026-08-09.
+    "shortwave_radiation_sum": OpenMeteoArchiveSignal(
+        "surface_shortwave_radiation", "MJ/m^2/day", "MJ/m^2/day", 0.0, 60.0, provider_unit="MJ/m²"
+    ),
 }
 
 OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS: Final = (
@@ -623,6 +640,7 @@ def parse_open_meteo_archive_payload(
         days = _archive_days(daily, expected_dates)
         for parameter in plan.parameters:
             specification = OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[parameter]
+            _require_provider_unit(location, parameter, specification)
             values = _archive_values(daily, parameter, specification, len(days))
             observed_count = sum(1 for value in values if value is not None)
             if observed_count:
@@ -741,6 +759,30 @@ def _validated_grid_point(cell: AnalysisGridCell, location: dict[str, object]) -
     if elevation is not None and (isinstance(elevation, bool) or not isinstance(elevation, int | float)):
         raise ValueError("Open-Meteo archive elevation must be numeric when present")
     return latitude, longitude, None if elevation is None else float(elevation)
+
+
+def _require_provider_unit(
+    location: dict[str, object], parameter: str, specification: OpenMeteoArchiveSignal
+) -> None:
+    """Reject a payload whose provider unit drifted from the one the mapping was verified against.
+
+    A silent unit change is worse than a loud one: it would land at the stored, already-correct
+    normalized_unit while carrying the wrong magnitude, and the merge with a second producer of
+    the same signal_name gives it no other chance to be caught. Only checked when the mapping
+    records a verified provider_unit -- see OpenMeteoArchiveSignal's own comment for why the other
+    variables are not asserted here.
+    """
+    if specification.provider_unit is None:
+        return
+    daily_units = location.get("daily_units")
+    if not isinstance(daily_units, dict):
+        raise ValueError("Open-Meteo archive location is missing its daily_units block")
+    reported = daily_units.get(parameter)
+    if reported != specification.provider_unit:
+        raise ValueError(
+            f"Open-Meteo archive reported unit {reported!r} for {parameter!r}, "
+            f"expected {specification.provider_unit!r}"
+        )
 
 
 def _archive_daily_block(location: dict[str, object], parameters: Sequence[str]) -> dict[str, object]:
