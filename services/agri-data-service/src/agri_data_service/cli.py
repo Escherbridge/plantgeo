@@ -252,6 +252,7 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
     HoldoutEvaluation,
     IterationOutcome,
     RegistrationSummary,
+    all_requested_cells_materialised,
     load_governed_history,
     load_governed_plane,
     load_license_snapshots,
@@ -260,6 +261,7 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
     pin_determinism,
     reconcile_actuals,
     register_governed_plane,
+    release_holds_claimed_corpus,
     select_candidate_cell_keys,
     simulate_cells,
     summarize_holdout,
@@ -726,6 +728,28 @@ def _registration_payload(summary: RegistrationSummary) -> dict[str, Any]:
         "first_observed_day": summary.plane.first_observed_day.isoformat(),
         "last_observed_day": summary.plane.last_observed_day.isoformat(),
         "observation_rows_inserted": summary.observation_count,
+        "release_cell_day_count": summary.materialisation.observation_count,
+        "release_series_count": summary.materialisation.series_count,
+        "release_first_observed_day": (
+            None
+            if summary.materialisation.first_observed_day is None
+            else summary.materialisation.first_observed_day.isoformat()
+        ),
+        "release_last_observed_day": (
+            None
+            if summary.materialisation.last_observed_day is None
+            else summary.materialisation.last_observed_day.isoformat()
+        ),
+        "release_matches_claimed_corpus": release_holds_claimed_corpus(
+            materialisation=summary.materialisation,
+            plane=summary.plane,
+        ),
+        "requested_cells_materialised": summary.selection.series_count,
+        "requested_cell_days_materialised": summary.selection.observation_count,
+        "all_requested_cells_materialised": all_requested_cells_materialised(
+            selection=summary.selection,
+            requested_cell_count=summary.requested_cell_count,
+        ),
         "payload_checksum": summary.plane.payload_checksum,
         "release_manifest_checksum": summary.plane.release_manifest_checksum,
         "release_set_id": str(summary.plane.release_set_id),

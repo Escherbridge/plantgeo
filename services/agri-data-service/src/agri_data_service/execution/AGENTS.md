@@ -668,6 +668,68 @@ re-derive a different calendar day. `data_available_at` is the real warehouse ar
 (`max(geo.features.created_at)`), and `forecast_input_recorded_at` is maintained entirely by
 the shipped triggers — there is no parallel provenance mechanism.
 
+**A registration pass must land something through its own cells.** `register_governed_plane`
+finishes by measuring twice and refusing on the narrower of the two, via the pure predicate
+`empty_materialisation_reason`. `EmptyGovernedReleaseError` is raised inside the caller's
+transaction (`cli.py`'s `session.begin()`), so the release and release set roll back with it —
+there is no path that leaves a registered release behind a refusal.
+
+Which count gates matters, and two of the three obvious choices are wrong.
+`load_observations.sql`'s return is wrong: its `ON CONFLICT DO NOTHING` reports only the rows
+**that call** inserted, so a healthy idempotent re-run reads 0 and would false-alarm.
+`release_materialisation.sql`'s release-wide count is *also* wrong as a gate, and this is the
+subtle one — it cannot fail on the reachable form of the bug. Because
+`uq_forecast_observation_source_event` is `(source_release_id, series_id, source_event_key)`,
+nothing can pre-exist under a **newly created** release id, so on a fresh release the
+release-wide count is identically `_load_observations`' return and adds no detection power at
+all; and on an **existing** release it is dominated by the earlier pass's rows. Run
+`forecast-vegetation-register` with cell keys that resolve to nothing — a typo, or keys whose
+upstream features were re-ingested under a changed `cellKey` — and `corpus_digest.sql` (no cell
+filter) reproduces the same `payload_checksum`, `select_source_release.sql` returns the existing
+release, every INNER JOIN in `load_observations.sql` matches nothing, and a release-wide guard
+sees 184,409 rows and waves it through. That is precisely the 81b8048 shape wearing a green
+stamp. So the gate is `selection_materialisation.sql`, scoped to the series behind this pass's
+own `cell_keys`. The release-wide read stays, for reporting only.
+
+This mirrors `unanswered_open_meteo_parameters` in `historical_open_meteo.py`, added after the
+radiation lane finalised cleanly over 397 cells of all-null series (81b8048), in shape rather
+than in code: that helper is typed to a `HistoricalOpenMeteoArchivePlan` and counts values per
+provider parameter, while this lane has no plan document and no parameter axis. What carries
+over is that the refusal is a **pure function** over measured counts, so both its branches are
+testable without a database.
+
+Two completeness fields, and they answer different questions — do not conflate them. A
+*partial* materialisation stays legal here (the verb registers "a bounded cell selection"), so
+it must stay visible rather than fatal. `release_matches_claimed_corpus` compares the whole
+release against the whole fingerprinted corpus; it reads **false** as soon as any vegetation
+cell sits below `MIN_CANDIDATE_OBSERVED_DAYS`, because `corpus_digest.sql` counts every cell
+while `select_candidate_cell_keys.sql` can only offer cells with at least 24 observed days.
+Today it is true only by luck — measured 2026-08-09: 1,568 corpus cells, none below 24 days,
+minimum 45 — and the first newly-observed cell makes it permanently false for a genuinely
+complete run. `all_requested_cells_materialised` is the luck-free per-pass signal: every cell
+this pass asked for now carries an observation.
+
+`register_governed_plane` dedupes `cell_keys` on entry (`dict.fromkeys`, order-preserving,
+because the order decides the batches). Not cosmetic: `--cell-key` is `multiple=True` with no
+dedup, and `selection_materialisation.sql` is batched, so a repeated key is counted twice when
+the duplicate straddles a batch boundary and only once when it does not — `ANY(array)` is set
+membership. Measured before the fix: 201 keys with one repeat summed `series_count=201` for 200
+distinct cells, while a key duplicated inside one batch measured `series_count=1` against a
+`len(cell_keys)` of 2, driving `all_requested_cells_materialised` **false for a healthy pass**.
+The gate itself was never affected (0 + 0 = 0, and no duplicate can manufacture a row), so this
+was a reporting defect on the field this section calls the luck-free signal. The sampled path was
+always safe because `select_candidate_cell_keys.sql` groups.
+
+Still open and deliberately unfixed: `corpus_digest.sql` fingerprints every vegetation cell
+while `load_observations.sql` writes only `cell_keys`, so `payload_checksum` cannot distinguish
+a bounded selection from a full one, and `insert_source_release.sql`'s `ON CONFLICT
+(data_source_id, source_version, payload_checksum, transform_version)` therefore lets a partial
+pass attach itself to an existing full release; `release_set_logical_key` (cutoff-only) collides
+for the same reason. Narrowing the digest to the selected cells would fix both, but it redefines
+a governed release identity and would strand the already-`validated` release set, so it belongs
+in its own reviewed change. The guard above adds no new write path to that collision — it only
+refuses to report such a pass as successful.
+
 Two reinterpretations are deliberate and load-bearing. `forecast_iteration.increment_count`
 and `forecast_iteration_value.increment_count` carry the **seasonal innovation pool size**
 (the number of resampling units), not a count of daily increments, because this method has

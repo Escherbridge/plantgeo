@@ -52,6 +52,8 @@ ENTITY_TYPE: Final = "grid_cell"
 SERIES_KEY_PREFIX: Final = "ndvi-daily"
 DAY_BUCKET_RULE: Final = "iso_date_prefix"
 MIN_CANDIDATE_OBSERVED_DAYS: Final = 24
+EMPTY_SELECTION_REASON: Final = "selected_cells_hold_no_observation"
+EMPTY_RELEASE_REASON: Final = "release_holds_no_observation"
 CELL_BATCH_SIZE: Final = 200
 STATEMENT_TIMEOUT: Final = "120s"
 DETERMINISM_GUCS: Final = (
@@ -73,6 +75,8 @@ _INSERT_RELEASE_SET_ITEM = text(load_query_sql("execution/insert_release_set_ite
 _INSERT_SPATIAL_CELLS = text(load_query_sql("execution/insert_spatial_cells.sql"))
 _INSERT_FORECAST_SERIES = text(load_query_sql("execution/insert_forecast_series.sql"))
 _LOAD_OBSERVATIONS = text(load_query_sql("execution/load_observations.sql"))
+_RELEASE_MATERIALISATION = text(load_query_sql("execution/release_materialisation.sql"))
+_SELECTION_MATERIALISATION = text(load_query_sql("execution/selection_materialisation.sql"))
 _LOAD_GOVERNED_PLANE = text(load_query_sql("execution/load_governed_plane.sql"))
 _LOAD_SERIES_IDENTITIES = text(load_query_sql("execution/load_series_identities.sql"))
 _LOAD_GOVERNED_HISTORY = text(load_query_sql("execution/load_governed_history.sql"))
@@ -102,6 +106,24 @@ class GovernedPlane:
 
 
 @dataclass(frozen=True, slots=True)
+class ReleaseMaterialisation:
+    """What one governed release holds in total, as opposed to what its registration claims."""
+
+    observation_count: int
+    series_count: int
+    first_observed_day: date | None
+    last_observed_day: date | None
+
+
+@dataclass(frozen=True, slots=True)
+class SelectionMaterialisation:
+    """How much of that release is reachable through one registration pass's own cell selection."""
+
+    observation_count: int
+    series_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class RegistrationSummary:
     """Measured effect of one governed-plane registration pass."""
 
@@ -110,6 +132,8 @@ class RegistrationSummary:
     spatial_cell_count: int
     series_count: int
     observation_count: int
+    materialisation: ReleaseMaterialisation
+    selection: SelectionMaterialisation
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +206,64 @@ class IterationEvidenceConflictError(ValueError):
     def __init__(self, iteration_key: str) -> None:
         super().__init__(f"forecast iteration {iteration_key} already exists with different immutable evidence")
         self.iteration_key = iteration_key
+
+
+class EmptyGovernedReleaseError(ValueError):
+    """Raised when a registration pass's own cell selection landed no observation at all."""
+
+    def __init__(
+        self,
+        *,
+        reason_code: str,
+        cutoff_day: date,
+        requested_cell_count: int,
+        release_observation_count: int,
+    ) -> None:
+        super().__init__(
+            f"governed NDVI registration for cutoff {cutoff_day.isoformat()} materialised no "
+            f"observation for any of its {requested_cell_count} requested cell(s) [{reason_code}]; "
+            f"the release holds {release_observation_count} observation(s) in total"
+        )
+        self.reason_code = reason_code
+        self.cutoff_day = cutoff_day
+        self.requested_cell_count = requested_cell_count
+        self.release_observation_count = release_observation_count
+
+
+def empty_materialisation_reason(
+    *,
+    selection: SelectionMaterialisation,
+    materialisation: ReleaseMaterialisation,
+) -> str | None:
+    """Name why a registration pass landed nothing, or None when its own cells hold observations.
+
+    Selection-scoped, and that is the whole point. The release-wide count cannot answer this: a pass
+    whose cell keys resolve to no registered cell writes nothing and still finds a full release,
+    because an earlier pass's rows hang off the same release id. See execution/AGENTS.md
+    §Vegetation NDVI.
+    """
+    if selection.observation_count > 0:
+        return None
+    return EMPTY_RELEASE_REASON if materialisation.observation_count == 0 else EMPTY_SELECTION_REASON
+
+
+def release_holds_claimed_corpus(*, materialisation: ReleaseMaterialisation, plane: GovernedPlane) -> bool:
+    """Whether the release holds every cell-day its own corpus digest fingerprinted.
+
+    Reads false, correctly, as soon as any vegetation cell sits below MIN_CANDIDATE_OBSERVED_DAYS:
+    the digest counts every cell while only candidate cells can ever be materialised. It answers
+    "is this release the whole fingerprinted corpus", never "did this run go well" -- ask
+    all_requested_cells_materialised for that. See execution/AGENTS.md §Vegetation NDVI.
+    """
+    return (
+        materialisation.observation_count == plane.corpus_cell_day_count
+        and materialisation.series_count == plane.corpus_cell_count
+    )
+
+
+def all_requested_cells_materialised(*, selection: SelectionMaterialisation, requested_cell_count: int) -> bool:
+    """Whether every cell this pass asked for now carries at least one governed observation."""
+    return selection.series_count == requested_cell_count
 
 
 async def pin_determinism(session: AsyncSession) -> None:
@@ -457,6 +539,52 @@ async def _load_observations(
     return inserted
 
 
+async def measure_release_materialisation(
+    session: AsyncSession,
+    *,
+    source_release_id: uuid.UUID,
+) -> ReleaseMaterialisation:
+    """Return what one governed release actually holds; see execution/AGENTS.md §Vegetation NDVI."""
+    result = await session.execute(_RELEASE_MATERIALISATION, {"source_release_id": source_release_id})
+    row = result.mappings().one()
+    first_observed_at: datetime | None = row["first_observed_at"]
+    last_observed_at: datetime | None = row["last_observed_at"]
+    return ReleaseMaterialisation(
+        observation_count=int(row["observation_count"]),
+        series_count=int(row["series_count"]),
+        first_observed_day=None if first_observed_at is None else first_observed_at.astimezone(UTC).date(),
+        last_observed_day=None if last_observed_at is None else last_observed_at.astimezone(UTC).date(),
+    )
+
+
+async def measure_selection_materialisation(
+    session: AsyncSession,
+    *,
+    source_release_id: uuid.UUID,
+    cell_keys: tuple[str, ...],
+) -> SelectionMaterialisation:
+    """Return how much of one release this pass's own cells reach; see execution/AGENTS.md."""
+    observation_count = 0
+    series_count = 0
+    # Batched like every other cell-keyed statement here, and summable because _batched slices one
+    # tuple into disjoint runs, so no series can be counted under two batches.
+    for batch in _batched(cell_keys, CELL_BATCH_SIZE):
+        result = await session.execute(
+            _SELECTION_MATERIALISATION,
+            {
+                "source_release_id": source_release_id,
+                "prefixed_cell_keys": [prefixed_cell_key(key) for key in batch],
+                "grid_name": GRID_NAME,
+                "metric_name": METRIC_NAME,
+                "transform_version": TRANSFORM_VERSION,
+            },
+        )
+        row = result.mappings().one()
+        observation_count += int(row["observation_count"])
+        series_count += int(row["series_count"])
+    return SelectionMaterialisation(observation_count=observation_count, series_count=series_count)
+
+
 async def register_governed_plane(
     session: AsyncSession,
     *,
@@ -466,6 +594,10 @@ async def register_governed_plane(
     """Register the governed Sentinel-2 NDVI observation plane for a bounded cell selection."""
     if not cell_keys:
         raise ValueError("registration requires at least one vegetation cell key")
+    # Deduped at the one choke point every caller passes through: --cell-key is `multiple=True`
+    # with no dedup of its own. dict.fromkeys, never set(), because the order decides the batches.
+    # See execution/AGENTS.md §Vegetation NDVI for what a duplicate would otherwise misreport.
+    cell_keys = tuple(dict.fromkeys(cell_keys))
     await pin_determinism(session)
     recorded_at = datetime.now(tz=UTC)
     data_source_id = await _register_data_source(session, reviewed_at=recorded_at)
@@ -492,6 +624,23 @@ async def register_governed_plane(
         cell_keys=cell_keys,
         cutoff_day=cutoff_day,
     )
+    # Measured, not assumed, and measured twice for two different questions: the release-wide count
+    # is reporting, the selection-scoped count is the gate. Neither is _load_observations' return,
+    # which is 0 for a healthy repeat. See execution/AGENTS.md §Vegetation NDVI.
+    materialisation = await measure_release_materialisation(session, source_release_id=source_release_id)
+    selection = await measure_selection_materialisation(
+        session,
+        source_release_id=source_release_id,
+        cell_keys=cell_keys,
+    )
+    reason_code = empty_materialisation_reason(selection=selection, materialisation=materialisation)
+    if reason_code is not None:
+        raise EmptyGovernedReleaseError(
+            reason_code=reason_code,
+            cutoff_day=cutoff_day,
+            requested_cell_count=len(cell_keys),
+            release_observation_count=materialisation.observation_count,
+        )
     return RegistrationSummary(
         plane=GovernedPlane(
             data_source_id=data_source_id,
@@ -509,6 +658,8 @@ async def register_governed_plane(
         spatial_cell_count=spatial_cell_count,
         series_count=series_count,
         observation_count=observation_count,
+        materialisation=materialisation,
+        selection=selection,
     )
 
 
