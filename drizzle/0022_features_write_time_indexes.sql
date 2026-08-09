@@ -1,0 +1,28 @@
+-- Two write-time indexes on geo.features, for the /ops/backfill lane-evidence panel.
+--
+-- That panel asks one question per archive stream -- "when did a row last land in this layer, and
+-- how many landed in the trailing window" -- and geo.features had no index that could answer it.
+-- The table carries idx_features_layer (layer_id) and idx_features_layer_status
+-- (layer_id, status) from 0001, and nothing at all on created_at or updated_at, so every ask read
+-- the whole layer: ~1.5 s over the ~2.4M rows the archive layers hold on 2026-08-09, re-run once a
+-- minute per connected operator, on a route that is not authenticated. The FIRMS archive walk the
+-- panel exists to watch is 93 of 1,882 windows in; finishing it grows that layer roughly
+-- twentyfold and takes the unindexed shape toward half a minute per ask.
+--
+-- TWO indexes rather than one composite, because the two columns answer independently: an
+-- insert moves created_at and a refresh of an already-walked day moves only updated_at, so the
+-- statement tests them separately and lets the planner OR the two ranges together (a bitmap OR
+-- de-duplicates by row, so a row inside both ranges is still counted once). Leading with layer_id
+-- in both keeps them usable for the per-layer equality that always accompanies the range, and lets
+-- "the newest write in this layer" be answered by walking one index backwards from its end.
+--
+-- This is an index-only change: no column, constraint, view or row is touched, and every existing
+-- query keeps the plan it had. CREATE INDEX (not CONCURRENTLY) because Drizzle runs each migration
+-- inside a transaction and CONCURRENTLY cannot; it holds a SHARE lock that blocks writes to
+-- geo.features for the build, which at this table size is seconds and happens during the deploy's
+-- pre-deploy migration step.
+--
+-- IF NOT EXISTS keeps a re-run of this file a no-op, matching the rest of this migration set.
+CREATE INDEX IF NOT EXISTS idx_features_layer_created_at ON geo.features (layer_id, created_at);
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS idx_features_layer_updated_at ON geo.features (layer_id, updated_at);

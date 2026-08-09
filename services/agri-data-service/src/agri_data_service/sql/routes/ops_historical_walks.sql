@@ -1,6 +1,7 @@
 -- Purpose: one row per plan-driven historical walk for the /ops/backfill dashboard -- how
 --          many lattice cells the walk has landed, out of how many the grid holds, how many
---          chunks it has written, when it started, and how long ago its newest chunk landed.
+--          chunks it has written, HOW MANY OBSERVED VALUES those chunks actually carried,
+--          when it started, and how long ago its newest chunk landed.
 -- Loaded by: agri_data_service.routes.ops
 -- Params: throughput_window_hours (int) -- how many trailing hours the "covered recently"
 --         and "landed recently" counters look back over. The route divides those counters
@@ -18,9 +19,27 @@
 -- enqueue ledger work items; the NASA POWER and Open-Meteo ERA5-Land historical walks are
 -- driven by a reviewed plan file instead and never write a job row, so the ledger cannot
 -- see them at all. What they DO write, once per chunk, is an agri.source_release row. This
--- statement reconstructs each walk's progress from those rows alone. It deliberately never
--- touches agri.signal_observation (tens of millions of rows); source_release is a few
--- thousand rows, which is why this can ride the dashboard's 5-second refresh.
+-- statement reconstructs each walk's progress from those rows alone, except for one column:
+-- observed_value_count, which is how many rows in agri.signal_observation those releases
+-- actually carry.
+--
+-- WHY THE VALUE COUNT IS WORTH ITS COST
+--
+-- Chunks landed and cells done are both counted from release rows, and a release row is
+-- written whether or not the chunk it describes returned any data. Measured on production
+-- 2026-08-09, the Open-Meteo radiation lane's pre-fix run published 8 chunks over 397 cells
+-- under the wrong model key with every series coming back no_data: 397 of 397 cells, 8
+-- chunks, ZERO observed values. Beside it sits the fixed run, same walk label, same 397 of
+-- 397, same 8 chunks, and 580,414 real values. Without this column those two rows read
+-- identically on the page, and the release set is immutable provenance that must not be
+-- deleted -- so counting what each walk landed is the only way to tell a complete walk from a
+-- complete-but-empty one.
+--
+-- The cost is real, and it is why the route caches this statement instead of re-running it on
+-- every five-second tick: the release-grain rollup below is an index-only scan of the whole
+-- (source_release_id, observed_at) index over ~46M rows, which takes this statement from
+-- 0.15 s to 2.0 s against production. Every other column here still reads only the few
+-- thousand rows of agri.source_release.
 --
 -- WHAT A "WALK" IS
 --
@@ -157,6 +176,23 @@
 --     one lattice and reports 1 here; 0 means none of its cells resolved and anything above
 --     1 means the cell keys straddle two grids. Only the 1 case is trusted below.
 --
+--   WITH release_volume AS (... GROUP BY observation.source_release_id)
+--     How many observed values each release carries, at release grain. Every row of
+--     agri.signal_observation names the release it came from, and the whole table is grouped
+--     down to one row per release -- about 1,800 of them -- in a single pass over the
+--     (source_release_id, observed_at) index. Grouping the whole table is not laziness: every
+--     observation in this warehouse belongs to a walk release, so there is no narrower set to
+--     scan, and asking per release instead (a LATERAL count for each of the 1,800) measured
+--     11 s against 2 s for this shape.
+--
+--     Restricting it up front -- WHERE observation.source_release_id IN (SELECT source_release_id
+--     FROM walk_release) -- looks like the obvious third option and is WORSE, measured against
+--     production 2026-08-09 with EXPLAIN (ANALYZE, BUFFERS): 12.0 s against 2.7 s. The semi-join
+--     against the CTE takes the index-only grouped scan away and leaves a sequential scan of all
+--     46,146,568 rows. It removes nothing either, for the reason above -- the releases it would
+--     filter to are already every release the observations name. Do not re-litigate this without
+--     a fresh plan; the shape below is the fast one.
+--
 --   WITH walk_release_rollup AS (...)
 --     The chunk-grain totals, kept separate from the cell-grain totals on purpose. Folding
 --     them together is not possible without corrupting both -- one release covers up to 50
@@ -190,7 +226,24 @@
 --     completion until either the plan is widened to the lattice or a producer starts
 --     recording its own intended cell count in query_parameters. Nothing here can tell "still
 --     walking toward the full grid" apart from "finished a smaller grid on purpose" without
---     that signal.
+--     that signal, and that includes a probe a later, wider plan has since superseded: the two
+--     4-cell soil-wetness pilots on production sit permanently at 4 of 397 beside the 397-of-397
+--     plan that replaced them, and both readings are literally true. Deciding they are the same
+--     campaign would take a walk-family rule over overlapping cell coverage, which is a great
+--     deal of machinery to build on a guess about intent. What observed_value_count DOES settle
+--     is the question that matters most beside them -- verified 2026-08-09, each pilot carries
+--     17,544 values, exactly 4 cells x 3 parameters x 1,462 days, so it reads as small and
+--     complete-for-its-scope rather than as the chunks-complete-and-empty release set two rows
+--     below it.
+--
+--   COALESCE(sum(release_volume.observed_value_count), 0) AS observed_value_count
+--     The walk's total landed values. It is summed, not counted DISTINCT like the cells,
+--     because the join beneath it is one release to one volume row -- walk_release already
+--     holds exactly one row per release, so nothing fans out and no value is counted twice. A
+--     re-run that re-covers a cell writes a NEW release with its own values, and those values
+--     are genuinely in the warehouse, so summing them is the honest total. COALESCE turns the
+--     NULL that a walk with no matching observations produces into the zero it means, which is
+--     precisely the case this column exists to expose.
 --
 --   count(*) FILTER (WHERE cell.id IS NOT NULL) AS cells_done
 --     Counted against resolved cells only, matching the denominator: grid_size counts real
@@ -300,6 +353,13 @@ walk_cell_rollup AS (
         walk_cell.walk_label,
         walk_cell.walk_parameters
 ),
+release_volume AS (
+    SELECT
+        observation.source_release_id,
+        count(*) AS observed_value_count
+    FROM agri.signal_observation AS observation
+    GROUP BY observation.source_release_id
+),
 walk_release_rollup AS (
     SELECT
         walk_release.data_source_key,
@@ -313,8 +373,10 @@ walk_release_rollup AS (
         min(walk_release.created_at) AS started_at,
         max(walk_release.created_at) AS last_chunk_at,
         min(walk_release.observed_from) AS observed_from,
-        max(walk_release.observed_to) AS observed_to
+        max(walk_release.observed_to) AS observed_to,
+        COALESCE(sum(release_volume.observed_value_count), 0) AS observed_value_count
     FROM walk_release
+    LEFT JOIN release_volume ON release_volume.source_release_id = walk_release.source_release_id
     GROUP BY
         walk_release.data_source_key,
         walk_release.walk_label,
@@ -335,6 +397,7 @@ SELECT
     walk_release_rollup.observed_to,
     walk_release_rollup.chunks_landed,
     walk_release_rollup.chunks_in_window,
+    walk_release_rollup.observed_value_count,
     walk_release_rollup.started_at,
     walk_release_rollup.last_chunk_at,
     COALESCE(walk_cell_rollup.cells_done, 0) AS cells_done,

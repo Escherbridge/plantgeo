@@ -227,6 +227,10 @@ export const features = geoSchema.table(
       .on(table.layerId, sql`(${table.properties} ->> 'id')`)
       .where(sql`${table.properties} ? 'id'`),
     index("ix_features_geometry_id").on(table.geometryId),
+    // "What landed in this layer, and when" for /ops/backfill; see drizzle/0022 for why the two
+    // write-time columns get an index each rather than one composite.
+    index("idx_features_layer_created_at").on(table.layerId, table.createdAt),
+    index("idx_features_layer_updated_at").on(table.layerId, table.updatedAt),
   ]
 );
 

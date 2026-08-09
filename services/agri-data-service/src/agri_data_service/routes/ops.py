@@ -4,20 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Mapping  # noqa: TC003 - Final[Mapping[...]] is evaluated at import time.
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from html import escape
 from pathlib import Path
-from typing import Any, Final
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Final
 
 import structlog
 from sanic import Blueprint, Request, html, json, raw
 from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates handler annotations at runtime.
-from sqlalchemy import text
+from sqlalchemy import ARRAY, Text, bindparam, text
 
 from agri_data_service.db.engine import receiver_writer_session
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.ingest.validation.models import DEFAULT_STREAM_DEFINITIONS
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from sqlalchemy.sql.elements import TextClause
 
 logger = structlog.get_logger()
 
@@ -28,6 +36,32 @@ _WALKS_SQL: Final = text(load_query_sql("routes/ops_historical_walks.sql"))
 _FAILURES_SQL: Final = text(load_query_sql("routes/ops_backfill_failures.sql"))
 _DEAD_LETTER_TREND_SQL: Final = text(load_query_sql("routes/ops_backfill_dead_letter_trend.sql"))
 _DATA_STREAMS_SQL: Final = text(load_query_sql("routes/ops_data_streams.sql"))
+_LANE_EVIDENCE_SQL: Final = text(load_query_sql("routes/ops_lane_landed_evidence.sql")).bindparams(
+    bindparam("stream_names", type_=ARRAY(Text))
+)
+
+# Every statement this page issues is bounded by the transaction-local timeout sql.md prescribes
+# for direct SQL. Three of them scan whole tables and those tables only grow -- finishing the FIRMS
+# archive walk this panel exists to watch multiplies its layer of geo.features roughly twentyfold --
+# and `/ops` is unauthenticated, so an unbounded scan is a way for anyone who can reach the route to
+# pin a production connection indefinitely. Crossing this raises; `_load_snapshot` catches it and the
+# page shows the timeout in its error banner, which is a loud failure rather than a silent one.
+# SET LOCAL stays inline here per sql/AGENTS.md: one line, no bind parameter (SET LOCAL cannot take
+# one), and it bakes in the constant above it.
+_STATEMENT_TIMEOUT_SECONDS: Final = 120
+_SET_STATEMENT_TIMEOUT: Final[TextClause] = text(
+    f"-- ops_statement_timeout\nSET LOCAL statement_timeout = '{_STATEMENT_TIMEOUT_SECONDS}s'"
+)
+
+# Which published stream each ledger lane fills. DERIVED from the stream catalog, which already
+# ties a lane to its stream through `archive_lane_definition_name` over the registered lane
+# objects, so this page and the validity report cannot spell the same lane two different ways. A
+# lane absent from here simply gets no landed-evidence line, which is the honest outcome for a
+# lane whose output nothing has mapped yet.
+_LANE_STREAMS: Final[Mapping[str, str]] = MappingProxyType(
+    {lane_name: definition.stream for definition in DEFAULT_STREAM_DEFINITIONS for lane_name in definition.lane_names}
+)
+_NO_LANE_EVIDENCE: Final[Mapping[str, dict[str, Any]]] = MappingProxyType({})
 
 _DATASTAR_PATH: Final = Path(__file__).resolve().parents[1] / "static" / "datastar.js"
 _DATASTAR_URL: Final = "/ops/static/datastar.js"
@@ -50,14 +84,47 @@ _DEAD_LETTER_TREND_DAYS: Final = 21
 _STREAM_FRESH_DAYS: Final = 2
 _STREAM_AGING_DAYS: Final = 30
 
-# The data-loads query aggregates every row of agri.signal_observation (~16M) and
-# geo.features, which costs ~26 s against the production proxy. The lane query is cheap and
-# wants the 5 s refresh; this one does not -- a backfill's landed coverage does not change
-# meaningfully inside a minute -- so it is cached independently rather than being dragged
-# along by the stream's cadence. Without this the SSE loop would re-run a 26 s scan every
-# 5 s and each connected operator would hold a permanent scan open against prod.
+# Three of the six statements scan a whole table and cannot ride the 5 s refresh. Each is
+# cached on its own clock, because "how long may this number be stale before it misleads"
+# has a different answer for each of them. Without any cache the SSE loop would re-run every
+# scan every 5 s and each connected operator would hold a permanent scan open against prod.
+#
+#   data loads    ~26 s -- aggregates all ~46M rows of agri.signal_observation and all of
+#                 geo.features. A backfill's landed coverage does not change meaningfully
+#                 inside a minute, let alone five.
+#   walks         ~2.0 s -- the release-grain value count is an index-only scan over the same
+#                 46M rows. A minute is well inside the 15-minute band that decides whether a
+#                 walk reads active, and chunks land minutes apart at best.
+#   lane evidence ~1.5 s -- scans the two archive layers of geo.features (~2.4M rows). A
+#                 minute is far short of the six hours that make a lane's ledger read stale,
+#                 so the cross-check never flips on cache age alone.
 _STREAMS_CACHE_SECONDS: Final = 300
-_STREAMS_CACHE: dict[str, Any] = {}
+_WALKS_CACHE_SECONDS: Final = 60
+_LANE_EVIDENCE_CACHE_SECONDS: Final = 60
+_STREAMS_CACHE_KEY: Final = "data-streams"
+# Keyed by statement (and by the window it was bound with, where that changes the answer), so
+# two operators watching different rate windows never read each other's numbers.
+_QUERY_CACHE: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
+
+# How long a non-terminal lane's ledger may stay silent before the page stops presenting its
+# counters as current state. Six hours is deliberately generous: the slowest single unit of
+# work either archive lane owns is a 5-day FIRMS window at the measured 11.5 minutes per
+# peak-season day, i.e. about an hour, so nothing that is merely between windows can trip
+# this. It is a display threshold only -- crossing it changes no number, it only stops a
+# frozen number from being read as a live one.
+_LEDGER_STALE_HOURS: Final = 6
+
+# The statuses that mean the ledger has SETTLED a run and owes it no further writes. This is not a
+# guess: sql/jobs/refresh_job_run_rollup.sql moves a run out of 'running' only once
+# succeeded + failed >= total, and the job_run check constraint that names the statuses which must
+# carry a completed_at (`terminal_run_has_completion_time`, models/jobs.py) is exactly this set. A
+# settled run is entitled to a silent ledger forever, so its silence is never evidence of anything.
+_TERMINAL_RUN_STATUSES: Final[frozenset[str]] = frozenset(
+    {"succeeded", "partial", "failed", "dead_letter", "cancelled"}
+)
+
+# The earliest possible ordering key, for a run that carries neither a schedule nor a start time.
+_BEFORE_ANY_RUN: Final = datetime.min.replace(tzinfo=UTC)
 
 # A stream missing more than a month of interior days is reported as severe rather than
 # merely notable: at that size the hole is a lane that stopped, not an upstream that skipped
@@ -89,6 +156,22 @@ _ACTIVITY_NOTE: Final = (
     "fired in days look identical from here."
 )
 
+# Shown above the lanes table only while at least one lane is actually flagged, because a
+# warning that is always on the page stops being read as a warning.
+_LANE_STALE_NOTE: Final = (
+    "one or more lanes are marked ledger stale: their driver has stopped writing work items, "
+    "so done, complete, win/h, eta and frontier are FROZEN at the timestamp beside them and are "
+    "not current state. Only a lane's NEWEST run is ever checked, and only while it still owes "
+    "claimable work -- a settled run, or one whose remaining items are all dead-lettered, is "
+    "entitled to a silent ledger and is never flagged. The line under such a lane's name is what "
+    "landed in the stream that lane fills, read straight from geo.features rather than from the "
+    "ledger; it is STREAM-WIDE over the same trailing window as win/h, so a stream more than one "
+    "lane writes to counts all of them, and the day pair under the frontier is the last hour only. "
+    "Both readings are evidence and neither is a claim about the scheduler: rows still landing "
+    "means the work is running somewhere the ledger cannot see, and no rows landing means nothing "
+    "wrote recently -- not that a process died."
+)
+
 # The same honesty convention as the lane note, for the loads the ledger cannot see at all.
 _WALK_NOTE: Final = (
     "plan-driven walks write no ledger item, so the lanes table above is blind to them. "
@@ -99,8 +182,24 @@ _WALK_NOTE: Final = (
     "only thing either of them tells you is when the last chunk landed. Target and % complete "
     "are always against the full lattice a walk's cells resolve to -- a plan that deliberately "
     "covers only part of that lattice reads as low and slow-moving, including its ETA, "
-    "rather than as the finished plan it may already be."
+    "rather than as the finished plan it may already be. Rows is the one column NOT derived "
+    "from releases: it counts what those releases actually carry in agri.signal_observation, "
+    "because a chunk publishes a release whether or not the upstream returned anything. A walk "
+    "showing every cell and every chunk with zero rows landed nothing at all, and its releases "
+    "stay on the page because they are real provenance of what was attempted -- state reads "
+    "no_data rather than complete, and the two walks below that share a label and differ only "
+    "in their source key are exactly that pair."
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _ScanQuery:
+    """One whole-table statement and how long its answer may be reused before it misleads."""
+
+    cache_key: str
+    statement: TextClause
+    parameters: dict[str, Any]
+    ttl_seconds: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,16 +294,26 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
     generated_at = datetime.now(UTC)
     try:
         async with receiver_writer_session() as session:
+            # First statement of the transaction, so every read below inherits the bound. SET LOCAL
+            # is scoped to this transaction and reverts with it, which is why the cap lives here and
+            # not on the shared receiver/writer pool that ingest also draws from.
+            await session.execute(_SET_STATEMENT_TIMEOUT)
             lane_result = await session.execute(
                 _LANES_SQL,
                 {"throughput_window_hours": throughput_window_hours},
             )
             lane_rows = [dict(row) for row in lane_result.mappings().all()]
-            walk_result = await session.execute(
-                _WALKS_SQL,
-                {"throughput_window_hours": throughput_window_hours},
+            walk_rows = await _cached_rows(
+                session,
+                _ScanQuery(
+                    cache_key=f"walks:{throughput_window_hours}",
+                    statement=_WALKS_SQL,
+                    parameters={"throughput_window_hours": throughput_window_hours},
+                    ttl_seconds=_WALKS_CACHE_SECONDS,
+                ),
+                generated_at,
             )
-            walk_rows = [dict(row) for row in walk_result.mappings().all()]
+            lane_evidence = await _load_lane_evidence(session, generated_at, throughput_window_hours)
             failure_result = await session.execute(
                 _FAILURES_SQL,
                 {"row_limit": _FAILURE_ROW_LIMIT, "error_summary_limit": _ERROR_SUMMARY_CHARACTERS},
@@ -215,7 +324,18 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
                 {"trend_days": _DEAD_LETTER_TREND_DAYS},
             )
             trend_rows = [dict(row) for row in trend_result.mappings().all()]
-            stream_rows = await _load_data_streams(session, generated_at)
+            stream_rows = await _cached_rows(
+                session,
+                _ScanQuery(
+                    cache_key=_STREAMS_CACHE_KEY,
+                    statement=_DATA_STREAMS_SQL,
+                    # Empty mapping rather than no argument: this query binds nothing, but every
+                    # other caller here passes parameters and the session contract expects them.
+                    parameters={},
+                    ttl_seconds=_STREAMS_CACHE_SECONDS,
+                ),
+                generated_at,
+            )
     except Exception as error:
         logger.warning("ops_backfill_snapshot_failed", error=str(error))
         return _Snapshot(
@@ -228,10 +348,20 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
             streams=[],
             error=f"{type(error).__name__}: {error}",
         )
+    current_run_ids = _current_run_ids(lane_rows)
     return _Snapshot(
         generated_at=generated_at,
         throughput_window_hours=throughput_window_hours,
-        lanes=[_lane_record(row, generated_at, throughput_window_hours) for row in lane_rows],
+        lanes=[
+            _lane_record(
+                row,
+                generated_at,
+                throughput_window_hours,
+                lane_evidence=lane_evidence,
+                is_current_run=row["job_run_id"] in current_run_ids,
+            )
+            for row in lane_rows
+        ],
         walks=[_walk_record(row, generated_at, throughput_window_hours) for row in walk_rows],
         failures=failure_rows,
         dead_letter_trend=trend_rows,
@@ -240,23 +370,58 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
     )
 
 
-async def _load_data_streams(session: Any, now: datetime) -> list[dict[str, Any]]:
-    """Return the data-load states, re-reading only once the cached copy has aged out."""
-    computed_at = _STREAMS_CACHE.get("computed_at")
-    if computed_at is not None and (now - computed_at).total_seconds() < _STREAMS_CACHE_SECONDS:
-        cached_rows: list[dict[str, Any]] = _STREAMS_CACHE["rows"]
-        return cached_rows
-    # Empty mapping rather than no argument: this query binds nothing, but every other
-    # caller in this module passes parameters and the session contract expects them.
-    result = await session.execute(_DATA_STREAMS_SQL, {})
+async def _cached_rows(session: Any, query: _ScanQuery, now: datetime) -> list[dict[str, Any]]:
+    """Run one scanning statement, re-reading only once the cached copy has aged past its own TTL."""
+    entry = _QUERY_CACHE.get(query.cache_key)
+    if entry is not None and (now - entry[0]).total_seconds() < query.ttl_seconds:
+        return entry[1]
+    result = await session.execute(query.statement, query.parameters)
     rows = [dict(row) for row in result.mappings().all()]
-    _STREAMS_CACHE["computed_at"] = now
-    _STREAMS_CACHE["rows"] = rows
+    _QUERY_CACHE[query.cache_key] = (now, rows)
     return rows
 
 
-def _lane_record(row: dict[str, Any], generated_at: datetime, throughput_window_hours: int) -> dict[str, Any]:
-    """Add completion, throughput and ETA to one lane row, leaving ETA None when stalled."""
+async def _load_lane_evidence(
+    session: Any,
+    now: datetime,
+    throughput_window_hours: int,
+) -> Mapping[str, dict[str, Any]]:
+    """Return what actually landed per lane-filled stream, keyed by stream name.
+
+    Skipped entirely when no lane maps to a stream, so a catalog that names none never buys the
+    page a table scan it has nothing to say about.
+    """
+    stream_names = sorted(set(_LANE_STREAMS.values()))
+    if not stream_names:
+        return _NO_LANE_EVIDENCE
+    rows = await _cached_rows(
+        session,
+        _ScanQuery(
+            cache_key=f"lane-evidence:{throughput_window_hours}",
+            statement=_LANE_EVIDENCE_SQL,
+            parameters={"stream_names": stream_names, "throughput_window_hours": throughput_window_hours},
+            ttl_seconds=_LANE_EVIDENCE_CACHE_SECONDS,
+        ),
+        now,
+    )
+    return {str(row["stream"]): row for row in rows}
+
+
+def _lane_record(
+    row: dict[str, Any],
+    generated_at: datetime,
+    throughput_window_hours: int,
+    *,
+    lane_evidence: Mapping[str, dict[str, Any]] = _NO_LANE_EVIDENCE,
+    is_current_run: bool = True,
+) -> dict[str, Any]:
+    """Add completion, throughput, ETA and the ledger-staleness cross-check to one lane row.
+
+    ETA stays None when the lane is stalled, and every landed_* key stays None when nothing
+    knows which stream this lane fills -- neither is invented. `is_current_run` defaults to True
+    because a row considered on its own is the only run there is; only a caller holding every
+    run of a lane can say otherwise, and `_current_run_ids` is how it does.
+    """
     total_items = int(row["total_items"])
     succeeded_items = int(row["succeeded_items"])
     outstanding_items = int(row["outstanding_items"])
@@ -267,13 +432,95 @@ def _lane_record(row: dict[str, Any], generated_at: datetime, throughput_window_
         eta_hours = outstanding_items / throughput_per_hour
     else:
         eta_hours = None
+    stream = _LANE_STREAMS.get(str(row["definition_name"]))
+    evidence = lane_evidence.get(stream) if stream is not None else None
     return {
         **row,
         "completion_percent": (100.0 * succeeded_items / total_items) if total_items else None,
         "throughput_per_hour": throughput_per_hour,
         "eta_hours": eta_hours,
         "eta_ready_at": None if eta_hours is None else generated_at + timedelta(hours=eta_hours),
+        "owed_items": _owed_items(row),
+        "ledger_quiet_hours": _ledger_quiet_hours(row, generated_at),
+        "ledger_stale": _ledger_is_stale(row, generated_at, is_current_run=is_current_run),
+        "landed_stream": stream,
+        "landed_window_hours": throughput_window_hours,
+        "landed_last_write_at": None if evidence is None else evidence["last_write_at"],
+        "landed_rows_in_window": None if evidence is None else int(evidence["rows_in_window"]),
+        "landed_oldest_day": None if evidence is None else evidence["oldest_day_written_recently"],
+        "landed_newest_day": None if evidence is None else evidence["newest_day_written_recently"],
     }
+
+
+def _current_run_ids(lane_rows: Sequence[dict[str, Any]]) -> frozenset[Any]:
+    """Name the newest run of each lane -- the only run whose ledger silence still means anything.
+
+    The lane statement returns one row per (job definition, job run), and lowering a lane's floor
+    mints a SECOND run rather than extending the first, so a superseded run sits in the ledger
+    with its final counters forever. Those counters are not frozen, they are finished, and the
+    landed-evidence line is keyed by stream rather than by run -- so letting an old run wear the
+    stale treatment would hang a permanent warning on a closed campaign and print the CURRENT
+    run's live activity beside it. Ordering is read from the row rather than trusted from the
+    statement's ORDER BY, so a later edit to either cannot silently change which run is checked.
+    """
+    newest: dict[str, dict[str, Any]] = {}
+    for row in lane_rows:
+        lane = str(row["definition_name"])
+        held = newest.get(lane)
+        if held is None or _run_ordinal(row) > _run_ordinal(held):
+            newest[lane] = row
+    return frozenset(row["job_run_id"] for row in newest.values())
+
+
+def _run_ordinal(row: dict[str, Any]) -> datetime:
+    """Order a lane's runs by when each was meant to run, then by when it actually started."""
+    scheduled: datetime | None = row["scheduled_for"] or row["run_started_at"]
+    return _BEFORE_ANY_RUN if scheduled is None else scheduled.astimezone(UTC)
+
+
+def _owed_items(row: dict[str, Any]) -> int:
+    """Count the work items this run can still claim, which is NOT `outstanding_items`.
+
+    `outstanding_items` is `status NOT IN ('succeeded', 'cancelled')`, so a dead-lettered window
+    stays in it forever. The ledger itself disagrees: refresh_job_run_rollup.sql folds dead_letter
+    into `failed` and calls a run terminal once succeeded + failed reaches total. Subtracting them
+    here asks the ledger's own question -- is anything still claimable -- instead of the different
+    question "is anything not succeeded", which one dead letter answers yes to for all time.
+    """
+    return max(int(row["outstanding_items"]) - int(row["dead_letter_items"]), 0)
+
+
+def _run_is_terminal(row: dict[str, Any]) -> bool:
+    """True once the ledger has settled this run, by either of the two marks it writes for that."""
+    return row["run_completed_at"] is not None or str(row["run_status"]) in _TERMINAL_RUN_STATUSES
+
+
+def _ledger_quiet_hours(row: dict[str, Any], now: datetime) -> float | None:
+    """Say how long the ledger has recorded nothing for this run, or None when it never did.
+
+    Falls back to the run's start because a run that fanned out and was then abandoned before
+    its first item settled has no activity timestamp at all, and that is the loudest silence
+    there is rather than an absence of evidence.
+    """
+    since: datetime | None = row["last_recorded_activity_at"] or row["run_started_at"]
+    if since is None:
+        return None
+    quiet = now - since.astimezone(UTC)
+    return quiet.total_seconds() / (_SECONDS_PER_MINUTE * _MINUTES_PER_HOUR)
+
+
+def _ledger_is_stale(row: dict[str, Any], now: datetime, *, is_current_run: bool = True) -> bool:
+    """True when this run still owes claimable work and its ledger went quiet long enough to mislead.
+
+    Every guard exists to keep the flag off a run that is simply done, because a warning that is
+    always on the page stops being read as a warning. A superseded run is over by construction; a
+    terminal run has been settled by the ledger's own finalizer; and a run whose only unsettled
+    items are dead letters can never claim another window no matter how long it is watched.
+    """
+    if not is_current_run or _run_is_terminal(row) or _owed_items(row) == 0:
+        return False
+    quiet_hours = _ledger_quiet_hours(row, now)
+    return quiet_hours is not None and quiet_hours >= _LEDGER_STALE_HOURS
 
 
 def _walk_record(row: dict[str, Any], generated_at: datetime, throughput_window_hours: int) -> dict[str, Any]:
@@ -302,12 +549,33 @@ def _walk_record(row: dict[str, Any], generated_at: datetime, throughput_window_
         "cells_per_hour": cells_per_hour,
         "eta_hours": eta_hours,
         "eta_ready_at": None if eta_hours is None else generated_at + timedelta(hours=eta_hours),
-        "state": _walk_state(row["last_chunk_at"], generated_at, cells_done, target_cells),
+        "observed_value_count": int(row["observed_value_count"]),
+        "state": _walk_state(
+            row["last_chunk_at"],
+            generated_at,
+            cells_done,
+            target_cells,
+            int(row["observed_value_count"]),
+        ),
     }
 
 
-def _walk_state(last_chunk_at: datetime | None, now: datetime, cells_done: int, target_cells: int | None) -> str:
+def _walk_state(
+    last_chunk_at: datetime | None,
+    now: datetime,
+    cells_done: int,
+    target_cells: int | None,
+    observed_value_count: int,
+) -> str:
     """Name a walk's state from landed evidence alone; see the walk note for what idle omits."""
+    if observed_value_count == 0:
+        # Tested BEFORE completion, because this is exactly the walk that would otherwise read
+        # complete: every cell covered, every chunk published, and not one value behind them. A
+        # walk whose first chunk has landed a release but no rows yet also reads no_data, which
+        # is the truth at that instant and corrects itself on the next read of this statement --
+        # up to _WALKS_CACHE_SECONDS away, not the page's 5 s tick, because the walk query is
+        # cached.
+        return "no_data"
     if target_cells is not None and cells_done >= target_cells:
         return "complete"
     if last_chunk_at is not None and now - last_chunk_at.astimezone(UTC) <= timedelta(minutes=_WALK_ACTIVE_MINUTES):
@@ -321,6 +589,8 @@ def _json_snapshot(snapshot: _Snapshot) -> dict[str, Any]:
         "generated_at": snapshot.generated_at.isoformat(),
         "throughput_window_hours": snapshot.throughput_window_hours,
         "activity_note": _ACTIVITY_NOTE,
+        "ledger_stale_note": _LANE_STALE_NOTE,
+        "ledger_stale_hours": _LEDGER_STALE_HOURS,
         "historical_walk_note": _WALK_NOTE,
         "error": snapshot.error,
         "lanes": [_json_safe(lane) for lane in snapshot.lanes],
@@ -462,12 +732,17 @@ def _tile(label: str, value: str, tone: str) -> str:
 
 
 def _render_lanes(snapshot: _Snapshot) -> str:
-    """Render one row per lane run: states, completion, rate, ETA, stall and activity."""
+    """Render one row per lane run, prefaced by the stale-ledger note only while one applies."""
     if not snapshot.lanes:
         return '<section id="ops-lanes"><h2>lanes</h2><p class="empty">no job runs in the ledger</p></section>'
     rows = "".join(_render_lane_row(lane, snapshot.generated_at) for lane in snapshot.lanes)
+    note = (
+        f'<p class="note">{escape(_LANE_STALE_NOTE)}</p>'
+        if any(lane["ledger_stale"] for lane in snapshot.lanes)
+        else ""
+    )
     return (
-        '<section id="ops-lanes"><h2>lanes</h2><div class="scroll"><table>'
+        f'<section id="ops-lanes"><h2>lanes</h2>{note}<div class="scroll"><table>'
         "<thead><tr>"
         "<th>lane / run</th><th>state</th>"
         '<th class="n">done</th><th class="n">queued</th><th class="n">leased</th>'
@@ -481,33 +756,83 @@ def _render_lanes(snapshot: _Snapshot) -> str:
 
 
 def _render_lane_row(lane: dict[str, Any], generated_at: datetime) -> str:
+    """Render one lane, dimming every counter the ledger has stopped moving rather than hiding it."""
     stalled = int(lane["stalled_lease_items"])
     dead_lettered = int(lane["dead_letter_items"])
     completion = lane["completion_percent"]
     eta_hours = lane["eta_hours"]
     enabled_mark = "" if lane["definition_enabled"] else ' <span class="pill warn">disabled</span>'
+    # A frozen counter keeps its value -- it is the ledger's real last word and deleting it would
+    # lose evidence -- but loses the tone that makes it read as live, and gains the landed line.
+    stale = bool(lane["ledger_stale"])
+    frozen = " dim" if stale else ""
+    stale_pill = ' <span class="pill warn">ledger stale</span>' if stale else ""
     return (
         "<tr>"
         f'<td><span class="lane">{escape(str(lane["definition_name"]))}</span>{enabled_mark}'
         f'<br><span class="dim">{escape(str(lane["logical_run_key"]))}</span>'
-        f'<br><span class="dim">started {_format_age(lane["run_started_at"], generated_at)}</span></td>'
-        f"<td>{_status_pill(str(lane['run_status']))}</td>"
-        f'<td class="n ok">{int(lane["succeeded_items"]):,}</td>'
+        f'<br><span class="dim">started {_format_age(lane["run_started_at"], generated_at)}</span>'
+        f"{_render_lane_evidence(lane, generated_at)}</td>"
+        f"<td>{_status_pill(str(lane['run_status']))}{stale_pill}</td>"
+        f'<td class="n{frozen or " ok"}">{int(lane["succeeded_items"]):,}</td>'
         f'<td class="n">{int(lane["queued_items"]):,}</td>'
         f'<td class="n">{int(lane["leased_items"]) + int(lane["running_items"]):,}</td>'
         f'<td class="n">{int(lane["retry_wait_items"]):,}</td>'
         f'<td class="n">{int(lane["deferred_items"]):,}</td>'
         f'<td class="n{" bad" if dead_lettered else ""}">{dead_lettered:,}</td>'
         f'<td class="n">{int(lane["total_items"]):,}</td>'
-        f'<td class="n">{_EMPTY if completion is None else f"{completion:.1f}%"}</td>'
-        f'<td class="n">{float(lane["throughput_per_hour"]):,.2f}</td>'
-        f'<td class="n{"" if eta_hours is not None else " warn"}">{_format_hours(eta_hours)}</td>'
+        f'<td class="n{frozen}">{_EMPTY if completion is None else f"{completion:.1f}%"}</td>'
+        f'<td class="n{frozen}">{float(lane["throughput_per_hour"]):,.2f}</td>'
+        f'<td class="n{frozen or ("" if eta_hours is not None else " warn")}">{_format_hours(eta_hours)}</td>'
         f'<td class="n{" warn" if stalled else ""}">{stalled:,}</td>'
-        f"<td>{_format_age(lane['last_recorded_activity_at'], generated_at)}"
+        f'<td class="{"dim" if stale else ""}">{_format_age(lane["last_recorded_activity_at"], generated_at)}'
         f'<br><span class="dim">{escape(_format_stamp(lane["last_recorded_activity_at"]))}</span></td>'
-        f'<td class="dim">{escape(str(lane["oldest_outstanding_shard_key"] or "—"))}</td>'
+        f'<td class="dim">{escape(str(lane["oldest_outstanding_shard_key"] or "—"))}'
+        f"{_render_lane_written_days(lane)}</td>"
         "</tr>"
     )
+
+
+def _render_lane_evidence(lane: dict[str, Any], generated_at: datetime) -> str:
+    """Say what landed in the stream a quiet lane fills, and nothing at all otherwise.
+
+    A healthy lane's ledger already answers the question, so repeating the store's answer beside
+    it would only invite two numbers to be read as a disagreement. The count is deliberately
+    worded STREAM-WIDE and carries its window: it is keyed by stream, not by run, and several
+    lanes may write the same stream, so it must never be read as this run's own output.
+    """
+    if not lane["ledger_stale"]:
+        return ""
+    quiet = _format_hours(lane["ledger_quiet_hours"])
+    stream = lane["landed_stream"]
+    if stream is None:
+        landed = "no stream is mapped to this lane, so nothing here can say whether it is still working"
+        return f'<br><span class="warn">ledger quiet {quiet}</span> <span class="dim">&mdash; {landed}</span>'
+    window = f"last {int(lane['landed_window_hours'])}h"
+    rows_in_window = lane["landed_rows_in_window"]
+    if rows_in_window:
+        landed = (
+            f'<span class="ok">{rows_in_window:,} rows</span> landed stream-wide in '
+            f"{escape(str(stream))} ({window}), newest {_format_age(lane['landed_last_write_at'], generated_at)}"
+        )
+    else:
+        landed = f'<span class="warn">no rows</span> landed stream-wide in {escape(str(stream))} ({window})'
+    return f'<br><span class="warn">ledger quiet {quiet}</span> <span class="dim">&mdash; {landed}</span>'
+
+
+def _render_lane_written_days(lane: dict[str, Any]) -> str:
+    """Put the days a stale lane's stream is really writing under its frozen ledger frontier.
+
+    Labelled with its own window because it is NOT the window the row count beside it uses: dating
+    a row costs about twenty times what counting one does, so the statement reads these two columns
+    over a fixed hour. Two spans an hour and a day apart, printed unlabelled in the same row, would
+    read as one measurement.
+    """
+    oldest = lane["landed_oldest_day"]
+    newest = lane["landed_newest_day"]
+    if not lane["ledger_stale"] or oldest is None or newest is None:
+        return ""
+    return f'<br><span class="ok">writing (last hour) {_format_day(oldest)} &rarr; {_format_day(newest)}</span>'
 
 
 def _render_walks(snapshot: _Snapshot) -> str:
@@ -525,7 +850,7 @@ def _render_walks(snapshot: _Snapshot) -> str:
         "<thead><tr>"
         "<th>walk</th><th>state</th><th>observed window</th>"
         '<th class="n">cells</th><th class="n">complete</th><th class="n">chunks</th>'
-        '<th class="n">cells/h</th><th class="n">eta</th>'
+        '<th class="n">rows</th><th class="n">cells/h</th><th class="n">eta</th>'
         "<th>started</th><th>last chunk</th>"
         "</tr></thead>"
         f"<tbody>{rows}</tbody></table></div></section>"
@@ -538,11 +863,16 @@ def _render_walk_row(walk: dict[str, Any], generated_at: datetime) -> str:
     target_cells = walk["target_cells"]
     completion = walk["completion_percent"]
     eta_hours = walk["eta_hours"]
+    observed_values = int(walk["observed_value_count"])
     parameter_names = walk["parameters"] or []
     parameters = escape(", ".join(str(name) for name in parameter_names)) if parameter_names else _EMPTY
     return (
         "<tr>"
         f'<td><span class="lane">{escape(str(walk["walk_label"]))}</span>'
+        # The source key is what separates two walks that share a label, which is exactly the
+        # shape a lane pointed at the wrong upstream model leaves behind. Without it on the page
+        # the good release set and the empty one are the same row twice.
+        f'<br><span class="dim">{escape(str(walk["data_source_key"]))}</span>'
         f'<br><span class="dim">{parameters}</span></td>'
         f"<td>{_status_pill(str(walk['state']))}</td>"
         f'<td class="dim">{_format_day(walk["observed_from"])} &rarr; {_format_day(walk["observed_to"])}</td>'
@@ -550,6 +880,7 @@ def _render_walk_row(walk: dict[str, Any], generated_at: datetime) -> str:
         f'<span class="dim">/{_EMPTY if target_cells is None else f"{int(target_cells):,}"}</span></td>'
         f'<td class="n">{_EMPTY if completion is None else f"{completion:.1f}%"}</td>'
         f'<td class="n">{int(walk["chunks_landed"]):,}</td>'
+        f'<td class="n{" bad" if observed_values == 0 else ""}">{observed_values:,}</td>'
         f'<td class="n">{float(walk["cells_per_hour"]):,.2f}</td>'
         f'<td class="n{"" if eta_hours is not None else " warn"}">{_format_hours(eta_hours)}</td>'
         f"<td>{_format_age(walk['started_at'], generated_at)}"
@@ -586,10 +917,10 @@ def _render_streams(snapshot: _Snapshot) -> str:
 
 def _streams_cache_age(now: datetime) -> str:
     """Say how old the cached scan is, so a stale number is never read as a live one."""
-    computed_at = _STREAMS_CACHE.get("computed_at")
-    if computed_at is None:
+    entry = _QUERY_CACHE.get(_STREAMS_CACHE_KEY)
+    if entry is None:
         return "just now"
-    return _format_age(computed_at, now)
+    return _format_age(entry[0], now)
 
 
 def _render_stream_row(stream: dict[str, Any]) -> str:
@@ -741,6 +1072,7 @@ def _status_pill(status: str) -> str:
         "retry_wait": "warn",
         "deferred": "warn",
         "partial": "warn",
+        "no_data": "bad",
         "failed": "bad",
         "dead_letter": "bad",
         "cancelled": "dim",
