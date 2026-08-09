@@ -231,22 +231,6 @@ export const features = geoSchema.table(
 );
 
 // ============================================
-// Fire Detections (geo schema)
-// Note: geom geometry(POINT,4326) column is added via migration
-// ============================================
-
-export const fireDetections = geoSchema.table("fire_detections", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  detectedAt: timestamp("detected_at", { withTimezone: true }).notNull(),
-  geom: spatialPoint("geom"),
-  confidence: varchar("confidence", { length: 20 }),
-  brightness: real("brightness"),
-  frp: real("frp"),
-  satellite: varchar("satellite", { length: 50 }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
-
-// ============================================
 // Tracking Schema
 // ============================================
 
