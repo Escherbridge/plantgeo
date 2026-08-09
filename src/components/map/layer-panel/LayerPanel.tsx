@@ -9,7 +9,6 @@ import {
   PANEL_SHELL,
 } from "@/components/map/layer-panel/panel-scroll";
 import { SearchDockSection } from "@/components/map/layer-panel/SearchDockSection";
-import { TimeDockSection } from "@/components/map/layer-panel/TimeDockSection";
 import { ViewDockSection } from "@/components/map/layer-panel/ViewDockSection";
 import { Button } from "@/components/ui/button";
 import { useMap } from "@/lib/map/map-context";
@@ -130,13 +129,16 @@ export function LayerPanel() {
           contract and not a preference, and for why its scrollbar is unpainted while every
           scroll gesture and key still reaches it. */}
       <div className={PANEL_SCROLLER}>
-        {/* The three control sections lead, in the order a reader needs them: where, when,
-            and how it is drawn. All three govern the whole map rather than one category, so a
-            control filed among the categories would read as belonging to whichever one it
-            landed beside. They scroll with the rest -- pinning them would be three fixed rows
-            competing with the header for a 19rem column's height. */}
+        {/* The two control sections lead, in the order a reader needs them: where, and how it
+            is drawn. Both govern the whole map rather than one category, so a control filed
+            among the categories would read as belonging to whichever one it landed beside.
+            They scroll with the rest -- pinning them would be fixed rows competing with the
+            header for a 19rem column's height.
+
+            WHEN is no longer among them, and deliberately: since 2026-08-09 each layer carries
+            its own day on its own row, so a section here would be a control over a map-wide
+            date that no longer exists. */}
         <SearchDockSection />
-        <TimeDockSection />
         <ViewDockSection />
         <DockSections />
       </div>

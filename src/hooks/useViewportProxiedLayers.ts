@@ -138,7 +138,7 @@ export function useSoilSurveyQuery(
 export interface SoilFieldQueryOptions extends ProxiedQueryOptions {
   /** Which quantity to read; also selects the toggle whose governance gates the request. */
   measure: SoilFieldMeasure;
-  /** The slider's settled day, or undefined at the server's today. */
+  /** The measure's own layer row's settled day, or undefined at the server's today. */
   date: string | undefined;
   depth: SoilFieldDepth;
   /**
@@ -158,8 +158,13 @@ export interface SoilFieldQueryOptions extends ProxiedQueryOptions {
  *
  * Every input here is part of the query key, so the map and the panel must pass the same
  * five -- both take `bbox`/`zoom` from the one `useViewportBounds()` derivation, `date` from
- * `useDebouncedMapDay`, and `measure`/`depth` from the soil store. `measure` being in the key
- * is what lets both fields be on at once without sharing an entry.
+ * `useDebouncedLayerDay(<this measure's toggle>)`, and `measure`/`depth` from the soil store.
+ * `measure` being in the key is what lets both fields be on at once without sharing an entry.
+ *
+ * The day must be looked up by the measure's OWN toggle on both sides. Each field is a separate
+ * row with a separate slider since 2026-08-09, so a caller that reached for some other layer's
+ * day would key a second entry for the same viewport and quietly draw a different date than the
+ * one the panel captions.
  */
 export function useSoilFieldQuery(
   bbox: string | null | undefined,
@@ -183,7 +188,7 @@ export interface ClimateFieldQueryOptions extends ProxiedQueryOptions {
   signal: ClimateFieldSignalId;
   /** Which daily statistic; only `air-temperature` varies, the rest ignore it server-side. */
   variant: AirTemperatureVariant;
-  /** The slider's settled day, or undefined at the server's today. */
+  /** The `climate-field` row's settled day, or undefined at the server's today. */
   date: string | undefined;
 }
 
@@ -193,8 +198,8 @@ export interface ClimateFieldQueryOptions extends ProxiedQueryOptions {
  * No `zoom`, unlike `useSoilFieldQuery`: the lane has one serving tier, so zoom is not part of
  * the answer and must not be part of the key. Every other input here IS part of the key, so
  * the map and the panel must pass the same three -- both take `bbox` from the one
- * `useViewportBounds()` derivation, `date` from `useDebouncedMapDay`, and `signal`/`variant`
- * from the climate store.
+ * `useViewportBounds()` derivation, `date` from `useDebouncedLayerDay("climate-field")`, and
+ * `signal`/`variant` from the climate store.
  */
 export function useClimateFieldQuery(
   bbox: string | null | undefined,

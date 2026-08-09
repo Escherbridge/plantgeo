@@ -3,12 +3,14 @@ import { devtools } from "zustand/middleware";
 import type { VegetationMode, VegetationSource } from "@/components/map/layers/VegetationLayer";
 
 /**
- * Vegetation DISPLAY state only. There is deliberately no year, month or date here: the one
- * notion of "when" is the time slider's selected day (`useTimeSliderStore`), and the GIBS
+ * Vegetation DISPLAY state only. There is deliberately no year, month or date here: this
+ * layer's one notion of "when" is the `vegetation` row's own day in `useTimeSliderStore`
+ * (`layerDates.vegetation`, defaulting to that layer's `latestObservedDate`), and the GIBS
  * composite's year/month are projected from it by `useVegetationDisplayMode` in
  * src/lib/map/layer-toggle-context.ts. This store held its own `year`/`month` until 2026-08-05,
  * which gave the app two disagreeing clocks and two competing sliders -- do not reintroduce
- * them. See src/components/map/AGENTS.md "One time control, projected per layer".
+ * them. Per-layer dates (2026-08-09) are not a licence to: the slider on this layer's row is
+ * still exactly one control, and it lives in the time-slider store like every other row's.
  *
  * `source` is the only dimension a reader can move here, and it is the whole point of this
  * store: NDVI is drawn EITHER as this platform's measured cells OR as the global GIBS

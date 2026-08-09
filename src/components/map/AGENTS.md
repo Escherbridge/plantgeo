@@ -84,9 +84,10 @@ The manager's shape:
 ```
 ManagerRail           collapsed: [manager button | AlertBell] + LayerLegend + hint
 LayerPanel            open: header (close), the one scroller, footer
-  SearchDockSection   ┐ ControlDockSection ×3 — caret + name + a card that issues no
-  TimeDockSection     │ warehouse query. Where, when, and how it is drawn: all three
-  ViewDockSection     ┘ govern the whole map rather than one category.
+  SearchDockSection   ┐ ControlDockSection ×2 — caret + name + a card that issues no
+  ViewDockSection     ┘ warehouse query. Where and how it is drawn: both govern the
+                        whole map rather than one category. There is no "when" section
+                        here any more — see "Every layer draws its own day" below.
   DockSections        the rest of the scroller
     LayerGroupSection ×6   caret + group eye + "n of m" + LayerRow list
       DetailsSection       ×5 (Basemap has none) — the category's report
@@ -94,14 +95,18 @@ LayerPanel            open: header (close), the one scroller, footer
       DockDetailsBody      dynamic()-imported region + the map props it needs
 ```
 
-The three control sections lead on purpose: each governs *every* layer, so one filed among the
-categories would read as belonging to whichever it landed beside. Search and Time are open on a
-cold load (`INITIALLY_EXPANDED_SECTIONS` in `panel-store`); View is not, because a basemap is
-picked once a session. That does not weaken the mounting rule below — it is the exception that
-rule is stated for, and `ControlDockSection` is the type-level statement of it: a section whose
-body issues nothing. `DetailsSection` and `ControlDockSection` share their caret's class list and
-their `pendingScrollSection` handshake through `dock-disclosure.ts`, so the manager has one
-disclosure vocabulary rather than several that merely look alike.
+The two control sections lead on purpose: each governs *every* layer, so one filed among the
+categories would read as belonging to whichever it landed beside. Search is open on a cold load
+(`INITIALLY_EXPANDED_SECTIONS` in `panel-store`); View is not, because a basemap is picked once a
+session. `TimeDockSection` was a third control section, seeded open beside Search, from
+2026-08-08 until per-layer sliders replaced it the very next day with one scrubber per row — see
+"One capabilities fetch; the controls are per-layer rows, not a dock section" below for what
+replaced it and why it could not simply move into a `LayerGroupSection`. That does not weaken the
+mounting rule below — it is the exception that rule is stated for, and `ControlDockSection` is the
+type-level statement of it: a section whose body issues nothing. `DetailsSection` and
+`ControlDockSection` share their caret's class list and their `pendingScrollSection` handshake
+through `dock-disclosure.ts`, so the manager has one disclosure vocabulary rather than several
+that merely look alike.
 
 Search's single query is the honest edge case: `IngestionCoverageBadge` calls
 `layers.getIngestionCoverage` with an hour's `staleTime`. It is not a report's query — the
@@ -113,13 +118,32 @@ so a seeded-open Search section costs no request until someone types.
 
 **Mounting is what "open" means now.** Every one of those regions used to take an `open` prop and gate its queries on it (`enabled: open && …`), staying mounted-but-disabled while its sheet was shut. A collapsed section is not mounted at all, so each region dropped the prop and the `open &&` term with it. This is load-bearing, not cosmetic: eight regions mounted on every dock open would fire eight panels' worth of queries before anyone had asked a question. `panel-store.expandedDetails` is therefore not a rename of `openPanel` — it is a list, several may be open at once, and it decides which queries exist. `viewport-proxied-query-sharing.test.tsx` pins both halves: one shared query entry when a section is expanded, and **no observer at all** when it is not.
 
-Which is exactly why a control section may be seeded open and no report may: its body issues nothing. The Time section's capabilities payload is fetched by `TimeSliderCapabilitiesLoader`, mounted in `MapView` and independent of the manager, so expanding it costs a card's worth of store subscriptions and zero requests. The id vocabulary widened to say that in the type system rather than in a comment: `DockDetailsId` still means "a section with a report behind it" and stays exhaustive over `DETAILS_LABELS` and `DETAILS_BODIES`, while `DockSectionId` — `DockDetailsId | "search" | "time" | "view"` — is what `expandedDetails`, `pendingScrollSection` and `focusDockSection` speak. Adding those three to the report union instead would have forced a title and a dynamically-imported body for something that is neither.
+Which is exactly why a control section may be seeded open and no report may: its body issues
+nothing — Search's issues only what `IngestionCoverageBadge` and a typed `useGeocode` query cost,
+both accounted for above; View's issues nothing at all. The id vocabulary widened to say that in
+the type system rather than in a comment: `DockDetailsId` still means "a section with a report
+behind it" and stays exhaustive over `DETAILS_LABELS` and `DETAILS_BODIES`, while `DockSectionId`
+— `DockDetailsId | "search" | "view"` — is what `expandedDetails` and `pendingScrollSection`
+speak. Adding those two to the report union instead would have forced a title and a
+dynamically-imported body for something that is neither. `DockSectionId` carried a third member,
+`"time"`, from 2026-08-08 until per-layer sliders replaced the single shared scrubber the very
+next day, and `focusDockSection` spoke it too, on behalf of the top-bar date pill's click handler.
+Both are gone rather than merely unused — there is no longer a single date to focus onto — see
+"One capabilities fetch; the controls are per-layer rows, not a dock section" below.
 
 **The one scroller survived the merge.** Each sheet body arrived carrying its own `overflow-y-auto max-h-[calc(100vh-8rem)]` wrapper, plus two `max-h-64` list boxes in the water report. Nested inside the dock's scroller those are exactly the second-scrollbar defect `panel-scroll.ts` rule 2 names, so they were stripped on the way in; the lists were already capped upstream (`WATERSHED_LIST_LIMIT`) and the dock scrolls them now.
 
-**What is left outside the manager.** Two things, and only one of them is a control. `ManagerRail` is the collapsed manager itself — a 44px button back in, `AlertBell`, and `LayerLegend` — and it unmounts the moment the manager opens. `TimeDatePill` in the top bar is the other, and it is a marker rather than a control; see below for why the pill cannot move in here.
+**What is left outside the manager.** One thing, and it is a control: `ManagerRail`, the
+collapsed manager itself — a 44px button back in, `AlertBell`, and `LayerLegend` — which unmounts
+the moment the manager opens. `TimeDatePill` used to be the other, a marker rather than a
+control, mounted unconditionally over the top-right of the canvas; it was deleted 2026-08-09 with
+the single shared day it named. See "One capabilities fetch; the controls are per-layer rows, not
+a dock section" below for what marks a layer's day now that there is no longer one shared day to
+mark.
 
-Both shortcuts speak `focusDockSection`, which docks the panel, expands the section and queues `pendingScrollSection` for that section to consume on arrival: `AlertBell` with `"alerts"`, the pill with `"time"`, and Ctrl/Cmd+K with `"search"`. The bell and the Alerts badge read the unread count through `useUnreadAlertCount`, so they observe one query rather than polling one number twice, and marking alerts read invalidates that key rather than calling back through an `onMarkRead` prop, which a lazily-mounted section has no parent to receive.
+Both shortcuts speak `focusDockSection`, which docks the panel, expands the section and queues `pendingScrollSection` for that section to consume on arrival: `AlertBell` with `"alerts"` and Ctrl/Cmd+K with `"search"`. There is no third: the pill spoke `"time"`, and both it and the `"time"` member of `DockSectionId` were deleted on 2026-08-09 — `panel-store.ts` now reads `DockDetailsId | "search" | "view"`. The bell and the Alerts badge read the unread count through `useUnreadAlertCount`, so they observe one query rather than polling one number twice, and marking alerts read invalidates that key rather than calling back through an `onMarkRead` prop, which a lazily-mounted section has no parent to receive.
+
+`MapDateSummary` replaced the pill, and is a marker rather than a shortcut — it speaks no `focusDockSection` and docks nothing. It mounts unconditionally in `MapView` as a sibling of `LayerPanel`, reading only `useViewedLayerDays()` and `capabilities.serverCurrentDate`, and that independence is the whole point: every other statement of a layer's day now lives on its row, which requires the dock to be docked, the group expanded and the layer switched on. With the dock closed, three layers on three different months would otherwise render as one image carrying no date information at all — a composite anyone would read as a single moment. It states the shared day when the visible layers agree, and when they do not it says so with the span and the layer count. It must never grow controls; the controls are the rows.
 
 **Reachability is now answerable by import.** `dock-sections.ts` derives the groups from the registry and is deliberately React-free, so `layer-registry.test.ts` can assert that every layer has a row by calling `dockReachableLayerToggleIds()`. It used to answer the same question by regex-scanning `<LayerToggle>` out of the panel sources — the only handle available when a layer's sole switch was buried in a sheet's JSX.
 
@@ -131,13 +155,29 @@ It is an **overlay inside `MapView`**, never a `MapLayout` side panel: reflowing
 
 **Deliberately not built, each for a reason rather than for time.** Drag reordering: paint order here is code, not data — the `beforeId` at each `addLayer` plus `style.load` listener registration order, which is load-bearing (see below) — and `activeLayers` is toggle-insertion order that means nothing spatially; a `map.moveLayer` would be discarded by the next basemap swap, giving a control that silently stops working at the style switcher. Blend modes: MapLibre has no per-layer blend mode, so anything shipped under that label would be a fake. Lock: Photoshop's lock guards against direct manipulation on canvas, and nothing here moves or edits a layer.
 
-Two rules the context encodes. First, availability is advisory: `shouldRender` follows the user's switch and governance only, never `availability`. A layer that vanished because the server has not published a capability yet is indistinguishable from one the user turned off — that ambiguity is what `describeAvailability` exists to prevent, so an unanswerable day yields a *caption*, not a hidden layer. For the same reason an absent capability reads as `published` rather than `not_yet_observed`: silence is not a measurement, and captioning every layer with a claim about history nobody measured would be a fabrication. Second, the day reaches a *query* only through `useDebouncedMapDay()` and never through a `style.load` handler — see below.
+Two rules the context encodes. First, availability is advisory: `shouldRender` follows the user's switch and governance only, never `availability`. A layer that vanished because the server has not published a capability yet is indistinguishable from one the user turned off — that ambiguity is what `describeAvailability` exists to prevent, so an unanswerable day yields a *caption*, not a hidden layer. For the same reason an absent capability reads as `published` rather than `not_yet_observed`: silence is not a measurement, and captioning every layer with a claim about history nobody measured would be a fabrication. Second, the day reaches a *query* only through each layer's own `useDebouncedLayerDay(layerId)` and never through a `style.load` handler — see below.
 
-## The slider's day reaches queries, not style.load handlers
+## Each layer's day reaches its own queries, not a style.load handler
 
-`useMapDay()` is the raw, per-tick day: correct for a *label* (`WaterPanel`'s "Map date" chip must track the pointer), wrong for a request. `useDebouncedMapDay()` is what every warehouse-backed query keys on. It differs from `useDebounce(useMapDay().selectedDate, …)` in a way that matters: it reads `time-slider-store` imperatively and only sets state once the scrub settles, so a day-granular scrub costs one render rather than one per pointer tick — and `LayerManager` sits above ~8 layer children. It settles on the same `SCRUB_SETTLE_MS` boundary `useMetricAtDate` debounces to, shared rather than restated, so two consumers can never issue two waves of requests for the same day. Its `requestDate` is `undefined` at the server's today; see `src/lib/server/AGENTS.md` §slider-day for why that is load-bearing rather than an optimisation.
+There is no map-wide day to read any more — see "Every layer draws its own day; there is no
+map-wide 'when'" below for the full design this replaced. `useLayerDay(layerId)` is the raw,
+per-tick day for ONE layer: correct for a *label* (a row's own date field must track the
+pointer), wrong for a request. `useDebouncedLayerDay(layerId)` is what that layer's
+warehouse-backed queries key on. It differs from
+`useDebounce(useLayerDay(layerId).selectedDate, …)` in a way that matters: the settle timer
+behind it reads `time-slider-store` imperatively and resolves THIS layer's day on every
+notification, returning immediately when it did not move — so a scrub on one row arms one timer,
+not one per mounted layer, and `LayerManager` sits above ~8 of them. It settles on the same
+`SCRUB_SETTLE_MS` boundary `useMetricAtDate` debounces to, shared rather than restated, so a
+layer's map feed and its own details region can never issue two waves of requests for the same
+day. Its `requestDate` is `undefined` at the server's today; see `src/lib/server/AGENTS.md`
+§slider-day for why that is load-bearing rather than an optimisation.
 
-The day must never enter a `style.load` handler's dependency array. Listing it there re-registers the handler on every scrub, moving it behind `ServiceAreaLayer`'s and dropping the dimming mask on top of the data pins — the ordering trap described under "Style.load listener order". Nothing needs it there: the queries above own the day, and the handlers only re-apply toggle visibility. (`useSelectedMapDateRef()` existed for a handler that would have read the day inline; it was removed with its last caller rather than left as an unused escape hatch.)
+The day must never enter a `style.load` handler's dependency array, for any layer. Listing it
+there re-registers the handler on every scrub, moving it behind `ServiceAreaLayer`'s and dropping
+the dimming mask on top of the data pins — the ordering trap described under "Style.load listener
+order". Nothing needs it there: the queries above own the day, and the handlers only re-apply
+toggle visibility.
 
 ## Style swaps and render-mode state
 
@@ -203,25 +243,82 @@ Params are validated on read, never trusted: a URL is user input and MapLibre
 throws on a non-finite centre instead of ignoring it. `prefers-reduced-motion`
 turns the `flyTo` into a `jumpTo`.
 
-## One time control, projected per layer
+## Every layer draws its own day; there is no map-wide "when"
 
-There is exactly one notion of "when" on this map: `time-slider-store`'s `selectedDate`. Any
-layer whose upstream is coarser than a day derives its own grain from that day — it does not
-keep state for it.
+**Rewritten 2026-08-09.** This section used to be titled "One time control, projected per layer"
+and opened with "There is exactly one notion of 'when' on this map: `time-slider-store`'s
+`selectedDate`." That field is gone. The global slider, `TimeDockSection` and `TimeDatePill` were
+deleted the same day per-layer sliders landed, and the map is now a genuinely mixed-time
+composite: fire can draw 2026-08-07 beside vegetation drawing 2025-06-14, and nothing forces them
+to agree.
 
-`VegetationPanel` used to own a Year slider and a Month slider backed by `vegetation-store`'s
-`year`/`month`, so the app had two clocks that could disagree, and two controls competing to be
-"the" time control. Those fields and both sliders were removed on 2026-08-05.
-`useVegetationDisplayMode` now projects the day onto the GIBS composite period, and
-`vegetation-store` holds display state only (`mode`, `ndviMode`, `showNDWI`, `opacity`).
+**The store, sparse.** `time-slider-store.layerDates` is `Record<string, string>`, keyed by
+`LayerToggleId`, and it is deliberately sparse: a layer with no entry is not "on today", it is
+"following its own record". `resolveLayerDate(layerDates, capabilities, layerId)` is the one
+function that resolves a layer's day, in order: the layer's own override if `setLayerDate` has
+ever been called for it; else that layer's own `latestObservedDate` from the capabilities
+payload, because under one shared "today" every layer but vegetation used to render an empty,
+confusingly-correct hole; else the server's `serverCurrentDate`, for a layer whose newest day
+nobody knows (no warehouse stream at all, or a stream that has published nothing) — the same day
+such a layer already drew before per-layer dates existed; else `UNINITIALIZED_DATE` before
+capabilities have arrived at all, which is not a calendar date, so every consumer reports no day
+rather than guessing one. Every reader of a layer's day — `useLayerDay`, `useDebouncedLayerDay`,
+`useMetricAtDate`, `LayerTimeSlider` — calls this one function; none of them re-implement the
+fallback order.
 
-Two details make the projection safe to copy for the next coarse-grained layer:
+**One settle timer per layer, not one per pointer tick and not one for the whole map.**
+`useSettledLayerDate(layerId)` (`src/lib/map/layer-toggle-context.ts`) subscribes to the store
+imperatively and resolves THIS layer's day on every notification, returning immediately when it
+did not move. A scrub on one row therefore arms one timer, on the same `SCRUB_SETTLE_MS` boundary
+`useMetricAtDate` debounces to (shared, not restated, so a layer's map feed and its own details
+region can never issue two waves of requests for the same day) — and every other mounted layer's
+timer never fires at all. `useDebouncedLayerDay(layerId)` wraps that settled day into what a
+request needs: `requestDate: undefined` at the server's today, exactly as the single global
+slider used to report, because the server treats an omitted day and today identically and
+sending it explicitly would mint a second react-query entry for the same answer. See
+`src/lib/server/AGENTS.md` §slider-day for why that omission is load-bearing.
+
+The one exception is `useSettledEveryLayerDateKey`, which exists only for `useViewedLayerDays` —
+the single place every layer's day is read at once, for the agent payload and for the mixed-time
+report below — and it settles one joined key on the same boundary rather than minting a timer per
+layer, because that consumer re-renders on any layer's change regardless.
+
+**The day must never enter a `style.load` handler's dependency array, for any layer.** See "Each
+layer's day reaches its own queries, not a style.load handler" above.
+
+**The mixed-time risk, and how the UI guards it.** A screenshot with every layer on its own
+newest day looks like one moment even though it may span years, and the guard against that is in
+three places, not one:
+
+- **`LayerTimeSlider` always renders the date**, even for a layer with no scrubbable axis at all
+  (a snapshot, an unpublished stream, one with no warehouse layer behind it) — see
+  `describeMissingAxis`. Hiding the date for those layers would be the same mislabelling this
+  whole feature exists to prevent; a layer is drawing as of some day whether or not a reader can
+  move it.
+- **The "behind its own latest" mark is a WORD, not a colour**, so it survives greyscale and a
+  screen reader. `MapDay.isBehindLatestObservedDate` is a positive claim and stays false unless
+  the layer's own `latestObservedDate` is known AND the selected day is provably before it —
+  never true for a layer whose newest day nobody has measured, because there is nothing measured
+  for it to be behind.
+- **`useViewedLayerDays` hands the agent and any cross-layer report every visible layer's own
+  settled day**, never a single "the map's day". A layer with no nameable day is omitted rather
+  than reported with a sentinel — "uninitialized" is not a day anyone is looking at — and each
+  entry's `isOnLatest` carries the same not-provably-behind rule `isBehindLatestObservedDate`
+  does, so the two can never disagree about the same layer.
+
+**What survives from the single-slider design, unchanged.** `VegetationPanel` used to own a Year
+slider and a Month slider backed by `vegetation-store`'s `year`/`month`, so the app had two
+clocks that could disagree even before per-layer dates existed. Those fields and both sliders
+were removed on 2026-08-05; `useVegetationDisplayMode` projects vegetation's OWN settled day (via
+`useDebouncedLayerDay("vegetation")`, never another layer's) onto the GIBS composite month, and
+`vegetation-store` holds display state only (`mode`, `ndviMode`, `showNDWI`, `opacity`). Two
+details still make that projection safe to copy for the next coarse-grained layer:
 
 - **Read the settled day, and memoize on the derived grain, not the day.**
-  `useVegetationDisplayMode` reads `useDebouncedMapDay()` and returns an object memoized on
-  `(year, month)`. Scrubbing thirty days inside one month therefore leaves every prop
-  `VegetationLayer` keys its `setTiles` effect on referentially unchanged. Memoizing on the day
-  would re-request a month-granular tile once per day scrubbed.
+  `useVegetationDisplayMode` returns an object memoized on `(year, month)`. Scrubbing thirty days
+  inside one month therefore leaves every prop `VegetationLayer` keys its `setTiles` effect on
+  referentially unchanged. Memoizing on the day would re-request a month-granular tile once per
+  day scrubbed.
 - **A day the upstream does not cover is stated, not drawn blank.** `resolveGibsNdviDate`
   refuses a period outside the product's published extent rather than emitting a URL that 404s,
   so `compositeUnavailableReason` names the gap and `VegetationPanel` renders it on the page.
@@ -229,99 +326,58 @@ Two details make the projection safe to copy for the next coarse-grained layer:
   disagree by a whole year. Before capabilities land there is no day, so `year`/`month` are
   `null` and no raster is attached — a browser-clock default would draw a period nobody chose.
 
-**Per-resource focus re-ranges the AXIS, never the map.** `time-slider-store.focusedLayerName`
-(2026-08-08, from the owner request "the range should transform based on the actuals and
-forecasts available for a selected resource") narrows the track to one `geo.layers` publication:
-its own `earliestObservedDate` on the left, `serverCurrentDate + forecastHorizonDays` on the
-right. It is a view over the control and not a filter over the map — `selectedDate` still applies
-to every layer, exactly as this section requires, and nothing about `activeLayers` or any query
-changes. That is easy to misread off a track that suddenly spans three months instead of four
-years, so the card states it in words beside the ends (`time-slider-focus-caption`: "Range shown
-for X. The selected date still applies to every layer."), and the caption is the reason the
-picker was safe to ship at all.
+**Dropped, not carried forward: per-resource axis focus.** The single global slider used to carry
+`time-slider-store.focusedLayerName`, narrowing the track to one `geo.layers` publication's own
+axis (`earliestObservedDate` … `serverCurrentDate + forecastHorizonDays`) while `selectedDate`
+still applied to every layer, with a caption stating that explicitly. That field,
+`focusedResourceDomain`, `publishesAnyForecast` and the whole focus picker are gone: every row
+now shows its OWN axis by construction, so there is nothing left for a picker to focus onto —
+narrowing a shared thumb to "look at fire's range" made sense when one control had to serve every
+layer, and stops meaning anything once fire already has its own thumb. Do not reintroduce a
+resource picker; give the layer its own row instead, as every layer already has one.
 
-Three details make the focused axis honest. It takes **no `futureAxisDays` padding**: that span
-exists to make the observed/future boundary visible on an axis assembled from every layer at
-once, and padding a single resource's axis would redraw the very band the focus exists to size —
-a horizon of 0 therefore ends the track at today and draws no future band. `publishesAnyForecast`
-is computed **from the focused layer alone whenever that layer's axis is the one drawn**, so the
-band beside it is never legended "Forecast" off some other layer's capability — and never
-legended "Nothing published" off the focused layer's while the track has fallen back to the
-global band, which is the whole warehouse's. And a focus the payload does not carry, or one on a
-layer that defines no axis of its own, **falls back to the global domain** rather than emptying
-the track: a stale name is not a claim that nothing was measured. Two kinds define no axis, and
-`focusedResourceDomain` excludes both — a layer that has observed nothing, and a **snapshot**,
-which may carry a perfectly real `earliestObservedDate` and still be one state of the world
-rather than a record (`watersheds`' 2013-01-18 WBD loaddate, the same date `sliderDomain` keeps
-out of the global axis start). The caption's second branch is worded for both: "X has no
-day-by-day record of its own, so the full range is shown." Switching resource clamps
-`selectedDate` into the new domain inside the same `set()`, because a two-step would publish one
-render with the thumb outside its own axis.
+## One capabilities fetch; the controls are per-layer rows, not a dock section
 
-The picker's option labels come from the **layer registry** (`toggleIdForWarehouseLayerName` →
-`layerLabel`), not from humanizing the `geo.layers` name, so a resource is called the same thing
-here as in the layer rows inches below; the humanizer survives only as the fallback for a
-publication no renderer carries. Option *values* stay the raw warehouse names, which is the one
-vocabulary the capabilities payload speaks.
+**Superseded 2026-08-09.** This section used to be titled "The scrubber is a dock section; the
+pill is a marker, not a disclosure" and described three components sharing one shared day:
+`TimeSliderCapabilitiesLoader` (the fetch), `TimeDockSection` (one scrubber card in the manager,
+titled "Map date"), and `TimeDatePill` (a top-bar marker over the canvas, whose click called
+`focusDockSection("time")`). The latter two are deleted along with the store field they
+controlled. `DockSectionId` lost `"time"` the same day — it was a member for exactly one day,
+from 2026-08-08 until per-layer sliders landed on 2026-08-09 — and `focusDockSection("time")` is
+now unreachable code that must not be reintroduced: there is no longer a single date to focus.
 
-## The scrubber is a dock section; the pill is a marker, not a disclosure
+**`TimeSliderCapabilitiesLoader` is the one part that did NOT change shape.** Still headless,
+still renders `null`, still mounted in `MapView` and never unmounted, still the ONE read of
+`environmental.getSliderCapabilities` and the one writer of `setCapabilities` /
+`setCapabilitiesUnavailable`, with the same 5-minute `staleTime`/`refetchInterval` pair (a
+UTC-midnight rollover is a date change no user action coincides with, and the poll is a
+server-side cache hit) and the same "only never-succeeded-and-errored counts as unavailable"
+rule. What changed is what the payload feeds: ONE fetch still supplies every layer, because
+per-layer dates split the DAY, not the capabilities — a fetch per row's slider would be one
+whole-warehouse scan per visible layer. It cannot live inside a collapsible dock section: every
+layer's day, and so every warehouse-backed query on the map, depends on it through
+`useDebouncedLayerDay(<toggle>)`, and a closed section is an unmounted section.
 
-**Superseded 2026-08-08.** This section used to be titled "The time slider is a collapsed
-top-bar pill, expanding to the region's header" and described `TimeSliderPanel`: an
-always-mounted 24rem right-hand region, `pointer-events-none`, scrolling, whose sticky top was
-the pill and whose disclosure opened the full scrubber card beneath it. That region is gone,
-and the file with it. Three components replaced it, each owning one of the three things it did:
+**The controls are `LayerTimeSlider`, one per row, gated on that row's own axis.** `LayerRow`
+renders one beside its opacity slider whenever the layer is switched on AND `hasOwnTimeAxis` —
+`sliderDomain(capabilities, warehouseLayerName) !== null` — so a snapshot or a layer with no
+warehouse feed behind it gets no track rather than a dead one, and a layer with a track always
+has a control (`hasSelectableDay` in `src/stores/time-slider-store.ts` is the one function both
+a layer's map read and its row must agree with — see "The layer registry and the toggle context"
+above). Stacked under the opacity slider rather than beside it: the dock column is 19rem, and
+splitting it would leave each track under 7rem, too narrow to address a day on a multi-year axis.
+`LayerTimeSlider` draws that row's own coverage track (gaps and thin ranges from that layer's own
+capability), its own "behind its own latest" mark in words, and — for a layer with no axis at all
+— still prints the bare selected date, because a mixed-time map is only readable while every row
+admits its own day whether or not that day can be moved.
 
-- **`TimeSliderCapabilitiesLoader`** — the fetch. Headless, renders `null`, mounted in `MapView`
-  and never unmounted. Still the ONE read of `environmental.getSliderCapabilities` and the one
-  writer of `setCapabilities` / `setCapabilitiesUnavailable`; that single-writer rule carried
-  over verbatim from the region's header, along with the 5-minute `staleTime`/`refetchInterval`
-  pair (a UTC-midnight rollover is a date change no user action coincides with, and the poll is
-  a server-side cache hit) and the "only never-succeeded-and-errored counts as unavailable"
-  rule. It cannot live in the dock: the day it supplies keys every warehouse-backed query on the
-  map through `useDebouncedMapDay()`, and a closed dock is an unmounted dock.
-- **`TimeDockSection`** — the controls, near the top of the manager's one scroller. See "One
-  manager, no floating surfaces" above. Its caret row (a `ControlDockSection` since 2026-08-09)
-  is also the card's TITLE (`TIME_SECTION_LABEL`, "Map date"), so
-  `TimeSlider` renders no heading of its own — it kept an `<h2>Map date</h2>` through the move and
-  printed the same title twice, one line apart. The Observed / Beyond-the-record chip that shared
-  that row stayed, right-aligned: it is live state about the selected day, not a title.
-- **`TimeDatePill`** — the claim, still `absolute right-16 top-4 z-10` over the canvas,
-  `pointer-events-none` with each control opting back in, still shrink-to-fit and capped against
-  the viewport. `right-16` clears MapLibre's top-right control stack; `top-4` puts it on the top
-  row, which since 2026-08-09 it has to itself — the search field that shared it is a section of
-  the manager now, and on a phone the manager's full-screen overlay covers the pill outright.
-
-**The invariant that survived every move is the pill.** The day applies to every layer, so an
-off-today date silently filters the whole map, and the marker for that — the date plus a
-"Past day" / "Beyond record" chip, plus a bar-level Today reset when off-today — cannot be
-something a reader opens a panel to reach. It is mounted unconditionally, whatever the dock is
-doing. Four shapes have now carried it: the bottom-centre floating card
-(`absolute bottom-24 left-1/2 -translate-x-1/2`), the always-open card at `top-16` (2026-08-05),
-the top-right region with the pill as its sticky head (2026-08-06), and the dock section with a
-marker-only pill (2026-08-08).
-
-**The pill is no longer a disclosure.** Its click calls `focusDockSection("time")` — the same
-three-fact handshake `AlertBell` uses — so its `aria-expanded` went away rather than becoming a
-claim about a region on the opposite edge that this button does not contain. The chevron went
-with it, replaced by the mirror of the `PanelLeftClose` the dock's own header wears. There is one
-scrubber now, in one place, instead of a card that could be open here and a section open there.
-
-`TIME_SLIDER_CONTAINER_CLASSES` keeps its invariant — the loaded slider and the
-`time-slider-unavailable` alert render from the same class list, so a fetch that later succeeds
-cannot reposition or resize anything — and still holds no positioning, no `overflow-*` and no
-`max-h-*`. That last part became load-bearing rather than incidental when the card moved into the
-dock: either would be the second-scrollbar defect `panel-scroll.ts` rule 2 names, and this card
-holds the dock's only drag control, which is exactly what a nested scroller makes unreachable on
-a phone.
-
-**Resolved 2026-08-08.** This section used to note that panel sheets portal themselves over the
-whole viewport, so an open panel covered the time region and its marker whole — and that fixing
-it would have meant giving `src/components/ui/sheet.tsx` a top offset, a file shared by every
-sheet in the app. The data panels are sections of the left dock now, and so is the scrubber.
-`src/components/ui/sheet.tsx` reached zero call sites anywhere in `src/` when the panels merged
-into the dock, and was deleted the same day under the clean-up-as-you-go rule (owner call,
-2026-08-08 — the "least amount possible" session).
+**Nothing marks the map's overall state any more, because there is no longer one state to mark.**
+The old pill's "Past day" / "Beyond record" claim applied to the single shared date; under
+per-layer dates that claim would have to be made once per layer, which is exactly what each row's
+own mark already does. A reader who wants the whole picture reads `useViewedLayerDays`, which is
+what the agent and any future cross-layer summary consume — see "Every layer draws its own day"
+above.
 
 ## Picking a point to query
 

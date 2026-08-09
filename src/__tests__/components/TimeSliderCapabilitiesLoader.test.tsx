@@ -23,7 +23,11 @@ vi.mock("@/lib/trpc/client", () => ({
 }));
 
 import TimeSliderCapabilitiesLoader from "@/components/map/TimeSliderCapabilitiesLoader";
-import { UNINITIALIZED_DATE, useTimeSliderStore } from "@/stores/time-slider-store";
+import {
+  resolveLayerDate,
+  UNINITIALIZED_DATE,
+  useTimeSliderStore,
+} from "@/stores/time-slider-store";
 
 const SERVER_CURRENT_DATE = "2026-08-04";
 
@@ -37,6 +41,10 @@ const CAPABILITIES: SliderCapabilities = {
       forecastHorizonDays: 0,
       forecastVariants: [],
       earliestObservedDate: "2026-08-02",
+      latestObservedDate: "2026-08-03",
+      coverageGaps: [],
+      thinRanges: [],
+      describedFromDay: null,
     },
     {
       layerName: "fire-perimeters",
@@ -44,17 +52,20 @@ const CAPABILITIES: SliderCapabilities = {
       forecastHorizonDays: 0,
       forecastVariants: [],
       earliestObservedDate: "2026-06-17",
+      latestObservedDate: "2026-07-21",
+      coverageGaps: [],
+      thinRanges: [],
+      describedFromDay: null,
     },
   ],
 };
 
 beforeEach(() => {
   useTimeSliderStore.setState({
-    selectedDate: UNINITIALIZED_DATE,
+    layerDates: {},
     forecastVariant: "monte_carlo",
     capabilities: null,
     capabilitiesUnavailable: false,
-    focusedLayerName: null,
   });
   capabilitiesQuery.mockReturnValue({ data: undefined, isError: false });
 });
@@ -69,28 +80,59 @@ describe("TimeSliderCapabilitiesLoader", () => {
     const { container } = renderWithProviders(<TimeSliderCapabilitiesLoader />);
 
     // Headless by design: it exists to own a fetch, not to draw. Anything it rendered would be
-    // a second surface competing with the pill and the dock's Time section.
+    // a second surface competing with the sliders on the layer rows.
     expect(container.innerHTML).toBe("");
     expect(screen.queryByTestId("time-slider")).toBeNull();
   });
 
-  it("leaves the day uninitialized until the server payload lands", () => {
+  /**
+   * Rewritten from "leaves the day uninitialized until the server payload lands", which read
+   * `state.selectedDate` -- one map-wide day, replaced on 2026-08-09 by a day per layer. The
+   * claim is unchanged and is still the important one: without a payload there is no honest
+   * "today", and a browser-clock fallback would put it on the wrong day outside UTC. It is now
+   * asserted through `resolveLayerDate`, which is where a layer's day actually comes from.
+   */
+  it("leaves every layer's day uninitialized until the server payload lands", () => {
     renderWithProviders(<TimeSliderCapabilitiesLoader />);
 
-    expect(useTimeSliderStore.getState().capabilities).toBeNull();
-    // A browser-clock fallback would put "today" on the wrong day outside UTC.
-    expect(useTimeSliderStore.getState().selectedDate).toBe(UNINITIALIZED_DATE);
-    // In flight is not the same as failed, and only the latter may interrupt the slider.
-    expect(useTimeSliderStore.getState().capabilitiesUnavailable).toBe(false);
+    const state = useTimeSliderStore.getState();
+    expect(state.capabilities).toBeNull();
+    // Sparse and empty: nothing is seeded, so no layer holds an override nobody set.
+    expect(state.layerDates).toEqual({});
+    expect(resolveLayerDate(state.layerDates, state.capabilities, "water")).toBe(
+      UNINITIALIZED_DATE
+    );
+    // In flight is not the same as failed, and only the latter may interrupt the sliders.
+    expect(state.capabilitiesUnavailable).toBe(false);
   });
 
-  it("writes the payload into the store and takes the day from it", () => {
+  /**
+   * Rewritten from "writes the payload into the store and takes the day from it". The payload
+   * write is unchanged; what the day is taken from is not. A layer with a capability now opens
+   * on its OWN `latestObservedDate` rather than on the server's today -- that is the whole point
+   * of per-layer dates -- and only a layer with no capability row falls back to the server's
+   * today, which is the part of the old assertion still worth making.
+   */
+  it("writes the payload into the store, from which each layer takes its own day", () => {
     capabilitiesQuery.mockReturnValue({ data: CAPABILITIES, isError: false });
     renderWithProviders(<TimeSliderCapabilitiesLoader />);
 
-    expect(useTimeSliderStore.getState().capabilities).toEqual(CAPABILITIES);
-    // The server's today, never Date.now().
-    expect(useTimeSliderStore.getState().selectedDate).toBe(SERVER_CURRENT_DATE);
+    const state = useTimeSliderStore.getState();
+    expect(state.capabilities).toEqual(CAPABILITIES);
+    // `water` -> "water-gauges", which published up to 2026-08-03.
+    expect(resolveLayerDate(state.layerDates, state.capabilities, "water")).toBe("2026-08-03");
+    // `fire-perimeters` published up to 2026-07-21 -- a different day, from the same payload.
+    expect(resolveLayerDate(state.layerDates, state.capabilities, "fire-perimeters")).toBe(
+      "2026-07-21"
+    );
+    // `drought` has no geo.layers row, so it falls back to the server's today -- never
+    // Date.now(), which is the guarantee this component exists to hold.
+    expect(resolveLayerDate(state.layerDates, state.capabilities, "drought")).toBe(
+      SERVER_CURRENT_DATE
+    );
+    // Nothing was seeded into `layerDates` by the payload landing: an eager copy would become a
+    // silent override the moment the next payload moved a layer's newest day.
+    expect(state.layerDates).toEqual({});
   });
 
   it("polls on the same interval the read-model memoizes for", () => {

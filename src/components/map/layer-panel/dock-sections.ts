@@ -65,12 +65,13 @@ export const DETAILS_LABELS: Record<DockDetailsId, string> = {
 
 /**
  * Every section the manager can render: the categories, the ungoverned bucket, the alerts
- * pivot, and the three query-free sections at the top of the scroller.
+ * pivot, and the two query-free sections at the top of the scroller.
  *
  * Wider than `DockDetailsId` because a section is not the same thing as a report -- "Basemap"
- * carries layers and no report; "search", "time" and "view" carry a control and no report.
- * `DockSectionId` brings those three in; the ungoverned bucket is a local sentinel and joins
- * from here.
+ * carries layers and no report; "search" and "view" carry a control and no report.
+ * `DockSectionId` brings those two in; the ungoverned bucket is a local sentinel and joins
+ * from here. "time" was a third such section for one day: the map-wide scrubber it held is
+ * gone, and each layer's own slider lives on its own `LayerRow` instead.
  */
 export type DockSectionKey = DockSectionId | typeof UNGOVERNED_GROUP_KEY;
 

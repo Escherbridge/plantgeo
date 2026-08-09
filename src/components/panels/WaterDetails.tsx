@@ -7,9 +7,9 @@ import { useWatershedsQuery } from "@/hooks/useViewportProxiedLayers";
 import { DROUGHT_LEGEND } from "@/components/map/layers/DroughtLayer";
 import { CONDITION_COLORS } from "@/components/map/layers/WaterLayer";
 import {
-  useDebouncedMapDay,
+  useDebouncedLayerDay,
+  useLayerDay,
   useLayerRenderState,
-  useMapDay,
 } from "@/lib/map/layer-toggle-context";
 
 interface WaterDetailsProps {
@@ -93,19 +93,23 @@ function ColorSwatch({ color, label }: { color: string; label: string }) {
  * layer rows are the switches.
  */
 export function WaterDetails({ bbox }: WaterDetailsProps) {
-  // The same settled day LayerManager sends, so this section and the map share one cache entry
-  // per feed rather than asking the warehouse for two different days.
-  const { requestDate } = useDebouncedMapDay();
+  // TWO days, because this section describes two layers and each carries its own slider on its
+  // own row since 2026-08-09. They are the same settled days LayerManager sends for the same
+  // toggles, so each tab and the map it describes share one cache entry rather than asking the
+  // warehouse for two different days -- but the gauge day and the drought day are now genuinely
+  // independent, and nothing here may present one as covering both.
+  const waterDay = useDebouncedLayerDay("water");
+  const droughtDay = useDebouncedLayerDay("drought");
 
   const streamflowQuery = trpc.environmental.getStreamflow.useQuery(
-    { bbox: bbox ?? "", date: requestDate },
+    { bbox: bbox ?? "", date: waterDay.requestDate },
     { enabled: !!bbox }
   );
 
   // tRPC keys `undefined` input differently from an object, so the dateless case must stay
   // literally undefined rather than becoming `{ date: undefined }`.
   const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(
-    requestDate === undefined ? undefined : { date: requestDate }
+    droughtDay.requestDate === undefined ? undefined : { date: droughtDay.requestDate }
   );
 
   // The same hook LayerManager calls, so the boundaries this tab lists are the ones the
@@ -113,17 +117,18 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
   // See src/lib/server/AGENTS.md §proxied-viewport-queries.
   const watershedQuery = useWatershedsQuery(bbox, { enabled: true });
 
-  // The map's day, read from the toggle context, so the panel and the map can never
-  // disagree about what is displayed. Read raw rather than settled, because this one is a
-  // label: the caption must track the pointer even while the queries wait for it to stop.
-  const mapDay = useMapDay();
-  const selectedDate = mapDay.selectedDate;
-  const hasSelectedDay = selectedDate !== null;
-  // Streamflow and drought are read for the selected day; the watershed boundaries below are
-  // proxied live from USGS per viewport and carry no date at all, so the caption says so
-  // rather than letting one undated feed be read as if it shared the other two's day.
-  const watershedsAreUndated = mapDay.isOffServerToday;
-  // The release actually served, which for a weekly product is on or before the selected day.
+  // Each layer's own day, read raw rather than settled, because these are LABELS: a caption
+  // must track the pointer even while the queries wait for it to stop.
+  const gaugeSelectedDate = useLayerDay("water").selectedDate;
+  const droughtSelectedDate = useLayerDay("drought").selectedDate;
+  // The two feeds are on the same day only when they are, which is a fact to be checked and
+  // never assumed -- opening on their own `latestObservedDate` puts them on different days by
+  // default, since the gauges and USDM publish on different cadences. The caption below states
+  // one date when they agree and both when they do not; asserting a shared "map date" over a
+  // mixed-time composite is the mislabelling this whole feature exists to prevent.
+  const feedDatesAgree = gaugeSelectedDate === droughtSelectedDate;
+  const hasAnySelectedDay = gaugeSelectedDate !== null || droughtSelectedDate !== null;
+  // The release actually served, which for a weekly product is on or before the drought day.
   const droughtReleaseDate =
     droughtQuery.data?.observedAt?.slice(0, 10) ?? null;
 
@@ -161,12 +166,37 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
 
   return (
     <div className="flex flex-col">
-      {hasSelectedDay && (
-        <p className="rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2 py-1.5 text-[11px] text-[hsl(var(--muted-foreground))]">
-          Map date{" "}
-          <span className="font-medium text-[hsl(var(--foreground))]">{selectedDate}</span>
-          {watershedsAreUndated &&
-            " — streamflow and drought below are read for this date; watershed boundaries are not dated."}
+      {/* One line per feed that has a day, never one date over all of them. Watersheds are
+          named unconditionally rather than only on an off-today day, which is what the old
+          caption did: the boundaries are proxied live from USGS per viewport and carry no date
+          at ALL, so their being undated was never a function of which day was selected -- and
+          beside two dated feeds on two different days, an unlabelled third would be read as
+          sharing whichever one it sat next to. */}
+      {hasAnySelectedDay && (
+        <p
+          className="rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2 py-1.5 text-[11px] text-[hsl(var(--muted-foreground))]"
+          data-testid="water-feed-dates"
+        >
+          {feedDatesAgree ? (
+            <>
+              Streamflow and drought read for{" "}
+              <span className="font-medium text-[hsl(var(--foreground))]">
+                {gaugeSelectedDate}
+              </span>
+            </>
+          ) : (
+            <>
+              Streamflow{" "}
+              <span className="font-medium text-[hsl(var(--foreground))]">
+                {gaugeSelectedDate ?? "no date yet"}
+              </span>
+              {" · drought "}
+              <span className="font-medium text-[hsl(var(--foreground))]">
+                {droughtSelectedDate ?? "no date yet"}
+              </span>
+            </>
+          )}
+          {" — each layer scrubs its own row; watershed boundaries are not dated."}
         </p>
       )}
 
@@ -329,11 +359,14 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
                   <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 text-center">
                     <p className="text-xs text-[hsl(var(--muted-foreground))] mb-1">
                       Dominant Classification
-                      {/* USDM is weekly, so the release covering the selected day is
+                      {/* USDM is weekly, so the release covering the drought row's day is
                           normally dated before it. Naming the release is what keeps a
-                          carried-forward map from reading as a same-day measurement. */}
+                          carried-forward map from reading as a same-day measurement. Compared
+                          against the DROUGHT row's day, never the gauges' -- the two are
+                          independent now, and against the wrong one this line would either
+                          appear on a same-day release or vanish on a carried-forward one. */}
                       {droughtReleaseDate !== null &&
-                        droughtReleaseDate !== selectedDate && (
+                        droughtReleaseDate !== droughtSelectedDate && (
                           <span className="block text-[10px]">
                             As of the {droughtReleaseDate} release
                           </span>

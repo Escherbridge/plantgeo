@@ -1,7 +1,7 @@
 "use client";
 
 import { useClimateFieldQuery } from "@/hooks/useViewportProxiedLayers";
-import { useDebouncedMapDay, useLayerVisibility } from "@/lib/map/layer-toggle-context";
+import { useDebouncedLayerDay, useLayerVisibility } from "@/lib/map/layer-toggle-context";
 import { useClimateStore } from "@/stores/climate-store";
 import {
   CLIMATE_FIELD_SIGNAL_IDS,
@@ -40,10 +40,10 @@ function pickerButtonClassName(selected: boolean): string {
 /**
  * What the NASA POWER climate field is showing, as the Climate section of the map dock.
  *
- * A SIGNAL picker, not a second clock: the day always comes from the global time slider, as
- * `src/components/map/AGENTS.md` "One time control, projected per layer" requires. The
- * statistic row appears only for air temperature, which is the one signal NASA POWER
- * publishes three ways over the same cells and days.
+ * A SIGNAL picker, not a second clock: the day always comes from the `climate-field` layer
+ * row's own time slider, never from a control here. The statistic row appears only for air
+ * temperature, which is the one signal NASA POWER publishes three ways over the same cells and
+ * days.
  *
  * It owns its own query rather than taking the collection as a prop, on the same key the map
  * uses, so expanding this section never issues a request the map was not already making.
@@ -60,7 +60,10 @@ export function ClimateDetails({ bbox }: ClimateDetailsProps) {
   const setAirTemperatureVariant = useClimateStore((state) => state.setAirTemperatureVariant);
 
   const definition = climateFieldSignalDefinition(signal);
-  const { requestDate } = useDebouncedMapDay();
+  // The `climate-field` row's own settled day, which is the same one LayerManager passes -- so
+  // this section and the map land on one react-query entry rather than two that differ only in
+  // which day they asked for.
+  const { requestDate } = useDebouncedLayerDay("climate-field");
 
   const query = useClimateFieldQuery(bbox, {
     enabled: visible,

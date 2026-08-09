@@ -14,8 +14,8 @@ import {
 import { NLCD_CATEGORY_CLASSES, NLCD_CLASSES, type NLCDCategory } from "@/lib/environmental/nlcd";
 import { useVegetationStore } from "@/stores/vegetation-store";
 import {
+  useLayerDay,
   useLayerRenderState,
-  useMapDay,
   useVegetationDisplayMode,
 } from "@/lib/map/layer-toggle-context";
 import { LayerOpacitySlider } from "@/components/ui/layer-opacity-slider";
@@ -95,11 +95,14 @@ export function VegetationDetails() {
   // screen; typed so a drifted trigger value breaks the build, not the gate.
   const [activeTab, setActiveTab] = useState<"ndvi" | "landcover" | "forecast">("ndvi");
 
-  // The map's day, read from the toggle context. This panel owns NO time control of its own:
-  // the time slider at the top of the right-hand region is the one clock for every layer, and
-  // the composite below is that day projected onto a month. `useMapDay` for the readout so it
-  // tracks the pointer; the composite comes from the settled day the raster actually drew.
-  const selectedDate = useMapDay().selectedDate;
+  // The `vegetation` row's own day, read from the toggle context. This panel owns NO time
+  // control of its own: the slider on that row is this layer's one clock, and the composite
+  // below is that day projected onto a month. `useLayerDay` for the readout so it tracks the
+  // pointer; the composite comes from the settled day the raster actually drew.
+  //
+  // Keyed to `vegetation` and nothing wider. Every other layer is on its own day now, so a
+  // readout built from any of them would caption this raster with a day nobody selected for it.
+  const selectedDate = useLayerDay("vegetation").selectedDate;
   const hasSelectedDay = selectedDate !== null;
   const { compositePeriod, compositeUnavailableReason } = useVegetationDisplayMode();
 
@@ -151,17 +154,21 @@ export function VegetationDetails() {
 
   return (
     <div className="flex flex-col">
-      {/* This section has no time control of its own -- the slider at the top of the
-          right-hand region is the one clock for every layer. What it does owe the reader is
-          what that day means HERE: GIBS publishes NDVI as an 8-day composite binned by
-          month, so every day in a month draws the same tile. Stating the period keeps a
-          day-granular scrub from reading as a day-granular raster. */}
+      {/* This section has no time control of its own -- the slider on the Vegetation layer row
+          is this layer's one clock. What it does owe the reader is what that day means HERE:
+          GIBS publishes NDVI as an 8-day composite binned by month, so every day in a month
+          draws the same tile. Stating the period keeps a day-granular scrub from reading as a
+          day-granular raster.
+
+          "Vegetation date", not "Map date": the map has no single date since 2026-08-09, and a
+          caption inside the Vegetation section claiming one would be read as covering every
+          other layer on screen -- which are each on a day of their own. */}
       {hasSelectedDay && (
         <p
           className="mt-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2 py-1.5 text-[11px] text-[hsl(var(--muted-foreground))]"
           data-testid="vegetation-composite-period"
         >
-          Map date{" "}
+          Vegetation date{" "}
           <span className="font-medium text-[hsl(var(--foreground))]">{selectedDate}</span>
           {/* Only claims a composite is drawn when one exists AND is the selected encoding --
               the gap notice below owns the other case, and saying "NDVI draws Jul 2024" for a
@@ -173,7 +180,7 @@ export function VegetationDetails() {
               <span className="font-medium text-[hsl(var(--foreground))]">
                 {compositePeriod}
               </span>
-              {" composite; the period follows the map date, month by month."}
+              {" composite; the period follows this layer's date, month by month."}
             </>
           )}
           {!showsComposite && " — the measured cells are the readings sampled up to that day."}

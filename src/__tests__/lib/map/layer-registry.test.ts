@@ -19,6 +19,7 @@ import {
   unreachableLayerToggleIds,
 } from '@/lib/map/layer-registry'
 import { STYLE_LAYER_TOGGLE_MAP, getLayers } from '@/lib/map/layers'
+import { SLIDER_STREAM_LAYER_NAMES } from '@/types/time-slider'
 import { getLayersForPanel } from '@/stores/panel-store'
 import { useMapStore } from '@/stores/map-store'
 
@@ -315,16 +316,14 @@ describe('layer registry derivations', () => {
   // can never exist and caption the layer with a history nobody measured. Its governance
   // stub is lifted, so it may not carry a withheld reason either.
   // soil-moisture is served out of the agri MODEL plane (agri.signal_observation), not out
-  // of geo.features, so it has no geo.layers row to name and no slider capability to look
-  // up -- the same shape drought and the proxied collections have. It still draws the
-  // slider's day; it simply makes no claim about which days the axis should offer.
+  // of geo.features, so it has no geo.layers ROW -- but it does have a published stream
+  // capability, which is a different thing and the one the slider reads.
   it.each(['soil-moisture', 'soil-temperature', 'soil-vpd'] as const)(
-    'gives the agri-plane %s field a panel switch and no warehouse feed',
+    'gives the agri-plane %s field a panel switch and a component render path',
     (toggleId) => {
       const entry = LAYER_REGISTRY[toggleId]
       expect(entry.renderKind).toBe('component')
       expect(entry.styleLayerIds).toEqual([])
-      expect(entry.warehouseLayerName).toBeNull()
       expect(entry.permanentlyUnavailableReason).toBeNull()
       expect(panelIdForLayerToggle(toggleId)).toBe('soil')
       expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty(toggleId)
@@ -334,14 +333,56 @@ describe('layer registry derivations', () => {
   // The same shape as the three ERA5-Land fields above, with two deliberate differences: it
   // is the only agri-plane layer under the Climate category, and the NASA POWER lane's nine
   // signals share this one toggle rather than getting one each -- see the entry's own note.
-  it('gives the agri-plane climate field a panel switch and no warehouse feed', () => {
+  it('gives the agri-plane climate field a panel switch and a component render path', () => {
     const entry = LAYER_REGISTRY['climate-field']
     expect(entry.renderKind).toBe('component')
     expect(entry.styleLayerIds).toEqual([])
-    expect(entry.warehouseLayerName).toBeNull()
     expect(entry.permanentlyUnavailableReason).toBeNull()
     expect(panelIdForLayerToggle('climate-field')).toBe('climate')
     expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty('climate-field')
+  })
+
+  /**
+   * The five toggles the slider had no axis for, and the names that give them one.
+   *
+   * All five carried `warehouseLayerName: null` until 2026-08-09, and the cost was the whole
+   * feature for half the dated layers: no name meant no capability lookup, so `sliderDomain`
+   * returned null, the row drew no track, and `resolveLayerDate` fell through to the server's
+   * today on every render -- five layers pinned to the live edge with no way back, even though
+   * every one of their readers takes a `date`.
+   *
+   * Read out of `SLIDER_STREAM_LAYER_NAMES` rather than spelled here, so this case cannot pass
+   * against a hand-typed name no capability answers to -- which is the one way to reintroduce
+   * exactly the same symptom while looking wired.
+   */
+  it.each([
+    ['drought', SLIDER_STREAM_LAYER_NAMES.drought],
+    ['soil-moisture', SLIDER_STREAM_LAYER_NAMES.soilMoisture],
+    ['soil-temperature', SLIDER_STREAM_LAYER_NAMES.soilTemperature],
+    ['soil-vpd', SLIDER_STREAM_LAYER_NAMES.soilVapourPressureDeficit],
+    ['climate-field', SLIDER_STREAM_LAYER_NAMES.climateField],
+  ] as const)('names the %s toggle a slider stream, so its row gets an axis again', (toggleId, streamName) => {
+    expect(LAYER_REGISTRY[toggleId].warehouseLayerName).toBe(streamName)
+    // And the inverse resolves, so a server or an agent naming the stream finds the row.
+    expect(toggleIdForWarehouseLayerName(streamName)).toBe(toggleId)
+  })
+
+  // Every stream name must stay distinct from every geo.layers name: one capability list is
+  // keyed by layerName, so a collision publishes two rows a lookup cannot tell apart. The
+  // distinctness case above covers the registry's own names; this covers the constant itself.
+  it('keeps every slider stream name out of the geo.layers namespace', () => {
+    const geoLayerNames = LAYER_TOGGLE_IDS.map(
+      (toggleId) => LAYER_REGISTRY[toggleId].warehouseLayerName
+    ).filter(
+      (name): name is string =>
+        name !== null &&
+        !Object.values(SLIDER_STREAM_LAYER_NAMES).includes(
+          name as (typeof SLIDER_STREAM_LAYER_NAMES)[keyof typeof SLIDER_STREAM_LAYER_NAMES]
+        )
+    )
+    for (const streamName of Object.values(SLIDER_STREAM_LAYER_NAMES)) {
+      expect(geoLayerNames).not.toContain(streamName)
+    }
   })
 
   // Every warehouse-backed field must be off by default. The mount-time race documented in

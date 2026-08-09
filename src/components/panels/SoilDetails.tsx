@@ -14,7 +14,7 @@ import { EROSION_COLORS, type ErosionClass } from "@/lib/environmental/erosion";
 import { CARBON_COLORS, classifyCarbonPotential, type CarbonClass } from "@/lib/environmental/carbon";
 import type { InterventionType } from "@/lib/environmental/intervention";
 import { ENVIRONMENTAL_TILES_CONFIGURED } from "@/lib/vegetation";
-import { useDebouncedMapDay, useLayerVisibility } from "@/lib/map/layer-toggle-context";
+import { useDebouncedLayerDay, useLayerVisibility } from "@/lib/map/layer-toggle-context";
 import {
   useSoilFieldQuery,
   useSoilSurveyQuery,
@@ -126,17 +126,22 @@ function SoilFieldSection({
   visible,
   bbox,
   zoom,
-  requestDate,
 }: {
   measure: SoilFieldMeasure;
   visible: boolean;
   bbox?: string;
   zoom?: number;
-  requestDate: string | undefined;
 }) {
   const definition = soilFieldMeasureDefinition(measure);
   const depth = useSoilStore((state) => state.fieldDepth[measure]);
   const setFieldDepth = useSoilStore((state) => state.setFieldDepth);
+  // This measure's OWN row's settled day, read here rather than passed down from the parent.
+  // The parent renders these in a `.map()`, so a hook per measure is only reachable from
+  // inside the component -- and it has to be per measure, because the three fields are three
+  // toggles with three sliders and scrubbing moisture back a week says nothing about
+  // temperature. Same day LayerManager sends for the same toggle, so the section and the map
+  // share one react-query entry.
+  const { requestDate } = useDebouncedLayerDay(definition.toggleId);
 
   // `visible` alone, where this read used to be `open && visible`: the section is mounted
   // only while the dock has it expanded, so mounting is what "open" means now.
@@ -368,9 +373,10 @@ export function SoilDetails({
     zoom,
   });
 
-  // The day the ERA5-Land sections below draw, from the global slider. They add a DEPTH
-  // control each, never a second date control.
-  const { requestDate } = useDebouncedMapDay();
+  // No day is read here any more. The ERA5-Land sections below each take their OWN layer row's
+  // day, inside `SoilFieldSection` -- a single day threaded down from this component would be
+  // the global slider's shape surviving in a place that now has three independent ones. This
+  // component's own feed, the SSURGO survey above, carries no date at all.
   const soilSurvey = soilSurveyQuery.data;
   // USDA holds more map units than it serves for one view and returned a subset; the
   // count below then describes part of the view, not the view.
@@ -424,7 +430,6 @@ export function SoilDetails({
           visible={layerVisibility[soilFieldMeasureDefinition(measure).toggleId]}
           bbox={bbox}
           zoom={zoom}
-          requestDate={requestDate}
         />
       ))}
 

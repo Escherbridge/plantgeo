@@ -76,9 +76,25 @@ function rowFor(layerId: string): HTMLElement {
 }
 
 /**
- * Enough of a payload for the dock's Time section to draw a card. The section renders nothing
- * without one -- the server's date is the only source of "today" here -- so a test about the
- * scrubber's place in the dock has to seed it.
+ * A row's OPACITY slider, addressed by name.
+ *
+ * A row can hold two range inputs since 2026-08-09 -- strength and day -- so "the range input
+ * in this row" is no longer an identifying description, and a positional query would quietly
+ * begin asserting about whichever control happened to render first.
+ */
+function opacitySliderIn(row: HTMLElement, layerLabel: string): HTMLInputElement | null {
+  return row.querySelector<HTMLInputElement>(
+    `input[type="range"][aria-label="${layerLabel} opacity"]`
+  );
+}
+
+/**
+ * Enough of a payload for a layer row to draw a time slider. A row renders no track without one
+ * -- the server's date is the only source of "today" here, and `sliderDomain` returns null
+ * without an axis -- so a test about a row's scrubber has to seed it.
+ *
+ * `watersheds` is a SNAPSHOT on purpose: it is the case a row must NOT get a slider for, and the
+ * only way to assert that is to have a published capability that still defines no axis.
  */
 const SLIDER_CAPABILITIES: SliderCapabilities = {
   serverCurrentDate: "2026-08-04",
@@ -90,6 +106,21 @@ const SLIDER_CAPABILITIES: SliderCapabilities = {
       forecastHorizonDays: 0,
       forecastVariants: [],
       earliestObservedDate: "2026-06-17",
+      latestObservedDate: "2026-07-28",
+      coverageGaps: [],
+      thinRanges: [],
+      describedFromDay: null,
+    },
+    {
+      layerName: "watersheds",
+      temporalKind: "snapshot",
+      forecastHorizonDays: 0,
+      forecastVariants: [],
+      earliestObservedDate: "2013-01-18",
+      latestObservedDate: "2013-01-18",
+      coverageGaps: [],
+      thinRanges: [],
+      describedFromDay: null,
     },
   ],
 };
@@ -108,18 +139,18 @@ beforeEach(() => {
   useLayerStore.setState({ layerOpacity: {} });
   usePanelStore.setState({
     layerPanelOpen: false,
-    // Reset to nothing rather than to the store's own seed: these cases are about the reports,
-    // and the Time section has its own describe below that opens it deliberately.
+    // Reset to nothing rather than to the store's own seed: these cases are about the reports.
     expandedDetails: [],
     pendingScrollSection: null,
   });
   useSoilStore.setState({ fieldDepth: DEFAULT_SOIL_FIELD_DEPTHS });
+  // Sparse and empty: an absent entry means the layer follows its own `latestObservedDate`,
+  // which is the default every row opens on.
   useTimeSliderStore.setState({
-    selectedDate: "2026-08-04",
+    layerDates: {},
     forecastVariant: "monte_carlo",
     capabilities: SLIDER_CAPABILITIES,
     capabilitiesUnavailable: false,
-    focusedLayerName: null,
   });
   useVegetationStore.setState({ mode: "ndvi", ndviMode: "absolute", showNDWI: false });
 });
@@ -292,10 +323,12 @@ describe("LayerPanel layer tree", () => {
       useMapStore.getState().toggleLayer("sensors");
     });
 
-    const slider = rowFor("sensors").querySelector<HTMLInputElement>('input[type="range"]');
+    // Selected by its own name rather than by "the range input in this row": a row can carry a
+    // second range control now -- its time slider -- so a positional query would silently start
+    // asserting about the wrong one.
+    const slider = opacitySliderIn(rowFor("sensors"), "Sensor Stations");
     expect(slider).not.toBeNull();
     // Named and spoken: a bare range announces as an unnamed slider whose value reads "0.6".
-    expect(slider?.getAttribute("aria-label")).toBe("Sensor Stations opacity");
     expect(slider?.getAttribute("aria-valuetext")).toBe("100 percent");
   });
 
@@ -309,7 +342,7 @@ describe("LayerPanel layer tree", () => {
       useMapStore.getState().toggleLayer("sensors");
     });
 
-    const slider = rowFor("sensors").querySelector<HTMLInputElement>('input[type="range"]');
+    const slider = opacitySliderIn(rowFor("sensors"), "Sensor Stations");
     expect(Number(slider?.min)).toBeGreaterThan(0);
     expect(Number(slider?.max)).toBe(1);
     expect(Number(slider?.step)).toBeGreaterThan(0);
@@ -529,78 +562,114 @@ describe("LayerPanel dock sections", () => {
 });
 
 /**
- * The time scrubber joined the dock on 2026-08-08, at the top of the one scroller and above
- * every category, because the day governs all of them. What is left of the floating top-right
- * region it came from is the date pill, which now opens this section.
+ * The time scrubber was a dock SECTION for one day: it joined on 2026-08-08 as one card above
+ * every category, and on 2026-08-09 it became one slider per layer row. These cases replace the
+ * "LayerPanel time section" describe wholesale, because the surface they pinned -- a single
+ * `dock-section-time` holding a single `time-slider` card, seeded open, addressable by
+ * `focusDockSection("time")` -- is genuinely gone rather than moved.
  *
- * Its economics are the exception the two-caret rule already allows for: a report's caret mounts
- * a component with its own warehouse queries, this caret mounts a card that issues none -- its
- * capabilities arrive from the always-mounted TimeSliderCapabilitiesLoader whether the dock is
- * open or not. That is why it is the one section `INITIALLY_EXPANDED_SECTIONS` seeds.
+ * What survives is the claim underneath it: the map's day must be reachable and legible. It is
+ * now reachable on the row that owns it, which is what these assert instead.
  */
-describe("LayerPanel time section", () => {
-  it("puts the map date first, inside the one scroller, above every category", () => {
-    renderDock();
-    const panel = openPanel();
-
-    const timeSection = screen.getByTestId("dock-section-time");
-    expect(scrollerWithin(panel).contains(timeSection)).toBe(true);
-
-    // Ordered before the first layer group: a date control filed among the categories would
-    // read as belonging to whichever one it landed beside, and it governs all of them.
-    const firstGroup = screen.getByTestId("layer-group-fire");
-    expect(
-      timeSection.compareDocumentPosition(firstGroup) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
-  });
-
-  it("keeps the scroll contract with the scrubber card mounted", () => {
-    renderDock();
-    const panel = openPanel();
-    act(() => {
-      usePanelStore.getState().toggleDetails("time");
-    });
-
-    // The card arrived carrying no `overflow-y-auto` and no `max-h-*` wrapper of its own --
-    // the second-scrollbar defect panel-scroll.ts rule 2 names, and the one this card would
-    // hurt most, since it holds the dock's only drag control.
-    expect(screen.getByTestId("time-slider")).toBeTruthy();
-    expect(scrollerWithin(panel)).toBeTruthy();
-  });
-
-  it("carets open and shut like every other section in the dock", () => {
+describe("LayerPanel per-layer time sliders", () => {
+  it("has no map-wide time section, card or caret left anywhere in the dock", () => {
     renderDock();
     openPanel();
 
-    const disclosure = detailsToggleFor("Map date");
-    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
-    expect(disclosure.hasAttribute("aria-controls")).toBe(false);
-    expect(screen.queryByTestId("dock-section-body-time")).toBeNull();
-
-    fireEvent.click(disclosure);
-
-    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
-    expect(usePanelStore.getState().expandedDetails).toEqual(["time"]);
-    expect(document.getElementById(disclosure.getAttribute("aria-controls") ?? "")).toBe(
-      screen.getByTestId("dock-section-body-time")
-    );
+    expect(screen.queryByTestId("dock-section-time")).toBeNull();
+    expect(screen.queryByTestId("time-slider")).toBeNull();
+    // The card's own title. A section named "Map date" would be a control over a date the map
+    // no longer has.
+    expect(screen.queryByRole("button", { name: "Map date" })).toBeNull();
   });
 
-  // What the top-bar date pill does. The dock is closed at that moment, so this also proves the
-  // shortcut does not merely expand a section nobody can see.
-  it("opens the dock at the Time section when the date pill focuses it", () => {
+  it("gives a temporal layer's row its own slider, only once that layer is switched on", () => {
     renderDock();
-    expect(screen.queryByTestId("layer-panel")).toBeNull();
+    openPanel();
+
+    // Off: no control at all, the same rule the opacity slider follows -- a control that
+    // adjusts nothing is a fabricated affordance.
+    expect(rowFor("water").querySelector('[data-testid="layer-time-slider-slot-water"]')).toBeNull();
 
     act(() => {
-      usePanelStore.getState().focusDockSection("time");
+      useMapStore.getState().toggleLayer("water");
     });
 
-    expect(screen.getByTestId("layer-panel")).toBeTruthy();
-    expect(detailsToggleFor("Map date").getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByTestId("time-slider")).toBeTruthy();
-    // Consumed on arrival, so a later expansion by hand does not re-scroll the dock.
-    expect(usePanelStore.getState().pendingScrollSection).toBeNull();
+    expect(screen.getByTestId("layer-time-slider-slot-water")).toBeTruthy();
+  });
+
+  /**
+   * The gate that keeps a dead control off a row. `watersheds` publishes a real capability with
+   * a real date -- 96% of its 9,396 HUC12 basins carry one 2013 WBD loaddate -- but it is a
+   * SNAPSHOT and defines no axis, so a track over it would advertise years of scrubbing across a
+   * boundary set that draws identically on every one of those days.
+   */
+  it("gives a snapshot layer no slider even though it carries a published date", () => {
+    renderDock();
+    openPanel();
+
+    act(() => {
+      useMapStore.getState().toggleLayer("watersheds");
+    });
+
+    expect(screen.getByTestId("layer-row-watersheds")).toBeTruthy();
+    expect(screen.queryByTestId("layer-time-slider-slot-watersheds")).toBeNull();
+  });
+
+  // `soil` has no `geo.layers` row behind it at all, so there is no axis to draw and no day to
+  // scrub -- a slider there would be a control over nothing.
+  it("gives a layer with no warehouse feed behind it no slider", () => {
+    renderDock();
+    openPanel();
+
+    act(() => {
+      useMapStore.getState().toggleLayer("soil");
+    });
+
+    expect(screen.getByTestId("layer-row-soil")).toBeTruthy();
+    expect(screen.queryByTestId("layer-time-slider-slot-soil")).toBeNull();
+  });
+
+  /**
+   * The row's slider is the ONE place a day is stated, so this checks it reaches the row rather
+   * than re-checking what it says -- `LayerTimeSlider.test.tsx` owns the track, the date field
+   * and the behind-latest mark. Two surfaces stating one day, one line apart, is the defect the
+   * dock already recorded once when `TimeSlider` printed "Map date" directly under a section
+   * header saying "Map date".
+   */
+  it("states a scrubbed layer's day exactly once, from the row's own slider", () => {
+    renderDock();
+    openPanel();
+
+    act(() => {
+      useMapStore.getState().toggleLayer("water");
+    });
+    act(() => {
+      useTimeSliderStore.getState().setLayerDate("water", "2026-07-02");
+    });
+
+    const row = rowFor("water");
+    // Exactly one date field in the row, and it is inside the slider slot. Two would be two
+    // controls over one value -- the drift the dock was built to end -- and the count is the
+    // assertion, not an incidental detail.
+    const dateFields = row.querySelectorAll<HTMLInputElement>('input[type="date"]');
+    expect(dateFields).toHaveLength(1);
+    expect(screen.getByTestId("layer-time-slider-slot-water").contains(dateFields[0])).toBe(true);
+    expect(dateFields[0].value).toBe("2026-07-02");
+  });
+
+  it("keeps the scroll contract with a row's slider mounted", () => {
+    renderDock();
+    const panel = openPanel();
+    act(() => {
+      useMapStore.getState().toggleLayer("water");
+    });
+
+    // A track inside a 19rem column is exactly where a stray `overflow-*` would produce the
+    // second-scrollbar defect panel-scroll.ts rule 2 names -- and it is the row's only drag
+    // control, so a nested scroller is what makes it unreachable on a phone.
+    expect(screen.getByTestId("layer-time-slider-slot-water")).toBeTruthy();
+    expect(scrollerWithin(panel)).toBeTruthy();
   });
 });
 
@@ -614,22 +683,26 @@ describe("LayerPanel time section", () => {
  * layer switch at all.
  */
 describe("LayerPanel control sections", () => {
-  it("leads the scroller with where, when and how, above every category", () => {
+  /**
+   * Rewritten from "leads the scroller with where, when and how": "when" is no longer among
+   * them. It was a third control section for one day, and it governed every layer -- which is
+   * exactly why it could not survive per-layer dates, since the day is now a property of one
+   * row rather than of the map. What is left still governs the whole map and still leads.
+   */
+  it("leads the scroller with where and how, above every category", () => {
     renderDock();
     const panel = openPanel();
 
     const search = screen.getByTestId("dock-section-search");
-    const time = screen.getByTestId("dock-section-time");
     const view = screen.getByTestId("dock-section-view");
     const firstGroup = screen.getByTestId("layer-group-fire");
 
-    for (const section of [search, time, view]) {
+    for (const section of [search, view]) {
       expect(scrollerWithin(panel).contains(section)).toBe(true);
     }
     // A control that governs every layer, filed among the categories, would read as belonging
     // to whichever one it landed beside.
-    expect(search.compareDocumentPosition(time) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(time.compareDocumentPosition(view) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(search.compareDocumentPosition(view) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(
       view.compareDocumentPosition(firstGroup) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();

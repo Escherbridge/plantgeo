@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { useMap } from "@/lib/map/map-context";
 import {
   useClimateDisplayMode,
-  useDebouncedMapDay,
+  useDebouncedLayerDay,
   useLayerOpacities,
   useLayerVisibility,
   useSoilDisplayMode,
@@ -21,12 +21,17 @@ import {
   useViewportBounds,
 } from "@/hooks/useViewportProxiedLayers";
 import { trpc } from "@/lib/trpc/client";
-import { styleBackedLayerEntries, type LayerToggleId } from "@/lib/map/layer-registry";
 import {
-  dateFilterableStyleLayerIds,
+  LAYER_REGISTRY,
+  styleBackedLayerEntries,
+  type LayerToggleId,
+} from "@/lib/map/layer-registry";
+import {
+  DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS,
   tileLayerDateFilter,
 } from "@/lib/map/tile-layer-date-filter";
 import { useMapStore } from "@/stores/map-store";
+import { hasSelectableDay, useTimeSliderStore } from "@/stores/time-slider-store";
 import { isRenderableWeatherObservation } from "@/lib/environmental/weather";
 import type { WeatherPoint } from "@/components/map/layers/WeatherLayer";
 
@@ -34,6 +39,69 @@ const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
+
+/**
+ * The style-baked tile toggles this component holds a day for.
+ *
+ * `DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS` is typed `readonly LayerToggleId[]`, so it cannot
+ * narrow anything on its own; this tuple is what makes `dateFilterableLayerDays` below a record
+ * the compiler checks against exactly the toggles a `useDebouncedLayerDay` call exists for.
+ * A tuple with `satisfies` rather than a hand-written union, so the list and the type cannot
+ * drift from each other -- there is now one place to add a toggle here instead of two.
+ *
+ * It can still drift from the EXPORTED constant, which is the drift that matters: an id added
+ * there without a hook here would leave that layer with no filter at all, and an unfiltered
+ * date-filterable layer draws its whole published record while its row's slider says otherwise
+ * -- the map showing four years of perimeters under a control that reads one day. Two things
+ * catch it: `applyDateFilter` reports the gap rather than skipping it silently, and the test
+ * "filters every date-filterable tile layer on that layer's own day" walks the exported
+ * constant, so the gap fails a case rather than shipping.
+ */
+const DATE_FILTERABLE_TOGGLES_WITH_A_DAY_HERE = [
+  "fire-perimeters",
+  "evacuation-zones",
+  "burn-severity",
+  "sensors",
+] as const satisfies readonly LayerToggleId[];
+
+type DateFilterableToggleId = (typeof DATE_FILTERABLE_TOGGLES_WITH_A_DAY_HERE)[number];
+
+/** True once the two lists have been compared; the drift is structural, so one report is enough. */
+let dateFilterableToggleDriftReported = false;
+
+/**
+ * Names any disagreement between the exported constant and the toggles wired here.
+ *
+ * Both directions are a defect and neither shows up as one. A toggle the constant lists and
+ * this component holds no day for draws its whole published record under a row whose slider
+ * claims a single day; a toggle wired here that the constant does not list has a day nobody
+ * ever applies, so its slider moves and its map does not. Reported rather than thrown: a
+ * console line in the browser and in the test run is enough to lose an hour to, whereas
+ * throwing would take the whole map down for a filter.
+ */
+function reportDateFilterableToggleDrift(): void {
+  if (dateFilterableToggleDriftReported) return;
+  dateFilterableToggleDriftReported = true;
+  const wiredHere = new Set<string>(DATE_FILTERABLE_TOGGLES_WITH_A_DAY_HERE);
+  for (const toggleId of DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS) {
+    if (wiredHere.has(toggleId)) continue;
+    console.error(
+      `LayerManager holds no day for the date-filterable toggle "${toggleId}", so its style ` +
+        `layers draw their whole published record with no upper bound while its row offers a ` +
+        `day. Add a useDebouncedLayerDay("${toggleId}") call, an entry in ` +
+        `DATE_FILTERABLE_TOGGLES_WITH_A_DAY_HERE and one in dateFilterableLayerDays.`
+    );
+  }
+  const listedAsFilterable = new Set<string>(DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS);
+  for (const toggleId of DATE_FILTERABLE_TOGGLES_WITH_A_DAY_HERE) {
+    if (listedAsFilterable.has(toggleId)) continue;
+    console.error(
+      `LayerManager holds a day for "${toggleId}", which ` +
+        `DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS does not list, so nothing ever applies it: ` +
+        `that row's slider moves and its map does not.`
+    );
+  }
+}
 
 const FireLayer = dynamic(
   () => import("@/components/map/layers/FireLayer").then((m) => ({ default: m.FireLayer })),
@@ -100,30 +168,78 @@ export default function LayerManager() {
   // owns its layers.
   const queryPoint = useMapStore((state) => state.queryPoint);
 
-  // The slider's day, settled. `requestDate` is undefined whenever the selection IS the
-  // server's today, which keeps the hot path on the exact dateless query key -- and the exact
-  // server query -- it has always used, so first paint never fetches the same day twice.
-  // Settled rather than raw: a day-granular scrub writes on every pointer tick, and this
-  // component sits above ~8 layer children.
+  // One settled day per LAYER, never one for the map: since 2026-08-09 each row scrubs its own
+  // axis and opens on its own `latestObservedDate`, so there is no map-wide day left to read.
+  // `requestDate` is undefined whenever THAT layer's day is the server's today, which keeps the
+  // hot path on the exact dateless query key -- and the exact server query -- it has always
+  // used, so first paint never fetches the same day twice. Settled rather than raw: a
+  // day-granular scrub writes on every pointer tick.
   //
-  // Read before the layer feeds below rather than after them, because `useFireData` takes it
-  // too now: fire detections were the one warehouse-backed layer not on the slider at all.
-  const { requestDate } = useDebouncedMapDay();
-  const fireData = useFireData(layerVisibility.fire, requestDate);
+  // One call per layer rather than a loop, for the same reason the three soil fields below are
+  // three calls: hooks cannot be called from one. The upside over the single global read this
+  // replaces is that a scrub on one row now re-runs one of these, not all of them.
+  const fireDay = useDebouncedLayerDay("fire");
+  const droughtDay = useDebouncedLayerDay("drought");
+  const waterDay = useDebouncedLayerDay("water");
+  const vegetationDay = useDebouncedLayerDay("vegetation");
+  const soilMoistureDay = useDebouncedLayerDay("soil-moisture");
+  const soilTemperatureDay = useDebouncedLayerDay("soil-temperature");
+  const soilVpdDay = useDebouncedLayerDay("soil-vpd");
+  const climateFieldDay = useDebouncedLayerDay("climate-field");
+  const weatherDay = useDebouncedLayerDay("weather");
+  // The four style-baked tile toggles. They are read here alongside the component-mounted
+  // layers rather than inside their own children because each is a ROW in the dock with a
+  // slider of its own, exactly like the layers above -- being drawn by a style filter instead
+  // of by a React component changes how the day is applied, not whose day it is.
+  const firePerimetersDay = useDebouncedLayerDay("fire-perimeters");
+  const evacuationZonesDay = useDebouncedLayerDay("evacuation-zones");
+  const burnSeverityDay = useDebouncedLayerDay("burn-severity");
+  const sensorsDay = useDebouncedLayerDay("sensors");
+
+  // Whether each tile toggle has a day a user can actually CHOOSE -- the same question, asked of
+  // the same function, that decides whether its row draws a slider (LayerRow.tsx). A layer with
+  // no selectable day must carry no date filter: `sliderDomain` refuses a snapshot, so
+  // evacuation-zones and sensors get no control, and burn-severity gets none either while it
+  // inherits the read model's default kind. Filtering them anyway installed
+  // `["<=", ["get","observed_day"], latestObservedDate]` on rows with nothing to change it with,
+  // and `latestObservedDate` is by contract the newest day AT OR ABOVE the density floor -- so
+  // through every partially-ingested live-edge day, which is the normal state of a running
+  // ingest lane, every sensor and evacuation zone observed that day was filtered off the map
+  // with no slider, no date and no caption to say why.
+  //
+  // Selected as BOOLEANS, so the five-minute capabilities poll re-runs the applier only when an
+  // answer actually changes rather than on every fresh payload object.
+  const firePerimetersHasSelectableDay = useTimeSliderStore((state) =>
+    hasSelectableDay(state.capabilities, "fire-perimeters")
+  );
+  const evacuationZonesHasSelectableDay = useTimeSliderStore((state) =>
+    hasSelectableDay(state.capabilities, "evacuation-zones")
+  );
+  const burnSeverityHasSelectableDay = useTimeSliderStore((state) =>
+    hasSelectableDay(state.capabilities, "burn-severity")
+  );
+  const sensorsHasSelectableDay = useTimeSliderStore((state) =>
+    hasSelectableDay(state.capabilities, "sensors")
+  );
+
+  const fireData = useFireData(layerVisibility.fire, fireDay.requestDate);
   // tRPC keys `undefined` input differently from an object, so the dateless case must stay
   // literally undefined here rather than becoming `{ date: undefined }`.
   const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(
-    requestDate === undefined ? undefined : { date: requestDate },
+    droughtDay.requestDate === undefined ? undefined : { date: droughtDay.requestDate },
     { enabled: layerVisibility.drought }
   );
   const droughtGeoJSON = droughtQuery.data ?? EMPTY_FEATURE_COLLECTION;
   const waterEnabled = layerVisibility.water;
+  // Both feeds take `water`'s day, because both are drawn by the one `water` toggle and so by
+  // the one row that carries a slider for them. Gauges and wells sharing a day is a property of
+  // there being a single control over them, not an assumption about the two upstreams.
   const streamflowQuery = trpc.environmental.getStreamflow.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90", date: requestDate },
+    { bbox: bbox ?? "-180,-90,180,90", date: waterDay.requestDate },
     { enabled: waterEnabled && bbox !== null, staleTime: 15 * 60 * 1000 }
   );
   const groundwaterQuery = trpc.environmental.getGroundwater.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90", date: requestDate },
+    { bbox: bbox ?? "-180,-90,180,90", date: waterDay.requestDate },
     { enabled: waterEnabled && bbox !== null, staleTime: 60 * 60 * 1000 }
   );
 
@@ -136,7 +252,7 @@ export default function LayerManager() {
   // the groundwater/watershed cadence rather than the 15-minute observation feeds. A named
   // day slides that per-cell window to end there instead of at now.
   const vegetationQuery = trpc.environmental.getVegetationIndex.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90", date: requestDate },
+    { bbox: bbox ?? "-180,-90,180,90", date: vegetationDay.requestDate },
     { enabled: vegetationEnabled && bbox !== null, staleTime: 60 * 60 * 1000 }
   );
   const vegetationGeoJSON: GeoJSON.FeatureCollection =
@@ -163,17 +279,19 @@ export default function LayerManager() {
 
   // The three ERA5-Land soil fields. `zoom` is not a hint here -- it selects the server-side
   // aggregation tier, so zooming out makes the answer SMALLER (isobands over a coarse
-  // lattice) rather than shipping 1,568 squares. The day is the slider's, settled, like
+  // lattice) rather than shipping 1,568 squares. Each takes ITS OWN row's settled day, like
   // every other warehouse-backed feed; the depth is the panel's, and neither is a second
   // time control. staleTime matches vegetation's: a reanalysis archive day is immutable.
   //
   // Three calls rather than a loop: hooks cannot be called from one, and `measure` is in the
   // query key, so each field holds a separate cache entry and any subset can be on at once.
+  // Three separate days for the same reason -- they are three toggles, and a reader who scrubs
+  // moisture back a week has said nothing about temperature.
   const soilMoistureVisible = layerVisibility["soil-moisture"];
   const soilMoistureQuery = useSoilFieldQuery(bbox, {
     enabled: soilMoistureVisible,
     measure: "moisture",
-    date: requestDate,
+    date: soilMoistureDay.requestDate,
     depth: soilMode.fieldDepth.moisture,
     zoom,
   });
@@ -184,7 +302,7 @@ export default function LayerManager() {
   const soilTemperatureQuery = useSoilFieldQuery(bbox, {
     enabled: soilTemperatureVisible,
     measure: "temperature",
-    date: requestDate,
+    date: soilTemperatureDay.requestDate,
     depth: soilMode.fieldDepth.temperature,
     zoom,
   });
@@ -195,7 +313,7 @@ export default function LayerManager() {
   const soilVpdQuery = useSoilFieldQuery(bbox, {
     enabled: soilVpdVisible,
     measure: "vpd",
-    date: requestDate,
+    date: soilVpdDay.requestDate,
     depth: soilMode.fieldDepth.vpd,
     zoom,
   });
@@ -204,15 +322,15 @@ export default function LayerManager() {
 
   // The NASA POWER climate field. No `zoom`: this lane has one serving tier -- 397 half-degree
   // cells drawn as themselves at every zoom -- so zoom is not part of the answer and must not
-  // be part of the key. The day is the slider's, settled; the signal is the panel's, and
-  // neither is a second time control. One call for nine signals, because only one is drawn at
-  // a time and the signal is in the query key.
+  // be part of the key. The day is this layer's own row's, settled; the signal is the panel's,
+  // and neither is a second time control. One call for nine signals, because only one is drawn
+  // at a time and the signal is in the query key.
   const climateFieldVisible = layerVisibility["climate-field"];
   const climateFieldQuery = useClimateFieldQuery(bbox, {
     enabled: climateFieldVisible,
     signal: climateMode.signal,
     variant: climateMode.airTemperatureVariant,
-    date: requestDate,
+    date: climateFieldDay.requestDate,
   });
   const climateFieldGeoJSON: GeoJSON.FeatureCollection =
     climateFieldQuery.data ?? EMPTY_FEATURE_COLLECTION;
@@ -222,7 +340,7 @@ export default function LayerManager() {
   // nearest one -- so the wind layer reflects the full spread of
   // warehouse-backed samples instead of a single point.
   const weatherQuery = trpc.wildfire.getWeatherForBbox.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90", date: requestDate },
+    { bbox: bbox ?? "-180,-90,180,90", date: weatherDay.requestDate },
     { enabled: weatherEnabled && bbox !== null, staleTime: 15 * 60 * 1000 }
   );
   // Every rendered field must still be measured -- nothing is back-filled with a zero the
@@ -296,16 +414,74 @@ export default function LayerManager() {
     []
   );
 
-  // Puts the style-baked Martin layers on the slider. They are not React-mounted, so they
-  // cannot take a date as a prop the way every layer below does; migration 0015 emits
-  // `observed_day` on each feature and this applies the matching style filter. Re-filtering
-  // costs no requests -- the tiles are already in the browser -- so unlike the queries above
-  // this reads the SETTLED day only because there is no point re-running it per pointer tick.
+  // Every date-filterable tile toggle's own settled day, in one object so the applier and the
+  // style.load safety net read one value. `settledDate`, NOT `requestDate`: `requestDate` is
+  // deliberately undefined at the server's today so a query keys the same as a dateless one,
+  // and borrowing that here would drop the filter entirely on any layer sitting on today --
+  // restoring the undated behaviour where every published row drew at every point on the axis.
+  // A style filter costs no request, so there is nothing to save by omitting the day.
+  //
+  // `null` is a DAY WE MAY NOT FILTER ON rather than a missing value, and it is the whole of
+  // F1's fix: a layer whose row offers no day to pick must be drawn unfiltered, because a
+  // filter is a claim the reader has no way to make and no way to see. `undefined` stays
+  // distinct from it and means something else entirely -- a toggle listed as filterable that
+  // this component was never wired for. See `applyDateFilter`.
+  const dateFilterableLayerDays = useMemo<Record<DateFilterableToggleId, string | null>>(
+    () => ({
+      "fire-perimeters": firePerimetersHasSelectableDay ? firePerimetersDay.settledDate : null,
+      "evacuation-zones": evacuationZonesHasSelectableDay
+        ? evacuationZonesDay.settledDate
+        : null,
+      "burn-severity": burnSeverityHasSelectableDay ? burnSeverityDay.settledDate : null,
+      sensors: sensorsHasSelectableDay ? sensorsDay.settledDate : null,
+    }),
+    [
+      firePerimetersDay.settledDate,
+      evacuationZonesDay.settledDate,
+      burnSeverityDay.settledDate,
+      sensorsDay.settledDate,
+      firePerimetersHasSelectableDay,
+      evacuationZonesHasSelectableDay,
+      burnSeverityHasSelectableDay,
+      sensorsHasSelectableDay,
+    ]
+  );
+
+  // Puts each style-baked Martin layer on ITS OWN row's slider. They are not React-mounted, so
+  // they cannot take a date as a prop the way every layer below does; migration 0015 emits
+  // `observed_day` on each feature and this applies the matching style filter per layer.
+  // Re-filtering costs no requests -- the tiles are already in the browser -- so unlike the
+  // queries above this reads the SETTLED day only because there is no point re-running it per
+  // pointer tick.
+  //
+  // One filter per toggle rather than one fanned across all of them: `tileLayerDateFilter`
+  // always took a single day for a single layer, and fanning it was only ever the global
+  // slider's shape leaking down here.
+  //
+  // Every listed toggle is WRITTEN on every pass, including the ones that end up unfiltered.
+  // Clearing has to be as explicit as filtering: a basemap swap rebuilds each style layer from
+  // its authored spec, so "leave it alone" and "make sure it carries no day" are the same
+  // instruction only until the first swap -- and a layer that loses its selectable day (a
+  // capabilities payload that reclassifies it, or one that fails to arrive) would otherwise keep
+  // a filter nothing can move.
   const applyDateFilter = useCallback(
-    (mapInstance: NonNullable<typeof map>, day: string | null) => {
-      const filter = tileLayerDateFilter(day);
-      for (const layerId of dateFilterableStyleLayerIds()) {
-        if (mapInstance.getLayer(layerId)) mapInstance.setFilter(layerId, filter ?? undefined);
+    (
+      mapInstance: NonNullable<typeof map>,
+      days: Record<DateFilterableToggleId, string | null>
+    ) => {
+      reportDateFilterableToggleDrift();
+      for (const toggleId of DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS) {
+        // Three states, not two. A day filters; `null` -- no selectable day -- clears, which is
+        // exactly what the layer drew before it had a slider at all; `undefined` is the wiring
+        // gap `reportDateFilterableToggleDrift` just named, and clears too, because there is no
+        // day to honour. Skipping it used to read as the cautious choice and was not: the layer
+        // is rebuilt filterless on the next style load either way, so the gap's real consequence
+        // is the whole published record under a row that claims one day.
+        const day = (days as Record<string, string | null | undefined>)[toggleId];
+        const filter = tileLayerDateFilter(day ?? null);
+        for (const layerId of LAYER_REGISTRY[toggleId].styleLayerIds) {
+          if (mapInstance.getLayer(layerId)) mapInstance.setFilter(layerId, filter ?? undefined);
+        }
       }
     },
     []
@@ -319,13 +495,15 @@ export default function LayerManager() {
   }, [layerVisibility]);
 
   // Same ref discipline, and for the same reason: a basemap swap rebuilds every style layer,
-  // so the style.load handler has to reapply the CURRENT day without listing it as a
-  // dependency. Listing it would re-register that handler on every settled scrub and move it
+  // so the style.load handler has to reapply the CURRENT days without listing them as a
+  // dependency. Listing them would re-register that handler on every settled scrub and move it
   // behind ServiceAreaLayer's in the listener queue -- the bug the AGENTS.md note describes.
-  const filterDayRef = useRef(requestDate ?? null);
+  // More load-bearing than it was: with per-layer days there are now several of these moving
+  // independently, so the handler would re-register that much more often.
+  const filterDaysRef = useRef(dateFilterableLayerDays);
   useEffect(() => {
-    filterDayRef.current = requestDate ?? null;
-  }, [requestDate]);
+    filterDaysRef.current = dateFilterableLayerDays;
+  }, [dateFilterableLayerDays]);
 
   // The third instance of the same discipline, and the one it matters most for: an opacity
   // slider fires far more often than a settled scrub, so listing the record in the style.load
@@ -360,7 +538,7 @@ export default function LayerManager() {
     const mapInstance = map;
     const onStyleLoad = () => {
       applyVisibility(mapInstance, layerVisibilityRef.current);
-      applyDateFilter(mapInstance, filterDayRef.current);
+      applyDateFilter(mapInstance, filterDaysRef.current);
       // A basemap swap rebuilds every style layer from its authored paint, so the multiplier
       // has to be re-applied here or a dimmed layer silently snaps back to full strength.
       applyOpacity(mapInstance, layerOpacityRef.current);
@@ -392,8 +570,8 @@ export default function LayerManager() {
   // nothing left to re-trigger it once the style caught up.
   useEffect(() => {
     if (!map || !map.isStyleLoaded()) return;
-    applyDateFilter(map, requestDate ?? null);
-  }, [map, requestDate, applyDateFilter, styleReady]);
+    applyDateFilter(map, dateFilterableLayerDays);
+  }, [map, dateFilterableLayerDays, applyDateFilter, styleReady]);
 
   // Same shape as the two effects above, plus one animation-frame of coalescing: MapLibre
   // repaints once per frame regardless, so more than one write per frame is pure waste -- and

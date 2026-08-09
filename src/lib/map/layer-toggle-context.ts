@@ -1,10 +1,14 @@
 "use client";
 
 /**
- * The layer toggle context: the one place the map and the slider agree on what is switched
- * on, what mode it draws in, and which day it draws. It composes the existing Zustand
+ * The layer toggle context: the one place the map and the sliders agree on what is switched
+ * on, what mode it draws in, and which day EACH layer draws. It composes the existing Zustand
  * stores and owns no state of its own -- see src/components/map/AGENTS.md
  * "The layer toggle is the only source of layer visibility".
+ *
+ * Every day here is per layer. There is no map-wide day left to ask for: each row scrubs its
+ * own axis and defaults to its own `latestObservedDate`, so a hook that answered "the map's
+ * day" could only answer for one row and would silently mislabel the rest.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -23,7 +27,9 @@ import {
   describeAvailability,
   findLayerCapability,
   isCalendarDate,
+  latestObservedDateFor,
   layerAvailabilityAt,
+  resolveLayerDate,
   resolveVariant,
   useTimeSliderStore,
 } from "@/stores/time-slider-store";
@@ -108,83 +114,171 @@ export function useSetLayerOpacity(): (layerId: LayerToggleId, opacity: number) 
   return useLayerStore((state) => state.setLayerOpacity);
 }
 
-/** The day the map draws as of, and which series that day reads from. */
+/** The day ONE layer draws as of, and which series that day reads from. */
 export interface MapDay {
-  /** YYYY-MM-DD, or null until the capabilities payload supplies one. */
+  /** YYYY-MM-DD, or null until something can name this layer's day. */
   selectedDate: string | null;
   /** Server UTC today; the only definition of "today". Null before capabilities arrive. */
   serverCurrentDate: string | null;
-  /** True when the selection is some day other than the server's today. */
+  /** True when this layer's day is some day other than the server's today. */
   isOffServerToday: boolean;
+  /** This layer's own newest published day, or null when no capability names one. */
+  latestObservedDate: string | null;
+  /**
+   * True only when this layer is PROVABLY behind its own newest published day.
+   *
+   * The map is a mixed-time composite now, so this drives the "not on its latest" mark on the
+   * row -- and that mark is a positive claim. A layer whose newest day nobody knows (drought
+   * has no geo.layers row; a layer the warehouse has not published yet has no latest either)
+   * therefore reads false: there is nothing measured for it to be behind, and marking it would
+   * assert staleness the client cannot see.
+   */
+  isBehindLatestObservedDate: boolean;
   /** The forecast series a future day would read from. */
   forecastVariant: ForecastVariant;
-  /** What the selected day actually reads from: observations up to today, forecast after. */
+  /** What this layer's day actually reads from: observations up to today, forecast after. */
   variant: MetricVariant;
 }
 
-/** The slider's day, shared by the map and every panel so they can never disagree. */
-export function useMapDay(): MapDay {
-  const selectedDate = useTimeSliderStore((state) => state.selectedDate);
+/**
+ * One layer's own day. Subscribes to that day alone, so scrubbing fire's row does not
+ * re-render vegetation's.
+ *
+ * The selector returns a STRING rather than the `layerDates` record: the record's identity
+ * changes on every write to any layer, so selecting it would re-render every layer's consumers
+ * on every pointer tick of any one layer's scrub. Zustand compares the selected value with
+ * Object.is, and a day that did not move is the same string.
+ */
+export function useLayerDay(layerId: LayerToggleId): MapDay {
+  const selectedDate = useTimeSliderStore((state) =>
+    resolveLayerDate(state.layerDates, state.capabilities, layerId)
+  );
   const forecastVariant = useTimeSliderStore((state) => state.forecastVariant);
   const capabilities = useTimeSliderStore((state) => state.capabilities);
 
   return useMemo(() => {
     const day = isCalendarDate(selectedDate) ? selectedDate : null;
     const serverCurrentDate = capabilities?.serverCurrentDate ?? null;
+    const latestObservedDate = latestObservedDateFor(capabilities, layerId);
     return {
       selectedDate: day,
       serverCurrentDate,
       isOffServerToday:
         day !== null && serverCurrentDate !== null && day !== serverCurrentDate,
+      latestObservedDate,
+      isBehindLatestObservedDate:
+        day !== null && latestObservedDate !== null && day < latestObservedDate,
       forecastVariant,
       variant:
         day !== null && capabilities !== null
           ? resolveVariant(day, capabilities, forecastVariant)
           : "observed",
     };
-  }, [selectedDate, forecastVariant, capabilities]);
+  }, [layerId, selectedDate, forecastVariant, capabilities]);
+}
+
+/** One layer's day read straight off the store, for the imperative paths below. */
+function readLayerDateNow(layerId: LayerToggleId): string {
+  const state = useTimeSliderStore.getState();
+  return resolveLayerDate(state.layerDates, state.capabilities, layerId);
 }
 
 /**
- * The slider's day, re-rendered only once a scrub has settled.
+ * Every registry layer's day in LAYER_TOGGLE_IDS order, joined into one comparable string.
  *
- * Deliberately NOT `useDebounce(useMapDay().selectedDate, …)`. That subscribes to the raw day,
- * so every consumer re-renders on every pointer tick of a day-granular scrub even though only
- * the settled value is ever read -- and `LayerManager` has ~8 layer children behind it. Reading
- * the store imperatively and setting state only after the settle window gives one render per
- * settle instead of one per tick, on the SAME boundary `useMetricAtDate` debounces to.
- *
- * The store fires for every field, not just the day; the timer re-reads the current day when
- * it finally elapses, and setting the same string is a React no-op.
+ * A joined key rather than a record because it is used as BOTH the change test and a
+ * `useMemo` dependency, and neither works on an object minted per read. "|" cannot occur in a
+ * YYYY-MM-DD day, so the join is lossless and the days split back out exactly.
  */
-function useSettledSelectedDate(): string {
-  const [settledDate, setSettledDate] = useState(
-    () => useTimeSliderStore.getState().selectedDate
-  );
+function readEveryLayerDateKey(): string {
+  const state = useTimeSliderStore.getState();
+  return LAYER_TOGGLE_IDS.map((toggleId) =>
+    resolveLayerDate(state.layerDates, state.capabilities, toggleId)
+  ).join("|");
+}
+
+/**
+ * Every layer's day at once, re-rendered only once ALL scrubbing has settled.
+ *
+ * One subscription and one timer for the whole set, rather than `useSettledLayerDate` per
+ * layer: hooks may not be called in a loop, and nothing is lost by settling them together
+ * because the only consumer -- `useViewedLayerDays` -- reports every layer and would re-render
+ * on any of them anyway. It settles on the same SCRUB_SETTLE_MS boundary from the same store
+ * writes as the per-layer hook, so the two cannot disagree once motion stops; mid-scrub this
+ * one may lag by up to one settle window, which is what "settled" means.
+ */
+function useSettledEveryLayerDateKey(): string {
+  const [settledKey, setSettledKey] = useState(readEveryLayerDateKey);
   useEffect(() => {
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastSeenKey = readEveryLayerDateKey();
+    // Same first-paint race as `useSettledLayerDate`; see the comment there.
+    setSettledKey(lastSeenKey);
     const unsubscribe = useTimeSliderStore.subscribe(() => {
+      const nextKey = readEveryLayerDateKey();
+      if (nextKey === lastSeenKey) return;
+      lastSeenKey = nextKey;
       if (settleTimer !== null) clearTimeout(settleTimer);
-      settleTimer = setTimeout(
-        () => setSettledDate(useTimeSliderStore.getState().selectedDate),
-        SCRUB_SETTLE_MS
-      );
+      settleTimer = setTimeout(() => setSettledKey(readEveryLayerDateKey()), SCRUB_SETTLE_MS);
     });
     return () => {
       if (settleTimer !== null) clearTimeout(settleTimer);
       unsubscribe();
     };
   }, []);
+  return settledKey;
+}
+
+/**
+ * One layer's day, re-rendered only once THAT layer's scrub has settled.
+ *
+ * Deliberately NOT `useDebounce(useLayerDay(layerId).selectedDate, …)`. That subscribes to the
+ * raw day, so every consumer re-renders on every pointer tick of a day-granular scrub even
+ * though only the settled value is ever read -- and `LayerManager` has ~8 layer children behind
+ * it. Reading the store imperatively and setting state only after the settle window gives one
+ * render per settle instead of one per tick, on the SAME boundary `useMetricAtDate` debounces
+ * to. That reasoning is unchanged by per-layer dates; only its scope narrows.
+ *
+ * The subscription still fires for every field of the store, because zustand has no per-key
+ * subscribe. What is new is the comparison inside it: the subscriber resolves THIS layer's day
+ * and returns immediately when it did not move, so a scrub on one row arms one timer instead of
+ * one per mounted layer. Resolving on every notification rather than reading `layerDates` is
+ * what makes an absent entry keep following `latestObservedDate` across a capabilities refresh.
+ */
+function useSettledLayerDate(layerId: LayerToggleId): string {
+  const [settledDate, setSettledDate] = useState(() => readLayerDateNow(layerId));
+  useEffect(() => {
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastSeenDate = readLayerDateNow(layerId);
+    // Adopts immediately rather than settling, and this line has to stay. It covers `layerId`
+    // changing -- where waiting out a settle window would report the PREVIOUS layer's day for a
+    // row nobody touched -- and, on first paint, a store write that lands BETWEEN this hook's
+    // initial render and this subscription: `TimeSliderCapabilitiesLoader`'s effect can call
+    // `setCapabilities` on the same commit that mounts a row, and if it runs first the row
+    // would hold a pre-capabilities day that no later notification ever corrects.
+    setSettledDate(lastSeenDate);
+    const unsubscribe = useTimeSliderStore.subscribe(() => {
+      const nextDate = readLayerDateNow(layerId);
+      if (nextDate === lastSeenDate) return;
+      lastSeenDate = nextDate;
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => setSettledDate(readLayerDateNow(layerId)), SCRUB_SETTLE_MS);
+    });
+    return () => {
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      unsubscribe();
+    };
+  }, [layerId]);
   return settledDate;
 }
 
-/** The slider's day as a request carries it: settled, and absent at the server's today. */
+/** One layer's day as a request carries it: settled, and absent at the server's today. */
 export interface DebouncedMapDay {
-  /** YYYY-MM-DD, or null until the capabilities payload supplies one. */
+  /** YYYY-MM-DD, or null until something can name this layer's day. */
   settledDate: string | null;
   /** Server UTC today; the only definition of "today". Null before capabilities arrive. */
   serverCurrentDate: string | null;
-  /** True when the settled selection is some day other than the server's today. */
+  /** True when this layer's settled day is some day other than the server's today. */
   isOffServerToday: boolean;
   /**
    * What a reader's optional `date` input must carry, and `undefined` whenever the settled day
@@ -195,17 +289,20 @@ export interface DebouncedMapDay {
    * paint fetch it twice. `undefined` also covers "capabilities have not arrived": without them
    * nothing knows which day is today, and guessing from the browser clock is exactly the
    * timezone disagreement `serverCurrentDate` exists to prevent.
+   *
+   * Set far more often than it used to be, and that is correct: a layer now opens on its own
+   * `latestObservedDate`, which for most layers is not today, so the day must ride along.
    */
   requestDate: string | undefined;
 }
 
 /**
- * The day every warehouse-backed viewport query keys on. One hook, so the map and the panels
- * settle on the same boundary and land on the same cache entry -- see
- * src/lib/server/AGENTS.md §slider-day.
+ * The day one layer's warehouse-backed viewport queries key on. One hook per layer, so a
+ * layer's map feed and its panel settle on the same boundary and land on the same cache entry
+ * -- see src/lib/server/AGENTS.md §slider-day.
  */
-export function useDebouncedMapDay(): DebouncedMapDay {
-  const settledSelection = useSettledSelectedDate();
+export function useDebouncedLayerDay(layerId: LayerToggleId): DebouncedMapDay {
+  const settledSelection = useSettledLayerDate(layerId);
   const capabilities = useTimeSliderStore((state) => state.capabilities);
 
   return useMemo(() => {
@@ -224,6 +321,61 @@ export function useDebouncedMapDay(): DebouncedMapDay {
   }, [settledSelection, capabilities]);
 }
 
+/** One visible layer's settled day, as the agent payload and the mixed-date report carry it. */
+export interface ViewedLayerDay {
+  layerId: LayerToggleId;
+  /** The `geo.layers.name` behind this toggle, or null when no warehouse layer backs it. */
+  warehouseLayerName: string | null;
+  /** YYYY-MM-DD. Only layers whose day can actually be named appear in the list. */
+  date: string;
+  /** False ONLY when the layer is provably behind its own newest published day. */
+  isOnLatest: boolean;
+}
+
+/**
+ * Every visible layer's settled day, for the agent payload and for mixed-date reporting.
+ *
+ * The map is a mixed-time composite now: fire on 2026-08-07 beside vegetation on 2025-06-14
+ * looks like one moment in a screenshot. Anything that describes what is on screen -- the agent
+ * most of all -- has to be told which day each layer is actually showing, or it will answer
+ * about a moment that never existed.
+ *
+ * A layer with no nameable day is OMITTED rather than reported with a sentinel: the list says
+ * what is being drawn as of when, and "uninitialized" is not a day anyone is looking at.
+ *
+ * `isOnLatest` is true whenever the layer is not provably behind, including when its newest day
+ * is unknown -- see `MapDay.isBehindLatestObservedDate` for why that asymmetry is deliberate.
+ */
+export function useViewedLayerDays(): ViewedLayerDay[] {
+  const visibility = useLayerVisibility();
+  const capabilities = useTimeSliderStore((state) => state.capabilities);
+  const settledDateKey = useSettledEveryLayerDateKey();
+  // Collapsed to the one fact this list reads, so toggling a layer that was already hidden
+  // cannot rebuild it.
+  const visibleLayerKey = LAYER_TOGGLE_IDS.filter((toggleId) => visibility[toggleId]).join("|");
+
+  return useMemo(() => {
+    // Both keys are re-expanded here rather than closed over, so every value this list is built
+    // from is a declared dependency and no render can serve a day from a previous one.
+    const settledDatesInRegistryOrder = settledDateKey.split("|");
+    const visibleLayerIds = new Set(visibleLayerKey.split("|"));
+    const viewed: ViewedLayerDay[] = [];
+    LAYER_TOGGLE_IDS.forEach((toggleId, index) => {
+      if (!visibleLayerIds.has(toggleId)) return;
+      const date = settledDatesInRegistryOrder[index];
+      if (date === undefined || !isCalendarDate(date)) return;
+      const latestObservedDate = latestObservedDateFor(capabilities, toggleId);
+      viewed.push({
+        layerId: toggleId,
+        warehouseLayerName: LAYER_REGISTRY[toggleId].warehouseLayerName,
+        date,
+        isOnLatest: latestObservedDate === null || date >= latestObservedDate,
+      });
+    });
+    return viewed;
+  }, [settledDateKey, visibleLayerKey, capabilities]);
+}
+
 /** Everything one layer needs to decide whether and how to draw. */
 export interface LayerRenderState {
   toggleId: LayerToggleId;
@@ -233,8 +385,12 @@ export interface LayerRenderState {
   isToggledOn: boolean;
   /** True when the layer should draw: switched on and not withheld. */
   shouldRender: boolean;
-  /** The day this layer draws as of, or null until capabilities arrive. */
+  /** The day this layer draws as of, or null until something can name one for it. */
   selectedDate: string | null;
+  /** This layer's own newest published day, or null when no capability names one. */
+  latestObservedDate: string | null;
+  /** False unless the layer is provably behind its own newest day; drives the mixed-time mark. */
+  isBehindLatestObservedDate: boolean;
   variant: MetricVariant;
   /** Whether the warehouse can answer for that day. */
   availability: MetricAtDateAvailability;
@@ -252,7 +408,7 @@ export interface LayerRenderState {
  */
 export function useLayerRenderState(layerId: LayerToggleId): LayerRenderState {
   const isToggledOn = useLayerToggle(layerId);
-  const mapDay = useMapDay();
+  const mapDay = useLayerDay(layerId);
   const capabilities = useTimeSliderStore((state) => state.capabilities);
 
   return useMemo(() => {
@@ -280,6 +436,8 @@ export function useLayerRenderState(layerId: LayerToggleId): LayerRenderState {
       isToggledOn,
       shouldRender: isToggledOn && entry.permanentlyUnavailableReason === null,
       selectedDate: mapDay.selectedDate,
+      latestObservedDate: mapDay.latestObservedDate,
+      isBehindLatestObservedDate: mapDay.isBehindLatestObservedDate,
       variant: mapDay.variant,
       availability,
       unavailableReason: describeAvailability(
@@ -354,12 +512,16 @@ export interface VegetationDisplayMode {
  * on the day -- so scrubbing 30 days inside one month leaves the raster's tile URL, and every
  * prop `VegetationLayer` keys its `setTiles` effect on, referentially unchanged. A month-
  * granular product must not re-request per day.
+ *
+ * The day is `vegetation`'s OWN, not the map's: with per-layer dates there is no map-wide day
+ * left to project, and reading another row's would caption this raster with a month nobody
+ * selected for it.
  */
 export function useVegetationDisplayMode(): VegetationDisplayMode {
   const mode = useVegetationStore((state) => state.mode);
   const ndviMode = useVegetationStore((state) => state.ndviMode);
   const showNDWI = useVegetationStore((state) => state.showNDWI);
-  const { settledDate, serverCurrentDate } = useDebouncedMapDay();
+  const { settledDate, serverCurrentDate } = useDebouncedLayerDay("vegetation");
 
   // Plain slices of a YYYY-MM-DD string the store already validated with `isCalendarDate`;
   // `new Date(day)` would reintroduce a timezone shift on the very value that exists to
@@ -399,7 +561,7 @@ export interface SoilDisplayMode {
   property: SoilProperty;
   /**
    * The ECMWF layer each soil field draws, per measure. A depth, never a date -- both fields
-   * take their day from `useDebouncedMapDay` like every other warehouse-backed feed.
+   * take their day from `useDebouncedLayerDay` like every other warehouse-backed feed.
    */
   fieldDepth: Record<SoilFieldMeasure, SoilFieldDepth>;
 }
@@ -416,7 +578,7 @@ export function useSoilDisplayMode(): SoilDisplayMode {
  * The climate layer's selected mode, as the renderer consumes it.
  *
  * A signal and a statistic, never a date: the NASA POWER field takes its day from
- * `useDebouncedMapDay` like every other warehouse-backed feed.
+ * `useDebouncedLayerDay` like every other warehouse-backed feed.
  */
 export interface ClimateDisplayMode {
   signal: ClimateFieldSignalId;

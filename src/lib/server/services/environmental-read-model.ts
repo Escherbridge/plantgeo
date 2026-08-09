@@ -2,7 +2,9 @@ import { and, desc, eq, gte, lte, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/server/db";
 import { features, layers } from "@/lib/server/db/schema";
 import { WEATHER_LAYER_ID } from "@/lib/server/layer-ids";
+import { SLIDER_STREAM_LAYER_NAMES } from "@/types/time-slider";
 import type {
+  DayRange,
   MetricAtDateAvailability,
   MetricAtDateCollection,
   MetricAtDateInput,
@@ -2491,6 +2493,36 @@ const OBSERVATION_DENSITY_FLOOR_FRACTION = 0.01;
  * water-gauges is ~9,000 points, which is a viewport bbox's job to narrow. */
 const METRIC_AT_DATE_MAX_ROWS = 5_000;
 
+/**
+ * Most coverage gaps, and most thin ranges, reported for ONE layer.
+ *
+ * Ranges rather than per-day flags is what makes this payload affordable at all: 12 layers x
+ * up to ~1,460 observed days is ~17,500 per-day entries and ~385 KB of JSON, against a handful
+ * of ~40-byte objects.
+ *
+ * RAISED from 120 to 800, and the number is derived rather than tuned. Disjoint closed ranges
+ * over an N-day axis can number at most ceil(N/2) -- every range needs a day between it and
+ * the next -- and the deepest axis this warehouse has is vegetation's ~1,460 days, which bounds
+ * either list at 730. 800 therefore admits the entire pathological worst case for every layer
+ * that exists today, so truncation is unreachable in practice while staying a real bound if an
+ * axis ever grows past ~1,600 days. The review measured the old cap at ~10.8 KB per layer and
+ * ~160 KB across ~15 layers uncompressed on an endpoint that is cached five minutes and fetched
+ * once per tab; at 800 the same pathological layer costs ~36 KB per list, which that budget
+ * absorbs, and every realistic layer costs a handful of ranges either way.
+ *
+ * The NEWEST ranges are the ones kept, because the right-hand edge of the axis is where people
+ * scrub and where a stalled ingest lane shows up.
+ *
+ * Truncation is no longer merely REPORTED. `coverageGapsTruncated`/`thinRangesTruncated` were
+ * computed, shipped and read by nothing, so a dropped gap drew as solid coverage on the track
+ * and let `coverageOnDay` answer `published` for a day that was never ingested -- which the
+ * agent prompt turns verbatim into "This is an observed absence". Every truncation now also
+ * moves `describedFromDay` to the oldest day the surviving ranges still cover, which is a value
+ * a consumer has to consult rather than a flag it can skip. See that field's note in
+ * src/types/time-slider.ts.
+ */
+const MAX_REPORTED_DAY_RANGES = 800;
+
 /** How `earliestObservedDate` was decided, so the UI never has to guess. */
 export type EarliestObservedDateRule =
   /** Isolated older observations exist but were excluded from the axis. */
@@ -2517,6 +2549,20 @@ export interface ResolvedSliderLayerCapability extends SliderLayerCapability {
   earliestRecordedObservationDate: string | null;
   /** Start of the newest continuous run, before the density floor was applied. */
   earliestContinuousObservationDate: string | null;
+  /**
+   * Newest datable observation on record, including days below the density floor.
+   * Differs from latestObservedDate whenever the live edge is still filling -- that
+   * difference is a partially-ingested day, surfaced rather than opened on.
+   */
+  latestRecordedObservationDate: string | null;
+  /** True when older coverage gaps exist beyond the ones listed. */
+  coverageGapsTruncated: boolean;
+  /** True when older thin ranges exist beyond the ones listed. */
+  thinRangesTruncated: boolean;
+  /** Oldest day `coverageGaps` still describes; null when it describes the whole axis. */
+  coverageGapsDescribedFromDay: string | null;
+  /** Oldest day `thinRanges` still describes; null when it describes the whole axis. */
+  thinRangesDescribedFromDay: string | null;
   /** Distinct observed days inside the reported window. */
   observedDayCount: number;
   /** Distinct observed days excluded by both rules together. */
@@ -2544,9 +2590,32 @@ const LAYER_TEMPORAL_KINDS: Readonly<Record<string, TemporalKind>> = {
   "water-gauges": "daily_series",
   "fire-detections": "event",
   "fire-perimeters": "event",
+  // `event`, and NOT left to DEFAULT_TEMPORAL_KIND. An MTBS burn scar is dated by the release
+  // that mapped it, so the layer genuinely accretes over time. Omitting it made it inherit
+  // `snapshot`, which under the one-rule contract below means no control AND no date filter --
+  // and a layer with no date filter draws its whole record. The failure that produced was
+  // invisible because it was self-consistent: scrub fire-perimeters to 2024-06-01 and the
+  // perimeters bound correctly while every scar through 2026 drew beneath them, including
+  // scars from fires that had not happened on the viewed day, with no row control and no
+  // caption to say so. Nothing in the suite could catch it, because the fixture encoded the
+  // same wrong kind. An entry omitted here is not a neutral omission.
+  "burn-severity": "event",
   "interventions": "snapshot",
   "evacuation-zones": "snapshot",
   "sensors": "snapshot",
+  // A genuine snapshot: 96% of HUC12 basins share one 2013 WBD loaddate. Listed rather than
+  // left to the default so that "absent" never again means "nobody decided".
+  "watersheds": "snapshot",
+  // The five non-geo.features streams. Drought is `daily_series` rather than `event` even
+  // though USDM publishes weekly: every day of a release's week resolves to that release, so
+  // the axis a user scrubs really is daily. An `event` kind would say the opposite -- that a
+  // day either has a discrete happening or nothing -- and would make the whole record read as
+  // a sequence of Tuesdays.
+  [SLIDER_STREAM_LAYER_NAMES.drought]: "daily_series",
+  [SLIDER_STREAM_LAYER_NAMES.soilMoisture]: "daily_series",
+  [SLIDER_STREAM_LAYER_NAMES.soilTemperature]: "daily_series",
+  [SLIDER_STREAM_LAYER_NAMES.soilVapourPressureDeficit]: "daily_series",
+  [SLIDER_STREAM_LAYER_NAMES.climateField]: "daily_series",
 };
 
 /** Conservative shape for a geo.layers row added after this registry was written. */
@@ -2749,10 +2818,16 @@ type ObservationWindowRow = {
   dense_earliest_day: string | null;
   clustered_earliest_day: string | null;
   recorded_earliest_day: string | null;
+  dense_latest_day: string | null;
+  recorded_latest_day: string | null;
   dense_day_count: number | string | null;
   clustered_day_count: number | string | null;
   recorded_day_count: number | string | null;
   density_floor: number | string | null;
+  /** jsonb array of {from,to}; the driver may hand it back parsed or as text. */
+  coverage_gaps: unknown;
+  /** jsonb array of {from,to}; the driver may hand it back parsed or as text. */
+  thin_ranges: unknown;
 };
 
 /**
@@ -2774,19 +2849,23 @@ type ObservationWindowRow = {
  * used to call this once per request just to range-check a date, which made every metric read
  * two whole-layer scans; it now shares one cached payload with getSliderCapabilities.
  */
-async function readObservationWindows(): Promise<Map<string, ObservationWindowRow>> {
-  const rows = await db.execute<ObservationWindowRow>(sql`
+/**
+ * The axis pipeline, over any relation of (layer_name, observed_day, observation_count).
+ *
+ * Parameterized rather than copied because the two rules it encodes -- continuity clustering
+ * then a density floor -- and the gap/thin derivation that hangs off them are the DEFINITION of
+ * what the slider draws. A second lane with its own hand-written variant of this SQL would be
+ * a second definition of "the axis", and the two would drift silently: the client cannot tell
+ * a lane whose gaps mean something slightly different from one whose gaps mean what these do.
+ *
+ * @param catalogue relation with a `name` column, listing every stream that must get a row --
+ *   including the ones with no observation at all, which report nulls rather than vanishing.
+ * @param observed relation of one row per (stream, day) with that day's observation count.
+ */
+function observationWindowStatement(catalogue: SQL, observed: SQL): SQL {
+  return sql`
     WITH observed AS (
-      SELECT
-        l.name AS layer_name,
-        ${OBSERVATION_DAY} AS observed_day,
-        COUNT(*) AS observation_count
-      FROM geo.layers l
-      JOIN geo.features f ON f.layer_id = l.id
-      WHERE f.status = 'published'
-        AND f.geometry_id IS NOT NULL
-        AND ${OBSERVATION_TIME_TEXT} IS NOT NULL
-      GROUP BY l.name, ${OBSERVATION_DAY}
+      ${observed}
     ),
     gapped AS (
       SELECT
@@ -2837,6 +2916,75 @@ async function readObservationWindows(): Promise<Map<string, ObservationWindowRo
       JOIN density d ON d.layer_name = n.layer_name
       WHERE n.observation_count >= d.density_floor
       GROUP BY n.layer_name
+    ),
+    -- Exactly the days the slider will draw: newest cluster, from the density floor's own
+    -- start day onward. Every gap and thin range below is derived from THIS relation, so a day
+    -- the axis hides and a day the report describes can never be different days.
+    axis AS (
+      SELECT
+        r.layer_name,
+        r.observed_day,
+        -- The exact complement of dense_start's predicate, against the same floor. Computing a
+        -- second threshold here would create a second definition of "thin".
+        r.observation_count < d.density_floor AS is_thin,
+        LAG(r.observed_day) OVER (
+          PARTITION BY r.layer_name ORDER BY r.observed_day
+        ) AS previous_observed_day
+      FROM ranked r
+      JOIN density d ON d.layer_name = r.layer_name
+      JOIN dense_start s ON s.layer_name = r.layer_name
+      WHERE r.cluster_index = r.newest_cluster_index
+        AND r.observed_day >= s.dense_earliest_day
+    ),
+    -- An absent day has no row to select, so gaps are read off the step between adjacent
+    -- observed days instead of materialising a calendar. The gapped CTE's own gap_days cannot
+    -- be reused: it is computed BEFORE clustering, so it also spans the pre-axis stragglers.
+    coverage_gap_ranges AS (
+      SELECT
+        layer_name,
+        jsonb_agg(
+          jsonb_build_object(
+            'from', to_char(previous_observed_day + 1, 'YYYY-MM-DD'),
+            'to', to_char(observed_day - 1, 'YYYY-MM-DD')
+          ) ORDER BY observed_day
+        ) AS coverage_gaps
+      FROM axis
+      WHERE previous_observed_day IS NOT NULL
+        AND observed_day - previous_observed_day > 1
+      GROUP BY layer_name
+    ),
+    -- Consecutive thin days collapse into one range. Restricting to thin days BEFORE the
+    -- island key is computed is what makes the key break on a published dense day AND on an
+    -- unpublished day alike, so a thin range abuts a gap instead of swallowing it.
+    thin_islands AS (
+      SELECT
+        layer_name,
+        observed_day,
+        observed_day - (
+          ROW_NUMBER() OVER (PARTITION BY layer_name ORDER BY observed_day)
+        )::integer AS island_key
+      FROM axis
+      WHERE is_thin
+    ),
+    thin_day_ranges AS (
+      SELECT
+        layer_name,
+        jsonb_agg(
+          jsonb_build_object(
+            'from', to_char(range_start, 'YYYY-MM-DD'),
+            'to', to_char(range_end, 'YYYY-MM-DD')
+          ) ORDER BY range_start
+        ) AS thin_ranges
+      FROM (
+        SELECT
+          layer_name,
+          island_key,
+          MIN(observed_day) AS range_start,
+          MAX(observed_day) AS range_end
+        FROM thin_islands
+        GROUP BY layer_name, island_key
+      ) islands
+      GROUP BY layer_name
     )
     SELECT
       l.name AS layer_name,
@@ -2845,6 +2993,19 @@ async function readObservationWindows(): Promise<Map<string, ObservationWindowRo
         WHERE r.cluster_index = r.newest_cluster_index
       ) AS clustered_earliest_day,
       MIN(r.observed_day) AS recorded_earliest_day,
+      -- The day each layer's slider opens on: newest day at or above the same floor. Never
+      -- null when dense_earliest_day is non-null, because the cluster's own peak day always
+      -- clears a floor derived from that peak.
+      MAX(r.observed_day) FILTER (
+        WHERE r.cluster_index = r.newest_cluster_index
+          AND s.dense_earliest_day IS NOT NULL
+          AND r.observed_day >= s.dense_earliest_day
+          AND r.observation_count >= d.density_floor
+      ) AS dense_latest_day,
+      -- Unfiltered: the global max day is in the newest cluster by construction (cluster_index
+      -- rises with observed_day). This anchors the trailing gap, so a still-filling live-edge
+      -- day is reported as thin rather than as unpublished.
+      MAX(r.observed_day) AS recorded_latest_day,
       COUNT(r.observed_day) FILTER (
         WHERE r.cluster_index = r.newest_cluster_index
           AND s.dense_earliest_day IS NOT NULL
@@ -2854,18 +3015,165 @@ async function readObservationWindows(): Promise<Map<string, ObservationWindowRo
         WHERE r.cluster_index = r.newest_cluster_index
       ) AS clustered_day_count,
       COUNT(r.observed_day) AS recorded_day_count,
-      MAX(d.density_floor) AS density_floor
-    FROM geo.layers l
+      MAX(d.density_floor) AS density_floor,
+      -- jsonb_agg over zero rows is NULL, not '[]'; the contract says DayRange[], never null.
+      COALESCE(g.coverage_gaps, '[]'::jsonb) AS coverage_gaps,
+      COALESCE(t.thin_ranges, '[]'::jsonb) AS thin_ranges
+    FROM (${catalogue}) l
     LEFT JOIN ranked r ON r.layer_name = l.name
     LEFT JOIN dense_start s ON s.layer_name = l.name
     LEFT JOIN density d ON d.layer_name = l.name
-    GROUP BY l.name, s.dense_earliest_day
+    -- Both of these are already one row per layer. Joining any PER-DAY relation here would
+    -- fan out the ranked CTE and silently inflate the three COUNT(observed_day) columns above.
+    LEFT JOIN coverage_gap_ranges g ON g.layer_name = l.name
+    LEFT JOIN thin_day_ranges t ON t.layer_name = l.name
+    -- The two jsonb columns are grouped, not aggregated: there is no MAX(jsonb), and jsonb has
+    -- a btree ordering, so grouping a one-row-per-layer value is both legal and lossless.
+    GROUP BY l.name, s.dense_earliest_day, g.coverage_gaps, t.thin_ranges
     ORDER BY l.name
-  `);
+  `;
+}
 
+/** Indexes window rows by the stream they describe. */
+function indexWindowRows(rows: ObservationWindowRow[]): Map<string, ObservationWindowRow> {
   const windows = new Map<string, ObservationWindowRow>();
   for (const row of rows) windows.set(row.layer_name, row);
   return windows;
+}
+
+async function readObservationWindows(): Promise<Map<string, ObservationWindowRow>> {
+  return indexWindowRows(
+    await db.execute<ObservationWindowRow>(
+      observationWindowStatement(
+        sql`SELECT name FROM geo.layers`,
+        sql`
+          SELECT
+            l.name AS layer_name,
+            ${OBSERVATION_DAY} AS observed_day,
+            COUNT(*) AS observation_count
+          FROM geo.layers l
+          JOIN geo.features f ON f.layer_id = l.id
+          WHERE f.status = 'published'
+            AND f.geometry_id IS NOT NULL
+            AND ${OBSERVATION_TIME_TEXT} IS NOT NULL
+          GROUP BY l.name, ${OBSERVATION_DAY}
+        `
+      )
+    )
+  );
+}
+
+/**
+ * The same axis, for the five streams that are not backed by `geo.features`.
+ *
+ * Drought lives in `geo.drought_areas` as weekly releases; the three soil measures and the
+ * climate field live in `agri.signal_observation` behind the two governed views. None of them
+ * has a `geo.layers` row, which is the ONLY reason they carried no capability -- and with no
+ * capability they had no axis, so `resolveLayerDate` fell through to the server's today and
+ * five of roughly ten dated layers were pinned to the live edge with no control and no account
+ * of why. Every one of their readers accepts a historical day.
+ *
+ * Runs the identical pipeline as `readObservationWindows`, so a gap here means exactly what a
+ * gap there means. Two things are worth knowing about what the pipeline does to these lanes:
+ *
+ * - Drought days are the days a release COVERS, not the Tuesdays it was valid on. Feeding the
+ *   valid dates raw would report six days in seven as unpublished, which is precisely the false
+ *   observed-absence this whole review is about; the coverage window below is the same bounded
+ *   carry-forward `resolveDroughtRelease` applies, so a week the record skips is a gap on the
+ *   axis and a gap in the reader, and neither invents the other.
+ * - Nothing is ever thin on these lanes in practice, and that is a true report rather than a
+ *   default. A USDM release arrives as a whole set of category polygons, so its per-day count
+ *   is 1-6 and the 1% floor bottoms out at 1; the model-plane lanes are written as whole-day
+ *   lattice slabs, so a day carries the whole grid or is absent. A partially written slab
+ *   still lands under the floor and IS reported thin.
+ *
+ * Executed against a real PostgreSQL 16 over stub relations before landing, because nothing
+ * tsc or a mocked db.execute can see would catch what this file has been bitten by twice
+ * (`invalid input syntax for type bigint`, `character varying = date`). Verified there: a
+ * deliberately withheld weekly release reports exactly its own seven-day week as a coverage
+ * gap; the newest release carries forward to today rather than to its own +14 when +14 is in
+ * the future; and a stream with no rows at all still returns a row, of nulls, rather than
+ * disappearing from the catalogue.
+ */
+async function readStreamObservationWindows(): Promise<Map<string, ObservationWindowRow>> {
+  const streamNames = Object.values(SLIDER_STREAM_LAYER_NAMES);
+  return indexWindowRows(
+    await db.execute<ObservationWindowRow>(
+      observationWindowStatement(
+        sql`
+          SELECT stream.name AS name
+          FROM (VALUES ${sql.join(
+            streamNames.map((name) => sql`(${name}::text)`),
+            sql`, `
+          )}) AS stream(name)
+        `,
+        sql`
+          SELECT
+            ${SLIDER_STREAM_LAYER_NAMES.drought}::text AS layer_name,
+            covered.covered_day::date AS observed_day,
+            release.class_count AS observation_count
+          FROM (
+            SELECT
+              d.valid_date::date AS valid_date,
+              LEAD(d.valid_date::date) OVER (ORDER BY d.valid_date::date) AS next_valid_date,
+              COUNT(*) AS class_count
+            FROM geo.drought_areas d
+            GROUP BY d.valid_date
+          ) release
+          ${/* A release stands until the next one supersedes it, and no longer: with a later
+                release stored, coverage stops the day before it, capped at its own week so a
+                skipped release week stays EMPTY. At the live edge there is no next release, so
+                the newest one carries forward under the same bound getPublishedDroughtClassification
+                applies -- and never past today, because a cached row must not claim a future day
+                as observed. */ sql``}
+          CROSS JOIN LATERAL generate_series(
+            release.valid_date::timestamp,
+            LEAST(
+              CASE
+                WHEN release.next_valid_date IS NULL
+                  THEN release.valid_date + ${DROUGHT_MAX_CARRY_FORWARD_DAYS}::integer
+                ELSE release.valid_date + (${DROUGHT_RELEASE_INTERVAL_DAYS}::integer - 1)
+              END,
+              CASE
+                WHEN release.next_valid_date IS NULL THEN (now() AT TIME ZONE 'UTC')::date
+                ELSE release.next_valid_date - 1
+              END
+            )::timestamp,
+            interval '1 day'
+          ) AS covered(covered_day)
+
+          UNION ALL
+
+          ${/* The governed views, not the base table: their VALUES joins already apply the unit,
+                lane and quality gates the drawing reads apply, so a day this axis offers is a day
+                those readers can actually answer. */ sql``}
+          SELECT
+            stream.layer_name,
+            soil.observed_day,
+            COUNT(*) AS observation_count
+          FROM geo.soil_field_observation AS soil
+          JOIN (VALUES
+            ('moisture'::text, ${SLIDER_STREAM_LAYER_NAMES.soilMoisture}::text),
+            ('temperature', ${SLIDER_STREAM_LAYER_NAMES.soilTemperature}),
+            ('vpd', ${SLIDER_STREAM_LAYER_NAMES.soilVapourPressureDeficit})
+          ) AS stream(measure, layer_name) ON stream.measure = soil.measure
+          WHERE soil.support_key = ${SOIL_FIELD_SUPPORT_KEY}
+          GROUP BY stream.layer_name, soil.observed_day
+
+          UNION ALL
+
+          SELECT
+            stream.layer_name,
+            climate.observed_day,
+            COUNT(*) AS observation_count
+          FROM geo.climate_field_observation AS climate
+          CROSS JOIN (VALUES (${SLIDER_STREAM_LAYER_NAMES.climateField}::text)) AS stream(layer_name)
+          WHERE climate.support_key = ${CLIMATE_FIELD_SUPPORT_KEY}
+          GROUP BY stream.layer_name, climate.observed_day
+        `
+      )
+    )
+  );
 }
 
 /** Normalizes a DATE column, which the driver may hand back as a Date or a string. */
@@ -2884,6 +3192,80 @@ function toCount(value: number | string | null): number {
 }
 
 /**
+ * Normalizes a jsonb array of {from,to} into DayRange[], sorted by start day.
+ *
+ * The dates are already formatted by `to_char(..., 'YYYY-MM-DD')` in SQL rather than left to
+ * the driver, for the same reason toCalendarDate above exists: a bare DATE arrives as a Date
+ * or as a string depending on the driver path, and inside jsonb_build_object there is no
+ * toCalendarDate left to rescue it. This still validates, because postgres-js parses jsonb for
+ * us and a future driver change could hand back the text instead. A malformed entry is DROPPED
+ * rather than repaired -- inventing an endpoint would put a hole on the axis where the
+ * warehouse never said there was one.
+ */
+function toDayRanges(value: unknown): DayRange[] {
+  const parsed =
+    typeof value === "string"
+      ? ((): unknown => {
+          try {
+            return JSON.parse(value);
+          } catch {
+            return null;
+          }
+        })()
+      : value;
+  if (!Array.isArray(parsed)) return [];
+
+  const ranges: DayRange[] = [];
+  for (const entry of parsed) {
+    if (entry === null || typeof entry !== "object") continue;
+    const { from, to } = entry as { from?: unknown; to?: unknown };
+    if (typeof from !== "string" || typeof to !== "string") continue;
+    if (!CALENDAR_DATE_PATTERN.test(from) || !CALENDAR_DATE_PATTERN.test(to)) continue;
+    if (from > to) continue;
+    ranges.push({ from, to });
+  }
+  // YYYY-MM-DD sorts lexicographically exactly as it sorts chronologically.
+  return ranges.sort((left, right) => (left.from < right.from ? -1 : left.from > right.from ? 1 : 0));
+}
+
+/** A capped range list plus the oldest day it still completely describes. */
+interface CappedDayRanges {
+  kept: DayRange[];
+  truncated: boolean;
+  /** null when nothing was dropped, so the list describes the whole axis. */
+  describedFromDay: string | null;
+}
+
+/**
+ * Keeps the newest `limit` ranges and says which day the kept list still describes.
+ *
+ * The boundary is the oldest SURVIVING range's own start day, not the newest dropped range's
+ * end day: the surviving list is complete from there on, and a day below it may sit inside a
+ * range that was dropped. That is conservative in the one direction that is safe -- a few days
+ * just under the boundary really were described and are now reported as unknown, whereas the
+ * reverse would license the false observed-absence this boundary exists to prevent.
+ *
+ * See MAX_REPORTED_DAY_RANGES; ranges arrive sorted oldest-first from `toDayRanges`.
+ */
+function capDayRanges(ranges: DayRange[], limit: number): CappedDayRanges {
+  if (ranges.length <= limit) return { kept: ranges, truncated: false, describedFromDay: null };
+  const kept = ranges.slice(ranges.length - limit);
+  return { kept, truncated: true, describedFromDay: kept[0]?.from ?? null };
+}
+
+/**
+ * The later of two per-list boundaries; null only when BOTH lists describe their whole axis.
+ *
+ * A day is described only when every list describes it, so the stricter boundary wins.
+ * YYYY-MM-DD compares lexicographically exactly as it compares chronologically.
+ */
+function laterDescribedFromDay(left: string | null, right: string | null): string | null {
+  if (left === null) return right;
+  if (right === null) return left;
+  return left > right ? left : right;
+}
+
+/**
  * Turns one layer's window row into the capability the client consumes.
  * The rule reports the STRONGEST exclusion that moved the date, so a layer whose stragglers
  * were removed by both rules reads "density_floored" rather than hiding that behind
@@ -2893,6 +3275,8 @@ function buildCapability(row: ObservationWindowRow): ResolvedSliderLayerCapabili
   const denseEarliest = toCalendarDate(row.dense_earliest_day);
   const clusteredEarliest = toCalendarDate(row.clustered_earliest_day);
   const recordedEarliest = toCalendarDate(row.recorded_earliest_day);
+  const denseLatest = toCalendarDate(row.dense_latest_day);
+  const recordedLatest = toCalendarDate(row.recorded_latest_day);
   const denseDays = toCount(row.dense_day_count);
   const clusteredDays = toCount(row.clustered_day_count);
   const recordedDays = toCount(row.recorded_day_count);
@@ -2907,20 +3291,101 @@ function buildCapability(row: ObservationWindowRow): ResolvedSliderLayerCapabili
           ? "gap_clustered"
           : "full_history";
 
+  // A layer with no axis has no ranges either. Reporting anything here would be a fabricated
+  // claim about a warehouse that published nothing at all.
+  const hasAxis = denseEarliest !== null;
+  // Both lists are capped HERE, against the same limit and by the same helper. The gap list
+  // was previously left uncapped with its flag hardcoded false and only re-capped inside
+  // closeCoverageGapsAtLiveEdge, so every caller that did not go through getSliderCapabilities
+  // -- and every future one -- received a flag that said "nothing was dropped" without anyone
+  // having checked. A truncation boundary that is only sometimes computed is worse than none,
+  // because it reads as a fact.
+  const coverageGaps = capDayRanges(
+    hasAxis ? toDayRanges(row.coverage_gaps) : [],
+    MAX_REPORTED_DAY_RANGES
+  );
+  const thinRanges = capDayRanges(
+    hasAxis ? toDayRanges(row.thin_ranges) : [],
+    MAX_REPORTED_DAY_RANGES
+  );
+
   return {
     layerName: row.layer_name,
     temporalKind: LAYER_TEMPORAL_KINDS[row.layer_name] ?? DEFAULT_TEMPORAL_KIND,
     forecastHorizonDays: FORECAST_HORIZON_DAYS,
     forecastVariants: [],
     earliestObservedDate: denseEarliest,
+    latestObservedDate: hasAxis ? denseLatest : null,
+    coverageGaps: coverageGaps.kept,
+    coverageGapsTruncated: coverageGaps.truncated,
+    coverageGapsDescribedFromDay: coverageGaps.describedFromDay,
+    thinRanges: thinRanges.kept,
+    thinRangesTruncated: thinRanges.truncated,
+    thinRangesDescribedFromDay: thinRanges.describedFromDay,
+    describedFromDay: laterDescribedFromDay(
+      coverageGaps.describedFromDay,
+      thinRanges.describedFromDay
+    ),
     earliestObservedDateRule: rule,
     earliestRecordedObservationDate: recordedEarliest,
     earliestContinuousObservationDate: clusteredEarliest,
+    latestRecordedObservationDate: hasAxis ? recordedLatest : null,
     observedDayCount: denseDays,
     excludedObservedDayCount: Math.max(0, recordedDays - denseDays),
     gapExcludedObservedDayCount: Math.max(0, recordedDays - clusteredDays),
     densityExcludedObservedDayCount: Math.max(0, clusteredDays - denseDays),
     minimumDailyObservationCount: denseEarliest === null ? null : densityFloor,
+  };
+}
+
+/**
+ * Closes a layer's gap list at the live edge and caps it.
+ *
+ * Deliberately NOT done in SQL, and deliberately not folded into buildCapability: the layer
+ * list is memoized for CAPABILITIES_CACHE_TTL_MS while `serverCurrentDate` is stamped fresh on
+ * every call, precisely so a payload held across UTC midnight cannot keep reporting yesterday
+ * as today. A trailing gap baked into the cached rows would reintroduce exactly that staleness
+ * -- the axis would stop declaring a hole on the day the hole first appeared.
+ *
+ * Anchored on `latestRecordedObservationDate`, not on `latestObservedDate`: a still-filling
+ * live-edge day IS published, so calling it unobserved would be a false claim. It is already
+ * described as thin. The trailing gap is appended last and therefore always survives the cap,
+ * which is the intent -- the newest hole is the one worth seeing.
+ *
+ * `describedFromDay` is recomputed here rather than carried through, because appending to a
+ * capped list can push one more range off the old end and that moves the boundary.
+ */
+function closeCoverageGapsAtLiveEdge(
+  layer: ResolvedSliderLayerCapability,
+  today: string
+): ResolvedSliderLayerCapability {
+  const lastPublishedDay = layer.latestRecordedObservationDate;
+  if (lastPublishedDay === null) return layer;
+
+  const dayAfterLastPublished = addUtcDays(lastPublishedDay, 1);
+  if (dayAfterLastPublished > today) return layer;
+
+  // buildCapability already capped this list, so appending to the CAPPED list keeps the
+  // trailing gap without re-widening what was dropped; the boundary it recorded therefore
+  // still bounds what the list describes, and a second cap can only tighten it further.
+  const gaps = capDayRanges(
+    [...layer.coverageGaps, { from: dayAfterLastPublished, to: today }],
+    MAX_REPORTED_DAY_RANGES
+  );
+  const coverageGapsDescribedFromDay = laterDescribedFromDay(
+    layer.coverageGapsDescribedFromDay,
+    gaps.describedFromDay
+  );
+
+  return {
+    ...layer,
+    coverageGaps: gaps.kept,
+    coverageGapsTruncated: layer.coverageGapsTruncated || gaps.truncated,
+    coverageGapsDescribedFromDay,
+    describedFromDay: laterDescribedFromDay(
+      coverageGapsDescribedFromDay,
+      layer.thinRangesDescribedFromDay
+    ),
   };
 }
 
@@ -2940,16 +3405,42 @@ function buildCapability(row: ObservationWindowRow): ResolvedSliderLayerCapabili
  */
 const CAPABILITIES_CACHE_TTL_MS = 5 * 60_000;
 
+/**
+ * How long the STREAM capability list is reused, and why it is not the same number.
+ *
+ * The five non-geo.features streams are read through the two governed views, whose gates sit
+ * in joins, so their scan is an aggregate over `agri.signal_observation` -- roughly 17 million
+ * accepted rows on production (the VPD signal alone was 2,149,140 on 2026-08-08). No index
+ * helps: the only usable one is keyed `(cell_id, observed_at, signal_name)`, and this grouping
+ * has no cell to drive from. It is therefore a whole-table pass, and it is deliberately NOT on
+ * the five-minute clock the geo.features scan runs on.
+ *
+ * NOT MEASURED against production -- this lane had no database access -- so treat the cost as
+ * unknown-but-large rather than as the 85 ms the geo.features scan was measured at. Two things
+ * bound the damage: the first caller after a cold start is the only one that ever waits (the
+ * list is then refreshed in the background, never expired out from under a request), and this
+ * constant is the single knob if it proves worse than expected. If it ever needs to become
+ * cheap, the fix is a per-day rollup written by the ingest lane, not a shorter TTL here.
+ */
+const STREAM_CAPABILITIES_CACHE_TTL_MS = 30 * 60_000;
+
 let cachedLayerCapabilities: {
   expiresAtMs: number;
   layers: ResolvedSliderLayerCapability[];
 } | null = null;
 let layerCapabilitiesInFlight: Promise<ResolvedSliderLayerCapability[]> | null = null;
+let cachedStreamCapabilities: {
+  expiresAtMs: number;
+  layers: ResolvedSliderLayerCapability[];
+} | null = null;
+let streamCapabilitiesInFlight: Promise<ResolvedSliderLayerCapability[]> | null = null;
 
-/** Drops the memoized capability list. Exists so tests never inherit another test's payload. */
+/** Drops the memoized capability lists. Exists so tests never inherit another test's payload. */
 export function clearSliderCapabilitiesCache(): void {
   cachedLayerCapabilities = null;
   layerCapabilitiesInFlight = null;
+  cachedStreamCapabilities = null;
+  streamCapabilitiesInFlight = null;
 }
 
 /** The per-layer capability list, computed at most once per TTL across all callers. */
@@ -2974,19 +3465,90 @@ async function readLayerCapabilities(): Promise<ResolvedSliderLayerCapability[]>
 }
 
 /**
+ * The stream capability list: blocking on the first computation, stale-while-revalidate after.
+ *
+ * Serving the previous list while a refresh runs is what keeps a whole-table pass off the
+ * request path. The alternative -- expiring the entry and making the unlucky caller wait, as
+ * the geo.features memo does -- turns a slow scan into a slow tRPC call every TTL, on a
+ * publicProcedure.
+ *
+ * A REJECTED read yields NO stream capabilities and is not cached, so the next call retries.
+ * Omission is deliberately the failure mode: a capability with a null `earliestObservedDate`
+ * would have the client tell a reader that drought "has no observations this far back", which
+ * is a claim about the warehouse made out of a failed query. Absence of a capability makes no
+ * claim at all -- it is the state these five streams were already in -- so a broken stream read
+ * costs the sliders and lies about nothing.
+ */
+async function readStreamCapabilities(): Promise<ResolvedSliderLayerCapability[]> {
+  const cached = cachedStreamCapabilities;
+  const isFresh = cached !== null && cached.expiresAtMs > Date.now();
+  if (isFresh) return cached.layers;
+
+  if (streamCapabilitiesInFlight === null) {
+    streamCapabilitiesInFlight = readStreamObservationWindows()
+      .then((windows) => {
+        const layers = [...windows.values()].map(buildCapability);
+        cachedStreamCapabilities = {
+          expiresAtMs: Date.now() + STREAM_CAPABILITIES_CACHE_TTL_MS,
+          layers,
+        };
+        return layers;
+      })
+      .finally(() => {
+        streamCapabilitiesInFlight = null;
+      });
+  }
+  // A stale list is served immediately and the refresh above finishes on its own. Only a cold
+  // start has nothing to serve, and only then does a caller wait.
+  if (cached !== null) {
+    // Nothing awaits the refresh on this path, so its rejection has to be absorbed here or it
+    // surfaces as an unhandled rejection and, under Next.js, can take the worker down.
+    void streamCapabilitiesInFlight.catch(() => undefined);
+    return cached.layers;
+  }
+  return streamCapabilitiesInFlight.catch(() => []);
+}
+
+/**
+ * Every capability, with the streams that have no `geo.layers` row appended.
+ *
+ * A stream name that a `geo.layers` row already published is DROPPED rather than appended:
+ * `findLayerCapability` resolves a name to the first match, so two rows sharing one name would
+ * make which axis a layer draws depend on array order. `SLIDER_STREAM_LAYER_NAMES` is chosen to
+ * make this unreachable; the guard is here so that a future `geo.layers` row taking one of
+ * those names degrades to "the warehouse layer wins" instead of to an ambiguous payload.
+ */
+function mergeStreamCapabilities(
+  layers: ResolvedSliderLayerCapability[],
+  streams: ResolvedSliderLayerCapability[]
+): ResolvedSliderLayerCapability[] {
+  const published = new Set(layers.map((layer) => layer.layerName));
+  return [...layers, ...streams.filter((stream) => !published.has(stream.layerName))];
+}
+
+/**
  * What the slider may offer, and what day the server thinks it is.
- * One capability per geo.layers row; layers with no mappable observation report a
- * null earliestObservedDate rather than being omitted, so the UI can distinguish
- * "this layer exists but has no history" from "this layer does not exist".
+ * One capability per geo.layers row plus one per non-geo.features stream; a stream with no
+ * mappable observation reports a null earliestObservedDate rather than being omitted, so the
+ * UI can distinguish "this layer exists but has no history" from "this layer does not exist".
  *
  * serverCurrentDate is stamped on every call, never cached with the layers: a payload held
- * across UTC midnight would otherwise keep reporting yesterday as today.
+ * across UTC midnight would otherwise keep reporting yesterday as today. `coverageGaps` is
+ * closed against that same fresh day for the same reason -- see closeCoverageGapsAtLiveEdge.
+ *
+ * The two reads are sequenced, not raced: the geo.features scan is the one every layer depends
+ * on, and it must not queue behind the far heavier stream pass on a cold connection pool.
  */
 export async function getSliderCapabilities(): Promise<ResolvedSliderCapabilities> {
+  const today = serverCurrentDate();
+  const layers = await readLayerCapabilities();
+  const streams = await readStreamCapabilities();
   return {
-    serverCurrentDate: serverCurrentDate(),
+    serverCurrentDate: today,
     futureAxisDays: FUTURE_AXIS_DAYS,
-    layers: await readLayerCapabilities(),
+    layers: mergeStreamCapabilities(layers, streams).map((layer) =>
+      closeCoverageGapsAtLiveEdge(layer, today)
+    ),
   };
 }
 

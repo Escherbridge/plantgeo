@@ -15,8 +15,8 @@ import { ManagerRail } from "./layer-panel/ManagerRail";
 import { LayerPanel } from "./layer-panel/LayerPanel";
 import LayerManager from "./LayerManager";
 import HoverTooltip from "./HoverTooltip";
+import { MapDateSummary } from "./MapDateSummary";
 import TimeSliderCapabilitiesLoader from "./TimeSliderCapabilitiesLoader";
-import TimeDatePill from "./TimeDatePill";
 import { ServiceAreaLayer } from "./ServiceAreaLayer";
 import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
 import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
@@ -321,25 +321,30 @@ export default function MapView() {
                 in one row. Mounted before the panel so the panel paints over its shadow
                 rather than under it; it renders nothing while the panel is open. */}
             <ManagerRail />
-            {/* The one control surface on this map: search, the map date, render mode, every
-                layer switch, every opacity slider and every former right-hand sheet, in one
+            {/* The one control surface on this map: search, render mode, every layer switch
+                with its own opacity and date sliders, and every former right-hand sheet, in one
                 left-edge column. See src/components/map/AGENTS.md "One manager, no floating
-                surfaces". */}
+                surfaces". Its dates are CONTROLS and it is closable; `MapDateSummary` below
+                states them and is not. */}
             <LayerPanel />
             {/* Mounted before LayerManager so its style.load handler registers
                 first -- see the ordering note in ServiceAreaLayer.tsx. */}
             <ServiceAreaLayer map={mapInstance} />
             <LayerManager />
+            {/* The one thing about time that never leaves the screen: what the drawn layers are
+                showing, and whether that is one day or several. It replaced `TimeDatePill` on
+                2026-08-09 -- the pill asserted the map's ONE date, and there is no such date now
+                -- but the invariant the pill carried survives it: a date that silently filters
+                what is drawn cannot be something a reader opens a panel to find. The per-layer
+                controls live on the dock's rows; this states and never sets. */}
+            <MapDateSummary />
             {/* Headless and always mounted: the only read of
-                environmental.getSliderCapabilities, whose payload is the store's day and the
-                whole axis. It cannot live in the dock's Time section, because the dock can be
-                closed -- and a closed dock unmounts -- while the day it supplies keys every
+                environmental.getSliderCapabilities, whose payload carries every layer's axis
+                and the server's today. Capabilities stay GLOBAL even though the days are now
+                per layer -- one payload feeds every row's slider -- and it cannot live in the
+                dock, because a closed dock unmounts while the days it supplies still key every
                 warehouse-backed query on this map. */}
             <TimeSliderCapabilitiesLoader />
-            {/* The scrubber itself is a section of the manager above. What stays out here is
-                the claim: the map draws one day, every layer draws as of it, so its marker must
-                never leave the screen. Clicking the pill opens the manager at that section. */}
-            <TimeDatePill />
             <HoverTooltip map={mapInstance} />
             {isAIOpen && <RegionalIntelligencePanel />}
             {agentCoords && (

@@ -4,7 +4,6 @@ import {
   BarChart3,
   Bell,
   Building2,
-  CalendarDays,
   CloudSun,
   Droplets,
   Flame,
@@ -69,9 +68,10 @@ const DOCK_SECTION_ICON_COMPONENTS: Record<DockSectionKey, LucideIcon> = {
   // The magnifier the floating search field wore before it became this section, so the
   // control a reader is looking for is marked the way they last saw it.
   search: Search,
-  // The same calendar the top-bar date pill wears, so the pill and the section it opens are
-  // visibly one control split across two places.
-  time: CalendarDays,
+  // No "time" glyph. That section held one scrubber for the whole map and was replaced on
+  // 2026-08-09 by a slider on every layer row, so there is no map-wide date section left to mark
+  // -- and a calendar in this gutter would advertise one.
+  //
   // Render mode -- basemap, terrain, globe, tilt -- is how the same data is LIT, which is the
   // one thing every control in that section has in common.
   view: SunMoon,

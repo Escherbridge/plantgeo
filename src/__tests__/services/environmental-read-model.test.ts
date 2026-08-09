@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Two seams into the warehouse, both stubbed so nothing here touches a real database:
@@ -197,62 +197,108 @@ describe("serverCurrentDate", () => {
   });
 });
 
-describe("getSliderCapabilities -- the 36-year trap", () => {
-  /** One observed day and how many observations landed on it. */
-  type ObservedDay = readonly [day: string, observationCount: number];
+/** One observed day and how many observations landed on it. */
+type ObservedDay = readonly [day: string, observationCount: number];
 
-  /** Mirrors OBSERVATION_CLUSTER_GAP_DAYS in environmental-read-model.ts. */
-  const GAP_THRESHOLD_DAYS = 21;
-  /** Mirrors OBSERVATION_DENSITY_FLOOR_FRACTION in environmental-read-model.ts. */
-  const DENSITY_FLOOR_FRACTION = 0.01;
+/** Mirrors OBSERVATION_CLUSTER_GAP_DAYS in environmental-read-model.ts. */
+const GAP_THRESHOLD_DAYS = 21;
+/** Mirrors OBSERVATION_DENSITY_FLOOR_FRACTION in environmental-read-model.ts. */
+const DENSITY_FLOOR_FRACTION = 0.01;
+/** Mirrors MAX_REPORTED_DAY_RANGES in environmental-read-model.ts. */
+const MAX_REPORTED_DAY_RANGES = 800;
 
-  /**
-   * Reimplements BOTH axis rules embedded in readObservationWindows' SQL -- continuity
-   * clustering, then the density floor over the newest cluster -- so a fixture mirroring
-   * production's real day/count distribution can be turned into the row shape the database
-   * is documented to hand back, without a database.
-   */
-  function summarizeObservedDays(sortedDays: readonly ObservedDay[]) {
-    if (sortedDays.length === 0) {
-      return {
-        layer_name: "",
-        dense_earliest_day: null,
-        clustered_earliest_day: null,
-        recorded_earliest_day: null,
-        dense_day_count: 0,
-        clustered_day_count: 0,
-        recorded_day_count: 0,
-        density_floor: null,
-      };
-    }
-    let clusterIndex = 0;
-    let previousMs: number | null = null;
-    const clusterIndexes: number[] = [];
-    for (const [day] of sortedDays) {
-      const currentMs = Date.parse(`${day}T00:00:00Z`);
-      const gapDays = previousMs === null ? null : (currentMs - previousMs) / 86_400_000;
-      if (gapDays === null || gapDays > GAP_THRESHOLD_DAYS) clusterIndex += 1;
-      clusterIndexes.push(clusterIndex);
-      previousMs = currentMs;
-    }
-    const newestCluster = sortedDays.filter(
-      (_day, index) => clusterIndexes[index] === clusterIndex
-    );
-    const peakCount = Math.max(...newestCluster.map(([, count]) => count));
-    const densityFloor = Math.max(1, Math.ceil(peakCount * DENSITY_FLOOR_FRACTION));
-    const denseDays = newestCluster.filter(([, count]) => count >= densityFloor);
+/** Adds whole days to a YYYY-MM-DD string in UTC. */
+function addDays(day: string, dayCount: number): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + dayCount * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Reimplements EVERY axis rule embedded in readObservationWindows' SQL -- continuity
+ * clustering, the density floor over the newest cluster, then the coverage gaps and thin
+ * ranges derived from the days that survive both -- so a fixture mirroring production's real
+ * day/count distribution can be turned into the row shape the database is documented to hand
+ * back, without a database.
+ *
+ * The gap and thin derivations must stay the SQL's twins, not merely plausible: gaps are read
+ * off the step between adjacent axis days, and a thin range breaks on an unpublished day as
+ * well as on a dense one, which is what keeps a thin range abutting a gap instead of
+ * swallowing it.
+ */
+function summarizeObservedDays(sortedDays: readonly ObservedDay[]) {
+  if (sortedDays.length === 0) {
     return {
       layer_name: "",
-      dense_earliest_day: denseDays[0]?.[0] ?? null,
-      clustered_earliest_day: newestCluster[0]?.[0] ?? null,
-      recorded_earliest_day: sortedDays[0][0],
-      dense_day_count: denseDays.length,
-      clustered_day_count: newestCluster.length,
-      recorded_day_count: sortedDays.length,
-      density_floor: densityFloor,
+      dense_earliest_day: null,
+      clustered_earliest_day: null,
+      recorded_earliest_day: null,
+      dense_latest_day: null,
+      recorded_latest_day: null,
+      dense_day_count: 0,
+      clustered_day_count: 0,
+      recorded_day_count: 0,
+      density_floor: null,
+      coverage_gaps: [] as Array<{ from: string; to: string }>,
+      thin_ranges: [] as Array<{ from: string; to: string }>,
     };
   }
+  let clusterIndex = 0;
+  let previousMs: number | null = null;
+  const clusterIndexes: number[] = [];
+  for (const [day] of sortedDays) {
+    const currentMs = Date.parse(`${day}T00:00:00Z`);
+    const gapDays = previousMs === null ? null : (currentMs - previousMs) / 86_400_000;
+    if (gapDays === null || gapDays > GAP_THRESHOLD_DAYS) clusterIndex += 1;
+    clusterIndexes.push(clusterIndex);
+    previousMs = currentMs;
+  }
+  const newestCluster = sortedDays.filter(
+    (_day, index) => clusterIndexes[index] === clusterIndex
+  );
+  const peakCount = Math.max(...newestCluster.map(([, count]) => count));
+  const densityFloor = Math.max(1, Math.ceil(peakCount * DENSITY_FLOOR_FRACTION));
+  const denseDays = newestCluster.filter(([, count]) => count >= densityFloor);
+  const axisStart = denseDays[0]?.[0] ?? null;
+  const axis = axisStart === null ? [] : newestCluster.filter(([day]) => day >= axisStart);
 
+  const coverageGaps: Array<{ from: string; to: string }> = [];
+  for (let index = 1; index < axis.length; index += 1) {
+    const previousDay = axis[index - 1][0];
+    const currentDay = axis[index][0];
+    if (addDays(previousDay, 1) !== currentDay) {
+      coverageGaps.push({ from: addDays(previousDay, 1), to: addDays(currentDay, -1) });
+    }
+  }
+
+  const thinRanges: Array<{ from: string; to: string }> = [];
+  for (const [day, count] of axis) {
+    if (count >= densityFloor) continue;
+    const openRange = thinRanges[thinRanges.length - 1];
+    if (openRange !== undefined && addDays(openRange.to, 1) === day) openRange.to = day;
+    else thinRanges.push({ from: day, to: day });
+  }
+
+  return {
+    layer_name: "",
+    dense_earliest_day: axisStart,
+    clustered_earliest_day: newestCluster[0]?.[0] ?? null,
+    recorded_earliest_day: sortedDays[0][0],
+    dense_latest_day: denseDays[denseDays.length - 1]?.[0] ?? null,
+    recorded_latest_day: sortedDays[sortedDays.length - 1][0],
+    dense_day_count: denseDays.length,
+    clustered_day_count: newestCluster.length,
+    recorded_day_count: sortedDays.length,
+    density_floor: densityFloor,
+    coverage_gaps: coverageGaps,
+    thin_ranges: thinRanges,
+  };
+}
+
+/** One layer's window row as readObservationWindows is documented to return it. */
+function layerWindowRow(layerName: string, days: readonly ObservedDay[]) {
+  return { ...summarizeObservedDays(days), layer_name: layerName };
+}
+
+describe("getSliderCapabilities -- the 36-year trap", () => {
   /**
    * Real production water-gauges distribution, measured 2026-08-04. Discontinued gauges carry
    * the timestamp of their final-ever reading, so the record starts 1990-09-30; the modern
@@ -366,10 +412,14 @@ describe("getSliderCapabilities -- the 36-year trap", () => {
         dense_earliest_day: "2026-08-02",
         clustered_earliest_day: "2026-08-02",
         recorded_earliest_day: "2026-08-02",
+        dense_latest_day: "2026-08-04",
+        recorded_latest_day: "2026-08-04",
         dense_day_count: 3,
         clustered_day_count: 3,
         recorded_day_count: 3,
         density_floor: 63,
+        coverage_gaps: [],
+        thin_ranges: [],
       },
     ]);
 
@@ -389,10 +439,14 @@ describe("getSliderCapabilities -- the 36-year trap", () => {
         dense_earliest_day: null,
         clustered_earliest_day: null,
         recorded_earliest_day: null,
+        dense_latest_day: null,
+        recorded_latest_day: null,
         dense_day_count: 0,
         clustered_day_count: 0,
         recorded_day_count: 0,
         density_floor: null,
+        coverage_gaps: [],
+        thin_ranges: [],
       },
     ]);
 
@@ -419,7 +473,9 @@ describe("getSliderCapabilities -- the 36-year trap", () => {
     ]);
     await getSliderCapabilities();
 
-    expect(dbExecute).toHaveBeenCalledTimes(1);
+    // Two scans, not two per caller: the geo.features window and the non-geo.features stream
+    // window, each behind its own single-flight guard and its own TTL.
+    expect(dbExecute).toHaveBeenCalledTimes(2);
     expect(second.layers).toEqual(first.layers);
     expect(third.layers).toEqual(first.layers);
   });
@@ -475,6 +531,662 @@ describe("the capability scan is typed for Postgres, not only for TypeScript", (
   });
 });
 
+describe("each layer reports its own axis: latest day, coverage gaps, thin ranges", () => {
+  /** Enough observations that the 1% floor lands at 10, so a thin day can be written as < 10. */
+  const DENSE = 1_000;
+  /** Below the floor derived from DENSE: published, but not a day worth opening the map on. */
+  const THIN = 5;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Resolves one layer's capability from a day/count fixture, on a fixed server day. */
+  async function capabilityFor(
+    layerName: string,
+    days: readonly ObservedDay[],
+    today: string
+  ) {
+    vi.setSystemTime(Date.parse(`${today}T12:00:00Z`));
+    dbExecute.mockResolvedValueOnce([layerWindowRow(layerName, days)]);
+    const capabilities = await getSliderCapabilities();
+    const layer = capabilities.layers.find((candidate) => candidate.layerName === layerName);
+    if (!layer) throw new Error(`expected a ${layerName} capability in the response`);
+    return layer;
+  }
+
+  it("reports a hole in the middle of the axis as one closed range", async () => {
+    const layer = await capabilityFor(
+      "vegetation",
+      [
+        ["2026-08-01", DENSE],
+        ["2026-08-02", DENSE],
+        ["2026-08-06", DENSE],
+        ["2026-08-07", DENSE],
+      ],
+      "2026-08-07"
+    );
+
+    // Both ends inclusive: the hole is 08-03, 08-04 and 08-05, and the days either side of it
+    // are published. A half-open range here would silently claim 08-06 has nothing.
+    expect(layer.coverageGaps).toEqual([{ from: "2026-08-03", to: "2026-08-05" }]);
+    expect(layer.thinRanges).toEqual([]);
+    expect(layer.earliestObservedDate).toBe("2026-08-01");
+    expect(layer.latestObservedDate).toBe("2026-08-07");
+  });
+
+  it("reports a hole at the head of the axis, starting the day after the axis begins", async () => {
+    const layer = await capabilityFor(
+      "vegetation",
+      [
+        ["2026-08-01", DENSE],
+        ["2026-08-05", DENSE],
+        ["2026-08-06", DENSE],
+        ["2026-08-07", DENSE],
+      ],
+      "2026-08-07"
+    );
+
+    expect(layer.earliestObservedDate).toBe("2026-08-01");
+    expect(layer.coverageGaps).toEqual([{ from: "2026-08-02", to: "2026-08-04" }]);
+    // The axis cannot open on a hole: earliestObservedDate is itself an observed day, so the
+    // earliest gap can only ever start the day after it.
+    expect(layer.coverageGaps[0]?.from).toBe(addDays(layer.earliestObservedDate ?? "", 1));
+  });
+
+  it("reports a hole at the tail running to the server's today, not to the last day that landed", async () => {
+    const layer = await capabilityFor(
+      "vegetation",
+      [
+        ["2026-08-01", DENSE],
+        ["2026-08-02", DENSE],
+        ["2026-08-03", DENSE],
+        ["2026-08-04", DENSE],
+      ],
+      "2026-08-09"
+    );
+
+    // A stalled ingest lane is the case this exists for: without the trailing range the axis
+    // just ends at 08-04 and reads as "the record stops here", which is a different claim.
+    expect(layer.coverageGaps).toEqual([{ from: "2026-08-05", to: "2026-08-09" }]);
+    expect(layer.latestObservedDate).toBe("2026-08-04");
+  });
+
+  it("closes the trailing gap against a freshly stamped today, never against the cached rows", async () => {
+    dbExecute.mockResolvedValue([
+      layerWindowRow("vegetation", [
+        ["2026-08-01", DENSE],
+        ["2026-08-02", DENSE],
+      ]),
+    ]);
+
+    vi.setSystemTime(Date.parse("2026-08-02T23:58:00Z"));
+    const before = await getSliderCapabilities();
+    // Three minutes later it is the next UTC day, and the layer list is still memoized.
+    vi.setSystemTime(Date.parse("2026-08-03T00:01:00Z"));
+    const after = await getSliderCapabilities();
+
+    // One geo.features window scan and one stream window scan, both still memoized.
+    expect(dbExecute).toHaveBeenCalledTimes(2);
+    expect(before.layers[0]?.coverageGaps).toEqual([]);
+    expect(after.layers[0]?.coverageGaps).toEqual([{ from: "2026-08-03", to: "2026-08-03" }]);
+  });
+
+  it("reports no gaps at all for an unbroken axis that reaches today", async () => {
+    const layer = await capabilityFor(
+      "vegetation",
+      [
+        ["2026-08-01", DENSE],
+        ["2026-08-02", DENSE],
+        ["2026-08-03", DENSE],
+        ["2026-08-04", DENSE],
+        ["2026-08-05", DENSE],
+      ],
+      "2026-08-05"
+    );
+
+    expect(layer.coverageGaps).toEqual([]);
+    expect(layer.thinRanges).toEqual([]);
+    expect(layer.coverageGapsTruncated).toBe(false);
+  });
+
+  it("fabricates no range at all for a layer with no observations", async () => {
+    const layer = await capabilityFor("sensors", [], "2026-08-09");
+
+    // The tempting bug is a gap from nothing to today, which would assert a hole in a record
+    // that was never opened. A layer with no axis has nothing to say about coverage.
+    expect(layer.latestObservedDate).toBeNull();
+    expect(layer.earliestObservedDate).toBeNull();
+    expect(layer.coverageGaps).toEqual([]);
+    expect(layer.thinRanges).toEqual([]);
+  });
+
+  it("keeps two gaps separated by a single published day apart, never merging across it", async () => {
+    const layer = await capabilityFor(
+      "vegetation",
+      [
+        ["2026-08-01", DENSE],
+        ["2026-08-03", DENSE],
+        ["2026-08-05", DENSE],
+      ],
+      "2026-08-05"
+    );
+
+    expect(layer.coverageGaps).toEqual([
+      { from: "2026-08-02", to: "2026-08-02" },
+      { from: "2026-08-04", to: "2026-08-04" },
+    ]);
+    // Merging these into 08-02..08-04 would report a day the warehouse published as a hole.
+    for (const gap of layer.coverageGaps) {
+      expect(gap.from <= "2026-08-03" && "2026-08-03" <= gap.to).toBe(false);
+    }
+  });
+
+  it("lets a thin range abut a gap rather than swallow it", async () => {
+    const layer = await capabilityFor(
+      "water-gauges",
+      [
+        ["2026-08-01", DENSE],
+        ["2026-08-02", THIN],
+        ["2026-08-03", THIN],
+        ["2026-08-06", THIN],
+        ["2026-08-07", DENSE],
+      ],
+      "2026-08-07"
+    );
+
+    // 08-02 and 08-03 are consecutive thin days and collapse; 08-06 is thin too but an
+    // unpublished stretch sits between them, so it opens its own range. A thin run that ran
+    // 08-02..08-06 would overlap the gap and describe 08-04 as both published and absent.
+    expect(layer.thinRanges).toEqual([
+      { from: "2026-08-02", to: "2026-08-03" },
+      { from: "2026-08-06", to: "2026-08-06" },
+    ]);
+    expect(layer.coverageGaps).toEqual([{ from: "2026-08-04", to: "2026-08-05" }]);
+    expect(addDays(layer.thinRanges[0].to, 1)).toBe(layer.coverageGaps[0].from);
+    expect(addDays(layer.coverageGaps[0].to, 1)).toBe(layer.thinRanges[1].from);
+  });
+
+  it("returns both lists sorted, and never overlapping each other", async () => {
+    const layer = await capabilityFor(
+      "water-gauges",
+      [
+        ["2026-08-01", DENSE],
+        ["2026-08-02", THIN],
+        ["2026-08-03", THIN],
+        ["2026-08-06", THIN],
+        ["2026-08-07", DENSE],
+      ],
+      "2026-08-10"
+    );
+
+    for (const ranges of [layer.coverageGaps, layer.thinRanges]) {
+      expect(ranges.map((range) => range.from)).toEqual(
+        [...ranges].sort((left, right) => (left.from < right.from ? -1 : 1)).map((range) => range.from)
+      );
+      for (const range of ranges) expect(range.from <= range.to).toBe(true);
+    }
+
+    const merged = [...layer.coverageGaps, ...layer.thinRanges].sort((left, right) =>
+      left.from < right.from ? -1 : 1
+    );
+    for (let index = 1; index < merged.length; index += 1) {
+      expect(merged[index - 1].to < merged[index].from).toBe(true);
+    }
+    expect(merged).toHaveLength(4);
+  });
+
+  it("opens on the newest day at the axis floor, never on a still-filling live edge", async () => {
+    const layer = await capabilityFor(
+      "water-gauges",
+      [
+        ["2026-08-01", DENSE],
+        ["2026-08-02", DENSE],
+        ["2026-08-03", 3],
+      ],
+      "2026-08-03"
+    );
+
+    // 08-03 is published and stays on the axis; it is simply not the day to open on, because a
+    // 3-reading national map looks exactly like an outage. It is marked, not hidden.
+    expect(layer.latestObservedDate).toBe("2026-08-02");
+    expect(layer.latestRecordedObservationDate).toBe("2026-08-03");
+    expect(layer.thinRanges).toEqual([{ from: "2026-08-03", to: "2026-08-03" }]);
+    // And it is a published day, so it is not also reported as a hole.
+    expect(layer.coverageGaps).toEqual([]);
+  });
+
+  it("calls a day thin by the same floor the axis start used, not by a second definition", async () => {
+    const layer = await capabilityFor(
+      "water-gauges",
+      [
+        ["2026-08-01", DENSE],
+        ["2026-08-02", 9],
+        ["2026-08-03", 10],
+        ["2026-08-04", DENSE],
+      ],
+      "2026-08-04"
+    );
+
+    // Floor is 1% of the layer's own 1,000-observation peak = 10, and it is inclusive at both
+    // the axis start and here: 10 anchors, 9 does not.
+    expect(layer.minimumDailyObservationCount).toBe(10);
+    expect(layer.thinRanges).toEqual([{ from: "2026-08-02", to: "2026-08-02" }]);
+  });
+
+  it("keeps the newest ranges and says so when it dropped older ones", async () => {
+    // One published day in two, for ten more days than the report carries: every hole is a
+    // single day, so the fixture emits MAX_REPORTED_DAY_RANGES + 10 of them.
+    const publishedDayCount = MAX_REPORTED_DAY_RANGES + 11;
+    const alternatingDays: ObservedDay[] = Array.from(
+      { length: publishedDayCount },
+      (_value, index) => [addDays("2020-01-01", index * 2), DENSE]
+    );
+    const lastPublishedDay = alternatingDays[alternatingDays.length - 1][0];
+    const layer = await capabilityFor("vegetation", alternatingDays, lastPublishedDay);
+
+    expect(layer.coverageGaps).toHaveLength(MAX_REPORTED_DAY_RANGES);
+    expect(layer.coverageGapsTruncated).toBe(true);
+    // The right-hand edge is what a scrubbing user is looking at, so that is what survives.
+    const newestGap = layer.coverageGaps[layer.coverageGaps.length - 1];
+    expect(newestGap.from).toBe(addDays(lastPublishedDay, -1));
+    expect(newestGap.to).toBe(addDays(lastPublishedDay, -1));
+    // And the day the surviving list stops describing is reported, not merely the fact that
+    // it stops: below this the axis draws clean while a dropped hole hides under it.
+    expect(layer.describedFromDay).toBe(layer.coverageGaps[0].from);
+  });
+
+  it("accepts the jsonb array as text and drops an entry it cannot read as two calendar days", async () => {
+    vi.setSystemTime(Date.parse("2026-08-04T12:00:00Z"));
+    dbExecute.mockResolvedValueOnce([
+      {
+        ...layerWindowRow("vegetation", [
+          ["2026-08-01", DENSE],
+          ["2026-08-04", DENSE],
+        ]),
+        // postgres-js parses jsonb for us today; a driver that handed back the text instead
+        // must not silently turn the whole axis report into an empty one.
+        coverage_gaps: '[{"from":"2026-08-02","to":"2026-08-03"}]',
+        thin_ranges: [
+          { from: "not-a-day", to: "2026-08-02" },
+          { from: "2026-08-03", to: "2026-08-02" },
+          { from: "2026-08-02", to: "2026-08-02" },
+        ],
+      },
+    ]);
+
+    const layer = (await getSliderCapabilities()).layers[0];
+    expect(layer.coverageGaps).toEqual([{ from: "2026-08-02", to: "2026-08-03" }]);
+    // A malformed range is dropped rather than repaired: an invented endpoint would put a
+    // marking on the axis the warehouse never asked for.
+    expect(layer.thinRanges).toEqual([{ from: "2026-08-02", to: "2026-08-02" }]);
+  });
+});
+
+/** `count` one-day ranges, every other day from `startDay`; the shape a pathological lane has. */
+function alternatingDayRanges(count: number, startDay: string) {
+  return Array.from({ length: count }, (_unused, index) => {
+    const day = addDays(startDay, index * 2);
+    return { from: day, to: day };
+  });
+}
+
+/** A window row with the range lists written directly, so a cap can be driven past its limit. */
+function windowRowWithRanges(fields: {
+  layerName: string;
+  earliestDay: string;
+  latestDay: string;
+  coverageGaps?: Array<{ from: string; to: string }>;
+  thinRanges?: Array<{ from: string; to: string }>;
+}) {
+  return {
+    layer_name: fields.layerName,
+    dense_earliest_day: fields.earliestDay,
+    clustered_earliest_day: fields.earliestDay,
+    recorded_earliest_day: fields.earliestDay,
+    dense_latest_day: fields.latestDay,
+    recorded_latest_day: fields.latestDay,
+    dense_day_count: 2,
+    clustered_day_count: 2,
+    recorded_day_count: 2,
+    density_floor: 10,
+    coverage_gaps: fields.coverageGaps ?? [],
+    thin_ranges: fields.thinRanges ?? [],
+  };
+}
+
+describe("a truncated range list says which day it stopped describing, not merely that it did", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Resolves one capability with today pinned to `latestDay`, so no trailing gap is appended. */
+  async function capabilityFrom(row: ReturnType<typeof windowRowWithRanges>) {
+    vi.setSystemTime(Date.parse(`${row.recorded_latest_day}T12:00:00Z`));
+    dbExecute.mockResolvedValueOnce([row]);
+    const layer = (await getSliderCapabilities()).layers.find(
+      (candidate) => candidate.layerName === row.layer_name
+    );
+    if (!layer) throw new Error(`expected a ${row.layer_name} capability in the response`);
+    return layer;
+  }
+
+  it("reports a describedFromDay that actually bounds the ranges it kept", async () => {
+    const gapCount = MAX_REPORTED_DAY_RANGES + 40;
+    const gaps = alternatingDayRanges(gapCount, "2022-01-02");
+    const layer = await capabilityFrom(
+      windowRowWithRanges({
+        layerName: "vegetation",
+        earliestDay: "2022-01-01",
+        latestDay: addDays(gaps[gapCount - 1].to, 1),
+        coverageGaps: gaps,
+      })
+    );
+
+    expect(layer.coverageGapsTruncated).toBe(true);
+    expect(layer.coverageGaps).toHaveLength(MAX_REPORTED_DAY_RANGES);
+    // The boundary IS the oldest surviving range's own start day, and every kept range is at
+    // or after it -- so a consumer that refuses to read the lists below the boundary refuses
+    // exactly the region where a dropped gap could be hiding.
+    expect(layer.describedFromDay).toBe(layer.coverageGaps[0].from);
+    expect(layer.coverageGaps.filter((gap) => gap.from < layer.describedFromDay!)).toEqual([]);
+    // ...and the undescribed region is real: the axis starts well before the boundary, which
+    // is what the old boolean flag could never say.
+    expect(layer.earliestObservedDate! < layer.describedFromDay!).toBe(true);
+    expect(layer.coverageGaps.some((gap) => gap.from === gaps[0].from)).toBe(false);
+  });
+
+  it("reports a null boundary for a layer whose lists describe its whole axis", async () => {
+    const layer = await capabilityFrom(
+      windowRowWithRanges({
+        layerName: "vegetation",
+        earliestDay: "2026-08-01",
+        latestDay: "2026-08-09",
+        coverageGaps: [{ from: "2026-08-03", to: "2026-08-04" }],
+        thinRanges: [{ from: "2026-08-06", to: "2026-08-06" }],
+      })
+    );
+
+    expect(layer.coverageGapsTruncated).toBe(false);
+    expect(layer.thinRangesTruncated).toBe(false);
+    expect(layer.describedFromDay).toBeNull();
+  });
+
+  it("takes the stricter of the two lists' boundaries, because a day must be described by both", async () => {
+    // Thin ranges are truncated far more recently than coverage gaps here. A day between the
+    // two boundaries is described by the gap list and NOT by the thin list, so it is not
+    // described: reporting the older boundary would license reading the thin list there.
+    const layer = await capabilityFrom(
+      windowRowWithRanges({
+        layerName: "vegetation",
+        earliestDay: "2022-01-01",
+        latestDay: "2030-12-31",
+        coverageGaps: alternatingDayRanges(MAX_REPORTED_DAY_RANGES + 1, "2022-01-02"),
+        thinRanges: alternatingDayRanges(MAX_REPORTED_DAY_RANGES + 1, "2026-01-02"),
+      })
+    );
+
+    expect(layer.coverageGapsTruncated).toBe(true);
+    expect(layer.thinRangesTruncated).toBe(true);
+    expect(layer.describedFromDay).toBe(layer.thinRanges[0].from);
+    expect(layer.describedFromDay! > layer.coverageGaps[0].from).toBe(true);
+  });
+
+  it("never reports a boundary the caller did not compute, whichever path built the row", async () => {
+    // The flag used to be hardcoded false in buildCapability and only set truthfully inside
+    // closeCoverageGapsAtLiveEdge, so any caller not going through getSliderCapabilities was
+    // told nothing had been dropped. Both fields are now decided in one place.
+    const gaps = alternatingDayRanges(MAX_REPORTED_DAY_RANGES + 5, "2022-01-02");
+    const lastObservedDay = addDays(gaps[gaps.length - 1].to, 1);
+    dbExecute.mockResolvedValueOnce([
+      windowRowWithRanges({
+        layerName: "vegetation",
+        earliestDay: "2022-01-01",
+        latestDay: lastObservedDay,
+        coverageGaps: gaps,
+      }),
+    ]);
+    // Ten days after the last observation, so the live-edge gap is appended on top of a list
+    // that was ALREADY at the cap.
+    vi.setSystemTime(Date.parse(`${addDays(lastObservedDay, 10)}T12:00:00Z`));
+
+    const layer = (await getSliderCapabilities()).layers[0];
+    expect(layer.coverageGaps).toHaveLength(MAX_REPORTED_DAY_RANGES);
+    expect(layer.coverageGapsTruncated).toBe(true);
+    // The trailing gap survives -- it is the newest hole and the one worth seeing -- and the
+    // boundary moved forward by the range that fell off the other end to make room for it.
+    expect(layer.coverageGaps[layer.coverageGaps.length - 1]).toEqual({
+      from: addDays(lastObservedDay, 1),
+      to: addDays(lastObservedDay, 10),
+    });
+    expect(layer.describedFromDay).toBe(layer.coverageGaps[0].from);
+    expect(layer.describedFromDay! > gaps[4].from).toBe(true);
+  });
+});
+
+describe("the streams that are not geo.features layers get an axis of their own", () => {
+  /** The fixtures below publish through 2026-08-03, so today is pinned there: a live-edge
+   * gap is closeCoverageGapsAtLiveEdge's own subject and has its own tests. */
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-08-03T12:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Routes each scan to its own fixture: one mock serves both statements. */
+  function respondWith(fixtures: { features?: unknown[]; streams?: unknown[] }) {
+    dbExecute.mockImplementation((...args: unknown[]) =>
+      Promise.resolve(
+        renderSqlText(args[0]).includes("JOIN geo.features f")
+          ? (fixtures.features ?? [])
+          : (fixtures.streams ?? [])
+      )
+    );
+  }
+
+  const STREAM_NAMES = [
+    "drought-areas",
+    "soil-field-moisture",
+    "soil-field-temperature",
+    "soil-field-vpd",
+    "climate-field",
+  ];
+
+  it("publishes a capability for drought, the three soil measures and the climate field", async () => {
+    respondWith({
+      features: [layerWindowRow("vegetation", [["2026-08-03", 1_000]])],
+      streams: STREAM_NAMES.map((layerName) =>
+        layerWindowRow(layerName, [
+          ["2026-08-01", 1_568],
+          ["2026-08-02", 1_568],
+          ["2026-08-03", 1_568],
+        ])
+      ),
+    });
+
+    const capabilities = await getSliderCapabilities();
+    const byName = new Map(capabilities.layers.map((layer) => [layer.layerName, layer]));
+
+    for (const layerName of STREAM_NAMES) {
+      const stream = byName.get(layerName);
+      if (!stream) throw new Error(`expected a ${layerName} capability in the response`);
+      // A real axis, not a placeholder: the same four fields every geo.features layer reports.
+      expect({
+        layerName,
+        earliest: stream.earliestObservedDate,
+        latest: stream.latestObservedDate,
+        gaps: stream.coverageGaps,
+        thin: stream.thinRanges,
+        kind: stream.temporalKind,
+      }).toEqual({
+        layerName,
+        earliest: "2026-08-01",
+        latest: "2026-08-03",
+        gaps: [],
+        thin: [],
+        // `daily_series`, never `snapshot`: a snapshot defines no axis, so sliderDomain would
+        // refuse it and these five would be pinned to today all over again.
+        kind: "daily_series",
+      });
+    }
+  });
+
+  it("reads the drought releases and the two governed views, and no feature at all", async () => {
+    respondWith({});
+    await getSliderCapabilities();
+
+    const streamScan = dbExecute.mock.calls
+      .map(([statement]) => renderSqlText(statement))
+      .find((statement) => !statement.includes("JOIN geo.features f"));
+    if (streamScan === undefined) throw new Error("expected a stream window scan");
+
+    expect(streamScan).toContain("geo.drought_areas");
+    expect(streamScan).toContain("geo.soil_field_observation");
+    expect(streamScan).toContain("geo.climate_field_observation");
+    // The same pipeline as the feature lane, so a gap here means what a gap there means.
+    expect(streamScan).toContain("dense_earliest_day");
+    expect(streamScan).toContain("r.observation_count < d.density_floor");
+  });
+
+  it("dates a drought day by the release that covers it, not by the Tuesday it was valid on", async () => {
+    // USDM publishes weekly and a release stands until the next supersedes it. Feeding the
+    // valid dates raw would report six days in seven as unpublished -- an observed absence
+    // for days the record describes perfectly well.
+    respondWith({});
+    await getSliderCapabilities();
+
+    const streamScan = dbExecute.mock.calls
+      .map(([statement]) => renderSqlText(statement))
+      .find((statement) => !statement.includes("JOIN geo.features f"));
+    if (streamScan === undefined) throw new Error("expected a stream window scan");
+
+    expect(streamScan).toContain("generate_series");
+    expect(streamScan).toContain("LEAD(d.valid_date::date)");
+    // Bounded exactly as resolveDroughtRelease bounds it: the next release ends this one's
+    // coverage, and the newest release may never carry forward past today.
+    expect(streamScan).toContain("release.next_valid_date - 1");
+    expect(streamScan).toContain("(now() AT TIME ZONE 'UTC')::date");
+  });
+
+  it("omits the streams when their scan fails, rather than reporting them as empty records", async () => {
+    // A capability with a null earliestObservedDate makes the client say the stream "has no
+    // observations this far back" -- a claim about the warehouse manufactured out of a failed
+    // query. No capability makes no claim, which is the state these streams were already in.
+    dbExecute.mockImplementation((...args: unknown[]) =>
+      renderSqlText(args[0]).includes("JOIN geo.features f")
+        ? Promise.resolve([layerWindowRow("vegetation", [["2026-08-03", 1_000]])])
+        : Promise.reject(new Error("relation \"geo.soil_field_observation\" does not exist"))
+    );
+
+    const capabilities = await getSliderCapabilities();
+
+    expect(capabilities.layers.map((layer) => layer.layerName)).toEqual(["vegetation"]);
+    // Not cached, so the next call retries rather than serving the failure for a whole TTL.
+    await getSliderCapabilities();
+    const streamScans = dbExecute.mock.calls.filter(
+      ([statement]) => !renderSqlText(statement).includes("JOIN geo.features f")
+    );
+    expect(streamScans).toHaveLength(2);
+  });
+
+  it("never publishes two capabilities under one name", async () => {
+    // findLayerCapability resolves a name to the first match, so a stream sharing a
+    // geo.layers name would make which axis a layer draws depend on array order.
+    respondWith({
+      features: [layerWindowRow("vegetation", [["2026-08-03", 1_000]])],
+      streams: [
+        layerWindowRow("vegetation", [["2020-01-01", 5]]),
+        layerWindowRow("drought-areas", [["2026-08-03", 5]]),
+      ],
+    });
+
+    const capabilities = await getSliderCapabilities();
+    const names = capabilities.layers.map((layer) => layer.layerName);
+
+    expect(names).toEqual([...new Set(names)]);
+    // The geo.layers row wins: it is the one the rest of the read model resolves against.
+    expect(
+      capabilities.layers.find((layer) => layer.layerName === "vegetation")?.earliestObservedDate
+    ).toBe("2026-08-03");
+  });
+
+  it("casts the fractional density floor it binds, exactly as the feature scan does", async () => {
+    // The stream lane runs the same pipeline, so it binds the same 0.01 -- and postgres-js
+    // would resolve it against the bigint on its left and 500 the whole capabilities call.
+    respondWith({});
+    await getSliderCapabilities();
+
+    const streamScan = dbExecute.mock.calls.find(
+      ([statement]) => !renderSqlText(statement).includes("JOIN geo.features f")
+    )?.[0];
+    expectNoBareFractionalParameter(streamScan);
+  });
+});
+
+describe("the axis report is derived from the scan that already runs", () => {
+  async function captureWindowScan() {
+    dbExecute.mockResolvedValue([]);
+    await getSliderCapabilities();
+    return renderSqlText(dbExecute.mock.calls[0]?.[0]);
+  }
+
+  it("adds no second pass over the observed-day series", async () => {
+    await captureWindowScan();
+    // Gaps and thin ranges are window functions over `ranked`, which is already materialized.
+    // A second scan would be a second sequential read of geo.features on a public procedure.
+    // Counted by what each statement READS, not by call count: the stream lane runs the same
+    // pipeline over geo.drought_areas and the two model-plane views, and it touches no feature.
+    const featureScans = dbExecute.mock.calls.filter(([statement]) =>
+      renderSqlText(statement).includes("JOIN geo.features f")
+    );
+    expect(featureScans).toHaveLength(1);
+  });
+
+  it("tests thinness against the same density_floor column the axis start is chosen by", async () => {
+    const statement = await captureWindowScan();
+    expect(statement).toContain("n.observation_count >= d.density_floor");
+    expect(statement).toContain("r.observation_count < d.density_floor");
+  });
+
+  it("formats every range endpoint in SQL rather than trusting the driver's DATE decoding", async () => {
+    const statement = await captureWindowScan();
+    // Inside jsonb_build_object there is no toCalendarDate left to normalize a Date object.
+    expect(statement).toMatch(/to_char\(previous_observed_day \+ 1, 'YYYY-MM-DD'\)/);
+    expect(statement).toMatch(/to_char\(observed_day - 1, 'YYYY-MM-DD'\)/);
+  });
+
+  it("casts the row number to integer, because date minus bigint has no operator", async () => {
+    const statement = await captureWindowScan();
+    expect(statement).toMatch(/\)::integer AS island_key/);
+  });
+
+  it("returns an empty array rather than a null for a layer with no ranges", async () => {
+    const statement = await captureWindowScan();
+    // jsonb_agg over zero rows is NULL, and the contract says DayRange[], never null.
+    expect(statement).toContain("COALESCE(g.coverage_gaps, '[]'::jsonb)");
+    expect(statement).toContain("COALESCE(t.thin_ranges, '[]'::jsonb)");
+  });
+
+  it("joins the range CTEs at one row per layer, so the day counts cannot fan out", async () => {
+    const statement = await captureWindowScan();
+    // Both CTEs aggregate to one row per layer before the join; joining a per-day relation
+    // into the final FROM would multiply `ranked` and inflate dense/clustered/recorded counts.
+    expect(statement).toMatch(/AS coverage_gaps\s+FROM axis[\s\S]*?GROUP BY layer_name/);
+    expect(statement).toMatch(/AS thin_ranges\s+FROM \([\s\S]*?\) islands\s+GROUP BY layer_name/);
+    expect(statement).toContain(
+      "GROUP BY l.name, s.dense_earliest_day, g.coverage_gaps, t.thin_ranges"
+    );
+  });
+});
+
 describe("getMetricAtDate -- typed availability, never a bare empty collection", () => {
   it("reports not_published, with a reason naming the metric, for a metric with no backing source", async () => {
     const result = await getMetricAtDate({
@@ -501,10 +1213,14 @@ describe("getMetricAtDate -- typed availability, never a bare empty collection",
             dense_earliest_day: "2026-07-01",
             clustered_earliest_day: "2026-07-01",
             recorded_earliest_day: "2026-07-01",
+            dense_latest_day: "2026-08-03",
+            recorded_latest_day: "2026-08-03",
             dense_day_count: 34,
             clustered_day_count: 34,
             recorded_day_count: 34,
             density_floor: 110,
+            coverage_gaps: [],
+            thin_ranges: [],
           },
         ])
         .mockResolvedValueOnce([]);
@@ -538,10 +1254,14 @@ describe("getMetricAtDate -- typed availability, never a bare empty collection",
                   dense_earliest_day: "2026-08-02",
                   clustered_earliest_day: "2026-05-24",
                   recorded_earliest_day: "1990-09-30",
+                  dense_latest_day: "2026-08-04",
+                  recorded_latest_day: "2026-08-04",
                   dense_day_count: 3,
                   clustered_day_count: 15,
                   recorded_day_count: 22,
                   density_floor: 110,
+                  coverage_gaps: [],
+                  thin_ranges: [],
                 },
               ]
             : []

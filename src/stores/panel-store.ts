@@ -34,44 +34,46 @@ export type PanelId =
  *
  * Every member has a REPORT behind it -- `DETAILS_LABELS` and `DETAILS_BODIES` are both
  * exhaustive over this union, so a new member is a compile error in two files until it has a
- * title and a body. That is why "time" is not in here: see `DockSectionId`.
+ * title and a body. That is why "search" and "view" are not in here: see `DockSectionId`.
  */
 export type DockDetailsId = PanelId | "alerts";
 
 /**
  * Anything the manager can expand and scroll to, which is a wider set than the reports.
  *
- * "time" joined on 2026-08-08, when the scrubber moved out of the top-right region and into
- * the top of the manager's scroller. "search" and "view" joined the same way on 2026-08-09,
- * when the floating search field and the bottom toolbar were absorbed. None of the three is a
- * `DockDetailsId`, because none has a dynamically-imported report or warehouse queries of its
- * own. Widening the id vocabulary rather than the report vocabulary is what keeps
- * `DockDetailsBody`'s exhaustive record honest about what a report is.
+ * "search" and "view" joined on 2026-08-09, when the floating search field and the bottom
+ * toolbar were absorbed. Neither is a `DockDetailsId`, because neither has a
+ * dynamically-imported report or warehouse queries of its own. Widening the id vocabulary rather
+ * than the report vocabulary is what keeps `DockDetailsBody`'s exhaustive record honest about
+ * what a report is.
+ *
+ * "time" was a member for one day, from 2026-08-08 until the per-layer sliders landed on
+ * 2026-08-09. It is gone rather than merely unused: it addressed a section holding ONE scrubber
+ * for the whole map, and every layer carries its own day on its own row now. Nothing may
+ * `focusDockSection("time")` again, because there is no single date to focus.
  */
-export type DockSectionId = DockDetailsId | "search" | "time" | "view";
+export type DockSectionId = DockDetailsId | "search" | "view";
 
 /**
  * The sections a cold load opens, and the only ones that may be seeded.
  *
  * Never a report, and the reason is economics: expanding a report MOUNTS it and fires its
- * warehouse queries. These two bodies fire none. The Time section's card reads capabilities the
- * always-mounted `TimeSliderCapabilitiesLoader` fetches whether the manager is open or not, and
- * the Search section issues nothing until someone types two characters -- its one query, the
- * ingestion-coverage strip, is an hour-stale descriptor the floating search field used to issue
- * unconditionally on every map load, so seeding it here strictly reduces requests.
+ * warehouse queries. This body fires none: the Search section issues nothing until someone types
+ * two characters -- its one query, the ingestion-coverage strip, is an hour-stale descriptor the
+ * floating search field used to issue unconditionally on every map load, so seeding it here
+ * strictly reduces requests.
  *
- * Both are seeded because both are what a reader most often came here to use: where am I, and
- * when. "view" is not, because a basemap is picked once a session.
+ * It is seeded because it is what a reader most often came here to use: where am I. "view" is
+ * not, because a basemap is picked once a session. "when" was seeded too until the per-layer
+ * sliders replaced the one global scrubber -- the time controls now live on the layer rows,
+ * which the layer groups already expand by default.
  *
  * `readonly`, because this is a declaration and not a working list: the store seeds a COPY of it
  * (`[...INITIALLY_EXPANDED_SECTIONS]`), and a mutable export would let any importer push a
  * section into the cold-load set from the far side of the module -- silently mounting a report
  * and firing its warehouse queries before anyone asked.
  */
-export const INITIALLY_EXPANDED_SECTIONS: readonly DockSectionId[] = [
-  "search",
-  "time",
-] as const;
+export const INITIALLY_EXPANDED_SECTIONS: readonly DockSectionId[] = ["search"] as const;
 
 /**
  * Maps each category to the layer IDs it governs, inverted from the layer registry so a

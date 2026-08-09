@@ -2,7 +2,7 @@
 
 import { Flame, Wind, AlertTriangle, MapPin } from "lucide-react";
 import { useFireData } from "@/hooks/useFireData";
-import { useDebouncedMapDay } from "@/lib/map/layer-toggle-context";
+import { useDebouncedLayerDay } from "@/lib/map/layer-toggle-context";
 
 interface StatCardProps {
   icon: React.ReactNode;
@@ -47,9 +47,12 @@ function StatCard({ icon, label, value, sub, highlight }: StatCardProps) {
  * was built to end.
  */
 export function FireDetails() {
-  // The same settled day the map's own fire layer reads, so the count here can never describe
-  // a different date than the pins beside it -- one query key, one answer.
-  const { requestDate } = useDebouncedMapDay();
+  // The `fire` row's own settled day -- the same one LayerManager gives the map's fire layer,
+  // so the count here can never describe a different date than the pins beside it: one query
+  // key, one answer. Keyed by the toggle rather than by anything map-wide, because since
+  // 2026-08-09 every layer scrubs its own axis and there is no map-wide day to borrow. The
+  // count below is a count OF THOSE PINS, so it has to move with them and with nothing else.
+  const { requestDate } = useDebouncedLayerDay("fire");
   const fireData = useFireData(true, requestDate);
   const effectiveFireCount = fireData.count;
 

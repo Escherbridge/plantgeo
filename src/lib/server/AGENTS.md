@@ -753,19 +753,25 @@ and `http/bounded-upstream.ts` respectively, not per-query settings.
 
 `services/environmental-read-model.ts`, the `date` inputs on
 `trpc/routers/environmental.ts` and `trpc/routers/wildfire.ts`, and
-`lib/map/layer-toggle-context.ts`'s `useDebouncedMapDay` on the client. The time slider used
-to report *whether* the warehouse held a chosen day while every layer kept drawing the live
-edge; this is what makes the layers draw the day.
+`lib/map/layer-toggle-context.ts`'s `useDebouncedLayerDay(layerId)` on the client — one hook call
+per layer row since 2026-08-09, not the single `useDebouncedMapDay()` this section used to name
+when one slider served the whole map. The time slider used to report *whether* the warehouse held
+a chosen day while every layer kept drawing the live edge; this is what makes the layers draw the
+day, and per-layer dates only narrowed WHOSE day each request carries — every warehouse-backed
+read still takes at most one optional `date`, and everything below still holds per layer.
 
 **An omitted day and today's date are the same read, deliberately.**
 `resolveRequestedObservationDay` collapses both to `{ kind: "live" }`, so first paint runs the
 exact query each reader has always run — the one whose cost is measured — and the client sends
-no `date` at all when the selection is `capabilities.serverCurrentDate`. That is not cosmetic:
-tRPC keys on the input, so passing the date explicitly would mint a second react-query entry
-for an identical answer and fetch it twice on load. `useDebouncedMapDay().requestDate` is
-`undefined` in exactly that case, and also before capabilities arrive — without them nothing
-knows which day is today, and reading the browser clock is the timezone disagreement
-`serverCurrentDate` exists to prevent.
+no `date` at all when a layer's selection is `capabilities.serverCurrentDate`. That is not
+cosmetic: tRPC keys on the input, so passing the date explicitly would mint a second react-query
+entry for an identical answer and fetch it twice on load.
+`useDebouncedLayerDay(layerId).requestDate` is `undefined` in exactly that case, and also before
+capabilities arrive — without them nothing knows which day is today, and reading the browser
+clock is the timezone disagreement `serverCurrentDate` exists to prevent. Because most layers now
+default to their own `latestObservedDate` rather than to today (see `resolveLayerDate` in
+`src/components/map/AGENTS.md`), `requestDate` is set far more often per layer than it was when
+one shared slider mostly sat on today.
 
 **Bucket a named day on the publisher's own named day, never in UTC.** In SQL that is
 `substring(<iso text>, 1, 10)::date` (`OBSERVATION_DAY`, or `namedDaySql` for one explicitly

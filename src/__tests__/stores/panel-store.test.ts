@@ -151,31 +151,34 @@ describe('map dock state', () => {
     expect(usePanelStore.getState().expandedDetails).toEqual(['alerts'])
   })
 
-  // What the top-bar date pill calls (2026-08-08). The scrubber lives in the dock now, so the
-  // pill is a shortcut to a section rather than a disclosure over a card of its own.
-  it('docks, expands and queues a scroll for the Time section too', () => {
-    act(() => {
-      usePanelStore.getState().focusDockSection('time')
-    })
-
-    const state = usePanelStore.getState()
-    expect(state.layerPanelOpen).toBe(true)
-    expect(state.expandedDetails).toContain('time')
-    expect(state.pendingScrollSection).toBe('time')
+  /**
+   * Rewritten from "docks, expands and queues a scroll for the Time section too", which pinned
+   * `focusDockSection('time')` on behalf of the top-bar date pill. Both are gone as of
+   * 2026-08-09: every layer scrubs its own day on its own row, so there is no map-wide date for
+   * a pill to state or for a section to hold, and "time" left `DockSectionId` with them.
+   *
+   * The replacement is the same claim stated as an absence, and it is worth an assertion rather
+   * than nothing: a re-added "time" member would compile and quietly reintroduce a second,
+   * map-wide control over dates that are now per layer.
+   */
+  it('offers no map-wide time section to focus', () => {
+    expect(INITIALLY_EXPANDED_SECTIONS).not.toContain('time')
+    expect(usePanelStore.getState().expandedDetails).not.toContain('time')
   })
 
   /**
    * Only CONTROL sections are seeded, and the exception proves the rule rather than weakening
-   * it: expanding a REPORT mounts it and fires its warehouse queries, while these two bodies
-   * issue nothing. The Time card's capabilities arrive from the always-mounted
-   * TimeSliderCapabilitiesLoader whether the manager is open or not, and the Search field's
-   * geocode is silent below two characters.
+   * it: expanding a REPORT mounts it and fires its warehouse queries, while this body issues
+   * nothing -- the Search field's geocode is silent below two characters.
    *
    * "view" is deliberately not seeded -- a basemap is picked once a session -- which is what
    * keeps this an assertion about cost rather than about which union a section belongs to.
+   * "time" was seeded on the same grounds until its section was replaced by a slider per layer
+   * row; the layer groups those rows sit in are expanded by default, so the controls are no
+   * less reachable for it.
    */
   it('seeds only sections that cost no query', () => {
-    expect(INITIALLY_EXPANDED_SECTIONS).toEqual(['search', 'time'])
+    expect(INITIALLY_EXPANDED_SECTIONS).toEqual(['search'])
   })
 
   // The section clears its own request on arrival, so a later expansion by hand does not

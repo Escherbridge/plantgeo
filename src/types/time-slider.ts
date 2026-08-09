@@ -14,6 +14,12 @@ export type ForecastVariant = "monte_carlo" | "ml";
 /** How a layer behaves over time; decides whether a future date is even meaningful. */
 export type TemporalKind = "snapshot" | "daily_series" | "event";
 
+/** A closed day range, both ends inclusive, YYYY-MM-DD. */
+export interface DayRange {
+  from: string;
+  to: string;
+}
+
 /**
  * One layer's value for one day at one enduring place, as the map consumes it.
  * There is no metric fact table: the server reads geo.features joined to geo.geometry (and
@@ -66,9 +72,43 @@ export interface MetricAtDateCollection extends GeoJSON.FeatureCollection {
   reason: string | null;
 }
 
-/** What one geo.layers row supports temporally, as delivered to the browser. */
+/**
+ * The streams the slider describes that are NOT geo.layers rows, keyed by the toggle each
+ * one backs.
+ *
+ * Lives in this pure-type module rather than in the server read model because
+ * `src/lib/map/layer-registry.ts` names these in `warehouseLayerName`, and the registry is
+ * plain TypeScript that panels, stores and node-run tests all import -- it must not reach
+ * into `environmental-read-model.ts` (and its `db` import) to learn a string.
+ *
+ * These five toggles used to carry `warehouseLayerName: null`, which cost them their slider
+ * ENTIRELY: no capability meant no axis, no control, and `resolveLayerDate` falling through
+ * to the server's today, so five of roughly ten dated layers were permanently pinned to the
+ * live edge even though every one of their readers accepts a historical day. They are backed
+ * by `geo.drought_areas` and by the two governed model-plane views, not by `geo.features`,
+ * which is the only reason they were ever absent from the capability payload.
+ *
+ * Every name here is deliberately distinct from every `geo.layers.name`: one capability list
+ * is keyed by `layerName`, so a collision would publish two rows a lookup cannot tell apart.
+ */
+export const SLIDER_STREAM_LAYER_NAMES = {
+  drought: "drought-areas",
+  soilMoisture: "soil-field-moisture",
+  soilTemperature: "soil-field-temperature",
+  soilVapourPressureDeficit: "soil-field-vpd",
+  climateField: "climate-field",
+} as const;
+
+/** One of the non-geo.features stream names above. */
+export type SliderStreamLayerName =
+  (typeof SLIDER_STREAM_LAYER_NAMES)[keyof typeof SLIDER_STREAM_LAYER_NAMES];
+
+/** What one published stream supports temporally, as delivered to the browser. */
 export interface SliderLayerCapability {
-  /** geo.layers.name */
+  /**
+   * The stream this capability describes: a `geo.layers.name`, or one of
+   * `SLIDER_STREAM_LAYER_NAMES` for a stream that is not backed by `geo.features`.
+   */
   layerName: string;
   temporalKind: TemporalKind;
   /** 0 = not forecastable. */
@@ -85,6 +125,61 @@ export interface SliderLayerCapability {
    * src/lib/server/services/environmental-read-model.ts.
    */
   earliestObservedDate: string | null;
+  /**
+   * The newest day this layer has published, or null when it has none.
+   *
+   * This is the day each layer's own slider OPENS on, which is why it is not
+   * `max(observed_day)`: it is the newest day at or above the SAME density floor that decided
+   * `earliestObservedDate`. A partially-ingested live-edge day carrying three of a layer's
+   * usual ten thousand readings is a published day, but opening the map on it draws a
+   * near-empty country and reads as an outage. Such a day is still on the axis and still
+   * scrubbable -- it is reported in `thinRanges` instead, so the slider marks it rather than
+   * defaults to it. Never `serverCurrentDate`: today is a clock reading, not an observation.
+   */
+  latestObservedDate: string | null;
+  /**
+   * Ranges within the layer's own axis where nothing is published.
+   *
+   * Anchored at `earliestObservedDate` and running to `serverCurrentDate`, NOT at
+   * `min(observed_day)` -- see the note on `earliestObservedDate` for why a bare min() puts
+   * water-gauges at 1990-10-01 and would turn this list into 36 years of noise. The closing
+   * range therefore reports a stalled ingest lane as the hole it is, rather than letting the
+   * axis end silently at the last day that happened to land.
+   */
+  coverageGaps: DayRange[];
+  /**
+   * Ranges whose days ARE published but fall under the axis density floor.
+   *
+   * Disjoint from `coverageGaps` by construction: a thin range is a run of consecutive
+   * calendar days that every one of them published. These are observations, not holes, and
+   * the distinction is the point -- a slider that drew them as gaps would assert the
+   * warehouse recorded nothing on a day it recorded something.
+   */
+  thinRanges: DayRange[];
+  /**
+   * The oldest day `coverageGaps` and `thinRanges` COMPLETELY describe; null when they
+   * describe this layer's whole axis.
+   *
+   * A day before this is UNDESCRIBED, and that is a third state, not a synonym for either
+   * list's silence: absence from `coverageGaps` there is not evidence anything was published,
+   * and absence from `thinRanges` is not evidence a published day was dense. Ask
+   * `isDayDescribed` in src/stores/time-slider-store.ts before turning either silence into a
+   * claim.
+   *
+   * A DAY rather than the boolean that preceded it, because the question every consumer has
+   * is "is THIS day described?" and a flag cannot answer it. The flag was computed, shipped
+   * and read by nothing, so a gap dropped by the range cap drew as solid coverage on the
+   * track and -- through `coverageOnDay` and the agent's prompt -- licensed the sentence
+   * "This is an observed absence: you may say there was none here on <day>" for a day that was
+   * never ingested. That is exactly what the `not_published_on_viewed_date` branch exists to
+   * prevent, so the boundary is now a value a consumer must consult rather than a report it
+   * may skip.
+   *
+   * Conservative by construction: it is the `from` day of the oldest SURVIVING range, so some
+   * days just below it are in fact described. Understating what we know is the safe direction;
+   * overstating it is the bug.
+   */
+  describedFromDay: string | null;
 }
 
 /** The server's answer to "what can the slider offer, and what day is it?". */

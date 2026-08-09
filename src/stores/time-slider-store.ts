@@ -1,5 +1,10 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
+import {
+  LAYER_REGISTRY,
+  isLayerToggleId,
+  type LayerToggleId,
+} from "@/lib/map/layer-registry";
 import type {
   ForecastVariant,
   MetricAtDateAvailability,
@@ -8,13 +13,13 @@ import type {
   SliderLayerCapability,
 } from "@/types/time-slider";
 
-/** selectedDate before the server supplies capabilities; never a valid YYYY-MM-DD. */
+/** A layer's day when nothing can name one yet; never a valid YYYY-MM-DD. */
 export const UNINITIALIZED_DATE = "uninitialized";
 
 const CALENDAR_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MILLISECONDS_PER_DAY = 86_400_000;
 
-/** The day range the slider spans; every end derived from the payload, never a literal. */
+/** The day range one layer's slider spans; every end derived from the payload, never a literal. */
 export interface SliderDomain {
   firstDay: string;
   today: string;
@@ -50,122 +55,72 @@ export function dayOffset(fromDate: string, toDate: string): number {
   return Math.round((toMilliseconds - fromMilliseconds) / MILLISECONDS_PER_DAY);
 }
 
+/** The capability row for a geo.layers name, or null when the server published none. */
+export function findLayerCapability(
+  capabilities: SliderCapabilities | null,
+  layerName: string
+): SliderLayerCapability | null {
+  if (capabilities === null) return null;
+  return capabilities.layers.find((layer) => layer.layerName === layerName) ?? null;
+}
+
 /**
- * The axis one focused resource draws, or null when that resource cannot define one.
+ * ONE layer's axis: its own actuals, plus the span drawn to the right of today. Null when the
+ * layer defines no axis at all.
  *
- * This is the per-resource range the owner asked for on 2026-08-08: exactly the layer's own
- * actuals plus its own forecast horizon, so "how far back does THIS resource go, and how far
- * ahead can it answer" is legible off the track instead of being buried in a whole-warehouse
- * axis whose ends belong to some other layer.
+ * Every layer row carries its own slider now, so there is no whole-warehouse axis left to fall
+ * back to and this returns null rather than borrowing another layer's ends. A row whose domain
+ * is null draws no track, which is the honest state: the alternative -- ranging a layer over
+ * days belonging to some other layer's record -- was exactly the confusion that made the single
+ * global axis unreadable, because most layers rendered empty across most of it.
  *
- * Deliberately NO `futureAxisDays` padding here, unlike the global domain below. That span
- * exists to make the observed/future boundary visible on an axis assembled from every layer at
- * once; a focused axis states one layer's horizon, and padding it would redraw the very band
- * this range exists to size honestly. A horizon of 0 therefore ends the axis at today and draws
- * no future band at all -- the render already handles `todayTickOffset === maxOffset`.
+ * `lastDay` is the further of this layer's forecast horizon and the axis's own future span, and
+ * the max is deliberate: the horizon says how far this layer can be ANSWERED for, `futureAxisDays`
+ * says how far its track is DRAWN. Today they disagree -- every horizon is 0 while the axis
+ * extends 30 days -- so the band right of today is drawn but answers nothing, which is the
+ * honest state. Keeping the padding per row matters MORE than it did on the global axis: with
+ * every horizon at 0, a row without it would end exactly at today and draw no observed/future
+ * boundary at all, so "the record stops here" would again be a fact stated only in words.
  *
- * Returns null (caller falls back to the global domain) in four cases, none of them a throw:
- * the layer is unknown in this payload, it is a snapshot (see below), it has observed nothing
- * yet, or its earliest observed day is somehow after the server's today -- which would put
- * `firstDay` past `lastDay` and invert every offset on the track.
+ * Null in four cases, none of them a throw:
+ *
+ * - The layer is unknown in this payload (a stale toggle, or a warehouse layer not yet published).
+ * - It is a SNAPSHOT. A snapshot does not define a time axis: it is one state of the world that
+ *   happens to carry a publication date, so the date says when it was PUBLISHED, not that
+ *   anything was observed changing from then on. Measured when `watersheds` was persisted (0017):
+ *   96% of its 9,396 HUC12 basins carry a single WBD loaddate of 2013-01-18 and the rest are
+ *   scattered ones and twos through 2018. Ranging its row over those years would advertise six
+ *   years of scrubbing across a static boundary set that draws identically on every one of them.
+ * - It has observed nothing yet, so there is no record to range over.
+ * - Its earliest observed day is somehow after the server's today, which would put `firstDay`
+ *   past `lastDay` and invert every offset on the track.
  */
-export function focusedResourceDomain(
-  capabilities: SliderCapabilities,
-  focusedLayerName: string
+export function sliderDomain(
+  capabilities: SliderCapabilities | null,
+  layerName: string
 ): SliderDomain | null {
-  const layer = findLayerCapability(capabilities, focusedLayerName);
+  if (capabilities === null) return null;
+  const layer = findLayerCapability(capabilities, layerName);
   if (layer === null) return null;
-  // The same exclusion `sliderDomain` applies below, and for the same reason: a snapshot does
-  // not define a time axis, so a focused one must not define one either. `watersheds` is the
-  // case that makes this concrete -- it carries a real `earliestObservedDate` (the 2013-01-18
-  // WBD loaddate shared by 96% of its basins) but is a static boundary set that draws
-  // identically on every day between then and now. layer-registry.ts:161 documents that
-  // sliderDomain keeps such a date out of the axis start; the focused path has to enforce the
-  // same invariant, or focusing the very layer that comment names would draw the years the
-  // global axis deliberately refuses to.
   if (layer.temporalKind === "snapshot") return null;
   const firstDay = layer.earliestObservedDate;
   if (firstDay === null || !isCalendarDate(firstDay)) return null;
   if (firstDay > capabilities.serverCurrentDate) return null;
-  return {
-    firstDay,
-    today: capabilities.serverCurrentDate,
-    lastDay: addDays(
-      capabilities.serverCurrentDate,
-      Math.max(0, layer.forecastHorizonDays)
-    ),
-  };
-}
-
-/**
- * Both ends of the slider, derived from the payload; null when no layer has history.
- *
- * `lastDay` is the further of the longest forecast horizon and the axis's own future span.
- * Those are two different claims and the max is deliberate: the horizon says how far a layer
- * can be ANSWERED for, `futureAxisDays` says how far the axis is DRAWN. Today they disagree --
- * every horizon is 0 while the axis extends 30 days -- so the band right of today is drawn but
- * answers nothing, which is the honest state. When a forecast producer lands and raises a
- * horizon past the axis span, the axis grows to contain it rather than truncating it.
- *
- * `focusedLayerName` re-ranges the AXIS to that one resource and nothing else. It is not a
- * filter and must never be read as one: `selectedDate` still applies to every layer on the map
- * -- see src/components/map/AGENTS.md "One time control, projected per layer" -- and the card
- * says so in words beside the picker. A focus the payload does not know, or one on a layer that
- * defines no axis of its own -- nothing observed, or a snapshot -- falls back to the global
- * domain rather than emptying the track.
- */
-export function sliderDomain(
-  capabilities: SliderCapabilities | null,
-  focusedLayerName?: string | null
-): SliderDomain | null {
-  if (capabilities === null) return null;
-  if (focusedLayerName !== undefined && focusedLayerName !== null) {
-    const focused = focusedResourceDomain(capabilities, focusedLayerName);
-    if (focused !== null) return focused;
-  }
-  const startsOf = (layers: SliderLayerCapability[]): string[] =>
-    layers
-      .map((layer) => layer.earliestObservedDate)
-      .filter((date): date is string => date !== null && isCalendarDate(date));
-
-  // A snapshot does not define a time axis. It is one state of the world that happens to carry a
-  // publication date, so the date says when it was PUBLISHED, not that anything was observed
-  // changing from then on -- and letting it set the axis start advertises years the slider cannot
-  // actually show anything moving across.
-  //
-  // Measured when `watersheds` was persisted (0017): 96% of the HUC12 basins carry a single WBD
-  // loaddate of 2013-01-18 and the rest are scattered ones and twos through 2018. Counting those
-  // would have pulled the axis from 2022-08-05 back past 2018 -- roughly doubling it -- for a
-  // static boundary set that draws identically on every one of those days.
-  //
-  // Falls back to every layer when nothing varies over time, because a domain derived from
-  // snapshots alone is still better than no slider at all.
-  const timeVaryingStarts = startsOf(
-    capabilities.layers.filter((layer) => layer.temporalKind !== "snapshot")
-  );
-  const observedStarts = timeVaryingStarts.length > 0 ? timeVaryingStarts : startsOf(capabilities.layers);
-  if (observedStarts.length === 0) return null;
-  const firstDay = observedStarts.reduce((earliest, candidate) =>
-    candidate < earliest ? candidate : earliest
-  );
-  const longestHorizonDays = capabilities.layers.reduce(
-    (longest, layer) => Math.max(longest, layer.forecastHorizonDays),
-    0
-  );
-  // Guarded rather than trusted: a payload from an older server carries no futureAxisDays at
-  // all, and a negative one would put lastDay before today and invert the whole axis.
+  // Both guarded rather than trusted: a payload from an older server carries no futureAxisDays
+  // at all, and a negative value on either would put lastDay before today and invert the axis.
   const futureAxisDays = Math.max(0, capabilities.futureAxisDays ?? 0);
+  const forecastHorizonDays = Math.max(0, layer.forecastHorizonDays);
   return {
     firstDay,
     today: capabilities.serverCurrentDate,
     lastDay: addDays(
       capabilities.serverCurrentDate,
-      Math.max(longestHorizonDays, futureAxisDays)
+      Math.max(forecastHorizonDays, futureAxisDays)
     ),
   };
 }
 
-/** The largest integer day offset from firstDay the slider may take. */
+/** The largest integer day offset from firstDay this layer's slider may take. */
 export function sliderMaxOffset(domain: SliderDomain): number {
   return dayOffset(domain.firstDay, domain.lastDay);
 }
@@ -176,17 +131,15 @@ export function todayOffset(domain: SliderDomain): number {
 }
 
 /**
- * Holds a date inside the domain. Returns the input when there is no domain to clamp to.
- *
- * Takes the focus for the same reason the axis does: the two must agree, or a resource whose
- * record starts later than the global first day would leave the thumb sitting off its own track.
+ * Holds a date inside ONE layer's axis. Returns the input when that layer has no axis to
+ * clamp to, which is the same answer as having no capabilities at all.
  */
 export function clampDateToDomain(
   date: string,
   capabilities: SliderCapabilities | null,
-  focusedLayerName?: string | null
+  layerName: string
 ): string {
-  const domain = sliderDomain(capabilities, focusedLayerName);
+  const domain = sliderDomain(capabilities, layerName);
   if (domain === null || !isCalendarDate(date)) return date;
   if (date < domain.firstDay) return domain.firstDay;
   if (date > domain.lastDay) return domain.lastDay;
@@ -196,15 +149,6 @@ export function clampDateToDomain(
 /** Strictly after the server's today. Drives hatching and the variant toggle's enablement. */
 export function isFutureDate(date: string, capabilities: SliderCapabilities): boolean {
   return date > capabilities.serverCurrentDate;
-}
-
-/** The capability row for a geo.layers name, or null when the server published none. */
-export function findLayerCapability(
-  capabilities: SliderCapabilities | null,
-  layerName: string
-): SliderLayerCapability | null {
-  if (capabilities === null) return null;
-  return capabilities.layers.find((layer) => layer.layerName === layerName) ?? null;
 }
 
 /** Which series a date reads from: observations up to today, the chosen forecast after. */
@@ -262,88 +206,289 @@ export function describeAvailability(
   }
 }
 
-interface TimeSliderState {
-  /** YYYY-MM-DD, or UNINITIALIZED_DATE until capabilities arrive. */
-  selectedDate: string;
+/**
+ * True when `date` falls inside a range the layer reports as unpublished.
+ *
+ * Ranges are closed at both ends, as `DayRange` states, so a one-day gap arrives as
+ * `{ from: d, to: d }` and both comparisons must be inclusive. String comparison is exact on
+ * zero-padded YYYY-MM-DD and avoids re-parsing a value the server already validated.
+ */
+export function isWithinCoverageGap(layer: SliderLayerCapability, date: string): boolean {
+  // Guarded rather than trusted: a payload from a server that predates the field carries no
+  // array at all, and a missing gap list must read as "no gap known", never as a crash.
+  const coverageGaps = layer.coverageGaps ?? [];
+  return coverageGaps.some((gap) => date >= gap.from && date <= gap.to);
+}
+
+/**
+ * True when this layer's `coverageGaps`/`thinRanges` describe `date`, so their SILENCE about it
+ * is evidence rather than an absence of evidence.
+ *
+ * Ask this before turning "not in coverageGaps" into "published on that day". The server caps
+ * both lists at the newest MAX_REPORTED_DAY_RANGES entries and reports the boundary in
+ * `describedFromDay`; below it a dropped gap is indistinguishable from continuous coverage, and
+ * reading the list anyway is what let the map paint an uningested day as solid and let the
+ * agent be told "This is an observed absence: you may say there was none here".
+ *
+ * Guarded rather than trusted, like the range lists themselves: a payload from a server that
+ * predates the field carries no boundary, and a missing boundary must read as "the whole axis
+ * is described" -- which is what that older server meant -- never as a crash.
+ */
+export function isDayDescribed(layer: SliderLayerCapability, date: string): boolean {
+  const describedFromDay = layer.describedFromDay ?? null;
+  return describedFromDay === null || date >= describedFromDay;
+}
+
+/** The warehouse stream name behind a toggle, or null when no stream backs it. */
+export function warehouseLayerNameFor(layerId: LayerToggleId): string | null {
+  return LAYER_REGISTRY[layerId].warehouseLayerName;
+}
+
+/**
+ * Whether this layer has a day a user can choose, and therefore both a control and a filter.
+ *
+ * THE RULE, and it is one rule on purpose: true exactly when the registry names a warehouse
+ * stream for the toggle AND `sliderDomain` returns an axis for that stream -- i.e. the payload
+ * carries the stream's capability, the stream is not a `snapshot`, it has an
+ * `earliestObservedDate`, and that day is not after the server's today. False in every other
+ * case, including while capabilities are still loading, because a layer whose axis nobody knows
+ * has no day to offer.
+ *
+ * Both sides of the feature must ask THIS function and nothing else. They disagreed before:
+ * whether a layer got a slider was snapshot-aware while whether its map read was date-filtered
+ * was snapshot-blind, so a snapshot layer was filtered to a day its row gave no way to change,
+ * and there was no single place where that could be noticed. A layer that is date-FILTERED on
+ * the map must have a control; a layer with a control must be date-filtered. Never one without
+ * the other.
+ */
+export function hasSelectableDay(
+  capabilities: SliderCapabilities | null,
+  layerId: LayerToggleId
+): boolean {
+  const layerName = warehouseLayerNameFor(layerId);
+  if (layerName === null) return false;
+  return sliderDomain(capabilities, layerName) !== null;
+}
+
+/**
+ * The newest day this toggle's layer has published, or null when no capability names one.
+ *
+ * Null is a real answer and must stay distinguishable from a date: a toggle may name no
+ * warehouse stream at all (the SoilGrids raster and the SSURGO proxy still do), and a stream the
+ * warehouse has not published yet has no newest day either. Callers that would otherwise mark a
+ * layer "not on its latest" must not make that claim about a layer whose latest nobody knows.
+ *
+ * Drought used to be the headline example here and no longer is: it is published as the
+ * `drought-areas` stream, so it has a newest day like every other dated layer.
+ */
+export function latestObservedDateFor(
+  capabilities: SliderCapabilities | null,
+  layerId: LayerToggleId
+): string | null {
+  const layerName = warehouseLayerNameFor(layerId);
+  if (layerName === null) return null;
+  const capability = findLayerCapability(capabilities, layerName);
+  if (capability === null) return null;
+  const latestObservedDate = capability.latestObservedDate;
+  if (latestObservedDate === null || !isCalendarDate(latestObservedDate)) return null;
+  return latestObservedDate;
+}
+
+/**
+ * The day ONE layer draws as of: its own override if it has one, else its own newest day.
+ *
+ * The fallback order is the whole feature. Before per-layer dates every layer shared "today",
+ * and since only vegetation has four years of depth most layers correctly-but-confusingly
+ * rendered empty; following `latestObservedDate` instead opens every layer on data.
+ *
+ * The last resort is the server's today, for a layer whose newest day nobody knows -- no
+ * warehouse stream at all, or a stream that has published nothing. That is the day such a layer
+ * already drew before this change, and it is the only day we can name without reading the
+ * browser clock. `UNINITIALIZED_DATE` only when even that is unavailable, i.e. before the
+ * capabilities payload lands; it is not a calendar date, so every consumer reports no day
+ * rather than guessing one.
+ */
+export function resolveLayerDate(
+  layerDates: Record<string, string>,
+  capabilities: SliderCapabilities | null,
+  layerId: LayerToggleId
+): string {
+  const ownDate = layerDates[layerId];
+  if (ownDate !== undefined) return ownDate;
+  const latestObservedDate = latestObservedDateFor(capabilities, layerId);
+  if (latestObservedDate !== null) return latestObservedDate;
+  return capabilities?.serverCurrentDate ?? UNINITIALIZED_DATE;
+}
+
+/** Holds a date inside one TOGGLE's axis, crossing to the warehouse name through the registry. */
+function clampToLayerAxis(
+  date: string,
+  capabilities: SliderCapabilities | null,
+  layerId: LayerToggleId
+): string {
+  const layerName = warehouseLayerNameFor(layerId);
+  if (layerName === null) return date;
+  return clampDateToDomain(date, capabilities, layerName);
+}
+
+/**
+ * Holds every override inside its own layer's axis after that axis may have moved.
+ *
+ * Returns the SAME record when nothing moved, so the five-minute capabilities poll does not
+ * hand every per-layer subscriber a fresh object for an answer that did not change.
+ */
+function clampLayerDatesToDomains(
+  layerDates: Record<string, string>,
+  capabilities: SliderCapabilities
+): Record<string, string> {
+  let anyDateMoved = false;
+  const clamped: Record<string, string> = {};
+  for (const [layerId, date] of Object.entries(layerDates)) {
+    // A key that is not a registry toggle cannot be clamped -- there is no axis to clamp it to
+    // -- but it is carried through rather than dropped, because dropping it here would silently
+    // undo a user-uploaded layer's own day.
+    const nextDate = isLayerToggleId(layerId)
+      ? clampToLayerAxis(date, capabilities, layerId)
+      : date;
+    if (nextDate !== date) anyDateMoved = true;
+    clamped[layerId] = nextDate;
+  }
+  return anyDateMoved ? clamped : layerDates;
+}
+
+/**
+ * Per-layer days recovered from a previously stored blob, with a legacy global day REFUSED.
+ *
+ * Nothing persists this store today -- verified 2026-08-09 across every persistence surface the
+ * app has: `plantgeo-layer-opacity` (layer-store) holds opacities keyed by toggle id,
+ * `plantgeo-search` holds recent searches, and the IndexedDB `plantgeo-query-cache` behind
+ * src/lib/cache/query-persister.ts keys entries by a tRPC queryHash that already embeds the day,
+ * so a per-layer day hits or misses it exactly as the global day did. None of them ever carried
+ * `selectedDate`. This function exists so that stays true by construction: it is the single
+ * supported way to read a stored blob back into `layerDates`, and any persistence added later
+ * must go through it rather than deserializing straight into state.
+ *
+ * A legacy `{ selectedDate }` blob is DROPPED, never fanned out across the layers. Fanning it out
+ * would pin every layer to one stale day -- which is precisely the state this feature removes,
+ * and it would arrive silently, as an override no one set. Dropping it returns every layer to
+ * following its own newest published day, which is the documented default.
+ */
+export function readPersistedLayerDates(persisted: unknown): Record<string, string> {
+  if (typeof persisted !== "object" || persisted === null) return {};
+  const storedLayerDates = (persisted as { layerDates?: unknown }).layerDates;
+  if (typeof storedLayerDates !== "object" || storedLayerDates === null) return {};
+  const recovered: Record<string, string> = {};
+  for (const [layerId, date] of Object.entries(storedLayerDates as Record<string, unknown>)) {
+    if (!isLayerToggleId(layerId)) continue;
+    if (typeof date !== "string" || !isCalendarDate(date)) continue;
+    recovered[layerId] = date;
+  }
+  return recovered;
+}
+
+export interface TimeSliderState {
+  /**
+   * Each layer's own day, keyed by LayerToggleId. SPARSE by contract: an ABSENT entry means the
+   * layer follows its own `latestObservedDate`, and that is the default.
+   *
+   * Never eagerly populated from capabilities. An eager copy is correct for exactly one payload:
+   * the next refresh moves a layer's newest day and the copied value has silently become an
+   * override, so the layer stops following its own record without anyone having touched its
+   * slider -- and it stops in the one direction that hurts, pinned behind the live edge.
+   */
+  layerDates: Record<string, string>;
   forecastVariant: ForecastVariant;
   capabilities: SliderCapabilities | null;
   /**
    * True only when getSliderCapabilities has never once succeeded and its most recent
    * attempt failed -- e.g. the read-model 500. TimeSliderCapabilitiesLoader is the sole writer
    * and deliberately does NOT set this on a background-refetch failure once capabilities
-   * already exist: the last known-good payload keeps the slider working, and flipping a working
-   * slider into an error state over a transient poll would be worse than the silence this
-   * flag exists to fix. See TimeSlider's early-return branch that reads it.
+   * already exist: the last known-good payload keeps every slider working, and flipping working
+   * sliders into an error state over a transient poll would be worse than the silence this
+   * flag exists to fix.
    */
   capabilitiesUnavailable: boolean;
-  /**
-   * The geo.layers name whose record the AXIS is drawn for, or null for "All resources".
-   *
-   * A view setting over one control, not a filter over the map. It changes which days the
-   * track spans -- one resource's actuals plus its own forecast horizon -- and changes nothing
-   * about what is drawn: `selectedDate` still applies to every layer, which is the invariant
-   * "One time control, projected per layer" in src/components/map/AGENTS.md states. Kept as a
-   * plain string rather than a LayerToggleId because it names a warehouse publication, which is
-   * the vocabulary SliderLayerCapability speaks; a name this payload does not carry falls back
-   * to the global axis rather than erroring.
-   */
-  focusedLayerName: string | null;
 
-  setSelectedDate: (date: string) => void;
+  setLayerDate: (layerId: LayerToggleId, date: string) => void;
+  /** Drop the override so the layer follows its own latest observed day again. */
+  resetLayerDate: (layerId: LayerToggleId) => void;
+  /** Return every layer to following its own newest day; the successor of `resetToToday`. */
+  resetAllLayerDates: () => void;
   setForecastVariant: (variant: ForecastVariant) => void;
   setCapabilities: (capabilities: SliderCapabilities) => void;
   setCapabilitiesUnavailable: (unavailable: boolean) => void;
-  setFocusedLayerName: (layerName: string | null) => void;
-  resetToToday: () => void;
+  /** The single supported path from a stored blob into `layerDates`. */
+  hydratePersistedLayerDates: (persisted: unknown) => void;
 }
 
 export const useTimeSliderStore = create<TimeSliderState>()(
   devtools((set) => ({
-    selectedDate: UNINITIALIZED_DATE,
+    layerDates: {},
     forecastVariant: "monte_carlo",
     capabilities: null,
     capabilitiesUnavailable: false,
-    focusedLayerName: null,
 
-    setSelectedDate: (date) => set({ selectedDate: date }),
+    // Clamped here rather than at the call site: this is the one writer, so nothing downstream
+    // -- including a rehydrated blob replayed through it -- can leave a layer's thumb off its
+    // own track. Mirrors layer-store's opacity clamp, for the same reason.
+    setLayerDate: (layerId, date) =>
+      set((state) => {
+        // A day that is not a day cannot be honoured, and storing it would blank the layer --
+        // which on the map is indistinguishable from a gap in the record. Dropping the override
+        // instead returns the layer to its own newest day, a state the row can actually show.
+        if (!isCalendarDate(date)) {
+          if (state.layerDates[layerId] === undefined) return state;
+          const withoutLayer = { ...state.layerDates };
+          delete withoutLayer[layerId];
+          return { layerDates: withoutLayer };
+        }
+        const clampedDate = clampToLayerAxis(date, state.capabilities, layerId);
+        if (state.layerDates[layerId] === clampedDate) return state;
+        return { layerDates: { ...state.layerDates, [layerId]: clampedDate } };
+      }),
+
+    // Deletes the key rather than writing today's date: "following its own latest" and
+    // "explicitly pinned to a day that happens to be its latest" are different facts, and only
+    // the first keeps tracking the live edge as later payloads land.
+    resetLayerDate: (layerId) =>
+      set((state) => {
+        if (state.layerDates[layerId] === undefined) return state;
+        const withoutLayer = { ...state.layerDates };
+        delete withoutLayer[layerId];
+        return { layerDates: withoutLayer };
+      }),
+
+    resetAllLayerDates: () =>
+      set((state) =>
+        Object.keys(state.layerDates).length === 0 ? state : { layerDates: {} }
+      ),
+
     setForecastVariant: (variant) => set({ forecastVariant: variant }),
 
-    // The payload is the only source of an initial selectedDate; a later payload can
-    // move the domain out from under an existing selection, so clamp rather than reset.
-    // Clamped against the CURRENT focus, because that is the axis on screen: clamping to the
-    // global domain while a narrower resource axis is drawn would leave the thumb off its track.
+    // A later payload can move a layer's axis out from under a day the user picked, so clamp
+    // rather than reset -- and clamp ONLY the overrides. Layers with no entry need no migration
+    // at all: they resolve through the new payload's `latestObservedDate` on the next read,
+    // which is exactly what keeps the sparse default following the live edge.
     setCapabilities: (capabilities) =>
       set((state) => ({
         capabilities,
         // A payload landed, however late: whatever the fetch history was, it is no longer
-        // true that the slider has nothing to show.
+        // true that the sliders have nothing to show.
         capabilitiesUnavailable: false,
-        selectedDate: clampDateToDomain(
-          state.selectedDate === UNINITIALIZED_DATE
-            ? capabilities.serverCurrentDate
-            : state.selectedDate,
-          capabilities,
-          state.focusedLayerName
-        ),
+        layerDates: clampLayerDatesToDomains(state.layerDates, capabilities),
       })),
 
     setCapabilitiesUnavailable: (unavailable) => set({ capabilitiesUnavailable: unavailable }),
 
-    // The clamp rides in the same set() as the focus, deliberately: switching resource narrows
-    // the axis under a selection that was legal a moment ago, and a two-step (focus now, clamp
-    // in an effect) would publish one render where the thumb sits outside its own track and the
-    // date field shows a day the axis cannot address.
-    setFocusedLayerName: (layerName) =>
-      set((state) => ({
-        focusedLayerName: layerName,
-        selectedDate: clampDateToDomain(state.selectedDate, state.capabilities, layerName),
-      })),
-
-    resetToToday: () =>
-      set((state) =>
-        state.capabilities === null
-          ? state
-          : { selectedDate: state.capabilities.serverCurrentDate }
-      ),
+    hydratePersistedLayerDates: (persisted) =>
+      set((state) => {
+        const recovered = readPersistedLayerDates(persisted);
+        return {
+          layerDates:
+            state.capabilities === null
+              ? recovered
+              : clampLayerDatesToDomains(recovered, state.capabilities),
+        };
+      }),
   }))
 );

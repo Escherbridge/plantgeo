@@ -5,6 +5,7 @@
  */
 
 import { SOIL_FIELD_MEASURES } from "@/lib/environmental/soil-field";
+import { SLIDER_STREAM_LAYER_NAMES } from "@/types/time-slider";
 import type { PanelId } from "@/stores/panel-store";
 
 /** Every toggle id the registry knows. `activeLayers` may also hold user-uploaded layer ids. */
@@ -72,7 +73,15 @@ export interface LayerRegistryEntry {
   renderKind: LayerRenderKind;
   /** Style layer ids flipped with setLayoutProperty; empty for React-mounted layers. */
   styleLayerIds: string[];
-  /** The `geo.layers.name` this toggle renders, or null when no warehouse layer backs it. */
+  /**
+   * The warehouse stream this toggle renders: a `geo.layers.name`, one of
+   * `SLIDER_STREAM_LAYER_NAMES`, or null when nothing the slider describes backs it.
+   *
+   * A stream name here is the whole of what gives a row an axis -- `hasSelectableDay` reads it,
+   * and a null costs the row its slider, its scrubbing and its date-filtered map read at once.
+   * Never hand-type one: the constants are in src/types/time-slider.ts precisely so a typo
+   * cannot publish a name no capability answers to.
+   */
   warehouseLayerName: string | null;
   /** The sidebar panel that owns this switch, or null when no panel does. */
   panelId: PanelId | null;
@@ -114,15 +123,19 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "water",
     permanentlyUnavailableReason: null,
   },
-  // Drought has no geo.layers row -- it lives in geo.drought_areas as weekly releases --
-  // so it claims no warehouse layer name and gets no slider capability.
+  // Drought has no geo.layers row -- it lives in geo.drought_areas as weekly releases -- so it
+  // is published as a STREAM capability instead, under the name below. It claimed null here
+  // until 2026-08-09, and the cost was not cosmetic: no capability meant no axis, so
+  // `resolveLayerDate` fell through to the server's today, `requestDate` was undefined on every
+  // render, and `getDroughtClassification` -- which has accepted a `date` all along -- could
+  // only ever be asked for the live edge.
   drought: {
     toggleId: "drought",
     label: "Drought Monitor",
     icon: "sprout",
     renderKind: "component",
     styleLayerIds: [],
-    warehouseLayerName: null,
+    warehouseLayerName: SLIDER_STREAM_LAYER_NAMES.drought,
     panelId: "water",
     permanentlyUnavailableReason: null,
   },
@@ -206,11 +219,13 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "soil",
     permanentlyUnavailableReason: null,
   },
-  // ERA5-Land volumetric soil water, read through environmental.getSoilField. The first
-  // layer served out of the MODEL plane (agri.signal_observation) rather than geo.features,
-  // so it claims no `geo.layers` name and gets no slider capability -- the same shape drought
-  // and watersheds have. It still draws the slider's day; it simply makes no claim about
-  // which days the axis should offer. See SoilFieldLayer in layers/SoilFieldLayer.tsx.
+  // ERA5-Land volumetric soil water, read through environmental.getSoilField. The first layer
+  // served out of the MODEL plane (agri.signal_observation) rather than geo.features, so its
+  // capability is published as a STREAM -- the days `geo.soil_field_observation` can answer
+  // for this measure -- rather than out of geo.layers. The stream is per MEASURE, not per lane:
+  // moisture, temperature and vpd are three toggles with three sliders, so one shared name
+  // would put three rows on one axis and one row's scrub would move the other two.
+  // See SoilFieldLayer in layers/SoilFieldLayer.tsx.
   "soil-moisture": {
     toggleId: "soil-moisture",
     // Read off the measure vocabulary rather than restated: SoilDetails already captioned
@@ -220,7 +235,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     icon: "droplets",
     renderKind: "component",
     styleLayerIds: [],
-    warehouseLayerName: null,
+    warehouseLayerName: SLIDER_STREAM_LAYER_NAMES.soilMoisture,
     panelId: "soil",
     permanentlyUnavailableReason: null,
   },
@@ -238,7 +253,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     icon: "thermometer",
     renderKind: "component",
     styleLayerIds: [],
-    warehouseLayerName: null,
+    warehouseLayerName: SLIDER_STREAM_LAYER_NAMES.soilTemperature,
     panelId: "soil",
     permanentlyUnavailableReason: null,
   },
@@ -254,15 +269,18 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     icon: "cloud-sun",
     renderKind: "component",
     styleLayerIds: [],
-    warehouseLayerName: null,
+    warehouseLayerName: SLIDER_STREAM_LAYER_NAMES.soilVapourPressureDeficit,
     panelId: "soil",
     permanentlyUnavailableReason: null,
   },
   // NASA POWER daily meteorology and pilot soil wetness, read through
   // environmental.getClimateField. The second lane served out of the MODEL plane
-  // (agri.signal_observation), so like the three ERA5-Land fields above it claims no
-  // `geo.layers` name and gets no slider capability -- it draws the slider's day without
-  // making a claim about which days the axis should offer.
+  // (agri.signal_observation), so like the three ERA5-Land fields above its capability is
+  // published as a STREAM -- the days `geo.climate_field_observation` can answer for -- rather
+  // than out of geo.layers.
+  //
+  // ONE stream for nine signals, matching the one toggle: the reader answers every signal from
+  // the same lane, so a day the axis offers is a day any signal can be drawn on.
   //
   // ONE toggle for nine signals, where the ERA5-Land lane has three toggles for three
   // measures. The difference is what "off" would mean: moisture and temperature are two
@@ -280,7 +298,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     icon: "cloud-sun",
     renderKind: "component",
     styleLayerIds: [],
-    warehouseLayerName: null,
+    warehouseLayerName: SLIDER_STREAM_LAYER_NAMES.climateField,
     panelId: "climate",
     permanentlyUnavailableReason: null,
   },
@@ -391,7 +409,7 @@ export function styleBackedLayerEntries(): LayerRegistryEntry[] {
   return layerRegistryEntries().filter((entry) => entry.styleLayerIds.length > 0);
 }
 
-/** The toggle that renders a `geo.layers.name`, or null when that layer has no renderer. */
+/** The toggle that renders a warehouse stream name, or null when that stream has no renderer. */
 export function toggleIdForWarehouseLayerName(layerName: string): LayerToggleId | null {
   const entry = layerRegistryEntries().find(
     (candidate) => candidate.warehouseLayerName === layerName

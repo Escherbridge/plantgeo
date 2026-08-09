@@ -11,18 +11,22 @@ const CAPABILITIES_REFRESH_MS = 5 * 60_000;
  * The one read of `environmental.getSliderCapabilities`, and the one writer of the store fields
  * it feeds. Renders nothing.
  *
- * Headless and always mounted, deliberately. The selected day reaches every warehouse-backed
- * query on this map through `useDebouncedMapDay()`, and that day exists only because this
- * payload does -- the server's `serverCurrentDate` is the ONLY definition of "today" here, and
- * the axis has no other source. The scrubber that draws it now lives in the left dock, which
- * a reader can close (and which unmounts entirely when closed), so the fetch cannot live inside
- * it: closing the dock would drop the day out from under the whole map.
+ * Headless and always mounted, deliberately. Every layer's day reaches every warehouse-backed
+ * query on this map through `useDebouncedLayerDay(<toggle>)`, and those days exist only because
+ * this payload does -- the server's `serverCurrentDate` is the ONLY definition of "today" here,
+ * each layer's `latestObservedDate` is the day its row opens on, and neither has another source.
+ * The scrubbers that draw them live on the layer rows in the left dock, which a reader can close
+ * (and which unmounts entirely when closed), so the fetch cannot live inside it: closing the dock
+ * would drop every layer's day out from under the whole map.
+ *
+ * ONE payload still feeds every row. Per-layer dates (2026-08-09) split the day, not the
+ * capabilities: a fetch per slider would be one whole-warehouse scan per visible layer.
  *
  * Nothing else may set capabilities. That rule carries over from `TimeSliderPanel`, which owned
  * this fetch until 2026-08-08; before either existed the slider had no mount point at all, so
- * `setCapabilities` was called only from tests, `selectedDate` never left `UNINITIALIZED_DATE`,
- * and both server procedures were unreachable code. Keeping the read here is also what lets
- * `TimeSlider` stay presentational enough to render against a fixture with no tRPC provider.
+ * `setCapabilities` was called only from tests, no day ever left `UNINITIALIZED_DATE`, and both
+ * server procedures were unreachable code. Keeping the read here is also what lets
+ * `LayerTimeSlider` stay presentational enough to render against a fixture with no tRPC provider.
  *
  * There is no fallback domain, and there must not be one: a browser-clock guess would put
  * "today" on the wrong day for anyone outside UTC and invent an axis nobody measured. Until the

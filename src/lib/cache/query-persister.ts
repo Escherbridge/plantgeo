@@ -1,8 +1,14 @@
 /**
  * A react-query v5 `persister` (see `defaultOptions.queries.persister` in
  * src/lib/providers.tsx) that backs an ALLOWLISTED subset of queries with IndexedDB, so
- * scrubbing the time slider back to a previously-viewed day is instant and survives a
+ * scrubbing a layer's time slider back to a previously-viewed day is instant and survives a
  * reload. Everything else passes straight through to the real `queryFn`, untouched.
+ *
+ * Untouched by per-layer dates (2026-08-09), and worth stating because it looks like it should
+ * not be: entries are keyed by the tRPC `queryHash`, which already embeds whatever `date` the
+ * caller sent, so one layer's day hits or misses exactly as the old map-wide day did. The only
+ * thing this file reads from the time-slider store is `serverCurrentDate` -- a property of the
+ * server, not of any layer -- so nothing here has to know which row asked.
  *
  * See src/lib/cache/AGENTS.md for the full rationale: the allowlist rule, the TTL policy,
  * the storage budget, and the degradation matrix.
@@ -102,8 +108,9 @@ export function isPersistableQueryKey(queryKey: readonly unknown[]): boolean {
 /**
  * Historical days cache for HISTORICAL_TTL_MS; "today" (or later, or a date we cannot yet
  * prove is in the past) caches only for LIVE_TTL_MS. "Today" is always the server's
- * `serverCurrentDate` from useTimeSliderStore -- this deliberately never reads the browser
- * clock to decide which calendar date is live; see src/stores/time-slider-store.ts.
+ * `serverCurrentDate` from useTimeSliderStore -- never any layer's own day, and never the
+ * browser clock, which would disagree with the server across a UTC midnight; see
+ * src/stores/time-slider-store.ts.
  */
 export function resolveCacheTtlMs(queryKey: readonly unknown[]): number {
   const input = queryInputRecord(queryKey);
