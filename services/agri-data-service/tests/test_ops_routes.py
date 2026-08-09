@@ -7,7 +7,7 @@
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -22,6 +22,13 @@ _RUN_ID = UUID("11111111-2222-3333-4444-555555555555")
 _EXPECTED_COMPLETION_PERCENT = 40.0
 _EXPECTED_ETA_HOURS = 60.0
 _EXPECTED_TREND_CUMULATIVE = 3
+# 392 of a 1,568-cell lattice done; 24 cells covered in a 24-hour window is 1 cell/hour, so
+# the 1,176 cells still outstanding are 1,176 hours away.
+_WALK_TARGET_CELLS = 1568
+_WALK_CELLS_DONE = 392
+_EXPECTED_WALK_COMPLETION_PERCENT = 25.0
+_EXPECTED_WALK_OUTSTANDING_CELLS = 1176
+_EXPECTED_WALK_ETA_HOURS = 1176.0
 
 
 class _Mappings:
@@ -60,11 +67,13 @@ class _Session:
         failures: list[dict[str, Any]],
         trend: list[dict[str, Any]],
         streams: list[dict[str, Any]] | None = None,
+        walks: list[dict[str, Any]] | None = None,
     ) -> None:
         self.lanes = lanes
         self.failures = failures
         self.trend = trend
         self.streams = streams if streams is not None else []
+        self.walks = walks if walks is not None else []
         self.parameters: list[dict[str, Any]] = []
 
     async def execute(self, statement: object, parameters: dict[str, Any]) -> _Result:
@@ -72,6 +81,8 @@ class _Session:
         rendered = str(statement)
         if "WITH item_rollup AS" in rendered:
             return _Result(self.lanes)
+        if "WITH historical_release AS" in rendered:
+            return _Result(self.walks)
         if "LEFT JOIN LATERAL" in rendered:
             return _Result(self.failures)
         if "WITH daily_dead_letters AS" in rendered:
@@ -185,6 +196,28 @@ def _stream() -> dict[str, Any]:
     }
 
 
+def _walk(**overrides: Any) -> dict[str, Any]:
+    """One walk row shaped like ops_historical_walks.sql returns it, parameter array included."""
+    row: dict[str, Any] = {
+        "data_source_key": "open-meteo-era5-land-archive",
+        "walk_label": "open-meteo-era5-land-archive-daily-v1:20220802-20260802:sentinel2-ndvi-0p25deg",
+        "parameters": ["vapour_pressure_deficit_max"],
+        "observed_from": datetime(2022, 8, 2, tzinfo=UTC),
+        "observed_to": datetime(2026, 8, 2, 23, 59, 59, tzinfo=UTC),
+        "chunks_landed": 8,
+        "chunks_in_window": 8,
+        "started_at": datetime(2026, 8, 1, tzinfo=UTC),
+        "last_chunk_at": datetime(2026, 8, 2, tzinfo=UTC),
+        "cells_done": _WALK_CELLS_DONE,
+        "cells_in_window": 24,
+        "unresolved_cells": 0,
+        "grid_name": "sentinel2-ndvi-0p25deg",
+        "target_cells": _WALK_TARGET_CELLS,
+    }
+    row.update(overrides)
+    return row
+
+
 def _request(**query: str) -> Any:
     return SimpleNamespace(args=query)
 
@@ -235,6 +268,114 @@ async def test_snapshot_json_derives_rate_and_eta_and_stays_json_serializable(
     assert session.parameters[0] == {"throughput_window_hours": ops_route._DEFAULT_THROUGHPUT_WINDOW_HOURS}
 
 
+def test_every_ops_statement_binds_only_the_parameters_its_caller_supplies() -> None:
+    """A colon glued to a word in a comment mints a phantom bind that fails at execution.
+
+    The walk statement's header quotes two regular expressions and two version strings that
+    really do contain colons, so this is the assertion that keeps that header honest.
+    """
+    assert set(ops_route._WALKS_SQL._bindparams) == {"throughput_window_hours"}
+    assert set(ops_route._LANES_SQL._bindparams) == {"throughput_window_hours"}
+
+
+def test_walk_record_derives_completion_cell_rate_and_eta() -> None:
+    generated_at = datetime(2026, 8, 9, 2, tzinfo=UTC)
+
+    record = ops_route._walk_record(_walk(), generated_at, ops_route._DEFAULT_THROUGHPUT_WINDOW_HOURS)
+
+    assert record["completion_percent"] == _EXPECTED_WALK_COMPLETION_PERCENT
+    assert record["cells_per_hour"] == 1.0
+    assert record["outstanding_cells"] == _EXPECTED_WALK_OUTSTANDING_CELLS
+    assert record["eta_hours"] == _EXPECTED_WALK_ETA_HOURS
+    assert record["eta_ready_at"] == generated_at + timedelta(hours=_EXPECTED_WALK_ETA_HOURS)
+
+
+def test_walk_record_keeps_an_unknown_denominator_and_a_stalled_rate_honest() -> None:
+    generated_at = datetime(2026, 8, 9, 2, tzinfo=UTC)
+
+    # No resolvable lattice, so there is no denominator to divide by and none is invented.
+    unknown_grid = ops_route._walk_record(
+        _walk(grid_name=None, target_cells=None),
+        generated_at,
+        ops_route._DEFAULT_THROUGHPUT_WINDOW_HOURS,
+    )
+    # A known denominator but nothing covered in the window; the remaining work is real and
+    # the rate is zero, which makes the ETA unknowable rather than infinite.
+    stalled = ops_route._walk_record(
+        _walk(cells_in_window=0),
+        generated_at,
+        ops_route._DEFAULT_THROUGHPUT_WINDOW_HOURS,
+    )
+
+    assert unknown_grid["target_cells"] is None
+    assert unknown_grid["outstanding_cells"] is None
+    assert unknown_grid["completion_percent"] is None
+    assert unknown_grid["eta_hours"] is None
+    assert unknown_grid["eta_ready_at"] is None
+    assert stalled["cells_per_hour"] == 0.0
+    assert stalled["eta_hours"] is None
+    assert stalled["eta_ready_at"] is None
+    # The missing denominator renders as an em dash beside the cells actually done.
+    cells_cell = f'{_WALK_CELLS_DONE:,}<span class="dim">/{ops_route._EMPTY}</span>'
+    assert cells_cell in ops_route._render_walk_row(unknown_grid, generated_at)
+
+
+def test_walk_state_separates_complete_active_and_idle() -> None:
+    generated_at = datetime(2026, 8, 9, 2, tzinfo=UTC)
+    window_hours = ops_route._DEFAULT_THROUGHPUT_WINDOW_HOURS
+
+    complete = ops_route._walk_record(_walk(cells_done=_WALK_TARGET_CELLS), generated_at, window_hours)
+    active = ops_route._walk_record(
+        _walk(last_chunk_at=generated_at - timedelta(minutes=2)),
+        generated_at,
+        window_hours,
+    )
+    idle = ops_route._walk_record(_walk(), generated_at, window_hours)
+
+    assert (complete["state"], active["state"], idle["state"]) == ("complete", "active", "idle")
+    assert 'pill ok">complete' in ops_route._render_walk_row(complete, generated_at)
+    assert 'pill info">active' in ops_route._render_walk_row(active, generated_at)
+    assert 'pill warn">idle' in ops_route._render_walk_row(idle, generated_at)
+
+
+def test_lane_row_says_how_long_ago_the_run_started() -> None:
+    generated_at = datetime(2026, 8, 7, 12, tzinfo=UTC)
+    window_hours = ops_route._DEFAULT_THROUGHPUT_WINDOW_HOURS
+
+    started = ops_route._render_lane_row(ops_route._lane_record(_lane(), generated_at, window_hours), generated_at)
+    never_started = ops_route._render_lane_row(
+        ops_route._lane_record(_lane(run_started_at=None), generated_at, window_hours),
+        generated_at,
+    )
+
+    assert '<span class="dim">started 6d12h ago</span>' in started
+    assert f'<span class="dim">started {ops_route._EMPTY}</span>' in never_started
+
+
+@pytest.mark.asyncio
+async def test_snapshot_json_carries_the_historical_walks_the_ledger_cannot_see(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(lanes=[_lane()], failures=[], trend=[], walks=[_walk()])
+    monkeypatch.setattr(ops_route, "receiver_writer_session", _session_factory(session))
+
+    response = await ops_route.backfill_snapshot_json(_request())
+    payload = json.loads(response.body)
+
+    walk = payload["historical_walks"][0]
+    assert walk["parameters"] == ["vapour_pressure_deficit_max"]
+    assert walk["observed_from"] == "2022-08-02T00:00:00+00:00"
+    assert walk["cells_done"] == _WALK_CELLS_DONE
+    assert walk["target_cells"] == _WALK_TARGET_CELLS
+    assert walk["completion_percent"] == _EXPECTED_WALK_COMPLETION_PERCENT
+    assert walk["eta_hours"] == _EXPECTED_WALK_ETA_HOURS
+    assert walk["state"] == "idle"
+    assert "look identical from here" in payload["historical_walk_note"]
+    # Both rate columns divide by the same trailing window, so both statements are bound with it.
+    window = {"throughput_window_hours": ops_route._DEFAULT_THROUGHPUT_WINDOW_HOURS}
+    assert session.parameters[:2] == [window, window]
+
+
 @pytest.mark.asyncio
 async def test_snapshot_reports_a_failed_ledger_read_instead_of_raising(
     monkeypatch: pytest.MonkeyPatch,
@@ -253,7 +394,7 @@ async def test_snapshot_reports_a_failed_ledger_read_instead_of_raising(
 async def test_backfill_page_serves_html_with_the_stream_wired_and_error_text_escaped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session = _Session(lanes=[_lane()], failures=[_failure()], trend=[_trend()])
+    session = _Session(lanes=[_lane()], failures=[_failure()], trend=[_trend()], walks=[_walk()])
     monkeypatch.setattr(ops_route, "receiver_writer_session", _session_factory(session))
 
     response = await ops_route.backfill_dashboard(_request(interval="99"))
@@ -265,8 +406,12 @@ async def test_backfill_page_serves_html_with_the_stream_wired_and_error_text_es
     # 99 clamps to the 30-second ceiling, and the stream URL carries the clamped value.
     assert "/ops/backfill/stream?interval=30" in body
     assert ops_route._DATASTAR_URL in body
-    assert all(region in body for region in ('id="ops-meta"', 'id="ops-lanes"', 'id="ops-failures"'))
+    assert all(region in body for region in ('id="ops-meta"', 'id="ops-lanes"', 'id="ops-walks"', 'id="ops-failures"'))
     assert "firms-archive" in body
+    # The walks section renders between the lanes and the data loads, both clocks included.
+    assert body.index('id="ops-lanes"') < body.index('id="ops-walks"') < body.index('id="ops-streams"')
+    assert "vapour_pressure_deficit_max" in body
+    assert '<span class="dim">started ' in body
     # Ledger error text is escaped, so a hostile error summary cannot inject markup.
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in body
     assert "<script>" not in body.split("</head>")[1]

@@ -24,6 +24,7 @@ logger = structlog.get_logger()
 ops_bp = Blueprint("ops", url_prefix="/ops")
 
 _LANES_SQL: Final = text(load_query_sql("routes/ops_backfill_lanes.sql"))
+_WALKS_SQL: Final = text(load_query_sql("routes/ops_historical_walks.sql"))
 _FAILURES_SQL: Final = text(load_query_sql("routes/ops_backfill_failures.sql"))
 _DEAD_LETTER_TREND_SQL: Final = text(load_query_sql("routes/ops_backfill_dead_letter_trend.sql"))
 _DATA_STREAMS_SQL: Final = text(load_query_sql("routes/ops_data_streams.sql"))
@@ -66,6 +67,13 @@ _GAP_SEVERE_DAYS: Final = 30
 # cadence in days, so it is named rather than printed as a misleading "0d".
 _CADENCE_SUBDAY: Final = 1.0
 
+# A walk lands one release per chunk. Measured on production, chunks inside a running walk
+# are 1-4 minutes apart at full tilt but tens of minutes apart when a scheduled task drives a
+# continuation, so this band is deliberately the conservative one: it governs only how long
+# the page keeps claiming a walk is moving, and a quieter walk reads idle with the exact age
+# of its last chunk in the column beside the pill.
+_WALK_ACTIVE_MINUTES: Final = 15
+
 _SECONDS_PER_MINUTE: Final = 60
 _MINUTES_PER_HOUR: Final = 60
 _HOURS_PER_DAY: Final = 24
@@ -81,6 +89,19 @@ _ACTIVITY_NOTE: Final = (
     "fired in days look identical from here."
 )
 
+# The same honesty convention as the lane note, for the loads the ledger cannot see at all.
+_WALK_NOTE: Final = (
+    "plan-driven walks write no ledger item, so the lanes table above is blind to them. "
+    "Everything here is derived from the source release each chunk persists: cells done "
+    "counts DISTINCT lattice cells and never sums, because a continuation re-covers cells "
+    "the walk already holds. State is evidence, not a claim about the scheduler -- an idle "
+    "walk and a walk whose scheduled task stopped firing look identical from here, and the "
+    "only thing either of them tells you is when the last chunk landed. Target and % complete "
+    "are always against the full lattice a walk's cells resolve to -- a plan that deliberately "
+    "covers only part of that lattice reads as low and slow-moving, including its ETA, "
+    "rather than as the finished plan it may already be."
+)
+
 
 @dataclass(frozen=True, slots=True)
 class _Snapshot:
@@ -89,6 +110,8 @@ class _Snapshot:
     generated_at: datetime
     throughput_window_hours: int
     lanes: list[dict[str, Any]]
+    # The plan-driven historical walks, reconstructed from source releases rather than jobs.
+    walks: list[dict[str, Any]]
     failures: list[dict[str, Any]]
     dead_letter_trend: list[dict[str, Any]]
     # Every load's landed state, including the lanes that never touch the ledger.
@@ -177,6 +200,11 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
                 {"throughput_window_hours": throughput_window_hours},
             )
             lane_rows = [dict(row) for row in lane_result.mappings().all()]
+            walk_result = await session.execute(
+                _WALKS_SQL,
+                {"throughput_window_hours": throughput_window_hours},
+            )
+            walk_rows = [dict(row) for row in walk_result.mappings().all()]
             failure_result = await session.execute(
                 _FAILURES_SQL,
                 {"row_limit": _FAILURE_ROW_LIMIT, "error_summary_limit": _ERROR_SUMMARY_CHARACTERS},
@@ -194,6 +222,7 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
             generated_at=generated_at,
             throughput_window_hours=throughput_window_hours,
             lanes=[],
+            walks=[],
             failures=[],
             dead_letter_trend=[],
             streams=[],
@@ -203,6 +232,7 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
         generated_at=generated_at,
         throughput_window_hours=throughput_window_hours,
         lanes=[_lane_record(row, generated_at, throughput_window_hours) for row in lane_rows],
+        walks=[_walk_record(row, generated_at, throughput_window_hours) for row in walk_rows],
         failures=failure_rows,
         dead_letter_trend=trend_rows,
         streams=stream_rows,
@@ -246,14 +276,55 @@ def _lane_record(row: dict[str, Any], generated_at: datetime, throughput_window_
     }
 
 
+def _walk_record(row: dict[str, Any], generated_at: datetime, throughput_window_hours: int) -> dict[str, Any]:
+    """Add completion, cell rate, ETA and state to one walk row, leaving unknowns None."""
+    cells_done = int(row["cells_done"])
+    # NULL when the walk's cells do not all resolve to one lattice. Without a denominator
+    # there is no completion and no ETA, and both must stay None rather than be invented.
+    target_cells = None if row["target_cells"] is None else int(row["target_cells"])
+    cells_per_hour = int(row["cells_in_window"]) / throughput_window_hours
+    outstanding_cells = None if target_cells is None else max(target_cells - cells_done, 0)
+    if outstanding_cells is None:
+        eta_hours: float | None = None
+    elif outstanding_cells == 0:
+        eta_hours = 0.0
+    elif cells_per_hour > 0:
+        eta_hours = outstanding_cells / cells_per_hour
+    else:
+        eta_hours = None
+    return {
+        **row,
+        "target_cells": target_cells,
+        "outstanding_cells": outstanding_cells,
+        "completion_percent": (
+            (100.0 * cells_done / target_cells) if target_cells is not None and target_cells > 0 else None
+        ),
+        "cells_per_hour": cells_per_hour,
+        "eta_hours": eta_hours,
+        "eta_ready_at": None if eta_hours is None else generated_at + timedelta(hours=eta_hours),
+        "state": _walk_state(row["last_chunk_at"], generated_at, cells_done, target_cells),
+    }
+
+
+def _walk_state(last_chunk_at: datetime | None, now: datetime, cells_done: int, target_cells: int | None) -> str:
+    """Name a walk's state from landed evidence alone; see the walk note for what idle omits."""
+    if target_cells is not None and cells_done >= target_cells:
+        return "complete"
+    if last_chunk_at is not None and now - last_chunk_at.astimezone(UTC) <= timedelta(minutes=_WALK_ACTIVE_MINUTES):
+        return "active"
+    return "idle"
+
+
 def _json_snapshot(snapshot: _Snapshot) -> dict[str, Any]:
     """Render the snapshot as JSON-safe primitives."""
     return {
         "generated_at": snapshot.generated_at.isoformat(),
         "throughput_window_hours": snapshot.throughput_window_hours,
         "activity_note": _ACTIVITY_NOTE,
+        "historical_walk_note": _WALK_NOTE,
         "error": snapshot.error,
         "lanes": [_json_safe(lane) for lane in snapshot.lanes],
+        "historical_walks": [_json_safe(walk) for walk in snapshot.walks],
         "failures": [_json_safe(failure) for failure in snapshot.failures],
         "dead_letter_trend": [_json_safe(entry) for entry in snapshot.dead_letter_trend],
         "data_streams": [_json_safe(stream) for stream in snapshot.streams],
@@ -307,6 +378,7 @@ def _regions(snapshot: _Snapshot, *, interval_seconds: int) -> list[tuple[str, s
     return [
         ("#ops-meta", _render_meta(snapshot, interval_seconds=interval_seconds)),
         ("#ops-lanes", _render_lanes(snapshot)),
+        ("#ops-walks", _render_walks(snapshot)),
         ("#ops-streams", _render_streams(snapshot)),
         ("#ops-failures", _render_failures(snapshot)),
         ("#ops-deadletters", _render_dead_letter_trend(snapshot)),
@@ -417,7 +489,8 @@ def _render_lane_row(lane: dict[str, Any], generated_at: datetime) -> str:
     return (
         "<tr>"
         f'<td><span class="lane">{escape(str(lane["definition_name"]))}</span>{enabled_mark}'
-        f'<br><span class="dim">{escape(str(lane["logical_run_key"]))}</span></td>'
+        f'<br><span class="dim">{escape(str(lane["logical_run_key"]))}</span>'
+        f'<br><span class="dim">started {_format_age(lane["run_started_at"], generated_at)}</span></td>'
         f"<td>{_status_pill(str(lane['run_status']))}</td>"
         f'<td class="n ok">{int(lane["succeeded_items"]):,}</td>'
         f'<td class="n">{int(lane["queued_items"]):,}</td>'
@@ -433,6 +506,56 @@ def _render_lane_row(lane: dict[str, Any], generated_at: datetime) -> str:
         f"<td>{_format_age(lane['last_recorded_activity_at'], generated_at)}"
         f'<br><span class="dim">{escape(_format_stamp(lane["last_recorded_activity_at"]))}</span></td>'
         f'<td class="dim">{escape(str(lane["oldest_outstanding_shard_key"] or "—"))}</td>'
+        "</tr>"
+    )
+
+
+def _render_walks(snapshot: _Snapshot) -> str:
+    """Render one row per plan-driven historical walk, with both elapsed clocks in full."""
+    if not snapshot.walks:
+        return (
+            '<section id="ops-walks"><h2>historical walks</h2>'
+            '<p class="empty">no historical source releases yet</p></section>'
+        )
+    rows = "".join(_render_walk_row(walk, snapshot.generated_at) for walk in snapshot.walks)
+    return (
+        '<section id="ops-walks"><h2>historical walks</h2>'
+        f'<p class="note">{escape(_WALK_NOTE)}</p>'
+        '<div class="scroll"><table>'
+        "<thead><tr>"
+        "<th>walk</th><th>state</th><th>observed window</th>"
+        '<th class="n">cells</th><th class="n">complete</th><th class="n">chunks</th>'
+        '<th class="n">cells/h</th><th class="n">eta</th>'
+        "<th>started</th><th>last chunk</th>"
+        "</tr></thead>"
+        f"<tbody>{rows}</tbody></table></div></section>"
+    )
+
+
+def _render_walk_row(walk: dict[str, Any], generated_at: datetime) -> str:
+    """Render one walk. Started and last chunk each carry an age and the stamp behind it."""
+    cells_done = int(walk["cells_done"])
+    target_cells = walk["target_cells"]
+    completion = walk["completion_percent"]
+    eta_hours = walk["eta_hours"]
+    parameter_names = walk["parameters"] or []
+    parameters = escape(", ".join(str(name) for name in parameter_names)) if parameter_names else _EMPTY
+    return (
+        "<tr>"
+        f'<td><span class="lane">{escape(str(walk["walk_label"]))}</span>'
+        f'<br><span class="dim">{parameters}</span></td>'
+        f"<td>{_status_pill(str(walk['state']))}</td>"
+        f'<td class="dim">{_format_day(walk["observed_from"])} &rarr; {_format_day(walk["observed_to"])}</td>'
+        f'<td class="n">{cells_done:,}'
+        f'<span class="dim">/{_EMPTY if target_cells is None else f"{int(target_cells):,}"}</span></td>'
+        f'<td class="n">{_EMPTY if completion is None else f"{completion:.1f}%"}</td>'
+        f'<td class="n">{int(walk["chunks_landed"]):,}</td>'
+        f'<td class="n">{float(walk["cells_per_hour"]):,.2f}</td>'
+        f'<td class="n{"" if eta_hours is not None else " warn"}">{_format_hours(eta_hours)}</td>'
+        f"<td>{_format_age(walk['started_at'], generated_at)}"
+        f'<br><span class="dim">{escape(_format_stamp(walk["started_at"]))}</span></td>'
+        f"<td>{_format_age(walk['last_chunk_at'], generated_at)}"
+        f'<br><span class="dim">{escape(_format_stamp(walk["last_chunk_at"]))}</span></td>'
         "</tr>"
     )
 
@@ -606,8 +729,13 @@ def _render_trend_row(entry: dict[str, Any], peak: int) -> str:
 
 
 def _status_pill(status: str) -> str:
+    # Ledger run/item statuses and the three historical-walk states share one map because
+    # their vocabularies are disjoint; an unknown status tones dim rather than raising.
     tone = {
         "succeeded": "ok",
+        "complete": "ok",
+        "active": "info",
+        "idle": "warn",
         "running": "info",
         "queued": "info",
         "retry_wait": "warn",
