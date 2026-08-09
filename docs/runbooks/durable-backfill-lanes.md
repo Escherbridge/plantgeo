@@ -443,7 +443,7 @@ services/agri-data-service/firms-archive-full.sh
 ```
 
 They run as **Windows scheduled tasks**, which is the laptop-bound property that made the original
-failure invisible. All four must be unregistered:
+failure invisible. All five must be unregistered:
 
 | Scheduled task | Supersedes to |
 | --- | --- |
@@ -451,6 +451,28 @@ failure invisible. All four must be unregistered:
 | `PlantGeoStreamflowArchiveBackfill` | `cron-archive-streamflow` |
 | `PlantGeo-OpenMeteo-SoilTemp-backfill` | **nothing — see "Still to unify"** |
 | `PlantGeo-OpenMeteo-VPD-backfill` | **nothing — see "Still to unify"** |
+| `PlantGeo-SoilGrids-warm` | `cron-soilgrids` — see below |
+
+`PlantGeo-SoilGrids-warm` was registered after this runbook was written and is **not** a durable
+lane: `scripts/warm-soilgrids.mjs` is a Node driver, it holds no `agri.job_*` row, and it resumes
+by diffing `agri.spatial_cell` centroids against `public.soil_grid_cache` rather than from a
+cursor. It is listed here only because it is one of the five laptop-bound tasks and retires the
+same way. Its service builds `infra/cron-soilgrids/Dockerfile` — a Node image, not the shared
+Python one — and needs the same two dashboard settings, plus `DATABASE_URL` (copied from
+`plantgeo-main`; the internal `plantgeo-spatiotemporal-db.railway.internal` host, since the
+container runs inside Railway), with `infra/cron-soilgrids/railway.json` as the config path. It
+runs `25 * * * *` at 120 cells: ISRIC is paced at one request per 20 s, so a typical tick is ~40
+minutes of the hour. A point that ISRIC keeps refusing is skipped rather than parked at the head
+of the queue forever; the run itself still stops after three consecutive skips or a 45-minute
+wall-clock deadline, whichever comes first, so the worst case is bounded rather than open-ended —
+an early-ending tick simply frees the schedule for the next one, and only a run that uses its
+whole deadline risks Railway skipping the following tick. Minute `:25` sits clear of every other
+cron's minute list ({:00, :05, :10, :15, :20, :30, :35, :40, :45, :50} across the twelve siblings
+that carry a `cronSchedule` — `infra/cron-ingest` is the one that does not). Unlike the archive
+lanes it is safe to enable while the local task still runs — a duplicate cell is skipped by the
+cache diff, not re-fetched — but only across separate runs: two runs overlapping in time would
+compute the same pending list and double the request rate against ISRIC, so do not run both at
+once regardless.
 
 ```powershell
 Get-ScheduledTask -TaskName 'PlantGeo-FIRMS-archive-backfill','PlantGeoStreamflowArchiveBackfill' |

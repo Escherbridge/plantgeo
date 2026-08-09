@@ -37,6 +37,14 @@ const REQUEST_SPACING_MS = 20_000;
 const THROTTLE_BACKOFF_MS = 120_000;
 const MAX_CONSECUTIVE_THROTTLES = 3;
 
+// A point that is refused twice and then succeeds never counts toward the run-scoped skip
+// budget above, so a sustained *partial* throttle (roughly one admission in three) is not
+// bounded by it: every point could cost two backoffs before landing, ~260 s each, which is
+// ~8.7 h across 120 points -- close to what the run-scoped budget exists to prevent. This
+// deadline is the backstop for that shape. Sized to leave headroom inside the hourly
+// cronSchedule this driver runs under (infra/cron-soilgrids/railway.json).
+const RUN_DEADLINE_MS = 45 * 60 * 1000;
+
 // Matches CACHE_CELL_DEGREES in soilgrids.ts. The cache row a centroid resolves to is the
 // quantized cell, so resumption has to compare on the same grid or every cell looks new.
 const CACHE_CELL_DEGREES = 0.001;
@@ -105,21 +113,33 @@ console.log(
 
 let cached = 0;
 let noData = 0;
+let skipped = 0;
 let stoppedEarly = false;
+let deadlineReached = false;
 
-let consecutiveThrottles = 0;
+// Two budgets, two scopes. Per-point: a refused point must not consume the whole run's
+// budget. Per-run: a run-wide refusal streak (ISRIC down, or the whole run banned) must
+// still stop the run rather than spending ~9h retrying every remaining point in turn.
+let consecutiveSkips = 0;
+const runStartedAt = Date.now();
 
 for (const [index, point] of targets.entries()) {
+  if (Date.now() - runStartedAt > RUN_DEADLINE_MS) {
+    deadlineReached = true;
+    console.error(`[soilgrids] wall-clock deadline reached after ${index}/${targets.length} points; stopping`);
+    break;
+  }
   if (index > 0) await sleep(REQUEST_SPACING_MS);
   const label = `${index + 1}/${targets.length} ${point.lat},${point.lon}`;
   let placed = false;
+  let consecutiveThrottles = 0;
 
   while (!placed) {
     const startedAt = Date.now();
     try {
       await getSoilProperties(point.lat, point.lon);
       cached += 1;
-      consecutiveThrottles = 0;
+      consecutiveSkips = 0;
       placed = true;
       console.log(`[soilgrids] ${label} cached (${Date.now() - startedAt}ms)`);
     } catch (error) {
@@ -127,7 +147,7 @@ for (const [index, point] of targets.entries()) {
       // complete=false and must not be retried, so it counts as progress.
       if (error instanceof SoilEvidenceUnavailableError) {
         noData += 1;
-        consecutiveThrottles = 0;
+        consecutiveSkips = 0;
         placed = true;
         console.log(`[soilgrids] ${label} no_data`);
         break;
@@ -135,10 +155,18 @@ for (const [index, point] of targets.entries()) {
       if (error instanceof SoilUpstreamUnavailableError) {
         consecutiveThrottles += 1;
         if (consecutiveThrottles >= MAX_CONSECUTIVE_THROTTLES) {
-          stoppedEarly = true;
+          skipped += 1;
+          consecutiveSkips += 1;
+          placed = true;
           console.error(
-            `[soilgrids] ${label} refused ${consecutiveThrottles}x; yielding to the next wake`
+            `[soilgrids] ${label} refused ${consecutiveThrottles}x; skipping to the next point`
           );
+          if (consecutiveSkips >= MAX_CONSECUTIVE_THROTTLES) {
+            stoppedEarly = true;
+            console.error(
+              `[soilgrids] ${consecutiveSkips} consecutive points refused; stopping the run`
+            );
+          }
           break;
         }
         console.warn(
@@ -148,6 +176,9 @@ for (const [index, point] of targets.entries()) {
         await sleep(THROTTLE_BACKOFF_MS);
         continue;
       }
+      // Not known to be point-specific -- a Postgres proxy timeout or a code defect fails
+      // the next point identically, so the run stops rather than burning its budget on
+      // guaranteed repeats.
       console.error(`[soilgrids] ${label} failed:`, error?.message ?? error);
       stoppedEarly = true;
       break;
@@ -159,8 +190,8 @@ for (const [index, point] of targets.entries()) {
 
 const remaining = pending.length - cached - noData;
 console.log(
-  `[soilgrids] done cached=${cached} noData=${noData} remaining=${remaining} ` +
-    `stoppedEarly=${stoppedEarly}`
+  `[soilgrids] done cached=${cached} noData=${noData} skipped=${skipped} remaining=${remaining} ` +
+    `stoppedEarly=${stoppedEarly} deadlineReached=${deadlineReached}`
 );
 
 await sql.end({ timeout: 5 });
