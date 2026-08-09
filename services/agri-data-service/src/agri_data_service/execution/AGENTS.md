@@ -128,8 +128,10 @@ collision is the entire point. NASA's radiation lane
 (`plans/nasa-power-western-na-weather-radiation-20220531-20260531.json`) is COMPLETE at 397/397 cells
 and permanently capped at **2026-05-31**, because `ALLSKY_SFC_SW_DWN` carries a hard ~2-month
 publication lag that no amount of re-running fixes. Open-Meteo republishes the same daily quantity
-from ERA5-Land with roughly six days of lag, so a second producer on the same `signal_name` is how
-the ceiling moves.
+with roughly six days of lag, so a second producer on the same `signal_name` is how the ceiling
+moves. It republishes it from **ERA5, not ERA5-Land**: ERA5-Land publishes no radiation flux through
+this endpoint at all, which is measured, dated and explained in §"The archive model decides which
+variables have values at all" below, and is why this one plan runs on `models=era5`.
 
 **No conversion is applied, and applying one would be the bug.** Both quantities are a daily *sum of
 megajoules per square metre*: Open-Meteo's daily-variable table publishes `shortwave_radiation_sum`
@@ -142,7 +144,7 @@ both the NASA spelling `MJ/m^2/day` rather than the provider's `MJ/m2`, because 
 nothing and is silently invisible instead of wrongly served.
 
 **This plan rides the NASA lattice, not this lane's usual one.**
-`plans/open-meteo-era5-land-nasa-power-lattice-radiation-20220802-20260802.json` declares
+`plans/open-meteo-era5-nasa-power-lattice-radiation-20220802-20260802.json` declares
 `grid_name = "nasa-power-0.5-degree"` and carries the NASA plan's 397 `na-sample:1deg:*` cells
 verbatim. Nothing in this lane hardcodes the NDVI lattice — `grid_name`/`grid_resolution_m` are plain
 plan fields and `_require_open_meteo_spatial_cells` compares against `plan.grid_name` — so the
@@ -152,11 +154,14 @@ it is what keeps one signal's coverage definition single-valued, and it is also 
 rows. The 1-degree cell spacing clears `require_governed_lattice`'s "cells must not share a native
 grid point" rule with an order of magnitude to spare.
 
-**`support_key` stays `era5-land-0.1deg`, and that currently blocks serving.** It is pinned as a
-`Literal` and it is honest: it records *spatial* support, and it is the only thing that lets a reader
-tell a 0.1-degree ERA5-Land sample from the 0.5-degree NASA POWER sample of the same cell-day.
-Writing `surface` here to make the rows serve would erase that distinction for every variable this
-lane carries. The consequence, stated plainly so nobody discovers it by seeing an unmoved map: **three
+**`support_key` is `era5-0.25deg` on this plan, and that still blocks serving.** It is no longer a
+pinned `Literal`: it is a pattern-checked `str` whose value is re-derived per model from
+`OPEN_METEO_ARCHIVE_PRODUCTS` and re-checked by `require_governed_lattice`, so ERA5-Land plans carry
+`era5-land-0.1deg` and this ERA5 one carries `era5-0.25deg`. Both are honest for the same reason: the
+field records *spatial* support, and it is what lets a reader tell a 0.25-degree ERA5 sample from a
+0.1-degree ERA5-Land one and from the 0.5-degree NASA POWER sample of the same cell-day. Writing
+`surface` here to make the rows serve would erase that distinction for every variable this lane
+carries. The consequence, stated plainly so nobody discovers it by seeing an unmoved map: **three
 serving-side predicates exclude these rows today**, and each is a deliberate gate somebody wrote, not
 an oversight —
 
@@ -168,27 +173,33 @@ an oversight —
 
 Only the fourth predicate, `cell.grid_name = 'nasa-power-0.5-degree'`, is already satisfied — by the
 lattice choice above. Widening the other three is a **separate reviewed change** with a real design
-question attached (0.5-degree and 0.1-degree support drawn on one ramp is exactly what
+question attached (0.5-degree and 0.25-degree support drawn on one ramp is exactly what
 `0020_climate_field.sql`'s own header argues against), so the producer landed first and alone. The
-`DISTINCT ON (signal_name, day) ORDER BY data_available_at DESC` precedence those readers use is
+`DISTINCT ON (signal_name, day) ORDER BY data_available_at DESC` precedence those two readers use is
 sound and needs nothing; it is the support/source gates in front of it that decide whether the merge
-is reachable at all.
+is reachable at all. Note that the precedence only *applies* to rows the gates admit: for this lane
+neither reader reaches these rows today, so nothing about a duplicate or a second lineage in it is
+resolved by that ordering yet.
 
-The plan's `source` block is byte-identical to the three sibling lane plans, including a `purpose`
-that names the Sentinel-2 NDVI lattice and now describes neither this plan's lattice nor its
-parameter. That is forced: `_ensure_data_source` raises "already governed by different metadata" on
-any disagreement, so correcting the wording is a coordinated edit across all four files.
-`transform_version` is likewise the shared `...daily-mean-normalization-v1`, which already carries a
-non-mean aggregation (VPD's daily max) — it names this lane's passthrough normalization, not the
-provider's reduction, since Open-Meteo performs the daily reduction upstream and this lane applies
-none.
+The plan carries **its own `source` block**, not the sibling plans': `source.key` is
+`open-meteo-era5-archive` and its `purpose` names ERA5, this lattice and this parameter. The same
+rule forces both facts — `_ensure_data_source` in `historical_writer/_shared.py` pins `model` and the
+native grid into `configuration` and raises "already governed by different metadata" on any
+disagreement, so a second reanalysis needs a second key rather than a reworded one. On the ERA5-Land
+side that same rule *freezes* the shared `purpose` ("...soil-state covariates...", naming the
+Sentinel-2 NDVI lattice) across all three sibling plans even though it no longer describes every
+parameter they carry; correcting it there is a coordinated edit across every sibling plan file's
+`source` block, not a one-plan change.
 
-`source.key = "open-meteo-era5-land-archive"` is shared identity across every plan in this lane, and
-`_ensure_data_source` in `historical_writer/_shared.py` raises "already governed by different metadata" if a
-plan's `source` block disagrees with the `data_source` row an earlier plan already persisted. The
-registered `purpose` text ("...soil-state covariates...") therefore stays byte-identical here even
-though it no longer describes every parameter this lane carries; correcting it is a coordinated edit
-across every sibling plan file's `source` block, not a one-plan change.
+`transform_version` is the shared `open-meteo-era5-land-archive-daily-mean-normalization-v1` on this
+ERA5 plan too, and the `era5-land` inside that string is a misnomer that is **deliberately kept**. It
+names this lane's passthrough normalization, not the provider's reduction (Open-Meteo performs the
+daily reduction upstream and this lane applies none), which is also why it already carries a non-mean
+aggregation in VPD's daily max. More decisively, it is *identity* rather than description: it is one
+of the four columns of `uq_source_release_identity`, it is projected as provenance by
+`agri.v_signal_timeseries_contract`, and it is inside `plan_checksum`. Renaming it would fork the
+identity of the 8 chunks already persisted under it and orphan the plan's checkpoint and its whole
+`raw/` cache, buying accuracy in a label at the price of a re-fetch of a quota-bound dataset.
 
 ### Two checksums, on purpose
 
@@ -296,15 +307,82 @@ forever, needing a hand-edited JSON file. `reason` is preserved -- it is the evi
 stop, and only `state` gates a resume. Nothing is lost by re-deriving, because finalization
 independently re-validates the manifest, the cached documents, and the persisted releases.
 
+### The archive model decides which variables have values at all
+
+One endpoint, two reanalyses. `models=era5_land` is the 0.1-degree product whose soil layers match
+the CDS variable definitions; `models=era5` is its 0.25-degree parent, which carries strictly more
+variables -- notably every radiation flux. **ERA5-Land publishes no radiation through this endpoint,
+and says so by returning nulls rather than an error.** Measured live on 2026-08-09 at 31N/104W:
+`models=era5_land&daily=shortwave_radiation_sum` answered HTTP 200 with the key present, the
+`daily_units` block correct (`MJ/m²`), the time axis exactly the reviewed window, and every one of
+the 1,462 values `null`. `models=era5` answered 30.76, 31.01, 30.21 MJ/m² for the same days at the
+same returned grid point.
+
+Every guard in this lane passed that payload, correctly: the byte cap, the location ordering, the
+grid-attribution check, the time-axis check, the `provider_unit` assertion and the range bounds all
+describe a *well-formed* response, and that response was well-formed. `_coverage_status` then read
+zero observed values as `no_data`, `require_accounted_open_meteo_result` agreed that zero rows is
+exactly what a `no_data` series should produce, and the checkpoint reached `validated` with
+397/397 series empty. The first authoring of the radiation plan therefore fetched 8 chunks,
+validated them, persisted them, finalized a release set, and wrote a `.done` marker over zero rows.
+
+Two changes make that unrepresentable rather than merely unlikely:
+
+1. **`OpenMeteoArchiveSignal.model` is required and first.** The signal table names the reanalysis
+   that publishes each variable, and `require_governed_lattice` refuses a plan whose parameters are
+   not all published by its own `model`. This is the only place the mistake can be caught *before* a
+   quota-bound fetch, because the provider answers with 200 either way.
+2. **A variable empty in every reviewed cell blocks finalization.**
+   `unanswered_open_meteo_parameters` is whole-plan, not per-chunk: one cell or one chunk may
+   honestly hold no data, but a variable with zero observed values across every reviewed cell is a
+   mapping or model-availability failure wearing a coverage failure's clothes. See the next section
+   for why it exits non-zero instead of waiting.
+
+`OPEN_METEO_ARCHIVE_PRODUCTS` is what the model fixes: native grid name, spacing, resolution,
+`support_key`, `data_source` key, `source_kind`, upstream product string, and `artifact_kind`. A plan
+may not drift from any of them. The two models get **separate `data_source` keys**
+(`open-meteo-era5-land-archive`, `open-meteo-era5-archive`) because `_ensure_data_source` pins
+`model` and the native grid into `configuration` and re-verifies them on every replay -- one key
+cannot honestly describe both products, and a shared key would have made the ERA5 plan fail at
+persist time with a confusing conflict message instead of registering its own source. Widening the
+model cost the radiation signal resolution, not honesty: `support_key` is `era5-0.25deg`, so a
+reader can still tell a 0.25-degree ERA5 sample from ERA5-Land's 0.1-degree one and from NASA
+POWER's 0.5-degree one of the same cell.
+
+**`artifact_kind` is per-model and was the last field to be threaded.** `agri.artifact.kind` names the
+product the bytes came from, and `historical_export.py` copies it into every export manifest as
+`source_artifact_kind`, so one literal cannot describe two reanalyses. ERA5-Land keeps
+`source_open_meteo_era5_land_archive_daily_json` byte-for-byte (artifacts are immutable and its rows
+are already persisted); ERA5 gets `source_open_meteo_era5_archive_daily_json`. **Known residual:** the
+8 radiation chunks persisted on 2026-08-09, before this was threaded, carry the ERA5-Land kind on
+ERA5 bytes. That is not retroactively rewritten — an artifact row is immutable by design and rewriting
+one to improve a label would be worse than the label. Everything else on those rows (source key,
+`source_kind`, `upstream_product`, `support_key`, native grid, artifact URI namespace) already
+discriminates correctly, so the mislabel is recoverable by joining to the release's data source.
+
+`schema_version` stays `open-meteo-era5-land-archive-daily-v1` for both models. It names the plan
+*document schema*, which is unchanged, and it is the walk-identity prefix `ops_historical_walks.sql`
+parses; re-versioning it would rename every already-persisted walk to say nothing new. It is also
+what `plan_continuation._plan_lane` routes on, which is correct for the same reason: both models
+share one document contract, and every *other* lane pins a different `schema_version` value.
+
 ### Two different finalization refusals, only one of which is a wait
 
-`historical-open-meteo-persist` reports `finalization_blocked_by_incomplete_coverage` and
-`finalization_blocked_by_stale_release_set_as_of` separately, and **exits non-zero** on the second.
+`historical-open-meteo-persist` reports `finalization_blocked_by_incomplete_coverage`,
+`finalization_blocked_by_stale_release_set_as_of` and `finalization_blocked_by_unanswered_parameters`
+separately, and **exits non-zero** on the last two.
 Incomplete coverage is a wait-and-resume state. A `release_set_as_of` that precedes a persisted
 receipt is not: coverage is complete, there is nothing left to fetch, and the plan itself has to be
 re-authored. Reporting it as missing coverage sends an operator after chunks that do not exist. The
 sibling finalizers all raise `ValueError("release_set_as_of must not precede a persisted source
 receipt")` for this condition; the CLI now reports it faithfully instead of skipping past the raise.
+
+A parameter that came back empty in every reviewed cell is the same shape of failure and gets the
+same treatment: there is nothing to resume, because the fetch already succeeded. Waiting would be
+worse than useless -- `durable-backfill.sh` only writes its `.done` marker when persist exits 0
+*and* reports no incompleteness, so a lane that silently finalized over zero rows retired itself and
+made every future wake a no-op. The non-zero exit keeps the lane open and puts
+`unanswered_parameters` in front of an operator.
 
 Re-authoring a plan is expensive on purpose: `release_set_as_of` is inside the plan checksum, so a
 new as-of orphans `historical-open-meteo/<checksum>.json` **and** its whole `raw/` cache, forcing a
@@ -624,6 +702,161 @@ The method lives in Python rather than `db/agri/functions/**` because promoting 
 reusable SQL function requires a new Alembic migration, which this track was scoped out of.
 That is the recommended follow-up; the canonical parameter text and the hash-seeded sampler
 were written to be portable to SQL without changing any digest.
+
+## `plan_continuation.py` -- why a finished plan stops moving, and what may be done about it
+
+A fixed-window plan that `durable-backfill.sh` has marked `.done` is frozen forever: every later wake
+exits at the `.done` check, so the lane ages one calendar day per calendar day with nothing pushing
+it. That had already happened twice by hand before this module existed. `agri-cli
+historical-plan-continue` authors the successor plan; `agri-cli historical-plan-staleness` is the half
+that makes the freeze visible instead of silent, and is meant to be read, not to gate anything.
+
+**Scheduling is deliberately not automated here.** Registering a Windows scheduled task needs the
+owner's own hands, so the two new plans of 2026-08-08 were left unscheduled and so is this. The verb
+is the mechanism; wiring it to a timer is a documented manual step.
+
+### The window slides. It cannot extend, and that is the whole cost model
+
+`HistoricalBackfillWindow.require_exact_four_calendar_years` rejects any window that is not exactly
+four calendar years, and **both** lanes share that class. "Keep the original start and only push the
+end forward" is therefore structurally impossible: `continuation_window` moves the end to the frontier
+and the start follows it. A tail-only plan covering just the new days would need a contract change.
+
+The consequence has to be stated in rows, because it is the deciding fact. `_source_version` in
+`historical_writer/nasa.py` is `{schema_version}:{start}-{end}:{cell_key}` and
+`_open_meteo_source_version` likewise folds the window in, so a slid window is a **new**
+`source_release` for every cell. `uq_signal_observation_release_cell_signal_time` is scoped to the
+release, so it does not dedupe the overlap: the ~4 years the two windows share are re-fetched and
+re-persisted in full. Measured on `weather-fast` (397 cells x 7 parameters) at the 2026-08-09
+frontier: **2,779 genuinely new rows against 4,060,119 duplicated ones**, roughly 2 GB at the ~529
+bytes per `agri.signal_observation` row measured elsewhere in this tree.
+
+This is the same shape as the hazard that got the redundant `era5-land-pnw-soil-*.json` plan skipped.
+Whether the duplicates are *merged* rather than double-counted is **each reader's own property, and
+it is lane-specific** -- which is why neither this module's generated plan description nor this
+section names a reader as though it were a general guarantee:
+
+- The NASA lane is merged. `agri.covariate_daily_features` takes `DISTINCT ON (signal_name, day)
+  ORDER BY data_available_at DESC`, and `geo.climate_field_observation` does the same, so a second
+  lineage over the same cell-days resolves to the newest release.
+- **The Open-Meteo lanes are not reached by either reader at all.**
+  `covariate_daily_features.sql` filters `signal.support_key = 'surface'` and this lane emits
+  `era5-land-0.1deg` / `era5-0.25deg`; the climate-field view filters `source.key =
+  'nasa-power-daily'`. Both gates are deliberate (see §"Shortwave radiation is a SECOND upstream"),
+  and until one is widened, a duplicate lineage on an Open-Meteo plan is pure storage with no merge
+  semantics in front of it either way.
+
+Either way the cost is storage and throughput rather than a wrong number, it is paid in full on every
+continuation regardless of how far the window moves, and the only real lever is **how rarely one is
+authored**. `MINIMUM_CONTINUATION_ADVANCE_DAYS` (30) is that lever, and the decision reports both row
+counts so an operator overriding it is doing so with the trade in front of them.
+
+`superseding_sibling` refuses outright when a same-family plan already carries a later window. That is
+exactly the redundant-ERA5 mistake, and the check is what stops the staleness sweep from recommending
+it: the superseded 2022-04-30 plans read as 95-101 days behind and would otherwise look like the most
+urgent lanes in the report.
+
+**The candidate set is both directories, and that is load-bearing.**
+`historical-plan-continue --output-directory` writes outside the source plan's own directory, so a
+search of only `source.path.parent` cannot see the continuation the previous invocation just wrote --
+and this check is the *single* guard against stacking lineages. Searching only one side made three
+ordinary invocations author three overlapping continuations of one plan, ~3.94 M duplicate rows each.
+`sibling_plan_candidates` globs the source's directory **and** the output directory, de-duplicated by
+resolved path. **Residual, measured rather than assumed:** an operator who points every invocation at
+a *different, empty* directory still escapes the check, because the earlier sibling is in neither
+place the check can see. Closing that needs a registry of plan directories rather than two globs; the
+practical rule is that `services/agri-data-service/plans/` is the canonical home and a continuation
+belongs beside its family.
+
+**Family identity is the filename stem minus its date pair, and that is a disclosed limitation.**
+Two plans that cover the same cells and parameters under *different* stems are not siblings to this
+check. That is true today, not hypothetically:
+`plans/nasa-power-western-na-soil-lattice-20220430-20260430.json` (397 cells,
+`ALLSKY_SFC_SW_DWN/PRECTOTCORR/RH2M/T2M/T2MDEW/T2M_MAX/T2M_MIN/WS2M`) is fully covered by
+`weather-fast` ∪ `weather-radiation` over the same 397 cells, and the split of `soil-wetness`,
+`weather-fast` and `weather-radiation` into three families is itself deliberate (they advance at
+different provider frontiers). Filename keying cannot see either relationship. Detecting overlap
+properly means comparing cell sets, parameter sets and windows across every plan in the tree, which is
+a real design with a real false-positive question attached -- deliberately not smuggled in here. Until
+then: **an operator adding a plan family that overlaps an existing one owns that check by hand**, and
+`historical-plan-staleness` will list both as continuable.
+
+### The end date is measured, never assumed
+
+There is no lag constant anywhere in this module. `probe_provider_frontier` asks the provider, with
+the plan's own parameters, at three cells spread across its own lattice, over a 240-day window:
+
+- **Across cells it takes the maximum.** An ocean or out-of-domain cell publishes nothing, and reading
+  that as provider lag would freeze a lane permanently.
+- **Across parameters it takes the minimum**, and names the limiting ones. This is not conservatism:
+  `require_complete_nasa_result` fails the *whole cell* -- every parameter -- when one parameter is
+  short of the window, and the Open-Meteo `require_accounted_*` rule wants one coverage row per
+  requested series. A plan can only reach the day its slowest parameter has reached.
+
+That distinction is the entire reason `weather-fast` and the radiation plan are separate files, and
+the probe reproduces the split from first principles. Measured 2026-08-09, three cells agreeing:
+`PRECTOTCORR/RH2M/T2M/T2MDEW/T2M_MAX/T2M_MIN/WS2M` and the three `GWET*` parameters all reach
+2026-08-07, while `ALLSKY_SFC_SW_DWN` reaches 2026-05-31. The Open-Meteo ERA5-Land archive reached
+2026-08-03 for every variable this tree requests.
+
+A fill value is not freshness: the NASA branch routes every value through
+`nasa_power_observed_value`, so POWER's `-999` reads as missing, and the Open-Meteo branch treats a
+`null` the same way. Both are the shared readers, not copies -- `_extract_parameter_values`,
+`_source_numeric_value` and `_four_calendar_years_before` were made public for this
+(`extract_nasa_power_parameter_values`, `nasa_power_observed_value`, `four_calendar_years_before`), and
+`nasa_power_daily_point_url` was factored out of `nasa_power_daily_url` so both build one URL shape.
+`--end-date` bypasses the probe for an offline run and records `mode: "declared"`, which is the
+operator's claim rather than a measurement. Two bounds keep that claim from turning into work that
+cannot succeed, and both are refusals rather than exceptions:
+
+- **A frontier past today is refused** (`provider_frontier_end_date_is_in_the_future`). A probe
+  cannot measure one, but `--end-date` accepts any calendar date, and days the provider has not
+  published are not freshness -- fetching them spends a full lattice's quota on nothing.
+- **A continuation may never leave an uncovered gap**
+  (`continuation_window_would_leave_an_uncovered_gap`). Because the window slides rather than extends,
+  a far enough jump moves the *start* past the day the source stopped: `--end-date 2031-01-01` against
+  a plan ending 2026-08-06 proposed `2027-01-01 .. 2031-01-01` and a 147-day hole covered by neither
+  lineage. The proposed start must be at most one day past the source's end.
+
+### Lane routing is `schema_version`, never key shape
+
+`_plan_lane` reads the `schema_version` each contract pins: the archive lanes' documents are
+structurally alike, and four of them (`historical_open_meteo`, `historical_cams`,
+`historical_glofas`, `ensemble_forecast`) carry `cells` and `chunk_cell_count` at the top level. Duck
+typing on those keys routed a CAMS plan into the Open-Meteo archive contract, where
+`model_validate` raised a bare `pydantic.ValidationError` -- which is a `ValueError`, not a
+`PlanContinuationError`, so it escaped `scan_plan_staleness`'s `except PlanContinuationError:
+continue` and aborted the whole sweep on one unrelated file. An unrecognised `schema_version` and a
+recognised one whose document fails its contract both raise `PlanContinuationError` now, so the sweep
+skips the file and keeps measuring the rest. The NASA contract carries its `schema_version` on the
+nested `nasa` block, which is where it is read from.
+
+### What a continuation inherits, and what it may change
+
+Everything except the window, the two identifiers derived from it, and the description: cells,
+parameters, grid, chunking, `transform_version` and the whole `source` block are carried verbatim,
+because `_ensure_data_source` raises "already governed by different metadata" on any source
+disagreement. The plan is built with `model_copy`, which skips validators, and then **re-parsed from
+the emitted bytes through the same contract the backfill verb uses** -- a document that cannot survive
+that round trip is never written. Output is `indent=2`, `sort_keys=True`, LF, one trailing newline,
+matching the 2026-08-08 continuation plans already on disk.
+
+The filename stem and `release_set_key` are retargeted *independently*. They are usually equal, but
+not always: `open-meteo-era5-land-pnw-vpd-*.json` carries the key
+`open-meteo-era5-land-pnw-ndvi-lattice-vpd-*`, so deriving one from the other would silently rename a
+release set.
+
+`release_set_as_of` is placed 30 days past today rather than at a forecast completion, per the rule in
+§historical_open_meteo: an as-of before a persisted receipt blocks finalization and forces a re-author,
+which orphans the checkpoint and the whole raw cache, while an as-of after it merely waits.
+
+### Exit semantics
+
+A refusal is **not** a fault. `historical-plan-continue` prints the decision as JSON and exits zero
+for every `ContinuationRefusal`, matching `durable-backfill.sh`'s own "nothing to do right now"
+convention, so a scheduled invocation that finds the frontier unmoved is silent success rather than a
+red run. Only an unreadable plan, an unreachable provider or an unwritable path raises. `--write` is
+off by default: without it the verb decides and reports but writes nothing.
 
 ## `open_meteo_lane.py` -- the scaffold the new Open-Meteo lanes share
 

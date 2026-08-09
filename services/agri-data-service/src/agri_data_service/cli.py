@@ -170,9 +170,11 @@ from agri_data_service.execution.historical_open_meteo import (
     initialize_historical_open_meteo_checkpoint,
     load_cached_historical_open_meteo_result,
     load_historical_open_meteo_checkpoint,
+    open_meteo_observed_values_by_parameter,
     record_historical_open_meteo_result,
     rederive_historical_open_meteo_checkpoint_state,
     run_open_meteo_archive_chunks,
+    unanswered_open_meteo_parameters,
     write_historical_open_meteo_checkpoint,
 )
 from agri_data_service.execution.historical_parquet import (
@@ -203,6 +205,20 @@ from agri_data_service.execution.historical_writer import (
     persist_usdm_shapefile,
 )
 from agri_data_service.execution.local_store import LocalRunStore
+from agri_data_service.execution.plan_continuation import (
+    CONTINUATION_AS_OF_HORIZON_DAYS,
+    FRONTIER_PROBE_CELL_COUNT,
+    MINIMUM_CONTINUATION_ADVANCE_DAYS,
+    PlanContinuationError,
+    continuation_decision_payload,
+    decide_continuation,
+    declared_frontier,
+    load_continuation_source,
+    plan_staleness_payload,
+    probe_provider_frontier,
+    scan_plan_staleness,
+    write_continuation_plan,
+)
 from agri_data_service.execution.publisher import BoundedPublisher, PublicationError
 from agri_data_service.execution.source_ingestion import (
     SOURCE_INGESTION_CHECKPOINT_SCHEMA_VERSION,
@@ -2277,6 +2293,7 @@ async def _historical_open_meteo_persist(plan_path: Path) -> None:
         checkpoint = _open_meteo_lane().load_checkpoint(plan, checkpoint_path_value)
         receipted = {receipt.chunk_key for receipt in checkpoint.receipts}
         persisted: list[dict[str, object]] = []
+        observed_by_parameter: dict[str, int] = {}
         # One engine for the whole verb, one session and one transaction per chunk: the per-chunk
         # write boundary is unchanged, but the connect handshake is paid once instead of per chunk.
         async with local_source_loader_engine(loader_database_url) as loader_session:
@@ -2287,13 +2304,20 @@ async def _historical_open_meteo_persist(plan_path: Path) -> None:
                 if result is None:
                     raise ValueError("Open-Meteo archive persistence requires every receipted local chunk document")
                 persisted.append(await _persist_open_meteo_chunk(loader_session, plan, result))
+                for parameter, observed in open_meteo_observed_values_by_parameter(result).items():
+                    observed_by_parameter[parameter] = observed_by_parameter.get(parameter, 0) + observed
             # Coverage complete but the as-of time predates a receipt is a governance failure, not a
             # wait-and-resume state: the chunks an operator would be sent to fetch do not exist.
             stale_chunk_keys = sorted(
                 receipt.chunk_key for receipt in checkpoint.receipts if receipt.retrieved_at > plan.release_set_as_of
             )
+            # Neither is a variable that came back empty in every reviewed cell: there is nothing to
+            # resume, because the fetch already succeeded. See execution/AGENTS.md §historical_open_meteo.
+            unanswered = (
+                unanswered_open_meteo_parameters(plan, observed_by_parameter) if checkpoint.state == "validated" else ()
+            )
             release_set = None
-            if checkpoint.state == "validated" and not stale_chunk_keys:
+            if checkpoint.state == "validated" and not stale_chunk_keys and not unanswered:
                 async with loader_session() as session, session.begin():
                     release_set = await finalize_open_meteo_release_set(session, plan=plan, checkpoint=checkpoint)
     except (OSError, SQLAlchemyError, ValueError) as exc:
@@ -2308,14 +2332,22 @@ async def _historical_open_meteo_persist(plan_path: Path) -> None:
         "no_data_series_count": sum(int(cast("int", item["no_data_series_count"])) for item in persisted),
         "release_set_id": None if release_set is None else str(release_set.release_set_id),
         "release_set_manifest_checksum": None if release_set is None else release_set.manifest_checksum,
-        "finalization_blocked_by_incomplete_coverage": release_set is None and not stale_chunk_keys,
+        "finalization_blocked_by_incomplete_coverage": (
+            release_set is None and not stale_chunk_keys and not unanswered
+        ),
         "finalization_blocked_by_stale_release_set_as_of": bool(stale_chunk_keys),
+        "finalization_blocked_by_unanswered_parameters": bool(unanswered),
         "release_set_as_of": plan.release_set_as_of.isoformat(),
         "stale_receipt_chunk_keys": stale_chunk_keys[:_OPEN_METEO_PENDING_PREVIEW],
+        "unanswered_parameters": list(unanswered),
     }
     if stale_chunk_keys:
         raise click.ClickException(
             json.dumps({**payload, "error": "open_meteo_release_set_as_of_precedes_a_persisted_receipt"}, indent=2)
+        )
+    if unanswered:
+        raise click.ClickException(
+            json.dumps({**payload, "error": "open_meteo_parameters_answered_no_values"}, indent=2)
         )
     click.echo(json.dumps(payload, indent=2))
 
@@ -2763,6 +2795,178 @@ def historical_usdm_status(plan: Path) -> None:
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(checkpoint.model_dump_json(indent=2))
+
+
+@cli.command("historical-plan-continue")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+@click.option(
+    "--output-directory",
+    type=click.Path(path_type=Path, file_okay=False),
+    default=None,
+    help="Where the continuation plan is written. Defaults to the source plan's own directory.",
+)
+@click.option(
+    "--minimum-advance-days",
+    type=click.IntRange(min=1),
+    default=MINIMUM_CONTINUATION_ADVANCE_DAYS,
+    show_default=True,
+    help="Refuse to author a continuation that buys fewer new days than this.",
+)
+@click.option(
+    "--as-of-horizon-days",
+    type=click.IntRange(min=1),
+    default=CONTINUATION_AS_OF_HORIZON_DAYS,
+    show_default=True,
+    help="How far past today the new release_set_as_of is placed.",
+)
+@click.option(
+    "--probe-cells",
+    type=click.IntRange(min=1),
+    default=FRONTIER_PROBE_CELL_COUNT,
+    show_default=True,
+    help="How many lattice cells the provider frontier is measured at.",
+)
+@click.option(
+    "--end-date",
+    default=None,
+    help="Skip the provider probe and declare the frontier as YYYY-MM-DD. The operator owns its honesty.",
+)
+@click.option(
+    "--allow-incomplete",
+    is_flag=True,
+    default=False,
+    help="Continue a plan the durable driver has not yet marked complete.",
+)
+@click.option("--write", is_flag=True, default=False, help="Write the plan. Off by default; nothing is written.")
+def historical_plan_continue(  # noqa: PLR0913 - one parameter per click option, as this file's own verbs are
+    plan: Path,
+    output_directory: Path | None,
+    minimum_advance_days: int,
+    as_of_horizon_days: int,
+    probe_cells: int,
+    end_date: str | None,
+    allow_incomplete: bool,
+    write: bool,
+) -> None:
+    """Author the forward continuation of one completed fixed-window historical backfill plan."""
+    asyncio.run(
+        _historical_plan_continue(
+            plan,
+            output_directory,
+            minimum_advance_days,
+            as_of_horizon_days,
+            probe_cells,
+            end_date,
+            allow_incomplete=allow_incomplete,
+            write=write,
+        )
+    )
+
+
+async def _historical_plan_continue(  # noqa: PLR0913 - mirrors its verb's options one for one
+    plan_path: Path,
+    output_directory: Path | None,
+    minimum_advance_days: int,
+    as_of_horizon_days: int,
+    probe_cells: int,
+    end_date: str | None,
+    *,
+    allow_incomplete: bool,
+    write: bool,
+) -> None:
+    try:
+        source = load_continuation_source(plan_path, local_execution_root=settings.local_execution_root)
+        frontier = (
+            declared_frontier(_forecast_cli_day(end_date, "--end-date"), measured_at=datetime.now(UTC))
+            if end_date is not None
+            else await probe_provider_frontier(source, probe_cell_count=probe_cells)
+        )
+        decision = decide_continuation(
+            source,
+            frontier,
+            output_directory=output_directory or plan_path.parent,
+            minimum_advance_days=minimum_advance_days,
+            as_of_horizon_days=as_of_horizon_days,
+            allow_incomplete=allow_incomplete,
+        )
+        written = False
+        if write and decision.refusal is None:
+            write_continuation_plan(decision)
+            written = True
+    except (OSError, ValueError, httpx.HTTPError) as exc:
+        raise click.ClickException(_plan_continuation_failure_reason(exc)) from exc
+    # A refusal is the normal scheduled outcome -- the provider has simply not published enough new
+    # days yet -- so it reports as JSON and exits zero, matching durable-backfill.sh's own semantics.
+    click.echo(json.dumps(continuation_decision_payload(decision, written=written), indent=2))
+
+
+@cli.command("historical-plan-staleness")
+@click.option(
+    "--plans-directory",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    required=True,
+    help="Directory of reviewed plan artifacts to report on.",
+)
+@click.option(
+    "--probe/--no-probe",
+    default=True,
+    show_default=True,
+    help="Measure each distinct lane/parameter set's provider frontier. --no-probe stays offline.",
+)
+@click.option("--probe-cells", type=click.IntRange(min=1), default=FRONTIER_PROBE_CELL_COUNT, show_default=True)
+@click.option(
+    "--minimum-advance-days",
+    type=click.IntRange(min=1),
+    default=MINIMUM_CONTINUATION_ADVANCE_DAYS,
+    show_default=True,
+)
+def historical_plan_staleness(
+    plans_directory: Path,
+    probe: bool,
+    probe_cells: int,
+    minimum_advance_days: int,
+) -> None:
+    """Report how far every continuable plan sits behind today and behind its provider's frontier."""
+    asyncio.run(_historical_plan_staleness(plans_directory, probe, probe_cells, minimum_advance_days))
+
+
+async def _historical_plan_staleness(
+    plans_directory: Path,
+    probe: bool,
+    probe_cells: int,
+    minimum_advance_days: int,
+) -> None:
+    try:
+        report = await scan_plan_staleness(
+            sorted(plans_directory.glob("*.json")),
+            local_execution_root=settings.local_execution_root,
+            probe=probe,
+            probe_cell_count=probe_cells,
+            minimum_advance_days=minimum_advance_days,
+        )
+    except (OSError, ValueError, httpx.HTTPError) as exc:
+        raise click.ClickException(_plan_continuation_failure_reason(exc)) from exc
+    click.echo(
+        json.dumps(
+            {
+                "plans_directory": str(plans_directory),
+                "probed": probe,
+                "minimum_advance_days": minimum_advance_days,
+                "plans": [plan_staleness_payload(entry) for entry in report],
+            },
+            indent=2,
+        )
+    )
+
+
+def _plan_continuation_failure_reason(exc: Exception) -> str:
+    if isinstance(exc, PlanContinuationError):
+        return f"plan continuation refused: {exc}"
+    if isinstance(exc, httpx.HTTPError):
+        return "plan continuation could not reach the provider to measure its frontier"
+    if isinstance(exc, OSError):
+        return "plan continuation could not read or write a local plan artifact"
+    return f"plan continuation input is invalid: {exc}"
 
 
 @cli.command("historical-promotion-spool")

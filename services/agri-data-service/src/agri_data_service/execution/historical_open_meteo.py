@@ -1,4 +1,4 @@
-"""Cache-first contracts for the Open-Meteo ERA5-Land archive replay over the NDVI lattice."""
+"""Cache-first contracts for the Open-Meteo ERA5/ERA5-Land archive replay over a reviewed lattice."""
 
 from __future__ import annotations
 
@@ -48,7 +48,9 @@ from agri_data_service.ingest.open_meteo import (
     OPEN_METEO_ARCHIVE_CELL_SELECTION,
     OPEN_METEO_ARCHIVE_CUSTOMER_BASE_URL,
     OPEN_METEO_ERA5_LAND_MODEL,
+    OPEN_METEO_ERA5_MODEL,
     OpenMeteoArchiveBaseUrl,
+    OpenMeteoArchiveModel,
     archive_daily_request,
     archive_daily_url,
     fetch_archive_daily,
@@ -57,7 +59,7 @@ from agri_data_service.ingest.open_meteo import (
 from agri_data_service.ingest.open_meteo_endpoint import OpenMeteoEndpoint, OpenMeteoProductRequest
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
     from pathlib import Path
 
     import httpx
@@ -76,6 +78,57 @@ OPEN_METEO_ARCHIVE_NATIVE_GRID_NAME: Final = "era5-land-0.1-degree"
 OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES: Final = 0.1
 OPEN_METEO_ARCHIVE_NATIVE_RESOLUTION_M: Final = 9_000
 
+OPEN_METEO_ERA5_SOURCE_KEY: Final = "open-meteo-era5-archive"
+OPEN_METEO_ERA5_SUPPORT_KEY: Final = "era5-0.25deg"
+OPEN_METEO_ERA5_NATIVE_GRID_NAME: Final = "era5-0.25-degree"
+OPEN_METEO_ERA5_NATIVE_GRID_DEGREES: Final = 0.25
+OPEN_METEO_ERA5_NATIVE_RESOLUTION_M: Final = 25_000
+
+
+class OpenMeteoArchiveProduct(NamedTuple):
+    """Everything the chosen archive model fixes: its native lattice, its spatial support, its source."""
+
+    native_grid_name: str
+    native_grid_degrees: float
+    native_grid_resolution_m: int
+    support_key: str
+    source_key: str
+    source_kind: str
+    upstream_product: str
+    # `agri.artifact.kind`, which `historical_export.py` copies into every export manifest as
+    # `source_artifact_kind`. It names the product the bytes came from, so it cannot be one literal
+    # for two reanalyses; the ERA5-Land spelling is frozen because artifacts are immutable.
+    artifact_kind: str
+
+
+# One archive endpoint, two reanalyses, and the model is what decides which. They are NOT
+# interchangeable and each gets its own `data_source` key, because `_ensure_data_source` pins the
+# model and native grid into the source's `configuration`: one key cannot honestly describe both,
+# and `support_key` is what lets a reader tell a 0.1-degree sample from a 0.25-degree one.
+OPEN_METEO_ARCHIVE_PRODUCTS: Final[dict[OpenMeteoArchiveModel, OpenMeteoArchiveProduct]] = {
+    OPEN_METEO_ERA5_LAND_MODEL: OpenMeteoArchiveProduct(
+        native_grid_name=OPEN_METEO_ARCHIVE_NATIVE_GRID_NAME,
+        native_grid_degrees=OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES,
+        native_grid_resolution_m=OPEN_METEO_ARCHIVE_NATIVE_RESOLUTION_M,
+        support_key=OPEN_METEO_ARCHIVE_SUPPORT_KEY,
+        source_key=OPEN_METEO_ARCHIVE_SOURCE_KEY,
+        source_kind="open_meteo_era5_land_archive_daily",
+        upstream_product="ECMWF ERA5-Land via Copernicus Climate Change Service",
+        # Byte-identical to the literal every already-persisted ERA5-Land artifact carries.
+        artifact_kind="source_open_meteo_era5_land_archive_daily_json",
+    ),
+    OPEN_METEO_ERA5_MODEL: OpenMeteoArchiveProduct(
+        native_grid_name=OPEN_METEO_ERA5_NATIVE_GRID_NAME,
+        native_grid_degrees=OPEN_METEO_ERA5_NATIVE_GRID_DEGREES,
+        native_grid_resolution_m=OPEN_METEO_ERA5_NATIVE_RESOLUTION_M,
+        support_key=OPEN_METEO_ERA5_SUPPORT_KEY,
+        source_key=OPEN_METEO_ERA5_SOURCE_KEY,
+        source_kind="open_meteo_era5_archive_daily",
+        upstream_product="ECMWF ERA5 via Copernicus Climate Change Service",
+        artifact_kind="source_open_meteo_era5_archive_daily_json",
+    ),
+}
+
 # Assembled here rather than imported because `ingest/open_meteo.py` predates `OpenMeteoEndpoint`;
 # both hosts and the byte budget are still its constants. See execution/AGENTS.md §historical_open_meteo.
 OPEN_METEO_ARCHIVE_ENDPOINT: Final[OpenMeteoEndpoint[OpenMeteoArchiveBaseUrl]] = OpenMeteoEndpoint(
@@ -92,9 +145,10 @@ OPEN_METEO_ARCHIVE_LANE: Final = OpenMeteoLane(
     endpoint=OPEN_METEO_ARCHIVE_ENDPOINT,
 )
 
-# Half the native grid spacing plus a float-comparison epsilon. A returned point further than this
-# from the requested centroid is a different grid box and must fail rather than be attributed.
-OPEN_METEO_ARCHIVE_MAX_GRID_OFFSET_DEGREES: Final = max_grid_offset_degrees(OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES)
+# The attribution tolerance -- half the native grid spacing plus a float-comparison epsilon -- is
+# derived per plan from `plan.product.native_grid_degrees` in `parse_open_meteo_archive_payload`,
+# never held as a module constant: ERA5's 0.25-degree box is two and a half times ERA5-Land's, and a
+# single shared value would silently accept or reject the wrong points for one of the two models.
 
 OPEN_METEO_ARCHIVE_MAX_RESPONSE_BYTES: Final = OPEN_METEO_ARCHIVE_BOUNDS.max_bytes
 OPEN_METEO_ARCHIVE_MAX_CELLS: Final = 10_000
@@ -104,8 +158,12 @@ OPEN_METEO_ARCHIVE_RAW_CACHE_SCHEMA_VERSION: Literal[1] = 1
 
 
 class OpenMeteoArchiveSignal(NamedTuple):
-    """One daily variable's warehouse naming, units, and inclusive physical acceptance range."""
+    """One daily variable's archive model, warehouse naming, units, and inclusive acceptance range."""
 
+    # The reanalysis that actually publishes this variable, verified live. Required, and first,
+    # because assuming it was the lane's usual model is exactly how `shortwave_radiation_sum`
+    # silently returned 580,414 nulls. See execution/AGENTS.md §historical_open_meteo.
+    model: OpenMeteoArchiveModel
     signal_name: str
     original_unit: str
     normalized_unit: str
@@ -119,35 +177,48 @@ class OpenMeteoArchiveSignal(NamedTuple):
     provider_unit: str | None = None
 
 
-# Open-Meteo daily variable -> warehouse signal, units, and the range a value must fall inside.
-# The bounds are the only thing standing between a provider sentinel (-999, a netCDF `_FillValue`)
-# and 1,462 accepted rows per cell. See execution/AGENTS.md §historical_open_meteo.
+# Open-Meteo daily variable -> the model that publishes it, warehouse signal, units, and the range a
+# value must fall inside. The bounds are the only thing standing between a provider sentinel (-999, a
+# netCDF `_FillValue`) and 1,462 accepted rows per cell. See execution/AGENTS.md §historical_open_meteo.
+_LAND: Final = OPEN_METEO_ERA5_LAND_MODEL
 OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS: Final[dict[str, OpenMeteoArchiveSignal]] = {
-    "soil_moisture_0_to_7cm_mean": OpenMeteoArchiveSignal("soil_water_content_layer_1", "m^3/m^3", "m^3/m^3", 0.0, 1.0),
+    "soil_moisture_0_to_7cm_mean": OpenMeteoArchiveSignal(
+        _LAND, "soil_water_content_layer_1", "m^3/m^3", "m^3/m^3", 0.0, 1.0
+    ),
     "soil_moisture_7_to_28cm_mean": OpenMeteoArchiveSignal(
-        "soil_water_content_layer_2", "m^3/m^3", "m^3/m^3", 0.0, 1.0
+        _LAND, "soil_water_content_layer_2", "m^3/m^3", "m^3/m^3", 0.0, 1.0
     ),
     "soil_moisture_28_to_100cm_mean": OpenMeteoArchiveSignal(
-        "soil_water_content_layer_3", "m^3/m^3", "m^3/m^3", 0.0, 1.0
+        _LAND, "soil_water_content_layer_3", "m^3/m^3", "m^3/m^3", 0.0, 1.0
     ),
-    "soil_temperature_0_to_7cm_mean": OpenMeteoArchiveSignal("soil_temperature_level_1", "C", "C", -100.0, 70.0),
+    "soil_temperature_0_to_7cm_mean": OpenMeteoArchiveSignal(_LAND, "soil_temperature_level_1", "C", "C", -100.0, 70.0),
     # The remaining three bands align with ERA5-Land's CDS levels 2-4, so this lane can carry the
     # soil-state profile the CDS lane was fetching -- at 0.1 degrees instead of 1.0, and keyless.
-    "soil_temperature_7_to_28cm_mean": OpenMeteoArchiveSignal("soil_temperature_level_2", "C", "C", -100.0, 70.0),
-    "soil_temperature_28_to_100cm_mean": OpenMeteoArchiveSignal("soil_temperature_level_3", "C", "C", -100.0, 70.0),
-    "soil_temperature_100_to_255cm_mean": OpenMeteoArchiveSignal("soil_temperature_level_4", "C", "C", -100.0, 70.0),
+    "soil_temperature_7_to_28cm_mean": OpenMeteoArchiveSignal(
+        _LAND, "soil_temperature_level_2", "C", "C", -100.0, 70.0
+    ),
+    "soil_temperature_28_to_100cm_mean": OpenMeteoArchiveSignal(
+        _LAND, "soil_temperature_level_3", "C", "C", -100.0, 70.0
+    ),
+    "soil_temperature_100_to_255cm_mean": OpenMeteoArchiveSignal(
+        _LAND, "soil_temperature_level_4", "C", "C", -100.0, 70.0
+    ),
     # An atmospheric-dryness covariate, not a soil-state one; see execution/AGENTS.md §historical_open_meteo.
-    "vapour_pressure_deficit_max": OpenMeteoArchiveSignal("vapor_pressure_deficit", "kPa", "kPa", 0.0, 15.0),
+    "vapour_pressure_deficit_max": OpenMeteoArchiveSignal(_LAND, "vapor_pressure_deficit", "kPa", "kPa", 0.0, 15.0),
     # A SECOND upstream for the signal NASA POWER already writes, deliberately sharing its name AND
     # its unit with NO conversion: `ALLSKY_SFC_SW_DWN` and `shortwave_radiation_sum` are both a daily
     # sum of megajoules per square metre. See execution/AGENTS.md §historical_open_meteo.
+    #
+    # `era5`, NOT `era5_land`: ERA5-Land publishes no radiation flux through this endpoint and answers
+    # the variable with a present, entirely-null series. Measured live 2026-08-09 at 31N/104W --
+    # models=era5_land returned 1,462 nulls per cell, models=era5 returned 30.76, 31.01, 30.21 MJ/m².
     #
     # provider_unit is set (unlike every sibling above) because this is the one variable in this
     # table whose plausible wrong-unit failure -- a kWh/m^2/day series, 0-10 -- lands entirely
     # inside the [0.0, 60.0] acceptance range below and would merge silently under the NASA
     # series' own signal_name. Verified live against the archive API 2026-08-09.
     "shortwave_radiation_sum": OpenMeteoArchiveSignal(
-        "surface_shortwave_radiation", "MJ/m^2/day", "MJ/m^2/day", 0.0, 60.0, provider_unit="MJ/m²"
+        OPEN_METEO_ERA5_MODEL, "surface_shortwave_radiation", "MJ/m^2/day", "MJ/m^2/day", 0.0, 60.0, "MJ/m²"
     ),
 }
 
@@ -186,20 +257,22 @@ class OpenMeteoArchiveCapture:
 
 
 class HistoricalOpenMeteoArchivePlan(ContractModel):
-    """Reviewed four-year Open-Meteo ERA5-Land archive replay over an existing analysis lattice."""
+    """Reviewed four-year Open-Meteo archive replay, on one declared reanalysis, over an existing lattice."""
 
     schema_version: Literal["open-meteo-era5-land-archive-daily-v1"] = OPEN_METEO_ARCHIVE_SCHEMA_VERSION
     source: SourceDefinition
     window: HistoricalBackfillWindow
-    model: Literal["era5_land"] = OPEN_METEO_ERA5_LAND_MODEL
+    # Every field below down to `support_key` is fixed by `model` and re-checked against
+    # `OPEN_METEO_ARCHIVE_PRODUCTS` in `require_governed_lattice`; none of them is free text.
+    model: OpenMeteoArchiveModel = OPEN_METEO_ERA5_LAND_MODEL
     cell_selection: Literal["nearest"] = OPEN_METEO_ARCHIVE_CELL_SELECTION
     time_zone: Literal["GMT"] = "GMT"
     grid_name: str = Field(pattern=r"^[a-z0-9][a-z0-9.:_-]{1,98}$")
     grid_resolution_m: int = Field(gt=0)
-    native_grid_name: Literal["era5-land-0.1-degree"] = OPEN_METEO_ARCHIVE_NATIVE_GRID_NAME
+    native_grid_name: str = Field(default=OPEN_METEO_ARCHIVE_NATIVE_GRID_NAME, pattern=r"^[a-z0-9][a-z0-9.-]{1,98}$")
     native_grid_degrees: float = Field(gt=0, le=1)
     native_grid_resolution_m: int = Field(gt=0)
-    support_key: Literal["era5-land-0.1deg"] = OPEN_METEO_ARCHIVE_SUPPORT_KEY
+    support_key: str = Field(default=OPEN_METEO_ARCHIVE_SUPPORT_KEY, pattern=r"^[a-z0-9][a-z0-9.-]{1,62}$")
     cells: list[AnalysisGridCell] = Field(min_length=1, max_length=OPEN_METEO_ARCHIVE_MAX_CELLS)
     chunk_cell_count: int = Field(ge=1, le=200)
     parameters: list[str] = Field(min_length=1, max_length=len(OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS))
@@ -228,6 +301,11 @@ class HistoricalOpenMeteoArchivePlan(ContractModel):
             raise ValueError(f"unsupported Open-Meteo archive parameter(s): {', '.join(unsupported)}")
         return value
 
+    @property
+    def product(self) -> OpenMeteoArchiveProduct:
+        """Return the native lattice, spatial support and source identity this plan's model fixes."""
+        return OPEN_METEO_ARCHIVE_PRODUCTS[self.model]
+
     @field_validator("release_set_as_of")
     @classmethod
     def require_aware_release_set_time(cls, value: datetime) -> datetime:
@@ -235,15 +313,28 @@ class HistoricalOpenMeteoArchivePlan(ContractModel):
 
     @model_validator(mode="after")
     def require_governed_lattice(self) -> HistoricalOpenMeteoArchivePlan:
-        if self.source.key != OPEN_METEO_ARCHIVE_SOURCE_KEY:
-            raise ValueError(f"Open-Meteo archive plans require source.key='{OPEN_METEO_ARCHIVE_SOURCE_KEY}'")
-        if self.native_grid_degrees != OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES:
-            raise ValueError("Open-Meteo archive plans must record the product's 0.1-degree native grid")
-        if self.native_grid_resolution_m != OPEN_METEO_ARCHIVE_NATIVE_RESOLUTION_M:
-            raise ValueError("Open-Meteo archive plans must record the product's documented 9-km resolution")
-        nearest_points = {
-            nearest_native_grid_point(cell, OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES) for cell in self.cells
-        }
+        product = self.product
+        if self.source.key != product.source_key:
+            raise ValueError(f"Open-Meteo archive plans on model '{self.model}' require '{product.source_key}'")
+        # A variable the requested model does not publish comes back as a present, entirely-null
+        # series rather than an error, so refusing the plan is the only place it can be caught
+        # before a quota-bound fetch. See execution/AGENTS.md §historical_open_meteo.
+        foreign = sorted(
+            parameter
+            for parameter in self.parameters
+            if OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[parameter].model != self.model
+        )
+        if foreign:
+            raise ValueError(f"Open-Meteo model '{self.model}' does not publish: {', '.join(foreign)}")
+        if self.native_grid_name != product.native_grid_name:
+            raise ValueError(f"Open-Meteo archive plans on model '{self.model}' must name its native grid")
+        if self.native_grid_degrees != product.native_grid_degrees:
+            raise ValueError(f"Open-Meteo archive plans on model '{self.model}' must record its native spacing")
+        if self.native_grid_resolution_m != product.native_grid_resolution_m:
+            raise ValueError(f"Open-Meteo archive plans on model '{self.model}' must record its documented resolution")
+        if self.support_key != product.support_key:
+            raise ValueError(f"Open-Meteo archive plans on model '{self.model}' must record its spatial support")
+        nearest_points = {nearest_native_grid_point(cell, product.native_grid_degrees) for cell in self.cells}
         if len(nearest_points) != len(self.cells):
             raise ValueError("Open-Meteo archive cells must not share a native grid point")
         if len(self.chunks) > OPEN_METEO_ARCHIVE_MAX_CHUNKS:
@@ -361,6 +452,7 @@ def open_meteo_archive_chunk_url(
         plan.parameters,
         plan.window.start_date,
         plan.window.end_date,
+        model=plan.model,
         base_url=base_url,
     )
 
@@ -570,6 +662,7 @@ async def fetch_open_meteo_archive_chunk(
         plan.parameters,
         plan.window.start_date,
         plan.window.end_date,
+        model=plan.model,
     )
     capture = await fetch_lane_capture(
         OPEN_METEO_ARCHIVE_LANE,
@@ -625,13 +718,14 @@ def parse_open_meteo_archive_payload(
     locations = ordered_locations(OPEN_METEO_ARCHIVE_LANE, payload, len(chunk.cells))
     expected_dates = list(date_range(plan.window.start_date, plan.window.end_date))
     payload_checksum = hashlib.sha256(payload).hexdigest()
+    max_offset_degrees = max_grid_offset_degrees(plan.product.native_grid_degrees)
 
     observations: list[HistoricalSignalObservation] = []
     coverage: list[HistoricalCoverageAudit] = []
     grid_points: list[tuple[str, float, float, float | None]] = []
     seen_grid_points: set[tuple[float, float]] = set()
     for cell, location in zip(chunk.cells, locations, strict=True):
-        latitude, longitude, elevation = _validated_grid_point(cell, location)
+        latitude, longitude, elevation = _validated_grid_point(cell, location, max_offset_degrees)
         if (latitude, longitude) in seen_grid_points:
             raise ValueError("Open-Meteo archive returned one native grid point for two reviewed cells")
         seen_grid_points.add((latitude, longitude))
@@ -716,6 +810,27 @@ def require_accounted_open_meteo_result(
         raise ValueError("Open-Meteo archive result does not record a native grid point for every reviewed cell")
 
 
+def open_meteo_observed_values_by_parameter(result: OpenMeteoArchiveChunkResult) -> dict[str, int]:
+    """Total one chunk's observed values per requested variable, for the plan-level emptiness gate."""
+    totals: dict[str, int] = {}
+    for item in result.coverage:
+        totals[item.source_parameter] = totals.get(item.source_parameter, 0) + item.received_observation_count
+    return totals
+
+
+def unanswered_open_meteo_parameters(
+    plan: HistoricalOpenMeteoArchivePlan,
+    observed_by_parameter: Mapping[str, int],
+) -> tuple[str, ...]:
+    """Name every reviewed variable the provider answered with no value in any cell of the plan.
+
+    Whole-plan, not per-chunk: one cell or one chunk may honestly hold no data, but a variable that
+    is empty across every reviewed cell is a mapping or model-availability failure wearing a
+    coverage failure's clothes. See execution/AGENTS.md §historical_open_meteo.
+    """
+    return tuple(parameter for parameter in plan.parameters if observed_by_parameter.get(parameter, 0) == 0)
+
+
 def _cell_observations(
     *,
     cell_key: str,
@@ -747,23 +862,20 @@ def _coverage_status(observed_count: int, expected_count: int) -> str:
     return "complete" if observed_count == expected_count else "partial"
 
 
-def _validated_grid_point(cell: AnalysisGridCell, location: dict[str, object]) -> tuple[float, float, float | None]:
+def _validated_grid_point(
+    cell: AnalysisGridCell,
+    location: dict[str, object],
+    max_offset_degrees: float,
+) -> tuple[float, float, float | None]:
     """Bind the point through the shared attribution guard, then read the elevation only this lane keeps."""
-    latitude, longitude = validated_grid_point(
-        OPEN_METEO_ARCHIVE_LANE,
-        cell,
-        location,
-        OPEN_METEO_ARCHIVE_MAX_GRID_OFFSET_DEGREES,
-    )
+    latitude, longitude = validated_grid_point(OPEN_METEO_ARCHIVE_LANE, cell, location, max_offset_degrees)
     elevation = location.get("elevation")
     if elevation is not None and (isinstance(elevation, bool) or not isinstance(elevation, int | float)):
         raise ValueError("Open-Meteo archive elevation must be numeric when present")
     return latitude, longitude, None if elevation is None else float(elevation)
 
 
-def _require_provider_unit(
-    location: dict[str, object], parameter: str, specification: OpenMeteoArchiveSignal
-) -> None:
+def _require_provider_unit(location: dict[str, object], parameter: str, specification: OpenMeteoArchiveSignal) -> None:
     """Reject a payload whose provider unit drifted from the one the mapping was verified against.
 
     A silent unit change is worse than a loud one: it would land at the stored, already-correct
@@ -780,8 +892,7 @@ def _require_provider_unit(
     reported = daily_units.get(parameter)
     if reported != specification.provider_unit:
         raise ValueError(
-            f"Open-Meteo archive reported unit {reported!r} for {parameter!r}, "
-            f"expected {specification.provider_unit!r}"
+            f"Open-Meteo archive reported unit {reported!r} for {parameter!r}, expected {specification.provider_unit!r}"
         )
 
 

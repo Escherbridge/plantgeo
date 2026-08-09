@@ -18,7 +18,7 @@ from agri_data_service.execution.contracts import ContractModel, canonical_json_
 from agri_data_service.execution.source_ingestion import SourceDefinition  # noqa: TC001
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
 NASA_POWER_DAILY_URL = "https://power.larc.nasa.gov/api/temporal/daily/point"
@@ -68,7 +68,7 @@ class HistoricalBackfillWindow(ContractModel):
 
     @model_validator(mode="after")
     def require_exact_four_calendar_years(self) -> HistoricalBackfillWindow:
-        expected_start = _four_calendar_years_before(self.end_date)
+        expected_start = four_calendar_years_before(self.end_date)
         if self.start_date != expected_start:
             raise ValueError(
                 "historical backfill windows must start exactly four calendar years before end_date "
@@ -539,19 +539,39 @@ def historical_nasa_release_manifest(
     ).hexdigest()
 
 
-def nasa_power_daily_url(plan: NasaPowerDailyPlan, cell: AnalysisGridCell) -> httpx.URL:
-    """Build the credential-free, canonical UTC request URL for one analysis cell."""
+def nasa_power_daily_point_url(  # noqa: PLR0913 - one argument per governed query field, all keyword-only
+    *,
+    latitude: float,
+    longitude: float,
+    parameters: Sequence[str],
+    start_date: date,
+    end_date: date,
+    time_standard: str = "UTC",
+) -> httpx.URL:
+    """Build the credential-free, canonical POWER daily point URL for one coordinate and window."""
     return httpx.URL(NASA_POWER_DAILY_URL).copy_merge_params(
         {
             "community": "AG",
-            "latitude": _format_coordinate(cell.latitude),
-            "longitude": _format_coordinate(cell.longitude),
-            "parameters": ",".join(plan.parameters),
-            "start": plan.window.start_date.strftime("%Y%m%d"),
-            "end": plan.window.end_date.strftime("%Y%m%d"),
+            "latitude": _format_coordinate(latitude),
+            "longitude": _format_coordinate(longitude),
+            "parameters": ",".join(parameters),
+            "start": start_date.strftime("%Y%m%d"),
+            "end": end_date.strftime("%Y%m%d"),
             "format": "JSON",
-            "time-standard": plan.time_standard,
+            "time-standard": time_standard,
         }
+    )
+
+
+def nasa_power_daily_url(plan: NasaPowerDailyPlan, cell: AnalysisGridCell) -> httpx.URL:
+    """Build the credential-free, canonical UTC request URL for one analysis cell."""
+    return nasa_power_daily_point_url(
+        latitude=cell.latitude,
+        longitude=cell.longitude,
+        parameters=plan.parameters,
+        start_date=plan.window.start_date,
+        end_date=plan.window.end_date,
+        time_standard=plan.time_standard,
     )
 
 
@@ -613,7 +633,7 @@ def parse_nasa_power_daily_payload(
         decoded = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("NASA POWER response must be UTF-8 JSON") from exc
-    parameters = _extract_parameter_values(decoded)
+    parameters = extract_nasa_power_parameter_values(decoded)
     missing_parameters = [parameter for parameter in plan.parameters if parameter not in parameters]
     if missing_parameters:
         raise ValueError(f"NASA POWER response is missing requested parameter(s): {', '.join(missing_parameters)}")
@@ -627,7 +647,7 @@ def parse_nasa_power_daily_payload(
         series = parameters[parameter]
         received = 0
         for day in days:
-            raw_value = _source_numeric_value(series.get(day.strftime("%Y%m%d")))
+            raw_value = nasa_power_observed_value(series.get(day.strftime("%Y%m%d")))
             is_observed = raw_value is not None
             if is_observed:
                 received += 1
@@ -709,7 +729,7 @@ async def _fetch_with_client(  # noqa: PLR0913
     raise RuntimeError("NASA POWER fetch exhausted without a response")
 
 
-def _extract_parameter_values(decoded: object) -> dict[str, dict[str, object]]:
+def extract_nasa_power_parameter_values(decoded: object) -> dict[str, dict[str, object]]:
     if not isinstance(decoded, dict):
         raise ValueError("NASA POWER response must be a JSON object")
     properties = decoded.get("properties")
@@ -726,7 +746,7 @@ def _extract_parameter_values(decoded: object) -> dict[str, dict[str, object]]:
     return result
 
 
-def _source_numeric_value(value: object) -> float | None:
+def nasa_power_observed_value(value: object) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int | float):
@@ -783,7 +803,7 @@ def _inclusive_dates(window: HistoricalBackfillWindow) -> list[date]:
     return [window.start_date + timedelta(days=offset) for offset in range(window.day_count)]
 
 
-def _four_calendar_years_before(value: date) -> date:
+def four_calendar_years_before(value: date) -> date:
     try:
         return value.replace(year=value.year - 4)
     except ValueError:

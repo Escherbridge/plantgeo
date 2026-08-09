@@ -175,9 +175,7 @@ def test_no_forecast_capability_role_holds_anything_in_this_database(
             """
         )
         survivors = [row[0] for row in cursor.fetchall()]
-    assert not survivors, (
-        f"retired forecast capability role(s) still own or hold grants here: {survivors}"
-    )
+    assert not survivors, f"retired forecast capability role(s) still own or hold grants here: {survivors}"
 
 
 def test_the_refresher_still_owns_the_materialized_view_it_refreshes(

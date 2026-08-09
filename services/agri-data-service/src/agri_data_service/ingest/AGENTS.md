@@ -461,6 +461,13 @@ That is not a nicety: `agri.source_release.query_parameters.request_url` on alre
 releases contains that exact string, and `test_the_keyless_canonical_url_is_byte_identical_to_the_pre_paid_tier_builder`
 pins it literally.
 
+**`models` is a required keyword argument on both archive builders, with no default.** The
+endpoint answers a variable the selected model does not publish with HTTP 200 and an all-null
+series, so a defaulted model is a silent data-loss bug rather than a convenience -- see
+execution/AGENTS.md §historical_open_meteo, "the archive model decides which variables have values
+at all". `OpenMeteoArchiveModel` is a closed `Literal`; the caller states `era5_land` (0.1-degree
+soil layers) or `era5` (0.25-degree parent, the only one carrying radiation).
+
 **`archive_daily_url` accepts an explicit `base_url`** and validates it through
 `require_archive_base_url`, which admits only the two reviewed hosts. Persistence replays a local
 cache receipt, so the host must come from the receipt rather than from the current environment;

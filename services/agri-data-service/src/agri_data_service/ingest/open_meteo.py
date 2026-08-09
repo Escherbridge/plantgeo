@@ -103,6 +103,15 @@ OpenMeteoArchiveBaseUrl = Literal[
 # selects the 0.1-degree ERA5-Land product whose layers match the CDS variable definitions.
 OPEN_METEO_ERA5_LAND_MODEL: Final = "era5_land"
 
+# The 0.25-degree parent reanalysis. It carries strictly more variables than ERA5-Land -- notably
+# every radiation flux -- at a coarser lattice. See ingest/AGENTS.md §"the archive model is an
+# argument, not a constant".
+OPEN_METEO_ERA5_MODEL: Final = "era5"
+
+# A closed set, because the model decides which variables come back with values at all, and a
+# caller that does not state one is choosing by accident.
+OpenMeteoArchiveModel = Literal["era5_land", "era5"]
+
 # `nearest` is pinned rather than left to the default so a coastal request can never be silently
 # relocated to a land cell that is not the one the analysis lattice names.
 OPEN_METEO_ARCHIVE_CELL_SELECTION: Final = "nearest"
@@ -153,22 +162,23 @@ def require_archive_base_url(value: str) -> OpenMeteoArchiveBaseUrl:
     raise ValueError("Open-Meteo archive base URL is not a reviewed endpoint")
 
 
-def archive_daily_url(
+def archive_daily_url(  # noqa: PLR0913 - one argument per governed query parameter, none defaultable
     coordinates: Sequence[tuple[float, float]],
     daily_variables: Sequence[str],
     start_date: date,
     end_date: date,
     *,
+    model: OpenMeteoArchiveModel,
     base_url: str | None = None,
 ) -> str:
     """Build the credential-free archive URL, whose parameter order is stable for a checksum.
 
     Safe to persist, and structurally unable to carry a key. `base_url` defaults to the host this
     process would call now; pass the host a past retrieval really used when recording provenance
-    for cached bytes.
+    for cached bytes. `model` has no default on purpose -- see ingest/AGENTS.md.
     """
     resolved = open_meteo_archive_base_url() if base_url is None else require_archive_base_url(base_url)
-    parameters = _archive_daily_parameters(coordinates, daily_variables, start_date, end_date)
+    parameters = _archive_daily_parameters(coordinates, daily_variables, start_date, end_date, model)
     return f"{resolved}?{urlencode(parameters)}"
 
 
@@ -177,6 +187,8 @@ def archive_daily_request(
     daily_variables: Sequence[str],
     start_date: date,
     end_date: date,
+    *,
+    model: OpenMeteoArchiveModel,
 ) -> ArchiveDailyRequest:
     """Resolve the credential once, returning the host to record and the credentialed URL to send.
 
@@ -184,7 +196,7 @@ def archive_daily_request(
     """
     api_key = resolve_open_meteo_api_key()
     base_url = _archive_base_url(api_key)
-    parameters = _archive_daily_parameters(coordinates, daily_variables, start_date, end_date)
+    parameters = _archive_daily_parameters(coordinates, daily_variables, start_date, end_date, model)
     if api_key is not None:
         parameters[OPEN_METEO_API_KEY_PARAMETER] = api_key
     return ArchiveDailyRequest(base_url=base_url, request_url=f"{base_url}?{urlencode(parameters)}")
@@ -199,6 +211,7 @@ def _archive_daily_parameters(
     daily_variables: Sequence[str],
     start_date: date,
     end_date: date,
+    model: OpenMeteoArchiveModel,
 ) -> dict[str, str]:
     """Validate one multi-location archive request and order its governed parameters for a checksum."""
     if not coordinates or len(coordinates) > MAX_ARCHIVE_LOCATIONS_PER_REQUEST:
@@ -221,7 +234,7 @@ def _archive_daily_parameters(
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "daily": ",".join(daily_variables),
-        "models": OPEN_METEO_ERA5_LAND_MODEL,
+        "models": model,
         "timezone": "GMT",
         "cell_selection": OPEN_METEO_ARCHIVE_CELL_SELECTION,
     }

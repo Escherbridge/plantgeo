@@ -251,9 +251,10 @@ def test_open_meteo_plans_carry_only_volumetric_soil_water(
     """Soil temperature is excluded on purpose; see execution/AGENTS.md for the measured reason."""
     for plan in (open_meteo_lattice_plan, open_meteo_probe_plan):
         assert plan.parameters == sorted(OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS)
-        signals = {OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[name][0] for name in plan.parameters}
+        signals = {OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[name].signal_name for name in plan.parameters}
         assert signals == OPEN_METEO_SOIL_MOISTURE_SIGNALS
-        assert {OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[name][2] for name in plan.parameters} == {"m^3/m^3"}
+        normalized = {OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[name].normalized_unit for name in plan.parameters}
+        assert normalized == {"m^3/m^3"}
 
 
 def test_open_meteo_shares_the_cds_signal_name_but_not_its_support_or_source(
@@ -263,8 +264,9 @@ def test_open_meteo_shares_the_cds_signal_name_but_not_its_support_or_source(
     """Same physical quantity keeps one name; the schema already models the support and provenance split."""
     cds_layer_one = ERA5_LAND_SIGNAL_SPECIFICATIONS["volumetric_soil_water_layer_1"]
     archive_layer_one = OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS["soil_moisture_0_to_7cm_mean"]
-    assert cds_layer_one[0] == archive_layer_one[0] == "soil_water_content_layer_1"
-    assert cds_layer_one[2] == archive_layer_one[2] == "m^3/m^3"
+    # The CDS table is a plain tuple; the archive table is a NamedTuple, read by name.
+    assert cds_layer_one[0] == archive_layer_one.signal_name == "soil_water_content_layer_1"
+    assert cds_layer_one[2] == archive_layer_one.normalized_unit == "m^3/m^3"
     assert open_meteo_lattice_plan.source.key != era5_plan.source.key
     assert open_meteo_lattice_plan.support_key == "era5-land-0.1deg"
 

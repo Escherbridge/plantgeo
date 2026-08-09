@@ -185,11 +185,20 @@ forecast.
 
 ## The radiation plan is the one Open-Meteo plan that does NOT ride the NDVI lattice
 
-`open-meteo-era5-land-nasa-power-lattice-radiation-20220802-20260802.json` requests
+`open-meteo-era5-nasa-power-lattice-radiation-20220802-20260802.json` requests
 `shortwave_radiation_sum` over the **397-cell `nasa-power-0.5-degree` lattice** — the
 `na-sample:1deg:*` cells, copied verbatim from
 `nasa-power-western-na-weather-radiation-20220531-20260531.json` rather than regenerated, for the same
 reason the soil-temperature and VPD plans copy the NDVI lattice.
+
+**It is the one plan on `models=era5`, not `era5_land`, and the filename says so.** ERA5-Land
+publishes no radiation flux through the archive endpoint and signals that with an all-null series
+rather than an error, so the first authoring of this plan -- which inherited the lane's usual
+`era5_land` -- fetched, validated, persisted and finalized 397 entirely empty series before anything
+refused it. The lane now rejects such a plan at validation time. Choosing ERA5 costs spatial
+resolution honestly: `support_key` is `era5-0.25deg` (~25 km) rather than `era5-land-0.1deg` (~9 km),
+and the plan carries its own `data_source` key, `open-meteo-era5-archive`. See
+`execution/AGENTS.md` §"The archive model decides which variables have values at all".
 
 It exists to raise a ceiling, not to add a signal. NASA POWER's `ALLSKY_SFC_SW_DWN` lane is complete
 at 397/397 cells and permanently stuck at **2026-05-31** behind that parameter's ~2-month publication
@@ -205,8 +214,16 @@ Two consequences for authoring:
   `getPublishedClimateField`'s `cell.grid_name = 'nasa-power-0.5-degree'` predicate. Nothing in the
   lane hardcodes a lattice: `grid_name` and `grid_resolution_m` (55660 here, 27830 on the NDVI plans)
   are plain plan fields, and the writer compares spatial cells against `plan.grid_name`.
-- **`window`, `release_set_as_of`, `chunk_cell_count`, `support_key`, `time_zone`,
-  `transform_version` and `source` stay byte-identical to the three 2026-08-08 continuation plans.**
-  The window's `end_date` (2026-08-02) is the upstream frontier measured for this lane that day; it is
-  shared rather than re-measured, so all four continuation plans cover one span. 397 cells at 50 per
-  chunk is 8 chunks against the 2,000 ceiling.
+- **`window`, `release_set_as_of`, `chunk_cell_count`, `time_zone` and `transform_version` stay
+  byte-identical to the three 2026-08-08 continuation plans; `support_key`, `model`, `native_grid_*`
+  and the whole `source` block do not, and cannot.** Choosing `models=era5` fixes those per-product
+  (`support_key = era5-0.25deg`, `source.key = open-meteo-era5-archive`), which is the point of the
+  paragraph above. The window's `end_date` (2026-08-02) is the upstream frontier measured for this
+  lane that day; it is shared rather than re-measured, so all four continuation plans cover one span.
+  397 cells at 50 per chunk is 8 chunks against the 2,000 ceiling.
+- **`transform_version` keeps the `era5-land` spelling on an ERA5 plan on purpose.** It is identity,
+  not description: one of the four columns of `uq_source_release_identity`, projected as provenance by
+  `agri.v_signal_timeseries_contract`, and inside `plan_checksum`. Renaming it would fork the identity
+  of the 8 chunks already persisted under it and orphan this plan's checkpoint and raw cache, forcing
+  a re-fetch of a quota-bound dataset to improve a label. See `execution/AGENTS.md` §"Shortwave
+  radiation is a SECOND upstream".

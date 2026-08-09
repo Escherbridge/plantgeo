@@ -1,4 +1,4 @@
-"""Transactional local persistence for accounted-for Open-Meteo ERA5-Land archive chunks."""
+"""Transactional local persistence for accounted-for Open-Meteo ERA5/ERA5-Land archive chunks."""
 
 from __future__ import annotations
 
@@ -54,7 +54,6 @@ if TYPE_CHECKING:
     from agri_data_service.models.historical import SpatialCell
     from agri_data_service.models.provenance import DataSource
 
-_ARTIFACT_KIND = "source_open_meteo_era5_land_archive_daily_json"
 _RELEASE_CONFLICT_MESSAGE = "historical Open-Meteo source release identity is already governed by different metadata"
 _RELEASE_UNVALIDATED_MESSAGE = "historical Open-Meteo source release is valid without a validation timestamp"
 _ARTIFACT_CONFLICT_MESSAGE = "historical Open-Meteo source artifact identity is already governed by different content"
@@ -66,7 +65,7 @@ async def persist_open_meteo_archive_chunk(
     plan: HistoricalOpenMeteoArchivePlan,
     result: OpenMeteoArchiveChunkResult,
 ) -> HistoricalOpenMeteoWriteResult:
-    """Persist one accounted-for Open-Meteo ERA5-Land archive chunk against the existing analysis lattice."""
+    """Persist one accounted-for Open-Meteo archive chunk against the existing analysis lattice."""
     require_accounted_open_meteo_result(plan, result)
     chunk = _open_meteo_chunk(plan, result.chunk_key)
     await advisory_lock(session, f"historical-open-meteo:{historical_open_meteo_plan_checksum(plan)}:{chunk.key}")
@@ -75,9 +74,9 @@ async def persist_open_meteo_archive_chunk(
         plan.source,
         configuration={
             "ingestion_boundary": "local_historical_backfill",
-            "source_kind": "open_meteo_era5_land_archive_daily",
+            "source_kind": plan.product.source_kind,
             "provider_role": "intermediary_redistributor",
-            "upstream_product": "ECMWF ERA5-Land via Copernicus Climate Change Service",
+            "upstream_product": plan.product.upstream_product,
             "model": plan.model,
             "native_grid_degrees": str(plan.native_grid_degrees),
             "native_grid_resolution_m": str(plan.native_grid_resolution_m),
@@ -227,8 +226,12 @@ async def _ensure_open_meteo_artifact(
     chunk: OpenMeteoArchiveChunk,
     result: OpenMeteoArchiveChunkResult,
 ) -> tuple[Artifact, bool]:
+    # Both the URI namespace and the artifact kind come from the plan's own model, so the two archive
+    # models cannot share an artifact identity. Each is byte-identical to the literal it replaced for
+    # every already-persisted ERA5-Land release.
+    artifact_kind = plan.product.artifact_kind
     uri = (
-        f"warehouse://historical-source/open-meteo-era5-land-archive/{chunk.key}/"
+        f"warehouse://historical-source/{plan.source.key}/{chunk.key}/"
         f"{plan.transform_version}/{result.payload_checksum}.json"
     )
     metadata = {
@@ -243,7 +246,7 @@ async def _ensure_open_meteo_artifact(
         session,
         Artifact(
             source_release_id=source_release.id,
-            kind=_ARTIFACT_KIND,
+            kind=artifact_kind,
             uri=uri,
             media_type="application/json",
             checksum_sha256=result.payload_checksum,
@@ -254,7 +257,7 @@ async def _ensure_open_meteo_artifact(
         ),
         expected={
             "source_release_id": source_release.id,
-            "kind": _ARTIFACT_KIND,
+            "kind": artifact_kind,
             "media_type": "application/json",
             "size_bytes": len(result.payload),
             "storage_class": "database_inline",
