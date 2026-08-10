@@ -126,6 +126,13 @@ MTBS_ANNUAL_RELEASE_DATES: Mapping[int, date] = MappingProxyType(
         # bringing the total release for 2018 fires to 1,129". The word "remaining" is an explicit
         # completion statement -- the strongest evidence in this table.
         2018: date(2020, 11, 24),
+        # MTBS Data Release, 27 September 2021: released "the remaining 457 fire mappings for 2019,
+        # bringing the total release for 2019 fires to 810" -- the same explicit "remaining" completion
+        # wording that makes 2018 the strongest entry in this table. 353 (21 April 2021) + 457 = 810
+        # matches the announced cumulative total exactly. The next release, the "2020 Interim Data
+        # Release" of 15 February 2022, names only fire year 2020, and no release through 15 July 2026
+        # reopens 2019.
+        2019: date(2021, 9, 27),
         # "2020 Data Release", 28 April 2022, added 397 fires and closed the cohort opened by the
         # "2020 Interim Data Release" of 15 February 2022 (417 fires). The next release, 10 August
         # 2022, had moved on to fire year 2021. 417 + 397 = 814 equals the live national perimeter

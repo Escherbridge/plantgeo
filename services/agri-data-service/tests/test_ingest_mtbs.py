@@ -359,10 +359,17 @@ def test_data_available_at_is_the_release_date_and_never_an_ignition_date() -> N
     assert data_available_at.date() - max(ignition_dates) > MIN_RELEASE_LEAD
 
 
-@pytest.mark.parametrize("ignition_year", [1984, 2017, 2019, 2023, 2024, 2025, 2026])
+@pytest.mark.parametrize("ignition_year", [1984, 2017, 2023, 2024, 2025, 2026])
 def test_a_fire_year_without_an_established_release_date_raises_with_no_fallback(ignition_year: int) -> None:
     with pytest.raises(MtbsReleaseNotPublishedError, match="no established release publication date"):
         resolve_data_available_at(ignition_year)
+
+
+def test_fire_year_2019_resolves_to_the_release_that_closed_its_cohort() -> None:
+    # The 27 September 2021 release stated it added "the remaining 457 fire mappings for 2019",
+    # and the next release (15 February 2022) names only fire year 2020. Guards against a tidy-up
+    # re-deriving this from the 21 April 2021 partial release, which left 353 of 810 fires unmapped.
+    assert resolve_data_available_at(2019) == datetime(2021, 9, 27, tzinfo=UTC)
 
 
 def test_every_tabled_release_date_leads_its_own_fire_year_by_more_than_the_floor() -> None:
@@ -371,8 +378,11 @@ def test_every_tabled_release_date_leads_its_own_fire_year_by_more_than_the_floo
         last_possible_ignition = date(ignition_year, 12, 31)
         assert release_date > last_possible_ignition
         assert release_date - last_possible_ignition > MIN_RELEASE_LEAD
-    # Fire years MTBS is still mapping must stay out of the table.
+    # Fire years MTBS is still mapping must stay out of the table. Both were still accreting as of
+    # 2026-08-10 -- the 7 April 2026 release added 482 more 2023 fires and 147 more 2024 fires, and
+    # mtbs.gov/data-availability targets "end of FY2026" for completing them, a date not yet reached.
     assert 2023 not in MTBS_ANNUAL_RELEASE_DATES
+    assert 2024 not in MTBS_ANNUAL_RELEASE_DATES
     assert 2024 not in MTBS_ANNUAL_RELEASE_DATES
 
 
