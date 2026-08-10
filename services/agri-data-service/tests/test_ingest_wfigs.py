@@ -213,6 +213,67 @@ async def test_a_non_transient_failure_is_not_retried() -> None:
     assert len(attempts) == 1
 
 
+async def test_several_throttle_responses_are_survived_before_success() -> None:
+    # Regression for the 2026-08-10 crash: two retries ~3s apart was not enough. This drives the
+    # busy response all the way to the last attempt the budget allows, and it still recovers.
+    attempts: list[int] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        if len(attempts) < wfigs.MAX_ATTEMPTS:
+            return _json_response({"error": {"message": "Too many requests."}})
+        return _json_response(_collection())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        perimeters, more_remaining = await fetch_fire_perimeters(client, "-125,42,-111,49", _no_sleep)
+
+    assert len(attempts) == wfigs.MAX_ATTEMPTS
+    assert len(perimeters) == 1
+    assert more_remaining is False
+
+
+async def test_a_sustained_throttle_still_fails_loudly_rather_than_retrying_forever() -> None:
+    # The exact production failure mode: WFIGS answers "too many requests" on every single attempt.
+    # A wider budget must still fail the run once that budget is spent -- never a silent empty
+    # success and never a partial write.
+    attempts: list[int] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        return _json_response({"error": {"message": "Too many requests."}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(UpstreamPayloadError, match="Too many requests"):
+            await fetch_fire_perimeters(client, "-125,42,-111,49", _no_sleep)
+
+    assert len(attempts) == wfigs.MAX_ATTEMPTS
+
+
+async def test_the_wall_clock_ceiling_stops_retrying_before_the_attempt_budget_is_spent() -> None:
+    # A fake clock that jumps a whole ceiling's worth of time on every sleep proves the ceiling --
+    # not just MAX_ATTEMPTS -- bounds the loop, independent of how many attempts remain.
+    clock_seconds = 0.0
+
+    async def jump_clock(_delay: float) -> None:
+        nonlocal clock_seconds
+        clock_seconds += wfigs.RETRY_WALL_CLOCK_CEILING_SECONDS
+
+    def monotonic() -> float:
+        return clock_seconds
+
+    attempts: list[int] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        return _json_response({"error": {"message": "Too many requests."}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(UpstreamPayloadError, match="Too many requests"):
+            await fetch_fire_perimeters(client, "-125,42,-111,49", jump_clock, monotonic)
+
+    assert 1 <= len(attempts) < wfigs.MAX_ATTEMPTS
+
+
 async def test_a_second_page_is_fetched_only_when_the_upstream_says_more_remain() -> None:
     requested_offsets: list[str | None] = []
 

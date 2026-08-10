@@ -7,6 +7,7 @@ import math
 import os
 import random
 import re
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
@@ -85,8 +86,12 @@ MAX_RECORD_COUNT: Final = 100
 # records is double DEFAULT_MAX_SOURCE_RECORDS, so the configured ceiling is what stops an ordinary
 # run, not this bound.
 MAX_PAGES: Final = 200
-MAX_ATTEMPTS: Final = 3
-RETRY_BASE_DELAYS_SECONDS: Final = (1.0, 2.0)
+# Widened 2026-08-10 after a sustained throttle crashed the hourly cron on two ~3s-apart retries;
+# see ingest/AGENTS.md's wfigs.py section for the incident and the shape rationale.
+MAX_ATTEMPTS: Final = 6
+RETRY_BASE_DELAY_SECONDS: Final = 1.0
+RETRY_MAX_DELAY_SECONDS: Final = 20.0
+RETRY_WALL_CLOCK_CEILING_SECONDS: Final = 60.0
 BUSY_MESSAGE_PATTERN: Final = re.compile(r"too many requests|busy|try again", re.IGNORECASE)
 
 # JavaScript's Date range; beyond it `new Date(ms)` is Invalid Date and the TypeScript stored null.
@@ -265,8 +270,9 @@ def is_retryable_failure(error: Exception) -> bool:
 
 
 def jittered_retry_delay_seconds(attempt_index: int) -> float:
-    """Exponential backoff base delay for one attempt, randomised by a 0.5-1.5x jitter."""
-    return RETRY_BASE_DELAYS_SECONDS[attempt_index] * (0.5 + random.random())
+    """Exponential backoff (doubling, capped) for one attempt, randomised by a 0.5-1.5x jitter."""
+    delay = min(RETRY_BASE_DELAY_SECONDS * (2**attempt_index), RETRY_MAX_DELAY_SECONDS)
+    return delay * (0.5 + random.random())
 
 
 async def fetch_fire_perimeters_page(
@@ -274,16 +280,31 @@ async def fetch_fire_perimeters_page(
     bbox: str,
     offset: int = 0,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> WfigsPerimeterPage:
-    """Fetch one bounded page of WFIGS perimeters, retrying only a busy or transient upstream."""
+    """Fetch one bounded page of WFIGS perimeters, retrying only a busy or transient upstream.
+
+    See ingest/AGENTS.md's wfigs.py section for why the attempt budget and wall-clock ceiling are
+    shaped the way they are.
+    """
     url = build_query_url(bbox, offset)
+    started_at = monotonic()
     for attempt in range(MAX_ATTEMPTS):
         try:
             return parse_perimeter_collection(await fetch_bounded_json(client, url, WFIGS_BOUNDS))
         except (UpstreamHttpError, UpstreamPayloadError) as error:
-            if attempt == MAX_ATTEMPTS - 1 or not is_retryable_failure(error):
+            elapsed_seconds = monotonic() - started_at
+            out_of_attempts = attempt == MAX_ATTEMPTS - 1
+            out_of_time = elapsed_seconds >= RETRY_WALL_CLOCK_CEILING_SECONDS
+            if out_of_attempts or out_of_time or not is_retryable_failure(error):
                 raise
-            logger.info("wfigs_upstream_retry", attempt=attempt + 1, offset=offset, error=str(error))
+            logger.info(
+                "wfigs_upstream_retry",
+                attempt=attempt + 1,
+                offset=offset,
+                error=str(error),
+                elapsed_seconds=round(elapsed_seconds, 2),
+            )
             await sleep(jittered_retry_delay_seconds(attempt))
     raise UpstreamPayloadError("WFIGS retry loop ended without a response")  # pragma: no cover - unreachable.
 
@@ -292,13 +313,14 @@ async def fetch_fire_perimeters(
     client: httpx.AsyncClient,
     bbox: str,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[list[dict[str, object]], bool]:
     """Page bounded WFIGS perimeters until the upstream stops clipping, reporting whether more were left behind."""
     ceiling = resolve_max_source_records()
     perimeters: list[dict[str, object]] = []
     offset = 0
     for _ in range(MAX_PAGES):
-        page = await fetch_fire_perimeters_page(client, bbox, offset, sleep)
+        page = await fetch_fire_perimeters_page(client, bbox, offset, sleep, monotonic)
         perimeters.extend(page.perimeters)
         if not page.perimeters or not page.exceeded_transfer_limit:
             return perimeters, False
