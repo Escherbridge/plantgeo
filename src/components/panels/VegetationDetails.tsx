@@ -4,14 +4,7 @@ import { useMemo, useState } from "react";
 import { Layers, Leaf, TrendingUp } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc/client";
-import {
-  ENVIRONMENTAL_TILES_CONFIGURED,
-  GIBS_NDVI_PRODUCT,
-  NDVI_ANOMALY_UNAVAILABLE_REASON,
-  NDVI_COLOR_RAMP,
-  NDWI_UNAVAILABLE_REASON,
-} from "@/lib/vegetation";
-import { NLCD_CATEGORY_CLASSES, NLCD_CLASSES, type NLCDCategory } from "@/lib/environmental/nlcd";
+import { GIBS_NDVI_PRODUCT, NDVI_COLOR_RAMP } from "@/lib/vegetation";
 import { useVegetationStore } from "@/stores/vegetation-store";
 import {
   useLayerDay,
@@ -25,11 +18,6 @@ import { ndviForecastSeriesKeyForPoint } from "@/lib/forecast/series-key";
 import { useMapStore } from "@/stores/map-store";
 import { PROXIED_RETRY_COUNT } from "@/hooks/useViewportProxiedLayers";
 import type { VegetationSource } from "@/components/map/layers/VegetationLayer";
-
-/** Which NLCD product the Land Cover tab selects: the 2021 snapshot or 2019–2021 change. */
-type LandCoverMode = "2021" | "change";
-
-const ALL_CATEGORIES = Object.keys(NLCD_CATEGORY_CLASSES) as NLCDCategory[];
 
 // Published forecasts change on publication cadence (roughly daily), so ten minutes
 // trades invisible staleness for not re-paying the proxy on every dock cycle.
@@ -66,6 +54,13 @@ const VEGETATION_SOURCE_OPTIONS: ReadonlyArray<{
 // The geo.layers name these NDVI controls drive lives in the layer registry
 // ("vegetation" -> "vegetation").
 
+/** The NDVI interval a legend class covers: its own stop up to the next one, open at the top. */
+function formatNdviBand(lower: number, upper: number | undefined): string {
+  return upper === undefined
+    ? `${lower.toFixed(1)}+`
+    : `${lower.toFixed(1)} – ${upper.toFixed(1)}`;
+}
+
 function ColorLegendRow({ color, label }: { color: string; label: string }) {
   return (
     <div className="flex items-center gap-2">
@@ -89,8 +84,6 @@ export function VegetationDetails() {
   // take the slider's day directly, so saying "NDVI draws the Aug 2026 composite" over them
   // would describe a raster the reader is not looking at.
   const showsComposite = source === "satellite";
-  const [landCoverMode, setLandCoverMode] = useState<LandCoverMode>("2021");
-  const [enabledCategories, setEnabledCategories] = useState<NLCDCategory[]>([...ALL_CATEGORIES]);
   // Controlled so the forecast proxy query can gate on its tab actually being on
   // screen; typed so a drifted trigger value breaks the build, not the gate.
   const [activeTab, setActiveTab] = useState<"ndvi" | "landcover" | "forecast">("ndvi");
@@ -145,12 +138,6 @@ export function VegetationDetails() {
     }));
     return { lineIsMedian, hasBand: hasFullBand(chartData), chartData };
   }, [forecast]);
-
-  function handleToggleCategory(cat: NLCDCategory) {
-    setEnabledCategories((prev) =>
-      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
-    );
-  }
 
   return (
     <div className="flex flex-col">
@@ -278,9 +265,18 @@ export function VegetationDetails() {
               <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
                 NDVI Legend
               </p>
+              {/* Each class carries the NDVI interval it names. The labels alone ("Sparse",
+                  "Moderate") are a vocabulary, not a definition -- two readers will not draw
+                  the same line between them, and NDVI is a measured index with an actual
+                  number behind every band. `value` on each stop is the band's lower bound, so
+                  a band runs to the next stop's value and the last runs to the index maximum. */}
               <div className="flex flex-col gap-1">
-                {NDVI_COLOR_RAMP.map((stop) => (
-                  <ColorLegendRow key={stop.color} color={stop.color} label={stop.label} />
+                {NDVI_COLOR_RAMP.map((stop, index) => (
+                  <ColorLegendRow
+                    key={stop.color}
+                    color={stop.color}
+                    label={`${formatNdviBand(stop.value, NDVI_COLOR_RAMP[index + 1]?.value)} · ${stop.label}`}
+                  />
                 ))}
               </div>
               {/* The composite arrives already shaded by GIBS's server-side palette, so this
@@ -294,27 +290,6 @@ export function VegetationDetails() {
               )}
             </div>
 
-            {/* Stated, not offered. These were checkboxes wired to store setters and
-                permanently `disabled`, so they could never fire -- a control that cannot act
-                is worse than a sentence that explains why. Same wording pattern as the
-                registry's permanentlyUnavailableReason. */}
-            <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 flex flex-col gap-2">
-              <p className="text-xs font-semibold text-[hsl(var(--foreground))]">
-                No data source yet
-              </p>
-              <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
-                <span className="font-medium text-[hsl(var(--foreground))]">Anomaly mode</span>
-                {" — "}
-                {NDVI_ANOMALY_UNAVAILABLE_REASON}
-              </p>
-              <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
-                <span className="font-medium text-[hsl(var(--foreground))]">
-                  NDWI (water stress)
-                </span>
-                {" — "}
-                {NDWI_UNAVAILABLE_REASON}
-              </p>
-            </div>
           </TabsContent>
 
           {/* Land Cover Tab */}
@@ -323,65 +298,16 @@ export function VegetationDetails() {
                 the warehouse cells or the GIBS proxy -- while land cover is exactly what
                 ENVIRONMENTAL_TILES_CONFIGURED gates, so on the NDVI tab it contradicted a
                 layer the reader could plainly see drawing. */}
-            {!ENVIRONMENTAL_TILES_CONFIGURED && (
-              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
-                Land-cover tiles are paused until a versioned first-party warehouse release
-                is published; the controls below change nothing yet.
-              </p>
-            )}
-
-            <div className="flex gap-2">
-              <button
-                className={`flex-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
-                  landCoverMode === "2021"
-                    ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent"
-                    : "border-[hsl(var(--border))] text-[hsl(var(--foreground))] bg-[hsl(var(--card))]"
-                }`}
-                onClick={() => setLandCoverMode("2021")}
-              >
-                NLCD 2021
-              </button>
-              <button
-                className={`flex-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
-                  landCoverMode === "change"
-                    ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent"
-                    : "border-[hsl(var(--border))] text-[hsl(var(--foreground))] bg-[hsl(var(--card))]"
-                }`}
-                onClick={() => setLandCoverMode("change")}
-              >
-                Change 2019–2021
-              </button>
-            </div>
-
-            <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-              <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
-                Filter by Category
-              </p>
-              <div className="flex flex-col gap-1.5">
-                {ALL_CATEGORIES.map((cat) => {
-                  const codes = NLCD_CATEGORY_CLASSES[cat];
-                  const sampleColor = NLCD_CLASSES[codes[0]]?.color ?? "#888";
-                  return (
-                    <label
-                      key={cat}
-                      className="flex items-center gap-2 cursor-pointer select-none text-xs"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={enabledCategories.includes(cat)}
-                        onChange={() => handleToggleCategory(cat)}
-                        className="rounded"
-                      />
-                      <span
-                        className="w-4 h-3 rounded-sm shrink-0"
-                        style={{ backgroundColor: sampleColor }}
-                      />
-                      <span className="text-[hsl(var(--foreground))]">{cat}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
+            {/* A product selector and a category filter stood here, over a layer that has
+                never drawn: `ENVIRONMENTAL_TILES_CONFIGURED` is a literal `false`, there is no
+                NLCD producer, and geo.osm_landuse holds no rows. They are deleted rather than
+                explained -- a control the reader can operate teaches that operating it does
+                something, and no caption undoes that. The class vocabulary itself is kept in
+                src/lib/environmental/nlcd.ts, ready for the day a producer publishes. */}
+            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+              No land-cover product is published for this platform yet. Nothing is drawn, and
+              there are no controls here until there is something for them to control.
+            </p>
           </TabsContent>
 
           {/* Forecast Tab */}

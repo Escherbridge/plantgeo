@@ -4,7 +4,7 @@ import { renderWithProviders } from "@/test/utils";
 
 import { LayerLegend } from "@/components/map/layer-panel/LayerLegend";
 import { DROUGHT_COLORS } from "@/components/map/layers/DroughtLayer";
-import { CONDITION_COLORS } from "@/components/map/layers/WaterLayer";
+import { GAUGE_READING_COLORS } from "@/components/map/layers/WaterLayer";
 import {
   DEFAULT_SOIL_FIELD_DEPTHS,
   SOIL_FIELD_MEASURES,
@@ -171,8 +171,11 @@ describe("LayerLegend", () => {
     expect(screen.getByTestId("legend-chip-drought")).toBeTruthy();
     expect(screen.getByTestId("legend-entry-drought")).toBeTruthy();
     const water = screen.getByTestId("legend-entry-water");
-    // Gauges are coloured by condition; the diverging ramp's neutral pivot is "Normal".
-    expect(swatchColorsOf(water)).toContain(asRenderedColor(CONDITION_COLORS.normal));
+    // Gauges are coloured by whether they reported a discharge value -- the five-class
+    // condition ramp this replaced was unreachable, since NWIS carries no percentile.
+    expect(swatchColorsOf(water)).toContain(
+      asRenderedColor(GAUGE_READING_COLORS.reporting)
+    );
     expect(water.textContent).toContain("Groundwater wells");
 
     toggleLayerOn("drought");

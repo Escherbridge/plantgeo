@@ -271,8 +271,11 @@ describe("viewport-proxied feeds are fetched once for the map and its dock secti
     expect(entries[0].observers).toHaveLength(1);
     expect(entries[0].observers[0].options.staleTime).toBe(60 * 60 * 1000);
     expect(entries[0].observers[0].options.retry).toBe(1);
-    // The ~5 MB HUC12 viewport is fetched once, however many surfaces read it.
-    expect(operationsFor("environmental.getWatersheds")).toHaveLength(1);
+    // And no request leaves the client at all. This viewport is ~767 sq deg against the
+    // procedure's 1 sq deg ceiling, so the fetch could only ever come back a validation
+    // error -- which the panel then had to render as though the provider were down. The
+    // observer stays (the dock is still asking the question), the doomed round trip does not.
+    expect(operationsFor("environmental.getWatersheds")).toHaveLength(0);
   });
 
   // Warehouse-backed rather than proxied, and keyed on five inputs rather than two (bbox,

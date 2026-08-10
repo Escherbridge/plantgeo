@@ -169,8 +169,11 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // The proxy could never draw at an ordinary zoom: it caps a request at 1 square degree
   // (MAX_WATERSHED_BBOX_SQUARE_DEGREES in src/lib/server/services/hydrosheds.ts) while the
   // viewport bbox is ~767 at the default zoom, so every request was rejected and the layer fell
-  // back to an empty collection. The tile path has no bbox ceiling -- see watershedsLayer in
-  // layers.ts for the minzoom that bounds payload instead.
+  // back to an empty collection. The tile path has no bbox ceiling and, since
+  // 0023_watershed_zoom_generalization, no minzoom either: payload is bounded by drawing the
+  // HUC rung the zoom can carry rather than by hiding the layer. The panel's basin LIST still
+  // comes from the capped proxy, so it can be empty while the map draws — which is why the
+  // Watersheds tab explains the ceiling instead of reporting an outage.
   //
   // Its 2013 WBD loaddate does not drag the slider axis: sliderDomain excludes snapshot layers
   // from the axis start.
@@ -203,7 +206,12 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     styleLayerIds: [],
     warehouseLayerName: null,
     panelId: "soil",
-    permanentlyUnavailableReason: null,
+    // SoilLayer resolves its raster template through `getEnvironmentalTileTemplate`, which
+    // returns "" unconditionally, so this switch has never had anything behind it. It read as
+    // an ordinary working toggle -- flip it, watch nothing happen, conclude the data is
+    // missing. The capability is withheld, and the row now says so instead of pretending.
+    permanentlyUnavailableReason:
+      "Soil property rasters are not published yet: no first-party SoilGrids tile release exists, so this layer has no tiles to draw. Click the map with the Soil section open to read measured values at a point.",
   },
   // USDA SSURGO map units, proxied per viewport through environmental.getSoilSurvey.
   // Distinct from `soil` above, which draws the SoilGrids raster: this one is the

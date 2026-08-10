@@ -4,7 +4,8 @@ import { Suspense, useEffect, useRef, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
-import { useMapStore } from "@/stores/map-store";
+import { DEFAULT_VIEWPORT, useMapStore } from "@/stores/map-store";
+import { DataLoadingChip } from "@/components/map/DataLoadingChip";
 import { getStyle, skyThemes } from "@/lib/map/styles";
 import { MapProvider } from "@/lib/map/map-context";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -123,16 +124,27 @@ export default function MapView() {
       }
     });
 
-    m.on("moveend", () => {
+    // The container's size travels with every viewport write, because it is half of what the
+    // bbox derivation needs and it can change without the camera moving at all (a window
+    // resize, the dock opening). Reported on load as well as on move, so the very first
+    // queries are scoped to the real screen rather than to the 1024x512 default.
+    const publishViewport = () => {
       const center = m.getCenter();
+      const container = m.getContainer();
       setViewport({
         longitude: center.lng,
         latitude: center.lat,
         zoom: m.getZoom(),
         bearing: m.getBearing(),
         pitch: m.getPitch(),
+        widthPx: container.clientWidth || DEFAULT_VIEWPORT.widthPx,
+        heightPx: container.clientHeight || DEFAULT_VIEWPORT.heightPx,
       });
-    });
+    };
+
+    m.on("load", publishViewport);
+    m.on("moveend", publishViewport);
+    m.on("resize", publishViewport);
 
     m.on("click", (e) => {
       // A panel capturing query points owns the click: without this stand-down, one click
@@ -306,6 +318,7 @@ export default function MapView() {
         <div ref={mapContainer} className="h-full w-full" />
         {mapInstance && (
           <>
+            <DataLoadingChip />
             {/* Suspense because MapFocus reads useSearchParams; MapView itself is
                 only ever mounted client-side, but the boundary keeps that true
                 regardless of how a future route renders it. */}

@@ -13,7 +13,13 @@
 
 import { useMemo } from "react";
 import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
-import { viewportBbox } from "@/lib/map/viewport-bbox";
+import { bboxSquareDegrees, viewportBbox } from "@/lib/map/viewport-bbox";
+
+/**
+ * `MAX_WATERSHED_BBOX_SQUARE_DEGREES` from `src/lib/server/services/hydrosheds.ts`, restated
+ * for the client rather than imported: that module is server-only. The two must move together.
+ */
+export const WATERSHED_LIST_MAX_SQUARE_DEGREES = 1;
 import { trpc } from "@/lib/trpc/client";
 import { useMapStore } from "@/stores/map-store";
 import {
@@ -73,7 +79,16 @@ export function useViewportBounds(): ViewportBounds {
     const zoom = viewport.zoom ?? DEFAULT_ZOOM;
     return {
       zoom,
-      bbox: viewportBbox(viewport.longitude, viewport.latitude, zoom),
+      // Halved because viewportBbox measures out from the centre. Sourced from the real
+      // container rather than a constant: the fixed 1024x512 assumption this replaced fetched
+      // a rectangle smaller than any modern display, and features stopped dead at its edge.
+      bbox: viewportBbox(
+        viewport.longitude,
+        viewport.latitude,
+        zoom,
+        viewport.widthPx / 2,
+        viewport.heightPx / 2
+      ),
     };
   }, [viewport]);
 }
@@ -99,10 +114,17 @@ export function useWatershedsQuery(
   { enabled }: ProxiedQueryOptions
 ) {
   const requested = bbox ?? null;
+  // The procedure's own ceiling, mirrored here so a viewport wider than USGS will answer for
+  // is never asked. Sending it anyway failed zod validation and surfaced as a request error,
+  // which reads as an outage; the map keeps drawing generalized basins from tiles at exactly
+  // those zooms, so an outage is precisely what it is not.
+  const area = requested === null ? null : bboxSquareDegrees(requested);
+  const withinProxyCeiling = area !== null && area <= WATERSHED_LIST_MAX_SQUARE_DEGREES;
   return trpc.environmental.getWatersheds.useQuery(
     { bbox: requested ?? NO_VIEWPORT_BBOX },
     {
-      enabled: enabled && requested !== null && !isWithheld("watersheds"),
+      enabled:
+        enabled && requested !== null && withinProxyCeiling && !isWithheld("watersheds"),
       staleTime: WATERSHEDS_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
     }

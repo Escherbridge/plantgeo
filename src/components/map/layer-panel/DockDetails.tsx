@@ -79,7 +79,12 @@ const AlertDetails = dynamic(
 );
 
 function FireDetailsBody() {
-  return <FireDetails />;
+  // The centre, not the bbox: the weather cards read the nearest published observation to one
+  // point, and a bbox would key a query the map's weather layer does not share.
+  const latitude = useMapStore((state) => state.viewport.latitude);
+  const longitude = useMapStore((state) => state.viewport.longitude);
+  const center = useMemo(() => ({ lat: latitude, lon: longitude }), [latitude, longitude]);
+  return <FireDetails center={center} />;
 }
 
 function WaterDetailsBody() {

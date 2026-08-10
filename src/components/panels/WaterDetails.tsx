@@ -3,9 +3,12 @@
 import { Droplets, CloudRain, Map } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc/client";
-import { useWatershedsQuery } from "@/hooks/useViewportProxiedLayers";
+import {
+  useWatershedsQuery,
+  WATERSHED_LIST_MAX_SQUARE_DEGREES,
+} from "@/hooks/useViewportProxiedLayers";
+import { bboxSquareDegrees } from "@/lib/map/viewport-bbox";
 import { DROUGHT_LEGEND } from "@/components/map/layers/DroughtLayer";
-import { CONDITION_COLORS } from "@/components/map/layers/WaterLayer";
 import {
   useDebouncedLayerDay,
   useLayerDay,
@@ -16,15 +19,6 @@ interface WaterDetailsProps {
   /** The map's viewport, from the one `useViewportBounds()` derivation LayerManager reads. */
   bbox?: string;
 }
-
-const CONDITION_LABEL: Record<string, string> = {
-  above_normal: "Above Normal",
-  normal: "Normal",
-  below_normal: "Below Normal",
-  low: "Low",
-  critically_low: "Critically Low",
-  unknown: "Unknown",
-};
 
 // The gauge layer's geo.layers name lives in the layer registry ("water" -> "water-gauges").
 // Drought has no geo.layers row, so the registry gives it none and it makes no claim.
@@ -57,12 +51,26 @@ const DROUGHT_UNAVAILABLE_COPY: Record<string, string> = {
 const DROUGHT_UNAVAILABLE_FALLBACK =
   "No US Drought Monitor classification is available for the selected date.";
 
-const TREND_SYMBOL: Record<string, string> = {
-  rising: "↑",
-  stable: "→",
-  declining: "↓",
-  critical: "↓↓",
-};
+/**
+ * Discharge, at the precision the reading carries. Small flows are the ones a single decimal
+ * matters to; a river running 40,000 cfs is not measured to a tenth.
+ */
+function formatCfs(value: number): string {
+  return value >= 100
+    ? Math.round(value).toLocaleString()
+    : value.toFixed(1);
+}
+
+function SummaryStat({ value, label }: { value: number | string; label: string }) {
+  return (
+    <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2">
+      <span className="block text-xl font-bold text-[hsl(var(--foreground))]">{value}</span>
+      <span className="text-[9px] text-[hsl(var(--muted-foreground))] leading-tight">
+        {label}
+      </span>
+    </div>
+  );
+}
 
 /**
  * Trims a watershed attribute down to a usable list label, rejecting blanks.
@@ -143,13 +151,24 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
   // USGS stops at its transfer limit and says so. The count below then describes a
   // subset of the view, so it must not be presented as the number of watersheds here.
   const watershedsTruncated = watershedQuery.data?.truncated === true;
+  // Wider than the proxy will answer for, so the list is empty by design rather than by fault.
+  const watershedListArea = bbox === undefined ? null : bboxSquareDegrees(bbox);
+  const beyondWatershedListZoom =
+    watershedListArea !== null && watershedListArea > WATERSHED_LIST_MAX_SQUARE_DEGREES;
   const listedWatersheds = watersheds.slice(0, WATERSHED_LIST_LIMIT);
 
-  // Summary counts per condition
-  const conditionCounts = gauges.reduce<Record<string, number>>((acc, g) => {
-    acc[g.condition] = (acc[g.condition] ?? 0) + 1;
-    return acc;
-  }, {});
+  // Gauges that actually reported a discharge value, and the middle of those readings. A
+  // gauge with no value is not a gauge reading zero, so it is excluded from the median rather
+  // than counted as a low flow.
+  const reportingGauges = gauges.filter(
+    (g): g is typeof g & { flowCfs: number } => g.flowCfs !== null
+  );
+  const medianFlowCfs =
+    reportingGauges.length === 0
+      ? null
+      : [...reportingGauges].sort((a, b) => a.flowCfs - b.flowCfs)[
+          Math.floor((reportingGauges.length - 1) / 2)
+        ].flowCfs;
 
   const droughtFeatures = droughtQuery.data?.features ?? [];
   const dmCounts: Record<number, number> = {};
@@ -255,23 +274,16 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
 
             {!streamflowQuery.isLoading && gauges.length > 0 && (
               <>
+                {/* Counts of what was measured, in place of a condition tally whose every
+                    bucket but "Unknown" was unreachable. Median is a summary OF the readings
+                    in view, never a reading in its own right. */}
                 <div className="grid grid-cols-3 gap-2 text-center">
-                  {Object.entries(conditionCounts).map(([condition, count]) => (
-                    <div
-                      key={condition}
-                      className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2"
-                    >
-                      <span
-                        className="block text-xl font-bold"
-                        style={{ color: CONDITION_COLORS[condition] ?? "#9e9e9e" }}
-                      >
-                        {count}
-                      </span>
-                      <span className="text-[9px] text-[hsl(var(--muted-foreground))] leading-tight">
-                        {CONDITION_LABEL[condition] ?? condition}
-                      </span>
-                    </div>
-                  ))}
+                  <SummaryStat value={gauges.length} label="Gauges in view" />
+                  <SummaryStat value={reportingGauges.length} label="Reporting discharge" />
+                  <SummaryStat
+                    value={medianFlowCfs === null ? "—" : formatCfs(medianFlowCfs)}
+                    label="Median cfs"
+                  />
                 </div>
 
                 <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
@@ -290,38 +302,20 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
                         <span className="text-[hsl(var(--foreground))] truncate flex-1">
                           {g.siteName || `USGS ${g.siteNo}`}
                         </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <span
-                            className="px-1.5 py-0.5 rounded text-[9px] font-medium text-white"
-                            style={{ backgroundColor: CONDITION_COLORS[g.condition] ?? "#9e9e9e" }}
-                          >
-                            {CONDITION_LABEL[g.condition] ?? g.condition}
-                          </span>
-                          {g.trend && (
-                            <span className="text-[hsl(var(--muted-foreground))]">
-                              {TREND_SYMBOL[g.trend]}
-                            </span>
-                          )}
-                        </div>
+                        {/* The discharge NWIS reported, which is the one number this feed
+                            actually carries. The chip that stood here read "Unknown" on every
+                            gauge in every view, forever -- see GAUGE_READING_COLORS. */}
+                        <span
+                          className={`shrink-0 tabular-nums ${
+                            g.flowCfs === null
+                              ? "text-[hsl(var(--muted-foreground))]"
+                              : "text-[hsl(var(--foreground))] font-medium"
+                          }`}
+                        >
+                          {g.flowCfs === null ? "not reported" : `${formatCfs(g.flowCfs)} cfs`}
+                        </span>
                       </div>
                     ))}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                  <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
-                    Condition Legend
-                  </p>
-                  <div className="flex flex-col gap-1">
-                    {Object.entries(CONDITION_COLORS)
-                      .filter(([k]) => k !== "unknown")
-                      .map(([condition, color]) => (
-                        <ColorSwatch
-                          key={condition}
-                          color={color}
-                          label={CONDITION_LABEL[condition] ?? condition}
-                        />
-                      ))}
                   </div>
                 </div>
               </>
@@ -531,11 +525,25 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
               </p>
             )}
 
+            {/* The list is capped by the proxy, the map layer is not. Said here because the
+                two disagree on purpose at wide zooms: basins are drawn (rolled up to the HUC
+                level the zoom can carry, per 0023_watershed_zoom_generalization) while this
+                list has nothing to show, and an unexplained empty list beside a drawn layer
+                reads as a fault. */}
+            {beyondWatershedListZoom && (
+              <p className="rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                This view is wider than the {WATERSHED_LIST_MAX_SQUARE_DEGREES} square degree
+                the USGS hydrography service will list basins for. The map still draws them,
+                grouped into their parent basins — zoom in for the named HUC12 list.
+              </p>
+            )}
+
             {/* Only claimed once a response actually arrived: an undefined query result
                 is "not answered yet", not "the provider says there are none here". */}
             {watershedQuery.data &&
               !watershedQuery.isLoading &&
               !watershedsUnavailable &&
+              !beyondWatershedListZoom &&
               watersheds.length === 0 && (
                 <p className="text-xs text-[hsl(var(--muted-foreground))]">
                   USGS reports no HUC12 watersheds intersecting this view.

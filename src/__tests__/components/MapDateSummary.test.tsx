@@ -254,13 +254,18 @@ describe("counting the layers that are behind their own newest published day", (
   });
 
   it("does not count a layer whose newest published day the server never named", () => {
-    // `soil` names no warehouse stream, so nothing measures its latest; it falls back to the
-    // server's today and must not be reported as stale on a claim nobody made.
-    arrangeVisibleLayers(["soil", "vegetation"]);
+    // `soil-survey` names no warehouse stream (it is proxied per viewport from USDA), so
+    // nothing measures its latest; it falls back to the server's today and must not be
+    // reported as stale on a claim nobody made. This stood on `soil` until that toggle was
+    // given a permanentlyUnavailableReason -- a withheld layer is not on screen at all, so it
+    // is correctly absent from a summary of what IS being shown.
+    arrangeVisibleLayers(["soil-survey", "vegetation"]);
 
     renderWithProviders(<MapDateSummary />);
 
-    expect(fullStatement()).not.toContain("Soil Properties: 2026-08-09 (behind its latest)");
-    expect(fullStatement()).toContain("Soil Properties: 2026-08-09");
+    expect(fullStatement()).not.toContain(
+      "Soil Survey (SSURGO): 2026-08-09 (behind its latest)"
+    );
+    expect(fullStatement()).toContain("Soil Survey (SSURGO): 2026-08-09");
   });
 });

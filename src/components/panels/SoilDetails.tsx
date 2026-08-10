@@ -13,7 +13,6 @@ import { useSoilStore } from "@/stores/soil-store";
 import { EROSION_COLORS, type ErosionClass } from "@/lib/environmental/erosion";
 import { CARBON_COLORS, classifyCarbonPotential, type CarbonClass } from "@/lib/environmental/carbon";
 import type { InterventionType } from "@/lib/environmental/intervention";
-import { ENVIRONMENTAL_TILES_CONFIGURED } from "@/lib/vegetation";
 import { useDebouncedLayerDay, useLayerVisibility } from "@/lib/map/layer-toggle-context";
 import {
   useSoilFieldQuery,
@@ -594,7 +593,14 @@ export function SoilDetails({
           {/* Soil Properties Tab */}
           <TabsContent value="properties" className="flex flex-col gap-4 mt-4">
             <div className="flex flex-col gap-2">
-              <p className="text-xs text-[hsl(var(--muted-foreground))]">Display property</p>
+              {/* "Display property" was a lie about scope. These buttons select nothing on the
+                  map -- the SoilGrids raster they were built for cannot draw at all, because
+                  `getEnvironmentalTileTemplate` returns "" until a first-party tile release
+                  exists. What they DO drive is the point query below: which property the
+                  clicked-point readout leads with. Named for that. */}
+              <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                Highlight in point query
+              </p>
               <div className="flex flex-wrap gap-1.5">
                 {SOIL_PROPERTY_OPTIONS.map((opt) => (
                   <button
@@ -617,10 +623,12 @@ export function SoilDetails({
               <p className="text-xs font-semibold mb-1 text-[hsl(var(--foreground))]">
                 {SOIL_PROPERTY_LABELS[selectedProperty]}
               </p>
+              {/* One sentence, not a ternary over a constant: ENVIRONMENTAL_TILES_CONFIGURED is
+                  a literal `false` in src/lib/vegetation.ts, so the other branch was unreachable
+                  copy describing a capability that has never existed. */}
               <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
-                {ENVIRONMENTAL_TILES_CONFIGURED
-                  ? "Versioned, first-party 0-5 cm mean tiles are configured."
-                  : "Soil tiles are paused until a versioned warehouse release is published."}
+                No soil raster is published, so nothing is drawn for this property. The values
+                below come from ISRIC SoilGrids, read live for the point you click.
               </p>
             </div>
 

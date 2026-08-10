@@ -31,6 +31,21 @@ export function canonicalViewportBbox(value: string): string | null {
     .join(",");
 }
 
+/**
+ * Area of a canonical bbox in square degrees, or null if it cannot be read.
+ *
+ * Several upstream proxies cap the area they will answer for -- USGS hydrography at 1 sq deg,
+ * for one -- and the cap is enforced by the procedure's zod input, so an oversized viewport
+ * fails validation rather than returning few features. Callers use this to know that before
+ * they ask, and to say so in the reader's terms instead of surfacing a request error.
+ */
+export function bboxSquareDegrees(value: string): number | null {
+  const canonical = canonicalViewportBbox(value);
+  if (canonical === null) return null;
+  const [west, south, east, north] = canonical.split(",").map(Number);
+  return (east - west) * (north - south);
+}
+
 /** Builds one bounded, non-wrapping bbox for viewport-scoped API calls. */
 export function viewportBbox(
   longitude: number,

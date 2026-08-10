@@ -21,7 +21,7 @@ import {
   FIRE_CONTAINMENT_COLOR_STOPS,
 } from "@/components/map/layers/FireLayer";
 import { DROUGHT_DRAWN_CLASSES } from "@/components/map/layers/DroughtLayer";
-import { CONDITION_COLORS, WELL_TREND_COLORS } from "@/components/map/layers/WaterLayer";
+import { GAUGE_READING_COLORS, WELL_TREND_COLORS } from "@/components/map/layers/WaterLayer";
 import {
   TEMPERATURE_COLOR_STOPS,
   WIND_SPEED_CLASSES,
@@ -196,17 +196,15 @@ function classesWithFallback(
 }
 
 /**
- * Stream-gauge conditions in worst-to-best order, reading their colours from the record
- * WaterLayer paints each gauge with. `unknown` is last because it is not a position on the
- * scale -- it is the absence of a reading, which is why it does not share "normal"'s grey.
+ * What a stream gauge is drawn as, reading its colours from the record WaterLayer paints each
+ * gauge with. This was a five-class flow-condition ramp; every class but the last was
+ * unreachable, because NWIS instantaneous values carry no percentile to classify against --
+ * see GAUGE_READING_COLORS in WaterLayer.tsx for why. A legend must only name states the map
+ * can actually take.
  */
 const STREAM_CONDITION_CLASSES: readonly LegendClass[] = [
-  { color: CONDITION_COLORS.critically_low, label: "Critically low" },
-  { color: CONDITION_COLORS.low, label: "Low" },
-  { color: CONDITION_COLORS.below_normal, label: "Below normal" },
-  { color: CONDITION_COLORS.normal, label: "Normal" },
-  { color: CONDITION_COLORS.above_normal, label: "Above normal" },
-  { color: CONDITION_COLORS.unknown, label: "No reading" },
+  { color: GAUGE_READING_COLORS.reporting, label: "Reporting discharge" },
+  { color: GAUGE_READING_COLORS.no_reading, label: "No reading" },
 ];
 
 const WELL_TREND_CLASSES: readonly LegendClass[] = [

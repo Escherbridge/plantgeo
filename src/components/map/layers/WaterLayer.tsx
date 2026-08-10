@@ -22,22 +22,26 @@ function finiteNumber(value: unknown): number | null {
   return Number.isFinite(num) ? num : null;
 }
 
-// RdBu diverging: above/below normal is diverging data, so "normal" is the neutral
-// gray midpoint. Exported so WaterDetails doesn't keep its own duplicate.
-export const CONDITION_COLORS: Record<string, string> = {
-  above_normal: "#2166ac",
-  normal: "#9e9e9e",
-  below_normal: "#f4a582",
-  low: "#d6604d",
-  critically_low: "#b2182b",
-  // Darker than the "normal" pivot on purpose: "no reading" and "normal flow" are
-  // different claims and must not share a color.
-  unknown: "#616161",
+/**
+ * The two states a USGS gauge can actually be drawn in.
+ *
+ * This replaced a five-class flow-condition ramp (critically low -> above normal). That ramp
+ * was unreachable: classifying a condition needs a flow percentile, NWIS's instantaneous-values
+ * service does not return one, and `usgs-water.ts` accordingly binds `percentile` to a literal
+ * null -- so `classifyCondition` returned "unknown" for every gauge ever served, and the map
+ * painted all of them the same grey under a legend advertising five colours none of them could
+ * take. Percentiles need the separate NWIS statistics service; until that lane exists the only
+ * honest distinction is whether the gauge reported a discharge value at all.
+ */
+export const GAUGE_READING_COLORS: Record<string, string> = {
+  reporting: "#2166ac",
+  no_reading: "#616161",
 };
 
 /**
- * Groundwater wells are coloured by water-level trend, not by the condition vocabulary
- * above: a well reports a direction of change, a stream gauge reports a flow percentile.
+ * Groundwater wells are coloured by water-level trend, not by the two-state vocabulary above:
+ * a well reports a direction of change measured against its own record, which is a claim a
+ * stream gauge's instantaneous discharge cannot make.
  * The last entry is the fallback every unrecognised trend takes.
  */
 export const WELL_TREND_COLORS = {
@@ -87,10 +91,13 @@ function buildGaugeGeoJSON(gauges: WaterGauge[]): GeoJSON.FeatureCollection {
         siteNo: g.siteNo,
         siteName: g.siteName,
         flowCfs: g.flowCfs,
-        percentile: g.percentile,
-        condition: g.condition,
-        trend: g.trend ?? "stable",
-        color: CONDITION_COLORS[g.condition] ?? CONDITION_COLORS.unknown,
+        // No `trend` and no `condition`. Trend was `g.trend ?? "stable"`, and "stable" is a
+        // claim about change over time that nothing here measured -- `inferTrend` reads NWIS
+        // qualifier codes, which say how a value was determined, not which way it is moving.
+        color:
+          g.flowCfs === null
+            ? GAUGE_READING_COLORS.no_reading
+            : GAUGE_READING_COLORS.reporting,
         updatedAt: g.updatedAt,
       },
     })),
@@ -287,19 +294,15 @@ export function WaterLayer({
       // Fallback inline popup
       import("maplibre-gl").then(({ Popup }) => {
         if (popupRef.current) popupRef.current.remove();
-        const trendSymbol = TREND_ARROW[props.trend as string] ?? "\u2192";
-        const condColor = CONDITION_COLORS[props.condition as string] ?? "#9e9e9e";
         const flow = finiteNumber(props.flowCfs);
-        const percentile = finiteNumber(props.percentile);
         const measured = formatTimestampWithRelative(toIsoTimestamp(props.updatedAt));
+        // No condition badge, no percentile row, no trend arrow: NWIS instantaneous values
+        // carry none of the three. The discharge reading and when it was taken are what this
+        // gauge actually reported.
         const html = `
           <div style="font-size:12px;min-width:180px">
             <strong style="display:block;margin-bottom:4px">${escapeHtml(props.siteName ?? "Unknown")}</strong>
-            <span style="display:inline-block;padding:1px 6px;border-radius:3px;background:${escapeHtml(condColor)};color:#fff;font-size:10px;margin-bottom:4px">
-              ${escapeHtml(String(props.condition ?? "unknown").replace(/_/g, " "))}
-            </span>
-            <div>Flow: <strong>${flow !== null ? `${escapeHtml(flow.toFixed(1))} cfs` : "N/A"}</strong> ${escapeHtml(trendSymbol)}</div>
-            ${percentile !== null ? `<div>Percentile: ${escapeHtml(Math.round(percentile))}th</div>` : ""}
+            <div>Discharge: <strong>${flow !== null ? `${escapeHtml(flow.toFixed(1))} cfs` : "not reported"}</strong></div>
             ${measured ? `<div class="map-popup-meta">Measured: ${escapeHtml(measured)}</div>` : ""}
             <div class="map-popup-meta">USGS #${escapeHtml(props.siteNo)}</div>
           </div>

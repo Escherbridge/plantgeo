@@ -424,32 +424,27 @@ export const buildingFootprintsLayer: FillExtrusionLayerSpecification = {
 // only identity (huc12/name/areasqkm/tohuc/states/hutype), so there is no class or ramp to
 // key a colour to the way "severity" keys evacuation zones.
 //
-// The minzoom is a payload floor, not an aesthetic one, and it is a measurement. There are
-// 9,396 published PNW basins and HUC12 outlines are dense. Measured against the production
-// Martin on 2026-08-08, transferred bytes over PNW tiles (lon -122, lat 45.5):
+// There is no minzoom any more, and its removal is the point of
+// drizzle/0023_watershed_zoom_generalization.sql.
 //
-//   z4 x2 y5   2.54 MB    z6 x10 y22  1.77 MB    z7 x20 y45  727 KB
-//   z5 x5 y11  3.80 MB    z6 x11 y22  1.68 MB    z7 x21 y45  616 KB
-//                         z6 x11 y23  1.41 MB    z8          247 KB
+// The floor was a payload measurement, not an aesthetic one. 9,396 published PNW basins with
+// dense HUC12 outlines, measured against the production Martin on 2026-08-08 (lon -122,
+// lat 45.5): z4 x2 y5 was 2.54 MB, z5 x5 y11 3.80 MB — the default camera cost 7.6 MB a
+// viewport, so z7 was the lowest zoom the client could reach. The cost was real; the remedy
+// was not. A layer that vanishes below a zoom is indistinguishable from a layer with no data,
+// and that is the confusion this platform keeps having to correct.
 //
-// So 7 is the floor, not 6: a 1024x512 viewport spans two 512px tiles, which is ~1.3 MB at
-// z7 against ~3.4 MB at z6 for boundaries only ~15px apart on screen. z5 — the default
-// camera — is 7.6 MB a viewport and unreachable from the client side at all; reaching it
-// needs geo.watershed_tiles() to generalize by zoom, which is a migration and out of scope
-// here. Dropping 8 to 7 is what the measurement supports. This is the same kind of floor
-// interventions has at 6 and building footprints at 13, rather than the z4 floor the sparse
-// incident layers use.
+// The tile function now answers each zoom with the rung of the HUC hierarchy that zoom can
+// legibly draw — HUC4 far out through HUC12 close in, each level the exact union of its
+// members — so a low-zoom tile carries tens of polygons instead of thousands and the layer is
+// visible everywhere. Payload is bounded by the generalization, not by hiding the layer.
 export const WATERSHED_BOUNDARY_COLOR = "#1565c0";
-
-/** The floor both watershed layers share; see the tile-weight measurement above. */
-const WATERSHED_MIN_ZOOM = 7;
 
 export const watershedsLayer: LayerSpecification = {
   id: "watersheds-fill",
   type: "fill",
   source: MARTIN_SOURCE,
   "source-layer": "watersheds",
-  minzoom: WATERSHED_MIN_ZOOM,
   layout: { visibility: "none" },
   paint: {
     "fill-color": WATERSHED_BOUNDARY_COLOR,
@@ -465,13 +460,12 @@ export const watershedsOutlineLayer: LayerSpecification = {
   type: "line",
   source: MARTIN_SOURCE,
   "source-layer": "watersheds",
-  minzoom: WATERSHED_MIN_ZOOM,
   layout: { visibility: "none" },
   paint: {
     "line-color": WATERSHED_BOUNDARY_COLOR,
     // Strengthened from 1px/0.6 on 2026-08-08. With the fill at a 0.05 wash the outline is
-    // the entire layer, and at the new z7 floor basins are small enough on screen that a
-    // 1px hairline at 0.6 read as a smudge rather than as a boundary.
+    // the entire layer, and basins are small enough on screen that a 1px hairline at 0.6 read
+    // as a smudge rather than as a boundary.
     "line-width": 1.4,
     "line-opacity": 0.8,
   },

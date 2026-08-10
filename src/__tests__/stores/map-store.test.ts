@@ -12,6 +12,8 @@ describe('useMapStore', () => {
         zoom: 7,
         bearing: 0,
         pitch: 0,
+        widthPx: 1024,
+        heightPx: 512,
       },
       activeLayers: ['fire-perimeters', 'sensors'],
       selectedFeatureId: null,

@@ -55,6 +55,11 @@ export const DEFAULT_VIEWPORT: Viewport = {
   zoom: 5.2,
   bearing: 0,
   pitch: 0,
+  // The window every viewport-scoped query silently assumed before MapView started reporting
+  // the real one. Kept as the seed so the first frame -- rendered before the map has a
+  // container to measure -- asks for exactly what it always asked for.
+  widthPx: 1024,
+  heightPx: 512,
 };
 
 export const useMapStore = create<MapState>()(

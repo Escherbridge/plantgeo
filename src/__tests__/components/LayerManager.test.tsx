@@ -730,7 +730,15 @@ describe("LayerManager viewport-proxied polygon layers", () => {
   it("sends the live viewport zoom with both zoom-adaptive queries", () => {
     useMapStore.setState({
       activeLayers: ["soil-survey", "soil-moisture"],
-      viewport: { longitude: -116.2, latitude: 43.6, zoom: 6.5, bearing: 0, pitch: 0 },
+      viewport: {
+        longitude: -116.2,
+        latitude: 43.6,
+        zoom: 6.5,
+        bearing: 0,
+        pitch: 0,
+        widthPx: 1024,
+        heightPx: 512,
+      },
     });
 
     const fakeMap = createFakeMap();
@@ -744,7 +752,15 @@ describe("LayerManager viewport-proxied polygon layers", () => {
   it("moves both zoom-adaptive queries onto a new tier when the viewport zooms", () => {
     useMapStore.setState({
       activeLayers: ["soil-survey", "soil-moisture"],
-      viewport: { longitude: -116.2, latitude: 43.6, zoom: 5, bearing: 0, pitch: 0 },
+      viewport: {
+        longitude: -116.2,
+        latitude: 43.6,
+        zoom: 5,
+        bearing: 0,
+        pitch: 0,
+        widthPx: 1024,
+        heightPx: 512,
+      },
     });
 
     const fakeMap = createFakeMap();
@@ -753,7 +769,15 @@ describe("LayerManager viewport-proxied polygon layers", () => {
 
     act(() => {
       useMapStore.setState({
-        viewport: { longitude: -116.2, latitude: 43.6, zoom: 14, bearing: 0, pitch: 0 },
+        viewport: {
+          longitude: -116.2,
+          latitude: 43.6,
+          zoom: 14,
+          bearing: 0,
+          pitch: 0,
+          widthPx: 1024,
+          heightPx: 512,
+        },
       });
     });
 

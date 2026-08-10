@@ -446,10 +446,10 @@ describe('layer registry derivations', () => {
   // floor already satisfies the "reviewed, access-controlled publication" condition it
   // was withheld pending. building-footprints is withheld instead: its Martin function
   // is live but geo.osm_buildings has 0 rows, so the toggle would control nothing.
-  it('withholds building-footprints at every date, and withholds nothing else', () => {
+  it('withholds the two layers with no tiles to draw, and withholds nothing else', () => {
     const withheld = LAYER_TOGGLE_IDS.filter(
       (toggleId) => LAYER_REGISTRY[toggleId].permanentlyUnavailableReason !== null
     )
-    expect(withheld).toEqual(['building-footprints'])
+    expect(withheld).toEqual(['soil', 'building-footprints'])
   })
 })

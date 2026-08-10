@@ -202,14 +202,32 @@ function formatIntervention(props: Properties): HoverContent | null {
  * tooltip rather than a shell of empty labels.
  */
 function formatWatershed(props: Properties): HoverContent | null {
-  const title = stringField(props.name) ?? "Watershed";
-  const huc12 = stringField(props.huc12);
+  // Which rung of the HUC hierarchy this feature was drawn from -- 12 is a published basin,
+  // anything coarser is the union of its members, built by 0023_watershed_zoom_generalization.
+  // The level is read rather than assumed so a HUC6 code can never be presented as a HUC12:
+  // a rollup carries no single name, tohuc, hutype or state list, and borrowing a member's
+  // would describe the part as the whole.
+  const level = toFiniteNumber(props.huc_level) ?? 12;
+  const code = stringField(props.huc) ?? stringField(props.huc12);
   const area = formatFixed(props.areasqkm, 1, " km²");
+
+  if (level < 12) {
+    const memberBasins = toFiniteNumber(props.basin_count);
+    return buildContent(code ? `HUC${level} ${code}` : `HUC${level} watershed`, [
+      area ? `Area: ${area}` : null,
+      memberBasins === null
+        ? null
+        : `${memberBasins.toLocaleString()} HUC12 basin${memberBasins === 1 ? "" : "s"}`,
+      "Zoom in for individual basins",
+    ]);
+  }
+
+  const title = stringField(props.name) ?? "Watershed";
   const drainsTo = stringField(props.tohuc);
   const states = stringField(props.states);
 
   return buildContent(title, [
-    huc12 ? `HUC12: ${huc12}` : null,
+    code ? `HUC12: ${code}` : null,
     area ? `Area: ${area}` : null,
     states ? `States: ${states}` : null,
     drainsTo ? `Drains to: ${drainsTo}` : null,
