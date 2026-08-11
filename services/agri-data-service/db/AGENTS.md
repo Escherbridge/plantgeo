@@ -102,6 +102,62 @@ inventory in this guide.
 > generated from the migration output, so the parity test (which compares
 > against the migration dump, not a rebuild) is exact.
 
+## Provisioning the disposable database
+
+Four separate gates stand between a fresh container and a green `agri_db` run,
+and three of them fail in ways that read as something else. The whole recipe,
+from an empty machine:
+
+```powershell
+podman run -d --name agri-sweep-db --user 0:0 --env-file <env> `
+  -p 127.0.0.1:5442:5432 localhost/plantgeo-spatiotemporal:pg16
+podman exec agri-sweep-db psql -U plantgeo_owner -d postgres `
+  -c "CREATE DATABASE agri_sweep OWNER plantgeo_owner"
+podman cp ../../infra/local-warehouse/enable-extensions.sql agri-sweep-db:/tmp/
+podman exec agri-sweep-db psql -U plantgeo_owner -d agri_sweep -f /tmp/enable-extensions.sql
+
+$env:DATABASE_URL_SYNC = "postgresql://plantgeo_owner:<pw>@127.0.0.1:5442/agri_sweep"
+uv run alembic upgrade head
+
+$env:AGRI_TEST_DATABASE_URL = "postgresql://plantgeo_owner:<pw>@127.0.0.1:5442/agri_sweep"
+$env:PGBIN = "C:\Program Files\PostgreSQL\16\bin"
+uv run pytest tests/ -q
+```
+
+The env file carries `POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD`/`PGDATA`
+exactly as `infra/local-warehouse/compose.yaml` sets them; that compose is the
+same recipe with a persistent named volume, so use it when you want the warehouse
+rather than a throwaway.
+
+Why each step, and what its absence looks like:
+
+- **The extension gate is manual on purpose.** `20260716_0001` raises `55000`
+  listing the missing extensions and states *"this migration never creates
+  extensions"*. `infra/local-warehouse/enable-extensions.sql` is that operator
+  step, and the image's Dockerfile deliberately deletes the upstream
+  `docker-entrypoint-initdb.d` scripts that would otherwise install TimescaleDB
+  behind your back. Run it against **each** database; extensions are per-database.
+- **`AGRI_TEST_DATABASE_URL` is a libpq DSN, not a SQLAlchemy URL.**
+  `conftest._assert_head_and_safe` hands it straight to `psycopg2.connect`, so a
+  `postgresql+asyncpg://` prefix fails with `invalid dsn: missing "="` — which
+  reads like a malformed string rather than a wrong dialect.
+- **A database named `plantgeo` is refused.** `PROTECTED_DATABASE_NAME` guards
+  the persistent warehouse, so the disposable one needs its own name. The failure
+  is a `pytest.fail` at fixture setup, which surfaces as ~40 ERRORs rather than
+  one clear message.
+- **`PGBIN` is only needed by the parity test**, and only it fails without one
+  (`pg_dump not found`) while the other DB-backed tests pass. Point it at a
+  `pg_dump` whose major is **≥** the server's; a 16.9 client dumps a 16.14 server
+  fine, since the constraint is major-to-major.
+
+Unset `AGRI_TEST_DATABASE_URL` and every one of these tests **skips silently**.
+`conftest` prints an `AGRI_DB SWEEP NOTICE` naming what it let skip, and enforces
+a no-skip gate once the variable *is* set — so a green sweep with the variable
+unset proves considerably less than it appears to. Measured 2026-08-11: 2494
+passed with it unset, 2536 passed with it set. The 3 remaining skips are
+structural, plus `agri_db_cross_major`, which by design needs a second server on
+a different major.
+
 ## Toolchain and major-version awareness
 
 `pg_dump` output is stable only *within* a major version, and `pg_dump` cannot

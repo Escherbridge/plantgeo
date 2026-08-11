@@ -357,7 +357,7 @@ long-running container without restarting it (`src/agri_data_service/ingest/AGEN
 | `EVACUATION_ZONES_LAYER_ID` | Optional | `evacuation-zones` | Which layer evacuation zones write to |
 | `RAILWAY_REPLICA_ID` | Optional | none; falls back to `jobs-run:<uuid4>` | Names the lease owner for `jobs-run` |
 | `AGRI_ALEMBIC_CONFIG` | Optional | `<service>/alembic.ini` | Path override for Alembic's config file |
-| `AGRI_TEST_DATABASE_URL` | Test-only | none | Real-DB tests skip silently if unset |
+| `AGRI_TEST_DATABASE_URL` | Test-only | none | Real-DB tests skip silently if unset. A libpq DSN, not a SQLAlchemy URL, and never a database named `plantgeo` — see `db/AGENTS.md` §Provisioning the disposable database for the full recipe |
 
 > [!WARNING]
 > **`FIRES_LAYER_ID` vs `FIRE_PERIMETERS_LAYER_ID` — setting the wrong one is a silent no-op.**
