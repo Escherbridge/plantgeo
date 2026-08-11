@@ -27,9 +27,11 @@ import {
   type SoilFieldDepth,
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
-import type {
-  AirTemperatureVariant,
-  ClimateFieldSignalId,
+import {
+  climateFieldToggleId,
+  type AirTemperatureVariant,
+  type ClimateFieldSignalId,
+  type ClimateRenderForm,
 } from "@/lib/environmental/climate-field";
 
 /** Zoom a viewport is read at before the map has reported one of its own. */
@@ -210,8 +212,13 @@ export interface ClimateFieldQueryOptions extends ProxiedQueryOptions {
   signal: ClimateFieldSignalId;
   /** Which daily statistic; only `air-temperature` varies, the rest ignore it server-side. */
   variant: AirTemperatureVariant;
-  /** The `climate-field` row's settled day, or undefined at the server's today. */
+  /** THIS signal's own row's settled day, or undefined at the server's today. */
   date: string | undefined;
+  /**
+   * The form to draw it in. Part of the KEY, because it changes the geometry the server
+   * returns -- squares, contours or points -- not merely how the same features are painted.
+   */
+  renderForm: ClimateRenderForm;
 }
 
 /**
@@ -220,18 +227,24 @@ export interface ClimateFieldQueryOptions extends ProxiedQueryOptions {
  * No `zoom`, unlike `useSoilFieldQuery`: the lane has one serving tier, so zoom is not part of
  * the answer and must not be part of the key. Every other input here IS part of the key, so
  * the map and the panel must pass the same three -- both take `bbox` from the one
- * `useViewportBounds()` derivation, `date` from `useDebouncedLayerDay("climate-field")`, and
- * `signal`/`variant` from the climate store.
+ * `useViewportBounds()` derivation, `date` from `useDebouncedLayerDay(<this signal's toggle>)`,
+ * and `variant` from the climate store.
+ *
+ * `date` is per SIGNAL since 2026-08-10 and must never be read from a shared climate day: the
+ * nine signals have nine rows on nine axes, and passing one row's day to another's read would
+ * draw a day that row's slider is not showing -- with its own legend still captioned from the
+ * collection's `observedDay`, so the two would visibly disagree.
  */
 export function useClimateFieldQuery(
   bbox: string | null | undefined,
-  { enabled, signal, variant, date }: ClimateFieldQueryOptions
+  { enabled, signal, variant, date, renderForm }: ClimateFieldQueryOptions
 ) {
   const requested = bbox ?? null;
   return trpc.environmental.getClimateField.useQuery(
-    { bbox: requested ?? NO_VIEWPORT_BBOX, signal, variant, date },
+    { bbox: requested ?? NO_VIEWPORT_BBOX, signal, variant, date, renderForm },
     {
-      enabled: enabled && requested !== null && !isWithheld("climate-field"),
+      enabled:
+        enabled && requested !== null && !isWithheld(climateFieldToggleId(signal)),
       staleTime: CLIMATE_FIELD_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
     }

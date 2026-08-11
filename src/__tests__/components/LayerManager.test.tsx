@@ -9,6 +9,10 @@ import { useTimeSliderStore } from "@/stores/time-slider-store";
 import { LAYER_REGISTRY } from "@/lib/map/layer-registry";
 import { DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS } from "@/lib/map/tile-layer-date-filter";
 import type { LayerToggleId } from "@/lib/map/layer-registry";
+import {
+  climateFieldStreamName,
+  CLIMATE_FIELD_SIGNAL_IDS,
+} from "@/lib/environmental/climate-field";
 import { SLIDER_STREAM_LAYER_NAMES } from "@/types/time-slider";
 import type {
   SliderCapabilities,
@@ -333,7 +337,11 @@ const streamBackedCapabilities: SliderCapabilities = {
       "2026-07-25",
       "2022-04-30"
     ),
-    publishedLayer(SLIDER_STREAM_LAYER_NAMES.climateField, "2026-07-24", "2022-04-30"),
+    // One stream per NASA POWER signal since 2026-08-10, so each row's axis describes its own
+    // signal rather than the union of all eleven signal_names in the lane.
+    ...CLIMATE_FIELD_SIGNAL_IDS.map((signal) =>
+      publishedLayer(climateFieldStreamName(signal), "2026-07-24", "2022-04-30")
+    ),
   ],
 };
 
@@ -837,9 +845,14 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
     ["getGroundwater", viewportQueries.getGroundwater],
     ["getVegetationIndex", viewportQueries.getVegetationIndex],
     ["getSoilField", viewportQueries.getSoilField],
-    ["getClimateField", viewportQueries.getClimateField],
     ["getWeatherForBbox", viewportQueries.getWeatherForBbox],
   ] as const;
+  // `getClimateField` is deliberately absent. The nine NASA POWER rows moved into
+  // `ClimateFieldLayers` on 2026-08-10 -- each needs its own day and its own query, which is
+  // eighteen hooks LayerManager no longer owns -- and that component is one of the dynamic
+  // imports this file stubs out. Its per-signal days are covered by
+  // src/__tests__/components/ClimateFieldLayers.test.tsx, which renders it directly rather than
+  // through a stub that returns null.
 
   /** Renders with capabilities in place and, optionally, some rows scrubbed off their default. */
   function renderWithLayerDates(layerDates: Record<string, string> = {}) {
@@ -909,13 +922,9 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
     // `undefined` input differently from an object, so this must stay literally undefined
     // rather than becoming `{ date: undefined }`.
     expect(inputOf(viewportQueries.getDroughtClassification)).toBeUndefined();
-    // The three ERA5-Land fields and the NASA POWER field have no stream capability here
-    // either, for the same reason.
+    // The three ERA5-Land fields have no stream capability here either, for the same reason.
     expect(
       (inputOf(viewportQueries.getSoilField) as { date?: string }).date
-    ).toBeUndefined();
-    expect(
-      (inputOf(viewportQueries.getClimateField) as { date?: string }).date
     ).toBeUndefined();
   });
 
@@ -946,9 +955,6 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
     expect(soilFieldInputOf("moisture").date).toBe("2026-07-27");
     expect(soilFieldInputOf("temperature").date).toBe("2026-07-26");
     expect(soilFieldInputOf("vpd").date).toBe("2026-07-25");
-    expect((inputOf(viewportQueries.getClimateField) as { date?: string }).date).toBe(
-      "2026-07-24"
-    );
   });
 
   /**
@@ -976,9 +982,6 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
 
     expect(inputOf(viewportQueries.getDroughtClassification)).toEqual({ date: "2024-06-01" });
     expect(soilFieldInputOf("moisture").date).toBe("2023-02-15");
-    expect((inputOf(viewportQueries.getClimateField) as { date?: string }).date).toBe(
-      "2023-11-30"
-    );
   });
 
   it("carries a past day into a feed whose row was scrubbed off today", () => {

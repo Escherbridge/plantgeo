@@ -6,6 +6,7 @@ import {
   text,
   boolean,
   integer,
+  bigint,
   jsonb,
   timestamp,
   doublePrecision,
@@ -32,6 +33,10 @@ const spatialPoint = customType<{ data: string; driverData: string }>({
 
 const spatialMultiPolygon = customType<{ data: string; driverData: string }>({
   dataType: () => "geometry(MULTIPOLYGON,4326)",
+});
+
+const spatialPolygon = customType<{ data: string; driverData: string }>({
+  dataType: () => "geometry(POLYGON,4326)",
 });
 
 const spatialGeographyPoint = customType<{ data: string; driverData: string }>({
@@ -389,6 +394,61 @@ export const priorityZones = pgTable("priority_zones", {
   geojson: jsonb("geojson"), // ConvexHull polygon from DBSCAN cluster
   computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow(),
 });
+
+// ============================================
+// Raster Publication Catalog (geo schema)
+// ============================================
+
+/**
+ * One published first-party raster archive. Append-only: superseding a release stamps
+ * `supersededAt` and inserts a new row. See `src/lib/server/db/AGENTS.md` §raster-release.
+ */
+export const rasterRelease = geoSchema.table(
+  "raster_release",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    collection: text("collection").notNull(),
+    property: text("property").notNull(),
+    depth: text("depth").notNull(),
+    statistic: text("statistic").notNull(),
+    sourceName: text("source_name").notNull(),
+    sourceRelease: text("source_release").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    licenseName: text("license_name").notNull(),
+    attribution: text("attribution").notNull(),
+    unit: text("unit").notNull(),
+    /** Divide a stored pixel by this to get `unit`; the raster holds pH*10, not pH. */
+    scaleDivisor: integer("scale_divisor").notNull(),
+    nodataValue: doublePrecision("nodata_value"),
+    valueMin: doublePrecision("value_min"),
+    valueMax: doublePrecision("value_max"),
+    /** The exact ramp the tiles were painted with: `[{ value, color }]` in `unit`. */
+    colorRamp: jsonb("color_ramp").notNull(),
+    objectKey: text("object_key").notNull(),
+    archiveFormat: text("archive_format").notNull(),
+    checksumSha256: text("checksum_sha256").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    minZoom: integer("min_zoom").notNull(),
+    maxZoom: integer("max_zoom").notNull(),
+    bounds: spatialPolygon("bounds").notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull().defaultNow(),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("ux_raster_release_live")
+      .on(
+        table.collection,
+        table.property,
+        table.depth,
+        table.statistic,
+        table.archiveFormat
+      )
+      .where(sql`${table.supersededAt} IS NULL`),
+    index("ix_raster_release_live_collection")
+      .on(table.collection, table.property)
+      .where(sql`${table.supersededAt} IS NULL`),
+  ]
+);
 
 // ============================================
 // Soil Health Tables (public schema)

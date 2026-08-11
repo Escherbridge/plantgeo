@@ -3,6 +3,7 @@ import { z } from "zod";
 import { router, publicProcedure } from "@/lib/server/trpc/init";
 import { rethrowUpstreamFault } from "@/lib/server/trpc/upstream-fault";
 import { getInterventionSuitability } from "@/lib/server/services/carbon-potential";
+import { getPublishedRasters } from "@/lib/server/services/raster-catalog";
 import {
   getMetricAtDate,
   getPublishedClimateField,
@@ -16,8 +17,10 @@ import {
 import {
   AIR_TEMPERATURE_VARIANT_IDS,
   CLIMATE_FIELD_SIGNAL_IDS,
+  CLIMATE_RENDER_FORMS,
   type AirTemperatureVariant,
   type ClimateFieldSignalId,
+  type ClimateRenderForm,
 } from "@/lib/environmental/climate-field";
 import {
   SOIL_FIELD_DEPTHS,
@@ -453,6 +456,15 @@ export const environmentalRouter = router({
    * request returns ~28 lattice nodes and at most nine isobands rather than 1,568 squares.
    * See `environmental-read-model.ts` §soil-field.
    */
+  /**
+   * The soil raster archives that are actually published, with the ramp their tiles were
+   * painted with. Returns an empty array when nothing is published, which is the honest
+   * answer and the one the layer tree renders as an inert row rather than a broken source.
+   */
+  getPublishedSoilRasters: publicProcedure.query(() =>
+    getPublishedRasters("soilgrids", "pmtiles")
+  ),
+
   getSoilField: publicProcedure
     .input(
       z.object({
@@ -499,6 +511,11 @@ export const environmentalRouter = router({
         // a variant the chosen signal does not publish to that signal's single reading.
         signal: z.enum(CLIMATE_FIELD_SIGNAL_IDS as [string, ...string[]]).optional(),
         variant: z.enum(AIR_TEMPERATURE_VARIANT_IDS as [string, ...string[]]).optional(),
+        // The union of every form, not the chosen signal's own list. Narrowing it here would
+        // put the per-signal rule -- no contour across precipitation, none across the pilot --
+        // in a second place, and a schema rejection would surface as a failed request rather
+        // than as the drawn default `resolveClimateRenderForm` degrades to.
+        renderForm: z.enum(CLIMATE_RENDER_FORMS as [string, ...string[]]).optional(),
       })
     )
     .query(({ input }) =>
@@ -506,6 +523,7 @@ export const environmentalRouter = router({
         date: input.date,
         signal: input.signal as ClimateFieldSignalId | undefined,
         variant: input.variant as AirTemperatureVariant | undefined,
+        renderForm: input.renderForm as ClimateRenderForm | undefined,
       })
     ),
 

@@ -992,12 +992,29 @@ describe("the streams that are not geo.features layers get an axis of their own"
     );
   }
 
+  // Four named streams plus one per NASA POWER signal. The lane published a single
+  // `climate-field` stream for all nine until 2026-08-10, and that one axis was computed over
+  // every signal_name unioned -- so the soil-wetness pilot was handed the full-lattice air
+  // temperature field's earliest day, latest day and gap list. Spelling the nine out here is
+  // what makes this case fail if they are ever collapsed back into one.
+  const CLIMATE_STREAM_NAMES = [
+    "climate-field-air-temperature",
+    "climate-field-dew-point",
+    "climate-field-precipitation",
+    "climate-field-relative-humidity",
+    "climate-field-shortwave-radiation",
+    "climate-field-wind-speed",
+    "climate-field-soil-wetness-surface",
+    "climate-field-soil-wetness-root-zone",
+    "climate-field-soil-wetness-profile",
+  ];
+
   const STREAM_NAMES = [
     "drought-areas",
     "soil-field-moisture",
     "soil-field-temperature",
     "soil-field-vpd",
-    "climate-field",
+    ...CLIMATE_STREAM_NAMES,
   ];
 
   it("publishes a capability for drought, the three soil measures and the climate field", async () => {

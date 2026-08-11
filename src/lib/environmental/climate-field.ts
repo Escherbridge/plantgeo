@@ -31,6 +31,46 @@ export type ClimateFieldSignalId =
  */
 export type AirTemperatureVariant = "mean" | "max" | "min";
 
+/**
+ * The registry toggle each signal owns, derived from the signal id so the two cannot drift.
+ *
+ * Nine toggles since 2026-08-10, where there was one until then. The old single `climate-field`
+ * toggle carried a signal picker inside the Climate panel, and the cost was not cosmetic: the
+ * slider capability for the whole lane was computed over ALL eleven `signal_name`s unioned, so
+ * the four-cell soil-wetness pilot was offered the same axis, the same `latestObservedDate` and
+ * the same gap list as the 397-cell air-temperature field. A row per signal is what gives each
+ * signal its own honest axis -- see `SLIDER_STREAM_LAYER_NAMES` in src/types/time-slider.ts.
+ */
+export type ClimateFieldToggleId = `climate-${ClimateFieldSignalId}`;
+
+/**
+ * How one signal is painted. The reason nine climate rows can be on at once and still compose.
+ *
+ * Nine filled fields over the same 397 cells is one visible field and eight invisible ones: the
+ * topmost opaque fill wins, and the category counter reads "3 of 9" while the map shows one. So
+ * a row picks a FORM as well as a day, and the three forms are chosen to layer over each other
+ * -- a filled base, contours across it, point symbols above both -- the way a printed weather
+ * chart composes a temperature wash, isotherms and station plots.
+ *
+ * Not every form is honest for every signal, which is why the per-signal `renderForms` list
+ * exists rather than this union being offered everywhere. See the note on that field.
+ */
+export type ClimateRenderForm = "field" | "isoline" | "symbol";
+
+/** Every form, for the wire schema and the exhaustiveness checks that must accept all of them. */
+export const CLIMATE_RENDER_FORMS: readonly ClimateRenderForm[] = [
+  "field",
+  "isoline",
+  "symbol",
+];
+
+/** The reader-facing caption for each form, so a row's control and its legend agree. */
+export const CLIMATE_RENDER_FORM_LABELS: Readonly<Record<ClimateRenderForm, string>> = {
+  field: "Filled",
+  isoline: "Contours",
+  symbol: "Points",
+};
+
 /** One drawn band: its interval, the colour that paints it, and the caption for the legend. */
 export interface ClimateFieldBand {
   bandIndex: number;
@@ -60,6 +100,30 @@ export interface AirTemperatureVariantDefinition {
 /** Everything that differs between one climate signal and the next. */
 export interface ClimateFieldSignalDefinition {
   signal: ClimateFieldSignalId;
+  /** The registry toggle that switches this signal, derived rather than typed. */
+  toggleId: ClimateFieldToggleId;
+  /** The slider stream whose axis this signal scrubs; its own, never the lane's. */
+  streamName: string;
+  /**
+   * The forms this signal may be drawn in, most appropriate FIRST -- the head is the default
+   * the row opens on.
+   *
+   * A list rather than the bare `ClimateRenderForm` union because two forms are affirmatively
+   * dishonest on some signals and are withheld there rather than offered and captioned:
+   *
+   *   - `isoline` is absent from `precipitation`. A contour asserts the field varies smoothly
+   *     between the samples it is drawn through, and daily rainfall does not: a convective cell
+   *     wets one 55 km square and leaves its neighbour dry, so an isopleth across the pair
+   *     draws a gradient where the record holds a discontinuity.
+   *   - `isoline` is absent from all three soil-wetness signals for the harder version of the
+   *     same problem. They are a PILOT on part of the lattice, and contouring scattered samples
+   *     interpolates a continuous field across ground the lane never measured -- the exact
+   *     fabrication `blankGroundMisreading` and the coverage note exist to prevent.
+   *
+   * `field` and `symbol` are honest everywhere: both draw one mark per measured cell and put
+   * nothing at all on a cell the lane has not filled.
+   */
+  renderForms: readonly ClimateRenderForm[];
   /** The picker's caption. */
   label: string;
   /** The legend heading, without the unit. */
@@ -85,6 +149,15 @@ export interface ClimateFieldSignalDefinition {
   /**
    * Why this signal's coverage is narrower than the lattice, or null when it is the whole
    * lattice. Published so a near-empty map reads as a pilot rather than as an outage.
+   *
+   * Carries NO COUNTS, deliberately, and a count must never be added back. Until 2026-08-10 it
+   * read "Pilot coverage: 4 of the lane's 397 cells carry this signal" -- a figure measured
+   * against production on 2026-08-08 and frozen into the bundle. The pilot then grew, and the
+   * panel rendered the frozen sentence directly above the live one, so a reader saw "4 of the
+   * lane's 397 cells" and "267 measured 0.5 degree cells drawn for 2026-08-06" in the same
+   * card. A constant cannot track a growing lane; the numbers belong to the served collection,
+   * which measures them per request. This states the KIND of coverage, and
+   * `ClimateDetails` composes the counted sentence from `cellCount` and `latticeCellCount`.
    */
   coverageNote: string | null;
   /** Lowest value the ramp's bottom tail is drawn at. */
@@ -351,20 +424,42 @@ export const AIR_TEMPERATURE_VARIANT_IDS: readonly AirTemperatureVariant[] = [
 /**
  * The coverage caveat the three soil-wetness signals carry.
  *
- * Measured on production 2026-08-08: 4 cells against the lane's 397, ~5.8 k rows each against
- * ~586 k. They are offered anyway, because a reader who cannot select a signal cannot be told
- * it is a pilot -- and four honestly-captioned cells are a better answer than a hidden lane.
+ * These signals arrived as a pilot on a fraction of the lattice and the backfill has been
+ * widening them since; they are offered anyway, because a reader who cannot select a signal
+ * cannot be told it is a pilot, and honestly-captioned partial coverage is a better answer
+ * than a hidden lane.
+ *
+ * States the KIND of coverage and no count -- the count is measured per request and rendered
+ * beside this by `ClimateDetails`. See the note on `coverageNote` for the stale-figure bug
+ * that rule exists to prevent.
  */
 const SOIL_WETNESS_COVERAGE_NOTE =
-  "Pilot coverage: 4 of the lane's 397 cells carry this signal, so most of the map is " +
-  "correctly blank.";
+  "This signal is a pilot: it is measured on part of the lane's lattice rather than all of " +
+  "it, so ground with no cell drawn is ground the lane has not filled yet -- not dry soil.";
 
-/** The nine quantities this lane publishes, in the order the picker renders them. */
-export const CLIMATE_FIELD_SIGNALS: Readonly<
-  Record<ClimateFieldSignalId, ClimateFieldSignalDefinition>
+/**
+ * One signal's entry as it is WRITTEN, without the two fields that are derived from its id.
+ *
+ * `toggleId` and `streamName` are omitted here and added by the builder below, for the reason
+ * `CLIMATE_FIELD_SIGNAL_IDS` is derived rather than hand-listed: a hand-typed
+ * `toggleId: "climate-dew-point"` beside `signal: "dew-point"` is a place the two can disagree,
+ * and a toggle id that does not match its signal resolves to a row that renders nothing while
+ * every type still checks.
+ */
+type ClimateFieldSignalTableEntry = Omit<
+  ClimateFieldSignalDefinition,
+  "toggleId" | "streamName"
+>;
+
+/** The nine quantities this lane publishes, in the order the dock renders their rows. */
+const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
+  Record<ClimateFieldSignalId, ClimateFieldSignalTableEntry>
 > = {
   "air-temperature": {
     signal: "air-temperature",
+    // The lane's natural base wash: the one signal a reader almost always wants painted under
+    // whatever else is on, and the only one that defaults to `field` for that reason.
+    renderForms: ["field", "isoline", "symbol"],
     label: "Air temperature",
     quantityLabel: "Air temperature",
     fieldLabel: "air-temperature",
@@ -388,6 +483,7 @@ export const CLIMATE_FIELD_SIGNALS: Readonly<
   },
   "dew-point": {
     signal: "dew-point",
+    renderForms: ["isoline", "field", "symbol"],
     label: "Dew point",
     quantityLabel: "Dew point temperature",
     fieldLabel: "dew-point",
@@ -410,6 +506,10 @@ export const CLIMATE_FIELD_SIGNALS: Readonly<
   },
   precipitation: {
     signal: "precipitation",
+    // No `isoline`, and defaults to `symbol` rather than `field`: a graduated drop over another
+    // signal's wash is the classic composite, and a dry cell then draws nothing at all instead
+    // of a pale blue that has to be told apart from a trace shower.
+    renderForms: ["symbol", "field"],
     label: "Precipitation",
     quantityLabel: "Precipitation",
     fieldLabel: "precipitation",
@@ -434,6 +534,7 @@ export const CLIMATE_FIELD_SIGNALS: Readonly<
   },
   "relative-humidity": {
     signal: "relative-humidity",
+    renderForms: ["isoline", "field", "symbol"],
     label: "Relative humidity",
     quantityLabel: "Relative humidity",
     fieldLabel: "relative-humidity",
@@ -456,6 +557,7 @@ export const CLIMATE_FIELD_SIGNALS: Readonly<
   },
   "shortwave-radiation": {
     signal: "shortwave-radiation",
+    renderForms: ["isoline", "field", "symbol"],
     label: "Solar radiation",
     quantityLabel: "Surface shortwave radiation",
     fieldLabel: "solar-radiation",
@@ -478,6 +580,12 @@ export const CLIMATE_FIELD_SIGNALS: Readonly<
   },
   "wind-speed": {
     signal: "wind-speed",
+    // No barb and no arrow, and none can be added from this lane: the NASA POWER backfill
+    // requests eight parameters -- ALLSKY_SFC_SW_DWN, PRECTOTCORR, RH2M, T2M, T2MDEW, T2M_MAX,
+    // T2M_MIN, WS2M -- and WD2M is not among them, so the warehouse holds a daily mean SPEED
+    // with no bearing anywhere. A barb drawn without a direction would point somewhere, and
+    // wherever it pointed would be invented. A speed is a scalar here, and it is drawn as one.
+    renderForms: ["isoline", "field", "symbol"],
     label: "Wind speed",
     quantityLabel: "Wind speed",
     fieldLabel: "wind-speed",
@@ -500,6 +608,9 @@ export const CLIMATE_FIELD_SIGNALS: Readonly<
   },
   "soil-wetness-surface": {
     signal: "soil-wetness-surface",
+    // No `isoline` on any of the three: see `renderForms` on the interface. Contouring a pilot
+    // interpolates a continuous field across ground the lane has never measured.
+    renderForms: ["field", "symbol"],
     label: "Soil wetness (surface) — pilot",
     quantityLabel: "Surface soil wetness",
     fieldLabel: "surface soil-wetness",
@@ -522,6 +633,7 @@ export const CLIMATE_FIELD_SIGNALS: Readonly<
   },
   "soil-wetness-root-zone": {
     signal: "soil-wetness-root-zone",
+    renderForms: ["field", "symbol"],
     label: "Soil wetness (root zone) — pilot",
     quantityLabel: "Root-zone soil wetness",
     fieldLabel: "root-zone soil-wetness",
@@ -544,6 +656,7 @@ export const CLIMATE_FIELD_SIGNALS: Readonly<
   },
   "soil-wetness-profile": {
     signal: "soil-wetness-profile",
+    renderForms: ["field", "symbol"],
     label: "Soil wetness (profile) — pilot",
     quantityLabel: "Profile soil wetness",
     fieldLabel: "profile soil-wetness",
@@ -566,6 +679,46 @@ export const CLIMATE_FIELD_SIGNALS: Readonly<
   },
 };
 
+/** The registry toggle that switches one signal. The only place this string is formed. */
+export function climateFieldToggleId(signal: ClimateFieldSignalId): ClimateFieldToggleId {
+  return `climate-${signal}`;
+}
+
+/**
+ * The slider stream one signal scrubs. The only place this string is formed.
+ *
+ * Prefixed `climate-field-` rather than reusing the toggle id, following the precedent the
+ * ERA5-Land lane set (`soil-moisture` toggles the `soil-field-moisture` stream): a capability
+ * payload keyed by `layerName` and a store keyed by `LayerToggleId` are two different lookups,
+ * and giving them the same strings makes a wrong-map bug invisible in every log line that
+ * prints one. Distinct from every `geo.layers.name` for the reason `SLIDER_STREAM_LAYER_NAMES`
+ * gives -- and structurally so, because no `geo.layers` row is named `climate-field-*`.
+ */
+export function climateFieldStreamName(signal: ClimateFieldSignalId): string {
+  return `climate-field-${signal}`;
+}
+
+/**
+ * The nine definitions as everything outside this module reads them: the written table, plus
+ * the two ids derived from each signal's own key.
+ *
+ * `Object.entries` over a record that is exhaustive by its own type cannot under-report, so
+ * this cannot omit a signal the table defines, and the derivation means a tenth signal needs
+ * one table entry and no other edit in this file.
+ */
+export const CLIMATE_FIELD_SIGNALS: Readonly<
+  Record<ClimateFieldSignalId, ClimateFieldSignalDefinition>
+> = Object.fromEntries(
+  Object.entries(CLIMATE_FIELD_SIGNAL_TABLE).map(([signal, entry]) => [
+    signal,
+    {
+      ...entry,
+      toggleId: climateFieldToggleId(signal as ClimateFieldSignalId),
+      streamName: climateFieldStreamName(signal as ClimateFieldSignalId),
+    },
+  ])
+) as Readonly<Record<ClimateFieldSignalId, ClimateFieldSignalDefinition>>;
+
 /**
  * Every signal, in declaration order; what the panel and the wire schema iterate.
  *
@@ -576,8 +729,27 @@ export const CLIMATE_FIELD_SIGNALS: Readonly<
  * JavaScript preserves the literal's insertion order for string keys.
  */
 export const CLIMATE_FIELD_SIGNAL_IDS: readonly ClimateFieldSignalId[] = Object.keys(
-  CLIMATE_FIELD_SIGNALS
+  CLIMATE_FIELD_SIGNAL_TABLE
 ) as ClimateFieldSignalId[];
+
+/** Every climate toggle, in the order the dock renders the Climate group's rows. */
+export const CLIMATE_FIELD_TOGGLE_IDS: readonly ClimateFieldToggleId[] =
+  CLIMATE_FIELD_SIGNAL_IDS.map(climateFieldToggleId);
+
+/**
+ * The signal a climate toggle switches, or null for a toggle that is not one of the nine.
+ *
+ * Parses rather than looks up, so it stays total over `string` -- callers hold a
+ * `LayerToggleId` from a store that may carry a user-uploaded id, and a lookup table would
+ * need a widening cast at every one of those call sites.
+ */
+export function climateFieldSignalForToggle(
+  toggleId: string
+): ClimateFieldSignalId | null {
+  if (!toggleId.startsWith("climate-")) return null;
+  const candidate = toggleId.slice("climate-".length);
+  return isClimateFieldSignal(candidate) ? candidate : null;
+}
 
 export function climateFieldSignalDefinition(
   signal: ClimateFieldSignalId
@@ -587,7 +759,30 @@ export function climateFieldSignalDefinition(
 
 /** True when the string names a signal this lane publishes. */
 export function isClimateFieldSignal(value: string): value is ClimateFieldSignalId {
-  return Object.prototype.hasOwnProperty.call(CLIMATE_FIELD_SIGNALS, value);
+  return Object.prototype.hasOwnProperty.call(CLIMATE_FIELD_SIGNAL_TABLE, value);
+}
+
+/** The form a signal's row opens on: the head of its own list, never a shared default. */
+export function defaultClimateRenderForm(signal: ClimateFieldSignalId): ClimateRenderForm {
+  return CLIMATE_FIELD_SIGNAL_TABLE[signal].renderForms[0];
+}
+
+/**
+ * The form to draw a signal in, given whatever the store holds for it.
+ *
+ * Resolves rather than rejects, and that is the whole point: a persisted store entry, a
+ * replayed cache and a signal whose `renderForms` list has since been narrowed all arrive here
+ * naming a form the signal no longer offers. Falling back to the signal's own default degrades
+ * to a drawn layer; honouring the stale value would draw the one form this signal withholds
+ * because it is not honest -- a contour across a pilot, or across daily rainfall.
+ */
+export function resolveClimateRenderForm(
+  signal: ClimateFieldSignalId,
+  requested: ClimateRenderForm | undefined
+): ClimateRenderForm {
+  const { renderForms } = CLIMATE_FIELD_SIGNAL_TABLE[signal];
+  if (requested !== undefined && renderForms.includes(requested)) return requested;
+  return renderForms[0];
 }
 
 /**

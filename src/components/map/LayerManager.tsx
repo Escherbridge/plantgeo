@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useMap } from "@/lib/map/map-context";
 import {
-  useClimateDisplayMode,
   useDebouncedLayerDay,
   useLayerOpacities,
   useLayerVisibility,
@@ -15,7 +14,6 @@ import {
 import { scaleOpacityValue, styleLayerOpacityTargets } from "@/lib/map/layer-opacity";
 import { useFireData } from "@/hooks/useFireData";
 import {
-  useClimateFieldQuery,
   useSoilFieldQuery,
   useSoilSurveyQuery,
   useViewportBounds,
@@ -131,8 +129,8 @@ const SoilFieldLayer = dynamic(
   () => import("@/components/map/layers/SoilFieldLayer").then((m) => ({ default: m.SoilFieldLayer })),
   { ssr: false }
 );
-const ClimateFieldLayer = dynamic(
-  () => import("@/components/map/layers/ClimateFieldLayer").then((m) => ({ default: m.ClimateFieldLayer })),
+const ClimateFieldLayers = dynamic(
+  () => import("@/components/map/layers/ClimateFieldLayers").then((m) => ({ default: m.ClimateFieldLayers })),
   { ssr: false }
 );
 const DemandHeatmapLayer = dynamic(
@@ -160,7 +158,6 @@ export default function LayerManager() {
   const layerOpacity = useLayerOpacities();
   const vegetationMode = useVegetationDisplayMode();
   const soilMode = useSoilDisplayMode();
-  const climateMode = useClimateDisplayMode();
   // Shared with DockDetails: one derivation, so the map and the dock's details regions key on
   // one bbox.
   const { zoom, bbox } = useViewportBounds();
@@ -185,7 +182,8 @@ export default function LayerManager() {
   const soilMoistureDay = useDebouncedLayerDay("soil-moisture");
   const soilTemperatureDay = useDebouncedLayerDay("soil-temperature");
   const soilVpdDay = useDebouncedLayerDay("soil-vpd");
-  const climateFieldDay = useDebouncedLayerDay("climate-field");
+  // No climate day here: the nine NASA POWER rows each settle their own inside
+  // `ClimateFieldLayers`, which is the point of giving each signal its own slider.
   const weatherDay = useDebouncedLayerDay("weather");
   // The four style-baked tile toggles. They are read here alongside the component-mounted
   // layers rather than inside their own children because each is a ROW in the dock with a
@@ -320,20 +318,10 @@ export default function LayerManager() {
   const soilVpdGeoJSON: GeoJSON.FeatureCollection =
     soilVpdQuery.data ?? EMPTY_FEATURE_COLLECTION;
 
-  // The NASA POWER climate field. No `zoom`: this lane has one serving tier -- 397 half-degree
-  // cells drawn as themselves at every zoom -- so zoom is not part of the answer and must not
-  // be part of the key. The day is this layer's own row's, settled; the signal is the panel's,
-  // and neither is a second time control. One call for nine signals, because only one is drawn
-  // at a time and the signal is in the query key.
-  const climateFieldVisible = layerVisibility["climate-field"];
-  const climateFieldQuery = useClimateFieldQuery(bbox, {
-    enabled: climateFieldVisible,
-    signal: climateMode.signal,
-    variant: climateMode.airTemperatureVariant,
-    date: climateFieldDay.requestDate,
-  });
-  const climateFieldGeoJSON: GeoJSON.FeatureCollection =
-    climateFieldQuery.data ?? EMPTY_FEATURE_COLLECTION;
+  // The nine NASA POWER rows read and draw themselves inside `ClimateFieldLayers` below: each
+  // signal owns a toggle, a slider and a day, so there is no single climate query or climate
+  // day left for this component to hold. Everything it would have kept here -- eighteen hooks'
+  // worth -- lives one component down, beside the layer it feeds.
 
   const weatherEnabled = layerVisibility.weather;
   // Reads every published observation across the viewport bbox -- not just the
@@ -660,16 +648,10 @@ export default function LayerManager() {
         opacityScale={layerOpacity["soil-vpd"]}
         visible={soilVpdVisible}
       />
-      {/* One instance for nine signals, where the ERA5-Land fields get one instance each:
-          those are three toggles a reader may have on at once, this is one toggle whose
-          signal picker swaps what the single source holds. */}
-      <ClimateFieldLayer
-        map={map}
-        signal={climateMode.signal}
-        geojson={climateFieldGeoJSON}
-        opacityScale={layerOpacity["climate-field"]}
-        visible={climateFieldVisible}
-      />
+      {/* Nine instances, one per signal, each on its own row's day and in its own form. The
+          ERA5-Land fields above get one instance per measure for the same reason: these are
+          toggles a reader may have on at once, and one instance cannot hold two days. */}
+      <ClimateFieldLayers map={map} bbox={bbox} />
       <DemandHeatmapLayer
         map={map}
         bbox={bbox}

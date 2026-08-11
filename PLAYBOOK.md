@@ -4,6 +4,7 @@
 > Run type-check + tests only at the end of each sprint.
 > Developer reviews and commits manually afterward.
 
+
 ## Progress
 
 | Sprint | Track | Status |

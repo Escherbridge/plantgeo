@@ -22,6 +22,10 @@ import {
   warehouseLayerNameFor,
 } from "@/stores/time-slider-store";
 import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
+import {
+  climateFieldStreamName,
+  climateFieldToggleId,
+} from "@/lib/environmental/climate-field";
 import { SLIDER_STREAM_LAYER_NAMES } from "@/types/time-slider";
 import type { SliderCapabilities, SliderLayerCapability } from "@/types/time-slider";
 
@@ -459,7 +463,9 @@ describe("hasSelectableDay -- one rule decides both the control and the filter",
       SLIDER_STREAM_LAYER_NAMES.soilMoisture,
       SLIDER_STREAM_LAYER_NAMES.soilTemperature,
       SLIDER_STREAM_LAYER_NAMES.soilVapourPressureDeficit,
-      SLIDER_STREAM_LAYER_NAMES.climateField,
+      // One climate signal stands for the nine: they are formed by `climateFieldStreamName`
+      // rather than listed, so a stream that resolves for one resolves for all.
+      climateFieldStreamName("air-temperature"),
     ].map((layerName) => ({ ...vegetationLayer, layerName }));
     const withStreams: SliderCapabilities = {
       ...capabilities,
@@ -479,7 +485,13 @@ describe("hasSelectableDay -- one rule decides both the control and the filter",
     // And once the registry names them, the toggles get a day. Skipped rather than failed
     // while `warehouseLayerName` is still null: that half of the fix lives in layer-registry.ts.
     const wiredToggles = (
-      ["drought", "soil-moisture", "soil-temperature", "soil-vpd", "climate-field"] as LayerToggleId[]
+      [
+        "drought",
+        "soil-moisture",
+        "soil-temperature",
+        "soil-vpd",
+        climateFieldToggleId("air-temperature"),
+      ] as LayerToggleId[]
     ).filter((layerId) => warehouseLayerNameFor(layerId) !== null);
     expect(
       wiredToggles.filter((layerId) => !hasSelectableDay(withStreams, layerId))

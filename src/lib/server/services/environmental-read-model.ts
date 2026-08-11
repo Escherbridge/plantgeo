@@ -21,11 +21,15 @@ import {
   climateFieldBandFor,
   climateFieldSignalDefinition,
   climateFieldSignalName,
+  climateFieldStreamName,
+  CLIMATE_FIELD_SIGNAL_IDS,
   DEFAULT_AIR_TEMPERATURE_VARIANT,
   DEFAULT_CLIMATE_FIELD_SIGNAL,
+  resolveClimateRenderForm,
   type AirTemperatureVariant,
   type ClimateFieldBand,
   type ClimateFieldSignalId,
+  type ClimateRenderForm,
 } from "@/lib/environmental/climate-field";
 import {
   SOIL_FIELD_ATTRIBUTION,
@@ -2020,7 +2024,9 @@ export type ClimateFieldFeatureProperties = {
 };
 
 export interface PublishedClimateFieldCollection
-  extends GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon> {
+  extends GeoJSON.FeatureCollection<
+    GeoJSON.Polygon | GeoJSON.MultiPolygon | GeoJSON.Point
+  > {
   availability: "published" | "unavailable";
   /**
    * `stale` means the lane covers this viewport but its newest reading predates the window
@@ -2047,6 +2053,18 @@ export interface PublishedClimateFieldCollection
   newestAvailableDay: string | null;
   /** Cells behind the answer. */
   cellCount: number;
+  /**
+   * Lattice cells intersecting the viewport, filled or not -- the denominator `cellCount` is
+   * measured against.
+   *
+   * Published so the panel can say "267 of the 397 cells in view" without a constant. The
+   * figure it replaced lived in the client bundle, was measured once against production, and
+   * was rendered directly above the live count until the two openly disagreed. A denominator
+   * that is not measured on the same request as its numerator will always eventually lie.
+   */
+  latticeCellCount: number;
+  /** The form the features were shaped for; echoed so a cached collection cannot be misdrawn. */
+  renderForm: ClimateRenderForm;
   /** More cells intersect the viewport than the cap allows. */
   truncated: boolean;
   maxCellCount: number;
@@ -2068,25 +2086,40 @@ export interface PublishedClimateFieldCollection
 type ClimateFieldCellRow = {
   cell_key: string | null;
   geometry: string | null;
+  centroid_lon: number | string | null;
+  centroid_lat: number | string | null;
   normalized_value: number | string | null;
   observed_day: string | null;
   coverage_fraction: number | string | null;
   allowed_client_exposure: boolean | null;
+  lattice_cell_count: number | string | null;
 };
 
-/** Which quantity to read, which daily statistic of it, and the slider's day. */
+/** Which quantity to read, which daily statistic of it, the day, and how it will be drawn. */
 export interface ClimateFieldReadOptions {
   signal?: ClimateFieldSignalId;
   variant?: AirTemperatureVariant;
   date?: string;
+  /**
+   * The form the caller will draw this signal in, which decides the GEOMETRY served.
+   *
+   * The server resolves it through `resolveClimateRenderForm` rather than trusting it, so a
+   * stale client cannot ask for a contour across daily precipitation or across the
+   * soil-wetness pilot -- the two cases where interpolating between samples would assert a
+   * continuity the record does not hold. See `renderForms` in
+   * src/lib/environmental/climate-field.ts.
+   */
+  renderForm?: ClimateRenderForm;
 }
 
 function emptyClimateFieldCollection(
   reason: NonNullable<PublishedClimateFieldCollection["reason"]>,
   signal: ClimateFieldSignalId,
   variant: AirTemperatureVariant,
+  renderForm: ClimateRenderForm,
   requestedDay: string,
-  newestAvailableDay: string | null
+  newestAvailableDay: string | null,
+  latticeCellCount = 0
 ): PublishedClimateFieldCollection {
   const definition = climateFieldSignalDefinition(signal);
   return {
@@ -2103,6 +2136,12 @@ function emptyClimateFieldCollection(
     requestedDay,
     newestAvailableDay,
     cellCount: 0,
+    // Defaults to 0 rather than being required, because the two callers that cannot know it --
+    // a future day, and a viewport whose readings all predate the window -- would otherwise
+    // have to invent one. Zero here means "not measured on this request", and the panel reads
+    // `cellCount` for its sentence, which is also zero on every one of these paths.
+    latticeCellCount,
+    renderForm,
     truncated: false,
     maxCellCount: CLIMATE_FIELD_MAX_CELLS,
     maxObservationAgeDays: CLIMATE_FIELD_MAX_OBSERVATION_AGE_DAYS,
@@ -2237,6 +2276,13 @@ export function climateFieldCellsStatement(
       SELECT DISTINCT ON (reading.cell_id)
         reading.cell_key,
         ST_AsGeoJSON(reading.cell_geometry) AS geometry,
+        ${/* Published alongside the cell polygon, not instead of it, because the three render
+              forms need different geometry off ONE read: `field` draws the square, `symbol`
+              draws a mark at this point, and `isoline` contours through it as a lattice node.
+              Two numbers a row is a trivial cost next to a second query per form, and it keeps
+              all three forms describing the same dedupe of the same day. */ sql``}
+        ST_X(reading.cell_centroid) AS centroid_lon,
+        ST_Y(reading.cell_centroid) AS centroid_lat,
         reading.normalized_value,
         to_char(reading.observed_day, 'YYYY-MM-DD') AS observed_day,
         reading.coverage_fraction,
@@ -2255,10 +2301,19 @@ export function climateFieldCellsStatement(
     SELECT
       deduped.cell_key,
       deduped.geometry,
+      deduped.centroid_lon,
+      deduped.centroid_lat,
       deduped.normalized_value,
       deduped.observed_day,
       deduped.coverage_fraction,
-      deduped.allowed_client_exposure
+      deduped.allowed_client_exposure,
+      ${/* The DENOMINATOR the pilot note needs: lattice cells intersecting this viewport,
+            whether or not this signal has filled them. Constant across the result and repeated
+            per row, which costs one integer a row and saves a second round trip -- and unlike
+            the "4 of the lane's 397 cells" that used to be frozen into the client bundle, it
+            cannot go stale as the backfill widens a pilot. Counted from `covered_cell`, so it
+            is scoped to what the reader can actually see rather than to the whole lane. */ sql``}
+      (SELECT count(*) FROM covered_cell)::integer AS lattice_cell_count
     FROM deduped
     ORDER BY deduped.cell_key
     LIMIT ${CLIMATE_FIELD_MAX_CELLS + 1}
@@ -2274,6 +2329,150 @@ async function readClimateFieldCells(
   return db.execute<ClimateFieldCellRow>(
     climateFieldCellsStatement(bounds, signalName, normalizedUnit, throughDay)
   );
+}
+
+/** One measured cell, after the null guards, in the shape all three render forms build from. */
+interface ClimateFieldCell {
+  cellKey: string | null;
+  geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+  /** Null only if PostGIS returned a centroid this reader could not parse; such a cell is
+   *  dropped from the point and contour forms and still drawn as a square by the field form. */
+  centroidLon: number | null;
+  centroidLat: number | null;
+  value: number;
+  observedDay: string;
+  coverageFraction: number | null;
+}
+
+/** The lattice pitch the contour builder walks, in degrees. The lane's own cell size. */
+const CLIMATE_FIELD_LATTICE_DEGREES = 0.5;
+
+/**
+ * The drawn features for one signal, in the form its row asked for.
+ *
+ * Three shapes off ONE read, which is what lets nine climate rows be switched on together and
+ * still compose. Nine filled fields over the same 397 cells is one visible field and eight
+ * hidden ones; a wash with contours across it and points above them is three readable layers.
+ *
+ *   - `field`     one square per measured cell. The stored geometry, unaggregated and
+ *                 unsmoothed, and the only form from which a value may be read off a place.
+ *   - `symbol`    one point per measured cell, at the cell's own centroid. Carries the same
+ *                 value and the same band; a renderer sizes and colours the mark from them.
+ *                 Draws NOTHING on an unfilled cell, which is what makes it composable.
+ *   - `isoline`   dissolved isobands across the lattice, drawn by the client as boundaries
+ *                 rather than fills. INTERPOLATED, and flagged `aggregated: true` for that
+ *                 reason -- a contour states that the field varies smoothly between the cells
+ *                 it passes between, which is a claim about ground nobody measured.
+ *
+ * The contouring runs here rather than in PostGIS or in the browser for the reason
+ * `src/lib/geo/AGENTS.md` §isobands gives for the soil field: `ST_Contour` needs
+ * `postgis_raster`, which is not installed, and shipping the lattice to the client to contour
+ * it there is the client-side aggregation the repo rule forbids. Unlike the soil field this
+ * needs no SQL aggregation function at all -- the NASA POWER cells ARE a regular 0.5-degree
+ * lattice already, so their centroids feed `buildIsobands` directly.
+ */
+function climateFieldFeatures(
+  signal: ClimateFieldSignalId,
+  definition: ReturnType<typeof climateFieldSignalDefinition>,
+  renderForm: ClimateRenderForm,
+  cells: readonly ClimateFieldCell[]
+): GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon | GeoJSON.Point>[] {
+  if (renderForm === "isoline") {
+    return climateFieldIsolineFeatures(signal, definition, cells);
+  }
+
+  const features: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon | GeoJSON.Point>[] =
+    [];
+  for (const cell of cells) {
+    const band = climateFieldBandFor(signal, cell.value);
+    const properties: ClimateFieldFeatureProperties = {
+      value: cell.value,
+      unit: definition.unit,
+      bandIndex: band.bandIndex,
+      bandLabel: band.label,
+      observedDay: cell.observedDay,
+      aggregated: false,
+      cellKey: cell.cellKey,
+      coverageFraction: cell.coverageFraction,
+    };
+    if (renderForm === "symbol") {
+      // A cell whose centroid did not parse is SKIPPED rather than given the polygon: a point
+      // form that silently emitted a square would break the client's geometry assumption.
+      if (cell.centroidLon === null || cell.centroidLat === null) continue;
+      features.push({
+        type: "Feature",
+        id: cell.cellKey ?? undefined,
+        geometry: { type: "Point", coordinates: [cell.centroidLon, cell.centroidLat] },
+        properties,
+      });
+      continue;
+    }
+    features.push({
+      type: "Feature",
+      id: cell.cellKey ?? undefined,
+      geometry: cell.geometry,
+      properties,
+    });
+  }
+  return features;
+}
+
+/**
+ * Dissolved isobands across the lattice, one feature per band that has any area.
+ *
+ * Every property is the BAND's, not a cell's: `value` is the band's representative value so a
+ * client colouring by value lands on the band's own colour, `cellKey` is null because a band is
+ * not one cell, and `coverageFraction` is null for the same reason. `aggregated` is true, which
+ * is the flag a panel must consult before reading a number off this form.
+ *
+ * `observedDay` comes from the cells, which all carry the same day by construction: the reader
+ * resolves ONE `served.observed_at` and every row matches it exactly.
+ */
+function climateFieldIsolineFeatures(
+  signal: ClimateFieldSignalId,
+  definition: ReturnType<typeof climateFieldSignalDefinition>,
+  cells: readonly ClimateFieldCell[]
+): GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>[] {
+  const samples: FieldSample[] = [];
+  for (const cell of cells) {
+    if (cell.centroidLon === null || cell.centroidLat === null) continue;
+    samples.push({ lon: cell.centroidLon, lat: cell.centroidLat, value: cell.value });
+  }
+  // Two samples cannot make a triangle, so nothing can be contoured through them. Returning
+  // empty makes the reader report `not_published` for the day, which is the honest answer:
+  // this form has nothing to draw, even though the cells behind it exist.
+  if (samples.length < 3) return [];
+
+  const observedDay = cells[0].observedDay;
+  const isobands = buildIsobands(samples, CLIMATE_FIELD_LATTICE_DEGREES, [
+    ...definition.bandBreaks,
+  ]);
+  const features: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>[] = [];
+  for (const isoband of isobands) {
+    if (isoband.polygons.length === 0) continue;
+    const band =
+      definition.bands[isoband.bandIndex] ?? climateFieldBandFor(signal, samples[0].value);
+    const properties: ClimateFieldFeatureProperties = {
+      value: band.representativeValue,
+      unit: definition.unit,
+      bandIndex: band.bandIndex,
+      bandLabel: band.label,
+      observedDay,
+      aggregated: true,
+      cellKey: null,
+      coverageFraction: null,
+    };
+    features.push({
+      type: "Feature",
+      id: `${signal}-band-${band.bandIndex}`,
+      geometry:
+        isoband.polygons.length === 1
+          ? { type: "Polygon", coordinates: isoband.polygons[0] }
+          : { type: "MultiPolygon", coordinates: isoband.polygons },
+      properties,
+    });
+  }
+  return features;
 }
 
 /**
@@ -2304,13 +2503,25 @@ export async function getPublishedClimateField(
   const signal = options.signal ?? DEFAULT_CLIMATE_FIELD_SIGNAL;
   const variant = options.variant ?? DEFAULT_AIR_TEMPERATURE_VARIANT;
   const definition = climateFieldSignalDefinition(signal);
+  // RESOLVED, never trusted: an `isoline` asked for on precipitation or on the soil-wetness
+  // pilot degrades to that signal's own default here rather than contouring a field the record
+  // does not support. The client applies the same rule; this is the copy that a stale bundle,
+  // a replayed cache entry or a hand-made request cannot get around.
+  const renderForm = resolveClimateRenderForm(signal, options.renderForm);
   // Resolved through the signal's own variant table, so a variant only air temperature offers
   // degrades to that signal's single reading rather than querying a name that cannot exist.
   const signalName = climateFieldSignalName(signal, variant);
 
   const day = resolveRequestedObservationDay(options.date);
   if (day.kind === "unobserved") {
-    return emptyClimateFieldCollection("not_forecastable", signal, variant, day.date, null);
+    return emptyClimateFieldCollection(
+      "not_forecastable",
+      signal,
+      variant,
+      renderForm,
+      day.date,
+      null
+    );
   }
   const throughDay = day.kind === "historical" ? day.date : serverCurrentDate();
 
@@ -2321,33 +2532,30 @@ export async function getPublishedClimateField(
     throughDay
   );
   const drawable = rows.slice(0, CLIMATE_FIELD_MAX_CELLS);
-  const features: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>[] = [];
+  const latticeCellCount = toCount(drawable[0]?.lattice_cell_count ?? null);
+  // The cells that survived every null guard, kept as a working set because all three render
+  // forms are built from the same list -- one dedupe, one day, three shapes.
+  const cells: ClimateFieldCell[] = [];
   let observedDay: string | null = null;
   let exposureApproved = false;
 
   for (const row of drawable) {
     const value = finiteNumber(row.normalized_value);
     if (row.geometry === null || value === null || row.observed_day === null) continue;
-    const band = climateFieldBandFor(signal, value);
     observedDay = row.observed_day;
     exposureApproved = row.allowed_client_exposure === true;
-    const properties: ClimateFieldFeatureProperties = {
-      value,
-      unit: definition.unit,
-      bandIndex: band.bandIndex,
-      bandLabel: band.label,
-      observedDay: row.observed_day,
-      aggregated: false,
+    cells.push({
       cellKey: row.cell_key,
-      coverageFraction: finiteNumber(row.coverage_fraction),
-    };
-    features.push({
-      type: "Feature",
-      id: row.cell_key ?? undefined,
       geometry: JSON.parse(row.geometry) as GeoJSON.Polygon | GeoJSON.MultiPolygon,
-      properties,
+      centroidLon: finiteNumber(row.centroid_lon),
+      centroidLat: finiteNumber(row.centroid_lat),
+      value,
+      observedDay: row.observed_day,
+      coverageFraction: finiteNumber(row.coverage_fraction),
     });
   }
+
+  const features = climateFieldFeatures(signal, definition, renderForm, cells);
 
   if (features.length === 0) {
     const newest = await newestClimateFieldDay(
@@ -2360,8 +2568,10 @@ export async function getPublishedClimateField(
       newest === null ? "not_published" : "stale",
       signal,
       variant,
+      renderForm,
       throughDay,
-      newest
+      newest,
+      latticeCellCount
     );
   }
 
@@ -2378,7 +2588,13 @@ export async function getPublishedClimateField(
     observedDay,
     requestedDay: throughDay,
     newestAvailableDay: null,
-    cellCount: features.length,
+    // The measured CELL count at every form, never `features.length`. An isoline collection
+    // holds at most one feature per band -- often fewer features than the field has cells --
+    // and reporting that as the cell count would let the panel say "9 measured 0.5 degree
+    // cells" over a contour map drawn through 267 of them.
+    cellCount: cells.length,
+    latticeCellCount,
+    renderForm,
     truncated: rows.length > CLIMATE_FIELD_MAX_CELLS,
     maxCellCount: CLIMATE_FIELD_MAX_CELLS,
     maxObservationAgeDays: CLIMATE_FIELD_MAX_OBSERVATION_AGE_DAYS,
@@ -2606,16 +2822,24 @@ const LAYER_TEMPORAL_KINDS: Readonly<Record<string, TemporalKind>> = {
   // A genuine snapshot: 96% of HUC12 basins share one 2013 WBD loaddate. Listed rather than
   // left to the default so that "absent" never again means "nobody decided".
   "watersheds": "snapshot",
-  // The five non-geo.features streams. Drought is `daily_series` rather than `event` even
-  // though USDM publishes weekly: every day of a release's week resolves to that release, so
-  // the axis a user scrubs really is daily. An `event` kind would say the opposite -- that a
-  // day either has a discrete happening or nothing -- and would make the whole record read as
-  // a sequence of Tuesdays.
+  // The non-geo.features streams: four named ones, plus one per NASA POWER signal. Drought is
+  // `daily_series` rather than `event` even though USDM publishes weekly: every day of a
+  // release's week resolves to that release, so the axis a user scrubs really is daily. An
+  // `event` kind would say the opposite -- that a day either has a discrete happening or
+  // nothing -- and would make the whole record read as a sequence of Tuesdays.
   [SLIDER_STREAM_LAYER_NAMES.drought]: "daily_series",
   [SLIDER_STREAM_LAYER_NAMES.soilMoisture]: "daily_series",
   [SLIDER_STREAM_LAYER_NAMES.soilTemperature]: "daily_series",
   [SLIDER_STREAM_LAYER_NAMES.soilVapourPressureDeficit]: "daily_series",
-  [SLIDER_STREAM_LAYER_NAMES.climateField]: "daily_series",
+  // Spread rather than listed: nine entries that are all `daily_series` is nine chances to
+  // omit one, and an omitted stream silently takes DEFAULT_TEMPORAL_KIND -- `snapshot` -- which
+  // would tell the slider that a daily archive has one undated state.
+  ...Object.fromEntries(
+    CLIMATE_FIELD_SIGNAL_IDS.map((signal) => [
+      climateFieldStreamName(signal),
+      "daily_series" as TemporalKind,
+    ])
+  ),
 };
 
 /** Conservative shape for a geo.layers row added after this registry was written. */
@@ -3162,12 +3386,27 @@ async function readStreamObservationWindows(): Promise<Map<string, ObservationWi
 
           UNION ALL
 
+          ${/* JOINED on the view's own `signal` column, where this was a CROSS JOIN against one
+                literal stream name until 2026-08-10. That CROSS JOIN was the bug: it collapsed
+                all eleven of the lane's signal_names into a single axis, so the soil-wetness
+                pilot -- measured on a fraction of the lattice, with its own much shorter record
+                -- was published with air temperature's earliest day, air temperature's latest
+                day and air temperature's gap list. Every day the pilot's slider offered was a
+                day SOME signal had published, which is not a claim any reader was making.
+                Grouping by the signal's own stream is what makes each axis describe its own
+                signal. The VALUES list is generated from CLIMATE_FIELD_SIGNAL_IDS so it cannot
+                fall out of step with the registry, the toggles or the tRPC enum. */ sql``}
           SELECT
             stream.layer_name,
             climate.observed_day,
             COUNT(*) AS observation_count
           FROM geo.climate_field_observation AS climate
-          CROSS JOIN (VALUES (${SLIDER_STREAM_LAYER_NAMES.climateField}::text)) AS stream(layer_name)
+          JOIN (VALUES ${sql.join(
+            CLIMATE_FIELD_SIGNAL_IDS.map(
+              (signal) => sql`(${signal}::text, ${climateFieldStreamName(signal)}::text)`
+            ),
+            sql`, `
+          )}) AS stream(signal, layer_name) ON stream.signal = climate.signal
           WHERE climate.support_key = ${CLIMATE_FIELD_SUPPORT_KEY}
           GROUP BY stream.layer_name, climate.observed_day
         `

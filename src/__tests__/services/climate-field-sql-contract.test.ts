@@ -106,6 +106,18 @@ const POSTGIS_SHIM = `
   CREATE FUNCTION st_asgeojson(geometry) RETURNS text LANGUAGE sql IMMUTABLE AS
     $$ SELECT $1::text $$;
 
+  -- The centroid accessors the climate reader gained on 2026-08-10, when the lane started
+  -- serving three shapes off one read: the cell polygon for the filled form, this point for
+  -- the symbol form, and the same point as a lattice node for the contours. Every cell this
+  -- suite seeds is a "lon,lat" point in disguise, so splitting the text is the honest stand-in.
+  -- In production agri.spatial_cell.centroid is public.geometry(Point,4326) and these are core
+  -- PostGIS, as geo.soil_field in drizzle/0014 has been calling them all along.
+  CREATE FUNCTION st_x(geometry) RETURNS double precision LANGUAGE sql IMMUTABLE AS
+    $$ SELECT split_part($1::text, ',', 1)::float8 $$;
+
+  CREATE FUNCTION st_y(geometry) RETURNS double precision LANGUAGE sql IMMUTABLE AS
+    $$ SELECT split_part($1::text, ',', 2)::float8 $$;
+
   -- Stands in for the GiST bbox-overlap operator. Every cell this suite seeds is a point in
   -- disguise, so "does the envelope contain it" is the honest stand-in for "do they overlap".
   CREATE FUNCTION shim_bbox_overlaps(cell geometry, envelope geometry)

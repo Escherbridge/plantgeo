@@ -5,11 +5,18 @@
  */
 
 import { SOIL_FIELD_MEASURES } from "@/lib/environmental/soil-field";
+import {
+  CLIMATE_FIELD_SIGNALS,
+  CLIMATE_FIELD_SIGNAL_IDS,
+  type ClimateFieldSignalId,
+  type ClimateFieldToggleId,
+} from "@/lib/environmental/climate-field";
 import { SLIDER_STREAM_LAYER_NAMES } from "@/types/time-slider";
 import type { PanelId } from "@/stores/panel-store";
 
 /** Every toggle id the registry knows. `activeLayers` may also hold user-uploaded layer ids. */
 export type LayerToggleId =
+  | ClimateFieldToggleId
   | "fire"
   | "fire-perimeters"
   | "water"
@@ -23,7 +30,6 @@ export type LayerToggleId =
   | "soil-moisture"
   | "soil-temperature"
   | "soil-vpd"
-  | "climate-field"
   | "demand-heatmap"
   | "interventions"
   | "evacuation-zones"
@@ -50,6 +56,9 @@ export type LayerIconName =
   | "wind"
   | "radio-tower"
   | "cloud-sun"
+  | "cloud-rain"
+  | "sun"
+  | "gauge"
   | "leaf"
   | "mountain"
   | "layers"
@@ -91,6 +100,70 @@ export interface LayerRegistryEntry {
    */
   permanentlyUnavailableReason: string | null;
 }
+
+/**
+ * The glyph each climate signal's row draws.
+ *
+ * Lives here rather than on the signal definition because an icon name is a REGISTRY concern:
+ * `LayerIconName` is declared in this module and resolved by `layer-icons.tsx`, and putting the
+ * field on `ClimateFieldSignalDefinition` would make `climate-field.ts` -- which this module
+ * imports -- import this one back. Exhaustive over the signal union, so a tenth signal fails to
+ * compile here rather than rendering a row with no glyph.
+ *
+ * Nine distinct glyphs where the single `Climate` row used to carry one `cloud-sun`: nine rows
+ * stacked in one dock group are told apart by their icons before their labels are read, and
+ * nine identical clouds would undo exactly that.
+ */
+const CLIMATE_SIGNAL_ICONS: Readonly<Record<ClimateFieldSignalId, LayerIconName>> = {
+  "air-temperature": "thermometer",
+  "dew-point": "droplets",
+  precipitation: "cloud-rain",
+  "relative-humidity": "gauge",
+  "shortwave-radiation": "sun",
+  "wind-speed": "wind",
+  "soil-wetness-surface": "sprout",
+  "soil-wetness-root-zone": "sprout",
+  "soil-wetness-profile": "sprout",
+};
+
+/**
+ * One registry row per NASA POWER signal, read through `environmental.getClimateField`.
+ *
+ * The second lane served out of the MODEL plane (`agri.signal_observation`), so like the three
+ * ERA5-Land fields above, each row's capability is published as a STREAM -- the days
+ * `geo.climate_field_observation` can answer for, per signal -- rather than out of `geo.layers`.
+ *
+ * NINE rows since 2026-08-10, where one `Climate` row with a signal picker stood before. The
+ * old shape was argued for on the grounds that nine signals are "nine answers to what was the
+ * weather, only one of which can be painted over a cell at a time", and the second half of that
+ * is still true of a FILLED field -- which is why `renderForms` exists and why only air
+ * temperature defaults to `field`. The first half was the mistake: one toggle means one
+ * `warehouseLayerName`, one capability, one axis, and that axis was computed over every signal
+ * in the lane unioned together. A four-cell pilot and a 397-cell field were handed the same
+ * scrubbable days and the same "latest observed" date. Nine rows is what makes each axis
+ * describe the signal it belongs to.
+ *
+ * DERIVED from the signal table, not hand-listed: the label, the stream name and the toggle id
+ * all come from `climate-field.ts`, so a tenth signal appears in the dock, on the map and on
+ * the slider with no edit here beyond one glyph above.
+ */
+const CLIMATE_FIELD_ENTRIES = CLIMATE_FIELD_SIGNAL_IDS.reduce((entries, signal) => {
+  const definition = CLIMATE_FIELD_SIGNALS[signal];
+  entries[definition.toggleId] = {
+    toggleId: definition.toggleId,
+    label: definition.label,
+    icon: CLIMATE_SIGNAL_ICONS[signal],
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: definition.streamName,
+    panelId: "climate",
+    permanentlyUnavailableReason: null,
+  };
+  return entries;
+  // Seeded with a cast because the record is only exhaustive once the fold has run; the fold
+  // is over `CLIMATE_FIELD_SIGNAL_IDS`, which is `Object.keys` of a record exhaustive over the
+  // signal union, so every key does get written.
+}, {} as Record<ClimateFieldToggleId, LayerRegistryEntry>);
 
 export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   fire: {
@@ -281,35 +354,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "soil",
     permanentlyUnavailableReason: null,
   },
-  // NASA POWER daily meteorology and pilot soil wetness, read through
-  // environmental.getClimateField. The second lane served out of the MODEL plane
-  // (agri.signal_observation), so like the three ERA5-Land fields above its capability is
-  // published as a STREAM -- the days `geo.climate_field_observation` can answer for -- rather
-  // than out of geo.layers.
-  //
-  // ONE stream for nine signals, matching the one toggle: the reader answers every signal from
-  // the same lane, so a day the axis offers is a day any signal can be drawn on.
-  //
-  // ONE toggle for nine signals, where the ERA5-Land lane has three toggles for three
-  // measures. The difference is what "off" would mean: moisture and temperature are two
-  // measurements of the same ground a reader may want side by side, whereas air temperature
-  // and precipitation are nine answers to "what was the weather", only one of which can be
-  // painted over a cell at a time. The signal picker lives in the Climate section; this switch
-  // decides whether the field is drawn at all. See ClimateFieldLayer in
-  // layers/ClimateFieldLayer.tsx.
-  //
-  // `cloud-sun` is shared with soil-vpd rather than invented for this row: the two are the
-  // map's atmospheric fields and the union stays closed over what layer-icons.tsx resolves.
-  "climate-field": {
-    toggleId: "climate-field",
-    label: "Climate",
-    icon: "cloud-sun",
-    renderKind: "component",
-    styleLayerIds: [],
-    warehouseLayerName: SLIDER_STREAM_LAYER_NAMES.climateField,
-    panelId: "climate",
-    permanentlyUnavailableReason: null,
-  },
+  ...CLIMATE_FIELD_ENTRIES,
   // Served by /api/v1/action-network's k-anonymity-floored activity grid --
   // aggregateActivityGrid in src/lib/server/services/community-activity.ts groups
   // strategy_requests into zoom-derived cells with a HAVING count(*) >= 3 floor and

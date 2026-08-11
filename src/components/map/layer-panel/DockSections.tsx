@@ -180,14 +180,14 @@ export function DockSections() {
       vegetationMode,
       ndviMode,
       soilFieldDepth: soilDisplayMode.fieldDepth,
-      climateFieldSignal: climateDisplayMode.signal,
+      climateRenderForms: climateDisplayMode.renderForms,
       climateFieldVariant: climateDisplayMode.airTemperatureVariant,
     }),
     [
       vegetationMode,
       ndviMode,
       soilDisplayMode.fieldDepth,
-      climateDisplayMode.signal,
+      climateDisplayMode.renderForms,
       climateDisplayMode.airTemperatureVariant,
     ]
   );

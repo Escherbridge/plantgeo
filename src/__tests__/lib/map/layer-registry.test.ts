@@ -19,6 +19,11 @@ import {
   unreachableLayerToggleIds,
 } from '@/lib/map/layer-registry'
 import { STYLE_LAYER_TOGGLE_MAP, getLayers } from '@/lib/map/layers'
+import {
+  CLIMATE_FIELD_SIGNALS,
+  CLIMATE_FIELD_SIGNAL_IDS,
+  type ClimateFieldSignalId,
+} from '@/lib/environmental/climate-field'
 import { SLIDER_STREAM_LAYER_NAMES } from '@/types/time-slider'
 import { getLayersForPanel } from '@/stores/panel-store'
 import { useMapStore } from '@/stores/map-store'
@@ -131,9 +136,13 @@ describe('layer registry derivations', () => {
       'soil-temperature',
       'soil-vpd',
     ])
-    // Climate owns exactly one layer: the NASA POWER lane's nine signals reach the map
-    // through one toggle, because only one of them can be painted over a cell at a time.
-    expect(getLayersForPanel('climate')).toEqual(['climate-field'])
+    // Climate owns one layer per NASA POWER signal. It owned exactly one for all nine until
+    // 2026-08-10, on the grounds that only one can be painted over a cell at a time -- which
+    // is true of a FILLED field and is now handled by `renderForms`, not by hiding eight
+    // signals behind a picker with no axis of their own.
+    expect(getLayersForPanel('climate')).toEqual(
+      CLIMATE_FIELD_SIGNAL_IDS.map((signal) => CLIMATE_FIELD_SIGNALS[signal].toggleId)
+    )
     expect(getLayersForPanel('community')).toEqual(['demand-heatmap', 'interventions'])
     expect(getLayersForPanel('team')).toEqual([])
     expect(getLayersForPanel('analytics')).toEqual([])
@@ -252,9 +261,19 @@ describe('layer registry derivations', () => {
       'soil-moisture': 'Soil Moisture (ERA5-Land)',
       'soil-temperature': 'Soil Temperature (ERA5-Land)',
       'soil-vpd': 'Vapor Pressure Deficit (ERA5-Land)',
-      // The second label with no <LayerToggle> predecessor: the Climate section was added
-      // after the sheets were gone, so this caption was never hand-typed anywhere.
-      'climate-field': 'Climate',
+      // The nine climate captions have no <LayerToggle> predecessor either: the Climate
+      // section was added after the sheets were gone, and these are read off
+      // CLIMATE_FIELD_SIGNALS rather than restated -- exactly as the three soil-field rows
+      // are read off SOIL_FIELD_MEASURES -- so a signal's caption has one definition.
+      'climate-air-temperature': 'Air temperature',
+      'climate-dew-point': 'Dew point',
+      'climate-precipitation': 'Precipitation',
+      'climate-relative-humidity': 'Relative humidity',
+      'climate-shortwave-radiation': 'Solar radiation',
+      'climate-wind-speed': 'Wind speed',
+      'climate-soil-wetness-surface': 'Soil wetness (surface) — pilot',
+      'climate-soil-wetness-root-zone': 'Soil wetness (root zone) — pilot',
+      'climate-soil-wetness-profile': 'Soil wetness (profile) — pilot',
       'demand-heatmap': 'Demand Heatmap',
       interventions: 'Interventions',
       'evacuation-zones': 'Evacuation Zones',
@@ -330,16 +349,42 @@ describe('layer registry derivations', () => {
     }
   )
 
-  // The same shape as the three ERA5-Land fields above, with two deliberate differences: it
-  // is the only agri-plane layer under the Climate category, and the NASA POWER lane's nine
-  // signals share this one toggle rather than getting one each -- see the entry's own note.
-  it('gives the agri-plane climate field a panel switch and a component render path', () => {
-    const entry = LAYER_REGISTRY['climate-field']
-    expect(entry.renderKind).toBe('component')
-    expect(entry.styleLayerIds).toEqual([])
-    expect(entry.permanentlyUnavailableReason).toBeNull()
-    expect(panelIdForLayerToggle('climate-field')).toBe('climate')
-    expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty('climate-field')
+  // The same shape as the three ERA5-Land fields above, one row per NASA POWER signal. The
+  // lane shared a single `climate-field` toggle until 2026-08-10; the nine rows are what give
+  // each signal its own axis, because one toggle can only carry one `warehouseLayerName` and
+  // so only one capability -- see CLIMATE_FIELD_ENTRIES in the registry.
+  it.each(CLIMATE_FIELD_SIGNAL_IDS as readonly ClimateFieldSignalId[])(
+    'gives the %s climate signal a panel switch and a component render path',
+    (signal: ClimateFieldSignalId) => {
+      const { toggleId } = CLIMATE_FIELD_SIGNALS[signal]
+      const entry = LAYER_REGISTRY[toggleId]
+      expect(entry.renderKind).toBe('component')
+      expect(entry.styleLayerIds).toEqual([])
+      expect(entry.permanentlyUnavailableReason).toBeNull()
+      expect(panelIdForLayerToggle(toggleId)).toBe('climate')
+      expect(STYLE_LAYER_TOGGLE_MAP).not.toHaveProperty(toggleId)
+    }
+  )
+
+  /**
+   * Nine signals, nine distinct streams -- the assertion that pins the axis fix.
+   *
+   * The lane published ONE stream for all nine until 2026-08-10, computed over every
+   * `signal_name` unioned, so the four-cell soil-wetness pilot was handed the full-lattice air
+   * temperature field's earliest day, latest day and gap list. Distinctness is what makes each
+   * capability describe its own signal; the round trip is what proves a server naming a stream
+   * still finds the row that draws it.
+   */
+  it('gives every climate signal its own stream, and none of them share one', () => {
+    const streamNames = CLIMATE_FIELD_SIGNAL_IDS.map(
+      (signal) => CLIMATE_FIELD_SIGNALS[signal].streamName
+    )
+    expect(new Set(streamNames).size).toBe(CLIMATE_FIELD_SIGNAL_IDS.length)
+    for (const signal of CLIMATE_FIELD_SIGNAL_IDS) {
+      const { toggleId, streamName } = CLIMATE_FIELD_SIGNALS[signal]
+      expect(LAYER_REGISTRY[toggleId].warehouseLayerName).toBe(streamName)
+      expect(toggleIdForWarehouseLayerName(streamName)).toBe(toggleId)
+    }
   })
 
   /**
@@ -360,7 +405,6 @@ describe('layer registry derivations', () => {
     ['soil-moisture', SLIDER_STREAM_LAYER_NAMES.soilMoisture],
     ['soil-temperature', SLIDER_STREAM_LAYER_NAMES.soilTemperature],
     ['soil-vpd', SLIDER_STREAM_LAYER_NAMES.soilVapourPressureDeficit],
-    ['climate-field', SLIDER_STREAM_LAYER_NAMES.climateField],
   ] as const)('names the %s toggle a slider stream, so its row gets an axis again', (toggleId, streamName) => {
     expect(LAYER_REGISTRY[toggleId].warehouseLayerName).toBe(streamName)
     // And the inverse resolves, so a server or an agent naming the stream finds the row.

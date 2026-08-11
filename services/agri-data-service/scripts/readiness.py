@@ -49,6 +49,62 @@ WAREHOUSE_CHECKS: list[tuple[str, str]] = [
         """,
     ),
     (
+        # Interior time gaps per stream. Presence of ANY cell counts the day as
+        # observed, so this finds stream-level holes; per-cell sparsity (normal
+        # for NDVI) needs the per-cell variant, not this. `duplicate_rows`
+        # exposes overlapping release windows: continuation plans that re-cover
+        # already-landed days double raw row counts without adding coverage.
+        "signal_stream_day_gaps",
+        """
+        with days as (
+            select signal_name, support_key, observed_at::date as day, count(*) as day_rows
+            from agri.signal_observation
+            group by 1, 2, 3
+        ), sequenced as (
+            select signal_name, support_key, day, day_rows,
+                   lag(day) over (partition by signal_name, support_key order by day) as previous_day
+            from days
+        )
+        select signal_name, support_key,
+               count(*) as observed_days,
+               (max(day) - min(day) + 1) - count(*) as missing_days,
+               count(*) filter (where day - previous_day > 1) as gap_count,
+               max(day - previous_day - 1) as widest_gap_days,
+               sum(day_rows) as total_rows
+        from sequenced
+        group by 1, 2
+        order by missing_days desc, signal_name
+        """,
+    ),
+    (
+        # Same analysis for the dated geo layers; walks-in-flight legitimately
+        # truncate from_day, so a shrinking span is progress, not a hole.
+        "geo_layer_day_gaps",
+        """
+        with days as (
+            select layer.name, substring(feature.properties->>'observedAt', 1, 10)::date as day
+            from geo.features feature
+            join geo.layers layer on layer.id = feature.layer_id
+            where layer.name in ('fire-detections', 'vegetation', 'weather-observations',
+                                 'sensors', 'evacuation-zones')
+              and feature.properties->>'observedAt' is not null
+            group by 1, 2
+        ), sequenced as (
+            select name, day, lag(day) over (partition by name order by day) as previous_day
+            from days
+        )
+        select name,
+               min(day) as from_day, max(day) as to_day,
+               count(*) as observed_days,
+               (max(day) - min(day) + 1) - count(*) as missing_days,
+               count(*) filter (where day - previous_day > 1) as gap_count,
+               max(day - previous_day - 1) as widest_gap_days
+        from sequenced
+        group by 1
+        order by missing_days desc
+        """,
+    ),
+    (
         "spatial_cells_by_grid",
         "select grid_name, count(*) as cells from agri.spatial_cell group by 1 order by 1",
     ),

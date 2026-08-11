@@ -18,7 +18,7 @@ import {
   type LayerToggleId,
 } from "@/lib/map/layer-registry";
 import { DEFAULT_LAYER_OPACITY } from "@/lib/map/layer-opacity";
-import { useClimateStore } from "@/stores/climate-store";
+import { climateRenderForm, useClimateStore } from "@/stores/climate-store";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
 import { useSoilStore } from "@/stores/soil-store";
@@ -39,6 +39,7 @@ import type { SoilFieldDepth, SoilFieldMeasure } from "@/lib/environmental/soil-
 import type {
   AirTemperatureVariant,
   ClimateFieldSignalId,
+  ClimateRenderForm,
 } from "@/lib/environmental/climate-field";
 import type { SoilProperty } from "@/components/map/layers/SoilLayer";
 import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
@@ -575,25 +576,39 @@ export function useSoilDisplayMode(): SoilDisplayMode {
 }
 
 /**
- * The climate layer's selected mode, as the renderer consumes it.
+ * The climate rows' selected modes, as the renderers consume them.
  *
- * A signal and a statistic, never a date: the NASA POWER field takes its day from
+ * Forms and a statistic, never a date: each NASA POWER row takes its own day from
  * `useDebouncedLayerDay` like every other warehouse-backed feed.
+ *
+ * No `signal`. Which signals are drawn is `layerVisibility` now that each has a row, and a
+ * `signal` here would be a second, disagreeing answer to the same question.
  */
 export interface ClimateDisplayMode {
-  signal: ClimateFieldSignalId;
+  /** Sparse; read through `renderFormFor`, which applies each signal's own default. */
+  renderForms: Partial<Record<ClimateFieldSignalId, ClimateRenderForm>>;
+  /** The form a given signal is drawn in, with the stale-value guard already applied. */
+  renderFormFor: (signal: ClimateFieldSignalId) => ClimateRenderForm;
   airTemperatureVariant: AirTemperatureVariant;
 }
 
 /**
  * Read-only view of the climate store; the panel keeps the store for its setters.
  *
- * Memoized because `LayerManager` sits above ~9 layer children and would otherwise hand
- * `ClimateFieldLayer` a fresh object on every unrelated re-render.
+ * Memoized because `LayerManager` sits above ~9 layer children and would otherwise hand every
+ * mounted `ClimateFieldLayer` a fresh object on each unrelated re-render.
  */
 export function useClimateDisplayMode(): ClimateDisplayMode {
-  const signal = useClimateStore((state) => state.signal);
+  const renderForms = useClimateStore((state) => state.renderForms);
   const airTemperatureVariant = useClimateStore((state) => state.airTemperatureVariant);
 
-  return useMemo(() => ({ signal, airTemperatureVariant }), [signal, airTemperatureVariant]);
+  return useMemo(
+    () => ({
+      renderForms,
+      renderFormFor: (signal: ClimateFieldSignalId) =>
+        climateRenderForm({ renderForms }, signal),
+      airTemperatureVariant,
+    }),
+    [renderForms, airTemperatureVariant]
+  );
 }

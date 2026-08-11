@@ -37,10 +37,13 @@ import {
 } from "@/lib/environmental/soil-field";
 import {
   CLIMATE_FIELD_SIGNALS,
+  CLIMATE_RENDER_FORM_LABELS,
+  climateFieldSignalForToggle,
   DEFAULT_AIR_TEMPERATURE_VARIANT,
-  DEFAULT_CLIMATE_FIELD_SIGNAL,
+  resolveClimateRenderForm,
   type AirTemperatureVariant,
   type ClimateFieldSignalId,
+  type ClimateRenderForm,
 } from "@/lib/environmental/climate-field";
 import {
   BURN_SEVERITY_ACRES_STOPS,
@@ -150,9 +153,17 @@ export interface LegendContext {
   vegetationMode: VegetationMode;
   ndviMode: "absolute" | "anomaly";
   soilFieldDepth: Record<SoilFieldMeasure, SoilFieldDepth>;
-  /** Which of the nine NASA POWER signals the one climate layer is drawing. */
-  climateFieldSignal: ClimateFieldSignalId;
-  /** Only read when that signal is `air-temperature`; the rest publish one value. */
+  /**
+   * The form each climate signal is currently drawn in, where the reader has chosen one.
+   *
+   * SPARSE, and no longer a single `climateFieldSignal`. Which signal is drawn stopped being a
+   * question with one answer on 2026-08-10: each of the nine has its own row, its own switch
+   * and its own axis, so the legend renders a section for every one that is ON. A missing entry
+   * here means the row is on its signal's default form, not that it is off -- `visibility` is
+   * what says that.
+   */
+  climateRenderForms: Partial<Record<ClimateFieldSignalId, ClimateRenderForm>>;
+  /** Only read on `air-temperature`; the other eight signals publish one value. */
   climateFieldVariant: AirTemperatureVariant;
 }
 
@@ -161,7 +172,7 @@ export const DEFAULT_LEGEND_CONTEXT: LegendContext = {
   vegetationMode: "ndvi",
   ndviMode: "absolute",
   soilFieldDepth: DEFAULT_SOIL_FIELD_DEPTHS,
-  climateFieldSignal: DEFAULT_CLIMATE_FIELD_SIGNAL,
+  climateRenderForms: {},
   climateFieldVariant: DEFAULT_AIR_TEMPERATURE_VARIANT,
 };
 
@@ -503,30 +514,39 @@ export function soilFieldLegendSpec(
 }
 
 /**
- * The NASA POWER field spec for the signal the panel has selected.
+ * The NASA POWER spec for one signal, in the form its row is currently drawn in.
  *
- * The caption names the air-temperature statistic and nothing else: `mean`, `max` and `min`
- * share one band table, so a reader looking at the ramp still needs to be told which of the
- * three the colours are keyed to. The other eight signals publish one value and have no
- * statistic to name.
+ * The caption carries two things a ramp alone cannot say. The air-temperature STATISTIC,
+ * because `mean`, `max` and `min` share one band table and a reader looking at the colours
+ * still needs to be told which of the three they are keyed to -- the other eight signals
+ * publish one value and have no statistic to name. And the FORM, because since the nine rows
+ * landed the same ramp can reach the map as a filled cell, a contour or a point, and three
+ * legend sections showing identical swatches over three differently-drawn layers is exactly
+ * the confusion nine rows were meant to remove.
  */
 export function climateFieldLegendSpec(
   signal: ClimateFieldSignalId,
-  variant: AirTemperatureVariant = DEFAULT_AIR_TEMPERATURE_VARIANT
+  variant: AirTemperatureVariant = DEFAULT_AIR_TEMPERATURE_VARIANT,
+  renderForm?: ClimateRenderForm
 ): LayerLegendSpec {
   const definition = CLIMATE_FIELD_SIGNALS[signal];
   const selectedVariant = definition.variants.find(
     (candidate) => candidate.variant === variant
   );
+  const form = resolveClimateRenderForm(signal, renderForm);
+  const formLabel = CLIMATE_RENDER_FORM_LABELS[form];
   const blocks: LegendBlock[] = [
     {
       kind: "ramp",
-      caption: selectedVariant?.label,
+      caption:
+        selectedVariant === undefined
+          ? formLabel
+          : `${selectedVariant.label} · ${formLabel}`,
       stops: definition.bands.map((band) => ({ color: band.color, label: band.label })),
     },
   ];
-  // The three soil-wetness signals cover 4 of the lane's 397 cells. A ramp with no note would
-  // let an almost-blank map read as an outage rather than as the pilot it is.
+  // The three soil-wetness signals are measured on part of the lattice. A ramp with no note
+  // would let an almost-blank map read as an outage rather than as the pilot it is.
   if (definition.coverageNote !== null) {
     blocks.push({ kind: "note", text: definition.coverageNote });
   }
@@ -550,8 +570,16 @@ export function layerLegendSpec(
   if (toggleId === "soil-vpd") {
     return soilFieldLegendSpec("vpd", context.soilFieldDepth.vpd);
   }
-  if (toggleId === "climate-field") {
-    return climateFieldLegendSpec(context.climateFieldSignal, context.climateFieldVariant);
+  // Nine toggles resolve through one branch rather than nine string comparisons: the toggle id
+  // carries its signal, so this cannot fall out of step with the registry the way a hand-listed
+  // set of nine `if`s would when a tenth signal lands.
+  const climateSignal = climateFieldSignalForToggle(toggleId);
+  if (climateSignal !== null) {
+    return climateFieldLegendSpec(
+      climateSignal,
+      context.climateFieldVariant,
+      context.climateRenderForms[climateSignal]
+    );
   }
   return STATIC_LAYER_LEGENDS[toggleId] ?? null;
 }

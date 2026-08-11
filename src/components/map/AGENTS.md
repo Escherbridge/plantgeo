@@ -440,32 +440,84 @@ from the global time slider, as "One time control, projected per layer" above re
 
 ## §climate-field
 
-`ClimateFieldLayer` draws the NASA POWER lane the same way `SoilFieldLayer` draws ERA5-Land —
-one geojson source, one `fill`, one `line`, plain MapLibre rather than deck.gl — with three
-differences worth knowing before editing it.
+**Rewritten 2026-08-10.** This section described one `climate-field` toggle drawing one of nine
+signals at a time, chosen by a picker in the dock. That toggle is gone. Each NASA POWER signal
+now owns a registry row, a switch, an opacity, a time slider and a render form, and
+`ClimateFieldLayers` mounts one `ClimateFieldLayer` per signal.
 
-**One mounted instance for nine signals**, where the soil fields get one instance per measure.
-Moisture and temperature are two measurements of the same ground a reader may want side by
-side; air temperature and precipitation are nine answers to "what was the weather", only one
-of which can be painted over a cell at a time. So `climate-field` is one registry toggle with
-a signal picker in the dock's Climate section, and nine sources would each hold a stale copy
-of the same lattice.
+**Why nine rows.** The old note argued for one toggle on the grounds that the nine signals are
+"nine answers to *what was the weather*, only one of which can be painted over a cell at a
+time." That is true of a **filled** field and is now handled by `renderForms`, not by hiding
+eight signals. What the argument missed is that one toggle carries one `warehouseLayerName`,
+therefore one capability, therefore **one axis** — and that axis was computed in
+`getSliderCapabilities` over all eleven of the lane's `signal_name`s unioned together. The
+four-cell soil-wetness pilot was published with the 397-cell air-temperature field's earliest
+day, latest day and gap list. Every day its slider offered was a day *some* signal had
+published, which is not a claim anybody was making. Nine rows is what makes each axis describe
+its own signal.
 
-**The fill colour is written on update, not only at add time.** The ramp is per SIGNAL and one
-instance switches between nine of them in place; `addLayers` short-circuits on an existing
-layer, so without the `setPaintProperty("fill-color", …)` in the update effect a signal switch
-would repaint nothing and leave the previous signal's ramp over the new values. The soil layer
-does not need this because its measure is fixed for the life of the instance.
+**Render forms are what make nine rows composable.** Nine fills over the same 397 cells is one
+visible field and eight buried under it, with the group header counting "3 of 9" while the map
+shows one. So a row picks a form as well as a day — `field` (one square per measured cell),
+`isoline` (dissolved isobands drawn as **boundaries only**, no fill), `symbol` (one point per
+cell, sized and coloured by value). A wash, contours across it and points above them compose
+the way a printed weather chart does. Only air temperature and the three soil-wetness pilots
+default to `field`; the rest default to contours or points so a reader switching several on
+gets a readable composite without touching a control.
 
-**The outline opacity is a scalar, not a `case`.** Every feature this lane serves is an
+**Two forms are withheld, and the withholding is the point.** `isoline` is absent from
+`precipitation` — a contour asserts the field varies smoothly between the samples it passes
+through, and daily rainfall does not; one 55 km square is wet and its neighbour dry. It is
+absent from all three soil-wetness signals for the harder version of the same problem: they are
+a pilot on part of the lattice, so contouring them interpolates a continuous field across ground
+the lane never measured. `resolveClimateRenderForm` enforces this on **both** sides — the client
+before it asks and the server before it answers — so a stale store entry or a hand-made request
+degrades to the signal's default instead of drawing the one form that would lie.
+
+**Geometry comes from the server, per form.** `getPublishedClimateField` emits cell polygons,
+cell centroids or dissolved isobands off a single read. The contouring runs server-side, in
+`climateFieldIsolineFeatures`, for the reason `src/lib/geo/AGENTS.md` §isobands gives for the
+soil field — `ST_Contour` needs `postgis_raster`, which is not installed, and contouring in the
+browser is the client-side aggregation the repo rule forbids. Unlike the soil field it needs no
+SQL aggregation function: the NASA POWER cells already **are** a regular 0.5° lattice, so their
+centroids feed `buildIsobands` directly. Isoband features carry `aggregated: true`; cell
+features carry `false`.
+
+**Ids are derived from the signal, never module constants.** Two rows can be on at once showing
+two different days, so `climate-field` as a fixed `SOURCE_ID` would have them overwrite each
+other. `layerIdsFor(signal)` owns every id one instance uses.
+
+**A form change rebuilds; it does not repaint.** The three forms are different MapLibre layer
+types over different geometry, so `renderForm` is a dependency of the mount effect rather than
+something `setPaintProperty` can apply. `removeLayers` tears down **every** form's ids, not just
+the current one — otherwise a switch from filled to contours leaves the old wash under the new
+lines.
+
+**The outline opacity is a scalar, not a `case`.** Every feature the `field` form serves is an
 unaggregated cell, so there is no isoband contour to suppress — the `["case", …, 0, 0.25]`
 expression in the two soil-field outlines has nothing to guard here, and this layer is
 therefore *not* one of the three data-driven-opacity layers listed under "Opacity is a
 multiplier" above. It still goes through `scaleOpacityValue`, so the multiplier rule has one
-implementation rather than two.
+implementation rather than two. Contours and points are drawn nearer full strength than a wash:
+both are thin marks that must stay legible over whatever is beneath them.
 
-The signal picker in `ClimateDetails` is a **signal**, not a second clock, for the same reason
-the soil depth selector is not one.
+**Wind has no direction, and no barb may be invented for it.** The NASA POWER backfill requests
+eight parameters — `ALLSKY_SFC_SW_DWN, PRECTOTCORR, RH2M, T2M, T2MDEW, T2M_MAX, T2M_MIN, WS2M`
+— and `WD2M` is not among them, so the warehouse holds a daily mean *speed* with no bearing
+anywhere. Wind speed is a scalar here and is drawn as one.
+
+**`ClimateDetails` is a report, not a picker.** It renders one section per switched-on signal,
+each with that signal's form control, its coverage note and its band table. The form control is
+a **form**, and the air-temperature statistic is a **statistic** — neither is a second clock,
+for the same reason the soil depth selector is not one.
+
+**The pilot coverage note carries no numbers.** It read "Pilot coverage: 4 of the lane's 397
+cells carry this signal" until 2026-08-10 — a figure measured against production on 2026-08-08
+and frozen into the client bundle. The pilot then grew, and the panel rendered that sentence
+directly above the live "267 measured 0.5° cells drawn for 2026-08-06" in the same card. The
+constant now states the *kind* of coverage; the counted sentence is composed from `cellCount`
+and `latticeCellCount`, both measured on the request that drew the cells. A denominator that is
+not measured beside its numerator will always eventually lie.
 
 ## §weather
 

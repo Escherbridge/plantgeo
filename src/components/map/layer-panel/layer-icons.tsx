@@ -4,10 +4,12 @@ import {
   BarChart3,
   Bell,
   Building2,
+  CloudRain,
   CloudSun,
   Droplets,
   Flame,
   FlameKindling,
+  Gauge,
   Layers,
   Leaf,
   Mountain,
@@ -15,6 +17,7 @@ import {
   Search,
   ShieldAlert,
   Sprout,
+  Sun,
   SunMoon,
   Thermometer,
   Users,
@@ -41,6 +44,12 @@ const LAYER_ICON_COMPONENTS: Record<LayerIconName, LucideIcon> = {
   wind: Wind,
   "radio-tower": RadioTower,
   "cloud-sun": CloudSun,
+  // The three added with the nine climate rows on 2026-08-10. Nine rows in one dock group are
+  // told apart by their glyphs before their labels are read, so precipitation, humidity and
+  // solar radiation each got their own rather than sharing the section's cloud.
+  "cloud-rain": CloudRain,
+  sun: Sun,
+  gauge: Gauge,
   leaf: Leaf,
   mountain: Mountain,
   layers: Layers,

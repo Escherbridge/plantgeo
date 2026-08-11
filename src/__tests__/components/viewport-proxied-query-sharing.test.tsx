@@ -6,7 +6,7 @@ import { observable } from "@trpc/server/observable";
 import type { TRPCLink } from "@trpc/client";
 import type maplibregl from "maplibre-gl";
 import { SOIL_FIELD_MEASURE_IDS } from "@/lib/environmental/soil-field";
-import { DEFAULT_CLIMATE_FIELD_SIGNAL } from "@/lib/environmental/climate-field";
+import { CLIMATE_FIELD_SIGNAL_IDS } from "@/lib/environmental/climate-field";
 import { MapProvider } from "@/lib/map/map-context";
 import { trpc } from "@/lib/trpc/client";
 import { useMapStore } from "@/stores/map-store";
@@ -48,21 +48,51 @@ const panelRegistry = vi.hoisted(
 );
 
 /**
- * `next/dynamic` resolves to the real details region for the two under test and to nothing for
- * everything else: the map sub-layers want a full MapLibre instance, and the other regions
- * are not what is being measured. The loader's source text is the only handle on identity
- * a stubbed dynamic import has -- the module path survives the transform. The lookup is
- * deferred to render time because `dynamic()` runs while the dock is imported, before
- * the registry below is filled.
+ * The map sub-layers that must really render, because they own a proxied read.
+ *
+ * Only `ClimateFieldLayers`, and only since 2026-08-10. Every other proxied query in this file
+ * is issued by `LayerManager` itself, so stubbing its sub-layers away costs nothing; the nine
+ * NASA POWER rows moved one component down when each signal got its own day, and their reads
+ * moved with them. Stubbing that component out would leave the map registering no climate
+ * observer at all -- and the "one entry, two observers" case would then pass with one observer
+ * short and prove nothing.
+ */
+const layerRegistry = vi.hoisted(
+  () => ({}) as Record<string, (props: Record<string, unknown>) => React.ReactNode>
+);
+
+/**
+ * `next/dynamic` resolves to the real details region for the two under test, to the real
+ * climate layer container, and to nothing for everything else: the remaining map sub-layers
+ * want a full MapLibre instance, and the other regions are not what is being measured. The
+ * loader's source text is the only handle on identity a stubbed dynamic import has -- the
+ * module path survives the transform. The lookup is deferred to render time because
+ * `dynamic()` runs while the dock is imported, before the registries below are filled.
  */
 vi.mock("next/dynamic", () => ({
   default: (loader: unknown) => {
-    const name = /panels[/\\](\w+)/.exec(String(loader))?.[1] ?? null;
-    return function DynamicPanelUnderTest(props: Record<string, unknown>) {
-      const Panel = name === null ? undefined : panelRegistry[name];
-      return Panel ? <Panel {...props} /> : null;
+    const source = String(loader);
+    const panelName = /panels[/\\](\w+)/.exec(source)?.[1] ?? null;
+    const layerName = /layers[/\\](\w+)/.exec(source)?.[1] ?? null;
+    return function DynamicComponentUnderTest(props: Record<string, unknown>) {
+      const Component =
+        (panelName === null ? undefined : panelRegistry[panelName]) ??
+        (layerName === null ? undefined : layerRegistry[layerName]);
+      return Component ? <Component {...props} /> : null;
     };
   },
+}));
+
+/**
+ * The leaf that actually talks to MapLibre, stubbed to nothing.
+ *
+ * `ClimateFieldLayers` is what this file needs to run -- it is where the nine per-signal reads
+ * are issued -- and it touches no map at all; it renders one `ClimateFieldLayer` per signal and
+ * those are what call addSource/addLayer against a style the fake map here does not have.
+ * Stubbing the leaf keeps the queries real and the MapLibre calls out of it.
+ */
+vi.mock("@/components/map/layers/ClimateFieldLayer", () => ({
+  ClimateFieldLayer: () => null,
 }));
 
 vi.mock("@/hooks/useFireData", () => ({
@@ -77,6 +107,7 @@ vi.mock("@/hooks/useFireData", () => ({
 
 import LayerManager from "@/components/map/LayerManager";
 import { LayerPanel } from "@/components/map/layer-panel/LayerPanel";
+import { ClimateFieldLayers } from "@/components/map/layers/ClimateFieldLayers";
 import { ClimateDetails } from "@/components/panels/ClimateDetails";
 import { SoilDetails } from "@/components/panels/SoilDetails";
 import { WaterDetails } from "@/components/panels/WaterDetails";
@@ -88,6 +119,13 @@ panelRegistry.SoilDetails = function SoilDetailsAdapter(props) {
 };
 panelRegistry.WaterDetails = function WaterDetailsAdapter(props) {
   return <WaterDetails {...(props as unknown as React.ComponentProps<typeof WaterDetails>)} />;
+};
+layerRegistry.ClimateFieldLayers = function ClimateFieldLayersAdapter(props) {
+  return (
+    <ClimateFieldLayers
+      {...(props as unknown as React.ComponentProps<typeof ClimateFieldLayers>)}
+    />
+  );
 };
 panelRegistry.ClimateDetails = function ClimateDetailsAdapter(props) {
   return (
@@ -327,37 +365,68 @@ describe("viewport-proxied feeds are fetched once for the map and its dock secti
     ).toEqual(new Set(activeMeasures));
   });
 
-  // The NASA POWER field, keyed on three inputs rather than the soil field's five: it has one
-  // serving tier, so `zoom` is deliberately absent from the key and `depth` has no analogue.
-  // The sharing hazard is the same one, though -- the section describing the field must key
-  // its read exactly as the map drawing it does.
-  it("gives the climate field one query entry, one request and one set of options", async () => {
-    useMapStore.setState({ activeLayers: ["climate-field"] });
+  /**
+   * The NASA POWER lane, keyed on four inputs rather than the soil field's five: it has one
+   * serving tier, so `zoom` is deliberately absent from the key and `depth` has no analogue.
+   * The sharing hazard is the same one -- the section describing a signal must key its read
+   * exactly as the map drawing it does.
+   *
+   * Two signals switched on rather than one, because the sharing question got harder when the
+   * lane split into nine rows on 2026-08-10. Each signal is its own layer with its own day and
+   * its own form, so the map now issues one read PER DRAWN SIGNAL; what must not happen is a
+   * second entry per signal, which is what a section deriving its own bbox or its own day would
+   * produce.
+   *
+   * The same registered-is-not-fetched shape the soil field asserts above: the map registers a
+   * key for every signal it knows, drawn or not, because a disabled observer still registers --
+   * and that is exactly what makes a divergent bbox or day visible here even for a row nobody
+   * has switched on. The DRAWN signals are the ones that carry two observers and cost a request.
+   */
+  it("gives each drawn climate signal one query entry, one request and one set of options", async () => {
+    const drawnSignals = ["air-temperature", "precipitation"];
+    useMapStore.setState({
+      activeLayers: drawnSignals.map((signal) => `climate-${signal}`),
+    });
     openDockAt("climate");
 
     const queryClient = await renderMapAndDock();
 
     await settle(queryClient);
 
-    const entries = cacheEntriesFor(queryClient, "getClimateField");
-    // One entry, not one per reader: the map and the section derive bbox, day and signal from
-    // the same three sources.
-    expect(entries).toHaveLength(1);
-    expect(entries[0].observers).toHaveLength(2);
-    expect(new Set(entries[0].observers.map((o) => o.options.staleTime))).toEqual(
-      new Set([60 * 60 * 1000])
-    );
-    expect(new Set(entries[0].observers.map((o) => o.options.retry))).toEqual(new Set([1]));
-    expect(operationsFor("environmental.getClimateField")).toHaveLength(1);
+    /** The signal a cache entry was keyed on, read off the key react-query actually built. */
+    const signalOf = (entry: { queryKey: unknown }) =>
+      (JSON.parse(JSON.stringify(entry.queryKey))[1]?.input as { signal?: string })?.signal;
 
-    const input = operationsFor("environmental.getClimateField")[0].input as {
-      signal?: string;
-      zoom?: number;
-    };
-    expect(input.signal).toBe(DEFAULT_CLIMATE_FIELD_SIGNAL);
+    const entries = cacheEntriesFor(queryClient, "getClimateField");
+    // One key per signal the dock knows about, never one per reader.
+    expect(entries).toHaveLength(CLIMATE_FIELD_SIGNAL_IDS.length);
+    expect(new Set(entries.map(signalOf))).toEqual(new Set(CLIMATE_FIELD_SIGNAL_IDS));
+
+    for (const entry of entries) {
+      const signal = signalOf(entry);
+      // Two observers -- the map's layer and the section's report -- on the drawn signals'
+      // keys; one, the map's own disabled observer, on the seven that are off. A section that
+      // derived its own bbox or its own day would show up here as a drawn signal with one.
+      expect(entry.observers, signal).toHaveLength(
+        drawnSignals.includes(signal ?? "") ? 2 : 1
+      );
+      expect(new Set(entry.observers.map((o) => o.options.staleTime))).toEqual(
+        new Set([60 * 60 * 1000])
+      );
+      expect(new Set(entry.observers.map((o) => o.options.retry))).toEqual(new Set([1]));
+    }
+
+    const operations = operationsFor("environmental.getClimateField");
+    const inputs = operations.map(
+      (operation) => operation.input as { signal?: string; zoom?: number }
+    );
+    // One request per DRAWN signal, and none for the seven that are off, however many keys
+    // are registered above.
+    expect(operations).toHaveLength(drawnSignals.length);
+    expect(new Set(inputs.map((input) => input.signal))).toEqual(new Set(drawnSignals));
     // A zoom in the key would split one answer into one entry per zoom level for a lane that
     // serves the same cells at every zoom.
-    expect(input.zoom).toBeUndefined();
+    for (const input of inputs) expect(input.zoom).toBeUndefined();
   });
 
   /**

@@ -90,13 +90,23 @@ export interface MetricAtDateCollection extends GeoJSON.FeatureCollection {
  *
  * Every name here is deliberately distinct from every `geo.layers.name`: one capability list
  * is keyed by `layerName`, so a collision would publish two rows a lookup cannot tell apart.
+ *
+ * The NASA POWER lane's streams are NOT here, and their absence is deliberate rather than an
+ * omission. It published one `climate-field` stream for all nine signals until 2026-08-10, and
+ * that single axis was computed over every one of the lane's eleven `signal_name`s unioned --
+ * so the soil-wetness pilot, measured on a fraction of the lattice, was handed the same
+ * `latestObservedDate`, the same gap list and the same scrubbable days as the full-lattice air
+ * temperature field. There are now nine streams, one per signal, and they are FORMED from the
+ * signal id by `climateFieldStreamName` in src/lib/environmental/climate-field.ts rather than
+ * listed: nine hand-typed constants is nine chances to publish a name no capability answers
+ * to. They cannot collide with a `geo.layers.name` structurally -- no row is named
+ * `climate-field-*` -- which is the same guarantee this record gives by inspection.
  */
 export const SLIDER_STREAM_LAYER_NAMES = {
   drought: "drought-areas",
   soilMoisture: "soil-field-moisture",
   soilTemperature: "soil-field-temperature",
   soilVapourPressureDeficit: "soil-field-vpd",
-  climateField: "climate-field",
 } as const;
 
 /** One of the non-geo.features stream names above. */
