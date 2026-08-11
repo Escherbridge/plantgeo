@@ -66,6 +66,15 @@
 --   feature.status = 'published'
 --     Only published features are servable, so only published features are counted. A layer
 --     holding nothing but pending_review rows is empty from the map's point of view.
+--
+--   feature.geometry_id is not null
+--     Only rows linked into the geometry dimension. This mirrors the two canonical censuses this
+--     query otherwise duplicates -- sql/ingest/observed_layer_days.sql and
+--     sql/ingest/feature_observed_days.sql -- which both gate on this same predicate for the same
+--     reason: an unlinked row has no shape the time-aware serving path can place, so the map's day
+--     slider can never reach it. Without this predicate the census here counts days the slider
+--     cannot actually offer, and /ops/backfill over-reports coverage relative to what a person
+--     scrubbing the map will see.
 
 with signal_days as (
     select
@@ -112,6 +121,7 @@ layer_days as (
     inner join geo.features as feature
         on feature.layer_id = layer.id
         and feature.status = 'published'
+        and feature.geometry_id is not null
     where geo.feature_observation_day(feature.properties) is not null
     group by layer.name, geo.feature_observation_day(feature.properties)
 ),

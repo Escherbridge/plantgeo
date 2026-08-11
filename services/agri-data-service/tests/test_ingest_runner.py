@@ -45,6 +45,9 @@ EXPECTED_VERBS = (
     # `emit`/`finish` fail a run when any source failed, which is wrong for a slice that legitimately
     # ends with work remaining. Their own contract is pinned in tests/test_ingest_commands_jobs.py.
     "jobs-plan-lane",
+    # Plans the windows a gap census says are owed, including reopening a hole inside an already
+    # `succeeded` run -- the inverse of `jobs-reconcile-lane`, and the verb that closes the loop.
+    "jobs-plan-gaps",
     "jobs-run",
     "jobs-status",
     "jobs-reconcile-lane",

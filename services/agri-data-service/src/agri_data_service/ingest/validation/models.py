@@ -11,6 +11,7 @@ from agri_data_service.ingest.archive_walk import archive_lane_definition_name
 from agri_data_service.ingest.lanes import FIRMS_ARCHIVE_LANE, STREAMFLOW_ARCHIVE_LANE
 from agri_data_service.ingest.validation.constants import (
     ARCHIVE_LANE_DEFINITION_NAMES,
+    DAILY_PUBLICATION_CADENCE_DAYS,
     MAX_LANE_STATE_ROWS,
     MAX_OBSERVED_DAY_ROWS,
     MAX_REPORTED_GAPS,
@@ -154,6 +155,24 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
     StreamDefinition(stream="historical_fire_data", kind="reference", store="historical_table"),
     StreamDefinition(stream="historical_water_drought", kind="reference", store="historical_table"),
 )
+
+
+def stream_definition_for_lane(definition_name: str) -> StreamDefinition | None:
+    """The catalog entry whose declared lanes include this job definition, or None when no stream claims it."""
+    return next((entry for entry in DEFAULT_STREAM_DEFINITIONS if definition_name in entry.lane_names), None)
+
+
+def lane_publication_cadence_days(definition_name: str) -> int:
+    """The cadence the lane's target stream declares, defaulting to daily when the catalog claims no lane."""
+    # DAILY IS THE SAFE DEFAULT AND THE DIRECTION MATTERS. A shorter cadence than the stream really
+    # publishes on demands MORE coverage of a backfill window, so an unclaimed lane over-reports gaps and
+    # re-walks days it did not have to; the opposite mistake would let a window settle over days nothing
+    # ever published for. `lane_names` is derived from `archive_lane_definition_name`, so this lookup keys
+    # on the single producer of a definition name rather than on a second spelling of it.
+    definition = stream_definition_for_lane(definition_name)
+    if definition is None or definition.publication_cadence_days is None:
+        return DAILY_PUBLICATION_CADENCE_DAYS
+    return definition.publication_cadence_days
 
 
 # ---------------------------------------------------------------------------------------------------------------

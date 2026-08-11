@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
@@ -18,6 +17,7 @@ from agri_data_service.ingest.identity import (
     format_javascript_fixed,
     format_javascript_timestamp,
 )
+from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import (
     UNCONFIGURED_BBOX_REASON,
     format_javascript_number,
@@ -47,10 +47,16 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 USGS_STREAMFLOW_SOURCE: Final = "usgs-streamflow"
-USGS_CHANNEL: Final = "layer:water-gauges"
 USGS_PROPERTY_SOURCE: Final = "USGS NWIS"
-WATER_GAUGES_LAYER_VARIABLE: Final = "WATER_GAUGES_LAYER_ID"
-DEFAULT_WATER_GAUGES_LAYER_NAME: Final = "water-gauges"
+
+WATER_GAUGES_LAYER: Final = LayerBinding(
+    variable="WATER_GAUGES_LAYER_ID",
+    default="water-gauges",
+    channel="layer:water-gauges",
+)
+USGS_CHANNEL: Final = WATER_GAUGES_LAYER.channel
+WATER_GAUGES_LAYER_VARIABLE: Final = WATER_GAUGES_LAYER.variable
+DEFAULT_WATER_GAUGES_LAYER_NAME: Final = WATER_GAUGES_LAYER.default
 
 STREAMFLOW_QUERY_TEMPLATE: Final = (
     "https://waterservices.usgs.gov/nwis/iv/?format=json&bBox={tile}&parameterCd=00060&siteType=ST&siteStatus=active"
@@ -133,7 +139,7 @@ DECLINING_QUALIFIER_CODE: Final = "e"
 
 def resolve_water_gauges_layer_name() -> str:
     """Read WATER_GAUGES_LAYER_ID at call time so a cron environment change needs no restart."""
-    return os.environ.get(WATER_GAUGES_LAYER_VARIABLE, "").strip() or DEFAULT_WATER_GAUGES_LAYER_NAME
+    return WATER_GAUGES_LAYER.resolve()
 
 
 def format_tile_ordinate(value: float) -> str:

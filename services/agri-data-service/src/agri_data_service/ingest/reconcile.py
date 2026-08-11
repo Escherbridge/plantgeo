@@ -25,6 +25,13 @@ Three outcomes per window, and only one of them settles anything:
 
 Dry run is the default. An `--apply` that mis-marked windows would recreate the silent hole from the other
 direction, so the report names the span it would settle and samples the windows themselves.
+
+The module also runs that measurement BACKWARDS, as `plan_lane_gaps` (`jobs-plan-gaps`). Settling was only
+ever half a loop: `validate-streams` could see that 2024-03-11 is missing and `reconcile_lane` could only
+ever REMOVE work, so a hole discovered inside an already-succeeded run had no verb that could reopen it.
+Planning gaps maps each missing day onto the lane's OWN floor-anchored grid -- never a second grid -- and
+opens the shard that owns it, reopening one that already succeeded over nothing. Both directions read the
+same day census and the same cadence-aware gap rule, so they cannot disagree about what "missing" means.
 """
 
 from __future__ import annotations
@@ -32,20 +39,31 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal
 
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.ingest.archive_walk import (
+    ARCHIVE_WALK_WORK_ITEM_KIND,
+    PAYLOAD_WALK_GENERATION,
     ArchiveWalkPayloadError,
     ArchiveWindowRequest,
     archive_lane_definition_name,
+    archive_lane_definition_spec,
     archive_lane_run_key,
     archive_source,
+    archive_window_payload,
+    archive_window_shard_key,
 )
+from agri_data_service.ingest.lanes import lane_windows
+from agri_data_service.ingest.validation.completeness import missing_publication_days
+from agri_data_service.ingest.validation.constants import DAILY_PUBLICATION_CADENCE_DAYS
+from agri_data_service.ingest.validation.models import lane_publication_cadence_days
+from agri_data_service.ingest.validation.queries import OBSERVED_DAYS_FOR_LAYER
 from agri_data_service.ingest.writer import resolve_layer_id
+from agri_data_service.jobs import JobWorkItemSpec, ensure_job_definition, open_job_run
 from agri_data_service.jobs.lease import apply_statement_timeout, canonical_json, fetch_rows, required_column
 from agri_data_service.jobs.worker import refresh_job_run_rollup
 
@@ -54,16 +72,32 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from agri_data_service.ingest.lanes import BackfillLane
+    from agri_data_service.ingest.lanes import BackfillLane, LaneWindow
     from agri_data_service.ingest.source import HistoryWindow
 
 CoverageVerdict = Literal["covered", "partial", "absent"]
 
-# Mirrors `validation._FEATURE_OBSERVED_DAYS` exactly, and deliberately so: a window is "landed" here only
-# if the completeness report can also see it. The two filters that make the difference are
-# `status = 'published'` and `geometry_id IS NOT NULL` -- readObservationWindows requires both, so a row
-# missing either is drawn on the map but invisible to the time axis. Counting such a row as coverage would
-# mark a window succeeded whose days the slider still cannot reach.
+# What gap planning would do to one window of the lane's grid. Only the first two write anything; the rest
+# are named outcomes rather than a silent skip, because "this gap day sits under a dead letter" and "this
+# gap day sits under a window nobody has claimed" are different operator problems.
+GapWindowAction = Literal["open", "reopen", "already_queued", "held", "dead_lettered", "cancelled"]
+
+GAP_WINDOW_ACTIONS: Final[tuple[GapWindowAction, ...]] = (
+    "open",
+    "reopen",
+    "already_queued",
+    "held",
+    "dead_lettered",
+    "cancelled",
+)
+
+# The report and this module now execute ONE statement, `sql/ingest/observed_days.sql`, formatted for one
+# layer instead of all of them; `OBSERVED_DAYS_FOR_LAYER` is imported rather than re-loaded. A window is
+# "landed" here only if the completeness report can also see it, and that is no longer a promise two files
+# make to each other -- it is the same SQL. The filters that carry it are `status = 'published'` and
+# `geometry_id IS NOT NULL`: readObservationWindows requires both, so a row missing either is drawn on the
+# map but invisible to the time axis, and counting it as coverage would mark a window succeeded whose days
+# the slider still cannot reach.
 PUBLISHED_FEATURE_STATUS: Final = "published"
 
 # The error direction is not symmetric and this filter is chosen for that reason. Under-counting coverage
@@ -113,6 +147,18 @@ HELD_WORK_ITEM_STATES: Final[frozenset[str]] = frozenset({"leased", "running"})
 # `ArchiveWindowRequest.from_payload` reads only the keys it names and ignores the rest, so the marker is
 # inert to the handler while staying queryable as `payload -> 'reconciled_from_observed_coverage'`.
 RECONCILIATION_MARKER_KEY: Final = "reconciled_from_observed_coverage"
+
+# The same idea running the other way: what a REOPENED window carries, so the row itself says why it went
+# back to `queued` and which days it was reopened over. Queryable as `payload -> 'reopened_from_observed_gaps'`.
+GAP_PLAN_MARKER_KEY: Final = "reopened_from_observed_gaps"
+
+# The one work-item state gap planning may convert. `succeeded` and nothing else: `queued`/`retry_wait`/
+# `deferred` are already open, `leased`/`running` are held by a live fence, `dead_letter` is evidence, and
+# `cancelled` is an operator's decision. All four are reported instead. The gate is repeated inside
+# `sql/ingest/reopen_gap_windows.sql`, because a cron tick can claim a window between the read and the write.
+REOPENABLE_WORK_ITEM_STATE: Final = "succeeded"
+
+CANCELLED_WORK_ITEM_STATE: Final = "cancelled"
 
 _ONE_MICROSECOND: Final = timedelta(microseconds=1)
 
@@ -251,12 +297,13 @@ def window_days(window: HistoryWindow) -> tuple[date, ...]:
     return tuple(first + timedelta(days=offset) for offset in range((last - first).days + 1))
 
 
-def window_coverage(
+def window_coverage(  # noqa: PLR0913 - the shard's four identifying values plus two keyword-only bounds
     shard_key: str,
     status: str,
     window: HistoryWindow,
     observed: frozenset[date],
     *,
+    publication_cadence_days: int = DAILY_PUBLICATION_CADENCE_DAYS,
     max_reported_missing_days: int = MAX_REPORTED_WINDOWS,
 ) -> WindowCoverage:
     """Measure one window against the observed days, refusing to call anything but full coverage landed.
@@ -267,10 +314,23 @@ def window_coverage(
     write the same silent hole the bash driver wrote, from the other direction -- and unlike the bash there
     would be no failure file to contradict it. So a partial window stays queued and the walk re-fetches it;
     the days that already landed cost nothing to re-walk, because the writer's diff rejects them.
+
+    The day comparison itself is NOT implemented here. It is `validation.completeness.missing_publication_days`,
+    the same cadence-aware walk `validate-streams` reports gaps with, so the report and the settler cannot
+    drift into two different meanings of "missing". A second, cadence-blind implementation lived here until
+    2026-08-10 and was a strictly weaker special case of that one: correct only while every lane's stream
+    published daily, and silently wrong -- in the settling direction -- for the first weekly or five-day
+    lane anyone registered. Both lanes registered today declare a daily cadence, so this substitution
+    changes no current behaviour; it removes the trap rather than a bug. See ingest/AGENTS.md, "One gap rule".
     """
     days = window_days(window)
-    missing = tuple(day for day in days if day not in observed)
-    observed_count = len(days) - len(missing)
+    missing = missing_publication_days(
+        (day for day in days if day in observed),
+        expected_first_day=days[0],
+        through_day=days[-1],
+        publication_cadence_days=publication_cadence_days,
+    )
+    observed_count = sum(1 for day in days if day in observed)
     if not missing:
         verdict: CoverageVerdict = "covered"
     elif observed_count == 0:
@@ -332,11 +392,11 @@ def reconciliation_marker(coverage: WindowCoverage, *, layer_reference: str) -> 
 # header records that divergence. The "no colon in a comment" rule now lives in sql/AGENTS.md and in every file.
 # ---------------------------------------------------------------------------------------------------------------
 
-_OBSERVED_LAYER_DAYS: Final = text(load_query_sql("ingest/observed_layer_days.sql"))
-
 _LANE_RUN_WINDOWS: Final = text(load_query_sql("ingest/lane_run_windows.sql"))
 
 _MARK_WINDOWS_RECONCILED: Final = text(load_query_sql("ingest/mark_windows_reconciled.sql"))
+
+_REOPEN_GAP_WINDOWS: Final = text(load_query_sql("ingest/reopen_gap_windows.sql"))
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -349,7 +409,7 @@ async def observed_layer_days(session: AsyncSession, layer_reference: str) -> fr
     layer_id = await resolve_layer_id(session, layer_reference)
     rows = await fetch_rows(
         session,
-        _OBSERVED_LAYER_DAYS,
+        OBSERVED_DAYS_FOR_LAYER,
         {
             "layer_id": layer_id,
             "published_status": PUBLISHED_FEATURE_STATUS,
@@ -411,6 +471,7 @@ async def reconcile_lane(
     await apply_statement_timeout(session)
     resolved_layer = layer_reference if layer_reference is not None else archive_source(lane).layer_reference()
     observed = await observed_layer_days(session, resolved_layer)
+    cadence = lane_publication_cadence_days(archive_lane_definition_name(lane))
     run_key = archive_lane_run_key(lane)
     job_run_id, rows = await _read_lane_windows(session, run_key)
 
@@ -427,6 +488,7 @@ async def reconcile_lane(
             status,
             _window_request(row).window,
             observed,
+            publication_cadence_days=cadence,
             max_reported_missing_days=max_reported_windows,
         )
         if status in HELD_WORK_ITEM_STATES:
@@ -513,22 +575,434 @@ async def _mark_windows_reconciled(
     return len(rows)
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# Gap planning: the same measurement, run backwards. Everything above turns "the data is there" into
+# `succeeded`; everything below turns "the data is NOT there" into a claimable window. Pure logic first,
+# for the same reason: the SQL only lists days and windows.
+# ---------------------------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class GapWindow:
+    """One window of the lane's own grid that a missing day landed in, and what planning would do to it."""
+
+    shard_key: str
+    lane_window: LaneWindow
+    action: GapWindowAction
+    existing_status: str | None
+    missing_days: tuple[date, ...]
+    omitted_missing_days: int
+
+    @property
+    def first_day(self) -> date:
+        """The window's inclusive first UTC day."""
+        return window_days(self.lane_window.window)[0]
+
+    @property
+    def last_day(self) -> date:
+        """The window's inclusive last UTC day; a window ending at midnight does not own that day."""
+        return window_days(self.lane_window.window)[-1]
+
+    def to_summary(self) -> dict[str, object]:
+        """Render one gap window: which shard, what state it is in, and which of its days are missing."""
+        summary: dict[str, object] = {
+            "shard_key": self.shard_key,
+            "grid_index": self.lane_window.grid_index,
+            "first_day": self.first_day.isoformat(),
+            "last_day": self.last_day.isoformat(),
+            "action": self.action,
+            "existing_status": self.existing_status,
+            "missing_days": [day.isoformat() for day in self.missing_days],
+        }
+        if self.omitted_missing_days:
+            summary["omitted_missing_days"] = self.omitted_missing_days
+        return summary
+
+
+@dataclass(frozen=True, slots=True)
+class LaneGapPlan:
+    """What one lane's layer is missing, which windows of its grid own those days, and what was opened."""
+
+    lane: str
+    definition: str
+    run_key: str
+    job_run_id: uuid.UUID | None
+    layer_reference: str
+    applied: bool
+    publication_cadence_days: int
+    floor_day: date
+    through_day: date | None
+    observed_day_count: int
+    missing_days: tuple[date, ...]
+    windows: tuple[GapWindow, ...]
+    unplannable_days: tuple[date, ...]
+    opened_count: int
+    reopened_count: int
+
+    def windows_for(self, action: GapWindowAction) -> tuple[GapWindow, ...]:
+        """Every gap window this plan would take one particular action on, oldest first."""
+        return tuple(window for window in self.windows if window.action == action)
+
+    @property
+    def would_open(self) -> int:
+        """Shards this run would create; equal to `opened_count` once `--apply` has run and nothing raced."""
+        return len(self.windows_for("open"))
+
+    @property
+    def would_reopen(self) -> int:
+        """Shards this run would move back to `queued`; equal to `reopened_count` after a clean `--apply`."""
+        return len(self.windows_for("reopen"))
+
+    def to_summary(self, *, max_reported_windows: int = MAX_REPORTED_WINDOWS) -> dict[str, object]:
+        """Render the whole plan as the one JSON line a cron log and an operator both read."""
+        summary: dict[str, object] = {
+            "lane": self.lane,
+            "definition": self.definition,
+            "run_key": self.run_key,
+            "job_run_id": None if self.job_run_id is None else str(self.job_run_id),
+            "layer": self.layer_reference,
+            "applied": self.applied,
+            "state": "applied" if self.applied else "dry_run",
+            "publication_cadence_days": self.publication_cadence_days,
+            "floor_day": self.floor_day.isoformat(),
+            "through_day": None if self.through_day is None else self.through_day.isoformat(),
+            "observed_day_count": self.observed_day_count,
+            "missing_day_count": len(self.missing_days),
+            # The calendar span is reported even when the sample is truncated: "this would plan 2012-01
+            # through 2014-08" is the single fact a human most needs before spending `--apply`.
+            "first_missing_day": self.missing_days[0].isoformat() if self.missing_days else None,
+            "last_missing_day": self.missing_days[-1].isoformat() if self.missing_days else None,
+            "missing_day_sample": [day.isoformat() for day in self.missing_days[:max_reported_windows]],
+            "omitted_missing_days": max(0, len(self.missing_days) - max_reported_windows),
+            "unplannable_day_count": len(self.unplannable_days),
+            "unplannable_day_sample": [day.isoformat() for day in self.unplannable_days[:max_reported_windows]],
+            "would_open": self.would_open,
+            "would_reopen": self.would_reopen,
+            "opened": self.opened_count,
+            "reopened": self.reopened_count,
+            "reopen_rule": _REOPEN_BIAS_NOTE,
+        }
+        for action in GAP_WINDOW_ACTIONS:
+            windows = self.windows_for(action)
+            summary[action] = {
+                "window_count": len(windows),
+                "first_day": windows[0].first_day.isoformat() if windows else None,
+                "last_day": max(window.last_day for window in windows).isoformat() if windows else None,
+                "windows": [window.to_summary() for window in windows[:max_reported_windows]],
+                "omitted_window_count": max(0, len(windows) - max_reported_windows),
+            }
+        return summary
+
+
+# The error direction is not symmetric here either, and it points the opposite way to reconciliation's.
+# Over-planning costs one re-walk of a window that had in fact landed -- minutes, and the writer rejects the
+# unchanged payload anyway. Under-planning leaves the hole exactly where `validate-streams` found it, which
+# is the state this verb exists to end. When in doubt, plan.
+_REOPEN_BIAS_NOTE: Final = (
+    "only a succeeded window is reopened; leased, dead-lettered and cancelled windows are reported, never converted"
+)
+
+
+def map_days_to_grid(
+    lane: BackfillLane,
+    days: Sequence[date],
+    grid: Sequence[LaneWindow],
+) -> tuple[tuple[tuple[LaneWindow, tuple[date, ...]], ...], tuple[date, ...]]:
+    """Place each missing day on the lane's own floor-anchored grid, naming the days no whole window owns."""
+    # THE GRID IS THE PLANNER'S, NOT A SECOND ONE. `lane_windows` builds it; this only inverts the arithmetic
+    # that built it (`floor + grid_index * window_days`) to find which window a day fell in, and then CHECKS
+    # the answer by asking that window for its own days. A day that lands outside the window the arithmetic
+    # chose means the two formulas have drifted, and failing that check loudly beats mis-keying a shard.
+    #
+    # A day with no whole window is normal rather than exceptional: everything above the newest whole window
+    # belongs to the forward hourly cron (see `lane_windows` on why no trailing partial is ever planned), and
+    # everything below the floor is outside what this lane declared it would fill. Both are REPORTED as
+    # unplannable rather than dropped, because "we found a gap and can do nothing about it" is the one answer
+    # an operator must not have to infer from silence.
+    by_index = {window.grid_index: window for window in grid}
+    owned: dict[int, list[date]] = {}
+    unplannable: list[date] = []
+    floor_day = lane.floor.date()
+    for day in days:
+        grid_index = (day - floor_day).days // lane.window_days
+        candidate = by_index.get(grid_index) if grid_index >= 0 else None
+        if candidate is None or day not in window_days(candidate.window):
+            unplannable.append(day)
+            continue
+        owned.setdefault(grid_index, []).append(day)
+    mapped = tuple((by_index[grid_index], tuple(sorted(found))) for grid_index, found in sorted(owned.items()))
+    return mapped, tuple(unplannable)
+
+
+def gap_window_action(existing_status: str | None) -> GapWindowAction:
+    """Decide what planning may do to the shard a missing day landed on, from the state that shard is in."""
+    if existing_status is None:
+        return "open"
+    if existing_status == REOPENABLE_WORK_ITEM_STATE:
+        return "reopen"
+    if existing_status in HELD_WORK_ITEM_STATES:
+        return "held"
+    if existing_status == DEAD_LETTER_WORK_ITEM_STATE:
+        return "dead_lettered"
+    if existing_status == CANCELLED_WORK_ITEM_STATE:
+        return "cancelled"
+    # `queued`, `retry_wait`, `deferred`. Already claimable; planning them again would only reset progress.
+    return "already_queued"
+
+
+def gap_reopen_marker(
+    window: GapWindow,
+    *,
+    layer_reference: str,
+    publication_cadence_days: int,
+) -> dict[str, object]:
+    """The record a reopened window carries on its own payload, stating what was measured rather than asserted."""
+    return {
+        "layer": layer_reference,
+        "publication_cadence_days": publication_cadence_days,
+        "first_day": window.first_day.isoformat(),
+        "last_day": window.last_day.isoformat(),
+        "missing_days": [day.isoformat() for day in window.missing_days],
+        "omitted_missing_days": window.omitted_missing_days,
+        "previous_status": window.existing_status,
+        "tool": "jobs-plan-gaps",
+    }
+
+
+async def plan_lane_gaps(  # noqa: PLR0913 - the lane plus five keyword-only knobs, as `reconcile_lane` has
+    session: AsyncSession,
+    lane: BackfillLane,
+    *,
+    apply_changes: bool = False,
+    end: datetime | None = None,
+    layer_reference: str | None = None,
+    max_reported_missing_days: int = MAX_REPORTED_WINDOWS,
+) -> LaneGapPlan:
+    """Turn the days a lane's layer is missing into claimable windows of that lane's own grid. The caller commits.
+
+    Read-only unless `apply_changes` is set, exactly like `reconcile_lane`, so a dry run that is never
+    committed writes nothing even if a future caller forgets which mode it asked for.
+    """
+    await apply_statement_timeout(session)
+    resolved_layer = layer_reference if layer_reference is not None else archive_source(lane).layer_reference()
+    observed = await observed_layer_days(session, resolved_layer)
+    cadence = lane_publication_cadence_days(archive_lane_definition_name(lane))
+    run_key = archive_lane_run_key(lane)
+    job_run_id, rows = await _read_lane_windows(session, run_key)
+    existing = {required_column(row, "shard_key", str): required_column(row, "status", str) for row in rows}
+
+    grid = lane_windows(lane, end if end is not None else datetime.now(UTC))
+    floor_day = lane.floor.date()
+    if not grid:
+        # Nothing whole below the boundary. A lane planned today at a floor of today owes no window yet, and
+        # reporting an empty plan is the honest answer rather than inventing a partial one.
+        return _empty_gap_plan(lane, run_key, job_run_id, resolved_layer, cadence, floor_day, len(observed))
+
+    # `grid` is newest-first, so its head names the last day any whole window owns. Asking for gaps past that
+    # day would report the forward hourly cron's own territory as this lane's debt.
+    through_day = window_days(grid[0].window)[-1]
+    missing = missing_publication_days(
+        observed,
+        expected_first_day=floor_day,
+        through_day=through_day,
+        publication_cadence_days=cadence,
+    )
+    mapped, unplannable = map_days_to_grid(lane, missing, grid)
+    windows = tuple(
+        GapWindow(
+            shard_key=(shard_key := archive_window_shard_key(lane, lane_window)),
+            lane_window=lane_window,
+            action=gap_window_action(existing.get(shard_key)),
+            existing_status=existing.get(shard_key),
+            missing_days=found[:max_reported_missing_days],
+            omitted_missing_days=max(0, len(found) - max_reported_missing_days),
+        )
+        for lane_window, found in mapped
+    )
+
+    opened_count = 0
+    reopened_count = 0
+    if apply_changes:
+        job_run_id, opened_count, reopened_count = await _apply_gap_plan(
+            session,
+            lane,
+            windows,
+            job_run_id=job_run_id,
+            layer_reference=resolved_layer,
+            publication_cadence_days=cadence,
+        )
+    return LaneGapPlan(
+        lane=lane.name,
+        definition=archive_lane_definition_name(lane),
+        run_key=run_key,
+        job_run_id=job_run_id,
+        layer_reference=resolved_layer,
+        applied=apply_changes,
+        publication_cadence_days=cadence,
+        floor_day=floor_day,
+        through_day=through_day,
+        observed_day_count=len(observed),
+        missing_days=missing,
+        windows=windows,
+        unplannable_days=unplannable,
+        opened_count=opened_count,
+        reopened_count=reopened_count,
+    )
+
+
+def _empty_gap_plan(  # noqa: PLR0913 - one parameter per field the empty plan still has to report honestly
+    lane: BackfillLane,
+    run_key: str,
+    job_run_id: uuid.UUID | None,
+    layer_reference: str,
+    publication_cadence_days: int,
+    floor_day: date,
+    observed_day_count: int,
+) -> LaneGapPlan:
+    """The plan for a lane whose grid holds no whole window yet: nothing owed, nothing measured, nothing done."""
+    return LaneGapPlan(
+        lane=lane.name,
+        definition=archive_lane_definition_name(lane),
+        run_key=run_key,
+        job_run_id=job_run_id,
+        layer_reference=layer_reference,
+        applied=False,
+        publication_cadence_days=publication_cadence_days,
+        floor_day=floor_day,
+        through_day=None,
+        observed_day_count=observed_day_count,
+        missing_days=(),
+        windows=(),
+        unplannable_days=(),
+        opened_count=0,
+        reopened_count=0,
+    )
+
+
+async def _apply_gap_plan(  # noqa: PLR0913 - the session, lane and windows plus three keyword-only values
+    session: AsyncSession,
+    lane: BackfillLane,
+    windows: Sequence[GapWindow],
+    *,
+    job_run_id: uuid.UUID | None,
+    layer_reference: str,
+    publication_cadence_days: int,
+) -> tuple[uuid.UUID | None, int, int]:
+    """Open the shards that do not exist, reopen the ones that succeeded over nothing, then recompute the run."""
+    opened_count = 0
+    to_open = [window for window in windows if window.action == "open"]
+    if to_open:
+        definition = await ensure_job_definition(session, archive_lane_definition_spec(lane))
+        opened = await open_job_run(
+            session,
+            definition,
+            logical_run_key=archive_lane_run_key(lane),
+            work_items=tuple(
+                JobWorkItemSpec(
+                    shard_key=window.shard_key,
+                    kind=ARCHIVE_WALK_WORK_ITEM_KIND,
+                    payload=archive_window_payload(lane, window.lane_window),
+                    # The window's index on the lane's fixed grid, exactly as `archive_lane_work_items`
+                    # assigns it, so a gap-planned shard takes its turn in the same newest-first order and
+                    # never jumps the queue by virtue of having been planned late.
+                    priority=window.lane_window.grid_index,
+                )
+                for window in to_open
+            ),
+            requested_by="agri-cli jobs-plan-gaps",
+            target_partitions={"lane": lane.name, "floor": lane.floor_day},
+        )
+        job_run_id = opened.job_run_id
+        opened_count = opened.added_work_items
+
+    reopened_count = 0
+    to_reopen = [window for window in windows if window.action == "reopen"]
+    if to_reopen and job_run_id is not None:
+        reopened_count = await _reopen_gap_windows(
+            session,
+            job_run_id=job_run_id,
+            lane=lane,
+            windows=to_reopen,
+            layer_reference=layer_reference,
+            publication_cadence_days=publication_cadence_days,
+        )
+    if job_run_id is not None and reopened_count:
+        # `open_job_run` already refreshed the rollup, but a reopen moves a shard OUT of `succeeded` after
+        # that, so the run's counters and its own status have to be recomputed once more. Absolute recompute
+        # rather than an incremental bump, for the reason `_mark_windows_reconciled` gives.
+        await refresh_job_run_rollup(session, job_run_id)
+    return job_run_id, opened_count, reopened_count
+
+
+async def _reopen_gap_windows(  # noqa: PLR0913 - the session plus five keyword-only values the statement binds
+    session: AsyncSession,
+    *,
+    job_run_id: uuid.UUID,
+    lane: BackfillLane,
+    windows: Sequence[GapWindow],
+    layer_reference: str,
+    publication_cadence_days: int,
+) -> int:
+    """Move every succeeded-but-empty window back to `queued` in one statement, with the measurement attached."""
+    reopened = [
+        {
+            "shard_key": window.shard_key,
+            # Rendered to TEXT here and cast back to jsonb inside the statement, the same double hop
+            # `open_job_run` and `_mark_windows_reconciled` both put a payload through.
+            "marker": canonical_json(
+                gap_reopen_marker(
+                    window,
+                    layer_reference=layer_reference,
+                    publication_cadence_days=publication_cadence_days,
+                )
+            ),
+        }
+        for window in windows
+    ]
+    rows = await fetch_rows(
+        session,
+        _REOPEN_GAP_WINDOWS,
+        {
+            "job_run_id": job_run_id,
+            "marker_key": GAP_PLAN_MARKER_KEY,
+            "generation_key": PAYLOAD_WALK_GENERATION,
+            # The lane's OWN declared budget, read through the single producer of the definition spec rather
+            # than re-spelled here, so a shard reopened over a real hole gets the same number of chances the
+            # lane grants any other window rather than whatever its previous pass happened to leave.
+            "attempt_budget": archive_lane_definition_spec(lane).max_attempts,
+            "reopened": json.dumps(reopened, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+        },
+    )
+    return len(rows)
+
+
 __all__ = [
+    "CANCELLED_WORK_ITEM_STATE",
     "DEAD_LETTER_WORK_ITEM_STATE",
+    "GAP_PLAN_MARKER_KEY",
+    "GAP_WINDOW_ACTIONS",
     "HELD_WORK_ITEM_STATES",
     "MAX_LANE_WINDOW_ROWS",
     "MAX_OBSERVED_DAY_ROWS",
     "MAX_REPORTED_WINDOWS",
     "RECONCILABLE_WORK_ITEM_STATES",
     "RECONCILIATION_MARKER_KEY",
+    "REOPENABLE_WORK_ITEM_STATE",
     "CoverageCategory",
     "CoverageVerdict",
+    "GapWindow",
+    "GapWindowAction",
+    "LaneGapPlan",
     "LaneReconciliation",
     "ReconciliationError",
     "ReconciliationScanTooLargeError",
     "WindowCoverage",
     "build_coverage_category",
+    "gap_reopen_marker",
+    "gap_window_action",
+    "map_days_to_grid",
     "observed_layer_days",
+    "plan_lane_gaps",
     "reconcile_lane",
     "reconciliation_marker",
     "window_coverage",

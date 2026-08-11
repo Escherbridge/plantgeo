@@ -50,7 +50,7 @@ from agri_data_service.ingest.mtbs import MTBS_SOURCE, run_mtbs_ingestion_job
 from agri_data_service.ingest.ndvi import NDVI_SOURCE, run_vegetation_ingestion_job
 from agri_data_service.ingest.open_meteo import OPEN_METEO_SOURCE, run_weather_ingestion_job
 from agri_data_service.ingest.realtime import RealtimePublisher
-from agri_data_service.ingest.reconcile import ReconciliationError, reconcile_lane
+from agri_data_service.ingest.reconcile import ReconciliationError, plan_lane_gaps, reconcile_lane
 from agri_data_service.ingest.results import any_job_failed, run_isolated_job
 from agri_data_service.ingest.runner import run_all_ingestion_jobs
 from agri_data_service.ingest.sensors import NWS_SENSOR_SOURCE, nws_sensor_source, run_sensor_ingestion_job
@@ -92,7 +92,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
 
     from agri_data_service.ingest.lanes import BackfillLane
-    from agri_data_service.ingest.reconcile import LaneReconciliation
+    from agri_data_service.ingest.reconcile import LaneGapPlan, LaneReconciliation
     from agri_data_service.ingest.results import IngestionJobResult
     from agri_data_service.ingest.source import IngestionSource
     from agri_data_service.ingest.usdm_history import HistoryBackfillPlan
@@ -1203,6 +1203,79 @@ async def _reconcile_archive_lane(lane: BackfillLane, *, apply_changes: bool) ->
     return reconciliation
 
 
+@click.command("jobs-plan-gaps")
+@click.option("--lane", "lane_name", required=True, help="Backfill lane token; the error names the registered set.")
+@click.option("--floor", default=None, help="Plan into the run planned at this YYYY-MM-DD floor, not the declared one.")
+@click.option("--until", default=None, help="Measure gaps below this YYYY-MM-DD day; defaults to today.")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    default=False,
+    help="Perform the planning; the default is a dry run that writes nothing.",
+)
+def jobs_plan_gaps(lane_name: str, floor: str | None, until: str | None, apply_changes: bool) -> None:
+    """Turn the days a lane's layer is MISSING into claimable windows, reopening one that succeeded over nothing.
+
+    The inverse of `jobs-reconcile-lane`, and the half of the loop that was absent. `validate-streams` finds
+    a gap and exits 0 on it by design; `jobs-reconcile-lane` only ever REMOVES work. Nothing could turn "the
+    report says 2024-03-11 is missing" into "a claimable window exists for 2024-03-11", and `jobs-plan-lane`
+    could not help: it appends whole windows below today, so a hole inside an already-succeeded run had no
+    verb at all. This is that verb.
+
+    DRY RUN BY DEFAULT. Without `--apply` this opens no write transaction and prints what it would plan: how
+    many days are missing, over which calendar span, which windows of the lane's own grid own them, and a
+    sample of those windows with the days that decided each one. Read the span first.
+
+    The grid is the lane's, never a second one. Each missing day is mapped back onto the floor-anchored
+    window that `jobs-plan-lane` would have given it, so a shard key is byte-identical whichever verb minted
+    it and re-running this is a set of `DO NOTHING` inserts. No trailing partial window is ever planned --
+    the forward hourly cron owns the present, and a partial would re-key itself every day.
+
+    Only a `succeeded` window is reopened. A queued, retry-waiting or deferred window is already claimable;
+    a leased or running one is held by a live worker's fence; a dead letter is the evidence that every
+    attempt failed and is never converted; a cancelled window is an operator's decision. All four are
+    reported instead, which is the point -- "we found a gap and can do nothing about it" must never have to
+    be inferred from silence.
+
+    EXIT CODES -- always 0 unless the plan itself could not be written. A lane with nothing to plan is the
+    normal, healthy state, exactly as it is for `jobs-plan-lane` and `jobs-reconcile-lane`.
+    """
+    lane = _lane_from_token(lane_name, floor)
+    end = None if until is None else _lane_day(until, "--until")
+    try:
+        plan = asyncio.run(_plan_archive_lane_gaps(lane, end=end, apply_changes=apply_changes))
+    except (
+        SQLAlchemyError,
+        MissingIngestionLayerError,
+        ReconciliationError,
+        JobLedgerRowError,
+        JobRunError,
+        JobSpecificationError,
+    ) as exc:
+        raise _ledger_failure(exc, f"planning gaps for lane {lane.name}") from exc
+    click.echo(json.dumps(plan.to_summary(), sort_keys=True))
+
+
+async def _plan_archive_lane_gaps(
+    lane: BackfillLane,
+    *,
+    end: datetime | None,
+    apply_changes: bool,
+) -> LaneGapPlan:
+    """Open one session for the measurement, and commit only when `--apply` actually planned something."""
+    async with ingest_session() as session:
+        plan = await plan_lane_gaps(session, lane, apply_changes=apply_changes, end=end)
+        if apply_changes:
+            await session.commit()
+        else:
+            # An explicit rollback rather than trusting the session's close, for the same reason
+            # `_reconcile_archive_lane` does it: a dry run must leave nothing behind even if a future edit
+            # starts writing on a path it does not today.
+            await session.rollback()
+    return plan
+
+
 INGEST_COMMANDS: tuple[click.Command, ...] = (
     ingest_firms,
     ingest_streamflow,
@@ -1219,6 +1292,7 @@ INGEST_COMMANDS: tuple[click.Command, ...] = (
     ingest_drought_history,
     ingest_all,
     jobs_plan_lane,
+    jobs_plan_gaps,
     jobs_run,
     jobs_status,
     jobs_reconcile_lane,

@@ -55,15 +55,20 @@ class MissingNativeKeyError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class FeatureIdentity:
-    """One producer's identity for one feature, plus the timestamp that dates its first geometry version."""
+    """One producer's identity for one feature, plus its observation time and, where known, its publication time."""
 
     producer: str
     producer_local_id: str
     observed_at: datetime | None
     entity_local_id: str | None = None
+    # When this platform could have known the record -- the ML leakage boundary, distinct from
+    # observed_at. None until a producer's own module is wired to supply it; see ingest/AGENTS.md
+    # "writer.py" and db/AGENTS.md geometry-dimension section for why this is never derived from
+    # created_at, now(), or an assumed lag.
+    data_available_at: datetime | None = None
 
     def __post_init__(self) -> None:
-        """Enforce the governed producer token, the 255-character key ceiling, and a tz-aware observation."""
+        """Enforce the governed producer token, the 255-character key ceiling, and tz-aware observation/availability."""
         if PRODUCER_TOKEN_PATTERN.match(self.producer) is None:
             raise ValueError(f"producer must match {PRODUCER_TOKEN_PATTERN.pattern}")
         if not self.producer_local_id:
@@ -74,11 +79,14 @@ class FeatureIdentity:
             raise ValueError(f"natural_key must not exceed {MAX_NATURAL_KEY_LENGTH} characters")
         if len(self.entity_key) > MAX_NATURAL_KEY_LENGTH:
             raise ValueError(f"entity_key must not exceed {MAX_NATURAL_KEY_LENGTH} characters")
-        if self.observed_at is None:
-            return
-        if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
-            raise ValueError("observed_at must include a timezone")
-        object.__setattr__(self, "observed_at", self.observed_at.astimezone(UTC))
+        if self.observed_at is not None:
+            if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
+                raise ValueError("observed_at must include a timezone")
+            object.__setattr__(self, "observed_at", self.observed_at.astimezone(UTC))
+        if self.data_available_at is not None:
+            if self.data_available_at.tzinfo is None or self.data_available_at.utcoffset() is None:
+                raise ValueError("data_available_at must include a timezone")
+            object.__setattr__(self, "data_available_at", self.data_available_at.astimezone(UTC))
 
     @property
     def natural_key(self) -> str:

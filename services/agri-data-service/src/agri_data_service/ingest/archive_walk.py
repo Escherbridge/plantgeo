@@ -112,10 +112,17 @@ PAYLOAD_WINDOW_START: Final = "window_start"
 PAYLOAD_WINDOW_END: Final = "window_end"
 PAYLOAD_BBOX: Final = "bbox"
 
+# How many times this window has been REOPENED over data that turned out not to be there. `jobs-plan-gaps`
+# bumps it (sql/ingest/reopen_gap_windows.sql); the walk copies it into every cursor it writes and discards
+# any cursor that disagrees with it. Absent on every window planned before this existed, which reads as
+# generation 0 on both sides and so changes nothing for them. See ingest/AGENTS.md, "Reopening a window".
+PAYLOAD_WALK_GENERATION: Final = "walk_generation"
+
 CURSOR_NEXT_CHUNK_START: Final = "next_chunk_start"
 CURSOR_RECORDS_SEEN: Final = "records_seen"
 CURSOR_RECORDS_WRITTEN: Final = "records_written"
 CURSOR_RECORDS_REJECTED: Final = "records_rejected"
+CURSOR_WALK_GENERATION: Final = PAYLOAD_WALK_GENERATION
 
 # The slowest chunk this window has walked, in whole seconds. It lives on the cursor and not in memory
 # because a window straddles ticks and every tick is a fresh one-shot container: an estimate held in a
@@ -457,6 +464,31 @@ def _cursor_count(cursor: Mapping[str, object] | None, key: str) -> int:
     return max(value, 0)
 
 
+def walk_generation(record: Mapping[str, object] | None) -> int:
+    """Read the walk generation off a payload or a cursor; absent, non-integer or negative all read as zero."""
+    return _cursor_count(record, PAYLOAD_WALK_GENERATION)
+
+
+def effective_cursor(
+    payload: Mapping[str, object],
+    cursor: Mapping[str, object] | None,
+) -> Mapping[str, object] | None:
+    """Keep the stored cursor only while it belongs to the window's current generation; otherwise restart.
+
+    A REOPENED WINDOW MUST NOT RESUME WHERE THE OLD ONE STOPPED. Resume position comes from the newest
+    `job_checkpoint` row for the work item, and a window that COMPLETED left its last checkpoint pointing
+    at its final chunk -- so a five-day FIRMS window reopened over four missing days would walk day five,
+    find no further chunk, and succeed again over the same hole. `jobs-plan-gaps` bumps the payload's
+    generation when it reopens a shard; every cursor this handler writes carries the generation it was
+    written under, so a mismatch means the cursor predates the reopen and names progress that no longer
+    counts. Discarding it whole rather than only its chunk marker is deliberate: the running record
+    totals beside it belong to that same superseded pass.
+    """
+    if cursor is None or walk_generation(cursor) == walk_generation(payload):
+        return cursor
+    return None
+
+
 def _detail_count(result: IngestionJobResult, key: str) -> int:
     """Read one count off a chunk result's details, treating an absent entry as zero rather than raising."""
     return result.details.get(key, 0)
@@ -649,6 +681,8 @@ async def archive_walk_handler(invocation: JobInvocation) -> JobHandlerOutcome:
             MISSING_CREDENTIAL_FAILURE_CLASS,
             f"lane {lane.name} needs {missing_credential} and the environment does not set it",
         )
+    generation = walk_generation(invocation.payload)
+    cursor = effective_cursor(invocation.payload, invocation.cursor)
     chunks = history_chunks(request.window, lane.chunk)
     if not chunks:  # pragma: no cover - HistoryWindow refuses start >= end, so a stored window always cuts.
         # A typed refusal rather than the `chunks[position]` IndexError it would otherwise be: an
@@ -658,8 +692,8 @@ async def archive_walk_handler(invocation: JobInvocation) -> JobHandlerOutcome:
             f"work item payload names a window that cuts into no chunk: "
             f"{request.window.start.isoformat()}..{request.window.end.isoformat()}"
         )
-    position = chunk_position(invocation.cursor, chunks)
-    estimated_seconds = chunk_budget_seconds(invocation.cursor)
+    position = chunk_position(cursor, chunks)
+    estimated_seconds = chunk_budget_seconds(cursor)
     if not invocation.has_budget_for(estimated_seconds):
         # Declined BEFORE the heartbeat and before any fetch. The runtime tests its deadline before
         # calling a handler and a handler call cannot be interrupted, so the decision to START a chunk is
@@ -669,7 +703,7 @@ async def archive_walk_handler(invocation: JobInvocation) -> JobHandlerOutcome:
             estimated_seconds,
             metrics=cursor_walk_metrics(
                 lane,
-                invocation.cursor,
+                cursor,
                 chunks_walked=position,
                 chunks_total=len(chunks),
             ),
@@ -689,10 +723,10 @@ async def archive_walk_handler(invocation: JobInvocation) -> JobHandlerOutcome:
 
     next_position = position + 1
     chunk_rejected = _detail_count(result, REJECTED_DETAIL)
-    records_seen = _cursor_count(invocation.cursor, CURSOR_RECORDS_SEEN) + result.records_seen
-    records_written = _cursor_count(invocation.cursor, CURSOR_RECORDS_WRITTEN) + result.records_written
-    records_rejected = _cursor_count(invocation.cursor, CURSOR_RECORDS_REJECTED) + chunk_rejected
-    slowest_chunk_seconds = max(_cursor_count(invocation.cursor, CURSOR_SLOWEST_CHUNK_SECONDS), chunk_seconds)
+    records_seen = _cursor_count(cursor, CURSOR_RECORDS_SEEN) + result.records_seen
+    records_written = _cursor_count(cursor, CURSOR_RECORDS_WRITTEN) + result.records_written
+    records_rejected = _cursor_count(cursor, CURSOR_RECORDS_REJECTED) + chunk_rejected
+    slowest_chunk_seconds = max(_cursor_count(cursor, CURSOR_SLOWEST_CHUNK_SECONDS), chunk_seconds)
     next_cursor = (
         None
         if next_position >= len(chunks)
@@ -702,6 +736,8 @@ async def archive_walk_handler(invocation: JobInvocation) -> JobHandlerOutcome:
             CURSOR_RECORDS_WRITTEN: records_written,
             CURSOR_RECORDS_REJECTED: records_rejected,
             CURSOR_SLOWEST_CHUNK_SECONDS: slowest_chunk_seconds,
+            # Stamped on every cursor so the NEXT claim can tell whether this progress survived a reopen.
+            CURSOR_WALK_GENERATION: generation,
         }
     )
     metrics: dict[str, object] = {
@@ -747,6 +783,8 @@ __all__ = [
     "ARCHIVE_WALK_TIME_BUDGET_SECONDS",
     "ARCHIVE_WALK_WORK_ITEM_KIND",
     "ARCHIVE_WALK_WORST_CHUNK_SECONDS",
+    "CURSOR_WALK_GENERATION",
+    "PAYLOAD_WALK_GENERATION",
     "ArchiveWalkContext",
     "ArchiveWalkContextError",
     "ArchiveWalkCursorError",
@@ -769,8 +807,10 @@ __all__ = [
     "chunk_position",
     "current_archive_walk_context",
     "cursor_walk_metrics",
+    "effective_cursor",
     "pinned_source_record_cap",
     "plan_archive_lane",
     "walk_archive_chunk",
+    "walk_generation",
     "walk_metrics",
 ]

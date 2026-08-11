@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Final, Literal
 
 import structlog
@@ -48,6 +48,8 @@ class AgentAnalyzeRequest(BaseModel):
     precision: Literal["approximate", "exact"] = "approximate"
     question: str | None = Field(default=None, max_length=_MAX_QUESTION_LENGTH)
     history: list[ConversationTurn] = Field(default_factory=list, max_length=MAX_HISTORY_TURNS)
+    selected_day: date | None = None
+    """The day the map's slider is on. Absent means the caller has no slider, not "use today"."""
 
 
 def _frame(event: dict[str, Any]) -> str:
@@ -88,6 +90,7 @@ async def analyze_location(request: Request) -> HTTPResponse | None:
         question=payload.question,
         history=tuple(payload.history),
         as_of=datetime.now(UTC),
+        selected_day=payload.selected_day,
     )
     context = GraphContext(
         request=agent_request,

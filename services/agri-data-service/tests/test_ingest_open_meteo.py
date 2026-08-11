@@ -18,6 +18,8 @@ from agri_data_service.ingest.open_meteo import (
     OPEN_METEO_BASE_URL,
     OPEN_METEO_BOUNDS,
     OPEN_METEO_CHANNEL,
+    OPEN_METEO_FORECAST_HISTORY_RETENTION,
+    OPEN_METEO_FORECAST_PAST_DAYS_MAXIMUM,
     OPEN_METEO_SOURCE,
     WEATHER_LAYER_VARIABLE,
     bounded_sample_points,
@@ -27,6 +29,7 @@ from agri_data_service.ingest.open_meteo import (
     parse_current_weather,
     resolve_weather_layer_name,
     run_weather_ingestion_job,
+    weather_history_capability,
 )
 from agri_data_service.ingest.policy import MAX_WEATHER_SAMPLE_POINTS, PACIFIC_NORTHWEST_COVERAGE_BBOX
 
@@ -201,6 +204,18 @@ def test_resolve_weather_layer_name_defaults_and_reads_the_environment_at_call_t
     assert resolve_weather_layer_name() == DEFAULT_WEATHER_LAYER_NAME == "weather-observations"
     monkeypatch.setenv(WEATHER_LAYER_VARIABLE, "custom-weather-layer")
     assert resolve_weather_layer_name() == "custom-weather-layer"
+
+
+def test_the_history_declaration_rolls_with_the_clock_rather_than_freezing_at_import() -> None:
+    # The forecast endpoint keeps a ROLLING past window, so the floor is resolved per call the way
+    # `sensors.nws_sensor_source` resolves NWS' retention. Declared, not implemented: no fetcher
+    # walks a past Open-Meteo window yet. See ingest/AGENTS.md "history declarations".
+    assert OPEN_METEO_FORECAST_PAST_DAYS_MAXIMUM == 92
+    assert timedelta(days=92) == OPEN_METEO_FORECAST_HISTORY_RETENTION
+    capability = weather_history_capability(NOW)
+    assert capability.supported is True
+    assert capability.earliest == NOW - OPEN_METEO_FORECAST_HISTORY_RETENTION
+    assert weather_history_capability(NOW + timedelta(days=1)).earliest != capability.earliest
 
 
 def test_the_densified_grid_redistributes_across_both_axes_rather_than_favouring_the_first_columns() -> None:

@@ -51,7 +51,7 @@ _MARKER = re.compile(r"^--\s+(\w+)\s*$", re.MULTILINE)
 JOB_RUN_ID = uuid.UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 LAYER_ID = "11111111-1111-4111-8111-111111111111"
 
-OBSERVED_DAYS_MARKER = "reconcile_observed_layer_days"
+OBSERVED_DAYS_MARKER = "observed_days"
 LANE_WINDOWS_MARKER = "reconcile_lane_run_windows"
 MARK_MARKER = "reconcile_mark_windows_succeeded"
 ROLLUP_MARKER = "refresh_job_run_rollup"
@@ -235,6 +235,52 @@ def test_a_windows_missing_day_listing_is_bounded_and_reports_how_many_it_left_o
 
     assert len(coverage.missing_sample) == 4
     assert coverage.omitted_missing_days == 26
+
+
+# --- The cadence the verdict is measured on -----------------------------------------------------------
+
+
+def test_a_window_is_measured_on_its_streams_declared_cadence_and_not_on_a_daily_grid() -> None:
+    # ONE gap rule. `window_coverage` no longer compares days itself -- it calls the same cadence-aware walk
+    # `validate-streams` reports gaps with. A five-day window of a five-day-revisit stream that published
+    # once owes nothing more, so it is COVERED; the old day-by-day comparison called it partial and left it
+    # queued forever. Both registered lanes declare a daily cadence, so this is the trap, not a live bug.
+    coverage = window_coverage(
+        "vegetation-archive:2022-08-05..2022-08-10",
+        "queued",
+        _window("2022-08-05T00:00:00+00:00", "2022-08-10T00:00:00+00:00"),
+        frozenset({date(2022, 8, 5)}),
+        publication_cadence_days=5,
+    )
+
+    assert coverage.verdict == "covered"
+    assert coverage.observed_days == 1
+    assert coverage.expected_days == 5
+
+
+def test_the_same_window_on_a_daily_cadence_is_partial_and_therefore_stays_queued() -> None:
+    coverage = window_coverage(
+        "firms-archive:2022-08-05..2022-08-10",
+        "queued",
+        _window("2022-08-05T00:00:00+00:00", "2022-08-10T00:00:00+00:00"),
+        frozenset({date(2022, 8, 5)}),
+    )
+
+    assert coverage.verdict == "partial"
+    assert coverage.missing_sample == (date(2022, 8, 6), date(2022, 8, 7), date(2022, 8, 8), date(2022, 8, 9))
+
+
+def test_a_window_a_cadence_stream_published_nothing_in_at_all_is_still_absent() -> None:
+    coverage = window_coverage(
+        "vegetation-archive:2022-08-05..2022-08-10",
+        "queued",
+        _window("2022-08-05T00:00:00+00:00", "2022-08-10T00:00:00+00:00"),
+        frozenset(),
+        publication_cadence_days=5,
+    )
+
+    assert coverage.verdict == "absent"
+    assert coverage.observed_days == 0
 
 
 # --- The printable category -------------------------------------------------------------------------

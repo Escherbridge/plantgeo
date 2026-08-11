@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from agri_data_service.ingest.policy import parse_bbox, resolve_bounded_bbox
 from agri_data_service.ingest.validation.completeness import (
-    _gap_between,
+    _gap_from_silence,
     apply_density_floor,
     build_slider_window,
     decide_verdict,
@@ -27,7 +27,9 @@ from agri_data_service.ingest.validation.completeness import (
     find_observation_gaps,
     find_thin_days,
     lane_floor_day,
+    missing_publication_days,
     newest_observation_cluster,
+    publication_grid_points,
     rank_gaps,
     sort_observed_days,
     split_days_at_expected_floor,
@@ -89,6 +91,8 @@ from agri_data_service.ingest.validation.models import (
     ThinDay,
     ValidationReport,
     ValidityFinding,
+    lane_publication_cadence_days,
+    stream_definition_for_lane,
 )
 from agri_data_service.ingest.validation.queries import (
     _DROUGHT_AREA_OBSERVED_DAYS,
@@ -102,6 +106,7 @@ from agri_data_service.ingest.validation.queries import (
     _SERVER_DAY,
     _SET_READ_ONLY_SNAPSHOT,
     _SET_STATEMENT_TIMEOUT,
+    OBSERVED_DAYS_FOR_LAYER,
 )
 from agri_data_service.ingest.validation.report import (
     _expected_day_span,
@@ -192,7 +197,7 @@ async def _read_day_series(session: AsyncSession) -> Mapping[str, tuple[Observed
     """Read every stream's observed-day series, refusing a result that hit the row cap rather than truncating."""
     series: dict[str, list[ObservedDay]] = {}
     for statement, label in (
-        (_FEATURE_OBSERVED_DAYS, "feature_observed_days"),
+        (_FEATURE_OBSERVED_DAYS, "observed_days"),
         (_HISTORICAL_OBSERVED_DAYS, "historical_observed_days"),
     ):
         rows = await _fetch_rows(
@@ -367,6 +372,7 @@ __all__ = [
     "NULL_GEOMETRY_CHECK",
     "OBSERVATION_CLUSTER_GAP_DAYS",
     "OBSERVATION_DENSITY_FLOOR_FRACTION",
+    "OBSERVED_DAYS_FOR_LAYER",
     "OUTSIDE_BBOX_CHECK",
     "PRODUCER_LOCAL_ID_CEILING_BY_STREAM",
     "PUBLISHED_FEATURE_STATUS",
@@ -414,7 +420,7 @@ __all__ = [
     "_day_text",
     "_expected_day_span",
     "_fetch_rows",
-    "_gap_between",
+    "_gap_from_silence",
     "_optional_text",
     "_read_day_series",
     "_read_lane_states",
@@ -439,10 +445,14 @@ __all__ = [
     "find_observation_gaps",
     "find_thin_days",
     "lane_floor_day",
+    "lane_publication_cadence_days",
+    "missing_publication_days",
     "newest_observation_cluster",
     "producer_local_id_ceiling",
+    "publication_grid_points",
     "rank_gaps",
     "sort_observed_days",
     "split_days_at_expected_floor",
+    "stream_definition_for_lane",
     "summarise_days_below_expected_floor",
 ]

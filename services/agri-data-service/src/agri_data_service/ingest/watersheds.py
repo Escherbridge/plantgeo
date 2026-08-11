@@ -16,7 +16,6 @@ point).
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 from urllib.parse import urlencode
@@ -25,6 +24,7 @@ import structlog
 
 from agri_data_service.ingest.http import UpstreamBounds, UpstreamPayloadError, fetch_bounded_json, upstream_client
 from agri_data_service.ingest.identity import FeatureIdentity, MissingNativeKeyError, format_javascript_timestamp
+from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import UNCONFIGURED_BBOX_REASON, parse_bbox, resolve_bounded_bbox
 from agri_data_service.ingest.results import IngestionJobResult, skipped_result
 from agri_data_service.ingest.writer import FeatureWrite
@@ -39,10 +39,16 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 WATERSHEDS_SOURCE: Final = "usgs-wbd-huc12"
-WATERSHEDS_CHANNEL: Final = "layer:watersheds"
 WATERSHEDS_PROPERTY_SOURCE: Final = "USGS NHDPlus HR WBDHU12"
-WATERSHEDS_LAYER_VARIABLE: Final = "WATERSHEDS_LAYER_ID"
-DEFAULT_WATERSHEDS_LAYER_NAME: Final = "watersheds"
+
+WATERSHEDS_LAYER: Final = LayerBinding(
+    variable="WATERSHEDS_LAYER_ID",
+    default="watersheds",
+    channel="layer:watersheds",
+)
+WATERSHEDS_CHANNEL: Final = WATERSHEDS_LAYER.channel
+WATERSHEDS_LAYER_VARIABLE: Final = WATERSHEDS_LAYER.variable
+DEFAULT_WATERSHEDS_LAYER_NAME: Final = WATERSHEDS_LAYER.default
 
 # The producer token and its identity builder belong beside the other producers in identity.py; this
 # adapter is fenced out of that file, so both live here -- the same handover the evacuation-zones
@@ -84,7 +90,7 @@ MILLISECONDS_PER_SECOND: Final = 1000
 
 def resolve_watersheds_layer_name() -> str:
     """Read WATERSHEDS_LAYER_ID at call time so a cron environment change needs no restart."""
-    return os.environ.get(WATERSHEDS_LAYER_VARIABLE, "").strip() or DEFAULT_WATERSHEDS_LAYER_NAME
+    return WATERSHEDS_LAYER.resolve()
 
 
 def parse_load_date(value: object) -> datetime | None:

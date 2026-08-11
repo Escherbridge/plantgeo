@@ -1,0 +1,28 @@
+-- Adds `data_available_at` to `geo.features`: the moment this platform could have known a
+-- feature, as opposed to the publisher-asserted `observed_at`/`updated_at` carried inside
+-- `properties` (when it happened) or this table's own `created_at` (last touched, never first
+-- seen -- src/lib/server/db/AGENTS.md §geometry-dimension already forbids deriving a
+-- `data_available_at` from it). For ML training this distinction is the leakage boundary: a
+-- feature is fair evidence for an as-of time only if the platform could actually have known it
+-- by then, and until now nothing in `geo.features` could answer that question at all.
+--
+-- Nullable, and deliberately so. The overwhelming majority of existing rows genuinely have no
+-- recorded publication date, and every honest alternative to leaving them NULL is fabrication:
+-- `created_at` is last-touched-not-first-seen, `now()` invents a date nobody asserted, and an
+-- assumed lag invents one from nothing. MTBS already proves the pattern this column is meant to
+-- host -- its capture layer's `MTBS_ANNUAL_RELEASE_DATES` RAISES rather than guessing when a
+-- cohort's release date is missing, guarded by two tripwires (release must lead the cohort's
+-- last ignition by >= 180 days, and must not land within 60 seconds of `now()`) -- but that
+-- table lives in MTBS's own capture module, not here, and this migration does not touch it.
+--
+-- THIS MIGRATION IS DECLARATION AND PLUMBING ONLY. No producer writes this column yet: FIRMS
+-- keeps stuffing its answering product's frontier into `properties.productCoverageThrough`,
+-- MTBS keeps its release-date table where it is, and every other producer keeps modelling
+-- publication lag not at all. Wiring an actual value in per producer is next-wave, per-layer
+-- work and belongs to whoever owns that producer's ingest module, not to this schema change.
+--
+-- Safe against the live table: a nullable column with no default and no NOT NULL is a
+-- metadata-only change under PostgreSQL (no table rewrite, no full-table lock beyond the brief
+-- ACCESS EXCLUSIVE the ALTER TABLE statement itself always takes). `IF NOT EXISTS` keeps a
+-- re-run of this file a no-op, matching the rest of this migration set.
+ALTER TABLE "geo"."features" ADD COLUMN IF NOT EXISTS "data_available_at" timestamp with time zone;

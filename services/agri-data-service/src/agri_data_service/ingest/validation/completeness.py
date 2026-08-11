@@ -3,6 +3,7 @@ credibility lives: the SQL only counts rows, the rules that turn counts into a v
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import ROUND_CEILING, Decimal
 from itertools import pairwise
@@ -67,6 +68,75 @@ def split_days_at_expected_floor(
     return below, inside
 
 
+@dataclass(frozen=True, slots=True)
+class _Silence:
+    """One run of calendar days nothing was published on, plus the first cadence grid point inside it."""
+
+    gap_from: date
+    gap_to: date
+    first_owed: date
+
+
+def _require_cadence(publication_cadence_days: int) -> timedelta:
+    """Turn a declared cadence into an interval, refusing a zero or negative rhythm rather than dividing by it."""
+    if publication_cadence_days < 1:
+        raise ValueError("publication_cadence_days must be at least one day")
+    return timedelta(days=publication_cadence_days)
+
+
+def _silences(
+    observed: Sequence[date],
+    *,
+    expected_first_day: date | None,
+    through_day: date | None,
+    cadence: timedelta,
+) -> tuple[_Silence, ...]:
+    """THE gap walk, once: every silence that ran past one whole cadence period, with its first owed grid point."""
+    # THE WALK IS ON THE STREAM'S OWN CADENCE, NOT ON A DAILY GRID. A daily grid is only correct for a daily
+    # stream: against drought_areas, which USDM publishes once every Tuesday, it called the six ordinary days
+    # between two consecutive releases missing -- so a perfectly complete weekly stream reported roughly 6/7 of
+    # the calendar as absent, and vegetation (a five-day Sentinel-2 revisit) 4/5 of it. Those phantom days
+    # drowned the real ones. A gap therefore opens only when the silence runs PAST one whole cadence period,
+    # and what it counts is the grid points `last publication + n * cadence` that passed with nothing published.
+    #
+    # This function is the ONE implementation of that rule. `find_observation_gaps` renders it as the report's
+    # calendar runs and `missing_publication_days` renders it as the individual owed days a backfill lane has
+    # to re-plan; a second day-comparison anywhere else is how the two halves of the pipeline start disagreeing
+    # about what "missing" means. See ingest/AGENTS.md, "One gap rule".
+    #
+    # Clipped here rather than by the caller so no caller can walk the unclipped series by omission.
+    ordered = sorted(day for day in observed if expected_first_day is None or day >= expected_first_day)
+    if not ordered:
+        if expected_first_day is None or through_day is None or through_day < expected_first_day:
+            return ()
+        # Nothing inside the window at all: the declared floor was itself owed, and so was every cadence step
+        # from it up to the reporting day.
+        return (_Silence(expected_first_day, through_day, expected_first_day),)
+
+    silences: list[_Silence] = []
+
+    first_observed = ordered[0]
+    if expected_first_day is not None and expected_first_day < first_observed:
+        silences.append(_Silence(expected_first_day, first_observed - _ONE_DAY, expected_first_day))
+
+    silences.extend(
+        _Silence(earlier + _ONE_DAY, later - _ONE_DAY, earlier + cadence)
+        for earlier, later in pairwise(ordered)
+        if later - earlier > cadence
+    )
+
+    last_observed = ordered[-1]
+    if through_day is not None and through_day - last_observed >= cadence:
+        silences.append(_Silence(last_observed + _ONE_DAY, through_day, last_observed + cadence))
+
+    return tuple(silences)
+
+
+def publication_grid_points(first_owed: date, through_day: date, cadence: timedelta) -> tuple[date, ...]:
+    """The cadence grid points from the first owed publication through the end of a silence, inclusive."""
+    return tuple(first_owed + cadence * step for step in range((through_day - first_owed) // cadence + 1))
+
+
 def find_observation_gaps(
     days: Sequence[ObservedDay],
     *,
@@ -75,52 +145,40 @@ def find_observation_gaps(
     publication_cadence_days: int = DAILY_PUBLICATION_CADENCE_DAYS,
 ) -> tuple[ObservationGap, ...]:
     """List every run of days the stream owed a publication and produced none, head and tail runs included."""
-    # THE WALK IS ON THE STREAM'S OWN CADENCE, NOT ON A DAILY GRID. A daily grid is only correct for a daily
-    # stream: against drought_areas, which USDM publishes once every Tuesday, it called the six ordinary days
-    # between two consecutive releases missing -- so a perfectly complete weekly stream reported roughly 6/7 of
-    # the calendar as absent, and vegetation (a five-day Sentinel-2 revisit) 4/5 of it. Those phantom days
-    # drowned the real ones. A gap therefore opens only when the silence runs PAST one whole cadence period,
-    # and what it counts is the grid points `last publication + n * cadence` that passed with nothing
-    # published. `days` stays the calendar length of the silence, because that is the number `decide_verdict`
-    # compares against the declared cadence and the number a reader recognises on a calendar.
-    if publication_cadence_days < 1:
-        raise ValueError("publication_cadence_days must be at least one day")
-    cadence = timedelta(days=publication_cadence_days)
-    # Clipped here rather than by the caller so no caller can walk the unclipped series by omission.
-    _, ordered = split_days_at_expected_floor(days, expected_first_day)
-    if not ordered:
-        if expected_first_day is None or through_day is None or through_day < expected_first_day:
-            return ()
-        # Nothing inside the window at all: the declared floor was itself owed, and so was every cadence step
-        # from it up to the reporting day.
-        return (_gap_between(expected_first_day, through_day, first_owed=expected_first_day, cadence=cadence),)
-
-    gaps: list[ObservationGap] = []
-
-    first_observed = ordered[0].day
-    if expected_first_day is not None and expected_first_day < first_observed:
-        gaps.append(
-            _gap_between(expected_first_day, first_observed - _ONE_DAY, first_owed=expected_first_day, cadence=cadence)
+    cadence = _require_cadence(publication_cadence_days)
+    return tuple(
+        _gap_from_silence(silence, cadence)
+        for silence in _silences(
+            [entry.day for entry in days],
+            expected_first_day=expected_first_day,
+            through_day=through_day,
+            cadence=cadence,
         )
+    )
 
-    for earlier, later in pairwise(ordered):
-        if later.day - earlier.day > cadence:
-            gaps.append(
-                _gap_between(
-                    earlier.day + _ONE_DAY,
-                    later.day - _ONE_DAY,
-                    first_owed=earlier.day + cadence,
-                    cadence=cadence,
-                )
-            )
 
-    last_observed = ordered[-1].day
-    if through_day is not None and through_day - last_observed >= cadence:
-        gaps.append(
-            _gap_between(last_observed + _ONE_DAY, through_day, first_owed=last_observed + cadence, cadence=cadence)
+def missing_publication_days(
+    observed: Iterable[date],
+    *,
+    expected_first_day: date,
+    through_day: date,
+    publication_cadence_days: int = DAILY_PUBLICATION_CADENCE_DAYS,
+) -> tuple[date, ...]:
+    """Every day inside the span that owed a publication and got none, from the same walk the report runs."""
+    # The lane-facing rendering of `_silences`. A backfill planner needs the individual owed DAYS rather than
+    # the calendar runs `find_observation_gaps` returns, because each of them has to be mapped onto a window of
+    # the lane's grid; on a daily cadence the two renderings carry exactly the same days.
+    cadence = _require_cadence(publication_cadence_days)
+    return tuple(
+        point
+        for silence in _silences(
+            tuple(observed),
+            expected_first_day=expected_first_day,
+            through_day=through_day,
+            cadence=cadence,
         )
-
-    return tuple(gaps)
+        for point in publication_grid_points(silence.first_owed, silence.gap_to, cadence)
+    )
 
 
 def summarise_days_below_expected_floor(days: Sequence[ObservedDay]) -> ObservationsBelowExpectedFloor | None:
@@ -136,13 +194,13 @@ def summarise_days_below_expected_floor(days: Sequence[ObservedDay]) -> Observat
     )
 
 
-def _gap_between(gap_from: date, gap_to: date, *, first_owed: date, cadence: timedelta) -> ObservationGap:
-    """Build the inclusive gap between two missing days, counting the publications owed inside it."""
+def _gap_from_silence(silence: _Silence, cadence: timedelta) -> ObservationGap:
+    """Render one silence as the report's gap, counting the publications owed inside it."""
     # `first_owed` is the first cadence grid point inside the silence: the declared floor for a head gap, and
-    # one cadence period past the last publication otherwise. Every caller opens a gap only once that point is
-    # reached, so the count below is never zero.
-    owed = (gap_to - first_owed) // cadence + 1
-    return ObservationGap(gap_from, gap_to, (gap_to - gap_from).days + 1, owed)
+    # one cadence period past the last publication otherwise. `_silences` opens a silence only once that point
+    # is reached, so the count below is never zero.
+    owed = len(publication_grid_points(silence.first_owed, silence.gap_to, cadence))
+    return ObservationGap(silence.gap_from, silence.gap_to, (silence.gap_to - silence.gap_from).days + 1, owed)
 
 
 def rank_gaps(gaps: Sequence[ObservationGap], limit: int) -> tuple[tuple[ObservationGap, ...], int]:

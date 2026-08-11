@@ -24,6 +24,7 @@ from agri_data_service.ingest.identity import (
     build_firms_identity,
     format_javascript_timestamp,
 )
+from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import (
     UNCONFIGURED_BBOX_REASON,
     is_fresh_observation,
@@ -55,10 +56,16 @@ FIRMS_SOURCE: Final = "nasa-firms"
 # A separate `--source` token so an operator cannot ask the archive walk for a current window, or the
 # forward job for a past one. Same producer, same layer, same identity contract; different access path.
 FIRMS_ARCHIVE_SOURCE: Final = "nasa-firms-archive"
-FIRMS_CHANNEL: Final = "layer:fire-detections"
 FIRMS_PROPERTY_SOURCE: Final = "NASA FIRMS"
-FIRMS_LAYER_VARIABLE: Final = "FIRMS_LAYER_ID"
-DEFAULT_FIRMS_LAYER_NAME: Final = "fire-detections"
+
+FIRMS_LAYER: Final = LayerBinding(
+    variable="FIRMS_LAYER_ID",
+    default="fire-detections",
+    channel="layer:fire-detections",
+)
+FIRMS_CHANNEL: Final = FIRMS_LAYER.channel
+FIRMS_LAYER_VARIABLE: Final = FIRMS_LAYER.variable
+DEFAULT_FIRMS_LAYER_NAME: Final = FIRMS_LAYER.default
 
 FIRMS_API_KEY_VARIABLE: Final = "NASA_FIRMS_KEY"
 FIRMS_DAY_RANGE_VARIABLE: Final = "FIRMS_DAY_RANGE"
@@ -168,7 +175,7 @@ _STRICT_NONNEGATIVE_INTEGER: Final = re.compile(r"^\d+$")
 
 def resolve_firms_layer_name() -> str:
     """Read FIRMS_LAYER_ID at call time so a cron environment change needs no restart."""
-    return os.environ.get(FIRMS_LAYER_VARIABLE, "").strip() or DEFAULT_FIRMS_LAYER_NAME
+    return FIRMS_LAYER.resolve()
 
 
 def firms_day_range() -> int:

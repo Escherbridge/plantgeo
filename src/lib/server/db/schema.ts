@@ -226,6 +226,11 @@ export const features = geoSchema.table(
     }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+    // When this platform could have known the feature -- the ML leakage boundary, distinct from
+    // observed_at (when it happened) and createdAt (last touched, never first seen). Nullable:
+    // existing rows have no known publication date and none may be fabricated. See
+    // src/lib/server/db/AGENTS.md §geometry-dimension.
+    dataAvailableAt: timestamp("data_available_at", { withTimezone: true }),
   },
   (table) => [
     uniqueIndex("features_layer_external_id_unique")

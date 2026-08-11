@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -393,6 +394,24 @@ def test_encode_stored_properties_round_trips_to_the_stored_payload() -> None:
     """The encoded text is exactly the payload the database receives."""
     write = build_write("alpha", properties={"brightness": 312.4, "geometry": {"type": "Point"}})
     assert json.loads(encode_stored_properties(write)) == write.stored_properties()
+
+
+def test_feature_write_exposes_the_identitys_data_available_at_for_future_sql_wiring() -> None:
+    """Plumbing only: the writer surfaces whatever a producer supplied, defaulting to None."""
+    assert build_write("alpha").data_available_at is None
+
+    known = FeatureWrite(
+        layer_reference="fire-detections",
+        identity=FeatureIdentity(
+            producer="firms",
+            producer_local_id="alpha",
+            observed_at=None,
+            data_available_at=datetime(2026, 8, 3, tzinfo=UTC),
+        ),
+        properties={"brightness": 1.0},
+        channel=FIRE_CHANNEL,
+    )
+    assert known.data_available_at == datetime(2026, 8, 3, tzinfo=UTC)
 
 
 # --- realtime message ----------------------------------------------------------------------------

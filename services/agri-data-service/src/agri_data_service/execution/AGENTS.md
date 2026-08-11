@@ -1244,3 +1244,262 @@ inlined copies.
 `open_meteo_lane.py` once the lane-adoption pass lands (check them for provenance copies then);
 `vegetation_ndvi_plane.py` behind an explicit decision about `ON CONFLICT DO NOTHING` vs governed
 refusal; `geospatial_pilot.py` last, with the `source_role` / `validate_immediately` parameters.
+
+## `coverage_census.py`, `coverage_report.py`, `coverage_fill.py` -- coverage-status and coverage-fill
+
+`coverage_contract.py` decides what a day's state IS and never touches a database. These three are
+the rest of the loop: measure the warehouse, report it to a person, and turn the oldest hole into
+either one authored plan or one governed absence. They back the `coverage-status` and
+`coverage-fill` verbs in `cli.py`.
+
+### Three measurements, three reads, one classification
+
+`census_contracts` issues exactly three reads per distinct lane window and feeds them to
+`reconcile_signal` unchanged:
+
+| read | file | what it decides |
+|---|---|---|
+| observed cells per day | `sql/execution/coverage_observed_cell_days.sql` | covered vs thin vs missing |
+| governed absences | `sql/execution/coverage_absence_windows.sql` | which missing days are explained |
+| lattice size | `sql/execution/coverage_grid_cells.sql` | the denominator of the cell floor |
+
+The observed-days read deliberately does **not** filter by signal name. Two contracts can share a
+source, grid and support -- NASA POWER's eight weather signals and its three soil-wetness signals do
+exactly that -- so the read returns the lane's whole union and the caller slices it. Filtering in SQL
+would need a list-valued bind parameter, which is the one shape this SQL tree avoids. The reads are
+cached on exactly their bind tuple within one run, so those two contracts cost one read, not two.
+
+`is_observed AND normalized_value IS NOT NULL` is load-bearing in the observed census. The
+Open-Meteo lane writes an explicit `is_observed=false, quality_flag='source_missing'` row for each
+day of a partly-published series precisely so the hole stays legible; counting those as coverage
+turns every one of them back into a silent hole.
+
+Absence windows are read back with an **overlap** test, not containment, then expanded and clipped
+to the contracted span in Python. A four-year audit window that only partly covers the contract
+still explains the days inside it, and a containment test would discard it and re-walk them.
+
+### The trailing edge is a declared measurement, not today
+
+`PUBLICATION_LAG_DAYS` is the one constant here that is neither in `coverage_contract.py` nor
+derived from data. Running a lane to today's date reports the provider's release schedule as a hole:
+measured against production 2026-08-11, NASA POWER's newest day was 2026-08-06 and Open-Meteo's
+ERA5-Land archive's was 2026-08-02. It lives here rather than in `LaneCoverageContract` because it
+describes the provider's cadence, not what the lane promises to hold -- the horizon stays declared
+and falsifiable, while the trailing bound stays honest. `ThroughDayBasis` travels with every report
+so a reader can see which of the two produced the numbers, and `--through` overrides it with the
+operator owning the claim. A lane with no measured lag falls back to a deliberately generous
+`UNMEASURED_PUBLICATION_LAG_DAYS`: over-reporting completeness for a fortnight is recoverable, while
+under-reporting sends a quota-bound fetch after days that do not exist yet. A test asserts every
+declared contract has a measured lag, so the fallback stays a fallback.
+
+### `coverage-fill` mirrors `plan_continuation.py`, and differs in exactly one place
+
+Same shape throughout -- load a reviewed plan, decide once, emit a typed refusal, write nothing
+without an explicit flag -- because an operator who reads one already reads the other. The one
+difference: a continuation moves the window to the provider's live edge, a fill moves it to the last
+day of the **oldest** hole. Oldest-first is what makes a lane converge instead of thrashing on
+whichever hole is newest.
+
+`HistoricalBackfillWindow` fixes the span at four calendar years, so a fill window covering only the
+hole is structurally impossible -- the same constraint `continuation_window` lives under, and the
+same overlap cost. Anchoring the end on the gap's last day rather than on today is what keeps the
+cost bounded to the hole plus its inherited four-year tail.
+
+`GAP_FILL_FAMILY_TOKEN` (`-gapfill`) sits before the window suffix in both the artifact stem and the
+`release_set_key`, so `plan_family` reads a fill and a continuation as different families. Without
+it, `superseding_sibling` in the continuation verb would see a gap fill as a forward move of the
+same plan and refuse to continue.
+
+### Absences are measured, never assumed
+
+The probe asks for the **whole run in one request per probed cell** -- 37 scattered days collapse to
+the handful of runs they actually form, and one run is targeted per invocation. `unprobed_refusal`
+runs every refusal that needs no network first (gap at the live edge, run longer than the frozen
+window, artifact already authored), so a request is only ever spent when its answer can still change
+the outcome. `gap_to_probe` is that same ladder exposed to the caller for exactly that reason.
+
+`gap_probe_verdict` is deliberately binary. A run served for some parameters and not others is
+`SERVED`: the walk itself already writes a per-parameter `no_data` audit row for the empty ones, and
+second-guessing that here would record an absence for a series the walk was about to describe more
+precisely. Only "nothing anywhere for anything asked" is `EMPTY`.
+
+An `EMPTY` verdict writes one `agri.signal_coverage_audit` row **per probed cell per parameter**,
+each spanning the whole run:
+
+- not one row per day -- a span with no data is one honest gap record, matching the Open-Meteo
+  lane's own precedent;
+- not one row per lattice cell -- inflating three measurements into 397 claims is the fabrication
+  this module exists to prevent.
+
+**There is no generalisation from probed cells to the lane.** An earlier draft made it in the read,
+on the reasoning that "a provider's product coverage is a property of the window it publishes, not
+of the cell". Production falsified that on 2026-08-11 -- see "An absence is evidence about the cells
+that recorded it" below -- so `coverage_absence_windows.sql` now returns the cell count and the
+census holds it to the lane's own cell floor. A three-cell probe therefore excuses nothing on a
+397-cell lattice, and that is correct: three measurements are not a statement about 397 cells. The
+probe's rows are evidence on the record; closing a whole lane's day needs evidence covering the
+lane. Making a three-cell absence actually retire a day is an open design question, not something
+the read may assume.
+
+The evidence itself travels in `details` and in the release's `quality_summary`: which cells were
+probed, how many days each parameter carried, and when. `payload_checksum` is the fingerprint of the
+**request**, because there is no payload -- which makes re-probing the same run land on the same
+release row rather than minting a second lineage of the same evidence.
+
+### Deviations
+
+- `coverage_absence_release.sql` uses `ON CONFLICT ... DO UPDATE SET source_version = EXCLUDED.source_version`
+  -- a deliberate no-op write, because `DO NOTHING` returns no row and the caller needs the existing
+  id in both cases. The assigned column is part of the conflict key, so the row cannot change value;
+  immutability is preserved and `RETURNING` becomes total.
+- The probe release sets `data_available_at = retrieved_at`. For an observation row that would be a
+  leakage bug; here it is the literal truth -- the fact recorded is "at this moment the provider had
+  nothing", and no observation row is ever written against this release, so no model can learn a
+  publication lag from it.
+- `coverage-fill` takes `--plan`, not `--source-key` alone. One source has several reviewed plans
+  with different lattices and parameter subsets (`weather-fast`, `weather-radiation`,
+  `soil-wetness`, `soil-lattice` for NASA POWER alone), so auto-selecting one by source key would
+  guess which lattice a hole belongs to. `--source-key` is accepted as an assertion the plan must
+  satisfy, so a scheduled invocation still states the lane it believes it is filling.
+
+## `coverage_contract.py` -- the coverage-contract section both modules point at
+
+`coverage_contract.py` and every test over it carry `See ... AGENTS.md §coverage-contract`. This is
+that section.
+
+### The contract is a claim, and claims are declared not measured
+
+`LANE_COVERAGE_CONTRACTS` names, per lane, the signals under contract and the day each must be
+complete from. Every date there is a **claim the cron is then held to**, never a description of what
+happens to be loaded. A horizon read from `min(observed_at)` makes the contract unfalsifiable: a
+lane that lost its first year would re-contract itself to its own truncated history and report 100%.
+
+**The NASA POWER surface horizon is deliberately narrower than the measurement.** Measured against
+production 2026-08-11: the eight surface signals hold the full 397-cell lattice from **2022-04-30**,
+while soil wetness holds 4 cells for 98 days (2022-04-30..2022-08-05) and widens to 397 on
+2022-08-06. Both contracts declare 2022-08-06. For soil wetness that is exactly the widening date.
+For the surface set it abandons 98 days the warehouse demonstrably holds, so a coverage report reads
+100% over a window 98 days short of the data. That is a conservative claim, not a measurement of one,
+and raising it is an owner call -- **follow-up A** below. It is pinned by
+`test_declared_horizons_are_the_claims_not_whatever_happens_to_be_loaded` with the real measurement
+spelled out beside it, so nobody can move the constant believing it matches production.
+
+### The classification, and the one precedence question in it
+
+`reconcile_signal` walks the cadence grid and labels each day COVERED / THIN / ABSENT / MISSING. The
+ladder is floor, then thin, then absence:
+
+- **at or above the floor** -> COVERED. `covered_cell_floor` is `max(1, round(cells * fraction))`;
+  the `max(1, ...)` exists because a fraction low enough to round to zero would let a day with no
+  rows at all clear the threshold and every hole in the lane would report covered.
+- **some cells, under the floor** -> THIN, and THIN is *not* satisfied. Partial is never complete.
+- **no cells, and the whole lattice excused** -> ABSENT, which *is* satisfied. Without that a lane
+  whose provider never published one day sits at 99% forever with a work list that can never empty.
+- **otherwise** -> MISSING. The only state a filler acts on.
+
+A day both observed and excused is COVERED, counted once: an absence is a statement about a fetch,
+and a later fetch that landed rows supersedes it. A day *under the floor* and excused stays THIN --
+rows on the ground outrank a `no_data` verdict, and a partial fill is worth retrying.
+
+`is_complete` and `completeness_fraction` both read 1.0 over an **empty** window, which is the honest
+answer for a lane whose history has not opened. `required_day_count` is the only discriminator, so
+**any reporter of completeness must print the day count beside the fraction**. `render_contract` does.
+
+### An absence is evidence about the cells that recorded it -- measured 2026-08-11
+
+The first cut of the read collapsed `agri.signal_coverage_audit` to one row per (signal, span) and
+treated "any cell said `no_data`" as "the lane is excused". Production says otherwise. Of the 1,965
+`no_data` rows, **1,568 are 98 permanently out-of-domain ERA5-Land cells writing four-year spans
+across 16 signals**. Running the reconciler under the loose rule marked **1,556 of that lane's 1,560
+contracted days** excused, while the provider was in fact publishing 1,470 cells on every one of
+them. Nothing was falsely retired only because `reconcile_signal` tests observations before absences
+and ERA5-Land happens to land rows daily; the first genuinely failed interior fetch would have been
+excused permanently.
+
+So `coverage_absence_windows.sql` projects `count(distinct audit.cell_id)`, `_absent_days` carries it
+per day, and `lattice_wide_absences` admits a day only when the excused cells reach the same floor an
+observation must clear. Where two spans overlap a day the **widest single span wins** rather than the
+sum -- overlapping spans may name overlapping cell sets and adding them would invent evidence, while
+the maximum can only under-count, which leaves a day MISSING and therefore refetchable. Erring toward
+work is the safe direction; erring the other way retires a day upstream can still serve.
+
+### One implementation, not two
+
+This wave produced two readers for the same job: `coverage_census.py` (three statements, consumed by
+`cli.py`, `coverage_report.py` and `coverage_fill.py`) and `coverage_reader.py` plus
+`sql/execution/signal_coverage_days.sql` (one statement, consumed by nothing). The reader fork was
+**deleted** at integration. It had no production consumer, it failed
+`test_sql_tree_conventions.py::test_marker_only_on_line_one` on four bare-word walkthrough lines, and
+its `is_governed_absence` encoded exactly the any-cell rule the paragraph above disproves. Its one
+genuinely better idea -- returning the absent-cell count so a caller can be strict -- was ported into
+the census instead. Do not re-introduce a second reader: the observed census, the absence windows and
+the lattice size are one read set.
+
+### `coverage-fill` is scoped to the plan's own signals
+
+A lane's contracts span every signal its source publishes, but one reviewed plan carries one
+parameter subset. Measured against `plans/` 2026-08-11 the two lanes partition cleanly:
+
+| lane | plans | signals each |
+|---|---|---|
+| `nasa-power-daily` | `weather-fast` / `weather-radiation` / `soil-wetness` | 7 / 1 / 3 |
+| `open-meteo-era5-land-archive` | `ndvi-lattice` / `soiltemp` / `vpd` | 3 / 4 / 1 |
+
+Without narrowing, an old hole in `soil_wetness_profile` would win oldest-first and be targeted by
+the `weather-fast` plan, which fetches no soil parameter: the walk succeeds, the hole survives, the
+census still reports it, and the next run authors the same useless plan again.
+`signals_this_plan_can_fill` maps the plan's parameters through `NASA_POWER_SIGNAL_SPECIFICATIONS` /
+`OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS` and filters the census to them. A lane is drained by
+running the verb once per plan, which is what the cron does.
+
+### A thin-only lane is never sent to `coverage-fill`
+
+`lane_gap_targets` reads `missing_days` only, so `coverage-fill` answers `lane_has_no_missing_days` on
+a lane whose every day is THIN. `verdict_line` therefore branches on `missing_day_count`: at zero
+missing and non-zero thin it names what actually closes a thin day instead of pointing at a verb that
+will refuse forever. This is live today -- see **follow-up B**.
+
+### Absence rows report what was WRITTEN, not what was offered
+
+`insert_coverage_absence.sql` ends `on conflict ... do nothing returning 1`, and
+`record_governed_absence` counts the rows that come back. A second `--apply` over the same run offers
+the same rows and writes none; printing `absence_rows_written: 36` for that would be the first
+principle inverted inside the payload key that states it.
+
+### `coverage-fill` does its network work outside a transaction
+
+`cli._coverage_fill` reads the census and the lattice in one session, rolls it back, probes the
+provider (up to three requests at the NASA POWER timeout) with **no** session open, then opens a
+second session only on the absence path. One `datetime.now(UTC)` is sampled at the top and threaded
+through `gap_to_probe` and `decide_coverage_fill`: sampling twice across UTC midnight turns a
+`GAP_AT_LIVE_EDGE` refusal into a hard error.
+
+### Open follow-ups, none of them fixed in this wave
+
+- **A.** The NASA POWER surface horizon (`coverage_contract.py`, `earliest_required_day=2022-08-06`)
+  is 98 days narrower than measured coverage. Raise it to 2022-04-30, or record why not.
+- **B.** `open-meteo-era5-land-archive` declares `grid_name='sentinel2-ndvi-0p25deg'` (1,568 cells)
+  at `minimum_cell_fraction=1.0`, but the lane covers **1,470**. Every day of that contract therefore
+  classifies THIN, the lane can never report complete, and `cron-era5-land-coverage-fill` will refuse
+  `NOTHING_MISSING` on every tick. It needs either a lane-specific grid or a measured fraction
+  (1470/1568 = 0.9375). Both are constants this wave was told not to move.
+- **C.** `contracts_for_source` returns `()` for a typo and for an uncontracted lane alike. Callers
+  that can afford to refuse must use `coverage_census.contracts_for_keys`, which raises.
+- **D.** Section 5 of the layer lane standard says `ingest/validation/completeness.py` is the one gap
+  engine. `coverage_contract.py` re-implements the cadence walk and the density floor beside it.
+  Folding them together needs a file inside this wave's forbidden boundary.
+- **E.** Nothing consumes `coverage-status --json` yet. `sql/routes/ops_data_streams.sql` still
+  computes `missing_days`/`largest_gap_days` that no surface reads. Wiring the report into
+  `/ops/backfill` is what turns these crons into a liveness signal rather than a log line.
+- **F.** No PostgreSQL-backed test covers the five coverage statements. They are proven to parse, to
+  bind and to carry their markers; that the joins reach the rows is unproven here.
+- **G.** A three-cell probe can never excuse a 397-cell day under the floor rule above, so the
+  `UPSTREAM_SERVES_NOTHING` path records evidence that the census will not yet act on. Deciding how a
+  sampled absence generalises -- probe the whole lattice, or declare a probe quorum in the contract --
+  is the open half of section 7.
+
+## Where the coverage contract sits
+
+`docs/layer-lane-standard.md` sections 5-8 define the loop this package implements for the signal
+plane: required days from the lane contract, minus observed days, minus governed absences in
+`agri.signal_coverage_audit`, becomes the gap list a filler acts on. Absences are evidence, not holes.

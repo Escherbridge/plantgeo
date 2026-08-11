@@ -12,7 +12,7 @@ is decided by the service and not by the model.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal
 
 import structlog
@@ -113,6 +113,8 @@ class AgentRequest:
     question: str | None = None
     history: tuple[ConversationTurn, ...] = ()
     as_of: datetime = field(default_factory=lambda: datetime.now(UTC))
+    selected_day: date | None = None
+    """The day the map is showing. None means the caller did not send one; see agent/AGENTS.md."""
 
 
 @dataclass(slots=True)
@@ -310,6 +312,7 @@ class GatherWarehouseEvidence:
                     precision=ctx.request.precision,
                     as_of=ctx.request.as_of,
                     question=ctx.request.question,
+                    selected_day=ctx.request.selected_day,
                 ),
             }
         )

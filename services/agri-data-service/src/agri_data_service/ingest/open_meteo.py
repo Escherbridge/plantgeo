@@ -28,6 +28,7 @@ from agri_data_service.ingest.identity import (
     build_weather_observation_identity,
     format_javascript_timestamp,
 )
+from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import (
     MAX_LATITUDE,
     MAX_LONGITUDE,
@@ -42,6 +43,7 @@ from agri_data_service.ingest.policy import (
     resolve_weather_sample_spacing_degrees,
 )
 from agri_data_service.ingest.results import IngestionJobResult, skipped_result
+from agri_data_service.ingest.source import HistoryCapability
 from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
@@ -55,14 +57,27 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 OPEN_METEO_SOURCE: Final = "open-meteo"
-OPEN_METEO_CHANNEL: Final = "layer:weather-observations"
 OPEN_METEO_PROPERTY_SOURCE: Final = "Open-Meteo"
-WEATHER_LAYER_VARIABLE: Final = "WEATHER_LAYER_ID"
-DEFAULT_WEATHER_LAYER_NAME: Final = "weather-observations"
+
+WEATHER_LAYER: Final = LayerBinding(
+    variable="WEATHER_LAYER_ID",
+    default="weather-observations",
+    channel="layer:weather-observations",
+)
+OPEN_METEO_CHANNEL: Final = WEATHER_LAYER.channel
+WEATHER_LAYER_VARIABLE: Final = WEATHER_LAYER.variable
+DEFAULT_WEATHER_LAYER_NAME: Final = WEATHER_LAYER.default
 
 OPEN_METEO_BASE_URL: Final = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_BOUNDS: Final = UpstreamBounds(max_bytes=128 * 1024, timeout_seconds=5.0)
 MAX_OBSERVATION_AGE: Final = timedelta(hours=3)
+
+# The forecast endpoint's documented `past_days` maximum (open-meteo.com/en/docs, read 2026-08-10;
+# documentation-sourced, NOT live-probed). It is the deepest window this LAYER's product reaches --
+# the ERA5 archive below goes to 1940 but is a different product. See ingest/AGENTS.md
+# "history declarations, wave 2026-08-10".
+OPEN_METEO_FORECAST_PAST_DAYS_MAXIMUM: Final = 92
+OPEN_METEO_FORECAST_HISTORY_RETENTION: Final = timedelta(days=OPEN_METEO_FORECAST_PAST_DAYS_MAXIMUM)
 
 CURRENT_FIELDS: Final = "temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,precipitation"
 
@@ -131,7 +146,13 @@ class OpenMeteoRateLimitError(UpstreamError):
 
 def resolve_weather_layer_name() -> str:
     """Read WEATHER_LAYER_ID at call time so a cron environment change needs no restart."""
-    return os.environ.get(WEATHER_LAYER_VARIABLE, "").strip() or DEFAULT_WEATHER_LAYER_NAME
+    return WEATHER_LAYER.resolve()
+
+
+def weather_history_capability(now: datetime | None = None) -> HistoryCapability:
+    """State the rolling past window the forecast endpoint serves; the floor moves, so it is resolved per call."""
+    moment = now if now is not None else datetime.now(UTC)
+    return HistoryCapability(supported=True, earliest=moment - OPEN_METEO_FORECAST_HISTORY_RETENTION)
 
 
 @dataclass(frozen=True, slots=True)

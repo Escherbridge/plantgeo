@@ -27,7 +27,22 @@ _SET_STATEMENT_TIMEOUT: Final[TextClause] = text(
 
 _SERVER_DAY: Final[TextClause] = text(load_query_sql("ingest/server_day.sql"))
 
-_FEATURE_OBSERVED_DAYS: Final[TextClause] = text(load_query_sql("ingest/feature_observed_days.sql"))
+# The canonical day census, held as unformatted text because its one `{layer_scope}` slot is filled at
+# import from the two constants below and never from input -- the same load-time slot `ingest/usdm.py`
+# uses for its replace predicate. Loaded exactly once, per sql/AGENTS.md's LOADED rule, and formatted
+# twice; ingest/reconcile.py imports the one-layer form from here rather than reading the file again.
+_OBSERVED_DAYS_TEMPLATE: Final = load_query_sql("ingest/observed_days.sql")
+
+# The report wants every layer, so it adds no scope clause at all.
+_ALL_LAYERS_SCOPE: Final = ""
+
+# Reconciliation wants one layer. The cast pins the bound parameter's type against a uuid column;
+# see the scope-slot note in the .sql file for why this is a load-time slot and not a bind.
+_ONE_LAYER_SCOPE: Final = "AND features.layer_id = CAST(:layer_id AS uuid)"
+
+_FEATURE_OBSERVED_DAYS: Final[TextClause] = text(_OBSERVED_DAYS_TEMPLATE.format(layer_scope=_ALL_LAYERS_SCOPE))
+
+OBSERVED_DAYS_FOR_LAYER: Final[TextClause] = text(_OBSERVED_DAYS_TEMPLATE.format(layer_scope=_ONE_LAYER_SCOPE))
 
 _FEATURE_VALIDITY_COUNTS: Final[TextClause] = text(load_query_sql("ingest/feature_validity_counts.sql"))
 

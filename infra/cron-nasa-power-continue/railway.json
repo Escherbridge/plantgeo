@@ -1,0 +1,12 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "infra/cron-ingest/Dockerfile"
+  },
+  "deploy": {
+    "cronSchedule": "55 9 * * *",
+    "restartPolicyType": "NEVER",
+    "startCommand": "agri-cli historical-plan-continue --plan plans/nasa-power-western-na-weather-fast-20220806-20260806.json --write && agri-cli historical-plan-continue --plan plans/nasa-power-western-na-weather-radiation-20220531-20260531.json --write && agri-cli historical-plan-continue --plan plans/nasa-power-western-na-soil-wetness-20220806-20260806.json --write"
+  }
+}

@@ -73,6 +73,11 @@ class FeatureWrite:
         """The producer-namespaced warehouse identity the Type-2 geometry dimension keys versions by."""
         return self.identity.natural_key
 
+    @property
+    def data_available_at(self) -> datetime | None:
+        """The ML leakage-boundary timestamp a producer supplied, or None until one is wired to supply it."""
+        return self.identity.data_available_at
+
     def stored_properties(self) -> dict[str, object]:
         """The exact jsonb payload written to geo.features, with the external id pinned last."""
         return {**self.properties, "id": self.external_id}

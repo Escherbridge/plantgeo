@@ -14,6 +14,7 @@ import pytest
 from agri_data_service.ingest import evacuation_zones
 from agri_data_service.ingest.evacuation_zones import (
     EVACUATION_ZONES_CHANNEL,
+    EVACUATION_ZONES_HISTORY_CAPABILITY,
     EVACUATION_ZONES_PRODUCER,
     EVACUATION_ZONES_SOURCE,
     MAX_RECORD_COUNT,
@@ -26,12 +27,12 @@ from agri_data_service.ingest.evacuation_zones import (
     evacuation_level_label,
     evacuation_severity,
     fetch_evacuation_zones,
-    is_retryable_failure,
     parse_evacuation_zone_collection,
     run_evacuation_zones_ingestion_job,
 )
 from agri_data_service.ingest.http import UpstreamHttpError, UpstreamPayloadError
 from agri_data_service.ingest.identity import MissingNativeKeyError
+from agri_data_service.ingest.source import HistoryUnavailableError, HistoryWindow
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -57,6 +58,11 @@ class RecordingWriter:
 
 async def _no_sleep(_delay: float) -> None:
     """Skip the backoff wait so a retry test runs at full speed."""
+
+
+def _json_response(payload: dict[str, object]) -> httpx.Response:
+    """Build a 200 JSON response from a payload dict, so a page fixture fits on one call site line."""
+    return httpx.Response(200, content=json.dumps(payload).encode(), headers={"content-type": "application/json"})
 
 
 @pytest.fixture(autouse=True)
@@ -220,12 +226,17 @@ def test_the_query_url_asks_for_a_bounded_geojson_page() -> None:
     assert "resultOffset=1000" in build_query_url("-125,42,-111,49", offset=1_000)
 
 
-def test_only_a_busy_or_transient_upstream_is_retried() -> None:
-    assert is_retryable_failure(UpstreamHttpError(429))
-    assert is_retryable_failure(UpstreamHttpError(503))
-    assert is_retryable_failure(UpstreamPayloadError("Oregon OEM evacuation API error: service is busy"))
-    assert not is_retryable_failure(UpstreamHttpError(400))
-    assert not is_retryable_failure(UpstreamPayloadError(UNEXPECTED_SHAPE_REASON))
+def test_the_history_declaration_refuses_and_names_the_upstream_limitation() -> None:
+    # A refusal here is the honest answer, not a reflex: Oregon publishes no archive of past
+    # evacuation levels. `HistoryCapability.__post_init__` already forbids a reasonless refusal;
+    # this pins that the reason names the actual upstream fact rather than restating the refusal.
+    assert EVACUATION_ZONES_HISTORY_CAPABILITY.supported is False
+    reason = EVACUATION_ZONES_HISTORY_CAPABILITY.reason or ""
+    assert "Fire_Evacuation_Areas_Public" in reason
+    assert "current-state hosted view" in reason
+    window = HistoryWindow(start=datetime(2024, 1, 1, tzinfo=UTC), end=datetime(2024, 2, 1, tzinfo=UTC))
+    with pytest.raises(HistoryUnavailableError, match="Fire_Evacuation_Areas_Public"):
+        EVACUATION_ZONES_HISTORY_CAPABILITY.require(EVACUATION_ZONES_SOURCE, window)
 
 
 async def test_a_transient_failure_is_retried_and_then_succeeds() -> None:
@@ -235,15 +246,84 @@ async def test_a_transient_failure_is_retried_and_then_succeeds() -> None:
         attempts.append(1)
         if len(attempts) == 1:
             return httpx.Response(503)
-        return httpx.Response(
-            200, content=json.dumps(_collection()).encode(), headers={"content-type": "application/json"}
-        )
+        return _json_response(_collection())
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         zones, more_remaining = await fetch_evacuation_zones(client, "-125,42,-111,49", _no_sleep)
     assert len(attempts) == 2
     assert len(zones) == 1
     assert more_remaining is False
+
+
+async def test_a_non_transient_failure_is_not_retried() -> None:
+    attempts: list[int] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        return httpx.Response(400)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(UpstreamHttpError):
+            await fetch_evacuation_zones(client, "-125,42,-111,49", _no_sleep)
+    assert len(attempts) == 1
+
+
+async def test_several_throttle_responses_are_survived_before_success() -> None:
+    # This module carried the pre-incident 3-attempt fixed-tuple ladder until 2026-08-10 -- the exact
+    # shape that lost every hourly fire-perimeters run. It now drives the busy response all the way
+    # to the last attempt the widened budget allows and still recovers.
+    attempts: list[int] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        if len(attempts) < evacuation_zones.MAX_ATTEMPTS:
+            return _json_response({"error": {"message": "Too many requests."}})
+        return _json_response(_collection())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        zones, more_remaining = await fetch_evacuation_zones(client, "-125,42,-111,49", _no_sleep)
+
+    assert evacuation_zones.MAX_ATTEMPTS == 6
+    assert len(attempts) == evacuation_zones.MAX_ATTEMPTS
+    assert len(zones) == 1
+    assert more_remaining is False
+
+
+async def test_a_sustained_throttle_still_fails_loudly_rather_than_retrying_forever() -> None:
+    # A wider budget must still fail the run once spent -- never a silent empty success, never a
+    # partial write. An evacuation layer reporting "ingested, wrote nothing" during an outage is the
+    # one failure mode this source must not have.
+    attempts: list[int] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        return _json_response({"error": {"message": "Too many requests."}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(UpstreamPayloadError, match="Too many requests"):
+            await fetch_evacuation_zones(client, "-125,42,-111,49", _no_sleep)
+
+    assert len(attempts) == evacuation_zones.MAX_ATTEMPTS
+
+
+async def test_the_wall_clock_ceiling_stops_retrying_before_the_attempt_budget_is_spent() -> None:
+    clock_seconds = 0.0
+
+    async def jump_clock(_delay: float) -> None:
+        nonlocal clock_seconds
+        clock_seconds += evacuation_zones.RETRY_WALL_CLOCK_CEILING_SECONDS
+
+    attempts: list[int] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        return _json_response({"error": {"message": "Too many requests."}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(UpstreamPayloadError, match="Too many requests"):
+            await fetch_evacuation_zones(client, "-125,42,-111,49", jump_clock, lambda: clock_seconds)
+
+    assert 1 <= len(attempts) < evacuation_zones.MAX_ATTEMPTS
 
 
 async def test_the_ceiling_stops_paging_even_when_the_upstream_says_more_remain(

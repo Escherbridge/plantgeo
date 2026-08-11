@@ -59,16 +59,30 @@ Design rationale beyond the operator's view lives in
 
 ## The verbs
 
-All five live in `agri_data_service/ingest/commands.py` and ship in the same image as every
+All six live in `agri_data_service/ingest/commands.py` and ship in the same image as every
 other cron verb.
 
 | Verb | What it does | Exit code |
 | --- | --- | --- |
 | `jobs-plan-lane --lane <token> [--floor DATE] [--until DATE]` | Declare the lane and fan its windows out as work items. Idempotent. | `0` unless the plan could not be written |
+| `jobs-plan-gaps --lane <token> [--floor DATE] [--until DATE] [--apply]` | Turn the days the layer is MISSING into claimable windows, reopening one that succeeded over nothing. Dry run by default. | `0` unless the plan could not be written |
 | `jobs-run --lane <token> [--budget-seconds N] [--worker-id S]` | Run one bounded slice. **This is what a cron tick invokes.** | `1` only if a window dead-lettered or the slice raised; otherwise `0` |
 | `jobs-status [--lane <token>] [--definition <name>]` | Counts by state, the oldest outstanding window, the dead-lettered shard keys. | always `0` |
 | `jobs-reconcile-lane --lane <token> [--apply]` | Settle windows whose days the layer already serves. Dry run by default. | always `0` |
 | `validate-streams [--format json\|markdown] [--output PATH]` | The cross-stream completeness and validity report. | `1` only if a stream is `invalid` |
+
+`jobs-plan-gaps` and `jobs-reconcile-lane` are the two directions of one measurement, and they
+read the same day census (`sql/ingest/observed_days.sql`) through the same cadence-aware gap rule
+(`validation/completeness.py`), so they cannot disagree about what "missing" means. Reconcile
+removes work the data proves is done; plan-gaps creates work the data proves is owed. It is the
+only verb that can reopen a hole inside an already-`succeeded` run — `jobs-plan-lane` appends
+whole windows below today and nothing else. It converts a `succeeded` window and nothing else: a
+dead letter is evidence, a cancelled window is your decision, and a leased one belongs to a live
+worker's fence. All three are reported in its JSON line rather than silently skipped.
+
+`infra/cron-maintain-firms/` and `infra/cron-maintain-streamflow/` chain the two verbs daily
+(07:17 and 07:47 UTC). **Those two Railway services are not provisioned yet**; the configs are
+inert until somebody creates them, so today the loop runs only when a person invokes it.
 
 Every verb prints **one JSON line per result on stdout**; operational logging goes to stderr.
 That is the same contract every `ingest-*` verb honours, so a cron log stays parseable.
@@ -198,6 +212,76 @@ recreating the silent hole inside the system built to remove it.
 
 Consequence for the cutover: **the cursor and failure files need no migration.** Abandon them
 where they lie.
+
+### Plan the gaps it is still missing — the other direction
+
+```bash
+agri-cli jobs-plan-gaps --lane firms-archive            # dry run; writes nothing
+agri-cli jobs-plan-gaps --lane firms-archive --apply    # open and reopen the windows that own them
+```
+
+`validate-streams` tells you 2024-03-11 is missing and exits 0. Reconcile can only ever remove
+work. `jobs-plan-lane` appends whole windows *below today*, so it cannot help with a hole in the
+middle of a run that already finished. This verb is the one path from "the report says that day is
+missing" to "a claimable window exists for it".
+
+It reads the same day census the reconciler and the report read, runs it through the same
+cadence-aware gap walk, and maps every missing day back onto the window of the lane's own
+floor-anchored grid that owns it — so the shard key is byte-identical to the one `jobs-plan-lane`
+would have minted, and re-running the verb is a set of `ON CONFLICT DO NOTHING` inserts.
+
+Six outcomes per window, and only the first two write anything:
+
+- **open** — no shard exists for that window. Created, at the window's own grid priority.
+- **reopen** — the shard says `succeeded` and the days are not there. Moved back to `queued`.
+- **already_queued** — `queued`/`retry_wait`/`deferred`. Already claimable; left alone.
+- **held** — `leased`/`running`. A live worker owns the fence; never rewritten behind it.
+- **dead_lettered** — reported, **never** converted. Requeue it yourself if you mean to.
+- **cancelled** — your decision, reported rather than overridden.
+
+Days it cannot plan are named rather than dropped: anything above the newest whole window belongs
+to the forward hourly cron (a trailing partial window would re-key itself every day), and anything
+below the lane floor is outside what the lane declared. Both land in `unplannable_day_sample`.
+
+```json
+{"lane":"firms-archive","state":"dry_run","publication_cadence_days":1,
+ "floor_day":"2000-11-01","through_day":"2026-08-08","observed_day_count":1284,
+ "missing_day_count":37,"first_missing_day":"2024-03-11","last_missing_day":"2024-04-02",
+ "missing_day_sample":["2024-03-11","..."],"unplannable_day_count":0,
+ "open":{"window_count":5,"first_day":"2024-03-26","last_day":"2024-04-05","windows":[...]},
+ "reopen":{"window_count":3,"first_day":"2024-03-11","last_day":"2024-03-25","windows":[...]},
+ "dead_lettered":{"window_count":1,"...":"..."},
+ "would_open":5,"would_reopen":3,"opened":0,"reopened":0}
+```
+
+A reopened window records its own marker (`payload -> 'reopened_from_observed_gaps'`) naming the
+layer, the cadence, the days it was reopened over and its previous status, so the reopen is
+auditable the same way a settlement is — and, like a settlement, it fabricates **no attempt row**.
+
+```sql
+SELECT shard_key, payload -> 'reopened_from_observed_gaps'
+FROM agri.job_work_item
+WHERE payload ? 'reopened_from_observed_gaps';
+```
+
+Two ledger details are worth knowing before you read a reopened row. Its `max_attempts` is
+**raised**, not its `attempt_count` reset — the claim refuses a shard whose attempts have reached
+its ceiling, and resetting the counter would collide with a stored attempt number and make the
+shard permanently unclaimable. And its payload gains a `walk_generation`, which is what stops the
+reopened window resuming at the final chunk its old checkpoint still points to; without it a
+five-day window would walk day five and re-succeed over the same hole.
+
+### Run both directions on a schedule
+
+`infra/cron-maintain-firms/railway.json` and `infra/cron-maintain-streamflow/railway.json` chain
+
+```bash
+agri-cli jobs-plan-gaps --lane <token> --apply && agri-cli jobs-reconcile-lane --lane <token> --apply
+```
+
+daily at 07:17 and 07:47 UTC, after `cron-validate`'s 06:00 report. **Neither Railway service is
+provisioned.** A `railway.json` configures a service that already exists; it does not create one.
+Until somebody creates them, this loop runs only when a person invokes it.
 
 ### Watch it
 

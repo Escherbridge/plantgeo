@@ -29,6 +29,7 @@ from agri_data_service.db.engine import (
     combined_local_engine,
     forecast_iteration_session,
     forecast_mv_refresh_session,
+    ingest_session,
     local_source_loader_engine,
     local_source_loader_session,
 )
@@ -56,6 +57,26 @@ from agri_data_service.execution.covariate_wind_persist import (
     WindTrainingRequest,
     run_covariate_wind_training,
 )
+from agri_data_service.execution.coverage_census import (
+    CoverageCensusError,
+    census_contracts,
+    contracts_for_keys,
+    load_lane_cells,
+)
+from agri_data_service.execution.coverage_contract import contracts_for_source
+from agri_data_service.execution.coverage_fill import (
+    GAP_PROBE_CELL_COUNT,
+    CoverageFillError,
+    FillRefusal,
+    coverage_fill_payload,
+    decide_coverage_fill,
+    gap_to_probe,
+    probe_gap_window,
+    record_governed_absence,
+    signals_this_plan_can_fill,
+    write_fill_plan,
+)
+from agri_data_service.execution.coverage_report import coverage_status_payload, render_census
 from agri_data_service.execution.ensemble_forecast import (
     ENSEMBLE_WAREHOUSE_PERSISTENCE_STATE,
     EnsembleForecastCheckpoint,
@@ -2991,6 +3012,256 @@ def _plan_continuation_failure_reason(exc: Exception) -> str:
     if isinstance(exc, OSError):
         return "plan continuation could not read or write a local plan artifact"
     return f"plan continuation input is invalid: {exc}"
+
+
+@cli.command("coverage-status")
+@click.option(
+    "--source-key",
+    "source_keys",
+    multiple=True,
+    help="Report only these lanes. Repeatable; the default is every declared coverage contract.",
+)
+@click.option(
+    "--through",
+    default=None,
+    help="Hold every lane to this YYYY-MM-DD instead of today minus the provider's measured lag.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the machine payload instead of the table.")
+def coverage_status(source_keys: tuple[str, ...], through: str | None, as_json: bool) -> None:
+    """Report, per signal, how complete a lane is, how many days are missing, and where the holes are.
+
+    READ ONLY. This verb opens no write transaction, authors nothing and fetches nothing; it is safe
+    to run against production at any time and is the only liveness signal the gap-fill cron has.
+
+    Read the three numbers in this order. `contracted through` first -- it is chosen as today minus
+    the provider's measured publication lag, and it is the single fact that decides whether the
+    trailing fortnight counts as a hole or as a release that has simply not happened yet. Then
+    `complete`, which counts a day as satisfied when it either landed at or above the lane's cell
+    floor OR carries a governed absence; an absence is evidence, not a hole, which is why a lane
+    whose provider never published one day can still reach 100%. Then the collapsed ranges under
+    each signal, which are the actual work list -- `coverage-fill` acts on the oldest of them.
+
+    `thin` is reported apart from `missing` on purpose. A thin day landed SOME cells and is a
+    partial fill, not a hole; folding the two together is how a settler writes a silent hole back
+    in. Partial is never complete.
+
+    EXIT CODES -- a finding never changes the exit code. An incomplete lane is a measurement, not
+    an incident, and this verb exits 0 whether every lane is whole or none is. A fault that stops
+    the measurement from happening at all -- an unreachable warehouse, an undeclared source key --
+    is a different thing and still raises.
+    """
+    asyncio.run(_coverage_status(source_keys, through, as_json=as_json))
+
+
+async def _coverage_status(source_keys: tuple[str, ...], through: str | None, *, as_json: bool) -> None:
+    through_day = _forecast_cli_day(through, "--through") if through is not None else None
+    try:
+        contracts = contracts_for_keys(source_keys)
+        async with ingest_session() as session:
+            censuses = await census_contracts(session, contracts, through_day=through_day)
+            # An explicit rollback rather than trusting the session's close, so a read-only verb
+            # leaves nothing behind even if a future edit starts writing on a path it does not today.
+            await session.rollback()
+    except (CoverageCensusError, SQLAlchemyError) as exc:
+        raise click.ClickException(_coverage_failure_reason(exc)) from exc
+    click.echo(json.dumps(coverage_status_payload(censuses), indent=2) if as_json else render_census(censuses))
+
+
+@cli.command("coverage-fill")
+@click.option(
+    "--plan",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    required=True,
+    help="The reviewed plan artifact whose lane, lattice and parameters the fill inherits verbatim.",
+)
+@click.option(
+    "--source-key",
+    default=None,
+    help="Assert the plan belongs to this agri.data_source.key. The run refuses on a mismatch.",
+)
+@click.option(
+    "--output-directory",
+    type=click.Path(path_type=Path, file_okay=False),
+    default=None,
+    help="Where the fill plan would be written. Defaults to the source plan's own directory.",
+)
+@click.option(
+    "--through",
+    default=None,
+    help="Hold the lane to this YYYY-MM-DD instead of today minus the provider's measured lag.",
+)
+@click.option(
+    "--probe-cells",
+    type=click.IntRange(min=1),
+    default=GAP_PROBE_CELL_COUNT,
+    show_default=True,
+    help="How many lattice cells the gap is probed at before it is called fillable or absent.",
+)
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    default=False,
+    help="Perform the write; the default is a dry run that writes nothing.",
+)
+def coverage_fill(  # noqa: PLR0913 - one parameter per click option, as this file's own verbs are
+    plan: Path,
+    source_key: str | None,
+    output_directory: Path | None,
+    through: str | None,
+    probe_cells: int,
+    apply_changes: bool,
+) -> None:
+    """Turn the oldest interior gap in one lane into a backfill plan, or into a governed absence.
+
+    DRY RUN BY DEFAULT. Without `--apply` this writes no plan artifact and opens no write
+    transaction; it prints the whole decision -- which run it targeted, what the provider answered
+    when asked for exactly that run, and what it would have written. Read the target gap first: it
+    is the fact that tells you whether the fill is closing the hole you think it is.
+
+    ONE upstream request per run, not one per day. The census's missing days are collapsed into the
+    contiguous runs they actually form, the OLDEST run is targeted so a lane converges instead of
+    thrashing on whichever hole is newest, and the provider is asked for that whole run in a single
+    request per probed cell. Re-run the verb to take the next run.
+
+    SCOPED TO THE PLAN'S OWN SIGNALS. A lane's contracts span every signal its source publishes, but
+    one reviewed plan carries one parameter subset -- NASA POWER's eleven signals are split across
+    three plans and ERA5-Land's eight across three more. Only holes in the signals THIS plan fetches
+    are considered, so a lane is drained by running the verb once per plan.
+
+    Two outcomes, and the difference between them is measured rather than assumed:
+
+      * the provider serves the run -- a plan is authored, anchored on the run's last day, inheriting
+        the source plan's cells, parameters, grid, chunking, source governance and transform version
+        verbatim. `HistoricalBackfillWindow` fixes the span at four calendar years, so the plan
+        necessarily re-requests already-persisted days either side of the hole; the projected row
+        counts in the payload are what that costs.
+
+      * the provider serves nothing at any probed cell for any requested parameter -- the run is not
+        a hole at all and is recorded under `--apply` as a governed absence in
+        `agri.signal_coverage_audit`, one row per probed cell per signal spanning the whole run,
+        with the probe's own evidence in `details`. The next census reads it back as satisfied and
+        the run stops being re-walked forever.
+
+    Neither outcome fabricates a day. A run that reaches today is refused as the forward refresh's
+    business, a run longer than four calendar years is refused rather than half-planned, and a run
+    whose plan artifact already exists is refused rather than re-authored.
+
+    EXIT CODES -- always 0. Every refusal above is a normal scheduled outcome, and a lane with
+    nothing missing is the state this verb exists to reach.
+    """
+    asyncio.run(_coverage_fill(plan, source_key, output_directory, through, probe_cells, apply_changes=apply_changes))
+
+
+async def _coverage_fill(  # noqa: PLR0913 - mirrors its verb's options one for one
+    plan_path: Path,
+    asserted_source_key: str | None,
+    output_directory: Path | None,
+    through: str | None,
+    probe_cells: int,
+    *,
+    apply_changes: bool,
+) -> None:
+    through_day = _forecast_cli_day(through, "--through") if through is not None else None
+    destination = output_directory or plan_path.parent
+    try:
+        source = load_continuation_source(plan_path, local_execution_root=settings.local_execution_root)
+    except (PlanContinuationError, OSError) as exc:
+        # A plan this verb cannot parse reaches the operator as one sentence, never as a traceback.
+        raise click.ClickException(_coverage_failure_reason(exc)) from exc
+    source_key = source.plan.source.key
+    if asserted_source_key is not None and asserted_source_key != source_key:
+        # The plan is the authority on which lane it belongs to. `--source-key` exists so a scheduled
+        # invocation states the lane it believes it is filling and fails loudly when the plan path is
+        # later pointed somewhere else, rather than silently filling a different lane.
+        raise click.ClickException(
+            f"--source-key {asserted_source_key} does not match the plan's own source key {source_key}"
+        )
+    contracts = contracts_for_source(source_key)
+    if not contracts:
+        raise click.ClickException(
+            f"no coverage contract declares source key {source_key}; declare the lane in "
+            "execution/coverage_contract.py before a gap in it can be filled"
+        )
+    grid_names = {contract.grid_name for contract in contracts}
+    support_keys = {contract.support_key for contract in contracts}
+    if len(grid_names) != 1 or len(support_keys) != 1:
+        # Every contract on one source must agree, because one fetch serves them all. Two grids or
+        # two supports would mean one probe answering for lattices it never asked about.
+        raise click.ClickException(
+            f"lane {source_key} declares more than one grid or support across its contracts, so one "
+            "gap probe cannot speak for all of them"
+        )
+    grid_name = next(iter(grid_names))
+    support_key = next(iter(support_keys))
+    # One clock for the whole run. `gap_to_probe` and `decide_coverage_fill` both consult it, and
+    # sampling twice across UTC midnight turns a GAP_AT_LIVE_EDGE refusal into a hard error.
+    decided_at = datetime.now(UTC)
+    try:
+        # The census read and the probe run outside any write transaction on purpose: a probe is up
+        # to three provider requests at 30s each, and holding the loader connection idle-in-
+        # transaction for that long is how a cron ties up a pooled DSN it is not using.
+        async with ingest_session() as read_session:
+            censuses = await census_contracts(read_session, contracts, through_day=through_day)
+            lane_cells = {cell.cell_key: cell for cell in await load_lane_cells(read_session, grid_name)}
+            await read_session.rollback()
+        signals = signals_this_plan_can_fill(source, tuple(signal for census in censuses for signal in census.signals))
+        if not signals:
+            raise click.ClickException(
+                f"{plan_path.name} fetches no parameter that maps to a contracted signal of lane "
+                f"{source_key}, so a gap in it cannot be filled from this plan"
+            )
+        target = gap_to_probe(source, signals, output_directory=destination, now=decided_at)
+        probe = await probe_gap_window(source, target, probe_cell_count=probe_cells, now=decided_at) if target else None
+        decision = decide_coverage_fill(
+            source,
+            signals,
+            output_directory=destination,
+            lane_cells=lane_cells,
+            support_key=support_key,
+            probe=probe,
+            now=decided_at,
+        )
+        plan_written = False
+        absence_rows_written = 0
+        if apply_changes and decision.refusal is None:
+            write_fill_plan(decision)
+            plan_written = True
+        elif apply_changes and decision.refusal is FillRefusal.UPSTREAM_SERVES_NOTHING:
+            async with ingest_session() as write_session:
+                absence_rows_written = await record_governed_absence(write_session, decision)
+                await write_session.commit()
+    except (
+        CoverageCensusError,
+        CoverageFillError,
+        PlanContinuationError,
+        SQLAlchemyError,
+        httpx.HTTPError,
+        OSError,
+    ) as exc:
+        raise click.ClickException(_coverage_failure_reason(exc)) from exc
+    click.echo(
+        json.dumps(
+            coverage_fill_payload(decision, plan_written=plan_written, absence_rows_written=absence_rows_written),
+            indent=2,
+        )
+    )
+
+
+def _coverage_failure_reason(exc: Exception) -> str:  # noqa: PLR0911 - an ordered ladder: one return per fault class
+    if isinstance(exc, CoverageFillError):
+        return f"coverage fill refused: {exc}"
+    if isinstance(exc, CoverageCensusError):
+        return f"coverage census could not read the warehouse: {exc}"
+    if isinstance(exc, PlanContinuationError):
+        return f"coverage fill could not read the source plan: {exc}"
+    if isinstance(exc, httpx.HTTPError):
+        return "coverage fill could not reach the provider to probe the gap"
+    if isinstance(exc, SQLAlchemyError):
+        return "coverage verb could not reach the warehouse"
+    if isinstance(exc, OSError):
+        return "coverage fill could not read or write a local plan artifact"
+    return f"coverage verb input is invalid: {exc}"
 
 
 @cli.command("historical-promotion-spool")

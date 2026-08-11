@@ -6,7 +6,6 @@ import argparse
 import asyncio
 import hashlib
 import json
-import os
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -35,6 +34,7 @@ from agri_data_service.ingest.identity import (
     build_burn_severity_identity,
     format_javascript_timestamp,
 )
+from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import (
     UNCONFIGURED_BBOX_REASON,
     parse_bbox,
@@ -966,10 +966,16 @@ async def ingest_mtbs(
 # The job token an operator reads in a cron summary and the governed source key name the same thing;
 # two spellings of it would be two things to keep reconciled.
 MTBS_SOURCE: Final = MTBS_SOURCE_KEY
-MTBS_CHANNEL: Final = "layer:burn-severity"
 MTBS_PROPERTY_SOURCE: Final = "MTBS Burned Area Boundaries"
-BURN_SEVERITY_LAYER_VARIABLE: Final = "BURN_SEVERITY_LAYER_ID"
-DEFAULT_BURN_SEVERITY_LAYER_NAME: Final = "burn-severity"
+
+BURN_SEVERITY_LAYER: Final = LayerBinding(
+    variable="BURN_SEVERITY_LAYER_ID",
+    default="burn-severity",
+    channel="layer:burn-severity",
+)
+MTBS_CHANNEL: Final = BURN_SEVERITY_LAYER.channel
+BURN_SEVERITY_LAYER_VARIABLE: Final = BURN_SEVERITY_LAYER.variable
+DEFAULT_BURN_SEVERITY_LAYER_NAME: Final = BURN_SEVERITY_LAYER.default
 
 # The key each normalised record travels under, so the upstream-record mapping has one spelling.
 MTBS_RECORD_FIELD: Final = "record"
@@ -986,7 +992,7 @@ MISSING_CLIENT_REASON: Final = "an MTBS fetch needs an upstream client; the job 
 
 def resolve_burn_severity_layer_name() -> str:
     """Read BURN_SEVERITY_LAYER_ID at call time so a cron environment change needs no restart."""
-    return os.environ.get(BURN_SEVERITY_LAYER_VARIABLE, "").strip() or DEFAULT_BURN_SEVERITY_LAYER_NAME
+    return BURN_SEVERITY_LAYER.resolve()
 
 
 def resolve_release_years(release_years: Sequence[int] | None) -> list[int]:

@@ -52,6 +52,34 @@ MAX_FIRE_YEARS_BACK: Final = 45
 DEFAULT_FORECAST_ROWS: Final = 40
 MAX_FORECAST_ROWS: Final = 120
 
+# --- Selected-day bounds -----------------------------------------------------------
+#
+# Bounds for the three tools that answer at the day the UI has selected. See agent/AGENTS.md,
+# "Answering at the selected day", for what each one is measured against and why.
+
+# 19 signal names are under contract across the three lanes (execution/coverage_contract.py,
+# verified against agri.data_source and agri.signal_observation 2026-08-11). Rows group by
+# signal x source parameter x support key x unit, so 40 leaves a lane room to publish a second
+# parameter spelling without a day's answer being silently truncated.
+MAX_DAY_SUMMARY_ROWS: Final = 40
+MAX_COVERAGE_AUDIT_ROWS: Final = 40
+# At most two rows -- one before, one after -- per group the day summary admits.
+MAX_TEMPORAL_NEIGHBOR_ROWS: Final = MAX_DAY_SUMMARY_ROWS * 2
+
+# Measured against production 2026-08-11: NASA POWER is gapless daily over 397 cells from
+# 2022-08-06 to 2026-08-06 and ERA5-Land runs to 2026-08-02, so a neighbour is normally one day
+# out and the widest routine gap is ERA5-Land's four-day publication lag. 180 days sits far
+# above that, which is what makes "no neighbour inside the window" a claim about the data.
+DEFAULT_NEIGHBOR_DAYS: Final = 30
+MAX_NEIGHBOR_DAYS: Final = 180
+
+# agri.spatial_cell 2026-08-11: nasa-power-0.5-degree holds 397 cells at roughly 55 km spacing
+# and sentinel2-ndvi-0p25deg 1,568 at roughly 27.8 km east-west by 20.1 km north-south at 43.6N,
+# so a 50 km radius admits about fourteen centroids of the denser grid. 25 covers both grids at
+# once with headroom.
+DEFAULT_NEAREST_CELLS: Final = 8
+MAX_NEAREST_CELLS: Final = 25
+
 # Pre-aggregation caps: how much the database may gather before it collapses to a summary.
 MAX_CELL_FANOUT: Final = 250
 MAX_FIRE_FEATURE_FANOUT: Final = 2_000
@@ -75,6 +103,18 @@ _FIRE_SQL: Final = text(load_query_sql("agent/fire_history_near_point.sql")).bin
 )
 _FORECAST_SQL: Final = text(load_query_sql("agent/forecast_summary_for_cell.sql")).bindparams(
     bindparam("metric_names", type_=ARRAY(Text))
+)
+_VALUE_ON_DAY_SQL: Final = text(load_query_sql("agent/signal_value_on_day.sql")).bindparams(
+    bindparam("signal_names", type_=ARRAY(Text))
+)
+_COVERAGE_ON_DAY_SQL: Final = text(load_query_sql("agent/signal_coverage_on_day.sql")).bindparams(
+    bindparam("signal_names", type_=ARRAY(Text))
+)
+_TIME_NEIGHBORS_SQL: Final = text(load_query_sql("agent/signal_neighbors_in_time.sql")).bindparams(
+    bindparam("signal_names", type_=ARRAY(Text))
+)
+_NEAREST_CELLS_SQL: Final = text(load_query_sql("agent/nearest_signal_cells.sql")).bindparams(
+    bindparam("grid_names", type_=ARRAY(Text))
 )
 
 
@@ -163,6 +203,31 @@ def _payload(body: dict[str, Any]) -> str:
 def _coordinate_error(tool_name: str) -> str:
     _record(tool_name, 0, {"error": "invalid_coordinate"})
     return _payload({"error": "longitude must be within -180..180 and latitude within -90..90"})
+
+
+def _parse_day(raw_day: str) -> date | None:
+    """Parse an ISO calendar day, answering None rather than guessing at an unparseable one."""
+    try:
+        return date.fromisoformat(raw_day.strip())
+    except ValueError:
+        return None
+
+
+def _day_error(tool_name: str, raw_day: str) -> str:
+    """Refuse an unparseable day outright; a substituted day would answer a different question."""
+    _record(tool_name, 0, {"error": "invalid_day"})
+    return _payload(
+        {
+            "error": "day must be an ISO calendar day such as 2026-03-14",
+            "received_day": raw_day,
+        }
+    )
+
+
+def _day_bounds(day: date) -> tuple[datetime, datetime]:
+    """The half-open pair of UTC midnights bounding one calendar day."""
+    opening = datetime(day.year, day.month, day.day, tzinfo=UTC)
+    return opening, opening + timedelta(days=1)
 
 
 async def _fetch(statement: Any, parameters: dict[str, Any]) -> list[dict[str, Any]]:
@@ -352,6 +417,198 @@ async def query_forecast_summary_for_cell(
     )
 
 
+async def query_signal_value_on_day(
+    longitude: float,
+    latitude: float,
+    day: str,
+    radius_meters: float = DEFAULT_RADIUS_METERS,
+    signal_names: list[str] | None = None,
+) -> str:
+    """Report what each governed signal measured on exactly the caller's day, and the audit for it."""
+    if not _valid_coordinate(longitude, latitude):
+        return _coordinate_error("signal_value_on_day")
+    selected_day = _parse_day(day)
+    if selected_day is None:
+        return _day_error("signal_value_on_day", day)
+    radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
+    names = _clean_names(signal_names)
+    day_start, day_end = _day_bounds(selected_day)
+    scope: dict[str, Any] = {
+        "longitude": longitude,
+        "latitude": latitude,
+        "radius_meters": radius,
+        "cell_limit": MAX_CELL_FANOUT,
+        "day_start": day_start,
+        "day_end": day_end,
+        "signal_names": names,
+    }
+    measured = await _fetch(_VALUE_ON_DAY_SQL, {**scope, "row_limit": MAX_DAY_SUMMARY_ROWS})
+    governed = await _fetch(_COVERAGE_ON_DAY_SQL, {**scope, "row_limit": MAX_COVERAGE_AUDIT_ROWS})
+    _record(
+        "signal_value_on_day",
+        len(measured),
+        {"requested_day": selected_day, "radius_meters": radius, "coverage_audit_rows": len(governed)},
+    )
+    return _payload(
+        {
+            "requested_day": selected_day,
+            "applied_bounds": {
+                "requested_day": selected_day,
+                "radius_meters": radius,
+                "signal_names": names,
+                "max_summary_rows": MAX_DAY_SUMMARY_ROWS,
+                "max_coverage_audit_rows": MAX_COVERAGE_AUDIT_ROWS,
+                "max_cells_scanned": MAX_CELL_FANOUT,
+            },
+            "signals_on_day": measured,
+            "signals_on_day_truncated": len(measured) >= MAX_DAY_SUMMARY_ROWS,
+            "coverage_audit_on_day": governed,
+            "coverage_audit_on_day_truncated": len(governed) >= MAX_COVERAGE_AUDIT_ROWS,
+            "note": (
+                "Every row in signals_on_day was measured ON requested_day and on no other day; "
+                "nothing here is borrowed from a neighbouring day. A signal absent from "
+                "signals_on_day had no accepted reading that day UNLESS "
+                "signals_on_day_truncated is true, in which case the list hit its row cap and a "
+                "missing signal may simply have been cut. coverage_audit_on_day is what "
+                "the ingest lane already recorded for a window covering it: status no_data means "
+                "the upstream published nothing and the day will not be refetched, partial means "
+                "fewer cells landed than expected, and an empty audit means nothing was recorded "
+                "either way. For the nearest days that do carry a reading call "
+                "signal_neighbors_in_time, and never quote one of those as this day's value."
+            ),
+        }
+    )
+
+
+async def query_signal_neighbors_in_time(  # noqa: PLR0913 - the parameter list is the published tool schema.
+    longitude: float,
+    latitude: float,
+    day: str,
+    radius_meters: float = DEFAULT_RADIUS_METERS,
+    neighbor_days: int = DEFAULT_NEIGHBOR_DAYS,
+    signal_names: list[str] | None = None,
+) -> str:
+    """Return the nearest accepted reading each side of the caller's day, carrying its real gap."""
+    if not _valid_coordinate(longitude, latitude):
+        return _coordinate_error("signal_neighbors_in_time")
+    selected_day = _parse_day(day)
+    if selected_day is None:
+        return _day_error("signal_neighbors_in_time", day)
+    radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
+    window_days = _clamp_int(neighbor_days, 1, MAX_NEIGHBOR_DAYS)
+    names = _clean_names(signal_names)
+    day_start, day_end = _day_bounds(selected_day)
+    rows = await _fetch(
+        _TIME_NEIGHBORS_SQL,
+        {
+            "longitude": longitude,
+            "latitude": latitude,
+            "radius_meters": radius,
+            "cell_limit": MAX_CELL_FANOUT,
+            "day": selected_day,
+            "search_start": day_start - timedelta(days=window_days),
+            "search_end": day_end + timedelta(days=window_days),
+            "signal_names": names,
+            "row_limit": MAX_TEMPORAL_NEIGHBOR_ROWS,
+        },
+    )
+    _record(
+        "signal_neighbors_in_time",
+        len(rows),
+        {"requested_day": selected_day, "radius_meters": radius, "neighbor_days": window_days},
+    )
+    return _payload(
+        {
+            "requested_day": selected_day,
+            "applied_bounds": {
+                "requested_day": selected_day,
+                "radius_meters": radius,
+                "neighbor_days": window_days,
+                "searched_from": selected_day - timedelta(days=window_days),
+                "searched_through": selected_day + timedelta(days=window_days),
+                "signal_names": names,
+                "max_rows": MAX_TEMPORAL_NEIGHBOR_ROWS,
+            },
+            "temporal_neighbors": rows,
+            "temporal_neighbors_truncated": len(rows) >= MAX_TEMPORAL_NEIGHBOR_ROWS,
+            "note": (
+                "Each row is the nearest accepted reading on a day OTHER than requested_day. "
+                "side says whether it precedes or follows, observed_day is that reading's own "
+                "date, distance_days is the real gap in days and day_offset the same gap signed, "
+                "and nearest_cell_distance_m is how far its cell sits from the point. Never "
+                "report one of these as the value on requested_day -- say which day it came from "
+                "and how far away that is. A signal missing its before or after row has no "
+                "accepted reading on that side between searched_from and searched_through, which "
+                "is a statement about the window searched and not about all of history -- unless "
+                "temporal_neighbors_truncated is true, in which case the list hit its row cap and "
+                "the missing side may simply have been cut."
+            ),
+        }
+    )
+
+
+async def query_nearest_signal_cells(  # noqa: PLR0913 - the parameter list is the published tool schema.
+    longitude: float,
+    latitude: float,
+    day: str,
+    radius_meters: float = DEFAULT_RADIUS_METERS,
+    cell_count: int = DEFAULT_NEAREST_CELLS,
+    grid_names: list[str] | None = None,
+) -> str:
+    """List the analysis cells nearest a point with their real distances and what they hold that day."""
+    if not _valid_coordinate(longitude, latitude):
+        return _coordinate_error("nearest_signal_cells")
+    selected_day = _parse_day(day)
+    if selected_day is None:
+        return _day_error("nearest_signal_cells", day)
+    radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
+    returned_cells = _clamp_int(cell_count, 1, MAX_NEAREST_CELLS)
+    grids = _clean_names(grid_names)
+    day_start, day_end = _day_bounds(selected_day)
+    rows = await _fetch(
+        _NEAREST_CELLS_SQL,
+        {
+            "longitude": longitude,
+            "latitude": latitude,
+            "radius_meters": radius,
+            "cell_limit": MAX_CELL_FANOUT,
+            "grid_names": grids,
+            "day_start": day_start,
+            "day_end": day_end,
+            "row_limit": returned_cells,
+        },
+    )
+    _record(
+        "nearest_signal_cells",
+        len(rows),
+        {"requested_day": selected_day, "radius_meters": radius, "cell_count": returned_cells},
+    )
+    return _payload(
+        {
+            "requested_day": selected_day,
+            "applied_bounds": {
+                "requested_day": selected_day,
+                "radius_meters": radius,
+                "cell_count": returned_cells,
+                "grid_names": grids,
+                "max_cells_scanned": MAX_CELL_FANOUT,
+            },
+            "nearest_cells": rows,
+            "note": (
+                "Cells are ordered by their real distance from the requested point, measured to "
+                "the cell centroid in metres on the curved earth, and are listed whether or not "
+                "they hold anything. observation_count_on_day counts rows on the SIGNAL plane "
+                "only (weather, soil, air quality and similar). Layers that land on the forecast "
+                "plane -- Sentinel-2 NDVI above all -- are not counted here at all, so a 0 is not "
+                "a claim that the cell is empty; it is a claim about signal observations. If the "
+                "nearest cell holds nothing on requested_day and a farther one does, quoting the "
+                "farther one is only honest with its distance attached. An empty list means no "
+                "cell of any listed grid falls inside the radius at all."
+            ),
+        }
+    )
+
+
 # --- Model-facing tools ------------------------------------------------------------
 
 
@@ -469,9 +726,118 @@ async def forecast_summary_for_cell(
     )
 
 
+@beta_async_tool
+async def signal_value_on_day(
+    longitude: float,
+    latitude: float,
+    day: str,
+    radius_meters: float = DEFAULT_RADIUS_METERS,
+    signal_names: list[str] | None = None,
+) -> str:
+    """Report what PlantGeo's governed signals measured near a coordinate on ONE specific day.
+
+    Use this whenever you need a value for the day the map is showing. It answers for that day
+    and no other: a signal missing from the result had no accepted reading that day, and nothing
+    is ever substituted from a neighbouring day. Each row carries the nearest contributing cell's
+    own reading and distance, the spread across every cell in range, and the real timestamps the
+    row was built from. The result also carries what the ingest lane recorded for that day --
+    status no_data means the upstream published nothing, which is why a value is missing.
+
+    Args:
+        longitude: WGS84 longitude in decimal degrees, -180 to 180.
+        latitude: WGS84 latitude in decimal degrees, -90 to 90.
+        day: The calendar day to answer for, as ISO YYYY-MM-DD. Use the day the caller selected.
+        radius_meters: Search radius around the point in metres; capped at 50000.
+        signal_names: Optional exact signal names to restrict to. Omit for every signal.
+    """
+    return await query_signal_value_on_day(
+        longitude=longitude,
+        latitude=latitude,
+        day=day,
+        radius_meters=radius_meters,
+        signal_names=signal_names,
+    )
+
+
+@beta_async_tool
+async def signal_neighbors_in_time(  # noqa: PLR0913 - the parameter list is the published tool schema.
+    longitude: float,
+    latitude: float,
+    day: str,
+    radius_meters: float = DEFAULT_RADIUS_METERS,
+    neighbor_days: int = DEFAULT_NEIGHBOR_DAYS,
+    signal_names: list[str] | None = None,
+) -> str:
+    """Find the nearest reading before and after a given day, each with how far away it really is.
+
+    Call this when signal_value_on_day returned nothing for the day you were asked about. For
+    each signal it returns at most two rows -- the closest accepted reading earlier than that day
+    and the closest one later -- carrying that reading's own observation date, the real gap in
+    days, and the distance of the cell it came from. These are neighbours, never answers: report
+    them as "nearest reading is six days earlier", never as the value on the day requested. A
+    signal missing a side simply has no reading there within the searched window.
+
+    Args:
+        longitude: WGS84 longitude in decimal degrees, -180 to 180.
+        latitude: WGS84 latitude in decimal degrees, -90 to 90.
+        day: The calendar day to search around, as ISO YYYY-MM-DD.
+        radius_meters: Search radius around the point in metres; capped at 50000.
+        neighbor_days: How many days each side of the day to search; capped at 180.
+        signal_names: Optional exact signal names to restrict to. Omit for every signal.
+    """
+    return await query_signal_neighbors_in_time(
+        longitude=longitude,
+        latitude=latitude,
+        day=day,
+        radius_meters=radius_meters,
+        neighbor_days=neighbor_days,
+        signal_names=signal_names,
+    )
+
+
+@beta_async_tool
+async def nearest_signal_cells(  # noqa: PLR0913 - the parameter list is the published tool schema.
+    longitude: float,
+    latitude: float,
+    day: str,
+    radius_meters: float = DEFAULT_RADIUS_METERS,
+    cell_count: int = DEFAULT_NEAREST_CELLS,
+    grid_names: list[str] | None = None,
+) -> str:
+    """List the analysis cells nearest a coordinate, each with its real distance in metres.
+
+    Use this to judge whether a reading is actually relevant to the point you were asked about,
+    and to see where the measurements physically are. Cells come back nearest first with their
+    centroid coordinates, their grid and resolution, and how many accepted observations each one
+    holds on the given day -- including cells holding nothing, which are listed with a count of
+    zero rather than omitted. That count covers the signal observation plane only; forecast-plane
+    layers such as Sentinel-2 NDVI are not counted, so zero never means the cell is empty of
+    everything. If you quote a value from a cell, quote its distance with it.
+
+    Args:
+        longitude: WGS84 longitude in decimal degrees, -180 to 180.
+        latitude: WGS84 latitude in decimal degrees, -90 to 90.
+        day: The calendar day to count observations for, as ISO YYYY-MM-DD.
+        radius_meters: Search radius around the point in metres; capped at 50000.
+        cell_count: How many cells to return, nearest first; capped at 25.
+        grid_names: Optional exact grid names to restrict to. Omit for every grid.
+    """
+    return await query_nearest_signal_cells(
+        longitude=longitude,
+        latitude=latitude,
+        day=day,
+        radius_meters=radius_meters,
+        cell_count=cell_count,
+        grid_names=grid_names,
+    )
+
+
 WAREHOUSE_TOOLS: Final = (
     signals_near_point,
     drought_history_at_point,
     fire_history_near_point,
     forecast_summary_for_cell,
+    signal_value_on_day,
+    signal_neighbors_in_time,
+    nearest_signal_cells,
 )

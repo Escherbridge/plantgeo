@@ -1,0 +1,12 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "infra/cron-ingest/Dockerfile"
+  },
+  "deploy": {
+    "cronSchedule": "17 7 * * *",
+    "restartPolicyType": "NEVER",
+    "startCommand": "agri-cli jobs-plan-gaps --lane firms-archive --apply && agri-cli jobs-reconcile-lane --lane firms-archive --apply"
+  }
+}

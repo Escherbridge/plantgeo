@@ -4,22 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import math
-import os
-import random
-import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
-from urllib.parse import urlencode
 
-import structlog
-
+from agri_data_service.ingest.arcgis import (
+    ArcGisEnvelopeQuery,
+    optional_number,
+    optional_text,
+    page_offset_walk,
+    parse_feature_collection,
+    require_feature_properties,
+    require_polygon_geometry,
+)
 from agri_data_service.ingest.http import (
-    HTTP_SERVER_ERROR_MINIMUM,
-    HTTP_TOO_MANY_REQUESTS,
     UpstreamBounds,
-    UpstreamHttpError,
     UpstreamPayloadError,
     fetch_bounded_json,
     upstream_client,
@@ -29,12 +29,15 @@ from agri_data_service.ingest.identity import (
     build_fire_perimeter_identity,
     format_javascript_timestamp,
 )
+from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import (
     UNCONFIGURED_BBOX_REASON,
     resolve_bounded_bbox,
     resolve_max_source_records,
 )
 from agri_data_service.ingest.results import IngestionJobResult, skipped_result
+from agri_data_service.ingest.source import HistoryCapability
+from agri_data_service.ingest.upstream_retry import UpstreamRetryPolicy, retry_upstream
 from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
@@ -44,13 +47,17 @@ if TYPE_CHECKING:
 
     from agri_data_service.ingest.writer import FeatureWriter
 
-logger = structlog.get_logger()
-
 WFIGS_SOURCE: Final = "wfigs-fire-perimeters"
-WFIGS_CHANNEL: Final = "layer:fire-perimeters"
 WFIGS_PROPERTY_SOURCE: Final = "WFIGS Interagency Fire Perimeters"
-FIRE_PERIMETERS_LAYER_VARIABLE: Final = "FIRE_PERIMETERS_LAYER_ID"
-DEFAULT_FIRE_PERIMETERS_LAYER_NAME: Final = "fire-perimeters"
+
+FIRE_PERIMETERS_LAYER: Final = LayerBinding(
+    variable="FIRE_PERIMETERS_LAYER_ID",
+    default="fire-perimeters",
+    channel="layer:fire-perimeters",
+)
+WFIGS_CHANNEL: Final = FIRE_PERIMETERS_LAYER.channel
+FIRE_PERIMETERS_LAYER_VARIABLE: Final = FIRE_PERIMETERS_LAYER.variable
+DEFAULT_FIRE_PERIMETERS_LAYER_NAME: Final = FIRE_PERIMETERS_LAYER.default
 
 WFIGS_QUERY_URL: Final = (
     "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services"
@@ -86,13 +93,23 @@ MAX_RECORD_COUNT: Final = 100
 # records is double DEFAULT_MAX_SOURCE_RECORDS, so the configured ceiling is what stops an ordinary
 # run, not this bound.
 MAX_PAGES: Final = 200
-# Widened 2026-08-10 after a sustained throttle crashed the hourly cron on two ~3s-apart retries;
-# see ingest/AGENTS.md's wfigs.py section for the incident and the shape rationale.
-MAX_ATTEMPTS: Final = 6
-RETRY_BASE_DELAY_SECONDS: Final = 1.0
-RETRY_MAX_DELAY_SECONDS: Final = 20.0
-RETRY_WALL_CLOCK_CEILING_SECONDS: Final = 60.0
-BUSY_MESSAGE_PATTERN: Final = re.compile(r"too many requests|busy|try again", re.IGNORECASE)
+
+# The retry ladder itself is shared (widened 2026-08-10 after the throttle incident); this source
+# only names its own budget. See ingest/AGENTS.md "upstream_retry.py".
+WFIGS_RETRY: Final = UpstreamRetryPolicy(
+    event="wfigs_upstream_retry",
+    exhausted_message="WFIGS retry loop ended without a response",
+)
+MAX_ATTEMPTS: Final = WFIGS_RETRY.ladder.max_attempts
+RETRY_BASE_DELAY_SECONDS: Final = WFIGS_RETRY.ladder.base_delay_seconds
+RETRY_MAX_DELAY_SECONDS: Final = WFIGS_RETRY.ladder.max_delay_seconds
+RETRY_WALL_CLOCK_CEILING_SECONDS: Final = WFIGS_RETRY.ladder.wall_clock_ceiling_seconds
+
+# WFIGS' IRWIN-integrated interagency perimeter record begins with the 2020 fire year, which is what
+# the historical services NIFC publishes beside `_Current` cover; documentation-derived and NOT
+# live-probed as of 2026-08-10. See ingest/AGENTS.md "history declarations, wave 2026-08-10".
+WFIGS_PERIMETER_HISTORY_EARLIEST: Final = datetime(2020, 1, 1, tzinfo=UTC)
+WFIGS_HISTORY_CAPABILITY: Final = HistoryCapability(supported=True, earliest=WFIGS_PERIMETER_HISTORY_EARLIEST)
 
 # JavaScript's Date range; beyond it `new Date(ms)` is Invalid Date and the TypeScript stored null.
 MAX_JAVASCRIPT_EPOCH_MILLISECONDS: Final = 8.64e15
@@ -104,12 +121,22 @@ MODERATE_CONTAINMENT: Final = 75
 MIN_CONTAINMENT: Final = 0
 MAX_CONTAINMENT: Final = 100
 
-POSITION_ORDINATE_COUNTS: Final = frozenset({2, 3})
+WFIGS_ERROR_PREFIX: Final = "WFIGS API error"
+UNEXPECTED_SHAPE_REASON: Final = "WFIGS API returned an unexpected feature collection shape"
+
+# `order_by_fields` is deliberately unset: ArcGIS paging without a deterministic sort may repeat or
+# skip rows, and turning it on here changes which perimeters survive a bitten record cap on a live
+# feed. See ingest/AGENTS.md "arcgis.py" for the un-enabled upgrades and what would justify them.
+WFIGS_PAGE_QUERY: Final = ArcGisEnvelopeQuery(
+    endpoint=WFIGS_QUERY_URL,
+    out_fields=WFIGS_OUT_FIELDS,
+    geometry_precision=WFIGS_GEOMETRY_PRECISION,
+)
 
 
 def resolve_fire_perimeters_layer_name() -> str:
     """Read FIRE_PERIMETERS_LAYER_ID at call time so a cron environment change needs no restart."""
-    return os.environ.get(FIRE_PERIMETERS_LAYER_VARIABLE, "").strip() or DEFAULT_FIRE_PERIMETERS_LAYER_NAME
+    return FIRE_PERIMETERS_LAYER.resolve()
 
 
 def perimeter_severity(percent_contained: object) -> str | None:
@@ -145,61 +172,7 @@ def epoch_milliseconds_to_iso(value: object) -> str | None:
 
 def build_query_url(bbox: str, offset: int = 0, max_record_count: int = MAX_RECORD_COUNT) -> str:
     """Build the bounded ArcGIS GeoJSON query URL for one page of one bbox."""
-    query = urlencode(
-        {
-            "where": "1=1",
-            "outFields": WFIGS_OUT_FIELDS,
-            "geometry": bbox,
-            "geometryType": "esriGeometryEnvelope",
-            "inSR": "4326",
-            "outSR": "4326",
-            "spatialRel": "esriSpatialRelIntersects",
-            "resultOffset": str(offset),
-            "resultRecordCount": str(max_record_count),
-            "geometryPrecision": str(WFIGS_GEOMETRY_PRECISION),
-            "f": "geojson",
-        }
-    )
-    return f"{WFIGS_QUERY_URL}?{query}"
-
-
-def _is_ring_collection(value: object, depth: int) -> bool:
-    """True when `value` nests `depth` levels of lists down to a 2-or-3 ordinate position."""
-    if not isinstance(value, list) or not value:
-        return False
-    if depth == 0:
-        return len(value) in POSITION_ORDINATE_COUNTS and all(
-            not isinstance(ordinate, bool) and isinstance(ordinate, int | float) and math.isfinite(ordinate)
-            for ordinate in value
-        )
-    return all(_is_ring_collection(item, depth - 1) for item in value)
-
-
-def _validate_geometry(geometry: object) -> Mapping[str, object]:
-    """Accept only a Polygon or MultiPolygon whose rings hold finite 2D or 3D positions."""
-    if not isinstance(geometry, dict):
-        raise UpstreamPayloadError("WFIGS API returned an unexpected feature collection shape")
-    coordinates = geometry.get("coordinates")
-    geometry_type = geometry.get("type")
-    if geometry_type == "Polygon" and _is_ring_collection(coordinates, 2):
-        return geometry
-    if geometry_type == "MultiPolygon" and _is_ring_collection(coordinates, 3):
-        return geometry
-    raise UpstreamPayloadError("WFIGS API returned an unexpected feature collection shape")
-
-
-def _optional_text(properties: Mapping[str, object], field_name: str) -> str | None:
-    """Return an optional ArcGIS string attribute, normalising an absent one to None."""
-    value = properties.get(field_name)
-    return value if isinstance(value, str) else None
-
-
-def _optional_number(properties: Mapping[str, object], field_name: str) -> float | None:
-    """Return an optional ArcGIS numeric attribute, normalising an absent or non-finite one to None."""
-    value = properties.get(field_name)
-    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
-        return None
-    return float(value)
+    return WFIGS_PAGE_QUERY.page_url(bbox=bbox, offset=offset, max_record_count=max_record_count)
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,69 +183,37 @@ class WfigsPerimeterPage:
     exceeded_transfer_limit: bool
 
 
-def _exceeded_transfer_limit(payload: Mapping[str, object]) -> bool:
-    """True when ArcGIS reported it clipped this page; GeoJSON nests the flag, the JSON form keeps it at the top."""
-    properties = payload.get("properties")
-    if isinstance(properties, dict) and properties.get("exceededTransferLimit") is True:
-        return True
-    return payload.get("exceededTransferLimit") is True
-
-
 def parse_perimeter_collection(payload: object) -> WfigsPerimeterPage:
     """Parse an ArcGIS GeoJSON answer into one page of perimeter records, rejecting its HTTP-200 error payload."""
-    if not isinstance(payload, dict):
-        raise UpstreamPayloadError("WFIGS API returned an unexpected feature collection shape")
-    error = payload.get("error")
-    if isinstance(error, dict):
-        details = error.get("details")
-        message = error.get("message") or ("; ".join(details) if isinstance(details, list) else None) or "unknown"
-        raise UpstreamPayloadError(f"WFIGS API error: {message}")
-
-    features = payload.get("features")
-    if payload.get("type") != "FeatureCollection" or not isinstance(features, list):
-        raise UpstreamPayloadError("WFIGS API returned an unexpected feature collection shape")
-
+    collection = parse_feature_collection(
+        payload,
+        error_prefix=WFIGS_ERROR_PREFIX,
+        unexpected_shape_reason=UNEXPECTED_SHAPE_REASON,
+    )
     perimeters: list[dict[str, object]] = []
-    for feature in features:
-        if not isinstance(feature, dict) or feature.get("type") != "Feature":
-            raise UpstreamPayloadError("WFIGS API returned an unexpected feature collection shape")
-        properties = feature.get("properties")
-        if not isinstance(properties, dict):
-            raise UpstreamPayloadError("WFIGS API returned an unexpected feature collection shape")
+    for feature in collection.features:
+        properties = require_feature_properties(feature, unexpected_shape_reason=UNEXPECTED_SHAPE_REASON)
         fire_identifier = properties.get("attr_UniqueFireIdentifier")
         if not isinstance(fire_identifier, str) or not fire_identifier:
-            raise UpstreamPayloadError("WFIGS API returned an unexpected feature collection shape")
+            raise UpstreamPayloadError(UNEXPECTED_SHAPE_REASON)
         perimeters.append(
             {
                 "uniqueFireIdentifier": fire_identifier,
-                "irwinId": _optional_text(properties, "attr_IrwinID"),
-                "incidentName": _optional_text(properties, "poly_IncidentName"),
+                "irwinId": optional_text(properties, "attr_IrwinID"),
+                "incidentName": optional_text(properties, "poly_IncidentName"),
                 "fireDiscoveryDateTime": epoch_milliseconds_to_iso(properties.get("attr_FireDiscoveryDateTime")),
                 "polygonDateTime": epoch_milliseconds_to_iso(properties.get("poly_PolygonDateTime")),
-                "gisAcres": _optional_number(properties, "poly_GISAcres"),
-                "fireCause": _optional_text(properties, "attr_FireCause"),
-                "incidentTypeCategory": _optional_text(properties, "attr_IncidentTypeCategory"),
-                "pooState": _optional_text(properties, "attr_POOState"),
-                "percentContained": _optional_number(properties, "attr_PercentContained"),
-                "geometry": _validate_geometry(feature.get("geometry")),
+                "gisAcres": optional_number(properties, "poly_GISAcres"),
+                "fireCause": optional_text(properties, "attr_FireCause"),
+                "incidentTypeCategory": optional_text(properties, "attr_IncidentTypeCategory"),
+                "pooState": optional_text(properties, "attr_POOState"),
+                "percentContained": optional_number(properties, "attr_PercentContained"),
+                "geometry": require_polygon_geometry(
+                    feature.get("geometry"), unexpected_shape_reason=UNEXPECTED_SHAPE_REASON
+                ),
             }
         )
-    return WfigsPerimeterPage(perimeters=perimeters, exceeded_transfer_limit=_exceeded_transfer_limit(payload))
-
-
-def is_retryable_failure(error: Exception) -> bool:
-    """True for an ArcGIS busy payload or a transient 429/5xx worth another attempt."""
-    if isinstance(error, UpstreamPayloadError):
-        return BUSY_MESSAGE_PATTERN.search(str(error)) is not None
-    return isinstance(error, UpstreamHttpError) and (
-        error.status == HTTP_TOO_MANY_REQUESTS or error.status >= HTTP_SERVER_ERROR_MINIMUM
-    )
-
-
-def jittered_retry_delay_seconds(attempt_index: int) -> float:
-    """Exponential backoff (doubling, capped) for one attempt, randomised by a 0.5-1.5x jitter."""
-    delay = min(RETRY_BASE_DELAY_SECONDS * (2**attempt_index), RETRY_MAX_DELAY_SECONDS)
-    return delay * (0.5 + random.random())
+    return WfigsPerimeterPage(perimeters=perimeters, exceeded_transfer_limit=collection.exceeded_transfer_limit)
 
 
 async def fetch_fire_perimeters_page(
@@ -282,31 +223,19 @@ async def fetch_fire_perimeters_page(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> WfigsPerimeterPage:
-    """Fetch one bounded page of WFIGS perimeters, retrying only a busy or transient upstream.
-
-    See ingest/AGENTS.md's wfigs.py section for why the attempt budget and wall-clock ceiling are
-    shaped the way they are.
-    """
+    """Fetch one bounded page of WFIGS perimeters, retrying only a busy or transient upstream."""
     url = build_query_url(bbox, offset)
-    started_at = monotonic()
-    for attempt in range(MAX_ATTEMPTS):
-        try:
-            return parse_perimeter_collection(await fetch_bounded_json(client, url, WFIGS_BOUNDS))
-        except (UpstreamHttpError, UpstreamPayloadError) as error:
-            elapsed_seconds = monotonic() - started_at
-            out_of_attempts = attempt == MAX_ATTEMPTS - 1
-            out_of_time = elapsed_seconds >= RETRY_WALL_CLOCK_CEILING_SECONDS
-            if out_of_attempts or out_of_time or not is_retryable_failure(error):
-                raise
-            logger.info(
-                "wfigs_upstream_retry",
-                attempt=attempt + 1,
-                offset=offset,
-                error=str(error),
-                elapsed_seconds=round(elapsed_seconds, 2),
-            )
-            await sleep(jittered_retry_delay_seconds(attempt))
-    raise UpstreamPayloadError("WFIGS retry loop ended without a response")  # pragma: no cover - unreachable.
+
+    async def attempt_once() -> WfigsPerimeterPage:
+        return parse_perimeter_collection(await fetch_bounded_json(client, url, WFIGS_BOUNDS))
+
+    return await retry_upstream(
+        attempt_once,
+        WFIGS_RETRY,
+        context={"offset": offset},
+        sleep=sleep,
+        monotonic=monotonic,
+    )
 
 
 async def fetch_fire_perimeters(
@@ -316,18 +245,12 @@ async def fetch_fire_perimeters(
     monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[list[dict[str, object]], bool]:
     """Page bounded WFIGS perimeters until the upstream stops clipping, reporting whether more were left behind."""
-    ceiling = resolve_max_source_records()
-    perimeters: list[dict[str, object]] = []
-    offset = 0
-    for _ in range(MAX_PAGES):
+
+    async def fetch_page(offset: int) -> tuple[list[dict[str, object]], bool]:
         page = await fetch_fire_perimeters_page(client, bbox, offset, sleep, monotonic)
-        perimeters.extend(page.perimeters)
-        if not page.perimeters or not page.exceeded_transfer_limit:
-            return perimeters, False
-        offset += len(page.perimeters)
-        if len(perimeters) >= ceiling:
-            return perimeters, True
-    return perimeters, True
+        return page.perimeters, page.exceeded_transfer_limit
+
+    return await page_offset_walk(fetch_page, max_pages=MAX_PAGES, record_ceiling=resolve_max_source_records())
 
 
 def build_perimeter_write(perimeter: Mapping[str, object], layer_name: str) -> FeatureWrite | None:

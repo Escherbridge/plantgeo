@@ -660,6 +660,32 @@ def test_identity_rejects_an_oversized_natural_key_and_a_malformed_producer_toke
         FeatureIdentity(producer="firms", producer_local_id="x", observed_at=datetime(2026, 8, 3))  # noqa: DTZ001
 
 
+# --- data_available_at: plumbing for the ML leakage boundary, not yet supplied by any producer ------
+
+
+def test_data_available_at_defaults_to_none_and_normalises_a_supplied_offset_to_utc() -> None:
+    undated = FeatureIdentity(producer="mtbs", producer_local_id="x", observed_at=None)
+    assert undated.data_available_at is None
+
+    dated = FeatureIdentity(
+        producer="mtbs",
+        producer_local_id="x",
+        observed_at=None,
+        data_available_at=datetime(2026, 8, 3, 9, 15, tzinfo=timezone(timedelta(hours=-7))),
+    )
+    assert dated.data_available_at == datetime(2026, 8, 3, 16, 15, tzinfo=UTC)
+
+
+def test_data_available_at_rejects_a_naive_timestamp_like_observed_at_does() -> None:
+    with pytest.raises(ValueError, match="data_available_at must include a timezone"):
+        FeatureIdentity(
+            producer="mtbs",
+            producer_local_id="x",
+            observed_at=None,
+            data_available_at=datetime(2026, 8, 3, 9, 15),  # noqa: DTZ001
+        )
+
+
 @pytest.mark.parametrize(
     ("layer_name", "producer"),
     [

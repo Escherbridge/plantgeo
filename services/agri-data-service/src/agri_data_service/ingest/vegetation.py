@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-import os
 import struct
 import zlib
 from dataclasses import dataclass
@@ -34,6 +33,7 @@ from agri_data_service.ingest.identity import (
     format_coordinate,
     format_javascript_timestamp,
 )
+from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import BBOX_ORDINATE_COUNT, parse_bbox
 from agri_data_service.ingest.source import FreshnessRule, FunctionSource, HistoryCapability
 from agri_data_service.ingest.writer import FeatureWrite
@@ -48,10 +48,16 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 VEGETATION_SOURCE: Final = "sentinel2-ndvi"
-VEGETATION_CHANNEL: Final = "layer:vegetation"
 VEGETATION_PROPERTY_SOURCE: Final = "Sentinel-2 L2A"
-VEGETATION_LAYER_VARIABLE: Final = "VEGETATION_LAYER_ID"
-DEFAULT_VEGETATION_LAYER_NAME: Final = "vegetation"
+
+VEGETATION_LAYER: Final = LayerBinding(
+    variable="VEGETATION_LAYER_ID",
+    default="vegetation",
+    channel="layer:vegetation",
+)
+VEGETATION_CHANNEL: Final = VEGETATION_LAYER.channel
+VEGETATION_LAYER_VARIABLE: Final = VEGETATION_LAYER.variable
+DEFAULT_VEGETATION_LAYER_NAME: Final = VEGETATION_LAYER.default
 
 # The producer token every key this module mints is namespaced by. It belongs beside FIRMS_PRODUCER and
 # friends in identity.py; that module is owned by another lane, so it is declared here for now.
@@ -302,7 +308,7 @@ class _RemoteTiff:
 
 def resolve_vegetation_layer_name() -> str:
     """Read VEGETATION_LAYER_ID at call time so a cron environment change needs no restart."""
-    return os.environ.get(VEGETATION_LAYER_VARIABLE, "").strip() or DEFAULT_VEGETATION_LAYER_NAME
+    return VEGETATION_LAYER.resolve()
 
 
 async def fetch_bounded_range(

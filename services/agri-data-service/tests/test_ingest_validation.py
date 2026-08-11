@@ -1318,7 +1318,7 @@ def stub_rows() -> dict[str, list[Mapping[str, object]]]:
     """Canned rows for one whole report: one dense feature stream, one lane, and empty non-feature stores."""
     return {
         "server_day": [{"server_day": day("2026-08-08")}],
-        "feature_observed_days": [
+        "observed_days": [
             {"stream": "water-gauges", "observed_day": day("2026-08-06"), "observation_count": 9_000},
             {"stream": "water-gauges", "observed_day": day("2026-08-07"), "observation_count": 9_500},
             {"stream": "water-gauges", "observed_day": day("2026-08-08"), "observation_count": 9_200},
@@ -1465,9 +1465,7 @@ async def test_an_unset_bbox_binds_four_nulls_so_the_strict_envelope_makes_the_p
 
 async def test_a_stream_the_catalog_does_not_declare_is_surfaced_rather_than_dropped() -> None:
     rows = stub_rows()
-    rows["feature_observed_days"].append(
-        {"stream": "mystery-layer", "observed_day": day("2026-08-08"), "observation_count": 4}
-    )
+    rows["observed_days"].append({"stream": "mystery-layer", "observed_day": day("2026-08-08"), "observation_count": 4})
     session = StubSession(rows)
 
     report = await build_validation_report(session, bbox="-125,42,-111,49")  # type: ignore[arg-type]
@@ -1503,7 +1501,7 @@ async def test_a_dead_lettered_firms_window_reaches_the_stream_it_fills_instead_
     matched nothing, landed in `unmatched_lanes`, and this stream reported COMPLETE.
     """
     rows = stub_rows()
-    rows["feature_observed_days"].append(
+    rows["observed_days"].append(
         {"stream": "fire-detections", "observed_day": day("2026-08-08"), "observation_count": 21_000}
     )
     rows["feature_validity_counts"].append(clean_feature_validity_row("fire-detections", 476_016))
@@ -1573,7 +1571,7 @@ async def test_a_day_series_that_reaches_its_row_cap_is_refused_rather_than_sile
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(validation, "MAX_OBSERVED_DAY_ROWS", 2)
-        with pytest.raises(ObservedDayScanTooLargeError, match="feature_observed_days returned more than 2"):
+        with pytest.raises(ObservedDayScanTooLargeError, match="observed_days returned more than 2"):
             await build_validation_report(session, bbox="-125,42,-111,49")  # type: ignore[arg-type]
 
 

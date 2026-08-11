@@ -25,7 +25,9 @@ from agri_data_service.ingest.archive_walk import (
     CURSOR_RECORDS_SEEN,
     CURSOR_RECORDS_WRITTEN,
     CURSOR_SLOWEST_CHUNK_SECONDS,
+    CURSOR_WALK_GENERATION,
     MISSING_CREDENTIAL_FAILURE_CLASS,
+    PAYLOAD_WALK_GENERATION,
     SKIPPED_FAILURE_CLASS,
     TOTAL_REJECTION_FAILURE_CLASS,
     TRUNCATED_FAILURE_CLASS,
@@ -47,6 +49,7 @@ from agri_data_service.ingest.archive_walk import (
     backfill_outcome,
     chunk_budget_seconds,
     chunk_position,
+    effective_cursor,
     pinned_source_record_cap,
     plan_archive_lane,
     walk_archive_chunk,
@@ -126,18 +129,23 @@ def _invocation(
     lane_name: str = TEST_LANE.name,
     fence_held: bool = True,
     seconds_remaining: float = 700.0,
+    payload_generation: int | None = None,
 ) -> JobInvocation:
     async def heartbeat() -> bool:
         return fence_held
 
+    payload: dict[str, object] = {
+        "lane": lane_name,
+        "window_start": NEWEST_WINDOW.start.isoformat(),
+        "window_end": NEWEST_WINDOW.end.isoformat(),
+    }
+    if payload_generation is not None:
+        payload[PAYLOAD_WALK_GENERATION] = payload_generation
+
     return JobInvocation(
         shard_key=f"{lane_name}:2026-01-06..2026-01-11",
         kind=ARCHIVE_WALK_WORK_ITEM_KIND,
-        payload={
-            "lane": lane_name,
-            "window_start": NEWEST_WINDOW.start.isoformat(),
-            "window_end": NEWEST_WINDOW.end.isoformat(),
-        },
+        payload=payload,
         cursor=cursor,
         parameters={},
         attempt_number=1,
@@ -214,6 +222,31 @@ def test_a_cursor_naming_no_chunk_of_this_window_refuses_rather_than_silently_re
 
     with pytest.raises(ArchiveWalkCursorError, match="names no chunk"):
         chunk_position({CURSOR_NEXT_CHUNK_START: "2019-05-05T00:00:00+00:00"}, chunks)
+
+
+# --------------------------------------------------------------------------- the walk generation
+
+
+def test_a_window_that_was_never_reopened_keeps_its_cursor_exactly_as_it_found_it() -> None:
+    cursor = {CURSOR_NEXT_CHUNK_START: "2026-01-09T00:00:00+00:00"}
+
+    assert effective_cursor({"lane": TEST_LANE.name}, cursor) is cursor
+    assert effective_cursor({"lane": TEST_LANE.name}, None) is None
+
+
+def test_a_cursor_written_before_a_reopen_is_discarded_whole_rather_than_resumed_from() -> None:
+    # Resume position comes from the newest job_checkpoint row, and a window that COMPLETED left its last
+    # checkpoint pointing at its FINAL chunk. Reopened without this, a five-day window walks day five, finds
+    # no further chunk, and succeeds again over the four days that were missing.
+    stale = {CURSOR_NEXT_CHUNK_START: "2026-01-10T00:00:00+00:00", CURSOR_RECORDS_SEEN: 900}
+
+    assert effective_cursor({PAYLOAD_WALK_GENERATION: 1}, stale) is None
+
+
+def test_a_cursor_written_after_the_reopen_survives_so_the_new_pass_still_resumes() -> None:
+    fresh = {CURSOR_NEXT_CHUNK_START: "2026-01-08T00:00:00+00:00", CURSOR_WALK_GENERATION: 2}
+
+    assert effective_cursor({PAYLOAD_WALK_GENERATION: 2}, fresh) is fresh
 
 
 # --------------------------------------------------------------------------- result to outcome
@@ -605,6 +638,40 @@ async def test_the_handler_walks_one_chunk_and_reports_where_the_next_one_starts
     assert outcome.cursor[CURSOR_RECORDS_WRITTEN] == 5
     assert outcome.cursor[CURSOR_RECORDS_REJECTED] == 0
     assert outcome.progress_fraction == 0.2
+
+
+async def test_a_reopened_window_restarts_at_its_first_chunk_instead_of_finishing_the_old_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The exact hole `jobs-plan-gaps` would otherwise write: the shard is back in `queued`, but its stored
+    # checkpoint still names the last chunk of the pass that succeeded over nothing.
+    walked: list[HistoryWindow] = []
+
+    async def fake_backfill(_source: object, _write: object, plan: object) -> list[IngestionJobResult]:
+        walked.append(plan.window)  # type: ignore[attr-defined]
+        return [_ingested()]
+
+    _use_lane(monkeypatch, TEST_LANE)
+    monkeypatch.setattr(archive_walk_module, "run_source_backfill", fake_backfill)
+    chunks = history_chunks(NEWEST_WINDOW, TEST_LANE.chunk)
+    stale_cursor: dict[str, object] = {
+        CURSOR_NEXT_CHUNK_START: chunks[-1].start.isoformat(),
+        CURSOR_RECORDS_SEEN: 900,
+        CURSOR_RECORDS_WRITTEN: 900,
+    }
+
+    async with archive_walk_context(ArchiveWalkContext(write_features=RecordingWriter())):
+        outcome = await archive_walk_handler(_invocation(cursor=stale_cursor, payload_generation=1))
+
+    assert walked[0].start == chunks[0].start
+    assert outcome.kind == "progressed"
+    assert outcome.cursor is not None
+    assert outcome.cursor[CURSOR_NEXT_CHUNK_START] == chunks[1].start.isoformat()
+    # The superseded pass's running totals go with it; carrying them over would report 903 records for a
+    # window that has walked one chunk.
+    assert outcome.cursor[CURSOR_RECORDS_SEEN] == 3
+    # And the new cursor states which generation it belongs to, so the next claim can make the same call.
+    assert outcome.cursor[CURSOR_WALK_GENERATION] == 1
 
 
 async def test_the_handler_completes_the_window_only_after_its_last_chunk(monkeypatch: pytest.MonkeyPatch) -> None:

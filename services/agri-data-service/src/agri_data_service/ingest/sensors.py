@@ -14,6 +14,7 @@ import structlog
 
 from agri_data_service.ingest.http import UpstreamBounds, UpstreamPayloadError, fetch_bounded_json, upstream_client
 from agri_data_service.ingest.identity import FeatureIdentity, MissingNativeKeyError
+from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import (
     UNCONFIGURED_BBOX_REASON,
     javascript_number,
@@ -43,10 +44,16 @@ logger = structlog.get_logger()
 
 NWS_SENSOR_SOURCE: Final = "nws-sensors"
 NWS_API_PRODUCER: Final = "nws-api"
-SENSORS_CHANNEL: Final = "layer:sensors"
 SENSORS_PROPERTY_SOURCE: Final = "NOAA NWS"
-SENSORS_LAYER_VARIABLE: Final = "SENSORS_LAYER_ID"
-DEFAULT_SENSORS_LAYER_NAME: Final = "sensors"
+
+SENSORS_LAYER: Final = LayerBinding(
+    variable="SENSORS_LAYER_ID",
+    default="sensors",
+    channel="layer:sensors",
+)
+SENSORS_CHANNEL: Final = SENSORS_LAYER.channel
+SENSORS_LAYER_VARIABLE: Final = SENSORS_LAYER.variable
+DEFAULT_SENSORS_LAYER_NAME: Final = SENSORS_LAYER.default
 
 NWS_API_BASE_URL: Final = "https://api.weather.gov"
 NWS_STATIONS_URL: Final = f"{NWS_API_BASE_URL}/stations"
@@ -127,7 +134,7 @@ class SensorStation:
 
 def resolve_sensors_layer_name() -> str:
     """Read SENSORS_LAYER_ID at call time, matching the name the push route already resolves."""
-    return os.environ.get(SENSORS_LAYER_VARIABLE, "").strip() or DEFAULT_SENSORS_LAYER_NAME
+    return SENSORS_LAYER.resolve()
 
 
 def resolve_nws_user_agent() -> str:

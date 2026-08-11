@@ -95,9 +95,58 @@ Ambient state (the session provider, the per-run tool ledger) travels in `Contex
 because a tool function's signature *is* its model-facing schema — a `session` parameter
 would become something the model is asked to supply.
 
+## Answering at the selected day
+
+Three tools exist purely to satisfy §11 of the layer-lane standard for the signal plane, and
+they are a different shape from the four above: those summarise a *window* and are free to
+answer from whichever days inside it happen to hold readings; these answer about **one day, the
+day the map is showing**.
+
+| tool | question | statements |
+|---|---|---|
+| `signal_value_on_day` | what was measured on this exact day | `signal_value_on_day.sql` + `signal_coverage_on_day.sql` |
+| `signal_neighbors_in_time` | what is the nearest reading each side of it | `signal_neighbors_in_time.sql` |
+| `nearest_signal_cells` | where are the measurements, and how far | `nearest_signal_cells.sql` |
+
+Design rules, each of which has a test:
+
+- **`day` is required, and it is a string.** No default. A defaulted day is exactly how a tool
+  drifts back to "latest" and starts answering a different question than the one asked. It is
+  `str` rather than `date` because the signature *is* the published JSON schema; it is parsed
+  with `date.fromisoformat` and an unparseable value is **refused**, never replaced with today.
+  Substituting a date is the same refusal MTBS makes for a fire year with no dated release.
+- **The day filter is a half-open pair of UTC midnights**, computed in Python and bound as two
+  timestamps. Not a per-row `::date` cast, which would defeat the index on `observed_at`.
+- **Every proximity answer carries its distance and the observation's own date.** Temporal rows
+  carry `observed_day`, `nearest_cell_observed_at`, signed `day_offset` and magnitude
+  `distance_days`; spatial rows carry `distance_meters` and the centroid coordinates. A
+  neighbour handed back without its gap is indistinguishable from an exact match, which is the
+  same class of bug as a lane reporting success having written nothing.
+- **`nearest_signal_cells` LEFT JOINs its day counts.** An INNER join would drop cells holding
+  nothing, and "the nearest cells" would silently mean "the nearest cells that had data" — the
+  substitution the tool exists to expose. A cell with nothing comes back with a count of `0`.
+- **Absence is explained from the table that already records it.** `signal_value_on_day` reads
+  `agri.signal_coverage_audit` over *exactly* the cells the value came from, so a `no_data`
+  verdict can only explain the point it was recorded for. Nothing new is written anywhere; the
+  ingest lanes fill that table and this only reads it back. See
+  `execution/coverage_contract.py` for how the same rows drive gap detection.
+
+`AgentRequest.selected_day` carries the map's day into `build_location_context`, which states it
+outright. When it is `None` the context says so and stands in today's date **visibly**, with an
+instruction to name the queried day in the answer — an unstated substitution would put the model
+in the position of implying a past reading is current.
+
+### Deviations
+
+- `signal_value_on_day` issues **two** statements for one tool call. Every other tool is one
+  statement, so `test_every_tool_statement_is_read_only` drives all seven published tools and
+  asserts `len(WAREHOUSE_TOOLS) == 7` beside the statement count. Both halves must be edited to
+  add a tool, which is the point: the tripwire scans every statement the model can reach, and a
+  count alone would let an eighth tool ship unscanned.
+
 ### Where the columns come from
 
-Three of the four tools read `agri.*` and every column is verified against
+Six of the seven tools read `agri.*` and every column is verified against
 `models/historical.py`, `models/forecasting.py` and the declarative view
 `db/agri/views/v_forecast_series_serving.sql`. `forecast_summary_for_cell` reads that
 serving view rather than re-deriving its joins, because the view is what encodes "published,
@@ -203,3 +252,48 @@ recommended fallback model server-side instead of surfacing as a dead request; `
 is used rather than a pinned model so we owe no migration when the recommendation changes.
 `stop_reason == "refusal"` is still checked on every turn — the fallback chain can itself
 refuse, and that is what the `refusal` event reports.
+
+### The selected day has to reach the route, or the whole surface answers nothing
+
+`AgentRequest.selected_day` alone is not wiring. `routes/agent_analysis.py` declares its ingress model
+with `extra="forbid"`, so until `AgentAnalyzeRequest` carried a `selected_day` field a caller sending
+one got a 400 and a caller omitting it left `selected_day=None` forever. `build_location_context` then
+stands in `as_of.date()` and tells the model to pass it to every tool -- and today is past the live
+edge of every lane (NASA POWER's newest day was 2026-08-06 and ERA5-Land's 2026-08-02, measured
+2026-08-11). The result was `signals_on_day: []` and `observation_count_on_day: 0` on **every** real
+request, for locations holding four years of data.
+
+The field is now declared on the ingress model and passed straight through.
+`test_the_analyze_route_accepts_the_selected_day_and_carries_it_into_the_request` pins both halves.
+The remaining half is outside this service: the Next.js caller must send the slider's day.
+
+### A row cap that nobody is told about is a fabricated absence
+
+`signals_on_day`, `coverage_audit_on_day` and `temporal_neighbors` are capped at 40, 40 and 80 rows,
+and each tool's note tells the model that a missing signal or a missing side is a statement about the
+data. That is only true while the list is complete, so `*_truncated` booleans now travel in the
+payload and the notes name them. Nineteen signals are under contract today so no cap binds, but the
+claim was wrong by construction and is the same class as a lane reporting success having written
+nothing.
+
+### `nearest_signal_cells` counts one plane, and says so
+
+`observation_count_on_day` is a census over `agri.signal_observation` only, while the tool returns
+cells from every grid -- including `sentinel2-ndvi-0p25deg`, whose NDVI lands on
+`agri.forecast_observation`. The note previously read "0 is an answer, not an omission", which is
+section 3's named failure: a census over one plane reporting healthy lanes as dead. Both the note and
+the model-facing docstring now name the plane, and `test_nearest_cells_...` asserts the wording rather
+than the old phrase.
+
+### `MAX_NEAREST_CELLS` arithmetic, corrected
+
+At 43.6N a 0.25 degree lattice is about 27.8 km east-west by 20.1 km north-south, so a 50 km radius
+admits roughly **fourteen** centroids of the denser grid, not eleven. `MAX_NEAREST_CELLS = 25` and
+`MAX_CELL_FANOUT = 250` both still clear it; only the citation was wrong.
+
+## What the agent owes every layer
+
+`docs/layer-lane-standard.md` section 11: a tool must answer at the CALLER-SUPPLIED day (the day the
+UI has selected, never `latest`), and every temporal or spatial neighbour must carry its real distance
+and its own observation date. Silently substituting a neighbour for an exact answer is the same bug
+class as a lane reporting success having written nothing.

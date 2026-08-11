@@ -15,12 +15,13 @@ from agri_data_service.ingest.http import UpstreamHttpError, UpstreamPayloadErro
 from agri_data_service.ingest.wfigs import (
     MAX_RECORD_COUNT,
     WFIGS_GEOMETRY_PRECISION,
+    WFIGS_HISTORY_CAPABILITY,
+    WFIGS_PERIMETER_HISTORY_EARLIEST,
     WFIGS_SOURCE,
     build_perimeter_write,
     build_query_url,
     epoch_milliseconds_to_iso,
     fetch_fire_perimeters,
-    is_retryable_failure,
     parse_perimeter_collection,
     perimeter_severity,
     run_fire_perimeters_ingestion_job,
@@ -172,12 +173,13 @@ def test_a_perimeter_with_no_containment_stores_a_null_severity() -> None:
     assert write.properties["percentContained"] is None
 
 
-def test_only_a_busy_or_transient_upstream_is_retried() -> None:
-    assert is_retryable_failure(UpstreamHttpError(429))
-    assert is_retryable_failure(UpstreamHttpError(503))
-    assert is_retryable_failure(UpstreamPayloadError("WFIGS API error: service is busy"))
-    assert not is_retryable_failure(UpstreamHttpError(400))
-    assert not is_retryable_failure(UpstreamPayloadError("unexpected feature collection shape"))
+def test_the_history_declaration_names_the_wfigs_perimeter_record_floor() -> None:
+    # Declared, not implemented: nothing fetches a past WFIGS window yet. A typed refusal here would
+    # be a FALSE refusal -- WFIGS does publish historical perimeter services beside `_Current`.
+    assert WFIGS_HISTORY_CAPABILITY.supported is True
+    assert WFIGS_HISTORY_CAPABILITY.earliest == WFIGS_PERIMETER_HISTORY_EARLIEST
+    assert WFIGS_PERIMETER_HISTORY_EARLIEST.tzinfo is not None
+    assert WFIGS_PERIMETER_HISTORY_EARLIEST.year == 2020
 
 
 async def test_a_transient_failure_is_retried_and_then_succeeds() -> None:

@@ -603,3 +603,275 @@ cadence -- a weekly stream that skips one release is still INCOMPLETE on 13 days
 and is what `CompletenessReport.missing_day_count` sums, so one skipped weekly release reads as 1, not 13.
 On a daily cadence the two are equal by construction, which is why the JSON gap triple and the Markdown
 gap line are unchanged for every daily stream: both renderers name the second number only when it differs.
+
+## layer_binding.py
+
+Nine producers each resolved their target layer with the same three lines -- an `os.environ.get(VAR, "").strip() or DEFAULT`
+paired with a `*_LAYER_VARIABLE` / `DEFAULT_*_LAYER_NAME` / `*_CHANNEL` constant triple. `LayerBinding(variable, default, channel)`
+is now the single definition, and each module keeps its own `resolve_*_layer_name()` one-liner plus its old constant names as
+aliases off the binding, so nothing outside these modules had to change (`agent/tools.py` imports two of those resolvers, and four
+tests import the `DEFAULT_*` / `*_VARIABLE` spellings).
+
+**The environment read stays at call time and that is the whole point of the shape.** `resolve()` is a method on a frozen binding
+constructed at import; it is not a value computed in `__init__`. The rule this preserves is the one `policy.py`'s paragraph above
+already states and `usgs_nwis.py`'s and `open_meteo.py`'s paragraphs each widened once: the cron container is long-lived, so an
+operator renaming a layer through `FIRE_PERIMETERS_LAYER_ID` must not need a restart. A naive extraction that resolved at
+construction would still pass every test that only checks defaults, which is why
+`test_the_variable_is_read_at_call_time_never_at_construction` constructs a binding first and sets the variable afterwards.
+
+**The channel is pinned to the DEFAULT layer name, never to the resolved one, and that asymmetry is deliberate rather than an
+oversight.** Every live binding's channel is `layer:<default>`, and renaming the layer through the environment leaves the channel
+alone -- which is correct, because the map subscribes to a fixed channel string and `writer.py` validates it against
+`^layer:[a-z0-9-]{1,100}$` before accepting a write. Deriving the channel from `resolve()` would let one environment variable
+silently re-point live invalidation at a channel nothing is listening on.
+`test_a_channel_is_pinned_to_the_default_layer_name_not_to_the_resolved_one` pins that for all nine.
+
+## upstream_retry.py
+
+`is_retryable_failure`, `jittered_retry_delay_seconds` and `BUSY_MESSAGE_PATTERN` were hand-duplicated in `wfigs.py` and
+`evacuation_zones.py`, and the `wfigs.py` section above closes by saying the two copies were kept structurally identical on
+purpose so a future extraction would be a mechanical move. This is that move.
+
+**The extraction is FROM the widened WFIGS version, and evacuation-zones was brought up to it rather than the reverse.** By
+2026-08-10 the two copies had drifted: WFIGS carried the post-incident budget (6 attempts, a doubling `RETRY_BASE_DELAY_SECONDS`
+capped at `RETRY_MAX_DELAY_SECONDS`, a `RETRY_WALL_CLOCK_CEILING_SECONDS` backstop checked against a threaded monotonic clock)
+while `evacuation_zones.py` still carried the pre-incident 3-attempt fixed `(1.0, 2.0)` tuple -- the exact shape that lost every
+hourly `plantgeo-cron-fire-perimeters` run through a sustained ArcGIS throttle. Extracting the narrower copy would have quietly
+un-fixed the incident. `RetryLadder` owns the shape and its post-incident defaults; `UpstreamRetryPolicy` adds the two per-source
+strings; `retry_upstream` is the loop, byte-for-byte the WFIGS one with the event name and the log context parameterised.
+
+**`wfigs_upstream_retry` and its four fields are unchanged.** The event name is a policy field rather than a derived string
+precisely so an operator's existing log filter keeps matching; the caller's own fields arrive through `context` (WFIGS passes
+`offset`) and the loop adds `attempt`, `error` and `elapsed_seconds`. Rendered field ORDER was checked rather than assumed and is
+not something either version controls: structlog's console renderer sorts keys alphabetically, so the line reads
+`attempt= elapsed_seconds= error= offset=` before and after this change alike. What an operator's filter matches on -- the event
+name and the four key names -- is byte-identical. `evacuation_zones_upstream_retry` keeps its own name and gains
+`elapsed_seconds` on the same line rather than a new event.
+
+**What changed behaviourally for evacuation-zones, stated plainly.** Its attempt budget went 3 -> 6; its backoff went from a fixed
+two-entry tuple to 1s/2s/4s/8s/16s doubling capped at 20s, each jittered 0.5-1.5x as before; a 60s wall-clock ceiling now bounds
+the loop so a sustained throttle gives up inside one cron tick instead of holding a container open; `fetch_evacuation_zone_page`
+and `fetch_evacuation_zones` gained a trailing `monotonic` parameter so a test can fake elapsed time without a real sleep. Nothing
+about *what* is retried moved: a malformed or schema-mismatched `UpstreamPayloadError` still never matches `BUSY_MESSAGE_PATTERN`
+and is still never retried, and a sustained throttle still raises rather than becoming a silent empty success or a partial write.
+That last property is load-bearing for this source in particular -- an evacuation layer reporting "ingested, wrote nothing"
+during an upstream outage is the one failure mode it must not have -- so it has its own named test.
+
+**Per-source values stay per-source; the ladder stops being reinvented.** `MAX_RECORD_COUNT` (100 for WFIGS, 1,000 for
+evacuation zones) and `MAX_PAGES` (200 vs 20) are unchanged and remain module constants. `MAX_ATTEMPTS` is still each module's own
+name, now bound to its policy's ladder, so the two cannot silently disagree about a budget they were meant to share. A source that
+genuinely needs a narrower budget passes its own `RetryLadder` rather than writing a third loop.
+
+## arcgis.py
+
+Three modules paged the same ArcGIS FeatureServer mechanics independently. This module is the shared vocabulary: the
+error document ArcGIS hides behind HTTP 200, the `exceededTransferLimit` flag in both the GeoJSON and the Esri JSON envelope,
+feature-collection and polygon-ring validation, the optional attribute readers, the envelope query URL, and the `resultOffset`
+walk. `wfigs.py` and `evacuation_zones.py` now hold only their own field projections and their own per-source constants.
+
+**MTBS is the reference implementation and was deliberately NOT rewired onto this module.** Its pager is the strongest of the
+three -- deterministic `orderByFields=fire_id`, an authoritative `returnCountOnly` completeness gate, cross-page `fire_id`
+uniqueness, page-size halving on the host's HTTP 500 refusal -- and this module's shape is derived from it. It is not *called by*
+it, for reasons that are contract differences rather than effort. MTBS speaks raw `httpx` with `params=`/`raise_for_status()` and
+raises `MtbsTruncatedCaptureError`; the other two speak `fetch_bounded_json` under an `UpstreamBounds` byte cap and raise
+`UpstreamPayloadError`. More importantly the two loops answer different questions: MTBS proves one frozen release complete against
+a count taken before paging, while WFIGS and evacuation zones page a live feed under a deliberate `resolve_max_source_records()`
+cap and report `truncated=True` -- a count-equality gate there would turn every concurrent upstream edit into a red cron. Its
+`page_is_truncated` also reads the flag truthily where `page_exceeded_transfer_limit` reads it as `is True`; the two agree on
+every payload ArcGIS actually emits, and reconciling them is a change to a completeness gate rather than a tidy-up, so it was left
+alone. `watersheds.py` is likewise not a consumer: it addresses basins by explicit `objectIds` batches because that layer answers
+HTTP 500 when asked to sort while returning geometry, which is a deliberate rejection of offset paging and not a duplicate of it.
+
+**Three MTBS mechanics are wired as parameters and left switched OFF for the two live feeds; that is a stopping point, not an
+oversight.** `ArcGisEnvelopeQuery.order_by_fields` is `None` for both: ArcGIS paging without a deterministic sort may repeat or
+skip rows, so turning it on is a genuine improvement, but it also changes which records survive a bitten record cap on a live
+feed, and neither `attr_UniqueFireIdentifier` nor `GlobalID` has been probed as a sortable field on its host. The
+`returnCountOnly` pre-check is not offered to them at all, for the contract reason above. Page-size halving is not enabled either:
+`wfigs.py`'s own section states that a page still too heavy for `WFIGS_BOUNDS.max_bytes` must fail that page rather than be
+silently permitted through, and halving would change that documented answer. Each of the three needs a live probe and an owner
+decision, not a refactor's discretion.
+
+**The parse split is behaviour-identical, and the reason it is safe is that one message covers every shape rejection.**
+`parse_feature_collection` validates each feature's `type` before the caller's loop reaches any of them, where the old code
+validated type, properties and key one feature at a time. A payload with two different defects therefore raises on a different
+feature than it used to -- but both modules raise the same `UNEXPECTED_SHAPE_REASON` string for all of them, so nothing an
+operator or a test can observe changed. `WFIGS_ERROR_PREFIX` and `UNEXPECTED_SHAPE_REASON` are now named constants in `wfigs.py`
+because the shared parser takes them as arguments; `evacuation_zones.py` already had the latter.
+
+**Not extracted, and named here so the next pass does not have to rediscover it:** `epoch_milliseconds_to_iso` (`wfigs.py`) and
+`epoch_milliseconds_to_datetime` (`evacuation_zones.py`) still duplicate `MAX_JAVASCRIPT_EPOCH_MILLISECONDS`, `EPOCH` and the
+same guard chain. They differ in return type and in what each wraps in its `try`, so folding them is a small behaviour question
+rather than a move, and it was left for a wave that can answer it.
+
+## history declarations, wave 2026-08-10
+
+`weather-observations`, `fire-perimeters` and `evacuation-zones` declared no `HistoryCapability` at all -- not even a typed
+refusal -- so they were structurally incapable of backfill with nothing stating why. Under the owner's max-available-per-layer
+policy a reflexive `supported=False` is the wrong default: a false refusal is the same "gap certified as complete" failure the
+type exists to prevent, wearing a different mask. Each declaration below is **declaration only**: no fetcher, lane or
+`FunctionSource` was wired this wave, and none of the three appears in `commands._build_backfillable_sources()`. A declaration
+with `supported=True` and no fetcher cannot silently produce an empty walk, because `FunctionSource.history_capability()` raises
+`SourceContractError` for exactly that combination the moment anyone composes one.
+
+**`weather-observations` -- `supported=True`, rolling floor.** Open-Meteo's forecast endpoint (`api.open-meteo.com/v1/forecast`,
+the endpoint this job already reads) serves a rolling past window whose documented `past_days` maximum is 92
+(open-meteo.com/en/docs, read 2026-08-10 -- documentation-sourced, **not** live-probed). `weather_history_capability(now)`
+therefore resolves `earliest` per call rather than freezing it at import, exactly as `sensors.nws_sensor_source` does for NWS'
+six-day retention. The far deeper ERA5/ERA5-Land archive is in this same module and is deliberately **not** this floor: it is a
+different product -- daily aggregates on a 0.1-degree lattice, against the sub-hourly point `current` block this layer stores --
+and filling `weather-observations` from it without a stored product discriminator would repeat the MODIS-into-VIIRS mixing the
+`firms.py` section above documents, on a layer whose serving side has no product filter either.
+
+**`fire-perimeters` -- `supported=True`, floor 2020-01-01.** WFIGS publishes historical perimeter services distinct from the
+`_Current` feed this job reads, and the IRWIN-integrated interagency data model those services carry begins with the 2020 fire
+year. That floor is documentation-derived and **not** live-probed as of 2026-08-10; it under-claims rather than over-claims, in
+the same spirit as `MTBS_ANNUAL_RELEASE_DATES`. NIFC's separate `InterAgencyFirePerimeterHistory` archive reaches back to 1878
+and is deliberately **not** this floor: it publishes no `attr_UniqueFireIdentifier`, so ingesting it under this producer would
+fork the layer's key rather than deepen it, and `build_fire_perimeter_identity` would have nothing to key on. **A real history
+source exists here and is unimplemented** -- wiring the archive service is scheduled work, not a closed question, and it needs a
+live probe of the service URL and its field spellings before the floor above should be trusted operationally.
+
+**`evacuation-zones` -- `supported=False`, and the reason names the upstream fact.** Oregon publishes
+`Fire_Evacuation_Areas_Public` as a current-state hosted view: its definition query drops an area once the upstream integration
+stops re-confirming it, and no attribute records when a level was raised, lowered or retired, so a past evacuation level cannot
+be reconstructed from it. No archive service of historical Oregon evacuation levels is published (checked 2026-08-10), and the
+module's existing note above already records that no equivalent government-run aggregator exists for Washington, Idaho or western
+Montana. The only history this layer has is what the `geo.geometry` Type-2 chain has accumulated since ingestion began. This is
+the one of the three where a refusal is the honest answer, and it is also the one where a wrong `supported=True` would be worst:
+a life-safety layer must not advertise a backfill that would quietly write nothing.
+
+## Deliberate deviations, wave 2026-08-10
+
+Recorded here rather than in the "Deliberate deviations from the TypeScript" list above because none of these is a divergence
+from the retired TypeScript -- they are deviations from the stated intent of this extraction wave.
+
+- **`is_retryable_failure` and `BUSY_MESSAGE_PATTERN` are no longer importable from `wfigs.py` or `evacuation_zones.py`.** Nothing
+  in `src/` imported either from those modules; only the two test files did, and their two byte-identical predicate tests are
+  consolidated into `tests/test_ingest_upstream_retry.py` with both producers' busy wordings pinned. Re-exporting the names for
+  compatibility was considered and rejected: an unused import kept alive only to preserve an import path is the duplication this
+  wave set out to remove, wearing an alias.
+- **The three MTBS pager upgrades are parameterised and left off.** See the `arcgis.py` section above for each one's specific
+  blocker; all three need a live probe or an owner call, and enabling any of them silently would be a behaviour change to a
+  production cron shipped inside a refactor.
+- **MTBS's own pager and `watersheds.py` are untouched by the `arcgis.py` extraction.** Both are documented above with the
+  contract difference that makes them not-a-duplicate.
+- **Three history capabilities are declared with no fetcher behind them.** `WFIGS_HISTORY_CAPABILITY` and
+  `weather_history_capability()` state what the upstream publishes, not what this package can currently walk. Declaring
+  `supported=False` instead would have been a false refusal under the max-available-per-layer policy; the guard that keeps the
+  declaration honest is `FunctionSource.history_capability()`, which refuses a source claiming history with no history fetcher.
+
+## One gap rule
+
+There were two, and the weaker one was the settler. `validation/completeness.py` walked a stream's own
+publication cadence; `reconcile.window_coverage` had its own day-by-day comparison with the cadence
+implicitly fixed at 1. That second implementation was a strictly weaker special case of the first --
+correct only while every registered lane's stream published daily, and wrong in the SETTLING direction the
+moment one did not. A five-day window of the five-day-revisit `vegetation` stream that published once owes
+nothing more; the cadence-blind rule called it partial and would have left it queued forever, and the
+symmetric failure (a wider cadence marking a real hole covered) is the one that writes a silent lie.
+
+`_silences` in `completeness.py` is now the single walk. It returns each run of calendar days nothing was
+published in, together with the first cadence grid point inside that run, and two renderers sit on it:
+`find_observation_gaps` (the report's calendar runs, unchanged public signature) and
+`missing_publication_days` (the individual owed days a backfill lane has to re-plan). `window_coverage`
+calls the second one, so the report and the settler cannot drift into two meanings of "missing". Both
+lanes registered today declare a daily cadence and `lane_publication_cadence_days` defaults to daily for a
+lane no stream claims, so this substitution changed no current behaviour -- it removed the trap, not a
+live bug. The default direction is deliberate: too SHORT a cadence demands more coverage and costs a
+re-walk, too long settles a window over days nothing ever published.
+
+The day census under both of them is also one statement now. `sql/ingest/observed_layer_days.sql` and
+`sql/ingest/feature_observed_days.sql` were the same three filters at two scopes, agreeing by inspection
+and by a comment asking the next reader to keep them agreeing. They are one file, `observed_days.sql`,
+whose single `{layer_scope}` slot is filled at import from two constants in `validation/queries.py` --
+the same load-time slot `store_drought_area.sql` uses for its replace predicate, and NOT a bound
+parameter, because an "either the parameter is null or the column matches it" predicate cannot use the
+index whose leading column is `layer_id` under a generic plan. `sql/AGENTS.md`'s LOADED rule is what
+forces the shape: a file may be loaded by exactly one `load_query_sql` call, so `queries.py` loads it,
+formats it twice, and `reconcile.py` imports `OBSERVED_DAYS_FOR_LAYER` rather than reading the file again.
+
+## jobs-plan-gaps: the half of the loop that was missing
+
+Nothing could turn a detected gap into a work item. `validate-streams` finds gaps and exits 0 on them by
+design, `reconcile_lane` only ever REMOVES work, and `jobs-plan-lane` only ever appends whole windows
+BELOW today -- so a hole discovered in the middle of an already-`succeeded` run was unreachable by every
+verb in the package. `jobs-plan-gaps` is the inverse of `_mark_windows_reconciled` and reuses its
+statement shape.
+
+**It plans onto the lane's own grid and never a second one.** `map_days_to_grid` inverts the arithmetic
+`lane_windows` used to build the grid (floor plus grid index times window days) and then CHECKS its answer
+by asking the chosen window for its own days, so a drift between the two formulas fails loudly rather than
+mis-keying a shard. A shard planned by this verb is byte-identical to one `jobs-plan-lane` would have
+planned, which is what makes `ON CONFLICT (job_run_id, shard_key) DO NOTHING` a no-op rather than a
+parallel key space. Days above the newest whole window and days below the floor are REPORTED as
+unplannable rather than dropped: the first belong to the forward hourly cron and a trailing partial
+re-keys itself every day, the second are outside what the lane declared.
+
+**Only `succeeded` is converted.** `queued`/`retry_wait`/`deferred` are already claimable, `leased`/
+`running` are held by a live fence, `dead_letter` is the evidence that every attempt failed, and
+`cancelled` is an operator's decision. All four are reported by name, because "we found a gap and can do
+nothing about it" must not have to be inferred from silence.
+
+## Reopening a window: two ledger facts that make the naive version a silent hole
+
+**`attempt_count` is never reset; `max_attempts` is raised instead.** `claim_work_item` refuses a shard
+whose `attempt_count` has reached `max_attempts`, so a reopened shard that had spent its budget would sit
+in `queued` forever, unclaimable -- a hole wearing the word "reopened". Zeroing the counter is worse than
+useless: the next claim derives its attempt NUMBER from it and `uq_job_attempt_item_number` is unique per
+work item, so a reset makes the shard collide with a stored attempt row and never run again. Raising the
+ceiling by the lane's own declared budget is the same primitive `defer_work_item` already uses (see
+`jobs/AGENTS.md`, "A deferral must not spend the retry budget") and keeps attempt numbers dense-unique.
+`GREATEST` keeps it monotone so a shard that deferred its way to a high ceiling is never quietly lowered.
+
+**The walk generation exists because resume position outlives a reopen.** `latest_checkpoint_cursor`
+returns the newest `job_checkpoint` row for the work item, unconditionally, and a window that COMPLETED
+left its last checkpoint pointing at its FINAL chunk -- the handler returns `completed` with no cursor on
+the last chunk, so nothing overwrites it. A five-day FIRMS window reopened over four missing days would
+therefore walk day five, find no further chunk, and succeed again over the same hole: the exact failure
+this whole package exists to make impossible, reintroduced by the verb meant to fix it. So
+`reopen_gap_windows.sql` bumps the payload's `walk_generation`, `archive_walk_handler` stamps that
+generation onto every cursor it writes, and `effective_cursor` discards a cursor whose generation
+disagrees. It discards the cursor WHOLE, not just its chunk marker, because the running record totals
+beside it belong to the same superseded pass. Absent on both sides reads as generation 0, so every window
+planned before this existed behaves exactly as it did.
+
+Appending a corrective checkpoint instead was considered and is not available: `fk_job_checkpoint_attempt_fence`
+requires a real `job_attempt` row behind every checkpoint, and fabricating an attempt would write a worker
+id, a fencing token and a wall-clock duration into the ledger for work no process performed -- the same
+refusal `reconcile.py` already makes for its own marker. Scoping the cursor read to the current generation
+inside `latest_checkpoint_cursor.sql` would need a column the schema does not have.
+
+**What is deliberately not touched on a reopen:** `fencing_token` (monotonicity is the whole mechanism),
+`checkpoint_sequence` (the next checkpoint must not collide under `uq_job_checkpoint_item_sequence`),
+`started_at` (stamped once, "when this shard first did anything"), and `last_error_class`/
+`last_error_summary` (the record of how it failed before, which is history rather than current state).
+`completed_at` and `progress_fraction` ARE cleared, because a queued row carrying a completion time makes
+every operator query that reads "completed" disagree with the status beside it; the fact that it had
+completed is written into the payload marker, and every `job_attempt` row it produced is untouched.
+
+## The scheduled loop, and what is not yet true about it
+
+`infra/cron-maintain-firms/` and `infra/cron-maintain-streamflow/` run `jobs-plan-gaps --apply` then
+`jobs-reconcile-lane --apply` for one lane each, daily at 07:17 and 07:47 UTC -- off the five-minute grid
+because every such minute is already taken by an existing cron service, and after `cron-validate`'s 06:00
+report so the two read the same day's warehouse. Chained with `&&` and not `;`: both verbs exit 0 on
+"nothing to do", so the only thing that breaks the chain is a genuine ledger failure, which is exactly
+when a cron run should go red.
+
+**A `railway.json` configures a service that already exists; it does not create one.** Until somebody
+provisions those two Railway services, the loop is code that runs correctly when invoked by hand and is
+not running on a schedule. `infra/cron-maintain-firms/AGENTS.md` says the same thing; do not read either
+file as evidence that the loop is live.
+
+**What has NOT been proved about the reopen path.** Every test here answers `AsyncSession.execute` from a
+recording stub, so no bind in `reopen_gap_windows.sql` has ever reached a PostgreSQL type resolver. That
+is the precise gap that let `mark_windows_reconciled.sql` pass its dry run and fail its first production
+`--apply` with `IndeterminateDatatypeError` on 2026-08-07. Every parameter in the new statement is CAST at
+its use site for that reason and a test asserts it, but a real-database pass is still owed: the local
+warehouse on 127.0.0.1:5442 was not running when this landed, and no disposable database was reachable.
+
+## The contract these producers serve
+
+`docs/layer-lane-standard.md` is the end-to-end contract every lane here must satisfy -- horizon,
+gap-to-work loop, governed absences, three crons, slider registration, agent tools. A producer that
+ingests correctly and is absent from the slider capability catalogue is not a finished layer.

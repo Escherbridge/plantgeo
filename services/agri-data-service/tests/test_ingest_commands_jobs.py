@@ -36,7 +36,7 @@ from agri_data_service.ingest.archive_walk import (
 )
 from agri_data_service.ingest.commands import WORKER_ID_MAX_LENGTH, WORKER_ID_VARIABLE, register_ingest_commands
 from agri_data_service.ingest.lanes import FIRMS_ARCHIVE_LANE, STREAMFLOW_ARCHIVE_LANE, BackfillLane
-from agri_data_service.ingest.reconcile import LaneReconciliation, build_coverage_category
+from agri_data_service.ingest.reconcile import LaneGapPlan, LaneReconciliation, build_coverage_category
 from agri_data_service.ingest.validation import (
     NULL_GEOMETRY_CHECK,
     ObservedDay,
@@ -56,7 +56,14 @@ JOB_RUN_ID = uuid.UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 FIRMS_DEFINITION = archive_lane_definition_name(FIRMS_ARCHIVE_LANE)
 STREAMFLOW_DEFINITION = archive_lane_definition_name(STREAMFLOW_ARCHIVE_LANE)
 
-JOBS_VERBS = ("jobs-plan-lane", "jobs-run", "jobs-status", "jobs-reconcile-lane", "validate-streams")
+JOBS_VERBS = (
+    "jobs-plan-lane",
+    "jobs-plan-gaps",
+    "jobs-run",
+    "jobs-status",
+    "jobs-reconcile-lane",
+    "validate-streams",
+)
 
 
 class FakeSession:
@@ -893,6 +900,116 @@ def test_a_floor_override_reconciles_the_run_that_floor_actually_opened(
     _invoke("jobs-reconcile-lane", "--lane", "streamflow-archive", "--floor", "2022-09-04")
 
     lane = reconcile_calls[0]["lane"]
+    assert isinstance(lane, BackfillLane)
+    assert lane.floor_day == "2022-09-04"
+    assert archive_lane_run_key(lane) != archive_lane_run_key(STREAMFLOW_ARCHIVE_LANE)
+
+
+# --- jobs-plan-gaps ---------------------------------------------------------------------------------
+
+
+def _gap_plan(lane: BackfillLane, *, applied: bool, reopened: int) -> LaneGapPlan:
+    return LaneGapPlan(
+        lane=lane.name,
+        definition=archive_lane_definition_name(lane),
+        run_key=archive_lane_run_key(lane),
+        job_run_id=JOB_RUN_ID,
+        layer_reference="fire-detections",
+        applied=applied,
+        publication_cadence_days=1,
+        floor_day=date(2022, 8, 5),
+        through_day=date(2026, 8, 6),
+        observed_day_count=1_200,
+        missing_days=(date(2024, 3, 11),),
+        windows=(),
+        unplannable_days=(),
+        opened_count=0,
+        reopened_count=reopened,
+    )
+
+
+@pytest.fixture
+def gap_plan_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    calls: list[dict[str, object]] = []
+
+    async def fake_plan_lane_gaps(
+        session: object,
+        lane: BackfillLane,
+        *,
+        apply_changes: bool = False,
+        end: datetime | None = None,
+    ) -> LaneGapPlan:
+        calls.append({"session": session, "lane": lane, "apply_changes": apply_changes, "end": end})
+        return _gap_plan(lane, applied=apply_changes, reopened=3 if apply_changes else 0)
+
+    monkeypatch.setattr(commands_module, "plan_lane_gaps", fake_plan_lane_gaps)
+    return calls
+
+
+def test_planning_gaps_defaults_to_a_dry_run_that_rolls_back_rather_than_commits(
+    gap_plan_calls: list[dict[str, object]],
+) -> None:
+    result = _invoke("jobs-plan-gaps", "--lane", "firms-archive")
+
+    assert result.exit_code == 0
+    assert gap_plan_calls[0]["apply_changes"] is False
+    assert SESSIONS[0].commits == 0
+    assert SESSIONS[0].rollbacks == 1
+    summary = _last_json_line(result.output)
+    assert summary["state"] == "dry_run"
+    assert summary["reopened"] == 0
+
+
+def test_applying_a_gap_plan_commits_and_reports_how_many_windows_it_reopened(
+    gap_plan_calls: list[dict[str, object]],
+) -> None:
+    result = _invoke("jobs-plan-gaps", "--lane", "firms-archive", "--apply")
+
+    assert result.exit_code == 0
+    assert gap_plan_calls[0]["apply_changes"] is True
+    assert SESSIONS[0].commits == 1
+    summary = _last_json_line(result.output)
+    assert summary["state"] == "applied"
+    assert summary["reopened"] == 3
+
+
+def test_a_lane_with_nothing_to_plan_still_exits_zero_because_that_is_the_normal_state(
+    gap_plan_calls: list[dict[str, object]],
+) -> None:
+    # Same contract as `jobs-plan-lane` and `jobs-reconcile-lane`. A maintenance cron that went red on a
+    # healthy lane would teach an operator to ignore its colour.
+    result = _invoke("jobs-plan-gaps", "--lane", "streamflow-archive")
+
+    assert result.exit_code == 0
+    summary = _last_json_line(result.output)
+    assert summary["missing_day_count"] == 1
+    assert "reopened" in str(summary["reopen_rule"])
+
+
+def test_planning_gaps_for_an_unknown_lane_is_refused_before_any_session_is_opened(
+    gap_plan_calls: list[dict[str, object]],
+) -> None:
+    result = _invoke("jobs-plan-gaps", "--lane", "not-a-lane")
+
+    assert result.exit_code == 2
+    assert gap_plan_calls == []
+    assert SESSIONS == []
+
+
+def test_an_until_bound_is_handed_to_the_planner_as_a_utc_calendar_day(
+    gap_plan_calls: list[dict[str, object]],
+) -> None:
+    _invoke("jobs-plan-gaps", "--lane", "firms-archive", "--until", "2024-03-11")
+
+    assert gap_plan_calls[0]["end"] == datetime(2024, 3, 11, tzinfo=UTC)
+
+
+def test_a_floor_override_plans_gaps_into_the_run_that_floor_actually_opened(
+    gap_plan_calls: list[dict[str, object]],
+) -> None:
+    _invoke("jobs-plan-gaps", "--lane", "streamflow-archive", "--floor", "2022-09-04")
+
+    lane = gap_plan_calls[0]["lane"]
     assert isinstance(lane, BackfillLane)
     assert lane.floor_day == "2022-09-04"
     assert archive_lane_run_key(lane) != archive_lane_run_key(STREAMFLOW_ARCHIVE_LANE)

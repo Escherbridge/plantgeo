@@ -1,0 +1,12 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "infra/cron-ingest/Dockerfile"
+  },
+  "deploy": {
+    "cronSchedule": "55 21 * * *",
+    "restartPolicyType": "NEVER",
+    "startCommand": "agri-cli coverage-fill --plan plans/open-meteo-era5-land-pnw-ndvi-lattice-20220802-20260802.json --source-key open-meteo-era5-land-archive --apply && agri-cli coverage-fill --plan plans/open-meteo-era5-land-pnw-soiltemp-20220802-20260802.json --source-key open-meteo-era5-land-archive --apply && agri-cli coverage-fill --plan plans/open-meteo-era5-land-pnw-vpd-20220802-20260802.json --source-key open-meteo-era5-land-archive --apply"
+  }
+}

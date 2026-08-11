@@ -447,14 +447,24 @@ async def test_forecast_tool_reads_only_the_published_serving_view() -> None:
 
 
 async def test_every_tool_statement_is_read_only() -> None:
-    """No agent-facing statement may mutate the warehouse."""
+    """No agent-facing statement may mutate the warehouse, and every published tool is scanned."""
+    selected_day = "2026-03-14"
     session = _Session([])
     async with agent_tools.run_context(session_provider=_session_provider(session)):
         await agent_tools.query_signals_near_point(longitude=-116.2, latitude=43.6)
         await agent_tools.query_drought_history_at_point(longitude=-116.2, latitude=43.6)
         await agent_tools.query_fire_history_near_point(longitude=-116.2, latitude=43.6)
         await agent_tools.query_forecast_summary_for_cell(longitude=-116.2, latitude=43.6)
-    assert len(session.statements) == len(agent_tools.WAREHOUSE_TOOLS)
+        await agent_tools.query_signal_value_on_day(longitude=-116.2, latitude=43.6, day=selected_day)
+        await agent_tools.query_signal_neighbors_in_time(longitude=-116.2, latitude=43.6, day=selected_day)
+        await agent_tools.query_nearest_signal_cells(longitude=-116.2, latitude=43.6, day=selected_day)
+    # Every published tool is driven above, so a tool added to WAREHOUSE_TOOLS without a call here
+    # breaks this assertion rather than slipping through unscanned. One statement per tool, plus one
+    # extra: `signal_value_on_day` reads its coverage audit in a second statement.
+    published_tool_count = 7
+    extra_statements = 1
+    assert len(agent_tools.WAREHOUSE_TOOLS) == published_tool_count
+    assert len(session.statements) == published_tool_count + extra_statements
     for statement in session.statements:
         # The beginner-doc headers are prose and legitimately contain English words that
         # collide with SQL verbs ("drops the rest"); only executable lines are scanned.
