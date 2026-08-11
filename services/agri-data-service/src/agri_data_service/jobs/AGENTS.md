@@ -564,3 +564,9 @@ constraint names cited in the comments are the ones production actually carries,
 `jsonb_to_recordset`'s column list matches the JSON `_work_items_json` emits. `tests/conftest.py` already
 provides `agri_db_connection` gated on `AGRI_TEST_DATABASE_URL`; a `test_jobs_lease_postgresql.py` that
 drives the real protocol against a disposable database is the outstanding follow-up.
+
+## The lane contract this ledger serves
+
+This package is the durable runtime; `docs/layer-lane-standard.md` is the contract every lane built on it
+must satisfy end to end (horizon, gap-to-work loop, governed absences, three crons, slider, agent tools).
+Read it before registering a new lane -- the ledger is only the middle third of what a finished layer needs.

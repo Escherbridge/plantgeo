@@ -55,3 +55,11 @@ Single path: push to `main` → Railway builds `Dockerfile` (the build stage run
 applies Drizzle migrations → healthcheck `/api/ready` → traffic. There is no
 GitHub Actions pipeline. A new migration must land with a matching
 `src/lib/server/db/migration-contract.ts` update in the same commit.
+
+## Data layers
+
+Every data layer must satisfy the contract in [`docs/layer-lane-standard.md`](docs/layer-lane-standard.md):
+a declared history horizon, a forward refresh, gap detection that authors work rather than only reporting,
+governed absences, a cron for each of those three, a serving reader registered in the slider capability
+catalogue, and agent tools answering at the UI-selected day with temporal and spatial neighbours. It ends in
+a definition-of-done checklist -- a layer that renders is not a layer that is finished.

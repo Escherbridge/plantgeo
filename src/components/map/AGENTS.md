@@ -573,3 +573,10 @@ The service picks on measured viewport *area* (`MAX_SOIL_UNION_SQUARE_DEGREES`, 
 the measured ~41,500 delineations per square degree) rather than on the zoom tier, because the
 ceiling that forces the choice is a row budget and rows scale with area. See
 `src/lib/server/services/usda-soil.ts`.
+
+## Layer completeness is a full-stack contract
+
+See `docs/layer-lane-standard.md` sections 9-11. The trap this directory has already hit: the slider
+capability catalogue is the OUTER relation of a LEFT JOIN, so a stream the observation query emits but the
+catalogue omits is dropped silently -- tiles paint, no slider mounts, and it looks like missing data.
+Assert the catalogue's bound parameters against a hand-spelled list, never against the shared constant.

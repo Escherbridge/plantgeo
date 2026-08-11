@@ -173,3 +173,10 @@ baseline — new inline SQL. Extracting a statement drops a module below its
 number, which passes; ratchet the baseline down in the same commit so the ground
 gained is held. It is advisory and ad-hoc (the owner removed build gates); it
 runs under `scripts/check.py`, not as a deploy gate.
+
+## Where these queries sit in the lane contract
+
+The observed-day census, the coverage reconciliation and the agent proximity queries are all steps in
+`docs/layer-lane-standard.md`. Two rules there are enforced by this directory's conventions and are easy to
+breach silently: the census must filter `geometry_id IS NOT NULL` or it reports days the slider cannot reach,
+and a colon immediately followed by a word character in a comment mints a phantom bind parameter.

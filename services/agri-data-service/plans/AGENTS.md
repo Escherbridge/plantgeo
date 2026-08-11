@@ -227,3 +227,9 @@ Two consequences for authoring:
   of the 8 chunks already persisted under it and orphan this plan's checkpoint and raw cache, forcing
   a re-fetch of a quota-bound dataset to improve a label. See `execution/AGENTS.md` §"Shortwave
   radiation is a SECOND upstream".
+
+## Plans are one half of the coverage loop
+
+A plan authors work; `docs/layer-lane-standard.md` defines the loop it belongs to -- required days from the
+lane's contract, minus observed days, minus governed absences, becomes the gaps a plan must close. A plan
+that only walks forward leaves interior holes no verb can reopen.
