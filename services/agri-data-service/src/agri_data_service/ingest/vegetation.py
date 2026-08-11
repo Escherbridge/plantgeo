@@ -597,23 +597,6 @@ def next_page_url(payload: Mapping[str, object]) -> str | None:
     return None
 
 
-async def search_sentinel2_scenes(
-    client: httpx.AsyncClient,
-    bbox: str,
-    start: datetime,
-    end: datetime,
-) -> list[SentinelScene]:
-    """Page the Earth Search catalogue for clear scenes over a bbox and window, clearest first."""
-    url: str | None = scene_search_url(bbox, start, end)
-    scenes: list[SentinelScene] = []
-    for _ in range(MAX_SEARCH_PAGES):
-        if url is None or len(scenes) >= MAX_SAMPLED_SCENES:
-            break
-        page, url = await fetch_scene_page(client, url)
-        scenes.extend(page)
-    return scenes[:MAX_SAMPLED_SCENES]
-
-
 async def fetch_scene_page(client: httpx.AsyncClient, url: str) -> tuple[list[SentinelScene], str | None]:
     """Read one catalogue page into typed scenes, plus the URL of the page after it."""
     payload = await fetch_bounded_json(client, url, STAC_BOUNDS)

@@ -189,17 +189,6 @@ class ReportOutcome:
 # --- Shared model-turn plumbing ----------------------------------------------------
 
 
-def _emit_text_blocks(content: Sequence[Any]) -> list[str]:
-    """Extract narration text from one assistant message's content blocks."""
-    chunks: list[str] = []
-    for block in content:
-        if getattr(block, "type", None) == "text":
-            chunk = getattr(block, "text", "")
-            if chunk:
-                chunks.append(chunk)
-    return chunks
-
-
 def _harvest_web_results(content: Sequence[Any], ctx: GraphContext) -> list[AgentEvent]:
     """Turn server-side web-search blocks into stream events and citations."""
     events: list[AgentEvent] = []

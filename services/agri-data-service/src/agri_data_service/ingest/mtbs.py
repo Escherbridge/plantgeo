@@ -88,7 +88,6 @@ SEVERITY_CLASS_BY_CODE: Mapping[int, BurnSeverityClass] = MappingProxyType(_SEVE
 NATIVE_FIRE_IDENTIFIER_FIELD_NAMES: Final = ("fire_id", "Fire_ID")
 SEVERITY_CODE_FIELD_NAMES: Final = ("severity", "Severity")
 IGNITION_DATE_FIELD_NAMES: Final = ("ig_date", "Ig_Date")
-IGNITION_YEAR_FIELD_NAMES: Final = ("year", "Ig_Year")
 FIRE_NAME_FIELD_NAMES: Final = ("fire_name", "Fire_Name", "Incid_Name")
 FIRE_TYPE_FIELD_NAMES: Final = ("fire_type", "Incid_Type")
 ASSESSMENT_TYPE_FIELD_NAMES: Final = ("asmnt_type", "Asmnt_Type")
@@ -96,15 +95,6 @@ ACRES_FIELD_NAMES: Final = ("acres", "BurnBndAc")
 # The per-fire mapping fingerprint. MTBS re-maps fires between releases under a stable Fire_ID, so
 # a Type-2 chain must version on these rather than on geometry floats.
 MAPPING_REVISION_FIELD_NAMES: Final = ("map_id", "asmnt_type", "pre_id", "post_id", "perim_id")
-SEVERITY_THRESHOLD_FIELD_NAMES: Final = (
-    "dnbr_offst",
-    "dnbr_stddv",
-    "nodata_threshold",
-    "greenness_threshold",
-    "low_threshold",
-    "moderate_threshold",
-    "high_threshold",
-)
 
 POLYGON_GEOMETRY_TYPES: Final = frozenset({"Polygon", "MultiPolygon"})
 

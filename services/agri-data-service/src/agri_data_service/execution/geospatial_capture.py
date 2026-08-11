@@ -302,14 +302,6 @@ def geospatial_capture_root(root: Path, plan: GeospatialCapturePlan) -> Path:
     return root / plan.pilot_key / geospatial_capture_plan_checksum(plan)
 
 
-def validate_existing_geospatial_capture(
-    target: Path,
-    plan: GeospatialCapturePlan,
-) -> GeospatialCaptureManifest:
-    """Validate an immutable capture without opening a network connection."""
-    return _validate_existing_capture(target, plan)
-
-
 def load_existing_geospatial_capture(
     target: Path,
     plan: GeospatialCapturePlan,

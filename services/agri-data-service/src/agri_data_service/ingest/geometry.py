@@ -30,11 +30,6 @@ GEOMETRY_LOCK_NAMESPACE: Final = "geo.geometry"
 MAX_GRID_NAME_LENGTH: Final = 100
 MAX_CELL_KEY_LENGTH: Final = 180
 
-POINT_KIND: Final = "point"
-POLYGON_KIND: Final = "polygon"
-LINE_KIND: Final = "line"
-GRID_CELL_KIND: Final = "grid_cell"
-
 GeometryVersionAction = Literal["opened", "confirmed", "superseded", "undatable"]
 
 # Every action the adapter can take, so a tally always carries all four keys and never a sparse dict.

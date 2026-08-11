@@ -68,9 +68,9 @@
 --     holding nothing but pending_review rows is empty from the map's point of view.
 --
 --   feature.geometry_id is not null
---     Only rows linked into the geometry dimension. This mirrors the two canonical censuses this
---     query otherwise duplicates -- sql/ingest/observed_layer_days.sql and
---     sql/ingest/feature_observed_days.sql -- which both gate on this same predicate for the same
+--     Only rows linked into the geometry dimension. This mirrors the canonical census this
+--     query otherwise duplicates -- sql/ingest/observed_days.sql, loaded at both its layer scopes
+--     by validation/queries.py -- which gates on this same predicate for the same
 --     reason: an unlinked row has no shape the time-aware serving path can place, so the map's day
 --     slider can never reach it. Without this predicate the census here counts days the slider
 --     cannot actually offer, and /ops/backfill over-reports coverage relative to what a person

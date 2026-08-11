@@ -43,12 +43,6 @@ def async_session() -> AsyncSession:
     return _combined_state.session_factory()
 
 
-async def get_session() -> AsyncIterator[AsyncSession]:
-    """Yield an async database session."""
-    async with async_session() as session:
-        yield session
-
-
 def _service_engine(profile: Literal["receiver_writer", "published_reader"]) -> AsyncEngine:
     database_url = (
         settings.require_receiver_writer_database_url()

@@ -1,7 +1,7 @@
 -- drought_area_observed_days
 -- Purpose: one row per US Drought Monitor release day held in `geo.drought_areas`, with how many
 --          drought-class polygons that day carries. The drought layer's equivalent of
---          feature_observed_days.sql, which cannot serve it because drought areas are not features.
+--          observed_days.sql, which cannot serve it because drought areas are not features.
 -- Loaded by: agri_data_service.ingest.validation
 -- Params: row_limit (int) -- a hard cap on returned rows; the Python side refuses a result that
 --         reaches the cap rather than reasoning about a truncated day set.
