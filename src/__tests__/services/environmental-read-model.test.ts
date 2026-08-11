@@ -1073,6 +1073,37 @@ describe("the streams that are not geo.features layers get an axis of their own"
     expect(streamScan).toContain("r.observation_count < d.density_floor");
   });
 
+  it("catalogues every climate stream it observes, so none is dropped by the catalogue join", async () => {
+    // The catalogue is the OUTER relation of the LEFT JOIN, so a stream the observation subquery
+    // emits but the catalogue omits vanishes silently: the layer paints tiles (the field read has
+    // its own 30-day backward window) while reporting no history, and the slider never mounts.
+    // That is precisely what shipped when the one-stream -> nine-stream split missed this call site.
+    respondWith({});
+    await getSliderCapabilities();
+
+    const statement = dbExecute.mock.calls
+      .map(([call]) => call)
+      .find((call) => !renderSqlText(call).includes("JOIN geo.features f"));
+    if (statement === undefined) throw new Error("expected a stream window scan");
+
+    // The stream names are BOUND PARAMETERS, so renderSqlText cannot see them -- flattenSql keeps
+    // both halves. Params are collected only up to `AS stream(name)`, which ends the catalogue's
+    // VALUES list; the observation subquery below binds the same nine names in its own VALUES, so
+    // an unscoped search would pass against the very bug this pins.
+    const catalogueParams: string[] = [];
+    for (const token of flattenSql(statement)) {
+      if (token.kind === "text" && token.text.includes("AS stream(name)")) break;
+      if (token.kind === "param" && typeof token.value === "string") catalogueParams.push(token.value);
+    }
+
+    // Asserted against the hand-spelled list above, deliberately NOT against
+    // CLIMATE_FIELD_SIGNAL_IDS: the production catalogue is built from that constant, so importing
+    // it here would let both sides drift together and still pass.
+    for (const streamName of CLIMATE_STREAM_NAMES) {
+      expect(catalogueParams).toContain(streamName);
+    }
+  });
+
   it("dates a drought day by the release that covers it, not by the Tuesday it was valid on", async () => {
     // USDM publishes weekly and a release stands until the next supersedes it. Feeding the
     // valid dates raw would report six days in seven as unpublished -- an observed absence

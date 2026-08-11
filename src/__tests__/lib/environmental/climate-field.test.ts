@@ -173,19 +173,19 @@ describe("climate field signal vocabulary", () => {
     ]);
   });
 
-  it("captions the pilot signals as pilots and the full-lattice ones not at all", () => {
-    const pilots = CLIMATE_FIELD_SIGNAL_IDS.filter(
+  it("captions no signal as a pilot, now that every one covers the whole lattice", () => {
+    // The three soil-wetness signals carried a coverage note and a "— pilot" label until
+    // 2026-08-10. Measured against production they are 4 cells only for their first 98 days
+    // (2022-04-30..2022-08-05) and the full 397 for the 1,462 days since -- the same width as air
+    // temperature on every one of those days. `coverageNote` is null when coverage IS the lattice,
+    // and the early window needs no static sentence because `ClimateDetails` composes the counted
+    // one per request from cellCount/latticeCellCount.
+    const captioned = CLIMATE_FIELD_SIGNAL_IDS.filter(
       (signal) => CLIMATE_FIELD_SIGNALS[signal].coverageNote !== null
     );
-    // 4 cells of 397. A reader who selects one of these and sees four squares must be told
-    // that is the coverage rather than an outage, so the note is load-bearing, not decorative.
-    expect(pilots).toEqual([
-      "soil-wetness-surface",
-      "soil-wetness-root-zone",
-      "soil-wetness-profile",
-    ] satisfies ClimateFieldSignalId[]);
-    for (const signal of pilots) {
-      expect(CLIMATE_FIELD_SIGNALS[signal].label.toLowerCase()).toContain("pilot");
+    expect(captioned).toEqual([] satisfies ClimateFieldSignalId[]);
+    for (const signal of CLIMATE_FIELD_SIGNAL_IDS) {
+      expect(CLIMATE_FIELD_SIGNALS[signal].label.toLowerCase()).not.toContain("pilot");
     }
   });
 });

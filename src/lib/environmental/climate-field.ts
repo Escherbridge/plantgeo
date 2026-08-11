@@ -421,21 +421,15 @@ export const AIR_TEMPERATURE_VARIANT_IDS: readonly AirTemperatureVariant[] = [
   "min",
 ];
 
-/**
- * The coverage caveat the three soil-wetness signals carry.
- *
- * These signals arrived as a pilot on a fraction of the lattice and the backfill has been
- * widening them since; they are offered anyway, because a reader who cannot select a signal
- * cannot be told it is a pilot, and honestly-captioned partial coverage is a better answer
- * than a hidden lane.
- *
- * States the KIND of coverage and no count -- the count is measured per request and rendered
- * beside this by `ClimateDetails`. See the note on `coverageNote` for the stale-figure bug
- * that rule exists to prevent.
- */
-const SOIL_WETNESS_COVERAGE_NOTE =
-  "This signal is a pilot: it is measured on part of the lane's lattice rather than all of " +
-  "it, so ground with no cell drawn is ground the lane has not filled yet -- not dry soil.";
+/* The three soil-wetness signals carried a `SOIL_WETNESS_COVERAGE_NOTE` and a "— pilot" label
+   suffix until 2026-08-10. The pilot is over: measured against production, the lane is 4 cells
+   for its first 98 days (2022-04-30..2022-08-05) and the full 397 for the 1,462 days since
+   (2022-08-06..2026-08-06) -- the same width as air temperature on every one of those days. So
+   the caption described 6% of the record and mis-described the rest, which is the failure the
+   `coverageNote` contract calls out: it is `null` when coverage IS the whole lattice. The early
+   98 days still need no static sentence, because `ClimateDetails` composes the counted one per
+   request from `cellCount`/`latticeCellCount` -- a reader sitting on 2022-05-01 is told "4 of
+   397" by the served collection itself, which is exactly what that mechanism exists for. */
 
 /**
  * One signal's entry as it is WRITTEN, without the two fields that are derived from its id.
@@ -611,7 +605,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
     // No `isoline` on any of the three: see `renderForms` on the interface. Contouring a pilot
     // interpolates a continuous field across ground the lane has never measured.
     renderForms: ["field", "symbol"],
-    label: "Soil wetness (surface) — pilot",
+    label: "Soil wetness (surface)",
     quantityLabel: "Surface soil wetness",
     fieldLabel: "surface soil-wetness",
     signalName: "soil_wetness_surface",
@@ -619,7 +613,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
     unit: "fraction_of_saturation",
     unitLabel: "fraction of saturation",
     blankGroundMisreading: "dry soil",
-    coverageNote: SOIL_WETNESS_COVERAGE_NOTE,
+    coverageNote: null,
     domainMinimum: 0,
     domainMaximum: 1,
     bandBreaks: SOIL_WETNESS_BAND_BREAKS,
@@ -634,7 +628,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
   "soil-wetness-root-zone": {
     signal: "soil-wetness-root-zone",
     renderForms: ["field", "symbol"],
-    label: "Soil wetness (root zone) — pilot",
+    label: "Soil wetness (root zone)",
     quantityLabel: "Root-zone soil wetness",
     fieldLabel: "root-zone soil-wetness",
     signalName: "soil_wetness_root_zone",
@@ -642,7 +636,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
     unit: "fraction_of_saturation",
     unitLabel: "fraction of saturation",
     blankGroundMisreading: "dry soil",
-    coverageNote: SOIL_WETNESS_COVERAGE_NOTE,
+    coverageNote: null,
     domainMinimum: 0,
     domainMaximum: 1,
     bandBreaks: SOIL_WETNESS_BAND_BREAKS,
@@ -657,7 +651,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
   "soil-wetness-profile": {
     signal: "soil-wetness-profile",
     renderForms: ["field", "symbol"],
-    label: "Soil wetness (profile) — pilot",
+    label: "Soil wetness (profile)",
     quantityLabel: "Profile soil wetness",
     fieldLabel: "profile soil-wetness",
     signalName: "soil_wetness_profile",
@@ -665,7 +659,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
     unit: "fraction_of_saturation",
     unitLabel: "fraction of saturation",
     blankGroundMisreading: "dry soil",
-    coverageNote: SOIL_WETNESS_COVERAGE_NOTE,
+    coverageNote: null,
     domainMinimum: 0,
     domainMaximum: 1,
     bandBreaks: SOIL_WETNESS_BAND_BREAKS,

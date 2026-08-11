@@ -2486,9 +2486,10 @@ function climateFieldIsolineFeatures(
  * the lane holds. That is why this procedure takes no `zoom`.
  *
  * Nothing is interpolated across missing coverage: a cell the lane has not filled is absent
- * rather than averaged in. That matters most for the three soil-wetness signals, which cover
- * 4 cells of the 397 -- a viewport can legitimately hold measured air temperature and no soil
- * wetness at all, which must read as `not_published` and never as a value.
+ * rather than averaged in. That mattered most for the three soil-wetness signals, which began
+ * as a 4-cell pilot; measured 2026-08-10 they now carry the full 397 from 2022-08-06 onward and
+ * only their first 98 days are narrow. A viewport sitting in that early window can still hold
+ * measured air temperature and no soil wetness, which must read as `not_published`, never a value.
  *
  * @param date optional YYYY-MM-DD from the time slider -- the single source of truth for the
  *   day drawn. Omitted means the live edge. A future day returns empty: an observation archive
@@ -2860,7 +2861,7 @@ const DEFAULT_TEMPORAL_KIND: TemporalKind = "snapshot";
  * (soil_water_content_layer_1/_2/_3, soil_temperature_level_1..4 and
  * vapor_pressure_deficit, daily 2022-04-30..2026-04-30 over a 1,568-cell 0.25-degree PNW
  * lattice), served by `getPublishedSoilField` above; and the NASA POWER lane (eight
- * meteorology signals plus three pilot soil-wetness signals, daily over a 397-cell
+ * meteorology signals plus three soil-wetness signals, daily over a 397-cell
  * 0.5-degree lattice), served by `getPublishedClimateField` above. The 2026-08-06 revision
  * of this note claimed the second lane was served by the first reader; it never was, and
  * could not be -- `geo.soil_field_observation`'s governed VALUES list structurally excludes
@@ -3288,7 +3289,7 @@ async function readObservationWindows(): Promise<Map<string, ObservationWindowRo
 }
 
 /**
- * The same axis, for the five streams that are not backed by `geo.features`.
+ * The same axis, for the thirteen streams that are not backed by `geo.features`.
  *
  * Drought lives in `geo.drought_areas` as weekly releases; the three soil measures and the
  * climate field live in `agri.signal_observation` behind the two governed views. None of them
@@ -3320,7 +3321,14 @@ async function readObservationWindows(): Promise<Map<string, ObservationWindowRo
  * disappearing from the catalogue.
  */
 async function readStreamObservationWindows(): Promise<Map<string, ObservationWindowRow>> {
-  const streamNames = Object.values(SLIDER_STREAM_LAYER_NAMES);
+  // The catalogue is the OUTER relation of the LEFT JOIN below, so a stream missing from here is
+  // dropped even when the observation subquery emits rows for it -- which is exactly how the nine
+  // climate streams reported "no history" while still painting tiles. Built from the same
+  // CLIMATE_FIELD_SIGNAL_IDS the observation side uses, so the two halves cannot drift again.
+  const streamNames = [
+    ...Object.values(SLIDER_STREAM_LAYER_NAMES),
+    ...CLIMATE_FIELD_SIGNAL_IDS.map(climateFieldStreamName),
+  ];
   return indexWindowRows(
     await db.execute<ObservationWindowRow>(
       observationWindowStatement(
@@ -3647,7 +3655,7 @@ const CAPABILITIES_CACHE_TTL_MS = 5 * 60_000;
 /**
  * How long the STREAM capability list is reused, and why it is not the same number.
  *
- * The five non-geo.features streams are read through the two governed views, whose gates sit
+ * The thirteen non-geo.features streams are read through the two governed views, whose gates sit
  * in joins, so their scan is an aggregate over `agri.signal_observation` -- roughly 17 million
  * accepted rows on production (the VPD signal alone was 2,149,140 on 2026-08-08). No index
  * helps: the only usable one is keyed `(cell_id, observed_at, signal_name)`, and this grouping
@@ -3715,7 +3723,7 @@ async function readLayerCapabilities(): Promise<ResolvedSliderLayerCapability[]>
  * Omission is deliberately the failure mode: a capability with a null `earliestObservedDate`
  * would have the client tell a reader that drought "has no observations this far back", which
  * is a claim about the warehouse made out of a failed query. Absence of a capability makes no
- * claim at all -- it is the state these five streams were already in -- so a broken stream read
+ * claim at all -- it is the state these thirteen streams were already in -- so a broken stream read
  * costs the sliders and lies about nothing.
  */
 async function readStreamCapabilities(): Promise<ResolvedSliderLayerCapability[]> {
