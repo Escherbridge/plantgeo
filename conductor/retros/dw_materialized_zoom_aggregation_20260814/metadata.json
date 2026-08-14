@@ -1,0 +1,11 @@
+{
+  "id": "dw_materialized_zoom_aggregation_20260814",
+  "description": "Pre-aggregate geospatial layer zoom tiers in PostGIS using Materialized Views (coarse-average, regional-average) with spatial GIST indexes and fast REFRESH routines for instant zoom serving",
+  "type": "feature",
+  "created_at": "2026-08-14T09:40:00Z",
+  "status": "completed",
+  "informed_by": [
+    "docs/database.md",
+    "src/lib/server/services/zoom-granularity.ts"
+  ]
+}

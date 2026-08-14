@@ -1,0 +1,13 @@
+{
+  "id": "ml_strategy_materialized_rendering_20260814",
+  "name": "ML Strategy Materialized View Rendering Engine",
+  "description": "Pre-aggregate ML strategy selection models and causal intervention recommendations into PostGIS Materialized Views across zoom tiers (coarse, regional, detail) with GIST spatial indexing and concurrent refresh routines for MapLibre/Martin tile serving.",
+  "type": "feature",
+  "created_at": "2026-08-14T09:49:00Z",
+  "status": "completed",
+  "informed_by": [
+    "docs/strategy-selection-training.md",
+    "conductor/tracks/dw_materialized_zoom_aggregation_20260814/spec.md",
+    "src/lib/server/services/environmental-read-model.ts"
+  ]
+}

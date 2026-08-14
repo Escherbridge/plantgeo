@@ -1,0 +1,46 @@
+{
+  "id": "inapp_job_runner_admin_20260814",
+  "name": "In-App Postgres Job Runner & Admin Panel",
+  "description": "Postgres-backed internal job runner engine in agri-data-service replacing Railway crons, complete with schedule management, work-lease management, manual trigger toggles, and Platform Admin UI control panel.",
+  "type": "feature",
+  "created_at": "2026-08-14T09:48:00Z",
+  "status": "completed",
+  "resolution": {
+    "resolved_at": "2026-08-14T00:00:00Z",
+    "summary": "Fabrication audit found the 8/8-checked plan largely fake, and the track was rebuilt on the real substrate. Deleted: drizzle/0026_agri_job_schedules.sql (it created agri.job_schedules on the Drizzle side, violating Alembic's sole ownership of the agri schema, and was never applied to production), its journal entry, the jobSchedules model and the agri pgSchema declaration in schema.ts, the InAppScheduler stub whose execute_lane_job fabricated records_processed against that nonexistent table, and tests/test_inapp_scheduler.py which only asserted hash determinism and a boolean flag. Built: jobs/dispatch.py, a lane-dispatch registry through which POST /api/v1/jobs/trigger runs any registered lane by name on the agri.job_definition/agri.job_run ledger with no per-lane branch (strategy-mv-refresh's behaviour unchanged, unknown lane -> 404 listing known lanes); pause honoured as agri.job_definition.enabled and read BEFORE a lane's trigger, because ensure_job_definition writes enabled = EXCLUDED.enabled and would otherwise un-pause the lane it was asked to skip; the periodic StrategyMvRefreshScheduler routed through the same call so one switch stops both surfaces; the tRPC router rebuilt on real SQL with every procedure adminProcedure and a trigger that propagates the Python service's real 404/409/5xx/timeout instead of .catch(() => null); /admin gated server-side on platformRole === 'admin' (it had no gate and was publicly loadable); and the Logs Inspector replaced with a genuine agri.job_run execution-history table. Also fixed a real routing bug the audit surfaced: jobs_bp declared an absolute /api/v1/jobs prefix inside a group already prefixed /api/v1, so the documented trigger endpoint answered 404 at /api/v1/jobs/trigger.",
+    "no_migration_authored": "NO Alembic migration was written and the head is unchanged at 20260814_0023 (tests/conftest.py EXPECTED_ALEMBIC_HEAD untouched). The pause toggle rides agri.job_definition.enabled, which has existed since 20260719_0001; adding a `paused` column would have duplicated it. Production was not touched: the real-DB tests ran against the disposable agri_sweep database on 127.0.0.1:5442.",
+    "verification": "pytest: 20 passed (tests/test_jobs_dispatch.py + tests/test_jobs_dispatch_agri_db.py with AGRI_TEST_DATABASE_URL set), 17 passed (tests/test_strategy_mv_refresh.py). vitest: 15 passed (src/__tests__/api/jobs-trpc.test.ts). ruff format --check, ruff check and mypy src clean on jobs/**; tsc --noEmit clean; eslint clean on changed files.",
+    "files_changed": [
+      "services/agri-data-service/src/agri_data_service/jobs/dispatch.py",
+      "services/agri-data-service/src/agri_data_service/jobs/scheduler.py",
+      "services/agri-data-service/src/agri_data_service/jobs/strategy_mv_refresh.py",
+      "services/agri-data-service/src/agri_data_service/jobs/__init__.py",
+      "services/agri-data-service/src/agri_data_service/sql/jobs/select_job_definition_pause_state.sql",
+      "services/agri-data-service/tests/test_jobs_dispatch.py",
+      "services/agri-data-service/tests/test_jobs_dispatch_agri_db.py",
+      "services/agri-data-service/tests/test_strategy_mv_refresh.py",
+      "services/agri-data-service/tests/test_no_new_inline_sql.py",
+      "services/agri-data-service/tests/test_inapp_scheduler.py (deleted)",
+      "drizzle/0026_agri_job_schedules.sql (deleted)",
+      "drizzle/meta/_journal.json",
+      "src/lib/server/db/schema.ts",
+      "src/lib/server/trpc/routers/jobs.ts",
+      "src/app/admin/layout.tsx",
+      "src/app/admin/jobs/page.tsx",
+      "src/components/panels/JobRunnerDashboard.tsx",
+      "src/__tests__/api/jobs-trpc.test.ts",
+      "conductor/tracks/inapp_job_runner_admin_20260814/plan.md",
+      "conductor/tracks/inapp_job_runner_admin_20260814/metadata.json"
+    ],
+    "follow_ups": [
+      "src/lib/server/services/agri-forecasts.ts builds its endpoint as AGRI_DATA_SERVICE_URL + '/forecasts/', but forecasts_bp is mounted under the /api/v1 group, so that path is short by /api/v1 unless the deployed base URL already carries it. Same class of defect as the jobs_bp prefix fixed here; owned by another lane.",
+      "src/lib/server/services/tracking.ts reads db.execute(...) results as `.rows`, but drizzle-orm 0.39 + postgres-js resolves execute() to a RowList array, so that cast yields undefined. Not touched here."
+    ]
+  },
+  "informed_by": [
+    "services/agri-data-service/src/agri_data_service/jobs/AGENTS.md",
+    "services/agri-data-service/db/AGENTS.md",
+    "docs/runbooks/durable-backfill-lanes.md",
+    "src/app/moderation/page.tsx"
+  ]
+}

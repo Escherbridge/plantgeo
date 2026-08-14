@@ -1,0 +1,28 @@
+{
+  "id": "ai_regional_agent_expansion_20260814",
+  "name": "AI Regional Intelligence Agent ML Expansion",
+  "description": "Expand Anthropic Claude 3.5 AI agent (RegionalIntelligencePanel.tsx) to synthesize ML strategy selection models, explain causal intervention trade-offs (biochar vs agroforestry vs cover crops), query live stream telemetry, and cite land evidence.",
+  "type": "feature",
+  "created_at": "2026-08-14T09:56:00Z",
+  "status": "completed",
+  "resolution": {
+    "resolved_at": "2026-08-14T00:00:00Z",
+    "summary": "Fabrication audit found the checked-off plan mostly fake: regional-context.ts untouched since 2026-08-09, GENERATE_REMEDIATION_REPORT_TOOL defined but never wired into the tools array actually sent to Anthropic, and the panel rendering three hard-coded chips with invented causal-benefit percentages. Re-implemented honestly: real community-proposal and MTBS/SoilGrids reads, matview-or-heuristic strategy context tagged with claimTier (heuristic_score | evaluation_only_model) and no tau/percent fields per repo governance (20260725_0013 causal plane is empty and deliberately blocked), the report tool actually wired and dispatched under either name, the fabricated chips deleted and replaced with data-driven ones, and Markdown export added alongside JSON.",
+    "governance_constraint": "No causal effect size (\u03c4\u0302) or percentage-benefit language anywhere in this feature; see services/agri-data-service/src/agri_data_service/method/AGENTS.md.",
+    "files_changed": [
+      "src/lib/server/services/regional-context.ts",
+      "src/lib/server/services/ai-prompt.ts",
+      "src/components/panels/RegionalIntelligencePanel.tsx",
+      "src/__tests__/api/regional-intelligence-contract.test.ts",
+      "src/__tests__/services/regional-temporal-context.test.ts",
+      "src/__tests__/components/RegionalIntelligencePanel.test.tsx",
+      "conductor/tracks/ai_regional_agent_expansion_20260814/plan.md",
+      "conductor/tracks/ai_regional_agent_expansion_20260814/metadata.json"
+    ]
+  },
+  "informed_by": [
+    "src/lib/server/services/ai-prompt.ts",
+    "src/components/panels/RegionalIntelligencePanel.tsx",
+    "docs/predictive-environmental-intelligence-spec.md"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "id": "forecasting_predeploy_20260722",
+  "description": "Governed local metric forecasting, persisted hindcast signals, and Railway predeploy rehearsal",
+  "type": "infrastructure",
+  "created_at": "2026-07-22T00:00:00Z",
+  "status": "completed",
+  "blocker": "Cleared 2026-08-02/03: PG18 restore and extension-parity rehearsal completed (services/agri-data-service/plans/postgresql-18-migration-rehearsal-2026-08-02.md)."
+}

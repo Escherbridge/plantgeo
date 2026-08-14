@@ -23,7 +23,9 @@
     "tiles:serve": "podman compose up -d martin",
     "tiles:logs": "podman compose logs -f martin",
     "routing:serve": "podman compose up valhalla -d",
-    "warm:soilgrids": "node scripts/warm-soilgrids.mjs"
+    "warm:soilgrids": "node scripts/warm-soilgrids.mjs",
+    "prepare": "husky",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
@@ -63,6 +65,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@testing-library/react": "^16.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
@@ -71,9 +74,16 @@
     "drizzle-kit": "^0.30.0",
     "eslint": "^9.0.0",
     "eslint-config-next": "^16.2.2",
+    "fake-indexeddb": "^6.2.5",
+    "husky": "^9.1.7",
+    "ioredis-mock": "^8.13.1",
     "jsdom": "^29.1.1",
+    "lint-staged": "^17.3.0",
     "postcss": "^8.5.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,mjs}": "eslint --fix"
   }
 }

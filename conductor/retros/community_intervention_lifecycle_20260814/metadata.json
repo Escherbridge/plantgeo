@@ -1,0 +1,13 @@
+{
+  "id": "community_intervention_lifecycle_20260814",
+  "name": "Community & Intervention Lifecycle Engine",
+  "description": "Consolidated track unifying community strategy proposals, expert moderation scorecards (/moderation), proposal feed (/feed), and post-intervention telemetry monitoring (USGS streamflow, soil moisture, fire risk).",
+  "type": "feature",
+  "created_at": "2026-08-14T09:55:00Z",
+  "status": "completed",
+  "informed_by": [
+    "conductor/tracks/community_engagement_completion_20260805/spec.md",
+    "conductor/tracks/north_america_intervention_data_20260723/spec.md",
+    "src/lib/server/services/community-activity.ts"
+  ]
+}

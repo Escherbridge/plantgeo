@@ -99,3 +99,4 @@ conductor/tracks/**/*.out
 # Raw research captures (fetched docs, HTML/log dumps) -- scratch, not source.
 .omc/research/
 dbconnect.md
+production/

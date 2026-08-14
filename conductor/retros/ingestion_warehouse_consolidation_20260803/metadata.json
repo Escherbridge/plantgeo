@@ -1,0 +1,15 @@
+{
+  "id": "ingestion_warehouse_consolidation_20260803",
+  "description": "Consolidate ingestion and the warehouse: cut the enforcement layer while preserving the ML serving lane, key everything to one Type-2 conformed geometry dimension, port ingestion to the Python CLI, and serve past-to-future through one day-granular read path",
+  "type": "feature",
+  "created_at": "2026-08-03T00:00:00Z",
+  "status": "completed",
+  "informed_by": [
+    "plans/ingestion-warehouse-consolidation-2026-08-03.md",
+    "services/agri-data-service/plans/checksum-layer-audit-2026-08-03.md",
+    "services/agri-data-service/plans/postgresql-18-migration-rehearsal-2026-08-02.md"
+  ],
+  "dependency_mode": "Owns DDL changes to agri (Alembic) and geo (Drizzle) on the single plantgeo database. Drizzle owns geo/public/tracking; Alembic owns agri; Python does DML only into geo. Neither tool's autogenerate is ever run against the other's schema.",
+  "activation_gate": "Phases 2 and 3 make destructive agri schema changes that are free only while agri holds 0 rows; phase 4 writes the first row, so 2 and 3 must both land before 4. Every Alembic revision in phase 2 is gated on REFRESH MATERIALIZED VIEW agri.mv_forecast_ml_daily_serving succeeding. Production migrations are applied by the owner, never by an agent.",
+  "resolution": "All plan items verified against prod 2026-08-14 (alembic 20260808_0019 live, enforcement layer gone, nine ML-serving tables intact, both UI defects fixed)."
+}

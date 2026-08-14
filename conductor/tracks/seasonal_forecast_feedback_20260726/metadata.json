@@ -1,8 +1,0 @@
-{
-  "id": "seasonal_forecast_feedback_20260726",
-  "description": "Evaluation-only seasonal forecasting, time-honest residual feedback, and ML feature lineage",
-  "type": "infrastructure",
-  "created_at": "2026-07-26T00:00:00Z",
-  "status": "active",
-  "depends_on": ["forecasting_predeploy_20260722"]
-}

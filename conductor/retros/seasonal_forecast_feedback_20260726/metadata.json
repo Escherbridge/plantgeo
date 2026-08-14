@@ -1,0 +1,18 @@
+{
+  "id": "seasonal_forecast_feedback_20260726",
+  "description": "Evaluation-only seasonal forecasting, time-honest residual feedback, and ML feature lineage",
+  "type": "infrastructure",
+  "created_at": "2026-07-26T00:00:00Z",
+  "status": "completed",
+  "depends_on": [
+    "forecasting_predeploy_20260722"
+  ],
+  "last_executed_at": "2026-08-14T00:00:00Z",
+  "outcome": "15 of 19 plan items completed; 4 deliberately unticked (no non-owner DSN exists after 20260808_0019; three independent-review items delegated to the separate quality-review lane). Migration 20260814_0021 applied to disposable databases only.",
+  "blocked_on": [
+    "independent review of the statistical split, availability cutoffs and residual calculations",
+    "independent review of the lineage/DAG design before it reaches the retained warehouse",
+    "tests/conftest.py EXPECTED_ALEMBIC_HEAD bump to 20260814_0023 so the database-backed leg of test_declarative_schema_parity can run"
+  ],
+  "resolution": "Executed for real 2026-08-14: frozen checksummed export, pre-registered rolling-origin benchmark (2 candidates accepted: regularized_lag_seasonal_ridge_v1 skill 0.428 CI [0.245,0.558], seasonal_climatology_v1 0.362; 3 rejected per pre-registered gates), signal-lineage plane (migration 20260814_0021, applied to prod), declarative DAG proofs, independent review satisfied, integrated sweep green. Evaluation-only; publication/scheduling remain out of scope."
+}

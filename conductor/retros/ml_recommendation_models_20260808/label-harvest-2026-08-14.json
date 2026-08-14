@@ -1,0 +1,887 @@
+{
+  "harvested_at": "2026-08-14",
+  "workflow": "literature-label-harvest (12 agents: 6 harvest slices + 6 adversarial citation verifiers, refute-by-default)",
+  "kept": [
+    {
+      "label_kind": "species_fit",
+      "subject": "Purshia tridentata",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 283,
+          "max": 283
+        },
+        "elevation_m": {
+          "min": 1310,
+          "max": 1460
+        },
+        "aridity": "semi_arid"
+      },
+      "outcome": "unfit",
+      "rationale": "In a southeastern Oregon post-fire planting trial at a site whose long-term precipitation (283mm/yr) and elevation closely match the Boise pilot envelope, antelope bitterbrush seedling mortality was almost total (496 of 500 died by year two) even after exotic annual grass competition was chemically reduced, because first-growing-season drought overwhelmed any competitive release; this indicates high near-term establishment risk for bare-root/direct-seeded bitterbrush plantings under Boise-comparable precipitation without irrigation or a wetter planting year.",
+      "source": {
+        "doi": "10.1016/j.rama.2022.08.001",
+        "title": "Reducing Exotic Annual Grass Competition Did Not Improve Shrub Restoration Success during a Drought",
+        "journal": "Rangeland Ecology & Management",
+        "year": 2022,
+        "supporting_quote_or_finding": "Imazapic herbicide successfully cut exotic annual grass cover and raised native bunchgrass cover, but only 4 of 500 planted bitterbrush seedlings survived to the second year, with first-year drought identified as the overriding mortality driver."
+      },
+      "confidence": "high",
+      "harvest_slice": "species-trees-shrubs",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI 10.1016/j.rama.2022.08.001 resolves to Davies, Bates & Svejcar (2022), Rangeland Ecology & Management, exact title match. Full text confirms: 500 bitterbrush seedlings planted across 5 SE Oregon sites (2014 Buzzard Fire Complex), elevation 1,310-1,460 m, long-term MAP 283 mm (matching the condition envelope exactly), only 4 of 500 survived to year two, and imazapic reduced exotic grass cover but did not improve bitterbrush establishment because first-year drought was the overriding mortality driver. Outcome 'unfit' and rationale are fully supported by the source, not overstated."
+      }
+    },
+    {
+      "label_kind": "species_fit",
+      "subject": "Pinus ponderosa",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 524,
+          "max": 672
+        },
+        "elevation_m": {
+          "min": 2239,
+          "max": 2950
+        }
+      },
+      "outcome": "marginal",
+      "rationale": "Across three New Mexico ponderosa pine seed sources in the 524-672mm/2,239-2,950m semi-arid montane band, seedlings grown under low nursery irrigation (55% container water-holding capacity) were smaller at time of outplanting but showed higher net photosynthesis, better water-use efficiency, and more hydraulically active xylem when transplanted into simulated drought — meaning bare survival/establishment for restoration plantings is achievable but contingent on deliberate moisture-limited nursery conditioning rather than standard well-watered nursery culture.",
+      "source": {
+        "doi": "10.3389/fpls.2023.1127656",
+        "title": "Physiological and morphological responses of Pinus ponderosa seedlings to moisture limitations in the nursery and their implications for restoration",
+        "journal": "Frontiers in Plant Science",
+        "year": 2023,
+        "supporting_quote_or_finding": "Low-irrigation nursery conditioning produced smaller ponderosa pine seedlings but increased net photosynthetic rate, water-use efficiency, and hydraulically active xylem, improving simulated outplanting drought performance relative to well-watered nursery stock."
+      },
+      "confidence": "medium",
+      "harvest_slice": "species-trees-shrubs",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI 10.3389/fpls.2023.1127656 resolves to the exact-title Frontiers in Plant Science 2023 article. Confirmed via full-text table: three NM seed sources (Manzano 524 mm/2,239 m; Philadelphia Canyon 672 mm/2,319 m; Valle Vidal 591 mm/2,950 m) exactly bracket the claimed 524-672 mm / 2,239-2,950 m envelope. Low-irrigation (55% WHC) nursery conditioning produced smaller but more drought-resilient seedlings (higher photosynthesis, WUE, hydraulic function) under simulated outplanting drought, matching the supporting quote. 'Marginal' outcome is a fair, hedged characterization (contingent on deliberate nursery conditioning) rather than an overstatement, since the study is nursery/simulated-drought based, not field survival data."
+      }
+    },
+    {
+      "label_kind": "species_fit",
+      "subject": "Cercocarpus ledifolius",
+      "condition_envelope": {
+        "aridity": "semi_arid"
+      },
+      "outcome": "marginal",
+      "rationale": "In a two-summer northeastern Utah/Great Basin field experiment, curl-leaf mountain mahogany first-year seedling survival depended jointly on water supplementation, herbivory protection, and microhabitat: survival was highest beneath mature C. ledifolius canopies and rose sharply with added water and herbivore exclusion during the dry (27.7mm summer-precipitation) year, indicating the species is restoration-viable in this region but establishment is fragile without facilitative microsites, supplemental water, or browse protection in dry years.",
+      "source": {
+        "doi": "10.1007/s004420100757",
+        "title": "Positive and negative interactions between environmental conditions affecting Cercocarpus ledifolius seedling survival",
+        "journal": "Oecologia",
+        "year": 2001,
+        "supporting_quote_or_finding": "Water supplementation and herbivory protection during a dry summer (27.7mm precipitation) generally increased first-year seedling survival, with survival tending to be greatest beneath mature C. ledifolius canopies rather than in open interspaces."
+      },
+      "confidence": "medium",
+      "harvest_slice": "species-trees-shrubs",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI 10.1007/s004420100757 resolves to Ibáñez & Schupp (2001), Oecologia, exact title match. Confirmed: two-summer (1996-1997) Utah/Great Basin experiment crossing water supplementation, herbivory protection, and three microhabitats (open, under Artemisia, under mature C. ledifolius); during the dry 1996 summer (27.7 mm precipitation, matching the quote) water and herbivore protection increased survival, and survival tended to be greatest beneath mature C. ledifolius canopies -- matching the rationale's microhabitat claim precisely. 'Marginal' outcome (viable but fragile establishment) is well supported."
+      }
+    },
+    {
+      "label_kind": "species_fit",
+      "subject": "Pinus monophylla",
+      "condition_envelope": {
+        "elevation_m": {
+          "min": 2100,
+          "max": 2450
+        },
+        "aridity": "semi_arid"
+      },
+      "outcome": "marginal",
+      "rationale": "Along a 2,100-2,450m elevation gradient in the semiarid Shoshone Mountains, Nevada, singleleaf pinyon establishment depended strongly on Artemisia tridentata nurse-shrub microsites: shrub cover let seedlings overcome an early establishment bottleneck and facilitation was strongly positive at the seedling/early-juvenile stage but shifted toward neutral once trees transitioned to adult foliage, and this facilitation dependence held across the elevation gradient rather than only at the driest sites — implying pinyon restoration succeeds best when paired with existing or planted sagebrush cover rather than bare interspace seeding.",
+      "source": {
+        "doi": "10.1111/nph.15957",
+        "title": "Shrub facilitation of tree establishment varies with ontogenetic stage across environmental gradients",
+        "journal": "New Phytologist",
+        "year": 2019,
+        "supporting_quote_or_finding": "Artemisia tridentata shrub microsites allowed Pinus monophylla to overcome an early population bottleneck and establish in areas without existing tree cover, with the net facilitation effect shifting from strongly positive to neutral as trees transitioned from juvenile to adult foliage."
+      },
+      "confidence": "medium",
+      "harvest_slice": "species-trees-shrubs",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI 10.1111/nph.15957 resolves to Urza, Weisberg, Chambers & Sullivan (2019), New Phytologist, exact title match. Confirmed: field study of Artemisia tridentata / Pinus monophylla facilitation in the Shoshone Mountains, Nevada, across an elevational gradient; net facilitation shifted from strongly positive to neutral as pinyon transitioned from juvenile to adult foliage, and interaction outcomes were not strongly related to elevation -- matching the claim that facilitation dependence 'held across the elevation gradient rather than only at the driest sites.' The specific 2,100-2,450 m elevation figure was not independently pinned down but is plausible for the described pinyon-juniper woodland site and not contradicted by anything found."
+      }
+    },
+    {
+      "label_kind": "species_fit",
+      "subject": "Populus fremontii",
+      "condition_envelope": {
+        "aridity": "arid"
+      },
+      "outcome": "marginal",
+      "rationale": "Across eight Fremont cottonwood populations spanning a 5.3C mean-annual-temperature gradient in the hyper-arid lower Colorado River Basin, trees rely on transpirational (evaporative) leaf cooling to stay within a lethal thermal safety margin; recent heatwaves have exceeded even this species' unusually high heat-tolerance threshold, and cottonwood forests have declined rapidly in the last decade where temperatures exceed roughly 50C — meaning the species is restoration-viable only where sustained groundwater or surface-water access supports the transpiration needed for leaf cooling, not as a rain-fed planting in a semi-arid setting.",
+      "source": {
+        "doi": "10.1111/nph.19247",
+        "title": "Limits of thermal and hydrological tolerance in a foundation tree species (Populus fremontii) in the desert southwestern United States",
+        "journal": "New Phytologist",
+        "year": 2023,
+        "supporting_quote_or_finding": "Despite an exceptionally high critical temperature for photosystem II function, recent heatwaves in the lower Colorado River Basin have exceeded that threshold, forcing P. fremontii to rely on evaporative leaf cooling to maintain thermal safety margins, and cottonwood forests have declined rapidly where temperatures exceed roughly 50C."
+      },
+      "confidence": "low",
+      "harvest_slice": "species-trees-shrubs",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI 10.1111/nph.19247 resolves to Moran et al. (2023), New Phytologist, exact title match ('Limits of thermal and hydrological tolerance in a foundation tree species (Populus fremontii) in the desert southwestern United States'). Confirmed: eight P. fremontii populations across a 5.3C MAT gradient in the lower Colorado River Basin rely on evaporative leaf cooling to stay within thermal safety margins; despite an exceptionally high Tcrit, recent heatwaves have exceeded it, and P. fremontii forests have rapidly declined over the last decade in places where temperatures sometimes exceed 50C -- matching the supporting quote almost verbatim. 'Marginal' outcome (restoration-viable only with sustained water access for transpirational cooling) is a fair, non-overstated reading tied to reduced Colorado River flows being flagged as a critical threat in the abstract."
+      }
+    },
+    {
+      "label_kind": "species_fit",
+      "subject": "Robinia pseudoacacia",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 1020,
+          "max": 1830
+        }
+      },
+      "outcome": "unfit",
+      "rationale": "The species' native-range optimum of 1,020-1,830mm annual precipitation is roughly three to six times the Boise pilot's 280-400mm envelope; even the reduced 500-550mm threshold at which introduced European populations remain drought-tolerant still exceeds Boise's precipitation supply, and the same review notes low adaptive capacity to arid conditions produces stunted, dwarfed growth outside its moisture range — indicating black locust is a poor rain-fed fit for this semi-arid intermountain setting and would require supplemental irrigation to avoid stress-stunted growth, separate from its documented invasive/riparian nitrogen-cycling concerns.",
+      "source": {
+        "doi": "10.1111/1365-2745.12162",
+        "title": "Biological Flora of the British Isles: Robinia pseudoacacia",
+        "journal": "Journal of Ecology",
+        "year": 2013,
+        "supporting_quote_or_finding": "R. pseudoacacia grows best in its native range under 1,020-1,830mm annual precipitation, and although drought-tolerant introduced populations persist down to 500-550mm, the species shows low adaptive capacity to arid conditions, resulting in stunted growth and dwarfism."
+      },
+      "confidence": "medium",
+      "harvest_slice": "species-trees-shrubs",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI 10.1111/1365-2745.12162 resolves to Cierjacks et al. (2013), Journal of Ecology, exact title match ('Biological Flora of the British Isles: Robinia pseudoacacia'). Confirmed: native-range optimum growth at 1,020-1,830 mm annual precipitation (matching the condition envelope exactly), drought-tolerant introduced European populations persisting down to 500-550 mm, and low adaptive capacity to arid conditions producing stunted growth and dwarfism -- matching the supporting quote closely. 'Unfit' outcome for the ~280-400mm Boise envelope (well below even the 500-550mm drought-tolerant threshold) is a sound, conservative inference, not an overstatement."
+      }
+    },
+    {
+      "label_kind": "species_fit",
+      "subject": "Camelina sativa",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 193,
+          "max": 375
+        },
+        "soil_texture": [
+          "silt_loam"
+        ],
+        "aridity": "semi_arid"
+      },
+      "outcome": "marginal",
+      "rationale": "In an 8-year field trial at the WSU Lind Dryland Research Station (crop-year precipitation averaging 281 mm, range 193-375 mm; Ritzville silt loam), replacing one fallow year of a 2-year winter wheat-fallow rotation with spring camelina produced a harvestable oilseed crop (avg. 643 kg/ha seed yield) but left a soil-water deficit that persisted through the following 13-month fallow period and reduced subsequent winter wheat yield relative to the standard wheat-fallow rotation. Camelina is agronomically viable as a fallow-replacement crop in this precipitation zone but carries a real water-carryover cost to the cash wheat crop, matching the low end of the Boise-pilot precipitation envelope closely.",
+      "source": {
+        "doi": "10.2136/sssaj2019.05.0157",
+        "title": "Soil Water Dynamics with Spring Camelina in a Three-Year Rotation in Washington's Winter Wheat-Fallow Region",
+        "journal": "Soil Science Society of America Journal",
+        "year": 2019
+      },
+      "confidence": "medium",
+      "harvest_slice": "species-cover-crops",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to Wuest & Schillinger, SSSAJ 2019, title matches exactly. Abstract (Semantic Scholar) confirms an 8-year study finding that 'extending the crop rotation to include camelina was costly in terms of water use, surface soil residue cover, soil water storage during the fallow, and WW grain yield' — matches the claimed 'marginal' outcome (viable oilseed crop but real water-carryover cost to subsequent wheat). Lind, WA / Ritzville silt loam / ~280mm precipitation zone is consistent with the claimed envelope."
+      }
+    },
+    {
+      "label_kind": "species_fit",
+      "subject": "Vicia villosa",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 421,
+          "max": 421
+        },
+        "mean_annual_temperature_c": {
+          "min": 10,
+          "max": 10
+        },
+        "soil_texture": [
+          "silt_loam"
+        ],
+        "elevation_m": {
+          "min": 1384,
+          "max": 1384
+        },
+        "aridity": "semi_arid"
+      },
+      "outcome": "unfit",
+      "rationale": "At the USDA-ARS Central Great Plains Research Station near Akron, CO (421 mm mean annual precipitation, 1384 m elevation, silt loam soils, semi-arid continental climate), hairy vetch grown as a spring green-fallow legume replacing part of the fallow period decreased available soil water at winter wheat planting and depressed subsequent winter wheat grain yield compared with conventional bare fallow. In a single-fallow-replacement, water-limited winter wheat system like the Boise pilot, this soil-water drawdown makes hairy vetch a poor standalone fit despite its strong nitrogen contribution.",
+      "source": {
+        "doi": "10.2134/agronj2004.0071",
+        "title": "Legume Green Fallow Effect on Soil Water Content at Wheat Planting and Wheat Yield",
+        "journal": "Agronomy Journal",
+        "year": 2005
+      },
+      "confidence": "low",
+      "harvest_slice": "species-cover-crops",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to Nielsen & Vigil, Agronomy Journal (published 2005, matching the label's stated year despite the '2004' DOI segment), title matches exactly, authors are the Akron CO USDA-ARS station named in the rationale. Verbatim abstract confirms hairy vetch was one of four legumes tested (Austrian winter pea, spring field pea, black lentil, hairy vetch) and explicitly states 'there were no significant differences in available soil water at wheat planting due to legume type' and that legume water cost 'may be too great to justify use of legumes as fallow cover crops... in semiarid environments' — this supports generalizing the negative finding to hairy vetch specifically, since the paper found no species-level difference."
+      }
+    },
+    {
+      "label_kind": "species_fit",
+      "subject": "Pisum sativum",
+      "condition_envelope": {
+        "aridity": "semi_arid"
+      },
+      "outcome": "fit",
+      "rationale": "On a long-term organic dryland farm in semiarid northern Montana, winter pea green manure (terminated at pod stage) contributed 14-20 kg N/ha more soil NO3-N than fallow, used 26-31 mm less soil water than comparison pea management treatments, and increased the following organic winter wheat's grain yield by 13-39% and protein by 1.5 percentage points. This is an in-region, positive result for winter pea as a nitrogen-building, comparatively water-conservative legume option in a semi-arid intermountain wheat rotation, contrasting with hairy vetch's negative water/yield tradeoff in a similar system.",
+      "source": {
+        "doi": "10.4141/cjps10109",
+        "title": "Pea green manure management affects organic winter wheat yield and quality in semiarid Montana",
+        "journal": "Canadian Journal of Plant Science",
+        "year": 2011
+      },
+      "confidence": "medium",
+      "harvest_slice": "species-cover-crops",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to Miller et al., Canadian Journal of Plant Science 2011, title/journal/year/location (Montana State University) all match exactly. Abstract snippet independently recovered gives near-verbatim matching numbers: winter pea contributed 14-20 kg/ha more soil NO3-N, used 26-31 mm less soil water than spring pea, and increased winter wheat yield 13-39% and protein 1.5 percentage points — all matching the label's rationale precisely."
+      }
+    },
+    {
+      "label_kind": "species_fit",
+      "subject": "xTriticosecale",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 421,
+          "max": 421
+        },
+        "mean_annual_temperature_c": {
+          "min": 10,
+          "max": 10
+        },
+        "soil_texture": [
+          "silt_loam"
+        ],
+        "elevation_m": {
+          "min": 1384,
+          "max": 1384
+        },
+        "aridity": "semi_arid"
+      },
+      "outcome": "fit",
+      "rationale": "In a 7-year dryland no-till corn-millet-triticale forage sequence at Akron, CO (421 mm MAP, 1384 m elevation, silt loam, semi-arid), winter triticale produced the greatest average forage dry matter (5367 kg/ha) of the three crops and had the highest probability of exceeding 4000 kg/ha dry matter, with dry matter production tightly linked to water use, indicating strong water-use efficiency for forage production under low-precipitation dryland conditions.",
+      "source": {
+        "doi": "10.2134/agronj2005.0356",
+        "title": "Forage Yield Response to Water Use for Dryland Corn, Millet, and Triticale in the Central Great Plains",
+        "journal": "Agronomy Journal",
+        "year": 2006
+      },
+      "confidence": "low",
+      "harvest_slice": "species-cover-crops",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to Nielsen, Vigil & Benjamin, Agronomy Journal 2006, title matches exactly. Verbatim abstract confirms a 7-year (1998-2004) dryland no-till corn-millet-triticale sequence at Akron, CO, semiarid central Great Plains, and that 'millet and triticale produced similar amounts of DM for a given water use, while corn produced less' — consistent with the claimed strong triticale water-use efficiency. The specific yield figures (5367 kg/ha, >4000 kg/ha probability) are plausible full-text results not visible in the abstract but not contradicted by it."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "cover_crops",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 0,
+          "max": 400
+        }
+      },
+      "outcome": "ineffective",
+      "rationale": "A global meta-analysis of 137 studies across 76 sites and 15 countries, stratified by precipitation class including a <400 mm dryland band matching the Boise pilot envelope, found that cover cropping (versus bare fallow) decreased soil water storage at winter wheat planting by 16.3%, decreased wheat yield by 7.0%, and decreased water-use efficiency by 26.3% in winter wheat monoculture systems. This is a negative finding specifically for cover crops as a water-and-yield-preserving fallow substitute in dry, single-crop winter wheat rotations, cautioning against blanket cover-crop adoption in the driest part of the target precipitation range without complementary practices (e.g., no-till/residue retention, which the same meta-analysis found improved outcomes).",
+      "source": {
+        "doi": "10.3389/fpls.2022.825309",
+        "title": "Effects of Fallow Management Practices on Soil Water, Crop Yield and Water Use Efficiency in Winter Wheat Monoculture System: A Meta-Analysis",
+        "journal": "Frontiers in Plant Science",
+        "year": 2022
+      },
+      "confidence": "medium",
+      "harvest_slice": "species-cover-crops",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to Adil et al., Frontiers in Plant Science 2022, title/journal/year/authors all match exactly. Full-text retrieval confirms the exact claimed percentages: cover cropping decreased soil water storage at wheat planting by 16.3%, wheat yield by 7.0%, and water use efficiency by 26.3%, each compared to 'no mulching' (i.e., bare/conventional fallow) — matching the label's claimed comparison baseline and figures precisely. The paper also confirms a <400 mm precipitation stratification class matching the label's condition envelope (0-400 mm)."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "agroforestry",
+      "condition_envelope": {
+        "soil_texture": [
+          "sandy_loam"
+        ]
+      },
+      "outcome": "mixed",
+      "rationale": "Field-shelter (windbreak) effect on spring wheat in the Northern Great Plains was strongly dependent on soil water status: beneficial when irrigation removed the water constraint, but detrimental under dryland (rainfed) conditions where the shelterbelt/crop competed for limited soil water. This is a direct caution for windbreak agroforestry in a water-limited semi-arid cropping context like the Boise pilot area, where most cropland is not irrigated at the field margin.",
+      "source": {
+        "doi": "10.2134/agronj1977.00021962006900060003x",
+        "title": "Growth and Yield of Spring Wheat as Influenced by Shelter and Soil Water",
+        "journal": "Agronomy Journal",
+        "year": 1977
+      },
+      "confidence": "low",
+      "harvest_slice": "strategy-agroforestry",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves via Crossref/Wiley to 'Growth and Yield of Spring Wheat as Influenced by Shelter and Soil Water,' Agronomy Journal, 1977 (Frank, Harris & Willis), exact title match. AGRIS abstract confirms the precise claimed finding: with irrigation, sheltered wheat yielded 21.8% MORE than exposed; under dryland, sheltered wheat yielded 19.4% LESS than exposed. Study soil was 'Parshall fine sandy loam,' matching the condition_envelope's sandy_loam texture. Northern Great Plains location matches. Finding and envelope fully corroborated."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "agroforestry",
+      "condition_envelope": {},
+      "outcome": "mixed",
+      "rationale": "Synthesizing many field studies, this review shows windbreak/shelterbelt yield response is spatially bimodal - a loss zone immediately leeward and a larger gain zone further out - and that the percentage yield benefit scales with regional/annual dryness, i.e. windbreaks are not a uniformly positive intervention but one whose net effect on yield depends on where in the field you measure and how dry the site is.",
+      "source": {
+        "doi": "10.1016/0167-8809(88)90017-5",
+        "title": "Benefits of windbreaks to field and forage crops",
+        "journal": "Agriculture, Ecosystems & Environment",
+        "year": 1988
+      },
+      "confidence": "low",
+      "harvest_slice": "strategy-agroforestry",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves via Crossref/Elsevier to Kort, J. 1988 'Benefits of windbreaks to field and forage crops,' Agriculture, Ecosystems & Environment, exact title/journal/year match. Independent secondary sources (USDA/extension literature) confirm this specific review reports a yield decrease at 0-1H (tree-height distances) leeward of the windbreak and a yield increase at 1-15H, with the net/percentage benefit found to be greater in drier years and regions. This matches the label's claimed spatially bimodal loss/gain pattern and dryness-dependence closely."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "agroforestry",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 300,
+          "max": 1000
+        },
+        "aridity": "semi_arid"
+      },
+      "outcome": "mixed",
+      "rationale": "A meta-analysis of woody-perennial (tree/shrub) integration into semi-arid cereal cropland found consistently positive effects on soil carbon, nitrogen, phosphorus and water infiltration, but cereal (millet/sorghum) grain-yield responses ranged from strongly negative to strongly positive depending on distance from the woody plant and whether it was a shrub or a tree - so the crop-yield outcome of agroforestry in a 300-1000mm/yr semi-arid envelope is not reliably positive even when soil benefits are.",
+      "source": {
+        "doi": "10.1007/s13593-018-0533-3",
+        "title": "Enhancing agroecosystem productivity with woody perennials in semi-arid West Africa. A meta-analysis",
+        "journal": "Agronomy for Sustainable Development",
+        "year": 2018
+      },
+      "confidence": "medium",
+      "harvest_slice": "strategy-agroforestry",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves via Crossref/Springer to 'Enhancing agroecosystem productivity with woody perennials in semi-arid West Africa. A meta-analysis,' Agronomy for Sustainable Development, 2018, exact title match. Full abstract (via PMC) confirms: study region rainfall 300-1000 mm/yr (exact match to condition_envelope), semi-arid classification matches; millet/sorghum yields ranged -25% to +120% under shrubs and -100% to +200% under trees (matches 'strongly negative to strongly positive... depending on... shrub or tree'); soil total C, N, and P availability were positively but variably affected (matches claimed soil benefits). Outcome label 'mixed' is well supported."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "silvopasture",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 318,
+          "max": 604
+        },
+        "mean_annual_temperature_c": {
+          "min": 16.2,
+          "max": 16.2
+        },
+        "elevation_m": {
+          "min": 380,
+          "max": 380
+        },
+        "aridity": "semi_arid"
+      },
+      "outcome": "mixed",
+      "rationale": "In a semi-arid Mediterranean holm-oak dehesa (a classic silvopasture system), isolated trees did not strongly draw down near-surface soil water used by understory forage during the growing season because they relied on deep water reserves instead - but that deep-water uptake extended across the whole inter-tree space and continued depleting through summer, so the system reduces (rather than eliminates) tree-forage water competition, at the cost of deep soil-moisture drawdown.",
+      "source": {
+        "doi": "10.1051/forest:2007012",
+        "title": "Effect of single Quercus ilex trees upon spatial and seasonal changes in soil water content in dehesas of central western Spain",
+        "journal": "Annals of Forest Science",
+        "year": 2007
+      },
+      "confidence": "low",
+      "harvest_slice": "strategy-agroforestry",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves via Crossref/Springer to 'Effect of single Quercus ilex trees upon spatial and seasonal changes in soil water content in dehesas of central western Spain,' Annals of Forest Science, 2007, exact title match. Located abstract/site description confirms elevation = 380 m a.s.l. (exact match to condition_envelope's 380 m), mean annual temperature = 16.2degC (exact match), mean annual rainfall = 597 mm (within the claimed 318-604 mm range), semi-arid Mediterranean climate (matches aridity field). Core finding confirmed: trees relied on deep water reserves rather than depleting near-surface water used by understory, but that deep-water uptake extended across the whole inter-tree space and continued through summer -- matching the 'reduces rather than eliminates competition, at cost of deep drawdown' framing almost verbatim."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "silvopasture",
+      "condition_envelope": {},
+      "outcome": "mixed",
+      "rationale": "A systematic review of US silvopasture research (53 studies, 1983-2021) found nationally reported producer benefits (income diversification, livestock shade) are concentrated almost entirely in the humid Southeast; apart from a few Kansas/Oklahoma studies, essentially no producer-focused silvopasture research exists for states west of the 100th meridian through the Rocky Mountains and arid Southwest - meaning silvopasture's commonly cited benefits are effectively unvalidated for a semi-arid Intermountain West setting like Boise, not confirmed to transfer there.",
+      "source": {
+        "doi": "10.1016/j.agee.2021.107818",
+        "title": "Silvopasture in the USA: A systematic review of natural resource professional and producer-reported benefits, challenges, and management activities",
+        "journal": "Agriculture, Ecosystems & Environment",
+        "year": 2022
+      },
+      "confidence": "low",
+      "harvest_slice": "strategy-agroforestry",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves via Crossref/Elsevier to Smith et al. 2022 'Silvopasture in the USA: A systematic review of natural resource professional and producer-reported benefits, challenges, and management activities,' Agriculture, Ecosystems & Environment, exact title/journal match (Crossref lists year 2022, consistent with the label). Full-text PDF (obtained directly, USDA National Agroforestry Center author copy) confirms 53 studies from 1983-2021 were reviewed, and Results/Discussion 3.1 explicitly states: 'most studies focused on producers from the Northeast, Southeast and Midwest... there was an absence of producer-focused studies from the Great Plains, Rocky Mountain, and Southwestern portions of the country' -- directly corroborating the label's claimed geographic research gap for a semi-arid Intermountain West setting."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "water_harvesting",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 378,
+          "max": 443
+        },
+        "aridity": "semi_arid",
+        "elevation_m": {
+          "min": 1185,
+          "max": 1570
+        }
+      },
+      "outcome": "mixed",
+      "rationale": "Rock detention structures (check dams, gabions, Rosgen cross-vanes) built across three southeastern Arizona semi-arid rangeland drainages produced site-dependent vegetation responses over 5 years: no clear change at the least-degraded site, a significant but largely nonnative-driven increase at the moderately degraded site, and a moderate native-species increase at the severely degraded site, with some structures damaged in high-flow events.",
+      "source": {
+        "doi": "10.1007/s00267-022-01762-0",
+        "title": "Five Year Analyses of Vegetation Response to Restoration using Rock Detention Structures in Southeastern Arizona, United States",
+        "year": 2022,
+        "journal": "Environmental Management"
+      },
+      "confidence": "low",
+      "supporting_quote_or_finding": "Treatment effects were degradation-dependent: Barboot (least degraded) showed no clear change in vegetation, Vaughn Canyon's significant perennial-vegetation increase was driven largely by nonnative Cynodon dactylon and Sorghum halepense, and Wildcat Canyon (most degraded) showed a moderate increase in native perennial cover at 3 of 4 treatment plots.",
+      "harvest_slice": "strategy-water-harvesting",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves via Crossref/Semantic Scholar to Wilson & Norman, 'Five Year Analyses of Vegetation Response to Restoration using Rock Detention Structures in Southeastern Arizona, United States,' Environmental Management (title matches verbatim; published online 2022-12-19, print 2023 — the claimed year=2022 reflects online-first date, not a mismatch). Abstract confirms a control-impact design across three SE Arizona sites with site-dependent outcomes: species composition shift with nonnative invasion at the moderately degraded site, wetland-species increase at the severely degraded site, matching the label's 'mixed' outcome and supporting quote almost exactly."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "water_harvesting",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 378,
+          "max": 443
+        },
+        "aridity": "semi_arid",
+        "elevation_m": {
+          "min": 1185,
+          "max": 1570
+        }
+      },
+      "outcome": "mixed",
+      "rationale": "A 10-year follow-up at the same three southeastern Arizona semi-arid rangeland sites (Vaughn Canyon, Barboot, Wildcat Canyon) found rock detention structures doubled herbaceous (forb+grass) cover and stabilized shrub cover through highly variable precipitation years relative to untreated controls, but structural equation modeling found no direct effect on soil fertility (nitrogen, carbon, organic matter, microbial richness).",
+      "source": {
+        "doi": "10.1016/j.scitotenv.2024.170194",
+        "title": "Dryland rock detention structures increase herbaceous vegetation cover and stabilize shrub cover over 10 years but do not directly affect soil fertility",
+        "year": 2024,
+        "journal": "Science of The Total Environment"
+      },
+      "confidence": "low",
+      "supporting_quote_or_finding": "Herbaceous cover in rock-detention-structure-treated channels doubled from 11% to 22% over 10 years while untreated control channels showed no significant increase, yet the structures had no direct effect on soil nitrogen, carbon, or microbial richness.",
+      "harvest_slice": "strategy-water-harvesting",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to Ossanna et al., 'Dryland rock detention structures increase herbaceous vegetation cover and stabilize shrub cover over 10 years but do not directly affect soil fertility,' Science of The Total Environment (2024) — title, journal, year all match exactly. Abstract confirms herbaceous cover doubling from 11% to 22% in treated channels, more stable shrub cover than untreated controls, and no direct SEM-detected effect on soil nitrogen/carbon/microbial metrics — matching the label's supporting quote and 'mixed' outcome precisely. Same SE Arizona sites as label 0, consistent envelope."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "water_harvesting",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 178,
+          "max": 406
+        },
+        "aridity": "semi_arid",
+        "elevation_m": {
+          "min": 2286,
+          "max": 2900
+        }
+      },
+      "outcome": "effective",
+      "rationale": "Nearly 900 hand-built, low-tech rock (Zeedyk) structures installed across seven drainageways in Gunnison Basin, Colorado sagebrush rangeland to slow water and reconnect floodplains produced an average 40% increase in wetland/wet-meadow plant cover over controls and reduced invasive weeds, despite most study years being drought years.",
+      "source": {
+        "doi": "10.1111/rec.14039",
+        "title": "Restoration of wet meadows to enhance Gunnison sage-grouse habitat and drought resilience in arid rangelands",
+        "year": 2024,
+        "journal": "Restoration Ecology"
+      },
+      "confidence": "low",
+      "supporting_quote_or_finding": "Treated drainageways averaged a 40% enhancement in wetland plant cover relative to controls, with 75% of ephemeral units and all perennial units meeting or exceeding the 4%-per-year cover-growth target despite six of eight study years being drought years, and invasive weeds declined in all but one treated unit.",
+      "harvest_slice": "strategy-water-harvesting",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to Rondeau et al. (incl. W.D. Zeedyk), 'Restoration of wet meadows to enhance Gunnison sage-grouse habitat and drought resilience in arid rangelands,' Restoration Ecology (2023/2024) — title and journal match exactly. Abstract confirms ~900 low-tech (Zeedyk) structures across seven Gunnison Basin, CO drainages 2012-2020, 75% of ephemeral units and all perennial units meeting/exceeding the 4%/yr cover growth target, ~40% greater wetland plant cover, effective despite drought years — matches the label's quote and 'effective' outcome closely. High-elevation Gunnison sagebrush basin is consistent with the claimed 2286-2900m envelope."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "water_harvesting",
+      "condition_envelope": {
+        "aridity": "semi_arid"
+      },
+      "outcome": "effective",
+      "rationale": "Loose-rock and wire-bound check dams (low-tech erosion control structures) built across small ephemeral channels on a degraded semi-arid rangeland alluvial fan in southeastern Arizona produced significantly higher soil moisture in nearby channel-bank profiles than at untreated control sites during the first monsoon season after construction.",
+      "source": {
+        "doi": "10.1016/j.catena.2012.06.010",
+        "title": "Short-term soil moisture response to low-tech erosion control structures in a semiarid rangeland",
+        "year": 2012,
+        "journal": "Catena"
+      },
+      "confidence": "low",
+      "supporting_quote_or_finding": "Soil moisture measured at 15-46 cm depth was significantly higher in channel-bank profiles near loose-rock and wire-bound check dams than at paired untreated control sites during the monsoon season following construction.",
+      "harvest_slice": "strategy-water-harvesting",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to Nichols, McReynolds & Reed, 'Short-term soil moisture response to low-tech erosion control structures in a semiarid rangeland,' Catena 98:104-109 (2012) — confirmed via Crossref and independent web search (experts.arizona.edu, ARS Southwest Watershed Research Center). Site description confirms a degraded alluvial fan in southeastern Arizona with loose-rock and wire-bound check dams on three ephemeral channels, soil moisture measured 15-46cm depth through the 2006 monsoon season, significantly higher near structures than at untreated controls — matches the label's supporting quote and 'effective' outcome exactly."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "water_harvesting",
+      "condition_envelope": {
+        "aridity": "arid"
+      },
+      "outcome": "effective",
+      "rationale": "Over 9,500 water-spreading bunds built across 1,922 ha of degraded arid rangeland in Dera Ghazi Khan, Pakistan (2014-2023), combined with dry afforestation and reseeding, were associated with significant NDVI gains, land-surface-temperature cooling, and increased root-zone soil moisture in remote-sensing analysis spanning 2016-2024.",
+      "source": {
+        "doi": "10.1016/j.scitotenv.2025.179382",
+        "title": "Enhancing vegetation cover growth through water spreading bunds and dry afforestation in arid rangelands: Integrating remote sensing indicators with field insights",
+        "year": 2025,
+        "journal": "Science of The Total Environment"
+      },
+      "confidence": "low",
+      "supporting_quote_or_finding": "Across more than 9500 water spreading bunds over 1922 ha, remote sensing showed an average NDVI net gain of 0.153, an average LST decrease of 5.2°C, and an increase in root-zone soil moisture relative to untreated rangeland.",
+      "harvest_slice": "strategy-water-harvesting",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to Abbas et al., 'Enhancing vegetation cover growth through water spreading bunds and dry afforestation in arid rangelands: Integrating remote sensing indicators with field insights,' Science of The Total Environment (2025) — title, journal, year match exactly. Abstract confirms >9,500 structures across 1,922 ha in arid Pakistan (2014-2023), remote sensing 2016-2024 showing NDVI net gain of 0.153, ~5.2C LST decrease, and improved soil moisture — matches the label's supporting quote and 'effective' outcome precisely. Region (Dera Ghazi Khan/arid Pakistan) is consistent with the claimed arid envelope."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "reforestation",
+      "condition_envelope": {
+        "aridity": "semi_arid"
+      },
+      "outcome": "ineffective",
+      "rationale": "In dry, low-elevation mixed-conifer forests of the northern Rocky Mountains (spanning Idaho and Montana), natural post-fire regeneration of ponderosa pine and Douglas-fir becomes minimal once mean summer temperature exceeds about 17C, and the large majority of sampled sites are projected to cross that threshold by mid-century regardless of seed-source proximity. For a Boise-area pilot, this means unassisted post-fire reforestation cannot be relied on in the warmer, lower-elevation portion of the envelope even where nearby seed trees survived.",
+      "source": {
+        "doi": "10.1002/ecs2.2568",
+        "title": "Climate will increasingly determine post-fire tree regeneration success in low-elevation forests, Northern Rockies, USA",
+        "year": 2019,
+        "journal": "Ecosphere"
+      },
+      "supporting_quote_or_finding": "Above a mean summer temperature of 17C, Douglas-fir regeneration is predicted to be minimal regardless of seed-source distance, and 82% of the 177 sampled sites (21 fires) are predicted to exceed that threshold by mid-century.",
+      "confidence": "medium",
+      "harvest_slice": "strategy-reforestation-fire",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves (via ESA Journals/Wiley) to Kemp, Higuera, Morgan & Abatzoglou 2019, Ecosphere, title matches verbatim: 'Climate will increasingly determine post-fire tree regeneration success in low-elevation forests, Northern Rockies, USA.' Abstract/summary confirms the exact 17C mean-summer-temperature threshold for Douglas-fir regeneration and the 82% mid-century exceedance figure. Independent search further corroborates the '177 sites (21 fires)' detail in the supporting quote. Condition envelope (semi-arid, dry low-elevation ID/MT mixed-conifer) matches the study region. Finding and outcome (ineffective/unreliable natural post-fire regen at warmer sites) are faithfully represented, not overstated."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "reforestation",
+      "condition_envelope": {
+        "aridity": "semi_arid"
+      },
+      "outcome": "mixed",
+      "rationale": "Across 33 wildfires and four western US regions (including the Northern Rockies), post-fire ponderosa pine and Douglas-fir regeneration shows a nonlinear threshold response to annual vapor pressure deficit, soil moisture, and maximum surface temperature rather than a gradual decline. Many low-elevation dry sites have already crossed these thresholds over the past two decades, so reforestation outcomes now diverge sharply between sites still inside versus outside the climatic envelope for establishment.",
+      "source": {
+        "doi": "10.1073/pnas.1815107116",
+        "title": "Wildfires and climate change push low-elevation forests across a critical climate threshold for tree regeneration",
+        "year": 2019,
+        "journal": "Proceedings of the National Academy of Sciences"
+      },
+      "supporting_quote_or_finding": "Regeneration exhibited a threshold response to annual climate (VPD, soil moisture, max surface temperature); dry sites across the study region crossed these thresholds over the past 20 years, and high fire severity plus low seed availability further reduced regeneration probability.",
+      "confidence": "medium",
+      "harvest_slice": "strategy-reforestation-fire",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves (via PNAS) to Davis et al. 2019, PNAS, title matches verbatim: 'Wildfires and climate change push low-elevation forests across a critical climate threshold for tree regeneration.' Abstract and independent corroboration confirm '33 wildfires' across 'four regions across the western United States' (matching the label's '33 wildfires and four western US regions'), the nonlinear threshold response to VPD/soil moisture/max surface temperature, and that dry sites crossed thresholds over the past 20 years with high severity fire and low seed availability further reducing regeneration. Condition envelope and outcome ('mixed' — divergent outcomes inside vs outside the climatic envelope) accurately reflect the source; nothing is overstated."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "reforestation",
+      "condition_envelope": {
+        "aridity": "semi_arid"
+      },
+      "outcome": "mixed",
+      "rationale": "A western-US-wide post-fire reforestation planning tool, built from regeneration probability and planted-seedling survival models across all 11 western states, finds hydroclimate is the dominant gate on outcomes: planting pays off on climatically suitable sites but shows reduced survival and is a poor investment on warm, dry sites such as the Southwest and arid parts of the southern Rockies. This argues for climate-based site screening before committing planting budget in a semi-arid pilot area rather than treating reforestation as uniformly effective.",
+      "source": {
+        "doi": "10.1186/s42408-025-00405-z",
+        "title": "A post-fire reforestation assessment and prioritization tool for the Western United States",
+        "year": 2025,
+        "journal": "Fire Ecology"
+      },
+      "supporting_quote_or_finding": "Hydroclimate is strongly tied to regeneration success, with reduced survival of planted trees in warm, dry areas like the Southwest and arid sites within the southern Rocky Mountains.",
+      "confidence": "low",
+      "harvest_slice": "strategy-reforestation-fire",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves (via Springer/Fire Ecology) to the 2025 Regenmapper paper, title matches verbatim: 'A post-fire reforestation assessment and prioritization tool for the Western United States.' Full text (PMC) contains the supporting quote nearly verbatim: 'hydroclimate is strongly tied to regeneration success, with reduced survival of planted trees in warm, dry areas like the Southwest ... and on arid sites within the southern Rocky Mountains.' Caveat: the rationale overstates the tool's construction, claiming it is 'built from regeneration probability and planted-seedling survival models' — the paper explicitly states Regenmapper models only natural regeneration probability (not planted-seedling survival) and the planted-survival claim is attributed to other cited studies (Ouzts 2015; Rodman 2024; Marshall 2024) rather than being this paper's own finding. This is a meaningful but non-disqualifying embellishment given the core quote/outcome are accurately sourced and the confidence was already flagged low; recommend downstream reviewers discount the 'planted-seedling survival models' framing specifically."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "reforestation",
+      "condition_envelope": {
+        "aridity": "semi_arid"
+      },
+      "outcome": "mixed",
+      "rationale": "Following a high-severity fire in northern New Mexico, survival of planted ponderosa pine, pinyon, southwestern white pine, and Douglas-fir seedlings depended heavily on which post-fire shrub sheltered them: survival was 10-35 percentage points higher under Gambel oak than under New Mexico locust because its denser canopy buffered temperature, humidity, and vapor pressure deficit. This shows planting outcomes in the dry interior West are conditional on microsite facilitation choices, not a uniform treatment effect.",
+      "source": {
+        "doi": "10.1139/cjfr-2021-0221",
+        "title": "Post-fire early successional vegetation buffers surface microclimate and increases survival of planted conifer seedlings in the Southwestern United States",
+        "year": 2021,
+        "journal": "Canadian Journal of Forest Research"
+      },
+      "supporting_quote_or_finding": "Seedlings planted under Gambel oak had survival rates 10% to 35% greater than those planted under New Mexico locust, driven by lower temperature, higher humidity, and lower vapor pressure deficit beneath the denser shrub canopy.",
+      "confidence": "low",
+      "harvest_slice": "strategy-reforestation-fire",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves (via Canadian Science Publishing) to Crockett & Hurteau, title matches (trivial capitalization difference: 'Southwestern' vs 'southwestern'). Journal matches (Canadian Journal of Forest Research). Content match is exact and strong: independent sources confirm the 10-35% survival advantage under Gambel oak vs New Mexico locust, driven by lower temperature/higher humidity/lower VPD, in northern New Mexico post-fire plantings — matching the supporting quote precisely. CAVEAT: the claimed publication year (2021) is incorrect; CrossRef and independent search confirm the article was formally published in 2022 (Vol. 52, Issue 3, pp. 416-425); '2021' likely reflects the DOI's embedded manuscript-year token, not the actual publication year. This is a citation metadata error that should be corrected (year -> 2022) but does not point to a different/wrong work — the DOI unambiguously resolves to the exact paper described, with all substantive findings verified."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "managed_grazing",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 300,
+          "max": 550
+        },
+        "mean_annual_temperature_c": {
+          "min": -2.2,
+          "max": 25
+        },
+        "aridity": "semi_arid"
+      },
+      "outcome": "effective",
+      "rationale": "Global meta-analysis (235 sites, 18 countries) found controlled/rotational grazing at high stocking density was the only grazing strategy that significantly raised topsoil soil organic carbon stocks and content versus continuous free grazing; in the paper's own arid-to-semi-arid climate class (MAP 300-550mm) the gain was smaller than under moist-humid conditions but still a significant, positive, quantified increase, supporting managed/rotational grazing as a viable soil-carbon strategy for Boise-analog semi-arid rangeland, with the caveat that the semi-arid effect size is the weakest of the climate classes tested.",
+      "source": {
+        "doi": "10.1016/j.geodrs.2021.e00479",
+        "title": "On the impact of grassland management on soil carbon stocks: a worldwide meta-analysis",
+        "journal": "Geoderma Regional",
+        "year": 2022
+      },
+      "confidence": "medium",
+      "supporting_quote_or_finding": "Controlled grazing with high density of grazers (CHG) significantly enhanced soil organic carbon stocks (effect size 0.477, +5.9% yr-1 on average), and under the paper's arid-to-semi-arid climate class specifically the increase was +15.6 g C m-3 yr-1 (1.9% yr-1), a smaller but still positive gain compared to +233 g C m-3 yr-1 (8.9% yr-1) under moist-humid conditions.",
+      "harvest_slice": "strategy-biochar-grazing",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves via Crossref/OpenAlex to the exact title 'On the impact of grassland management on soil carbon stocks: a worldwide meta-analysis', Geoderma Regional, 2021/2022 (Phukubye et al.). Retrieved abstract summary confirms 235 sites/18 countries, controlled high-density grazing (CHG) as the standout positive practice, and explicit statement that effectiveness 'varied by climate zone', which supports the label's arid/semi-arid vs moist-humid breakdown. Full text was paywalled/bot-blocked, so the precise numeric effect sizes cited (0.477 effect size; 15.6 vs 233 g C m-3 yr-1) could not be independently confirmed, but nothing retrieved contradicts them and the qualitative claim (smaller but still positive semi-arid effect) is consistent with what is verifiable. Outcome label 'effective' is a fair reading of the paper's own policy recommendation to adopt CHG grazing."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "managed_grazing",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 320,
+          "max": 320
+        },
+        "elevation_m": {
+          "min": 1650,
+          "max": 1650
+        },
+        "aridity": "semi_arid"
+      },
+      "outcome": "mixed",
+      "rationale": "A ranch-scale, multi-year field comparison at the USDA Central Plains Experimental Range shortgrass steppe (Colorado, semi-arid, 320mm MAP, 1650m elevation) found that adaptively managed multipaddock rotational grazing produced vegetation/forage outcomes statistically indistinguishable from season-long continuous grazing at the same stocking rate, while continuous grazing achieved greater cattle weight gains -- i.e., rotational grazing did not outperform simple continuous grazing on either forage or livestock-production metrics in this semi-arid shortgrass system.",
+      "source": {
+        "doi": "10.1016/j.rama.2020.07.005",
+        "title": "Adaptive, Multipaddock Rotational Grazing Management: A Ranch-Scale Assessment of Effects on Vegetation and Livestock Performance in Semiarid Rangeland",
+        "journal": "Rangeland Ecology & Management",
+        "year": 2020
+      },
+      "confidence": "low",
+      "supporting_quote_or_finding": "When adaptive multipaddock rotational management was directly compared with continuous grazing at the same increased stocking rate, continuous grazing achieved similar vegetation outcomes but with greater cattle weight gains than the rotational system.",
+      "harvest_slice": "strategy-biochar-grazing",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to the exact title 'Adaptive, Multipaddock Rotational Grazing Management: A Ranch-Scale Assessment of Effects on Vegetation and Livestock Performance in Semiarid Rangeland', Rangeland Ecology & Management, 2020 (Augustine, Derner et al.). Retrieved abstract states rotational grazing caused a '12-16% reduction in total cattle weight gain relative to continuous grazing' and 'minimal benefits for perennial grass density or production' -- directly matching the label's supporting quote and rationale. Study site/authors (Augustine, Derner -- USDA-ARS Central Plains Experimental Range researchers) are consistent with the claimed Colorado shortgrass steppe location and condition envelope. 'Mixed' outcome is a defensible characterization (similar vegetation, worse livestock outcome)."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "managed_grazing",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 550,
+          "max": 550
+        },
+        "elevation_m": {
+          "min": 1247,
+          "max": 1564
+        },
+        "soil_texture": [
+          "sandy_loam",
+          "clay_loam"
+        ],
+        "aridity": "semi_arid"
+      },
+      "outcome": "mixed",
+      "rationale": "In semi-arid Borana rangeland (Ethiopia), managed grazing exclosures (a deferment/rotational strategy) roughly doubled soil organic carbon and total nitrogen relative to continuous open grazing at sites with low woody encroachment, but the benefit disappeared (statistically insignificant) at heavily encroached sites -- showing the strategy's soil-carbon benefit is conditional on rangeland vegetation state, not a universal effect. Out-of-region evidence, kept as a low-confidence global data point illustrating a genuine mixed/negative-condition finding rather than a cherry-picked positive.",
+      "source": {
+        "doi": "10.1371/journal.pone.0109063",
+        "title": "Managing Semi-Arid Rangelands for Carbon Storage: Grazing and Woody Encroachment Effects on Soil Carbon and Nitrogen",
+        "journal": "PLOS ONE",
+        "year": 2015
+      },
+      "confidence": "low",
+      "supporting_quote_or_finding": "At low woody-encroachment sites on sandy clay soils, grazing exclosures showed roughly twice the soil organic carbon and total nitrogen of open-grazed sites, but at heavily encroached sites on sandy loam soils the difference between exclosure and open grazing was not statistically significant.",
+      "harvest_slice": "strategy-biochar-grazing",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to the exact title 'Managing Semi-Arid Rangelands for Carbon Storage: Grazing and Woody Encroachment Effects on Soil Carbon and Nitrogen', PLOS ONE, 2015 (Yusuf, Treydte, Sauerborn). The publisher's own landing page abstract contains a near-verbatim match to the label's supporting quote: soil OC/TSN unchanged under exclusion at heavily encroached sites but roughly double at low-encroachment sites. Location (Borana rangeland, Ethiopia) and conditional/mixed nature of the finding are both confirmed. Minor flaw: the condition_envelope's soil_texture (sandy_loam, clay_loam) doesn't precisely match the rationale's own text ('sandy clay soils' at low-encroachment sites) -- an internal imprecision, not a refutation-level mismatch. Label is appropriately flagged low-confidence and out-of-region, which is honest self-disclosure rather than misrepresentation."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "biochar",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 450,
+          "max": 460
+        },
+        "soil_texture": [
+          "silt_loam"
+        ],
+        "aridity": "semi_arid"
+      },
+      "outcome": "mixed",
+      "rationale": "A 5-year field trial at the University of Nebraska-Lincoln's High Plains Agricultural Laboratory near Sidney, NE (western Great Plains, semi-arid, ~457mm MAP, silt loam) found wood biochar needed a fairly high application rate (at least 6.25 Mg/ha) to raise crop yield at all, the benefit was inconsistent year to year, and the soil-property gains were concentrated in fertility (nutrient) measures rather than physical/water-holding properties, with benefits fading between year 1 and year 5 -- a marginal, rate- and time-dependent outcome rather than a clear win.",
+      "source": {
+        "doi": "10.1016/j.fcr.2024.109340",
+        "title": "How does biochar impact soils and crops in a semi-arid environment? A 5-yr assessment",
+        "journal": "Field Crops Research",
+        "year": 2024
+      },
+      "confidence": "medium",
+      "supporting_quote_or_finding": "At least 6.25 Mg biochar ha-1 was needed to improve some soil properties and crop yields in this semi-arid silt loam, biochar improved soil fertility properties more than physical properties (including water-related properties), and the soil/yield benefits were greater in year 1 than by years 3 and 5 of the trial.",
+      "harvest_slice": "strategy-biochar-grazing",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to the exact title 'How does biochar impact soils and crops in a semi-arid environment? A 5-yr assessment', Field Crops Research, 2024, vol. 310 (Blanco-Canqui, Creech, Easterly). Crossref funder metadata confirms University of Nebraska-Lincoln Center for Energy Sciences Research and Nebraska Forest Service funding, corroborating the claimed Nebraska/High Plains semi-arid site. Full abstract text was not retrievable (paywalled, sciencedirect 403, semantic scholar returned no abstract), so the precise application-rate threshold (6.25 Mg/ha) and year-1-vs-year-5 decay claims could not be independently confirmed, but they are consistent with the known research program and nothing contradicts them."
+      }
+    },
+    {
+      "label_kind": "strategy_outcome",
+      "subject": "biochar",
+      "condition_envelope": {
+        "soil_texture": [
+          "loam",
+          "loamy_sand",
+          "silt_loam"
+        ],
+        "aridity": "arid"
+      },
+      "outcome": "ineffective",
+      "rationale": "A 3-year, 4-site, 10 site-year irrigated field trial across Utah (Cedar City, Cornish, Elberta, Mosida -- directly adjacent to the Boise pilot's Intermountain West/BSk climate zone) tested wood biochar on alfalfa, corn, and wheat and found essentially no reliable benefit to yield, crop quality, or plant-available soil water/water tension across sites and years; wheat yield actually declined slightly as biochar rate increased, leading the authors to explicitly conclude the amendment was not effective for boosting production or conserving irrigation water under arid agriculture.",
+      "source": {
+        "doi": "10.1002/agj2.21040",
+        "title": "Biochar had minor effects on yield, quality, and water availability of irrigated alfalfa, corn, and wheat",
+        "journal": "Agronomy Journal",
+        "year": 2022
+      },
+      "confidence": "medium",
+      "supporting_quote_or_finding": "Across 10 site-years in Utah, incorporated biochar increased silage corn yield by 12% in one year but decreased it 10% the next, topdressed biochar had no effect on alfalfa yield in any year, and wheat grain yield declined by about 0.01 Mg/ha for every additional 1 Mg/ha of biochar applied, with no consistent effect on soil water tension -- leading the authors to conclude this wood biochar was not an effective tool for crop production or water conservation in arid agriculture.",
+      "harvest_slice": "strategy-biochar-grazing",
+      "citation_check": {
+        "refuted": false,
+        "doi_resolves": true,
+        "reason": "DOI resolves to the exact title 'Biochar had minor effects on yield, quality, and water availability of irrigated alfalfa, corn, and wheat', Agronomy Journal, 2022 (Holt, Yost, Winward, Creech, Allen, McAvoy). Crossref returned the full abstract, which matches the label almost verbatim: two Utah studies at two sites each, 2018-2020, irrigated alfalfa/corn/wheat, silage corn +12% in 2018 then -10% in 2019, wheat yield declining 0.01 Mg/ha per 1 Mg/ha biochar applied, 10 site-years total, and the explicit conclusion that biochar 'was not an effective tool for enhancing short-term crop production or conserving irrigation water in arid agriculture'. Author affiliation with Southern Utah University (Cedar City) confirms one of the named sites. Strongest-verified label of the set; outcome 'ineffective' is directly supported."
+      }
+    }
+  ],
+  "rejected": [
+    {
+      "label_kind": "species_fit",
+      "subject": "Panicum miliaceum",
+      "condition_envelope": {
+        "mean_annual_precipitation_mm": {
+          "min": 421,
+          "max": 421
+        },
+        "mean_annual_temperature_c": {
+          "min": 10,
+          "max": 10
+        },
+        "soil_texture": [
+          "silt_loam"
+        ],
+        "elevation_m": {
+          "min": 1384,
+          "max": 1384
+        },
+        "aridity": "semi_arid"
+      },
+      "outcome": "marginal",
+      "rationale": "In the same Akron, CO dryland no-till sequence (421 mm MAP, silt loam, semi-arid), proso millet had the steepest water-use-efficiency regression slope of the three crops tested (33.0 kg ha-1 mm-1 vs. 24.2 for corn), showing it converts scarce water into biomass efficiently, but its average forage dry matter (3283 kg/ha) was well below winter triticale's (5367 kg/ha), making it a workable but lower-ceiling dryland forage option relative to triticale in the same low-precipitation system.",
+      "source": {
+        "doi": "10.2134/agronj2005.0356",
+        "title": "Forage Yield Response to Water Use for Dryland Corn, Millet, and Triticale in the Central Great Plains",
+        "journal": "Agronomy Journal",
+        "year": 2006
+      },
+      "confidence": "low",
+      "harvest_slice": "species-cover-crops",
+      "citation_check": {
+        "refuted": true,
+        "doi_resolves": true,
+        "reason": "DOI resolves correctly to the same Nielsen/Vigil/Benjamin 2006 paper (title/journal/year match), but the verbatim abstract identifies the millet species studied as 'foxtail millet (Setaria italica L. Beauv.)', not proso millet (Panicum miliaceum) as claimed by this label. Foxtail millet and proso millet are different genera/species. The label attributes species-specific WUE-slope and yield findings to Panicum miliaceum that the source paper actually reports for Setaria italica — a subject/species mismatch, not merely an imprecision."
+      }
+    },
+    {
+      "label_kind": "species_fit",
+      "subject": "Sorghum bicolor",
+      "condition_envelope": {
+        "aridity": "semi_arid"
+      },
+      "outcome": "fit",
+      "rationale": "In fallow-replacement cover crop trials at Garden City, KS in a semi-arid High Plains dryland cropping system, sorghum/sudangrass was the most productive of the grass-type cover crops evaluated (ranking above cereal rye, triticale, wheat, oat, and barley), indicating strong biomass production potential as a summer fallow-replacement/cover option in low-precipitation dryland wheat rotations.",
+      "source": {
+        "doi": "10.1002/csc2.20543",
+        "title": "Fallow replacement cover crops in a semi-arid High Plains cropping system",
+        "journal": "Crop Science",
+        "year": 2021
+      },
+      "confidence": "low",
+      "harvest_slice": "species-cover-crops",
+      "citation_check": {
+        "refuted": true,
+        "doi_resolves": true,
+        "reason": "DOI resolves to Holman, Obour & Assefa, Crop Science 2021, title matches exactly, location (Garden City, KS) matches. However the verbatim abstract states 'Spring triticale had up to 182% more forage accumulation over other forage cover crops and a 108% grain yield advantage over other grain cover crops' — i.e., triticale, not sorghum/sudangrass, was the standout performer. The label's claim that 'sorghum/sudangrass was the most productive of the grass-type cover crops evaluated (ranking above cereal rye, triticale, wheat, oat, and barley)' directly contradicts the actual reported result and also conflates Sorghum bicolor's role as the rotation's main cash crop (the 'S' in the WSF wheat-sorghum-fallow rotation) with being one of the tested fallow-replacement cover crops."
+      }
+    }
+  ]
+}

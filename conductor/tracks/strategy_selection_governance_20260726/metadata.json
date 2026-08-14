@@ -1,8 +1,0 @@
-{
-  "id": "strategy_selection_governance_20260726",
-  "description": "Research-only intervention-effect label, training, and selection lineage governance",
-  "type": "governance",
-  "created_at": "2026-07-26T00:00:00Z",
-  "status": "blocked",
-  "blocker": "No governed intervention/control outcome labels or source mapping are available."
-}

@@ -1,0 +1,11 @@
+{
+  "id": "swr_indexeddb_dw_reconciliation_20260814",
+  "description": "IndexedDB Stale-While-Revalidate (SWR) cache layer with background Data Warehouse (DW) revision reconciliation, ETag HTTP 304 validation, and 100% geospatial layer coverage",
+  "type": "feature",
+  "created_at": "2026-08-14T09:40:00Z",
+  "status": "active",
+  "informed_by": [
+    "src/lib/cache/query-persister.ts",
+    "src/lib/cache/indexeddb-store.ts"
+  ]
+}

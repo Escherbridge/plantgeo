@@ -1,0 +1,13 @@
+{
+  "id": "restoration_ag_demo_20260726",
+  "description": "Evaluation-only, goal-specific predictive demo for restoration-agriculture evidence and operational signals",
+  "type": "product-governance",
+  "created_at": "2026-07-26T00:00:00Z",
+  "status": "completed",
+  "informed_by": [
+    "north_america_intervention_data_20260723",
+    "seasonal_forecast_feedback_20260726"
+  ],
+  "dependency_mode": "The informed_by tracks are non-blocking context. A public offline benchmark may proceed from an accepted source receipt; a map, property, or operational-goal vertical additionally requires its own authorized AOI and target contract.",
+  "activation_gate": "Sessions A-C may begin the public GHISACONUS offline benchmark from its accepted receipt. Any map, property, or operational-goal acquisition remains gated on an authorized demo AOI and target contract."
+}

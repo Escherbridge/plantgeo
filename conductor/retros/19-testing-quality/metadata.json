@@ -1,0 +1,6 @@
+{
+  "id": "19-testing-quality",
+  "type": "feature",
+  "status": "completed",
+  "description": "Testing & quality: vitest, Playwright E2E, Redis/PostGIS integration, mobile layouts, benchmarks + perf regression, pre-commit hooks; CI superseded by Dockerfile gates"
+}
