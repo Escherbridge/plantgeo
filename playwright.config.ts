@@ -27,7 +27,7 @@ export default defineConfig({
   webServer: {
     command: "npm run dev",
     url: BASE_URL,
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
     // Turbopack's first compile of the whole App Router tree is slow, well past
     // Playwright's 60s default -- generous on purpose so a cold start doesn't flake.
     timeout: 180_000,

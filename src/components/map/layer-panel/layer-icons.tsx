@@ -10,6 +10,7 @@ import {
   Flame,
   FlameKindling,
   Gauge,
+  HardDrive,
   Layers,
   Leaf,
   Mountain,
@@ -93,6 +94,9 @@ const DOCK_SECTION_ICON_COMPONENTS: Record<DockSectionKey, LucideIcon> = {
   team: Building2,
   analytics: BarChart3,
   alerts: Bell,
+  // Carried over from the bottom-right floating toggle it replaced, so a reader who knew that
+  // corner finds the same mark in the dock.
+  offline: HardDrive,
   Basemap: Layers,
 };
 

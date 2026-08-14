@@ -57,8 +57,26 @@ export async function GET(request: Request) {
 
   try {
     const data = await getPublishedFireDetections(undefined, firmsDayRange(), date);
+    const etag = `W/"fire-${date ?? "live"}-${data.features.length}"`;
+    const dataRevision = `rev-fire-${date ?? "live"}-${data.features.length}`;
+
+    const ifNoneMatch = request.headers.get("if-none-match");
+    if (ifNoneMatch && (ifNoneMatch === etag || ifNoneMatch.includes(etag))) {
+      return new NextResponse(null, {
+        status: 304,
+        headers: {
+          ETag: etag,
+          "x-data-revision": dataRevision,
+          "Cache-Control":
+            date === undefined ? LIVE_WINDOW_CACHE_CONTROL : HISTORICAL_DAY_CACHE_CONTROL,
+        },
+      });
+    }
+
     return NextResponse.json(data, {
       headers: {
+        ETag: etag,
+        "x-data-revision": dataRevision,
         "Cache-Control":
           date === undefined ? LIVE_WINDOW_CACHE_CONTROL : HISTORICAL_DAY_CACHE_CONTROL,
         "X-Fire-Data-Source": "platform-database",

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The eight details regions, and the map-derived props each one needs.
+ * The nine details regions, and the map-derived props each one needs.
  *
  * Every region is dynamically imported and rendered ONLY while its section is expanded, which
  * is the whole reason the merge could fold seven right-hand sheets into one dock without
@@ -75,6 +75,10 @@ const AnalyticsDetails = dynamic(
 );
 const AlertDetails = dynamic(
   () => import("@/components/panels/AlertDetails").then((m) => ({ default: m.AlertDetails })),
+  { ssr: false, loading: DetailsLoading }
+);
+const OfflinePanel = dynamic(
+  () => import("@/components/panels/OfflinePanel").then((m) => ({ default: m.OfflinePanel })),
   { ssr: false, loading: DetailsLoading }
 );
 
@@ -155,6 +159,10 @@ function AlertDetailsBody() {
   return <AlertDetails />;
 }
 
+function OfflineDetailsBody() {
+  return <OfflinePanel />;
+}
+
 /** Exhaustive over `DockDetailsId`: a new section fails to compile rather than rendering blank. */
 const DETAILS_BODIES: Record<DockDetailsId, () => React.ReactNode> = {
   fire: FireDetailsBody,
@@ -166,6 +174,7 @@ const DETAILS_BODIES: Record<DockDetailsId, () => React.ReactNode> = {
   team: TeamDetailsBody,
   analytics: AnalyticsDetailsBody,
   alerts: AlertDetailsBody,
+  offline: OfflineDetailsBody,
 };
 
 /** One details region, mounted by its section only while that section is expanded. */

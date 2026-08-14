@@ -27,6 +27,12 @@ export default defineConfig({
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
+    // `vitest bench` reads this instead of `test.include`; scoped to __benchmarks__ so a bench
+    // file can never be swept into a plain `npm test` run (whose `include` above only matches
+    // *.test.*/*.spec.* anyway) and so `vitest run` never has to skip-filter bench files out.
+    benchmark: {
+      include: ["src/__benchmarks__/**/*.bench.ts"],
+    },
   },
   resolve: {
     alias: {

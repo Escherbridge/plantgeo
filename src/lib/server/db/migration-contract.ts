@@ -1,5 +1,5 @@
 export const EXPECTED_DRIZZLE_MIGRATION = {
-  tag: "0025_feature_data_available_at",
-  createdAt: 1_787_700_000_000,
-  sha256: "4092409420ee7d46b1c1d6be3c634f36c04b9ebd55059b169c5e60bd66f83b99",
+  tag: "0027_ml_strategy_materialized_views",
+  createdAt: 1_787_900_000_000,
+  sha256: "9be2390fdc75f42579611bf33fe842e6dd02f9760e7d8d74ff967423d948f145",
 } as const;

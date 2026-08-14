@@ -32,6 +32,8 @@ import { useMapStore } from "@/stores/map-store";
 import { hasSelectableDay, useTimeSliderStore } from "@/stores/time-slider-store";
 import { isRenderableWeatherObservation } from "@/lib/environmental/weather";
 import type { WeatherPoint } from "@/components/map/layers/WeatherLayer";
+import { globalWebGPUAccelerator } from "@/lib/map/webgpu-accelerator";
+import { processGeoJsonFeatures } from "@/workers/layer-processor.worker";
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -143,6 +145,10 @@ const WeatherLayer = dynamic(
 );
 const QueryPointLayer = dynamic(
   () => import("@/components/map/layers/QueryPointLayer").then((m) => ({ default: m.QueryPointLayer })),
+  { ssr: false }
+);
+const StrategyLayer = dynamic(
+  () => import("@/components/map/layers/StrategyLayer").then((m) => ({ default: m.StrategyLayer })),
   { ssr: false }
 );
 
@@ -573,6 +579,37 @@ export default function LayerManager() {
     return () => cancelAnimationFrame(frame);
   }, [map, layerOpacity, applyOpacity, styleReady]);
 
+  // WebGPU hardware acceleration manager lifecycle & visibility-gated worker pipeline
+  useEffect(() => {
+    void globalWebGPUAccelerator.initialize();
+  }, []);
+
+  useEffect(() => {
+    // Strict Visibility Gating: execute zero worker tasks or GPU compute pipelines unless enabled
+    if (layerVisibility.fire && fireData.data.features.length > 0) {
+      const { packed } = processGeoJsonFeatures(fireData.data);
+      void globalWebGPUAccelerator.processLayerBuffer("fire", packed, { opacity: layerOpacity.fire });
+    }
+    if (layerVisibility.drought && droughtGeoJSON.features.length > 0) {
+      const { packed } = processGeoJsonFeatures(droughtGeoJSON);
+      void globalWebGPUAccelerator.processLayerBuffer("drought", packed, { opacity: layerOpacity.drought });
+    }
+    if (layerVisibility.vegetation && vegetationGeoJSON.features.length > 0) {
+      const { packed } = processGeoJsonFeatures(vegetationGeoJSON);
+      void globalWebGPUAccelerator.processLayerBuffer("vegetation", packed, { opacity: layerOpacity.vegetation });
+    }
+  }, [
+    layerVisibility.fire,
+    layerVisibility.drought,
+    layerVisibility.vegetation,
+    fireData.data,
+    droughtGeoJSON,
+    vegetationGeoJSON,
+    layerOpacity.fire,
+    layerOpacity.drought,
+    layerOpacity.vegetation,
+  ]);
+
   if (!map) return null;
 
   return (
@@ -669,6 +706,7 @@ export default function LayerManager() {
           and DockDetails' capture hook (SoilDetailsBody, DockDetails.tsx:100-101) is the
           only thing that ever sets it. */}
       <QueryPointLayer map={map} point={queryPoint} />
+      <StrategyLayer map={map} loaded={styleReady} />
     </>
   );
 }

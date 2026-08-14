@@ -61,6 +61,10 @@ export const DETAILS_LABELS: Record<DockDetailsId, string> = {
   team: "Team Dashboard",
   analytics: "Environmental Analytics",
   alerts: "Environmental Alerts",
+  // The other region with no sheet predecessor: it was a floating bottom-right toggle + panel
+  // in `MapView` until 2026-08-14, when it joined the dock as the reviewer-mandated fix for
+  // the second control surface the map had grown outside "One manager, no floating surfaces".
+  offline: "Offline & Sync",
 };
 
 /**
@@ -119,11 +123,12 @@ export const DOCK_LAYER_GROUPS: DockLayerGroup[] = buildLayerGroups();
 
 /**
  * Sections that own no layer, so the registry cannot order them: two categories whose reports
- * describe the whole map rather than one feed, and the warnings surface the toolbar bell used
- * to open in its own sheet. They sit below the layer groups, where a reader who has finished
- * with the layer list finds them.
+ * describe the whole map rather than one feed, the warnings surface the toolbar bell used to
+ * open in its own sheet, and the offline/sync surface the bottom-right floating toggle used to
+ * open before it joined the dock. They sit below the layer groups, where a reader who has
+ * finished with the layer list finds them.
  */
-export const DOCK_PIVOT_SECTIONS: DockDetailsId[] = ["alerts", "team", "analytics"];
+export const DOCK_PIVOT_SECTIONS: DockDetailsId[] = ["alerts", "team", "analytics", "offline"];
 
 /**
  * Every layer the dock renders a row for.

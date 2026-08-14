@@ -1,0 +1,57 @@
+{
+  "generatedAt": "2026-08-14T20:03:06.200Z",
+  "nodeVersion": "v24.13.0",
+  "platform": "win32",
+  "benchmarks": {
+    "src/__benchmarks__/large-dataset.bench.ts > clusterActionNetworkPoints (100k-feature stress case) > clusters 100,000 points at zoom 6": {
+      "mean": 79.81025999999993,
+      "hz": 12.529717357141813,
+      "p75": 91.04219999999987
+    },
+    "src/__benchmarks__/large-dataset.bench.ts > clusterActionNetworkPoints (100k-feature stress case) > clusters 100,000 points at zoom 12 (finest grid)": {
+      "mean": 75.90332000000004,
+      "hz": 13.17465428389693,
+      "p75": 80.90910000000031
+    },
+    "src/__benchmarks__/large-dataset.bench.ts > activityGridToFeatureCollection (100k-cell stress case) > builds a FeatureCollection from 100,000 activity cells": {
+      "mean": 6.98478333333335,
+      "hz": 143.168363609465,
+      "p75": 10.363900000000285
+    },
+    "src/__benchmarks__/tile-processing.bench.ts > clusterActionNetworkPoints (per-tile scale) > zoom 3 (coarse grid, heavy cell collisions)": {
+      "mean": 0.2222728888888889,
+      "hz": 4498.974233874676,
+      "p75": 0.2375000000000682
+    },
+    "src/__benchmarks__/tile-processing.bench.ts > clusterActionNetworkPoints (per-tile scale) > zoom 9 (fine grid, near one cluster per point)": {
+      "mean": 0.4309525409130096,
+      "hz": 2320.441127650425,
+      "p75": 0.47050000000012915
+    },
+    "src/__benchmarks__/tile-processing.bench.ts > clusterActionNetworkPoints (per-tile scale) > zoom 6 with minimum-vote and minimum-feature-count filters applied": {
+      "mean": 0.26687187833511267,
+      "hz": 3747.11642994581,
+      "p75": 0.27880000000004657
+    },
+    "src/__benchmarks__/tile-processing.bench.ts > activityGridToFeatureCollection (per-tile scale) > builds a FeatureCollection from 2,000 activity cells": {
+      "mean": 0.06104025878906094,
+      "hz": 16382.630412097968,
+      "p75": 0.061599999999998545
+    },
+    "src/__benchmarks__/tile-processing.bench.ts > measurement.ts geometry math (per-shape scale) > polygonArea over a 500-vertex ring": {
+      "mean": 0.012449269227896527,
+      "hz": 80325.99999999868,
+      "p75": 0.01290000000017244
+    },
+    "src/__benchmarks__/tile-processing.bench.ts > measurement.ts geometry math (per-shape scale) > lineStringDistance over a 250-point line": {
+      "mean": 0.014377304617863133,
+      "hz": 69554.06639694804,
+      "p75": 0.015600000000631553
+    },
+    "src/__benchmarks__/tile-processing.bench.ts > measurement.ts geometry math (per-shape scale) > haversineDistance, single pair": {
+      "mean": 0.00007651511372113285,
+      "hz": 13069313.386171028,
+      "p75": 0.00010000000020227162
+    }
+  }
+}

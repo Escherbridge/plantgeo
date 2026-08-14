@@ -23,7 +23,6 @@ export type StrategyRecommendationResult =
     }
   | StrategyRecommendationUnavailable;
 
-/** Identifies a deliberate fail-closed response rather than a transport failure. */
 export class StrategyEvidenceUnavailableError extends Error {
   readonly code = STRATEGY_EVIDENCE_UNAVAILABLE_CODE;
 
@@ -33,7 +32,6 @@ export class StrategyEvidenceUnavailableError extends Error {
   }
 }
 
-/** Reports readiness without manufacturing scores from a map coordinate. */
 export function getStrategyRecommendationResult(
   lat: number,
   lon: number
@@ -56,14 +54,13 @@ export function getStrategyRecommendationResult(
   };
 }
 
-/** Preserves the existing array API while making unavailable evidence explicit. */
 export async function getStrategyRecommendations(
   lat: number,
   lon: number
 ): Promise<StrategyScore[]> {
   const result = getStrategyRecommendationResult(lat, lon);
-  if (result.status === "unavailable") {
-    throw new StrategyEvidenceUnavailableError(result);
+  if (result.status === "available") {
+    return result.recommendations;
   }
-  return result.recommendations;
+  throw new StrategyEvidenceUnavailableError(result);
 }

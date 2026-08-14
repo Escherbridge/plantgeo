@@ -292,4 +292,117 @@ export const interventionsRouter = router({
         .orderBy(desc(features.createdAt))
         .limit(input.limit);
     }),
+
+  /**
+   * Propose a new community intervention linked to a MapLibre click & ML strategy cell.
+   */
+  proposeIntervention: contributorProcedure
+    .input(
+      z.object({
+        title: z.string().min(3).max(255),
+        strategyType: z.string(),
+        lat: z.number().min(-90).max(90),
+        lon: z.number().min(-180).max(180),
+        cellId: z.string().optional(),
+        causalTauEst: z.number().optional(),
+        description: z.string().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = currentUserId(ctx.session);
+      const layerId = await resolveInterventionsLayerId(ctx);
+
+      const [proposed] = await ctx.db
+        .insert(features)
+        .values({
+          layerId,
+          status: "proposed",
+          properties: {
+            name: input.title,
+            type: input.strategyType,
+            description: input.description ?? null,
+            cellId: input.cellId ?? null,
+            causalTauEst: input.causalTauEst ?? 0.15,
+            submittedByUserId: userId,
+            publicationConsent: true,
+          },
+        })
+        .returning(submissionProjection);
+
+      return proposed;
+    }),
+
+  /**
+   * Expert voting procedure for moderation queue.
+   */
+  castModerationVote: contributorProcedure
+    .input(
+      z.object({
+        interventionId: z.string().uuid(),
+        vote: z.enum(["approve", "reject", "request_revision"]),
+        note: z.string().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const role = (ctx.session?.user as { platformRole?: string } | undefined)?.platformRole;
+      if (!role || !["expert", "admin"].includes(role)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Expert or Admin role required" });
+      }
+
+      const [feature] = await ctx.db
+        .select()
+        .from(features)
+        .where(eq(features.id, input.interventionId))
+        .limit(1);
+
+      if (!feature) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
+      }
+
+      const newStatus = input.vote === "approve" ? "approved" : input.vote === "reject" ? "rejected" : "pending_review";
+
+      const [updated] = await ctx.db
+        .update(features)
+        .set({
+          status: newStatus,
+          reviewNote: input.note ?? `Vote cast: ${input.vote}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(features.id, input.interventionId))
+        .returning(submissionProjection);
+
+      return updated;
+    }),
+
+  /**
+   * State machine transition for intervention lifecycle (`proposed` -> `approved` -> `active` -> `monitored`).
+   */
+  transitionLifecycleState: contributorProcedure
+    .input(
+      z.object({
+        interventionId: z.string().uuid(),
+        targetState: z.enum(["proposed", "approved", "active", "monitored"]),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const role = (ctx.session?.user as { platformRole?: string } | undefined)?.platformRole;
+      if (!role || !["expert", "admin"].includes(role)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Expert or Admin role required" });
+      }
+
+      const [updated] = await ctx.db
+        .update(features)
+        .set({
+          status: input.targetState,
+          updatedAt: new Date(),
+        })
+        .where(eq(features.id, input.interventionId))
+        .returning(submissionProjection);
+
+      if (!updated) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
+      }
+
+      return updated;
+    }),
 });

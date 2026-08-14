@@ -21,6 +21,12 @@ import { sql } from "drizzle-orm";
 
 export const geoSchema = pgSchema("geo");
 export const trackingSchema = pgSchema("tracking");
+// No `agri` schema is declared here, deliberately. That schema is owned end to end by the
+// agri-data-service's Alembic tree (see services/agri-data-service/db/AGENTS.md); a `pgSchema("agri")`
+// with tables hanging off it is exactly what lets a Drizzle migration emit DDL against someone
+// else's schema. Read agri.* through raw `sql` in a router instead -- the Next app's pool reaches
+// the same database. 2026-08-14: an `agri.job_schedules` table was modelled here and created by
+// drizzle/0026; both are deleted, and the job runner reads agri.job_definition/agri.job_run.
 
 // Database triggers maintain spatial columns from validated application data.
 const spatialGeometry = customType<{ data: string; driverData: string }>({

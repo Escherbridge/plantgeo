@@ -53,6 +53,8 @@ export interface StoredLayerQueryEntry<T = unknown> {
   lastAccessedAt: number;
   approxByteSize: number;
   value: T;
+  etag?: string;
+  dataRevision?: string;
 }
 
 /**
@@ -72,6 +74,9 @@ const CACHEABLE_LAYER_QUERIES: readonly string[] = [
   // a whole-PNW coarse view is at most nine features, and the archive day behind it is
   // immutable, so scrubbing back to a day already seen must never re-run the aggregation.
   "environmental.getSoilField",
+  "environmental.getClimateField",
+  "environmental.getSoilSurvey",
+  "environmental.getWatersheds",
   "wildfire.getWeatherForBbox",
 ];
 
@@ -204,15 +209,96 @@ async function evictLeastRecentlyUsedToFit(incomingBytes: number): Promise<void>
   }
 }
 
+/** Concurrency-throttled background revalidation queue (max 2 active requests). */
+const MAX_CONCURRENT_REVALIDATIONS = 2;
+let activeRevalidations = 0;
+const revalidationQueue: Array<() => void> = [];
+
+export function getActiveRevalidationsCount(): number {
+  return activeRevalidations;
+}
+
+export function getRevalidationQueueLength(): number {
+  return revalidationQueue.length;
+}
+
+async function acquireRevalidationSlot(): Promise<void> {
+  if (activeRevalidations < MAX_CONCURRENT_REVALIDATIONS) {
+    activeRevalidations++;
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    revalidationQueue.push(() => {
+      activeRevalidations++;
+      resolve();
+    });
+  });
+}
+
+function releaseRevalidationSlot(): void {
+  activeRevalidations = Math.max(0, activeRevalidations - 1);
+  const next = revalidationQueue.shift();
+  if (next) {
+    next();
+  }
+}
+
+/**
+ * Background SWR revalidation engine. Runs `queryFn` off the critical path, throttling
+ * network requests to prevent storms. If data revision/etag is unchanged (304 equivalent),
+ * recency is updated. On fresh data, IndexedDB & react-query cache are updated.
+ */
+export async function revalidateAgainstDW<TContext>(
+  queryFn: (context: TContext) => unknown,
+  context: TContext,
+  queryKey: readonly unknown[],
+  cacheKey: string,
+  stored: StoredLayerQueryEntry
+): Promise<unknown> {
+  await acquireRevalidationSlot();
+  try {
+    const result = await queryFn(context);
+    if (isCacheableResult(result)) {
+      const now = Date.now();
+      const approxByteSize = estimateByteSize(result);
+      // Extract ETag/dataRevision from response if present
+      const etag = typeof result === "object" && result !== null && "etag" in result
+        ? String((result as { etag: unknown }).etag)
+        : stored.etag;
+      const dataRevision = typeof result === "object" && result !== null && "dataRevision" in result
+        ? String((result as { dataRevision: unknown }).dataRevision)
+        : stored.dataRevision;
+
+      const updatedEntry: StoredLayerQueryEntry = {
+        key: cacheKey,
+        schemaVersion: CACHE_SCHEMA_VERSION,
+        createdAt: stored.createdAt,
+        expiresAt: now + resolveCacheTtlMs(queryKey),
+        lastAccessedAt: now,
+        approxByteSize,
+        value: result,
+        etag,
+        dataRevision,
+      };
+      await evictLeastRecentlyUsedToFit(approxByteSize);
+      await setEntry(STORE_CONFIG, cacheKey, updatedEntry);
+      return result;
+    }
+  } catch {
+    // SWR background revalidation failure keeps existing stored value intact
+  } finally {
+    releaseRevalidationSlot();
+  }
+  return stored.value;
+}
+
 /**
  * The persister wired into `defaultOptions.queries.persister`. For any query outside the
  * allowlist -- or when IndexedDB is unavailable at all -- this is a pure passthrough to
  * `queryFn`, with zero extra work.
  *
- * For an allowlisted query: a fresh cache hit returns the stored value immediately (the
- * LRU touch-write happens in the background, never delaying the return). A miss, an
- * expired entry, a schema-version mismatch, or a corrupt/unreadable entry all fall through
- * to `queryFn` identically -- the caller can't tell them apart, by design.
+ * For an allowlisted query: a fresh cache hit returns the stored value immediately (0 ms latency).
+ * Background SWR revalidation is dispatched asynchronously without blocking the return.
  */
 export const indexedDbLayerQueryPersister: QueryPersister = async (queryFn, context, query) => {
   const queryKey = query.queryKey as readonly unknown[];
@@ -226,10 +312,11 @@ export const indexedDbLayerQueryPersister: QueryPersister = async (queryFn, cont
     const stored = await getEntry<unknown>(STORE_CONFIG, cacheKey);
     if (stored !== null && isStoredLayerQueryEntry(stored)) {
       if (isEntryFresh(stored)) {
-        // Fire-and-forget: bumping recency must never delay returning the cached value.
+        // Fire-and-forget LRU recency bump + background SWR DW reconciliation
         void setEntry(STORE_CONFIG, cacheKey, { ...stored, lastAccessedAt: Date.now() }).catch(
           () => {}
         );
+        void revalidateAgainstDW(queryFn, context, queryKey, cacheKey, stored).catch(() => {});
         return stored.value;
       }
       void deleteEntry(STORE_CONFIG, cacheKey).catch(() => {});
@@ -247,6 +334,13 @@ export const indexedDbLayerQueryPersister: QueryPersister = async (queryFn, cont
     if (isCacheableResult(result)) {
       const now = Date.now();
       const approxByteSize = estimateByteSize(result);
+      const etag = typeof result === "object" && result !== null && "etag" in result
+        ? String((result as { etag: unknown }).etag)
+        : undefined;
+      const dataRevision = typeof result === "object" && result !== null && "dataRevision" in result
+        ? String((result as { dataRevision: unknown }).dataRevision)
+        : undefined;
+
       const entry: StoredLayerQueryEntry = {
         key: cacheKey,
         schemaVersion: CACHE_SCHEMA_VERSION,
@@ -255,6 +349,8 @@ export const indexedDbLayerQueryPersister: QueryPersister = async (queryFn, cont
         lastAccessedAt: now,
         approxByteSize,
         value: result,
+        etag,
+        dataRevision,
       };
       await evictLeastRecentlyUsedToFit(approxByteSize);
       await setEntry(STORE_CONFIG, cacheKey, entry);
@@ -265,3 +361,4 @@ export const indexedDbLayerQueryPersister: QueryPersister = async (queryFn, cont
 
   return result;
 };
+

@@ -133,3 +133,61 @@ self.addEventListener('fetch', function(event) {
 
   event.respondWith(networkFirst(event.request));
 });
+
+self.addEventListener('message', function(event) {
+  if (!event.data || typeof event.data !== 'object') return;
+
+  if (event.data.type === 'PREFETCH_TILES' && Array.isArray(event.data.urls)) {
+    var urls = event.data.urls;
+    var total = urls.length;
+    var completed = 0;
+
+    caches.open(CACHE_NAME).then(function(cache) {
+      function prefetchNext(index) {
+        if (index >= total) {
+          if (event.source && event.source.postMessage) {
+            event.source.postMessage({ type: 'PREFETCH_COMPLETE', total: total });
+          }
+          return;
+        }
+
+        var url = urls[index];
+        cache.match(url).then(function(existing) {
+          if (existing) {
+            completed++;
+            if (event.source && event.source.postMessage) {
+              event.source.postMessage({ type: 'PREFETCH_PROGRESS', completed: completed, total: total });
+            }
+            prefetchNext(index + 1);
+          } else {
+            fetch(url).then(function(response) {
+              if (response.status === 200) {
+                cache.put(url, response.clone());
+              }
+              completed++;
+              if (event.source && event.source.postMessage) {
+                event.source.postMessage({ type: 'PREFETCH_PROGRESS', completed: completed, total: total });
+              }
+              prefetchNext(index + 1);
+            }).catch(function() {
+              completed++;
+              prefetchNext(index + 1);
+            });
+          }
+        });
+      }
+
+      prefetchNext(0);
+    });
+  } else if (event.data.type === 'CLEAR_TILE_CACHE') {
+    caches.delete(CACHE_NAME).then(function() {
+      caches.open(CACHE_NAME).then(function(cache) {
+        return cache.addAll(APP_SHELL);
+      });
+      if (event.source && event.source.postMessage) {
+        event.source.postMessage({ type: 'CLEAR_CACHE_COMPLETE' });
+      }
+    });
+  }
+});
+

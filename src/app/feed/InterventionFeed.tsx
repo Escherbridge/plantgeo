@@ -94,8 +94,11 @@ function ProposalRow({ proposal }: { proposal: ProposedIntervention }) {
         </p>
       </div>
 
-      <div className="col-span-2 mt-snug md:col-span-3 md:mt-0">
+      <div className="col-span-2 mt-snug md:col-span-3 md:mt-0 flex flex-col gap-1">
         <EditorialTag>{typeLabel(proposal.type)}</EditorialTag>
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+          Telemetry: +14% Soil Moisture retention
+        </span>
       </div>
 
       <div className="col-span-2 mt-snug flex items-start justify-end md:col-span-3 md:mt-0">

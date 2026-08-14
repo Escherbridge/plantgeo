@@ -15,6 +15,7 @@ import { strategyRouter } from "@/lib/server/trpc/routers/strategy";
 import { alertsRouter } from "@/lib/server/trpc/routers/alerts";
 import { regionalIntelligenceRouter } from "@/lib/server/trpc/routers/regional-intelligence";
 import { forecastsRouter } from "@/lib/server/trpc/routers/forecasts";
+import { jobsRouter } from "@/lib/server/trpc/routers/jobs";
 
 export const appRouter = router({
   layers: layersRouter,
@@ -33,6 +34,7 @@ export const appRouter = router({
   alerts: alertsRouter,
   regionalIntelligence: regionalIntelligenceRouter,
   forecasts: forecastsRouter,
+  jobs: jobsRouter,
 });
 
 export type AppRouter = typeof appRouter;

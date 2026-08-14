@@ -143,7 +143,11 @@ describe('layer registry derivations', () => {
     expect(getLayersForPanel('climate')).toEqual(
       CLIMATE_FIELD_SIGNAL_IDS.map((signal) => CLIMATE_FIELD_SIGNALS[signal].toggleId)
     )
-    expect(getLayersForPanel('community')).toEqual(['demand-heatmap', 'interventions'])
+    expect(getLayersForPanel('community')).toEqual([
+      'demand-heatmap',
+      'interventions',
+      'strategy-recommendations',
+    ])
     expect(getLayersForPanel('team')).toEqual([])
     expect(getLayersForPanel('analytics')).toEqual([])
   })
@@ -276,6 +280,7 @@ describe('layer registry derivations', () => {
       'climate-soil-wetness-profile': 'Soil wetness (profile)',
       'demand-heatmap': 'Demand Heatmap',
       interventions: 'Interventions',
+      'strategy-recommendations': 'ML Strategy Recommendations',
       'evacuation-zones': 'Evacuation Zones',
       'burn-severity': 'Burn History (MTBS)',
       // The one label with no <LayerToggle> predecessor: this layer is switched from the

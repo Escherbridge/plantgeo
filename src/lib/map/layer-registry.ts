@@ -32,6 +32,7 @@ export type LayerToggleId =
   | "soil-vpd"
   | "demand-heatmap"
   | "interventions"
+  | "strategy-recommendations"
   | "evacuation-zones"
   | "burn-severity"
   | "building-footprints";
@@ -386,6 +387,16 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     renderKind: "style",
     styleLayerIds: ["interventions", "interventions-outline", "interventions-points"],
     warehouseLayerName: "interventions",
+    panelId: "community",
+    permanentlyUnavailableReason: null,
+  },
+  "strategy-recommendations": {
+    toggleId: "strategy-recommendations",
+    label: "ML Strategy Recommendations",
+    icon: "sprout",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: "strategy-recommendations",
     panelId: "community",
     permanentlyUnavailableReason: null,
   },

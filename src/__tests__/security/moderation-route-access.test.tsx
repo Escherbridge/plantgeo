@@ -15,8 +15,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/server/auth", () => ({ getServerSession: mocks.getServerSession }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
-vi.mock("@/components/panels/ContributionQueue", () => ({
-  ContributionQueue: () => <div data-testid="contribution-queue-stub" />,
+vi.mock("@/components/panels/ModerationPanel", () => ({
+  ModerationPanel: () => <div data-testid="contribution-queue-stub" />,
 }));
 
 import ModerationPage from "@/app/moderation/page";

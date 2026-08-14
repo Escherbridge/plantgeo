@@ -1,3 +1,7 @@
+-- NOTE (2026-08-14): geo.sync_feature_geom_from_properties() (drizzle/0004) derives geom
+-- from properties->'geometry' and DISCARDS any directly-supplied geom value. The geom
+-- arguments in the inserts below are therefore dead; the properties 'geometry' member is
+-- the value under test. Keep both in sync if you edit either.
 -- Manual SQL test for geo.sensor_tiles() (drizzle/0010_sensor_tile_properties.sql).
 -- Same standalone-harness pattern as drizzle/tests/0009_evacuation_zone_tiles.test.sql:
 -- no vitest/pg integration harness exists for direct-to-Postgres tile functions, so this
@@ -37,6 +41,7 @@ BEGIN
     'published',
     ST_SetSRID(ST_MakePoint(-116.2, 43.6), 4326),
     jsonb_build_object(
+      'geometry', '{"type":"Point","coordinates":[-116.2,43.6]}'::jsonb,
       'network', 'ASOS',
       'sensor_id', 'KBOI',
       'station_name', 'Boise Air Terminal',
@@ -51,7 +56,11 @@ BEGIN
     sensors_layer_id,
     'pending_review',
     ST_SetSRID(ST_MakePoint(-116.3, 43.5), 4326),
-    jsonb_build_object('network', 'RAWS', 'sensor_id', 'SHOULDNOTSHOW')
+    jsonb_build_object(
+      'geometry', '{"type":"Point","coordinates":[-116.3,43.5]}'::jsonb,
+      'network', 'RAWS',
+      'sensor_id', 'SHOULDNOTSHOW'
+    )
   )
   RETURNING id INTO pending_id;
 

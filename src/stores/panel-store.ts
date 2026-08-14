@@ -29,14 +29,18 @@ export type PanelId =
 /**
  * A dock section that can open a details region.
  *
- * The seven categories plus "alerts", which owns no layer and no registry entry: it is the
- * warnings surface the toolbar bell used to open in its own sheet.
+ * The seven categories plus "alerts" and "offline", neither of which owns a layer or a
+ * registry entry. "alerts" is the warnings surface the toolbar bell used to open in its own
+ * sheet. "offline" joined 2026-08-14, absorbing the bottom-right floating toggle + panel
+ * `MapView` used to mount directly -- see `src/components/map/AGENTS.md` "One manager, no
+ * floating surfaces": every control surface is a section of this dock, and area download /
+ * storage / sync-conflict resolution is a control surface like any other.
  *
  * Every member has a REPORT behind it -- `DETAILS_LABELS` and `DETAILS_BODIES` are both
  * exhaustive over this union, so a new member is a compile error in two files until it has a
  * title and a body. That is why "search" and "view" are not in here: see `DockSectionId`.
  */
-export type DockDetailsId = PanelId | "alerts";
+export type DockDetailsId = PanelId | "alerts" | "offline";
 
 /**
  * Anything the manager can expand and scroll to, which is a wider set than the reports.

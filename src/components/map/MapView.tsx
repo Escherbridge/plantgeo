@@ -6,6 +6,7 @@ import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import { DEFAULT_VIEWPORT, useMapStore } from "@/stores/map-store";
 import { DataLoadingChip } from "@/components/map/DataLoadingChip";
+import { SyncIndicator } from "@/components/ui/SyncIndicator";
 import { getStyle, skyThemes } from "@/lib/map/styles";
 import { MapProvider } from "@/lib/map/map-context";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -359,6 +360,17 @@ export default function MapView() {
                 warehouse-backed query on this map. */}
             <TimeSliderCapabilitiesLoader />
             <HoverTooltip map={mapInstance} />
+            {/* Offline/sync status chip -- a marker with no controls, `MapDateSummary`
+                precedent. The controls it used to open standalone (area download, storage,
+                conflict resolution) are the dock's Offline & Sync section now; see
+                src/components/map/AGENTS.md "One manager, no floating surfaces". ManagerRail
+                claims bottom-left and MapLibre's own controls claim top-right, so this is the
+                one open corner left for persistent chrome. */}
+            <div className="pointer-events-none absolute bottom-4 right-4 z-10 flex flex-col items-end gap-2">
+              <div className="pointer-events-auto">
+                <SyncIndicator />
+              </div>
+            </div>
             {isAIOpen && <RegionalIntelligencePanel />}
             {agentCoords && (
               <AgentInteraction

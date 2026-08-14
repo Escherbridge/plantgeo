@@ -188,6 +188,101 @@ function RemediationCard({
   );
 }
 
+/**
+ * One chip per recommended strategy, built from the model's own `remediation` items -- the only
+ * strategy data this panel actually receives (the server never streams `strategyContext` down;
+ * see `src/lib/server/services/regional-context.ts`). Renders nothing when there is nothing to
+ * show, and never a percentage or an effect-size number: `evidenceOrigin` is the strongest claim
+ * a chip is allowed to make about where a strategy came from.
+ */
+function StrategyChips({
+  remediation,
+}: {
+  remediation: RegionalIntelligenceResponse['remediation'];
+}) {
+  if (!remediation.length) return null;
+  return (
+    <div aria-label="Suggested strategy chips" className="flex flex-wrap gap-1">
+      {remediation.map((item, index) => (
+        <span
+          key={`${item.strategy}-${index}`}
+          className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-mono bg-emerald-500/20 text-emerald-800 dark:text-emerald-300"
+        >
+          {humanize(item.strategy)}
+          <span className="rounded bg-white/50 px-1 text-[10px] font-sans font-medium dark:bg-black/30">
+            {ORIGIN_LABELS[item.evidenceOrigin]}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Renders the report as readable Markdown, mirroring the JSON export's structure. */
+function reportToMarkdown(response: RegionalIntelligenceResponse): string {
+  const lines: string[] = [];
+  lines.push(`# Remediation report — ${AI_GENERATED_LABEL}`);
+  lines.push('');
+  lines.push(AI_GENERATED_DISCLAIMER);
+  lines.push('');
+  lines.push(`## Risk: ${response.riskSummary.level.toUpperCase()}`);
+  lines.push(response.riskSummary.headline);
+  if (response.riskSummary.factors.length) {
+    lines.push('');
+    for (const factor of response.riskSummary.factors) lines.push(`- ${factor}`);
+  }
+  lines.push('');
+  lines.push(`_Evidence origin: ${ORIGIN_LABELS[response.riskSummary.evidenceOrigin]}_`);
+
+  if (response.observations.length) {
+    lines.push('');
+    lines.push('## What the data shows');
+    for (const observation of response.observations) {
+      const source = observation.evidenceSource ? ` (${humanize(observation.evidenceSource)})` : '';
+      lines.push(`- ${observation.statement} — _${ORIGIN_LABELS[observation.evidenceOrigin]}${source}_`);
+    }
+  }
+
+  lines.push('');
+  lines.push('## Suggested remediation');
+  if (response.remediation.length) {
+    for (const item of response.remediation) {
+      lines.push('');
+      lines.push(`### ${item.title}`);
+      lines.push(
+        `Strategy: ${humanize(item.strategy)} · Timeframe: ${humanize(item.timeframe)} · Confidence: ${item.confidence}`
+      );
+      lines.push('');
+      lines.push(item.rationale);
+      if (item.consultProfessionals.length) {
+        lines.push('');
+        lines.push(
+          `Consult: ${item.consultProfessionals.map((discipline) => humanize(discipline)).join(', ')}`
+        );
+      }
+      lines.push('');
+      lines.push(`_Evidence origin: ${ORIGIN_LABELS[item.evidenceOrigin]}_`);
+    }
+  } else {
+    lines.push('');
+    lines.push(
+      'The assistant did not find enough here to suggest a remediation strategy. Treat this as an absence of evidence, not an all-clear.'
+    );
+  }
+
+  lines.push('');
+  lines.push('## Professional consultation');
+  lines.push(response.professionalConsultation);
+
+  if (response.webSources.length) {
+    lines.push('');
+    lines.push('## Web sources consulted');
+    for (const source of response.webSources) lines.push(`- [${source.title}](${source.url})`);
+  }
+
+  return lines.join('\n');
+}
+
 function WebSourcesList({
   sources,
 }: {
@@ -299,9 +394,40 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
   const response = message.parsedResponse;
   if (response) {
+    const downloadReport = (content: string, mimeType: string, extension: string) => {
+      const reportBlob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(reportBlob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `remediation-report-${Date.now()}.${extension}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    };
+    const handleExportJson = () =>
+      downloadReport(JSON.stringify(response, null, 2), "application/json", "json");
+    const handleExportMarkdown = () =>
+      downloadReport(reportToMarkdown(response), "text/markdown", "md");
+
     return (
       <div className="space-y-3">
         <AiGeneratedBanner />
+        <div className="flex items-center justify-between gap-2">
+          <StrategyChips remediation={response.remediation} />
+          <div className="flex shrink-0 gap-1.5">
+            <button
+              onClick={handleExportJson}
+              className="px-2.5 py-1 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded transition"
+            >
+              Export JSON
+            </button>
+            <button
+              onClick={handleExportMarkdown}
+              className="px-2.5 py-1 text-xs font-semibold bg-gray-600 hover:bg-gray-500 text-white rounded transition"
+            >
+              Export Markdown
+            </button>
+          </div>
+        </div>
         <RiskSummaryCard data={response.riskSummary} />
         <ObservationsList observations={response.observations} />
         {response.remediation.length > 0 ? (

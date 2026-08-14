@@ -100,3 +100,7 @@ conductor/tracks/**/*.out
 .omc/research/
 dbconnect.md
 production/
+
+# Playwright E2E artifacts.
+playwright-report/
+test-results/

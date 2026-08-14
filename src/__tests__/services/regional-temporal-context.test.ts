@@ -10,25 +10,55 @@ const mocks = vi.hoisted(() => ({
   getStrategyRecommendations: vi.fn(),
   getInterventionSuitability: vi.fn(),
   getServerSession: vi.fn(),
+  getSoilProperties: vi.fn(),
+  getMTBSPerimeters: vi.fn(),
+  // Consumed in call order by the generic `db.select()`/`db.execute()` stand-ins below, so a
+  // test that cares can queue exactly what `readCommunityProposals` and `resolveStrategyContext`
+  // will see on their next call. Left empty, every call resolves to `[]` -- the same "nothing
+  // configured" default `readPublishedFirePerimeters` has always seen from this file.
+  dbSelectResults: [] as unknown[][],
+  dbExecuteResults: [] as unknown[][],
 }));
 
-// readPublishedFirePerimeters is the one read this module issues itself; it is not the subject
-// of these tests, so the chain terminates in an empty result rather than a fixture.
+/**
+ * `readPublishedFirePerimeters` is the one read `regional-context.ts` issued through `db`
+ * before 2026-08-14; `readCommunityProposals` and `resolveStrategyContext` (real reads added
+ * that day to close two fabrication gaps -- see the track's plan.md) added a second `db.select`
+ * call shape with no `innerJoin`, and `db.execute` for the `to_regclass` matview guard. The stand-in
+ * below is shape-agnostic (every chain method just returns itself) so it serves all three without
+ * caring which methods a given query happens to call, and defaults to "nothing configured" so
+ * every pre-existing test in this file keeps seeing exactly the empty results it always has.
+ */
+function chainableSelect(rows: unknown[]) {
+  const node = {
+    from: () => node,
+    innerJoin: () => node,
+    where: () => node,
+    orderBy: () => node,
+    limit: async () => rows,
+  };
+  return node;
+}
+
 vi.mock("@/lib/server/db", () => ({
   db: {
-    select: () => ({
-      from: () => ({
-        innerJoin: () => ({
-          where: () => ({
-            orderBy: () => ({ limit: async () => [] }),
-          }),
-        }),
-      }),
-    }),
+    select: () => chainableSelect(mocks.dbSelectResults.shift() ?? []),
+    execute: async () => mocks.dbExecuteResults.shift() ?? [],
   },
 }));
 
 vi.mock("@/lib/server/auth", () => ({ getServerSession: mocks.getServerSession }));
+
+// Live external reads (ISRIC, ArcGIS-hosted MTBS) added to regional-context.ts on 2026-08-14.
+// Mocked at the module boundary so this suite never attempts real network calls; see
+// getSoilProperties/getMTBSPerimeters defaults in beforeEach below.
+vi.mock("@/lib/server/services/soilgrids", () => ({
+  getSoilProperties: mocks.getSoilProperties,
+}));
+
+vi.mock("@/lib/server/services/mtbs", () => ({
+  getMTBSPerimeters: mocks.getMTBSPerimeters,
+}));
 
 vi.mock("@/lib/server/services/environmental-read-model", async () => {
   const actual = await vi.importActual<
@@ -135,6 +165,8 @@ function emptyDrought() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.dbSelectResults.length = 0;
+  mocks.dbExecuteResults.length = 0;
   mocks.getStrategyRecommendations.mockResolvedValue([]);
   mocks.getInterventionSuitability.mockResolvedValue({
     availability: "unavailable",
@@ -149,6 +181,10 @@ beforeEach(() => {
     features: [],
   });
   mocks.getSliderCapabilities.mockResolvedValue(sliderCapabilities());
+  // Unconfigured by default, same as the pre-2026-08-14 hardcoded nulls this replaced: no test
+  // in this file exercises soil/MTBS content unless it explicitly overrides these.
+  mocks.getSoilProperties.mockRejectedValue(new Error("No soil fixture configured"));
+  mocks.getMTBSPerimeters.mockResolvedValue({ type: "FeatureCollection", features: [] });
 });
 
 describe("assembling regional context at the days the user is viewing", () => {
@@ -836,5 +872,203 @@ describe("the viewed-layers request contract", () => {
       JSON.stringify({ ...validBody, question: "x".repeat(1000), viewedLayers })
     ).length;
     expect(bytes).toBeLessThan(16 * 1024);
+  });
+});
+
+/**
+ * A 2026-08-14 fabrication audit found `regional-context.ts` untouched since 2026-08-09 despite
+ * a checked-off plan claiming ML strategy context and community proposals had been added:
+ * `communityProposals` did not exist, `strategyRecommendations` was the pre-existing heuristic
+ * shape, and `soilProperties`/`mtbsPerimeters` were hardcoded null despite both having a real
+ * server-side read path. These tests pin the honest versions of all four, including the
+ * governance constraint that strategy context may never carry a causal effect size or a
+ * percentage benefit, whichever tier produced it.
+ */
+describe("community proposals and strategy context (2026-08-14 fabrication fix)", () => {
+  it("reads nearby community intervention proposals from geo.features/geo.layers", async () => {
+    mocks.dbSelectResults.push(
+      // `db.select()` calls are consumed in issue order across every reader in this module, not
+      // per-reader: `readPublishedFirePerimeters` (unrelated to this test) always makes the
+      // first one, so its slot is queued empty here exactly as the shared "nothing configured"
+      // default already leaves it everywhere else in this file.
+      [],
+      [{ id: "layer-1" }],
+      [
+        {
+          id: "feat-1",
+          name: "Streambank willow planting",
+          type: "riparian_buffer",
+          description: "Community-proposed riparian planting.",
+          distanceMeters: 1234.6,
+          createdAt: new Date("2026-07-01T00:00:00Z"),
+        },
+      ]
+    );
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+
+    expect(result.payload.communityProposals).toEqual([
+      {
+        id: "feat-1",
+        name: "Streambank willow planting",
+        type: "riparian_buffer",
+        description: "Community-proposed riparian planting.",
+        distanceMeters: 1235,
+        createdAt: "2026-07-01T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("defaults to no community proposals when the interventions layer read resolves empty", async () => {
+    const result = await assembleRegionalContext(43.6, -116.2);
+    expect(result.payload.communityProposals).toEqual([]);
+  });
+
+  it("falls back to the heuristic StrategyScore list, tagged heuristic_score, when the matview is absent", async () => {
+    mocks.getStrategyRecommendations.mockResolvedValue([
+      {
+        strategyId: "biochar",
+        name: "Biochar amendment",
+        score: 0.82,
+        factors: {
+          waterStress: 0.5,
+          soilHealth: 0.7,
+          fireRisk: 0.2,
+          vegetationDegradation: 0.3,
+          communityDemand: 0.4,
+        },
+        confidence: "medium",
+        topReasons: ["High soil organic carbon deficit"],
+      },
+    ]);
+    // dbExecuteResults left unconfigured: `to_regclass` resolves to `[]`, so the matview reads
+    // as absent, exactly the drizzle-0027-not-yet-applied state this branch exists for.
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+
+    expect(result.payload.strategyContext).toEqual([
+      {
+        claimTier: "heuristic_score",
+        strategySlug: "biochar",
+        name: "Biochar amendment",
+        category: null,
+        score: 0.82,
+      },
+    ]);
+  });
+
+  it("reads geo.mv_strategy_recommendations_regional when it exists, tagged evaluation_only_model", async () => {
+    mocks.dbExecuteResults.push(
+      [{ exists: true }],
+      [
+        {
+          strategy_slug: "silvopasture",
+          strategy_name: "Silvopasture conversion",
+          strategy_category: "agroforestry",
+          suitability_score: 0.71,
+        },
+      ]
+    );
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+
+    expect(result.payload.strategyContext).toEqual([
+      {
+        claimTier: "evaluation_only_model",
+        strategySlug: "silvopasture",
+        name: "Silvopasture conversion",
+        category: "agroforestry",
+        score: 0.71,
+      },
+    ]);
+  });
+
+  it("never carries a causal effect size or a percentage benefit in strategy context, from either source", async () => {
+    mocks.getStrategyRecommendations.mockResolvedValue([
+      {
+        strategyId: "biochar",
+        name: "Biochar amendment",
+        score: 0.82,
+        factors: {
+          waterStress: 0.5,
+          soilHealth: 0.7,
+          fireRisk: 0.2,
+          vegetationDegradation: 0.3,
+          communityDemand: 0.4,
+        },
+        confidence: "medium",
+        topReasons: ["High soil organic carbon deficit"],
+      },
+    ]);
+    mocks.dbExecuteResults.push(
+      [{ exists: true }],
+      [
+        {
+          strategy_slug: "silvopasture",
+          strategy_name: "Silvopasture conversion",
+          strategy_category: "agroforestry",
+          suitability_score: 0.71,
+        },
+      ]
+    );
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+
+    // The matview branch wins when present, but the guard below holds regardless of which
+    // branch produced the entries -- neither StrategyScore nor a matview row is ever mapped
+    // through a field named tau/causal/benefit-percent.
+    const serialized = JSON.stringify(result.payload.strategyContext);
+    expect(serialized.toLowerCase()).not.toMatch(/tau|causal|benefit.*%|%.*benefit/);
+  });
+
+  it("wires soil properties and MTBS perimeters from their live read paths", async () => {
+    mocks.getSoilProperties.mockResolvedValue({
+      ph: 6.8,
+      organicCarbon: 12,
+      nitrogen: 1.1,
+      bulkDensity: 1.3,
+      cec: 14,
+      ocd: 3.2,
+    });
+    mocks.getMTBSPerimeters.mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [-116.2, 43.6] },
+          properties: {
+            fireName: "Test Fire",
+            fireYear: 2023,
+            acres: 500,
+            severityClass: "high",
+            ignitionDate: "2023-07-04",
+            fireId: "X1",
+          },
+        },
+      ],
+    });
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+
+    expect(result.payload.soilProperties).toEqual({
+      ph: 6.8,
+      organicCarbon: 12,
+      nitrogen: 1.1,
+      bulkDensity: 1.3,
+      cec: 14,
+      ocd: 3.2,
+    });
+    expect(result.dataFreshness.soilProperties).toBe("static_release_untimed");
+    expect(result.payload.mtbsPerimeters?.totalCount).toBe(1);
+    expect(result.dataFreshness.mtbsPerimeters).toBe("2023-07-04");
+    expect(result.contextIsEmpty).toBe(false);
+  });
+
+  it("still reports soil and MTBS as unavailable when neither read resolves anything", async () => {
+    const result = await assembleRegionalContext(43.6, -116.2);
+    expect(result.payload.soilProperties).toBeNull();
+    expect(result.payload.mtbsPerimeters).toBeNull();
+    expect(result.dataFreshness.soilProperties).toBe("unavailable");
+    expect(result.dataFreshness.mtbsPerimeters).toBe("unavailable");
   });
 });

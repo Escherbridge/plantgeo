@@ -1,3 +1,7 @@
+-- NOTE (2026-08-14): geo.sync_feature_geom_from_properties() (drizzle/0004) derives geom
+-- from properties->'geometry' and DISCARDS any directly-supplied geom value. The geom
+-- arguments in the inserts below are therefore dead; the properties 'geometry' member is
+-- the value under test. Keep both in sync if you edit either.
 -- Manual SQL test for geo.evacuation_zone_tiles() (drizzle/0009_evacuation_zone_tiles.sql).
 -- Same standalone-harness pattern as drizzle/tests/0004_repair_ingested_geometries.test.sql:
 -- no vitest/pg integration harness exists for direct-to-Postgres tile functions, so this
@@ -36,6 +40,7 @@ BEGIN
     'published',
     ST_SetSRID(ST_MakePoint(-123.1, 44.9), 4326),
     jsonb_build_object(
+      'geometry', '{"type":"Point","coordinates":[-123.1,44.9]}'::jsonb,
       'evacuationAreaName', 'Test Evacuation Area',
       'fireName', 'Test Fire',
       'county', 'Test County',
@@ -53,7 +58,11 @@ BEGIN
     zones_layer_id,
     'pending_review',
     ST_SetSRID(ST_MakePoint(-123.2, 44.8), 4326),
-    jsonb_build_object('evacuationAreaName', 'Should Never Serve', 'severity', 'critical')
+    jsonb_build_object(
+      'geometry', '{"type":"Point","coordinates":[-123.2,44.8]}'::jsonb,
+      'evacuationAreaName', 'Should Never Serve',
+      'severity', 'critical'
+    )
   )
   RETURNING id INTO pending_id;
 

@@ -1,7 +1,14 @@
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "@/lib/server/db";
 import { features, layers } from "@/lib/server/db/schema";
-import type { SoilProperties } from "@/lib/server/services/soilgrids";
+import {
+  getSoilProperties,
+  type SoilProperties,
+} from "@/lib/server/services/soilgrids";
+import {
+  getMTBSPerimeters,
+  type MTBSFireProperties,
+} from "@/lib/server/services/mtbs";
 import {
   getStrategyRecommendations,
   type StrategyScore,
@@ -43,6 +50,7 @@ const CONTEXT_RADIUS_DEGREES = 0.25;
 const NEAREST_GAUGE_MAX_DEGREES = 0.5;
 const MAX_FIRE_DETECTIONS = 25;
 const MAX_FIRE_PERIMETERS = 10;
+const MAX_MTBS_FIRES = 10;
 
 export interface NearbyFireDetection {
   observedAt: string;
@@ -58,9 +66,57 @@ export interface NearbyFirePerimeter {
   updatedAt: string;
 }
 
+/**
+ * One signed-in contributor's intervention recommendation still awaiting expert review, read
+ * for its proximity to the agent's queried point. Mirrors the shape
+ * `interventionsRouter.listProposed` (`src/lib/server/trpc/routers/interventions.ts`) already
+ * serves to the feed UI; this is a second, independent read of the same rows rather than a call
+ * through tRPC, because a server-side context assembler has no request/session to route through.
+ */
+export interface CommunityProposal {
+  id: string;
+  name: string | null;
+  type: string | null;
+  description: string | null;
+  distanceMeters: number;
+  createdAt: string;
+}
+
+/**
+ * What produced a `StrategyContextEntry`, so the prompt and the UI can say so rather than let a
+ * ranking read as a validated prediction.
+ *
+ * `"heuristic_score"` — `strategy-scoring.ts`'s rule-based `StrategyScore` list (currently always
+ * empty: that plane has no validated evidence release published yet, see
+ * `getStrategyRecommendationResult`).
+ * `"evaluation_only_model"` — a `geo.mv_strategy_recommendations_*` row (drizzle 0027). That
+ * plane's own label review tier is `agent_reviewed_pending_owner_signature`: reviewed by an
+ * agent, not yet signed off by an owner, and never causal — see the governance note on
+ * `resolveStrategyContext` below.
+ */
+export type StrategyClaimTier = "heuristic_score" | "evaluation_only_model";
+
+/**
+ * A strategy candidate for this point, carrying only what is safe to hand an LLM regardless of
+ * which tier produced it: a name and a relative ranking. Never a causal effect size, an
+ * expected-benefit percentage, or anything else that could be read as a validated outcome.
+ */
+export interface StrategyContextEntry {
+  claimTier: StrategyClaimTier;
+  strategySlug: string;
+  name: string;
+  category: string | null;
+  /** A relative suitability ranking from its own source, not an effect size. */
+  score: number;
+}
+
 export interface RegionalContextPayload {
   location: { lat: number; lon: number; geohash: string };
   strategyRecommendations: StrategyScore[] | null;
+  /** Top strategy candidates for this point. See `resolveStrategyContext`. */
+  strategyContext: StrategyContextEntry[];
+  /** Nearby unreviewed community intervention proposals. See `readCommunityProposals`. */
+  communityProposals: CommunityProposal[];
   soilProperties: SoilProperties | null;
   waterScarcity: {
     droughtClass: string | null;
@@ -218,8 +274,11 @@ const EVIDENCE_SOURCE_BY_VIEWED_LAYER: Record<string, RegionalEvidenceSource> = 
  * `firePerimeters` is absent on purpose and not by oversight: WFIGS publishes no per-feature
  * observation time, so row `updatedAt` is the only time signal the perimeter read has (see
  * `readPublishedFirePerimeters`) and there is no honest way to ask it for a past day.
- * `strategyRecommendations` and `carbonPotential` are derived scores over the live warehouse,
- * `soilProperties` and `mtbsPerimeters` are never populated.
+ * `strategyRecommendations` and `carbonPotential` are derived scores over the live warehouse.
+ * `soilProperties` (SoilGrids, via `getSoilProperties`) and `mtbsPerimeters` (via
+ * `getMTBSPerimeters`) are populated from live external reads as of 2026-08-14, but neither
+ * upstream accepts a historical day, so both are always served as-of-latest, the same as
+ * `strategyRecommendations` and `carbonPotential`.
  */
 const DATE_PARAMETERISED_SOURCES: ReadonlySet<RegionalEvidenceSource> = new Set<
   RegionalEvidenceSource
@@ -338,6 +397,142 @@ async function readPublishedFirePerimeters(
     });
   }
   return { perimeters, latestUpdatedAt };
+}
+
+const COMMUNITY_PROPOSAL_RADIUS_METERS = 10_000;
+const MAX_COMMUNITY_PROPOSALS = 5;
+/** The `geo.layers` row every intervention feature belongs to; mirrors `interventionsRouter`. */
+const INTERVENTIONS_LAYER_NAME = "interventions";
+/** Mirrors `interventionsRouter`'s `RECOMMENDATION_STATUS`: a submission still awaiting review. */
+const COMMUNITY_PROPOSAL_STATUS = "pending_review";
+
+/**
+ * Nearby community intervention proposals still awaiting expert review.
+ *
+ * A direct read of `geo.features`/`geo.layers` rather than a call through
+ * `interventionsRouter.listProposed`: that procedure is `protectedProcedure`-gated and reads
+ * `ctx.session`, neither of which exists for a server-side context assembler with no inbound
+ * tRPC request. The row shape and consent/status gate below are kept in lockstep with it by
+ * hand -- see `src/lib/server/trpc/routers/interventions.ts`.
+ *
+ * Resolves to an empty array both when nothing is nearby and when the read itself fails (an
+ * unprovisioned `interventions` layer, for instance): unlike a warehouse evidence plane, there is
+ * no coverage-gap distinction to preserve here, so the caller cannot tell the two apart from this
+ * return value alone and does not need to.
+ */
+async function readCommunityProposals(
+  lat: number,
+  lon: number
+): Promise<CommunityProposal[]> {
+  const [layer] = await db
+    .select({ id: layers.id })
+    .from(layers)
+    .where(eq(layers.name, INTERVENTIONS_LAYER_NAME))
+    .limit(1);
+  if (!layer) return [];
+
+  const point = sql`ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)::geography`;
+  const rows = await db
+    .select({
+      id: features.id,
+      name: sql<string | null>`${features.properties} ->> 'name'`,
+      type: sql<string | null>`${features.properties} ->> 'type'`,
+      description: sql<string | null>`${features.properties} ->> 'description'`,
+      distanceMeters: sql<number>`ST_Distance(${features.geom}::geography, ${point})`,
+      createdAt: features.createdAt,
+    })
+    .from(features)
+    .where(
+      and(
+        eq(features.layerId, layer.id),
+        eq(features.status, COMMUNITY_PROPOSAL_STATUS),
+        sql`${features.properties} ->> 'publicationConsent' = 'true'`,
+        sql`ST_DWithin(${features.geom}::geography, ${point}, ${COMMUNITY_PROPOSAL_RADIUS_METERS})`
+      )
+    )
+    .orderBy(sql`ST_Distance(${features.geom}::geography, ${point})`)
+    .limit(MAX_COMMUNITY_PROPOSALS);
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    description: row.description,
+    distanceMeters: Math.round(Number(row.distanceMeters)),
+    createdAt: (row.createdAt ?? new Date(0)).toISOString(),
+  }));
+}
+
+const STRATEGY_CONTEXT_MATVIEW = "geo.mv_strategy_recommendations_regional";
+const MAX_STRATEGY_CONTEXT_ENTRIES = 3;
+/** Half the `regional` matview's own cell width (`ST_MakeEnvelope(lon±0.125, lat±0.125)`). */
+const STRATEGY_MATVIEW_CELL_RADIUS_METERS = 14_000;
+
+/** Object type, not an interface: db.execute requires an implicit index signature. */
+type StrategyMatviewRow = {
+  strategy_slug: string;
+  strategy_name: string;
+  strategy_category: string | null;
+  suitability_score: number;
+};
+
+/** Whether a relation is present in this database. Used to gate on drizzle 0027 (`geo.mv_strategy_recommendations_*`), which is not yet applied in every environment. */
+async function relationExists(qualifiedName: string): Promise<boolean> {
+  const rows = await db.execute<{ exists: boolean }>(
+    sql`SELECT to_regclass(${qualifiedName}) IS NOT NULL AS exists`
+  );
+  return rows[0]?.exists === true;
+}
+
+/**
+ * Top strategy candidates for this point.
+ *
+ * Governance boundary (do not relax without an owner decision): this repo forbids representing
+ * strategy-model output as a causal effect claim. The `20260725_0013` causal plane is empty and
+ * deliberately blocked, and today's evaluation model carries
+ * `label_review_tier = agent_reviewed_pending_owner_signature` -- reviewed by an agent, not
+ * signed off by an owner. See
+ * `services/agri-data-service/src/agri_data_service/method/AGENTS.md`.
+ *
+ * `geo.mv_strategy_recommendations_*` (drizzle 0027) DOES carry a `causal_benefit_tau` column
+ * and a `confidence_lower`/`confidence_upper` bound, but they are computed over
+ * `agri.strategy_selection_candidate` rows assigned to RANDOM coordinates (`37.5 + random() *
+ * 5.0`, see the migration) -- not a located causal estimate of anything, and never read here.
+ * Only `suitability_score` -- a relative ranking, not an effect size -- crosses this boundary,
+ * and every entry is tagged with the tier that produced it so the prompt and the UI can say so.
+ */
+async function resolveStrategyContext(
+  lat: number,
+  lon: number,
+  heuristicRecommendations: StrategyScore[]
+): Promise<StrategyContextEntry[]> {
+  const matviewPresent = await relationExists(STRATEGY_CONTEXT_MATVIEW).catch(() => false);
+
+  if (matviewPresent) {
+    const point = sql`ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)::geography`;
+    const rows = await db.execute<StrategyMatviewRow>(sql`
+      SELECT strategy_slug, strategy_name, strategy_category, suitability_score
+      FROM ${sql.raw(STRATEGY_CONTEXT_MATVIEW)}
+      WHERE ST_DWithin(geom::geography, ${point}, ${STRATEGY_MATVIEW_CELL_RADIUS_METERS})
+      ORDER BY suitability_score DESC
+      LIMIT ${MAX_STRATEGY_CONTEXT_ENTRIES}
+    `);
+    return rows.map((row) => ({
+      claimTier: "evaluation_only_model" as const,
+      strategySlug: row.strategy_slug,
+      name: row.strategy_name,
+      category: row.strategy_category,
+      score: row.suitability_score,
+    }));
+  }
+
+  return heuristicRecommendations.slice(0, MAX_STRATEGY_CONTEXT_ENTRIES).map((score) => ({
+    claimTier: "heuristic_score" as const,
+    strategySlug: score.strategyId,
+    name: score.name,
+    category: null,
+    score: score.score,
+  }));
 }
 
 /**
@@ -520,25 +715,41 @@ export async function assembleRegionalContext(
     if (source !== undefined) dateBySource.set(source, row.date);
   }
 
-  const [strategy, drought, gauges, weather, fires, perimeters, carbon, capabilities] =
-    await Promise.allSettled([
-      getStrategyRecommendations(lat, lon),
-      getPublishedDroughtClassification(undefined, dateBySource.get("drought")),
-      getPublishedStreamflowGauges(bbox, dateBySource.get("streamflow")),
-      readNearestWeather(
-        lat,
-        lon,
-        bbox,
-        dateBySource.get("weatherObservations"),
-        today
-      ),
-      // The middle argument is the FIRMS lookback window; passing undefined takes its default,
-      // which is the same window this call has always used.
-      getPublishedFireDetections(bbox, undefined, dateBySource.get("fireDetections")),
-      readPublishedFirePerimeters(west, south, east, north),
-      getInterventionSuitability(lat, lon),
-      getSliderCapabilities(),
-    ]);
+  const [
+    strategy,
+    drought,
+    gauges,
+    weather,
+    fires,
+    perimeters,
+    carbon,
+    capabilities,
+    soil,
+    mtbs,
+    communityProposals,
+  ] = await Promise.allSettled([
+    getStrategyRecommendations(lat, lon),
+    getPublishedDroughtClassification(undefined, dateBySource.get("drought")),
+    getPublishedStreamflowGauges(bbox, dateBySource.get("streamflow")),
+    readNearestWeather(
+      lat,
+      lon,
+      bbox,
+      dateBySource.get("weatherObservations"),
+      today
+    ),
+    // The middle argument is the FIRMS lookback window; passing undefined takes its default,
+    // which is the same window this call has always used.
+    getPublishedFireDetections(bbox, undefined, dateBySource.get("fireDetections")),
+    readPublishedFirePerimeters(west, south, east, north),
+    getInterventionSuitability(lat, lon),
+    getSliderCapabilities(),
+    // Live external reads, added 2026-08-14 to replace the two fields this assembler used to
+    // hardcode to null despite both having a real server-side read path.
+    getSoilProperties(lat, lon),
+    getMTBSPerimeters(bbox),
+    readCommunityProposals(lat, lon),
+  ]);
 
   const strategyValues = settled(strategy, [] as StrategyScore[]);
   const droughtValue = drought.status === "fulfilled" ? drought.value : null;
@@ -553,6 +764,32 @@ export async function assembleRegionalContext(
     latestUpdatedAt: null as string | null,
   });
   const carbonValue = carbon.status === "fulfilled" ? carbon.value : null;
+  const soilValue = soil.status === "fulfilled" ? soil.value : null;
+  const mtbsCollection = settled(mtbs, {
+    type: "FeatureCollection",
+    features: [],
+  } as GeoJSON.FeatureCollection);
+  const communityProposalsValue = settled(
+    communityProposals,
+    [] as CommunityProposal[]
+  );
+  // Runs after the batch above resolves rather than inside it: the matview branch is a second
+  // sequential query only when drizzle 0027 is actually applied, which today it is not anywhere
+  // this runs -- so the common path adds no extra latency, just a map over `strategyValues`.
+  const strategyContextValue = await resolveStrategyContext(
+    lat,
+    lon,
+    strategyValues
+  ).catch(() => [] as StrategyContextEntry[]);
+
+  const latestMtbsIgnitionDate = mtbsCollection.features
+    .map((feature) => {
+      const properties = feature.properties as MTBSFireProperties | null;
+      return typeof properties?.ignitionDate === "string" ? properties.ignitionDate : null;
+    })
+    .filter((value): value is string => value !== null && Number.isFinite(Date.parse(value)))
+    .sort()
+    .at(-1);
 
   const detections: NearbyFireDetection[] = [];
   for (const feature of fireCollection.features) {
@@ -589,8 +826,12 @@ export async function assembleRegionalContext(
     firePerimeters: perimeterValue.latestUpdatedAt ?? "unavailable",
     strategyRecommendations:
       strategyValues.length > 0 ? "published_revision_required" : "unavailable",
-    soilProperties: "unavailable",
-    mtbsPerimeters: "unavailable",
+    // SoilGrids v2.0 is a static, undated raster release (see soilgrids.ts): there is no
+    // per-request observation time to report, so this sentinel is deliberately not a parseable
+    // date. It still resolves `contextIsEmpty` and the freshness footer correctly to "available
+    // data exists" vs "unavailable" -- the one thing it cannot claim is a specific age.
+    soilProperties: soilValue !== null ? "static_release_untimed" : "unavailable",
+    mtbsPerimeters: latestMtbsIgnitionDate ?? "unavailable",
     carbonPotential:
       carbonValue?.availability === "published"
         ? "published_revision_required"
@@ -600,7 +841,9 @@ export async function assembleRegionalContext(
   const payload: RegionalContextPayload = {
     location: { lat, lon, geohash: `${lat.toFixed(2)}_${lon.toFixed(2)}` },
     strategyRecommendations: strategyValues.length > 0 ? strategyValues : null,
-    soilProperties: null,
+    strategyContext: strategyContextValue,
+    communityProposals: communityProposalsValue,
+    soilProperties: soilValue,
     waterScarcity:
       droughtValue?.availability === "published" || gaugeValues.length > 0
         ? {
@@ -620,7 +863,12 @@ export async function assembleRegionalContext(
           totalCount: perimeterValue.perimeters.length,
         }
       : null,
-    mtbsPerimeters: null,
+    mtbsPerimeters: mtbsCollection.features.length
+      ? {
+          fires: mtbsCollection.features.slice(0, MAX_MTBS_FIRES),
+          totalCount: mtbsCollection.features.length,
+        }
+      : null,
     carbonPotential:
       carbonValue?.availability === "published" ? carbonValue : null,
   };
