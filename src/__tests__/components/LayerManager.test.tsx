@@ -387,10 +387,10 @@ afterEach(() => {
 describe("LayerManager style readiness", () => {
   it("re-applies visibility once the style catches up, not just when style.load fires", () => {
     // `sensors` is style-backed with a single style layer id and no governance reason, so
-    // applyVisibility is the only thing deciding its visibility. (This was
-    // `building-footprints` until the registry withheld that one for having an empty backing
-    // table -- a withheld toggle reads false in useLayerVisibility whatever activeLayers says,
-    // which would make every case here pass for the wrong reason.)
+    // applyVisibility is the only thing deciding its visibility. (This was the 3D-footprints
+    // layer until the registry withheld that one for having an empty backing table -- a
+    // withheld toggle reads false in useLayerVisibility whatever activeLayers says, which
+    // would make every case here pass for the wrong reason.)
     useMapStore.setState({ activeLayers: [] });
     const fakeMap = createFakeMap();
     renderLayerManager(fakeMap);
@@ -548,11 +548,10 @@ describe("LayerManager applies per-layer opacity", () => {
     const written = new Set(
       fakeMap.setPaintProperty.mock.calls.map(([layerId, property]) => `${layerId}|${property}`)
     );
-    // fill / line / circle / fill-extrusion, each on the layer whose type defines it.
+    // fill / line / circle, each on the layer whose type defines it.
     expect(written).toContain("interventions|fill-opacity");
     expect(written).toContain("interventions-outline|line-opacity");
     expect(written).toContain("interventions-points|circle-opacity");
-    expect(written).toContain("building-footprints|fill-extrusion-opacity");
     // ...and never a property the layer's type does not define.
     expect(written).not.toContain("interventions|circle-opacity");
     expect(written).not.toContain("interventions-points|fill-opacity");

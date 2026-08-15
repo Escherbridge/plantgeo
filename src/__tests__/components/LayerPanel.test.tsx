@@ -263,16 +263,6 @@ describe("LayerPanel layer tree", () => {
     }
   });
 
-  // `building-footprints` belongs to no category, so
-  // without a home in the tree the one comprehensive list of layers would be missing one.
-  it("files the layer no panel governs under its own group", () => {
-    renderDock();
-    openPanel();
-
-    const basemap = screen.getByTestId("layer-group-Basemap");
-    expect(basemap.textContent).toContain(LAYER_REGISTRY["building-footprints"].label);
-  });
-
   // `map-store.activeLayers` is the single source of layer visibility, and since the dock
   // absorbed the sheets it is also the only surface writing it.
   it("writes layer visibility to activeLayers and nowhere else", () => {
@@ -303,10 +293,10 @@ describe("LayerPanel layer tree", () => {
     renderDock();
     openPanel();
 
-    const row = rowFor("building-footprints");
+    const row = rowFor("soil");
     const eye = row.querySelector<HTMLButtonElement>('[role="switch"]');
     expect(eye?.disabled).toBe(true);
-    expect(row.textContent).toContain("3D building footprints are not published yet");
+    expect(row.textContent).toContain(LAYER_REGISTRY.soil.permanentlyUnavailableReason!);
   });
 
   /**
@@ -441,10 +431,10 @@ describe("LayerPanel dock sections", () => {
 
     // The layer list is fully expanded...
     expect(rowFor("sensors")).toBeTruthy();
-    // ...and not one report is mounted with it. Eight expanded reports on every dock open
-    // would issue eight panels' worth of warehouse queries before anyone asked a question.
+    // ...and not one report is mounted with it. Every report expanded on a dock open would
+    // issue every panel's worth of warehouse queries before anyone asked a question.
     expect(usePanelStore.getState().expandedDetails).toEqual([]);
-    for (const section of ["fire", "water", "vegetation", "soil", "community", "alerts"]) {
+    for (const section of ["fire", "water", "vegetation", "soil", "community", "offline"]) {
       const disclosure = screen
         .getByTestId(`dock-section-${section}`)
         .querySelector("button");
@@ -489,21 +479,11 @@ describe("LayerPanel dock sections", () => {
       "Vegetation & Land Cover",
       "Soil Health & Carbon",
       "Strategy Requests",
-      "Environmental Alerts",
       "Team Dashboard",
-      "Environmental Analytics",
+      "Offline & Sync",
     ]) {
       expect(detailsToggleFor(label), label).toBeTruthy();
     }
-  });
-
-  // The ungoverned bucket carries layers, not a report: there is no panel body behind it.
-  it("gives the Basemap bucket no report to disclose", () => {
-    renderDock();
-    openPanel();
-
-    const basemap = screen.getByTestId("layer-group-Basemap");
-    expect(basemap.querySelector('[data-testid^="dock-section-"]')).toBeNull();
   });
 
   // JSX drops whitespace that spans a newline between two children, so the label and the
@@ -528,20 +508,18 @@ describe("LayerPanel dock sections", () => {
     );
   });
 
-  // What the toolbar's alert bell does. The dock is closed at that moment, so this is also
-  // what proves the shortcut does not merely expand a section nobody can see.
+  // What a shortcut outside the manager does. The dock is closed at that moment, so this is
+  // also what proves the shortcut does not merely expand a section nobody can see.
   it("opens the dock at the section a shortcut focuses", () => {
     renderDock();
     expect(screen.queryByTestId("layer-panel")).toBeNull();
 
     act(() => {
-      usePanelStore.getState().focusDockSection("alerts");
+      usePanelStore.getState().focusDockSection("offline");
     });
 
     expect(screen.getByTestId("layer-panel")).toBeTruthy();
-    expect(detailsToggleFor("Environmental Alerts").getAttribute("aria-expanded")).toBe(
-      "true"
-    );
+    expect(detailsToggleFor("Offline & Sync").getAttribute("aria-expanded")).toBe("true");
     // Consumed on arrival, so a later expansion by hand does not re-scroll the dock.
     expect(usePanelStore.getState().pendingScrollSection).toBeNull();
   });
@@ -737,7 +715,7 @@ describe("LayerPanel control sections", () => {
 
   /**
    * The whole reason render mode is its own section. Changing how the map is lit must never add
-   * or drop a layer, and the toolbar this replaced broke that with a building-footprints button
+   * or drop a layer, and the toolbar this replaced broke that with a 3D-footprints button
    * sitting between the globe and the 3D toggles.
    */
   it("gives render mode no layer switch of its own", () => {
@@ -750,17 +728,9 @@ describe("LayerPanel control sections", () => {
       control.textContent
     );
     expect(switchNames).toEqual(["Terrain", "Globe", "3D tilt"]);
-    expect(view.textContent).not.toContain(LAYER_REGISTRY["building-footprints"].label);
-  });
-
-  it("keeps the layer no category governs switchable from its Basemap row alone", () => {
-    renderDock();
-    openPanel();
-
-    // Withheld, so the eye is disabled -- but it exists, and it is the only one. The toolbar
-    // button that used to be the second is gone.
-    const eyes = screen.getAllByRole("switch", { name: "Show 3D Building Footprints on map" });
-    expect(eyes).toHaveLength(1);
+    for (const toggleId of LAYER_TOGGLE_IDS) {
+      expect(view.textContent, toggleId).not.toContain(LAYER_REGISTRY[toggleId].label);
+    }
   });
 
   it("changes render mode without touching what is drawn", () => {

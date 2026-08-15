@@ -76,6 +76,19 @@ interface RunRow {
   last_error_summary: string | null;
 }
 
+interface ExhaustedGapWindowRow {
+  shard_key: string;
+  lane_id: string;
+  window_start: string | null;
+  window_end: string | null;
+  layer_reference: string | null;
+  first_missing_day: string | null;
+  last_missing_day: string | null;
+  missing_day_count: number;
+  walk_generation: number;
+  reopened_at: string | null;
+}
+
 /** The Python service route that actually runs a lane; see jobs/scheduler.py's `jobs_bp`. */
 function triggerEndpoint(): URL {
   const url = providerUrl("AGRI_DATA_SERVICE_URL", "http://localhost:8000");
@@ -351,6 +364,96 @@ export const jobsRouter = router({
         succeededWorkItems: row.succeeded_work_items,
         failedWorkItems: row.failed_work_items,
         error: row.last_error_summary,
+      }));
+    }),
+
+  /**
+   * Windows `jobs-plan-gaps` gave up on reopening — NOT failures. `reconcile.py`'s
+   * `gap_window_action` moves a succeeded-but-missing window through up to
+   * `MAX_GAP_REOPEN_GENERATIONS` (5) reopen passes; past that, a day the upstream still doesn't
+   * serve is read as evidence the source never published it, not evidence of a hole, and the
+   * window is reported (`reopen_exhausted`) instead of reopened a sixth time. Every row here is
+   * one of those governed absences.
+   *
+   * `agri.job_work_item.payload` carries the marker `reopen_gap_windows.sql` stamps on: the
+   * key `reopened_from_observed_gaps` (present only once a reopen has fired) and the counter
+   * `walk_generation` it bumps every pass. `walk_generation >= 5` is this router's own copy of
+   * `MAX_GAP_REOPEN_GENERATIONS` — the two are independent numbers by construction (Python owns
+   * the constant, this file owns the read), so a future change to one without the other silently
+   * drifts; there is no shared source across the language boundary.
+   *
+   * `payload -> 'reopened_from_observed_gaps' IS NOT NULL` stands in for the jsonb `?` (key
+   * exists) operator: postgres-js's tagged-template parser treats a bare `?` as reserved, so the
+   * equivalent null-check is used instead of `payload ? 'reopened_from_observed_gaps'`.
+   *
+   * `missing_day_count` reconstructs the window's TRUE count rather than the capped sample
+   * `gap_reopen_marker` stores: `missing_days` is truncated to `MAX_REPORTED_WINDOWS` (50) with
+   * the overflow counted separately in `omitted_missing_days`, exactly as `reconcile.py`'s own
+   * report totals do, so this adds the two back together rather than reporting a truncated array
+   * length as the whole story.
+   */
+  getExhaustedGapWindows: adminProcedure
+    .input(
+      z.object({
+        laneId: z.string().min(1).max(150).optional(),
+        limit: z.number().int().min(1).max(200).default(50),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const laneFilter = input.laneId ? sql`AND exhausted.lane_id = ${input.laneId}` : sql``;
+      const result = await ctx.db.execute(sql`
+        WITH exhausted AS (
+          SELECT
+            item.shard_key,
+            definition.name AS lane_id,
+            item.payload AS payload,
+            COALESCE(
+              CASE
+                WHEN jsonb_typeof(item.payload -> 'walk_generation') = 'number'
+                  THEN (item.payload ->> 'walk_generation')::int
+              END,
+              0
+            ) AS walk_generation
+          FROM agri.job_work_item item
+          JOIN agri.job_run run ON run.id = item.job_run_id
+          JOIN agri.job_definition definition ON definition.id = run.job_definition_id
+          WHERE item.payload -> 'reopened_from_observed_gaps' IS NOT NULL
+        )
+        SELECT
+          exhausted.shard_key,
+          exhausted.lane_id,
+          exhausted.walk_generation,
+          exhausted.payload ->> 'window_start' AS window_start,
+          exhausted.payload ->> 'window_end' AS window_end,
+          exhausted.payload -> 'reopened_from_observed_gaps' ->> 'layer' AS layer_reference,
+          exhausted.payload -> 'reopened_from_observed_gaps' ->> 'first_day' AS first_missing_day,
+          exhausted.payload -> 'reopened_from_observed_gaps' ->> 'last_day' AS last_missing_day,
+          COALESCE(
+            jsonb_array_length(exhausted.payload -> 'reopened_from_observed_gaps' -> 'missing_days'),
+            0
+          ) + COALESCE(
+            (exhausted.payload -> 'reopened_from_observed_gaps' ->> 'omitted_missing_days')::int,
+            0
+          ) AS missing_day_count,
+          exhausted.payload -> 'reopened_from_observed_gaps' ->> 'reopened_at' AS reopened_at
+        FROM exhausted
+        WHERE exhausted.walk_generation >= 5
+        ${laneFilter}
+        ORDER BY missing_day_count DESC, exhausted.shard_key
+        LIMIT ${input.limit}
+      `);
+
+      return resultRows<ExhaustedGapWindowRow>(result).map((row) => ({
+        shardKey: row.shard_key,
+        laneId: row.lane_id,
+        windowStart: row.window_start,
+        windowEnd: row.window_end,
+        layerReference: row.layer_reference,
+        firstMissingDay: row.first_missing_day,
+        lastMissingDay: row.last_missing_day,
+        missingDayCount: row.missing_day_count,
+        walkGeneration: row.walk_generation,
+        reopenedAt: row.reopened_at,
       }));
     }),
 });

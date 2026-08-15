@@ -146,7 +146,6 @@ graph TD
         MapStore[map-store<br/>viewport, zoom, bearing]
         LayerStore[layer-store<br/>visibility, opacity, filters]
         RoutingStore[routing-store<br/>origin, dest, waypoints]
-        AlertsStore[alerts-store<br/>unread count, list]
         AIStore[regional-intelligence-store<br/>messages, location, streaming]
         TrackingStore[tracking-store<br/>assets, positions]
         DrawingStore[drawing-store<br/>shapes, mode, vertices]
@@ -164,7 +163,6 @@ graph TD
         MapView[MapView]
         Panels[LayerPanel dock]
         Layers[LayerManager]
-        AlertBell[AlertBell]
         RIPanel[AI Panel]
     end
 
@@ -187,10 +185,10 @@ graph LR
         WD[WaterDetails]
         VD[VegetationDetails]
         SD[SoilDetails]
+        CLD[ClimateDetails]
         CD[CommunityDetails]
         TD[TeamDetails]
-        AD[AnalyticsDetails]
-        ALD[AlertDetails]
+        OP[OfflinePanel]
     end
 
     Dock -->|tRPC queries, one region at a time as it expands| API[tRPC Routers]

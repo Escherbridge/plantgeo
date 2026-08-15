@@ -192,7 +192,6 @@ describe('styleLayerOpacityTargets', () => {
     expect(baseOf('evacuation-zones', 'fill-opacity')).toBe(0.45)
     expect(baseOf('burn-severity-outline', 'line-opacity')).toBe(0.8)
     expect(baseOf('interventions-points', 'circle-opacity')).toBe(0.9)
-    expect(baseOf('building-footprints', 'fill-extrusion-opacity')).toBe(0.75)
   })
 
   // An outline the style leaves unset draws at 1. Defaulting to `undefined` instead would

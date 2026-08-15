@@ -58,6 +58,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -68,7 +69,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agri_data_service.db.engine import ingest_session
 from agri_data_service.db.sql_queries import load_query_sql
-from agri_data_service.ingest.archive_walk import archive_lane_definition_name
+from agri_data_service.ingest.archive_walk import archive_lane_definition_name, archive_source
 from agri_data_service.ingest.commands import (
     WORKER_ID_MAX_LENGTH,
     WORKER_ID_VARIABLE,
@@ -78,6 +79,7 @@ from agri_data_service.ingest.commands import (
     run_archive_definition_slice,
 )
 from agri_data_service.ingest.lanes import BACKFILL_LANES, resolve_lane
+from agri_data_service.ingest.reconcile import observed_day_shards, observed_layer_days_in_range
 from agri_data_service.jobs import (
     JobDefinitionNotFoundError,
     JobLedgerRowError,
@@ -110,6 +112,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from agri_data_service.ingest.lanes import BackfillLane
     from agri_data_service.jobs.dispatch import LaneDispatchRegistry, LanePauseState
     from agri_data_service.jobs.registry import JobHandlerRegistry
 
@@ -499,11 +502,93 @@ class MaintenanceStepReport:
     detail: str | None
 
 
-async def _execute_maintenance_step(planned: PlannedMaintenanceStep) -> MaintenanceStepReport:
+@dataclass(frozen=True, slots=True)
+class _ShardCensusProbe:
+    """How many day-census shards one lane's reconcile/plan-gaps step reads, and the slowest one's seconds.
+
+    Exists so an operator reading one hourly `jobs-pulse` log line can tell "too few shards" (shard_count
+    low, every shard slow) from "one pathological shard" (shard_count normal, slowest_shard_seconds spikes)
+    without reading a second source -- the whole point of putting this in the step's own detail string.
+    """
+
+    shard_count: int
+    slowest_shard_seconds: float
+
+
+async def _probe_census_shards(lane: BackfillLane, *, monotonic: Callable[[], float]) -> _ShardCensusProbe:
+    """Time every shard of the observed-day census `reconcile_lane`/`plan_lane_gaps` are about to read again.
+
+    Neither returns shard-level telemetry, and adding it to their reports would mean editing reconcile.py,
+    which this module must not do. So this probe reads the SAME shards a second time, through the public
+    entry points that module exposes for exactly this purpose -- its own docstring calls out "a caller
+    holding a pool can fan out for itself with no change to my file": `observed_day_shards` cuts the lane's
+    own floor-to-today span into the same shards `observed_layer_days` would use internally, and
+    `observed_layer_days_in_range` reads one of them.
+
+    The bound mirrors `reconcile_lane`'s own -- floor through today (UTC) -- rather than `plan_lane_gaps`'
+    grid-anchored bound, which is never more than one lane window narrower. At `OBSERVED_DAY_SHARD_DAYS`
+    (two years) that narrower tail cannot move a day into a different shard, so one probe, cached per lane
+    by the caller, serves both steps' detail lines without a second read.
+
+    Shards are read ONE AT A TIME on ONE session rather than fanned out: this is a diagnostic read, not the
+    settlement itself, and it is not worth a session (and connection) per shard just to shave the wall-clock
+    time of a number nobody is blocked on. The per-shard row-cap refusal inside `observed_layer_days_in_range`
+    still applies to each read, so a probe can raise exactly as the real census can; the caller isolates that
+    failure the same way it isolates every other maintenance-step failure, so a broken probe degrades the
+    log line rather than the settlement.
+    """
+    layer_reference = archive_source(lane).layer_reference()
+    shards = observed_day_shards(lane.floor.date(), datetime.now(UTC).date())
+    slowest_seconds = 0.0
+    async with ingest_session() as session:
+        for shard_from, shard_to in shards:
+            shard_started = monotonic()
+            await observed_layer_days_in_range(session, layer_reference, from_day=shard_from, to_day=shard_to)
+            slowest_seconds = max(slowest_seconds, monotonic() - shard_started)
+        await session.rollback()
+    return _ShardCensusProbe(shard_count=len(shards), slowest_shard_seconds=slowest_seconds)
+
+
+async def _census_detail(
+    lane: BackfillLane,
+    lane_token: str,
+    *,
+    monotonic: Callable[[], float],
+    census_probes: dict[str, _ShardCensusProbe],
+) -> str:
+    """The `census shards=N slowest_shard_seconds=S.SSS` fragment appended to a lane step's detail.
+
+    Cached per lane so the reconcile step and the plan-gaps step -- which read effectively the same census,
+    see `_probe_census_shards` -- share one probe rather than two. A probe failure is reported inline and
+    never raised: it is diagnostic only, and must never turn a real settlement into a reported `raised` tick
+    over a fault in the number that was only there to help debug one.
+    """
+    probe = census_probes.get(lane_token)
+    if probe is not None:
+        return f"census shards={probe.shard_count} slowest_shard_seconds={probe.slowest_shard_seconds:.3f}"
+    try:
+        probe = await _probe_census_shards(lane, monotonic=monotonic)
+    except Exception as error:  # the probe is diagnostic only; its failure must not block real settlement
+        logger.warning("jobs_pulse_census_probe_failed", lane=lane_token, error=type(error).__name__)
+        return f"census probe failed ({type(error).__name__})"
+    census_probes[lane_token] = probe
+    return f"census shards={probe.shard_count} slowest_shard_seconds={probe.slowest_shard_seconds:.3f}"
+
+
+async def _execute_maintenance_step(
+    planned: PlannedMaintenanceStep,
+    *,
+    monotonic: Callable[[], float],
+    census_probes: dict[str, _ShardCensusProbe],
+) -> MaintenanceStepReport:
     """Run one data-quality step through the exact function its own CLI verb calls.
 
     Both lane steps run with `apply_changes=True`. That is the whole point of putting them on a
     schedule: a dry run detects a gap and changes nothing, which is the state this pass exists to end.
+
+    `census_probes` carries this tick's `_ShardCensusProbe` results, keyed by lane token, so the
+    reconcile and plan-gaps steps for one lane share a single probe of the observed-day census instead of
+    reading it a third and fourth time -- see `_census_detail`.
     """
     if planned.step == "validate-streams":
         # `bbox=None` means "the configured INGEST_BBOX", exactly as the verb's own default does.
@@ -514,13 +599,19 @@ async def _execute_maintenance_step(planned: PlannedMaintenanceStep) -> Maintena
         outcome: PulseLaneOutcome = "invalid" if counts.get("invalid", 0) else "ran"
         return MaintenanceStepReport(outcome=outcome, records=len(report.streams), detail=detail)
 
-    lane = resolve_lane(planned.require_lane_token())
+    lane_token = planned.require_lane_token()
+    lane = resolve_lane(lane_token)
+    census_detail = await _census_detail(lane, lane_token, monotonic=monotonic, census_probes=census_probes)
+
     if planned.step == "reconcile":
         reconciliation = await reconcile_archive_lane(lane, apply_changes=True)
         return MaintenanceStepReport(
             outcome="ran",
             records=reconciliation.marked_succeeded_count,
-            detail=f"settled {reconciliation.marked_succeeded_count} of {reconciliation.planned_window_count} planned",
+            detail=(
+                f"settled {reconciliation.marked_succeeded_count} of {reconciliation.planned_window_count} "
+                f"planned, {census_detail}"
+            ),
         )
 
     # `end=None` measures gaps through today, matching `jobs-plan-gaps`' own `--until` default. No
@@ -532,7 +623,8 @@ async def _execute_maintenance_step(planned: PlannedMaintenanceStep) -> Maintena
         records=opened,
         detail=(
             f"opened {gap_plan.opened_count}, reopened {gap_plan.reopened_count}, "
-            f"missing {len(gap_plan.missing_days)} day(s), unplannable {len(gap_plan.unplannable_days)}"
+            f"missing {len(gap_plan.missing_days)} day(s), unplannable {len(gap_plan.unplannable_days)}, "
+            f"{census_detail}"
         ),
     )
 
@@ -541,13 +633,14 @@ async def _run_maintenance_step(
     planned: PlannedMaintenanceStep,
     *,
     monotonic: Callable[[], float],
+    census_probes: dict[str, _ShardCensusProbe],
 ) -> PulseLaneResult:
     """Run one data-quality step, isolating its own failure exactly as the two lane passes do."""
     if not planned.enabled:
         return PulseLaneResult(lane=planned.step_id, kind="maintenance", outcome="paused", seconds=0.0, records=0)
     started = monotonic()
     try:
-        report = await _execute_maintenance_step(planned)
+        report = await _execute_maintenance_step(planned, monotonic=monotonic, census_probes=census_probes)
     except Exception as error:  # per-step isolation: one check's fault must not end the pulse
         logger.error("jobs_pulse_maintenance_step_raised", step=planned.step_id, error=type(error).__name__)
         return PulseLaneResult(
@@ -613,11 +706,14 @@ async def run_jobs_pulse(  # noqa: PLR0913 - one parameter per operator-tunable 
             results.append(_budget_exhausted_result(planned_definition.lane_token, "durable"))
             continue
         results.append(await _run_durable_definition(planned_definition, worker_id=worker_id, monotonic=monotonic))
+    # Keyed by lane token, not step: the reconcile and plan-gaps steps for one lane share a single
+    # `_ShardCensusProbe` rather than each probing the census a second time -- see `_census_detail`.
+    census_probes: dict[str, _ShardCensusProbe] = {}
     for planned_step in plan.maintenance:
         if monotonic() >= deadline:
             results.append(_budget_exhausted_result(planned_step.step_id, "maintenance"))
             continue
-        results.append(await _run_maintenance_step(planned_step, monotonic=monotonic))
+        results.append(await _run_maintenance_step(planned_step, monotonic=monotonic, census_probes=census_probes))
     return PulseSummary(lanes=tuple(results))
 
 

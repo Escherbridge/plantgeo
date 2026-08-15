@@ -89,10 +89,12 @@ export interface CommunityProposal {
  * `"heuristic_score"` — `strategy-scoring.ts`'s rule-based `StrategyScore` list (currently always
  * empty: that plane has no validated evidence release published yet, see
  * `getStrategyRecommendationResult`).
- * `"evaluation_only_model"` — a `geo.mv_strategy_recommendations_*` row (drizzle 0027). That
- * plane's own label review tier is `agent_reviewed_pending_owner_signature`: reviewed by an
- * agent, not yet signed off by an owner, and never causal — see the governance note on
- * `resolveStrategyContext` below.
+ * `"evaluation_only_model"` — a `geo.mv_strategy_recommendations_*` row (drizzle 0027, rebuilt
+ * over real geometry by 0028). No row on that plane has ever been signed off by an owner: every
+ * receipt feeding it is CHECK-pinned `evaluation_only` with `CHECK (NOT publication_authorized)`,
+ * and each served cell carries its own `label_review_tier` saying what its label release is
+ * worth — down to `no_label_release_bound` when nothing can be cited at all. Never causal: see
+ * the governance note on `resolveStrategyContext` below.
  */
 export type StrategyClaimTier = "heuristic_score" | "evaluation_only_model";
 
@@ -465,7 +467,17 @@ async function readCommunityProposals(
 
 const STRATEGY_CONTEXT_MATVIEW = "geo.mv_strategy_recommendations_regional";
 const MAX_STRATEGY_CONTEXT_ENTRIES = 3;
-/** Half the `regional` matview's own cell width (`ST_MakeEnvelope(lon±0.125, lat±0.125)`). */
+/**
+ * How far outside a cell's own boundary a point still counts as being in it.
+ *
+ * A tolerance, not a cell half-width. Until drizzle 0028 the regional matview drew fixed
+ * `ST_MakeEnvelope(lon±0.125, lat±0.125)` boxes around fabricated centres, so half of one box
+ * was a meaningful number; the tier now unions REAL `agri.spatial_cell` polygons, whose size is
+ * whatever the source grid publishes and differs between grids. `ST_DWithin` against the real
+ * polygon is already 0 for any point inside it, so this only widens the match to points just
+ * outside a cell edge — near enough that answering about the neighbouring cell is better than
+ * answering about nothing.
+ */
 const STRATEGY_MATVIEW_CELL_RADIUS_METERS = 14_000;
 
 /** Object type, not an interface: db.execute requires an implicit index signature. */
@@ -476,7 +488,7 @@ type StrategyMatviewRow = {
   suitability_score: number;
 };
 
-/** Whether a relation is present in this database. Used to gate on drizzle 0027 (`geo.mv_strategy_recommendations_*`), which is not yet applied in every environment. */
+/** Whether a relation is present in this database. Used to gate on drizzle 0027/0028 (`geo.mv_strategy_recommendations_*`), which is not yet applied in every environment. */
 async function relationExists(qualifiedName: string): Promise<boolean> {
   const rows = await db.execute<{ exists: boolean }>(
     sql`SELECT to_regclass(${qualifiedName}) IS NOT NULL AS exists`
@@ -494,12 +506,19 @@ async function relationExists(qualifiedName: string): Promise<boolean> {
  * signed off by an owner. See
  * `services/agri-data-service/src/agri_data_service/method/AGENTS.md`.
  *
- * `geo.mv_strategy_recommendations_*` (drizzle 0027) DOES carry a `causal_benefit_tau` column
- * and a `confidence_lower`/`confidence_upper` bound, but they are computed over
- * `agri.strategy_selection_candidate` rows assigned to RANDOM coordinates (`37.5 + random() *
- * 5.0`, see the migration) -- not a located causal estimate of anything, and never read here.
- * Only `suitability_score` -- a relative ranking, not an effect size -- crosses this boundary,
- * and every entry is tagged with the tier that produced it so the prompt and the UI can say so.
+ * `geo.mv_strategy_recommendations_*` carries an `effect_utility_score` and an
+ * `effect_utility_lower`/`effect_utility_upper` spread. Until drizzle 0028 those three were
+ * named `causal_benefit_tau`, `confidence_lower` and `confidence_upper` -- names asserting a
+ * causal effect and a validated interval that this evidence chain has never been able to
+ * support -- and they were computed over `agri.strategy_selection_candidate` rows assigned to
+ * RANDOM coordinates (`37.5 + random() * 5.0`), so they described no place at all. 0028
+ * rebuilds the plane over the real `agri.spatial_cell` geometry each candidate's analysis
+ * subject actually occupies and renames the three columns to what they are: a model-internal
+ * ordering quantity and its spread.
+ *
+ * They are still never read here, and the renaming does not relax the boundary. Only
+ * `suitability_score` -- a relative ranking, not an effect size -- crosses it, and every entry
+ * is tagged with the tier that produced it so the prompt and the UI can say so.
  */
 async function resolveStrategyContext(
   lat: number,
@@ -774,8 +793,9 @@ export async function assembleRegionalContext(
     [] as CommunityProposal[]
   );
   // Runs after the batch above resolves rather than inside it: the matview branch is a second
-  // sequential query only when drizzle 0027 is actually applied, which today it is not anywhere
-  // this runs -- so the common path adds no extra latency, just a map over `strategyValues`.
+  // sequential query only when drizzle 0027/0028 is actually applied, which today it is not
+  // anywhere this runs -- so the common path adds no extra latency, just a map over
+  // `strategyValues`.
   const strategyContextValue = await resolveStrategyContext(
     lat,
     lon,

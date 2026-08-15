@@ -219,7 +219,6 @@ Global application state stored in `/src/stores/`:
 | `map-store.ts` | Map center, zoom, bearing, pitch |
 | `routing-store.ts` | Routing parameters, selected route, isochrone |
 | `tracking-store.ts` | Active asset tracking, vehicle positions |
-| `alerts-store.ts` | Fire alerts, environmental alerts, dismissals |
 | `imagery-store.ts` | Street view imagery, Mapillary sequences |
 | `drawing-store.ts` | Drawing mode, drawn features, measurement |
 | `realtime-store.ts` | WebSocket connection status, live data |

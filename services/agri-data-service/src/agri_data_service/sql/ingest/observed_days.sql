@@ -3,13 +3,17 @@
 --          publisher-dated observations for, with how many rows that day carries. THE canonical
 --          day census. Two callers bind it -- the completeness report over every layer, and lane
 --          reconciliation over one layer -- and they must never disagree about which rows count.
--- Loaded by: agri_data_service.ingest.validation.queries (which formats it once per scope and hands
---          the one-layer form to agri_data_service.ingest.reconcile)
+-- Loaded by: agri_data_service.ingest.validation.queries (which formats it once per combination of the
+--          two scope slots below and hands the one-layer, day-ranged form to
+--          agri_data_service.ingest.reconcile)
 -- Params: published_status (text) -- the one `geo.features.status` value the map serves,
 --         row_limit (int) -- a hard cap on returned rows; both callers REFUSE a result that reached
 --         the cap rather than reasoning about a truncated day set,
 --         layer_id (text holding a UUID) -- supplied ONLY by the one-layer form; the all-layers form
---         carries no such parameter at all. See the scope slot note below.
+--         carries no such parameter at all. See the scope slot notes below,
+--         from_day, to_day (date) -- an INCLUSIVE day range, supplied ONLY by the day-scoped form; the
+--         unscoped form carries neither. The reconciling caller shards its span across several
+--         executions of this statement and binds one shard's bounds per execution.
 --
 -- The first line above is a dispatch marker, not documentation. The unit tests answer
 -- AsyncSession.execute from a recording stub and route each statement by the first single-word comment
@@ -30,7 +34,7 @@
 -- lane settle a window over days the report is simultaneously reporting as absent. One statement
 -- cannot drift from itself.
 --
--- THE SCOPE SLOT. The one clause the two callers genuinely need to differ on is written here as a
+-- THE LAYER SCOPE SLOT. The one clause the two callers genuinely need to differ on is written here as a
 -- Python `.format()` slot, filled at import time from a closed set of two constants in
 -- validation/queries.py and NEVER from request input -- the same load-time slot pattern
 -- ingest/store_drought_area.sql already uses for its replace predicate. It is not a bound parameter
@@ -40,6 +44,32 @@
 -- for a null parameter too and so degrades to a filter over every row of geo.features. The all-layers
 -- caller scans everything by definition and loses nothing; the one-layer caller would lose the only
 -- index that makes its scan bounded.
+--
+-- THE DAY SCOPE SLOT, AND WHY THE ONE-LAYER CALLER SHARDS. A second `.format()` slot sits immediately
+-- below the first, filled the same way -- at import time, from a closed set of constants in
+-- validation/queries.py, NEVER from input. Empty for the report, which wants every day a layer holds; an
+-- inclusive day range for the reconciling caller, which runs this statement once per shard of the lane's
+-- floor-to-today span and unions the answers back together in Python.
+--
+-- The sharding is not an optimisation for its own sake. Measured on prod 2026-08-15, one unsharded census
+-- of the firms layer (about 9,400 days from a 2000-11-01 floor) took 81 to 101 seconds against a 120s
+-- transaction statement timeout, so the census failed outright whenever anything else was running. The cap
+-- below is applied PER SHARD by the caller, never to the union: a shard that reached the cap is refused
+-- exactly as an unsharded scan is, because a truncated shard silently unioned would report its missing tail
+-- as absent days, and an absent day is precisely what reopens a window and re-walks it forever.
+--
+-- The two slots are independent and are AND-combined, never OR-combined. Every caller therefore reads a
+-- subset of the same census the report reads -- narrowing a scope can only remove rows, never add one the
+-- report would not have counted -- which is the property that lets the two callers stay one statement.
+--
+-- The day predicate below is written as two plain inequalities and not as an "either the bound is null or
+-- the column matches it" pair, for the reason the layer scope gives: a nullable bound forces a generic plan.
+-- A caller that wants the whole span binds the widest dates the calendar has rather than binding null, so
+-- there is one statement shape and one plan for both. NOTE FOR WHOEVER TUNES THIS: the day expression is a
+-- function over jsonb and geo.features carries no index on it today, so a shard bound prunes rows only
+-- after they are read. Sharding still keeps each STATEMENT under the timeout, but the total work multiplies
+-- by the shard count until an expression index on (layer_id, geo.feature_observation_day(properties))
+-- exists -- geo.feature_observation_day is IMMUTABLE and PARALLEL SAFE, so it can carry one.
 --
 -- What this returns: one row per (layer, day) pair, ordered by layer then day, each row carrying the
 -- layer's name, the day, and the number of published features observed on it. The one-layer form
@@ -89,11 +119,18 @@
 --     validity failure; it must not silently land on some default day here, and it cannot vouch for
 --     any backfill window either.
 --
---   the scope slot, immediately below that filter
+--   the layer scope slot, immediately below that filter
 --     Either nothing at all (the report, which wants every layer) or one extra equality on the
 --     feature's layer id, whose bound value is cast to uuid so PostgreSQL knows which type to resolve
 --     the text parameter to. A cast like that changes no value; it only pins a type that would
 --     otherwise be ambiguous.
+--
+--   the day scope slot, immediately below the layer scope slot
+--     Either nothing at all (the report, which wants every day) or two inequalities pinning the
+--     observation day into one inclusive range, each bound cast to date for the same type-pinning reason
+--     the layer id is cast to uuid. Inclusive at BOTH ends, which is why the caller that cuts a span into
+--     shards must make its shards touch without overlapping: a one-day hole between two shards would come
+--     back as a missing day, and a missing day is the thing this whole census exists to be trusted about.
 --
 --   GROUP BY layers.name, geo.feature_observation_day(features.properties)
 --     GROUP BY collapses many rows into one row per distinct combination of the listed expressions --
@@ -111,7 +148,10 @@
 --     The cap. It exists so a runaway layer cannot pull an unbounded result into memory; both callers
 --     treat hitting it as an error, not as an answer, because a truncated day set silently invents
 --     absent days -- and an absent day at the tail is what turns a covered window into a partial one
---     and leaves it queued forever.
+--     and leaves it queued forever. The cap is per EXECUTION, so a caller that shards its span applies
+--     the refusal to each shard's own row count and never to the union: the union of one truncated shard
+--     and four whole ones is indistinguishable from a complete answer, which is the one thing this
+--     statement must never hand back.
 SELECT layers.name                                            AS stream,
        geo.feature_observation_day(features.properties)       AS observed_day,
        count(*)                                               AS observation_count
@@ -122,6 +162,7 @@ SELECT layers.name                                            AS stream,
    AND features.geometry_id IS NOT NULL
    AND geo.feature_observation_day(features.properties) IS NOT NULL
    {layer_scope}
+   {day_scope}
  GROUP BY layers.name, geo.feature_observation_day(features.properties)
  ORDER BY layers.name, geo.feature_observation_day(features.properties)
  LIMIT :row_limit

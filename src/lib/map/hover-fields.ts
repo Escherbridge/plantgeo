@@ -22,7 +22,6 @@ export const HOVERABLE_LAYER_IDS: string[] = [
   "soil-survey-fill",
   "soil-survey-summary",
   "weather-temperature",
-  "building-footprints",
   "osm-roads",
   "osm-waterways",
 ];
@@ -333,19 +332,6 @@ function formatWeatherObservation(props: Properties): HoverContent | null {
   ]);
 }
 
-function formatBuildingFootprint(props: Properties): HoverContent | null {
-  const title = stringField(props.name) ?? "Building";
-  const height = formatFixed(props.height, 0, " m");
-  const levels = props.levels != null ? formatInteger(props.levels, "") : null;
-  const buildingType = stringField(props.building_type);
-
-  return buildContent(title, [
-    height ? `Height: ${height}` : null,
-    levels ? `Levels: ${levels}` : null,
-    buildingType ? `Type: ${buildingType}` : null,
-  ]);
-}
-
 function formatRoad(props: Properties): HoverContent | null {
   const title = stringField(props.name) ?? stringField(props.highway) ?? "Road";
   const highway = stringField(props.highway);
@@ -383,7 +369,6 @@ const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
   // their own `summary` flag rather than by which layer drew them.
   "soil-survey-summary": formatSoilSurvey,
   "weather-temperature": formatWeatherObservation,
-  "building-footprints": formatBuildingFootprint,
   "osm-roads": formatRoad,
   "osm-waterways": formatWaterway,
 };

@@ -35,7 +35,6 @@ describe("HOVERABLE_LAYER_IDS", () => {
       // arrows: "weather-wind" is a text symbol whose hit area is the glyph run and whose
       // placement collides away at density.
       "weather-temperature",
-      "building-footprints",
       "osm-roads",
       "osm-waterways",
     ]);
@@ -381,29 +380,6 @@ describe("formatHoverContent: soil-survey-fill", () => {
       hydricFraction: null,
     });
     expect(content?.lines.some((l) => l.startsWith("Hydric share"))).toBe(false);
-    assertNoSentinels(content);
-  });
-});
-
-describe("formatHoverContent: building-footprints", () => {
-  it("formats a full building", () => {
-    const content = formatHoverContent("building-footprints", {
-      name: "Ada County Courthouse",
-      height: 24.8,
-      levels: 5,
-      building_type: "government",
-    });
-    expect(content?.title).toBe("Ada County Courthouse");
-    expect(content?.lines).toContain("Height: 25 m");
-    expect(content?.lines).toContain("Levels: 5");
-    expect(content?.lines).toContain("Type: government");
-    assertNoSentinels(content);
-  });
-
-  it("falls back to a generic title when name is missing", () => {
-    const content = formatHoverContent("building-footprints", { height: 10 });
-    expect(content?.title).toBe("Building");
-    expect(content?.lines).toEqual(["Height: 10 m"]);
     assertNoSentinels(content);
   });
 });

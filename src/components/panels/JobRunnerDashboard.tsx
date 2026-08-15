@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { trpc } from "@/lib/trpc/client";
-import { Activity, Play, RefreshCw, Power, Clock, Database, Layers } from "lucide-react";
+import { Activity, Play, RefreshCw, Power, Clock, Database, Layers, Info } from "lucide-react";
 
 /**
  * The platform admin view of the durable job runner, over `agri.job_definition` / `agri.job_run`.
@@ -12,6 +12,10 @@ import { Activity, Play, RefreshCw, Power, Clock, Database, Layers } from "lucid
  * `job_definition.schedule`, so it is shown as declared-and-documentary rather than as a control.
  * A lane appears here once its definition is registered — an empty table means no lane has ever
  * run, which is the honest reading of an empty ledger.
+ *
+ * The "Governed absences" tab is deliberately styled apart from run history: its rows are windows
+ * `jobs-plan-gaps` gave up reopening after five passes, which is evidence the upstream never
+ * published those days rather than evidence of a broken fetch. See jobsRouter.getExhaustedGapWindows.
  */
 
 const RUN_STATUS_STYLES: Record<string, string> = {
@@ -48,7 +52,7 @@ function formatDuration(
 }
 
 export function JobRunnerDashboard() {
-  const [activeTab, setActiveTab] = useState<"lanes" | "history">("lanes");
+  const [activeTab, setActiveTab] = useState<"lanes" | "history" | "gaps">("lanes");
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const utils = trpc.useUtils();
 
@@ -57,9 +61,17 @@ export function JobRunnerDashboard() {
     { limit: 50 },
     { refetchInterval: 15_000, enabled: activeTab === "history" }
   );
+  const exhaustedGapWindows = trpc.jobs.getExhaustedGapWindows.useQuery(
+    { limit: 50 },
+    { refetchInterval: 15_000, enabled: activeTab === "gaps" }
+  );
 
   const invalidate = async () => {
-    await Promise.all([utils.jobs.getLanes.invalidate(), utils.jobs.getRunHistory.invalidate()]);
+    await Promise.all([
+      utils.jobs.getLanes.invalidate(),
+      utils.jobs.getRunHistory.invalidate(),
+      utils.jobs.getExhaustedGapWindows.invalidate(),
+    ]);
   };
 
   const toggleLane = trpc.jobs.toggleLane.useMutation({
@@ -203,6 +215,16 @@ export function JobRunnerDashboard() {
         >
           Run history
         </button>
+        <button
+          onClick={() => setActiveTab("gaps")}
+          className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
+            activeTab === "gaps"
+              ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
+              : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          Governed absences
+        </button>
       </div>
 
       {activeTab === "lanes" ? (
@@ -332,7 +354,7 @@ export function JobRunnerDashboard() {
             ))}
           </div>
         )
-      ) : (
+      ) : activeTab === "history" ? (
         <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-x-auto shadow-xl">
           {history.isLoading ? (
             <p className="p-6 text-slate-400">Reading run history…</p>
@@ -388,6 +410,82 @@ export function JobRunnerDashboard() {
               </tbody>
             </table>
           )}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/10 p-5 flex gap-3">
+            <Info className="w-5 h-5 text-indigo-300 shrink-0 mt-0.5" />
+            <div className="text-sm text-indigo-100/90 leading-relaxed">
+              <p className="font-semibold text-indigo-200">
+                These windows are evidence of governed absence, not failures.
+              </p>
+              <p className="mt-1 text-indigo-100/80">
+                <code className="font-mono text-xs">jobs-plan-gaps</code> reopens a succeeded window
+                whenever the days it claimed to cover still show up missing — but only up to five
+                times. Past that, a day the upstream still doesn&apos;t serve is read as proof the
+                source never published anything for it (an off-season for a satellite pass, a sensor
+                with no coverage there, a publication cadence the layer just hasn&apos;t reached yet),
+                not as a fetch that keeps breaking. Rather than reopen a sixth time, the ledger reports
+                the window here and leaves it alone.
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-x-auto shadow-xl">
+            {exhaustedGapWindows.isLoading ? (
+              <p className="p-6 text-slate-400">Reading reopen-exhausted windows…</p>
+            ) : exhaustedGapWindows.isError ? (
+              <p className="p-6 text-rose-300 font-mono text-sm">{exhaustedGapWindows.error.message}</p>
+            ) : (exhaustedGapWindows.data ?? []).length === 0 ? (
+              <p className="p-6 text-slate-400">
+                No window has exhausted its reopens. Every gap{" "}
+                <code className="font-mono">jobs-plan-gaps</code> has found so far has either closed on
+                a later pass or is still within its five reopen attempts.
+              </p>
+            ) : (
+              <table className="w-full text-left text-sm text-slate-300">
+                <thead className="bg-slate-800/60 text-slate-400 font-mono text-xs uppercase border-b border-slate-800">
+                  <tr>
+                    <th className="p-4">Lane</th>
+                    <th className="p-4">Layer</th>
+                    <th className="p-4">Window span</th>
+                    <th className="p-4">Missing days</th>
+                    <th className="p-4">First → last missing</th>
+                    <th className="p-4">Reopen passes</th>
+                    <th className="p-4">Last reopened</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {(exhaustedGapWindows.data ?? []).map((gapWindow) => (
+                    <tr key={gapWindow.shardKey} className="hover:bg-slate-800/40 align-top">
+                      <td className="p-4 font-mono font-medium text-white break-all">
+                        {gapWindow.laneId}
+                        <div className="text-[11px] text-slate-500 font-normal break-all">
+                          {gapWindow.shardKey}
+                        </div>
+                      </td>
+                      <td className="p-4 text-xs text-slate-400 font-mono">
+                        {gapWindow.layerReference ?? "—"}
+                      </td>
+                      <td className="p-4 text-xs text-slate-400">
+                        {formatMoment(gapWindow.windowStart)} – {formatMoment(gapWindow.windowEnd)}
+                      </td>
+                      <td className="p-4">
+                        <span className="px-2 py-0.5 rounded text-xs font-semibold bg-indigo-500/20 text-indigo-300">
+                          {gapWindow.missingDayCount} day{gapWindow.missingDayCount === 1 ? "" : "s"}
+                        </span>
+                      </td>
+                      <td className="p-4 text-xs text-slate-400">
+                        {formatMoment(gapWindow.firstMissingDay)} → {formatMoment(gapWindow.lastMissingDay)}
+                      </td>
+                      <td className="p-4 text-xs text-slate-400">{gapWindow.walkGeneration}</td>
+                      <td className="p-4 text-xs text-slate-400">{formatMoment(gapWindow.reopenedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       )}
     </div>

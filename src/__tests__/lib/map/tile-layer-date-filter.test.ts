@@ -89,6 +89,5 @@ describe("dateFilterableStyleLayerIds", () => {
     // of the three timestamp keys -- there is no day to filter on. Adding it to this list
     // without the migration would filter on a missing attribute and hide the layer outright.
     expect(DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS).not.toContain("interventions");
-    expect(DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS).not.toContain("building-footprints");
   });
 });

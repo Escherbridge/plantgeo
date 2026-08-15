@@ -14,7 +14,11 @@ import { useMapStore } from "@/stores/map-store";
 /**
  * A category of map data. Named `PanelId` for the seven right-hand sheets it once addressed;
  * since 2026-08-08 there are no sheets and it names a SECTION of the left dock instead. The
- * registry still routes every layer to one of these, so the vocabulary outlived its surface.
+ * registry routes every layer to one of these, so the vocabulary outlived its surface.
+ *
+ * "analytics" was an eighth member until 2026-08-15, when the Environmental Analytics report
+ * was removed: it governed no layer and its warehouse aggregate was never published, so the
+ * section could only ever say so.
  */
 export type PanelId =
   | "fire"
@@ -23,24 +27,24 @@ export type PanelId =
   | "soil"
   | "climate"
   | "community"
-  | "team"
-  | "analytics";
+  | "team";
 
 /**
  * A dock section that can open a details region.
  *
- * The seven categories plus "alerts" and "offline", neither of which owns a layer or a
- * registry entry. "alerts" is the warnings surface the toolbar bell used to open in its own
- * sheet. "offline" joined 2026-08-14, absorbing the bottom-right floating toggle + panel
- * `MapView` used to mount directly -- see `src/components/map/AGENTS.md` "One manager, no
- * floating surfaces": every control surface is a section of this dock, and area download /
- * storage / sync-conflict resolution is a control surface like any other.
+ * The categories plus "offline", which owns no layer and no registry entry: it joined
+ * 2026-08-14, absorbing the bottom-right floating toggle + panel `MapView` used to mount
+ * directly -- see `src/components/map/AGENTS.md` "One manager, no floating surfaces": every
+ * control surface is a section of this dock, and area download / storage / sync-conflict
+ * resolution is a control surface like any other. "alerts" was a second such member -- the
+ * warnings surface the toolbar bell opened -- until the alerts feature was removed on
+ * 2026-08-15.
  *
  * Every member has a REPORT behind it -- `DETAILS_LABELS` and `DETAILS_BODIES` are both
  * exhaustive over this union, so a new member is a compile error in two files until it has a
  * title and a body. That is why "search" and "view" are not in here: see `DockSectionId`.
  */
-export type DockDetailsId = PanelId | "alerts" | "offline";
+export type DockDetailsId = PanelId | "offline";
 
 /**
  * Anything the manager can expand and scroll to, which is a wider set than the reports.
@@ -92,11 +96,10 @@ function buildPanelLayerMap(): Record<PanelId, LayerToggleId[]> {
     soil:       [],
     climate:    [],
     community:  [],
-    analytics:  [],
     team:       [],
   };
   for (const entry of layerRegistryEntries()) {
-    if (entry.panelId !== null) panelLayers[entry.panelId].push(entry.toggleId);
+    panelLayers[entry.panelId].push(entry.toggleId);
   }
   return panelLayers;
 }
@@ -126,7 +129,7 @@ interface PanelState {
    *
    * Load-bearing rather than cosmetic: a details region is where every panel query lives, and
    * it is MOUNTED only while its id is in here. Opening the dock therefore costs nothing, the
-   * way opening the old rail cost nothing -- the alternative, mounting all eight, would fire
+   * way opening the old rail cost nothing -- the alternative, mounting them all, would fire
    * every panel's queries at once on the first click. Several may be open at a time; that is
    * the reader's call, not a limit worth enforcing.
    *
@@ -141,7 +144,7 @@ interface PanelState {
   /**
    * A section asked to be brought into view, consumed by the section that scrolls itself.
    *
-   * The dock's body is the one scroller (see panel-scroll.ts), so "open the dock at Alerts"
+   * The dock's body is the one scroller (see panel-scroll.ts), so "open the dock at Search"
    * is two facts -- expand it, and put it on screen -- and the second cannot be expressed as
    * state the section merely renders from. Cleared by the section on arrival so a later
    * expansion by hand does not re-scroll.
@@ -157,8 +160,8 @@ interface PanelState {
   toggleDetails: (id: DockSectionId) => void;
   /**
    * Open the manager at a section: dock it, expand that section, and ask it to scroll into
-   * view. The one call every shortcut outside the manager makes -- the rail's alert bell, the
-   * top-bar date pill, and the Ctrl/Cmd+K search shortcut.
+   * view. The one call every shortcut outside the manager makes -- the top-bar date pill and
+   * the Ctrl/Cmd+K search shortcut.
    */
   focusDockSection: (id: DockSectionId) => void;
   /** Marks the scroll request served; called by the section that scrolled. */

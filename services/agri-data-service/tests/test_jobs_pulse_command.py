@@ -586,7 +586,10 @@ def _fake_maintenance(monkeypatch: pytest.MonkeyPatch, **by_step: object) -> lis
     """Record the order steps ran in, answering each with a scripted report or raising its exception."""
     order: list[str] = []
 
-    async def _fake_execute(planned: PlannedMaintenanceStep) -> object:
+    # `**_step_context` swallows the keyword-only arguments the real `_execute_maintenance_step` now
+    # takes (`monotonic`, `census_probes`). These cases assert step ORDER and exit rules, so the shard
+    # timing probe those arguments drive is exactly what the fake exists to stand in for.
+    async def _fake_execute(planned: PlannedMaintenanceStep, **_step_context: object) -> object:
         order.append(planned.step_id)
         answer = by_step.get(planned.step, MaintenanceStepReport(outcome="ran", records=0, detail=None))
         if isinstance(answer, Exception):

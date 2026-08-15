@@ -162,11 +162,15 @@ def test_an_unstated_envelope_term_is_flagged_rather_than_imputed() -> None:
     assert row[names.index("envelope__elevation_m__center")] == 0.0
 
 
-def test_model_a_carries_no_subject_identity_column() -> None:
+def test_model_a_carries_a_subject_identity_column_per_species() -> None:
+    # Model A suppressed subject identity while the harvest held one label per species, which made the
+    # one-hot perfectly separating and unscoreable under leave-one-source-out. The harvest plan now
+    # requires >=2 sources per species, which is the condition that makes the column scoreable, so
+    # both model kinds carry it. See the note above `subjects_in_corpus` in recommendation_models.py.
     matrix = assemble_training_matrix(_matrix_rows(), model_kind="species_fit")
 
-    assert matrix.subject_vocabulary == ()
-    assert not any(name.startswith("subject__") for name in matrix.feature_names)
+    assert len(matrix.subject_vocabulary) == 8  # noqa: PLR2004
+    assert sum(1 for name in matrix.feature_names if name.startswith("subject__")) == 8  # noqa: PLR2004
 
 
 def test_model_b_carries_a_subject_identity_column_per_strategy() -> None:

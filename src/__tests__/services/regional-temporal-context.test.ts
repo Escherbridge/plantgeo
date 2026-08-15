@@ -863,8 +863,9 @@ describe("the viewed-layers request contract", () => {
   });
 
   it("keeps the viewed-layers bound small enough that a full array fits the body cap", () => {
+    // The longest toggle id in the registry, so the bound is measured against the worst case.
     const viewedLayers = Array.from({ length: MAX_VIEWED_LAYERS }, () => ({
-      layer: "building-footprints",
+      layer: "climate-shortwave-radiation",
       date: "2026-08-07",
       hasDataOnDate: true,
     }));

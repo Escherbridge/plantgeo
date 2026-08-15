@@ -34,8 +34,7 @@ export type LayerToggleId =
   | "interventions"
   | "strategy-recommendations"
   | "evacuation-zones"
-  | "burn-severity"
-  | "building-footprints";
+  | "burn-severity";
 
 /** How a toggle reaches the map: a React-mounted layer component, or baked style layers. */
 export type LayerRenderKind = "component" | "style";
@@ -65,8 +64,7 @@ export type LayerIconName =
   | "layers"
   | "thermometer"
   | "sprout"
-  | "users"
-  | "building-2";
+  | "users";
 
 /** Identity and wiring for one switchable layer. */
 export interface LayerRegistryEntry {
@@ -93,8 +91,12 @@ export interface LayerRegistryEntry {
    * cannot publish a name no capability answers to.
    */
   warehouseLayerName: string | null;
-  /** The sidebar panel that owns this switch, or null when no panel does. */
-  panelId: PanelId | null;
+  /**
+   * The category that owns this switch. Total, not nullable: `building-footprints` was the one
+   * uncategorised layer, and it went with the 3D-footprints removal, so every layer is now
+   * reachable from exactly one category's group in the dock.
+   */
+  panelId: PanelId;
   /**
    * Set when the capability is withheld -- by governance, or because the data behind it
    * doesn't exist yet -- the switch is disabled and the layer never renders either way.
@@ -428,27 +430,6 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "fire",
     permanentlyUnavailableReason: null,
   },
-  // No category's report describes it, so `panelId` is null and the manager files it under
-  // its own Basemap bucket -- which since 2026-08-09 is its ONLY switch, the bottom toolbar's
-  // building button having been a second control over this same entry. Withheld: the Martin
-  // function (building_tiles) is live, but its backing table geo.osm_buildings has 0 rows
-  // in production -- the osm2pgsql import (infra/db/import/osm-flex-config.lua) has not
-  // been run for the covered region -- so the switch would toggle a capability that can
-  // never show anything. Drop this reason the same way demand-heatmap's was dropped, once
-  // the import has run and the table is populated; nothing else needs to change.
-  "building-footprints": {
-    toggleId: "building-footprints",
-    // The one label with no `<LayerToggle>` predecessor to preserve: it was taken from the
-    // toolbar button captioned "Toggle 3D building footprints" that used to switch it.
-    label: "3D Building Footprints",
-    icon: "building-2",
-    renderKind: "style",
-    styleLayerIds: ["building-footprints"],
-    warehouseLayerName: null,
-    panelId: null,
-    permanentlyUnavailableReason:
-      "3D building footprints are not published yet: the OSM building import has not been run for this region, so geo.osm_buildings has no rows even though the tile function is live.",
-  },
 };
 
 export const LAYER_TOGGLE_IDS = Object.keys(LAYER_REGISTRY) as LayerToggleId[];
@@ -481,28 +462,17 @@ export function toggleIdForWarehouseLayerName(layerName: string): LayerToggleId 
   return entry?.toggleId ?? null;
 }
 
-/** The panel that owns a toggle's switch, or null for user-uploaded and uncategorised layers. */
+/** The category that owns a toggle's switch, or null for a user-uploaded (non-registry) layer. */
 export function panelIdForLayerToggle(layerId: string): PanelId | null {
   if (!isLayerToggleId(layerId)) return null;
   return LAYER_REGISTRY[layerId].panelId;
 }
 
-/**
- * Toggles no category governs, which the manager files under its own Basemap bucket.
- *
- * Called `TOOLBAR_OWNED_LAYER_TOGGLE_IDS` until 2026-08-09, when the bottom toolbar it named
- * was deleted: `building-footprints` was never really toolbar-owned, it was CATEGORY-less, and
- * the toolbar was merely where its second switch happened to live. The set is the same one and
- * still exists for one reason -- to keep `unreachableLayerToggleIds()` from reporting a layer
- * that has a row as missing one just because no report describes it.
- */
-export const UNCATEGORISED_LAYER_TOGGLE_IDS: readonly LayerToggleId[] = ["building-footprints"];
-
 /** Panels owning at least one layer, in registry declaration order. */
 export function panelIdsOwningLayers(): PanelId[] {
   const ordered: PanelId[] = [];
   for (const entry of layerRegistryEntries()) {
-    if (entry.panelId !== null && !ordered.includes(entry.panelId)) ordered.push(entry.panelId);
+    if (!ordered.includes(entry.panelId)) ordered.push(entry.panelId);
   }
   return ordered;
 }
@@ -510,21 +480,16 @@ export function panelIdsOwningLayers(): PanelId[] {
 /**
  * Toggles nothing reaches — always empty; a non-empty result is a wiring gap.
  *
- * Called with no argument this only catches an entry that claims no panel, which is the
- * weaker half: a `panelId` is a claim about a component the registry never sees, and this
- * returned `[]` while `sensors` and `evacuation-zones` had no switch in any panel. Pass the
- * toggle ids the panel sources actually render to catch that larger class — see
- * src/__tests__/lib/map/layer-registry.test.ts, which reads them out of src/components.
+ * `panelId` is total now, so the claim this makes is entirely about the SWITCH: a category is
+ * a claim about a component the registry never sees, and the panel field alone returned `[]`
+ * while `sensors` and `evacuation-zones` had no switch in any panel. Pass the toggle ids the
+ * panel sources actually render — see src/__tests__/lib/map/layer-registry.test.ts, which
+ * reads them out of src/components.
  */
 export function unreachableLayerToggleIds(renderedToggleIds?: Iterable<string>): LayerToggleId[] {
-  // Uncategorised layers claim no panel by design, so they are exempt from the panel claim;
-  // the rendered-switch check still catches them, because the manager gives them a row.
-  const rendered = renderedToggleIds === undefined ? null : new Set(renderedToggleIds);
+  if (renderedToggleIds === undefined) return [];
+  const rendered = new Set(renderedToggleIds);
   return layerRegistryEntries()
-    .filter((entry) => {
-      if (UNCATEGORISED_LAYER_TOGGLE_IDS.includes(entry.toggleId)) return false;
-      if (entry.panelId === null) return true;
-      return rendered !== null && !rendered.has(entry.toggleId);
-    })
+    .filter((entry) => !rendered.has(entry.toggleId))
     .map((entry) => entry.toggleId);
 }

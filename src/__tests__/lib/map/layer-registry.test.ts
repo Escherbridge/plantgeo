@@ -10,7 +10,6 @@ import {
 import {
   LAYER_REGISTRY,
   LAYER_TOGGLE_IDS,
-  UNCATEGORISED_LAYER_TOGGLE_IDS,
   isLayerToggleId,
   panelIdForLayerToggle,
   panelIdsOwningLayers,
@@ -57,7 +56,6 @@ describe('layer registry derivations', () => {
       'evacuation-zones': ['evacuation-zones', 'evacuation-zones-outline'],
       interventions: ['interventions', 'interventions-outline', 'interventions-points'],
       'burn-severity': ['burn-severity', 'burn-severity-outline'],
-      'building-footprints': ['building-footprints'],
     })
   })
 
@@ -70,7 +68,6 @@ describe('layer registry derivations', () => {
       'interventions',
       'evacuation-zones',
       'burn-severity',
-      'building-footprints',
     ])
     for (const entry of styleBackedLayerEntries()) {
       expect(entry.renderKind).toBe('style')
@@ -149,11 +146,12 @@ describe('layer registry derivations', () => {
       'strategy-recommendations',
     ])
     expect(getLayersForPanel('team')).toEqual([])
-    expect(getLayersForPanel('analytics')).toEqual([])
   })
 
-  it('keeps "building-footprints" uncategorised rather than panel-owned', () => {
-    expect(panelIdForLayerToggle('building-footprints')).toBeNull()
+  // `panelId` is total over the registry, so the only null this can produce is "not a registry
+  // layer at all" -- which is what an uploaded layer's id is.
+  it('claims no category for a layer id the registry does not know', () => {
+    expect(panelIdForLayerToggle('user-upload-42')).toBeNull()
   })
 
   // The dock orders its layer groups from this, so a layer-owning category missing here has
@@ -169,15 +167,6 @@ describe('layer registry derivations', () => {
     ])
   })
 
-  // The manager is meant to be comprehensive: every toggle reaches a category unless it is on
-  // the uncategorised allowlist. A new entry that forgets its panelId shows up here. Necessary
-  // but not sufficient -- an entry naming a category the manager renders no row for passes this
-  // and is caught by the reachability test below instead.
-  it('leaves no layer unreachable from the manager', () => {
-    expect(UNCATEGORISED_LAYER_TOGGLE_IDS).toEqual(['building-footprints'])
-    expect(unreachableLayerToggleIds()).toEqual([])
-  })
-
   // The bug this pins: `sensors` and `evacuation-zones` named their panels, served real
   // tiles, and had no switch in any panel, so the only way to turn them on did not exist. The
   // registry-only check above reported zero unreachable layers throughout. The dock derives
@@ -186,44 +175,27 @@ describe('layer registry derivations', () => {
     expect(unreachableLayerToggleIds(dockReachableLayerToggleIds())).toEqual([])
   })
 
-  // The comprehensiveness claim in the other direction: the manager's own bucket for layers no
-  // category governs is what keeps `building-footprints` in the one complete list of layers
-  // rather than missing from it. Since the bottom toolbar went on 2026-08-09 that bucket's row
-  // is also its ONLY switch, so a regression here would make the layer unreachable outright.
-  it('files the layer no category governs under the dock’s own bucket', () => {
-    const basemap = DOCK_LAYER_GROUPS.find((group) => group.key === 'Basemap')
-    expect(basemap?.layerIds).toEqual(['building-footprints'])
-    // No report under it: a bucket of ungoverned layers has no panel body to disclose.
-    expect(basemap?.detailsId).toBeNull()
-    // Every registry layer, exactly once. Sorted, because grouping deliberately reorders:
-    // the dock lists a category's layers together, and the registry declares them apart.
+  // The comprehensiveness claim in the other direction: the groups the dock derives must
+  // between them account for every registry layer. A "Basemap" bucket held the ungoverned
+  // ones until 2026-08-15, when `building-footprints` -- the only layer ever in it -- was
+  // removed and `panelId` became total.
+  it('gives every registry layer a group, exactly once', () => {
+    // Sorted, because grouping deliberately reorders: the dock lists a category's layers
+    // together, and the registry declares them apart.
     expect([...dockReachableLayerToggleIds()].sort()).toEqual([...LAYER_TOGGLE_IDS].sort())
-  })
-
-  // Teams and Analytics own no layer, so the registry cannot order them and they get no
-  // group; Alerts and Offline are not registry concepts at all -- `DockDetailsId` is
-  // `PanelId | "alerts" | "offline"`, so those two are the pair `getLayersForPanel` cannot
-  // even be asked about, which is why the loop below covers only the other two. All four are
-  // still reachable, as the dock's layerless sections -- which is what stopped the rail's
-  // removal from orphaning them.
-  it('keeps the layerless reports reachable as their own dock sections', () => {
-    expect(DOCK_PIVOT_SECTIONS).toEqual(['alerts', 'team', 'analytics', 'offline'])
-    for (const panelId of ['team', 'analytics'] as const) {
-      expect(getLayersForPanel(panelId)).toEqual([])
-      expect(DOCK_LAYER_GROUPS.some((group) => group.key === panelId)).toBe(false)
+    for (const group of DOCK_LAYER_GROUPS) {
+      expect(group.detailsId, group.key).toBe(group.key)
     }
   })
 
-  // The same drift the other way round: a dock row for a layer whose registry entry lost its
-  // panelId would flip a toggle the panel store no longer tracks. `building-footprints` is
-  // the deliberate exception, filed under the Basemap bucket above.
-  it('renders no category row for a layer the registry gives no category', () => {
-    const orphaned = [...new Set(dockReachableLayerToggleIds())].filter(
-      (layerId) =>
-        panelIdForLayerToggle(layerId) === null &&
-        !UNCATEGORISED_LAYER_TOGGLE_IDS.includes(layerId as (typeof LAYER_TOGGLE_IDS)[number])
-    )
-    expect(orphaned).toEqual([])
+  // Teams owns no layer, so the registry cannot order it and it gets no group; Offline is not
+  // a registry concept at all -- `DockDetailsId` is `PanelId | "offline"`, so it is the one
+  // `getLayersForPanel` cannot even be asked about. Both are still reachable, as the dock's
+  // layerless sections -- which is what stopped the rail's removal from orphaning them.
+  it('keeps the layerless reports reachable as their own dock sections', () => {
+    expect(DOCK_PIVOT_SECTIONS).toEqual(['team', 'offline'])
+    expect(getLayersForPanel('team')).toEqual([])
+    expect(DOCK_LAYER_GROUPS.some((group) => group.key === 'team')).toBe(false)
   })
 
   /**
@@ -285,9 +257,6 @@ describe('layer registry derivations', () => {
       'strategy-recommendations': 'ML Strategy Recommendations',
       'evacuation-zones': 'Evacuation Zones',
       'burn-severity': 'Burn History (MTBS)',
-      // The one label with no <LayerToggle> predecessor: this layer is switched from the
-      // manager's own Basemap bucket, never from a category's report.
-      'building-footprints': '3D Building Footprints',
     })
   })
 
@@ -310,7 +279,7 @@ describe('layer registry derivations', () => {
   /**
    * The same claim for the 2026-08-09 wave, and the same reason for asserting absence rather
    * than scanning: each of these files held a control that WROTE state the manager owns --
-   * `MapControls` a second `building-footprints` switch beside four render-mode buttons,
+   * `MapControls` a second 3D-footprints switch beside four render-mode buttons,
    * `CommandPalette` a `toggleLayer('fire-perimeters')` command plus the basemap/terrain/globe/
    * 3D commands, `SearchBar` the field that overlapped the manager's own header. Deleting them
    * is what makes the manager authoritative; hiding them would have left every one of those
@@ -495,12 +464,12 @@ describe('layer registry derivations', () => {
 
   // demand-heatmap's stub was lifted 2026-08-03: /api/v1/action-network's k-anonymity
   // floor already satisfies the "reviewed, access-controlled publication" condition it
-  // was withheld pending. building-footprints is withheld instead: its Martin function
-  // is live but geo.osm_buildings has 0 rows, so the toggle would control nothing.
-  it('withholds the two layers with no tiles to draw, and withholds nothing else', () => {
+  // was withheld pending. building-footprints was the second withheld entry until
+  // 2026-08-15, when the layer was removed outright rather than left as a disabled row.
+  it('withholds the one layer with no tiles to draw, and withholds nothing else', () => {
     const withheld = LAYER_TOGGLE_IDS.filter(
       (toggleId) => LAYER_REGISTRY[toggleId].permanentlyUnavailableReason !== null
     )
-    expect(withheld).toEqual(['soil', 'building-footprints'])
+    expect(withheld).toEqual(['soil'])
   })
 })

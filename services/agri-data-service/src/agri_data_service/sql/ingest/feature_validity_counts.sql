@@ -3,7 +3,8 @@
 --          per-row validity fault the report knows how to look for -- missing shape, unlinked
 --          geometry, missing or over-long producer id, undated or future-dated day, a shape outside
 --          the configured bounding box, and a stored missing-value sentinel masquerading as a reading.
--- Loaded by: agri_data_service.ingest.validation
+-- Loaded by: agri_data_service.ingest.validation.queries (which formats it three ways -- unscoped, one
+--          inclusive day range, and undated-only -- see "THE DAY SCOPE SLOT" below)
 -- Params: published_status (text) -- the one `geo.features.status` value the map serves,
 --         producer_local_id_ceiling_by_stream (text holding JSON) -- an object mapping a layer name to
 --         the maximum length its producer-local id may have,
@@ -13,14 +14,17 @@
 --         sentinel_property_by_stream (text holding JSON) -- an object mapping a layer name to the
 --         one payload field whose value must be checked against the sentinel,
 --         missing_value_sentinel (double precision) -- the numeric value an upstream publisher writes
---         in place of a reading it does not have.
+--         in place of a reading it does not have,
+--         from_day, to_day (date) -- an INCLUSIVE observation-day range, supplied ONLY by the day-range
+--         form; the unscoped form and the undated-only form carry neither.
 --
 -- The first line above is a dispatch marker the unit tests match statements on. It stays first and
 -- stays spelled as it is -- see "Marker protocol" in sql/AGENTS.md.
 --
 -- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap" in
 -- sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too and would mint a bind
--- parameter nobody supplies.
+-- parameter nobody supplies. That rule is stricter than usual in this file, because the day scope slot
+-- below means the parameter list is not the same for all three forms.
 --
 -- What this returns: one row per layer, ordered by layer name. The first column is the layer name,
 -- the second is how many published rows it holds, and every column after that is a count of rows
@@ -37,6 +41,34 @@
 -- failing -- and the Python side, which knows whether a box was configured, reports that check as
 -- unevaluated rather than as a clean pass. The zero here is never mistaken for evidence.
 --
+-- THE DAY SCOPE SLOT, AND WHY IT HAS THREE FORMS INSTEAD OF TWO. A `{day_scope}` slot sits in the WHERE
+-- clause below, filled at import time from a closed set of constants in validation/queries.py, NEVER
+-- from request input -- the same load-time slot pattern observed_days.sql already uses for its own day
+-- scope. It exists for the same reason: this statement scans every published row of geo.features once
+-- per execution with no index to prune by, and observed_days.sql measured that same shape of scan at 81
+-- to 101 seconds against the 120-second transaction statement timeout once a layer grew large enough
+-- (see that file's header). Cutting the scan into date-bounded shards keeps each STATEMENT under that
+-- timeout, the same trade observed_days.sql makes: total work multiplies by the shard count, but
+-- thirteen statements that each finish beat one statement the database kills at 120 seconds.
+--
+-- Where this file differs from observed_days.sql: most of what it counts is NOT about the observation
+-- day at all. total_rows, null_geom, missing_external_id, unlinked_geometry, outside_bbox and
+-- missing_value_sentinel all want every published row regardless of date, and undated_day specifically
+-- wants the rows whose day COULD NOT be parsed. A plain date-range predicate structurally cannot select
+-- those rows -- geo.feature_observation_day returns NULL for them, and NULL fails every comparison, so
+-- no range, however wide, ever matches it. A caller that sharded this scan the way observed_days.sql is
+-- sharded -- narrower and narrower date ranges covering the whole calendar -- would silently lose every
+-- undated row from every counter, in the exact direction this whole report exists to catch: a row that
+-- is really there would be counted as though it were not.
+--
+-- So the day scope slot has three fillings instead of two: empty (the unscoped form, byte-for-byte what
+-- this statement was before this slot existed, and what the completeness report still calls), an
+-- inclusive date range (for a caller sharding the scan by day), and an undated-only predicate that is
+-- the date range's complement, not a narrower case of it. A caller sharding this scan sums every counter
+-- across however many date-range shards it runs PLUS one execution of the undated-only form, and that
+-- sum reproduces the unscoped form's own grand total exactly -- every published row is counted by
+-- precisely one of those executions, never zero and never two.
+--
 -- How this query works, clause by clause:
 --
 --   FROM geo.layers AS layers JOIN geo.features AS features ON features.layer_id = layers.id
@@ -47,6 +79,13 @@
 --   WHERE features.status = published_status
 --     Only rows the map actually serves. A fault on a row nobody can see is not a fault the report is
 --     asked about.
+--
+--   the day scope slot, immediately below that filter
+--     Either nothing at all (the unscoped form -- every published row, regardless of date), an
+--     inclusive date range on geo.feature_observation_day(features.properties) with both bounds cast to
+--     date for the same type-pinning reason observed_days.sql casts its own day bounds (the day-range
+--     form, for a caller sharding this scan), or a single IS NULL test on that same expression (the
+--     undated-only form, which a date range can never reach). See "THE DAY SCOPE SLOT" above.
 --
 --   GROUP BY layers.name
 --     GROUP BY collapses many rows into one row per distinct layer name. Once rows are collapsed there
@@ -172,5 +211,6 @@ SELECT layers.name AS stream,
   JOIN geo.features AS features
     ON features.layer_id = layers.id
  WHERE features.status = :published_status
+   {day_scope}
  GROUP BY layers.name
  ORDER BY layers.name

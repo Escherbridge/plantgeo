@@ -21,11 +21,10 @@ const DYNAMIC_TILES_URL =
 // vector_layers in TileJSON for tables but cannot for functions, and MapLibre
 // validates style source-layers against vector_layers whenever the field is
 // present -- a mixed composite therefore rejects every function-backed layer.
-// building_tiles stays in this composite even though geo.osm_buildings has 0 rows in
-// production: the Martin function is live and serves valid (empty) tiles, so there is no
-// 404 risk to the rest of the composite. What's withheld is the *switch* --
-// LAYER_REGISTRY["building-footprints"].permanentlyUnavailableReason in layer-registry.ts
-// -- not the source, so populating the table needs no change here.
+// building_tiles was a member until 2026-08-15, when the 3D-footprints layer was removed:
+// nothing draws geo.osm_buildings any more, so requesting its tiles bought nothing. The
+// Martin function is still live and still serves valid (empty) tiles, so restoring the layer
+// means re-listing the id here and nothing else.
 // An id may only be listed once Martin actually answers for it: this is a SINGLE MapLibre
 // source over every member, so a 404 on any one of them fails the whole TileJSON and blanks
 // every dynamic layer at once, not just the missing one. Martin runs `auto_publish: false`
@@ -37,13 +36,12 @@ const DYNAMIC_TILE_SOURCE_IDS = [
   "evacuation_zone_tiles",
   "burn_severity_tiles",
   "intervention_tiles",
-  "building_tiles",
   "watershed_tiles",
 ] as const;
 
 // Both are Martin *table* sources, and both geo.osm_roads and geo.osm_waterways also have
-// 0 rows in production -- but unlike building-footprints, neither has a LayerRegistry
-// toggle to withhold: they're baked unconditionally into every style's roadsLayer/
+// 0 rows in production, with no toggle to withhold: they're baked unconditionally into
+// every style's roadsLayer/
 // waterwaysLayer (src/lib/map/layers.ts), the same always-on shape as the protomaps
 // roads/water basemap layers. An empty source renders nothing rather than erroring (see
 // src/components/map/AGENTS.md "The layer toggle is the only source of layer

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { Layers, X } from "lucide-react";
 import { LayerLegend } from "@/components/map/layer-panel/LayerLegend";
-import { AlertBell } from "@/components/ui/AlertBell";
 import { useMapStore } from "@/stores/map-store";
 import { usePanelStore } from "@/stores/panel-store";
 
@@ -61,15 +60,14 @@ function ManagerHint() {
 }
 
 /**
- * The whole map surface while the manager is collapsed: a way back in, the unread alert count,
- * and the legend.
+ * The whole map surface while the manager is collapsed: a way back in, and the legend.
  *
  * "Everything collapses away" is the interaction this component is the other half of. Collapsed,
  * the map carries exactly one row of chrome at its bottom-left corner, and that row's largest
  * part is the legend -- which is to say, the list of what is drawn. It unmounts entirely while
- * the manager is open, because every one of these three has a fuller form in there: the button
- * becomes the header's close control, the bell becomes the Alerts section's badge, and the
- * legend becomes the layer tree.
+ * the manager is open, because both halves have a fuller form in there: the button becomes the
+ * header's close control, and the legend becomes the layer tree. An unread-alert bell sat
+ * between them until the alerts feature was removed on 2026-08-15.
  *
  * It sits where the bottom toolbar used to, not where the search field used to. The top-left
  * corner is deliberately left empty: that is where the manager's own header lands, and the
@@ -109,7 +107,6 @@ export function ManagerRail() {
             <span className="absolute right-1 top-1 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[hsl(var(--background))]" />
           )}
         </button>
-        <AlertBell />
       </div>
 
       <div className="pointer-events-auto flex min-w-0 items-end gap-2">

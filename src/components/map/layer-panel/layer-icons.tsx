@@ -1,8 +1,6 @@
 "use client";
 
 import {
-  BarChart3,
-  Bell,
   Building2,
   CloudRain,
   CloudSun,
@@ -57,7 +55,6 @@ const LAYER_ICON_COMPONENTS: Record<LayerIconName, LucideIcon> = {
   thermometer: Thermometer,
   sprout: Sprout,
   users: Users,
-  "building-2": Building2,
 };
 
 /** Decorative by design: the row's text label is what names the layer. */
@@ -92,12 +89,9 @@ const DOCK_SECTION_ICON_COMPONENTS: Record<DockSectionKey, LucideIcon> = {
   climate: CloudSun,
   community: Users,
   team: Building2,
-  analytics: BarChart3,
-  alerts: Bell,
   // Carried over from the bottom-right floating toggle it replaced, so a reader who knew that
   // corner finds the same mark in the dock.
   offline: HardDrive,
-  Basemap: Layers,
 };
 
 /** Decorative by design: the section's text label is what names it. */

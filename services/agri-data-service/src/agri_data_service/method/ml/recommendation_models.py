@@ -5,6 +5,13 @@ relates to a stated outcome, and they score a query site by comparing its govern
 against each candidate's envelope. Nothing here is a causal effect claim, and Model B writes to
 no selection or publication surface. Method limits, the effective-sample-size caveat and the
 scoring policy live in `method/AGENTS.md` (this package) under `recommendation_models.py`.
+
+A design row is four blocks: the site (governed climate and covariates, drought included), the
+envelope the source stated, the subject's identity -- carried by BOTH models now, not only Model
+B -- and the subject's species traits. Identity says which plant this is; traits say what kind of
+plant it is, which is the only thing left to generalize from when a cross-validation fold removes
+every source that names the species. Each row is weighted `confidence_weight` divided by the
+label's matched instance count, so one label is one unit of evidence.
 """
 
 from __future__ import annotations
@@ -67,15 +74,32 @@ WILDFIRE_EVIDENCE_SLICES: Final = ("strategy-reforestation-fire",)
 WATER_EVIDENCE_SLICES: Final = ("strategy-water-harvesting",)
 
 # The covariate positions the compatibility model reads. A deliberate subset of the pinned
-# vector: the 28-day rolling means describe the site's recent regime, the calendar pair carries
-# season. The lag-1/2/3 positions are weather, not site character, and would inject day-level
-# noise into a model whose target is a time-invariant literature claim.
+# vector: the 28-day rolling means describe the site's recent regime, the drought block carries
+# the site's standing water deficit, and the calendar pair carries season. The lag-1/2/3
+# meteorology positions are weather, not site character, and would inject day-level noise into a
+# model whose target is a time-invariant literature claim.
+#
+# The drought block (covariate schema indices 36-38: USDM severity at lag 1 and lag 7 plus the
+# imputation flag) was previously excluded. It is included now because drought is one of the
+# stated objectives and because a recommendation conditioned on region is exactly a
+# recommendation conditioned on standing water deficit -- the 28-day precipitation mean describes
+# the last month, not the multi-season deficit a USDM class encodes.
+#
+# CONSEQUENCE, stated plainly: the USDM completeness mask is now BLOCKING. `build_design_row`
+# returns `None` for any cell-day whose drought covariates are absent, so those days are counted
+# in `skipped_incomplete_rows` and never train. A day the drought stream has not reached is a
+# declared gap, not a zero. Un-zeroing `agri.drought_polygon_snapshot` therefore stops being
+# optional for training coverage, and the imputed-flag position keeps an imputed severity
+# distinguishable from an observed one rather than laundering the two together.
 SITE_COVARIATE_FEATURES: Final[tuple[str, ...]] = (
     "air_temperature_mean_roll_mean_28",
     "precipitation_roll_mean_28",
     "relative_humidity_roll_mean_28",
     "wind_speed_roll_mean_28",
     "dew_point_temperature_roll_mean_28",
+    "drought_severity_class_lag_1",
+    "drought_severity_class_lag_7",
+    "drought_severity_imputed_lag_1",
     "day_of_year_sin",
     "day_of_year_cos",
 )
@@ -98,6 +122,36 @@ ARIDITY_CLASSES: Final[tuple[str, ...]] = (
     "dry_subhumid",
     "humid",
 )
+
+# Species traits, read from `agri.species` and injected here as an already-fetched mapping so
+# this module keeps doing no database work. They are what lets a held-out species be scored from
+# the KIND of plant it is -- growth habit, drought tolerance, precipitation and pH range, nitrogen
+# fixation -- rather than from a subject one-hot that the leave-one-source-out fold just removed.
+#
+# `agri.species` holds zero rows in production, so absence is the common case and is encoded
+# rather than imputed: every trait block carries a `__stated` position, and a subject with no
+# trait record encodes as all zeros with every `__stated` at 0.0 and `record_present` at 0.0.
+# That is a recorded absence the coefficients can learn to ignore -- exactly the posture the
+# envelope terms already take when a source stated no bound -- and it is the reason a missing
+# trait does NOT make `build_design_row` return `None`: traits are a declared gap, while the
+# governed site covariates are a required input.
+SPECIES_TRAIT_RANGE_TERMS: Final[tuple[tuple[str, str, str], ...]] = (
+    ("precipitation_mm", "min_precip_mm", "max_precip_mm"),
+    ("ph", "min_ph", "max_ph"),
+    # One range-typed column rather than a min/max pair, hence the repeated key.
+    ("usda_zones", "usda_zones", "usda_zones"),
+)
+SPECIES_TRAIT_BOOLEAN_TERMS: Final[tuple[str, ...]] = ("nitrogen_fixer", "edible", "timber_value")
+SPECIES_TRAIT_CATEGORICAL_TERMS: Final[tuple[str, ...]] = (
+    "growth_habit",
+    "native_status",
+    "light_requirement",
+    "drought_tolerance",
+    "salt_tolerance",
+    "pollinator_value",
+)
+# Array-valued traits, one-hot per member rather than per value.
+SPECIES_TRAIT_MULTI_VALUE_TERMS: Final[tuple[str, ...]] = ("guild_roles",)
 
 DEFAULT_REGULARIZATION_STRENGTH: Final = 1.0
 DEFAULT_MAX_ITERATIONS: Final = 2_000
@@ -174,7 +228,122 @@ def _aridity_classes(envelope_value: object) -> tuple[str, ...]:
     return ()
 
 
-def design_feature_names(*, subject_vocabulary: Sequence[str]) -> tuple[str, ...]:
+def _normalized_trait_value(trait_value: object) -> str | None:
+    """One categorical trait as a comparable token, or `None` when the species record left it null."""
+    if trait_value is None:
+        return None
+    text = str(trait_value).strip().lower()
+    return text or None
+
+
+def _normalized_trait_values(trait_value: object) -> tuple[str, ...]:
+    """An array-valued trait as comparable tokens, dropping nulls the record left in place."""
+    if trait_value is None:
+        return ()
+    if isinstance(trait_value, str):
+        single = _normalized_trait_value(trait_value)
+        return () if single is None else (single,)
+    if isinstance(trait_value, (list, tuple, set, frozenset)):
+        return tuple(
+            sorted({token for token in (_normalized_trait_value(item) for item in trait_value) if token is not None})
+        )
+    single = _normalized_trait_value(trait_value)
+    return () if single is None else (single,)
+
+
+def _range_bounds(trait_value: object) -> tuple[float | None, float | None]:
+    """Read a range-typed trait column, whether it arrived as a driver Range, a pair, or a mapping."""
+    if trait_value is None:
+        return None, None
+    # A driver Range exposes `.lower`/`.upper`; str and bytes expose same-named METHODS, so they
+    # are excluded before the attribute probe rather than after it.
+    if not isinstance(trait_value, (str, bytes, list, dict)):
+        lower = getattr(trait_value, "lower", None)
+        upper = getattr(trait_value, "upper", None)
+        if lower is not None or upper is not None:
+            return _optional_number(lower), _optional_number(upper)
+    return _numeric_bounds(trait_value)
+
+
+def _trait_bounds(traits: Mapping[str, object], low_key: str, high_key: str) -> tuple[float | None, float | None]:
+    """The low and high end of one trait range, from a min/max column pair or a single range column."""
+    if low_key == high_key:
+        return _range_bounds(traits.get(low_key))
+    return _optional_number(traits.get(low_key)), _optional_number(traits.get(high_key))
+
+
+def build_species_trait_vocabulary(
+    traits_by_subject: Mapping[str, Mapping[str, object]],
+) -> dict[str, tuple[str, ...]]:
+    """The observed categorical trait values, derived from the corpus exactly as subjects are.
+
+    Pinning a vocabulary here rather than in a constant keeps a column from ever being born
+    degenerate: a trait value no species in this release states gets no column at all.
+    """
+    observed: dict[str, set[str]] = {}
+    for traits in traits_by_subject.values():
+        for term in SPECIES_TRAIT_CATEGORICAL_TERMS:
+            value = _normalized_trait_value(traits.get(term))
+            if value is not None:
+                observed.setdefault(term, set()).add(value)
+        for term in SPECIES_TRAIT_MULTI_VALUE_TERMS:
+            for value in _normalized_trait_values(traits.get(term)):
+                observed.setdefault(term, set()).add(value)
+    return {term: tuple(sorted(values)) for term, values in sorted(observed.items())}
+
+
+def species_trait_feature_names(vocabulary: Mapping[str, Sequence[str]]) -> tuple[str, ...]:
+    """The ordered trait column names for one corpus-derived trait vocabulary."""
+    names: list[str] = ["species_trait__record_present"]
+    for term, _low_key, _high_key in SPECIES_TRAIT_RANGE_TERMS:
+        names.extend(
+            (
+                f"species_trait__{term}__center",
+                f"species_trait__{term}__half_width",
+                f"species_trait__{term}__stated",
+            )
+        )
+    for term in SPECIES_TRAIT_BOOLEAN_TERMS:
+        names.extend((f"species_trait__{term}__true", f"species_trait__{term}__stated"))
+    for term in (*SPECIES_TRAIT_CATEGORICAL_TERMS, *SPECIES_TRAIT_MULTI_VALUE_TERMS):
+        names.extend(f"species_trait__{term}__{value}" for value in vocabulary.get(term, ()))
+        names.append(f"species_trait__{term}__stated")
+    return tuple(names)
+
+
+def _species_trait_values(traits: Mapping[str, object], vocabulary: Mapping[str, Sequence[str]]) -> list[float]:
+    """The trait block of one design row. Absent traits encode as zeros with `__stated` at 0.0."""
+    values: list[float] = [1.0 if traits else 0.0]
+    for _term, low_key, high_key in SPECIES_TRAIT_RANGE_TERMS:
+        low, high = _trait_bounds(traits, low_key, high_key)
+        low_value = low if low is not None else high
+        high_value = high if high is not None else low
+        if low_value is None or high_value is None:
+            values.extend((0.0, 0.0, 0.0))
+            continue
+        values.extend(((low_value + high_value) / 2.0, (high_value - low_value) / 2.0, 1.0))
+    for term in SPECIES_TRAIT_BOOLEAN_TERMS:
+        stated_boolean = traits.get(term)
+        if stated_boolean is None:
+            values.extend((0.0, 0.0))
+            continue
+        values.extend((1.0 if bool(stated_boolean) else 0.0, 1.0))
+    for term in SPECIES_TRAIT_CATEGORICAL_TERMS:
+        stated_value = _normalized_trait_value(traits.get(term))
+        values.extend(1.0 if stated_value == value else 0.0 for value in vocabulary.get(term, ()))
+        values.append(0.0 if stated_value is None else 1.0)
+    for term in SPECIES_TRAIT_MULTI_VALUE_TERMS:
+        stated_values = _normalized_trait_values(traits.get(term))
+        values.extend(1.0 if value in stated_values else 0.0 for value in vocabulary.get(term, ()))
+        values.append(1.0 if stated_values else 0.0)
+    return values
+
+
+def design_feature_names(
+    *,
+    subject_vocabulary: Sequence[str],
+    species_trait_vocabulary: Mapping[str, Sequence[str]] | None = None,
+) -> tuple[str, ...]:
     """The ordered design-matrix column names, pinned so an artifact is reproducible."""
     names: list[str] = [f"site__{name}" for name in SITE_CLIMATE_FEATURES]
     names.extend(f"site__{name}" for name in SITE_COVARIATE_FEATURES)
@@ -190,22 +359,33 @@ def design_feature_names(*, subject_vocabulary: Sequence[str]) -> tuple[str, ...
     names.extend(f"deviation__{term}" for term in _DEVIATION_TERMS)
     names.append("deviation__aridity_class_distance")
     names.extend(f"subject__{subject}" for subject in subject_vocabulary)
+    names.extend(species_trait_feature_names(species_trait_vocabulary or {}))
     return tuple(names)
 
 
-def build_design_row(
+def build_design_row(  # noqa: PLR0913 - one keyword per pinned block of the design vector
     *,
     site_climate: Mapping[str, object],
     site_covariates: Mapping[str, float | None],
     envelope: Mapping[str, object],
     subject_normalized: str,
     subject_vocabulary: Sequence[str],
+    species_traits: Mapping[str, object] | None = None,
+    species_trait_vocabulary: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[float, ...] | None:
     """Assemble one design row, or `None` when a required governed value is missing.
 
     Returning `None` rather than a default is the point: a site whose trailing year is
     incomplete has no annual precipitation, and a fabricated one would train the model on a
-    number no stream ever produced.
+    number no stream ever produced. Since the drought block joined `SITE_COVARIATE_FEATURES`,
+    a cell-day the USDM stream has not reached is one of those missing values and is skipped.
+
+    `species_traits` is one row of `agri.species` for `subject_normalized`, pre-fetched by the
+    caller -- this function does no database work, so a trait can never be read lazily inside a
+    training loop. An empty mapping means the species has no trait record, which is encoded as a
+    declared absence (see `SPECIES_TRAIT_RANGE_TERMS`) and never blocks the row. Range-typed
+    trait columns may arrive as a driver Range, a two-element `[low, high]`, or a
+    `{"min": ..., "max": ...}` mapping.
     """
     values: list[float] = []
     for name in SITE_CLIMATE_FEATURES:
@@ -270,6 +450,7 @@ def build_design_row(
         )
 
     values.extend(1.0 if subject == subject_normalized else 0.0 for subject in subject_vocabulary)
+    values.extend(_species_trait_values(species_traits or {}, species_trait_vocabulary or {}))
     return tuple(values)
 
 
@@ -285,6 +466,12 @@ class SubjectEvidence:
     citations: tuple[Mapping[str, object], ...]
     wildfire_evidence_fraction: float
     water_evidence_fraction: float
+    # The `agri.species` row behind this subject, carried so serving rebuilds the same design row
+    # the fit saw. Empty means the species has no trait record -- a declared gap, not a zero.
+    traits: Mapping[str, object] = field(default_factory=dict)
+    # Design rows this subject contributed. Reporting only: the imbalance it measures is corrected
+    # at training time by the per-label weight, never by re-scoring at inference (see `rank_subjects`).
+    instance_count: int = 0
 
     def to_payload(self) -> dict[str, object]:
         """The canonical rendering stored in the artifact and echoed by the serving route."""
@@ -297,6 +484,8 @@ class SubjectEvidence:
             "citations": [dict(citation) for citation in self.citations],
             "wildfire_evidence_fraction": self.wildfire_evidence_fraction,
             "water_evidence_fraction": self.water_evidence_fraction,
+            "traits": dict(self.traits),
+            "instance_count": self.instance_count,
         }
 
 
@@ -310,6 +499,7 @@ class _SubjectAccumulator:
     outcomes: dict[str, int] = field(default_factory=dict)
     citations: dict[str, Mapping[str, object]] = field(default_factory=dict)
     slices: list[str] = field(default_factory=list)
+    instance_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,6 +517,10 @@ class TrainingMatrix:
     skipped_incomplete_rows: int
     label_count: int
     source_count: int
+    species_trait_vocabulary: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    # Subjects the fit saw with no `agri.species` row, reported so the trait gap stays visible
+    # rather than hiding inside a block of zeros.
+    subjects_without_trait_record: int = 0
 
     @property
     def row_count(self) -> int:
@@ -340,55 +534,106 @@ def _objective_fraction(slices: Sequence[str], wanted: Sequence[str]) -> float:
     return sum(1 for slice_name in slices if slice_name in wanted) / len(slices)
 
 
-def assemble_training_matrix(rows: Sequence[Mapping[str, object]], *, model_kind: ModelKind) -> TrainingMatrix:
-    """Turn matched training instances into a design matrix, subject evidence, and CV groups."""
+@dataclass(frozen=True)
+class _DecodedInstance:
+    """The four decoded blocks one matched training instance contributes to its design row."""
+
+    site_climate: Mapping[str, object]
+    site_covariates: Mapping[str, float | None]
+    envelope: Mapping[str, object]
+    subject_normalized: str
+
+
+def _decode_training_instance(row: Mapping[str, object]) -> _DecodedInstance:
+    """Decode and shape-check one instance row, refusing rather than defaulting a malformed block."""
+    envelope_match = row["envelope_match"]
+    if not isinstance(envelope_match, dict):
+        raise RecommendationTrainingError("envelope_match did not decode as an object")
+    site_climate = envelope_match.get("site_climate")
+    if not isinstance(site_climate, dict):
+        raise RecommendationTrainingError("envelope_match carries no site_climate object")
+    feature_values = row["feature_values"]
+    if not isinstance(feature_values, list):
+        raise RecommendationTrainingError("feature_values did not decode as an array")
+    envelope = row["condition_envelope"]
+    if not isinstance(envelope, dict):
+        raise RecommendationTrainingError("condition_envelope did not decode as an object")
+    return _DecodedInstance(
+        site_climate=site_climate,
+        site_covariates={
+            str(entry["feature_name"]): (None if entry.get("feature_value") is None else float(entry["feature_value"]))
+            for entry in feature_values
+            if isinstance(entry, dict)
+        },
+        envelope=envelope,
+        subject_normalized=str(row["subject_normalized"]),
+    )
+
+
+def assemble_training_matrix(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    model_kind: ModelKind,
+    species_traits_by_subject: Mapping[str, Mapping[str, object]] | None = None,
+) -> TrainingMatrix:
+    """Turn matched training instances into a design matrix, subject evidence, and CV groups.
+
+    `species_traits_by_subject` maps `subject_normalized` to that species' `agri.species` row,
+    fetched once by the caller. Subjects absent from it train with a declared trait gap; the
+    table is empty in production today, so that is currently every subject.
+
+    Sample weights are `confidence_weight / instances_for_that_label`, so one label contributes
+    one unit of evidence however many cell-days its envelope happens to sweep. Without it a
+    one-term `{"aridity": "semi_arid"}` label matching nearly every cell-day moves the fitted
+    coefficients by orders of magnitude more than a precise five-term trial-site label -- and
+    ranking the outputs afterwards cannot undo a function that was fitted wrong.
+    """
     if not rows:
         raise RecommendationTrainingError("no matched training instances to fit on")
-    subject_vocabulary = tuple(
-        sorted({str(row["subject_normalized"]) for row in rows})
-        if model_kind == "strategy_selection"
-        # Model A deliberately carries no subject identity: the harvest holds one label per
-        # species, so a species one-hot would be a perfectly separating column that
-        # leave-one-source-out cross-validation could never score. The model generalizes
-        # through the envelope descriptors instead.
-        else ()
+    if model_kind not in CLASS_ORDER_BY_MODEL_KIND:
+        raise RecommendationTrainingError(f"unknown model kind {model_kind!r}")
+    # Both models carry subject identity. Model A used to suppress it because the harvest held one
+    # label per species, which made a species one-hot a perfectly separating column that
+    # leave-one-source-out could never score. The harvest plan now requires >=2 sources per species
+    # (>=3 to be safe), which is exactly the condition that makes the column scoreable: hold one
+    # source out and another still carries the species. Species traits below are the other half --
+    # they let a species whose every source is in the held-out fold still be scored, from the kind
+    # of plant it is rather than from an identity the fold removed.
+    subjects_in_corpus = {str(row["subject_normalized"]) for row in rows}
+    subject_vocabulary = tuple(sorted(subjects_in_corpus))
+    corpus_traits = {
+        subject: dict(traits)
+        for subject, traits in (species_traits_by_subject or {}).items()
+        if subject in subjects_in_corpus
+    }
+    species_trait_vocabulary = build_species_trait_vocabulary(corpus_traits)
+    feature_names = design_feature_names(
+        subject_vocabulary=subject_vocabulary,
+        species_trait_vocabulary=species_trait_vocabulary,
     )
-    feature_names = design_feature_names(subject_vocabulary=subject_vocabulary)
 
     design_rows: list[tuple[float, ...]] = []
     targets: list[str] = []
     groups: list[str] = []
     label_keys: list[str] = []
-    weights: list[float] = []
+    confidence_weights: list[float] = []
+    instances_by_label: dict[str, int] = {}
     skipped = 0
     by_subject: dict[str, _SubjectAccumulator] = {}
 
     for row in rows:
-        envelope_match = row["envelope_match"]
-        if not isinstance(envelope_match, dict):
-            raise RecommendationTrainingError("envelope_match did not decode as an object")
-        site_climate = envelope_match.get("site_climate")
-        if not isinstance(site_climate, dict):
-            raise RecommendationTrainingError("envelope_match carries no site_climate object")
-        feature_values = row["feature_values"]
-        if not isinstance(feature_values, list):
-            raise RecommendationTrainingError("feature_values did not decode as an array")
-        site_covariates = {
-            str(entry["feature_name"]): (None if entry.get("feature_value") is None else float(entry["feature_value"]))
-            for entry in feature_values
-            if isinstance(entry, dict)
-        }
-        envelope = row["condition_envelope"]
-        if not isinstance(envelope, dict):
-            raise RecommendationTrainingError("condition_envelope did not decode as an object")
-        subject_normalized = str(row["subject_normalized"])
+        instance = _decode_training_instance(row)
+        envelope = instance.envelope
+        subject_normalized = instance.subject_normalized
 
         design_row = build_design_row(
-            site_climate=site_climate,
-            site_covariates=site_covariates,
+            site_climate=instance.site_climate,
+            site_covariates=instance.site_covariates,
             envelope=envelope,
             subject_normalized=subject_normalized,
             subject_vocabulary=subject_vocabulary,
+            species_traits=corpus_traits.get(subject_normalized),
+            species_trait_vocabulary=species_trait_vocabulary,
         )
         if design_row is None:
             skipped += 1
@@ -397,12 +642,14 @@ def assemble_training_matrix(rows: Sequence[Mapping[str, object]], *, model_kind
         targets.append(str(row["outcome"]))
         groups.append(str(row["doi"] or row["source_key"]))
         label_keys.append(str(row["label_key"]))
-        weights.append(_require_number(row["confidence_weight"], "confidence_weight"))
+        confidence_weights.append(_require_number(row["confidence_weight"], "confidence_weight"))
+        instances_by_label[str(row["label_key"])] = instances_by_label.get(str(row["label_key"]), 0) + 1
 
         bucket = by_subject.setdefault(
             subject_normalized,
             _SubjectAccumulator(subject=str(row["subject"]), envelope=envelope),
         )
+        bucket.instance_count += 1
         label_key = str(row["label_key"])
         if label_key not in bucket.label_keys:
             bucket.label_keys.add(label_key)
@@ -437,9 +684,17 @@ def assemble_training_matrix(rows: Sequence[Mapping[str, object]], *, model_kind
             citations=tuple(bucket.citations.values()),
             wildfire_evidence_fraction=_objective_fraction(bucket.slices, WILDFIRE_EVIDENCE_SLICES),
             water_evidence_fraction=_objective_fraction(bucket.slices, WATER_EVIDENCE_SLICES),
+            traits=corpus_traits.get(subject_normalized, {}),
+            instance_count=bucket.instance_count,
         )
         for subject_normalized, bucket in sorted(by_subject.items())
     )
+    # One label = one unit of evidence. The division is by the label's MATCHED design rows, which
+    # is what actually entered the fit, not by the days its envelope nominally covered.
+    weights = [
+        confidence_weight / instances_by_label[label_key]
+        for confidence_weight, label_key in zip(confidence_weights, label_keys, strict=True)
+    ]
     return TrainingMatrix(
         feature_names=feature_names,
         features=np.asarray(design_rows, dtype=np.float64),
@@ -452,6 +707,8 @@ def assemble_training_matrix(rows: Sequence[Mapping[str, object]], *, model_kind
         skipped_incomplete_rows=skipped,
         label_count=len(set(label_keys)),
         source_count=len(set(groups)),
+        species_trait_vocabulary=species_trait_vocabulary,
+        subjects_without_trait_record=sum(1 for subject in subjects if not subject.traits),
     )
 
 
@@ -638,7 +895,13 @@ def evaluate_leave_one_source_out(
         ),
         caveats=(
             f"Effective sample size is {matrix.label_count} labels, not {matrix.row_count} design rows: "
-            "the rows of one label are the same claim evaluated on different days of one cell.",
+            "the rows of one label are the same claim evaluated on different days of one cell. The fit "
+            "now applies this rather than only stating it -- each row is weighted "
+            "confidence_weight / instances-for-that-label, so a broad envelope cannot outvote a "
+            "precise one by sweeping more cell-days.",
+            f"{matrix.subjects_without_trait_record} of {len(matrix.subjects)} subjects carried no "
+            "agri.species trait record; their trait columns are a recorded absence, not an imputed "
+            "value, and those subjects can only be generalized through the envelope descriptors.",
             "Scores prove the training and evaluation framework runs end to end on governed data; "
             "they do not establish an operational recommender.",
             "Labels are agent-reviewed and pending an owner signature; no label is owner-approved.",
@@ -665,6 +928,9 @@ class ModelArtifact:
     label_release_checksum: str
     label_review_tier: str
     training_code_checksum: str
+    # Corpus-derived, exactly like `subject_vocabulary`, so serving rebuilds the same trait
+    # columns the fit used. Defaulted so an artifact persisted before traits existed still loads.
+    species_trait_vocabulary: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def to_document(self) -> dict[str, object]:
         """The canonical-JSON document whose sha256 is this artifact's identity."""
@@ -684,6 +950,9 @@ class ModelArtifact:
             "standardization": {"mean": list(self.standardization.mean), "scale": list(self.standardization.scale)},
             "subjects": [subject.to_payload() for subject in self.subjects],
             "subject_vocabulary": list(self.subject_vocabulary),
+            "species_trait_vocabulary": {
+                term: list(values) for term, values in sorted(self.species_trait_vocabulary.items())
+            },
             "hyperparameters": dict(self.hyperparameters),
             "label_release_key": self.label_release_key,
             "label_release_checksum": self.label_release_checksum,
@@ -730,13 +999,17 @@ def build_artifact(  # noqa: PLR0913 - one parameter per pinned lineage field th
             "regularization_strength_C": regularization_strength,
             "max_iterations": DEFAULT_MAX_ITERATIONS,
             "random_seed": DEFAULT_RANDOM_SEED,
-            "sample_weight": "expert_label.confidence_weight",
+            "sample_weight": (
+                "expert_label.confidence_weight / matched design rows for that label, so one "
+                "label is one unit of evidence regardless of how many cell-days it sweeps"
+            ),
             "standardization": "column mean/std fitted on the training design matrix",
         },
         label_release_key=label_release_key,
         label_release_checksum=label_release_checksum,
         label_review_tier=label_review_tier,
         training_code_checksum=training_code_checksum(),
+        species_trait_vocabulary=matrix.species_trait_vocabulary,
     )
 
 
@@ -800,7 +1073,13 @@ def rank_subjects(
     wildfire_weight: float,
     water_weight: float,
 ) -> tuple[tuple[RankedRecommendation, ...], tuple[str, ...]]:
-    """Score every subject the artifact knows against one site, returning ranks and skips."""
+    """Score every subject the artifact knows against one site, returning ranks and skips.
+
+    Subject identity, traits and the trait vocabulary all come from the artifact, so the design
+    row scored here is assembled exactly as the fitted one was. `instance_count` is deliberately
+    NOT used to weight anything: the per-label imbalance it records is corrected at training
+    time, and re-scoring for it here would price the same evidence twice.
+    """
     scored: list[RankedRecommendation] = []
     skipped: list[str] = []
     for subject in artifact.subjects:
@@ -810,6 +1089,8 @@ def rank_subjects(
             envelope=subject.envelope,
             subject_normalized=subject.subject_normalized,
             subject_vocabulary=artifact.subject_vocabulary,
+            species_traits=subject.traits,
+            species_trait_vocabulary=artifact.species_trait_vocabulary,
         )
         if design_row is None:
             skipped.append(subject.subject)
@@ -890,6 +1171,8 @@ def artifact_from_document(document: Mapping[str, object]) -> ModelArtifact:
             water_evidence_fraction=_require_number(
                 entry["water_evidence_fraction"], "subjects[].water_evidence_fraction"
             ),
+            traits=_as_mapping(entry.get("traits", {}), "subjects[].traits"),
+            instance_count=int(_require_number(entry.get("instance_count", 0), "subjects[].instance_count")),
         )
         for entry in (_as_mapping(raw, "subjects[]") for raw in subjects_payload)
     )
@@ -920,6 +1203,12 @@ def artifact_from_document(document: Mapping[str, object]) -> ModelArtifact:
         subject_vocabulary=tuple(
             str(name) for name in _as_sequence(document["subject_vocabulary"], "subject_vocabulary")
         ),
+        species_trait_vocabulary={
+            str(term): tuple(str(value) for value in _as_sequence(values, "species_trait_vocabulary[]"))
+            for term, values in _as_mapping(
+                document.get("species_trait_vocabulary", {}), "species_trait_vocabulary"
+            ).items()
+        },
         hyperparameters=_as_mapping(document["hyperparameters"], "hyperparameters"),
         label_release_key=str(document["label_release_key"]),
         label_release_checksum=str(document["label_release_checksum"]),
@@ -960,6 +1249,12 @@ class TrainingReport:
             "hyperparameters": dict(self.artifact.hyperparameters),
             "site_covariate_features": list(SITE_COVARIATE_FEATURES),
             "site_climate_features": list(SITE_CLIMATE_FEATURES),
+            "species_trait_terms": {
+                "range": [term for term, _low, _high in SPECIES_TRAIT_RANGE_TERMS],
+                "boolean": list(SPECIES_TRAIT_BOOLEAN_TERMS),
+                "categorical": list(SPECIES_TRAIT_CATEGORICAL_TERMS),
+                "multi_value": list(SPECIES_TRAIT_MULTI_VALUE_TERMS),
+            },
             "numeric_term_tolerance": dict(NUMERIC_TERM_TOLERANCE),
             "envelope_term_support": dict(ENVELOPE_TERM_SUPPORT),
         }
@@ -1025,6 +1320,10 @@ class TrainingReport:
 __all__ = [
     "CLAIM_TIER",
     "EVALUATION_DISCLAIMER",
+    "SPECIES_TRAIT_BOOLEAN_TERMS",
+    "SPECIES_TRAIT_CATEGORICAL_TERMS",
+    "SPECIES_TRAIT_MULTI_VALUE_TERMS",
+    "SPECIES_TRAIT_RANGE_TERMS",
     "ExpertLabelPlaneError",
     "ModelArtifact",
     "RankedRecommendation",
@@ -1033,8 +1332,10 @@ __all__ = [
     "artifact_from_document",
     "assemble_training_matrix",
     "build_design_row",
+    "build_species_trait_vocabulary",
     "class_probabilities",
     "evaluate_leave_one_source_out",
     "expected_utility",
     "rank_subjects",
+    "species_trait_feature_names",
 ]

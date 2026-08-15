@@ -9,9 +9,15 @@
  * report a confident fireRiskAvg of 0, a droughtClass of 0 and an "improving"
  * risk trend -- a fabricated result, not an absent one.
  *
- * These types stay because the router and lib/export/analytics-export.ts still
- * describe the shape the future aggregate must satisfy. Reintroduce queries
- * here only alongside a read path that distinguishes "unknown" from "zero".
+ * These types stay because analyticsRouter still describes the shape the future
+ * aggregate must satisfy. Reintroduce queries here only alongside a read path
+ * that distinguishes "unknown" from "zero".
+ *
+ * The Environmental Analytics panel that consumed these -- and the CSV/PDF
+ * exporter in lib/export/analytics-export.ts -- were removed from the front end
+ * on 2026-08-15: with the aggregate unpublished, the panel could only ever
+ * render the PRECONDITION_FAILED message. The router is deliberately left in
+ * place so restoring the panel is a front-end change alone.
  */
 
 export interface RegionalRiskSummary {

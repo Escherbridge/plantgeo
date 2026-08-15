@@ -9,11 +9,10 @@
  *    module that draws it, so a palette edit reaches the map and the legend in one commit
  *    and the two can never disagree. Labels ARE written here -- they are prose about the
  *    encoding, not the encoding.
- * 2. A toggle gets a spec only when turning it on actually paints something. Layers whose
- *    upstream publishes nothing (`soil`) or whose capability is withheld
- *    (`building-footprints`) are absent on purpose: legending a colour the map never draws
- *    is the exact drift this module exists to prevent. `LEGENDLESS_TOGGLE_REASONS` records
- *    why for each.
+ * 2. A toggle gets a spec only when turning it on actually paints something. A layer whose
+ *    upstream publishes nothing (`soil`) is absent on purpose: legending a colour the map
+ *    never draws is the exact drift this module exists to prevent.
+ *    `LEGENDLESS_TOGGLE_REASONS` records why for each.
  */
 
 import {
@@ -182,9 +181,6 @@ export const LEGENDLESS_TOGGLE_REASONS: Partial<Record<LayerToggleId, string>> =
     "SoilLayer's tile template comes from getEnvironmentalTileTemplate, which returns an " +
     "empty string until a first-party SoilGrids raster release exists, so the layer adds no " +
     "source and paints no colour to legend.",
-  "building-footprints":
-    "Withheld by the registry (geo.osm_buildings has no rows), so useLayerVisibility reports " +
-    "it false at every toggle state and it can never be drawn.",
 };
 
 /**

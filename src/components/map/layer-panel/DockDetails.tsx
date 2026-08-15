@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The nine details regions, and the map-derived props each one needs.
+ * The details regions, and the map-derived props each one needs.
  *
  * Every region is dynamically imported and rendered ONLY while its section is expanded, which
  * is the whole reason the merge could fold seven right-hand sheets into one dock without
@@ -11,8 +11,8 @@
  *
  * Each body owns the hooks its region needs, rather than the dock reading everything and
  * prop-drilling: `useViewportBounds` re-renders its caller on every pan, and scoping that to
- * the two regions that key a query on the viewport keeps a pan from re-rendering the layer
- * rows above them.
+ * the regions that key a query on the viewport keeps a pan from re-rendering the layer rows
+ * above them.
  */
 
 import { useMemo } from "react";
@@ -64,17 +64,6 @@ const CommunityDetails = dynamic(
 );
 const TeamDetails = dynamic(
   () => import("@/components/panels/TeamDetails").then((m) => ({ default: m.TeamDetails })),
-  { ssr: false, loading: DetailsLoading }
-);
-const AnalyticsDetails = dynamic(
-  () =>
-    import("@/components/panels/AnalyticsDetails").then((m) => ({
-      default: m.AnalyticsDetails,
-    })),
-  { ssr: false, loading: DetailsLoading }
-);
-const AlertDetails = dynamic(
-  () => import("@/components/panels/AlertDetails").then((m) => ({ default: m.AlertDetails })),
   { ssr: false, loading: DetailsLoading }
 );
 const OfflinePanel = dynamic(
@@ -150,15 +139,6 @@ function TeamDetailsBody() {
   return <TeamDetails teamId={storeActiveTeamId ?? session?.user?.activeTeamId ?? null} />;
 }
 
-function AnalyticsDetailsBody() {
-  const { bbox } = useViewportBounds();
-  return <AnalyticsDetails bbox={bbox ?? undefined} />;
-}
-
-function AlertDetailsBody() {
-  return <AlertDetails />;
-}
-
 function OfflineDetailsBody() {
   return <OfflinePanel />;
 }
@@ -172,8 +152,6 @@ const DETAILS_BODIES: Record<DockDetailsId, () => React.ReactNode> = {
   climate: ClimateDetailsBody,
   community: CommunityDetailsBody,
   team: TeamDetailsBody,
-  analytics: AnalyticsDetailsBody,
-  alerts: AlertDetailsBody,
   offline: OfflineDetailsBody,
 };
 

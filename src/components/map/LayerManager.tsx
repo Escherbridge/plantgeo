@@ -366,10 +366,10 @@ export default function LayerManager() {
     [weatherQuery.data]
   );
 
-  // Sync visibility of style-baked Martin layers (fire-perimeters/
-  // interventions/building-footprints) with activeLayers -- these are static
-  // layers added via getStyle(), not React-mounted components, so they need
-  // setLayoutProperty instead of an unmount/remount cycle.
+  // Sync visibility of style-baked Martin layers (fire-perimeters/interventions/
+  // watersheds) with activeLayers -- these are static layers added via getStyle(),
+  // not React-mounted components, so they need setLayoutProperty instead of an
+  // unmount/remount cycle.
   const applyVisibility = useCallback(
     (mapInstance: NonNullable<typeof map>, currentVisibility: LayerVisibility) => {
       for (const entry of styleBackedLayerEntries()) {

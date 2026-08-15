@@ -63,8 +63,8 @@ function RenderModeRow({
  * These four were a floating bar across the bottom of the canvas until 2026-08-09
  * (`MapControls`, with `TerrainControl` and `GlobeToggle` inside it). Two things were wrong
  * with that, and only one of them was that it was a second surface. The other was its fifth
- * button: a building-footprints switch writing the same `activeLayers` entry the layer tree's
- * own row writes, one of them always out of sight. That button is not here. **Nothing in this
+ * button: a 3D-footprints switch writing the same `activeLayers` entry the layer tree's own
+ * row wrote, one of them always out of sight. That button is not here. **Nothing in this
  * section touches `activeLayers`** -- changing how the map is lit must never add or drop a
  * layer, which is the rule in src/components/map/AGENTS.md, and keeping render mode in a
  * section that owns no layer switch is what makes that structural instead of remembered.

@@ -110,12 +110,13 @@ describe("layer toggle context", () => {
   });
 
   it("keeps a withheld layer off even if forced into activeLayers", () => {
-    // `building-footprints` is the currently withheld entry: its tile function is live but
-    // geo.osm_buildings has no rows. (This was `demand-heatmap` until the k-anonymity floor
-    // satisfied its gate and the registry opened it.)
-    useMapStore.setState({ activeLayers: ["building-footprints"] });
+    // `soil` is the currently withheld entry: getEnvironmentalTileTemplate returns an empty
+    // string until a first-party SoilGrids raster release exists. (This was `demand-heatmap`
+    // until the k-anonymity floor satisfied its gate, and `building-footprints` until that
+    // layer was removed outright on 2026-08-15.)
+    useMapStore.setState({ activeLayers: ["soil"] });
     const { result } = renderHook(() => useLayerVisibility());
-    expect(result.current["building-footprints"]).toBe(false);
+    expect(result.current["soil"]).toBe(false);
   });
 
   it("toggling a layer on changes what its own slider requests, and off withdraws the request", () => {

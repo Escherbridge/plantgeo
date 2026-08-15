@@ -3,10 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChevronUp } from "lucide-react";
 import { LayerSwatch } from "@/components/map/layer-panel/LayerSwatch";
-import {
-  GROUP_LABELS,
-  UNGOVERNED_GROUP_KEY,
-} from "@/components/map/layer-panel/dock-sections";
+import { GROUP_LABELS } from "@/components/map/layer-panel/dock-sections";
 import {
   activeLegendEntries,
   type LegendBlock,
@@ -14,7 +11,7 @@ import {
   type LegendEntry,
   type LegendRampStop,
 } from "@/lib/map/layer-legends";
-import { layerLabel, panelIdForLayerToggle } from "@/lib/map/layer-registry";
+import { LAYER_REGISTRY, layerLabel } from "@/lib/map/layer-registry";
 import {
   useClimateDisplayMode,
   useLayerVisibility,
@@ -40,8 +37,7 @@ function groupByCategory(entries: readonly LegendEntry[]): LegendCategory[] {
   const categories: LegendCategory[] = [];
   const byLabel = new Map<string, LegendCategory>();
   for (const entry of entries) {
-    const panelId = panelIdForLayerToggle(entry.toggleId);
-    const label = panelId === null ? UNGOVERNED_GROUP_KEY : GROUP_LABELS[panelId];
+    const label = GROUP_LABELS[LAYER_REGISTRY[entry.toggleId].panelId];
     let category = byLabel.get(label);
     if (category === undefined) {
       category = { label, entries: [] };

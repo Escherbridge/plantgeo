@@ -398,25 +398,6 @@ export const interventionsPointsLayer: LayerSpecification = {
   },
 };
 
-// Martin-served 3D building footprints from geo.osm_buildings — a separate
-// dataset from the always-on protomaps "buildings" basemap layer above.
-// "building_tiles" is the Martin *source id*; the MVT layer name emitted by
-// ST_AsMVT inside geo.building_tiles() is "buildings" (drizzle/0001:499).
-export const buildingFootprintsLayer: FillExtrusionLayerSpecification = {
-  id: "building-footprints",
-  type: "fill-extrusion",
-  source: MARTIN_SOURCE,
-  "source-layer": "buildings",
-  minzoom: 13,
-  layout: { visibility: "none" },
-  paint: {
-    "fill-extrusion-height": ["coalesce", ["get", "height"], 8],
-    "fill-extrusion-base": ["coalesce", ["get", "min_height"], 0],
-    "fill-extrusion-color": "#8b5cf6",
-    "fill-extrusion-opacity": 0.75,
-  },
-};
-
 // USGS WBD HUC12 boundaries, served by geo.watershed_tiles()
 // (drizzle/0017_watershed_persistence.sql), whose ST_AsMVT tag -- and so the
 // `source-layer` below -- is exactly "watersheds"; a mismatch renders nothing and reports
@@ -626,7 +607,6 @@ export function getLayers(): LayerSpecification[] {
     interventionsOutlineLayer,
     // After the outline so submitted sites draw over any zone they sit inside.
     interventionsPointsLayer,
-    buildingFootprintsLayer,
     watershedsLayer,
     watershedsOutlineLayer,
     roadsLayer,

@@ -63,20 +63,16 @@ describe('PANEL_LAYER_MAP exhaustiveness', () => {
     const managedIds = getAllManagedLayerIds()
 
     for (const id of Object.keys(STYLE_LAYER_TOGGLE_MAP)) {
-      // "building-footprints" is toggled from the manager's own Basemap bucket, not
-      // from any sidebar panel — it has no owning PanelId and is intentionally
-      // excluded from PANEL_LAYER_MAP. Assert that exclusion explicitly below
-      // instead of silently skipping it.
-      if (id === 'building-footprints') continue
-
       const occurrences = managedIds.filter((managedId) => managedId === id).length
       expect(occurrences).toBe(1)
       expect(getPanelForLayer(id)).not.toBeNull()
     }
   })
 
-  it('"building-footprints" is deliberately not panel-governed (no report describes it)', () => {
-    expect(getPanelForLayer('building-footprints')).toBeNull()
+  // The only null `getPanelForLayer` can produce now that `panelId` is total over the
+  // registry: an id that is not a registry layer at all, which is what an upload's is.
+  it('claims no panel for a layer id outside the registry', () => {
+    expect(getPanelForLayer('3f6c1e2a-0000-4000-8000-000000000000')).toBeNull()
   })
 })
 
@@ -128,27 +124,27 @@ describe('map dock state', () => {
     expect(usePanelStore.getState().expandedDetails).toEqual(['soil'])
   })
 
-  // What the toolbar's alert bell calls. Three facts in one action, because a shortcut that
-  // expanded a section without docking the panel would point at something nobody can see.
+  // What a shortcut outside the manager calls. Three facts in one action, because a shortcut
+  // that expanded a section without docking the panel would point at something nobody can see.
   it('docks, expands and queues a scroll when a section is focused', () => {
     act(() => {
-      usePanelStore.getState().focusDockSection('alerts')
+      usePanelStore.getState().focusDockSection('offline')
     })
 
     const state = usePanelStore.getState()
     expect(state.layerPanelOpen).toBe(true)
-    expect(state.expandedDetails).toContain('alerts')
-    expect(state.pendingScrollSection).toBe('alerts')
+    expect(state.expandedDetails).toContain('offline')
+    expect(state.pendingScrollSection).toBe('offline')
   })
 
   // Focusing an already-expanded section must not toggle it shut, and must not list it twice.
   it('re-focuses an open section without closing or duplicating it', () => {
     act(() => {
-      usePanelStore.getState().toggleDetails('alerts')
-      usePanelStore.getState().focusDockSection('alerts')
+      usePanelStore.getState().toggleDetails('offline')
+      usePanelStore.getState().focusDockSection('offline')
     })
 
-    expect(usePanelStore.getState().expandedDetails).toEqual(['alerts'])
+    expect(usePanelStore.getState().expandedDetails).toEqual(['offline'])
   })
 
   /**

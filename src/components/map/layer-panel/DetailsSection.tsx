@@ -19,8 +19,6 @@ interface DetailsSectionProps {
   label: string;
   /** Drawn before the label on a section that has no layer rows to identify it. */
   icon?: ReactNode;
-  /** A live count or state chip, drawn after the label. Alerts is the only user today. */
-  badge?: ReactNode;
 }
 
 /**
@@ -33,15 +31,15 @@ interface DetailsSectionProps {
  * over both would have had to pick, and either choice is wrong for half the dock.
  *
  * Expansion lives in `panel-store` rather than in local state because it is addressable from
- * outside: the toolbar's bell opens the dock at Alerts, the top-bar date pill opens it at Time,
- * and `pendingScrollSection` is how either request reaches the one scroller.
+ * outside: the Ctrl/Cmd+K shortcut opens the dock at Search and the top-bar date pill opens it
+ * at a layer, and `pendingScrollSection` is how either request reaches the one scroller.
  *
  * The row style and that handshake are imported from `dock-disclosure.ts`, which
  * `TimeDockSection` reads too -- the Time section is not a report and mounts no
  * `DockDetailsBody`, so it cannot be an instance of this component, but the dock's carets must
  * still be one control vocabulary rather than two that merely look alike.
  */
-export function DetailsSection({ id, label, icon, badge }: DetailsSectionProps) {
+export function DetailsSection({ id, label, icon }: DetailsSectionProps) {
   const isExpanded = useDetailsExpanded(id);
   const toggleDetails = usePanelStore((state) => state.toggleDetails);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -67,7 +65,6 @@ export function DetailsSection({ id, label, icon, badge }: DetailsSectionProps) 
         )}
         {icon}
         <span className="min-w-0 flex-1 truncate">{label}</span>
-        {badge}
       </button>
 
       {isExpanded && (

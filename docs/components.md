@@ -50,11 +50,9 @@ src/components/
 │   ├── WaterDetails.tsx         # Water monitoring
 │   ├── SoilDetails.tsx          # Soil data viewer
 │   ├── VegetationDetails.tsx    # Vegetation analysis
-│   ├── AnalyticsDetails.tsx     # User metrics
 │   ├── RegionalIntelligencePanel.tsx # AI analysis
 │   ├── StrategyPanel.tsx        # Strategy management
 │   ├── StrategyCard.tsx         # Individual strategy
-│   ├── AlertDetails.tsx         # Alert list
 │   ├── TeamDetails.tsx          # Team info
 │   ├── TeamProfilePanel.tsx     # Team editing
 │   ├── UserPanel.tsx            # User profile
@@ -63,7 +61,6 @@ src/components/
 │   ├── RequestSubmitModal.tsx   # Feature request form
 │   └── ...more panels, each region a *Details component mounted by DockDetails
 ├── ui/
-│   ├── AlertBell.tsx            # Notification icon
 │   ├── SyncIndicator.tsx        # Data sync status
 │   ├── time-slider.tsx          # Time range selector
 │   └── ...shared UI components

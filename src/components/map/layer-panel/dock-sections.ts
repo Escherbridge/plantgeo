@@ -19,7 +19,8 @@ import type { DockDetailsId, DockSectionId, PanelId } from "@/stores/panel-store
  *
  * Deliberately the CATEGORY, not the details region's title: "Fire" names the set of layers,
  * "Fire Dashboard" names the report under them. The record is exhaustive over `PanelId`, so a
- * new category fails to compile here rather than rendering an unnamed group.
+ * new category fails to compile here rather than rendering an unnamed group -- which is why
+ * "Teams" is in here despite owning no layer and so never heading a group.
  */
 export const GROUP_LABELS: Record<PanelId, string> = {
   fire: "Fire",
@@ -29,17 +30,7 @@ export const GROUP_LABELS: Record<PanelId, string> = {
   climate: "Climate",
   community: "Community",
   team: "Teams",
-  analytics: "Analytics",
 };
-
-/**
- * Where a layer that no category governs is filed. Only `building-footprints` lands here: no
- * category's report describes it, and this bucket is what keeps the one comprehensive list of
- * layers complete. Its row is also its ONLY switch since 2026-08-09 -- the bottom toolbar's
- * building button was a second control over the same `activeLayers` entry, and went with the
- * toolbar.
- */
-export const UNGOVERNED_GROUP_KEY = "Basemap";
 
 /**
  * The title a details region carries.
@@ -59,8 +50,6 @@ export const DETAILS_LABELS: Record<DockDetailsId, string> = {
   climate: "Climate & Weather History",
   community: "Strategy Requests",
   team: "Team Dashboard",
-  analytics: "Environmental Analytics",
-  alerts: "Environmental Alerts",
   // The other region with no sheet predecessor: it was a floating bottom-right toggle + panel
   // in `MapView` until 2026-08-14, when it joined the dock as the reviewer-mandated fix for
   // the second control surface the map had grown outside "One manager, no floating surfaces".
@@ -68,25 +57,24 @@ export const DETAILS_LABELS: Record<DockDetailsId, string> = {
 };
 
 /**
- * Every section the manager can render: the categories, the ungoverned bucket, the alerts
- * pivot, and the two query-free sections at the top of the scroller.
+ * Every section the manager can render: the categories, plus the two query-free sections at
+ * the top of the scroller.
  *
- * Wider than `DockDetailsId` because a section is not the same thing as a report -- "Basemap"
- * carries layers and no report; "search" and "view" carry a control and no report.
- * `DockSectionId` brings those two in; the ungoverned bucket is a local sentinel and joins
- * from here. "time" was a third such section for one day: the map-wide scrubber it held is
- * gone, and each layer's own slider lives on its own `LayerRow` instead.
+ * Wider than `DockDetailsId` because a section is not the same thing as a report -- "search"
+ * and "view" carry a control and no report. "time" was a third such section for one day: the
+ * map-wide scrubber it held is gone, and each layer's own slider lives on its own `LayerRow`
+ * instead. A "Basemap" bucket sat here too, holding the layers no category governed; it went
+ * with `building-footprints`, the only layer that was ever in it.
  */
-export type DockSectionKey = DockSectionId | typeof UNGOVERNED_GROUP_KEY;
+export type DockSectionKey = DockSectionId;
 
 /** One category of layers, with the details region filed under it. */
 export interface DockLayerGroup {
-  /** Stable key: the category id, or the sentinel for layers no category governs. */
-  key: PanelId | typeof UNGOVERNED_GROUP_KEY;
+  /** Stable key: the category id, which is also the id of the report filed under it. */
+  key: PanelId;
   label: string;
   layerIds: LayerToggleId[];
-  /** The details region this group discloses, or null for a group that has no report. */
-  detailsId: DockDetailsId | null;
+  detailsId: DockDetailsId;
 }
 
 /**
@@ -101,14 +89,14 @@ function buildLayerGroups(): DockLayerGroup[] {
   const byKey = new Map<string, DockLayerGroup>();
 
   for (const entry of layerRegistryEntries()) {
-    const key = entry.panelId ?? UNGOVERNED_GROUP_KEY;
+    const key = entry.panelId;
     let group = byKey.get(key);
     if (group === undefined) {
       group = {
         key,
-        label: entry.panelId === null ? UNGOVERNED_GROUP_KEY : GROUP_LABELS[entry.panelId],
+        label: GROUP_LABELS[key],
         layerIds: [],
-        detailsId: entry.panelId,
+        detailsId: key,
       };
       byKey.set(key, group);
       groups.push(group);
@@ -122,13 +110,12 @@ function buildLayerGroups(): DockLayerGroup[] {
 export const DOCK_LAYER_GROUPS: DockLayerGroup[] = buildLayerGroups();
 
 /**
- * Sections that own no layer, so the registry cannot order them: two categories whose reports
- * describe the whole map rather than one feed, the warnings surface the toolbar bell used to
- * open in its own sheet, and the offline/sync surface the bottom-right floating toggle used to
- * open before it joined the dock. They sit below the layer groups, where a reader who has
- * finished with the layer list finds them.
+ * Sections that own no layer, so the registry cannot order them: the category whose report
+ * describes the whole workspace rather than one feed, and the offline/sync surface the
+ * bottom-right floating toggle used to open before it joined the dock. They sit below the
+ * layer groups, where a reader who has finished with the layer list finds them.
  */
-export const DOCK_PIVOT_SECTIONS: DockDetailsId[] = ["alerts", "team", "analytics", "offline"];
+export const DOCK_PIVOT_SECTIONS: DockDetailsId[] = ["team", "offline"];
 
 /**
  * Every layer the dock renders a row for.
@@ -151,7 +138,7 @@ export function dockSectionDomId(key: DockSectionKey): string {
  *
  * A group's key and its details region's id are the same string for every category (both are
  * the `PanelId`), so the group `<section>` and the `DetailsSection` it wraps would otherwise
- * render the same id twice for all seven categories. Nothing reads either id today -- scroll
+ * render the same id twice for every one of them. Nothing reads either id today -- scroll
  * addresses a section by ref -- so this exists only to keep the DOM valid.
  */
 export function dockGroupDomId(key: DockLayerGroup["key"]): string {

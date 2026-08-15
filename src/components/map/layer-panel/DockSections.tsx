@@ -12,7 +12,6 @@ import {
 } from "@/components/map/layer-panel/dock-sections";
 import { DockSectionIcon } from "@/components/map/layer-panel/layer-icons";
 import { LayerRow } from "@/components/map/layer-panel/LayerRow";
-import { useUnreadAlertCount } from "@/hooks/useUnreadAlertCount";
 import {
   DEFAULT_LEGEND_CONTEXT,
   type LegendContext,
@@ -135,26 +134,10 @@ function LayerGroupSection({
           ))}
         </ul>
       )}
-      {group.detailsId !== null && (
-        <div className="pl-4.5">
-          <DetailsSection id={group.detailsId} label={DETAILS_LABELS[group.detailsId]} />
-        </div>
-      )}
+      <div className="pl-4.5">
+        <DetailsSection id={group.detailsId} label={DETAILS_LABELS[group.detailsId]} />
+      </div>
     </section>
-  );
-}
-
-/** The unread count, as a chip on the Alerts disclosure. Silent at zero rather than "0". */
-function UnreadAlertBadge() {
-  const count = useUnreadAlertCount();
-  if (count === 0) return null;
-  return (
-    <span
-      className="rounded-full bg-red-500 px-1.5 py-px text-[10px] font-bold leading-none text-white"
-      aria-label={`${count} unread`}
-    >
-      {count > 99 ? "99+" : count}
-    </span>
   );
 }
 
@@ -198,9 +181,9 @@ export function DockSections() {
         <LayerGroupSection key={group.key} group={group} legendContext={legendContext} />
       ))}
 
-      {/* Alerts, Teams and Analytics govern no layer, so the registry cannot order them and
-          they have no rows to sit under. They keep the dock's one vocabulary -- a caret and a
-          name -- rather than becoming a second control style for the same act of disclosure. */}
+      {/* Teams and Offline govern no layer, so the registry cannot order them and they have no
+          rows to sit under. They keep the dock's one vocabulary -- a caret and a name --
+          rather than becoming a second control style for the same act of disclosure. */}
       <div className="mt-1 flex flex-col gap-0.5 border-t border-(--glass-border) pt-2">
         <h3 className="px-1 text-[10px] font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))] opacity-70">
           Workspace
@@ -211,7 +194,6 @@ export function DockSections() {
             id={id}
             label={DETAILS_LABELS[id]}
             icon={<DockSectionIcon sectionKey={id} className="h-3.5 w-3.5 shrink-0 opacity-70" />}
-            badge={id === "alerts" ? <UnreadAlertBadge /> : undefined}
           />
         ))}
       </div>
