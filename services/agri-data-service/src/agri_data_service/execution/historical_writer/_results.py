@@ -75,3 +75,32 @@ class HistoricalOpenMeteoWriteResult:
     no_data_series_count: int
     crosswalk_count: int
     idempotent: bool
+
+
+@dataclass(frozen=True)
+class HistoricalGlofasWriteResult:
+    """Identifiers and row counts from one persisted Open-Meteo GloFAS flood chunk."""
+
+    source_release_id: uuid.UUID
+    artifact_id: uuid.UUID
+    observation_count: int
+    observed_value_count: int
+    coverage_count: int
+    no_data_series_count: int
+    crosswalk_count: int
+    idempotent: bool
+
+
+@dataclass(frozen=True)
+class HistoricalCamsWriteResult:
+    """Identifiers and row counts from one persisted Open-Meteo CAMS air-quality chunk."""
+
+    source_release_id: uuid.UUID
+    artifact_id: uuid.UUID
+    observation_count: int
+    observed_value_count: int
+    insufficient_hour_day_count: int
+    coverage_count: int
+    no_data_series_count: int
+    crosswalk_count: int
+    idempotent: bool

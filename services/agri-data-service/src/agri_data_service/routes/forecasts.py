@@ -84,8 +84,9 @@ class ForecastLineage(BaseModel):
 
     release_set_id: UUID
     forecast_run_id: UUID
-    forecast_method: Literal["sql_linear", "ml"]
+    forecast_method: Literal["sql_linear", "ml", "ensemble"]
     input_release_checksum: str
+
     feature_checksum: str
     model_checksum: str
     parameter_checksum: str

@@ -127,10 +127,14 @@ class Settings(BaseSettings):
     cloud_training_enabled: bool = False
     local_execution_root: Path = Path(".agri-local-runs")
 
-    # Copernicus CDS credentials for the ERA5-Land lane. Declared here so `.env` works; a real
+    # Copernicus CDS credentials for the ERA5-Land & AgERA5 lanes. Declared here so `.env` works; a real
     # CDSAPI_URL/CDSAPI_KEY in the process environment still wins. See execution/AGENTS.md.
     cdsapi_url: str | None = None
     cdsapi_key: SecretStr | None = None
+
+    # Copernicus EWDS credentials for the CEMS fire danger indices lane.
+    ewds_url: str | None = None
+    ewds_api_key: SecretStr | None = None
 
     def _require_command_database_url(self, override: str | None, field_name: str) -> str:
         """Return `override` when set, else DATABASE_URL; blank/whitespace is unset. See db/AGENTS.md."""

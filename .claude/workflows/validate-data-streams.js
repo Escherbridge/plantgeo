@@ -15,8 +15,12 @@ export const meta = {
 // The engine is `agri-cli validate-streams`, not this script. The verb owns the SQL, the
 // continuity rules mirrored from the UI's read model, and the verdicts; this workflow exists to
 // RUN it, then spend one agent per problem stream working out WHY -- which is the part a report
-// cannot do for itself. Keeping the rules in the verb is what lets a Railway cron run the same
-// check unattended (infra/cron-validate) and get the same answer.
+// cannot do for itself. Keeping the rules in the verb would let a Railway cron run the same check
+// unattended, but as of the 2026-08-14 cron consolidation (docs/deployment.md, "Cron
+// consolidation, 2026-08-14") `infra/cron-validate` was deleted along with the other
+// config-as-code directories that never backed a live service -- `validate-streams` is not
+// scheduled by any cron service today. This workflow and a manual `agri-cli validate-streams`
+// invocation are the only ways it runs.
 //
 // See docs/runbooks/durable-backfill-lanes.md for the lane model the lane findings refer to.
 

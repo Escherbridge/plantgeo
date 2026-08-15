@@ -9,5 +9,5 @@ this file: the whole forecast-role and calling-login privilege matrix, which gov
 had no members and no DSN.
 """
 
-EXPECTED_ALEMBIC_REVISION = "20260808_0019"
+EXPECTED_ALEMBIC_REVISION = "20260814_0023"
 REQUIRED_EXTENSIONS = ("postgis", "timescaledb", "vector", "pgcrypto")

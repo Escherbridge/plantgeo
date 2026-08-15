@@ -2,11 +2,20 @@
 # It runs every ingestion source to completion and exits non-zero if any source failed,
 # so a failed FIRMS fetch is a failed cron run rather than a line in a server log.
 #
-# ONE IMAGE, MANY SERVICES. Every infra/cron-*/railway.json points its dockerfilePath here
-# and overrides the ENTRYPOINT below with its own `startCommand`, so the verb -- not the
-# image -- is what distinguishes the services. That now includes the durable archive lanes
-# (`jobs-run`) and the completeness report (`validate-streams`), whose exit rules differ
-# from `ingest-all`'s deliberately: see docs/runbooks/durable-backfill-lanes.md.
+# ONE SERVICE, ONE PULSE (2026-08-14). This image used to back a fan-out of one Railway cron
+# service per verb; eleven of those were deleted and folded into the single hourly ENTRYPOINT
+# below, because `ingest-all` already runs the eight forward sources plus the geometry repair
+# and `jobs-pulse` already visits every dispatchable lane and every durable archive definition.
+# See docs/runbooks/durable-backfill-lanes.md and execution/jobs_pulse_command.py's docstring.
+#
+# TWO services deliberately survived that consolidation, and neither is a job-runner lane:
+#   - plantgeo-cron-mtbs still overrides this ENTRYPOINT with `agri-cli ingest-mtbs` on a weekly
+#     schedule. MTBS is quarterly-published, so hourly is the wrong shape, and `ingest-mtbs`
+#     fails a run outright when a fire year has no established release date -- chaining it here
+#     would turn that rare catalog gap into a permanently red hourly cron and mask real ingest
+#     failures behind it. It keeps its own cadence and its own exit-code verdict.
+#   - plantgeo-cron-soilgrids builds from infra/cron-soilgrids/Dockerfile, not this one: it is a
+#     Node driver walking a finite ~1568-cell grid at 120 cells/hour, not a recurring lane.
 #
 # Build context is the REPOSITORY ROOT, not this directory: the image needs
 # services/agri-data-service/{pyproject.toml,uv.lock,src/}. The Railway service's
@@ -48,4 +57,11 @@ USER plantgeo
 # No CRON_SECRET and no HTTP hop: this container reaches Postgres directly and its exit
 # code is the run's verdict. restartPolicyType NEVER plus the hourly schedule is now the
 # concurrency guard that the deleted in-memory `ingestionInFlight` flag used to be.
-ENTRYPOINT ["agri-cli", "ingest-all"]
+#
+# Both verbs run unconditionally and the exit code is their AND -- deliberately not `&&`.
+# `&&` would skip the pulse whenever any single ingestion source failed, which is exactly
+# backwards: the durable archive lanes and the dispatchable lanes have nothing to do with
+# whether FIRMS answered, and starving them for an hour over an unrelated upstream outage
+# is how a backfill silently stops advancing. So each verb gets its turn, each verdict is
+# captured, and the run is green only if both were.
+ENTRYPOINT ["/bin/sh", "-c", "agri-cli ingest-all; ingest_status=$?; agri-cli jobs-pulse --time-budget-seconds 600; pulse_status=$?; [ $ingest_status -eq 0 ] && [ $pulse_status -eq 0 ]"]

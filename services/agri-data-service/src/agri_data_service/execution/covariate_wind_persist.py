@@ -8,14 +8,13 @@ write, and why the forecast run stays `staged` forever live in `AGENTS.md`
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import text
 
-from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.execution import forecast_receipt_writer as _receipt_writer
 from agri_data_service.execution.covariate_wind_model import (
     DEFAULT_CALIBRATION_DAYS,
     DEFAULT_HORIZON_COUNT,
@@ -45,6 +44,7 @@ from agri_data_service.execution.covariate_wind_model import (
 from agri_data_service.jobs.lease import apply_statement_timeout
 
 if TYPE_CHECKING:
+    import uuid
     from collections.abc import Mapping, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -100,21 +100,21 @@ MODEL_VERSION_MAX_LENGTH: Final = 100
 # A bounded, readable coefficient summary for the receipt JSONB; the full set is in the artifact.
 REPORTED_COEFFICIENT_COUNT: Final = 10
 
-_SELECT_RELEASE_SET = text(load_query_sql("execution/select_validated_release_set.sql"))
-_INSERT_JOB_DEFINITION = text(load_query_sql("execution/insert_training_job_definition.sql"))
-_INSERT_JOB_RUN = text(load_query_sql("execution/insert_training_job_run.sql"))
-_INSERT_MODEL_ARTIFACT = text(load_query_sql("execution/insert_model_artifact.sql"))
-_INSERT_JOB_OUTPUT = text(load_query_sql("execution/insert_job_output.sql"))
-_INSERT_FEATURE_SNAPSHOT = text(load_query_sql("execution/insert_forecast_feature_snapshot.sql"))
-_INSERT_FORECAST_MODEL = text(load_query_sql("execution/insert_forecast_model.sql"))
-_INSERT_TRAINING_RUN = text(load_query_sql("execution/insert_forecast_training_run.sql"))
-_INSERT_FORECAST_RUN = text(load_query_sql("execution/insert_forecast_run.sql"))
-_INSERT_BACKTEST_METRIC = text(load_query_sql("execution/insert_forecast_backtest_metric.sql"))
-_VALIDATE_TRAINING_RUN = text(load_query_sql("execution/validate_training_run.sql"))
+# The nine governed statements below are the SAME `load_query_sql(...)` results
+# `analog_ensemble_persist.py` binds; both lanes import them from `forecast_receipt_writer.py`
+# (the one call site per file) rather than each loading its own copy. Bound to this module's own
+# private names so `persist_training_receipt` below is unchanged from before the extraction.
+_INSERT_JOB_DEFINITION = _receipt_writer.INSERT_JOB_DEFINITION
+_INSERT_JOB_RUN = _receipt_writer.INSERT_JOB_RUN
+_INSERT_MODEL_ARTIFACT = _receipt_writer.INSERT_MODEL_ARTIFACT
+_INSERT_JOB_OUTPUT = _receipt_writer.INSERT_JOB_OUTPUT
+_INSERT_FEATURE_SNAPSHOT = _receipt_writer.INSERT_FEATURE_SNAPSHOT
+_INSERT_FORECAST_MODEL = _receipt_writer.INSERT_FORECAST_MODEL
+_INSERT_TRAINING_RUN = _receipt_writer.INSERT_TRAINING_RUN
+_INSERT_FORECAST_RUN = _receipt_writer.INSERT_FORECAST_RUN
+_INSERT_BACKTEST_METRIC = _receipt_writer.INSERT_BACKTEST_METRIC
+_VALIDATE_TRAINING_RUN = _receipt_writer.VALIDATE_TRAINING_RUN
 
-_SELECT_QUALITY_POLICY = text(
-    "SELECT id FROM agri.forecast_quality_policy WHERE policy_key = :policy_key AND is_active"
-)
 _VALIDATE_FEATURE_SNAPSHOT = text(
     "SELECT (agri.validate_forecast_feature_snapshot(CAST(:snapshot_id AS uuid))).status AS status"
 )
@@ -130,7 +130,7 @@ _LOOKUP_FORECAST_MODEL = text(
 )
 
 
-class ForecastTrainingPersistError(RuntimeError):
+class ForecastTrainingPersistError(_receipt_writer.ForecastReceiptPersistError):
     """Raised when a governed prerequisite for a training receipt is missing or unresolvable."""
 
 
@@ -345,14 +345,11 @@ class WindTrainingReport:
         }
 
 
-async def _scalar_uuid(
-    session: AsyncSession,
-    statement: TextClause,
-    parameters: Mapping[str, object],
-) -> uuid.UUID | None:
-    """Run a statement expected to yield at most one id, returning it as a UUID."""
-    value = (await session.execute(statement, dict(parameters))).scalar_one_or_none()
-    return None if value is None else uuid.UUID(str(value))
+# The four helpers below used to be defined here byte-identically to `analog_ensemble_persist.py`
+# -- both lanes drive the SAME receipt-chain sequence. They now live once in
+# `forecast_receipt_writer.py`; these are thin wrappers that bind this lane's own
+# `ForecastTrainingPersistError` as the failure type, so every call site below is unchanged.
+_scalar_uuid = _receipt_writer.scalar_uuid
 
 
 async def _insert_or_resolve(  # noqa: PLR0913 - one parameter per statement/parameter pair, plus the label
@@ -364,55 +361,30 @@ async def _insert_or_resolve(  # noqa: PLR0913 - one parameter per statement/par
     lookup_parameters: Mapping[str, object],
     description: str,
 ) -> uuid.UUID:
-    """Insert a row keyed by a derived identity, or resolve the one a previous attempt already wrote.
-
-    Every insert in this lane is `ON CONFLICT ... DO NOTHING RETURNING id`, which yields no row
-    on the conflict path. That is what makes a re-claimed durable shard idempotent instead of a
-    unique-violation dead letter.
-    """
-    inserted = await _scalar_uuid(session, insert_statement, insert_parameters)
-    if inserted is not None:
-        return inserted
-    existing = await _scalar_uuid(session, lookup_statement, lookup_parameters)
-    if existing is None:
-        raise ForecastTrainingPersistError(f"{description} was neither inserted nor found")
-    return existing
+    """Insert a row keyed by a derived identity, or resolve the one a previous attempt already wrote."""
+    return await _receipt_writer.insert_or_resolve(
+        session,
+        insert_statement=insert_statement,
+        insert_parameters=insert_parameters,
+        lookup_statement=lookup_statement,
+        lookup_parameters=lookup_parameters,
+        description=description,
+        error_type=ForecastTrainingPersistError,
+    )
 
 
-@dataclass(frozen=True, slots=True)
-class _ReleaseBinding:
-    """The governed release set a receipt pins its inputs to."""
-
-    release_set_id: uuid.UUID
-    logical_key: str
-    manifest_checksum: str
-
-
-async def _resolve_release_set(session: AsyncSession, *, as_of_time: datetime) -> _ReleaseBinding:
+async def _resolve_release_set(session: AsyncSession, *, as_of_time: datetime) -> _receipt_writer.ReleaseBinding:
     """Bind the newest validated release set that already existed at the run's as-of instant."""
-    row = (await session.execute(_SELECT_RELEASE_SET, {"as_of_time": as_of_time})).mappings().first()
-    if row is None:
-        raise ForecastTrainingPersistError(
-            "no validated release set exists at or before the as-of instant; a training receipt "
-            "cannot pin its inputs, and this lane will not mint a release set of its own"
-        )
-    return _ReleaseBinding(
-        release_set_id=uuid.UUID(str(row["id"])),
-        logical_key=str(row["logical_key"]),
-        manifest_checksum=str(row["manifest_checksum"]),
+    return await _receipt_writer.resolve_release_set(
+        session, as_of_time=as_of_time, error_type=ForecastTrainingPersistError
     )
 
 
 async def _resolve_quality_policy(session: AsyncSession, *, policy_key: str) -> uuid.UUID:
     """Resolve the reviewed quality policy a forecast run must reference; never mint one."""
-    policy_id = await _scalar_uuid(session, _SELECT_QUALITY_POLICY, {"policy_key": policy_key})
-    if policy_id is None:
-        raise ForecastTrainingPersistError(
-            f"no active agri.forecast_quality_policy with policy_key {policy_key!r}. A quality policy "
-            "encodes the thresholds a forecast must clear, so this lane will not invent one; seed it "
-            "through the reviewed path first"
-        )
-    return policy_id
+    return await _receipt_writer.resolve_quality_policy(
+        session, policy_key=policy_key, error_type=ForecastTrainingPersistError
+    )
 
 
 def _origin_metric_payload(origin: OriginBacktest, *, parameter_checksum: str) -> dict[str, object]:

@@ -500,8 +500,7 @@ def ndvi_lattice_cells(
             cells.append(
                 {
                     "cell_key": (
-                        f"{NDVI_GRID_NAME}:{_format_ndvi_coordinate(latitude)}:"
-                        f"{_format_ndvi_coordinate(longitude)}"
+                        f"{NDVI_GRID_NAME}:{_format_ndvi_coordinate(latitude)}:{_format_ndvi_coordinate(longitude)}"
                     ),
                     "latitude": latitude,
                     "longitude": longitude,

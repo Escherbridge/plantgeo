@@ -28,8 +28,8 @@ CREATE TABLE agri.forecast_run (
     validated_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_forecast_run_checksums CHECK ((((input_release_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((feature_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((model_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((parameter_checksum)::text ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT ck_forecast_run_method CHECK (((forecast_method)::text = ANY ((ARRAY['sql_linear'::character varying, 'ml'::character varying])::text[]))),
-    CONSTRAINT ck_forecast_run_model_binding CHECK (((((forecast_method)::text = 'sql_linear'::text) AND (training_run_id IS NULL)) OR (((forecast_method)::text = 'ml'::text) AND (training_run_id IS NOT NULL)))),
+    CONSTRAINT ck_forecast_run_method CHECK (((forecast_method)::text = ANY ((ARRAY['sql_linear'::character varying, 'ml'::character varying, 'ensemble'::character varying])::text[]))),
+    CONSTRAINT ck_forecast_run_model_binding CHECK (((((forecast_method)::text = 'sql_linear'::text) AND (training_run_id IS NULL)) OR (((forecast_method)::text = 'ml'::text) AND (training_run_id IS NOT NULL)) OR (((forecast_method)::text = 'ensemble'::text) AND (training_run_id IS NULL)))),
     CONSTRAINT ck_forecast_run_ordered_window CHECK ((valid_to > valid_from)),
     CONSTRAINT ck_forecast_run_positive_horizon CHECK (((horizon_steps > 0) AND (step_interval > '00:00:00'::interval))),
     CONSTRAINT ck_forecast_run_status CHECK (((status)::text = ANY ((ARRAY['staged'::character varying, 'validated'::character varying, 'rejected'::character varying])::text[])))

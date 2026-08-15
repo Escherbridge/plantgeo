@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 
@@ -243,6 +243,18 @@ def test_vapour_pressure_deficit_is_a_bounded_atmospheric_covariate_not_a_soil_s
     assert specification.signal_name == "vapor_pressure_deficit"
     assert specification.original_unit == specification.normalized_unit == "kPa"
     assert (specification.minimum, specification.maximum) == (0.0, 15.0)
+
+
+def test_et0_fao_evapotranspiration_is_absent_from_open_meteo_archive_signal_specifications_under_era5_land_model() -> (
+    None
+):
+    """et0_fao_evapotranspiration cannot be in OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS while model is era5_land.
+
+    ERA5-Land does not model et0_fao_evapotranspiration natively in Open-Meteo. Including it in an
+    era5_land plan causes Open-Meteo to return nulls, which bounds checks wave through.
+    """
+    assert "et0_fao_evapotranspiration" not in OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS
+    assert HistoricalOpenMeteoArchivePlan.model_fields["model"].annotation == Literal["era5_land", "era5"]
 
 
 def test_shortwave_radiation_shares_nasa_power_s_name_and_unit_with_no_conversion() -> None:

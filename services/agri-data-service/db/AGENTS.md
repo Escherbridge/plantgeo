@@ -444,3 +444,21 @@ Then run `regenerate.py` so the rest of the tree (and any dependent object
 pg_dump reorders) reflects the new head, and the parity test stays green. For
 new tables/constraints, author the migration normally, then regenerate — the
 tree follows the migration, never the reverse.
+
+## `forecast_signal_lineage_audit.ancestor_count` counts paths, not ancestors
+
+`agri/functions/forecast_signal_lineage_audit.sql`'s recursive CTE (`20260814_0021`) enumerates
+**every simple path** back from the root value, not every distinct ancestor node: a value reachable
+through two different lineage edges contributes two rows to `walk`, one per path, and
+`ancestor_count` is `count(*)` over those rows. Two properties follow, and neither is a bug:
+
+- **The walk is exponential in DAG width**, bounded only by the hard `traversal_depth < 64` cutoff
+  (`forecast_signal_lineage_audit.sql:41`). A signal whose recipe fans in from many parents at each
+  hop can enumerate a combinatorial number of paths before the depth bound stops it: this is a
+  correctness/verification function run per-audit, not a hot serving path, and the bound exists
+  precisely so a pathological DAG terminates rather than hangs.
+- **`ancestor_count` is a path count, not a distinct-ancestor count.** A diamond-shaped lineage
+  (root depending on the same grandparent through two different parents) reports `ancestor_count =
+  2` for that one grandparent, not 1. Treat it as "how many lineage paths this audit walked," never
+  as "how many distinct signal values this root depends on" -- the two only coincide when every
+  value in the DAG has exactly one path back to the root.

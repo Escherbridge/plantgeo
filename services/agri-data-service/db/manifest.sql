@@ -22,10 +22,15 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/functions/covariate_lookback_days.sql
 \i agri/functions/covariate_vector_manifest.sql
 \i agri/functions/drought_class_daily_series.sql
+\i agri/functions/expert_label_envelope_valid.sql
+\i agri/functions/expert_label_release_summary.sql
 \i agri/functions/export_strategy_label_bundle.sql
 \i agri/functions/forecast_aligned_daily_series.sql
+\i agri/functions/forecast_candidate_evaluation_receipt_checksum.sql
 \i agri/functions/forecast_daily_bootstrap.sql
 \i agri/functions/forecast_date_spine.sql
+\i agri/functions/forecast_derived_signal_snapshot_eligible.sql
+\i agri/functions/forecast_derived_signal_value_checksum.sql
 \i agri/functions/forecast_iteration_evaluation.sql
 \i agri/functions/forecast_iteration_receipt_checksum.sql
 \i agri/functions/forecast_iteration_signal_timeseries.sql
@@ -39,8 +44,10 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/tables/forecast_quality_policy.sql
 \i agri/functions/forecast_quality_policy_contract_v2.sql
 \i agri/functions/forecast_rolling_stats.sql
+\i agri/functions/forecast_signal_lineage_audit.sql
 \i agri/functions/forecast_timeseries_base.sql
 \i agri/functions/forecast_timeseries_contract.sql
+\i agri/functions/guard_expert_label_review_change.sql
 \i agri/functions/guard_forecast_immutable_rows.sql
 \i agri/functions/guard_strategy_review_change.sql
 \i agri/procedures/materialize_forecast_iteration.sql
@@ -82,7 +89,14 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/tables/companion_relationships.sql
 \i agri/tables/data_source.sql
 \i agri/tables/drought_polygon_snapshot.sql
+\i agri/tables/expert_label.sql
+\i agri/tables/expert_label_release.sql
+\i agri/tables/expert_label_source.sql
+\i agri/tables/expert_label_training_instance.sql
 \i agri/tables/forecast_backtest_metric.sql
+\i agri/tables/forecast_candidate_evaluation.sql
+\i agri/tables/forecast_candidate_evaluation_origin.sql
+\i agri/tables/forecast_derived_signal_value.sql
 \i agri/tables/forecast_entity_state.sql
 \i agri/tables/forecast_input_recorded_at.sql
 \i agri/tables/forecast_iteration.sql
@@ -94,6 +108,8 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/tables/forecast_publication_item.sql
 \i agri/tables/forecast_receipt.sql
 \i agri/tables/forecast_series.sql
+\i agri/tables/forecast_signal_definition.sql
+\i agri/tables/forecast_signal_lineage_edge.sql
 \i agri/tables/forecast_value.sql
 \i agri/tables/historical_promotion_artifact_receipt.sql
 \i agri/tables/historical_promotion_bundle.sql
@@ -121,6 +137,7 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/views/v_forecast_series_serving.sql
 \i agri/materialized_views/mv_forecast_ml_daily_serving.sql
 \i agri/tables/normalized_source_feature.sql
+\i agri/tables/recommendation_training_receipt.sql
 \i agri/tables/release_set.sql
 \i agri/tables/release_set_item.sql
 \i agri/tables/signal_coverage_audit.sql
@@ -147,7 +164,13 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/foreign_keys/climate_profiles.sql
 \i agri/foreign_keys/companion_relationships.sql
 \i agri/foreign_keys/drought_polygon_snapshot.sql
+\i agri/foreign_keys/expert_label.sql
+\i agri/foreign_keys/expert_label_training_instance.sql
+\i agri/foreign_keys/forecast_candidate_evaluation.sql
+\i agri/foreign_keys/forecast_candidate_evaluation_origin.sql
+\i agri/foreign_keys/forecast_derived_signal_value.sql
 \i agri/foreign_keys/forecast_feature_snapshot.sql
+\i agri/foreign_keys/forecast_signal_lineage_edge.sql
 \i agri/foreign_keys/forecast_training_run.sql
 \i agri/foreign_keys/historical_promotion_artifact_receipt.sql
 \i agri/foreign_keys/historical_promotion_bundle.sql
@@ -169,6 +192,7 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/foreign_keys/land_use_snapshots.sql
 \i agri/foreign_keys/normalized_source_feature.sql
 \i agri/foreign_keys/publication_pointer.sql
+\i agri/foreign_keys/recommendation_training_receipt.sql
 \i agri/foreign_keys/release_set_item.sql
 \i agri/foreign_keys/signal_coverage_audit.sql
 \i agri/foreign_keys/signal_observation.sql
@@ -201,6 +225,10 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/partitions/attach.sql
 
 -- ==== triggers ====
+\i agri/triggers/expert_label.sql
+\i agri/triggers/forecast_candidate_evaluation.sql
+\i agri/triggers/forecast_candidate_evaluation_origin.sql
+\i agri/triggers/forecast_derived_signal_value.sql
 \i agri/triggers/forecast_entity_state.sql
 \i agri/triggers/forecast_feature_snapshot.sql
 \i agri/triggers/data_source.sql
@@ -214,6 +242,8 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/triggers/forecast_publication.sql
 \i agri/triggers/forecast_receipt.sql
 \i agri/triggers/forecast_run.sql
+\i agri/triggers/forecast_signal_definition.sql
+\i agri/triggers/forecast_signal_lineage_edge.sql
 \i agri/triggers/forecast_training_run.sql
 \i agri/triggers/strategy_label_episode.sql
 \i agri/triggers/strategy_label_release.sql

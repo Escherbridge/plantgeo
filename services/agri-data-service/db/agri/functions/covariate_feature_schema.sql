@@ -11,8 +11,8 @@ CREATE FUNCTION agri.covariate_feature_schema(p_schema_version character varying
     SET extra_float_digits TO '1'
     AS $$
         BEGIN
-            IF p_schema_version <> 'agri_covariates_v1' THEN
-                RAISE EXCEPTION 'unknown covariate schema version %; only agri_covariates_v1 is defined', p_schema_version;
+            IF p_schema_version NOT IN ('agri_covariates_v1', 'agri_covariates_v2') THEN
+                RAISE EXCEPTION 'unknown covariate schema version %; defined versions are agri_covariates_v1 and agri_covariates_v2', p_schema_version;
             END IF;
 
             RETURN QUERY
@@ -66,6 +66,35 @@ CREATE FUNCTION agri.covariate_feature_schema(p_schema_version character varying
                     feature_index, feature_name, feature_kind, stream_key,
                     signal_name, lag_days, window_days
                 )
+            ),
+            forecast_derived AS (
+                -- v2 only. Indices 1..40 above are byte-identical to v1, so an
+                -- agri_covariates_v1 caller sees exactly the vector it always saw and a v2
+                -- caller sees that same prefix followed by the forecast-derived block.
+                -- Every entry is strictly lagged (lag_days >= 1) or a deterministic function
+                -- of the row's own date, so a day-D feature row can never read a day-D issue.
+                SELECT
+                    entry.feature_index,
+                    entry.feature_name,
+                    entry.feature_kind,
+                    entry.stream_key,
+                    entry.signal_name,
+                    entry.lag_days,
+                    entry.window_days
+                FROM (
+                    VALUES
+                        (41, 'mc_forecast_low_for_day', 'mc_forecast', 'forecast_iteration', NULL::text, 1, 1),
+                        (42, 'mc_forecast_median_for_day', 'mc_forecast', 'forecast_iteration', NULL::text, 1, 1),
+                        (43, 'mc_forecast_high_for_day', 'mc_forecast', 'forecast_iteration', NULL::text, 1, 1),
+                        (44, 'mc_forecast_band_width_for_day', 'mc_forecast', 'forecast_iteration', NULL::text, 1, 1),
+                        (45, 'mc_forecast_lead_days', 'mc_forecast', 'forecast_iteration', NULL::text, 1, 1),
+                        (46, 'day_of_year_sin_semiannual', 'calendar', 'calendar', NULL::text, 0, 1),
+                        (47, 'day_of_year_cos_semiannual', 'calendar', 'calendar', NULL::text, 0, 1)
+                ) AS entry(
+                    feature_index, feature_name, feature_kind, stream_key,
+                    signal_name, lag_days, window_days
+                )
+                WHERE p_schema_version = 'agri_covariates_v2'
             )
             SELECT
                 combined.feature_index::integer,
@@ -79,6 +108,8 @@ CREATE FUNCTION agri.covariate_feature_schema(p_schema_version character varying
                 SELECT * FROM meteorology
                 UNION ALL
                 SELECT * FROM derived
+                UNION ALL
+                SELECT * FROM forecast_derived
             ) AS combined
             ORDER BY combined.feature_index;
         END

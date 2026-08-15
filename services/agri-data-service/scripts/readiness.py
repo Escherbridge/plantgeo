@@ -213,9 +213,7 @@ async def run_warehouse_checks(dsn: str) -> dict[str, Any]:
         for section, sql in WAREHOUSE_CHECKS:
             try:
                 rows = await connection.fetch(sql)
-                report[section] = [
-                    {key: jsonable(value) for key, value in row.items()} for row in rows
-                ]
+                report[section] = [{key: jsonable(value) for key, value in row.items()} for row in rows]
             except Exception as exc:
                 report[section] = {"error": f"{type(exc).__name__}: {exc}"}
         # The serving matview is created WITH NO DATA and refreshed only by an
@@ -234,9 +232,7 @@ async def run_warehouse_checks(dsn: str) -> dict[str, Any]:
                 )
             )
             rows = (
-                await connection.fetchval("select count(*) from agri.mv_forecast_ml_daily_serving")
-                if populated
-                else 0
+                await connection.fetchval("select count(*) from agri.mv_forecast_ml_daily_serving") if populated else 0
             )
             report["ml_serving_matview"] = {"populated": populated, "rows": rows}
         except Exception as exc:
@@ -275,7 +271,10 @@ def scheduled_walk_status() -> list[dict[str, str]] | dict[str, str]:
     try:
         raw = subprocess.run(
             ["schtasks", "/query", "/fo", "csv", "/nh"],
-            capture_output=True, text=True, timeout=30, check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
         ).stdout
     except Exception as exc:
         return {"error": f"{type(exc).__name__}: {exc}"}
@@ -296,7 +295,8 @@ def checkpoint_state() -> dict[str, Any]:
     done = sorted(marker.stem for marker in locks_directory.glob("*.done"))
     held = sorted(lock.name for lock in locks_directory.glob("*.lock"))
     lanes = sorted(
-        entry.name for entry in LOCAL_RUN_ROOT.iterdir()
+        entry.name
+        for entry in LOCAL_RUN_ROOT.iterdir()
         if entry.is_dir() and entry.name not in {"locks", "logs", "pytest-tmp"}
     )
     return {"lanes_with_checkpoints": lanes, "completed_plans": done, "held_locks": held}
@@ -307,10 +307,7 @@ def render(report: dict[str, Any]) -> str:
     for section, payload in report.items():
         lines.append(f"\n== {section}")
         if isinstance(payload, list):
-            lines.extend(
-                "  " + "  ".join(f"{key}={value}" for key, value in entry.items())
-                for entry in payload
-            )
+            lines.extend("  " + "  ".join(f"{key}={value}" for key, value in entry.items()) for entry in payload)
         else:
             lines.append("  " + json.dumps(payload, default=jsonable))
     return "\n".join(lines)

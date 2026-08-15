@@ -16,7 +16,7 @@ CREATE TABLE agri.forecast_model (
     metadata_json jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_forecast_model_code_checksum_sha256 CHECK (((model_code_checksum)::text ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT ck_forecast_model_kind CHECK (((model_kind)::text = ANY ((ARRAY['sql_linear'::character varying, 'ml'::character varying])::text[]))),
+    CONSTRAINT ck_forecast_model_kind CHECK (((model_kind)::text = ANY ((ARRAY['sql_linear'::character varying, 'ml'::character varying, 'ensemble'::character varying])::text[]))),
     CONSTRAINT ck_forecast_model_ml_artifact CHECK ((((model_kind)::text <> 'ml'::text) OR (artifact_id IS NOT NULL))),
     CONSTRAINT ck_forecast_model_purpose CHECK (((model_purpose)::text = ANY ((ARRAY['metric_forecast'::character varying, 'strategy_selection'::character varying])::text[])))
 );

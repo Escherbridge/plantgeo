@@ -27,6 +27,7 @@ from agri_data_service.execution.geospatial_capture import (
     load_existing_geospatial_capture,
     load_geospatial_capture_plan,
 )
+from agri_data_service.ingest.validation.source_manifests import NORTH_AMERICA_INTERVENTION_MANIFESTS
 from agri_data_service.models.geospatial import (
     AnalysisSubject,
     InterventionAnalysisRun,
@@ -119,37 +120,14 @@ SELECT
 FROM city, property, wui_union
 """.strip()
 
+# Sourced from the machine-readable manifest registry (ingest/validation/source_manifests.py)
+# rather than hardcoded here: each implemented adapter's manifest carries its own governed
+# attribute_allowlist, and this module only reads it. See that module's docstring for the
+# governance decisions (docs/north-america-intervention-source-matrix.md) behind each allowlist.
 SOURCE_ATTRIBUTE_ALLOWLISTS: dict[str, tuple[str, ...]] = {
-    "census-tigerweb-boise-2025": (
-        "STATE",
-        "PLACE",
-        "GEOID",
-        "BASENAME",
-        "NAME",
-        "LSADC",
-        "FUNCSTAT",
-        "AREALAND",
-        "AREAWATER",
-        "CENTLAT",
-        "CENTLON",
-    ),
-    "osm-hillside-to-hollow-20260723": (
-        "osm_type",
-        "osm_id",
-        "category",
-        "type",
-        "name",
-    ),
-    "usfs-wui-2020-hillside-hollow": (
-        "objectid",
-        "blk20",
-        "state",
-        "veg2019pc",
-        "hu2020",
-        "huden2020",
-        "wuiflag2020",
-        "wuiclass2020",
-    ),
+    manifest.source_key: manifest.attribute_allowlist
+    for manifest in NORTH_AMERICA_INTERVENTION_MANIFESTS.values()
+    if manifest.adapter_status == "implemented"
 }
 SOURCE_NATIVE_SCALE = {
     "census-tigerweb-boise-2025": "2025 TIGERweb incorporated-place vector; not survey grade",

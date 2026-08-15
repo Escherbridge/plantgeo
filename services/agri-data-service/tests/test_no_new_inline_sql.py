@@ -43,6 +43,11 @@ _SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
 #                                   literal span two lines). Its nine report queries were extracted.
 #                                   Keyed on the new path: `ingest/validation.py` became a package on
 #                                   2026-08-08 and its SQL bindings moved to `queries.py` unchanged.
+#
+# Ratcheted 2026-08-14: `jobs/scheduler.py` reached zero and its entry is gone. Its three statements
+# were not extracted -- they were deleted. All three queried `agri.job_schedules`, a table no
+# migration in either tree creates; the pause switch they were meant to serve is
+# `agri.job_definition.enabled`, read through `sql/jobs/select_job_definition_pause_state.sql`.
 BASELINE: dict[str, int] = {
     "execution/geospatial_pilot.py": 1,
     "ingest/commands.py": 3,

@@ -259,7 +259,7 @@ class ForecastModel(Base, UUIDMixin):
 
     __table_args__ = (
         UniqueConstraint("model_key", "model_version", name="uq_forecast_model_version"),
-        CheckConstraint("model_kind IN ('sql_linear', 'ml')", name="kind"),
+        CheckConstraint("model_kind IN ('sql_linear', 'ml', 'ensemble')", name="kind"),
         CheckConstraint("model_kind <> 'ml' OR artifact_id IS NOT NULL", name="ml_artifact"),
         CheckConstraint("model_purpose IN ('metric_forecast', 'strategy_selection')", name="purpose"),
         CheckConstraint("model_code_checksum ~ '^[0-9a-f]{64}$'", name="code_checksum_sha256"),
@@ -401,10 +401,11 @@ class ForecastRun(Base, UUIDMixin):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (
-        CheckConstraint("forecast_method IN ('sql_linear', 'ml')", name="method"),
+        CheckConstraint("forecast_method IN ('sql_linear', 'ml', 'ensemble')", name="method"),
         CheckConstraint(
             "(forecast_method = 'sql_linear' AND training_run_id IS NULL) OR "
-            "(forecast_method = 'ml' AND training_run_id IS NOT NULL)",
+            "(forecast_method = 'ml' AND training_run_id IS NOT NULL) OR "
+            "(forecast_method = 'ensemble' AND training_run_id IS NULL)",
             name="model_binding",
         ),
         CheckConstraint("valid_to > valid_from", name="ordered_window"),

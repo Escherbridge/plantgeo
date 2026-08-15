@@ -10,7 +10,14 @@ CREATE FUNCTION agri.covariate_daily_features(p_cell_id uuid, p_window_start tim
     SET "DateStyle" TO 'ISO, MDY'
     SET extra_float_digits TO '1'
     AS $$
-    WITH spec AS (
+    WITH mode AS (
+        -- agri_covariates_v2 replaces the ONE global knowledge cutoff with a per-issue-date
+        -- gate: a day-D feature row admits only inputs whose server-recorded availability was
+        -- at or before day D began. v1 keeps the global gate exactly as shipped, so every v1
+        -- branch below is guarded by `NOT per_issue_gating` and every v2 branch by it.
+        SELECT p_schema_version = 'agri_covariates_v2' AS per_issue_gating
+    ),
+    spec AS (
         SELECT
             schema_entry.feature_index,
             schema_entry.feature_name,
@@ -54,6 +61,7 @@ CREATE FUNCTION agri.covariate_daily_features(p_cell_id uuid, p_window_start tim
         FROM agri.signal_observation AS signal
         CROSS JOIN lookback
         WHERE signal.cell_id = p_cell_id
+          AND NOT (SELECT mode.per_issue_gating FROM mode)
           AND signal.data_available_at <= p_as_of_time
           AND signal.support_key = 'surface'
           AND signal.quality_flag = 'accepted'
@@ -63,6 +71,59 @@ CREATE FUNCTION agri.covariate_daily_features(p_cell_id uuid, p_window_start tim
             signal.signal_name,
             (signal.observed_at AT TIME ZONE 'UTC')::date,
             signal.data_available_at DESC,
+            signal.observed_at DESC,
+            signal.source_release_id DESC,
+            signal.id DESC
+    ),
+    per_issue_observation AS MATERIALIZED (
+        -- The revision pick re-taken once PER FEATURE-ROW DAY under that day's own knowledge
+        -- horizon, which is what v1's single global cutoff cannot express.
+        --
+        -- Preference order, and why it is a preference rather than a filter: first choice is
+        -- the revision that was current at day D (the honest as-of answer). When the stream
+        -- records no revision available by day D -- which is the norm for bulk-backfilled
+        -- history, where a whole archive shares one `data_available_at` instant, measured on
+        -- this warehouse -- the fallback is the EARLIEST-ever-published revision, never a
+        -- later one. So v2 moves strictly away from leakage in every case: exact when the
+        -- stream supports as-of reconstruction, minimal-revision when it does not, whereas
+        -- v1's `data_available_at DESC` always takes the most-revised value. A hard filter
+        -- would instead empty the entire meteorology block for backfilled history, which
+        -- reports a gap by producing no feature plane at all.
+        --
+        -- Which regime applied to a row is visible in the returned `data_available_at`: a
+        -- value later than `observed_date` means the fallback was taken.
+        SELECT DISTINCT ON (
+            issue.observed_date,
+            signal.signal_name,
+            (signal.observed_at AT TIME ZONE 'UTC')::date
+        )
+            issue.observed_date AS issue_date,
+            signal.signal_name::text AS signal_name,
+            (signal.observed_at AT TIME ZONE 'UTC')::date AS observed_date,
+            signal.normalized_value,
+            signal.is_observed,
+            signal.source_release_id,
+            signal.data_available_at
+        FROM spine AS issue
+        CROSS JOIN lookback
+        JOIN agri.signal_observation AS signal
+          ON signal.cell_id = p_cell_id
+         AND signal.observed_at >= (issue.observed_date - lookback.lookback_days)::timestamptz
+         AND signal.observed_at < issue.observed_date::timestamptz
+        WHERE (SELECT mode.per_issue_gating FROM mode)
+          AND signal.data_available_at <= p_as_of_time
+          AND signal.support_key = 'surface'
+          AND signal.quality_flag = 'accepted'
+        ORDER BY
+            issue.observed_date,
+            signal.signal_name,
+            (signal.observed_at AT TIME ZONE 'UTC')::date,
+            (signal.data_available_at <= issue.observed_date::timestamptz) DESC,
+            CASE
+                WHEN signal.data_available_at <= issue.observed_date::timestamptz
+                    THEN -extract(epoch FROM signal.data_available_at)
+                ELSE extract(epoch FROM signal.data_available_at)
+            END,
             signal.observed_at DESC,
             signal.source_release_id DESC,
             signal.id DESC
@@ -81,6 +142,41 @@ CREATE FUNCTION agri.covariate_daily_features(p_cell_id uuid, p_window_start tim
             p_window_end,
             p_as_of_time
         ) AS drought_day
+    ),
+    mc_forecast AS MATERIALIZED (
+        -- The Monte-Carlo iteration plane read as an assignment-time feature: for day D, what
+        -- the newest FINALIZED iteration issued strictly before D said about D. Three gates
+        -- keep it honest: the iteration must be finalized with a server-set recorded_at, that
+        -- recorded_at must be at or before both the caller's as-of instant and day D itself,
+        -- and the iteration's own cutoff must precede D. Evaluation-only evidence feeding an
+        -- evaluation-only feature layer; nothing here joins a serving or publication surface.
+        SELECT DISTINCT ON (issue.observed_date)
+            issue.observed_date AS issue_date,
+            iteration_value.low_value,
+            iteration_value.median_value,
+            iteration_value.high_value,
+            (issue.observed_date - (iteration.cutoff_time AT TIME ZONE 'UTC')::date)::double precision AS lead_days,
+            iteration.recorded_at AS data_available_at
+        FROM spine AS issue
+        JOIN agri.forecast_series AS series
+          ON series.spatial_cell_id = p_cell_id
+        JOIN agri.forecast_iteration AS iteration
+          ON iteration.series_id = series.id
+         AND iteration.status = 'finalized'
+         AND iteration.recorded_at IS NOT NULL
+         AND iteration.recorded_at <= least(p_as_of_time, issue.observed_date::timestamptz)
+         AND (iteration.cutoff_time AT TIME ZONE 'UTC')::date < issue.observed_date
+        JOIN agri.forecast_iteration_value AS iteration_value
+          ON iteration_value.iteration_id = iteration.id
+         AND (iteration_value.valid_time AT TIME ZONE 'UTC')::date = issue.observed_date
+        WHERE (SELECT mode.per_issue_gating FROM mode)
+        ORDER BY
+            issue.observed_date,
+            iteration.cutoff_time DESC,
+            iteration.recorded_at DESC,
+            iteration.id DESC,
+            iteration_value.horizon_step,
+            iteration_value.id DESC
     ),
     meteorology_feature AS (
         SELECT
@@ -105,6 +201,39 @@ CREATE FUNCTION agri.covariate_daily_features(p_cell_id uuid, p_window_start tim
                BETWEEN spine.observed_date - spec.lag_days - spec.window_days + 1
                    AND spine.observed_date - spec.lag_days
         WHERE spec.feature_kind = 'meteorology'
+          AND NOT (SELECT mode.per_issue_gating FROM mode)
+        GROUP BY
+            spine.observed_date,
+            spec.feature_index,
+            spec.feature_name,
+            spec.feature_kind,
+            spec.window_days
+    ),
+    per_issue_meteorology_feature AS (
+        SELECT
+            spine.observed_date,
+            spec.feature_index,
+            spec.feature_name,
+            spec.feature_kind,
+            CASE
+                WHEN count(per_issue_observation.normalized_value) = spec.window_days
+                    THEN avg(per_issue_observation.normalized_value)
+            END AS feature_value,
+            count(per_issue_observation.normalized_value)::integer AS input_count,
+            spec.window_days AS expected_input_count,
+            coalesce(bool_or(NOT per_issue_observation.is_observed), false) AS is_imputed,
+            count(DISTINCT per_issue_observation.source_release_id)::integer AS source_release_count,
+            max(per_issue_observation.data_available_at) AS data_available_at
+        FROM spine
+        CROSS JOIN spec
+        LEFT JOIN per_issue_observation
+            ON per_issue_observation.issue_date = spine.observed_date
+           AND per_issue_observation.signal_name = spec.signal_name
+           AND per_issue_observation.observed_date
+               BETWEEN spine.observed_date - spec.lag_days - spec.window_days + 1
+                   AND spine.observed_date - spec.lag_days
+        WHERE spec.feature_kind = 'meteorology'
+          AND (SELECT mode.per_issue_gating FROM mode)
         GROUP BY
             spine.observed_date,
             spec.feature_index,
@@ -136,7 +265,36 @@ CREATE FUNCTION agri.covariate_daily_features(p_cell_id uuid, p_window_start tim
         CROSS JOIN spec
         LEFT JOIN drought
             ON drought.observed_date = spine.observed_date - spec.lag_days
+        -- Named limitation of v2: drought is NOT per-issue re-picked. Its revision choice
+        -- happens inside agri.drought_class_daily_series, which resolves one polygon per day
+        -- under the caller's global as-of and exposes no alternatives to re-pick from. The
+        -- row's own `data_available_at` still travels out, so a consumer can see when a
+        -- drought input postdates the issue date it was attached to.
         WHERE spec.feature_kind = 'drought'
+    ),
+    mc_forecast_feature AS (
+        SELECT
+            spine.observed_date,
+            spec.feature_index,
+            spec.feature_name,
+            spec.feature_kind,
+            CASE spec.feature_name
+                WHEN 'mc_forecast_low_for_day' THEN mc_forecast.low_value
+                WHEN 'mc_forecast_median_for_day' THEN mc_forecast.median_value
+                WHEN 'mc_forecast_high_for_day' THEN mc_forecast.high_value
+                WHEN 'mc_forecast_band_width_for_day' THEN mc_forecast.high_value - mc_forecast.low_value
+                WHEN 'mc_forecast_lead_days' THEN mc_forecast.lead_days
+            END AS feature_value,
+            CASE WHEN mc_forecast.issue_date IS NULL THEN 0 ELSE 1 END AS input_count,
+            spec.window_days AS expected_input_count,
+            false AS is_imputed,
+            0 AS source_release_count,
+            mc_forecast.data_available_at
+        FROM spine
+        CROSS JOIN spec
+        LEFT JOIN mc_forecast
+            ON mc_forecast.issue_date = spine.observed_date
+        WHERE spec.feature_kind = 'mc_forecast'
     ),
     calendar_feature AS (
         SELECT
@@ -149,6 +307,10 @@ CREATE FUNCTION agri.covariate_daily_features(p_cell_id uuid, p_window_start tim
                     THEN sin(2 * pi() * extract(doy FROM spine.observed_date)::double precision / 365.25)
                 WHEN 'day_of_year_cos'
                     THEN cos(2 * pi() * extract(doy FROM spine.observed_date)::double precision / 365.25)
+                WHEN 'day_of_year_sin_semiannual'
+                    THEN sin(4 * pi() * extract(doy FROM spine.observed_date)::double precision / 365.25)
+                WHEN 'day_of_year_cos_semiannual'
+                    THEN cos(4 * pi() * extract(doy FROM spine.observed_date)::double precision / 365.25)
             END AS feature_value,
             spec.window_days AS input_count,
             spec.window_days AS expected_input_count,
@@ -162,7 +324,11 @@ CREATE FUNCTION agri.covariate_daily_features(p_cell_id uuid, p_window_start tim
     combined AS (
         SELECT * FROM meteorology_feature
         UNION ALL
+        SELECT * FROM per_issue_meteorology_feature
+        UNION ALL
         SELECT * FROM drought_feature
+        UNION ALL
+        SELECT * FROM mc_forecast_feature
         UNION ALL
         SELECT * FROM calendar_feature
     )

@@ -19,11 +19,25 @@ Typical use inside a migration ``upgrade()``::
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
-# services/agri-data-service/db/agri
-SCHEMA_ROOT = Path(__file__).resolve().parents[3] / "db" / "agri"
+
+def _find_schema_root() -> Path:
+    env_path = os.environ.get("AGRI_SCHEMA_ROOT")
+    if env_path:
+        return Path(env_path)
+    curr = Path(__file__).resolve().parent
+    while curr != curr.parent:
+        candidate = curr / "db" / "agri"
+        if candidate.is_dir():
+            return candidate
+        curr = curr.parent
+    return Path(__file__).resolve().parents[3] / "db" / "agri"
+
+
+SCHEMA_ROOT = _find_schema_root()
 
 _CREATE = re.compile(r"^\s*CREATE\s+(FUNCTION|PROCEDURE|VIEW|MATERIALIZED VIEW)\b", re.IGNORECASE | re.MULTILINE)
 

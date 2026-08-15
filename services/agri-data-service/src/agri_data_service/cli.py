@@ -216,11 +216,15 @@ from agri_data_service.execution.historical_usdm import (
     write_historical_usdm_checkpoint,
 )
 from agri_data_service.execution.historical_writer import (
+    finalize_cams_release_set,
     finalize_era5_release_set,
+    finalize_glofas_release_set,
     finalize_nasa_release_set,
     finalize_open_meteo_release_set,
     finalize_usdm_release_set,
+    persist_cams_air_quality_chunk,
     persist_era5_land_month,
+    persist_glofas_flood_chunk,
     persist_nasa_power_cell,
     persist_open_meteo_archive_chunk,
     persist_usdm_shapefile,
@@ -330,6 +334,24 @@ def cli() -> None:
 
 
 register_ingest_commands(cli)
+
+from agri_data_service.execution.analog_ensemble_cli import (  # noqa: E402
+    forecast_recalibrate_ndvi,
+    forecast_train_anen,
+)
+from agri_data_service.execution.jobs_pulse_command import jobs_pulse  # noqa: E402
+from agri_data_service.execution.recommendation_commands import (  # noqa: E402
+    register_recommendation_commands,
+)
+from agri_data_service.execution.seasonal_command import (  # noqa: E402
+    register_seasonal_commands,
+)
+
+cli.add_command(forecast_train_anen)
+cli.add_command(forecast_recalibrate_ndvi)
+cli.add_command(jobs_pulse)
+register_recommendation_commands(cli)
+register_seasonal_commands(cli)
 
 
 @cli.command()
@@ -450,8 +472,18 @@ def _strategy_seed_statement(data: dict[str, Any]) -> Any:
 
 
 def _alembic_config() -> Config:
+    env_path = os.environ.get("AGRI_ALEMBIC_CONFIG")
+    if env_path:
+        return Config(env_path)
+    curr = Path(__file__).resolve().parent
     default_path = Path(__file__).resolve().parents[2] / "alembic.ini"
-    return Config(os.environ.get("AGRI_ALEMBIC_CONFIG", str(default_path)))
+    while curr != curr.parent:
+        candidate = curr / "alembic.ini"
+        if candidate.is_file():
+            default_path = candidate
+            break
+        curr = curr.parent
+    return Config(str(default_path))
 
 
 @cli.command("db-status")
@@ -2444,11 +2476,8 @@ def _glofas_lane() -> ChunkedLane[
         status_totals=lambda _plan, checkpoint: {
             "observed_value_count": sum(receipt.observed_value_count for receipt in checkpoint.receipts),
             "no_data_series_count": sum(receipt.no_data_series_count for receipt in checkpoint.receipts),
-            "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
         },
-        backfill_extras=lambda _plan, _checkpoint: {
-            "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
-        },
+        backfill_extras=lambda _plan, _checkpoint: {"next_steps": ["historical-glofas-persist"]},
     )
 
 
@@ -2466,6 +2495,60 @@ def historical_glofas_status(plan: Path) -> None:
 def historical_glofas_backfill(plan: Path, max_chunks: int | None, concurrency: int) -> None:
     """Fetch, validate, and cache reviewed GloFAS river-discharge chunks; resumable and bounded."""
     asyncio.run(_glofas_lane().run_backfill(plan, max_chunks, concurrency))
+
+
+@cli.command("historical-glofas-persist")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_glofas_persist(plan: Path) -> None:
+    """Persist every cached GloFAS flood chunk into the warehouse; finalize only when complete."""
+    asyncio.run(_historical_glofas_persist(plan))
+
+
+async def _historical_glofas_persist(plan_path: Path) -> None:
+    try:
+        loader_database_url = settings.require_local_source_loader_database_url()
+        plan = HistoricalGlofasFloodPlan.model_validate_json(plan_path.read_bytes())
+        checkpoint_path_value = historical_glofas_checkpoint_path(settings.local_execution_root, plan)
+        if not checkpoint_path_value.exists():
+            raise ValueError("GloFAS flood persistence requires a matching checkpoint")
+        checkpoint = _glofas_lane().load_checkpoint(plan, checkpoint_path_value)
+        receipted = {receipt.chunk_key for receipt in checkpoint.receipts}
+        persisted: list[dict[str, object]] = []
+        async with local_source_loader_engine(loader_database_url) as loader_session:
+            for chunk in plan.chunks:
+                if chunk.key not in receipted:
+                    continue
+                result = load_cached_historical_glofas_result(settings.local_execution_root, plan, chunk)
+                if result is None:
+                    raise ValueError("GloFAS flood persistence requires every receipted local chunk document")
+                async with loader_session() as session, session.begin():
+                    written = await persist_glofas_flood_chunk(session, plan=plan, result=result)
+                persisted.append(
+                    {
+                        "chunk_key": result.chunk_key,
+                        "observation_count": written.observation_count,
+                        "observed_value_count": written.observed_value_count,
+                        "no_data_series_count": written.no_data_series_count,
+                    }
+                )
+            release_set = None
+            if checkpoint.state == "validated":
+                async with loader_session() as session, session.begin():
+                    release_set = await finalize_glofas_release_set(session, plan=plan, checkpoint=checkpoint)
+    except (OSError, SQLAlchemyError, ValueError) as exc:
+        raise click.ClickException(_historical_glofas_failure_reason(exc)) from exc
+    payload = {
+        "checkpoint": str(checkpoint_path_value),
+        "state": checkpoint.state,
+        "persisted_chunk_count": len(persisted),
+        "chunk_count": len(plan.chunks),
+        "observation_row_count": sum(int(cast("int", item["observation_count"])) for item in persisted),
+        "observed_value_count": sum(int(cast("int", item["observed_value_count"])) for item in persisted),
+        "no_data_series_count": sum(int(cast("int", item["no_data_series_count"])) for item in persisted),
+        "release_set_id": None if release_set is None else str(release_set.release_set_id),
+        "release_set_manifest_checksum": None if release_set is None else release_set.manifest_checksum,
+    }
+    click.echo(json.dumps(payload, indent=2))
 
 
 def _historical_glofas_failure_reason(exc: BaseException) -> str:
@@ -2507,11 +2590,8 @@ def _cams_lane() -> ChunkedLane[
             "insufficient_hour_day_count": sum(receipt.insufficient_hour_day_count for receipt in checkpoint.receipts),
             "no_data_series_count": sum(receipt.no_data_series_count for receipt in checkpoint.receipts),
             "failed_series_count": sum(receipt.failed_series_count for receipt in checkpoint.receipts),
-            "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
         },
-        backfill_extras=lambda _plan, _checkpoint: {
-            "warehouse_persistence": _WAREHOUSE_PERSISTENCE_NOT_IMPLEMENTED,
-        },
+        backfill_extras=lambda _plan, _checkpoint: {"next_steps": ["historical-cams-persist"]},
     )
 
 
@@ -2529,6 +2609,62 @@ def historical_cams_status(plan: Path) -> None:
 def historical_cams_backfill(plan: Path, max_chunks: int | None, concurrency: int) -> None:
     """Fetch, validate, and cache reviewed CAMS air-quality chunks; resumable and bounded."""
     asyncio.run(_cams_lane().run_backfill(plan, max_chunks, concurrency))
+
+
+@cli.command("historical-cams-persist")
+@click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+def historical_cams_persist(plan: Path) -> None:
+    """Persist every cached CAMS air-quality chunk into the warehouse; finalize only when complete."""
+    asyncio.run(_historical_cams_persist(plan))
+
+
+async def _historical_cams_persist(plan_path: Path) -> None:
+    try:
+        loader_database_url = settings.require_local_source_loader_database_url()
+        plan = HistoricalCamsAirQualityPlan.model_validate_json(plan_path.read_bytes())
+        checkpoint_path_value = historical_cams_checkpoint_path(settings.local_execution_root, plan)
+        if not checkpoint_path_value.exists():
+            raise ValueError("CAMS air-quality persistence requires a matching checkpoint")
+        checkpoint = _cams_lane().load_checkpoint(plan, checkpoint_path_value)
+        receipted = {receipt.chunk_key for receipt in checkpoint.receipts}
+        persisted: list[dict[str, object]] = []
+        async with local_source_loader_engine(loader_database_url) as loader_session:
+            for chunk in plan.chunks:
+                if chunk.key not in receipted:
+                    continue
+                result = load_cached_historical_cams_result(settings.local_execution_root, plan, chunk)
+                if result is None:
+                    raise ValueError("CAMS air-quality persistence requires every receipted local chunk document")
+                async with loader_session() as session, session.begin():
+                    written = await persist_cams_air_quality_chunk(session, plan=plan, result=result)
+                persisted.append(
+                    {
+                        "chunk_key": result.chunk_key,
+                        "observation_count": written.observation_count,
+                        "observed_value_count": written.observed_value_count,
+                        "insufficient_hour_day_count": written.insufficient_hour_day_count,
+                        "no_data_series_count": written.no_data_series_count,
+                    }
+                )
+            release_set = None
+            if checkpoint.state == "validated":
+                async with loader_session() as session, session.begin():
+                    release_set = await finalize_cams_release_set(session, plan=plan, checkpoint=checkpoint)
+    except (OSError, SQLAlchemyError, ValueError) as exc:
+        raise click.ClickException(_historical_cams_failure_reason(exc)) from exc
+    payload = {
+        "checkpoint": str(checkpoint_path_value),
+        "state": checkpoint.state,
+        "persisted_chunk_count": len(persisted),
+        "chunk_count": len(plan.chunks),
+        "observation_row_count": sum(int(cast("int", item["observation_count"])) for item in persisted),
+        "observed_value_count": sum(int(cast("int", item["observed_value_count"])) for item in persisted),
+        "insufficient_hour_day_count": sum(int(cast("int", item["insufficient_hour_day_count"])) for item in persisted),
+        "no_data_series_count": sum(int(cast("int", item["no_data_series_count"])) for item in persisted),
+        "release_set_id": None if release_set is None else str(release_set.release_set_id),
+        "release_set_manifest_checksum": None if release_set is None else release_set.manifest_checksum,
+    }
+    click.echo(json.dumps(payload, indent=2))
 
 
 def _historical_cams_failure_reason(exc: BaseException) -> str:

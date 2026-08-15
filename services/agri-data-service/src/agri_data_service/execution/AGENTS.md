@@ -1503,3 +1503,42 @@ through `gap_to_probe` and `decide_coverage_fill`: sampling twice across UTC mid
 `docs/layer-lane-standard.md` sections 5-8 define the loop this package implements for the signal
 plane: required days from the lane contract, minus observed days, minus governed absences in
 `agri.signal_coverage_audit`, becomes the gap list a filler acts on. Absences are evidence, not holes.
+
+## `recommendation_lane.py` and `recommendation_commands.py`
+
+The session-bound half of the ML recommendation lane; the pure half is in
+`method/ml/` (see that directory's `AGENTS.md`), which may not import SQLAlchemy.
+
+What this module writes, and what it deliberately does not:
+
+- It writes `agri.expert_label_source`, `expert_label_release`, `expert_label`,
+  `expert_label_training_instance`, `recommendation_training_receipt`, and the shared
+  job ledger (`job_definition`, `job_run`, `artifact`, `job_output`) — reusing
+  `covariate_wind_persist.py`'s insert-or-resolve shape so a re-run resolves rather
+  than duplicates.
+- It writes **nothing** to `strategy_selection_receipt`,
+  `strategy_selection_candidate`, `forecast_publication`, `forecast_publication_item`
+  or any publication pointer. `recommendation_training_receipt` carries
+  `CHECK (evaluation_only)` and `CHECK (NOT publication_authorized)`, so the row shape
+  cannot express a publishable recommendation model even by mistake.
+- `job_run.release_set_id` is left NULL on purpose: this lane's inputs are literature
+  labels and the covariate plane, not a forecast release set, and binding one would
+  misstate the lineage.
+
+`load_labels` loads every harvested label as `draft` in one transaction and then
+advances the non-refuted ones, so a loader bug cannot mint a trainable label in a
+single statement. Labels the harvest states without a condition envelope are reported
+as unloadable with a reason rather than stored envelope-less or dropped:
+`agri.expert_label_envelope_valid` refuses to store one, and that partition is what
+keeps the Python and the CHECK constraint in step.
+
+`map_labels_to_training_instances` stores excluded and unexpressible instances as
+well as matched ones. The count of days an envelope excluded is the evidence that the
+envelope was actually evaluated against the streams, and the unexpressible terms are
+the data-completion gap the plane exists to surface.
+
+CLI verbs, registered by `recommendation_commands.register_recommendation_commands(cli)`:
+`recommendation-labels-load`, `recommendation-labels-summary`,
+`recommendation-labels-map`, `recommendation-train`,
+`recommendation-covariate-coverage`. Every one prints a single JSON line and writes
+nothing without `--persist`.

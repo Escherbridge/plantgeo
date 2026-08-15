@@ -1,0 +1,42 @@
+-- select_job_definition_pause_state
+-- Purpose: report whether a lane is registered at all, and whether ANY version of it is still
+--          enabled, so a paused lane can be told apart from one that was never registered.
+-- Loaded by: agri_data_service.jobs.dispatch
+-- Params: name (text) -- the lane's agri.job_definition.name.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap" in
+-- sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too.
+--
+-- What this returns: exactly one row, always -- aggregates over an empty set still produce a row.
+-- definition_count is 0 for a lane no deploy has registered yet, and any_version_enabled is the
+-- answer to the only question the dispatcher actually has: "would load_job_definition find
+-- something to run?"
+--
+-- Why this exists next to load_job_definition rather than inside it. That query filters on
+-- "AND enabled" and returns no rows for a lane that is absent, a lane that is disabled and a lane
+-- pinned to a missing version alike -- deliberately, because a slice runner only needs to refuse.
+-- An operator-facing pause toggle needs the distinction: "paused" is a state the admin panel must
+-- show and can undo, while "never registered" is a state only a deploy can fix.
+--
+-- How this query works, clause by clause:
+--
+--   SELECT count(*) AS definition_count
+--     How many version rows this lane name has. An AGGREGATE over zero matching rows is 0, not
+--     "no rows" -- which is exactly why this query never needs a not-found branch in Python.
+--
+--   coalesce(bool_or(enabled), false) AS any_version_enabled
+--     bool_or is the OR aggregate: true when at least one row's enabled is true. Over zero rows it
+--     returns NULL rather than false, so coalesce pins the empty case to false and the column is
+--     never nullable to the caller.
+--
+--     ANY version, deliberately. load_job_definition takes the newest ENABLED version, so pausing
+--     only the newest row would silently fall through to an older enabled one and keep running the
+--     lane -- the exact opposite of what an operator pressing pause asked for. The toggle therefore
+--     writes every row of the name, and this predicate reads them the same way.
+--
+--   WHERE name = name
+--     One lane. There is no version parameter here on purpose: see the note above.
+SELECT count(*) AS definition_count,
+       coalesce(bool_or(enabled), false) AS any_version_enabled
+FROM agri.job_definition
+WHERE name = :name

@@ -16,8 +16,10 @@ from agri_data_service.routes import (
     forecasts_bp,
     health_bp,
     historical_promotion_bp,
+    jobs_bp,
     local_publication_bp,
     ops_bp,
+    recommendations_bp,
     strategies_bp,
 )
 
@@ -97,11 +99,13 @@ def create_app(_args: object | None = None) -> AgriApp:
     profile_blueprints = {
         "combined_local": (
             forecasts_bp,
+            recommendations_bp,
             strategies_bp,
             local_publication_bp,
             historical_promotion_bp,
+            jobs_bp,
         ),
-        "receiver_writer": (local_publication_bp, historical_promotion_bp),
+        "receiver_writer": (local_publication_bp, historical_promotion_bp, jobs_bp),
         "published_reader": (forecasts_bp,),
     }[settings.service_profile]
     api_v1 = Blueprint.group(*profile_blueprints, url_prefix="/api/v1")

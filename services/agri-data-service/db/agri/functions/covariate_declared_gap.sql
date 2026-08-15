@@ -11,8 +11,8 @@ CREATE FUNCTION agri.covariate_declared_gap(p_schema_version character varying) 
     SET extra_float_digits TO '1'
     AS $$
         BEGIN
-            IF p_schema_version <> 'agri_covariates_v1' THEN
-                RAISE EXCEPTION 'unknown covariate schema version %; only agri_covariates_v1 is defined', p_schema_version;
+            IF p_schema_version NOT IN ('agri_covariates_v1', 'agri_covariates_v2') THEN
+                RAISE EXCEPTION 'unknown covariate schema version %; defined versions are agri_covariates_v1 and agri_covariates_v2', p_schema_version;
             END IF;
 
             RETURN QUERY
@@ -27,6 +27,29 @@ CREATE FUNCTION agri.covariate_declared_gap(p_schema_version character varying) 
                     'ERA5-Land is in the governed plan but was never requested: no CDS credentials are provisioned. It is recorded as an explicit declared gap, never as empty covariate columns implying a queried-and-absent stream.'
                 )
             ) AS entry(stream_key, gap_kind, gap_reason)
-            ORDER BY entry.stream_key;
+            WHERE p_schema_version IN ('agri_covariates_v1', 'agri_covariates_v2')
+
+            UNION ALL
+
+            SELECT
+                entry.stream_key::text,
+                entry.gap_kind::text,
+                entry.gap_reason::text
+            FROM (
+                VALUES
+                    (
+                        'analog_ensemble',
+                        'not_yet_authored',
+                        'k-NN analog-ensemble forecast statistics are named in the track specification but no governed AnEn product exists for this schema version. Declared as a gap so a v2 vector is never padded with empty analog columns that would read as a queried-and-absent product.'
+                    ),
+                    (
+                        'ml_ridge_forecast',
+                        'not_yet_authored',
+                        'ML (ridge) forecast statistics are named in the track specification but the covariate wind lane persists receipts, not a per-day governed forecast series this reader can join. Declared as a gap rather than emitted as empty columns.'
+                    )
+            ) AS entry(stream_key, gap_kind, gap_reason)
+            WHERE p_schema_version = 'agri_covariates_v2'
+
+            ORDER BY 1;
         END
         $$;

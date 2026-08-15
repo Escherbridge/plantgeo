@@ -773,7 +773,7 @@ def jobs_run(
     definition = _required_definition(definition_name, lane_name)
     try:
         summary = asyncio.run(
-            _run_archive_slice(
+            run_archive_definition_slice(
                 definition_name=definition,
                 worker_id=_resolve_worker_id(worker_id),
                 budget_seconds=budget_seconds,
@@ -793,13 +793,19 @@ def jobs_run(
         context.exit(FAILED_JOB_EXIT_CODE)
 
 
-async def _run_archive_slice(
+async def run_archive_definition_slice(
     *,
     definition_name: str,
     worker_id: str,
     budget_seconds: float | None,
 ) -> JobSliceSummary:
     """Open one session, publisher and write path for the whole tick, then drive one bounded slice through them.
+
+    The shared core behind `jobs-run` AND `jobs-pulse` (`execution/jobs_pulse_command.py`) -- both name
+    a durable archive definition and want exactly this: one session, one bounded slice, one summary.
+    `jobs-run` targets one definition per invocation via `--lane`/`--definition`; `jobs-pulse` calls this
+    once per definition the ledger's own namespace still owes a tick, in one cron container. Neither
+    caller's behaviour changed when this was extracted -- this is a pure rename of `_run_archive_slice`.
 
     ONE `ingest_session()` for the slice and never one per work item: `db/engine.ingest_session` builds a
     new engine per `async with` and disposes it in its `finally`, so a per-shard binding would be a full

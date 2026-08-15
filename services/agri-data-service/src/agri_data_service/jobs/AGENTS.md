@@ -320,7 +320,7 @@ Two things every operator of this runtime has to know, because both change what 
 ### A SIGTERM releases the lease
 
 `shutdown_signal()` binds SIGTERM and SIGINT to a stop flag for the length of one slice, and
-`ingest/commands.py::_run_archive_slice` installs it — at the process boundary, because that is the only
+`ingest/commands.py::run_archive_definition_slice` installs it — at the process boundary, because that is the only
 scope that knows this is a one-shot container rather than a library call. `run_job_slice` reads the flag
 in two places: before claiming another shard, and between two handler steps of the shard it already
 holds. On the second, the shard is **released** on the same fenced `defer_work_item` path a budget yield
