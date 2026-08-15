@@ -25,12 +25,16 @@ from agri_data_service.execution import jobs_pulse_command
 from agri_data_service.execution.jobs_pulse_command import (
     DEFAULT_PULSE_TIME_BUDGET_SECONDS,
     FAILED_PULSE_EXIT_CODE,
+    MaintenanceStepContractError,
+    MaintenanceStepReport,
     PlannedDispatchableLane,
     PlannedDurableDefinition,
+    PlannedMaintenanceStep,
     PulseLaneResult,
     PulsePlan,
     PulseSummary,
     _parse_lane_filter,
+    _plan_maintenance_steps,
     jobs_pulse,
     known_lane_tokens,
     run_jobs_pulse,
@@ -99,17 +103,37 @@ def _durable(lane_token: str, *, definition_name: str | None = None, enabled: bo
     )
 
 
+def _maintenance(
+    step: Any,
+    *,
+    lane_token: str | None = None,
+    enabled: bool = True,
+) -> PlannedMaintenanceStep:
+    return PlannedMaintenanceStep(step=step, lane_token=lane_token, enabled=enabled)
+
+
 def _plan(
     dispatchable: Sequence[PlannedDispatchableLane] = (),
     durable: Sequence[PlannedDurableDefinition] = (),
+    maintenance: Sequence[PlannedMaintenanceStep] = (),
 ) -> PulsePlan:
-    return PulsePlan(dispatchable=tuple(dispatchable), durable=tuple(durable))
+    return PulsePlan(
+        dispatchable=tuple(dispatchable),
+        durable=tuple(durable),
+        maintenance=tuple(maintenance),
+    )
 
 
 def _patch_plan(monkeypatch: pytest.MonkeyPatch, plan: PulsePlan) -> None:
-    async def _fake_discover(session: object, *, lane_filter: object, registry: object = None) -> PulsePlan:
+    async def _fake_discover(
+        session: object,
+        *,
+        lane_filter: object,
+        registry: object = None,
+        include_maintenance: bool = True,
+    ) -> PulsePlan:
         del session, lane_filter, registry
-        return plan
+        return plan if include_maintenance else _plan(plan.dispatchable, plan.durable)
 
     monkeypatch.setattr(jobs_pulse_command, "discover_pulse_plan", _fake_discover)
 
@@ -547,3 +571,228 @@ def test_the_time_budget_default_and_an_override_both_reach_run_jobs_pulse(monke
 
     _invoke("jobs-pulse", "--time-budget-seconds", "42")
     assert captured["time_budget_seconds"] == 42.0
+
+
+# --- the data-quality maintenance pass ---------------------------------------------------------
+#
+# This pass restored on 2026-08-14 what the cron consolidation had left unscheduled. The tests below
+# assert the three properties that make it worth having: it is DERIVED from the ledger's own lane set
+# (so a new lane is maintained with no second list to update), it runs in an order where reconcile
+# settles before gap-planning measures, and it carries `validate-streams`' exit rule through
+# unchanged -- `invalid` fails the tick, `incomplete` does not.
+
+
+def _fake_maintenance(monkeypatch: pytest.MonkeyPatch, **by_step: object) -> list[str]:
+    """Record the order steps ran in, answering each with a scripted report or raising its exception."""
+    order: list[str] = []
+
+    async def _fake_execute(planned: PlannedMaintenanceStep) -> object:
+        order.append(planned.step_id)
+        answer = by_step.get(planned.step, MaintenanceStepReport(outcome="ran", records=0, detail=None))
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(jobs_pulse_command, "_execute_maintenance_step", _fake_execute)
+    return order
+
+
+async def _pulse(monkeypatch: pytest.MonkeyPatch, plan: PulsePlan, *, budget: float) -> PulseSummary:
+    _patch_plan(monkeypatch, plan)
+    return await run_jobs_pulse(
+        lane_filter=None,
+        time_budget_seconds=budget,
+        worker_id="test-worker",
+        monotonic=_ScriptedClock(),
+    )
+
+
+def test_maintenance_is_planned_from_the_durable_lane_set_not_a_second_list() -> None:
+    steps = _plan_maintenance_steps(
+        (_durable("firms-archive"), _durable("streamflow-archive", enabled=False)),
+        lane_filter=None,
+    )
+
+    assert [step.step_id for step in steps] == [
+        "firms-archive:reconcile",
+        "firms-archive:plan-gaps",
+        "streamflow-archive:reconcile",
+        "streamflow-archive:plan-gaps",
+        "validate-streams",
+    ]
+    # The pause switch is inherited from the lane's own ledger row rather than read a second time.
+    assert [step.enabled for step in steps] == [True, True, False, False, True]
+
+
+def test_reconcile_precedes_plan_gaps_for_each_lane_and_validation_runs_last() -> None:
+    steps = _plan_maintenance_steps((_durable("firms-archive"),), lane_filter=None)
+    ordering = [step.step for step in steps]
+    assert ordering.index("reconcile") < ordering.index("plan-gaps") < ordering.index("validate-streams")
+
+
+def test_a_lane_filtered_tick_plans_no_global_stream_validation() -> None:
+    steps = _plan_maintenance_steps((_durable("firms-archive"),), lane_filter=frozenset({"firms-archive"}))
+    assert [step.step for step in steps] == ["reconcile", "plan-gaps"]
+
+
+def test_a_per_lane_step_planned_with_no_lane_refuses_rather_than_maintaining_nothing() -> None:
+    with pytest.raises(MaintenanceStepContractError):
+        _maintenance("reconcile").require_lane_token()
+
+
+@pytest.mark.asyncio
+async def test_a_paused_lane_is_never_maintained(monkeypatch: pytest.MonkeyPatch) -> None:
+    order = _fake_maintenance(monkeypatch)
+
+    summary = await _pulse(
+        monkeypatch,
+        _plan(maintenance=[_maintenance("reconcile", lane_token="firms-archive", enabled=False)]),
+        budget=DEFAULT_PULSE_TIME_BUDGET_SECONDS,
+    )
+
+    assert order == []
+    assert [lane.outcome for lane in summary.lanes] == ["paused"]
+    assert not summary.failed
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_stream_fails_the_tick_and_is_reported_apart_from_a_raised_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_maintenance(
+        monkeypatch,
+        **{"validate-streams": MaintenanceStepReport(outcome="invalid", records=7, detail="invalid=1")},
+    )
+
+    summary = await _pulse(
+        monkeypatch,
+        _plan(maintenance=[_maintenance("validate-streams")]),
+        budget=DEFAULT_PULSE_TIME_BUDGET_SECONDS,
+    )
+
+    assert summary.failed
+    report = summary.to_summary()
+    assert report["invalid"] == 1
+    # `raised` stays zero: the check ran perfectly, it just found rows that are wrong.
+    assert report["raised"] == 0
+
+
+@pytest.mark.asyncio
+async def test_an_incomplete_only_validation_keeps_the_tick_green(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_maintenance(
+        monkeypatch,
+        **{"validate-streams": MaintenanceStepReport(outcome="ran", records=7, detail="incomplete=3")},
+    )
+
+    summary = await _pulse(
+        monkeypatch,
+        _plan(maintenance=[_maintenance("validate-streams")]),
+        budget=DEFAULT_PULSE_TIME_BUDGET_SECONDS,
+    )
+
+    assert not summary.failed
+
+
+@pytest.mark.asyncio
+async def test_one_maintenance_step_raising_never_stops_the_next(monkeypatch: pytest.MonkeyPatch) -> None:
+    order = _fake_maintenance(monkeypatch, reconcile=OperationalError("boom", None, Exception("boom")))
+
+    summary = await _pulse(
+        monkeypatch,
+        _plan(
+            maintenance=[
+                _maintenance("reconcile", lane_token="firms-archive"),
+                _maintenance("plan-gaps", lane_token="firms-archive"),
+            ]
+        ),
+        budget=DEFAULT_PULSE_TIME_BUDGET_SECONDS,
+    )
+
+    assert order == ["firms-archive:reconcile", "firms-archive:plan-gaps"]
+    assert [lane.outcome for lane in summary.lanes] == ["raised", "ran"]
+    assert summary.failed
+
+
+@pytest.mark.asyncio
+async def test_maintenance_runs_after_both_lane_passes_so_a_spent_budget_drops_checking_not_walking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order = _fake_maintenance(monkeypatch)
+
+    async def _fake_dispatch(session: object, lane_id: str, *, requested_by: str, **kwargs: object) -> DispatchOutcome:
+        del session, requested_by, kwargs
+        order.append(f"dispatch:{lane_id}")
+        return DispatchOutcome(lane_id=lane_id, state="dispatched", summary=_slice_summary(lane_id))
+
+    async def _fake_slice(*, definition_name: str, worker_id: str, budget_seconds: float | None) -> JobSliceSummary:
+        del worker_id, budget_seconds
+        order.append(f"slice:{definition_name}")
+        return _slice_summary(definition_name)
+
+    monkeypatch.setattr(jobs_pulse_command, "dispatch_lane", _fake_dispatch)
+    monkeypatch.setattr(jobs_pulse_command, "run_archive_definition_slice", _fake_slice)
+
+    await _pulse(
+        monkeypatch,
+        _plan(
+            dispatchable=[_dispatchable("strategy-mv-refresh")],
+            durable=[_durable("firms-archive")],
+            maintenance=[_maintenance("validate-streams")],
+        ),
+        budget=DEFAULT_PULSE_TIME_BUDGET_SECONDS,
+    )
+
+    assert order == [
+        "dispatch:strategy-mv-refresh",
+        "slice:agri.ingest.archive_walk.firms-archive",
+        "validate-streams",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_exhausted_budget_skips_a_maintenance_step_rather_than_starting_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order = _fake_maintenance(monkeypatch)
+
+    summary = await _pulse(monkeypatch, _plan(maintenance=[_maintenance("validate-streams")]), budget=0.0)
+
+    assert order == []
+    assert [lane.outcome for lane in summary.lanes] == ["skipped_budget"]
+    assert not summary.failed
+
+
+def test_skip_maintenance_reaches_run_jobs_pulse_and_defaults_to_running_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def _fake_run_jobs_pulse(**kwargs: object) -> PulseSummary:
+        captured.update(kwargs)
+        return PulseSummary(lanes=())
+
+    monkeypatch.setattr(jobs_pulse_command, "run_jobs_pulse", _fake_run_jobs_pulse)
+
+    _invoke("jobs-pulse")
+    assert captured["include_maintenance"] is True
+
+    _invoke("jobs-pulse", "--skip-maintenance")
+    assert captured["include_maintenance"] is False
+
+
+def test_the_dry_run_report_lists_the_maintenance_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_plan(
+        monkeypatch,
+        _plan(
+            durable=[_durable("firms-archive")],
+            maintenance=[_maintenance("reconcile", lane_token="firms-archive"), _maintenance("validate-streams")],
+        ),
+    )
+
+    result = _invoke("jobs-pulse", "--dry-run")
+
+    assert result.exit_code == 0
+    maintenance = _last_json_line(result.output)["maintenance"]
+    assert isinstance(maintenance, list)
+    assert [entry["lane"] for entry in maintenance] == ["firms-archive:reconcile", "validate-streams"]
+    assert all(entry["would_run"] for entry in maintenance)

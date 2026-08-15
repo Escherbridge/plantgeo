@@ -14,7 +14,7 @@ define the security boundary:
 | Service | PlantGeo responsibility | Current gate |
 | --- | --- | --- |
 | `plantgeo-main` | Next.js application | Running; Railway's GitHub integration deploys it from `main`, and no other service is deployed by a web release. |
-| `plantgeo-ingest-cron` | Hourly `agri-cli ingest-all` (eight forward sources plus geometry repair) then `agri-cli jobs-pulse --time-budget-seconds 600` (every dispatchable lane and durable archive definition) — both run unconditionally from one `ENTRYPOINT` | Running; config-as-code in `infra/cron-ingest/`, `deploy.cronSchedule: "0 * * * *"`. Consolidated back onto this one hourly service 2026-08-14 — see "Cron consolidation, 2026-08-14" below — from a fan-out of one Railway cron service per source and per lane. |
+| `plantgeo-ingest-cron` | Hourly `agri-cli ingest-all` (eight forward sources plus geometry repair) then `agri-cli jobs-pulse --time-budget-seconds 600` (every dispatchable lane, every durable archive definition, then the reconcile/gap-plan/validate data-quality pass) — both run unconditionally from one `ENTRYPOINT` | Running; config-as-code in `infra/cron-ingest/`, `deploy.cronSchedule: "0 * * * *"`. Consolidated back onto this one hourly service 2026-08-14 — see "Cron consolidation, 2026-08-14" below — from a fan-out of one Railway cron service per source and per lane. |
 | `plantgeo-cron-mtbs` | `agri-cli ingest-mtbs` weekly, Tuesdays at 07:55 UTC | Running; config-as-code in `infra/cron-mtbs/`, overriding the shared `infra/cron-ingest/Dockerfile` via `deploy.startCommand`. Deliberately excluded from `ingest-all` — see "Cron consolidation, 2026-08-14" below. |
 | `plantgeo-cron-soilgrids` | `node scripts/warm-soilgrids.mjs 120` hourly at `:25` | Running; config-as-code in `infra/cron-soilgrids/`, building from its own `infra/cron-soilgrids/Dockerfile` (Node, not the Python `agri-cli` image). A finite, resumable warm walk, not a recurring ingestion lane — see "Cron consolidation, 2026-08-14" below. |
 | `plantgeo-dataservice` | Bounded Python API and publication receiver | Running; Alembic owns only the `agri` schema. |
@@ -566,12 +566,13 @@ geometry-repair pass, each isolated so one source's failure never blocks another
 | `plantgeo-cron-archive-firms` | `infra/cron-archive-firms/` | `jobs-run --lane firms-archive` | `jobs-pulse`'s durable-archive namespace, hourly |
 | `plantgeo-cron-archive-streamflow` | `infra/cron-archive-streamflow/` | `jobs-run --lane streamflow-archive` | `jobs-pulse`'s durable-archive namespace, hourly |
 
-`jobs-pulse` visits two namespaces per tick, in order, mirroring `jobs/dispatch.py`'s own split of
-responsibility: dispatchable lanes (`jobs/dispatch.py`'s `LANE_DISPATCH` registry — the same path
-`POST /api/v1/jobs/trigger` takes, which is also how the HTTP-triggered `strategy-mv-refresh` lane
-now gets a cron tick it never had before), and every durable archive definition this database's
-ledger has ever written that matches an `ingest/lanes.py` archive lane, run through the same
-`run_archive_definition_slice` function `jobs-run` itself calls. A lane paused
+`jobs-pulse` visits three namespaces per tick, in order, the first two mirroring
+`jobs/dispatch.py`'s own split of responsibility: dispatchable lanes (`jobs/dispatch.py`'s
+`LANE_DISPATCH` registry — the same path `POST /api/v1/jobs/trigger` takes, which is also how the
+HTTP-triggered `strategy-mv-refresh` lane now gets a cron tick it never had before), every durable
+archive definition this database's ledger has ever written that matches an `ingest/lanes.py` archive
+lane, run through the same `run_archive_definition_slice` function `jobs-run` itself calls, and then
+the data-quality pass described in "The data-quality loop, restored inside `jobs-pulse`" below. A lane paused
 (`agri.job_definition.enabled = false` on every version of its name) is skipped, not attempted, and
 one lane raising or dead-lettering never stops another's turn — each lane opens and closes its own
 session.
@@ -630,11 +631,44 @@ does not contain, not by trusting any command string.
 `cron-maintain-streamflow`, and `cron-validate` were deleted in the same pass, but none of them ever
 backed a created Railway service — they were config-as-code for services that were never
 provisioned, so nothing operational was lost. Their schedules and plan arguments are recoverable
-from git history if one is ever needed again. One consequence is worth flagging: `jobs-plan-gaps`
-and `jobs-reconcile-lane` — the verbs `cron-maintain-firms` and `cron-maintain-streamflow` would
-have run — and `validate-streams` — the verb `cron-validate` would have run (see
-`.claude/workflows/validate-data-streams.js`) — are not on any schedule today. Nothing currently
-triggers them but a manual `agri-cli` invocation.
+from git history if one is ever needed again.
+
+### The data-quality loop, restored inside `jobs-pulse` (2026-08-14)
+
+Deleting `cron-maintain-firms`, `cron-maintain-streamflow` and `cron-validate` cost nothing
+operationally — none had ever been provisioned — but it did leave `jobs-plan-gaps`,
+`jobs-reconcile-lane` and `validate-streams` on **no schedule at all**. That mattered more than the
+directories did: those three verbs are the loop that turns a *detected* gap into a *claimable* work
+item, so while they were manual-only a hole in a layer could sit indefinitely with every cron green.
+
+`agri-cli jobs-pulse` now runs all three as a **third pass**, after the dispatchable and durable
+namespaces, on the same hourly `plantgeo-ingest-cron` tick. Per lane it runs
+`jobs-reconcile-lane --apply` then `jobs-plan-gaps --apply`; once per unfiltered tick it then runs
+one global `validate-streams`. Four properties are deliberate:
+
+- **The lane set is derived, not listed.** Both verbs take a required `--lane`, so restoring them as
+  cron services would have meant naming the lanes in a hard-coded shell string — and a hard-coded
+  lane list joins to nothing the day a lane is renamed. The pass reuses the lane set the durable
+  namespace already discovered from `agri.job_definition`, so a new archive lane is maintained from
+  the moment its first run is planned, with no second list to update.
+- **They are a pass, not dispatchable lanes.** A dispatchable lane is driven by `run_job_slice`,
+  which takes a lease and writes `agri.job_work_item` rows of its own; reconcile and gap-planning
+  exist to *mutate those same rows* for other lanes. Registering them would have the ledger's
+  bookkeeping and its maintenance contend for one set of rows in one transaction.
+- **Order is load-bearing.** Reconcile settles the windows a layer already serves *before*
+  gap-planning measures holes, so gap-planning reads the settled truth rather than windows that were
+  about to be marked succeeded. `validate-streams` runs last, so its verdict describes the state the
+  tick leaves behind and so it is the step a spent time budget drops — an unmeasured hour is
+  recoverable, an un-walked hour of backfill is not.
+- **`validate-streams`' exit rule is carried through unchanged.** A stream reported `invalid` (rows
+  that are there are wrong) fails the tick; a stream reported `incomplete` (a backfill in flight,
+  which is weeks of correct operation) does not. The pulse reports these as distinct outcomes —
+  `invalid` versus `raised` — so an operator can tell "the gap detector is broken" from "the gap
+  detector works and is telling you something".
+
+The pass is skippable with `agri-cli jobs-pulse --skip-maintenance` for an operator draining lane
+work by hand. The scheduled tick must never use it. `agri-cli jobs-pulse --dry-run` lists every
+maintenance step it would run alongside the other two namespaces, applying nothing.
 
 ### Deferred services
 

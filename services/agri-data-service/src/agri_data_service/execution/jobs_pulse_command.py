@@ -6,7 +6,8 @@ pulse on the job runner." Before this, each durable lane -- `jobs-run --lane fir
 scheduled cron service. This verb replaces that fan-out with one process that visits every lane this
 service knows how to run a bounded slice of, once per tick, and reports one row per lane.
 
-Two namespaces, visited in order, mirroring `jobs/dispatch.py`'s own split of responsibility:
+Three namespaces, visited in order, the first two mirroring `jobs/dispatch.py`'s own split of
+responsibility:
 
 1. DISPATCHABLE LANES (`jobs/dispatch.py`'s `LANE_DISPATCH` registry) -- run through the exact same
    `dispatch_lane` call `POST /api/v1/jobs/trigger` makes, so a manual trigger, a scheduled tick and
@@ -16,11 +17,36 @@ Two namespaces, visited in order, mirroring `jobs/dispatch.py`'s own split of re
    `ingest.commands.run_archive_definition_slice` -- the exact function `jobs-run` itself calls,
    extracted to a public name so this module reuses it rather than re-implementing the claim/
    checkpoint loop. A lane already covered by step 1, or one no ledger row names yet, is excluded.
+3. THE DATA-QUALITY MAINTENANCE PASS -- `jobs-reconcile-lane --apply` then `jobs-plan-gaps --apply`
+   for each lane step 2 discovered, then one global `validate-streams`.
+
+Why the maintenance pass lives HERE rather than in its own cron service. The 2026-08-14 consolidation
+deleted `infra/cron-maintain-*` and `infra/cron-validate`, which left `validate-streams`,
+`jobs-plan-gaps` and `jobs-reconcile-lane` on no schedule at all -- so the loop that turns a DETECTED
+gap into a CLAIMABLE work item was manual-only, and a lane could sit with a hole in it indefinitely
+while every cron stayed green. Restoring that loop as three more cron services would have to name the
+lanes in a hard-coded shell string (both verbs take a required `--lane`), and a hard-coded lane list
+joins to nothing the day a lane is renamed -- the exact failure `_ARCHIVE_LANE_TOKEN_BY_DEFINITION_NAME`
+below exists to avoid. This pass instead reuses the lane set step 2 already discovered from the ledger,
+so a new archive lane is maintained the moment its first run is planned, with no second list to update.
+
+These are NOT registered as dispatchable lanes. A dispatchable lane is driven by `run_job_slice`, which
+takes a lease and writes `agri.job_work_item` rows of its own; reconcile and gap-planning exist to
+MUTATE those same rows for other lanes, so running them inside a slice would have the ledger's own
+bookkeeping and its maintenance contend for one set of rows in one transaction. They are a third pass
+over the plan instead, which `--dry-run` reports alongside the other two.
+
+ORDER WITHIN THE PASS is load-bearing. Per lane, reconcile runs before gap-planning: reconcile settles
+the windows the layer already serves, so gap-planning then measures holes against the settled truth
+rather than against windows that were about to be marked succeeded. `validate-streams` runs last, for
+two reasons: its verdict then describes the state the tick actually leaves behind, and it is the one
+step that can be dropped by the tick's time budget without leaving a lane half-maintained.
 
 A lane paused (`agri.job_definition.enabled = false` on every version of its name) is skipped, not
-attempted. One lane raising or dead-lettering never stops another's turn: each lane opens and closes
-its own session, and any exception is caught at that lane's boundary and reported as its own outcome.
-See jobs/AGENTS.md for the runtime underneath both namespaces, and execution/AGENTS.md for this module.
+attempted, in every pass. One lane raising or dead-lettering never stops another's turn: each lane
+opens and closes its own session, and any exception is caught at that lane's boundary and reported as
+its own outcome. See jobs/AGENTS.md for the runtime underneath the first two namespaces, and
+execution/AGENTS.md for this module.
 """
 
 from __future__ import annotations
@@ -46,9 +72,12 @@ from agri_data_service.ingest.archive_walk import archive_lane_definition_name
 from agri_data_service.ingest.commands import (
     WORKER_ID_MAX_LENGTH,
     WORKER_ID_VARIABLE,
+    build_stream_validation_report,
+    plan_archive_lane_gaps,
+    reconcile_archive_lane,
     run_archive_definition_slice,
 )
-from agri_data_service.ingest.lanes import BACKFILL_LANES
+from agri_data_service.ingest.lanes import BACKFILL_LANES, resolve_lane
 from agri_data_service.jobs import (
     JobDefinitionNotFoundError,
     JobLedgerRowError,
@@ -109,8 +138,25 @@ _ARCHIVE_LANE_TOKEN_BY_DEFINITION_NAME: Final[Mapping[str, str]] = MappingProxyT
     {archive_lane_definition_name(lane): lane.name for lane in BACKFILL_LANES.values()}
 )
 
-PulseLaneKind = Literal["dispatchable", "durable"]
-PulseLaneOutcome = Literal["ran", "paused", "raised", "skipped_budget"]
+PulseLaneKind = Literal["dispatchable", "durable", "maintenance"]
+
+# `invalid` is deliberately distinct from `raised`: `raised` means the check itself could not run,
+# while `invalid` means it ran perfectly and found rows that ARE wrong. Both fail the tick, but an
+# operator reading the summary must be able to tell "the gap detector is broken" from "the gap
+# detector works and is telling you something".
+PulseLaneOutcome = Literal["ran", "paused", "raised", "skipped_budget", "invalid"]
+
+# The three data-quality steps, in the order one lane's turn runs them. `validate-streams` carries no
+# lane of its own -- it measures every stream at once -- which is why `PlannedMaintenanceStep.lane_token`
+# is optional and why the step is planned once per tick rather than once per lane.
+MaintenanceStepKind = Literal["reconcile", "plan-gaps", "validate-streams"]
+
+_GLOBAL_MAINTENANCE_STEPS: Final[tuple[MaintenanceStepKind, ...]] = ("validate-streams",)
+_PER_LANE_MAINTENANCE_STEPS: Final[tuple[MaintenanceStepKind, ...]] = ("reconcile", "plan-gaps")
+
+
+class MaintenanceStepContractError(RuntimeError):
+    """Raised when a per-lane maintenance step was planned with no lane, which only a bad edit can cause."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,15 +179,48 @@ class PlannedDurableDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class PlannedMaintenanceStep:
+    """One data-quality step this tick considered, and whether the lane it maintains is paused."""
+
+    step: MaintenanceStepKind
+    lane_token: str | None
+    enabled: bool
+
+    @property
+    def step_id(self) -> str:
+        """The summary-table label: `<lane>:<step>` for a lane step, the bare step for a global one."""
+        return self.step if self.lane_token is None else f"{self.lane_token}:{self.step}"
+
+    def require_lane_token(self) -> str:
+        """Return the lane this step maintains, refusing in typed terms rather than maintaining nothing."""
+        if self.lane_token is None:
+            raise MaintenanceStepContractError(
+                f"maintenance step {self.step!r} is per-lane but was planned with no lane token"
+            )
+        return self.lane_token
+
+
+@dataclass(frozen=True, slots=True)
 class PulsePlan:
     """What this tick discovered it could run, before anything is actually dispatched or sliced."""
 
     dispatchable: tuple[PlannedDispatchableLane, ...]
     durable: tuple[PlannedDurableDefinition, ...]
+    maintenance: tuple[PlannedMaintenanceStep, ...] = ()
 
     def to_report(self) -> dict[str, object]:
         """Render the plan for `--dry-run`: what WOULD run, without running any of it."""
         return {
+            "maintenance": [
+                {
+                    "lane": entry.step_id,
+                    "kind": "maintenance",
+                    "step": entry.step,
+                    "paused": not entry.enabled,
+                    "would_run": entry.enabled,
+                }
+                for entry in self.maintenance
+            ],
             "dispatchable": [
                 {
                     "lane": entry.lane_id,
@@ -202,8 +281,12 @@ class PulseSummary:
 
         Matches `jobs-run`'s own exit philosophy: a paused lane, a budget-skipped lane, and a lane that
         merely left work behind are all healthy outcomes for an in-flight, multi-tick job runner.
+
+        `invalid` joins the failing set because it is `validate-streams`' own exit rule, carried through
+        unchanged: a stream whose rows are WRONG fails the run, while an `incomplete` stream -- a backfill
+        still in flight, which is weeks of correct operation -- does not and is reported as `ran`.
         """
-        return any(lane.outcome == "raised" or lane.dead_lettered > 0 for lane in self.lanes)
+        return any(lane.outcome in {"raised", "invalid"} or lane.dead_lettered > 0 for lane in self.lanes)
 
     def to_summary(self) -> dict[str, object]:
         """Render the operator-facing JSON object this verb echoes as one line, per ingest/commands.py."""
@@ -213,6 +296,7 @@ class PulseSummary:
             "ran": sum(1 for lane in self.lanes if lane.outcome == "ran"),
             "paused": sum(1 for lane in self.lanes if lane.outcome == "paused"),
             "raised": sum(1 for lane in self.lanes if lane.outcome == "raised"),
+            "invalid": sum(1 for lane in self.lanes if lane.outcome == "invalid"),
             "skipped_budget": sum(1 for lane in self.lanes if lane.outcome == "skipped_budget"),
             "dead_lettered_lanes": sum(1 for lane in self.lanes if lane.dead_lettered > 0),
         }
@@ -234,11 +318,39 @@ def known_lane_tokens(registry: LaneDispatchRegistry | None = None) -> frozenset
     return frozenset(BACKFILL_LANES) | frozenset(dispatch_registry.lane_ids())
 
 
+def _plan_maintenance_steps(
+    durable: Sequence[PlannedDurableDefinition],
+    *,
+    lane_filter: frozenset[str] | None,
+) -> tuple[PlannedMaintenanceStep, ...]:
+    """Derive the data-quality pass from the lanes the durable pass already found in the ledger.
+
+    Reusing that list rather than walking `BACKFILL_LANES` is deliberate on both sides: a lane with no
+    ledger row has no planned run to reconcile or plan into, and a lane the ledger DOES name is
+    maintained without anything having to add it to a second list.
+
+    `validate-streams` measures every stream at once, so it is planned only for an unfiltered tick --
+    under `--lane` an operator has asked about one lane, and a report covering all of them would answer
+    a question they did not ask and could fail the tick on a lane they excluded.
+    """
+    steps = [
+        PlannedMaintenanceStep(step=step, lane_token=entry.lane_token, enabled=entry.enabled)
+        for entry in durable
+        for step in _PER_LANE_MAINTENANCE_STEPS
+    ]
+    if lane_filter is None:
+        steps.extend(
+            PlannedMaintenanceStep(step=step, lane_token=None, enabled=True) for step in _GLOBAL_MAINTENANCE_STEPS
+        )
+    return tuple(steps)
+
+
 async def discover_pulse_plan(
     session: AsyncSession,
     *,
     lane_filter: frozenset[str] | None,
     registry: LaneDispatchRegistry | None = None,
+    include_maintenance: bool = True,
 ) -> PulsePlan:
     """Read the dispatch registry's pause states and the ledger's own archive-definition namespace.
 
@@ -279,7 +391,8 @@ async def discover_pulse_plan(
         enabled = required_column(row, "any_version_enabled", bool)
         durable.append(PlannedDurableDefinition(definition_name=name, lane_token=lane_token, enabled=enabled))
 
-    return PulsePlan(dispatchable=tuple(dispatchable), durable=tuple(durable))
+    maintenance = _plan_maintenance_steps(durable, lane_filter=lane_filter) if include_maintenance else ()
+    return PulsePlan(dispatchable=tuple(dispatchable), durable=tuple(durable), maintenance=maintenance)
 
 
 def _budget_exhausted_result(lane: str, kind: PulseLaneKind) -> PulseLaneResult:
@@ -377,6 +490,84 @@ async def _run_durable_definition(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class MaintenanceStepReport:
+    """What one data-quality step measured: how it landed, what it changed, and the one-line evidence."""
+
+    outcome: PulseLaneOutcome
+    records: int
+    detail: str | None
+
+
+async def _execute_maintenance_step(planned: PlannedMaintenanceStep) -> MaintenanceStepReport:
+    """Run one data-quality step through the exact function its own CLI verb calls.
+
+    Both lane steps run with `apply_changes=True`. That is the whole point of putting them on a
+    schedule: a dry run detects a gap and changes nothing, which is the state this pass exists to end.
+    """
+    if planned.step == "validate-streams":
+        # `bbox=None` means "the configured INGEST_BBOX", exactly as the verb's own default does.
+        report = await build_stream_validation_report(None)
+        counts = dict(report.verdict_counts)
+        detail = ", ".join(f"{verdict}={count}" for verdict, count in sorted(counts.items()))
+        # `incomplete` is NOT a failure -- see `PulseSummary.failed` and the verb's own docstring.
+        outcome: PulseLaneOutcome = "invalid" if counts.get("invalid", 0) else "ran"
+        return MaintenanceStepReport(outcome=outcome, records=len(report.streams), detail=detail)
+
+    lane = resolve_lane(planned.require_lane_token())
+    if planned.step == "reconcile":
+        reconciliation = await reconcile_archive_lane(lane, apply_changes=True)
+        return MaintenanceStepReport(
+            outcome="ran",
+            records=reconciliation.marked_succeeded_count,
+            detail=f"settled {reconciliation.marked_succeeded_count} of {reconciliation.planned_window_count} planned",
+        )
+
+    # `end=None` measures gaps through today, matching `jobs-plan-gaps`' own `--until` default. No
+    # trailing partial window is ever planned; the forward hourly ingest leg owns the present.
+    gap_plan = await plan_archive_lane_gaps(lane, end=None, apply_changes=True)
+    opened = gap_plan.opened_count + gap_plan.reopened_count
+    return MaintenanceStepReport(
+        outcome="ran",
+        records=opened,
+        detail=(
+            f"opened {gap_plan.opened_count}, reopened {gap_plan.reopened_count}, "
+            f"missing {len(gap_plan.missing_days)} day(s), unplannable {len(gap_plan.unplannable_days)}"
+        ),
+    )
+
+
+async def _run_maintenance_step(
+    planned: PlannedMaintenanceStep,
+    *,
+    monotonic: Callable[[], float],
+) -> PulseLaneResult:
+    """Run one data-quality step, isolating its own failure exactly as the two lane passes do."""
+    if not planned.enabled:
+        return PulseLaneResult(lane=planned.step_id, kind="maintenance", outcome="paused", seconds=0.0, records=0)
+    started = monotonic()
+    try:
+        report = await _execute_maintenance_step(planned)
+    except Exception as error:  # per-step isolation: one check's fault must not end the pulse
+        logger.error("jobs_pulse_maintenance_step_raised", step=planned.step_id, error=type(error).__name__)
+        return PulseLaneResult(
+            lane=planned.step_id,
+            kind="maintenance",
+            outcome="raised",
+            seconds=monotonic() - started,
+            records=0,
+            detail=failure_summary(error),
+        )
+    return PulseLaneResult(
+        lane=planned.step_id,
+        kind="maintenance",
+        outcome=report.outcome,
+        seconds=monotonic() - started,
+        records=report.records,
+        detail=report.detail,
+    )
+
+
 async def run_jobs_pulse(  # noqa: PLR0913 - one parameter per operator-tunable knob of a single pulse tick
     *,
     lane_filter: frozenset[str] | None,
@@ -385,18 +576,28 @@ async def run_jobs_pulse(  # noqa: PLR0913 - one parameter per operator-tunable 
     registry: LaneDispatchRegistry | None = None,
     handlers: JobHandlerRegistry = JOB_HANDLERS,
     monotonic: Callable[[], float] = time.monotonic,
+    include_maintenance: bool = True,
 ) -> PulseSummary:
-    """Dispatch every dispatchable lane, then run one slice of every durable archive definition owed.
+    """Dispatch every dispatchable lane, slice every durable definition owed, then maintain data quality.
 
     `time_budget_seconds` bounds when this tick STARTS a new lane, never a lane already in hand: the
     budget is checked before each lane's own turn, exactly as `run_job_slice`'s own budget is checked
     before claiming another shard, never mid-shard. A lane's own slice keeps its own definition-level
     lease/budget regardless of how much of this tick's global budget remains.
+
+    The maintenance pass runs LAST so that a tick whose budget was spent on real ingest work drops
+    checking rather than dropping walking -- a gap that goes one hour unmeasured is recoverable, an
+    hour of un-walked backfill is an hour the archive never gets back.
     """
     started = monotonic()
     deadline = started + time_budget_seconds
     async with ingest_session() as discovery_session:
-        plan = await discover_pulse_plan(discovery_session, lane_filter=lane_filter, registry=registry)
+        plan = await discover_pulse_plan(
+            discovery_session,
+            lane_filter=lane_filter,
+            registry=registry,
+            include_maintenance=include_maintenance,
+        )
         await discovery_session.rollback()
 
     results: list[PulseLaneResult] = []
@@ -412,13 +613,18 @@ async def run_jobs_pulse(  # noqa: PLR0913 - one parameter per operator-tunable 
             results.append(_budget_exhausted_result(planned_definition.lane_token, "durable"))
             continue
         results.append(await _run_durable_definition(planned_definition, worker_id=worker_id, monotonic=monotonic))
+    for planned_step in plan.maintenance:
+        if monotonic() >= deadline:
+            results.append(_budget_exhausted_result(planned_step.step_id, "maintenance"))
+            continue
+        results.append(await _run_maintenance_step(planned_step, monotonic=monotonic))
     return PulseSummary(lanes=tuple(results))
 
 
-async def _dry_run_report(lane_filter: frozenset[str] | None) -> dict[str, object]:
+async def _dry_run_report(lane_filter: frozenset[str] | None, *, include_maintenance: bool) -> dict[str, object]:
     """Build `--dry-run`'s report: the plan this tick would execute, without executing any of it."""
     async with ingest_session() as session:
-        plan = await discover_pulse_plan(session, lane_filter=lane_filter)
+        plan = await discover_pulse_plan(session, lane_filter=lane_filter, include_maintenance=include_maintenance)
         await session.rollback()
     return plan.to_report()
 
@@ -475,8 +681,15 @@ def _parse_lane_filter(lane_names: Sequence[str]) -> frozenset[str] | None:
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="List what this tick WOULD run -- the dispatch registry, the ledger's own due definitions, and "
-    "every lane's pause state -- without dispatching or slicing anything.",
+    help="List what this tick WOULD run -- the dispatch registry, the ledger's own due definitions, the "
+    "data-quality steps, and every lane's pause state -- without dispatching, slicing or applying anything.",
+)
+@click.option(
+    "--skip-maintenance",
+    is_flag=True,
+    default=False,
+    help="Run only the two lane passes, omitting the reconcile/gap-plan/validate data-quality pass. For an "
+    "operator draining lane work; the scheduled tick must not use it, or gaps stop becoming work items.",
 )
 @click.pass_context
 def jobs_pulse(
@@ -484,29 +697,39 @@ def jobs_pulse(
     time_budget_seconds: float,
     lane_names: tuple[str, ...],
     dry_run: bool,
+    skip_maintenance: bool,
 ) -> None:
     """Keep the whole in-app job runner alive from ONE Railway cron, replacing a per-lane cron service.
 
-    Two ordered passes over ONE tick: every dispatchable lane in `jobs/dispatch.py`'s `LANE_DISPATCH`
+    Three ordered passes over ONE tick: every dispatchable lane in `jobs/dispatch.py`'s `LANE_DISPATCH`
     registry (the same path `POST /api/v1/jobs/trigger` runs), then one bounded slice of every durable
     archive definition this database's ledger owns that also names an `ingest/lanes.py` `--lane` token
-    and is not already covered by a dispatchable lane. A lane paused in the ledger is skipped rather
-    than attempted, in either pass.
+    and is not already covered by a dispatchable lane, then the DATA-QUALITY pass -- per lane,
+    `jobs-reconcile-lane --apply` then `jobs-plan-gaps --apply`, and finally one `validate-streams`.
+    A lane paused in the ledger is skipped rather than attempted, in every pass.
+
+    The data-quality pass is what turns a detected gap into a claimable work item. Before it lived
+    here those three verbs were on no schedule at all, so a hole in a layer was found by whoever
+    happened to run the report by hand. See this module's docstring for why it is a pass rather than
+    three more cron services or three more dispatchable lanes.
 
     EXIT CODES, matching `jobs-run`'s own philosophy:
 
       0 -- the tick ran. Some lanes may have been paused; some may have been skipped because this
-           tick's own time budget was already spent starting the next one. Neither is an incident --
-           a multi-tick, in-flight job runner working exactly as designed looks like this.
-      1 -- any lane DEAD-LETTERED a shard during this tick, or any lane's own dispatch/slice call
-           raised. Per-lane isolation means one such lane never stops another lane's turn; it only
-           changes THIS TICK'S exit code, once every lane still due one has had its turn.
+           tick's own time budget was already spent starting the next one. A stream reported
+           `incomplete` -- a backfill in flight -- is likewise not an incident. All of these are what
+           a multi-tick, in-flight job runner working exactly as designed looks like.
+      1 -- any lane DEAD-LETTERED a shard during this tick, any lane's own dispatch/slice call raised,
+           any data-quality step raised, or `validate-streams` found a stream `invalid` (rows that ARE
+           there are wrong). Per-lane isolation means one such lane never stops another lane's turn; it
+           only changes THIS TICK'S exit code, once every lane still due one has had its turn.
     """
     lane_filter = _parse_lane_filter(lane_names)
+    include_maintenance = not skip_maintenance
 
     try:
         if dry_run:
-            report = asyncio.run(_dry_run_report(lane_filter))
+            report = asyncio.run(_dry_run_report(lane_filter, include_maintenance=include_maintenance))
             click.echo(json.dumps(report, sort_keys=True))
             return
         summary = asyncio.run(
@@ -514,6 +737,7 @@ def jobs_pulse(
                 lane_filter=lane_filter,
                 time_budget_seconds=time_budget_seconds,
                 worker_id=_default_worker_id(),
+                include_maintenance=include_maintenance,
             )
         )
     except _LEDGER_ERRORS as exc:

@@ -1125,7 +1125,7 @@ def validate_streams(
     when every validity check reads zero.
     """
     try:
-        report = asyncio.run(_build_validation_report(bbox))
+        report = asyncio.run(build_stream_validation_report(bbox))
     except (SQLAlchemyError, ObservedDayScanTooLargeError, ValidationRowError, ValueError) as exc:
         raise _ledger_failure(exc, "cross-stream validation") from exc
     document = report.to_json(indent=2) if output_format == "json" else report.to_markdown()
@@ -1150,8 +1150,13 @@ def validate_streams(
         context.exit(INVALID_STREAM_EXIT_CODE)
 
 
-async def _build_validation_report(bbox: str | None) -> ValidationReport:
-    """Open one read-only session for the whole report; `build_validation_report` pins the snapshot itself."""
+async def build_stream_validation_report(bbox: str | None) -> ValidationReport:
+    """Open one read-only session for the whole report; `build_validation_report` pins the snapshot itself.
+
+    Public because `execution/jobs_pulse_command.py`'s maintenance pass runs this exact measurement on
+    the hourly tick. It reuses this rather than opening its own session, for the same reason it reuses
+    `run_archive_definition_slice`: one spelling of "how this check is run", not two that can drift.
+    """
     async with ingest_session() as session:
         return await build_validation_report(session, bbox=bbox)
 
@@ -1190,14 +1195,17 @@ def jobs_reconcile_lane(lane_name: str, floor: str | None, apply_changes: bool) 
     """
     lane = _lane_from_token(lane_name, floor)
     try:
-        reconciliation = asyncio.run(_reconcile_archive_lane(lane, apply_changes=apply_changes))
+        reconciliation = asyncio.run(reconcile_archive_lane(lane, apply_changes=apply_changes))
     except (SQLAlchemyError, MissingIngestionLayerError, ReconciliationError, JobLedgerRowError, JobRunError) as exc:
         raise _ledger_failure(exc, f"reconciling lane {lane.name}") from exc
     click.echo(json.dumps(reconciliation.to_summary(), sort_keys=True))
 
 
-async def _reconcile_archive_lane(lane: BackfillLane, *, apply_changes: bool) -> LaneReconciliation:
-    """Open one session for the measurement, and commit only when `--apply` actually settled something."""
+async def reconcile_archive_lane(lane: BackfillLane, *, apply_changes: bool) -> LaneReconciliation:
+    """Open one session for the measurement, and commit only when `--apply` actually settled something.
+
+    Public for `execution/jobs_pulse_command.py`'s maintenance pass; see `build_stream_validation_report`.
+    """
     async with ingest_session() as session:
         reconciliation = await reconcile_lane(session, lane, apply_changes=apply_changes)
         if apply_changes:
@@ -1250,7 +1258,7 @@ def jobs_plan_gaps(lane_name: str, floor: str | None, until: str | None, apply_c
     lane = _lane_from_token(lane_name, floor)
     end = None if until is None else _lane_day(until, "--until")
     try:
-        plan = asyncio.run(_plan_archive_lane_gaps(lane, end=end, apply_changes=apply_changes))
+        plan = asyncio.run(plan_archive_lane_gaps(lane, end=end, apply_changes=apply_changes))
     except (
         SQLAlchemyError,
         MissingIngestionLayerError,
@@ -1263,20 +1271,23 @@ def jobs_plan_gaps(lane_name: str, floor: str | None, until: str | None, apply_c
     click.echo(json.dumps(plan.to_summary(), sort_keys=True))
 
 
-async def _plan_archive_lane_gaps(
+async def plan_archive_lane_gaps(
     lane: BackfillLane,
     *,
     end: datetime | None,
     apply_changes: bool,
 ) -> LaneGapPlan:
-    """Open one session for the measurement, and commit only when `--apply` actually planned something."""
+    """Open one session for the measurement, and commit only when `--apply` actually planned something.
+
+    Public for `execution/jobs_pulse_command.py`'s maintenance pass; see `build_stream_validation_report`.
+    """
     async with ingest_session() as session:
         plan = await plan_lane_gaps(session, lane, apply_changes=apply_changes, end=end)
         if apply_changes:
             await session.commit()
         else:
             # An explicit rollback rather than trusting the session's close, for the same reason
-            # `_reconcile_archive_lane` does it: a dry run must leave nothing behind even if a future edit
+            # `reconcile_archive_lane` does it: a dry run must leave nothing behind even if a future edit
             # starts writing on a path it does not today.
             await session.rollback()
     return plan

@@ -8,6 +8,13 @@
 # and `jobs-pulse` already visits every dispatchable lane and every durable archive definition.
 # See docs/runbooks/durable-backfill-lanes.md and execution/jobs_pulse_command.py's docstring.
 #
+# THE DATA-QUALITY LOOP IS INSIDE `jobs-pulse`, not a fourth verb on this line. The consolidation
+# also deleted infra/cron-maintain-* and infra/cron-validate, which left `jobs-reconcile-lane`,
+# `jobs-plan-gaps` and `validate-streams` on no schedule -- so a detected gap never became a
+# claimable work item. `jobs-pulse` now runs all three as its third pass, deriving the lane set
+# from the ledger rather than from a hard-coded list a shell string here would have to carry.
+# Do not add them to this ENTRYPOINT as well; they would run twice per tick.
+#
 # TWO services deliberately survived that consolidation, and neither is a job-runner lane:
 #   - plantgeo-cron-mtbs still overrides this ENTRYPOINT with `agri-cli ingest-mtbs` on a weekly
 #     schedule. MTBS is quarterly-published, so hourly is the wrong shape, and `ingest-mtbs`

@@ -1542,3 +1542,54 @@ CLI verbs, registered by `recommendation_commands.register_recommendation_comman
 `recommendation-labels-map`, `recommendation-train`,
 `recommendation-covariate-coverage`. Every one prints a single JSON line and writes
 nothing without `--persist`.
+
+## `jobs_pulse_command.py` -- one cron tick for the whole job runner
+
+`agri-cli jobs-pulse` is the single hourly tick that replaced a fan-out of eleven Railway cron
+services on 2026-08-14 (owner directive: *"we should not need all the individual crons, maybe just one
+to keep a pulse on the job runner."*). It visits three namespaces per tick and reports one row per
+lane; `docs/deployment.md` § "Cron consolidation, 2026-08-14" is the deployment-side record.
+
+1. **Dispatchable lanes** — `jobs/dispatch.py`'s `LANE_DISPATCH` registry, through the same
+   `dispatch_lane` call `POST /api/v1/jobs/trigger` makes.
+2. **Durable archive definitions** — every `agri.job_definition.name` the ledger has written that also
+   names an `ingest/lanes.py` `--lane` token, through the same `run_archive_definition_slice`
+   `jobs-run` calls.
+3. **The data-quality maintenance pass** — per lane, `jobs-reconcile-lane --apply` then
+   `jobs-plan-gaps --apply`; then one global `validate-streams`.
+
+### Why the maintenance pass is a pass, not lanes and not cron services
+
+The consolidation deleted `infra/cron-maintain-*` and `infra/cron-validate`, which left those three
+verbs on **no schedule at all** — so the loop that turns a *detected* gap into a *claimable* work item
+was manual-only and a hole in a layer could persist with every cron green. Three properties decided
+the shape of the fix:
+
+- **Cron services would need a hard-coded lane list.** Both lane verbs take a required `--lane`, so a
+  shell string would have to name them, and a hard-coded lane list joins to nothing the day a lane is
+  renamed — the same failure `_ARCHIVE_LANE_TOKEN_BY_DEFINITION_NAME` exists to avoid. The pass reuses
+  the lane set namespace 2 already discovered from the ledger, so there is no second list to update.
+- **Dispatchable lanes would contend with themselves.** A dispatchable lane runs under `run_job_slice`,
+  which takes a lease and writes `agri.job_work_item` rows; reconcile and gap-planning exist to *mutate
+  those same rows* for other lanes.
+- **Order is load-bearing.** Reconcile settles before gap-planning measures, so gap-planning reads the
+  settled truth. `validate-streams` runs last so its verdict describes the state the tick leaves
+  behind, and so a spent time budget drops *checking* rather than *walking* — an unmeasured hour is
+  recoverable, an un-walked hour of backfill is not.
+
+### Outcomes and the exit rule
+
+`PulseLaneOutcome` distinguishes `invalid` from `raised` deliberately: `raised` means the check could
+not run, `invalid` means it ran perfectly and found rows that are wrong. Both fail the tick
+(`PulseSummary.failed`); `paused`, `skipped_budget`, and a stream merely reported `incomplete` do not.
+That carries `validate-streams`' own rule through unchanged — a backfill in flight is `incomplete` for
+weeks of correct operation and must not turn the hourly cron red.
+
+`--skip-maintenance` runs only the two lane passes, for an operator draining lane work by hand; the
+scheduled tick must never use it. `--dry-run` lists all three namespaces and applies nothing.
+
+**Measured cost (prod, 2026-08-14):** the four lane steps took 57 s + 75 s + 68 s + 81 s = 281 s with
+both lanes fully settled and nothing to plan, before `validate-streams`. Against the cron's
+`--time-budget-seconds 600` that is roughly half the tick spent on maintenance in the steady state, so
+the budget check before each step — and `validate-streams`' last position — are what keep a slow lane
+from starving the next tick rather than a nicety.
