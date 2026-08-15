@@ -202,7 +202,7 @@ describe("getPublishedForecastSeries", () => {
     });
 
     const requestedUrl = mockedFetch.mock.calls[0][0] as URL;
-    expect(requestedUrl.pathname).toBe("/forecasts/");
+    expect(requestedUrl.pathname).toBe("/api/v1/forecasts/");
     expect(requestedUrl.searchParams.get("series_key")).toBe(
       "ndvi-daily:sentinel2-ndvi-0p25deg:43.1250:-113.6250"
     );

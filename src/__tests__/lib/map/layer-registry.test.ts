@@ -201,11 +201,13 @@ describe('layer registry derivations', () => {
   })
 
   // Teams and Analytics own no layer, so the registry cannot order them and they get no
-  // group; Alerts is not a registry concept at all. All three are still reachable, as the
-  // dock's three layerless sections -- which is what stopped the rail's removal from
-  // orphaning them.
+  // group; Alerts and Offline are not registry concepts at all -- `DockDetailsId` is
+  // `PanelId | "alerts" | "offline"`, so those two are the pair `getLayersForPanel` cannot
+  // even be asked about, which is why the loop below covers only the other two. All four are
+  // still reachable, as the dock's layerless sections -- which is what stopped the rail's
+  // removal from orphaning them.
   it('keeps the layerless reports reachable as their own dock sections', () => {
-    expect(DOCK_PIVOT_SECTIONS).toEqual(['alerts', 'team', 'analytics'])
+    expect(DOCK_PIVOT_SECTIONS).toEqual(['alerts', 'team', 'analytics', 'offline'])
     for (const panelId of ['team', 'analytics'] as const) {
       expect(getLayersForPanel(panelId)).toEqual([])
       expect(DOCK_LAYER_GROUPS.some((group) => group.key === panelId)).toBe(false)

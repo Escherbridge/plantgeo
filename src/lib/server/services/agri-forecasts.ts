@@ -107,7 +107,7 @@ const UPSTREAM_TIMEOUT_MS = 8000;
 
 function endpoint(): URL {
   const url = providerUrl("AGRI_DATA_SERVICE_URL", "http://localhost:8000");
-  url.pathname = `${url.pathname.replace(/\/$/, "")}/forecasts/`;
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/api/v1/forecasts/`;
   return url;
 }
 

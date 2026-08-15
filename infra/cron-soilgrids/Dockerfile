@@ -27,8 +27,17 @@ ENV NODE_ENV=development \
 # let this build work before it was declared directly). The resolve is still asserted at build
 # time -- a lockfile/tree drift should fail this build rather than surface as a crashed cron
 # tick at 03:00.
+#
+# `--ignore-scripts` is load-bearing, not hygiene. package.json's `prepare` script runs `husky`,
+# husky is a devDependency, and `--omit=dev` means it is not installed -- so the lifecycle script
+# exits 127 (`sh: husky: not found`) and takes the whole build with it. That was latent for as
+# long as Railway kept this layer cached and surfaced the moment the cache went cold, which is
+# the worst possible time to discover it: the image cannot rebuild while the last good one keeps
+# ticking, so nothing looks broken until a deploy needs to produce a new image. Nothing this
+# driver depends on (`postgres`, `jiti`, `zod`, `drizzle-orm`) has an install script, so skipping
+# them costs nothing here. The jiti assertion below is unaffected and still gates the build.
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev \
+RUN npm ci --omit=dev --ignore-scripts \
     && node -e "require.resolve('jiti')"
 
 # The whole `src/` tree, because the driver's jiti alias maps "@" to it and the reachable set

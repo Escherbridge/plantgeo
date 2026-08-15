@@ -16,6 +16,28 @@ export interface TrackingPositionInput {
 export class UnknownTrackingAssetError extends Error {}
 export class DuplicateTrackingPositionError extends Error {}
 
+interface TrackingPositionRow {
+  asset_id: string;
+  time: Date;
+  heading: number | null;
+  speed: number | null;
+  altitude: number | null;
+  metadata: { lat: number; lon: number };
+}
+
+/**
+ * `db.execute` on postgres-js resolves to a RowList, which IS the array; only older driver
+ * shapes wrap it in `.rows`. Both readers below reached straight for `.rows` and cast, so on
+ * this stack (drizzle 0.39 + postgres-js) they returned `undefined` rather than rows -- and
+ * because the cast asserted the array type, neither the compiler nor the one test that reaches
+ * `getRouteHistory` (it asserts only that a non-admin is refused) could see it.
+ */
+function resultRows(result: unknown): TrackingPositionRow[] {
+  if (Array.isArray(result)) return result as TrackingPositionRow[];
+  const wrapped = result as { rows?: unknown } | null;
+  return Array.isArray(wrapped?.rows) ? (wrapped.rows as TrackingPositionRow[]) : [];
+}
+
 /** Verify the asset and durably insert one idempotent position in one transaction. */
 export async function persistVerifiedPosition(
   input: TrackingPositionInput
@@ -58,14 +80,7 @@ export async function getLastPositions(db: PostgresJsDatabase) {
         FROM tracking.positions
         ORDER BY asset_id, time DESC`
   );
-  return (result as unknown as { rows: unknown[] }).rows as Array<{
-    asset_id: string;
-    time: Date;
-    heading: number | null;
-    speed: number | null;
-    altitude: number | null;
-    metadata: { lat: number; lon: number };
-  }>;
+  return resultRows(result);
 }
 
 export async function getRouteHistory(
@@ -81,14 +96,7 @@ export async function getRouteHistory(
           AND time BETWEEN ${from} AND ${to}
         ORDER BY time ASC`
   );
-  return (result as unknown as { rows: unknown[] }).rows as Array<{
-    asset_id: string;
-    time: Date;
-    heading: number | null;
-    speed: number | null;
-    altitude: number | null;
-    metadata: { lat: number; lon: number };
-  }>;
+  return resultRows(result);
 }
 
 interface PositionRow {
