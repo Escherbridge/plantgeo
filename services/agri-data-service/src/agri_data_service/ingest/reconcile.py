@@ -56,6 +56,7 @@ from agri_data_service.ingest.archive_walk import (
     archive_source,
     archive_window_payload,
     archive_window_shard_key,
+    walk_generation,
 )
 from agri_data_service.ingest.lanes import lane_windows
 from agri_data_service.ingest.validation.completeness import missing_publication_days
@@ -80,16 +81,44 @@ CoverageVerdict = Literal["covered", "partial", "absent"]
 # What gap planning would do to one window of the lane's grid. Only the first two write anything; the rest
 # are named outcomes rather than a silent skip, because "this gap day sits under a dead letter" and "this
 # gap day sits under a window nobody has claimed" are different operator problems.
-GapWindowAction = Literal["open", "reopen", "already_queued", "held", "dead_lettered", "cancelled"]
+GapWindowAction = Literal[
+    "open",
+    "reopen",
+    "reopen_exhausted",
+    "already_queued",
+    "held",
+    "dead_lettered",
+    "cancelled",
+]
 
 GAP_WINDOW_ACTIONS: Final[tuple[GapWindowAction, ...]] = (
     "open",
     "reopen",
+    "reopen_exhausted",
     "already_queued",
     "held",
     "dead_lettered",
     "cancelled",
 )
+
+# How many times gap planning may reopen ONE window before it stops asking and starts reporting.
+#
+# Reopening assumes a missing day is a HOLE -- the walk succeeded over nothing and a re-walk will land the
+# rows. For a lane whose upstream genuinely published nothing that day, that assumption is false and the
+# loop never terminates: the window is reopened, re-walked, writes nothing because there is nothing to
+# write, succeeds again, and is reopened by the next tick. Measured on prod 2026-08-14, firms-archive
+# offers 454 such windows over 1,069 "missing" days whose month histogram is 68% December-February and
+# 1.7% July-September -- the inverse of fire season, which is what a PNW bbox with no fires in it looks
+# like, not what a fetch defect looks like. `ingest/archive_walk.py` already states the same rule from the
+# walk's side: "a winter day genuinely holds no detections; failing those would turn most of the archive
+# red".
+#
+# So a window that has been reopened this many times is reclassified `reopen_exhausted` rather than
+# reopened again. That is not the gap being forgiven -- the window keeps every missing day it carries and
+# is reported under its own action, which is what surfaces it as an operator data point instead of as
+# silent hourly churn. The counter is the walk generation the reopen statement already bumps
+# (`PAYLOAD_WALK_GENERATION`), so this needs no new column and no migration.
+MAX_GAP_REOPEN_GENERATIONS: Final = 5
 
 # The report and this module now execute ONE statement, `sql/ingest/observed_days.sql`, formatted for one
 # layer instead of all of them; `OBSERVED_DAYS_FOR_LAYER` is imported rather than re-loaded. A window is
@@ -734,12 +763,29 @@ def map_days_to_grid(
     return mapped, tuple(unplannable)
 
 
-def gap_window_action(existing_status: str | None) -> GapWindowAction:
-    """Decide what planning may do to the shard a missing day landed on, from the state that shard is in."""
+def _row_payload(row: Mapping[str, object]) -> Mapping[str, object] | None:
+    """Read one window row's JSONB payload, tolerating a driver that hands back something else.
+
+    `walk_generation` already treats an absent or non-integer counter as zero; this only has to guarantee
+    it is handed a mapping or None, so a payload stored as a JSON scalar cannot raise here. `dict` rather
+    than `Mapping` because a JSONB column deserializes to exactly that, and testing against the builtin
+    keeps `collections.abc` in the type-checking block where the rest of this module's imports live.
+    """
+    payload = row.get("payload")
+    return payload if isinstance(payload, dict) else None
+
+
+def gap_window_action(existing_status: str | None, *, reopen_generation: int = 0) -> GapWindowAction:
+    """Decide what planning may do to the shard a missing day landed on, from the state that shard is in.
+
+    `reopen_generation` is the shard's walk generation -- how many times gap planning has already reopened
+    it. Past `MAX_GAP_REOPEN_GENERATIONS` a still-missing day is evidence that the upstream has nothing to
+    give rather than evidence of a hole, so the window is reported instead of reopened a sixth time.
+    """
     if existing_status is None:
         return "open"
     if existing_status == REOPENABLE_WORK_ITEM_STATE:
-        return "reopen"
+        return "reopen_exhausted" if reopen_generation >= MAX_GAP_REOPEN_GENERATIONS else "reopen"
     if existing_status in HELD_WORK_ITEM_STATES:
         return "held"
     if existing_status == DEAD_LETTER_WORK_ITEM_STATE:
@@ -790,6 +836,11 @@ async def plan_lane_gaps(  # noqa: PLR0913 - the lane plus five keyword-only kno
     run_key = archive_lane_run_key(lane)
     job_run_id, rows = await _read_lane_windows(session, run_key)
     existing = {required_column(row, "shard_key", str): required_column(row, "status", str) for row in rows}
+    # How many times each shard has already been reopened, read off the same rows: the reopen statement
+    # bumps `PAYLOAD_WALK_GENERATION` on every pass, so the payload already counts this for free.
+    reopen_generations = {
+        required_column(row, "shard_key", str): walk_generation(_row_payload(row)) for row in rows
+    }
 
     grid = lane_windows(lane, end if end is not None else datetime.now(UTC))
     floor_day = lane.floor.date()
@@ -812,7 +863,10 @@ async def plan_lane_gaps(  # noqa: PLR0913 - the lane plus five keyword-only kno
         GapWindow(
             shard_key=(shard_key := archive_window_shard_key(lane, lane_window)),
             lane_window=lane_window,
-            action=gap_window_action(existing.get(shard_key)),
+            action=gap_window_action(
+                existing.get(shard_key),
+                reopen_generation=reopen_generations.get(shard_key, 0),
+            ),
             existing_status=existing.get(shard_key),
             missing_days=found[:max_reported_missing_days],
             omitted_missing_days=max(0, len(found) - max_reported_missing_days),
@@ -970,6 +1024,9 @@ async def _reopen_gap_windows(  # noqa: PLR0913 - the session plus five keyword-
             # than re-spelled here, so a shard reopened over a real hole gets the same number of chances the
             # lane grants any other window rather than whatever its previous pass happened to leave.
             "attempt_budget": archive_lane_definition_spec(lane).max_attempts,
+            # The cap, re-asserted inside the write for the same reason the status gate is: a window can
+            # cross it between the read that classified it and this statement.
+            "max_reopen_generations": MAX_GAP_REOPEN_GENERATIONS,
             "reopened": json.dumps(reopened, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
         },
     )

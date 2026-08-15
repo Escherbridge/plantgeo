@@ -28,9 +28,11 @@ from agri_data_service.ingest.archive_walk import (
 )
 from agri_data_service.ingest.lanes import FIRMS_ARCHIVE_LANE, STREAMFLOW_ARCHIVE_LANE, lane_windows
 from agri_data_service.ingest.reconcile import (
+    MAX_GAP_REOPEN_GENERATIONS,
     MAX_LANE_WINDOW_ROWS,
     MAX_OBSERVED_DAY_ROWS,
     RECONCILIATION_MARKER_KEY,
+    gap_window_action,
     ReconciliationError,
     ReconciliationScanTooLargeError,
     build_coverage_category,
@@ -648,3 +650,44 @@ async def test_the_window_a_reconciliation_measures_is_the_one_the_planner_store
     measured = reconciliation.absent.windows[0]
     assert measured.first_day == lane_window.window.start.date()
     assert measured.expected_days == FIRMS_ARCHIVE_LANE.window_days
+
+
+# --- the gap-reopen cap ------------------------------------------------------------------------
+#
+# Reopening assumes a missing day is a hole a re-walk will fill. For a day the upstream never published
+# that assumption never comes true and the window is reopened forever. Measured on prod 2026-08-14,
+# firms-archive offers 454 such windows over 1,069 days whose month histogram is 68% Dec-Feb -- the
+# inverse of fire season. Past MAX_GAP_REOPEN_GENERATIONS the window is reported, not reopened again.
+
+
+def test_a_window_below_the_cap_is_still_reopened() -> None:
+    for generation in range(MAX_GAP_REOPEN_GENERATIONS):
+        assert gap_window_action("succeeded", reopen_generation=generation) == "reopen"
+
+
+def test_a_window_at_or_past_the_cap_is_reported_instead_of_reopened() -> None:
+    assert gap_window_action("succeeded", reopen_generation=MAX_GAP_REOPEN_GENERATIONS) == "reopen_exhausted"
+    assert gap_window_action("succeeded", reopen_generation=MAX_GAP_REOPEN_GENERATIONS + 7) == "reopen_exhausted"
+
+
+def test_the_cap_defaults_to_zero_so_a_window_planned_before_it_existed_is_reopenable() -> None:
+    assert gap_window_action("succeeded") == "reopen"
+
+
+def test_the_cap_never_converts_a_state_that_was_not_reopenable_anyway() -> None:
+    # An exhausted counter must not promote a held, dead-lettered or cancelled window into any new
+    # behaviour: those are reported for reasons the counter knows nothing about.
+    exhausted = MAX_GAP_REOPEN_GENERATIONS + 1
+    assert gap_window_action(None, reopen_generation=exhausted) == "open"
+    assert gap_window_action("dead_letter", reopen_generation=exhausted) == "dead_lettered"
+    assert gap_window_action("cancelled", reopen_generation=exhausted) == "cancelled"
+    assert gap_window_action("queued", reopen_generation=exhausted) == "already_queued"
+
+
+def test_the_reopen_statement_asserts_the_cap_itself() -> None:
+    # Defence in depth, exactly as the `status = 'succeeded'` gate is repeated in SQL: a window can cross
+    # the cap between the read that classified it and the write that reopens it.
+    statement = reconcile_module.load_query_sql("ingest/reopen_gap_windows.sql")
+    assert "max_reopen_generations" in statement
+    body = statement[statement.index("UPDATE agri.job_work_item") :]
+    assert "CAST(:max_reopen_generations AS integer)" in body

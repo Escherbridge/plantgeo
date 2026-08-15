@@ -133,6 +133,15 @@
 --     because comparing anything to NULL in SQL yields NULL -- neither true nor false -- so `IS` is the
 --     only test that works.
 --
+--   AND COALESCE(<the generation, read defensively>, 0) < CAST(<the generation cap> AS integer)
+--     The REOPEN CAP, repeated here for the same reason the state gate is: `gap_window_action` classifies
+--     an exhausted window `reopen_exhausted` and leaves it out of the batch, but a window can cross the
+--     cap between that read and this write, and nothing else stops this statement reopening a window
+--     forever. Past the cap a still-missing day is evidence the upstream published nothing rather than
+--     evidence of a hole -- see MAX_GAP_REOPEN_GENERATIONS in ingest/reconcile.py for the measurement
+--     behind that. The same defensive COALESCE/jsonb_typeof shape as the SET clause below, so a payload
+--     written before this key existed reads as generation 0 and is reopenable.
+--
 --   RETURNING item.shard_key AS shard_key
 --     RETURNING makes a write also behave like a read, handing back a row for each row it actually
 --     changed. It is the only honest way to learn what this statement did.
@@ -164,4 +173,11 @@ WHERE item.job_run_id = CAST(:job_run_id AS uuid)
   AND item.shard_key = reopened.shard_key
   AND item.status = 'succeeded'
   AND item.lease_owner IS NULL
+  AND COALESCE(
+        CASE
+            WHEN jsonb_typeof(item.payload -> CAST(:generation_key AS text)) = 'number'
+                THEN CAST(item.payload ->> CAST(:generation_key AS text) AS integer)
+        END,
+        0
+      ) < CAST(:max_reopen_generations AS integer)
 RETURNING item.shard_key AS shard_key
