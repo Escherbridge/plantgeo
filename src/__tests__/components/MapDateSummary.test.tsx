@@ -22,6 +22,7 @@ const SCRUBBED_SPAN_DAYS = 421;
 const CAPABILITIES: SliderCapabilities = {
   serverCurrentDate: SERVER_CURRENT_DATE,
   futureAxisDays: 3,
+  streamsUnavailable: false,
   layers: [
     {
       layerName: "fire-detections",

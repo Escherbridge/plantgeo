@@ -182,6 +182,38 @@ So, mandatory:
 Serving readers resolve a requested day through their own backward window. That
 is why a dropped catalogue entry looks like missing data and not a dropped join.
 
+### 9.1 Three ways a toggle may resolve, never a fourth
+
+`warehouseLayerName` on a registry entry must resolve exactly one of three ways.
+Anything else is a silent drop, not a variant:
+
+1. **A real catalogue row** — a `geo.layers.name` or a `SLIDER_STREAM_LAYER_NAMES`
+   entry.
+2. **A declared snapshot** — `SNAPSHOT_SURFACE_LAYER_NAMES`
+   (`src/types/time-slider.ts`), for a capability the resolver registers by name
+   with no observation window at all. `strategy-recommendations`
+   (`layer-registry.ts:401`) was the live instance of this bug: its name matched
+   neither a layer nor a stream, so it dropped out of the LEFT JOIN silently until
+   the 2026-08-15 pre-aggregation-layer slice named it here.
+3. **`null` with a reason** — `permanentlyUnavailableReason` set (a withheld
+   capability), or the toggle is genuinely axis-less by design (a live aggregate
+   with no per-day history, e.g. `demand-heatmap`) and is listed as such in the
+   conformance test below.
+
+`soil-survey` was the other live instance, and a different shape of the same bug:
+`0013_soil_survey_persistence.sql` gave it a real `geo.layers` row on 2026-08-05,
+and the registry kept `warehouseLayerName: null` anyway — neither withheld nor
+declared, just stale relative to what its own upstream migration had already
+shipped.
+
+A conformance test walking every registry entry against these three states is
+what catches the next one:
+`src/__tests__/services/environmental-read-model.test.ts` (the registry cross-
+check) and `src/__tests__/services/pre-aggregation-catalogue.test.ts` (the
+24-name catalogue itself, cross-checked against the `geo.layers` seed migrations
+and the census matviews' own DDL). Extend the hand-spelled lists in both when a
+25th name is added; never import the constant under test to check itself.
+
 ## 10. Wire the time slider
 
 Every layer with history exposes a slider axis: earliest day, latest day,

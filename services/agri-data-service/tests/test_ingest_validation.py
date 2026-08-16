@@ -1354,17 +1354,14 @@ def stub_rows() -> dict[str, list[Mapping[str, object]]]:
         "drought_area_validity_counts": [
             {"total_rows": 1_035, "null_geom": 0, "undated_day": 0, "future_day": 0, "outside_bbox": 0}
         ],
+        # Both empty since the three geo.historical_* StreamDefinitions were deregistered. The
+        # fixture used to carry a `historical_vegetation` row here; with no catalog entry left to
+        # match it, it became an UNKNOWN stream and started showing up in every report's
+        # unknown_streams tuple -- masking the one deliberate unknown ("mystery-layer") the suite
+        # exists to pin. A retired stream must leave the fixture, not sit in it as a permanent
+        # unknown.
         "historical_observed_days": [],
-        "historical_validity_counts": [
-            {
-                "stream": "historical_vegetation",
-                "total_rows": 0,
-                "null_geom": 0,
-                "undated_day": 0,
-                "future_day": 0,
-                "outside_bbox": 0,
-            }
-        ],
+        "historical_validity_counts": [],
         "job_lane_state": [
             {
                 "lane": STREAMFLOW_LANE_NAME,

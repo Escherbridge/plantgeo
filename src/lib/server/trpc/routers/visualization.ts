@@ -34,6 +34,47 @@ function viewportCondition([west, south, east, north]: [
   )`;
 }
 
+/**
+ * The three readers below are bounded at 2,000 rows and were unbounded in BYTES: each selected
+ * the whole `features.properties` jsonb, which on geo.features carries 1,467 MB of TOAST across
+ * the table. Two of them then read four scalars off it and threw the rest away.
+ *
+ * So each now projects the exact keys it consumes, as a jsonb object built in SQL. That is a
+ * projection, not a filter: the same rows come back, carrying only the keys the mapper reads.
+ * Detoasting still happens per row -- `->` on a TOASTed jsonb reads the datum -- but the value
+ * crossing the wire and living in the Node heap is a handful of scalars instead of a whole
+ * upstream payload, which is what a 2,000-row viewport read multiplies.
+ *
+ * `getPointData` is the exception and keeps the whole blob: its contract RETURNS `properties`
+ * to the client, so projecting it would silently change what the caller receives rather than
+ * how much the server carries. Its cap stays the row limit.
+ */
+const HEATMAP_PROPERTY_KEYS = [
+  "longitude",
+  "lng",
+  "latitude",
+  "lat",
+  "weight",
+  "intensity",
+  "risk",
+] as const;
+
+const FLOW_PROPERTY_KEYS = ["source", "target", "value", "volume"] as const;
+
+/**
+ * Builds `jsonb_build_object('k', properties -> 'k', ...)` over exactly the keys a mapper reads.
+ *
+ * Both binds carry `::text`. `jsonb -> unknown` is ambiguous between `-> text` (object key) and
+ * `-> integer` (array element), and postgres-js sends a bare string with no type OID — the same
+ * bind-type trap documented on `environmental-read-model.ts`.
+ */
+function projectedProperties(keys: readonly string[]) {
+  return sql<Record<string, unknown>>`jsonb_build_object(${sql.join(
+    keys.map((key) => sql`${key}::text, ${features.properties} -> ${key}::text`),
+    sql`, `
+  )})`;
+}
+
 function finiteNumber(value: unknown): number | null {
   if (
     (typeof value !== "number" && typeof value !== "string") ||
@@ -66,7 +107,7 @@ export const visualizationRouter = router({
     .input(viewportQuerySchema)
     .query(async ({ ctx, input }) => {
       const rows = await ctx.db
-        .select({ properties: features.properties })
+        .select({ properties: projectedProperties(HEATMAP_PROPERTY_KEYS) })
         .from(features)
         .innerJoin(layers, eq(features.layerId, layers.id))
         .where(
@@ -122,7 +163,7 @@ export const visualizationRouter = router({
     .input(viewportQuerySchema)
     .query(async ({ ctx, input }) => {
       const rows = await ctx.db
-        .select({ properties: features.properties })
+        .select({ properties: projectedProperties(FLOW_PROPERTY_KEYS) })
         .from(features)
         .innerJoin(layers, eq(features.layerId, layers.id))
         .where(

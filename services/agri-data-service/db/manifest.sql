@@ -133,6 +133,7 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/tables/knowledge_chunks.sql
 \i agri/tables/land_use_snapshots.sql
 \i agri/tables/locations.sql
+\i agri/tables/matview_refresh_state.sql
 \i agri/tables/publication_pointer.sql
 \i agri/views/v_forecast_series_serving.sql
 \i agri/materialized_views/mv_forecast_ml_daily_serving.sql

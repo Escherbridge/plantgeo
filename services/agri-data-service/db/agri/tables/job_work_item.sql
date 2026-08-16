@@ -58,3 +58,6 @@ CREATE INDEX ix_job_work_item_claim ON agri.job_work_item USING btree (status, n
 
 -- INDEX: ix_job_work_item_lease_expiry
 CREATE INDEX ix_job_work_item_lease_expiry ON agri.job_work_item USING btree (lease_expires_at);
+
+-- INDEX: ix_job_work_item_reopened_gaps
+CREATE INDEX ix_job_work_item_reopened_gaps ON agri.job_work_item USING btree (((payload -> 'reopened_from_observed_gaps'::text))) WHERE ((payload -> 'reopened_from_observed_gaps'::text) IS NOT NULL);

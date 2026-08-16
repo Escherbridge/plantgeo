@@ -18,6 +18,21 @@
 -- so the agent can tell those two apart. Nothing new is recorded anywhere -- this reads the table
 -- the lanes already fill.
 --
+-- WHY THIS ONE STATEMENT STILL READS A RAW TABLE while its siblings were repointed at the
+-- pre-aggregated rollups. The pre-aggregation design's rule is not "no aggregates"; it is that no
+-- request may make the database read far more rows than it returns. This read is already bounded
+-- on both sides: the cell CTE caps it at cell_limit cells before the audit is touched, and the
+-- window overlap caps it to the audit rows spanning one day. It is an indexed range read over a
+-- governance ledger, not a scan of an observation plane, so there is nothing here for a rollup to
+-- remove.
+--
+-- It is also the one question the census cannot answer. geo.mv_signal_observation_day is grained
+-- by catalogue SURFACE and day and says how much landed; this table is grained by signal, cell and
+-- fetched window and says WHY nothing did. Folding a reason-for-absence ledger into a
+-- how-much-landed census would lose exactly the column that makes an empty day explainable. The
+-- census half of the question is answered instead by observation_coverage_on_day.sql, which reads
+-- the rollup, and the two are reported side by side.
+--
 -- How this query works, clause by clause:
 --
 --   WITH nearby_cells AS (...)

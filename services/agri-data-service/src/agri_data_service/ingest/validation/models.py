@@ -151,9 +151,12 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
         publication_cadence_days=7,
         cadence_basis="USDM publishes one release every Tuesday, so a weekly rhythm is complete, not sparse",
     ),
-    StreamDefinition(stream="historical_vegetation", kind="reference", store="historical_table"),
-    StreamDefinition(stream="historical_fire_data", kind="reference", store="historical_table"),
-    StreamDefinition(stream="historical_water_drought", kind="reference", store="historical_table"),
+    # historical_vegetation / historical_fire_data / historical_water_drought deregistered 2026-08-15:
+    # owner directive "if there is no planned track to populate the table then remove the layer". The
+    # three geo.historical_* tables they named have no producer anywhere in the tree, and every
+    # validate-streams tick scanned them anyway (historical_observed_days.sql, historical_validity_counts.sql)
+    # for a `store="historical_table"` catalog entry that could never report anything but empty. See
+    # docs/pending-migrations/0029-pre-aggregation.md for the ordered apply sequence this sits inside.
 )
 
 

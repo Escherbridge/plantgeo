@@ -89,6 +89,12 @@ from agri_data_service.jobs import (
     failure_summary,
 )
 
+# Same mechanism, same reason: `register_dispatchable_lane` runs at the bottom of
+# `jobs.matview_refresh` at import time. Without this import the matview-refresh lane exists in code
+# but is invisible to this CLI's `LANE_DISPATCH` registry -- every matview it refreshes stays
+# unscheduled, which is the exact bug this lane exists to prevent, one layer up.
+from agri_data_service.jobs import matview_refresh as _matview_refresh_registers_on_import  # noqa: F401
+
 # Importing this module is also what REGISTERS the strategy-mv-refresh dispatchable lane in THIS
 # process: `register_dispatchable_lane` runs at the bottom of `jobs.strategy_mv_refresh` at import
 # time, the same mechanism `jobs/scheduler.py` relies on so the HTTP trigger route can reach it. This

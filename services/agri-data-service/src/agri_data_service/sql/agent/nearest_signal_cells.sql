@@ -5,8 +5,8 @@
 -- Loaded by: agri_data_service.agent.tools
 -- Params: longitude/latitude (double precision), radius_meters (double precision),
 --         cell_limit (int -- how many cells the scan may gather), grid_names (text[], empty array
---         means "every grid"), day_start/day_end (timestamptz -- the UTC midnight the day opens on
---         and the UTC midnight the next day opens on), row_limit (int -- how many cells come back)
+--         means "every grid"), day (date -- the one calendar day being counted),
+--         row_limit (int -- how many cells come back)
 --
 -- Parameter names appear above WITHOUT a leading colon -- see "Header/bind-param trap" in
 -- sql/AGENTS.md.
@@ -16,6 +16,20 @@
 -- and a caller that only ever saw "the nearest cell" would never learn the difference. So this
 -- statement returns cells whether or not they carry anything, each with its measured distance and
 -- its count for the day, and lets the reader decide which one it is honest to quote.
+--
+-- THE COUNTS COME FROM geo.mv_signal_cell_daily, the pre-aggregated rollup, not from
+-- agri.signal_observation. The rollup already holds one row per (support key, signal, unit, cell,
+-- day) with the raw reading count folded into it, so a per-cell census for one day is a short
+-- range read on its (cell_id, observed_day) index rather than a scan of a 26 GB table.
+--
+-- Two limits on what the count means, both inherited from the rollup's definition and both named
+-- in the tool's note because no column here can express them:
+--   * It counts the GOVERNED SIGNAL plane only -- the 19 signal names under contract
+--     (execution/coverage_contract.py, verified against agri.data_source 2026-08-11), observed and
+--     quality-accepted. Layers that land on agri.forecast_observation, Sentinel-2 NDVI above all,
+--     are not counted here at all.
+--   * A zero is therefore a claim about the governed signal plane, never a claim that the cell
+--     holds nothing.
 --
 -- How this query works, clause by clause:
 --
@@ -53,13 +67,16 @@
 --
 --   day_observations AS (...)
 --     The second CTE, counting what each of those cells holds on the one day in question. The
---     filter is a half-open range over the two UTC midnights -- at or after the opening midnight,
---     strictly before the next -- which admits every instant of the day exactly once and lets the
---     database use its index on observed_at, which a per-row date cast would defeat.
+--     filter is a plain equality on the rollup's own day column, because the rollup's grain IS a
+--     calendar day -- there is no timestamp left to bracket and no per-row cast to defeat an index.
 --
---   observation.is_observed AND observation.quality_flag = 'accepted'
---     Excludes rows that stand in for an absence and rows the ingest lane flagged, so a cell whose
---     only rows are placeholders is correctly counted as holding nothing.
+--   sum(rollup.observation_count)
+--     The count of RAW readings behind the cell-day, not the count of rollup rows. The rollup
+--     remembers how many readings it collapsed, so this recovers the true number.
+--
+--   count(DISTINCT rollup.signal_name)
+--     How many distinct governed signals that cell carried that day, which is the more useful
+--     figure of the two when judging whether a cell is worth quoting.
 --
 --   LEFT JOIN day_observations
 --     LEFT, not INNER, and that is the whole design. An INNER join would silently drop every cell
@@ -94,18 +111,14 @@ WITH nearby_cells AS (
 ),
 day_observations AS (
     SELECT
-        observation.cell_id,
-        count(*) AS observation_count,
-        count(DISTINCT observation.signal_name) AS signal_count,
-        min(observation.observed_at) AS first_observed_at,
-        max(observation.observed_at) AS last_observed_at
-    FROM agri.signal_observation AS observation
-    INNER JOIN nearby_cells ON nearby_cells.cell_id = observation.cell_id
-    WHERE observation.observed_at >= :day_start
-      AND observation.observed_at < :day_end
-      AND observation.is_observed
-      AND observation.quality_flag = 'accepted'
-    GROUP BY observation.cell_id
+        rollup.cell_id,
+        sum(rollup.observation_count) AS observation_count,
+        count(DISTINCT rollup.signal_name) AS signal_count,
+        max(rollup.newest_observed_at) AS last_observed_at
+    FROM geo.mv_signal_cell_daily AS rollup
+    INNER JOIN nearby_cells ON nearby_cells.cell_id = rollup.cell_id
+    WHERE rollup.observed_day = :day
+    GROUP BY rollup.cell_id
 )
 SELECT
     nearby_cells.cell_key,
@@ -116,7 +129,6 @@ SELECT
     nearby_cells.distance_m AS distance_meters,
     coalesce(day_observations.observation_count, 0) AS observation_count_on_day,
     coalesce(day_observations.signal_count, 0) AS signal_count_on_day,
-    day_observations.first_observed_at,
     day_observations.last_observed_at
 FROM nearby_cells
 LEFT JOIN day_observations ON day_observations.cell_id = nearby_cells.cell_id

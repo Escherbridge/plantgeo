@@ -164,10 +164,13 @@ async def test_refreshes_all_three_views_concurrently_in_coarse_regional_detail_
         f"REFRESH MATERIALIZED VIEW CONCURRENTLY {REGIONAL}",
         f"REFRESH MATERIALIZED VIEW CONCURRENTLY {DETAIL}",
     ]
-    # Per view: exists check, unique-index check, REFRESH, row count -- four statements, three
-    # commits (one per successfully refreshed view), no rollbacks.
-    assert len(session.statements) == 12
-    assert session.commits == 3
+    # Per view: exists check, unique-index check, REFRESH, row count, and the observability
+    # write-back into agri.matview_refresh_state -- five statements, and two commits (the refresh
+    # itself, then the state row), so 15 statements and 6 commits across three views. The
+    # write-back is committed separately on purpose: an observability row must never be able to
+    # roll back the refresh it is describing.
+    assert len(session.statements) == 15
+    assert session.commits == 6
     assert session.rollbacks == 0
 
 
@@ -243,7 +246,10 @@ async def test_a_failed_refresh_rolls_back_and_does_not_block_the_remaining_view
     assert REGIONAL in report.failure_summary()
 
     assert session.rollbacks == 1
-    assert session.commits == 2
+    # Two successful refreshes commit twice each (the REFRESH, then the observability write-back);
+    # the failed view rolls its REFRESH back and still commits ITS state row -- recording a failure
+    # is the one thing that must survive the failure.
+    assert session.commits == 5
     # All three REFRESH statements were still attempted -- one view's failure never short-circuits
     # the loop.
     assert len(session.refresh_statements()) == 3

@@ -74,27 +74,75 @@ export async function persistVerifiedPosition(
   });
 }
 
+/**
+ * How far back a "last known position" may be and still be a position.
+ *
+ * `tracking.positions` is the only hypertable in the database (0 chunks, 0 rows, 40 kB as
+ * measured 2026-08-15), so today this bound costs nothing and buys nothing. It exists because
+ * the shape it replaces -- `DISTINCT ON (asset_id) ... ORDER BY asset_id, time DESC` with no
+ * time predicate and no LIMIT -- sorts the ENTIRE positions table, and a live-tracking table is
+ * the one relation in this schema whose row count is set by wall-clock time rather than by how
+ * much ground the ingest lanes cover. On a 3 GB box that sort is the failure this whole
+ * pre-aggregation pass exists to prevent, and it would arrive on the day the first fleet
+ * connects rather than on a day anyone was measuring.
+ *
+ * 24 hours: an asset that has not reported in a day is not "where it is", it is a stale
+ * record, and the map draws a stale pin as a current one.
+ */
+const LAST_POSITION_MAX_AGE_HOURS = 24;
+
+/** Assets one map read may pin. Well above any fleet this platform has served. */
+const LAST_POSITION_MAX_ASSETS = 5_000;
+
+/** Days one route request may span. Beyond this the answer is a report, not a map layer. */
+const ROUTE_HISTORY_MAX_RANGE_DAYS = 7;
+
+/** Points one route may draw. A 7-day route at 5 s resolution is 120,960 -- this caps it. */
+const ROUTE_HISTORY_MAX_POINTS = 5_000;
+
 export async function getLastPositions(db: PostgresJsDatabase) {
   const result = await db.execute(
     sql`SELECT DISTINCT ON (asset_id) asset_id, time, heading, speed, altitude, metadata
         FROM tracking.positions
-        ORDER BY asset_id, time DESC`
+        WHERE time >= now() - (${LAST_POSITION_MAX_AGE_HOURS}::integer * interval '1 hour')
+        ORDER BY asset_id, time DESC
+        LIMIT ${LAST_POSITION_MAX_ASSETS}`
   );
   return resultRows(result);
 }
 
+/**
+ * One asset's track between two instants, with the range CLAMPED rather than refused.
+ *
+ * Clamped to the newest `ROUTE_HISTORY_MAX_RANGE_DAYS` of the requested window, so a caller
+ * asking for a year gets the most recent week rather than an error -- the recent end is the
+ * one a track is read for.
+ *
+ * The row cap is a hard LIMIT and this reader does NOT report having hit it: with
+ * `ORDER BY time ASC` a capped answer is the OLDEST `ROUTE_HISTORY_MAX_POINTS` of the clamped
+ * window, so a caller comparing `rows.length` against the cap is the only signal there is. That
+ * is a deliberate stopgap, not a finished contract -- an unbounded read is strictly worse -- and
+ * the honest fix is a `truncated` flag on the caller's payload, which needs the route-history
+ * response type widened.
+ */
 export async function getRouteHistory(
   db: PostgresJsDatabase,
   assetId: string,
   from: Date,
   to: Date
 ) {
+  const maxRangeMs = ROUTE_HISTORY_MAX_RANGE_DAYS * 86_400_000;
+  const clampedFrom =
+    to.getTime() - from.getTime() > maxRangeMs
+      ? new Date(to.getTime() - maxRangeMs)
+      : from;
   const result = await db.execute(
     sql`SELECT asset_id, time, heading, speed, altitude, metadata
         FROM tracking.positions
         WHERE asset_id = ${assetId}
-          AND time BETWEEN ${from} AND ${to}
-        ORDER BY time ASC`
+          AND time BETWEEN ${clampedFrom} AND ${to}
+        ORDER BY time ASC
+        LIMIT ${ROUTE_HISTORY_MAX_POINTS}`
   );
   return resultRows(result);
 }

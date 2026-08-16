@@ -86,7 +86,19 @@ export function processGeoJsonFeatures(
   return { packed, count };
 }
 
-if (typeof self !== "undefined" && typeof self.addEventListener === "function") {
+/**
+ * True only inside a real dedicated/shared worker.
+ *
+ * The previous guard asked whether `self.addEventListener` was a function, which on the MAIN
+ * thread is trivially true -- `self` IS `window` there. So importing this module for its pure
+ * `processGeoJsonFeatures` export (as `LayerManager` briefly did) installed a `message`
+ * listener on `window` that answered any `postMessage` and posted back with a transfer list.
+ * `WorkerGlobalScope` is undefined on the main thread and cannot be faked by an import.
+ */
+const isWorkerScope =
+  typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScope;
+
+if (isWorkerScope) {
   self.addEventListener("message", (event: MessageEvent<ProcessGeoJsonMessage>) => {
     const { type, layerId, geojson, valueProperty } = event.data || {};
 

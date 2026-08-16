@@ -416,11 +416,17 @@ describe('layer registry derivations', () => {
     expect(useMapStore.getState().activeLayers).not.toContain('climate-field')
   })
 
-  it('treats the upstream-proxied collection as a component layer with no warehouse feed', () => {
+  // `warehouseLayerName` is 'soil-survey', NOT null. It was null until 2026-08-15 and that was
+  // simply never updated after 0013_soil_survey_persistence.sql gave the layer a real geo.layers
+  // row on 2026-08-05: a null name with no permanentlyUnavailableReason means "this toggle
+  // resolves to no day axis by design", and this layer has one. The conformance audit in
+  // environmental-read-model.test.ts ("resolves every LAYER_REGISTRY toggle to a catalogue
+  // entry, a declared snapshot, or a documented null") is what caught it.
+  it('treats the upstream-proxied collection as a component layer fed by its own geo.layers row', () => {
     const entry = LAYER_REGISTRY['soil-survey']
     expect(entry.renderKind).toBe('component')
     expect(entry.styleLayerIds).toEqual([])
-    expect(entry.warehouseLayerName).toBeNull()
+    expect(entry.warehouseLayerName).toBe('soil-survey')
     expect(entry.permanentlyUnavailableReason).toBeNull()
     expect(panelIdForLayerToggle('soil-survey')).toBe('soil')
     // Its style layer ids stay out of the setLayoutProperty path: a component-added

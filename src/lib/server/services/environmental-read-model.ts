@@ -305,6 +305,14 @@ type FireDetectionRow = { properties: unknown };
  * `::date` in the predicate abort the whole statement, whereas the reader's job is to omit
  * that one detection. Both sides are the same fixed-width YYYY-MM-DD form, so the comparison
  * is exact.
+ *
+ * DELIBERATELY NOT GIVEN the `geo.feature_observation_day(properties)` restriction that the
+ * water-gauges, weather and vegetation readers carry for `ix_features_layer_observation_day`.
+ * That function's COALESCE is `observedAt, updatedAt, polygonDateTime` and knows nothing about
+ * `acqDate`, so for a detection dated only by FIRMS's own field it returns NULL -- adding it
+ * here would silently drop exactly the rows this COALESCE exists to keep. This read stays a
+ * bounded-by-LIMIT scan of the fire-detections layer-day slice until either the function learns
+ * `acqDate` or the ingest path backfills `observedAt` on every detection.
  */
 async function readFireDetectionsOnDay(
   date: string,
@@ -447,6 +455,15 @@ async function readStreamflowGaugesOnDay(
       AND f.status = 'published'
       AND f.properties->>'siteNo' IS NOT NULL
       AND ${namedDaySql(sql`f.properties->>'updatedAt'`)} = ${date}::date
+      ${/* REDUNDANT BY DATA, LOAD-BEARING BY PLAN. The line above is the layer's own day rule
+            and stays the authority; this one restates it in the exact expression
+            `ix_features_layer_observation_day (layer_id, geo.feature_observation_day(properties))
+            WHERE status = 'published'` is built on, so the sort input below is ONE day of one
+            layer rather than the layer's whole history. The two agree for this layer because
+            water-gauges rows carry `updatedAt` and none of the other two named-day keys --
+            verified against production and recorded on OBSERVATION_TIME_TEXT -- and
+            `observation-day-contract.test.ts` pins the function to the same rule. */ sql``}
+      AND geo.feature_observation_day(f.properties) = ${date}::date
       AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
     ORDER BY
       f.properties->>'siteNo',
@@ -574,28 +591,34 @@ export async function getPublishedWeatherForPoint(
     throw new RangeError("Point must be within WGS84 bounds");
   }
 
-  // MATERIALIZED pins the layer/status filter ahead of the KNN sort, so a sparse
-  // weather set cannot walk a large slice of the GiST index before finding its
-  // candidates. Returned coordinates are read from the same geom column the sort
-  // ranks -- never from the properties copy, which can drift from it silently.
+  // THE `WITH candidates AS MATERIALIZED` THAT USED TO WRAP THIS IS DELETED, and the
+  // reasoning it carried is worth keeping because it was right about the wrong machine.
+  // MATERIALIZED pinned the layer/status filter ahead of the KNN sort so a sparse weather set
+  // could not walk a large slice of the GiST index. What it actually does is spool the WHOLE
+  // weather layer's `properties` JSONB plus its geometry into a work_mem tuplestore before a
+  // LIMIT 8 -- a plan pin that is nearly free on a fat box and a temp-file bomb on a 3 GB
+  // cgroup. It fires on first paint of every session and again inside `assembleRegionalContext`.
+  //
+  // Letting the GiST KNN drive is what makes this read proportional to the eight rows it
+  // returns. `<->` on an indexed geometry column is an index scan, not a sort of the layer,
+  // so the "walk a large slice" case costs index pages rather than detoasted JSONB.
+  //
+  // Returned coordinates are still read from the same geom column the sort ranks -- never from
+  // the properties copy, which can drift from it silently.
   const rows = await db.execute<{
     properties: unknown;
     lon: number | null;
     lat: number | null;
   }>(sql`
-    WITH candidates AS MATERIALIZED (
-      SELECT f.properties, f.geom
-      FROM geo.features f
-      JOIN geo.layers l ON l.id = f.layer_id
-      WHERE l.name = ${WEATHER_LAYER_ID}
-        AND f.status = 'published'
-    )
     SELECT
-      properties,
-      ST_X(geom) AS lon,
-      ST_Y(geom) AS lat
-    FROM candidates
-    ORDER BY geom <-> ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)
+      f.properties,
+      ST_X(f.geom) AS lon,
+      ST_Y(f.geom) AS lat
+    FROM geo.features f
+    JOIN geo.layers l ON l.id = f.layer_id
+    WHERE l.name = ${WEATHER_LAYER_ID}
+      AND f.status = 'published'
+    ORDER BY f.geom <-> ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)
     LIMIT ${WEATHER_CANDIDATE_ROWS}
   `);
 
@@ -672,6 +695,12 @@ async function readWeatherOnDay(
     WHERE l.name = ${WEATHER_LAYER_ID}
       AND f.status = 'published'
       AND ${namedDaySql(sql`f.properties->>'observedAt'`)} = ${date}::date
+      ${/* Same restatement, same reason, as `readStreamflowGaugesOnDay`: this is the expression
+            `ix_features_layer_observation_day` indexes, so the DISTINCT ON below sorts one day
+            instead of the layer. Provably implied here rather than merely verified --
+            `observedAt` is FIRST in the named-day COALESCE, so whenever the line above matches,
+            `geo.feature_observation_day` reads that same key. */ sql``}
+      AND geo.feature_observation_day(f.properties) = ${date}::date
       AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
     ORDER BY
       ST_X(f.geom),
@@ -917,16 +946,44 @@ type DroughtReleaseResolution =
 async function resolveDroughtRelease(
   date: string
 ): Promise<DroughtReleaseResolution> {
+  // Two index probes on `uq_mv_drought_release_index`, where this was three FILTERed
+  // aggregates over an unfiltered `geo.drought_areas` -- a full scan of a table that hides
+  // 495 MB of TOAST behind 1,040 rows, issued by BOTH drought readers and again inside
+  // `assembleRegionalContext`. The release index projects `valid_date` and its neighbours
+  // and NEVER `geom`, so nothing detoasts.
+  //
+  // The three output aliases are unchanged on purpose: every branch below, and the reason
+  // each branch exists, is about which of the three is null. `earliest_release` still comes
+  // from the whole record rather than from the covering row, so a date BEFORE the first
+  // release still reports "the record starts <day>" instead of "nothing published yet" --
+  // those are different sentences about different warehouse states. Zero rows means the
+  // record is genuinely empty, which is the same null-everything case the old aggregate
+  // returned over an empty table.
   const releases = await db.execute<{
     earliest_release: string | null;
     as_of_release: string | null;
     next_release: string | null;
   }>(sql`
+    WITH covering AS (
+      SELECT valid_date, next_valid_date, earliest_valid_date
+      FROM geo.mv_drought_release_index
+      WHERE valid_date <= ${date}::date
+      ORDER BY valid_date DESC
+      LIMIT 1
+    ),
+    first_release AS (
+      SELECT earliest_valid_date
+      FROM geo.mv_drought_release_index
+      ORDER BY valid_date ASC
+      LIMIT 1
+    )
     SELECT
-      MIN(valid_date) AS earliest_release,
-      MAX(valid_date) FILTER (WHERE valid_date <= ${date}) AS as_of_release,
-      MIN(valid_date) FILTER (WHERE valid_date > ${date}) AS next_release
-    FROM geo.drought_areas
+      COALESCE(covering.earliest_valid_date, first_release.earliest_valid_date)
+        AS earliest_release,
+      covering.valid_date AS as_of_release,
+      covering.next_valid_date AS next_release
+    FROM first_release
+    LEFT JOIN covering ON true
   `);
   const earliestRelease = toCalendarDate(releases[0]?.earliest_release);
   const asOfRelease = toCalendarDate(releases[0]?.as_of_release);
@@ -1257,10 +1314,24 @@ export async function getPublishedVegetationIndex(
   // carries an explicit `Z`, so for this layer the named day and the UTC day agree; the named
   // day is what a bounded historical window is expressed in, because that is the form a
   // requested date arrives as.
+  //
+  // Both branches carry a second, redundant-by-data restriction written in
+  // `geo.feature_observation_day(properties)` -- the exact expression
+  // `ix_features_layer_observation_day (layer_id, geo.feature_observation_day(properties))
+  // WHERE status = 'published'` is built on. Vegetation is the deepest per-day slice in
+  // geo.features (four years, 184,409 rows), so restricting the scan to the window BEFORE the
+  // DISTINCT ON is what stops a low-zoom read from sorting the layer's whole history.
+  // Implied rather than assumed: `observedAt` is first in the named-day COALESCE, so a row the
+  // authoritative predicate keeps is a row the function dates identically, and a row missing
+  // `observedAt` is excluded by the authoritative predicate's own NULL.
   const observationWindowSql =
     windowThroughDay === null || windowAfterDay === null
-      ? sql`(f.properties->>'observedAt')::timestamptz >= ${freshSince}::timestamptz`
-      : sql`${observedDay} > ${windowAfterDay}::date AND ${observedDay} <= ${windowThroughDay}::date`;
+      ? sql`(f.properties->>'observedAt')::timestamptz >= ${freshSince}::timestamptz
+            AND geo.feature_observation_day(f.properties)
+                >= (${freshSince}::timestamptz AT TIME ZONE 'UTC')::date`
+      : sql`${observedDay} > ${windowAfterDay}::date AND ${observedDay} <= ${windowThroughDay}::date
+            AND geo.feature_observation_day(f.properties) > ${windowAfterDay}::date
+            AND geo.feature_observation_day(f.properties) <= ${windowThroughDay}::date`;
   const tolerance = droughtSimplifyTolerance(east - west);
 
   // Every stored cell is a 5-vertex axis-aligned square (verified: ST_NPoints = 5 on all
@@ -1318,24 +1389,50 @@ export async function getPublishedVegetationIndex(
   if (rows.length === 0) {
     // Paid for only in the empty case, and only to tell two very different answers apart:
     // a viewport the grid does not cover at all, versus one it covers where every cell has
-    // been under cloud longer than the window. MAX over the ISO-8601 text is chronological
-    // because every stored value is the same fixed-width UTC format.
+    // been under cloud longer than the window.
     //
-    // Bounded to the requested day for a named day: a cell first sampled AFTER that day says
-    // nothing about whether the grid covered the viewport then, and reporting it as the
+    // THIS USED TO BE AN UNBOUNDED `MAX(properties->>'observedAt')` OVER THE WHOLE BBOXED
+    // VEGETATION HISTORY, and it fires in exactly the common case -- low zoom, or an old date --
+    // rather than the rare one. It is now two bounded halves in one round trip:
+    //
+    //   - COVERAGE: `EXISTS ... LIMIT 1` against the GiST index. That is the half that answers
+    //     "does the lattice reach this viewport at all", and it stops at the first row.
+    //   - RECENCY: `max(newest_observed_at)` off `geo.mv_feature_observation_day`, an indexed
+    //     range over ~1,460 rows on `uq_mv_feature_observation_day (surface_name, observed_day)`.
+    //
+    // Bounded to the requested day for a named day, as before: a cell first sampled AFTER that
+    // day says nothing about whether the grid covered the viewport then, and reporting it as the
     // "newest observation" here would caption a never-sampled day as merely stale.
+    //
+    // ONE HONEST DIFFERENCE, stated rather than hidden: the recency half is now LANE-WIDE where
+    // it used to be viewport-wide. The census carries no geometry (deliberately -- see the
+    // rollup's own note on why cell polygons stay out of it), so for a covered viewport whose
+    // own cells are all under cloud, this caption can name an instant fresher than those cells
+    // carry. Measured 2026-08-05 that is at most a ~19-day overstatement on 65 of 1,568 cells;
+    // it moves a sentence, never a drawn value, and only on a viewport that already draws
+    // nothing. The coverage half -- which is the answer that changes `not_published` into
+    // `stale` -- is still exactly the viewport's own.
     const newest = await db.execute<{ observed_at: string | null }>(sql`
-      SELECT MAX(f.properties->>'observedAt') AS observed_at
-      FROM geo.features f
-      JOIN geo.layers l ON l.id = f.layer_id
-      WHERE l.name = ${VEGETATION_LAYER_ID}
-        AND f.status = 'published'
-        AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
+      SELECT to_char(
+               max(census.newest_observed_at) AT TIME ZONE 'UTC',
+               'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+             ) AS observed_at
+      FROM geo.mv_feature_observation_day census
+      WHERE census.surface_name = ${VEGETATION_LAYER_ID}
         ${
           windowThroughDay === null
             ? sql``
-            : sql`AND ${observedDay} <= ${windowThroughDay}::date`
+            : sql`AND census.observed_day <= ${windowThroughDay}::date`
         }
+        AND EXISTS (
+          SELECT 1
+          FROM geo.features f
+          JOIN geo.layers l ON l.id = f.layer_id
+          WHERE l.name = ${VEGETATION_LAYER_ID}
+            AND f.status = 'published'
+            AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
+          LIMIT 1
+        )
     `);
     const newestObservedAt = parseZonedObservationTime(newest[0]?.observed_at);
     return newestObservedAt === null
@@ -3266,22 +3363,28 @@ function indexWindowRows(rows: ObservationWindowRow[]): Map<string, ObservationW
   return windows;
 }
 
+/**
+ * The feature-backed half of the axis, read from the pre-aggregated day census.
+ *
+ * THE PIPELINE ABOVE IS UNCHANGED; only the relation it consumes is. `geo.layers` stays the
+ * outer relation of the LEFT JOIN (§9 of docs/layer-lane-standard.md), and the observation
+ * subquery now reads one row per (surface, day) out of `geo.mv_feature_observation_day` via
+ * `geo.v_observation_day_census` instead of grouping 4.97M `geo.features` rows per call. The
+ * census MV applies the SAME `status = 'published' AND geometry_id IS NOT NULL` floor and the
+ * same publisher-named-day rule, so a day this axis offers is still a day `getMetricAtDate`
+ * can answer -- that filter is why an unlinked-only day must not advertise availability.
+ *
+ * `surface_name` is `geo.layers.name` verbatim, so the join key on both sides is untouched.
+ */
 async function readObservationWindows(): Promise<Map<string, ObservationWindowRow>> {
   return indexWindowRows(
     await db.execute<ObservationWindowRow>(
       observationWindowStatement(
         sql`SELECT name FROM geo.layers`,
         sql`
-          SELECT
-            l.name AS layer_name,
-            ${OBSERVATION_DAY} AS observed_day,
-            COUNT(*) AS observation_count
-          FROM geo.layers l
-          JOIN geo.features f ON f.layer_id = l.id
-          WHERE f.status = 'published'
-            AND f.geometry_id IS NOT NULL
-            AND ${OBSERVATION_TIME_TEXT} IS NOT NULL
-          GROUP BY l.name, ${OBSERVATION_DAY}
+          SELECT surface_name AS layer_name, observed_day, observation_count
+          FROM geo.v_observation_day_census
+          WHERE surface_kind = 'feature'
         `
       )
     )
@@ -3303,22 +3406,23 @@ async function readObservationWindows(): Promise<Map<string, ObservationWindowRo
  *
  * - Drought days are the days a release COVERS, not the Tuesdays it was valid on. Feeding the
  *   valid dates raw would report six days in seven as unpublished, which is precisely the false
- *   observed-absence this whole review is about; the coverage window below is the same bounded
- *   carry-forward `resolveDroughtRelease` applies, so a week the record skips is a gap on the
- *   axis and a gap in the reader, and neither invents the other.
+ *   observed-absence this whole review is about. That expansion now lives in
+ *   `geo.mv_drought_observation_day`'s own DDL, under the same bounded carry-forward
+ *   `resolveDroughtRelease` applies, so a week the record skips is a gap on the axis and a gap
+ *   in the reader, and neither invents the other.
  * - Nothing is ever thin on these lanes in practice, and that is a true report rather than a
  *   default. A USDM release arrives as a whole set of category polygons, so its per-day count
  *   is 1-6 and the 1% floor bottoms out at 1; the model-plane lanes are written as whole-day
  *   lattice slabs, so a day carries the whole grid or is absent. A partially written slab
  *   still lands under the floor and IS reported thin.
  *
- * Executed against a real PostgreSQL 16 over stub relations before landing, because nothing
- * tsc or a mocked db.execute can see would catch what this file has been bitten by twice
- * (`invalid input syntax for type bigint`, `character varying = date`). Verified there: a
- * deliberately withheld weekly release reports exactly its own seven-day week as a coverage
- * gap; the newest release carries forward to today rather than to its own +14 when +14 is in
- * the future; and a stream with no rows at all still returns a row, of nulls, rather than
- * disappearing from the catalogue.
+ * The observation half was executed against a real PostgreSQL 16 over stub relations when it
+ * still grouped the base relations, because nothing tsc or a mocked db.execute can see would
+ * catch what this file has been bitten by twice (`invalid input syntax for type bigint`,
+ * `character varying = date`). Those three shapes now live in the census matviews' DDL and are
+ * exercised at REFRESH time instead; what remains here is a two-predicate read of a plain view,
+ * and a stream with no rows at all still returns a row, of nulls, rather than disappearing from
+ * the catalogue.
  */
 async function readStreamObservationWindows(): Promise<Map<string, ObservationWindowRow>> {
   // The catalogue is the OUTER relation of the LEFT JOIN below, so a stream missing from here is
@@ -3339,84 +3443,26 @@ async function readStreamObservationWindows(): Promise<Map<string, ObservationWi
             sql`, `
           )}) AS stream(name)
         `,
+        /* THE QUERY THAT CAUSED THE 2026-08-15 CLOUDFLARE 524 IS GONE. It grouped
+           `geo.soil_field_observation` and `geo.climate_field_observation` -- two views over
+           `agri.signal_observation`, ~17M accepted rows, with no index that could serve the
+           grouping -- plus a LEAD/generate_series expansion of every USDM release, on a
+           publicProcedure. All three unions are now precomputed:
+
+           - `geo.mv_signal_observation_day` carries the twelve signal-backed streams
+             (surface_kind = 'signal'), grouped from the SAME governed views under the SAME
+             support keys, so a day this axis offers is a day the field readers can answer.
+           - `geo.mv_drought_observation_day` carries `drought-areas` (surface_kind =
+             'polygon'), with the weekly valid_date already expanded to the days a release
+             COVERS under the same bounded carry-forward `resolveDroughtRelease` applies --
+             so a release week the record skips is still a gap here and a gap there.
+
+           `geo.v_observation_day_census` unions the two matviews with the feature-backed one;
+           it is a plain view over ~35,000 total rows, which is a sort, not a scan. */
         sql`
-          SELECT
-            ${SLIDER_STREAM_LAYER_NAMES.drought}::text AS layer_name,
-            covered.covered_day::date AS observed_day,
-            release.class_count AS observation_count
-          FROM (
-            SELECT
-              d.valid_date::date AS valid_date,
-              LEAD(d.valid_date::date) OVER (ORDER BY d.valid_date::date) AS next_valid_date,
-              COUNT(*) AS class_count
-            FROM geo.drought_areas d
-            GROUP BY d.valid_date
-          ) release
-          ${/* A release stands until the next one supersedes it, and no longer: with a later
-                release stored, coverage stops the day before it, capped at its own week so a
-                skipped release week stays EMPTY. At the live edge there is no next release, so
-                the newest one carries forward under the same bound getPublishedDroughtClassification
-                applies -- and never past today, because a cached row must not claim a future day
-                as observed. */ sql``}
-          CROSS JOIN LATERAL generate_series(
-            release.valid_date::timestamp,
-            LEAST(
-              CASE
-                WHEN release.next_valid_date IS NULL
-                  THEN release.valid_date + ${DROUGHT_MAX_CARRY_FORWARD_DAYS}::integer
-                ELSE release.valid_date + (${DROUGHT_RELEASE_INTERVAL_DAYS}::integer - 1)
-              END,
-              CASE
-                WHEN release.next_valid_date IS NULL THEN (now() AT TIME ZONE 'UTC')::date
-                ELSE release.next_valid_date - 1
-              END
-            )::timestamp,
-            interval '1 day'
-          ) AS covered(covered_day)
-
-          UNION ALL
-
-          ${/* The governed views, not the base table: their VALUES joins already apply the unit,
-                lane and quality gates the drawing reads apply, so a day this axis offers is a day
-                those readers can actually answer. */ sql``}
-          SELECT
-            stream.layer_name,
-            soil.observed_day,
-            COUNT(*) AS observation_count
-          FROM geo.soil_field_observation AS soil
-          JOIN (VALUES
-            ('moisture'::text, ${SLIDER_STREAM_LAYER_NAMES.soilMoisture}::text),
-            ('temperature', ${SLIDER_STREAM_LAYER_NAMES.soilTemperature}),
-            ('vpd', ${SLIDER_STREAM_LAYER_NAMES.soilVapourPressureDeficit})
-          ) AS stream(measure, layer_name) ON stream.measure = soil.measure
-          WHERE soil.support_key = ${SOIL_FIELD_SUPPORT_KEY}
-          GROUP BY stream.layer_name, soil.observed_day
-
-          UNION ALL
-
-          ${/* JOINED on the view's own `signal` column, where this was a CROSS JOIN against one
-                literal stream name until 2026-08-10. That CROSS JOIN was the bug: it collapsed
-                all eleven of the lane's signal_names into a single axis, so the soil-wetness
-                pilot -- measured on a fraction of the lattice, with its own much shorter record
-                -- was published with air temperature's earliest day, air temperature's latest
-                day and air temperature's gap list. Every day the pilot's slider offered was a
-                day SOME signal had published, which is not a claim any reader was making.
-                Grouping by the signal's own stream is what makes each axis describe its own
-                signal. The VALUES list is generated from CLIMATE_FIELD_SIGNAL_IDS so it cannot
-                fall out of step with the registry, the toggles or the tRPC enum. */ sql``}
-          SELECT
-            stream.layer_name,
-            climate.observed_day,
-            COUNT(*) AS observation_count
-          FROM geo.climate_field_observation AS climate
-          JOIN (VALUES ${sql.join(
-            CLIMATE_FIELD_SIGNAL_IDS.map(
-              (signal) => sql`(${signal}::text, ${climateFieldStreamName(signal)}::text)`
-            ),
-            sql`, `
-          )}) AS stream(signal, layer_name) ON stream.signal = climate.signal
-          WHERE climate.support_key = ${CLIMATE_FIELD_SUPPORT_KEY}
-          GROUP BY stream.layer_name, climate.observed_day
+          SELECT surface_name AS layer_name, observed_day, observation_count
+          FROM geo.v_observation_day_census
+          WHERE surface_kind IN ('signal', 'polygon')
         `
       )
     )
@@ -3639,37 +3685,49 @@ function closeCoverageGapsAtLiveEdge(
 /**
  * How long a computed capability list is reused.
  *
- * readObservationWindows cannot be made index-driven -- it must produce DISTINCT observed
- * days per layer, which needs every row, and the expression index that would help cannot be
- * created because text->timestamptz/date is a CoerceViaIO conversion Postgres treats as
- * STABLE (CREATE INDEX rejects it with 42P17). Measured today the scan is 85 ms over 25,328
- * rows; at one year of ingest it is millions of rows and gigabytes of heap per call, and
- * environmental.getSliderCapabilities is a publicProcedure anyone can call in a loop.
+ * The claim this note used to make -- "readObservationWindows cannot be made index-driven"
+ * because the day expression is CoerceViaIO and `CREATE INDEX` rejects it with 42P17 -- was
+ * TRUE OF THE INLINE EXPRESSION AND FALSE OF THE FUNCTION. `geo.feature_observation_day(jsonb)`
+ * is declared IMMUTABLE PARALLEL SAFE (drizzle/0015_tile_observation_day.sql), so
+ * `ix_features_layer_observation_day` is legal and exists, and the whole grouping is now
+ * precomputed into `geo.mv_feature_observation_day` anyway (~16,000 rows against 4.97M).
  *
- * So it is not served per request. The payload only changes when an ingest run lands a new
- * day, which is at most hourly, and a single-flight guard collapses a burst of concurrent
- * callers (a scrub prefetch fans out several at once) onto one scan.
+ * The memo is KEPT, at the same TTL, for a different reason than the one it was written for.
+ * The read is now cheap, but `getSliderCapabilities` is a publicProcedure anyone can call in a
+ * loop and every caller runs the five-window-function axis pipeline over the census; the
+ * single-flight guard collapses a scrub prefetch's fan-out onto one evaluation. The payload
+ * still only changes when the refresh lane lands a new day.
  */
 const CAPABILITIES_CACHE_TTL_MS = 5 * 60_000;
 
 /**
- * How long the STREAM capability list is reused, and why it is not the same number.
+ * How long the STREAM capability list is reused, and why it is still not the same number.
  *
- * The thirteen non-geo.features streams are read through the two governed views, whose gates sit
- * in joins, so their scan is an aggregate over `agri.signal_observation` -- roughly 17 million
- * accepted rows on production (the VPD signal alone was 2,149,140 on 2026-08-08). No index
- * helps: the only usable one is keyed `(cell_id, observed_at, signal_name)`, and this grouping
- * has no cell to drive from. It is therefore a whole-table pass, and it is deliberately NOT on
- * the five-minute clock the geo.features scan runs on.
+ * This constant used to be sized against an unbounded risk: the thirteen non-geo.features
+ * streams were read by grouping the two governed views, i.e. an aggregate over roughly 17
+ * million accepted rows of `agri.signal_observation` with no index that could serve it. That
+ * whole-table pass spent the entire Cloudflare origin budget on 2026-08-15 and returned a 524.
+ * It is gone: both halves are now indexed reads of `geo.mv_signal_observation_day` and
+ * `geo.mv_drought_observation_day` through `geo.v_observation_day_census`.
  *
- * NOT MEASURED against production -- this lane had no database access -- so treat the cost as
- * unknown-but-large rather than as the 85 ms the geo.features scan was measured at. Two things
- * bound the damage: the first caller after a cold start is the only one that ever waits (the
- * list is then refreshed in the background, never expired out from under a request), and this
- * constant is the single knob if it proves worse than expected. If it ever needs to become
- * cheap, the fix is a per-day rollup written by the ingest lane, not a shorter TTL here.
+ * Thirty minutes is kept rather than lowered to the feature lane's five, because the refresh
+ * cadence upstream of it is the real staleness floor: the signal census refreshes on a
+ * source-release watermark at a 6-hour minimum interval / 24-hour maximum staleness (see
+ * `agri.matview_refresh_state`). A shorter TTL here would re-evaluate the axis pipeline more
+ * often without ever seeing a newer day.
  */
 const STREAM_CAPABILITIES_CACHE_TTL_MS = 30 * 60_000;
+
+/**
+ * How long a COLD caller waits for the stream scan before answering without it.
+ *
+ * Sized against the edge, not against the database: Cloudflare cuts the origin off at 100s with
+ * a 524, and a 524 costs the client every capability including `serverCurrentDate`, so the whole
+ * map goes dateless. Answering short at 15s is strictly better than answering nothing at 100s,
+ * and it only ever applies to the first caller after a boot -- the scan it raced keeps running
+ * and fills the cache regardless of who won.
+ */
+const STREAM_CAPABILITIES_COLD_WAIT_MS = 15_000;
 
 let cachedLayerCapabilities: {
   expiresAtMs: number;
@@ -3712,7 +3770,7 @@ async function readLayerCapabilities(): Promise<ResolvedSliderLayerCapability[]>
 }
 
 /**
- * The stream capability list: blocking on the first computation, stale-while-revalidate after.
+ * The stream capability list: never blocking, stale-while-revalidate, short-and-flagged when cold.
  *
  * Serving the previous list while a refresh runs is what keeps a whole-table pass off the
  * request path. The alternative -- expiring the entry and making the unlucky caller wait, as
@@ -3726,10 +3784,13 @@ async function readLayerCapabilities(): Promise<ResolvedSliderLayerCapability[]>
  * claim at all -- it is the state these thirteen streams were already in -- so a broken stream read
  * costs the sliders and lies about nothing.
  */
-async function readStreamCapabilities(): Promise<ResolvedSliderLayerCapability[]> {
+async function readStreamCapabilities(): Promise<{
+  layers: ResolvedSliderLayerCapability[];
+  unavailable: boolean;
+}> {
   const cached = cachedStreamCapabilities;
   const isFresh = cached !== null && cached.expiresAtMs > Date.now();
-  if (isFresh) return cached.layers;
+  if (isFresh) return { layers: cached.layers, unavailable: false };
 
   if (streamCapabilitiesInFlight === null) {
     streamCapabilitiesInFlight = readStreamObservationWindows()
@@ -3745,15 +3806,43 @@ async function readStreamCapabilities(): Promise<ResolvedSliderLayerCapability[]
         streamCapabilitiesInFlight = null;
       });
   }
-  // A stale list is served immediately and the refresh above finishes on its own. Only a cold
-  // start has nothing to serve, and only then does a caller wait.
-  if (cached !== null) {
-    // Nothing awaits the refresh on this path, so its rejection has to be absorbed here or it
-    // surfaces as an unhandled rejection and, under Next.js, can take the worker down.
-    void streamCapabilitiesInFlight.catch(() => undefined);
-    return cached.layers;
-  }
-  return streamCapabilitiesInFlight.catch(() => []);
+
+  // Nothing on THIS path awaits the refresh, so its rejection has to be absorbed here or it
+  // surfaces as an unhandled rejection and, under Next.js, can take the worker down.
+  void streamCapabilitiesInFlight.catch(() => undefined);
+
+  // A stale list is served immediately and the refresh above finishes on its own.
+  if (cached !== null) return { layers: cached.layers, unavailable: false };
+
+  // COLD START: a BOUNDED wait, which is neither of the two things it used to be.
+  //
+  // It used to await the scan outright. That scan WAS a whole-table pass over ~17M rows of
+  // agri.signal_observation with no index that helps, so on a memory-throttled warehouse
+  // (2026-08-15) it spent the entire Cloudflare origin budget and the request returned 524 --
+  // taking the WHOLE slider system down, streams and geo.features layers alike, because this
+  // payload is the only definition of "today" the client is allowed to read.
+  //
+  // The scan is now an indexed read of the census matviews, so the bound below should never
+  // fire again. It is KEPT rather than deleted because it is the only thing that stopped a
+  // sick warehouse from taking the map's date with it, and a stalled REFRESH holding a lock
+  // is a new way for this read to become slow that the old shape did not have.
+  //
+  // Not waiting at all is the opposite error: a healthy cold start would report every stream
+  // as unreadable for a full poll interval when the answer was a second away.
+  //
+  // So: whoever wins. A healthy scan lands well inside the bound and the caller gets the real
+  // list; a sick one leaves the caller with a short list it KNOWS is short, in time to answer
+  // the request, while the scan keeps running and populates the cache for the next caller.
+  // Losing the race is never an error and never poisons the cache.
+  return Promise.race([
+    streamCapabilitiesInFlight.then((layers) => ({ layers, unavailable: false })),
+    new Promise<{ layers: ResolvedSliderLayerCapability[]; unavailable: boolean }>((resolve) =>
+      setTimeout(
+        () => resolve({ layers: [], unavailable: true }),
+        STREAM_CAPABILITIES_COLD_WAIT_MS
+      ).unref?.()
+    ),
+  ]).catch(() => ({ layers: [], unavailable: true }));
 }
 
 /**
@@ -3793,7 +3882,8 @@ export async function getSliderCapabilities(): Promise<ResolvedSliderCapabilitie
   return {
     serverCurrentDate: today,
     futureAxisDays: FUTURE_AXIS_DAYS,
-    layers: mergeStreamCapabilities(layers, streams).map((layer) =>
+    streamsUnavailable: streams.unavailable,
+    layers: mergeStreamCapabilities(layers, streams.layers).map((layer) =>
       closeCoverageGapsAtLiveEdge(layer, today)
     ),
   };
@@ -3968,6 +4058,12 @@ export async function getMetricAtDate(
       WHERE l.name = ${source.layerName}
         AND f.status = 'published'
         AND ${OBSERVATION_DAY} = ${date}::date
+        ${/* The same day, restated in the indexed expression. `OBSERVATION_DAY` above stays the
+              authority; `observation-day-contract.test.ts` is what makes this restatement safe,
+              because it is the test that asserts these two derive the day alike. Written out
+              rather than folded into OBSERVATION_DAY so that a future divergence breaks the
+              contract test loudly instead of quietly changing which rows a metric returns. */ sql``}
+        AND geo.feature_observation_day(f.properties) = ${date}::date
         AND jsonb_typeof(f.properties->${source.valueKey}) = 'number'
         ${
           // Excluded in SQL, not after the fact, so LIMIT counts only real readings.
@@ -3999,10 +4095,49 @@ export async function getMetricAtDate(
       ORDER BY f.geometry_id, ${OBSERVATION_TIME} DESC
       LIMIT ${METRIC_AT_DATE_MAX_ROWS + 1}
     ),
+    ${/* THE SUMMARY IS WHAT USED TO DEFEAT THE LIMIT: `page` caps output rows, `summary`
+          counted the whole uncapped `candidate` CTE, so METRIC_AT_DATE_MAX_ROWS bounded what
+          came back and nothing bounded what was read. R1 measured the two shapes at 25,328
+          rows: a bboxed metric read 0.85 ms, an unbboxed one 44 ms, and geo.features is now
+          4.97M rows with 1,467 MB of TOAST behind `properties`.
+
+          Two cases, chosen by whether a viewport was given, because they are genuinely
+          different questions and neither may be answered with the other's number:
+
+          - NO BBOX -- the unbounded case, and the only one that was ever pathological. The
+            day's totals are read as ONE ROW from `geo.mv_feature_observation_day`, whose
+            `metric_counts` jsonb is built per METRIC KEY (not per property key) in the MV's
+            own DDL, so the sentinel and comparable-rows rules this metric applies below are
+            applied there too. `FROM (SELECT 1)` + LEFT JOIN keeps this CTE at exactly one row
+            even when the census holds nothing for the day, which is what stops a missing
+            census row from swallowing the page through `FROM summary LEFT JOIN page ON true`.
+
+          - WITH A BBOX -- the totals are about THIS VIEWPORT and the census cannot answer
+            them; it is grained on (surface, day) and carries no geometry. The count stays over
+            `candidate`, which is now genuinely bounded: `ix_features_layer_observation_day`
+            restricts it to one layer-day before the `&&` narrows it further. Approximating a
+            viewport's "N of M observations are not yet linked to a place" with the national
+            figure would print a false sentence, which is worse than a bounded index range. */ sql``}
     summary AS (
-      SELECT COUNT(*)::bigint AS candidate_count,
-             COUNT(*) FILTER (WHERE geometry_id IS NULL)::bigint AS unlinked_count
-      FROM candidate
+      ${
+        area
+          ? sql`SELECT COUNT(*)::bigint AS candidate_count,
+                       COUNT(*) FILTER (WHERE geometry_id IS NULL)::bigint AS unlinked_count
+                FROM candidate`
+          : // `::text` on the metric-key bind is not decoration: `jsonb -> unknown` is ambiguous
+            // between `-> text` (object key) and `-> integer` (array element), and postgres-js
+            // sends a bare string with no type OID. See the postgres-js bind-type trap on
+            // OBSERVATION_DENSITY_FLOOR_FRACTION for the same class of failure.
+            sql`SELECT
+                  COALESCE((census.metric_counts -> ${metric}::text ->> 'candidate')::bigint, 0)
+                    AS candidate_count,
+                  COALESCE((census.metric_counts -> ${metric}::text ->> 'unlinked')::bigint, 0)
+                    AS unlinked_count
+                FROM (SELECT 1) AS one
+                LEFT JOIN geo.mv_feature_observation_day census
+                  ON census.surface_name = ${source.layerName}
+                 AND census.observed_day = ${date}::date`
+      }
     )
     SELECT page.geometry_id,
            page.geometry,

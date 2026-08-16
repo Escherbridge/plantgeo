@@ -91,9 +91,142 @@ Python and SQL rather than requested in the prompt.
   warehouse holds no record here" from "the condition is absent". The system prompt repeats
   the rule; the payload makes it unavoidable.
 
-Ambient state (the session provider, the per-run tool ledger) travels in `ContextVar`s
-because a tool function's signature *is* its model-facing schema — a `session` parameter
-would become something the model is asked to supply.
+Ambient state (the session provider, the per-run tool ledger, the per-run plane-probe cache)
+travels in `ContextVar`s because a tool function's signature *is* its model-facing schema — a
+`session` parameter would become something the model is asked to supply.
+
+## Reading the pre-aggregated planes
+
+Every tool that used to read a raw observation table now reads the matview the **map** reads.
+That is not primarily a cost decision, though it is that too: it is the only structural
+guarantee that **the agent cannot contradict the screen**. If the agent answered from
+`agri.signal_observation` while the map painted from `geo.mv_signal_cell_daily`, the two could
+disagree about the same cell on the same day — different quality filters, different day
+derivation, different refresh moment — and the agent would state something the user can see is
+false.
+
+| tool | reads |
+|---|---|
+| `signals_near_point`, `signal_value_on_day`, `signal_neighbors_in_time`, `nearest_signal_cells` | `geo.mv_signal_cell_daily` ⋈ `agri.spatial_cell` |
+| `signal_coverage_on_day` | `agri.signal_coverage_audit` (unchanged — see below) |
+| `drought_history_at_point` | `geo.mv_drought_release_index` ⋈ `geo.drought_areas` |
+| `fire_history_near_point` | `geo.features` + `geo.mv_feature_observation_day` |
+| `forecast_summary_for_cell` | `agri.mv_forecast_ml_daily_serving` |
+| `observation_coverage_on_day`, `observation_temporal_neighbors` | `geo.v_observation_day_census` |
+| `feature_value_near_point` | `geo.features`, via `ix_features_layer_observation_day` |
+
+Four consequences, each of which shows up in a payload and therefore in a note:
+
+- **Quality, lane, unit and scope are all inherited, not filtered.** `geo.mv_signal_cell_daily`
+  keeps only rows that are observed and quality-accepted, and it joins the **19 governed
+  `(signal_name, normalized_unit, lane)` triples** — not the 19 signal names alone
+  (`execution/coverage_contract.py`, verified against `agri.data_source` 2026-08-11). Both halves
+  of that triple matter and neither is visible from this service:
+  - the **unit** is pinned because `geo.soil_field_observation` (drizzle/0016, 0019) and
+    `geo.climate_field_observation` (drizzle/0020) join signal name to an exact
+    `normalized_unit`, and every app reader pins it too. Without it, one off-contract unit for a
+    governed name gives the agent two rows per (cell, day) — a second, differently-scaled value
+    for a signal the map serves in exactly one unit — because these tools `DISTINCT ON` /
+    `GROUP BY (signal_name, support_key, normalized_unit)` rather than pinning the unit;
+  - the **lane** is pinned because `geo.climate_field_observation` gates
+    `source.key = 'nasa-power-daily'`, and drizzle/0020's own header records that `support_key`
+    cannot substitute for it ("`surface` is a generic support the ERA5-Land writer also emits").
+    `precipitation`, `wind_speed` and `relative_humidity` are shared names; without the lane gate
+    a non-NASA row is in the rollup the agent reads and absent from the view the map draws.
+
+  No `is_observed`, `quality_flag`, unit, lane or signal-scope predicate remains in any tool
+  statement, because there is no column left to write one against. **If the rollup's defining
+  query ever stops applying those filters, every signal tool silently starts reporting imputed,
+  off-lane or off-unit values**, and no test in this service can see it. That coupling is the
+  price of the repoint and it is stated here rather than buried.
+- **`source_parameter` is gone.** The rollup's grain is
+  `(support_key, signal_name, normalized_unit, cell_id, observed_day)` and carries no upstream
+  parameter column. Under the governed contract a signal name resolves to one parameter within
+  one support key anyway; emitting a parameter the rollup cannot distinguish would be inventing
+  one. Answers are grained `(signal, support, unit)`.
+- **Days are dates, not midnight pairs.** The rollup's grain *is* the calendar day, derived once
+  where it is built. The old half-open `day_start`/`day_end` bracket existed to keep an index on
+  a raw `observed_at` usable; there is no `observed_at` left to bracket. `signal_coverage_on_day`
+  is the one exception and still binds both, because `agri.signal_coverage_audit` is grained by
+  the *window a lane fetched* rather than by a day.
+- **`forecast_summary_for_cell` narrowed.** `agri.mv_forecast_ml_daily_serving` covers ML-method
+  forecasts on series flagged `allow_ml_daily_aggregate`, aggregated to one row per valid **day**
+  — so `horizon_step` is gone and a published non-ML forecast is out of scope rather than absent.
+  There is deliberately **no fallback** to `agri.v_forecast_series_serving`: falling back would
+  reintroduce the eight-table join precisely when the box can least afford it.
+
+### Why `signal_coverage_on_day` still reads a raw table
+
+The rule is not "no aggregates"; it is that no request may read far more rows than it returns.
+That read is bounded on both sides already — capped at `MAX_CELL_FANOUT` cells before the audit
+is touched, then to the audit rows overlapping one day. It is also the one question the census
+**cannot** answer: `geo.mv_signal_observation_day` is grained by catalogue surface and day and
+says *how much landed*; `agri.signal_coverage_audit` is grained by signal, cell and fetched
+window and says *why nothing did*. Folding a reason-for-absence ledger into a how-much-landed
+census would destroy the column that makes an empty day explainable.
+
+### Refusing an unbuilt plane
+
+A matview can exist while holding nothing: PostgreSQL creates it `WITH NO DATA` and **raises**
+rather than returning zero rows until a `REFRESH` has run. `agri.mv_forecast_ml_daily_serving`
+shipped in exactly that state — created, indexed, never refreshed, its refresher reading an
+environment variable nobody set.
+
+That leaves two bad options and one good one. Letting the raise escape surfaces to the model as
+an unexplained tool error. Catching it and returning `[]` is **far worse**, because "no drought
+here" and "the drought plane was never built" become the same answer. So every tool probes the
+relations it is about to read (`sql/agent/materialized_plane_populated.sql`, a `pg_class`
+lookup touching no user data) and returns a **typed refusal naming the relation**. Silence about
+a relation counts as unbuilt: fail closed, not open.
+
+The probe's answers are cached per `run_context`, because a matview cannot become unpopulated
+again once refreshed. `geo.v_observation_day_census` is a plain **view** and reports itself
+populated regardless of the matviews beneath it, so the probe always names
+`CENSUS_RELATIONS` — the three matviews — and never the view that unions them.
+
+## The generic surface triad
+
+Section 11 of `docs/layer-lane-standard.md` obliges *every* layer to answer three questions, and
+only the signal plane had all three. Eleven more bespoke tool sets would repeat the mistake the
+pre-aggregation work exists to undo — many relations answering one question — so instead there
+are three tools parameterised by `surface_name`, reading the same relations the app reads:
+
+| tool | question | source |
+|---|---|---|
+| `observation_coverage_on_day` | is this day covered at all, and where does it sit in the surface's history | `geo.v_observation_day_census` |
+| `observation_temporal_neighbors` | nearest covered day each side, with `distance_days` | same census, two one-row index probes |
+| `feature_value_near_point` | nearest published features on that day, with `distance_meters` | `geo.features` |
+
+`AGENT_SURFACE_NAMES` holds **24 hand-spelled names** — 11 `geo.layers` rows, 4
+`SLIDER_STREAM_LAYER_NAMES`, 9 `climate-field-<signal>` streams — for the same reason
+`docs/layer-lane-standard.md` §9 requires a hand-spelled catalogue assertion: a derived list
+drifts with the thing it is meant to check. If this were built from a query, a layer that
+vanished from the database would vanish from the agent's vocabulary too, and the agent would say
+"I do not know that surface" instead of "that surface stopped being served".
+
+Two design points that are load-bearing rather than incidental:
+
+- **An uncovered day is answered three ways, not one.** `observation_coverage_on_day` returns
+  the surface's earliest and latest served days beside the verdict, so the model can say *before
+  this lane's horizon* / *past its live edge* / *a real hole in the middle* rather than merely
+  "empty". Those are three different facts and only one of them is a bug.
+- **Refusals name the gap.** An unknown surface, a stream handed to `feature_value_near_point`,
+  or an unbuilt matview all produce a typed refusal listing what *is* answerable — never an
+  empty result, which the model reads as an absence.
+
+### The bounding-box prefilter
+
+`ST_DWithin(geom::geography, …)` is exact and correct, and the cast makes it unusable by
+`idx_features_geom` / `drought_areas_geom_gist`, which are GiST indexes over the **geometry**
+column — and no geography index exists on either table. The planner's only option was a scan
+that detoasted every published feature's `properties` on the way past. Every distance query now
+puts `geom && ST_Expand(point, bbox_degrees)` in front of the exact test; `&&` is a strict
+superset, so it changes how many rows are examined and never which rows come back.
+
+`bbox_degrees` is computed **per latitude** (`_bbox_degrees`). A degree of latitude is a fixed
+110,574 m; a degree of longitude is 111,320 m only at the equator and shrinks by `cos(latitude)`.
+Sizing the box on the latitude figure alone clips its east–west edges away from the equator and
+silently drops real features — which is exactly the failure a prefilter must not introduce.
 
 ## Answering at the selected day
 
@@ -139,25 +272,46 @@ in the position of implying a past reading is current.
 ### Deviations
 
 - `signal_value_on_day` issues **two** statements for one tool call. Every other tool is one
-  statement, so `test_every_tool_statement_is_read_only` drives all seven published tools and
-  asserts `len(WAREHOUSE_TOOLS) == 7` beside the statement count. Both halves must be edited to
+  statement, so `test_every_tool_statement_is_read_only` drives all ten published tools and
+  asserts `len(WAREHOUSE_TOOLS) == 10` beside the statement count. Both halves must be edited to
   add a tool, which is the point: the tripwire scans every statement the model can reach, and a
-  count alone would let an eighth tool ship unscanned.
+  count alone would let an eleventh tool ship unscanned. The plane probe is excluded from that
+  count and asserted separately — it fires at most a few times per run, not once per tool, and
+  pinning its exact count would make the assertion depend on tool ordering.
+- `observation_coverage_on_day` and `observation_temporal_neighbors` take **no coordinate**. They
+  ask about a whole map surface on a day, so a longitude would be a parameter they had nothing to
+  do with. Every tool is still keyed by something the service validates — a range-checked
+  coordinate, or a surface name checked against the hand-spelled catalogue —
+  so `test_tool_schemas_publish_bounded_arguments` branches on the tool name rather than
+  requiring coordinates of all ten.
 
 ### Where the columns come from
 
-Six of the seven tools read `agri.*` and every column is verified against
-`models/historical.py`, `models/forecasting.py` and the declarative view
-`db/agri/views/v_forecast_series_serving.sql`. `forecast_summary_for_cell` reads that
-serving view rather than re-deriving its joins, because the view is what encodes "published,
-finalized, validated" — the agent must not be able to quote a draft forecast.
+`agri.*` columns are verified against `models/historical.py`, `models/forecasting.py` and the
+declarative views under `db/agri/`. `forecast_summary_for_cell` reads
+`agri.mv_forecast_ml_daily_serving`, which is built on `agri.v_forecast_series_serving` and so
+inherits its "published, finalized, validated" gate — the agent must not be able to quote a draft
+forecast, and reading the matview rather than re-deriving the join keeps that true.
 
-`fire_history_near_point` is the exception: fire evidence is served from `geo.features`,
-whose declarative source of truth is the Next.js Drizzle schema
-(`src/lib/server/db/schema.ts`), not this service's ORM. Only columns that schema declares
-are referenced (`id`, `layer_id`, `geom`, `properties`, `status`). The layer names come from
-`ingest/firms.py` and `ingest/mtbs.py` via their existing call-time resolvers rather than
-being re-spelled here, so a renamed layer moves in one place.
+`geo.*` columns come from a different source of truth: the Next.js Drizzle schema
+(`src/lib/server/db/schema.ts`) and the `drizzle/` migrations, not this service's ORM. Tools that
+read `geo.features` reference only columns that schema declares (`id`, `layer_id`, `geom`,
+`properties`, `status`, `geometry_id`, `data_available_at`); `geo.drought_areas` contributes only
+`valid_date`, `dm_category`, `ingested_at` and `geom` — the last as a filter, never a projection,
+because that table hides about 495 MB of TOAST behind 1,040 rows. The pre-aggregated `geo.mv_*`
+relations are created by the drizzle tree, which is why they can be referenced here without a
+cross-migration ordering hazard.
+
+`fire_history_near_point`'s layer names come from `ingest/firms.py` and `ingest/mtbs.py` via
+their existing call-time resolvers rather than being re-spelled here, so a renamed layer moves
+in one place. `feature_value_near_point` takes its layer name from the caller and checks it
+against `FEATURE_SURFACE_NAMES`, so an unknown name is a refusal rather than an empty result.
+
+`feature_value_near_point` projects `properties` through a fixed `FEATURE_PROPERTY_KEYS`
+allow-list, harvested 2026-08-15 from the eight `geo.*_tiles` functions in `drizzle/` and the
+`properties->>` reads in `src/lib/server/services/`. `SELECT properties` on that table is how a
+bounded row count becomes an unbounded byte count — roughly 1,467 MB of TOAST across 4.97 million
+rows — so a fifty-row answer would otherwise be tens of megabytes.
 
 Non-trivial SQL lives in `sql/agent/*.sql` behind `load_query_sql`, with the beginner-doc
 header standard from `sql/AGENTS.md` — including its bind-param trap: parameter names in
@@ -290,6 +444,36 @@ than the old phrase.
 At 43.6N a 0.25 degree lattice is about 27.8 km east-west by 20.1 km north-south, so a 50 km radius
 admits roughly **fourteen** centroids of the denser grid, not eleven. `MAX_NEAREST_CELLS = 25` and
 `MAX_CELL_FANOUT = 250` both still clear it; only the citation was wrong.
+
+### The drought tool answered from an empty table, and succeeded
+
+`drought_history_at_point.sql` read `agri.drought_polygon_snapshot`: **0 rows, no forward
+producer anywhere in the tree**. The map serves drought from `geo.drought_areas` — 1,040 rows
+across 208 weekly releases spanning 2022-08-09 to 2026-08-11, measured 2026-08-15.
+
+The query therefore *succeeded* and returned nothing, on every call, for every point. There was
+no error to notice. The agent could only read the empty result as "the warehouse holds no drought
+record here", and would state there was no drought on days the user could see drought painted on
+the map in front of them. This is the exact bug class the tool contract's "absence is stated,
+never implied" rule exists to prevent, arriving through the one door that rule does not cover: a
+tool pointed at the wrong plane.
+
+The fix is to read the plane the map reads, and the test asserts **the plane, not a row** —
+`test_the_drought_tool_reads_the_plane_the_map_serves_and_not_the_empty_one`. Sameness of
+relation is what makes disagreement impossible rather than merely unlikely; an assertion about
+returned values would pass again the next time the source drifted.
+
+Two shape changes came with it, both in the payload and both named in the note:
+
+- **A release that published no drought class over the point is now a row**, with
+  `severity_class` null and `covering_class_count` 0. That is a measured "this release existed
+  and found no drought here" — a fact. An **empty** `weekly_severity` list is a different claim
+  entirely: no release was published in the window at all, so nothing is known either way. The
+  old shape collapsed the two.
+- **`impact_type` is gone.** `geo.drought_areas` has no such column, and returning a permanently
+  null field labelled `impact_type` invites the model to reason about it. `prev_valid_date` and
+  `next_valid_date` arrive in its place, from `geo.mv_drought_release_index`, so a day falling
+  between two Tuesday releases can be answered with the real gap stated.
 
 ## What the agent owes every layer
 

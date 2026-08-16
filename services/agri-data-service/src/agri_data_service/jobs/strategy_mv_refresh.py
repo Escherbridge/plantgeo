@@ -18,6 +18,14 @@ GUARDRAIL: this lane touches ONLY the three `geo.mv_strategy_recommendations_*` 
 `STRATEGY_RECOMMENDATION_VIEWS`. It must never be widened to cover `agri.mv_forecast_ml_daily_serving`
 -- that matview has its own reviewed refresher (`cli.py`'s `forecast-refresh-ml-daily`, over
 `FORECAST_MV_REFRESH_DATABASE_URL`) and this lane is not a replacement for it.
+
+OBSERVABILITY PARITY, added alongside `jobs/matview_refresh.py`: every outcome this lane produces is
+also written to `agri.matview_refresh_state`, the same table that lane's eleven views report through,
+so an operator reading that table sees all fourteen matviews' last-refresh state in one place rather
+than needing to know this lane's rows live somewhere else. This does NOT adopt that lane's
+watermark gate -- this lane still refreshes all three views unconditionally on every
+`STRATEGY_MV_REFRESH_POLL_INTERVAL_SECONDS` tick, exactly as before; `source_watermark` here is a
+constant sentinel rather than a real measurement, because there is nothing to gate.
 """
 
 from __future__ import annotations
@@ -35,8 +43,11 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.jobs.dispatch import register_dispatchable_lane
+from agri_data_service.jobs.matview_refresh import (
+    SELECT_MATERIALIZED_VIEW_UNIQUE_INDEX,
+    UPSERT_MATVIEW_REFRESH_STATE,
+)
 from agri_data_service.jobs.registry import (
     JobDefinitionSpec,
     JobHandlerOutcome,
@@ -180,7 +191,19 @@ def _require_known_view(qualified_name: str) -> None:
 
 _VIEW_EXISTS_SQL: Final = text("SELECT to_regclass(:qualified_name) IS NOT NULL AS view_exists")
 
-_SELECT_UNIQUE_INDEX: Final = text(load_query_sql("jobs/select_materialized_view_unique_index.sql"))
+# IMPORTED, not re-loaded. Both statements are byte-identical to the ones jobs/matview_refresh.py
+# already loads, and sql/AGENTS.md's LOADED-ONCE rule (tests/test_sql_tree_conventions.py) requires
+# exactly one `load_query_sql` call site per file: two lanes calling the loader on the same path is
+# how a query quietly acquires two copies that drift. Reusing that lane's compiled TextClause keeps
+# one call site and one shape, and the upsert does not care which lane calls it.
+_SELECT_UNIQUE_INDEX: Final = SELECT_MATERIALIZED_VIEW_UNIQUE_INDEX
+
+_UPSERT_MATVIEW_REFRESH_STATE: Final = UPSERT_MATVIEW_REFRESH_STATE
+
+# `agri.matview_refresh_state.source_watermark` is NOT NULL, but this lane has no watermark to
+# report -- it is not gated, by design (see the guardrail note above). The sentinel says so plainly
+# rather than a real column value dressed up as one.
+_UNGATED_WATERMARK_SENTINEL: Final = "unwatermarked:strategy_mv_refresh always refreshes on its poll interval"
 
 
 async def _view_exists(session: AsyncSession, qualified_name: str) -> bool:
@@ -290,13 +313,38 @@ async def _refresh_one_view(session: AsyncSession, qualified_name: str) -> Mater
     )
 
 
+async def _write_observability_state(session: AsyncSession, result: MaterializedViewRefreshResult) -> None:
+    """Record this view's outcome into the shared `agri.matview_refresh_state` table -- see the module
+    docstring's "OBSERVABILITY PARITY" note. Runs after every attempt, including a `skipped_missing`
+    one, so the table reflects all three views' current state even before drizzle/0027 has landed.
+    """
+    refreshed_at = datetime.now(UTC) if result.status in {"refreshed_concurrently", "refreshed_full"} else None
+    result_proxy = await session.execute(
+        _UPSERT_MATVIEW_REFRESH_STATE,
+        {
+            "view_name": result.qualified_name,
+            "source_watermark": _UNGATED_WATERMARK_SENTINEL,
+            "refreshed_at": refreshed_at,
+            "duration_ms": round(result.elapsed_seconds * 1000),
+            "row_count": result.row_count,
+            "outcome": result.status,
+        },
+    )
+    result_proxy.mappings().first()
+    await session.commit()
+
+
 async def refresh_strategy_recommendation_views(
     session: AsyncSession,
     *,
     views: Sequence[str] = STRATEGY_RECOMMENDATION_VIEWS,
 ) -> StrategyMvRefreshReport:
     """Refresh every guardrailed view in order, one view's outcome never blocking the next one's attempt."""
-    results = [await _refresh_one_view(session, qualified_name) for qualified_name in views]
+    results: list[MaterializedViewRefreshResult] = []
+    for qualified_name in views:
+        result = await _refresh_one_view(session, qualified_name)
+        await _write_observability_state(session, result)
+        results.append(result)
     return StrategyMvRefreshReport(results=tuple(results))
 
 

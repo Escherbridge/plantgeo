@@ -34,6 +34,7 @@ const SERVER_CURRENT_DATE = "2026-08-04";
 const CAPABILITIES: SliderCapabilities = {
   serverCurrentDate: SERVER_CURRENT_DATE,
   futureAxisDays: 0,
+  streamsUnavailable: false,
   layers: [
     {
       layerName: "water-gauges",
@@ -143,7 +144,20 @@ describe("TimeSliderCapabilitiesLoader", () => {
     // yesterday as today. The refetch is a server-side cache hit, so it costs nothing upstream.
     const [, options] = capabilitiesQuery.mock.calls[0] as [unknown, Record<string, unknown>];
     expect(options.staleTime).toBe(5 * 60_000);
-    expect(options.refetchInterval).toBe(5 * 60_000);
+
+    // Two clocks, chosen per payload. A COMPLETE payload polls on the read-model's own memo
+    // interval, so the poll is a server-side cache hit that only re-stamps the date.
+    const refetchInterval = options.refetchInterval as (query: {
+      state: { data: { streamsUnavailable: boolean } | undefined };
+    }) => number;
+    expect(refetchInterval({ state: { data: { streamsUnavailable: false } } })).toBe(5 * 60_000);
+    expect(refetchInterval({ state: { data: undefined } })).toBe(5 * 60_000);
+
+    // A SHORT payload is known-incomplete rather than merely old -- the server answered without
+    // its stream scan, so thirteen layers are missing an axis they really have. That scan lands
+    // in the server cache seconds later, so waiting the full five minutes to collect it would
+    // hold every stream-backed slider in the outage state long after the outage ended.
+    expect(refetchInterval({ state: { data: { streamsUnavailable: true } } })).toBe(30_000);
     // The layer list moves only when an ingest run lands a new day, so a focus refetch would
     // spend the whole-warehouse scan for an answer that has not changed.
     expect(options.refetchOnWindowFocus).toBe(false);

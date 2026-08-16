@@ -113,6 +113,33 @@ export const SLIDER_STREAM_LAYER_NAMES = {
 export type SliderStreamLayerName =
   (typeof SLIDER_STREAM_LAYER_NAMES)[keyof typeof SLIDER_STREAM_LAYER_NAMES];
 
+/**
+ * Toggles registered as a deliberate SNAPSHOT capability rather than a day axis: the
+ * capability resolver publishes these by name with no observation window, in place of the
+ * `geo.layers` row or `SLIDER_STREAM_LAYER_NAMES` entry an axis-bearing toggle would carry.
+ *
+ * The one member today is `strategyRecommendations`. `layer-registry.ts` has always pointed
+ * `warehouseLayerName` at the literal `"strategy-recommendations"`, and that string names
+ * neither a `geo.layers` row nor a `SLIDER_STREAM_LAYER_NAMES` entry -- so the §9 capability
+ * LEFT JOIN (docs/layer-lane-standard.md) has always dropped it silently: the three
+ * `geo.mv_strategy_recommendations_*` tiers still draw the map fine, but the row reports no
+ * history and no slider mounts. Naming it here, the same way the axis-bearing streams are
+ * named, is what lets the resolver register an honest snapshot/reference row for it instead
+ * of leaving the drop as an omission nothing states -- see the pre-aggregation-layer design's
+ * §9, "the live bug", landed 2026-08-15.
+ *
+ * Lives beside `SLIDER_STREAM_LAYER_NAMES` for the same reason that one does: the registry,
+ * the resolver and any test asserting agreement between them must all read the same string
+ * from one place rather than each hand-typing it.
+ */
+export const SNAPSHOT_SURFACE_LAYER_NAMES = {
+  strategyRecommendations: "strategy-recommendations",
+} as const;
+
+/** One of the declared-snapshot names above. */
+export type SnapshotSurfaceLayerName =
+  (typeof SNAPSHOT_SURFACE_LAYER_NAMES)[keyof typeof SNAPSHOT_SURFACE_LAYER_NAMES];
+
 /** What one published stream supports temporally, as delivered to the browser. */
 export interface SliderLayerCapability {
   /**
@@ -213,6 +240,19 @@ export interface SliderCapabilities {
    */
   futureAxisDays: number;
   layers: SliderLayerCapability[];
+  /**
+   * True when the stream capability scan did not answer, so `layers` is known to be SHORT
+   * rather than complete.
+   *
+   * The thirteen non-`geo.features` streams are read by a whole-table pass that can time out
+   * (measured as a Cloudflare 524 on 2026-08-15 against a memory-throttled warehouse). That
+   * read is allowed to fail -- omission lies about nothing -- but the client cannot act on an
+   * omission it cannot see: a missing capability and a stream with no history are the same
+   * absence, and treating them alike silently unmounted every stream-backed slider with
+   * nothing anywhere saying why. This flag is the difference, and `LayerRow` reads it exactly
+   * the way it reads a null payload: axis unknown, so keep the control and let it say so.
+   */
+  streamsUnavailable: boolean;
 }
 
 /** Input for `environmental.getMetricAtDate({ metric, date, variant, bbox })`. */

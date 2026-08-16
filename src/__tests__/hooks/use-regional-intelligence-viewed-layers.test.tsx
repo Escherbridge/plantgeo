@@ -26,6 +26,7 @@ const DAY_BELOW_THE_DESCRIBED_BOUNDARY = "2023-01-15";
 const capabilities: SliderCapabilities = {
   serverCurrentDate: "2026-08-09",
   futureAxisDays: 0,
+  streamsUnavailable: false,
   layers: [
     {
       layerName: "fire-detections",

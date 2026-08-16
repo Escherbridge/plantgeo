@@ -75,10 +75,18 @@ export function LayerRow({ layerId, legendContext }: LayerRowProps) {
   //
   // Selected as a BOOLEAN, so the five-minute capabilities poll re-renders this row only when
   // the answer actually changes rather than on every fresh payload object.
+  //
+  // `streamsUnavailable` joins `capabilities === null` on the unknown side for the same reason.
+  // A payload whose stream scan timed out carries only the geo.features layers, so every
+  // stream-backed layer reads as "no selectable day" -- indistinguishable from a layer that
+  // genuinely has no history, and the exact shape of the outage above: the sliders vanished
+  // from drought, the three soil measures and the nine climate signals with nothing saying why.
   const mountsTimeSlider = useTimeSliderStore(
     (state) =>
       warehouseLayerName !== null &&
-      (state.capabilities === null || hasSelectableDay(state.capabilities, layerId))
+      (state.capabilities === null ||
+        state.capabilities.streamsUnavailable ||
+        hasSelectableDay(state.capabilities, layerId))
   );
 
   const withheldReason = entry.permanentlyUnavailableReason;

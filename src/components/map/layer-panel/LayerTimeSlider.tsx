@@ -154,10 +154,17 @@ const VERY_COARSE_STEP_DAYS = 365;
 function describeMissingAxis(
   warehouseLayerName: string | null,
   capability: ReturnType<typeof findLayerCapability>,
-  serverCurrentDate: string | null
+  serverCurrentDate: string | null,
+  streamsUnavailable: boolean
 ): string {
   if (warehouseLayerName === null) {
     return "No warehouse layer backs this one, so it has no record of its own to scrub.";
+  }
+  // Checked BEFORE the null-capability sentence below, which would otherwise report a timed-out
+  // scan as "not published yet" -- a claim about the warehouse built out of a failed query, and
+  // the precise inversion this control exists to refuse. The absence is ours, not the record's.
+  if (streamsUnavailable && capability === null) {
+    return "Its history could not be read just now, so no range can be drawn yet. Retrying.";
   }
   if (capability === null) {
     return "Not published to the warehouse record yet, so it has no dates of its own.";
@@ -298,7 +305,12 @@ export function LayerTimeSlider({ layerId, className }: LayerTimeSliderProps) {
             own. */}
         <p className="text-[10px] tabular-nums text-[hsl(var(--foreground))]">{selectedDate}</p>
         <p className="text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
-          {describeMissingAxis(warehouseLayerName, capability, serverCurrentDate)}
+          {describeMissingAxis(
+            warehouseLayerName,
+            capability,
+            serverCurrentDate,
+            capabilities?.streamsUnavailable ?? false
+          )}
         </p>
       </div>
     );

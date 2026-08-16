@@ -119,6 +119,7 @@ function sliderCapabilities() {
   return {
     serverCurrentDate: SERVER_TODAY,
     futureAxisDays: 0,
+    streamsUnavailable: false,
     layers: [
       {
         layerName: "fire-detections",
@@ -390,6 +391,7 @@ describe("assembling regional context at the days the user is viewing", () => {
     mocks.getSliderCapabilities.mockResolvedValue({
       serverCurrentDate: SERVER_TODAY,
       futureAxisDays: 0,
+      streamsUnavailable: false,
       layers: [],
     });
 

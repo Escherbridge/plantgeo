@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -50,6 +52,7 @@ import {
   resolveRequestedObservationDay,
   serverCurrentDate,
 } from "@/lib/server/services/environmental-read-model";
+import { layerRegistryEntries } from "@/lib/map/layer-registry";
 
 /**
  * Flattens a drizzle `sql` template back to its literal text, so a test can assert on the
@@ -64,6 +67,27 @@ function renderSqlText(value: unknown): string {
   }
   if (Array.isArray(node.value)) return node.value.join("");
   return "";
+}
+
+/**
+ * Tells the FEATURE day-axis scan apart from the STREAM day-axis scan.
+ *
+ * `JOIN geo.features f` used to be the discriminator, and since drizzle/0029 it discriminates
+ * nothing: BOTH axes now read `geo.v_observation_day_census` and neither names `geo.features`
+ * at all. A selector looking for the absence of that string therefore matches the FIRST
+ * statement -- the feature axis -- and every assertion written for the stream lane silently
+ * moved onto the wrong statement. The two are told apart by the only thing that still differs
+ * between them, which is the census predicate each one carries.
+ */
+const FEATURE_AXIS_PREDICATE = "surface_kind = 'feature'";
+const STREAM_AXIS_PREDICATE = "surface_kind IN ('signal', 'polygon')";
+
+function isFeatureAxisScan(statement: unknown): boolean {
+  return renderSqlText(statement).includes(FEATURE_AXIS_PREDICATE);
+}
+
+function isStreamAxisScan(statement: unknown): boolean {
+  return renderSqlText(statement).includes(STREAM_AXIS_PREDICATE);
 }
 
 /** One element of a drizzle `sql` template: literal text, or a value bound as a parameter. */
@@ -984,11 +1008,7 @@ describe("the streams that are not geo.features layers get an axis of their own"
   /** Routes each scan to its own fixture: one mock serves both statements. */
   function respondWith(fixtures: { features?: unknown[]; streams?: unknown[] }) {
     dbExecute.mockImplementation((...args: unknown[]) =>
-      Promise.resolve(
-        renderSqlText(args[0]).includes("JOIN geo.features f")
-          ? (fixtures.features ?? [])
-          : (fixtures.streams ?? [])
-      )
+      Promise.resolve(isFeatureAxisScan(args[0]) ? (fixtures.features ?? []) : (fixtures.streams ?? []))
     );
   }
 
@@ -1017,6 +1037,42 @@ describe("the streams that are not geo.features layers get an axis of their own"
     ...CLIMATE_STREAM_NAMES,
   ];
 
+  // The 11 `geo.layers` rows seeded by drizzle/0001, 0011, 0013 and 0017 -- see
+  // pre-aggregation-catalogue.test.ts, which cross-checks this exact list against those
+  // migrations' own INSERT statements. Hand-spelled here too, independently, rather than
+  // imported: this describe already treats "hand-spell it a second time" as the anti-drift
+  // rule for the stream half of the catalogue, and the same reasoning applies to the feature
+  // half now that a registry entry can silently point at a name neither side actually serves.
+  const FEATURE_LAYER_NAMES = [
+    "fire-perimeters",
+    "fire-detections",
+    "water-gauges",
+    "weather-observations",
+    "evacuation-zones",
+    "sensors",
+    "vegetation",
+    "interventions",
+    "burn-severity",
+    "soil-survey",
+    "watersheds",
+  ];
+
+  // warehouseLayerName values that resolve OUTSIDE the day-axis catalogue by design: a
+  // declared snapshot capability (SNAPSHOT_SURFACE_LAYER_NAMES in src/types/time-slider.ts),
+  // not a dropped join. The only member today is strategy-recommendations -- see that
+  // constant's doc and docs/layer-lane-standard.md §9.1. Hand-spelled, not imported, for the
+  // same reason STREAM_NAMES is: importing the constant under test would let a registry entry
+  // and its declaration drift together and still pass.
+  const EXPECTED_SNAPSHOT_DECLARATIONS = ["strategy-recommendations"];
+
+  // Toggles whose warehouseLayerName is null BY DESIGN, not because a capability is withheld
+  // (permanentlyUnavailableReason covers that separately below) -- demand-heatmap is served by
+  // a live k-anonymity-floored aggregate (src/lib/server/services/community-activity.ts) with
+  // no per-day history to scrub. Anything else with a null warehouseLayerName and no
+  // permanentlyUnavailableReason is the soil-survey bug class: a layer that silently lost its
+  // catalogue entry rather than one that was deliberately never given an axis.
+  const EXPECTED_AXIS_LESS_BY_DESIGN_TOGGLE_IDS = ["demand-heatmap"];
+
   it("publishes a capability for drought, the three soil measures and the climate field", async () => {
     respondWith({
       features: [layerWindowRow("vegetation", [["2026-08-03", 1_000]])],
@@ -1031,6 +1087,11 @@ describe("the streams that are not geo.features layers get an axis of their own"
 
     const capabilities = await getSliderCapabilities();
     const byName = new Map(capabilities.layers.map((layer) => [layer.layerName, layer]));
+
+    // A healthy scan answers inside the cold-start bound, so the list is COMPLETE and says so.
+    // The flag has to be false here or the client holds every stream slider in the outage state
+    // while the real axes sit in the same payload.
+    expect(capabilities.streamsUnavailable).toBe(false);
 
     for (const layerName of STREAM_NAMES) {
       const stream = byName.get(layerName);
@@ -1056,18 +1117,28 @@ describe("the streams that are not geo.features layers get an axis of their own"
     }
   });
 
-  it("reads the drought releases and the two governed views, and no feature at all", async () => {
+  it("reads the pre-aggregated census for the signal and polygon planes, and no feature at all", async () => {
+    // WHAT CHANGED AND WHY THIS STILL PINS THE SAME THING. Until drizzle/0029 this statement
+    // grouped geo.drought_areas, geo.soil_field_observation and geo.climate_field_observation
+    // in-line -- ~17M accepted rows on a publicProcedure, which returned a Cloudflare 524 on
+    // 2026-08-15 and unmounted every slider at once. Those three relations are now read once
+    // per refresh inside geo.mv_drought_observation_day and geo.mv_signal_observation_day, and
+    // that the matviews read exactly those governed relations (not the base tables) is asserted
+    // against the DDL by src/__tests__/services/pre-aggregation-catalogue.test.ts. What this
+    // case still owns is the half no DDL can state: that the stream lane reads the SIGNAL and
+    // POLYGON planes of the census and never the feature plane, and that it runs the identical
+    // gap/thin pipeline as the feature lane -- so a gap here means what a gap there means.
     respondWith({});
     await getSliderCapabilities();
 
     const streamScan = dbExecute.mock.calls
       .map(([statement]) => renderSqlText(statement))
-      .find((statement) => !statement.includes("JOIN geo.features f"));
+      .find((statement) => statement.includes(STREAM_AXIS_PREDICATE));
     if (streamScan === undefined) throw new Error("expected a stream window scan");
 
-    expect(streamScan).toContain("geo.drought_areas");
-    expect(streamScan).toContain("geo.soil_field_observation");
-    expect(streamScan).toContain("geo.climate_field_observation");
+    expect(streamScan).toContain("geo.v_observation_day_census");
+    expect(streamScan).not.toContain(FEATURE_AXIS_PREDICATE);
+    expect(streamScan).not.toContain("JOIN geo.features f");
     // The same pipeline as the feature lane, so a gap here means what a gap there means.
     expect(streamScan).toContain("dense_earliest_day");
     expect(streamScan).toContain("r.observation_count < d.density_floor");
@@ -1081,9 +1152,7 @@ describe("the streams that are not geo.features layers get an axis of their own"
     respondWith({});
     await getSliderCapabilities();
 
-    const statement = dbExecute.mock.calls
-      .map(([call]) => call)
-      .find((call) => !renderSqlText(call).includes("JOIN geo.features f"));
+    const statement = dbExecute.mock.calls.map(([call]) => call).find(isStreamAxisScan);
     if (statement === undefined) throw new Error("expected a stream window scan");
 
     // The stream names are BOUND PARAMETERS, so renderSqlText cannot see them -- flattenSql keeps
@@ -1104,24 +1173,61 @@ describe("the streams that are not geo.features layers get an axis of their own"
     }
   });
 
-  it("dates a drought day by the release that covers it, not by the Tuesday it was valid on", async () => {
+  it("resolves every LAYER_REGISTRY toggle to a catalogue entry, a declared snapshot, or a documented null", () => {
+    // §0 of the pre-aggregation-layer design: every one of LAYER_REGISTRY's toggles must
+    // resolve to EITHER a catalogue entry (a geo.layers row or a slider stream) OR an
+    // explicit, tested snapshot/no-axis declaration. Zero silent drops. This is the test that
+    // makes that a checked invariant instead of a claim: the conformance audit that motivated
+    // this slice found it already violated twice --
+    //   - strategy-recommendations' warehouseLayerName matched neither list (fixed 2026-08-15
+    //     by declaring it a SNAPSHOT_SURFACE_LAYER_NAMES entry instead);
+    //   - soil-survey's warehouseLayerName was null with no permanentlyUnavailableReason, even
+    //     though 0013_soil_survey_persistence.sql gave it a real geo.layers row on 2026-08-05
+    //     (fixed 2026-08-15 by pointing it at that row).
+    const catalogueNames = new Set([...FEATURE_LAYER_NAMES, ...STREAM_NAMES]);
+    expect(catalogueNames.size).toBe(24);
+
+    const violations = layerRegistryEntries()
+      .filter((entry) => {
+        if (entry.warehouseLayerName === null) {
+          const declaredAxisLess = EXPECTED_AXIS_LESS_BY_DESIGN_TOGGLE_IDS.includes(entry.toggleId);
+          const withheld = (entry.permanentlyUnavailableReason ?? "").length > 0;
+          return !(declaredAxisLess || withheld);
+        }
+        return !(
+          catalogueNames.has(entry.warehouseLayerName) ||
+          EXPECTED_SNAPSHOT_DECLARATIONS.includes(entry.warehouseLayerName)
+        );
+      })
+      .map((entry) => `${entry.toggleId} -> ${entry.warehouseLayerName ?? "null"}`);
+
+    expect(violations).toEqual([]);
+  });
+
+  it("dates a drought day by the release that covers it, not by the Tuesday it was valid on", () => {
     // USDM publishes weekly and a release stands until the next supersedes it. Feeding the
     // valid dates raw would report six days in seven as unpublished -- an observed absence
     // for days the record describes perfectly well.
-    respondWith({});
-    await getSliderCapabilities();
+    //
+    // ASSERTED AGAINST THE DDL, not against a rendered statement, because that is where the
+    // expansion moved: `readStreamObservationWindows` now reads a census that already carries
+    // one row per COVERED day, so the LEAD/generate_series it used to build per request is in
+    // geo.mv_drought_observation_day's defining query. Reading the migration file keeps the
+    // bound under test instead of retiring the case along with the SQL that used to carry it.
+    const ddl = readFileSync(
+      join(process.cwd(), "drizzle", "0029_pre_aggregation_layer.sql"),
+      "utf8"
+    );
+    const start = ddl.indexOf("CREATE MATERIALIZED VIEW IF NOT EXISTS geo.mv_drought_observation_day");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const block = ddl.slice(start, ddl.indexOf("--> statement-breakpoint", start));
 
-    const streamScan = dbExecute.mock.calls
-      .map(([statement]) => renderSqlText(statement))
-      .find((statement) => !statement.includes("JOIN geo.features f"));
-    if (streamScan === undefined) throw new Error("expected a stream window scan");
-
-    expect(streamScan).toContain("generate_series");
-    expect(streamScan).toContain("LEAD(d.valid_date::date)");
+    expect(block).toContain("generate_series");
+    expect(block).toContain("LEAD(d.valid_date::date)");
     // Bounded exactly as resolveDroughtRelease bounds it: the next release ends this one's
     // coverage, and the newest release may never carry forward past today.
-    expect(streamScan).toContain("release.next_valid_date - 1");
-    expect(streamScan).toContain("(now() AT TIME ZONE 'UTC')::date");
+    expect(block).toContain("release.next_valid_date - 1");
+    expect(block).toContain("(now() AT TIME ZONE 'UTC')::date");
   });
 
   it("omits the streams when their scan fails, rather than reporting them as empty records", async () => {
@@ -1129,19 +1235,22 @@ describe("the streams that are not geo.features layers get an axis of their own"
     // observations this far back" -- a claim about the warehouse manufactured out of a failed
     // query. No capability makes no claim, which is the state these streams were already in.
     dbExecute.mockImplementation((...args: unknown[]) =>
-      renderSqlText(args[0]).includes("JOIN geo.features f")
+      isFeatureAxisScan(args[0])
         ? Promise.resolve([layerWindowRow("vegetation", [["2026-08-03", 1_000]])])
-        : Promise.reject(new Error("relation \"geo.soil_field_observation\" does not exist"))
+        : Promise.reject(new Error("relation \"geo.v_observation_day_census\" does not exist"))
     );
 
     const capabilities = await getSliderCapabilities();
 
     expect(capabilities.layers.map((layer) => layer.layerName)).toEqual(["vegetation"]);
+    // ...and SAYS the list is short. Omission alone is what took the sliders down on
+    // 2026-08-15: the client cannot tell an omitted stream from one with no history, so it
+    // read thirteen live layers as dateless and unmounted every one of their controls. The
+    // omission is still the right payload; the flag is what makes it legible.
+    expect(capabilities.streamsUnavailable).toBe(true);
     // Not cached, so the next call retries rather than serving the failure for a whole TTL.
     await getSliderCapabilities();
-    const streamScans = dbExecute.mock.calls.filter(
-      ([statement]) => !renderSqlText(statement).includes("JOIN geo.features f")
-    );
+    const streamScans = dbExecute.mock.calls.filter(([statement]) => isStreamAxisScan(statement));
     expect(streamScans).toHaveLength(2);
   });
 
@@ -1172,9 +1281,7 @@ describe("the streams that are not geo.features layers get an axis of their own"
     respondWith({});
     await getSliderCapabilities();
 
-    const streamScan = dbExecute.mock.calls.find(
-      ([statement]) => !renderSqlText(statement).includes("JOIN geo.features f")
-    )?.[0];
+    const streamScan = dbExecute.mock.calls.find(([statement]) => isStreamAxisScan(statement))?.[0];
     expectNoBareFractionalParameter(streamScan);
   });
 });
@@ -1189,13 +1296,19 @@ describe("the axis report is derived from the scan that already runs", () => {
   it("adds no second pass over the observed-day series", async () => {
     await captureWindowScan();
     // Gaps and thin ranges are window functions over `ranked`, which is already materialized.
-    // A second scan would be a second sequential read of geo.features on a public procedure.
-    // Counted by what each statement READS, not by call count: the stream lane runs the same
-    // pipeline over geo.drought_areas and the two model-plane views, and it touches no feature.
-    const featureScans = dbExecute.mock.calls.filter(([statement]) =>
+    // A second pass would be a second read of the whole day series on a public procedure.
+    // Counted by what each statement READS, not by call count: the feature lane and the stream
+    // lane each read the census ONCE, over disjoint surface_kinds, and neither touches
+    // geo.features -- which is what drizzle/0029 bought and what would regress silently if a
+    // reader were repointed back at the base table.
+    const featureAxisScans = dbExecute.mock.calls.filter(([statement]) => isFeatureAxisScan(statement));
+    const streamAxisScans = dbExecute.mock.calls.filter(([statement]) => isStreamAxisScan(statement));
+    expect(featureAxisScans).toHaveLength(1);
+    expect(streamAxisScans).toHaveLength(1);
+    const heapScans = dbExecute.mock.calls.filter(([statement]) =>
       renderSqlText(statement).includes("JOIN geo.features f")
     );
-    expect(featureScans).toHaveLength(1);
+    expect(heapScans).toHaveLength(0);
   });
 
   it("tests thinness against the same density_floor column the axis start is chosen by", async () => {
@@ -1347,11 +1460,43 @@ describe("observation days are bucketed by the day the publisher named", () => {
   });
 
   it("buckets in SQL by substring, never by AT TIME ZONE 'UTC'", async () => {
-    dbExecute.mockResolvedValue([]);
-    await getSliderCapabilities();
+    // READ OFF getMetricAtDate, NOT off getSliderCapabilities. Since drizzle/0029 the capability
+    // axis reads geo.v_observation_day_census, whose days were bucketed once at REFRESH time by
+    // geo.feature_observation_day -- so the rendered capability statement carries no day
+    // expression to assert on any more. getMetricAtDate's candidate/page CTEs still build
+    // OBSERVATION_DAY per request and are the live carrier of this rule. The refresh-time half
+    // is pinned separately: src/__tests__/lib/observation-day-contract.test.ts holds
+    // geo.feature_observation_day and its JavaScript twin to the same keys and the same slice.
+    // The capability read has to be answered, or getMetricAtDate range-checks the day against an
+    // empty catalogue and returns before it builds a day predicate at all.
+    dbExecute.mockImplementation((...args: unknown[]) =>
+      Promise.resolve(
+        renderSqlText(args[0]).includes("dense_earliest_day")
+          ? [
+              {
+                layer_name: "water-gauges",
+                dense_earliest_day: "2026-07-01",
+                clustered_earliest_day: "2026-07-01",
+                recorded_earliest_day: "2026-07-01",
+                dense_latest_day: "2026-08-03",
+                recorded_latest_day: "2026-08-03",
+                dense_day_count: 34,
+                clustered_day_count: 34,
+                recorded_day_count: 34,
+                density_floor: 110,
+                coverage_gaps: [],
+                thin_ranges: [],
+              },
+            ]
+          : []
+      )
+    );
+    await getMetricAtDate({ metric: "streamflow-cfs", date: "2026-08-03", variant: "observed" });
 
-    const statement = renderSqlText(dbExecute.mock.calls[0]?.[0]);
-    expect(statement).toContain("substring(");
+    const statement = dbExecute.mock.calls
+      .map(([call]) => renderSqlText(call))
+      .find((text) => text.includes("substring("));
+    if (statement === undefined) throw new Error("expected a statement bucketing by substring");
     expect(statement).toContain(", 1, 10)::date");
     // Restoring the UTC cast moves 37.5% of gauge readings onto the following day.
     expect(statement).not.toContain("AT TIME ZONE 'UTC'");

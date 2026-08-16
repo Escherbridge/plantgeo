@@ -110,6 +110,23 @@ function upstreamMessage(body: string): string {
   return body.slice(0, 500) || "the job service returned no message";
 }
 
+/**
+ * THREE READS IN THIS ROUTER ARE INDEX-DEPENDENT RATHER THAN MATVIEW-BACKED, deliberately, as
+ * part of the 2026-08-15 pre-aggregation pass. Fewer relations wins where an index can do the
+ * job, and here one can:
+ *
+ *   - `getLanes`'s two `DISTINCT ON (definition.name)` are served by
+ *     `agri.job_run (job_definition_id, created_at DESC)`.
+ *   - `getRunHistory`'s `ORDER BY run.created_at DESC LIMIT n` by `agri.job_run (created_at DESC)`.
+ *   - `getExhaustedGapWindows`'s otherwise-unindexable jsonb predicate by the partial index
+ *     `agri.job_work_item ((payload -> 'reopened_from_observed_gaps'))
+ *      WHERE payload -> 'reopened_from_observed_gaps' IS NOT NULL`.
+ *
+ * All three ship in the alembic revision that accompanies drizzle/0029. The SQL below is
+ * written to be servable by them and must stay that way: `agri.job_run` grows one row per lane
+ * per tick forever, so any rewrite that stops these predicates being index-driven turns an
+ * admin page into an unbounded scan. Rationale: src/lib/server/AGENTS.md §pre-aggregation.
+ */
 export const jobsRouter = router({
   /**
    * Every lane the ledger knows, one row per definition NAME, with its newest version's

@@ -99,6 +99,7 @@ function opacitySliderIn(row: HTMLElement, layerLabel: string): HTMLInputElement
 const SLIDER_CAPABILITIES: SliderCapabilities = {
   serverCurrentDate: "2026-08-04",
   futureAxisDays: 30,
+  streamsUnavailable: false,
   layers: [
     {
       layerName: "water-gauges",

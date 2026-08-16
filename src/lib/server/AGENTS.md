@@ -977,3 +977,164 @@ workspaces they are a member of).
   nothing reads it, and the serving contract forbids reusing it for waypoints. It
   should be deleted, not revived; the aggregates above deliberately compute from
   `strategy_requests` instead.
+
+## §pre-aggregation
+
+Landed 2026-08-15, under one owner constraint: *"we should not be running analytical
+queries for application reasons."* The production timeseries database is capped at 3 GB
+of RAM by a Railway cgroup with zero active users. The binding constraint is RESIDENT
+WORKING SET, not latency — the owner explicitly accepts up to ~2 s per slider-debounce
+pause, because Redis and the client's local-first sync already own caching. Optimise for
+a small working set; do not add a DB-side cache to make a read faster.
+
+The rule this pass enforces is not "no aggregates" — `DISTINCT ON` over an index is fine.
+It is: **no application request may cause the database to read more rows than it returns
+by more than a bounded, documented factor.** Three ways to satisfy it, in descending order
+of value: index the predicate; delete the plan pin; pre-aggregate. Only aggregates and
+small dictionaries get materialized.
+
+### What each reader now reads
+
+| reader | was | now |
+|---|---|---|
+| `readObservationWindows` | `GROUP BY` over 4.97M `geo.features` rows | `geo.v_observation_day_census WHERE surface_kind='feature'` (~16,000 rows) |
+| `readStreamObservationWindows` | aggregate over ~17M accepted `agri.signal_observation` rows, no usable index | same census, `surface_kind IN ('signal','polygon')` (~19,000 rows) |
+| `getMetricAtDate`'s `summary` (no bbox) | `COUNT(*)` over the whole uncapped `candidate` CTE | one `metric_counts` jsonb lookup on `geo.mv_feature_observation_day` |
+| `resolveDroughtRelease` | three FILTERed aggregates over an unfiltered `geo.drought_areas` | two index probes on `geo.mv_drought_release_index` |
+| vegetation empty-case probe | unbounded `MAX(properties->>'observedAt')` over the bboxed vegetation history | `EXISTS`-gated `max(newest_observed_at)` off the census |
+| `getFeatureCountByLayer` / `getSystemStats` / `layerStats` | `COUNT(*) GROUP BY layer_id` over 4.97M rows, on a publicProcedure | `geo.mv_layer_feature_stats` (11 rows) |
+| `getRecentActivity(N)` | `created_at >= now() - N hours` with no index that leads on `created_at` | `SUM(feature_count)` over an indexed range of `geo.mv_layer_hourly_activity` |
+
+The `readStreamObservationWindows` row is the one that mattered most: that query caused a
+Cloudflare 524 on 2026-08-15 and took the whole slider system down, streams and
+`geo.features` layers alike, because its payload is the only definition of "today" the
+client is allowed to read.
+
+`geo.layers` is joined at read time in every analytics reader rather than denormalized into
+the matview, and that join is what applies `is_public`. The visibility rule stays in one
+place; 11 rows cost nothing.
+
+The axis pipeline in `observationWindowStatement` — five window functions, four GROUP BYs,
+two `jsonb_agg`, eight FILTERed aggregates — is UNCHANGED and must stay so. It is the
+definition of what the slider draws, and a second hand-written variant would be a second
+definition. Only the relation it consumes changed. Over ~35,000 census rows it is a small
+sort, not an analytical query in any sense that matters here.
+
+### The plan and index fixes, which matter as much as the rollups
+
+- **`getPublishedWeatherForPoint` lost its `WITH candidates AS MATERIALIZED`.** The comment
+  defending it as a plan pin was right about a fat box: it spools the whole weather layer's
+  `properties` jsonb plus geometry into a tuplestore before a `LIMIT 8` KNN. It fires on
+  first paint of every session and again inside `assembleRegionalContext`. The GiST KNN now
+  drives.
+- **`readPublishedFirePerimeters` uses `geom && ST_MakeEnvelope(...)`** in place of four
+  `ST_XMax`/`ST_XMin`/`ST_YMax`/`ST_YMin` comparisons. Identical predicate; the old form was
+  a function OF the indexed column, so `idx_features_geom` could not serve it at all.
+- **`readStreamflowGaugesOnDay`, `readWeatherOnDay`, `getPublishedVegetationIndex` and
+  `getMetricAtDate` each carry a redundant-by-data restriction written as
+  `geo.feature_observation_day(f.properties)`** — the exact expression
+  `ix_features_layer_observation_day (layer_id, geo.feature_observation_day(properties))
+  WHERE status = 'published'` is built on. The layer's own day predicate stays the
+  authority; the restatement exists so the DISTINCT ON sorts one day instead of a history.
+  The comment claiming this index "cannot be created (42P17)" was true of the INLINE
+  `namedDaySql` expression and false of the FUNCTION, which is `IMMUTABLE PARALLEL SAFE`
+  (drizzle/0015_tile_observation_day.sql). `observation-day-contract.test.ts` is what makes
+  the restatement safe — it asserts the two derive the day alike. **Do not delete it.**
+- **`readDetailFeatures` sorts on `f.id`**, not `properties->>'id'` — same determinism, no
+  per-row jsonb extraction on the sort key of a TOAST-heavy table.
+- **`visualization.ts`'s heatmap and flow readers project explicit keys** instead of the
+  whole `properties` blob. `getPointData` keeps the blob because it RETURNS it.
+- **`tracking.ts` gained bounds.** `getLastPositions` had no time predicate and no LIMIT,
+  so it sorted the entire positions table; `getRouteHistory` had an unbounded range. Neither
+  is on the 24-surface slider list, so a layer-scoped sweep misses both.
+- **`analytics.ts`'s `getFeatureDensity` is deleted** — exported, referenced by no router.
+- **`routers/jobs.ts` is unchanged and index-dependent.** `getLanes`, `getRunHistory` and
+  `getExhaustedGapWindows` are served by three new `agri` indexes shipped in the alembic
+  revision beside drizzle/0029. Fewer relations wins where an index can do the job; the SQL
+  must stay servable by them, because `agri.job_run` grows one row per lane per tick forever.
+
+### What was deliberately NOT materialized, and what would have to change first
+
+An honest remaining scan beats a matview that returns a subtly different answer.
+
+- **The four soil/climate field statements** (`soilFieldCellsStatement`,
+  `climateFieldCellsStatement`, and both `*NewestDayStatement` LATERALs) still read
+  `agri.signal_observation` and its two governed views. They are cell-scoped index probes
+  already — the LATERAL shape measured 16 ms PNW-wide against 207 ms for the `GROUP BY` it
+  is often "simplified" into — and `src/__tests__/services/climate-field-sql-contract.test.ts`
+  is a REAL-DATABASE suite that seeds `agri.signal_observation` directly and executes these
+  statements through the driver. Repointing them at `geo.mv_signal_cell_daily` requires that
+  fixture to refresh the matview between seed and read. Do the two together or neither.
+- **`readAggregatedFeatures` / `readSummaryFeatures`** (`usda-soil.ts`). Both are
+  viewport-parameterised in a way a three-tier matview cannot reproduce: the union is scoped
+  and simplified to THIS bbox, and `soilSummaryCellDegrees` picks its step off an unbounded
+  doubling ladder that is published back to the client as `cellDegrees` and used to place
+  every returned point. Pin the tier ladder to a fixed enumerated set first. Both reads are
+  bounded today (20,000 and 200,000 input rows, and the union path is gated to ~zoom 10.6+).
+- **`readFireDetectionsOnDay`** gets no `geo.feature_observation_day` restriction: that
+  function's COALESCE knows `observedAt`/`updatedAt`/`polygonDateTime` and not FIRMS's
+  `acqDate`, so adding it would drop exactly the rows the reader's own COALESCE exists to
+  keep. Fix by teaching the function `acqDate` or by backfilling `observedAt`, not here.
+- **`getMetricAtDate` with a bbox** keeps counting the `candidate` CTE. The census is
+  grained `(surface, day)` and carries no geometry, so it cannot answer "N of M observations
+  IN THIS VIEWPORT are unlinked". Printing the national figure under a viewport's caption
+  would be a false sentence. With the expression index the bboxed count is a bounded index
+  range, which is the case measured at 0.85 ms.
+- **Martin's eight `ST_AsMVT` tile functions are untouched.** They benefit automatically
+  from the new expression index at high zoom. Changing any of them forces a Martin restart,
+  and a missing tile function 404s the whole composite — every layer, not one.
+
+### What the pre-aggregation layer DOES change about an answer
+
+Everything else in this section is a claim of equivalence. These four are the exceptions, and
+each one is a property of the grain the matview is built on, not of the rollup being wrong.
+They were found by an adversarial pass over the equivalence claim on 2026-08-15; anything not
+on this list is asserted to be byte-identical to the query it replaced.
+
+1. **`analytics.getRecentActivity` over-counts by up to 59 minutes.** The predicate was
+   `created_at >= now() - N hours`, an exact rolling instant; `geo.mv_layer_hourly_activity`
+   is grained on the hour, so `hour_bucket >= date_trunc('hour', now()) - N hours` admits the
+   whole oldest bucket. Including it is the deliberate choice — excluding it silently drops up
+   to an hour of the window the caller asked for, and a "last 24 hours" panel that
+   under-reports is the worse failure. The newest bucket can also lag by the refresh interval.
+2. **`geo.mv_layer_feature_stats` LEFT JOINs, and the readers filter it back.** The matview
+   carries a zero row for a public layer with no published features (`interventions` today),
+   deliberately, so an empty layer is reportable as empty rather than absent.
+   `getFeatureCountByLayer` and `getLayerFeatureStats` add `published_count > 0` because the
+   inner join they replaced emitted no row at all for that case. `layerStats` also takes
+   `layer_name` from the LIVE `geo.layers` row, never `stats.layer_name`, so a rename is not
+   stale until the next refresh.
+3. **Two clock-dependent matviews need a clock component in their watermark, and have one.**
+   `geo.mv_drought_observation_day` carries the newest USDM release forward to today, and
+   `geo.mv_layer_hourly_activity` materialises a trailing 168-hour window — both advance with
+   no ingest at all. Their refresh watermarks carry `(now() AT TIME ZONE 'UTC')::date` and
+   `date_trunc('hour', now())` respectively. Without those, the drought census's newest covered
+   day sits at yesterday after UTC midnight while `resolveDroughtRelease` serves drought for
+   today, and the slider reports a coverage gap for a day the layer is painting. The residual
+   window is now one refresh interval, not one backstop interval.
+4. **The vegetation empty-case caption is lane-wide, not viewport-wide** — see below.
+
+### One honest loss of precision, stated rather than hidden
+
+The vegetation empty-case probe's RECENCY half is now lane-wide where it used to be
+viewport-wide, because the census carries no geometry. For a covered viewport whose own
+cells are all under cloud, the "newest observation" caption can name an instant fresher than
+those cells carry — at most a ~19-day overstatement on 65 of 1,568 cells as measured
+2026-08-05. It moves a sentence, never a drawn value, and only on a viewport that already
+draws nothing. The COVERAGE half — the answer that turns `not_published` into `stale` — is
+still exactly the viewport's own, via an `EXISTS ... LIMIT 1` on the GiST index.
+
+### Deploy ordering, which is not optional
+
+These readers name relations that do not exist until `drizzle/0029_pre_aggregation_layer.sql`
+and `scripts/apply-pre-aggregation.mjs` have both run — the matviews are created `WITH NO
+DATA` and first-populated by the ops script. There is deliberately **no fallback path** to
+the old queries: a fallback silently reintroduces the scan this work exists to remove, and
+`agri.mv_forecast_ml_daily_serving` (created, never populated, never scheduled) is the
+standing proof that a quiet degradation lasts longer than a loud failure. Deploy the read
+paths AFTER the migration.
+
+Every matview is refreshed by the `matview-refresh` pulse lane against a watermark in
+`agri.matview_refresh_state`. A reader that needs to know how stale an answer is reads
+`refreshed_at` there — a rollup over a stalled ingest lane faithfully materialises the stall,
+and staleness must not be mistaken for absence.

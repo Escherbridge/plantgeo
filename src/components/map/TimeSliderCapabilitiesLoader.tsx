@@ -8,6 +8,15 @@ import { useTimeSliderStore } from "@/stores/time-slider-store";
 const CAPABILITIES_REFRESH_MS = 5 * 60_000;
 
 /**
+ * The faster clock used only while the server reports `streamsUnavailable`.
+ *
+ * Long enough that a warehouse already too slow to finish its scan is not being asked again
+ * every few seconds; short enough that the sliders come back on their own rather than on a
+ * reload.
+ */
+const CAPABILITIES_RETRY_MS = 30_000;
+
+/**
  * The one read of `environmental.getSliderCapabilities`, and the one writer of the store fields
  * it feeds. Renders nothing.
  *
@@ -52,9 +61,17 @@ export default function TimeSliderCapabilitiesLoader() {
   // unreachable until reload. The interval bounds that staleness to CAPABILITIES_REFRESH_MS
   // and costs nothing upstream: `readLayerCapabilities` memoizes for the same 5 minutes behind
   // a single-flight guard, so the poll is a server-side cache hit that re-stamps the date.
+  // A SHORT payload is retried on a short clock. `streamsUnavailable` means the server answered
+  // without its stream scan (see readStreamCapabilities' cold-start race), so this payload is
+  // known-incomplete rather than merely old: thirteen layers are missing an axis they really
+  // have. That scan is still running server-side and lands in the cache seconds later, so
+  // waiting the full five minutes to collect it would hold every stream-backed slider in the
+  // outage state long after the outage ended. Once a complete payload arrives this returns to
+  // the five-minute clock, where a poll is a server-side cache hit that re-stamps the date.
   const capabilitiesQuery = trpc.environmental.getSliderCapabilities.useQuery(undefined, {
     staleTime: CAPABILITIES_REFRESH_MS,
-    refetchInterval: CAPABILITIES_REFRESH_MS,
+    refetchInterval: (query) =>
+      query.state.data?.streamsUnavailable ? CAPABILITIES_RETRY_MS : CAPABILITIES_REFRESH_MS,
     refetchOnWindowFocus: false,
   });
 

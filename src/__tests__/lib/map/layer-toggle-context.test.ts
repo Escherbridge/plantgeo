@@ -64,6 +64,7 @@ const capabilities: SliderCapabilities = {
   // 0 so every domain assertion below still measures the FORECAST horizon alone; the
   // future-axis span has its own tests rather than shifting these.
   futureAxisDays: 0,
+  streamsUnavailable: false,
   layers: [waterLayerCapability, vegetationLayerCapability, fireLayerCapability],
 };
 

@@ -33,8 +33,23 @@ function runStatusClass(status: string | null): string {
   return RUN_STATUS_STYLES[status] ?? "bg-slate-700/40 text-slate-300";
 }
 
+/** A bare calendar day, `YYYY-MM-DD`, with no time and no zone. */
+const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Renders an instant, or a DAY as the day it is.
+ *
+ * The day branch is not cosmetic. The gap-window fields (`first_day`/`last_day`, written by
+ * reconcile.py as `date.isoformat()`) are calendar days with no time in them, and `new Date()`
+ * parses a bare `YYYY-MM-DD` as UTC MIDNIGHT. Passing that through `toLocaleString()` shifts
+ * every operator west of UTC back a day and appends a time nobody measured -- so a census gap
+ * on 2026-08-07 read as "8/6/2026, 6:00:00 PM" in Denver, misnaming the very day this console
+ * exists to report. Handled here rather than at each call site so no future day-valued column
+ * has to remember.
+ */
 function formatMoment(value: Date | string | null | undefined): string {
   if (!value) return "—";
+  if (typeof value === "string" && DAY_ONLY.test(value)) return value;
   const moment = value instanceof Date ? value : new Date(value);
   return Number.isNaN(moment.getTime()) ? "—" : moment.toLocaleString();
 }
@@ -456,8 +471,16 @@ export function JobRunnerDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {(exhaustedGapWindows.data ?? []).map((gapWindow) => (
-                    <tr key={gapWindow.shardKey} className="hover:bg-slate-800/40 align-top">
+                  {(exhaustedGapWindows.data ?? []).map((gapWindow, index) => (
+                    /* `shard_key` is unique per (job_run_id, shard_key) only -- see
+                       uq_job_work_item_run_shard -- and getExhaustedGapWindows spans every run,
+                       so the same lane re-walking a window yields the key twice. React would
+                       then drop a row. The lane and generation disambiguate the repeats this
+                       query can actually produce; the index closes the shape entirely. */
+                    <tr
+                      key={`${gapWindow.laneId}:${gapWindow.shardKey}:${gapWindow.walkGeneration}:${index}`}
+                      className="hover:bg-slate-800/40 align-top"
+                    >
                       <td className="p-4 font-mono font-medium text-white break-all">
                         {gapWindow.laneId}
                         <div className="text-[11px] text-slate-500 font-normal break-all">

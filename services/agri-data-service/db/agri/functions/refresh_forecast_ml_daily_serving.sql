@@ -8,7 +8,34 @@ CREATE FUNCTION agri.refresh_forecast_ml_daily_serving() RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'agri'
     AS $$
+        DECLARE
+            is_populated boolean;
         BEGIN
-            REFRESH MATERIALIZED VIEW agri.mv_forecast_ml_daily_serving;
+            -- CONCURRENTLY, where this was a plain REFRESH until 20260816_0024. A plain refresh
+            -- takes ACCESS EXCLUSIVE on agri.mv_forecast_ml_daily_serving and blocks every read of
+            -- it for the whole rebuild; the concurrent form lets readers keep the previous contents
+            -- until the new ones are complete. It is legal here because
+            -- uq_mv_forecast_ml_daily_serving_identity already exists -- REFRESH ... CONCURRENTLY
+            -- refuses to run without a unique index -- and REFRESH ... CONCURRENTLY is legal inside
+            -- a plpgsql function and inside a transaction, unlike CREATE INDEX CONCURRENTLY.
+            --
+            -- THE relispopulated BRANCH IS NOT DEFENSIVE PADDING. This view was created WITH NO
+            -- DATA and, measured on production 2026-08-15, has never been refreshed once:
+            -- pg_class.relispopulated is still false. CONCURRENTLY raises "cannot refresh
+            -- materialized view ... concurrently" on a never-populated view before it does anything
+            -- at all, so a function that only knew the concurrent form could never be the thing
+            -- that heals this view -- it would fail on exactly the state it needs to fix. The plain
+            -- refresh below runs at most once in the life of the relation, and its ACCESS EXCLUSIVE
+            -- lock is harmless precisely because an unpopulated view has no readers to block.
+            SELECT relispopulated INTO is_populated
+              FROM pg_class
+             WHERE oid = 'agri.mv_forecast_ml_daily_serving'::regclass;
+
+            IF is_populated THEN
+                REFRESH MATERIALIZED VIEW CONCURRENTLY agri.mv_forecast_ml_daily_serving;
+            ELSE
+                RAISE WARNING 'agri.mv_forecast_ml_daily_serving has never been populated; refreshing NON-concurrently to heal it';
+                REFRESH MATERIALIZED VIEW agri.mv_forecast_ml_daily_serving;
+            END IF;
         END
         $$;

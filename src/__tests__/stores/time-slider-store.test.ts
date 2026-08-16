@@ -93,6 +93,7 @@ const capabilities: SliderCapabilities = {
   // 0 so every domain assertion below still measures the FORECAST horizon alone; the
   // future-axis span has its own tests rather than shifting these.
   futureAxisDays: 0,
+  streamsUnavailable: false,
   layers: [vegetationLayer, weatherLayer, firePerimeterLayer, sensorLayer],
 };
 
@@ -133,6 +134,7 @@ describe("sliderDomain", () => {
     const shallowHistory: SliderCapabilities = {
       serverCurrentDate: SERVER_CURRENT_DATE,
       futureAxisDays: 0,
+      streamsUnavailable: false,
       layers: [
         { ...vegetationLayer, earliestObservedDate: "2018-02-20", forecastHorizonDays: 3 },
       ],
@@ -174,6 +176,7 @@ describe("sliderDomain", () => {
     const nothingForecasts: SliderCapabilities = {
       serverCurrentDate: SERVER_CURRENT_DATE,
       futureAxisDays: 30,
+      streamsUnavailable: false,
       layers: [{ ...vegetationLayer, forecastHorizonDays: 0, forecastVariants: [] }],
     };
 

@@ -11,7 +11,7 @@ import {
   type ClimateFieldSignalId,
   type ClimateFieldToggleId,
 } from "@/lib/environmental/climate-field";
-import { SLIDER_STREAM_LAYER_NAMES } from "@/types/time-slider";
+import { SLIDER_STREAM_LAYER_NAMES, SNAPSHOT_SURFACE_LAYER_NAMES } from "@/types/time-slider";
 import type { PanelId } from "@/stores/panel-store";
 
 /** Every toggle id the registry knows. `activeLayers` may also hold user-uploaded layer ids. */
@@ -83,12 +83,18 @@ export interface LayerRegistryEntry {
   styleLayerIds: string[];
   /**
    * The warehouse stream this toggle renders: a `geo.layers.name`, one of
-   * `SLIDER_STREAM_LAYER_NAMES`, or null when nothing the slider describes backs it.
+   * `SLIDER_STREAM_LAYER_NAMES`, one of `SNAPSHOT_SURFACE_LAYER_NAMES`, or null when nothing
+   * the slider describes backs it.
    *
    * A stream name here is the whole of what gives a row an axis -- `hasSelectableDay` reads it,
    * and a null costs the row its slider, its scrubbing and its date-filtered map read at once.
-   * Never hand-type one: the constants are in src/types/time-slider.ts precisely so a typo
-   * cannot publish a name no capability answers to.
+   * `SNAPSHOT_SURFACE_LAYER_NAMES` is the one exception: it is a NAME with no axis behind it,
+   * resolved by the capability resolver as a fixed reference row rather than an observation
+   * window -- see the constant's own doc for why that is still a real resolution and not a
+   * dressed-up null. Every non-null value must resolve one of these three ways or it is
+   * silently dropped by the §9 LEFT JOIN (docs/layer-lane-standard.md) -- tiles render, history
+   * reports zero, no slider mounts, nothing errors. Never hand-type one: the constants are in
+   * src/types/time-slider.ts precisely so a typo cannot publish a name no capability answers to.
    */
   warehouseLayerName: string | null;
   /**
@@ -289,17 +295,25 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     permanentlyUnavailableReason:
       "Soil property rasters are not published yet: no first-party SoilGrids tile release exists, so this layer has no tiles to draw. Click the map with the Soil section open to read measured values at a point.",
   },
-  // USDA SSURGO map units, proxied per viewport through environmental.getSoilSurvey.
-  // Distinct from `soil` above, which draws the SoilGrids raster: this one is the
-  // vector survey polygons. Also upstream-proxied, so no warehouse layer name.
-  // See soilSurveyLayer in layers.ts.
+  // USDA SSURGO map units, rendered per viewport through environmental.getSoilSurvey.
+  // Distinct from `soil` above, which draws the SoilGrids raster: this one is the vector
+  // survey polygons. See soilSurveyLayer in layers.ts.
+  //
+  // `warehouseLayerName` was null here until the conformance audit found the drop: 0013's
+  // 0013_soil_survey_persistence.sql gave this layer a real `geo.layers` row on 2026-08-05
+  // ('soil-survey', see the migration's INSERT), and geo.mv_soil_survey_grid/_union (the
+  // pre-aggregation layer, 2026-08-15) give it a genuinely cheap history to report -- but
+  // nobody repointed the registry after persistence landed, so this toggle silently lost its
+  // §9 catalogue row: no axis, no scrubbing, no date-filtered read, and no error anywhere
+  // saying why. The proxy-per-viewport READ path is unaffected; only the capability name
+  // changes, from null to the geo.layers row it has carried since 2026-08-05.
   "soil-survey": {
     toggleId: "soil-survey",
     label: "Soil Survey (SSURGO)",
     icon: "layers",
     renderKind: "component",
     styleLayerIds: [],
-    warehouseLayerName: null,
+    warehouseLayerName: "soil-survey",
     panelId: "soil",
     permanentlyUnavailableReason: null,
   },
@@ -392,13 +406,21 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "community",
     permanentlyUnavailableReason: null,
   },
+  // Rendered from the three geo.mv_strategy_recommendations_{coarse,regional,detail} tiers
+  // directly, not from a day-scrubbable geo.features/stream feed -- there is no observation
+  // day here, only a strategy_id/cell_id grain. `warehouseLayerName` names the DECLARED
+  // SNAPSHOT capability the conformance audit found this toggle had always been missing: the
+  // literal it carried matched neither a `geo.layers` row nor a `SLIDER_STREAM_LAYER_NAMES`
+  // entry, so the §9 LEFT JOIN silently dropped it -- tiles painted, history reported zero, no
+  // slider ever mounted. Sourced from SNAPSHOT_SURFACE_LAYER_NAMES rather than hand-typed so
+  // the registry and the capability resolver that must register this exact name cannot drift.
   "strategy-recommendations": {
     toggleId: "strategy-recommendations",
     label: "ML Strategy Recommendations",
     icon: "sprout",
     renderKind: "component",
     styleLayerIds: [],
-    warehouseLayerName: "strategy-recommendations",
+    warehouseLayerName: SNAPSHOT_SURFACE_LAYER_NAMES.strategyRecommendations,
     panelId: "community",
     permanentlyUnavailableReason: null,
   },

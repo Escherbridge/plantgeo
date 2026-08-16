@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/server/db";
 import { features, layers } from "@/lib/server/db/schema";
 import {
@@ -370,10 +370,13 @@ async function readPublishedFirePerimeters(
       and(
         eq(layers.name, process.env.FIRES_LAYER_ID ?? "fire-perimeters"),
         eq(features.status, "published"),
-        gte(sql<number>`ST_XMax(${features.geom})`, west),
-        lte(sql<number>`ST_XMin(${features.geom})`, east),
-        gte(sql<number>`ST_YMax(${features.geom})`, south),
-        lte(sql<number>`ST_YMin(${features.geom})`, north)
+        // `&&` is the bounding-box overlap operator the GiST index on geo.features.geom
+        // ACTUALLY answers. The four ST_XMax/ST_XMin/ST_YMax/ST_YMin comparisons this
+        // replaces expressed the identical predicate -- envelope overlap -- but as functions
+        // OF the indexed column, which no index can serve: the planner had to seq-scan the
+        // fire-perimeters slice and call four PostGIS functions per row before the
+        // `ORDER BY updated_at DESC`. Same rows, same order, index-driven.
+        sql`${features.geom} && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)`
       )
     )
     .orderBy(desc(features.updatedAt))

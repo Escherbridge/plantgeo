@@ -27,6 +27,7 @@ const SERVER_CURRENT_DATE = "2019-03-07";
 const CAPABILITIES: SliderCapabilities = {
   serverCurrentDate: SERVER_CURRENT_DATE,
   futureAxisDays: 2,
+  streamsUnavailable: false,
   layers: [
     {
       layerName: "water-gauges",
@@ -223,5 +224,65 @@ describe("LayerRow when the capabilities payload does not arrive", () => {
 
     expect(screen.queryByTestId("layer-time-slider-unavailable-water")).toBeNull();
     expect(screen.getByTestId("layer-time-slider-range-water")).not.toBeNull();
+  });
+});
+
+/**
+ * The outage of 2026-08-15, which looked like a UI regression and was a partial payload.
+ *
+ * `getSliderCapabilities` answers from two scans. The second covers the thirteen streams with no
+ * `geo.layers` row (drought, the three soil measures, the nine climate signals) and is a
+ * whole-table pass that is allowed to fail. When it did, the payload still arrived -- carrying
+ * only the geo.features layers -- so `capabilities` was non-null and every stream-backed layer
+ * read as "no selectable day": the same answer a layer with genuinely no history gives. Every
+ * one of those sliders vanished, with nothing anywhere saying why.
+ *
+ * `streamsUnavailable` is the distinction, and these cases pin that the row treats it as
+ * UNKNOWN (keep the control, let it speak) rather than as absence.
+ */
+describe("LayerRow when the payload arrives without its stream scan", () => {
+  beforeEach(() => {
+    useMapStore.setState({ activeLayers: [...LAYER_TOGGLE_IDS] });
+    useLayerStore.setState({ layerOpacity: {} });
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: { ...CAPABILITIES, streamsUnavailable: true },
+      capabilitiesUnavailable: false,
+    });
+  });
+
+  it("keeps the control on a stream-backed layer the short payload omits", () => {
+    // `fire-detections` is a real warehouse stream this payload does not carry. With the scan
+    // reported unavailable that omission is OUR failure, not the record's, so the control stays.
+    renderRow("fire");
+
+    expect(timeSliderSlotFor("fire")).not.toBeNull();
+    expect(screen.getByTestId("layer-time-slider-no-axis-fire")).not.toBeNull();
+  });
+
+  it("says the history could not be read rather than that the layer is unpublished", () => {
+    renderRow("fire");
+
+    expect(screen.getByTestId("layer-time-slider-no-axis-fire").textContent).toContain(
+      "could not be read"
+    );
+  });
+
+  it("still refuses a control to a layer no warehouse stream backs", () => {
+    // A failed stream scan says nothing about `soil`, which names no stream at all. The flag
+    // must not become a blanket "mount everything".
+    renderRow("soil");
+
+    expect(timeSliderSlotFor("soil")).toBeNull();
+  });
+
+  it("draws the real axis for a layer the short payload does carry", () => {
+    // `water-gauges` rides the geo.features scan, which succeeded. A short stream list must not
+    // downgrade the layers that were actually answered.
+    renderRow("water");
+
+    expect(screen.getByTestId("layer-time-slider-range-water")).not.toBeNull();
+    expect(screen.queryByTestId("layer-time-slider-no-axis-water")).toBeNull();
   });
 });

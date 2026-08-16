@@ -514,11 +514,40 @@ def forecast_refresh_ml_daily() -> None:
     click.echo(json.dumps({"state": "refreshed", "row_count": row_count}, sort_keys=True))
 
 
+def _forecast_mv_refresh_database_url() -> str:
+    """Resolve the async DSN `forecast-refresh-ml-daily` connects with, falling back through what
+    this service already has configured rather than reading the environment a second time.
+
+    `FORECAST_MV_REFRESH_DATABASE_URL` -> `DATABASE_URL` is `require_forecast_mv_refresh_database_url`'s
+    own fallback (config.py, not owned by this pass). Neither is reliably set in the deployments this
+    refresh has actually needed to run against, which -- per the design this fallback was added
+    under -- is the likely reason `agri.mv_forecast_ml_daily_serving` shipped `relispopulated = false`
+    and stayed that way: nothing ever supplied a DSN this command would accept. `DATABASE_URL_SYNC` IS
+    always configured (every `db-upgrade` needs it -- see `plantgeo-alembic-targets-production` in this
+    repo's memory), so it is a third, additional fallback. Its scheme is the SYNCHRONOUS driver
+    (`postgresql://` / `postgresql+psycopg2://`); rewritten to `postgresql+asyncpg://` it is a valid
+    DSN for the async session this command opens.
+    """
+    try:
+        return settings.require_forecast_mv_refresh_database_url()
+    except ValueError:
+        pass
+    sync_url = settings.database_url_sync.strip()
+    if sync_url.startswith("postgresql+psycopg2://"):
+        return sync_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
+    if sync_url.startswith("postgresql://"):
+        return sync_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    raise ValueError(
+        "set FORECAST_MV_REFRESH_DATABASE_URL or DATABASE_URL, or make DATABASE_URL_SYNC a "
+        "recognised synchronous PostgreSQL URL"
+    )
+
+
 async def _forecast_refresh_ml_daily() -> int:
     # No capability-role assumption since 20260808_0019 retired the family: the refresher
     # function and the matview it refreshes now belong to the owner credential that calls
     # them, so the refresh is an ordinary owner statement. See alembic/versions/20260808_0019.
-    database_url = settings.require_forecast_mv_refresh_database_url()
+    database_url = _forecast_mv_refresh_database_url()
     async with forecast_mv_refresh_session(database_url) as session, session.begin():
         # Non-concurrent REFRESH takes ACCESS EXCLUSIVE on the matview; the timeout is the
         # same bound every other CLI verb sets so a wedged refresh cannot hold that lock.

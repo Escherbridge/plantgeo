@@ -991,7 +991,17 @@ async function readDetailFeatures(
       AND f.geom IS NOT NULL
       AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
       AND ST_Intersects(f.geom, ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326))
-    ORDER BY f.properties->>'id'
+    ${/* Ordered on the real `f.id` column, not on `properties->>'id'`. The JSONB form forced a
+          sort of the whole bboxed slice with a per-row jsonb extraction on the sort key, on a
+          table whose `properties` hides 1,467 MB of TOAST -- and it bought nothing, because the
+          order is only here to make truncation deterministic rather than to mean anything to a
+          reader. `f.id` is the primary key and gives the same guarantee for free.
+
+          It DOES change which 1,000 delineations a truncated viewport returns. That is
+          acceptable and was already arbitrary: SSURGO's `mupolygonkey` sorts lexically, so the
+          old order was neither spatial nor by area nor by anything a user could name. A
+          truncated answer still says so in `truncated`. */ sql``}
+    ORDER BY f.id
     LIMIT ${MAX_SOIL_POLYGONS + 1}
   `);
 
@@ -1033,6 +1043,18 @@ async function readDetailFeatures(
  * as the bigint sitting next to it — see `environmental-read-model.ts`
  * §OBSERVATION_DENSITY_FLOOR_FRACTION for the case that does. `hydricFraction` is
  * divided in TypeScript for the same reason: the two counts it divides are bigints.
+ *
+ * NOT REPOINTED at `geo.mv_soil_survey_union` in the 2026-08-15 pre-aggregation pass, and the
+ * reason is a real mismatch rather than an omission. That matview is grained
+ * `(zoom_tier, drainage_class)` -- a global dissolve per tier -- while this answer is the union
+ * of the delineations inside THIS VIEWPORT, simplified at a tolerance the caller chose. Reading
+ * a national dissolve and clipping it back to the bbox replaces an `ST_Union` over ≤20,000
+ * bounded rows with an `ST_Intersection` against a continent-sized multipolygon, which is worse
+ * on exactly the axis this work is about; serving it unclipped would draw soil the viewport
+ * does not contain. This read is already bounded twice over -- `MAX_SOIL_AGGREGATE_INPUT_ROWS`
+ * caps the union's input, and `MAX_SOIL_UNION_SQUARE_DEGREES` means it is only ever reached at
+ * ~zoom 10.6 or tighter -- so it is a bounded transient, not an unbounded scan.
+ * See src/lib/server/AGENTS.md §pre-aggregation for what would have to change first.
  */
 async function readAggregatedFeatures(
   bounds: [number, number, number, number],
@@ -1122,6 +1144,17 @@ async function readAggregatedFeatures(
  * neighbour — see the `plantgeo-postgres-js-bigint-trap` case. Unlike
  * `readAggregatedFeatures`'s tolerance, this one lands in a bare division rather than in a
  * typed PostGIS argument, so nothing else would give it a type.
+ *
+ * NOT REPOINTED at `geo.mv_soil_survey_grid` in the 2026-08-15 pre-aggregation pass. That
+ * matview is grained `(zoom_tier, cell_col, cell_row)` over at most three tiers;
+ * `soilSummaryCellDegrees` picks `step` off an UNBOUNDED doubling ladder
+ * (`SOIL_SURVEY_CELL_DEGREES * 2^k`, k chosen so the viewport fits in 8x8 cells), and `step` is
+ * published back to the client as `cellDegrees` and used to place every returned point. Three
+ * tiers cannot reproduce that, and answering a k the matview does not hold with the nearest one
+ * it does would move every dot on the map and mislabel the square each dot claims to summarize.
+ * Materializing this faithfully needs the tier ladder pinned to a fixed, enumerated set FIRST;
+ * until then the honest read is this GROUP BY, bounded by `MAX_SOIL_SUMMARY_INPUT_ROWS` and
+ * driven by the GiST `&&`. See src/lib/server/AGENTS.md §pre-aggregation.
  */
 async function readSummaryFeatures(
   bounds: [number, number, number, number]

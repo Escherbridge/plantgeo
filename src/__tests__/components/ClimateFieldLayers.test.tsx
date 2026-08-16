@@ -74,6 +74,7 @@ function capabilitiesWithDistinctDays(): SliderCapabilities {
   return {
     serverCurrentDate: SERVER_CURRENT_DATE,
     futureAxisDays: 0,
+    streamsUnavailable: false,
     layers: CLIMATE_FIELD_SIGNAL_IDS.map((signal, index) =>
       publishedStream(
         climateFieldStreamName(signal),

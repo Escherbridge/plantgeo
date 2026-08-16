@@ -41,7 +41,10 @@
 -- failing -- and the Python side, which knows whether a box was configured, reports that check as
 -- unevaluated rather than as a clean pass. The zero here is never mistaken for evidence.
 --
--- THE DAY SCOPE SLOT, AND WHY IT HAS THREE FORMS INSTEAD OF TWO. A `{day_scope}` slot sits in the WHERE
+-- THE DAY SCOPE SLOT, AND WHY IT HAS THREE FORMS INSTEAD OF TWO. A `{{day_scope}}` slot sits in the WHERE
+-- (doubled so str.format leaves this mention alone: the day-range filling is TWO lines, and substituting
+-- it into a `--` comment pushed its second line out of the comment and into the statement as bare prose,
+-- which made FEATURE_VALIDITY_COUNTS_FOR_DAY_RANGE invalid SQL. Any brace named here must stay doubled.)
 -- clause below, filled at import time from a closed set of constants in validation/queries.py, NEVER
 -- from request input -- the same load-time slot pattern observed_days.sql already uses for its own day
 -- scope. It exists for the same reason: this statement scans every published row of geo.features once

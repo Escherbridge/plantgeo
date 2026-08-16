@@ -32,8 +32,6 @@ import { useMapStore } from "@/stores/map-store";
 import { hasSelectableDay, useTimeSliderStore } from "@/stores/time-slider-store";
 import { isRenderableWeatherObservation } from "@/lib/environmental/weather";
 import type { WeatherPoint } from "@/components/map/layers/WeatherLayer";
-import { globalWebGPUAccelerator } from "@/lib/map/webgpu-accelerator";
-import { processGeoJsonFeatures } from "@/workers/layer-processor.worker";
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -539,7 +537,20 @@ export default function LayerManager() {
       // `isStyleLoaded()` is typed `boolean | void`; coerce so this stays a boolean state.
       setStyleReady(!!mapInstance.isStyleLoaded());
     };
-    const onStyleData = () => setStyleReady(!!mapInstance.isStyleLoaded());
+    // Visibility is re-applied here, not just on style.load, and that is load-bearing rather
+    // than belt-and-braces. `isStyleLoaded()` requires every SOURCE's tiles to be in, so one
+    // failing source (an expired PMTiles pin, a 404ing Martin tile function) holds it false
+    // indefinitely -- and while it is false the styleReady-gated effects below all no-op, the
+    // authored `visibility` from getStyle() stands, and every style-baked layer paints while
+    // the dock reports "0 of 5". That is the outage of 2026-08-15: the toggles were never
+    // broken, they were never applied. This handler converges them as the style settles,
+    // whatever isStyleLoaded() thinks. Cheap enough to run per styledata: setLayoutProperty
+    // over a handful of style-baked layers, and idempotent. Opacity and the date filter stay
+    // off this path -- both recompile expressions, and styledata fires per tile.
+    const onStyleData = () => {
+      applyVisibility(mapInstance, layerVisibilityRef.current);
+      setStyleReady(!!mapInstance.isStyleLoaded());
+    };
 
     mapInstance.on("style.load", onStyleLoad);
     mapInstance.on("styledata", onStyleData);
@@ -554,8 +565,15 @@ export default function LayerManager() {
   // flips true -- without styleReady in the deps, this ran once on first paint while
   // isStyleLoaded() was still false, no-opped, and had nothing left to re-trigger it
   // once the style caught up (see src/components/map/AGENTS.md and the bug this fixes).
+  // Deliberately NOT gated on isStyleLoaded(). `applyVisibility` already guards every write
+  // with `getLayer()`, so running it against a half-built style is a no-op per missing layer
+  // rather than an error -- while GATING it there means a reader's click on the eye is silently
+  // dropped, with nothing left to re-trigger it, for as long as one source fails to settle
+  // (styleReady never changes, so this effect never re-runs). A dead toggle is a worse failure
+  // than a redundant setLayoutProperty. styleReady stays in the deps so the pass still repeats
+  // as the style becomes ready.
   useEffect(() => {
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map) return;
     applyVisibility(map, layerVisibility);
   }, [map, layerVisibility, applyVisibility, styleReady]);
 
@@ -579,36 +597,14 @@ export default function LayerManager() {
     return () => cancelAnimationFrame(frame);
   }, [map, layerOpacity, applyOpacity, styleReady]);
 
-  // WebGPU hardware acceleration manager lifecycle & visibility-gated worker pipeline
-  useEffect(() => {
-    void globalWebGPUAccelerator.initialize();
-  }, []);
-
-  useEffect(() => {
-    // Strict Visibility Gating: execute zero worker tasks or GPU compute pipelines unless enabled
-    if (layerVisibility.fire && fireData.data.features.length > 0) {
-      const { packed } = processGeoJsonFeatures(fireData.data);
-      void globalWebGPUAccelerator.processLayerBuffer("fire", packed, { opacity: layerOpacity.fire });
-    }
-    if (layerVisibility.drought && droughtGeoJSON.features.length > 0) {
-      const { packed } = processGeoJsonFeatures(droughtGeoJSON);
-      void globalWebGPUAccelerator.processLayerBuffer("drought", packed, { opacity: layerOpacity.drought });
-    }
-    if (layerVisibility.vegetation && vegetationGeoJSON.features.length > 0) {
-      const { packed } = processGeoJsonFeatures(vegetationGeoJSON);
-      void globalWebGPUAccelerator.processLayerBuffer("vegetation", packed, { opacity: layerOpacity.vegetation });
-    }
-  }, [
-    layerVisibility.fire,
-    layerVisibility.drought,
-    layerVisibility.vegetation,
-    fireData.data,
-    droughtGeoJSON,
-    vegetationGeoJSON,
-    layerOpacity.fire,
-    layerOpacity.drought,
-    layerOpacity.vegetation,
-  ]);
+  // No WebGPU/worker pipeline here, deliberately. One lived here from 2026-08-14 to 2026-08-15
+  // and did nothing but cost: every result it computed was discarded (`void`), so the packing
+  // pass and the GPU readback ran on the MAIN thread, synchronously, on every change to fire,
+  // drought or vegetation data -- on the same render path this component exists to keep clear.
+  // `@/workers/layer-processor.worker` is a worker module and is never instantiated as one; it
+  // was imported directly, which also installed its module-scope `message` listener on `window`
+  // (on the main thread `self` IS `window`). Nothing here may import it. See
+  // `useActionNetworkFeatures` for the shape a real worker takes in this codebase.
 
   if (!map) return null;
 

@@ -40,5 +40,11 @@ ALTER TABLE ONLY agri.job_run
 ALTER TABLE ONLY agri.job_run
     ADD CONSTRAINT uq_job_run_logical_run_key UNIQUE (logical_run_key);
 
+-- INDEX: ix_job_run_created_at
+CREATE INDEX ix_job_run_created_at ON agri.job_run USING btree (created_at DESC);
+
+-- INDEX: ix_job_run_definition_created
+CREATE INDEX ix_job_run_definition_created ON agri.job_run USING btree (job_definition_id, created_at DESC);
+
 -- INDEX: ix_job_run_status_scheduled
 CREATE INDEX ix_job_run_status_scheduled ON agri.job_run USING btree (status, scheduled_for);

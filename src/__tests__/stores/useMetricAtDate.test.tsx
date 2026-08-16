@@ -30,6 +30,7 @@ const WATER_CAPABILITY: SliderCapabilities["layers"][number] = {
 const CAPABILITIES: SliderCapabilities = {
   serverCurrentDate: "2026-08-08",
   futureAxisDays: 0,
+  streamsUnavailable: false,
   layers: [WATER_CAPABILITY],
 };
 

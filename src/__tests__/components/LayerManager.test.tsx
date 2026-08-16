@@ -282,6 +282,7 @@ const sliderCapabilities: SliderCapabilities = {
   // 0 so every domain assertion below still measures the FORECAST horizon alone; the
   // future-axis span has its own tests rather than shifting these.
   futureAxisDays: 0,
+  streamsUnavailable: false,
   layers: [
     // Its newest day IS the server's today, which is the one case that must send no date.
     publishedLayer("fire-detections", SERVER_CURRENT_DATE),
@@ -311,6 +312,7 @@ const sliderCapabilities: SliderCapabilities = {
 const realTemporalKindCapabilities: SliderCapabilities = {
   serverCurrentDate: SERVER_CURRENT_DATE,
   futureAxisDays: 0,
+  streamsUnavailable: false,
   layers: [
     publishedLayer("fire-perimeters", "2026-07-21", "2026-05-24", "event"),
     publishedLayer("evacuation-zones", "2026-07-22", "2026-05-24", "snapshot"),
@@ -328,6 +330,7 @@ const realTemporalKindCapabilities: SliderCapabilities = {
 const streamBackedCapabilities: SliderCapabilities = {
   serverCurrentDate: SERVER_CURRENT_DATE,
   futureAxisDays: 0,
+  streamsUnavailable: false,
   layers: [
     publishedLayer(SLIDER_STREAM_LAYER_NAMES.drought, "2026-07-28", "2024-01-02"),
     publishedLayer(SLIDER_STREAM_LAYER_NAMES.soilMoisture, "2026-07-27", "2022-04-30"),
@@ -401,12 +404,20 @@ describe("LayerManager style readiness", () => {
     });
 
     // The toggle flips on while the style is still mid-load (e.g. a persisted toggle
-    // hydrating). Before the fix, the guarded effect ran once here, saw
-    // isStyleLoaded() === false, no-opped, and was never retried.
+    // hydrating), and it is applied AT ONCE -- isStyleLoaded() no longer gates this.
+    //
+    // This assertion was `.not` until 2026-08-15, pinning the old guard: a write attempted
+    // mid-load was dropped and retried when the style went ready. That is safe only while the
+    // style eventually GOES ready. isStyleLoaded() also requires every source's tiles, so one
+    // failing source (an expired PMTiles pin, a 404ing Martin tile function) holds it false for
+    // good -- and then the retry never comes, the click is swallowed, and the layer keeps
+    // painting whatever the style authored while the dock reports it off. Writing through is
+    // safe in the case the guard was protecting: applyVisibility skips any layer `getLayer`
+    // does not return, so a style layer that genuinely is not built yet is still not touched.
     act(() => {
       useMapStore.setState({ activeLayers: ["sensors"] });
     });
-    expect(fakeMap.setLayoutProperty).not.toHaveBeenCalledWith(
+    expect(fakeMap.setLayoutProperty).toHaveBeenCalledWith(
       "sensors",
       "visibility",
       "visible"
@@ -1237,6 +1248,7 @@ describe("LayerManager keeps the date filter and the row's own control in step",
     const partiallyIngested: SliderCapabilities = {
       serverCurrentDate: SERVER_CURRENT_DATE,
       futureAxisDays: 0,
+      streamsUnavailable: false,
       layers: [
         // Dense through 2026-07-24 while rows for 2026-08-04 are still landing.
         publishedLayer("sensors", "2026-07-24", "2026-05-24", "snapshot"),

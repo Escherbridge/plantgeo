@@ -313,6 +313,40 @@ getting any of it wrong is silent:
   because that is genuinely high-volume and genuinely disposable. `job_incident` and `job_outbox` are
   still written by nothing. See `models/AGENTS.md` §job_event.
 
+## Choosing a `logical_run_key`: when bucketing strands a shard
+
+`strategy_mv_refresh.py::_run_bucket_key` mints a NEW `job_run_id` every
+`STRATEGY_MV_REFRESH_POLL_INTERVAL_SECONDS` by rounding the trigger moment down to that interval and
+folding it into the run key. This is a real pattern with a real purpose -- it is what lets a periodic
+tick and a manual `POST /jobs/trigger` landing seconds apart collapse into ONE run via
+`open_job_run`'s `ON CONFLICT (logical_run_key) DO NOTHING` -- but it has a failure mode that only
+shows up under a crash, and production has already produced one: `.omc/RUNBOOK.md`'s "Traps
+discovered" section records a `strategy-mv-refresh` work item sitting `retry_wait` under a run stuck
+`running` from `20260815T010000Z`, unreachable by any later tick.
+
+**The mechanism.** `run_job_slice` is told which run to drive via `job_run_id`, and
+`claim_work_item` is scoped to that exact `job_run_id` -- it can never see a work item that belongs
+to a different run. `reclaim_expired_leases`, by contrast, is scoped to `job_definition_id` (see "No
+lease-reclaim mechanism" above) precisely so a reaper can reach a shard in a sibling run. Those two
+scopes being different is fine as long as something eventually calls `claim_work_item` against THAT
+sibling run again -- and a bucketed key guarantees nothing ever will. Once the bucket that opened a
+run has closed, no future `_run_bucket_key(now())` ever produces that run's key again, so no future
+`open_job_run` call reopens it and no future `run_job_slice` call is ever handed its `job_run_id`.
+Reclaiming the lease moves the stranded item back to `retry_wait`, `retry_wait` is claimable in
+principle, and it is never claimed by anything, forever.
+
+**Bucket a run key only when the SHARDS THEMSELVES are naturally windowed** -- `strategy_mv_refresh`
+fans out one work item covering all three views per poll window, so a stuck window really is stale
+information the next window supersedes; the item's own staleness is what the bucket is for. **Do not
+bucket a run key merely to get a fresh, claimable work item on every tick** for a lane whose shards
+are NOT windowed data. `jobs/matview_refresh.py` needed exactly that (a fresh shard every tick, to
+refresh whatever has drifted stale since the last one) without wanting a new run every tick, and
+solved it the other way around: ONE constant `logical_run_key` reused forever
+(`MATVIEW_REFRESH_RUN_KEY`), with a freshly-keyed `JobWorkItemSpec` added to that SAME run on every
+trigger call. A shard stuck behind a dead lease from tick N is still inside the run tick N+1 claims
+from, so the definition-scoped reaper in step 1 of `run_job_slice` can actually reach it, and the
+orphan class above cannot occur by construction.
+
 ## Shutdown and heartbeat semantics
 
 Two things every operator of this runtime has to know, because both change what a row in the ledger means.

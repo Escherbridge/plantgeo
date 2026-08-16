@@ -3,10 +3,10 @@ import { TRPCError } from "@trpc/server";
 import { protectedProcedure, publicProcedure, router } from "@/lib/server/trpc/init";
 import {
   getFeatureCountByLayer,
+  getLayerFeatureStats,
   getRecentActivity,
   getSystemStats,
 } from "@/lib/server/services/analytics";
-import { layers } from "@/lib/server/db/schema";
 import {
   type PrioritySubregion,
   type RegionalRiskSummary,
@@ -32,17 +32,14 @@ export const analyticsRouter = router({
       return getRecentActivity(ctx.db, input?.hours ?? 24);
     }),
 
+  /**
+   * One read, not two. This used to count all 4.97M published features and then
+   * `SELECT * FROM layers` -- every column of every layer, style jsonb included -- purely to
+   * map an id to a name it then matched in JavaScript. `geo.mv_layer_feature_stats` carries
+   * both, one row per layer. The returned shape is unchanged.
+   */
   layerStats: publicProcedure.query(async ({ ctx }) => {
-    const counts = await getFeatureCountByLayer(ctx.db);
-    const layerList = await ctx.db.select().from(layers);
-    return counts.map((c) => {
-      const layer = layerList.find((l) => l.id === c.layerId);
-      return {
-        layerId: c.layerId,
-        layerName: layer?.name ?? "Unknown",
-        count: c.count,
-      };
-    });
+    return getLayerFeatureStats(ctx.db);
   }),
 
   systemStats: publicProcedure.query(async ({ ctx }) => {

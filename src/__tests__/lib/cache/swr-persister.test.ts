@@ -27,7 +27,7 @@ const initialTimeSliderState = useTimeSliderStore.getState();
 describe("SWR IndexedDB DW Reconciliation & Throttling", () => {
   beforeEach(() => {
     globalThis.indexedDB = createFakeIndexedDb() as unknown as IDBFactory;
-    useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-14", futureAxisDays: 0, layers: [] } });
+    useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-14", futureAxisDays: 0, layers: [], streamsUnavailable: false } });
   });
 
   afterEach(() => {

@@ -43,6 +43,7 @@ const WEATHER_DESCRIBED_FROM_DAY = "2019-02-10";
 const CAPABILITIES: SliderCapabilities = {
   serverCurrentDate: SERVER_CURRENT_DATE,
   futureAxisDays: 2,
+  streamsUnavailable: false,
   layers: [
     {
       layerName: "vegetation",
