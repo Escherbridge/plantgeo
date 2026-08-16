@@ -39,7 +39,10 @@
 -- WHAT THIS FILE DOES NOT DO, deliberately:
 --   * No `CREATE INDEX CONCURRENTLY` / `DROP INDEX CONCURRENTLY`. `node scripts/migrate.mjs` uses
 --     drizzle-orm/postgres-js's migrator, which wraps each migration FILE in one transaction;
---     `--> statement-breakpoint` splits statements but they still share it. CONCURRENTLY raises
+--     the statement-breakpoint marker splits statements but they still share it. (That marker is
+--     spelled out nowhere in this comment on purpose: drizzle-orm's migrator splits the file on the
+--     literal string, so writing it here -- even inside a comment -- cuts the header in half and the
+--     migration dies with a 42601 syntax error.) CONCURRENTLY raises
 --     25001 there, and `IF NOT EXISTS` does not save you because PostgreSQL raises 25001 BEFORE it
 --     checks existence. The two concurrent indexes are built by `scripts/apply-pre-aggregation.mjs`
 --     phase A; this file only ASSERTS they exist, so a deploy that skipped the ops script fails

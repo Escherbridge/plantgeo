@@ -190,6 +190,20 @@
       "when": 1787900000000,
       "tag": "0027_ml_strategy_materialized_views",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1788000000000,
+      "tag": "0028_strategy_recommendations_real_geometry",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1788100000000,
+      "tag": "0029_pre_aggregation_layer",
+      "breakpoints": true
     }
   ]
 }
