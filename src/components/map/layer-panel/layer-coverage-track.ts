@@ -1,11 +1,19 @@
 /**
- * Geometry for one layer row's coverage track: which days of that layer's own axis the
- * warehouse covered, how densely, and where each run lands as a percentage of the drawn track.
+ * Geometry for one layer row's TWO tracks: the coverage track (which days of that layer's own
+ * axis the warehouse covered, how densely) and the synced-days track (which of those days this
+ * BROWSER holds a fresh copy of), plus where each run of either lands as a percentage of the
+ * drawn axis.
  *
- * Split out of LayerTimeSlider.tsx because none of it touches the DOM, and because the three
- * coverage states are the one thing on that control that can make a false claim about the
- * warehouse. Keeping them here means they are asserted against the capabilities payload
- * directly, without rendering anything, and the component is left with nothing but layout.
+ * Split out of LayerTimeSlider.tsx because none of it touches the DOM, and because the coverage
+ * states are the one thing on that control that can make a false claim about the warehouse.
+ * Keeping them here means they are asserted against the capabilities payload directly, without
+ * rendering anything, and the component is left with nothing but layout. The synced-days
+ * functions answer a different question -- what the browser has, not what the server has -- but
+ * share this module's day-offset-to-percent geometry and its run-coalescing, via
+ * `floorAxisRunsToBands`, for exactly the reason `drawCoverageBands` needed it: a four-year axis
+ * is ~1,460 days, and a div per day would be thousands of elements across a panel of switched-on
+ * layers. See `src/components/map/AGENTS.md` §synced-days-track for why the two tracks are drawn
+ * as separate rows rather than one blended track.
  */
 
 import {
@@ -50,9 +58,23 @@ export interface CoverageSegment {
   endOffsetExclusive: number;
 }
 
-/** A non-dense run as it is actually painted: percentage geometry plus the days it stands for. */
-export interface DrawnCoverageBand {
-  kind: DrawnCoverageKind;
+/**
+ * One run of consecutive days on a layer's axis sharing one KIND, before the visible-width floor
+ * `floorAxisRunsToBands` applies. The shape `buildCoverageSegments` (coverage, four kinds) and
+ * `buildSyncedDayRuns` (synced-days, one kind) both produce, so a single floor-and-coalesce pass
+ * can serve either.
+ */
+export interface AxisRun<TKind extends string> {
+  kind: TKind;
+  /** Day offset from `domain.firstDay` where the run begins. */
+  startOffset: number;
+  /** One past the run's last offset, so `endOffsetExclusive - startOffset` is its length in days. */
+  endOffsetExclusive: number;
+}
+
+/** An axis run as it is actually painted: percentage geometry plus the days it stands for. */
+export interface DrawnAxisRunBand<TKind extends string> {
+  kind: TKind;
   leftPercent: number;
   widthPercent: number;
   /** First day of the earliest range this band draws. */
@@ -61,10 +83,14 @@ export interface DrawnCoverageBand {
   toDate: string;
   /**
    * How many separate ranges this band draws; above one when they were too close together to
-   * be drawn apart. Read by `describeCoverageBand`, which must not describe three holes as one.
+   * be drawn apart. Read by `describeCoverageBand`/`describeSyncedDayBand`, neither of which may
+   * describe three holes -- or three synced runs -- as one.
    */
   rangeCount: number;
 }
+
+/** A non-dense coverage run as it is actually painted. See `DrawnAxisRunBand`. */
+export type DrawnCoverageBand = DrawnAxisRunBand<DrawnCoverageKind>;
 
 /**
  * The narrowest band that is still visible, as a percentage of the track.
@@ -188,44 +214,46 @@ export function buildCoverageSegments(
 }
 
 /**
- * The non-dense runs as percentage bands, floored to a visible width and coalesced when that
- * flooring makes two of them touch.
+ * Runs floored to a visible width and coalesced when that flooring makes two of the SAME kind
+ * touch.
  *
- * Coalescing is what bounds the element count. Without it a lane with hundreds of one-day holes
- * would emit hundreds of sub-pixel divs per row, on a panel that renders one of these per
+ * Shared by every track this file draws bands for -- `drawCoverageBands` calls it with the
+ * non-dense coverage segments, `drawSyncedDayBands` calls it with the single "synced" kind -- so
+ * the flooring policy and the element-count bound below live in exactly one place rather than
+ * two that could drift apart. Coalescing is what bounds that count: without it a lane with
+ * hundreds of one-day holes (or a browser with hundreds of scattered synced days) would emit
+ * hundreds of sub-pixel divs per row, on a panel that renders two of these tracks per
  * switched-on layer; with it there can never be more than `100 / MINIMUM_DRAWN_BAND_PERCENT`
- * bands of either kind. A coalesced band keeps `rangeCount` above one precisely so its own
- * description can say "three ranges between X and Y" rather than claiming one continuous hole
- * across days that were published.
+ * bands of a given kind. A coalesced band keeps `rangeCount` above one precisely so its own
+ * description can say "three ranges between X and Y" rather than claiming one continuous span
+ * across days that were not all the same.
  */
-export function drawCoverageBands(
+export function floorAxisRunsToBands<TKind extends string>(
   domain: SliderDomain,
-  layer: SliderLayerCapability
-): DrawnCoverageBand[] {
-  const bands: DrawnCoverageBand[] = [];
+  runs: readonly AxisRun<TKind>[]
+): DrawnAxisRunBand<TKind>[] {
+  const bands: DrawnAxisRunBand<TKind>[] = [];
 
-  for (const segment of buildCoverageSegments(domain, layer)) {
-    if (segment.kind === "dense") continue;
-
-    const leftEdge = Math.min(100, Math.max(0, percentOfDayOffset(domain, segment.startOffset)));
+  for (const run of runs) {
+    const leftEdge = Math.min(100, Math.max(0, percentOfDayOffset(domain, run.startOffset)));
     const rightEdge = Math.min(
       100,
-      Math.max(0, percentOfDayOffset(domain, segment.endOffsetExclusive))
+      Math.max(0, percentOfDayOffset(domain, run.endOffsetExclusive))
     );
     const widthPercent = Math.min(
       100,
       Math.max(rightEdge - leftEdge, MINIMUM_DRAWN_BAND_PERCENT)
     );
-    // Pulled back off the right edge rather than clipped, so a hole on the last covered day is
+    // Pulled back off the right edge rather than clipped, so a run on the last covered day is
     // drawn at full width instead of shrinking to nothing exactly where the record ends.
     const leftPercent = Math.max(0, Math.min(leftEdge, 100 - widthPercent));
-    const fromDate = addDays(domain.firstDay, segment.startOffset);
-    const toDate = addDays(domain.firstDay, segment.endOffsetExclusive - 1);
+    const fromDate = addDays(domain.firstDay, run.startOffset);
+    const toDate = addDays(domain.firstDay, run.endOffsetExclusive - 1);
 
     const previous = bands[bands.length - 1];
     if (
       previous !== undefined &&
-      previous.kind === segment.kind &&
+      previous.kind === run.kind &&
       leftPercent <= previous.leftPercent + previous.widthPercent
     ) {
       previous.widthPercent = Math.min(
@@ -237,10 +265,88 @@ export function drawCoverageBands(
       continue;
     }
 
-    bands.push({ kind: segment.kind, leftPercent, widthPercent, fromDate, toDate, rangeCount: 1 });
+    bands.push({ kind: run.kind, leftPercent, widthPercent, fromDate, toDate, rangeCount: 1 });
   }
 
   return bands;
+}
+
+/**
+ * The non-dense coverage runs as percentage bands. See `floorAxisRunsToBands` for the flooring
+ * and coalescing policy this delegates to.
+ */
+export function drawCoverageBands(
+  domain: SliderDomain,
+  layer: SliderLayerCapability
+): DrawnCoverageBand[] {
+  const runs = buildCoverageSegments(domain, layer).filter(
+    (segment): segment is CoverageSegment & { kind: DrawnCoverageKind } => segment.kind !== "dense"
+  );
+  return floorAxisRunsToBands(domain, runs);
+}
+
+/** The one kind a synced-days run can be -- there is only one signal on that line. */
+export type SyncedDayRunKind = "synced";
+
+/** A run of consecutive days this browser holds a fresh, persisted copy of. See `drawSyncedDayBands`. */
+export type SyncedDayBand = DrawnAxisRunBand<SyncedDayRunKind>;
+
+/**
+ * Which days of a layer's axis this browser currently holds, coalesced into runs of consecutive
+ * days -- the input `drawSyncedDayBands` floors into bands.
+ *
+ * Swept over the WHOLE drawn axis (`sliderMaxOffset(domain) + 1` days), not just through today
+ * the way `buildCoverageSegments` stops at `coveredDayCount`: that stop is specific to what
+ * `coverageGaps` can describe (the server has not observed the future), but a forecast variant
+ * can be fetched -- and therefore synced -- past the live edge, so this sweep must not inherit a
+ * bound that belongs to a different question.
+ */
+export function buildSyncedDayRuns(
+  domain: SliderDomain,
+  syncedDays: ReadonlySet<string>
+): AxisRun<SyncedDayRunKind>[] {
+  const dayCount = sliderMaxOffset(domain) + 1;
+  if (dayCount <= 0 || syncedDays.size === 0) return [];
+
+  const runs: AxisRun<SyncedDayRunKind>[] = [];
+  let runStart: number | null = null;
+  for (let offset = 0; offset <= dayCount; offset += 1) {
+    const isSynced = offset < dayCount && syncedDays.has(addDays(domain.firstDay, offset));
+    if (isSynced && runStart === null) {
+      runStart = offset;
+    } else if (!isSynced && runStart !== null) {
+      runs.push({ kind: "synced", startOffset: runStart, endOffsetExclusive: offset });
+      runStart = null;
+    }
+  }
+  return runs;
+}
+
+/**
+ * The synced-days line's bands: which runs of a layer's axis this browser holds a fresh copy of
+ * right now.
+ *
+ * Answers a different question than `drawCoverageBands` -- "what THIS BROWSER has" rather than
+ * "what the server has" -- so it is built from `useSyncedDays`'s set rather than the capability
+ * payload, and `LayerTimeSlider` draws the two as separate rows rather than blending synced-ness
+ * into `CoverageKind`: a reader must never have to guess which of the two claims a band is
+ * making. Coalesced through the same `floorAxisRunsToBands` the coverage track uses, and for the
+ * identical reason -- see that function's own doc.
+ */
+export function drawSyncedDayBands(
+  domain: SliderDomain,
+  syncedDays: ReadonlySet<string>
+): SyncedDayBand[] {
+  return floorAxisRunsToBands(domain, buildSyncedDayRuns(domain, syncedDays));
+}
+
+/** One synced-days band in words, for its tooltip. Mirrors `describeCoverageBand`. */
+export function describeSyncedDayBand(band: SyncedDayBand): string {
+  if (band.rangeCount > 1) {
+    return `Saved on this device: ${band.rangeCount} ranges between ${band.fromDate} and ${band.toDate}`;
+  }
+  const extent = band.fromDate === band.toDate ? band.fromDate : `${band.fromDate} to ${band.toDate}`;
+  return `Saved on this device: ${extent}`;
 }
 
 /**
@@ -379,6 +485,30 @@ export const TRACK_REGION_APPEARANCE: Record<TrackRegion, TrackRegionAppearance>
       "repeating-linear-gradient(45deg, hsl(var(--muted-foreground) / 0.55) 0 3px, transparent 3px 6px)",
   },
 };
+
+/**
+ * The synced-days line's own fill -- deliberately NOT a member of `TRACK_REGION_APPEARANCE`
+ * above. That table is the five claims a COVERAGE track can make about the WAREHOUSE; folding a
+ * sixth, "synced", in there would be the exact blending the synced-days row exists to refuse
+ * (see this file's own top doc and `drawSyncedDayBands`). Keeping the appearance in a separate
+ * constant makes that refusal structural, not just a convention a call site could forget.
+ *
+ * A dotted texture, not a fifth line hatch: `dense`, `thin`, `absent`, `future` and `undescribed`
+ * already claim the track's four right-angle hatch directions (0/45/90/135) between them, and a
+ * synced run initially reused `dense`'s plain solid `--primary` fill outright -- visually
+ * indistinguishable from the coverage track's own dense base a few pixels below it, with only a
+ * ~4px row gap and a 2px height delta actually separating the two. Dots are a THIRD visual
+ * vocabulary rather than a fifth hatch angle, so the two tracks read as two different systems
+ * (continuous coverage drawn in lines, discrete saved days drawn in dots) even in a screenshot
+ * with no caption in view.
+ */
+export const SYNCED_DAY_APPEARANCE: TrackRegionAppearance = {
+  backgroundColor: "hsl(var(--primary) / 0.25)",
+  backgroundImage: "radial-gradient(circle, hsl(var(--primary)) 1.1px, transparent 1.5px)",
+};
+
+/** Tile size for `SYNCED_DAY_APPEARANCE`'s dot pattern -- a repeating radial-gradient needs one stated explicitly. */
+export const SYNCED_DAY_APPEARANCE_BACKGROUND_SIZE = "5px 5px";
 
 /** What a band of each drawn kind is called, in the tooltip and in the spoken summary. */
 const DRAWN_COVERAGE_SUBJECT: Record<DrawnCoverageKind, string> = {

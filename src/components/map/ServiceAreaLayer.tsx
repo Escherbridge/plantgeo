@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
 import { trpc } from "@/lib/trpc/client";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
+import { viewportForBbox } from "@/lib/map/coverage-region";
 
 const SOURCE_ID = "ingestion-coverage";
 const MASK_LAYER_ID = "ingestion-coverage-mask";
@@ -213,12 +214,34 @@ export function ServiceAreaLayer({ map }: ServiceAreaLayerProps) {
 
     if (!hasFitRef.current) {
       hasFitRef.current = true;
+
+      // The store's DEFAULT_VIEWPORT already opens on an approximation of this
+      // bbox (see src/stores/map-store.ts / src/lib/map/coverage-region.ts),
+      // computed synchronously before this query ever resolved. When the
+      // camera the user is already looking at is close to where this exact
+      // fitBounds would land, animating is just a pointless wobble -- snap
+      // instantly instead. A real mismatch (client fallback bbox differs from
+      // this deployment's actual INGEST_BBOX) still gets the animated
+      // correction, same as before this change.
+      const container = map.getContainer();
+      const target = viewportForBbox(
+        bbox,
+        container.clientWidth || 1024,
+        container.clientHeight || 512,
+        40
+      );
+      const currentCenter = map.getCenter();
+      const cameraAlreadyMatches =
+        Math.abs(map.getZoom() - target.zoom) < 0.3 &&
+        Math.abs(currentCenter.lng - target.longitude) < 1 &&
+        Math.abs(currentCenter.lat - target.latitude) < 1;
+
       map.fitBounds(
         [
           [bbox.west, bbox.south],
           [bbox.east, bbox.north],
         ],
-        { padding: 40, duration: 800 }
+        { padding: 40, duration: cameraAlreadyMatches ? 0 : 800 }
       );
     }
   }, [map, bbox?.west, bbox?.south, bbox?.east, bbox?.north]);

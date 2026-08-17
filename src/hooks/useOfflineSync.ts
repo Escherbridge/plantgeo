@@ -11,6 +11,13 @@ import {
   type ConflictedOperation,
 } from "@/lib/offline/sync-queue";
 import { toast } from "@/components/ui/toast";
+import { createBudgetedFetch } from "@/lib/net/request-budget";
+
+/** One lane for the whole replay pass: `isSnapshotStale`'s pre-check and the mutation fetch it
+ *  gates are sequential steps of the same per-op iteration, not competing streams -- see
+ *  src/lib/net/AGENTS.md "fairness policy". Module-level so `runSync` and `isSnapshotStale`
+ *  share one budgeted fetch. */
+const budgetedFetch = createBudgetedFetch("offline-sync");
 
 interface UseOfflineSyncResult {
   isOnline: boolean;
@@ -32,7 +39,7 @@ async function isSnapshotStale(op: SyncOperation): Promise<boolean> {
   if (!record?.id) return false;
 
   try {
-    const res = await fetch(`/api/${op.resource}/${record.id}`);
+    const res = await budgetedFetch(`/api/${op.resource}/${record.id}`);
     if (!res.ok) return false;
     const current = await res.json();
     return typeof current?.updatedAt === "number" && current.updatedAt > op.updatedAt;
@@ -86,7 +93,7 @@ export function useOfflineSync(): UseOfflineSyncResult {
             continue;
           }
 
-          const response = await fetch(`/api/${op.resource}`, {
+          const response = await budgetedFetch(`/api/${op.resource}`, {
             method:
               op.type === "create"
                 ? "POST"

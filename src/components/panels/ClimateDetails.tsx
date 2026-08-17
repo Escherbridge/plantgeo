@@ -191,9 +191,25 @@ function ClimateSignalReport({
         </p>
       )}
 
-      {(query.isLoading || (served !== undefined && field === undefined)) && (
+      {/* `isFetching`, never `isLoading`. This read holds the previous answer while the next
+          loads (`keepPreviousData`, see useViewportProxiedLayers), which sets `status: "success"`
+          — so `isLoading` is permanently false after the first success and this line would never
+          appear again. The `served`/`field` term beside it catches a form or statistic change,
+          which is a different mismatch and not a date one. */}
+      {((query.isFetching && !query.isPlaceholderData) ||
+        (served !== undefined && field === undefined)) && (
         <p role="status" aria-live="polite" className="text-xs text-[hsl(var(--muted-foreground))]">
           Loading the {definition.fieldLabel} field for this view…
+        </p>
+      )}
+
+      {/* The retained case. `field.requestedDay` below is the day the response in hand was asked
+          for, so while this is true the "newest reading at or before {day}" note names the
+          PREVIOUS request's day rather than this row's. Worded without "loading" because offline
+          pauses a fetch rather than cancelling it. */}
+      {query.isPlaceholderData && field !== undefined && (
+        <p role="status" aria-live="polite" className="text-xs text-[hsl(var(--muted-foreground))]">
+          The figures below describe the previous request; this one has not arrived yet.
         </p>
       )}
 

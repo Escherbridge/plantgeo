@@ -2,12 +2,35 @@
 
 import { useMemo } from "react";
 import { CalendarDays } from "lucide-react";
-import { layerLabel } from "@/lib/map/layer-registry";
+import { layerLabel, type LayerToggleId } from "@/lib/map/layer-registry";
 import { useViewedLayerDays, type ViewedLayerDay } from "@/lib/map/layer-toggle-context";
-import { dayOffset, useTimeSliderStore } from "@/stores/time-slider-store";
+import {
+  dayOffset,
+  latestObservedDateFor,
+  useTimeSliderStore,
+} from "@/stores/time-slider-store";
+import { useDrawnLayerDayStore, type DrawnLayerDay } from "@/stores/useMetricAtDate";
+import type { SliderCapabilities } from "@/types/time-slider";
 
 /** Where a drawn day sits against the server's today. */
 export type ViewedDayStanding = "live" | "past" | "beyond_record" | "unknown";
+
+/**
+ * One visible layer as this surface may state it: the day actually PAINTED, plus what is still
+ * on its way.
+ *
+ * `ViewedLayerDay.date` is the row's settled slider position, which is the day being asked for
+ * and not necessarily the day in hand. Since `LayerManager` retains the previous collection
+ * while the next loads (`keepPreviousData`), those two differ for a whole warehouse round trip
+ * after every scrub -- and captioning the request would state a day the canvas is not showing.
+ * The rule is `useMetricAtDate.resolvedDate`'s: the surface may lag, it may not misstate.
+ */
+export interface DrawnViewedLayerDay extends ViewedLayerDay {
+  /** The day being waited on, or null when the painted day IS the day the row asks for. */
+  pendingDate: string | null;
+  /** A request whose answer is not yet on the canvas is open. False while offline pauses it. */
+  isLoading: boolean;
+}
 
 /** What the visible layers, taken together, are showing and as of when. */
 export interface ViewedDateSummary {
@@ -25,8 +48,52 @@ export interface ViewedDateSummary {
   latestDayStanding: ViewedDayStanding;
   /** Whole days from `earliestDay` to `latestDay`; 0 when one day is shared. */
   spanDays: number;
-  /** Visible layers provably behind their own newest published day. */
+  /** Visible layers provably behind their own newest published day, judged on the DRAWN day. */
   behindLatestCount: number;
+  /** Visible layers with an open request whose answer is not yet painted. */
+  loadingCount: number;
+  /** Visible layers painting a day OLDER than the one their row is asking for. */
+  pendingCount: number;
+}
+
+/**
+ * Each visible layer restated on the day it is actually drawing.
+ *
+ * `isOnLatest` is RE-ANSWERED against that day rather than carried over. `useViewedLayerDays`
+ * answers it for the day the row is asking for, which is right for the agent payload and wrong
+ * here: every qualifier in a sentence must be about the day that sentence names. Carrying it
+ * over put two different days in one line -- click "Latest" on a scrubbed layer and the row read
+ * an old date with no "behind its latest" mark, while the reverse case marked a day that WAS the
+ * latest as behind it. The rule itself is `useViewedLayerDays`'s, unchanged; only its subject is.
+ *
+ * A layer nothing has published for keeps its row's day and reports no loading state. That is
+ * honest only while unpublished layers BLANK during a load rather than retaining — a layer given
+ * `keepPreviousData` without a report here would be captioned with a day it is not painting, so
+ * the two must be added together.
+ */
+export function resolveDrawnViewedDays(
+  viewed: ViewedLayerDay[],
+  drawnDays: Partial<Record<LayerToggleId, DrawnLayerDay>>,
+  capabilities: SliderCapabilities | null
+): DrawnViewedLayerDay[] {
+  return viewed.map((layer) => {
+    const drawn = drawnDays[layer.layerId];
+    if (drawn === undefined) return { ...layer, pendingDate: null, isLoading: false };
+    // A feed whose read carries no day (SSURGO, proxied per viewport) publishes a null drawn
+    // date and contributes only its loading state; the row's own day still names it.
+    const drawnDate = drawn.drawnDate ?? layer.date;
+    const latestObservedDate = latestObservedDateFor(capabilities, layer.layerId);
+    return {
+      ...layer,
+      date: drawnDate,
+      pendingDate:
+        drawn.requestedDate !== null && drawn.requestedDate !== drawnDate
+          ? drawn.requestedDate
+          : null,
+      isLoading: drawn.isLoading,
+      isOnLatest: latestObservedDate === null || drawnDate >= latestObservedDate,
+    };
+  });
 }
 
 /**
@@ -52,7 +119,7 @@ function dayStanding(day: string, serverCurrentDate: string | null): ViewedDaySt
  * named, so an empty list here means exactly "nothing dated is drawn".
  */
 export function summariseViewedDays(
-  viewed: ViewedLayerDay[],
+  viewed: DrawnViewedLayerDay[],
   serverCurrentDate: string | null
 ): ViewedDateSummary | null {
   if (viewed.length === 0) return null;
@@ -71,6 +138,8 @@ export function summariseViewedDays(
     // published day is unknown -- see MapDay.isBehindLatestObservedDate. So this counts layers
     // measured to be behind, never layers we merely cannot vouch for.
     behindLatestCount: viewed.filter((layer) => !layer.isOnLatest).length,
+    loadingCount: viewed.filter((layer) => layer.isLoading).length,
+    pendingCount: viewed.filter((layer) => layer.pendingDate !== null).length,
   };
 }
 
@@ -82,12 +151,29 @@ function describeBehindLatest(behindLatestCount: number): string {
 }
 
 /**
+ * "1 layer on an earlier day" / "3 layers on earlier days".
+ *
+ * Counted over layers whose PAINTED day is older than the day their row asks for, which is not
+ * the same population as "a request is open": a pan re-reads the same day over new ground, and
+ * offline pauses a fetch without cancelling it (`fetchStatus: "paused"`, so a retained frame
+ * stands with nothing in flight). Saying "still loading" was therefore false for as long as
+ * connectivity was out, and contradicted the absent Updating chip beside it. This wording is
+ * true in all three states, and it is the one worth a line of chrome: the control has moved
+ * ahead of the canvas.
+ */
+function describeShowingEarlierDay(pendingCount: number): string {
+  return pendingCount === 1
+    ? "1 layer on an earlier day"
+    : `${pendingCount} layers on earlier days`;
+}
+
+/**
  * The whole composite in one sentence plus a line per layer, for a tooltip and for a screen
  * reader. This is the escape hatch that keeps the visible surface small: the span says THAT the
  * days differ, this says exactly which layer is on which day, without a dozen rows on canvas.
  */
 export function describeViewedDays(
-  viewed: ViewedLayerDay[],
+  viewed: DrawnViewedLayerDay[],
   summary: ViewedDateSummary
 ): string {
   const headline =
@@ -100,14 +186,23 @@ export function describeViewedDays(
       : `The ${summary.layerCount} visible layers are on ${summary.distinctDays.length} ` +
         `different days spanning ${summary.spanDays} days, from ${summary.earliestDay} to ` +
         `${summary.latestDay}. This is a mixed-time composite, not one moment.`;
+  // Said in full, because the one-line surface can only carry a count.
+  const loading =
+    summary.pendingCount === 0
+      ? []
+      : [
+          `${describeShowingEarlierDay(summary.pendingCount)}: each is painting the day it last ` +
+            `loaded until its own request lands.`,
+        ];
   const rows = [...viewed]
     .sort((left, right) => left.date.localeCompare(right.date))
     .map(
       (layer) =>
         `${layerLabel(layer.layerId)}: ${layer.date}` +
+        (layer.pendingDate === null ? "" : ` (loading ${layer.pendingDate})`) +
         (layer.isOnLatest ? "" : " (behind its latest)")
     );
-  return [headline, ...rows].join("\n");
+  return [headline, ...loading, ...rows].join("\n");
 }
 
 /**
@@ -150,23 +245,41 @@ const PRIMARY_CHIP_CLASSES = `${CHIP_CLASSES} bg-[hsl(var(--primary))]/15 text-[
  * control here would be the map-wide day this feature deleted, wearing a smaller hat. Nothing in
  * it is clickable, and its only interaction is a `title` on hover.
  *
+ * And what it states is the day DRAWN, never the day requested. It read the sliders' positions
+ * until 2026-08-16, which was correct only while a layer blanked during a load; now that the
+ * previous collection is retained (`keepPreviousData`, see `LayerManager`) the two differ for a
+ * whole warehouse round trip after every scrub, and asserting the request would put the new day
+ * over the old day's features. Ordinary latency then reads as a data bug -- which is exactly the
+ * failure this surface exists to prevent, one layer down. So the headline names what is painted,
+ * an "Updating" chip names the fetch, and the second line counts the layers whose control has
+ * moved ahead of their canvas.
+ *
  * No `role="status"` and no `aria-live`: it re-renders on every layer toggle and on every settle
  * of every row's scrub, so announcing it would talk over the control the reader is dragging. The
  * same full text a sighted reader gets on hover is in the DOM as `sr-only` text instead.
  */
 export function MapDateSummary() {
   const viewedLayerDays = useViewedLayerDays();
-  const serverCurrentDate = useTimeSliderStore(
-    (state) => state.capabilities?.serverCurrentDate ?? null
-  );
+  // What the layers say they are PAINTING, which is what this surface states. The rows above
+  // carry the slider's position; captioning that would name a day the canvas is not showing for
+  // the length of every fetch. See `src/stores/useMetricAtDate.ts` §DrawnLayerDay.
+  const drawnDays = useDrawnLayerDayStore((state) => state.drawnDays);
+  // The whole payload, because "behind its latest" is re-answered per layer against the day
+  // actually drawn -- see `resolveDrawnViewedDays`.
+  const capabilities = useTimeSliderStore((state) => state.capabilities);
+  const serverCurrentDate = capabilities?.serverCurrentDate ?? null;
 
+  const drawnLayerDays = useMemo(
+    () => resolveDrawnViewedDays(viewedLayerDays, drawnDays, capabilities),
+    [viewedLayerDays, drawnDays, capabilities]
+  );
   const summary = useMemo(
-    () => summariseViewedDays(viewedLayerDays, serverCurrentDate),
-    [viewedLayerDays, serverCurrentDate]
+    () => summariseViewedDays(drawnLayerDays, serverCurrentDate),
+    [drawnLayerDays, serverCurrentDate]
   );
   const detail = useMemo(
-    () => (summary === null ? "" : describeViewedDays(viewedLayerDays, summary)),
-    [viewedLayerDays, summary]
+    () => (summary === null ? "" : describeViewedDays(drawnLayerDays, summary)),
+    [drawnLayerDays, summary]
   );
 
   if (summary === null) return null;
@@ -184,6 +297,9 @@ export function MapDateSummary() {
   }
   if (summary.behindLatestCount > 0) {
     secondLineParts.push(describeBehindLatest(summary.behindLatestCount));
+  }
+  if (summary.pendingCount > 0) {
+    secondLineParts.push(describeShowingEarlierDay(summary.pendingCount));
   }
 
   return (
@@ -209,6 +325,15 @@ export function MapDateSummary() {
           )}
           {!isMixed && summary.latestDayStanding === "past" && (
             <span className={PRIMARY_CHIP_CLASSES}>Past day</span>
+          )}
+          {/* The latency signal, and a wider population than `pendingCount`: a pan re-reads the
+              same day over new ground, which a reader must be able to tell from a day that is
+              simply empty. Silent while offline pauses a fetch -- nothing is in flight then, and
+              the second line carries that case instead. */}
+          {summary.loadingCount > 0 && (
+            <span className={MUTED_CHIP_CLASSES} data-testid="map-date-summary-loading">
+              Updating
+            </span>
           )}
         </div>
         {secondLineParts.length > 0 && (

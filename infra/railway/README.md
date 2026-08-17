@@ -95,7 +95,7 @@ gate. Its variables must use an explicit PlantGeo service reference:
 ```dotenv
 DATABASE_URL=<sealed DSN for a Martin-only login on plantgeo-spatiotemporal-db>
 PORT=3000
-TILE_CORS_ORIGIN=https://plantgeo-main-production.up.railway.app
+TILE_CORS_ORIGIN=https://plantgeo.aevani.com
 MARTIN_CACHE_SIZE_MB=128
 MARTIN_POOL_SIZE=8
 ```
@@ -107,6 +107,16 @@ admin connection with a login restricted to database connect, `geo` schema
 usage, and execute on the four allowlisted functions. Put the public domain
 behind CDN/WAF request limits; CORS is not authentication. Static PMTiles are
 served directly from R2/CDN and are not mounted into the Railway container.
+
+**`plantgeo-main`'s domain set and Martin's `cors.origin` list are coupled —
+adding a domain to one without the other is a silent, browser-only outage for
+every dynamic layer** (`curl` sees a clean `200`; only a request carrying a real
+`Origin` header sees the missing `Access-Control-Allow-Origin`). `TILE_CORS_ORIGIN`
+above is only the custom-domain half; `infra/martin/martin.yaml` also carries a
+`TILE_CORS_ORIGIN_RAILWAY_DOMAIN` placeholder defaulted to the Railway service
+domain, so that half needs no variable here unless the domain changes. See
+`docs/deployment.md`'s "Martin CORS allow-list is coupled to the domain set" for
+the full reproduction command and the verified basis for this design.
 
 The web service uses the private URL below for server calls, while browser code
 uses Martin's generated public/custom HTTPS domain:

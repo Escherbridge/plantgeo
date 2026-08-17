@@ -5,14 +5,19 @@ import {
   CACHE_SCHEMA_VERSION,
   HISTORICAL_TTL_MS,
   LIVE_TTL_MS,
+  MAX_TOTAL_CACHE_BYTES,
   STORE_CONFIG,
-  indexedDbLayerQueryPersister,
+  createIndexedDbLayerQueryPersister,
   isPersistableQueryKey,
+  resetCacheAccounting,
   resolveCacheTtlMs,
   type StoredLayerQueryEntry,
 } from "@/lib/cache/query-persister";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
 import { createFakeIndexedDb } from "./fake-indexeddb";
+
+/** No QueryClient attached: these cases never exercise publication. See swr-persister.test.ts. */
+const indexedDbLayerQueryPersister = createIndexedDbLayerQueryPersister(() => null);
 
 /** Mirrors `@trpc/react-query`'s `getQueryKeyInternal` shape for a `.useQuery(input)` call. */
 function trpcQueryKey(path: string[], input?: Record<string, unknown>): readonly unknown[] {
@@ -31,6 +36,8 @@ const initialTimeSliderState = useTimeSliderStore.getState();
 
 beforeEach(() => {
   useTimeSliderStore.setState(initialTimeSliderState, true);
+  // A fresh fake store per test changes what is on disk behind the running byte totals.
+  resetCacheAccounting();
 });
 
 afterEach(() => {
@@ -284,16 +291,17 @@ describe("indexedDbLayerQueryPersister", () => {
   });
 
   it("evicts the least-recently-used entries once the size budget would be exceeded", async () => {
-    // Five 20 MB entries (declared directly, not via real payload size) total 100 MB --
-    // double the 50 MB MAX_TOTAL_CACHE_BYTES budget -- so writing one more entry must evict
-    // the oldest ones by `lastAccessedAt` until the total fits again.
+    // Five entries at two fifths of the budget each (declared directly, not via real payload
+    // size) total twice MAX_TOTAL_CACHE_BYTES, so writing one more must evict the oldest by
+    // `lastAccessedAt` until the total fits again. Sized off the constant rather than a literal
+    // so raising the budget cannot quietly turn this into a test that evicts nothing.
     const bigEntry = (key: string, lastAccessedAt: number): StoredLayerQueryEntry => ({
       key,
       schemaVersion: CACHE_SCHEMA_VERSION,
       createdAt: lastAccessedAt,
       expiresAt: Date.now() + HISTORICAL_TTL_MS,
       lastAccessedAt,
-      approxByteSize: 20 * 1024 * 1024,
+      approxByteSize: Math.floor(MAX_TOTAL_CACHE_BYTES * 0.4),
       value: { tiny: true },
     });
     for (let i = 0; i < 5; i += 1) {

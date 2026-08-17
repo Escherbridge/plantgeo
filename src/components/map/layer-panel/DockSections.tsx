@@ -23,6 +23,7 @@ import {
   useSoilDisplayMode,
   useToggleLayer,
 } from "@/lib/map/layer-toggle-context";
+import { useDrawnLayerDayStore } from "@/stores/useMetricAtDate";
 import { useVegetationStore } from "@/stores/vegetation-store";
 
 /**
@@ -50,6 +51,13 @@ function LayerGroupSection({
   const [isExpanded, setIsExpanded] = useState(true);
   const layerVisibility = useLayerVisibility();
   const toggleLayer = useToggleLayer();
+  // One subscription for every row this section renders, not one per row: a selector cannot be
+  // called inside the `.map()` below (that would be a hook call whose count varies with
+  // `group.layerIds.length`, i.e. a conditional hook call), so this reads the whole published
+  // table once and each row below does a plain object index into it instead. The store itself
+  // only publishes a new object when something in it actually changed (see `sameDrawnLayerDays`
+  // in `useMetricAtDate.ts`), so this does not re-render on every unrelated layer's fetch.
+  const drawnDays = useDrawnLayerDayStore((state) => state.drawnDays);
 
   // Withheld layers read false in useLayerVisibility whatever activeLayers says, so they are
   // excluded from the count rather than counted as permanently off -- "0 of 1" for a layer
@@ -130,7 +138,12 @@ function LayerGroupSection({
       {isExpanded && (
         <ul id={listId} className="flex flex-col">
           {group.layerIds.map((layerId) => (
-            <LayerRow key={layerId} layerId={layerId} legendContext={legendContext} />
+            <LayerRow
+              key={layerId}
+              layerId={layerId}
+              legendContext={legendContext}
+              isFetchingSelectedDay={drawnDays[layerId]?.isLoading ?? false}
+            />
           ))}
         </ul>
       )}

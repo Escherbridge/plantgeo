@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { create } from "zustand";
 import { useDebounce } from "@/hooks/useDebounce";
 import { getVanillaTrpcClient } from "@/lib/trpc/client";
 import type { LayerToggleId } from "@/lib/map/layer-registry";
@@ -138,6 +139,11 @@ export interface UseMetricAtDateResult {
    * True while the collection is the PREVIOUS day's, retained so the layer does not blank
    * during a load. Consumers that assert a date to the user must read `resolvedDate` rather
    * than the slider's day, and may dim; consumers that only draw geometry can ignore it.
+   *
+   * That rule is stated here and enforced for the whole map by the drawn-day registry at the
+   * foot of this file: every live layer is read by `LayerManager` through a tRPC hook rather
+   * than through this one, so the layers publish what they are painting and `MapDateSummary`
+   * captions from that instead of from the thumb's position.
    */
   isShowingPreviousDay: boolean;
   variant: MetricVariant;
@@ -295,4 +301,207 @@ export function useMetricAtDate(options: UseMetricAtDateOptions): UseMetricAtDat
     isShowingPreviousDay: shouldQuery && query.isPlaceholderData,
     variant,
   };
+}
+
+/**
+ * What one layer is actually DRAWING, as against the day its row's slider is asking for.
+ *
+ * `resolvedDate` above states the rule for the one hook that owns both a request and the
+ * collection it produced. Every live layer on this map is read by `LayerManager` instead --
+ * one tRPC hook per feed, each holding half of that pair -- so the rule needed a home for
+ * readers that own neither. This is it: the layers publish what is painted, `MapDateSummary`
+ * captions from it, and no surface has to infer a drawn day from a control position.
+ */
+export interface DrawnLayerDay {
+  /**
+   * The day the features currently on the map belong to, or null for a feed whose read carries
+   * no day at all (SSURGO is proxied per viewport, so a pan re-reads it and a scrub does not).
+   */
+  drawnDate: string | null;
+  /** The day this layer's row is asking for. Differs from `drawnDate` only during a load. */
+  requestedDate: string | null;
+  /** A request for this layer is in flight -- for a new day, or the same day over a new bbox. */
+  isLoading: boolean;
+}
+
+/** The published drawn day of every live layer whose reader reports one. */
+type DrawnLayerDays = Partial<Record<LayerToggleId, DrawnLayerDay>>;
+
+/**
+ * Who published. Either `LayerManager` or one layer's own component.
+ *
+ * Publishers must own DISJOINT sets of layer ids -- the merge below is otherwise
+ * order-dependent. It holds structurally today: the manager reads every feed except the nine
+ * NASA POWER signals, and each of those is published by its own `ClimateSignalLayer`.
+ */
+export type DrawnLayerDayPublisher = "layer-manager" | LayerToggleId;
+
+interface DrawnLayerDayState {
+  /**
+   * Sparse, and deliberately so: a layer appears only while something is drawing it AND that
+   * something publishes here. An absent layer is not "on no day" -- it is a layer nothing has
+   * told us about, and its reader must fall back to the row's own settled day rather than
+   * captioning an absence.
+   */
+  drawnDays: DrawnLayerDays;
+  /** What each publisher last said, so one reader's silence cannot erase another's entries. */
+  publications: Partial<Record<DrawnLayerDayPublisher, DrawnLayerDays>>;
+  /** The only writer. Returns the SAME state when a publisher repeats itself. */
+  publishDrawnLayerDays: (publisher: DrawnLayerDayPublisher, next: DrawnLayerDays) => void;
+}
+
+/** True when two published records say the same thing about the same layers. */
+function sameDrawnLayerDays(left: DrawnLayerDays, right: DrawnLayerDays): boolean {
+  const leftIds = Object.keys(left) as LayerToggleId[];
+  if (leftIds.length !== Object.keys(right).length) return false;
+  for (const layerId of leftIds) {
+    const before = left[layerId];
+    const after = right[layerId];
+    if (before === undefined || after === undefined) return false;
+    if (before.drawnDate !== after.drawnDate) return false;
+    if (before.requestedDate !== after.requestedDate) return false;
+    if (before.isLoading !== after.isLoading) return false;
+  }
+  return true;
+}
+
+/**
+ * Where the layers say what day they are painting, so a caption can state it.
+ *
+ * Neither persisted nor devtools-wrapped, unlike the other stores here, and both omissions are
+ * deliberate: this is per-frame transport between two siblings in `MapView`, it moves on every
+ * fetch, and a replayed or rehydrated "what is drawn" would be a claim about a canvas that no
+ * longer exists. It is a store rather than a context for the reason
+ * `src/lib/map/layer-toggle-context.ts` gives for having no Provider -- a provider broadcasting
+ * this would re-render the whole map subtree on every fetch.
+ */
+export const useDrawnLayerDayStore = create<DrawnLayerDayState>()((set) => ({
+  drawnDays: {},
+  publications: {},
+  publishDrawnLayerDays: (publisher, next) =>
+    set((state) => {
+      const previous = state.publications[publisher];
+      // A publisher repeating itself is the common case -- these hooks run on every render of
+      // components that re-render on every viewport tick -- and it must wake nothing.
+      if (previous !== undefined && sameDrawnLayerDays(previous, next)) return state;
+      const publications = { ...state.publications, [publisher]: next };
+      const drawnDays: DrawnLayerDays = {};
+      for (const published of Object.values(publications)) Object.assign(drawnDays, published);
+      return { publications, drawnDays };
+    }),
+}));
+
+/** One live layer's read, as `usePublishedDrawnLayerDays` needs to see it. */
+export interface LiveLayerDayReport {
+  layerId: LayerToggleId;
+  /** False while the toggle is off. Such a layer is not published at all -- see the hook. */
+  isDrawn: boolean;
+  /** The day this layer's row has settled on, or null while nothing can name one yet. */
+  requestedDate: string | null;
+  /** A request for this layer is open. Narrowed before publication -- see the hook. */
+  isFetching: boolean;
+  /**
+   * The collection in hand demonstrably ANSWERS for `requestedDate`: a request that LANDED.
+   *
+   * Never `!isPlaceholderData`. That flag is false on ERROR as well as on success, so a failed
+   * day would be recorded as the day in hand -- and then named over the NEXT request's retained
+   * frame, which paints the day before it. `useFireData.dataDate` gets this right by moving only
+   * when a fetch for that day actually lands; `drawnDayFlagsFromQuery` is how a react-query read
+   * says the same thing.
+   */
+  hasLandedForRequestedDate: boolean;
+  /**
+   * A retained frame from an earlier request is what is on the canvas -- react-query's
+   * `isPlaceholderData`. Distinct from the negation of the flag above: a failed request is
+   * neither landed nor retained, and the layer is drawing nothing at all.
+   */
+  isShowingPreviousDay: boolean;
+}
+
+/** The fields of a react-query result the registry reads; optional so a stub may omit them. */
+export interface QueryReadState {
+  isSuccess?: boolean;
+  isPlaceholderData?: boolean;
+  isFetching?: boolean;
+  data?: unknown;
+}
+
+/**
+ * The three flags a react-query read contributes, derived in ONE place.
+ *
+ * Restating them per call site is how the error case got it wrong at nine of them at once: the
+ * distinction between "not showing a placeholder" and "this request landed" is invisible until
+ * a fetch fails, and there are a dozen reads on this map.
+ */
+export function drawnDayFlagsFromQuery(
+  query: QueryReadState
+): Pick<
+  LiveLayerDayReport,
+  "isFetching" | "hasLandedForRequestedDate" | "isShowingPreviousDay"
+> {
+  return {
+    isFetching: query.isFetching === true,
+    hasLandedForRequestedDate:
+      query.isSuccess === true && query.isPlaceholderData !== true && query.data !== undefined,
+    isShowingPreviousDay: query.isPlaceholderData === true,
+  };
+}
+
+/**
+ * Publishes what each live layer is painting, for the surfaces that caption the map.
+ *
+ * A toggle that is off is skipped rather than published as idle: TanStack keeps
+ * `isPlaceholderData` true off `keepPreviousData` even once a query is DISABLED -- the trap
+ * `resolvedDate` documents above -- so a hidden layer would report itself permanently mid-load.
+ *
+ * `isLoading` is published narrowed to a request whose answer is NOT yet on the canvas. A
+ * background refresh of the day already painted -- react-query's `staleTime` expiring, or
+ * `useFireData`'s two-minute poll -- is a fetch nobody is waiting on, and reporting it would
+ * blink an "Updating" mark over an idle map every two minutes.
+ */
+export function usePublishedDrawnLayerDays(
+  publisher: DrawnLayerDayPublisher,
+  reports: readonly LiveLayerDayReport[]
+): void {
+  // The day each layer's collection was last known to actually describe.
+  const drawnDateByLayer = useRef<Partial<Record<LayerToggleId, string>>>({});
+
+  // Everything happens in the effect, bookkeeping included: what is on screen is a fact about
+  // the COMMIT, not about the render that proposed it. No dependency array -- the table is
+  // rebuilt every render, and the store's own equality check is the cheap place to absorb that.
+  useEffect(() => {
+    const drawnDays: DrawnLayerDays = {};
+    for (const report of reports) {
+      if (!report.isDrawn) continue;
+      const { requestedDate } = report;
+      if (requestedDate !== null && report.hasLandedForRequestedDate) {
+        drawnDateByLayer.current[report.layerId] = requestedDate;
+      }
+      const drawnDate =
+        requestedDate === null
+          ? null
+          : report.isShowingPreviousDay
+            ? // A retained frame is painted, so name the day it belongs to. The fallback covers
+              // a placeholder standing in before this hook ever watched one land.
+              (drawnDateByLayer.current[report.layerId] ?? requestedDate)
+            : // Landed, or nothing painted at all (first load, or a failed request). Naming the
+              // day asked for is the honest neutral in both: no features are being mislabelled.
+              requestedDate;
+      drawnDays[report.layerId] = {
+        drawnDate,
+        requestedDate,
+        isLoading: report.isFetching && !report.hasLandedForRequestedDate,
+      };
+    }
+    useDrawnLayerDayStore.getState().publishDrawnLayerDays(publisher, drawnDays);
+  });
+
+  // Nothing is drawn once the reader unmounts, and a caption sourced from a canvas that no
+  // longer exists is exactly the misstatement this registry exists to prevent.
+  useEffect(
+    () => () => {
+      useDrawnLayerDayStore.getState().publishDrawnLayerDays(publisher, {});
+    },
+    [publisher]
+  );
 }

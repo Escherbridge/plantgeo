@@ -380,7 +380,7 @@ Keep Martin private and stopped until the database gate passes. Then configure:
 ```dotenv
 DATABASE_URL=<sealed DSN for the Martin-only target role>
 PORT=3000
-TILE_CORS_ORIGIN=https://plantgeo-main-production.up.railway.app
+TILE_CORS_ORIGIN=https://plantgeo.aevani.com
 MARTIN_CACHE_SIZE_MB=128
 MARTIN_POOL_SIZE=8
 ```
@@ -391,7 +391,49 @@ grant the Martin role only database connect, `geo` schema usage, and execute on
 those functions; place the public endpoint behind CDN/WAF rate limits. CORS is
 not authentication. Static PMTiles belong in R2/CDN, not the Martin container.
 See "Martin tile-function reload after a migration" below for the required
-restart after any migration that adds or renames a tile function.
+restart after any migration that adds or renames a tile function, and "Martin
+CORS allow-list is coupled to the domain set" immediately below for what must
+change alongside a domain edit.
+
+### Martin CORS allow-list is coupled to the domain set
+
+**Adding or removing a domain on `plantgeo-main` is not complete until
+`infra/martin/martin.yaml`'s `cors.origin` list agrees with it.** Martin matches
+the browser's `Origin` header against that list with exact string equality; a
+domain missing from the list is not degraded, it is a total outage for every
+dynamic layer on that domain, and it fails silently — `curl` gets a clean `200`
+because `curl` never sends an `Origin` header, so this class of bug only shows
+up in a real browser. This is exactly what happened on 2026-08-17: `plantgeo-main`
+carries two active domains (the custom domain and the Railway-provided service
+domain), `cors.origin` carried only one entry, and switching that one entry from
+one domain to the other only ever fixes one of the two.
+
+`cors.origin` is now a genuine multi-entry list, one placeholder per allowed
+origin — see the comment in `infra/martin/martin.yaml` for why Martin cannot
+expand a single `TILE_CORS_ORIGIN` value into several list entries (verified
+against the pinned `subst` crate and Martin's own config source for `1.10.1`,
+the version this repo runs). `TILE_CORS_ORIGIN` above sets the custom-domain
+entry. A second variable, `TILE_CORS_ORIGIN_RAILWAY_DOMAIN`, covers the Railway
+service domain; its default in `martin.yaml` already matches
+`https://plantgeo-main-production.up.railway.app`, so it needs no Railway
+variable at all unless that domain is later rotated. **A third domain added to
+`plantgeo-main` needs a third placeholder added to `martin.yaml` in the same
+change** — Martin's list has no way to grow itself from configuration alone.
+
+Reproduce or verify a CORS allow-list gap with the browser's real origin, not a
+bare `curl`:
+
+```
+curl -sSI -H "Origin: https://plantgeo.aevani.com" \
+  https://plantgeo-martin-production.up.railway.app/fire_risk_tiles,sensor_tiles,evacuation_zone_tiles,burn_severity_tiles,intervention_tiles,watershed_tiles/6/11/22
+```
+
+Read the response for `access-control-allow-origin`. Present and equal to the
+`Origin` you sent means that origin is allowed; a `200` with `vary: … Origin …`
+and no `access-control-allow-origin` header at all means Martin's CORS layer is
+active but did not match — that origin is blocked. Repeat with an `OPTIONS`
+request and an `Access-Control-Request-Method: GET` header to see the browser's
+actual preflight outcome; a mismatched origin returns `400 Bad Request` there.
 
 ### Martin tile-function reload after a migration
 

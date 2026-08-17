@@ -6,8 +6,27 @@ on_invalid: abort
 
 cors:
   max_age: 86400
+  # Each entry below is its OWN "${VAR:default}" placeholder. Martin expands env vars into the
+  # YAML text before parsing (the `subst` crate, single-colon default syntax -- verified against
+  # subst v0.3.8, the version this Martin v1.10.1 build actually vendors), so one placeholder can
+  # only ever yield one scalar. It does not re-parse a substituted value as YAML, so a comma-
+  # separated TILE_CORS_ORIGIN would NOT expand into a two-item list -- it would become one
+  # literal "a,b" origin string that matches no real browser Origin header, silently blocking
+  # BOTH origins behind a clean `curl` 200 (verified against Martin source: cors.origin is a
+  # Vec<String> matched with exact string equality, martin/src/config/file/cors.rs). This is why
+  # 2026-08-17's outage happened: this list held exactly one entry, so setting TILE_CORS_ORIGIN to
+  # either live domain necessarily blocked the other.
+  #
+  # So: one placeholder per allowed origin, and each placeholder's default is the currently-
+  # correct value -- this list is right even if Railway sets neither var. TILE_CORS_ORIGIN keeps
+  # its existing name/default; Railway already carries the corrected value for it, no Railway
+  # change needed. TILE_CORS_ORIGIN_RAILWAY_DOMAIN is new and its default already matches the
+  # Railway-provided service domain, so it too needs no Railway variable unless that domain is
+  # later rotated. Adding a THIRD domain to the plantgeo-main service is a new line here, in the
+  # same commit that adds the domain -- see docs/deployment.md's "Martin CORS" note.
   origin:
     - "${TILE_CORS_ORIGIN:http://localhost:3001}"
+    - "${TILE_CORS_ORIGIN_RAILWAY_DOMAIN:https://plantgeo-main-production.up.railway.app}"
 
 cache:
   size_mb: ${MARTIN_CACHE_SIZE_MB:128}

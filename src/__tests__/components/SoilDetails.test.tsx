@@ -34,6 +34,14 @@ type SoilSurveyResult = {
     | undefined;
   isLoading: boolean;
   isError: boolean;
+  /**
+   * The retention pair. These reads hold the previous answer while the next loads
+   * (`keepPreviousData`, see `useViewportProxiedLayers`), which sets `status: "success"` -- so
+   * `isLoading` is permanently false after the first success and a spinner keyed on it never
+   * fires again. Optional so every existing case stays a settled read.
+   */
+  isFetching?: boolean;
+  isPlaceholderData?: boolean;
 };
 
 /** Mirrors `SoilProperties` from soilgrids.ts; hand-rolled so the stub pulls in no server code. */
@@ -50,6 +58,14 @@ type SoilPropertiesResult = {
     | undefined;
   isLoading: boolean;
   isError: boolean;
+  /**
+   * The retention pair. These reads hold the previous answer while the next loads
+   * (`keepPreviousData`, see `useViewportProxiedLayers`), which sets `status: "success"` -- so
+   * `isLoading` is permanently false after the first success and a spinner keyed on it never
+   * fires again. Optional so every existing case stays a settled read.
+   */
+  isFetching?: boolean;
+  isPlaceholderData?: boolean;
 };
 
 /**
@@ -75,6 +91,14 @@ type SoilFieldResult = {
     | undefined;
   isLoading: boolean;
   isError: boolean;
+  /**
+   * The retention pair. These reads hold the previous answer while the next loads
+   * (`keepPreviousData`, see `useViewportProxiedLayers`), which sets `status: "success"` -- so
+   * `isLoading` is permanently false after the first success and a spinner keyed on it never
+   * fires again. Optional so every existing case stays a settled read.
+   */
+  isFetching?: boolean;
+  isPlaceholderData?: boolean;
 };
 
 const queries = vi.hoisted(() => ({
@@ -444,6 +468,69 @@ describe("SoilDetails SSURGO coverage", () => {
 
     expect(screen.getByText(/3 SSURGO map units drawn/)).toBeTruthy();
     expect(screen.queryByText(/drainage-class averages/)).toBeNull();
+  });
+});
+
+/**
+ * A retained answer must not be stated as the current one, and the loading line must still fire.
+ *
+ * Both reads here hold the previous answer while the next loads (`keepPreviousData`), which sets
+ * `status: "success"`: `isLoading` is therefore permanently false after the first success, so the
+ * two "Loading … for this view…" lines -- keyed on it until 2026-08-16 -- never appeared again
+ * for any later viewport. Meanwhile every figure below them is measured on the response in hand,
+ * which during that window describes the PREVIOUS view. Pan Boise to Portland and the section
+ * read "412 SSURGO map units drawn for this view" for the length of a USDA round trip, with no
+ * loading line: the same defect the map lane refused to introduce into the watershed LIST.
+ */
+describe("SoilDetails retained answers", () => {
+  it("shows the survey loading line on a refetch, not only on the very first load", () => {
+    queries.getSoilSurvey.mockReturnValue({
+      data: soilSurveyCollection(3),
+      // The shape after a first success: a fetch is open, and `isLoading` is false because
+      // `status` already reads "success".
+      isLoading: false,
+      isError: false,
+      isFetching: true,
+      isPlaceholderData: false,
+    });
+
+    renderPanel();
+
+    expect(screen.getByText(/Loading the USDA soil survey for this view/)).toBeTruthy();
+  });
+
+  it("says the survey figures describe the previous view while a retained answer stands", () => {
+    queries.getSoilSurvey.mockReturnValue({
+      data: soilSurveyCollection(412),
+      isLoading: false,
+      isError: false,
+      isFetching: true,
+      isPlaceholderData: true,
+    });
+
+    renderPanel();
+
+    expect(
+      screen.getByText(/survey figures below describe the previous view/)
+    ).toBeTruthy();
+    // The count is still shown rather than blanked -- blanking is the defect retention fixed --
+    // but it is no longer the only thing said about it.
+    expect(screen.getByText(/412 SSURGO map units drawn for this view/)).toBeTruthy();
+  });
+
+  it("does not claim a retained view while nothing is retained", () => {
+    queries.getSoilSurvey.mockReturnValue({
+      data: soilSurveyCollection(412),
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      isPlaceholderData: false,
+    });
+
+    renderPanel();
+
+    expect(screen.queryByText(/describe the previous view/)).toBeNull();
+    expect(screen.queryByText(/Loading the USDA soil survey/)).toBeNull();
   });
 });
 

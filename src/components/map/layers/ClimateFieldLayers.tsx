@@ -10,6 +10,10 @@ import {
   useLayerVisibility,
 } from "@/lib/map/layer-toggle-context";
 import {
+  drawnDayFlagsFromQuery,
+  usePublishedDrawnLayerDays,
+} from "@/stores/useMetricAtDate";
+import {
   CLIMATE_FIELD_SIGNALS,
   CLIMATE_FIELD_SIGNAL_IDS,
   type ClimateFieldSignalId,
@@ -90,6 +94,20 @@ function ClimateSignalLayer({
     date: day.requestDate,
     renderForm,
   });
+
+  // This signal's read retains the previous day's isobands while the next loads
+  // (`keepPreviousData`), so it owes the canvas's caption the day it is actually painting --
+  // see src/components/map/AGENTS.md "A layer must not blank between days". Published from
+  // here rather than from `LayerManager`, which owns none of these nine reads; the publisher
+  // key is this row's own toggle, so the nine sets stay disjoint from the manager's.
+  usePublishedDrawnLayerDays(toggleId, [
+    {
+      layerId: toggleId,
+      isDrawn: visible,
+      requestedDate: day.settledDate,
+      ...drawnDayFlagsFromQuery(query),
+    },
+  ]);
 
   return (
     <ClimateFieldLayer

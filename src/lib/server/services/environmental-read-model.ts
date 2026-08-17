@@ -313,6 +313,13 @@ type FireDetectionRow = { properties: unknown };
  * here would silently drop exactly the rows this COALESCE exists to keep. This read stays a
  * bounded-by-LIMIT scan of the fire-detections layer-day slice until either the function learns
  * `acqDate` or the ingest path backfills `observedAt` on every detection.
+ *
+ * `f.id` breaks ties in the ORDER BY, and is not cosmetic: `acqTime` is FIRMS's own `HHMM`
+ * field, at most 1,440 distinct values across a whole day, so a busy day routinely has tie
+ * groups far larger than `MAX_ROWS`. Without a unique tiebreaker, LIMIT cuts through a tie
+ * group at Postgres's discretion, so two identical requests can legally return two DIFFERENT
+ * subsets of the same day -- not just reordered, a different SET -- which silently changes both
+ * what the client draws and what any content fingerprint over the result hashes to.
  */
 async function readFireDetectionsOnDay(
   date: string,
@@ -334,7 +341,7 @@ async function readFireDetectionsOnDay(
           ? sql`AND f.geom && ST_MakeEnvelope(${area[0]}, ${area[1]}, ${area[2]}, ${area[3]}, 4326)`
           : sql``
       }
-    ORDER BY f.properties->>'acqTime' DESC NULLS LAST
+    ORDER BY f.properties->>'acqTime' DESC NULLS LAST, f.id
     LIMIT ${MAX_ROWS}
   `);
 }
@@ -345,14 +352,19 @@ async function readFireDetectionsOnDay(
  * @param date optional YYYY-MM-DD; omitted (or the server's today) reads the live FIRMS
  *   lookback window unchanged, a past day reads that day's own detections, and a future day
  *   returns empty rather than restamping the newest detections.
+ * @param today injectable so a caller that ALSO needs "today" for its own decision (e.g. a
+ *   cache-control choice made from the same request) reads the identical clock value this
+ *   function resolves `date` against, rather than a second, independently-read one that can
+ *   disagree with this one across the `await` below if a day boundary lands mid-request.
  */
 export async function getPublishedFireDetections(
   bbox?: string,
   dayRange = firmsDayRange(),
-  date?: string
+  date?: string,
+  today: string = serverCurrentDate()
 ): Promise<GeoJSON.FeatureCollection<GeoJSON.Point>> {
   const area = bbox ? parseBbox(bbox) : null;
-  const day = resolveRequestedObservationDay(date);
+  const day = resolveRequestedObservationDay(date, today);
   if (day.kind === "unobserved") return { type: "FeatureCollection", features: [] };
   if (day.kind === "historical") {
     return collectFireDetections(
@@ -378,7 +390,10 @@ export async function getPublishedFireDetections(
         area ? lte(sql<number>`ST_Y(${features.geom})`, area[3]) : undefined
       )
     )
-    .orderBy(desc(features.createdAt))
+    // `features.id` breaks ties: `createdAt` is `defaultNow()`, so a batch insert gives many
+    // rows the SAME instant -- see the tiebreaker note on readFireDetectionsOnDay, same issue,
+    // same fix.
+    .orderBy(desc(features.createdAt), features.id)
     .limit(MAX_ROWS);
 
   return collectFireDetections(rows, day, dayRange);

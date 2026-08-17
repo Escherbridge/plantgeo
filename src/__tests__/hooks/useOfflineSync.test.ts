@@ -137,7 +137,12 @@ describe("useOfflineSync", () => {
     await waitFor(() => expect(markConflictedMock).toHaveBeenCalledWith(op, "stale-snapshot"));
     await waitFor(() => expect(result.current.conflicts).toHaveLength(1));
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/vegetation/res-1");
+    // `isSnapshotStale` now goes through `createBudgetedFetch`, whose adapter always forwards
+    // `init` positionally to the real fetch (`fetch(input, init)`) even when the call site
+    // passed none -- so the recorded call carries an explicit `undefined` second argument where
+    // a bare `fetch(url)` used to carry none. Same request, same URL, no init options; see
+    // src/lib/net/request-budget.ts's `createBudgetedFetch`.
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/vegetation/res-1", undefined);
   });
 
   it("leaves a hard-failed op queued and reports a sync-failed toast", async () => {

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import type { MapStyle, Viewport } from "@/types/map";
+import { getClientCoverageBbox, viewportForBbox } from "@/lib/map/coverage-region";
 
 export type { Viewport };
 
@@ -46,20 +47,36 @@ interface MapState {
   resetView: () => void;
 }
 
-// PNW-wide: matches the INGEST_BBOX coverage area so the map opens on data
-// instead of a Boise close-up; ServiceAreaLayer's fitBounds also lands users
-// on the exact coverage bbox once it resolves, covering any drift here.
+// PNW-wide: derived synchronously from the ingestion coverage bbox (see
+// src/lib/map/coverage-region.ts) instead of a hand-picked approximation, so
+// the map opens already on the coverage box rather than animating there a
+// beat later while getIngestionCoverage's tRPC round trip is in flight.
+// ServiceAreaLayer's fitBounds still runs once that query resolves -- it's
+// the authoritative source and remains server-configurable via INGEST_BBOX
+// -- but downgrades to an instant, non-animated snap when the camera it
+// computed here is already close, and only visibly corrects the view if a
+// deployment's real INGEST_BBOX ever drifts from this client-side value.
+const DEFAULT_VIEWPORT_WIDTH_PX = 1024;
+const DEFAULT_VIEWPORT_HEIGHT_PX = 512;
+const DEFAULT_VIEWPORT_FIT_PADDING_PX = 40;
+const derivedDefaultCamera = viewportForBbox(
+  getClientCoverageBbox(),
+  DEFAULT_VIEWPORT_WIDTH_PX,
+  DEFAULT_VIEWPORT_HEIGHT_PX,
+  DEFAULT_VIEWPORT_FIT_PADDING_PX
+);
+
 export const DEFAULT_VIEWPORT: Viewport = {
-  longitude: -118,
-  latitude: 45.5,
-  zoom: 5.2,
+  longitude: derivedDefaultCamera.longitude,
+  latitude: derivedDefaultCamera.latitude,
+  zoom: derivedDefaultCamera.zoom,
   bearing: 0,
   pitch: 0,
   // The window every viewport-scoped query silently assumed before MapView started reporting
   // the real one. Kept as the seed so the first frame -- rendered before the map has a
   // container to measure -- asks for exactly what it always asked for.
-  widthPx: 1024,
-  heightPx: 512,
+  widthPx: DEFAULT_VIEWPORT_WIDTH_PX,
+  heightPx: DEFAULT_VIEWPORT_HEIGHT_PX,
 };
 
 export const useMapStore = create<MapState>()(
@@ -78,7 +95,7 @@ export const useMapStore = create<MapState>()(
     is3DEnabled: false,
     isGlobeView: false,
     terrainExaggeration: 1.5,
-    currentStyle: "dark",
+    currentStyle: "satellite",
     isTerrainEnabled: false,
 
     setViewport: (v) =>

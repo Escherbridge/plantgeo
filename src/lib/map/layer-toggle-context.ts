@@ -282,17 +282,21 @@ export interface DebouncedMapDay {
   /** True when this layer's settled day is some day other than the server's today. */
   isOffServerToday: boolean;
   /**
-   * What a reader's optional `date` input must carry, and `undefined` whenever the settled day
-   * IS the server's today.
+   * What a reader's optional `date` input must carry. `undefined` ONLY when POSITIVELY known to
+   * be the server's today (`serverCurrentDate` loaded AND equal to `settledDate`) -- see
+   * `src/lib/server/AGENTS.md` §slider-day for why the server treats that the same as no date.
    *
-   * The server treats an omitted day and today's date identically, so sending the date
-   * explicitly would only mint a SECOND react-query entry for the same answer and make first
-   * paint fetch it twice. `undefined` also covers "capabilities have not arrived": without them
-   * nothing knows which day is today, and guessing from the browser clock is exactly the
-   * timezone disagreement `serverCurrentDate` exists to prevent.
-   *
-   * Set far more often than it used to be, and that is correct: a layer now opens on its own
-   * `latestObservedDate`, which for most layers is not today, so the day must ride along.
+   * Deliberately NOT `undefined` merely because `serverCurrentDate` hasn't loaded yet.
+   * `settledDate` can already be a concrete day before capabilities arrive (`resolveLayerDate`
+   * returns an explicit `layerDates[layerId]` override with no capabilities dependency at all),
+   * and omitting the date then would silently ask every warehouse reader for ITS OWN idea of
+   * "today" while every caption already names `settledDate`. For most readers that is a same-
+   * answer no-op today (`resolveRequestedObservationDay` collapses an omitted day and today's
+   * date), which is why this went unnoticed; for `/api/fires` it asks for the live FIRMS
+   * lookback window instead of the settled day's own detections -- a different answer, not just
+   * a colder cache entry for the same one. And it does not self-correct: a stalled capabilities
+   * fetch (a 524 is not hypothetical here -- see `environmental-read-model.ts` around line 3725)
+   * leaves `serverCurrentDate` null indefinitely, not just for one round trip.
    */
   requestDate: string | undefined;
 }
@@ -313,11 +317,18 @@ export function useDebouncedLayerDay(layerId: LayerToggleId): DebouncedMapDay {
       settledDate !== null &&
       serverCurrentDate !== null &&
       settledDate !== serverCurrentDate;
+    // Same three branches as before (off-today, at-today, unresolved) for every case EXCEPT
+    // "settledDate is already concrete but capabilities have not confirmed today yet" -- there,
+    // this now sends settledDate explicitly instead of omitting it. See the requestDate doc
+    // above; `isOffServerToday` keeps its existing meaning (false when serverCurrentDate is
+    // unknown) since callers use it for "is this off today", a different question.
+    const isKnownToBeServerToday =
+      settledDate !== null && serverCurrentDate !== null && settledDate === serverCurrentDate;
     return {
       settledDate,
       serverCurrentDate,
       isOffServerToday,
-      requestDate: isOffServerToday && settledDate !== null ? settledDate : undefined,
+      requestDate: isKnownToBeServerToday ? undefined : (settledDate ?? undefined),
     };
   }, [settledSelection, capabilities]);
 }

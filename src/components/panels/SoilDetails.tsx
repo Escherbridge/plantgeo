@@ -193,13 +193,32 @@ function SoilFieldSection({
             </div>
           </div>
 
-          {query.isLoading && (
+          {/* `isFetching`, never `isLoading`. This read holds the previous answer while the
+              next loads (`keepPreviousData`, see useViewportProxiedLayers), which sets
+              `status: "success"` — so `isLoading` is permanently false after the first success
+              and this line would never appear again for any later day or viewport. */}
+          {query.isFetching && !query.isPlaceholderData && (
             <p
               role="status"
               aria-live="polite"
               className="text-xs text-[hsl(var(--muted-foreground))]"
             >
               Loading the {definition.fieldLabel} field for this view…
+            </p>
+          )}
+
+          {/* The retained case, and it must be said before anything below it: every figure and
+              every day in this section is read off `field`, which is the PREVIOUS request's
+              answer while this is true. Worded without "loading" because offline pauses a fetch
+              rather than cancelling it, and a retained frame can stand with nothing in flight. */}
+          {query.isPlaceholderData && (
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-xs text-[hsl(var(--muted-foreground))]"
+            >
+              The {definition.fieldLabel} figures below describe the previous request; this one
+              has not arrived yet.
             </p>
           )}
 
@@ -442,13 +461,29 @@ export function SoilDetails({
           a reason there would also disable the switch while the layer is still drawing. */}
       {soilSurveyVisible && (
         <div className="mt-1.5 flex flex-col gap-1.5">
-          {soilSurveyQuery.isLoading && (
+          {/* `isFetching`, never `isLoading` -- see the field section above for why. */}
+          {soilSurveyQuery.isFetching && !soilSurveyQuery.isPlaceholderData && (
             <p
               role="status"
               aria-live="polite"
               className="text-xs text-[hsl(var(--muted-foreground))]"
             >
               Loading the USDA soil survey for this view…
+            </p>
+          )}
+
+          {/* Every count below -- "N SSURGO map units drawn for this view", the uncovered-cell
+              and unreadable tallies -- is measured on the response in hand, which while this is
+              true is the answer for the PREVIOUS viewport. Pan Boise to Portland and the survey
+              keeps its old figures for the length of a USDA round trip; stating them as current
+              is the same defect the map lane refused to introduce into the watershed LIST. */}
+          {soilSurveyQuery.isPlaceholderData && (
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-xs text-[hsl(var(--muted-foreground))]"
+            >
+              The survey figures below describe the previous view; this one has not arrived yet.
             </p>
           )}
 

@@ -318,6 +318,25 @@ describe("useDebouncedLayerDay", () => {
     expect(result.current.requestDate).toBeUndefined();
   });
 
+  it("sends the settled date explicitly once it is concrete, even before capabilities confirm today", () => {
+    // A day can already be concrete before capabilities load: resolveLayerDate returns an
+    // explicit `layerDates` override with no capabilities dependency at all (e.g. a persisted
+    // selection hydrated before the capabilities poll lands). Omitting the date here would ask
+    // the warehouse for ITS OWN idea of "today" while every caption already names 2026-07-30 --
+    // and for /api/fires specifically that is a different answer (the live window), not merely
+    // a colder cache entry for the same one.
+    useTimeSliderStore.setState({
+      layerDates: { fire: "2026-07-30" },
+      forecastVariant: "monte_carlo",
+      capabilities: null,
+    });
+    const { result } = renderHook(() => useDebouncedLayerDay("fire"));
+
+    expect(result.current.settledDate).toBe("2026-07-30");
+    expect(result.current.serverCurrentDate).toBeNull();
+    expect(result.current.requestDate).toBe("2026-07-30");
+  });
+
   it("sends no date at the server's today and sends one on any other day", () => {
     useTimeSliderStore.setState({
       layerDates: {},

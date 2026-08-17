@@ -5,14 +5,21 @@ import {
   describeCoverageBand,
   describeCoverageTopology,
   describeDayCoverage,
+  describeSyncedDayBand,
   dayCoverageState,
   drawCoverageBands,
+  drawSyncedDayBands,
   percentOfDayOffset,
+  SYNCED_DAY_APPEARANCE,
+  SYNCED_DAY_APPEARANCE_BACKGROUND_SIZE,
   TRACK_REGION_APPEARANCE,
 } from "@/components/map/layer-panel/layer-coverage-track";
 import { layerLabel, type LayerToggleId } from "@/lib/map/layer-registry";
 import { useLayerDay } from "@/lib/map/layer-toggle-context";
 import { cn } from "@/lib/utils";
+// Contractually-fixed surface from the parallel lane building this store; do not stub it, do not
+// edit it. See src/components/map/AGENTS.md §synced-days-track for the pinned signatures.
+import { useSyncedDays, useSyncIndexReady } from "@/stores/sync-index-store";
 import {
   addDays,
   clampDateToDomain,
@@ -91,6 +98,41 @@ const layerTimeSliderStyles = `
   }
   .layer-time-slider-range:focus-visible::-moz-range-thumb {
     box-shadow: 0 0 0 3px hsl(var(--ring) / 0.6);
+  }
+  /* Pending affordance: this layer's map data is still in flight (a settled scrub, or a pan
+     over unchanged ground) and what is painted is a retained frame (placeholderData:
+     keepPreviousData in useMetricAtDate). The thumb is what a scrub is already looking at, so it
+     pulses rather than the track changing shape -- see isFetchingCurrentDay. Static under
+     reduced motion so the affordance survives without relying on movement alone.
+
+     Uses filter/drop-shadow, deliberately NOT box-shadow: a running CSS Animation outranks
+     a normal-importance author declaration on the SAME property regardless of selector
+     specificity (CSS Cascade 4 -- the "animations" origin sits above normal author rules), so
+     animating box-shadow here would have made the :focus-visible box-shadow ring above
+     never render while a scrub was pending -- exactly the moment a keyboard user most needs to
+     find their thumb, and worse with several layers pending from one pan. filter is a
+     different property the focus ring never touches, so the two compose instead of one
+     silently winning the cascade.
+
+     NOTE: no backticks anywhere in this comment. It lives inside a template literal, so a
+     backtick here terminates the CSS string early and breaks the file. This bit once. */
+  @media (prefers-reduced-motion: no-preference) {
+    .layer-time-slider-range.is-pending::-webkit-slider-thumb {
+      animation: plantgeo-layer-time-slider-pending-pulse 1.1s ease-in-out infinite;
+    }
+    .layer-time-slider-range.is-pending::-moz-range-thumb {
+      animation: plantgeo-layer-time-slider-pending-pulse 1.1s ease-in-out infinite;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .layer-time-slider-range.is-pending::-webkit-slider-thumb,
+    .layer-time-slider-range.is-pending::-moz-range-thumb {
+      filter: drop-shadow(0 0 3px hsl(var(--primary) / 0.7));
+    }
+  }
+  @keyframes plantgeo-layer-time-slider-pending-pulse {
+    0%, 100% { filter: drop-shadow(0 0 1px hsl(var(--primary) / 0.45)); }
+    50% { filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.85)); }
   }
   /* Without this the UA paints the calendar glyph for a light page, which on the default dark
      theme is a near-black icon on a near-black field: the picker is there but invisible, so the
@@ -184,6 +226,20 @@ function describeMissingAxis(
 export interface LayerTimeSliderProps {
   layerId: LayerToggleId;
   className?: string;
+  /**
+   * True while THIS layer's map data is still in flight -- a settled scrub whose query has not
+   * resolved, or a pan over unchanged ground -- so what is drawn on the map may be a retained,
+   * older frame (`placeholderData: keepPreviousData`). This component has no tRPC of its own
+   * (see its own doc below), so it cannot read that state itself; the caller supplies it.
+   * Optional and defaults to false so this control keeps rendering from a fixture with no
+   * provider when nothing supplies it.
+   *
+   * Recommended source: `useDrawnLayerDayStore((state) => state.drawnDays[layerId]?.isLoading ??
+   * false)` from `@/stores/useMetricAtDate` -- the map lane's per-layer drawn-day registry
+   * already tracks exactly this. See src/components/map/AGENTS.md §synced-days-track for the
+   * full contract and why this file does not import that store itself.
+   */
+  isFetchingCurrentDay?: boolean;
 }
 
 /**
@@ -207,7 +263,11 @@ export interface LayerTimeSliderProps {
  * a provider. `TimeSliderCapabilitiesLoader` remains the one reader and the one writer of
  * capabilities.
  */
-export function LayerTimeSlider({ layerId, className }: LayerTimeSliderProps) {
+export function LayerTimeSlider({
+  layerId,
+  className,
+  isFetchingCurrentDay = false,
+}: LayerTimeSliderProps) {
   useLayerTimeSliderStyles();
 
   const label = layerLabel(layerId);
@@ -215,6 +275,13 @@ export function LayerTimeSlider({ layerId, className }: LayerTimeSliderProps) {
     useLayerDay(layerId);
   const capabilities = useTimeSliderStore((state) => state.capabilities);
   const capabilitiesUnavailable = useTimeSliderStore((state) => state.capabilitiesUnavailable);
+  // What THIS BROWSER holds locally, not what the server has -- see the synced-days row below
+  // and layer-coverage-track.ts's own doc for why the two are never blended into one claim.
+  // Called unconditionally, ahead of every early return, like every other hook in this
+  // component: the "no axis"/"unavailable"/"loading" branches below don't render this row, but
+  // Rules of Hooks still requires the call.
+  const syncedDays = useSyncedDays(layerId);
+  const syncIndexReady = useSyncIndexReady();
   // Whether this layer is PINNED to a day of its own, which is a different question from
   // whether that day happens to equal its newest one -- see `canReturnToLatest`. Selected as a
   // boolean so a scrub on any other row cannot re-render this one.
@@ -263,6 +330,14 @@ export function LayerTimeSlider({ layerId, className }: LayerTimeSliderProps) {
         ? null
         : describeCoverageTopology(domain, capability),
     [domain, capability]
+  );
+  // Reuses the exact geometry the coverage bands are drawn with, so a synced run and the
+  // coverage band for the same days land at the identical percent -- see drawSyncedDayBands.
+  // `useSyncedDays` is documented referentially stable when unchanged, so memoizing on it
+  // directly (rather than on, say, its size) never misses a real change.
+  const syncedDayBands = useMemo(
+    () => (domain === null ? [] : drawSyncedDayBands(domain, syncedDays)),
+    [domain, syncedDays]
   );
 
   // The fetch has never once succeeded and its last attempt failed. There is no honest axis to
@@ -343,13 +418,43 @@ export function LayerTimeSlider({ layerId, className }: LayerTimeSliderProps) {
   // newest day nobody knows, which is also the layer for which no jump target could be named.
   const canReturnToLatest = hasOwnDateOverride;
 
-  // Ordered day-first: the coverage note is about the day the thumb is on, which is the more
-  // immediate fact; the staleness note is about the row's relationship to its own record.
+  // How many days of this layer this browser holds, and whether the day on screen is one of
+  // them -- the two facts the synced-days row states in words, since colour alone must never
+  // carry them (see the row's own JSX below).
+  //
+  // Never null, unlike `coverageNote`: the row ALWAYS renders a visually distinct baseline
+  // (empty, hydrated) versus hatch (not yet hydrated) versus dots (holding days), so a sighted
+  // reader always has three tellable states -- an aural reader must too, or "hydrated and
+  // holding nothing" collapses into "the feature doesn't apply here", which it does not. This
+  // is NOT the same case `describeDayCoverage` returns null for: a dense day carries no visual
+  // mark of its own to be silent about (the absence of a hatch IS "dense"), where this row's
+  // empty state is a still genuinely distinct render from its other two.
+  const syncedDayCount = syncedDays.size;
+  const isSelectedDaySynced = syncedDays.has(selectedDate);
+  const syncedNote = !syncIndexReady
+    ? "Checking what's saved on this device for offline use…"
+    : syncedDayCount > 0
+      ? `${syncedDayCount} ${syncedDayCount === 1 ? "day" : "days"} saved on this device; this day is${isSelectedDaySynced ? "" : " not"} one of them.`
+      : "Nothing saved on this device yet.";
+  // The one signal LayerRow/LayerManager cannot supply through this component's own state --
+  // see isFetchingCurrentDay's own doc for exactly what it must be wired to. Deliberately not
+  // "showing the previous DAY": the same in-flight signal also covers a pan over unchanged ground
+  // (a new bbox for the same day), where what is retained is an older VIEWPORT's answer, not an
+  // older day's -- so the note names neither and stays true of both.
+  const pendingNote = isFetchingCurrentDay
+    ? `Updating ${label}; what's shown may be a moment behind until this finishes.`
+    : null;
+
+  // Ordered by urgency, day-first: pending is transient and about to change; the coverage note
+  // is about the day the thumb is on; the staleness note is about the row's relationship to its
+  // own record; the synced note is about local storage, the least time-sensitive of the four.
   const notes = [
+    pendingNote,
     coverageNote === null ? null : `${coverageNote}.`,
     isBehindLatestObservedDate && latestObservedDate !== null
       ? `${daysBehindLatest} ${daysBehindLatest === 1 ? "day" : "days"} behind its latest, ${latestObservedDate}.`
       : null,
+    syncedNote,
   ].filter((note): note is string => note !== null);
 
   /** Writes through on every tick so the thumb tracks the pointer; the query debounces. */
@@ -455,6 +560,77 @@ export function LayerTimeSlider({ layerId, className }: LayerTimeSliderProps) {
         </button>
       </div>
 
+      {/* The synced-days line: a distinct sibling row ON TOP OF the coverage track below, never
+          blended into it -- this answers "what has THIS BROWSER saved", the track below answers
+          "what has the SERVER published", and a reader must never have to guess which claim a
+          band is making. It shares `percentOfDayOffset`/`domain` with the track below it, so a
+          synced run and the day it covers register pixel-exactly underneath one another.
+
+          Three states, told apart by more than colour AND by more than the coverage track's own
+          four regions: the hatched `undescribed` texture (index not hydrated yet -- distinct
+          from "hydrated and empty" so a cold load never reads as "nothing is cached"), a plain
+          baseline (hydrated, nothing synced), and DOTTED runs -- `SYNCED_DAY_APPEARANCE`, not a
+          fifth hatch angle borrowed from `TRACK_REGION_APPEARANCE` -- for hydrated-and-holding.
+          The count and the current day's membership are always stated in the caption below, in
+          all three states, so the aural channel is never left inferring a hydrated-but-empty
+          layer from silence the way a sighted reader can from the plain baseline. h-2, half the
+          main track's h-5, because this row carries one signal and no thumb. */}
+      <div
+        className="relative flex h-2 items-center"
+        title={`What ${label} has saved on this device`}
+        data-testid={`layer-time-slider-synced-track-${layerId}`}
+      >
+        <div
+          aria-hidden="true"
+          data-testid={`layer-time-slider-synced-baseline-${layerId}`}
+          className="absolute inset-x-0 h-px rounded-full bg-[hsl(var(--border))]"
+        />
+
+        {syncIndexReady ? (
+          syncedDayBands.map((band) => (
+            <div
+              key={`synced-${band.fromDate}`}
+              aria-hidden="true"
+              data-testid={`layer-time-slider-synced-band-${layerId}`}
+              data-from={band.fromDate}
+              data-to={band.toDate}
+              data-range-count={band.rangeCount}
+              title={describeSyncedDayBand(band)}
+              className="absolute h-1 rounded-full"
+              style={{
+                left: `${band.leftPercent}%`,
+                width: `${band.widthPercent}%`,
+                backgroundColor: SYNCED_DAY_APPEARANCE.backgroundColor,
+                backgroundImage: SYNCED_DAY_APPEARANCE.backgroundImage,
+                backgroundSize: SYNCED_DAY_APPEARANCE_BACKGROUND_SIZE,
+              }}
+            />
+          ))
+        ) : (
+          <div
+            aria-hidden="true"
+            data-testid={`layer-time-slider-synced-unknown-${layerId}`}
+            title="Checking what's saved on this device for offline use"
+            className="absolute inset-x-0 h-1 rounded-full"
+            style={{
+              backgroundColor: TRACK_REGION_APPEARANCE.undescribed.backgroundColor,
+              backgroundImage: TRACK_REGION_APPEARANCE.undescribed.backgroundImage,
+            }}
+          />
+        )}
+
+        {/* Where the day on screen sits on THIS row -- same treatment as the main track's today
+            tick, so a reader who already knows what a tick means here recognises it again. Its
+            position over a filled run or over open space is a second, colour-independent way to
+            read "is this day held", alongside the caption's words below. */}
+        <div
+          aria-hidden="true"
+          data-testid={`layer-time-slider-synced-selected-tick-${layerId}`}
+          className="absolute h-2 w-px -translate-x-1/2 bg-[hsl(var(--foreground))]"
+          style={{ left: `${percentOfDayOffset(domain, selectedOffset)}%` }}
+        />
+      </div>
+
       {/* h-5 matches the 20px range hit area; max-sm:h-11 matches the 44px it grows to under the
           media query above, so the row still contains its own input on a phone.
 
@@ -465,6 +641,7 @@ export function LayerTimeSlider({ layerId, className }: LayerTimeSliderProps) {
         className="relative flex h-5 items-center max-sm:h-11"
         title={`${firstDay} to ${lastDay}`}
         data-testid={`layer-time-slider-track-${layerId}`}
+        aria-busy={isFetchingCurrentDay ? "true" : undefined}
       >
         {/* The dense base. Every covered day is dense until a band overlays it, so a dense run
             costs no element at all -- which is what keeps a four-year axis to a handful of divs. */}
@@ -549,7 +726,7 @@ export function LayerTimeSlider({ layerId, className }: LayerTimeSliderProps) {
             the note below the track is saying about this day. */}
         <input
           type="range"
-          className="layer-time-slider-range absolute inset-x-0"
+          className={cn("layer-time-slider-range absolute inset-x-0", isFetchingCurrentDay && "is-pending")}
           min={0}
           max={maxOffset}
           step={1}

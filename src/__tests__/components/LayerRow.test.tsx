@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { act, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import { LayerRow } from "@/components/map/layer-panel/LayerRow";
 import { DEFAULT_LEGEND_CONTEXT } from "@/lib/map/layer-legends";
@@ -11,7 +11,39 @@ import {
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
 import { hasSelectableDay, useTimeSliderStore } from "@/stores/time-slider-store";
+import {
+  clearLayerSyncedDays,
+  useLayerSyncedBytes,
+  useSyncedDays,
+  useSyncIndexReady,
+} from "@/stores/sync-index-store";
 import type { SliderCapabilities } from "@/types/time-slider";
+
+/**
+ * `sync-index-store` is a pinned contract owned by a parallel lane (see
+ * src/components/map/AGENTS.md §synced-days-track) -- mocked exactly like `useOfflineSync` is in
+ * `OfflinePanel.test.tsx`. Defaulted ready-and-empty here so every gate test above and below,
+ * none of which cares about sync state, renders the reset control disabled and inert without
+ * needing to know that.
+ */
+vi.mock("@/stores/sync-index-store", () => ({
+  useSyncedDays: vi.fn(),
+  useSyncIndexReady: vi.fn(),
+  useLayerSyncedBytes: vi.fn(),
+  clearLayerSyncedDays: vi.fn(),
+}));
+
+const mockUseSyncedDays = vi.mocked(useSyncedDays);
+const mockUseSyncIndexReady = vi.mocked(useSyncIndexReady);
+const mockUseLayerSyncedBytes = vi.mocked(useLayerSyncedBytes);
+const mockClearLayerSyncedDays = vi.mocked(clearLayerSyncedDays);
+
+beforeEach(() => {
+  mockUseSyncedDays.mockReturnValue(new Set());
+  mockUseSyncIndexReady.mockReturnValue(true);
+  mockUseLayerSyncedBytes.mockReturnValue(0);
+  mockClearLayerSyncedDays.mockReset().mockResolvedValue(undefined);
+});
 
 /**
  * The gate these cases exist for.
@@ -284,5 +316,201 @@ describe("LayerRow when the payload arrives without its stream scan", () => {
 
     expect(screen.getByTestId("layer-time-slider-range-water")).not.toBeNull();
     expect(screen.queryByTestId("layer-time-slider-no-axis-water")).toBeNull();
+  });
+});
+
+/**
+ * The per-timeline reset control. Gated on the SAME `mountsTimeSlider` boolean as the slider
+ * slot -- a layer with no timeline has no per-day cache entries to offer resetting -- and, once
+ * mounted, armed by an explicit two-step confirm rather than firing on the first click. See
+ * src/components/map/AGENTS.md §synced-days-track for the full home decision and its rationale.
+ */
+describe("layer sync reset control", () => {
+  beforeEach(() => {
+    useMapStore.setState({ activeLayers: [...LAYER_TOGGLE_IDS] });
+    useLayerStore.setState({ layerOpacity: {} });
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: CAPABILITIES,
+      capabilitiesUnavailable: false,
+    });
+  });
+
+  it("mounts only where the time slider itself mounts", () => {
+    renderRow("watersheds");
+
+    expect(timeSliderSlotFor("watersheds")).toBeNull();
+    expect(screen.queryByTestId("layer-sync-reset-watersheds")).toBeNull();
+  });
+
+  /**
+   * `aria-disabled`, not the native `disabled` attribute -- see the trigger button's own doc for
+   * why the button must stay FOCUSABLE even when inert (a successful clear disables it in the
+   * same commit that returns focus to it). `.disabled` (the DOM property) would read `false`
+   * here regardless of state, since the native attribute is never set at all.
+   */
+  it("is inert and named honestly when the layer holds nothing yet", () => {
+    renderRow("water");
+
+    const button = screen.getByTestId("layer-sync-reset-water") as HTMLButtonElement;
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.title).toContain("Nothing saved");
+  });
+
+  it("is inert while the sync index is still hydrating, not falsely enabled", () => {
+    mockUseSyncIndexReady.mockReturnValue(false);
+    renderRow("water");
+
+    expect(
+      screen.getByTestId("layer-sync-reset-water").getAttribute("aria-disabled")
+    ).toBe("true");
+  });
+
+  it("enables and names the count once the layer holds saved days", () => {
+    mockUseSyncedDays.mockReturnValue(new Set(["2019-01-01", "2019-01-02"]));
+    mockUseLayerSyncedBytes.mockReturnValue(2_400_000);
+    renderRow("water");
+
+    const button = screen.getByTestId("layer-sync-reset-water") as HTMLButtonElement;
+    expect(button.getAttribute("aria-disabled")).toBeNull();
+    expect(button.textContent).toContain("2");
+  });
+
+  it("requires a second, explicit confirmation before clearing anything", () => {
+    mockUseSyncedDays.mockReturnValue(new Set(["2019-01-01"]));
+    renderRow("water");
+
+    fireEvent.click(screen.getByTestId("layer-sync-reset-water"));
+
+    expect(mockClearLayerSyncedDays).not.toHaveBeenCalled();
+    const confirmBlock = screen.getByTestId("layer-sync-reset-confirm-water");
+    expect(confirmBlock).not.toBeNull();
+    // Scoped honestly: must never read as "clear everything".
+    expect(confirmBlock.textContent).toContain("Downloaded map tiles");
+    expect(confirmBlock.textContent).toContain("not yet synced to the server are not affected");
+  });
+
+  it("clears nothing and returns focus to the trigger on Cancel", () => {
+    mockUseSyncedDays.mockReturnValue(new Set(["2019-01-01"]));
+    renderRow("water");
+
+    fireEvent.click(screen.getByTestId("layer-sync-reset-water"));
+    fireEvent.click(screen.getByTestId("layer-sync-reset-cancel-water"));
+
+    expect(mockClearLayerSyncedDays).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("layer-sync-reset-confirm-water")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByTestId("layer-sync-reset-water"));
+  });
+
+  it("cancels on Escape as well as on the Cancel button", () => {
+    mockUseSyncedDays.mockReturnValue(new Set(["2019-01-01"]));
+    renderRow("water");
+
+    fireEvent.click(screen.getByTestId("layer-sync-reset-water"));
+    fireEvent.keyDown(screen.getByTestId("layer-sync-reset-confirm-water"), { key: "Escape" });
+
+    expect(screen.queryByTestId("layer-sync-reset-confirm-water")).toBeNull();
+  });
+
+  /**
+   * `clearLayerSyncedDays` is documented never to reject, so "the call resolved" alone must
+   * never be read as "the clear happened" -- a silent no-op (quota pressure, a version-change
+   * lock) resolves identically to a real deletion. The mock here simulates the ONLY honest
+   * signal available: whether `useSyncedDays`'s own report actually changes.
+   */
+  it("calls clearLayerSyncedDays with this layer's id, and closes only once the index reflects it", async () => {
+    let currentlySynced = new Set(["2019-01-01"]);
+    mockUseSyncedDays.mockImplementation(() => currentlySynced);
+    mockClearLayerSyncedDays.mockImplementation(async () => {
+      currentlySynced = new Set();
+    });
+    renderRow("water");
+
+    fireEvent.click(screen.getByTestId("layer-sync-reset-water"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("layer-sync-reset-confirm-button-water"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockClearLayerSyncedDays).toHaveBeenCalledTimes(1);
+    expect(mockClearLayerSyncedDays).toHaveBeenCalledWith("water");
+    expect(screen.queryByTestId("layer-sync-reset-confirm-water")).toBeNull();
+  });
+
+  it("returns focus to the trigger after a successful clear too, not only after Cancel", async () => {
+    let currentlySynced = new Set(["2019-01-01"]);
+    mockUseSyncedDays.mockImplementation(() => currentlySynced);
+    mockClearLayerSyncedDays.mockImplementation(async () => {
+      currentlySynced = new Set();
+    });
+    renderRow("water");
+
+    fireEvent.click(screen.getByTestId("layer-sync-reset-water"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("layer-sync-reset-confirm-button-water"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.activeElement).toBe(screen.getByTestId("layer-sync-reset-water"));
+  });
+
+  /**
+   * The defect the reviewer reproduced: a `Promise<void>` that resolves without rejecting is
+   * not evidence anything was deleted. The index here is left completely unchanged by the
+   * mocked call, exactly like a real silent no-op would leave it.
+   */
+  it("treats an unchanged index after the call resolves as a failure, since it never rejects", async () => {
+    mockUseSyncedDays.mockReturnValue(new Set(["2019-01-01"]));
+    mockClearLayerSyncedDays.mockResolvedValue(undefined);
+    renderRow("water");
+
+    fireEvent.click(screen.getByTestId("layer-sync-reset-water"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("layer-sync-reset-confirm-button-water"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The dialog stays open and says so -- it must never close as though the clear had worked.
+    const confirmBlock = screen.getByTestId("layer-sync-reset-confirm-water");
+    expect(confirmBlock).not.toBeNull();
+    expect(confirmBlock.textContent).toContain("Could not clear");
+    expect(confirmBlock.textContent).toContain("nothing here changed");
+  });
+
+  it("is inert by the readiness half of the gate even while the index already reports days", () => {
+    // A live write racing hydration: the index has entries, but `useSyncIndexReady` has not
+    // flipped yet. `hasSyncedDays` is `syncIndexReady && count > 0`, and this pins the ORDER --
+    // a future edit that swapped the operands or dropped the readiness half would still pass a
+    // naive "is it inert with zero days" test, but not this one.
+    mockUseSyncIndexReady.mockReturnValue(false);
+    mockUseSyncedDays.mockReturnValue(new Set(["2019-01-01", "2019-01-02"]));
+    renderRow("water");
+
+    expect(
+      screen.getByTestId("layer-sync-reset-water").getAttribute("aria-disabled")
+    ).toBe("true");
+  });
+
+  it("is never nested inside the slider's own slot, where Latest lives", () => {
+    mockUseSyncedDays.mockReturnValue(new Set(["2019-01-01"]));
+    renderRow("water");
+
+    const slot = screen.getByTestId("layer-time-slider-slot-water");
+    const resetButton = screen.getByTestId("layer-sync-reset-water");
+    expect(slot.contains(resetButton)).toBe(false);
+  });
+
+  it("threads the pending signal through to its time slider", () => {
+    renderWithProviders(
+      <ul>
+        <LayerRow layerId="water" legendContext={DEFAULT_LEGEND_CONTEXT} isFetchingSelectedDay />
+      </ul>
+    );
+
+    expect(screen.getByTestId("layer-time-slider-range-water").className).toContain("is-pending");
   });
 });

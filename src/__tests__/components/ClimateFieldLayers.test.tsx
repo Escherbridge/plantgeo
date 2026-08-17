@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { useMapStore } from "@/stores/map-store";
 import { useLayerStore } from "@/stores/layer-store";
 import { useClimateStore } from "@/stores/climate-store";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
+import { SCRUB_SETTLE_MS, useDrawnLayerDayStore } from "@/stores/useMetricAtDate";
 import {
   climateFieldStreamName,
   CLIMATE_FIELD_SIGNALS,
@@ -27,9 +28,20 @@ import type { SliderCapabilities, SliderLayerCapability } from "@/types/time-sli
 // Both parameters are declared, unlike the equivalent stub in LayerManager.test.tsx: these
 // cases read the query INPUT and the `enabled` flag off `mock.calls`, and a zero-arity stub
 // types that tuple as empty.
-const climateQuery = vi.hoisted(() => ({
-  useQuery: vi.fn((_input: unknown, _options: unknown) => ({ data: undefined })),
-}));
+//
+// Answers PER SIGNAL rather than one result for all nine. Nine rows retaining nine independent
+// days is the whole point of the split, so a stub that could only answer once for all of them
+// could not tell "each row named its own drawn day" from "one day fanned across nine".
+const climateQuery = vi.hoisted(() => {
+  const resultBySignal = new Map<string, Record<string, unknown>>();
+  return {
+    resultBySignal,
+    useQuery: vi.fn((_input: unknown, _options: unknown) => {
+      const signal = (_input as { signal?: string } | undefined)?.signal ?? "";
+      return resultBySignal.get(signal) ?? { data: undefined };
+    }),
+  };
+});
 
 vi.mock("@/lib/trpc/client", () => ({
   trpc: { environmental: { getClimateField: { useQuery: climateQuery.useQuery } } },
@@ -108,6 +120,8 @@ const INITIAL_CLIMATE_STATE = useClimateStore.getState();
 
 beforeEach(() => {
   climateQuery.useQuery.mockClear();
+  climateQuery.resultBySignal.clear();
+  useDrawnLayerDayStore.setState({ drawnDays: {}, publications: {} });
   drawnLayers.renders.length = 0;
   useMapStore.setState(INITIAL_MAP_STATE, true);
   useLayerStore.setState({ ...INITIAL_LAYER_STATE, layerOpacity: {} }, true);
@@ -130,7 +144,34 @@ function renderWithDrawn(signals: readonly ClimateFieldSignalId[]) {
   useMapStore.setState({
     activeLayers: signals.map((signal) => CLIMATE_FIELD_SIGNALS[signal].toggleId),
   });
-  render(<ClimateFieldLayers map={null} bbox={BBOX} />);
+  return render(<ClimateFieldLayers map={null} bbox={BBOX} />);
+}
+
+/** A response that answered for the key it was asked with. */
+function landed(): Record<string, unknown> {
+  return {
+    data: { type: "FeatureCollection", features: [] },
+    isSuccess: true,
+    isFetching: false,
+    isPlaceholderData: false,
+  };
+}
+
+/** A response still standing in from the PREVIOUS key while the current one loads. */
+function retaining(): Record<string, unknown> {
+  return {
+    data: { type: "FeatureCollection", features: [] },
+    isSuccess: true,
+    isFetching: true,
+    isPlaceholderData: true,
+  };
+}
+
+/** Waits out one row's scrub settle window, which is what turns a new day into a request. */
+async function settleScrub(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, SCRUB_SETTLE_MS + 20));
+  });
 }
 
 describe("the nine climate rows read and draw independently", () => {
@@ -227,5 +268,117 @@ describe("the nine climate rows read and draw independently", () => {
       expect(props?.visible, signal).toBe(true);
       expect(props?.renderForm, signal).toBe(inputFor(signal)?.renderForm);
     }
+  });
+});
+
+/**
+ * Each row says which day it is PAINTING, not which day it is asking for.
+ *
+ * `useClimateFieldQuery` holds the previous answer while the next loads (`keepPreviousData`), so
+ * these nine layers retain the previous day's isobands through every scrub. Retaining without
+ * reporting is strictly worse than neither: the canvas caption (`MapDateSummary`) and the row's
+ * own pending indicator (`DockSections`, which reads `drawnDays[layerId]?.isLoading`) both go
+ * silently wrong -- one states the day the slider asks for over the day before it, the other
+ * never lights at all. `LayerManager` reads none of these nine, so each row publishes its own.
+ */
+describe("each climate row labels the day it is actually painting", () => {
+  function publishedFor(signal: ClimateFieldSignalId) {
+    return useDrawnLayerDayStore.getState().drawnDays[CLIMATE_FIELD_SIGNALS[signal].toggleId];
+  }
+
+  /**
+   * The coverage assertion, walking the signal list rather than a list spelled here: a tenth
+   * signal added without a publication would fail this case instead of shipping a dead row
+   * indicator and a caption that names the wrong day.
+   */
+  it("publishes a drawn day for every signal that is switched on", () => {
+    for (const signal of CLIMATE_FIELD_SIGNAL_IDS) {
+      climateQuery.resultBySignal.set(signal, landed());
+    }
+    renderWithDrawn(CLIMATE_FIELD_SIGNAL_IDS);
+
+    for (const [index, signal] of CLIMATE_FIELD_SIGNAL_IDS.entries()) {
+      const day = `2026-07-${String(10 + index).padStart(2, "0")}`;
+      expect(publishedFor(signal), signal).toEqual({
+        drawnDate: day,
+        requestedDate: day,
+        isLoading: false,
+      });
+    }
+  });
+
+  it("publishes nothing for a signal whose row is switched off", () => {
+    // The disabled-query shape: TanStack keeps `isPlaceholderData` true off `keepPreviousData`
+    // even once a query stops running, so an off row would otherwise report itself mid-load for
+    // good and leave its indicator lit with nothing able to clear it.
+    climateQuery.resultBySignal.set("precipitation", { ...retaining(), isFetching: false });
+    renderWithDrawn(["air-temperature"]);
+
+    expect(publishedFor("precipitation")).toBeUndefined();
+    expect(publishedFor("air-temperature")).toBeDefined();
+  });
+
+  /**
+   * H2 itself: the row has moved and the isobands on screen are still the previous day's.
+   * Scrubbing precipitation from its own newest day back to 2023 must leave the publication
+   * naming the day in hand, and must not disturb any other row's.
+   */
+  it("keeps naming the day in hand while a retained frame is on screen", async () => {
+    for (const signal of CLIMATE_FIELD_SIGNAL_IDS) {
+      climateQuery.resultBySignal.set(signal, landed());
+    }
+    const rendered = renderWithDrawn(CLIMATE_FIELD_SIGNAL_IDS);
+    const precipitationIndex = CLIMATE_FIELD_SIGNAL_IDS.indexOf("precipitation");
+    const paintedDay = `2026-07-${String(10 + precipitationIndex).padStart(2, "0")}`;
+    expect(publishedFor("precipitation")?.drawnDate).toBe(paintedDay);
+
+    climateQuery.resultBySignal.set("precipitation", retaining());
+    act(() => {
+      useTimeSliderStore
+        .getState()
+        .setLayerDate(CLIMATE_FIELD_SIGNALS.precipitation.toggleId, "2023-11-30");
+    });
+    await settleScrub();
+    rendered.rerender(<ClimateFieldLayers map={null} bbox={BBOX} />);
+
+    expect(publishedFor("precipitation")).toEqual({
+      drawnDate: paintedDay,
+      requestedDate: "2023-11-30",
+      isLoading: true,
+    });
+    // Nine publishers, nine disjoint sets: one row's scrub must not touch another's entry.
+    expect(publishedFor("air-temperature")).toEqual({
+      drawnDate: "2026-07-10",
+      requestedDate: "2026-07-10",
+      isLoading: false,
+    });
+  });
+
+  /**
+   * Offline. `fetchStatus: "paused"` leaves the retained isobands standing with nothing in
+   * flight, so the drawn day still lags while nothing is loading -- and it stays that way until
+   * connectivity returns, in an app that ships an offline sync queue. A publication reporting
+   * this as loading would light every affected row's indicator indefinitely.
+   */
+  it("reports a paused request as an earlier day painted, not as loading", async () => {
+    climateQuery.resultBySignal.set("precipitation", landed());
+    const rendered = renderWithDrawn(["precipitation"]);
+    const precipitationIndex = CLIMATE_FIELD_SIGNAL_IDS.indexOf("precipitation");
+    const paintedDay = `2026-07-${String(10 + precipitationIndex).padStart(2, "0")}`;
+
+    climateQuery.resultBySignal.set("precipitation", { ...retaining(), isFetching: false });
+    act(() => {
+      useTimeSliderStore
+        .getState()
+        .setLayerDate(CLIMATE_FIELD_SIGNALS.precipitation.toggleId, "2023-11-30");
+    });
+    await settleScrub();
+    rendered.rerender(<ClimateFieldLayers map={null} bbox={BBOX} />);
+
+    expect(publishedFor("precipitation")).toEqual({
+      drawnDate: paintedDay,
+      requestedDate: "2023-11-30",
+      isLoading: false,
+    });
   });
 });

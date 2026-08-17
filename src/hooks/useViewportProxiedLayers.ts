@@ -12,6 +12,7 @@
  */
 
 import { useMemo } from "react";
+import { keepPreviousData } from "@tanstack/react-query";
 import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
 import { bboxSquareDegrees, viewportBbox } from "@/lib/map/viewport-bbox";
 
@@ -52,6 +53,33 @@ const SOIL_SURVEY_STALE_TIME_MS = 24 * 60 * 60 * 1000;
 
 /** One retry, not react-query's default three — each attempt re-pays the full upstream cost. */
 export const PROXIED_RETRY_COUNT = 1;
+
+/**
+ * Hold the previous answer while the next one loads, for the queries the MAP draws.
+ *
+ * Every query here keys on the viewport, so without this a pan drops the layer to zero features
+ * for a full round trip and then refills it — the blank-and-refill that reads as latency and as
+ * staleness at once. A retained frame is safe for drawn geometry because geometry is
+ * self-locating: the polygons in hand are still true where they are, they merely do not reach
+ * the new edge yet.
+ *
+ * **It retains across a pending request, NOT across a failure.** An errored query has
+ * `data: undefined` and `isPlaceholderData: false`, so the layer blanks exactly as it did
+ * before — see §retained-answers in `src/components/map/AGENTS.md`.
+ *
+ * **Every consumer of these hooks owes the reader a label.** `status` reads `"success"` while a
+ * placeholder stands in, so `isLoading` is permanently false after the first success: a spinner
+ * keyed on it never fires again, and any count or day read off `data` describes the PREVIOUS
+ * request. The map publishes the drawn day (`usePublishedDrawnLayerDays`); `SoilDetails` and
+ * `ClimateDetails` gate their loading lines on `isFetching` and say so on `isPlaceholderData`.
+ *
+ * Deliberately NOT applied to `useWatershedsQuery`. Its only consumer is `WaterDetails`, which
+ * renders the basins as a LIST under a heading claiming they are the ones in view; a retained
+ * list is a false statement about the current viewport rather than an incomplete drawing of it,
+ * and there is no caption on that surface to say otherwise. Retaining is permitted, misstating
+ * is not — the same rule `useMetricAtDate.resolvedDate` states.
+ */
+const KEEP_PREVIOUS_WHILE_PANNING = keepPreviousData;
 
 /**
  * ERA5-Land: a reanalysis archive day never changes once published, and the answer is
@@ -154,6 +182,7 @@ export function useSoilSurveyQuery(
       enabled: enabled && requested !== null && !isWithheld("soil-survey"),
       staleTime: SOIL_SURVEY_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
+      placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
 }
@@ -202,6 +231,7 @@ export function useSoilFieldQuery(
       enabled: enabled && requested !== null && !isWithheld(toggleId),
       staleTime: SOIL_FIELD_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
+      placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
 }
@@ -247,6 +277,7 @@ export function useClimateFieldQuery(
         enabled && requested !== null && !isWithheld(climateFieldToggleId(signal)),
       staleTime: CLIMATE_FIELD_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
+      placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { keepPreviousData } from "@tanstack/react-query";
 import { useMap } from "@/lib/map/map-context";
 import {
   useDebouncedLayerDay,
@@ -30,6 +31,11 @@ import {
 } from "@/lib/map/tile-layer-date-filter";
 import { useMapStore } from "@/stores/map-store";
 import { hasSelectableDay, useTimeSliderStore } from "@/stores/time-slider-store";
+import {
+  drawnDayFlagsFromQuery,
+  usePublishedDrawnLayerDays,
+  type LiveLayerDayReport,
+} from "@/stores/useMetricAtDate";
 import { isRenderableWeatherObservation } from "@/lib/environmental/weather";
 import type { WeatherPoint } from "@/components/map/layers/WeatherLayer";
 
@@ -201,8 +207,11 @@ export default function LayerManager() {
   // Whether each tile toggle has a day a user can actually CHOOSE -- the same question, asked of
   // the same function, that decides whether its row draws a slider (LayerRow.tsx). A layer with
   // no selectable day must carry no date filter: `sliderDomain` refuses a snapshot, so
-  // evacuation-zones and sensors get no control, and burn-severity gets none either while it
-  // inherits the read model's default kind. Filtering them anyway installed
+  // evacuation-zones and sensors get no control. burn-severity is NOT one of them -- the read
+  // model declares it `event` (environmental-read-model.ts, LAYER_TEMPORAL_KINDS), so it draws a
+  // slider and must be filtered. It was in that list only while it was absent from that table and
+  // inherited `snapshot`, which is why an unbounded MTBS layer used to draw every scar through
+  // 2026 beneath perimeters scrubbed to 2024. Filtering a genuine snapshot anyway installed
   // `["<=", ["get","observed_day"], latestObservedDate]` on rows with nothing to change it with,
   // and `latestObservedDate` is by contract the newest day AT OR ABOVE the density floor -- so
   // through every partially-ingested live-edge day, which is the normal state of a running
@@ -225,11 +234,17 @@ export default function LayerManager() {
   );
 
   const fireData = useFireData(layerVisibility.fire, fireDay.requestDate);
+  // `placeholderData: keepPreviousData` on every dated feed below: each keys on a day AND a
+  // bbox, so without it every settled scrub and every pan blanked the layer for a full round
+  // trip. Legal only because `usePublishedDrawnLayerDays` below labels the retained frame --
+  // see src/components/map/AGENTS.md "A layer must not blank between days". Never one without
+  // the other.
+  //
   // tRPC keys `undefined` input differently from an object, so the dateless case must stay
   // literally undefined here rather than becoming `{ date: undefined }`.
   const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(
     droughtDay.requestDate === undefined ? undefined : { date: droughtDay.requestDate },
-    { enabled: layerVisibility.drought }
+    { enabled: layerVisibility.drought, placeholderData: keepPreviousData }
   );
   const droughtGeoJSON = droughtQuery.data ?? EMPTY_FEATURE_COLLECTION;
   const waterEnabled = layerVisibility.water;
@@ -238,11 +253,19 @@ export default function LayerManager() {
   // there being a single control over them, not an assumption about the two upstreams.
   const streamflowQuery = trpc.environmental.getStreamflow.useQuery(
     { bbox: bbox ?? "-180,-90,180,90", date: waterDay.requestDate },
-    { enabled: waterEnabled && bbox !== null, staleTime: 15 * 60 * 1000 }
+    {
+      enabled: waterEnabled && bbox !== null,
+      staleTime: 15 * 60 * 1000,
+      placeholderData: keepPreviousData,
+    }
   );
   const groundwaterQuery = trpc.environmental.getGroundwater.useQuery(
     { bbox: bbox ?? "-180,-90,180,90", date: waterDay.requestDate },
-    { enabled: waterEnabled && bbox !== null, staleTime: 60 * 60 * 1000 }
+    {
+      enabled: waterEnabled && bbox !== null,
+      staleTime: 60 * 60 * 1000,
+      placeholderData: keepPreviousData,
+    }
   );
 
   const vegetationEnabled = layerVisibility.vegetation;
@@ -255,7 +278,11 @@ export default function LayerManager() {
   // day slides that per-cell window to end there instead of at now.
   const vegetationQuery = trpc.environmental.getVegetationIndex.useQuery(
     { bbox: bbox ?? "-180,-90,180,90", date: vegetationDay.requestDate },
-    { enabled: vegetationEnabled && bbox !== null, staleTime: 60 * 60 * 1000 }
+    {
+      enabled: vegetationEnabled && bbox !== null,
+      staleTime: 60 * 60 * 1000,
+      placeholderData: keepPreviousData,
+    }
   );
   const vegetationGeoJSON: GeoJSON.FeatureCollection =
     vegetationQuery.data ?? EMPTY_FEATURE_COLLECTION;
@@ -333,7 +360,11 @@ export default function LayerManager() {
   // warehouse-backed samples instead of a single point.
   const weatherQuery = trpc.wildfire.getWeatherForBbox.useQuery(
     { bbox: bbox ?? "-180,-90,180,90", date: weatherDay.requestDate },
-    { enabled: weatherEnabled && bbox !== null, staleTime: 15 * 60 * 1000 }
+    {
+      enabled: weatherEnabled && bbox !== null,
+      staleTime: 15 * 60 * 1000,
+      placeholderData: keepPreviousData,
+    }
   );
   // Every rendered field must still be measured -- nothing is back-filled with a zero the
   // upstream never reported -- but completeness is now judged PER DRAWN LAYER rather than
@@ -363,6 +394,86 @@ export default function LayerManager() {
         })),
     [weatherQuery.data]
   );
+
+  // What each live layer is actually DRAWING, for the surfaces that caption the map. The other
+  // half of `keepPreviousData` above; see src/components/map/AGENTS.md "A layer must not blank
+  // between days". `settledDate`, not `requestDate` -- a caption cannot state an omission.
+  //
+  // Nine ids, never the nine NASA POWER signals: each `ClimateSignalLayer` publishes its own,
+  // because it owns its own read. Publishers must stay disjoint.
+  const liveLayerDayReports: LiveLayerDayReport[] = [
+    {
+      layerId: "fire",
+      isDrawn: layerVisibility.fire,
+      requestedDate: fireDay.settledDate,
+      // `useFireData` is not a react-query read, but it retains the previous day's detections
+      // across a 304, a failed fetch and a date change, and states that as
+      // `isStaleForRequestedDate` -- whose own doc says a caller must read it before captioning
+      // `data`. `count` is what separates a retained frame from nothing having loaded at all,
+      // which `isStaleForRequestedDate` alone does not.
+      isFetching: fireData.isLoading,
+      hasLandedForRequestedDate: fireData.isStaleForRequestedDate !== true,
+      isShowingPreviousDay: fireData.isStaleForRequestedDate === true && fireData.count > 0,
+    },
+    {
+      layerId: "drought",
+      isDrawn: layerVisibility.drought,
+      requestedDate: droughtDay.settledDate,
+      ...drawnDayFlagsFromQuery(droughtQuery),
+    },
+    {
+      // One row over two upstreams: the day is drawn only once BOTH have answered for it.
+      layerId: "water",
+      isDrawn: waterEnabled,
+      requestedDate: waterDay.settledDate,
+      isFetching: streamflowQuery.isFetching === true || groundwaterQuery.isFetching === true,
+      hasLandedForRequestedDate:
+        drawnDayFlagsFromQuery(streamflowQuery).hasLandedForRequestedDate &&
+        drawnDayFlagsFromQuery(groundwaterQuery).hasLandedForRequestedDate,
+      isShowingPreviousDay:
+        streamflowQuery.isPlaceholderData === true || groundwaterQuery.isPlaceholderData === true,
+    },
+    {
+      layerId: "vegetation",
+      isDrawn: vegetationEnabled,
+      requestedDate: vegetationDay.settledDate,
+      ...drawnDayFlagsFromQuery(vegetationQuery),
+    },
+    {
+      // SSURGO is proxied per viewport and its key holds no date, so it has no day of its own to
+      // draw: a retained frame here is a different VIEWPORT, never a different day.
+      layerId: "soil-survey",
+      isDrawn: soilSurveyVisible,
+      requestedDate: null,
+      ...drawnDayFlagsFromQuery(soilSurveyQuery),
+      isShowingPreviousDay: false,
+    },
+    {
+      layerId: "soil-moisture",
+      isDrawn: soilMoistureVisible,
+      requestedDate: soilMoistureDay.settledDate,
+      ...drawnDayFlagsFromQuery(soilMoistureQuery),
+    },
+    {
+      layerId: "soil-temperature",
+      isDrawn: soilTemperatureVisible,
+      requestedDate: soilTemperatureDay.settledDate,
+      ...drawnDayFlagsFromQuery(soilTemperatureQuery),
+    },
+    {
+      layerId: "soil-vpd",
+      isDrawn: soilVpdVisible,
+      requestedDate: soilVpdDay.settledDate,
+      ...drawnDayFlagsFromQuery(soilVpdQuery),
+    },
+    {
+      layerId: "weather",
+      isDrawn: weatherEnabled,
+      requestedDate: weatherDay.settledDate,
+      ...drawnDayFlagsFromQuery(weatherQuery),
+    },
+  ];
+  usePublishedDrawnLayerDays("layer-manager", liveLayerDayReports);
 
   // Sync visibility of style-baked Martin layers (fire-perimeters/interventions/
   // watersheds) with activeLayers -- these are static layers added via getStyle(),
@@ -528,6 +639,10 @@ export default function LayerManager() {
   useEffect(() => {
     if (!map) return;
     const mapInstance = map;
+    // One pending frame for the convergence pass below, cancelled on teardown. See
+    // src/components/map/AGENTS.md for what actually emits `styledata` and why that makes the
+    // coalescing load-bearing.
+    let convergenceFrame: number | null = null;
     const onStyleLoad = () => {
       applyVisibility(mapInstance, layerVisibilityRef.current);
       applyDateFilter(mapInstance, filterDaysRef.current);
@@ -537,24 +652,28 @@ export default function LayerManager() {
       // `isStyleLoaded()` is typed `boolean | void`; coerce so this stays a boolean state.
       setStyleReady(!!mapInstance.isStyleLoaded());
     };
-    // Visibility is re-applied here, not just on style.load, and that is load-bearing rather
-    // than belt-and-braces. `isStyleLoaded()` requires every SOURCE's tiles to be in, so one
-    // failing source (an expired PMTiles pin, a 404ing Martin tile function) holds it false
-    // indefinitely -- and while it is false the styleReady-gated effects below all no-op, the
-    // authored `visibility` from getStyle() stands, and every style-baked layer paints while
-    // the dock reports "0 of 5". That is the outage of 2026-08-15: the toggles were never
-    // broken, they were never applied. This handler converges them as the style settles,
-    // whatever isStyleLoaded() thinks. Cheap enough to run per styledata: setLayoutProperty
-    // over a handful of style-baked layers, and idempotent. Opacity and the date filter stay
-    // off this path -- both recompile expressions, and styledata fires per tile.
+    // All three appliers converge here, not only on style.load: a style layer added after this
+    // style loaded (every component that adds its own does so on `style.load`) would otherwise
+    // keep its authored visibility, filter and opacity until the next basemap swap. See
+    // src/components/map/AGENTS.md "`isStyleLoaded()` is a signal to retry on".
+    //
+    // Visibility runs unthrottled; the filter and the opacity multiplier build an expression per
+    // style layer before MapLibre gets to compare it, so they share one frame.
     const onStyleData = () => {
       applyVisibility(mapInstance, layerVisibilityRef.current);
       setStyleReady(!!mapInstance.isStyleLoaded());
+      if (convergenceFrame !== null) return;
+      convergenceFrame = requestAnimationFrame(() => {
+        convergenceFrame = null;
+        applyDateFilter(mapInstance, filterDaysRef.current);
+        applyOpacity(mapInstance, layerOpacityRef.current);
+      });
     };
 
     mapInstance.on("style.load", onStyleLoad);
     mapInstance.on("styledata", onStyleData);
     return () => {
+      if (convergenceFrame !== null) cancelAnimationFrame(convergenceFrame);
       mapInstance.off("style.load", onStyleLoad);
       mapInstance.off("styledata", onStyleData);
     };
@@ -577,22 +696,21 @@ export default function LayerManager() {
     applyVisibility(map, layerVisibility);
   }, [map, layerVisibility, applyVisibility, styleReady]);
 
-  // Guarded on styleReady for the same reason the visibility sync above is: on first paint
-  // the style layers do not exist yet, so an unguarded pass would setFilter nothing and have
-  // nothing left to re-trigger it once the style caught up.
+  // This effect is what actually answers a scrub, and it is NOT gated on isStyleLoaded() -- see
+  // src/components/map/AGENTS.md "`isStyleLoaded()` is a signal to retry on, never a gate to
+  // drop writes behind" for the outage that gate caused. Unthrottled on purpose: it responds to
+  // the reader's own input, and a settled day arrives at most once per SCRUB_SETTLE_MS anyway.
   useEffect(() => {
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map) return;
     applyDateFilter(map, dateFilterableLayerDays);
   }, [map, dateFilterableLayerDays, applyDateFilter, styleReady]);
 
-  // Same shape as the two effects above, plus one animation-frame of coalescing: MapLibre
-  // repaints once per frame regardless, so more than one write per frame is pure waste -- and
-  // the expression path (`["*", ...]`) recompiles the expression on every set, which is the
-  // expensive case. Deliberately NOT the slider's settle constant: that one exists to
-  // coalesce network requests, and opacity issues none, so borrowing it would leave the map
-  // visibly trailing the thumb.
+  // Same shape, plus one animation-frame of coalescing: an opacity drag fires per pointer tick
+  // and rebuilds an expression per style layer. Deliberately NOT the slider's settle constant --
+  // that exists to coalesce network requests, and opacity issues none, so borrowing it would
+  // leave the map visibly trailing the thumb. Ungated for the same reason the filter is.
   useEffect(() => {
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map) return;
     const frame = requestAnimationFrame(() => applyOpacity(map, layerOpacity));
     return () => cancelAnimationFrame(frame);
   }, [map, layerOpacity, applyOpacity, styleReady]);

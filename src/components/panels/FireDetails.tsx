@@ -78,6 +78,13 @@ export function FireDetails({ center }: FireDetailsProps) {
   const { requestDate } = useDebouncedLayerDay("fire");
   const fireData = useFireData(true, requestDate);
   const effectiveFireCount = fireData.count;
+  // `data`/`count` may still be a RETAINED previous day's answer -- loading is not the only
+  // state that makes them untrustworthy, see useFireData's `isStaleForRequestedDate` doc.
+  const fireCountUnsettled = fireData.isLoading || fireData.isStaleForRequestedDate;
+  const fireCountSub =
+    requestDate === undefined
+      ? "Published FIRMS detections, live window"
+      : `Published FIRMS detections, ${requestDate}`;
 
   const weatherQuery = trpc.wildfire.getWeatherForPoint.useQuery({
     lat: center.lat,
@@ -142,8 +149,8 @@ export function FireDetails({ center }: FireDetailsProps) {
         <StatCard
           icon={<Flame className="h-3.5 w-3.5" />}
           label="Fire Detections"
-          value={fireData.isLoading ? "..." : effectiveFireCount}
-          sub="Published FIRMS detections, last 24h"
+          value={fireCountUnsettled ? "..." : effectiveFireCount}
+          sub={fireCountSub}
         />
         <StatCard
           icon={<Wind className="h-3.5 w-3.5" />}

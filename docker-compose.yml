@@ -53,6 +53,10 @@ services:
     environment:
       DATABASE_URL: postgresql://geo:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgis:5432/plantgeo
       PORT: 3000
+      # Local-dev default only. infra/martin/martin.yaml's cors.origin is a real multi-entry
+      # list, one placeholder per allowed origin -- this var fills only the custom-domain
+      # entry. Never comma-join multiple origins here: Martin expands one placeholder into
+      # exactly one scalar and will not split it (see the comment in martin.yaml).
       TILE_CORS_ORIGIN: ${TILE_CORS_ORIGIN:-http://localhost:3001}
       MARTIN_CACHE_SIZE_MB: ${MARTIN_CACHE_SIZE_MB:-128}
       MARTIN_POOL_SIZE: ${MARTIN_POOL_SIZE:-8}

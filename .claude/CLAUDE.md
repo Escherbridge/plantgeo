@@ -8,7 +8,7 @@ PlantGeo is an enterprise-grade open-source 3D mapping platform built to provide
 - **3D Map Rendering**: MapLibre GL JS v5 (globe, terrain, fill-extrusion)
 - **Data Visualization**: deck.gl v9 (interleaved mode with MapLibre)
 - **Custom 3D**: Three.js via CustomLayerInterface
-- **Tile Serving**: Martin v1.4 (Rust, PostGIS + PMTiles + MBTiles)
+- **Tile Serving**: Martin v1.10.1 (Rust, PostGIS + PMTiles + MBTiles) — pinned in `Dockerfile.martin:1` and `docker-compose.yml:52`; this list previously said v1.4, which was wrong
 - **Tile Format**: PMTiles v3 on Cloudflare R2, MVT for dynamic
 - **Routing**: Valhalla (multi-modal, isochrones, turn-by-turn)
 - **Geocoding**: Photon (autocomplete) backed by Nominatim

@@ -1,17 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "@testing-library/react";
+import { keepPreviousData } from "@tanstack/react-query";
 import { renderWithProviders } from "@/test/utils";
 import { MapProvider } from "@/lib/map/map-context";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
 import { useSoilStore } from "@/stores/soil-store";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
+import { SCRUB_SETTLE_MS, useDrawnLayerDayStore } from "@/stores/useMetricAtDate";
 import { LAYER_REGISTRY } from "@/lib/map/layer-registry";
-import { DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS } from "@/lib/map/tile-layer-date-filter";
+import {
+  DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS,
+  dateFilterableStyleLayerIds,
+} from "@/lib/map/tile-layer-date-filter";
 import type { LayerToggleId } from "@/lib/map/layer-registry";
 import {
   climateFieldStreamName,
   CLIMATE_FIELD_SIGNAL_IDS,
+  CLIMATE_FIELD_TOGGLE_IDS,
 } from "@/lib/environmental/climate-field";
 import { SLIDER_STREAM_LAYER_NAMES } from "@/types/time-slider";
 import type {
@@ -61,25 +67,69 @@ function lastRenderOf(component: string): Record<string, unknown> | null {
  * exactly what several cases here assert: fire detections take the `fire` ROW's day, and no
  * other layer's.
  */
-const fireDataHook = vi.hoisted(() =>
-  vi.fn((_visible: boolean, _date?: string) => ({
+const fireDataStub = vi.hoisted(() => {
+  /**
+   * Fire detections that have landed for the day being asked for.
+   *
+   * The retention pair is spelled out rather than omitted: `useFireData` keeps the previous
+   * day's detections across a 304, a failed fetch and a date change, and its own contract
+   * requires a caller to read `isStaleForRequestedDate` before captioning `data` as the
+   * requested day's -- which is exactly what LayerManager publishes to `MapDateSummary`. A stub
+   * that left them out would let that read regress to `undefined` and still pass.
+   */
+  const settled = () => ({
     data: { type: "FeatureCollection", features: [] } as GeoJSON.FeatureCollection,
     count: 0,
     isLoading: false,
     error: null,
+    isStaleForRequestedDate: false,
+    dataDate: undefined as string | undefined,
     refetch: vi.fn(),
-  }))
-);
+  });
+  return { settled, hook: vi.fn((_visible: boolean, _date?: string) => settled()) };
+});
 
-vi.mock("@/hooks/useFireData", () => ({ useFireData: fireDataHook }));
+vi.mock("@/hooks/useFireData", () => ({ useFireData: fireDataStub.hook }));
 
 /** The `date` argument `useFireData` was last called with. */
 function fireRequestDate(): string | undefined {
-  return fireDataHook.mock.calls.at(-1)?.[1];
+  return fireDataStub.hook.mock.calls.at(-1)?.[1];
 }
 
-type ViewportQueryResult = { data: GeoJSON.FeatureCollection | undefined };
-type StreamflowQueryResult = { data: unknown[] };
+/**
+ * Every field of a react-query result LayerManager reads. The two flags are optional so the
+ * default stubs stay one line: `undefined` is compared against `true` in the component, exactly
+ * because a stub cannot be trusted to spell every flag.
+ */
+type ViewportQueryResult = {
+  data: GeoJSON.FeatureCollection | undefined;
+  isSuccess?: boolean;
+  isFetching?: boolean;
+  isPlaceholderData?: boolean;
+};
+type StreamflowQueryResult = {
+  data: unknown[];
+  isSuccess?: boolean;
+  isFetching?: boolean;
+  isPlaceholderData?: boolean;
+};
+
+/**
+ * A query that has answered for the key it was asked with.
+ *
+ * `isSuccess` is spelled, not omitted: "this request landed" is `isSuccess && !isPlaceholderData
+ * && data !== undefined`, never merely the absence of a placeholder, because `isPlaceholderData`
+ * is false on ERROR too. A stub that left `isSuccess` off would report every landing as a
+ * failure and let the drawn day silently fall back to the day requested.
+ */
+function landed<T>(data: T): { data: T; isSuccess: true; isFetching: false; isPlaceholderData: false } {
+  return { data, isSuccess: true, isFetching: false, isPlaceholderData: false };
+}
+
+/** A query whose next key is loading, with the previous key's answer still standing in. */
+function retaining<T>(data: T): { data: T; isSuccess: true; isFetching: true; isPlaceholderData: true } {
+  return { data, isSuccess: true, isFetching: true, isPlaceholderData: true };
+}
 
 const viewportQueries = vi.hoisted(() => ({
   // Declared with no parameters on purpose: both arguments are still recorded on
@@ -186,6 +236,11 @@ function createFakeMap() {
   // the regression to catch, not an even trade.
   const registrations = new Map<string, number>();
   let styleLoaded = false;
+  // Whether the style has BUILT its layers yet, which is a different question from whether it
+  // has finished loading: every applier guards its writes with getLayer(), so a style mid-build
+  // swallows them silently and something later has to converge. Defaults to built, because that
+  // is the state every case but the convergence ones assumes.
+  let styleLayersExist = true;
 
   return {
     on: (type: string, handler: () => void) => {
@@ -198,7 +253,10 @@ function createFakeMap() {
       listeners.get(type)?.delete(handler);
     },
     isStyleLoaded: () => styleLoaded,
-    getLayer: () => true,
+    getLayer: () => (styleLayersExist ? true : undefined),
+    setStyleLayersExist(value: boolean) {
+      styleLayersExist = value;
+    },
     setLayoutProperty: vi.fn(),
     // The single writer of every style-baked layer's opacity -- see
     // src/lib/map/layer-opacity.ts. It is always written as the AUTHORED base scaled, never as
@@ -218,8 +276,41 @@ function createFakeMap() {
 
 type FakeMap = ReturnType<typeof createFakeMap>;
 
+/**
+ * Resolves after the next animation frame.
+ *
+ * The `styledata` convergence pass and the opacity applier both coalesce onto one frame --
+ * `styledata` fires per tile and both rebuild a style expression per layer -- so a case that
+ * asserts either of them has to let a frame run. jsdom supplies a real `requestAnimationFrame`
+ * (vitest's jsdom environment sets `pretendToBeVisual`), and a callback registered here after
+ * the component's own is queued for the same frame, behind it.
+ */
+function nextAnimationFrame(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
 function renderLayerManager(fakeMap: FakeMap) {
   return renderWithProviders(
+    <MapProvider value={fakeMap as unknown as maplibregl.Map}>
+      <LayerManager />
+    </MapProvider>
+  );
+}
+
+/**
+ * Re-renders the manager against the same fake map.
+ *
+ * Every query here is a module mock read during render, so a case that changes what one of them
+ * answers has to render again for the component to see it -- nudging an unrelated store to force
+ * that would make the case about the nudge.
+ */
+function rerenderLayerManager(
+  rendered: ReturnType<typeof renderLayerManager>,
+  fakeMap: FakeMap
+): void {
+  rendered.rerender(
     <MapProvider value={fakeMap as unknown as maplibregl.Map}>
       <LayerManager />
     </MapProvider>
@@ -364,6 +455,12 @@ beforeEach(() => {
   // with a layer already dimmed by a previous one.
   useLayerStore.setState({ ...INITIAL_LAYER_STATE, layerOpacity: {} }, true);
   resetSliderStore();
+  // What the layers published about the previous case's canvas is a claim about a canvas that
+  // no longer exists; LayerManager clears it on unmount, and this is the belt to that braces.
+  useDrawnLayerDayStore.setState({ drawnDays: {}, publications: {} });
+  // `vi.clearAllMocks()` clears recorded CALLS and not implementations, so a case that overrides
+  // what the fire hook answers would otherwise answer that way for every case after it.
+  fireDataStub.hook.mockImplementation(() => fireDataStub.settled());
   dynamicStub.renders.length = 0;
   viewportQueries.getWatersheds.mockReturnValue({ data: undefined });
   viewportQueries.getSoilSurvey.mockReturnValue({ data: undefined });
@@ -566,6 +663,53 @@ describe("LayerManager applies per-layer opacity", () => {
     // ...and never a property the layer's type does not define.
     expect(written).not.toContain("interventions|circle-opacity");
     expect(written).not.toContain("interventions-points|fill-opacity");
+  });
+
+  /**
+   * The opacity half of the same gate the date filter used to sit behind. `isStyleLoaded()`
+   * stays false for as long as one source fails to settle, and while it was gated a reader's
+   * drag was dropped outright with nothing left to re-trigger it -- the layer kept painting its
+   * authored strength under a control reading something else.
+   */
+  it("dims a layer while a failing source holds isStyleLoaded() false", async () => {
+    const fakeMap = createFakeMap();
+    // Never set true: one Martin source is out for the whole session.
+    renderLayerManager(fakeMap);
+    fakeMap.setPaintProperty.mockClear();
+
+    act(() => {
+      useLayerStore.getState().setLayerOpacity("watersheds", 0.5);
+    });
+    await act(async () => {
+      await nextAnimationFrame();
+    });
+
+    expect(paintWriteFor(fakeMap, "watersheds-fill", "fill-opacity")).toBeCloseTo(0.025, 6);
+  });
+
+  /** And converges on styledata for a style layer that had not been built yet. */
+  it("converges the multiplier on styledata for style layers that did not exist yet", async () => {
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLayersExist(false);
+    renderLayerManager(fakeMap);
+
+    act(() => {
+      useLayerStore.getState().setLayerOpacity("watersheds", 0.5);
+    });
+    await act(async () => {
+      await nextAnimationFrame();
+    });
+    expect(fakeMap.setPaintProperty).not.toHaveBeenCalled();
+
+    fakeMap.setStyleLayersExist(true);
+    act(() => {
+      fakeMap.emit("styledata");
+    });
+    await act(async () => {
+      await nextAnimationFrame();
+    });
+
+    expect(paintWriteFor(fakeMap, "watersheds-fill", "fill-opacity")).toBeCloseTo(0.025, 6);
   });
 
   /**
@@ -1150,6 +1294,118 @@ describe("LayerManager filters each style-baked tile layer on its own layer's da
    * fire synchronously with `isStyleLoaded()` still false -- so the direct re-application inside
    * that handler is the safety net, and it has to reach every layer's own day, not one.
    */
+  /**
+   * The highest-value case in this file. `isStyleLoaded()` requires EVERY source's tiles to be
+   * in, so one slow or failing source holds it false indefinitely -- a Martin tile source
+   * routinely takes 84-117s cold in production, and before the CORS fix of 2026-08-17 the Martin
+   * composite never loaded at all. While it was false the date-filter effect was gated off and
+   * the only filter ever written was the one `onStyleLoad` wrote once, which on a cold load is
+   * `null`: every date-filterable tile layer drew its whole multi-year record underneath a row
+   * whose slider read one day, with no error and no caption. Dragging the slider changed
+   * nothing.
+   *
+   * The gate is gone for the same reason it went from the visibility applier: `applyDateFilter`
+   * guards every write with `getLayer()`, so an early pass is a no-op per missing layer rather
+   * than an error, and a dropped write has nothing left to re-trigger it.
+   */
+  it("filters every layer while a failing source holds isStyleLoaded() false for good", () => {
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: sliderCapabilities,
+    });
+    const fakeMap = createFakeMap();
+    // Never set true anywhere in this case: that is the whole point.
+    renderLayerManager(fakeMap);
+
+    expect(fakeMap.isStyleLoaded()).toBe(false);
+    expect(filteredDayFor(fakeMap, "fire-perimeters")).toBe("2026-07-21");
+    expect(filteredDayFor(fakeMap, "burn-severity")).toBe("2026-07-23");
+    expect(filteredDayFor(fakeMap, "sensors")).toBe("2026-07-24");
+  });
+
+  /**
+   * The same gap, in the direction that matters for a live session: a filter the reader's own
+   * action should change. Driven through `setCapabilities` rather than through a scrub because
+   * `hasSelectableDay` reaches the applier synchronously while a settled day waits out
+   * SCRUB_SETTLE_MS -- the property under test is that the write is not DROPPED, not how long
+   * the settle takes.
+   */
+  it("re-writes a filter after the style has stopped reporting itself loaded", () => {
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: sliderCapabilities,
+    });
+    const fakeMap = createFakeMap();
+    renderLayerManager(fakeMap);
+    expect(filteredDayFor(fakeMap, "sensors")).toBe("2026-07-24");
+
+    act(() => {
+      useTimeSliderStore.getState().setCapabilities(realTemporalKindCapabilities);
+    });
+
+    // sensors is a snapshot in the real payload, so its correct filter is none -- and that
+    // clearing has to reach the map even though nothing ever reports the style as loaded.
+    expect(lastFilterWriteFor(fakeMap, "sensors")).toBeUndefined();
+  });
+
+  /**
+   * The other half of the fix: a style whose layers do not exist yet swallows every write
+   * through the `getLayer()` guard, and with `isStyleLoaded()` stuck false no effect will ever
+   * re-run. `styledata` fires as each source's tiles land, so the filter converges there --
+   * exactly as visibility already did, and coalesced onto one frame because it rebuilds an
+   * expression per style layer and `styledata` fires per tile.
+   */
+  it("converges the filter on styledata for style layers that did not exist yet", async () => {
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: sliderCapabilities,
+    });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLayersExist(false);
+    renderLayerManager(fakeMap);
+
+    // Nothing to write to yet, and nothing written.
+    expect(fakeMap.setFilter).not.toHaveBeenCalled();
+
+    // The style builds its layers; one source is still out, so isStyleLoaded() stays false and
+    // no effect re-runs. Only the styledata handler is left to notice.
+    fakeMap.setStyleLayersExist(true);
+    act(() => {
+      fakeMap.emit("styledata");
+    });
+    await act(async () => {
+      await nextAnimationFrame();
+    });
+
+    expect(filteredDayFor(fakeMap, "fire-perimeters")).toBe("2026-07-21");
+    expect(filteredDayFor(fakeMap, "sensors")).toBe("2026-07-24");
+  });
+
+  /** One pass per frame however many tiles land, since each pass rebuilds every expression. */
+  it("coalesces a burst of styledata into a single filter pass", async () => {
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: sliderCapabilities,
+    });
+    const fakeMap = createFakeMap();
+    renderLayerManager(fakeMap);
+    fakeMap.setFilter.mockClear();
+
+    act(() => {
+      for (let tile = 0; tile < 12; tile += 1) fakeMap.emit("styledata");
+    });
+    await act(async () => {
+      await nextAnimationFrame();
+    });
+
+    const perPass = dateFilterableStyleLayerIds().length;
+    expect(fakeMap.setFilter).toHaveBeenCalledTimes(perPass);
+  });
+
   it("re-applies every layer's own filter after a basemap swap", () => {
     useTimeSliderStore.setState({
       layerDates: {},
@@ -1302,5 +1558,257 @@ describe("LayerManager keeps the date filter and the row's own control in step",
         expect(lastFilterWriteFor(fakeMap, styleLayerId), styleLayerId).toBeUndefined();
       }
     }
+  });
+});
+
+/**
+ * A layer must not go blank between days, and what it draws meanwhile must be labelled.
+ *
+ * Every feed here fell back to `EMPTY_FEATURE_COLLECTION` while pending, so each date change and
+ * each pan dropped the layer to zero features for a whole warehouse round trip and then refilled
+ * -- read by a user as latency AND as staleness, and indistinguishable from a day the warehouse
+ * genuinely holds nothing for. `keepPreviousData` fixes the blanking; on its own it would trade
+ * that for a worse bug, the previous day painted under a row whose slider has already moved. The
+ * publication below is what closes that: `MapDateSummary` captions the day actually drawn, so the
+ * two halves ship together or not at all.
+ */
+describe("LayerManager holds the previous day while the next one loads", () => {
+  /** The options object the component passed for a query. */
+  function optionsOf(query: { mock: { calls: unknown[][] } }): Record<string, unknown> {
+    return (query.mock.calls.at(-1)?.[1] ?? {}) as Record<string, unknown>;
+  }
+
+  /** Waits out one row's scrub settle window, which is what turns a new day into a request. */
+  async function settleScrub(): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, SCRUB_SETTLE_MS + 20));
+    });
+  }
+
+  it("asks every dated feed to keep the previous collection rather than blank", () => {
+    useMapStore.setState({
+      activeLayers: ["drought", "water", "vegetation", "weather", "soil-moisture", "soil-survey"],
+    });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    for (const [name, query] of [
+      ["getDroughtClassification", viewportQueries.getDroughtClassification],
+      ["getStreamflow", viewportQueries.getStreamflow],
+      ["getGroundwater", viewportQueries.getGroundwater],
+      ["getVegetationIndex", viewportQueries.getVegetationIndex],
+      ["getWeatherForBbox", viewportQueries.getWeatherForBbox],
+      // Proxied per viewport rather than dated, and it blanks on every PAN for the same reason.
+      ["getSoilField", viewportQueries.getSoilField],
+      ["getSoilSurvey", viewportQueries.getSoilSurvey],
+    ] as const) {
+      expect(optionsOf(query).placeholderData, name).toBe(keepPreviousData);
+    }
+  });
+
+  it("publishes the day each drawn layer is actually painting", () => {
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: streamBackedCapabilities,
+    });
+    useMapStore.setState({ activeLayers: ["drought"] });
+    viewportQueries.getDroughtClassification.mockReturnValue({
+      ...landed(polygonCollection()),
+    });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    expect(useDrawnLayerDayStore.getState().drawnDays.drought).toEqual({
+      drawnDate: "2026-07-28",
+      requestedDate: "2026-07-28",
+      isLoading: false,
+    });
+  });
+
+  /**
+   * The whole of D4/D5, as one case. The row has moved to a new day and the collection on screen
+   * is still the old one -- so what the map is DRAWING is the old day, and any surface that says
+   * otherwise turns an ordinary fetch into what reads as a data bug.
+   */
+  it("keeps naming the previous day while the retained frame is still on screen", async () => {
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: streamBackedCapabilities,
+    });
+    useMapStore.setState({ activeLayers: ["drought"] });
+    viewportQueries.getDroughtClassification.mockReturnValue({
+      ...landed(polygonCollection()),
+    });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const rendered = renderLayerManager(fakeMap);
+
+    // The reader scrubs; react-query hands back the previous day's collection as a placeholder
+    // while the new day loads.
+    viewportQueries.getDroughtClassification.mockReturnValue({
+      ...retaining(polygonCollection()),
+    });
+    act(() => {
+      useTimeSliderStore.getState().setLayerDate("drought", "2026-06-01");
+    });
+    await settleScrub();
+
+    expect(useDrawnLayerDayStore.getState().drawnDays.drought).toEqual({
+      drawnDate: "2026-07-28",
+      requestedDate: "2026-06-01",
+      isLoading: true,
+    });
+
+    // ...and adopts the new day the moment its collection actually lands.
+    viewportQueries.getDroughtClassification.mockReturnValue({
+      ...landed(polygonCollection()),
+    });
+    act(() => {
+      rerenderLayerManager(rendered, fakeMap);
+    });
+
+    expect(useDrawnLayerDayStore.getState().drawnDays.drought).toEqual({
+      drawnDate: "2026-06-01",
+      requestedDate: "2026-06-01",
+      isLoading: false,
+    });
+  });
+
+  /**
+   * TanStack keeps `isPlaceholderData` true off `keepPreviousData` even once a query is
+   * DISABLED, so a layer switched off would otherwise report itself permanently mid-load and
+   * leave an "Updating" mark on the canvas that nothing could clear. It is the same trap
+   * `useMetricAtDate.resolvedDate` documents, met from the other side.
+   */
+  it("publishes nothing at all for a layer that is switched off", () => {
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: streamBackedCapabilities,
+    });
+    useMapStore.setState({ activeLayers: [] });
+    viewportQueries.getDroughtClassification.mockReturnValue({
+      // The disabled-query shape: a placeholder still standing, nothing in flight.
+      ...retaining(polygonCollection()),
+      isFetching: false,
+    });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    expect(useDrawnLayerDayStore.getState().drawnDays.drought).toBeUndefined();
+  });
+
+  /**
+   * A cross-lane contract, pinned here because this is its only consumer on the map.
+   * `useFireData` is not a tRPC hook and has no `isPlaceholderData`, but it retains the previous
+   * day's detections for the same reasons and states that as `isStaleForRequestedDate`. Its own
+   * doc says a caller must read it before captioning `data` as the requested day's -- so
+   * ignoring it here would put fire's retained frame on the canvas under the new day's date,
+   * which is the exact defect the rest of this block exists to prevent for every other feed.
+   */
+  it("labels fire's retained frame from the hook's own staleness flag", async () => {
+    useTimeSliderStore.setState({
+      layerDates: { fire: "2026-07-30" },
+      forecastVariant: "monte_carlo",
+      capabilities: sliderCapabilities,
+    });
+    useMapStore.setState({ activeLayers: ["fire"] });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    // The day the reader asked for has landed.
+    expect(useDrawnLayerDayStore.getState().drawnDays.fire).toEqual({
+      drawnDate: "2026-07-30",
+      requestedDate: "2026-07-30",
+      isLoading: false,
+    });
+
+    // The reader scrubs back; that day's fetch has not landed, so the detections still painted
+    // are 2026-07-30's -- reported as such without LayerManager ever being told which day they
+    // came from, because the previous settled day is what it already watched land.
+    // A retained frame means features are actually painted, which is what `count` says and
+    // `isStaleForRequestedDate` alone cannot: that flag is equally true before anything has ever
+    // loaded, where the layer is empty and there is no earlier day to name.
+    fireDataStub.hook.mockImplementation(() => ({
+      ...fireDataStub.settled(),
+      data: polygonCollection(),
+      count: 1,
+      isLoading: true,
+      isStaleForRequestedDate: true,
+      dataDate: "2026-07-30",
+    }));
+    act(() => {
+      useTimeSliderStore.getState().setLayerDate("fire", "2026-07-25");
+    });
+    await settleScrub();
+
+    expect(useDrawnLayerDayStore.getState().drawnDays.fire).toEqual({
+      drawnDate: "2026-07-30",
+      requestedDate: "2026-07-25",
+      isLoading: true,
+    });
+  });
+
+  /**
+   * The coverage half of the pair, and the one that stops being a documentation problem now that
+   * `DockSections` renders a per-row pending indicator from `drawnDays[layerId]?.isLoading`.
+   *
+   * A layer given `keepPreviousData` without a report here is worse than one with neither: it
+   * retains the previous answer AND reports `isLoading: false` forever, so its row's indicator is
+   * silently dead and the canvas caption states the day its slider asks for over the day before
+   * it. This walks every feed the manager reads rather than a list spelled here, so adding a
+   * tenth and forgetting to report it fails this case instead of shipping.
+   */
+  it("publishes a report for every feed it reads, so no retained layer is left unlabelled", () => {
+    const READ_BY_THE_MANAGER: LayerToggleId[] = [
+      "fire",
+      "drought",
+      "water",
+      "vegetation",
+      "soil-survey",
+      "soil-moisture",
+      "soil-temperature",
+      "soil-vpd",
+      "weather",
+    ];
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: streamBackedCapabilities,
+    });
+    useMapStore.setState({ activeLayers: READ_BY_THE_MANAGER });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    const published = useDrawnLayerDayStore.getState().drawnDays;
+    for (const toggleId of READ_BY_THE_MANAGER) {
+      expect(published[toggleId], toggleId).toBeDefined();
+    }
+    // ...and never the nine NASA POWER rows, which `ClimateSignalLayer` publishes itself. Two
+    // publishers writing one id would make the store's merge order-dependent.
+    for (const toggleId of CLIMATE_FIELD_TOGGLE_IDS) {
+      expect(published[toggleId], toggleId).toBeUndefined();
+    }
+  });
+
+  it("stops publishing once the map is gone, rather than captioning a canvas that is not there", () => {
+    useMapStore.setState({ activeLayers: ["drought"] });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const rendered = renderLayerManager(fakeMap);
+    expect(useDrawnLayerDayStore.getState().drawnDays.drought).toBeDefined();
+
+    act(() => {
+      rendered.unmount();
+    });
+
+    expect(useDrawnLayerDayStore.getState().drawnDays).toEqual({});
   });
 });

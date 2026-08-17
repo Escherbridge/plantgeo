@@ -34,6 +34,7 @@ use the database owner.
 | `NEXT_PUBLIC_TERRAIN_URL` | Optional reviewed terrain URL template containing `{z}`, `{x}`, and `{y}`. |
 | `NEXT_PUBLIC_DYNAMIC_TILES_URL` | Public/custom HTTPS Martin origin. Leave unset until Martin passes its database, role, catalog, tile, CORS, and rate-limit gates. |
 | `NEXT_PUBLIC_APP_URL` | Public canonical origin used in links and email, `http://localhost:3001` in development. |
+| `NEXT_PUBLIC_INGEST_BBOX` | Optional. Same `west,south,east,north` format as `INGEST_BBOX`; set it identically so the opening map camera (computed client-side before `getIngestionCoverage` resolves, see `src/lib/map/coverage-region.ts`) matches the server's real coverage box. Falls back to a hardcoded box mirroring current production `INGEST_BBOX` when unset, so behavior is correct today regardless — but drifts from a future `INGEST_BBOX` change until this is set. Not yet forwarded as a Docker build ARG; see `.env.example` for the required Dockerfile addition. |
 
 Never place a credential, provider token, `localhost` production value, or
 `*.railway.internal` hostname in a public variable. Environmental tile layers
@@ -47,7 +48,8 @@ does not update the client.
 | Variable | Scope | Current status |
 | --- | --- | --- |
 | `MARTIN_URL` | server | Private Martin URL. Keep unset in production until `plantgeo-martin` is activated. |
-| `TILE_CORS_ORIGIN` | Martin | Exact web origin; CORS is not authentication. |
+| `TILE_CORS_ORIGIN` | Martin | Exact web origin allowed to request public dynamic tiles; CORS is not authentication. Fills one entry in `infra/martin/martin.yaml`'s `cors.origin` list -- the custom-domain entry. That list is a genuine multi-entry list, one placeholder per origin, because Martin cannot expand a single env var into several list entries. A domain active on `plantgeo-main` but missing from the list is a silent, browser-only outage: `curl` returns a clean `200` because it never sends an `Origin` header. See `docs/deployment.md`'s "Martin CORS allow-list is coupled to the domain set". |
+| `TILE_CORS_ORIGIN_RAILWAY_DOMAIN` | Martin | Second `cors.origin` entry, for the Railway-provided service domain (as opposed to the custom domain covered by `TILE_CORS_ORIGIN` above). Defaults in `martin.yaml` to the current Railway domain, so production needs no value set here unless that domain is renamed or rotated. |
 | `VALHALLA_URL` | server | Optional/deferred routing service; absence must produce an unavailable response. |
 | `VALHALLA_PBF_URL` | operator | Optional graph-build input, not a web runtime setting. Pin the release/checksum before use. |
 | `PHOTON_URL` | server | Optional/deferred geocoder. Production should use an owned or contractually approved service, not an undocumented public instance. |

@@ -4,6 +4,13 @@
  * storage usage estimation, and cache clearing.
  */
 
+import { createBudgetedFetch } from "@/lib/net/request-budget";
+
+/** Only the no-service-worker fallback below needs this -- the SW-mediated path is already
+ *  serial by accident of its message-passing design, not by intent; see
+ *  src/lib/net/AGENTS.md "The problem this replaces". */
+const budgetedFetch = createBudgetedFetch("tile-prefetch");
+
 export interface BoundingBox {
   west: number;
   south: number;
@@ -87,7 +94,7 @@ export function prefetchTiles(
         return;
       }
       for (const url of urls) {
-        fetch(url, { mode: "cors" })
+        budgetedFetch(url, { mode: "cors" })
           .catch(() => {})
           .finally(() => {
             completed++;

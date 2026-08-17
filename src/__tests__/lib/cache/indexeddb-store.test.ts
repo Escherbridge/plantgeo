@@ -12,6 +12,8 @@ import { createAlwaysFailingIndexedDb, createFakeIndexedDb } from "./fake-indexe
 const CONFIG: IndexedDbStoreConfig = {
   databaseName: "test-db",
   storeName: "test-store",
+  metadataStoreName: "test-store-metadata",
+  version: 2,
 };
 
 const originalIndexedDb = globalThis.indexedDB;

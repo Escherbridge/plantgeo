@@ -1,21 +1,41 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createEvent, fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import { LayerTimeSlider } from "@/components/map/layer-panel/LayerTimeSlider";
 import {
   buildCoverageSegments,
+  buildSyncedDayRuns,
   dayCoverageState,
   describeCoverageBand,
   describeCoverageTopology,
   describeDayCoverage,
+  describeSyncedDayBand,
   drawCoverageBands,
+  drawSyncedDayBands,
   MAX_SPOKEN_COVERAGE_RUNS,
   MINIMUM_DRAWN_BAND_PERCENT,
+  percentOfDayOffset,
+  SYNCED_DAY_APPEARANCE,
   TRACK_REGION_APPEARANCE,
 } from "@/components/map/layer-panel/layer-coverage-track";
 import { layerLabel } from "@/lib/map/layer-registry";
 import { addDays, dayOffset, useTimeSliderStore } from "@/stores/time-slider-store";
+import { useSyncedDays, useSyncIndexReady } from "@/stores/sync-index-store";
 import type { SliderCapabilities, SliderLayerCapability } from "@/types/time-slider";
+
+/**
+ * `sync-index-store` is a pinned contract owned by a parallel lane (see
+ * src/components/map/AGENTS.md §synced-days-track) -- mocked here exactly like
+ * `useOfflineSync` is in `OfflinePanel.test.tsx`, rather than exercised for real, so these cases
+ * assert against a controlled set/readiness pair instead of a real IndexedDB-backed hydration.
+ */
+vi.mock("@/stores/sync-index-store", () => ({
+  useSyncedDays: vi.fn(),
+  useSyncIndexReady: vi.fn(),
+}));
+
+const mockUseSyncedDays = vi.mocked(useSyncedDays);
+const mockUseSyncIndexReady = vi.mocked(useSyncIndexReady);
 
 /**
  * Deliberately nowhere near the machine's own date: a stray `new Date()` deciding "today" flips
@@ -134,6 +154,10 @@ describe("LayerTimeSlider", () => {
       // previous test left behind would make the in-flight and failed states swap silently.
       capabilitiesUnavailable: false,
     });
+    // Ready-and-empty by default: harmless for every case above that predates the synced-days
+    // line (see "the synced-days line" below for why this specific pair renders nothing extra).
+    mockUseSyncIndexReady.mockReturnValue(true);
+    mockUseSyncedDays.mockReturnValue(new Set());
   });
 
   it("draws a coverage gap and a thin range as separate bands over one dense base", () => {
@@ -791,6 +815,236 @@ describe("LayerTimeSlider", () => {
       expect(TRACK_REGION_APPEARANCE.absent.backgroundImage).not.toBe(
         TRACK_REGION_APPEARANCE.future.backgroundImage
       );
+    });
+  });
+
+  describe("synced-days geometry", () => {
+    it("draws one band per contiguous run of synced days", () => {
+      const bands = drawSyncedDayBands(
+        VEGETATION_DOMAIN,
+        new Set(["2019-01-05", "2019-01-06", "2019-01-07"])
+      );
+
+      expect(bands).toHaveLength(1);
+      expect(bands[0].kind).toBe("synced");
+      expect(bands[0].fromDate).toBe("2019-01-05");
+      expect(bands[0].toDate).toBe("2019-01-07");
+    });
+
+    it("draws nothing for an empty synced set", () => {
+      expect(drawSyncedDayBands(VEGETATION_DOMAIN, new Set())).toEqual([]);
+      expect(buildSyncedDayRuns(VEGETATION_DOMAIN, new Set())).toEqual([]);
+    });
+
+    it("keeps two runs separate when they are far enough apart not to floor together", () => {
+      const bands = drawSyncedDayBands(VEGETATION_DOMAIN, new Set(["2019-01-05", "2019-03-01"]));
+      expect(bands).toHaveLength(2);
+    });
+
+    it("keeps a single synced day visible on a long axis instead of rounding it away", () => {
+      const longDomain = { firstDay: "2015-03-07", today: SERVER_CURRENT_DATE, lastDay: LAST_DAY };
+      const bands = drawSyncedDayBands(longDomain, new Set(["2017-06-14"]));
+
+      expect(bands).toHaveLength(1);
+      expect(bands[0].widthPercent).toBe(MINIMUM_DRAWN_BAND_PERCENT);
+    });
+
+    it("sweeps the whole drawn axis, not just through today, so a synced forecast day counts", () => {
+      // LAST_DAY sits two days past SERVER_CURRENT_DATE (the axis's future padding).
+      // buildCoverageSegments stops at today; a synced-days run must not inherit that bound.
+      const runs = buildSyncedDayRuns(VEGETATION_DOMAIN, new Set([LAST_DAY]));
+      expect(runs).toHaveLength(1);
+      expect(runs[0].startOffset).toBe(dayOffset(FIRST_DAY, LAST_DAY));
+    });
+
+    it("shares its geometry with the coverage track, registering pixel-exactly", () => {
+      const coverageBands = drawCoverageBands(VEGETATION_DOMAIN, vegetationCapability());
+      const gapBand = coverageBands.find((band) => band.kind === "absent");
+      expect(gapBand).toBeDefined();
+
+      const syncedBands = drawSyncedDayBands(
+        VEGETATION_DOMAIN,
+        new Set([VEGETATION_GAP.from, "2019-01-11", VEGETATION_GAP.to])
+      );
+
+      expect(syncedBands[0].leftPercent).toBe(gapBand!.leftPercent);
+      expect(syncedBands[0].widthPercent).toBe(gapBand!.widthPercent);
+    });
+
+    it("describes a synced band in words for its tooltip", () => {
+      const bands = drawSyncedDayBands(VEGETATION_DOMAIN, new Set(["2019-01-05", "2019-01-06"]));
+      expect(describeSyncedDayBand(bands[0])).toBe("Saved on this device: 2019-01-05 to 2019-01-06");
+    });
+
+    it("counts coalesced runs rather than naming them individually, like the coverage track does", () => {
+      // Same three dates the coverage track's own "coalesces holes too close to draw apart" case
+      // uses, on the same long axis where a single day floors below MINIMUM_DRAWN_BAND_PERCENT:
+      // proven there to merge, so a mismatch here would mean the shared floor/merge core diverged
+      // between the two callers.
+      const longDomain = { firstDay: "2015-03-07", today: SERVER_CURRENT_DATE, lastDay: LAST_DAY };
+      const bands = drawSyncedDayBands(
+        longDomain,
+        new Set(["2017-06-14", "2017-06-16", "2017-06-18"])
+      );
+
+      expect(bands).toHaveLength(1);
+      expect(bands[0].rangeCount).toBe(3);
+      expect(bands[0].fromDate).toBe("2017-06-14");
+      expect(bands[0].toDate).toBe("2017-06-18");
+      expect(describeSyncedDayBand(bands[0])).toBe(
+        "Saved on this device: 3 ranges between 2017-06-14 and 2017-06-18"
+      );
+    });
+
+    /**
+     * Locks in the fix for a reused-fill defect: the first version painted synced runs in the
+     * exact same solid `TRACK_REGION_APPEARANCE.dense.backgroundColor` the coverage track's own
+     * dense base uses a few pixels below it, which read as one bar with a fainter echo rather
+     * than two separate claims. Asserted against the exported constants directly (no rendering,
+     * no dependence on how a test environment's CSSOM round-trips `hsl(var(...))`/gradient
+     * syntax) -- the same style the existing "encodes each track region with a hatch angle of
+     * its own" case already uses for `TRACK_REGION_APPEARANCE`.
+     */
+    it("gives the synced-days line its own fill, never a token TRACK_REGION_APPEARANCE already uses", () => {
+      expect(SYNCED_DAY_APPEARANCE.backgroundImage).toContain("radial-gradient");
+      expect(SYNCED_DAY_APPEARANCE.backgroundColor).not.toBe(
+        TRACK_REGION_APPEARANCE.dense.backgroundColor
+      );
+      for (const region of Object.values(TRACK_REGION_APPEARANCE)) {
+        expect(SYNCED_DAY_APPEARANCE.backgroundColor).not.toBe(region.backgroundColor);
+        if (region.backgroundImage === undefined) continue;
+        // Every coverage region's image is a line hatch; the synced line's is a dot pattern --
+        // a third vocabulary, not a fifth angle.
+        expect(SYNCED_DAY_APPEARANCE.backgroundImage).not.toBe(region.backgroundImage);
+      }
+    });
+  });
+
+  describe("the synced-days line", () => {
+    it("registers pixel-exactly above the coverage track for the same days", () => {
+      mockUseSyncedDays.mockReturnValue(new Set([VEGETATION_GAP.from, "2019-01-11", VEGETATION_GAP.to]));
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+
+      const coverageBand = screen.getByTestId("layer-time-slider-band-vegetation-absent");
+      const syncedBand = screen.getByTestId("layer-time-slider-synced-band-vegetation");
+      expect(syncedBand.style.left).toBe(coverageBand.style.left);
+      expect(syncedBand.style.width).toBe(coverageBand.style.width);
+    });
+
+    /**
+     * The hydrated-but-empty state renders a visually DISTINCT baseline (no hatch, no dots) --
+     * a sighted reader can already tell it apart from "not yet known" and from "holding days".
+     * An aural reader must be able to tell the SAME three states apart, which means this state
+     * cannot be silent the way a dense coverage day is: dense has no visual mark of its own to
+     * be silent about, where this state's plain baseline is itself a real, distinct render.
+     */
+    it("states nothing is saved yet, in words, once the index is known to be empty", () => {
+      renderWithProviders(<LayerTimeSlider layerId="water" />);
+
+      expect(screen.queryAllByTestId("layer-time-slider-synced-band-water")).toHaveLength(0);
+      expect(screen.queryByTestId("layer-time-slider-synced-unknown-water")).toBeNull();
+      expect(screen.getByTestId("layer-time-slider-note-water").textContent).toContain(
+        "Nothing saved on this device yet."
+      );
+    });
+
+    it("draws the not-yet-known placeholder distinctly from an empty track, and says so", () => {
+      mockUseSyncIndexReady.mockReturnValue(false);
+      renderWithProviders(<LayerTimeSlider layerId="water" />);
+
+      expect(screen.getByTestId("layer-time-slider-synced-unknown-water")).not.toBeNull();
+      expect(screen.queryAllByTestId("layer-time-slider-synced-band-water")).toHaveLength(0);
+      expect(screen.getByTestId("layer-time-slider-note-water").textContent).toContain(
+        "Checking what's saved"
+      );
+    });
+
+    /**
+     * A live write racing hydration: the index already has entries for this layer, but
+     * `useSyncIndexReady` has not flipped yet. The track must still draw as "not yet known" --
+     * this pins the branch reading `syncIndexReady` first, not `syncedDayBands.length`, since a
+     * future reorder could pass a naive "renders hatch when nothing is synced" test while
+     * failing this one.
+     */
+    it("draws the not-yet-known placeholder even when the index already reports days", () => {
+      mockUseSyncIndexReady.mockReturnValue(false);
+      mockUseSyncedDays.mockReturnValue(new Set(["2019-01-01"]));
+      renderWithProviders(<LayerTimeSlider layerId="water" />);
+
+      expect(screen.getByTestId("layer-time-slider-synced-unknown-water")).not.toBeNull();
+      expect(screen.queryAllByTestId("layer-time-slider-synced-band-water")).toHaveLength(0);
+    });
+
+    it("states the held count and that the current day is one of them, in words", () => {
+      mockUseSyncedDays.mockReturnValue(new Set([VEGETATION_LATEST_DATE, "2019-01-05"]));
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+
+      const note = screen.getByTestId("layer-time-slider-note-vegetation").textContent ?? "";
+      expect(note).toContain("2 days saved on this device");
+      expect(note).not.toContain("this day is not");
+    });
+
+    it("says the current day is not held when it sits outside the synced set", () => {
+      mockUseSyncedDays.mockReturnValue(new Set(["2019-01-05"]));
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+
+      expect(screen.getByTestId("layer-time-slider-note-vegetation").textContent).toContain(
+        "this day is not one of them"
+      );
+    });
+
+    it("marks the selected day on its own row at the same offset the main track uses", () => {
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+
+      const tick = screen.getByTestId("layer-time-slider-synced-selected-tick-vegetation");
+      const expectedPercent = percentOfDayOffset(
+        VEGETATION_DOMAIN,
+        dayOffset(FIRST_DAY, VEGETATION_LATEST_DATE)
+      );
+      expect(tick.style.left).toBe(`${expectedPercent}%`);
+    });
+  });
+
+  describe("the pending fetch signal", () => {
+    it("marks the range input pending and the track busy when told the fetch is in flight", () => {
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" isFetchingCurrentDay />);
+
+      expect(screen.getByTestId("layer-time-slider-range-vegetation").className).toContain(
+        "is-pending"
+      );
+      expect(
+        screen.getByTestId("layer-time-slider-track-vegetation").getAttribute("aria-busy")
+      ).toBe("true");
+    });
+
+    it("leaves the range input and track unmarked when nothing is pending", () => {
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+
+      expect(screen.getByTestId("layer-time-slider-range-vegetation").className).not.toContain(
+        "is-pending"
+      );
+      expect(
+        screen.getByTestId("layer-time-slider-track-vegetation").getAttribute("aria-busy")
+      ).toBeNull();
+    });
+
+    it("says so in words, never claiming the retained frame is a specific previous DAY", () => {
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" isFetchingCurrentDay />);
+
+      const note = screen.getByTestId("layer-time-slider-note-vegetation").textContent ?? "";
+      expect(note).toContain("moment behind");
+      expect(note).not.toContain("previous day");
+    });
+
+    it("orders the pending note ahead of the coverage note", () => {
+      useTimeSliderStore.setState({ layerDates: { vegetation: VEGETATION_GAP.from } });
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" isFetchingCurrentDay />);
+
+      const note = screen.getByTestId("layer-time-slider-note-vegetation").textContent ?? "";
+      const pendingIndex = note.indexOf("moment behind");
+      const coverageIndex = note.indexOf("No data on this date");
+      expect(pendingIndex).toBeGreaterThanOrEqual(0);
+      expect(coverageIndex).toBeGreaterThan(pendingIndex);
     });
   });
 });
