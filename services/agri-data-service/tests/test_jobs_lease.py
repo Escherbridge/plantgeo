@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from agri_data_service.ingest.results import failure_reason, redact_secrets
 from agri_data_service.jobs.lease import (
@@ -31,7 +31,9 @@ from agri_data_service.jobs.lease import (
     defer_work_item,
     extend_lease,
     fail_work_item,
+    failure_condition_name,
     failure_summary,
+    find_missing_relations,
     reclaim_expired_leases,
     record_checkpoint,
     redact_text,
@@ -723,11 +725,101 @@ def test_an_error_summary_never_carries_a_url_or_a_dsn() -> None:
 
 def test_a_sqlalchemy_error_degrades_to_its_class_name_so_its_statement_and_parameters_stay_out_of_the_log() -> None:
     error = OperationalError("INSERT INTO agri.job_work_item ...", {"payload": "secret"}, Exception("boom"))
-    assert failure_summary(error) == "job step failed (OperationalError)"
+    summary = failure_summary(error)
+    # The class pair, and never the statement or the bound parameter.
+    assert summary == "job step failed (OperationalError: Exception)"
+    assert "INSERT INTO" not in summary
+    assert "secret" not in summary
 
 
 def test_an_empty_error_message_still_produces_a_summary_rather_than_an_empty_column() -> None:
     assert failure_summary(RuntimeError("")) == "unknown job failure"
+
+
+def test_failure_condition_name_reports_a_plain_exception_that_has_no_driver_error() -> None:
+    """Not every failure is a DBAPI error; one with no `orig` reports its own class alone."""
+    assert failure_condition_name(PermissionError("permission denied")) == "PermissionError"
+    assert failure_condition_name(TimeoutError()) == "TimeoutError"
+
+
+def test_failure_condition_name_names_the_real_condition_under_a_dialect_wrapper() -> None:
+    """This is the production bug directly: prod's `error_summary` read the tautological literal
+    'job step failed (ProgrammingError)' for an `UndefinedTable` on `agri.matview_refresh_state`
+    before its migration had landed, because the outer class name alone said nothing the dialect
+    wrapper's own class did not already say. The real condition is one level down, on `.orig`'s own
+    `__cause__` -- asyncpg wraps its own ProgrammingError around the actual UndefinedTableError.
+    """
+
+    class UndefinedTableError(Exception):
+        """Stands in for asyncpg.exceptions.UndefinedTableError without the driver dependency."""
+
+    condition = UndefinedTableError('relation "agri.matview_refresh_state" does not exist')
+
+    # A driver error that IS the condition: nothing to unwrap, so `orig` is reported as-is.
+    direct = ProgrammingError(statement="select 1", params={}, orig=condition)
+    # The live shape: a distinct wrapper class, so the assertion only passes if the unwrap actually
+    # happened rather than merely reading `orig`'s own type.
+    wrapped = ProgrammingError(statement="select 1", params={}, orig=RuntimeError("dialect wrapper"))
+    wrapped.orig.__cause__ = condition
+
+    assert failure_condition_name(direct) == "ProgrammingError: UndefinedTableError"
+    assert failure_condition_name(wrapped) == "ProgrammingError: UndefinedTableError"
+    assert "RuntimeError" not in failure_condition_name(wrapped)
+    assert failure_summary(wrapped) == "job step failed (ProgrammingError: UndefinedTableError)"
+
+
+def test_failure_condition_name_publishes_nothing_but_identifiers_however_hostile_the_exception() -> None:
+    """The security property is structural: every expression is `type(x).__name__`, always an
+    identifier, so this holds however an exception tries to smuggle a statement through `__str__`,
+    `.statement`, `.params` or `__cause__`.
+    """
+
+    class _HostileError(Exception):
+        statement = "select email, slug from public.users"
+        params = ("secret",)
+
+        def __str__(self) -> str:
+            return "[SQL: select email from public.users]"
+
+    wrapping_hostile = ProgrammingError(statement="select 1", params={"secret": "value"}, orig=_HostileError())
+    wrapping_hostile.orig.__cause__ = _HostileError()
+
+    for published in (failure_condition_name(_HostileError()), failure_condition_name(wrapping_hostile)):
+        assert re.fullmatch(r"\w+(?:: \w+)?", published), published
+
+
+async def test_find_missing_relations_reports_only_what_to_regclass_could_not_resolve() -> None:
+    session = RecordingSession()
+    session.answer(
+        "check_relations_exist",
+        [
+            {"qualified_name": "agri.matview_refresh_state", "relation_exists": False},
+            {"qualified_name": "geo.mv_layer_feature_stats", "relation_exists": True},
+        ],
+    )
+    missing = await find_missing_relations(
+        session, ["agri.matview_refresh_state", "geo.mv_layer_feature_stats"]
+    )
+    assert missing == ("agri.matview_refresh_state",)
+    assert session.parameters_for("check_relations_exist")["qualified_names"] == [
+        "agri.matview_refresh_state",
+        "geo.mv_layer_feature_stats",
+    ]
+
+
+async def test_find_missing_relations_answers_immediately_on_an_empty_list_with_no_round_trip() -> None:
+    session = RecordingSession()
+    assert await find_missing_relations(session, []) == ()
+    assert session.statements == []
+
+
+async def test_find_missing_relations_reports_nothing_missing_when_every_relation_resolved() -> None:
+    session = RecordingSession()
+    session.answer(
+        "check_relations_exist",
+        [{"qualified_name": "agri.matview_refresh_state", "relation_exists": True}],
+    )
+    assert await find_missing_relations(session, ["agri.matview_refresh_state"]) == ()
 
 
 def test_a_firms_key_in_a_url_path_is_redacted_because_firms_puts_its_key_in_the_path_not_the_query() -> None:

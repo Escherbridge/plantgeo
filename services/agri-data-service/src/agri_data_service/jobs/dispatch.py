@@ -32,6 +32,7 @@ from sqlalchemy import text
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.jobs.lease import fetch_row, required_column
 from agri_data_service.jobs.registry import JOB_HANDLERS, JobHandlerRegistry
+from agri_data_service.jobs.worker import slice_summary_is_failing
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -188,12 +189,22 @@ async def dispatch_lane(
         logger.info("lane_dispatch_skipped_paused", lane_id=lane_id, requested_by=requested_by)
         return DispatchOutcome(lane_id=lane_id, state="paused", summary=None)
     summary = await lane.trigger(session, requested_by=requested_by)
-    logger.info(
+    # Severity follows the outcome, not the log level every dispatch used to share: a fully
+    # dead-lettered lane's next tick claims nothing and reports `stop_reason=no_claimable_work
+    # succeeded=0`, which is numerically identical to a finished lane -- exactly what let production
+    # read SUCCESS hourly for ~24h with two lanes fully dead. `slice_summary_is_failing` is the single
+    # predicate `execution/jobs_pulse_command.py`'s `_slice_outcome`/`FAILING_PULSE_OUTCOMES` also read,
+    # so the two can never quietly disagree about what "failing" means. See jobs/AGENTS.md "Preflight"
+    # and execution/AGENTS.md "Outcomes and the exit rule".
+    log = logger.error if slice_summary_is_failing(summary) else logger.info
+    log(
         "lane_dispatched",
         lane_id=lane_id,
         requested_by=requested_by,
         job_run_id=None if summary.job_run_id is None else str(summary.job_run_id),
         stop_reason=summary.stop_reason,
         succeeded=summary.succeeded,
+        dead_lettered=summary.dead_lettered,
+        run_status=summary.run_status,
     )
     return DispatchOutcome(lane_id=lane_id, state="dispatched", summary=summary)

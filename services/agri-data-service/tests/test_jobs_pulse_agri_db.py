@@ -58,6 +58,18 @@ _DELETE_RUN_BY_DEFINITION_NAME: Final = text(
 )
 _SET_ENABLED: Final = text("UPDATE agri.job_definition SET enabled = :enabled, updated_at = now() WHERE name = :name")
 
+# Seeds for the dead-letter census. Written as raw INSERTs rather than through the runtime because the
+# state under test is a lane whose items were settled by SOME EARLIER TICK, which no single call can
+# produce -- and because it must contain a 'cancelled' item, which only an operator ever writes.
+_INSERT_RUN: Final = text(
+    "INSERT INTO agri.job_run (id, job_definition_id, logical_run_key, scheduled_for, status) "
+    "SELECT :run_id, id, :logical_run_key, now(), 'running' FROM agri.job_definition WHERE name = :name LIMIT 1"
+)
+_INSERT_SETTLED_WORK_ITEM: Final = text(
+    "INSERT INTO agri.job_work_item (job_run_id, shard_key, kind, status, completed_at) "
+    "VALUES (:run_id, :shard_key, 'test_census_shard', :status, now())"
+)
+
 
 @dataclass
 class _RunTracker:
@@ -189,6 +201,15 @@ async def test_run_jobs_pulse_reaches_a_real_dispatchable_lane_and_a_real_durabl
         lane_filter=frozenset({_DISPATCHABLE_LANE, _STREAMFLOW_TOKEN}),
         time_budget_seconds=600.0,
         worker_id="test-jobs-pulse-worker",
+        # This test's whole contract (see the module docstring) is the dispatchable + durable
+        # passes reaching real rows in one call; the maintenance pass is a third, separate pass
+        # with its own reconcile/plan-gaps/validate-streams tests. It is also unsafe to include
+        # here unmocked: `reconcile_archive_lane`/`plan_archive_lane_gaps` resolve their own
+        # session through `ingest.commands`'s own `ingest_session` import, not this module's --
+        # `_bind_real_ingest_session` above only binds `jobs_pulse_command.ingest_session` -- so a
+        # maintenance pass here would reach for `LOCAL_SOURCE_LOADER_DATABASE_URL` instead of this
+        # test's disposable engine.
+        include_maintenance=False,
     )
 
     lanes_by_id = {lane.lane: lane for lane in summary.lanes}
@@ -207,5 +228,48 @@ async def test_run_jobs_pulse_reaches_a_real_dispatchable_lane_and_a_real_durabl
     assert durable_result.outcome == "ran"
     assert durable_result.records == 3
     assert durable_result.dead_lettered == 0
+    assert durable_result.standing_dead_letters == 0
     assert len(archive_calls) == 1
     assert archive_calls[0]["definition_name"] == _STREAMFLOW_DEFINITION
+
+
+async def test_the_dead_letter_census_counts_buried_items_and_never_an_operator_cancellation(
+    tracker: _RunTracker,
+) -> None:
+    """Real-SQL proof of the standing-failure signal, including the safety property it exists to hold.
+
+    The census joins `agri.job_work_item` up through `agri.job_run` to `agri.job_definition.name`, and
+    that join is exactly what a mocked session cannot prove. It also asserts the property finding (b)
+    of the 2026-08-16 review showed the old `job_run.status` signal violated: a lane whose only settled
+    work is an operator CANCELLATION is not carrying buried work and must not red the hourly tick.
+    """
+    session = await _seed_both_definitions(tracker)
+    run_id = uuid.uuid4()
+    await session.execute(
+        _INSERT_RUN,
+        {"run_id": run_id, "logical_run_key": f"census-test-{run_id}", "name": _STREAMFLOW_DEFINITION},
+    )
+    await session.execute(
+        _INSERT_SETTLED_WORK_ITEM,
+        {"run_id": run_id, "shard_key": "2026-01-01", "status": "dead_letter"},
+    )
+    await session.execute(
+        _INSERT_SETTLED_WORK_ITEM,
+        {"run_id": run_id, "shard_key": "2026-01-02", "status": "cancelled"},
+    )
+    await session.execute(
+        _INSERT_SETTLED_WORK_ITEM,
+        {"run_id": run_id, "shard_key": "2026-01-03", "status": "succeeded"},
+    )
+    await session.commit()
+
+    standing = await jobs_pulse_command.read_standing_dead_letters(session, _STREAMFLOW_DEFINITION)
+
+    assert standing.count == 1, "only the 'dead_letter' item is buried work"
+    assert standing.first_shard_key == "2026-01-01"
+    assert standing.present is True
+
+    # And the lane next door, whose ledger rows this run never touched, stays at zero.
+    other = await jobs_pulse_command.read_standing_dead_letters(session, _DISPATCHABLE_LANE)
+    assert other.count == 0
+    assert other.present is False

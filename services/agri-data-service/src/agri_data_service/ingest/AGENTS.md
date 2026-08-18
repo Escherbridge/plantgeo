@@ -790,6 +790,36 @@ index whose leading column is `layer_id` under a generic plan. `sql/AGENTS.md`'s
 forces the shape: a file may be loaded by exactly one `load_query_sql` call, so `queries.py` loads it,
 formats it twice, and `reconcile.py` imports `OBSERVED_DAYS_FOR_LAYER` rather than reading the file again.
 
+### The census was sharded for one day, and the sharding was the wrong fix (2026-08-15 to 2026-08-16)
+
+`observed_days.sql` over the firms layer's whole span measured 81 to 101 seconds on prod against the 120s
+transaction statement timeout `apply_statement_timeout` pins, so the census did not merely run slowly, it
+failed outright whenever anything else was competing for the database. The response was a fan-out:
+`observed_day_shards` cut the lane's floor-to-today span into 730-day pieces, `observed_layer_days`
+gathered them behind an `asyncio.Lock` (one `AsyncSession` is one connection, and SQLAlchemy refuses two
+concurrent executes on it), and `jobs-pulse` grew a `_probe_census_shards` helper that re-read the whole
+census a second time, per lane, per tick, to report `census shards=N slowest_shard_seconds=S`.
+
+**The slowness was a missing index, not a missing partition.** `geo.feature_observation_day` is IMMUTABLE
+and PARALLEL SAFE, so it can carry an expression index; `ix_features_layer_observation_day` over
+`(layer_id, geo.feature_observation_day(properties))` now exists in production and the planner uses it as
+an Index Cond on the day predicate. Re-measured against prod on 2026-08-16 with that index present: ONE
+statement 68.7s, thirteen shards 95.3s, `shared_blks_read` a wash (331,152 against 332,076). Sharding
+never reduced the work; it added roughly 27 seconds of per-statement overhead on top of it. 68.7s is 57%
+of the timeout. So the fan-out, the lock, the shard constant and the probe are all gone.
+
+**What survived, and why it must keep surviving.** The day BOUNDS are the point of the revert, not a
+casualty of it: `{day_scope}` in `observed_days.sql` and `_DAY_RANGE_SCOPE` in `validation/queries.py`
+are exactly the predicate the new index serves, and the map's date slider wants a bounded range for the
+same reason. `_DAY_RANGE_SCOPE` is inclusive at BOTH ends. What was removed is the SHARDED CENSUS; what
+was never in question is bounded querying. The row-cap refusal is likewise unchanged and is still per
+EXECUTION of the statement -- there simply is only ever one execution now.
+
+The lesson worth keeping is the diagnostic one. A statement that is slow because it reads too many rows
+and a statement that is slow because it reads the right rows the wrong way look identical from the
+application side; only `shared_blks_read` told them apart, and it was not measured until after the
+fan-out shipped. Measure the buffers before partitioning anything.
+
 ## jobs-plan-gaps: the half of the loop that was missing
 
 Nothing could turn a detected gap into a work item. `validate-streams` finds gaps and exits 0 on them by

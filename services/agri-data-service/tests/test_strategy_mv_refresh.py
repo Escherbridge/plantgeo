@@ -397,11 +397,19 @@ async def test_trigger_route_dispatches_strategy_mv_refresh_to_the_real_ledger(m
     calls: list[tuple[object, str]] = []
 
     class _FakeSummary:
-        """The fields `dispatch_lane` logs, plus the payload the route returns."""
+        """The fields `dispatch_lane` logs, plus the payload the route returns.
+
+        Carries `dead_lettered`/`run_status` too, even though this scenario is a healthy dispatch,
+        because `dispatch_lane` now reads both through `slice_summary_is_failing` before it can pick a
+        log level -- a real `JobSliceSummary` always has them (defaults `0`/`None`), so this stand-in
+        must as well.
+        """
 
         job_run_id = None
         stop_reason = "no_claimable_work"
         succeeded = 1
+        dead_lettered = 0
+        run_status = None
 
         def to_summary(self) -> dict[str, object]:
             return {"stop_reason": "no_claimable_work", "succeeded": 1}

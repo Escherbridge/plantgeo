@@ -30,6 +30,7 @@ from agri_data_service.jobs.registry import (
 from agri_data_service.jobs.worker import (
     CANCELLED_RELEASE_REASON,
     JOB_EVENT_SERVICE,
+    PREFLIGHT_MISSING_RELATIONS_STOP_REASON,
     SHUTDOWN_RELEASE_REASON,
     SLICE_FINISHED_EVENT_CODE,
     JobDefinitionNotFoundError,
@@ -37,6 +38,7 @@ from agri_data_service.jobs.worker import (
     ShutdownSignal,
     ensure_job_definition,
     open_job_run,
+    preflight_required_relations,
     run_job_slice,
 )
 
@@ -533,7 +535,12 @@ async def test_a_failure_written_after_an_aborted_transaction_names_the_error_cl
     )
     recorded = session.parameters_for("close_attempt_failed")
     assert recorded["failure_class"] == "OperationalError"
-    assert recorded["error_summary"] == "job step failed (OperationalError)"
+    # `failure_condition_name` unwraps one `.orig` level past the dialect wrapper (see
+    # jobs/AGENTS.md "failure_summary names the real condition now, not the dialect's tautology"):
+    # this OperationalError's `orig` is the bare `Exception("boom")` the test raises it with, and
+    # that has no `__cause__` of its own, so the pair reports the dialect wrapper alongside `orig`'s
+    # own class rather than the class-name tautology the old, unwrap-free assertion expected.
+    assert recorded["error_summary"] == "job step failed (OperationalError: Exception)"
 
 
 async def test_the_statement_timeout_is_re_pinned_after_a_handler_commits_the_shared_session() -> None:
@@ -986,6 +993,76 @@ async def test_a_definition_with_no_open_run_reports_that_rather_than_inventing_
     assert summary.stop_reason == "no_open_run"
     assert summary.job_run_id is None
     assert session.emitted("claim_work_item") is False
+
+
+async def test_a_preflight_refusal_names_what_is_missing_and_opens_no_run() -> None:
+    session = RecordingSession()
+    session.answer(
+        "check_relations_exist",
+        [{"qualified_name": "agri.matview_refresh_state", "relation_exists": False}],
+    )
+
+    summary = await preflight_required_relations(
+        session,
+        definition_name=DEFINITION_NAME,
+        worker_id="agri-worker-1",
+        required_relations=["agri.matview_refresh_state"],
+    )
+
+    assert summary is not None
+    assert summary.stop_reason == PREFLIGHT_MISSING_RELATIONS_STOP_REASON
+    assert summary.job_run_id is None
+    assert summary.preflight_missing_relations == ("agri.matview_refresh_state",)
+    # No run opened, no work item minted, no attempt claimed -- there is nothing here to retry or
+    # dead-letter, which is the whole point.
+    assert session.emitted("insert_job_run") is False
+    assert session.emitted("claim_work_item") is False
+    # The refusal is still durable: one heartbeat row, committed, so a lane that refuses on every
+    # tick still reads as ticking rather than looking identical to a container that never started.
+    assert session.markers().count("write_slice_event") == 1
+    assert session.commits == 1
+    written = json.loads(session.parameters_for("write_slice_event")["progress"])
+    assert written["stop_reason"] == PREFLIGHT_MISSING_RELATIONS_STOP_REASON
+    assert written["preflight_missing_relations"] == ["agri.matview_refresh_state"]
+    assert session.parameters_for("write_slice_event")["severity"] == "error"
+
+
+async def test_a_preflight_pass_returns_none_and_touches_nothing_durable() -> None:
+    session = RecordingSession()
+    session.answer(
+        "check_relations_exist",
+        [{"qualified_name": "agri.matview_refresh_state", "relation_exists": True}],
+    )
+
+    summary = await preflight_required_relations(
+        session,
+        definition_name=DEFINITION_NAME,
+        worker_id="agri-worker-1",
+        required_relations=["agri.matview_refresh_state"],
+    )
+
+    assert summary is None
+    assert session.emitted("write_slice_event") is False
+    assert session.commits == 0
+
+
+async def test_a_preflight_refusal_is_distinguishable_from_a_healthy_idle_tick() -> None:
+    """Per docs/layer-lane-standard.md §0: a refusal must never render like `no_claimable_work`."""
+    session = RecordingSession()
+    session.answer(
+        "check_relations_exist",
+        [{"qualified_name": "agri.matview_refresh_state", "relation_exists": False}],
+    )
+    refusal = await preflight_required_relations(
+        session,
+        definition_name=DEFINITION_NAME,
+        worker_id="agri-worker-1",
+        required_relations=["agri.matview_refresh_state"],
+    )
+    assert refusal is not None
+    assert refusal.stop_reason not in {"no_open_run", "no_claimable_work"}
+    rendered = json.loads(json.dumps(refusal.to_summary(), sort_keys=True))
+    assert rendered["preflight_missing_relations"] == ["agri.matview_refresh_state"]
 
 
 async def test_a_slice_summary_renders_as_one_json_line_a_cron_log_can_carry() -> None:

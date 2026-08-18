@@ -36,7 +36,6 @@ same day census and the same cadence-aware gap rule, so they cannot disagree abo
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from dataclasses import dataclass
@@ -137,29 +136,31 @@ PUBLISHED_FEATURE_STATUS: Final = "published"
 # package exists to make impossible. When in doubt, do not mark.
 _COVERAGE_BIAS_NOTE: Final = "a window is marked landed only when every one of its days is already served"
 
-# One row per observed day of one layer, PER SHARD of the census. FIRMS' floor is 2000-11-01, so the widest
-# lane owes about 9,400 days; 50,000 is five times that and still trivial to hold. Hitting it is REFUSED
-# rather than truncated -- a truncated day set invents absent days, and an absent day at the tail is what
-# turns a covered window into a partial one and leaves it queued forever.
+# One row per observed day of one layer, for the ONE execution of `observed_days.sql` a census now costs.
+# FIRMS' floor is 2000-11-01, so the widest lane owes about 9,400 days; 50,000 is five times that and still
+# trivial to hold. Hitting it is REFUSED rather than truncated -- a truncated day set invents absent days,
+# and an absent day at the tail is what turns a covered window into a partial one and leaves it queued
+# forever.
 MAX_OBSERVED_DAY_ROWS: Final = 50_000
 
-# How wide one shard of the day census is, in calendar days. Two years.
+# WHY THE CENSUS IS ONE STATEMENT AGAIN, AND WHY IT WAS BRIEFLY THIRTEEN. Between 2026-08-15 and 2026-08-16
+# this function cut the lane's span into two-year shards and unioned the answers, because an unsharded
+# census of the firms layer measured 81 to 101 seconds against the 120s transaction statement timeout
+# `apply_statement_timeout` pins. That diagnosis was wrong in its cause: the slowness was a MISSING INDEX,
+# not a missing partition. `geo.feature_observation_day` is IMMUTABLE and PARALLEL SAFE, so it can carry an
+# expression index, and `ix_features_layer_observation_day` over
+# `(layer_id, geo.feature_observation_day(properties))` now exists in production and is confirmed used by
+# the planner as an Index Cond.
 #
-# WHY THE CENSUS IS SHARDED AT ALL. `observed_days.sql` over the firms layer's whole span measured 81 to 101
-# seconds on prod 2026-08-15 against the 120s transaction statement timeout `apply_statement_timeout` pins,
-# so the census did not merely run slowly -- it failed outright whenever anything else was competing for the
-# database, and a reconciliation that cannot read the census settles nothing. Cutting the span into two-year
-# shards puts each STATEMENT an order of magnitude under the timeout. FIRMS' 2000-11-01 floor gives about
-# thirteen shards, not the four or five a shorter-lived lane would give.
+# Measured against production 2026-08-16 with that index in place: ONE statement runs in 68.7s, thirteen
+# shards run in 95.3s, and `shared_blks_read` is a wash (331,152 against 332,076). Sharding never reduced
+# the work -- it added roughly 27 seconds of pure per-statement overhead on top of it. 68.7s is 57% of the
+# 120s timeout, which leaves 43% headroom, so the fan-out is removed and the census is one bounded,
+# index-served statement.
 #
-# What sharding does NOT buy today is total wall-clock: `geo.feature_observation_day` is a function over
-# jsonb and `geo.features` carries no index on it, so a day bound prunes rows only after they are read and
-# the total work multiplies by the shard count. That trade is deliberate and it is the right way round --
-# thirteen statements that each finish beat one statement that is killed at 120 seconds and returns nothing
-# -- but it stops being a trade at all once an expression index on
-# `(layer_id, geo.feature_observation_day(properties))` exists. The function is IMMUTABLE and PARALLEL SAFE,
-# so it can carry one; see the tuning note in the .sql file's header.
-OBSERVED_DAY_SHARD_DAYS: Final = 730
+# The day BOUNDS survive that revert and are the point of it: `{day_scope}` in `observed_days.sql` and
+# `_DAY_RANGE_SCOPE` in `validation/queries.py` are exactly what the new index makes fast, and the map's
+# date slider still wants a bounded range. What was removed is the SHARDED CENSUS, never bounded querying.
 
 # The bounds a census carries when its caller named none. Real dates rather than NULLs on purpose: a
 # nullable bound would force `observed_days.sql` into an "either the bound is null or the day matches it"
@@ -353,40 +354,6 @@ def window_days(window: HistoryWindow) -> tuple[date, ...]:
     return tuple(first + timedelta(days=offset) for offset in range((last - first).days + 1))
 
 
-def observed_day_shards(
-    first_day: date,
-    through_day: date,
-    *,
-    shard_days: int = OBSERVED_DAY_SHARD_DAYS,
-) -> tuple[tuple[date, date], ...]:
-    """Cut one inclusive day span into contiguous, non-overlapping census shards, oldest first.
-
-    THE TWO PROPERTIES THAT MAKE THE UNION HONEST, and the reason this is a pure function with no session in
-    sight. Every shard is inclusive at both ends, exactly as the day scope slot in `observed_days.sql` is:
-
-    - **Contiguous.** Shard N+1 starts the very next day after shard N ends. A one-day hole between two
-      shards would come back from the union as a day nobody observed, and this module turns an unobserved
-      day into a reopened window and a re-walk. A gap here would be a permanent, self-renewing phantom.
-    - **Non-overlapping.** Not for correctness -- the union is a set and a repeated day costs nothing -- but
-      because an overlap is the shape a fencepost error takes, and one that showed up as "harmless" here
-      would be the same arithmetic that is not harmless in the shard above it.
-
-    The last shard is short rather than overshooting `through_day`, so no shard ever asks for a day outside
-    the span the caller named.
-    """
-    if shard_days < 1:
-        raise ReconciliationError(f"a day census shard must span at least one day, not {shard_days}")
-    if through_day < first_day:
-        raise ReconciliationError(f"day span {first_day.isoformat()}..{through_day.isoformat()} ends before it begins")
-    shards: list[tuple[date, date]] = []
-    shard_first = first_day
-    while shard_first <= through_day:
-        shard_last = min(shard_first + timedelta(days=shard_days - 1), through_day)
-        shards.append((shard_first, shard_last))
-        shard_first = shard_last + timedelta(days=1)
-    return tuple(shards)
-
-
 def window_coverage(  # noqa: PLR0913 - the shard's four identifying values plus two keyword-only bounds
     shard_key: str,
     status: str,
@@ -494,147 +461,51 @@ _REOPEN_GAP_WINDOWS: Final = text(load_query_sql("ingest/reopen_gap_windows.sql"
 # ---------------------------------------------------------------------------------------------------------------
 
 
-async def _observed_days_in_shard(  # noqa: PLR0913 - the session plus one keyword per bound the shard binds
-    session: AsyncSession,
-    *,
-    layer_id: str,
-    layer_reference: str,
-    from_day: date,
-    to_day: date,
-    session_lock: asyncio.Lock | None = None,
-) -> frozenset[date]:
-    """Read ONE shard of the day census, refusing this shard's own truncation rather than the union's.
-
-    **THE REFUSAL IS PER SHARD AND MUST STAY PER SHARD.** The cap belongs to a single execution of
-    `observed_days.sql`, so checking it against the union is not a weaker version of this check -- it is a
-    check that can never fire correctly. Thirteen shards of four thousand days each union to fifty-two
-    thousand days, over the cap, while no shard was truncated and nothing is wrong; and one truncated shard
-    of fifty thousand days unions with twelve small ones to a number the aggregate check would happily
-    accept. Worse, the truncation is silent in the direction that matters: `observed_days.sql` orders by day
-    and takes the earliest rows, so a truncated shard drops its TAIL, and every dropped day comes back
-    through this function as a day the layer does not serve. `plan_lane_gaps` then reopens the window that
-    owns it and the walk re-fetches a window that was never missing, forever. Refusing here is the only
-    place the caller can still tell the difference.
-
-    `session_lock`, when the fan-out supplies one, serializes execution against the shared `AsyncSession`.
-    An `AsyncSession` is one transaction on one connection and SQLAlchemy raises on two coroutines executing
-    through it at once, so the lock is what makes `observed_layer_days`' gather legal. The cap check sits
-    deliberately OUTSIDE the lock: it reads only this shard's own rows and holding the connection while it
-    runs would serialize nothing worth serializing.
-    """
-    parameters = {
-        "layer_id": layer_id,
-        "published_status": PUBLISHED_FEATURE_STATUS,
-        "from_day": from_day,
-        "to_day": to_day,
-        "row_limit": MAX_OBSERVED_DAY_ROWS,
-    }
-    if session_lock is None:
-        rows = await fetch_rows(session, OBSERVED_DAYS_FOR_LAYER, parameters)
-    else:
-        async with session_lock:
-            rows = await fetch_rows(session, OBSERVED_DAYS_FOR_LAYER, parameters)
-    if len(rows) >= MAX_OBSERVED_DAY_ROWS:
-        raise ReconciliationScanTooLargeError(
-            f"layer {layer_reference!r} reports at least {MAX_OBSERVED_DAY_ROWS} observed days between "
-            f"{from_day.isoformat()} and {to_day.isoformat()}; narrow OBSERVED_DAY_SHARD_DAYS or raise "
-            "MAX_OBSERVED_DAY_ROWS rather than reconciling against a truncated day set"
-        )
-    return frozenset(required_column(row, "observed_day", date) for row in rows)
-
-
-async def observed_layer_days_in_range(
-    session: AsyncSession,
-    layer_reference: str,
-    *,
-    from_day: date,
-    to_day: date,
-) -> frozenset[date]:
-    """One shard of the census, for a caller that owns its own session and wants to fan out for itself.
-
-    `observed_layer_days` is the entry point almost everything should call; this exists so a caller holding
-    a pool of independent sessions can pair `observed_day_shards` with one session per shard and get real
-    wall-clock parallelism, which a single shared `AsyncSession` cannot give. It carries the same per-shard
-    refusal, because that refusal lives in the one place both paths go through.
-    """
-    layer_id = await resolve_layer_id(session, layer_reference)
-    return await _observed_days_in_shard(
-        session,
-        layer_id=layer_id,
-        layer_reference=layer_reference,
-        from_day=from_day,
-        to_day=to_day,
-    )
-
-
 async def observed_layer_days(
     session: AsyncSession,
     layer_reference: str,
     *,
     first_day: date | None = None,
     through_day: date | None = None,
-    shard_days: int = OBSERVED_DAY_SHARD_DAYS,
 ) -> frozenset[date]:
     """Every UTC day the lane's target layer already serves, read through the same rule the report applies.
 
-    Naming both bounds shards the census across several executions of `observed_days.sql` and unions the
-    answers; naming neither reads the layer's whole life in one execution, which is what this function did
-    before the firms layer grew large enough to spend 81 to 101 seconds of a 120-second statement timeout on
-    it. The bounded form is what the two verbs in this module use, and the union it returns is a superset of
-    every day either verb consults: both only ever ask about days inside the lane's own floor-to-now span.
+    ONE execution of `observed_days.sql`, always. Naming both bounds narrows the day scope to the caller's
+    own span, which is what `ix_features_layer_observation_day` turns into an Index Cond; naming neither
+    binds the widest dates the calendar has, so there is one statement shape and one plan either way and no
+    caller ever forces the nullable-bound generic plan the .sql header warns about. Both verbs in this
+    module name a span, and the set returned is a superset of every day either consults -- both only ever
+    ask about days inside the lane's own floor-to-now range.
 
-    The fan-out is `asyncio.gather` with `return_exceptions=True`, and the flag is load-bearing rather than
-    defensive. A bare gather propagates the first failure the moment it happens and leaves its siblings
-    running, which here means statements still arriving on a session whose caller has already begun to roll
-    back. Collecting every result first and re-raising the earliest failure afterwards means the session is
-    quiet before this function returns, and a shard that refused still refuses -- the exception is re-raised,
-    never counted, never summarised, never turned into a partial day set.
+    **THE ROW-CAP REFUSAL IS THE POINT OF READING IT HERE.** `observed_days.sql` orders by day and takes the
+    earliest rows, so a truncated result drops its TAIL, and every dropped day comes back from this function
+    as a day the layer does not serve. `plan_lane_gaps` would then reopen the window that owns it and the
+    walk would re-fetch a window that was never missing, forever. A truncated census is not a smaller
+    census, it is a wrong one, so it is refused rather than returned.
     """
     layer_id = await resolve_layer_id(session, layer_reference)
-    if first_day is None or through_day is None:
-        # No span named: one unbounded execution, exactly the shape and cost this function had before.
-        return await _observed_days_in_shard(
-            session,
-            layer_id=layer_id,
-            layer_reference=layer_reference,
-            from_day=UNBOUNDED_FIRST_OBSERVED_DAY,
-            to_day=UNBOUNDED_LAST_OBSERVED_DAY,
-        )
-
-    shards = observed_day_shards(first_day, through_day, shard_days=shard_days)
-    if len(shards) == 1:
-        only_from, only_to = shards[0]
-        return await _observed_days_in_shard(
-            session,
-            layer_id=layer_id,
-            layer_reference=layer_reference,
-            from_day=only_from,
-            to_day=only_to,
-        )
-
-    session_lock = asyncio.Lock()
-    results = await asyncio.gather(
-        *(
-            _observed_days_in_shard(
-                session,
-                layer_id=layer_id,
-                layer_reference=layer_reference,
-                from_day=shard_from,
-                to_day=shard_to,
-                session_lock=session_lock,
-            )
-            for shard_from, shard_to in shards
-        ),
-        return_exceptions=True,
+    from_day = UNBOUNDED_FIRST_OBSERVED_DAY if first_day is None else first_day
+    to_day = UNBOUNDED_LAST_OBSERVED_DAY if through_day is None else through_day
+    if to_day < from_day:
+        raise ReconciliationError(f"day span {from_day.isoformat()}..{to_day.isoformat()} ends before it begins")
+    rows = await fetch_rows(
+        session,
+        OBSERVED_DAYS_FOR_LAYER,
+        {
+            "layer_id": layer_id,
+            "published_status": PUBLISHED_FEATURE_STATUS,
+            "from_day": from_day,
+            "to_day": to_day,
+            "row_limit": MAX_OBSERVED_DAY_ROWS,
+        },
     )
-    observed: set[date] = set()
-    for result in results:
-        # Oldest shard first, so a refusal names the earliest span that overflowed rather than an arbitrary
-        # one. Raised, not accumulated: a census missing one shard is not a smaller census, it is a wrong one.
-        if isinstance(result, BaseException):
-            raise result
-        observed |= result
-    return frozenset(observed)
+    if len(rows) >= MAX_OBSERVED_DAY_ROWS:
+        raise ReconciliationScanTooLargeError(
+            f"layer {layer_reference!r} reports at least {MAX_OBSERVED_DAY_ROWS} observed days between "
+            f"{from_day.isoformat()} and {to_day.isoformat()}; raise MAX_OBSERVED_DAY_ROWS or narrow the "
+            "day range rather than reconciling against a truncated day set"
+        )
+    return frozenset(required_column(row, "observed_day", date) for row in rows)
 
 
 async def _read_lane_windows(
@@ -682,8 +553,8 @@ async def reconcile_lane(
     a dry run that is never committed writes nothing even if a future caller forgets which mode it asked for.
 
     The day census is read over the lane's OWN span -- its declared floor through today -- rather than over
-    the layer's whole life, so it shards (see `observed_layer_days`). No verdict can move as a result: every
-    window on the lane's grid is floor-anchored and no window reaches past now, so every day
+    the layer's whole life, in one bounded statement (see `observed_layer_days`). No verdict can move as a
+    result: every window on the lane's grid is floor-anchored and no window reaches past now, so every day
     `window_coverage` consults is inside that span by construction. What the narrowing does change is the
     three `observed_*` fields of the report, which now describe the days this LANE's span holds rather than
     every day the layer holds -- which is the number a lane report was always trying to say.
@@ -1031,7 +902,7 @@ async def plan_lane_gaps(  # noqa: PLR0913 - the lane plus five keyword-only kno
     run_key = archive_lane_run_key(lane)
     floor_day = lane.floor.date()
 
-    # The grid is built BEFORE the census, and only because the census now wants bounds to shard on. It is
+    # The grid is built BEFORE the census, and only because the census wants the day bounds it names. It is
     # pure arithmetic over the lane and the clock, it issues no statement, and moving it above the first
     # `execute` therefore changes neither what is read nor the order the statements arrive in.
     #
@@ -1248,7 +1119,6 @@ __all__ = [
     "MAX_LANE_WINDOW_ROWS",
     "MAX_OBSERVED_DAY_ROWS",
     "MAX_REPORTED_WINDOWS",
-    "OBSERVED_DAY_SHARD_DAYS",
     "RECONCILABLE_WORK_ITEM_STATES",
     "RECONCILIATION_MARKER_KEY",
     "REOPENABLE_WORK_ITEM_STATE",
@@ -1265,9 +1135,7 @@ __all__ = [
     "gap_reopen_marker",
     "gap_window_action",
     "map_days_to_grid",
-    "observed_day_shards",
     "observed_layer_days",
-    "observed_layer_days_in_range",
     "plan_lane_gaps",
     "reconcile_lane",
     "reconciliation_marker",

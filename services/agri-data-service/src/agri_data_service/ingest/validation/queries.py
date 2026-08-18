@@ -47,6 +47,13 @@ _ONE_LAYER_SCOPE: Final = "AND features.layer_id = CAST(:layer_id AS uuid)"
 # the same expression. Shared here rather than spelled twice, so the two files cannot drift apart on what
 # "a day range" means. See each .sql file's own "THE DAY SCOPE SLOT" note for why this predicate looks
 # the way it does and why it is a load-time slot rather than a nullable bind.
+#
+# `_DAY_RANGE_SCOPE` is INCLUSIVE AT BOTH ENDS, and that is load-bearing for every caller that cuts a span
+# into pieces: two pieces that touch without overlapping cover the span exactly, while a fencepost slip
+# either way shows up as a phantom missing day. It is also the predicate
+# `ix_features_layer_observation_day` -- the expression index over
+# `(layer_id, geo.feature_observation_day(properties))` -- serves as an Index Cond, which is what made the
+# one-statement day census fast enough to stop sharding it. See ingest/reconcile.py's `observed_layer_days`.
 _ALL_DAYS_SCOPE: Final = ""
 _DAY_RANGE_SCOPE: Final = (
     "AND geo.feature_observation_day(features.properties) >= CAST(:from_day AS date)\n"
@@ -57,11 +64,12 @@ _FEATURE_OBSERVED_DAYS: Final[TextClause] = text(
     _OBSERVED_DAYS_TEMPLATE.format(layer_scope=_ALL_LAYERS_SCOPE, day_scope=_ALL_DAYS_SCOPE)
 )
 
-# Reconciliation shards its census across several executions of this statement (see
-# ingest/reconcile.py's `observed_day_shards` and `_observed_days_in_shard`), so the one-layer form
-# always carries an inclusive day-range predicate -- even a caller that wants the layer's whole life
-# binds the widest dates the calendar has (`ingest.reconcile.UNBOUNDED_FIRST_OBSERVED_DAY` /
-# `UNBOUNDED_LAST_OBSERVED_DAY`) rather than asking this statement to omit the predicate.
+# Reconciliation reads its census in ONE execution of this statement (see
+# `ingest/reconcile.py::observed_layer_days`), and the one-layer form always carries an inclusive
+# day-range predicate -- even a caller that wants the layer's whole life binds the widest dates the
+# calendar has (`ingest.reconcile.UNBOUNDED_FIRST_OBSERVED_DAY` / `UNBOUNDED_LAST_OBSERVED_DAY`) rather
+# than asking this statement to omit the predicate. One statement shape means one plan, and the plan
+# `ix_features_layer_observation_day` gives it is an Index Cond on the day range rather than a scan.
 OBSERVED_DAYS_FOR_LAYER: Final[TextClause] = text(
     _OBSERVED_DAYS_TEMPLATE.format(layer_scope=_ONE_LAYER_SCOPE, day_scope=_DAY_RANGE_SCOPE)
 )
@@ -77,10 +85,13 @@ _UNDATED_DAY_SCOPE: Final = "AND geo.feature_observation_day(features.properties
 
 _FEATURE_VALIDITY_COUNTS: Final[TextClause] = text(_FEATURE_VALIDITY_COUNTS_TEMPLATE.format(day_scope=_ALL_DAYS_SCOPE))
 
-# A caller sharding the validity scan by day (reusing `ingest.reconcile.observed_day_shards` for the
-# cutting, never a second copy of that arithmetic) binds one shard's `from_day`/`to_day` per execution
-# against this form, then sums every counter across those executions AND one execution of
+# A caller narrowing the validity scan to one day range binds `from_day`/`to_day` against this form, then
+# sums every counter across however many ranges it read AND one execution of
 # `FEATURE_VALIDITY_COUNTS_FOR_UNDATED_ROWS` to reproduce `_FEATURE_VALIDITY_COUNTS`'s own grand total.
+# Ranges that touch without overlapping are what make that sum exact, because `_DAY_RANGE_SCOPE` is
+# inclusive at both ends. NOTE: there is no shared day-cutting helper any more -- the one that existed
+# (`ingest.reconcile.observed_day_shards`) was deleted with the sharded census on 2026-08-16, because the
+# expression index it predated removed the reason to cut a span at all.
 FEATURE_VALIDITY_COUNTS_FOR_DAY_RANGE: Final[TextClause] = text(
     _FEATURE_VALIDITY_COUNTS_TEMPLATE.format(day_scope=_DAY_RANGE_SCOPE)
 )
@@ -97,9 +108,9 @@ _FEATURE_DUPLICATE_IDENTITIES: Final[TextClause] = text(load_query_sql("ingest/f
 # this pass (drought_area_observed_days.sql scans geo.drought_areas keyed on a VARCHAR valid_date;
 # historical_observed_days.sql UNIONs three geo.historical_* tables). Whoever adds that slot should shape
 # it the way `_DAY_RANGE_SCOPE` above is shaped -- an inclusive range over the statement's own day
-# expression, cast to date, filled at import time from a closed constant -- and the caller that fans the
-# shards out should reuse `ingest.reconcile.observed_day_shards` for the cutting rather than a third copy
-# of the same arithmetic.
+# expression, cast to date, filled at import time from a closed constant. There is no shared day-cutting
+# helper to reuse for the fan-out (see the note above `FEATURE_VALIDITY_COUNTS_FOR_DAY_RANGE`); whoever
+# needs one writes it once and points both callers at it.
 _DROUGHT_AREA_OBSERVED_DAYS: Final[TextClause] = text(load_query_sql("ingest/drought_area_observed_days.sql"))
 
 _DROUGHT_AREA_VALIDITY_COUNTS: Final[TextClause] = text(load_query_sql("ingest/drought_area_validity_counts.sql"))

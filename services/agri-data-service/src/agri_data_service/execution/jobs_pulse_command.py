@@ -57,8 +57,7 @@ import os
 import sys
 import time
 import uuid
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -69,7 +68,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agri_data_service.db.engine import ingest_session
 from agri_data_service.db.sql_queries import load_query_sql
-from agri_data_service.ingest.archive_walk import archive_lane_definition_name, archive_source
+from agri_data_service.ingest.archive_walk import archive_lane_definition_name
 from agri_data_service.ingest.commands import (
     WORKER_ID_MAX_LENGTH,
     WORKER_ID_VARIABLE,
@@ -79,8 +78,8 @@ from agri_data_service.ingest.commands import (
     run_archive_definition_slice,
 )
 from agri_data_service.ingest.lanes import BACKFILL_LANES, resolve_lane
-from agri_data_service.ingest.reconcile import observed_day_shards, observed_layer_days_in_range
 from agri_data_service.jobs import (
+    PREFLIGHT_MISSING_RELATIONS_STOP_REASON,
     JobDefinitionNotFoundError,
     JobLedgerRowError,
     JobRunError,
@@ -110,7 +109,13 @@ from agri_data_service.jobs.dispatch import (
     dispatch_lane,
     read_lane_pause_state,
 )
-from agri_data_service.jobs.lease import apply_statement_timeout, fetch_rows, required_column
+from agri_data_service.jobs.lease import (
+    apply_statement_timeout,
+    fetch_row,
+    fetch_rows,
+    optional_column,
+    required_column,
+)
 from agri_data_service.jobs.registry import JOB_HANDLERS
 
 if TYPE_CHECKING:
@@ -118,9 +123,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from agri_data_service.ingest.lanes import BackfillLane
     from agri_data_service.jobs.dispatch import LaneDispatchRegistry, LanePauseState
     from agri_data_service.jobs.registry import JobHandlerRegistry
+    from agri_data_service.jobs.worker import JobSliceSummary
 
 # Operational telemetry to stderr, never stdout: this verb's stdout is one JSON-lines summary and
 # nothing else, matching every other `jobs-*`/`ingest-*` verb in `ingest/commands.py`.
@@ -153,7 +158,62 @@ PulseLaneKind = Literal["dispatchable", "durable", "maintenance"]
 # while `invalid` means it ran perfectly and found rows that ARE wrong. Both fail the tick, but an
 # operator reading the summary must be able to tell "the gap detector is broken" from "the gap
 # detector works and is telling you something".
-PulseLaneOutcome = Literal["ran", "paused", "raised", "skipped_budget", "invalid"]
+#
+# `dead_lettered` and `standing_dead_letters` are the same distinction drawn one more time, and they exist
+# because neither was distinguishable from a healthy idle tick. `dead_lettered` means THIS tick exhausted a
+# work item's retries and buried it. `standing_dead_letters` means the lane is CARRYING buried work from an
+# earlier tick: this tick found nothing new to bury, and `agri.job_work_item` rows are nevertheless sitting
+# in 'dead_letter' for this definition right now. That second state is what let production report SUCCESS
+# hourly for ~24h with two lanes fully dead: the tick that did the dead-lettering was correctly loud once,
+# and every tick after it read as `stop_reason=no_claimable_work succeeded=0`, which is exactly what a
+# finished lane looks like.
+PulseLaneOutcome = Literal[
+    "ran",
+    "paused",
+    "raised",
+    "skipped_budget",
+    "invalid",
+    "dead_lettered",
+    "standing_dead_letters",
+    "preflight_refused",
+]
+
+# The outcomes that mean this tick found something wrong rather than found nothing to do. Named once and
+# consumed by `PulseSummary.failed`, the ERROR log and the exit rule, so the three cannot disagree about
+# what "a failing tick" is -- the disagreement being the whole bug this set was introduced to close.
+FAILING_PULSE_OUTCOMES: Final[frozenset[str]] = frozenset(
+    {"raised", "invalid", "dead_lettered", "standing_dead_letters", "preflight_refused"}
+)
+
+# THE STANDING-FAILURE SIGNAL IS A DEAD-LETTERED WORK ITEM COUNT, NOT A RUN STATUS.
+#
+# It used to be `JobSliceSummary.run_status in TERMINALLY_FAILED_RUN_STATUSES`, which was wrong in both
+# directions and is proved so by the ledger's own SQL rather than by argument:
+#
+#   It could not fire when it should have. `sql/jobs/select_open_job_run.sql` selects a run only while its
+#   status is 'queued' or 'running'. The moment `refresh_job_run_rollup.sql` rolls a run up to 'failed' or
+#   'partial' it stops being selectable, so the NEXT tick takes `run_job_slice`'s `run_id is None` branch,
+#   which builds a summary with `stop_reason='no_open_run'` and `run_status` left at its `None` default --
+#   and `None` is not a failing status. The signal therefore covered exactly ONE tick, the one on which the
+#   run went terminal, and that tick was already loud through `dead_lettered > 0`. The 24-hour
+#   green-while-broken hole it was written to close stayed open.
+#
+#   It fired when it must not have. `refresh_job_run_rollup.sql` counts a work item in 'cancelled' as
+#   `failed`, and the run CASE has no 'cancelled' branch, so an OPERATOR CANCELLATION -- the only encoding
+#   cancellation actually has in this ledger -- rolls the run up to 'partial' or 'failed'. Both were
+#   "terminally failed". A lane holding one never-rotating run (`jobs/matview_refresh.py`, by design) keeps
+#   every settled item forever, so one historical burial or cancellation would have pinned that run at
+#   'partial' and redded the hourly cron permanently, with nothing an operator could do to clear it --
+#   while the old detail line told them to "cancel it deliberately", which made it strictly worse.
+#
+# Nothing in this service ever writes 'dead_letter' or 'cancelled' to `agri.job_run.status`. Two statements
+# touch that column: `insert_job_run.sql` writes 'queued', and the rollup CASE writes 'running',
+# 'succeeded', 'failed' or 'partial'. Those five are the whole writable vocabulary.
+#
+# A dead-lettered WORK ITEM has neither defect: it is issued unconditionally, per definition, independent
+# of whether a run was selected this tick; it is not produced by an operator's decision; and it IS
+# operator-clearable, because requeueing or cancelling the item moves it out of 'dead_letter'.
+_COUNT_DEAD_LETTERED_WORK_ITEMS: Final = text(load_query_sql("jobs/count_dead_lettered_work_items.sql"))
 
 # The three data-quality steps, in the order one lane's turn runs them. `validate-streams` carries no
 # lane of its own -- it measures every stream at once -- which is why `PlannedMaintenanceStep.lane_token`
@@ -263,6 +323,10 @@ class PulseLaneResult:
     seconds: float
     records: int
     dead_lettered: int = 0
+    # How many of this lane's work items are sitting in 'dead_letter' RIGHT NOW, across every run its
+    # definition has ever opened -- counted unconditionally, whether or not this tick drove a run. This
+    # is the standing signal; `dead_lettered` above is what THIS tick buried.
+    standing_dead_letters: int = 0
     detail: str | None = None
 
     def to_row(self) -> dict[str, object]:
@@ -274,6 +338,7 @@ class PulseLaneResult:
             "seconds": round(self.seconds, 3),
             "records": self.records,
             "dead_lettered": self.dead_lettered,
+            "standing_dead_letters": self.standing_dead_letters,
             "detail": self.detail,
         }
 
@@ -285,8 +350,17 @@ class PulseSummary:
     lanes: tuple[PulseLaneResult, ...]
 
     @property
+    def failing_lanes(self) -> tuple[PulseLaneResult, ...]:
+        """Every lane this tick must be reported as having failed on, in the order it was attempted."""
+        return tuple(
+            lane
+            for lane in self.lanes
+            if lane.outcome in FAILING_PULSE_OUTCOMES or lane.dead_lettered > 0 or lane.standing_dead_letters > 0
+        )
+
+    @property
     def failed(self) -> bool:
-        """True when this tick must fail the cron run: a lane raised, or a lane dead-lettered a shard.
+        """True when this tick must fail the cron run.
 
         Matches `jobs-run`'s own exit philosophy: a paused lane, a budget-skipped lane, and a lane that
         merely left work behind are all healthy outcomes for an in-flight, multi-tick job runner.
@@ -294,8 +368,13 @@ class PulseSummary:
         `invalid` joins the failing set because it is `validate-streams`' own exit rule, carried through
         unchanged: a stream whose rows are WRONG fails the run, while an `incomplete` stream -- a backfill
         still in flight, which is weeks of correct operation -- does not and is reported as `ran`.
+
+        `dead_lettered > 0` and `standing_dead_letters > 0` are kept as second, independent triggers beside
+        the outcomes that name them, so a lane holding buried work still fails the tick even if some future
+        edit classifies its outcome differently. Two ways to fail on the same evidence is the right
+        redundancy here; the bug this guards against is a dead letter silently reading as a clean tick.
         """
-        return any(lane.outcome in {"raised", "invalid"} or lane.dead_lettered > 0 for lane in self.lanes)
+        return bool(self.failing_lanes)
 
     def to_summary(self) -> dict[str, object]:
         """Render the operator-facing JSON object this verb echoes as one line, per ingest/commands.py."""
@@ -307,8 +386,51 @@ class PulseSummary:
             "raised": sum(1 for lane in self.lanes if lane.outcome == "raised"),
             "invalid": sum(1 for lane in self.lanes if lane.outcome == "invalid"),
             "skipped_budget": sum(1 for lane in self.lanes if lane.outcome == "skipped_budget"),
+            "dead_lettered": sum(1 for lane in self.lanes if lane.outcome == "dead_lettered"),
+            "standing_dead_letters": sum(1 for lane in self.lanes if lane.outcome == "standing_dead_letters"),
             "dead_lettered_lanes": sum(1 for lane in self.lanes if lane.dead_lettered > 0),
+            "standing_dead_letter_lanes": sum(1 for lane in self.lanes if lane.standing_dead_letters > 0),
+            "failed": self.failed,
+            "failing_lanes": [lane.lane for lane in self.failing_lanes],
         }
+
+
+def _log_tick_verdict(summary: PulseSummary) -> None:
+    """Emit ONE terminal line per tick, at ERROR when anything failed and at INFO only when nothing did.
+
+    This is the line that was missing. `jobs/dispatch.py` logs `lane_dispatched ... stop_reason=... ` at
+    INFO after every dispatch, including one that buried every remaining work item, and nothing downstream
+    of it ever said otherwise -- so a log scrape for ERROR over a fully dead lane found nothing at all. The
+    verdict is logged here, from the summary, rather than at each lane's own boundary, because the summary
+    is the only place that knows whether the WHOLE tick was healthy.
+
+    `stop_reason` is deliberately absent from this line. It is a property of one slice's claim loop and
+    `no_claimable_work` is a truthful answer even when everything is on fire; repeating it beside a verdict
+    would only re-import the ambiguity this line exists to remove.
+    """
+    if not summary.failed:
+        logger.info(
+            "jobs_pulse_tick_healthy",
+            lane_count=len(summary.lanes),
+            ran=sum(1 for lane in summary.lanes if lane.outcome == "ran"),
+        )
+        return
+    logger.error(
+        "jobs_pulse_tick_failed",
+        lane_count=len(summary.lanes),
+        failing_lane_count=len(summary.failing_lanes),
+        failing_lanes=[
+            {
+                "lane": lane.lane,
+                "kind": lane.kind,
+                "outcome": lane.outcome,
+                "dead_lettered": lane.dead_lettered,
+                "standing_dead_letters": lane.standing_dead_letters,
+                "detail": lane.detail,
+            }
+            for lane in summary.failing_lanes
+        ],
+    )
 
 
 def _default_worker_id() -> str:
@@ -409,6 +531,104 @@ def _budget_exhausted_result(lane: str, kind: PulseLaneKind) -> PulseLaneResult:
     return PulseLaneResult(lane=lane, kind=kind, outcome="skipped_budget", seconds=0.0, records=0)
 
 
+def _slice_outcome(summary: JobSliceSummary) -> tuple[PulseLaneOutcome, str | None]:
+    """Classify what ONE slice did this tick: what it buried, or that it refused to start at all.
+
+    Deliberately says nothing about work buried on an EARLIER tick -- see `_read_standing_dead_letters`
+    and the module constant above it for why `JobSliceSummary.run_status` cannot carry that and what
+    replaced it. This function reads only evidence the slice in hand actually produced.
+    """
+    if summary.dead_lettered > 0:
+        return "dead_lettered", (
+            f"dead-lettered {summary.dead_lettered} of {summary.claimed} claimed "
+            f"(succeeded {summary.succeeded}, retried {summary.retried}, run_status {summary.run_status})"
+        )
+    if summary.stop_reason == PREFLIGHT_MISSING_RELATIONS_STOP_REASON:
+        # The lane refused before it ever opened a run or minted a shard -- work that will not run,
+        # reported as though nothing needed to run. See worker.py::preflight_required_relations and
+        # jobs/AGENTS.md "Preflight".
+        return "preflight_refused", (
+            f"preflight refused: missing relation(s) {', '.join(summary.preflight_missing_relations)}"
+        )
+    return "ran", None
+
+
+@dataclass(frozen=True, slots=True)
+class StandingDeadLetters:
+    """One lane's buried work as it stands right now, independent of what this tick did."""
+
+    count: int
+    first_shard_key: str | None = None
+
+    @property
+    def present(self) -> bool:
+        """True when this lane is carrying at least one dead-lettered work item."""
+        return self.count > 0
+
+    def describe(self) -> str:
+        """The operator-facing sentence, naming a shard to look at and an action that actually clears it."""
+        shard = "" if self.first_shard_key is None else f", first {self.first_shard_key}"
+        return (
+            f"{self.count} work item(s) standing dead-lettered for this definition{shard}; "
+            "the lane is not idle, its work is buried -- requeue those items, or cancel them "
+            "deliberately, and the next tick goes green"
+        )
+
+
+async def read_standing_dead_letters(session: AsyncSession, definition_name: str) -> StandingDeadLetters:
+    """Count one definition's dead-lettered work items -- the tick's standing-failure signal.
+
+    Issued UNCONDITIONALLY per lane, whichever way that lane's own slice landed and whether or not a run
+    was selected, because that independence is the whole point: the state this measures outlives the run
+    that produced it and is invisible to any one slice's summary.
+    """
+    row = await fetch_row(session, _COUNT_DEAD_LETTERED_WORK_ITEMS, {"definition_name": definition_name})
+    if row is None:  # pragma: no cover - the statement aggregates, so it always yields exactly one row
+        raise JobLedgerRowError(f"the dead-letter census for {definition_name!r} returned no row")
+    return StandingDeadLetters(
+        count=required_column(row, "dead_lettered_work_items", int),
+        first_shard_key=optional_column(row, "first_dead_lettered_shard_key", str),
+    )
+
+
+async def _fold_in_standing_dead_letters(result: PulseLaneResult, definition_name: str) -> PulseLaneResult:
+    """Add this definition's buried-work census to one lane's already-computed result.
+
+    Opens its OWN session rather than reusing the lane's, for two reasons: the dispatch path's session is
+    already closed by the time its result exists, and the raised path has no usable session at all -- and
+    a census that ran only on the healthy paths would be exactly the conditional signal this replaced.
+
+    FAILS CLOSED. A census that cannot be read leaves the lane `raised`, never `ran`: "we do not know
+    whether this lane is carrying buried work" is not the same claim as "it is not".
+    """
+    try:
+        async with ingest_session() as session:
+            await apply_statement_timeout(session)
+            standing = await read_standing_dead_letters(session, definition_name)
+            await session.rollback()
+    except Exception as error:  # per-lane isolation: an unreadable census must not end the pulse
+        logger.error("jobs_pulse_dead_letter_census_raised", lane=result.lane, error=type(error).__name__)
+        detail = f"dead-letter census failed: {failure_summary(error)}"
+        return replace(result, outcome="raised", detail=_join_details(result.detail, detail))
+    if not standing.present:
+        return result
+    # A landing this tick produced outranks the standing condition in the OUTCOME, because "this happened
+    # just now" is the more actionable of the two -- but the count rides along regardless, and
+    # `PulseSummary.failing_lanes` triggers on it independently of whichever outcome won.
+    outcome: PulseLaneOutcome = "standing_dead_letters" if result.outcome == "ran" else result.outcome
+    return replace(
+        result,
+        outcome=outcome,
+        standing_dead_letters=standing.count,
+        detail=_join_details(result.detail, standing.describe()),
+    )
+
+
+def _join_details(existing: str | None, addition: str) -> str:
+    """Keep both halves of a lane's evidence rather than letting the later one overwrite the earlier."""
+    return addition if not existing else f"{existing}; {addition}"
+
+
 async def _run_dispatchable_lane(
     planned: PlannedDispatchableLane,
     *,
@@ -416,7 +636,12 @@ async def _run_dispatchable_lane(
     handlers: JobHandlerRegistry,
     monotonic: Callable[[], float],
 ) -> PulseLaneResult:
-    """Dispatch one lane through the exact path `POST /jobs/trigger` uses, isolating its own failure."""
+    """Dispatch one lane through the exact path `POST /jobs/trigger` uses, isolating its own failure.
+
+    A dispatchable lane's `lane_id` IS its `agri.job_definition.name` -- `discover_pulse_plan` already
+    relies on that when it excludes a ledger definition already covered by the dispatch registry -- so it
+    is what the standing dead-letter census is keyed by.
+    """
     if planned.pause_state.paused:
         return PulseLaneResult(lane=planned.lane_id, kind="dispatchable", outcome="paused", seconds=0.0, records=0)
     started = monotonic()
@@ -431,13 +656,16 @@ async def _run_dispatchable_lane(
             )
     except Exception as error:  # per-lane isolation: one lane's fault must not end the pulse
         logger.error("jobs_pulse_dispatchable_lane_raised", lane_id=planned.lane_id, error=type(error).__name__)
-        return PulseLaneResult(
-            lane=planned.lane_id,
-            kind="dispatchable",
-            outcome="raised",
-            seconds=monotonic() - started,
-            records=0,
-            detail=failure_summary(error),
+        return await _fold_in_standing_dead_letters(
+            PulseLaneResult(
+                lane=planned.lane_id,
+                kind="dispatchable",
+                outcome="raised",
+                seconds=monotonic() - started,
+                records=0,
+                detail=failure_summary(error),
+            ),
+            planned.lane_id,
         )
     elapsed = monotonic() - started
     if outcome.state == "paused":
@@ -445,16 +673,20 @@ async def _run_dispatchable_lane(
         # exactly as the pre-flight check above would have, rather than as a raised lane.
         return PulseLaneResult(lane=planned.lane_id, kind="dispatchable", outcome="paused", seconds=elapsed, records=0)
     summary = outcome.summary
-    records = 0 if summary is None else summary.claimed
-    dead_lettered = 0 if summary is None else summary.dead_lettered
-    return PulseLaneResult(
-        lane=planned.lane_id,
-        kind="dispatchable",
-        outcome="ran",
-        seconds=elapsed,
-        records=records,
-        dead_lettered=dead_lettered,
-    )
+    if summary is None:
+        result = PulseLaneResult(lane=planned.lane_id, kind="dispatchable", outcome="ran", seconds=elapsed, records=0)
+    else:
+        lane_outcome, detail = _slice_outcome(summary)
+        result = PulseLaneResult(
+            lane=planned.lane_id,
+            kind="dispatchable",
+            outcome=lane_outcome,
+            seconds=elapsed,
+            records=summary.claimed,
+            dead_lettered=summary.dead_lettered,
+            detail=detail,
+        )
+    return await _fold_in_standing_dead_letters(result, planned.lane_id)
 
 
 async def _run_durable_definition(
@@ -480,22 +712,30 @@ async def _run_durable_definition(
         )
     except Exception as error:  # per-lane isolation: one lane's fault must not end the pulse
         logger.error("jobs_pulse_durable_definition_raised", lane=planned.lane_token, error=type(error).__name__)
-        return PulseLaneResult(
-            lane=planned.lane_token,
-            kind="durable",
-            outcome="raised",
-            seconds=monotonic() - started,
-            records=0,
-            detail=failure_summary(error),
+        return await _fold_in_standing_dead_letters(
+            PulseLaneResult(
+                lane=planned.lane_token,
+                kind="durable",
+                outcome="raised",
+                seconds=monotonic() - started,
+                records=0,
+                detail=failure_summary(error),
+            ),
+            planned.definition_name,
         )
     elapsed = monotonic() - started
-    return PulseLaneResult(
-        lane=planned.lane_token,
-        kind="durable",
-        outcome="ran",
-        seconds=elapsed,
-        records=summary.claimed,
-        dead_lettered=summary.dead_lettered,
+    lane_outcome, detail = _slice_outcome(summary)
+    return await _fold_in_standing_dead_letters(
+        PulseLaneResult(
+            lane=planned.lane_token,
+            kind="durable",
+            outcome=lane_outcome,
+            seconds=elapsed,
+            records=summary.claimed,
+            dead_lettered=summary.dead_lettered,
+            detail=detail,
+        ),
+        planned.definition_name,
     )
 
 
@@ -508,93 +748,18 @@ class MaintenanceStepReport:
     detail: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class _ShardCensusProbe:
-    """How many day-census shards one lane's reconcile/plan-gaps step reads, and the slowest one's seconds.
-
-    Exists so an operator reading one hourly `jobs-pulse` log line can tell "too few shards" (shard_count
-    low, every shard slow) from "one pathological shard" (shard_count normal, slowest_shard_seconds spikes)
-    without reading a second source -- the whole point of putting this in the step's own detail string.
-    """
-
-    shard_count: int
-    slowest_shard_seconds: float
-
-
-async def _probe_census_shards(lane: BackfillLane, *, monotonic: Callable[[], float]) -> _ShardCensusProbe:
-    """Time every shard of the observed-day census `reconcile_lane`/`plan_lane_gaps` are about to read again.
-
-    Neither returns shard-level telemetry, and adding it to their reports would mean editing reconcile.py,
-    which this module must not do. So this probe reads the SAME shards a second time, through the public
-    entry points that module exposes for exactly this purpose -- its own docstring calls out "a caller
-    holding a pool can fan out for itself with no change to my file": `observed_day_shards` cuts the lane's
-    own floor-to-today span into the same shards `observed_layer_days` would use internally, and
-    `observed_layer_days_in_range` reads one of them.
-
-    The bound mirrors `reconcile_lane`'s own -- floor through today (UTC) -- rather than `plan_lane_gaps`'
-    grid-anchored bound, which is never more than one lane window narrower. At `OBSERVED_DAY_SHARD_DAYS`
-    (two years) that narrower tail cannot move a day into a different shard, so one probe, cached per lane
-    by the caller, serves both steps' detail lines without a second read.
-
-    Shards are read ONE AT A TIME on ONE session rather than fanned out: this is a diagnostic read, not the
-    settlement itself, and it is not worth a session (and connection) per shard just to shave the wall-clock
-    time of a number nobody is blocked on. The per-shard row-cap refusal inside `observed_layer_days_in_range`
-    still applies to each read, so a probe can raise exactly as the real census can; the caller isolates that
-    failure the same way it isolates every other maintenance-step failure, so a broken probe degrades the
-    log line rather than the settlement.
-    """
-    layer_reference = archive_source(lane).layer_reference()
-    shards = observed_day_shards(lane.floor.date(), datetime.now(UTC).date())
-    slowest_seconds = 0.0
-    async with ingest_session() as session:
-        for shard_from, shard_to in shards:
-            shard_started = monotonic()
-            await observed_layer_days_in_range(session, layer_reference, from_day=shard_from, to_day=shard_to)
-            slowest_seconds = max(slowest_seconds, monotonic() - shard_started)
-        await session.rollback()
-    return _ShardCensusProbe(shard_count=len(shards), slowest_shard_seconds=slowest_seconds)
-
-
-async def _census_detail(
-    lane: BackfillLane,
-    lane_token: str,
-    *,
-    monotonic: Callable[[], float],
-    census_probes: dict[str, _ShardCensusProbe],
-) -> str:
-    """The `census shards=N slowest_shard_seconds=S.SSS` fragment appended to a lane step's detail.
-
-    Cached per lane so the reconcile step and the plan-gaps step -- which read effectively the same census,
-    see `_probe_census_shards` -- share one probe rather than two. A probe failure is reported inline and
-    never raised: it is diagnostic only, and must never turn a real settlement into a reported `raised` tick
-    over a fault in the number that was only there to help debug one.
-    """
-    probe = census_probes.get(lane_token)
-    if probe is not None:
-        return f"census shards={probe.shard_count} slowest_shard_seconds={probe.slowest_shard_seconds:.3f}"
-    try:
-        probe = await _probe_census_shards(lane, monotonic=monotonic)
-    except Exception as error:  # the probe is diagnostic only; its failure must not block real settlement
-        logger.warning("jobs_pulse_census_probe_failed", lane=lane_token, error=type(error).__name__)
-        return f"census probe failed ({type(error).__name__})"
-    census_probes[lane_token] = probe
-    return f"census shards={probe.shard_count} slowest_shard_seconds={probe.slowest_shard_seconds:.3f}"
-
-
-async def _execute_maintenance_step(
-    planned: PlannedMaintenanceStep,
-    *,
-    monotonic: Callable[[], float],
-    census_probes: dict[str, _ShardCensusProbe],
-) -> MaintenanceStepReport:
+async def _execute_maintenance_step(planned: PlannedMaintenanceStep) -> MaintenanceStepReport:
     """Run one data-quality step through the exact function its own CLI verb calls.
 
     Both lane steps run with `apply_changes=True`. That is the whole point of putting them on a
     schedule: a dry run detects a gap and changes nothing, which is the state this pass exists to end.
 
-    `census_probes` carries this tick's `_ShardCensusProbe` results, keyed by lane token, so the
-    reconcile and plan-gaps steps for one lane share a single probe of the observed-day census instead of
-    reading it a third and fourth time -- see `_census_detail`.
+    NO CENSUS TELEMETRY IS COLLECTED HERE, deliberately. A `_probe_census_shards` helper used to time each
+    shard of the observed-day census and fold `census shards=N slowest_shard_seconds=S` into every lane
+    step's detail. Its entire cost was re-reading the WHOLE census a second time, per lane, per tick, to
+    describe a fan-out that no longer exists -- see `ingest/reconcile.py::observed_layer_days` for the
+    measurement that removed it. Anyone wanting that number back should have `reconcile_lane` report its
+    own census timing rather than reading the census twice to observe it once.
     """
     if planned.step == "validate-streams":
         # `bbox=None` means "the configured INGEST_BBOX", exactly as the verb's own default does.
@@ -607,7 +772,6 @@ async def _execute_maintenance_step(
 
     lane_token = planned.require_lane_token()
     lane = resolve_lane(lane_token)
-    census_detail = await _census_detail(lane, lane_token, monotonic=monotonic, census_probes=census_probes)
 
     if planned.step == "reconcile":
         reconciliation = await reconcile_archive_lane(lane, apply_changes=True)
@@ -615,8 +779,7 @@ async def _execute_maintenance_step(
             outcome="ran",
             records=reconciliation.marked_succeeded_count,
             detail=(
-                f"settled {reconciliation.marked_succeeded_count} of {reconciliation.planned_window_count} "
-                f"planned, {census_detail}"
+                f"settled {reconciliation.marked_succeeded_count} of {reconciliation.planned_window_count} planned"
             ),
         )
 
@@ -629,8 +792,7 @@ async def _execute_maintenance_step(
         records=opened,
         detail=(
             f"opened {gap_plan.opened_count}, reopened {gap_plan.reopened_count}, "
-            f"missing {len(gap_plan.missing_days)} day(s), unplannable {len(gap_plan.unplannable_days)}, "
-            f"{census_detail}"
+            f"missing {len(gap_plan.missing_days)} day(s), unplannable {len(gap_plan.unplannable_days)}"
         ),
     )
 
@@ -639,14 +801,13 @@ async def _run_maintenance_step(
     planned: PlannedMaintenanceStep,
     *,
     monotonic: Callable[[], float],
-    census_probes: dict[str, _ShardCensusProbe],
 ) -> PulseLaneResult:
     """Run one data-quality step, isolating its own failure exactly as the two lane passes do."""
     if not planned.enabled:
         return PulseLaneResult(lane=planned.step_id, kind="maintenance", outcome="paused", seconds=0.0, records=0)
     started = monotonic()
     try:
-        report = await _execute_maintenance_step(planned, monotonic=monotonic, census_probes=census_probes)
+        report = await _execute_maintenance_step(planned)
     except Exception as error:  # per-step isolation: one check's fault must not end the pulse
         logger.error("jobs_pulse_maintenance_step_raised", step=planned.step_id, error=type(error).__name__)
         return PulseLaneResult(
@@ -712,15 +873,14 @@ async def run_jobs_pulse(  # noqa: PLR0913 - one parameter per operator-tunable 
             results.append(_budget_exhausted_result(planned_definition.lane_token, "durable"))
             continue
         results.append(await _run_durable_definition(planned_definition, worker_id=worker_id, monotonic=monotonic))
-    # Keyed by lane token, not step: the reconcile and plan-gaps steps for one lane share a single
-    # `_ShardCensusProbe` rather than each probing the census a second time -- see `_census_detail`.
-    census_probes: dict[str, _ShardCensusProbe] = {}
     for planned_step in plan.maintenance:
         if monotonic() >= deadline:
             results.append(_budget_exhausted_result(planned_step.step_id, "maintenance"))
             continue
-        results.append(await _run_maintenance_step(planned_step, monotonic=monotonic, census_probes=census_probes))
-    return PulseSummary(lanes=tuple(results))
+        results.append(await _run_maintenance_step(planned_step, monotonic=monotonic))
+    summary = PulseSummary(lanes=tuple(results))
+    _log_tick_verdict(summary)
+    return summary
 
 
 async def _dry_run_report(lane_filter: frozenset[str] | None, *, include_maintenance: bool) -> dict[str, object]:
@@ -821,10 +981,28 @@ def jobs_pulse(
            tick's own time budget was already spent starting the next one. A stream reported
            `incomplete` -- a backfill in flight -- is likewise not an incident. All of these are what
            a multi-tick, in-flight job runner working exactly as designed looks like.
-      1 -- any lane DEAD-LETTERED a shard during this tick, any lane's own dispatch/slice call raised,
-           any data-quality step raised, or `validate-streams` found a stream `invalid` (rows that ARE
-           there are wrong). Per-lane isolation means one such lane never stops another lane's turn; it
-           only changes THIS TICK'S exit code, once every lane still due one has had its turn.
+      1 -- any lane DEAD-LETTERED a shard during this tick; any lane is CARRYING dead-lettered work items
+           from an earlier tick (counted per definition, unconditionally, whether or not a run was driven);
+           any lane's own dispatch/slice call raised; any data-quality step raised; the dead-letter census
+           itself could not be read; or `validate-streams` found a stream `invalid` (rows that ARE there
+           are wrong). Per-lane isolation means one such lane never stops another lane's turn; it only
+           changes THIS TICK'S exit code, once every lane still due one has had its turn. A failing tick
+           also emits one `jobs_pulse_tick_failed` line at ERROR naming every failing lane, so the failure
+           is visible in the log and not only in the exit status.
+
+    An OPERATOR CANCELLATION never reds a tick. Cancellation is recorded on the WORK ITEM as 'cancelled',
+    which this verb does not count, and the run-level rollup it also moves is not read here at all -- see
+    the standing-signal note beside `_COUNT_DEAD_LETTERED_WORK_ITEMS` for why reading that rollup made
+    cancelling a lane an unclearable hourly failure.
+
+    WHY A NON-ZERO EXIT IS SAFE HERE, and what would make it unsafe. `infra/cron-ingest/railway.json` sets
+    `restartPolicyType: NEVER` alongside `cronSchedule: 0 * * * *`, and `infra/cron-ingest/Dockerfile`'s
+    ENTRYPOINT already propagates this verb's status. So a non-zero exit marks ONE hourly run red and
+    Railway starts nothing in its place; the next attempt is the next hour's tick. `standing_dead_letters`
+    in particular is a STANDING condition that will repeat every hour until an operator requeues or cancels
+    the buried items, and that is the intended behaviour -- one red run per hour, not a restart storm. If
+    that restart policy is ever changed to `ON_FAILURE`, it becomes an unbounded loop of back-to-back
+    600-second ticks and must be demoted to an ERROR log with a zero exit before the policy is flipped.
     """
     lane_filter = _parse_lane_filter(lane_names)
     include_maintenance = not skip_maintenance

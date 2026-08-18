@@ -496,6 +496,260 @@ redacts now. It is not imported from here and does not import from here: `jobs` 
 primitive `ingest` builds on, and a dependency in either direction would invert that layering for a
 twelve-token regex. Both copies carry a comment naming the other.
 
+### `failure_summary` names the real condition now, not the dialect's tautology
+
+Production measured `agri.job_attempt.error_summary` reading the literal `'job step failed
+(ProgrammingError)'` for every one of a day's worth of `matview-refresh` and `strategy-mv-refresh`
+failures, whose real cause was `UndefinedTable` on `agri.matview_refresh_state` before its migration
+had been applied. `error.__class__.__name__` alone could never have said that: asyncpg's dialect
+wraps the driver condition in its own `ProgrammingError`, so `type(error).__name__` reports the
+wrapper, not the condition underneath it.
+
+`failure_condition_name` fixes this by reusing the exact unwrap `routes/ops.py::_panel_error_summary`
+already proved safe for an unauthenticated page: read `.orig` one level (the dialect's addition, no
+more), then that value's `__cause__` (the real condition), and report only `type(x).__name__` pairs —
+never `str()`, `repr()`, `.statement`, `.params`, `.detail` or `.args`, so nothing it returns can carry
+a table name, a row value or a bound parameter. `failure_summary` now renders `"job step failed
+(ProgrammingError: UndefinedTable)"` for exactly this case. `failure_class`
+(`worker.py::_fail_after_error`) is left as the bare `type(error).__name__` deliberately — only
+`error_summary` carries the richer pair, and it still funnels through `clamp_summary` at
+`fail_work_item`/`defer_work_item` before it becomes durable, exactly as before.
+
+**`routes/ops.py::_panel_error_summary` is not owned by this package and still carries its own copy of
+this logic**, predating `failure_condition_name` by the incident that motivated extracting it here.
+Repointing that call site at `agri_data_service.jobs.lease.failure_condition_name` is an outstanding
+follow-up for whoever owns `routes/`; it is not done here because `routes/ops.py` is out of scope for
+this package's ownership boundary.
+
+## Preflight: refusing before the retry budget is spent
+
+A lane's handler can depend on a relation existing — `agri.matview_refresh_state` is the shared
+ledger both `matview_refresh.py` and `strategy_mv_refresh.py` read and write through — and until that
+relation's migration lands, EVERY attempt against it raises. Left alone, that shape burns a lane's
+full `max_attempts` on every single tick, forever, because both lanes mint a brand-new, freshly-keyed
+work item on every trigger call (`matview_refresh.py`'s one persistent run gets a new shard per tick;
+`strategy_mv_refresh.py` buckets a new run per poll window) — so there is always a fresh shard to
+burn the budget on again. Measured in production: ten `matview-refresh` shards dead-lettered and
+thirteen `strategy-mv-refresh` ones sitting `retry_wait`, across roughly a day, before anyone noticed
+`agri.job_attempt.error_summary` said anything at all.
+
+`worker.py::preflight_required_relations` is the fix: a lane calls it FIRST, before
+`ensure_job_definition`/`open_job_run`, over the relations its handler cannot function without
+(`lease.py::find_missing_relations`, a single `to_regclass` catalog lookup per name, no lock, no
+error on an absent relation). Missing anything, it refuses immediately — no run opened, no work item
+minted, no attempt claimed, nothing to retry or dead-letter — and returns a terminal
+`JobSliceSummary` with `stop_reason = "preflight_missing_relations"` and the missing relations named
+plainly in `preflight_missing_relations`.
+
+**The refusal is not a silent early return.** It still writes the one `job_event` heartbeat row every
+other stop path writes, at severity `error` (louder than a dead-lettered tick's `warning`, because
+this is the whole lane refusing, not one shard failing), so `max(occurred_at) WHERE event_code =
+'slice_finished'` keeps reading as "this lane is ticking" and the missing relations can be read
+straight off `job_event.progress` without a second lookup, statement, or SSH session.
+`docs/layer-lane-standard.md` §0's rule — "a lane that reports success having written nothing is
+worse than a lane that fails" — is exactly what a refusal that looked like `no_claimable_work` would
+violate; `preflight_missing_relations` is its own stop reason for precisely that reason, not reused
+from `no_open_run`.
+
+**Scoped to the relation that has no graceful path, not to every relation a lane touches.**
+`matview_refresh.py`'s eleven views already handle an individual missing view gracefully
+(`_view_exists` -> `skipped_missing`, self-healing the moment the relation appears — see that
+module's own "Graceful skip, not a crash" comment), and `strategy_mv_refresh.py`'s three guardrailed
+views do the same. Preflighting those too would turn "eight of eleven views are ready, refresh them"
+into "refuse the whole tick because three views are not," a real behavioural regression this change
+does not make. `agri.matview_refresh_state` is different: nothing catches its absence, so it is the
+one relation both lanes declare in `MATVIEW_REFRESH_REQUIRED_RELATIONS` (`jobs/matview_refresh.py`),
+and `strategy_mv_refresh.py` imports that same tuple rather than restating the literal, because it
+writes to the identical table through the identical failure mode.
+
+**Dead-lettered shards from before the fix are not re-armed, on purpose.** Both lanes' shards are
+ephemeral refresh cycles, not irreplaceable data windows: `matview_refresh.py` mints a fresh,
+uniquely-keyed shard into its one persistent run on every trigger call, and `strategy_mv_refresh.py`
+mints a fresh shard into a fresh bucketed run every poll window, regardless of what any earlier shard
+did. The moment the missing relation exists again, the very next tick's fresh shard succeeds and
+refreshes every view exactly as if the outage had not happened — there is no data loss to recover,
+because a matview refresh has no "window" a superseded attempt could have uniquely captured. Re-arming
+old dead letters would only matter for a lane whose shards each own an irreplaceable slice of
+history — an archive walk's 5-day FIRMS window, for instance — where a dead-lettered shard really does
+mean a permanent gap `next_attempt_at` can never revisit on its own. Neither refresh lane has that
+shape, so the ten and thirteen stale rows stay exactly what this file's "Why max_attempts exhaustion
+is `dead_letter` and never silent success" already says they should be: a truthful record that a
+specific tick failed, not a gap anything downstream is missing data because of.
+
+## The matview-refresh lane's four self-inflicted stalls
+
+All four were found by measuring production on 2026-08-17 rather than by reading the code, and all
+share one shape: a view that cannot make progress is indistinguishable, to some gate, from a view that
+is fine. The numbers are here because the code that acts on them is terse by house convention, and
+because a first pass got several of them wrong — every figure below is a live read.
+
+The ledger, `agri.matview_refresh_state`:
+
+| view | `refreshed_at` | `duration_ms` | cap | outcome |
+|---|---|---|---|---|
+| `mv_signal_cell_daily` | 08-16 16:40 | **1,729,192** | 1,800 s → **1,900** | refreshed (96%) |
+| `mv_feature_observation_day` | 08-17 10:02 | **300,257** | 300 s → **900** | **failed** |
+| `mv_layer_feature_stats` | 08-17 11:49 | 42,589 | 60 s → **120** | refreshed (71%) |
+| `mv_layer_hourly_activity` | 08-17 12:11 | 7,865 | 60 s → **120** | refreshed |
+| `mv_signal_observation_day` | **NULL** | 300,238 | 300 s | failed (timeout, to the ms) |
+| `mv_soil_survey_grid` | **NULL** | 86,320 | 300 s | failed |
+| `mv_soil_survey_union` | **NULL** | 104,269 | 300 s | failed (`relispopulated=false`) |
+
+`agri.job_attempt` 48 h: 47 failed / 7 deferred / **2 succeeded**; 15 work items standing in
+`dead_letter`. Total guaranteed-doomed REFRESH per hourly tick: **791 s**.
+
+### 1. A view that can never succeed was eligible on every tick, forever — by two different routes
+
+`upsert_matview_refresh_state.sql` COALESCEs a failed attempt's NULL `refreshed_at` onto the stored
+value, so a failure never erases a real prior success. Correct — and it makes "never succeeded" and
+"never attempted" the same row. `_eligibility`'s first branch read that row as *never refreshed, try
+it*.
+
+**There is a second door, and missing it undercounted the waste by 43%.** `mv_feature_observation_day`
+HAS a prior success, so its `refreshed_at` is non-NULL and it never took that branch — it re-enters
+every tick through the **watermark** gate, because its watermark is `max(updated_at)` over
+`geo.features` and that moves on every ingest. Both doors lead to the same unbounded loop. The backoff
+sits in front of the whole gate, so it covers both; only the *census* of the damage was wrong.
+
+`_backoff_seconds` doubles from the spec's `min_interval_seconds`, capped at its own
+`max_staleness_seconds`.
+
+#### Why the cap is `max_staleness_seconds` and not a tuning knob
+
+That value already declares "this view must be re-attempted at least this often", so capping there is
+what stops the backoff becoming silence: a view someone fixes becomes eligible on its own, with no
+operator action and no second switch to remember. **But read the actual numbers before assuming that
+is quick.** For the two soil views `max_staleness_seconds` is **604,800 s = 7 days**, so the schedule
+is 6 h → 12 h → 24 h → 48 h → … → 7 days, and after a handful of failures a fixed view waits up to a
+week to prove it. There is no in-lane verb to shorten that. The operator action is one statement:
+
+```sql
+UPDATE agri.matview_refresh_state
+   SET consecutive_failures = 0
+ WHERE view_name = 'geo.mv_soil_survey_union';
+```
+
+which makes the very next tick attempt it. Do that after fixing a view rather than waiting.
+
+#### Backoff must not buy silence
+
+The counter suppresses the WORK and never the SIGNAL. A withheld view is reported `deferred_failing`,
+`MatviewRefreshReport.has_failures` returns True for it, the handler returns `failed`, the work item
+still dead-letters, and `execution/jobs_pulse_command.py`'s dead-lettered-work-item census still reds
+the hourly cron — the signal RUNBOOK §3 makes binding, unchanged in both directions. Producing that
+signal now costs ~0 s instead of 791 s.
+
+#### A yield used to swallow the failure signal
+
+The paragraph above was **false as first written**, and the bug was one line of ordering. The handler
+tested `budget_exhausted` *before* `report.has_failures` and returned `JobHandlerOutcome.yielded`,
+which `worker.py::_apply_park` treats as a park — max_attempts raised rather than spent, so the item
+never fails, never dead-letters, and the census sees nothing. Every budget-exhausted tick was therefore
+**green over permanently-failing views**, for up to `MAX_CONSECUTIVE_PARKS = 24` consecutive hours.
+Stall 3 below made it materially more reachable, by letting the 1,729 s view start at all.
+
+`has_failures` is now tested first. Nothing is lost by preferring the failure: the yield cursor is an
+optimisation, not a correctness device — a view refreshed earlier in the tick has its watermark and
+`refreshed_at` committed, so the next tick's fresh plan skips it as `skipped_unchanged` regardless.
+
+#### Two clocks, and which one governs what
+
+The gate compares a Python `datetime.now(UTC)` against `last_attempt_at`, which the upsert writes from
+the **database** `now()`. That mix is deliberate and was already the case for `refreshed_at`; the
+thresholds are minutes-to-days, so seconds of skew cost scheduling precision and not correctness
+(unlike a lease deadline — see "every timestamp comes from the database"). Two consequences worth
+knowing: a container with a badly wrong clock backs off by the wrong amount, and **an OOM-killed or
+disconnected refresh writes no ledger row at all**, so `consecutive_failures` does not increment for
+it — that failure mode is invisible to the backoff and surfaces only as a dead-lettered work item.
+
+### 2. The real discriminator is `Parallel Hash`, not parallelism
+
+`dynamic_shared_memory_type = posix`, so every parallel plan allocates its segment in `/dev/shm` —
+tmpfs, which is RAM, inside the 3 GB cgroup. Reproducing `mv_soil_survey_grid`'s defining query
+read-only raised `could not resize shared memory segment ... to 16777216 bytes: No space left on
+device` after 55.05 s; the same query at `max_parallel_workers_per_gather = 0` ran past 280 s clean.
+
+**A default of 1 removes no exposure, and must not be read as a mitigation.** Plain `EXPLAIN` on prod:
+
+| relation | plan | DSM shape |
+|---|---|---|
+| `mv_feature_observation_day_axis` | `HashAggregate` over `Gather`, Workers Planned 2 | fixed ~64 kB tuple queues |
+| `mv_feature_observation_day` | `GroupAggregate` over `Gather Merge`, Workers Planned 2 | fixed ~64 kB tuple queues |
+| `mv_soil_survey_grid` | `GroupAggregate` over `Gather Merge` **+ `Parallel Hash` Left Join** | **shared, RESIZABLE hash table** |
+
+All three allocate a segment; one worker allocates one just as two do. What distinguishes the faulting
+views is `Parallel Hash` — a shared hash table that **grows**, which is exactly what "could not
+*resize* shared memory segment" reports.
+
+**So the classification test for any view added to this lane is: does its plan contain `Parallel
+Hash`?** Not "is it parallel?". If yes, set `max_parallel_workers_per_gather=0` on its spec. If no,
+leave the default alone — the census plans have never faulted, and three of them sit at 96%, 94% and
+71% of their own statement timeouts, so removing their workers would convert working refreshes into
+permanent failures and feed the livelock stall 1 removes.
+
+(`mv_soil_survey_union` also carries the `ST_CollectionExtract` omission at `drizzle/0029:918`.
+Removing its memory fault will change *which* error it reports, not make it pass.)
+
+### 3. A view can be too big for its own lane
+
+The budget gate demanded `BUDGET_SAFETY_FACTOR × estimate` before starting a refresh. For
+`mv_signal_cell_daily` that is `2 × 1,729 = 3,458 s` against a tick budget of 1,800 s —
+**unsatisfiable on every tick**, so the view would have been reported `skipped_budget` forever. That
+outcome is a healthy deferral everywhere else in this lane, which is what made the starvation
+invisible.
+
+`_required_budget_seconds` caps the requirement at the view's own `statement_timeout_seconds`, the
+bound that is actually true: the statement cannot run longer than that. The doubling still governs
+wherever it is the smaller number.
+
+#### The tick budget is sized against the cron, not the spec table
+
+`time_budget_seconds` must exceed every `statement_timeout_seconds`, or the view whose cap equals the
+budget can only start on a tick where zero time has elapsed. But it must not simply be made large:
+
+- The lane runs from an **hourly** cron. 2,100 s puts a worst-case tick (heaviest view at its 1,900 s
+  cap plus ledger overhead, ~32 min) about 25 minutes clear of the next tick. An earlier draft used
+  2,400 s and halved that slack.
+- **This lane holds no `concurrency_key`** (verified NULL on the prod `job_definition` row). Two
+  overlapping ticks each mint their own shard, and both would issue `REFRESH CONCURRENTLY` against the
+  same views — they serialise on the matview lock rather than corrupting anything, but the second burns
+  its lease waiting.
+- `execution/jobs_pulse_command.py`'s own `DEFAULT_PULSE_TIME_BUDGET_SECONDS` is **600**, so a tick
+  where this lane runs long lands every later pulse lane in `skipped_budget` — including the durable
+  archive lanes, so the FIRMS backlog does not drain on such a tick. `skipped_budget` is not a dead
+  letter, so the pulse still reports green. That is pre-existing (1,800 was already 3× 600) and is
+  recorded here rather than fixed, because the fix is a scheduling decision above this lane.
+
+### 4. The census re-grain, and what it actually buys
+
+`drizzle/0031` adds `geo.mv_feature_observation_day_axis`; `drizzle/0032` repoints
+`geo.v_observation_day_census` onto it behind a `relispopulated` precondition. Two files, because
+**PostgreSQL refuses to read an unpopulated matview** — `materialized view "..." has not been
+populated`, a thrown query, and no join type avoids it (a `FULL JOIN ... ON false` against an
+unpopulated relation raises identically). Repointing the census before the populate would have 500'd
+the entire layer-catalogue request, since `readObservationWindows` and the signal/drought axis both
+select from that view.
+
+**The re-grain is not a latency win, and an earlier claim that it was is retracted.** Measured against
+prod: the axis populates in **286.8 s**, essentially the same as the combined statement's 283,049 ms.
+Extrapolating a per-layer 0.82 s to "~22 s over 5.0M rows" was wrong by more than 13×, because the scan
+and the `properties` detoast dominate at full scale and both variants pay them. What the split buys is
+**spill width** — 33 bytes per tuple against 511, ~165 MB against ~1.4 GiB, the only axis a 3 GB cap
+cares about — and **reliability**, since a 287 s statement completes under a 900 s cap and does not
+under 300 s. Total refresh seconds per day go slightly *up*.
+
+The wide relation drops to **six-hourly, not daily**, because two of its columns are not captions:
+`metric_counts` feeds a `COALESCE(..., 0)` that turns a missing row into the false sentence
+"`<label>` recorded no observation on `<date>`" (`environmental-read-model.ts:4204`, whose own comment
+at `:4197` says that sentence "asserts something false about the warehouse"), and `newest_observed_at`
+**selects `not_published` vs `stale`** at `:1452` — a status driver, not a caption. Six hours bounds
+both windows; closing the false sentence properly is a TypeScript change tracked outside this lane.
+
+A **ghost day** is the accepted residual of the FULL JOIN: a `(surface, day)` the wide relation still
+holds after the axis has correctly dropped it lingers for up to one wide-relation cadence, so the
+slider offers a day that draws nothing rather than hiding a day that has data. `drizzle/0032`'s header
+states it.
+
 ## Metrics
 
 `job_attempt.metrics` is written on **every** attempt-closing path, not just the successful one.

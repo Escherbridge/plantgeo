@@ -1,5 +1,6 @@
 -- Purpose: repoint geo.features rows at the geometry versions just resolved for them, touching
---          only the rows that are not already pointing there.
+--          only the rows that are not already pointing there, and stamp the write-time watermark
+--          every downstream refresh reads.
 -- Loaded by: agri_data_service.ingest.geometry
 -- Params: feature_ids (text[]) -- the geo.features rows to repoint, as uuid text.
 --         geometry_ids (text[]) -- the version each of those rows should point at, as uuid text.
@@ -68,6 +69,21 @@
 --     Names the zipped table and its columns in array order, so they can be referred to by name
 --     in the SET and WHERE clauses.
 --
+--   SET ... updated_at = now()
+--     The write-time watermark, and it is NOT decoration. `geo.features.updated_at` is what the
+--     matview-refresh lane reads as its watermark for every geo.features-backed view
+--     (`sql/jobs/matview_refresh_watermark_features_updated_at.sql`), and it is the only column a
+--     future delta refresh could key a "what changed since the last pass" predicate on. This
+--     statement moves `geometry_id`, and `geometry_id` is precisely what drives
+--     `observation_count` / `unlinked_count` / `distinct_key_count` in
+--     `geo.mv_feature_observation_day` and `geo.mv_feature_observation_day_axis` -- so a linking
+--     pass that did not stamp the watermark would be a content change no watermark reader could
+--     see. It was missing here and present in the other two writers of this column
+--     (`sql/ingest/refresh_features.sql` and `src/lib/server/services/ingest.ts`); there is no
+--     trigger and no ORM `$onUpdate` behind it, so the invariant is maintained by convention and
+--     two of three writers is how a convention rots. `now()` is the transaction timestamp, which
+--     is what the other two writers use, so a batch lands on one instant rather than smeared.
+--
 --   WHERE feature.id = CAST(link.feature_id AS uuid)
 --     The join condition: each instruction finds the one row it names. In an UPDATE ... FROM
 --     the join lives in the WHERE clause rather than in an ON clause, and omitting it would not
@@ -95,7 +111,8 @@
 --     above it is what turns "how many links did we request" into "how many features did we
 --     actually move".
 UPDATE geo.features AS feature
-SET geometry_id = CAST(link.geometry_id AS uuid)
+SET geometry_id = CAST(link.geometry_id AS uuid),
+    updated_at = now()
 FROM unnest(CAST(:feature_ids AS text[]), CAST(:geometry_ids AS text[])) AS link(feature_id, geometry_id)
 WHERE feature.id = CAST(link.feature_id AS uuid)
   AND feature.geometry_id IS DISTINCT FROM CAST(link.geometry_id AS uuid)

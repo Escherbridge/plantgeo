@@ -47,6 +47,7 @@ from agri_data_service.jobs.registry import (
     job_handler,
 )
 from agri_data_service.jobs.worker import (
+    PREFLIGHT_MISSING_RELATIONS_STOP_REASON,
     JobDefinitionNotFoundError,
     JobDefinitionRecord,
     JobRunError,
@@ -60,11 +61,13 @@ from agri_data_service.jobs.worker import (
     refresh_job_run_rollup,
     run_job_slice,
     shutdown_signal,
+    slice_summary_is_failing,
 )
 
 __all__ = [
     "JOB_HANDLERS",
     "LANE_DISPATCH",
+    "PREFLIGHT_MISSING_RELATIONS_STOP_REASON",
     "CheckpointRecord",
     "ClaimedWorkItem",
     "DispatchOutcome",
@@ -116,4 +119,5 @@ __all__ = [
     "release_lost_attempt",
     "run_job_slice",
     "shutdown_signal",
+    "slice_summary_is_failing",
 ]

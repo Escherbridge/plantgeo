@@ -16,7 +16,7 @@ import json
 import re
 import uuid
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -493,6 +493,84 @@ async def test_the_observed_day_scan_is_bounded_to_the_lanes_own_layer_and_to_se
     # invisible to the time axis, so counting it as coverage would settle a window the slider cannot reach.
     assert "features.status = :published_status" in sql
     assert "features.geometry_id IS NOT NULL" in sql
+
+
+# --- The day census is ONE bounded statement --------------------------------------------------------
+#
+# It was thirteen sharded statements for one day (2026-08-15 to 2026-08-16) and the revert left no test
+# behind by itself, which is how the sharded version shipped uncovered in the first place. These cases
+# pin the shape rather than the timing: one execution, bounded at both ends, refusing rather than
+# truncating. The measurement that chose one statement over thirteen (68.7s against 95.3s, with
+# shared_blks_read a wash) lives in `observed_layer_days`' own comment -- it is a production fact and
+# nothing here can or should re-prove it.
+
+
+async def test_the_day_census_is_read_in_exactly_one_statement_bounded_to_the_lanes_own_span() -> None:
+    session = RecordingSession()
+    session.answer(OBSERVED_DAYS_MARKER, _observed("2022-08-05"))
+    session.answer(LANE_WINDOWS_MARKER, [])
+
+    await _reconcile(session)
+
+    census_statements = [
+        sql for sql, _ in session.statements if RecordingSession.marker_of(sql) == OBSERVED_DAYS_MARKER
+    ]
+    assert len(census_statements) == 1, "the census is one statement; a fan-out is what the 2026-08-16 revert removed"
+
+    parameters = session.parameters_for(OBSERVED_DAYS_MARKER)
+    # The lane's own floor through today, not the layer's whole life and not a shard of either.
+    assert parameters["from_day"] == FIRMS_ARCHIVE_LANE.floor.date()
+    assert parameters["to_day"] == datetime.now(UTC).date()
+    # The bounded predicate survives the revert: it is what `ix_features_layer_observation_day` serves.
+    assert ":from_day" in census_statements[0]
+    assert ":to_day" in census_statements[0]
+
+
+async def test_a_census_with_no_bounds_binds_the_widest_calendar_dates_rather_than_nulls() -> None:
+    # A nullable bound would force `observed_days.sql` into a generic plan and lose the index entirely --
+    # see the "THE DAY SCOPE SLOT" note in the .sql file. So "unbounded" is spelled as real dates.
+    session = RecordingSession()
+    session.answer(OBSERVED_DAYS_MARKER, _observed("2022-08-05"))
+
+    observed = await reconcile_module.observed_layer_days(cast("Any", session), "geo:firms")
+
+    assert observed == frozenset({date(2022, 8, 5)})
+    parameters = session.parameters_for(OBSERVED_DAYS_MARKER)
+    assert parameters["from_day"] == date.min
+    assert parameters["to_day"] == date.max
+    assert parameters["from_day"] is not None
+    assert parameters["to_day"] is not None
+
+
+async def test_a_census_span_that_ends_before_it_begins_is_refused_rather_than_read() -> None:
+    session = RecordingSession()
+    session.answer(OBSERVED_DAYS_MARKER, _observed("2022-08-05"))
+
+    with pytest.raises(ReconciliationError, match="ends before it begins"):
+        await reconcile_module.observed_layer_days(
+            cast("Any", session),
+            "geo:firms",
+            first_day=date(2022, 8, 10),
+            through_day=date(2022, 8, 1),
+        )
+
+    assert not session.emitted(OBSERVED_DAYS_MARKER)
+
+
+async def test_a_bounded_census_that_hits_its_cap_is_refused_and_names_the_span_it_read() -> None:
+    # The refusal is per EXECUTION and always was; what changed is that there is now only ever one. A
+    # truncated result drops its TAIL (the statement orders by day), and every dropped day would come back
+    # as a day the layer does not serve -- which reopens a window that was never missing, forever.
+    session = RecordingSession()
+    session.answer(OBSERVED_DAYS_MARKER, [{"observed_day": date(2000, 11, 1)}] * MAX_OBSERVED_DAY_ROWS)
+
+    with pytest.raises(ReconciliationScanTooLargeError, match="2000-11-01"):
+        await reconcile_module.observed_layer_days(
+            cast("Any", session),
+            "geo:firms",
+            first_day=date(2000, 11, 1),
+            through_day=date(2024, 1, 1),
+        )
 
 
 # --- Refusals ---------------------------------------------------------------------------------------

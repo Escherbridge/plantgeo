@@ -28,6 +28,7 @@ from agri_data_service.jobs.lease import (
     failure_summary,
     fetch_row,
     fetch_rows,
+    find_missing_relations,
     mark_work_item_running,
     optional_column,
     reclaim_expired_leases,
@@ -87,7 +88,47 @@ JOB_EVENT_TEXT_MAX_LENGTH: Final = 100
 # true per-lane heartbeat, which is the single fact the ledger could not previously produce.
 SLICE_FINISHED_EVENT_CODE: Final = "slice_finished"
 
-SliceStopReason = Literal["no_open_run", "no_claimable_work", "time_budget_exhausted", "shutdown_requested"]
+SliceStopReason = Literal[
+    "no_open_run",
+    "no_claimable_work",
+    "time_budget_exhausted",
+    "shutdown_requested",
+    "preflight_missing_relations",
+]
+
+# The stop reason a preflight refusal reports. See `preflight_required_relations` and jobs/AGENTS.md
+# "Preflight": a lane whose required relation does not exist must refuse before it ever opens a run
+# or claims a shard, rather than burning its retry budget on a step certain to raise.
+PREFLIGHT_MISSING_RELATIONS_STOP_REASON: Final[SliceStopReason] = "preflight_missing_relations"
+
+def slice_summary_is_failing(summary: JobSliceSummary) -> bool:
+    """True when one slice's landing means this tick found something wrong, not merely nothing to do.
+
+    The single source of truth `jobs/dispatch.py`'s `lane_dispatched` log severity and
+    `execution/jobs_pulse_command.py`'s `_slice_outcome`/`FAILING_PULSE_OUTCOMES` both read, so the two
+    can never quietly diverge on what counts as "failing" -- which is exactly how a fully dead-lettered
+    lane logged `stop_reason=no_claimable_work succeeded=0` at INFO for roughly 24 hours: dispatch.py's
+    own `lane_dispatched` line described one slice's landing but was never told which landings meant
+    trouble. See `execution/AGENTS.md` § "Outcomes and the exit rule".
+
+    THIS PREDICATE DESCRIBES ONE SLICE'S LANDING AND NOTHING ELSE. A lane whose work was buried on some
+    EARLIER tick is a standing condition, not a landing, and is deliberately not readable from here:
+    `JobSliceSummary.run_status` cannot carry it. Two independent reasons, both provable from the SQL:
+
+      * It cannot fire when it should. `sql/jobs/select_open_job_run.sql` selects only a run whose
+        status is 'queued' or 'running', so the tick AFTER a run rolls up terminal selects no run at
+        all and reports `run_status=None` (see `run_job_slice`'s `no_open_run` branch) -- healthy.
+      * It fires when it must not. `sql/jobs/refresh_job_run_rollup.sql` counts a 'cancelled' WORK ITEM
+        as `failed` and its run CASE has no 'cancelled' branch, so an operator cancellation rolls the
+        run up to 'partial'/'failed'. Nothing anywhere writes 'cancelled' or 'dead_letter' to
+        `job_run.status` at all -- `insert_job_run.sql` writes 'queued' and that rollup CASE writes the
+        other four, and those are the only two statements that touch the column.
+
+    The standing signal lives in `execution/jobs_pulse_command.py` instead, counted from
+    `sql/jobs/count_dead_lettered_work_items.sql`, which has neither defect.
+    """
+    return summary.dead_lettered > 0 or summary.stop_reason == PREFLIGHT_MISSING_RELATIONS_STOP_REASON
+
 
 ItemLanding = Literal[
     "succeeded",
@@ -249,6 +290,10 @@ class JobSliceSummary:
     reclaimed: int = 0
     elapsed_seconds: float = 0.0
     run_status: str | None = None
+    # Populated only when stop_reason == "preflight_missing_relations": the relations the lane
+    # declared as required that do not exist right now, named plainly so an operator reading the
+    # ledger never has to SSH anywhere to know what is missing. Empty on every other tick.
+    preflight_missing_relations: tuple[str, ...] = ()
 
     def to_summary(self) -> dict[str, object]:
         """Render the operator-facing JSON object a cron container echoes as one line, per ingest/results.py."""
@@ -268,6 +313,7 @@ class JobSliceSummary:
             "reclaimed": self.reclaimed,
             "elapsed_seconds": round(self.elapsed_seconds, 3),
             "run_status": self.run_status,
+            "preflight_missing_relations": list(self.preflight_missing_relations),
         }
 
 
@@ -330,12 +376,21 @@ async def _write_slice_event(session: AsyncSession, summary: JobSliceSummary) ->
     # dead-lettered something without having to know a second vocabulary word. The slice summary goes in
     # `progress` verbatim -- it is already the operator-facing shape the cron log carries -- and the queue
     # depth the statement computes for itself goes in `detail`.
+    severity = "info"
+    if summary.stop_reason == PREFLIGHT_MISSING_RELATIONS_STOP_REASON:
+        # Louder than a dead-lettered tick's "warning": this is not one shard failing, it is the
+        # whole lane refusing to run at all, and it will refuse identically on every future tick
+        # until someone applies the missing migration -- exactly the class of silence this exists
+        # to end.
+        severity = "error"
+    elif summary.dead_lettered:
+        severity = "warning"
     await fetch_row(
         session,
         _WRITE_SLICE_EVENT,
         {
             "job_run_id": summary.job_run_id,
-            "severity": "warning" if summary.dead_lettered else "info",
+            "severity": severity,
             "event_code": SLICE_FINISHED_EVENT_CODE,
             "environment": _job_event_environment(),
             "service": JOB_EVENT_SERVICE,
@@ -508,6 +563,54 @@ def _require_budget_within_lease(budget: float, definition: JobDefinitionRecord)
         raise JobSpecificationError(
             f"budget_seconds must be under the definition's lease_seconds ({definition.lease_seconds})"
         )
+
+
+async def preflight_required_relations(
+    session: AsyncSession,
+    *,
+    definition_name: str,
+    worker_id: str,
+    required_relations: Sequence[str],
+) -> JobSliceSummary | None:
+    """Refuse a lane immediately, naming what is missing, before it opens a run or mints a shard.
+
+    A lane declares the relations its handler cannot function without and calls this FIRST, before
+    `ensure_job_definition`/`open_job_run`. Returns the terminal summary the caller should return
+    as-is when one or more are missing; returns None when every relation exists and the caller
+    should proceed to open its run.
+
+    Without this, a lane whose dependency does not exist burns its full retry budget on EVERY tick,
+    forever, and mints a brand-new work item each tick to burn it on -- exactly the production shape
+    this exists to prevent (see jobs/AGENTS.md "Preflight"): `agri.matview_refresh_state` missing
+    dead-lettered ten `matview-refresh` shards and parked thirteen `strategy-mv-refresh` ones across
+    a single day, none of it visible without reading `job_attempt.error_summary` row by row.
+
+    The refusal is not a silent early return: it writes the same `job_event` heartbeat every other
+    stop path writes (severity `error`, distinct from a dead-lettered tick's `warning`), so
+    `max(occurred_at) WHERE event_code = 'slice_finished'` still reads as "this lane is ticking, and
+    refusing" rather than looking identical to a lane that quietly did nothing, or one that never
+    ran at all.
+    """
+    await _reset(session)
+    missing = await find_missing_relations(session, required_relations)
+    if not missing:
+        return None
+    logger.error(
+        "job_preflight_refused_missing_relations",
+        definition=definition_name,
+        missing_relations=missing,
+    )
+    summary = JobSliceSummary(
+        definition_name=definition_name,
+        worker_id=worker_id,
+        job_run_id=None,
+        stop_reason=PREFLIGHT_MISSING_RELATIONS_STOP_REASON,
+        elapsed_seconds=0.0,
+        preflight_missing_relations=missing,
+    )
+    await _write_slice_event(session, summary)
+    await _commit(session)
+    return summary
 
 
 async def _select_open_job_run(session: AsyncSession, job_definition_id: uuid.UUID) -> uuid.UUID | None:

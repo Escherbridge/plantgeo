@@ -45,7 +45,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agri_data_service.jobs.dispatch import register_dispatchable_lane
 from agri_data_service.jobs.matview_refresh import (
+    MATVIEW_REFRESH_REQUIRED_RELATIONS,
     SELECT_MATERIALIZED_VIEW_UNIQUE_INDEX,
+    SUCCESSFUL_REFRESH_OUTCOMES,
     UPSERT_MATVIEW_REFRESH_STATE,
 )
 from agri_data_service.jobs.registry import (
@@ -57,6 +59,7 @@ from agri_data_service.jobs.registry import (
 from agri_data_service.jobs.worker import (
     ensure_job_definition,
     open_job_run,
+    preflight_required_relations,
     run_job_slice,
 )
 
@@ -318,7 +321,10 @@ async def _write_observability_state(session: AsyncSession, result: Materialized
     docstring's "OBSERVABILITY PARITY" note. Runs after every attempt, including a `skipped_missing`
     one, so the table reflects all three views' current state even before drizzle/0027 has landed.
     """
-    refreshed_at = datetime.now(UTC) if result.status in {"refreshed_concurrently", "refreshed_full"} else None
+    # The SHARED set, not a local spelling of it: since alembic 20260817_0025 the upsert derives
+    # `consecutive_failures` from whether this value arrives non-NULL, so a lane whose idea of
+    # "succeeded" differed from the other's would put its views into a backoff they had not earned.
+    refreshed_at = datetime.now(UTC) if result.status in SUCCESSFUL_REFRESH_OUTCOMES else None
     result_proxy = await session.execute(
         _UPSERT_MATVIEW_REFRESH_STATE,
         {
@@ -447,6 +453,20 @@ async def trigger_strategy_mv_refresh(
     The caller owns the session and its engine's lifetime; this function commits the plan, then binds
     the session for the handler's own commits inside `run_job_slice`.
     """
+    worker_id = _default_worker_id()
+    # Reuses jobs/matview_refresh.py's own required-relations tuple rather than restating the
+    # literal: this lane writes to the exact same `agri.matview_refresh_state` table through
+    # `_write_observability_state`, and that table missing is what dead-lettered ten
+    # matview-refresh shards and parked thirteen strategy-mv-refresh ones in prod on 2026-08-15/16.
+    # See jobs/AGENTS.md "Preflight".
+    refusal = await preflight_required_relations(
+        session,
+        definition_name=STRATEGY_MV_REFRESH_DEFINITION_NAME,
+        worker_id=worker_id,
+        required_relations=MATVIEW_REFRESH_REQUIRED_RELATIONS,
+    )
+    if refusal is not None:
+        return refusal
     definition = await ensure_job_definition(session, strategy_mv_refresh_definition_spec())
     moment = now if now is not None else datetime.now(UTC)
     bucket = _run_bucket_key(moment)
@@ -470,7 +490,7 @@ async def trigger_strategy_mv_refresh(
         return await run_job_slice(
             session,
             definition_name=STRATEGY_MV_REFRESH_DEFINITION_NAME,
-            worker_id=_default_worker_id(),
+            worker_id=worker_id,
             job_run_id=opened.job_run_id,
         )
 

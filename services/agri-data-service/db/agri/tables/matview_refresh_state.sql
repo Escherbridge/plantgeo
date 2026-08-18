@@ -11,6 +11,9 @@ CREATE TABLE agri.matview_refresh_state (
     duration_ms integer,
     row_count bigint,
     outcome character varying(64) NOT NULL,
+    last_attempt_at timestamp with time zone,
+    consecutive_failures integer DEFAULT 0 NOT NULL,
+    CONSTRAINT ck_matview_refresh_state_nonnegative_consecutive_failures CHECK ((consecutive_failures >= 0)),
     CONSTRAINT ck_matview_refresh_state_nonnegative_duration CHECK (((duration_ms IS NULL) OR (duration_ms >= 0))),
     CONSTRAINT ck_matview_refresh_state_nonnegative_row_count CHECK (((row_count IS NULL) OR (row_count >= 0))),
     CONSTRAINT ck_matview_refresh_state_schema_qualified_view CHECK (((view_name)::text ~ '^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$'::text))

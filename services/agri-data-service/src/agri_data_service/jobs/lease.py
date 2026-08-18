@@ -130,6 +130,8 @@ _RECLAIM_EXPIRED_LEASES: Final = text(load_query_sql("jobs/reclaim_expired_lease
 
 _CLOSE_LOST_ATTEMPTS: Final = text(load_query_sql("jobs/close_lost_attempts.sql"))
 
+_CHECK_RELATIONS_EXIST: Final = text(load_query_sql("jobs/check_relations_exist.sql"))
+
 
 def clamp_text(value: str, limit: int) -> str:
     """Cut a free-text field to the width its column declares, because a long value aborts the write."""
@@ -147,11 +149,53 @@ def clamp_summary(value: str) -> str:
     return clamp_text(redact_text(value), FAILURE_SUMMARY_MAX_LENGTH) or UNKNOWN_FAILURE_SUMMARY
 
 
+def failure_condition_name(error: BaseException) -> str:
+    """Name the real driver condition under a SQLAlchemy wrapper, never a statement or a parameter.
+
+    Ported from `routes/ops.py::_panel_error_summary`, which discovered this in production: prod's
+    `agri.job_attempt.error_summary` read the tautological literal `'job step failed
+    (ProgrammingError)'` for an `UndefinedTable` on a named relation, because `failure_summary` used
+    to stop at the outer wrapper's class alone. `routes/ops.py` is not owned by this package and
+    still carries its own copy pending a follow-up repoint to this one -- see jobs/AGENTS.md
+    "Redaction" for the sibling precedent (`ingest/results.py::failure_reason`) this mirrors.
+
+    WHAT THIS FUNCTION MAY EVALUATE, WHICH IS THE ENTIRE SECURITY ARGUMENT. Every expression below
+    is `type(x).__name__`. A Python class name is an identifier -- letters, digits and underscores --
+    so nothing this returns can carry a statement, a parameter, a row or a message, whatever it is
+    handed. It never reads `str()`, `repr()`, `.statement`, `.params`, `.detail`, `.args` or
+    `__context__`. Any future edit that reads a VALUE off an exception rather than its type breaks
+    that argument and needs the same scrutiny this function got.
+
+    WHY IT UNWRAPS EXACTLY ONE LEVEL. `orig` is SQLAlchemy's handle on the driver exception, but for
+    asyncpg it is the DIALECT's own wrapper rather than the condition: a missing relation arrives as
+    ProgrammingError whose `orig` is asyncpg's own ProgrammingError, so the pair reads
+    "ProgrammingError: ProgrammingError" -- a tautology saying nothing `type(error).__name__` alone
+    did not. The real condition, e.g. UndefinedTableError, hangs off that wrapper's `__cause__`. One
+    level is unwrapped and no more: one level is what the dialect adds, and a loop would chase a
+    chain of unknown depth for no gain. An error raised outside the driver has no `orig` at all and
+    reports its own class alone.
+    """
+    origin = getattr(error, "orig", None)
+    if origin is None:
+        return type(error).__name__
+    condition = getattr(origin, "__cause__", None) or origin
+    return f"{type(error).__name__}: {type(condition).__name__}"
+
+
 def failure_summary(error: BaseException) -> str:
     """Describe a failure without echoing a statement, a payload, a DSN, or an API-keyed URL."""
     if isinstance(error, SQLAlchemyError):
-        # The SQLAlchemy message carries the whole statement and its bound parameters.
-        return f"job step failed ({error.__class__.__name__})"
+        # The SQLAlchemy message carries the whole statement and its bound parameters; the class
+        # pair from failure_condition_name recovers the real driver condition instead of the outer
+        # wrapper's name alone -- "ProgrammingError: UndefinedTable" rather than the tautological
+        # "ProgrammingError" a bare error.__class__.__name__ produced.
+        #
+        # `clamp_summary` here is belt-and-braces, not a live leak fix: every part this branch
+        # interpolates is a `type(...).__name__`, which is an identifier and can carry neither a
+        # statement nor a parameter. It is applied anyway so that EVERY return of this function has
+        # passed redaction and clamping -- an invariant a reader can check locally, rather than one
+        # that holds only as long as `failure_condition_name` keeps its own promise.
+        return clamp_summary(f"job step failed ({failure_condition_name(error)})")
     return clamp_summary(str(error))
 
 
@@ -611,3 +655,20 @@ async def reclaim_expired_leases(
         attempts_closed=len(closed),
         work_item_ids=work_item_ids,
     )
+
+
+async def find_missing_relations(session: AsyncSession, qualified_names: Sequence[str]) -> tuple[str, ...]:
+    """Return every relation in `qualified_names` that does not exist right now, in the input's order.
+
+    The preflight primitive: a lane calls this once, before it opens a run or mints a work item, over
+    the relations its handler cannot function without. See jobs/AGENTS.md "Preflight" -- a matview
+    lane failing this check with the relation still missing is worse than never trying; it must
+    refuse loudly rather than attempt a step certain to raise.
+    """
+    if not qualified_names:
+        return ()
+    rows = await fetch_rows(session, _CHECK_RELATIONS_EXIST, {"qualified_names": list(qualified_names)})
+    existing = {
+        required_column(row, "qualified_name", str) for row in rows if bool(row.get("relation_exists"))
+    }
+    return tuple(name for name in qualified_names if name not in existing)

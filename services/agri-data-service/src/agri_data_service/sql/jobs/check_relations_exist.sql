@@ -1,0 +1,30 @@
+-- check_relations_exist
+-- Purpose: cheap preflight -- report which of a lane's declared relations exist right now, so a
+--          lane can refuse immediately, naming what is missing, rather than attempting a step that
+--          is certain to raise, burning its whole retry budget and minting a fresh dead-lettered
+--          work item on every tick forever.
+-- Loaded by: agri_data_service.jobs.lease
+-- Params: qualified_names (text holding an array of schema-qualified relation names, e.g.
+--         'agri.matview_refresh_state') -- the caller's own declared dependency list, never
+--         anything derived from an exception or an operator-supplied string.
+--
+-- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap" in
+-- sql/AGENTS.md: SQLAlchemy scans comments for colon-prefixed words too.
+--
+-- What this returns: one row per candidate name, in the array's own order, with whether it
+-- resolves to a real relation right now.
+--
+-- How this query works, clause by clause:
+--
+--   FROM unnest(CAST(qualified_names AS text[])) AS qualified_name
+--     unnest() turns the bound array into one row per name, the set-shaped counterpart to the
+--     ANY(array) pattern close_lost_attempts.sql uses for the read direction -- one round trip for
+--     any number of relations rather than one statement per name.
+--
+--   to_regclass(qualified_name) IS NOT NULL
+--     to_regclass resolves a schema-qualified name against pg_catalog with no lock taken and no
+--     error raised for a relation that does not exist -- it returns NULL instead. That is what
+--     makes this check safe to run before every dispatch: the thing it exists to avoid is exactly
+--     the crash a direct SELECT against a missing table would raise.
+SELECT qualified_name, to_regclass(qualified_name) IS NOT NULL AS relation_exists
+FROM unnest(CAST(:qualified_names AS text[])) AS qualified_name

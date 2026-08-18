@@ -55,15 +55,68 @@ _RUN_ID = uuid.UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 _FAKE_HANDLER_TOKEN = "tests.jobs_pulse_fake_handler"
 
 
-class _FakeSession:
-    """The narrow slice of `AsyncSession` this verb touches: a statement sink and two boundaries."""
+class _FakeResult:
+    """The two-call shape `jobs.lease.fetch_row` drives: `.mappings().first()`."""
+
+    def __init__(self, row: Mapping[str, object] | None) -> None:
+        self._row = row
+
+    def mappings(self) -> _FakeResult:
+        return self
+
+    def first(self) -> Mapping[str, object] | None:
+        return self._row
+
+
+class _Ledger:
+    """The ledger state the fake session answers from: how much work each definition has buried.
+
+    Keyed by `agri.job_definition.name` -- which for a dispatchable lane IS its `lane_id`, and for a
+    durable lane is `PlannedDurableDefinition.definition_name`. A definition absent from the mapping has
+    buried nothing, which is the healthy default every existing test in this module relies on.
+    """
 
     def __init__(self) -> None:
+        self.dead_lettered_by_definition: dict[str, int] = {}
+        self.census_calls: list[str] = []
+        self.census_error: Exception | None = None
+
+    def bury(self, definition_name: str, count: int) -> None:
+        """Put `count` work items of this definition into 'dead_letter', as an earlier tick would have."""
+        self.dead_lettered_by_definition[definition_name] = count
+
+    def census_row(self, definition_name: str) -> Mapping[str, object]:
+        """The one row `sql/jobs/count_dead_lettered_work_items.sql` returns for this definition."""
+        self.census_calls.append(definition_name)
+        if self.census_error is not None:
+            raise self.census_error
+        buried = self.dead_lettered_by_definition.get(definition_name, 0)
+        return {
+            "dead_lettered_work_items": buried,
+            "first_dead_lettered_shard_key": f"{definition_name}:shard-0" if buried else None,
+            "last_dead_lettered_at": None,
+        }
+
+
+class _FakeSession:
+    """The narrow slice of `AsyncSession` this verb touches: a statement sink and two boundaries.
+
+    `execute` answers the dead-letter census for real, because the standing-failure signal is issued
+    through this session by the pulse's own code path -- so a test that wants a lane to be carrying
+    buried work states that on the ledger and lets `_fold_in_standing_dead_letters` find it, rather than
+    hand-building the classifier's output.
+    """
+
+    def __init__(self, ledger: _Ledger) -> None:
         self.commits = 0
         self.rollbacks = 0
+        self._ledger = ledger
 
-    async def execute(self, statement: object, parameters: Mapping[str, object] | None = None) -> None:
-        del statement, parameters
+    async def execute(self, statement: object, parameters: Mapping[str, object] | None = None) -> _FakeResult:
+        if parameters and "definition_name" in parameters:
+            return _FakeResult(self._ledger.census_row(str(parameters["definition_name"])))
+        del statement
+        return _FakeResult(None)
 
     async def commit(self) -> None:
         self.commits += 1
@@ -72,14 +125,20 @@ class _FakeSession:
         self.rollbacks += 1
 
 
+@pytest.fixture
+def ledger() -> _Ledger:
+    """The ledger every fake session in one test answers from; empty (nothing buried) by default."""
+    return _Ledger()
+
+
 @pytest.fixture(autouse=True)
-def _patch_ingest_session(monkeypatch: pytest.MonkeyPatch) -> list[_FakeSession]:
+def _patch_ingest_session(monkeypatch: pytest.MonkeyPatch, ledger: _Ledger) -> list[_FakeSession]:
     """Hand every call a fresh recorded session, exactly as `test_ingest_commands_jobs.py` does."""
     sessions: list[_FakeSession] = []
 
     @asynccontextmanager
     async def _fake_ingest_session() -> AsyncIterator[_FakeSession]:
-        session = _FakeSession()
+        session = _FakeSession(ledger)
         sessions.append(session)
         yield session
 
@@ -150,6 +209,22 @@ def _slice_summary(definition_name: str, **overrides: object) -> JobSliceSummary
     }
     fields.update(overrides)
     return JobSliceSummary(**fields)
+
+
+class _RecordingLogger:
+    """The three structlog levels this module emits, captured as `(level, event, fields)` triples."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def info(self, event: str, **fields: Any) -> None:
+        self.calls.append(("info", event, fields))
+
+    def warning(self, event: str, **fields: Any) -> None:
+        self.calls.append(("warning", event, fields))
+
+    def error(self, event: str, **fields: Any) -> None:
+        self.calls.append(("error", event, fields))
 
 
 class _ScriptedClock:
@@ -352,10 +427,211 @@ async def test_a_dead_lettered_shard_fails_the_tick_without_stopping_the_next_la
     summary = await run_jobs_pulse(lane_filter=None, time_budget_seconds=600.0, worker_id="w")
 
     by_lane = {lane.lane: lane for lane in summary.lanes}
-    assert by_lane["firms-like-lane"].outcome == "ran"
+    # NOT `ran`. A tick that buried a work item must not report the outcome a clean tick reports; that
+    # ambiguity is what let production show SUCCESS hourly for ~24h with two lanes fully dead-lettering.
+    assert by_lane["firms-like-lane"].outcome == "dead_lettered"
     assert by_lane["firms-like-lane"].dead_lettered == 1
+    assert "dead-lettered 1 of 1 claimed" in (by_lane["firms-like-lane"].detail or "")
     assert by_lane["streamflow-archive"].outcome == "ran"
     assert summary.failed is True
+
+
+# --- run_jobs_pulse: the STANDING failure signal ---------------------------------------------------
+#
+# What the runtime actually produces on the ticks after a burial, and why these tests are shaped this
+# way. `sql/jobs/select_open_job_run.sql` selects a run only while its status is 'queued'/'running'.
+# Once `refresh_job_run_rollup.sql` rolls a run up to 'failed'/'partial' it is no longer selectable, so
+# `run_job_slice` takes its `run_id is None` branch and returns `stop_reason='no_open_run'` with
+# `run_status` left at its `None` default. Every one of these tests therefore hands the pulse THAT
+# shape -- the shape the runtime can really emit after burial -- and states the buried work on the
+# ledger, where the real signal is read from.
+
+
+def _post_burial_summary(definition_name: str) -> JobSliceSummary:
+    """The summary `run_job_slice` really returns on every tick after a lane's work has been buried."""
+    return _slice_summary(
+        definition_name,
+        job_run_id=None,
+        stop_reason="no_open_run",
+        claimed=0,
+        succeeded=0,
+        dead_lettered=0,
+        run_status=None,
+    )
+
+
+async def test_a_lane_carrying_buried_work_stays_red_on_tick_2_and_3_not_only_the_tick_that_buried_it(
+    monkeypatch: pytest.MonkeyPatch,
+    ledger: _Ledger,
+) -> None:
+    # THE 24h-GREEN BUG, exercised on the real path. The tick that did the burying was already loud
+    # through `dead_lettered > 0`; the hole was every tick AFTER it. The old signal read
+    # `JobSliceSummary.run_status`, which on these ticks is `None` because no run is selectable any
+    # more -- so it classified them `ran`. Three consecutive ticks must all be red.
+    definition_name = "agri.ingest.archive_walk.firms-archive"
+    _patch_plan(monkeypatch, _plan(durable=[_durable("firms-archive")]))
+    ledger.bury(definition_name, 3)
+
+    async def _fake_slice(*, definition_name: str, worker_id: str, budget_seconds: float | None) -> JobSliceSummary:
+        return _post_burial_summary(definition_name)
+
+    monkeypatch.setattr(jobs_pulse_command, "run_archive_definition_slice", _fake_slice)
+
+    for tick in (1, 2, 3):
+        summary = await run_jobs_pulse(lane_filter=None, time_budget_seconds=600.0, worker_id="w")
+        lane = summary.lanes[0]
+        assert lane.outcome == "standing_dead_letters", f"tick {tick} read as {lane.outcome}"
+        assert lane.dead_lettered == 0, "nothing was buried THIS tick; the burial was earlier"
+        assert lane.standing_dead_letters == 3
+        assert "3 work item(s) standing dead-lettered" in (lane.detail or "")
+        assert summary.failed is True, f"tick {tick} exited green with three work items buried"
+
+    # And the census really was issued once per lane per tick, not derived from the slice summary.
+    assert ledger.census_calls == [definition_name] * 3
+
+
+async def test_an_operator_cancellation_never_reds_the_tick(
+    monkeypatch: pytest.MonkeyPatch,
+    ledger: _Ledger,
+) -> None:
+    # THE SAFETY PROPERTY. Cancellation is recorded on the WORK ITEM as 'cancelled', and
+    # `refresh_job_run_rollup.sql` counts a cancelled item as `failed`, so a cancelled lane's run rolls
+    # up to 'partial' (or 'failed') -- there is no 'cancelled' branch in that CASE and nothing anywhere
+    # writes 'cancelled' to `job_run.status`. Reading that rollup is what made "cancel it deliberately"
+    # an instruction that turned the hourly cron red forever with no state left to clear. Nothing is in
+    # 'dead_letter' here, so the tick must be GREEN.
+    definition_name = "agri.ingest.archive_walk.firms-archive"
+    _patch_plan(monkeypatch, _plan(durable=[_durable("firms-archive")]))
+    assert definition_name not in ledger.dead_lettered_by_definition
+
+    async def _fake_slice(*, definition_name: str, worker_id: str, budget_seconds: float | None) -> JobSliceSummary:
+        return _slice_summary(definition_name, claimed=0, succeeded=0, run_status="partial")
+
+    monkeypatch.setattr(jobs_pulse_command, "run_archive_definition_slice", _fake_slice)
+
+    summary = await run_jobs_pulse(lane_filter=None, time_budget_seconds=600.0, worker_id="w")
+
+    assert summary.lanes[0].outcome == "ran"
+    assert summary.lanes[0].standing_dead_letters == 0
+    assert summary.failed is False
+
+
+@pytest.mark.parametrize("run_status", ["queued", "running", "succeeded", "partial", "failed", None])
+async def test_no_writable_run_status_decides_the_tick_on_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+    run_status: str | None,
+) -> None:
+    # Those six ARE the whole writable vocabulary of `agri.job_run.status`: `insert_job_run.sql` writes
+    # 'queued', `refresh_job_run_rollup.sql`'s CASE writes the other four, and `None` is what a tick
+    # that selected no run reports. ('dead_letter' and 'cancelled' are in the table's CHECK constraint
+    # but no statement in this service ever writes them.) With nothing buried, every one of them is a
+    # green tick -- the verdict comes from the work items, not from the run.
+    _patch_plan(monkeypatch, _plan(durable=[_durable("firms-archive")]))
+
+    async def _fake_slice(*, definition_name: str, worker_id: str, budget_seconds: float | None) -> JobSliceSummary:
+        return _slice_summary(definition_name, claimed=0, succeeded=0, run_status=run_status)
+
+    monkeypatch.setattr(jobs_pulse_command, "run_archive_definition_slice", _fake_slice)
+
+    summary = await run_jobs_pulse(lane_filter=None, time_budget_seconds=600.0, worker_id="w")
+
+    assert summary.lanes[0].outcome == "ran"
+    assert summary.failed is False
+
+
+async def test_the_burial_census_is_issued_even_for_a_lane_whose_own_dispatch_raised(
+    monkeypatch: pytest.MonkeyPatch,
+    ledger: _Ledger,
+) -> None:
+    # UNCONDITIONAL means unconditional. A census only issued on the healthy paths would be exactly the
+    # conditional signal this replaced -- and a lane that raises is the likeliest one to be carrying
+    # buried work. The `raised` outcome wins the label (it is this tick's own evidence), but the count
+    # rides along and `failing_lanes` triggers on it independently.
+    _patch_plan(monkeypatch, _plan(dispatchable=[_dispatchable("matview-refresh")]))
+    ledger.bury("matview-refresh", 4)
+
+    async def _fake_dispatch(session: object, lane_id: str, *, requested_by: str, **kwargs: object) -> DispatchOutcome:
+        raise RuntimeError("the dispatcher blew up")
+
+    monkeypatch.setattr(jobs_pulse_command, "dispatch_lane", _fake_dispatch)
+
+    summary = await run_jobs_pulse(lane_filter=None, time_budget_seconds=600.0, worker_id="w")
+
+    assert ledger.census_calls == ["matview-refresh"]
+    lane = summary.lanes[0]
+    assert lane.outcome == "raised"
+    assert lane.standing_dead_letters == 4
+    assert "the dispatcher blew up" in (lane.detail or "")
+    assert "4 work item(s) standing dead-lettered" in (lane.detail or "")
+    assert summary.failed is True
+
+
+async def test_a_census_that_cannot_be_read_fails_closed_rather_than_reporting_a_clean_lane(
+    monkeypatch: pytest.MonkeyPatch,
+    ledger: _Ledger,
+) -> None:
+    # "We do not know whether this lane is carrying buried work" is not the same claim as "it is not".
+    _patch_plan(monkeypatch, _plan(durable=[_durable("firms-archive")]))
+    ledger.census_error = OperationalError("SELECT ...", {"dsn": "postgresql://user:secret@host"}, Exception())
+
+    async def _fake_slice(*, definition_name: str, worker_id: str, budget_seconds: float | None) -> JobSliceSummary:
+        return _slice_summary(definition_name)
+
+    monkeypatch.setattr(jobs_pulse_command, "run_archive_definition_slice", _fake_slice)
+
+    summary = await run_jobs_pulse(lane_filter=None, time_budget_seconds=600.0, worker_id="w")
+
+    assert summary.lanes[0].outcome == "raised"
+    assert "dead-letter census failed" in (summary.lanes[0].detail or "")
+    assert "secret" not in (summary.lanes[0].detail or "")
+    assert summary.failed is True
+
+
+async def test_a_paused_lane_is_never_censused_because_it_was_never_run(
+    monkeypatch: pytest.MonkeyPatch,
+    ledger: _Ledger,
+) -> None:
+    # A paused lane is skipped in every pass, so it gets no verdict of any kind. Pausing is itself an
+    # operator decision and, like cancellation, must not page anyone hourly for having been made.
+    _patch_plan(monkeypatch, _plan(durable=[_durable("firms-archive", enabled=False)]))
+    ledger.bury("agri.ingest.archive_walk.firms-archive", 9)
+
+    summary = await run_jobs_pulse(lane_filter=None, time_budget_seconds=600.0, worker_id="w")
+
+    assert ledger.census_calls == []
+    assert summary.lanes[0].outcome == "paused"
+    assert summary.failed is False
+
+
+async def test_a_failing_tick_logs_at_error_and_a_healthy_one_does_not(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The whole point of Task 2's logging half: a log scrape for ERROR over a fully dead lane found
+    # nothing, because `jobs/dispatch.py`'s `lane_dispatched` INFO line was the only line emitted.
+    recorded = _RecordingLogger()
+    monkeypatch.setattr(jobs_pulse_command, "logger", recorded)
+    _patch_plan(monkeypatch, _plan(durable=[_durable("firms-archive")]))
+
+    async def _buried(*, definition_name: str, worker_id: str, budget_seconds: float | None) -> JobSliceSummary:
+        return _slice_summary(definition_name, claimed=2, succeeded=0, dead_lettered=2, run_status="failed")
+
+    monkeypatch.setattr(jobs_pulse_command, "run_archive_definition_slice", _buried)
+    await run_jobs_pulse(lane_filter=None, time_budget_seconds=600.0, worker_id="w")
+
+    assert [event for level, event, _ in recorded.calls if level == "error"] == ["jobs_pulse_tick_failed"]
+    assert "jobs_pulse_tick_healthy" not in [event for _, event, _ in recorded.calls]
+    failed_call = next(fields for level, event, fields in recorded.calls if event == "jobs_pulse_tick_failed")
+    assert failed_call["failing_lane_count"] == 1
+    assert failed_call["failing_lanes"][0]["outcome"] == "dead_lettered"
+
+    recorded.calls.clear()
+
+    async def _clean(*, definition_name: str, worker_id: str, budget_seconds: float | None) -> JobSliceSummary:
+        return _slice_summary(definition_name)
+
+    monkeypatch.setattr(jobs_pulse_command, "run_archive_definition_slice", _clean)
+    await run_jobs_pulse(lane_filter=None, time_budget_seconds=600.0, worker_id="w")
+
+    assert [event for level, event, _ in recorded.calls if level == "error"] == []
+    assert "jobs_pulse_tick_healthy" in [event for _, event, _ in recorded.calls]
 
 
 # --- run_jobs_pulse: the global time budget --------------------------------------------------------
@@ -485,6 +761,42 @@ def test_exit_code_1_when_a_lane_dead_lettered(monkeypatch: pytest.MonkeyPatch) 
     assert _last_json_line(result.output)["dead_lettered_lanes"] == 1
 
 
+def test_exit_code_1_when_a_lane_is_carrying_buried_work_from_an_earlier_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Nothing dead-lettered THIS tick, so the `dead_lettered > 0` trigger cannot fire -- the standing
+    # count is the only evidence, and it must be enough on its own. Safe under Railway's
+    # `restartPolicyType: NEVER` (infra/cron-ingest/railway.json): one hourly run turns red until an
+    # operator acts, never a restart loop. See the exit-code note in `jobs_pulse`'s own docstring.
+    async def _fake_run_jobs_pulse(**kwargs: object) -> PulseSummary:
+        return PulseSummary(
+            lanes=(
+                PulseLaneResult(
+                    lane="matview-refresh",
+                    kind="dispatchable",
+                    outcome="standing_dead_letters",
+                    seconds=1.0,
+                    records=0,
+                    standing_dead_letters=2,
+                    detail="2 work item(s) standing dead-lettered for this definition",
+                ),
+            )
+        )
+
+    monkeypatch.setattr(jobs_pulse_command, "run_jobs_pulse", _fake_run_jobs_pulse)
+
+    result = _invoke("jobs-pulse")
+
+    assert result.exit_code == FAILED_PULSE_EXIT_CODE
+    payload = _last_json_line(result.output)
+    assert payload["standing_dead_letters"] == 1
+    assert payload["standing_dead_letter_lanes"] == 1
+    assert payload["failed"] is True
+    assert payload["failing_lanes"] == ["matview-refresh"]
+    # The healthy counter must NOT have absorbed it: a failing lane counted as `ran` is the whole bug.
+    assert payload["ran"] == 0
+
+
 def test_exit_code_0_when_only_paused_and_skipped_budget_lanes_are_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _fake_run_jobs_pulse(**kwargs: object) -> PulseSummary:
         return PulseSummary(
@@ -586,9 +898,9 @@ def _fake_maintenance(monkeypatch: pytest.MonkeyPatch, **by_step: object) -> lis
     """Record the order steps ran in, answering each with a scripted report or raising its exception."""
     order: list[str] = []
 
-    # `**_step_context` swallows the keyword-only arguments the real `_execute_maintenance_step` now
-    # takes (`monotonic`, `census_probes`). These cases assert step ORDER and exit rules, so the shard
-    # timing probe those arguments drive is exactly what the fake exists to stand in for.
+    # `**_step_context` is tolerated rather than required: `_execute_maintenance_step` takes only the
+    # planned step today (the `monotonic`/`census_probes` pair went away with the shard census probe),
+    # and these cases assert step ORDER and exit rules rather than any step's own arguments.
     async def _fake_execute(planned: PlannedMaintenanceStep, **_step_context: object) -> object:
         order.append(planned.step_id)
         answer = by_step.get(planned.step, MaintenanceStepReport(outcome="ran", records=0, detail=None))

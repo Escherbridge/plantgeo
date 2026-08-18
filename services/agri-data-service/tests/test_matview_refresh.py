@@ -40,6 +40,7 @@ from agri_data_service.jobs.matview_refresh import (
     MatviewRefreshLaneContext,
     MatviewRefreshReport,
     MatviewRefreshResult,
+    _backoff_seconds,
     _budget_skipped_result,
     _cursor_completed_views,
     _eligibility,
@@ -47,6 +48,7 @@ from agri_data_service.jobs.matview_refresh import (
     _PriorRefreshState,
     _refresh_one_matview,
     _remaining_budget_seconds,
+    _required_budget_seconds,
     _watermark_signature,
     _work_item_shard_key,
     current_matview_refresh_context,
@@ -60,12 +62,14 @@ from agri_data_service.jobs.registry import JOB_HANDLERS, JobInvocation
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-# The hand-spelled 11-name list this lane must cover -- asserted against, never generated from, the
+# The hand-spelled 12-name list this lane must cover -- asserted against, never generated from, the
 # module's own MATVIEW_REFRESH_SPECS, so the two cannot drift together and still pass. Nine new
-# matviews drizzle/0029 creates plus two adopted (geo.watershed_rollup, agri.mv_forecast_ml_daily_serving).
+# matviews drizzle/0029 creates, two adopted (geo.watershed_rollup, agri.mv_forecast_ml_daily_serving),
+# and the day axis drizzle/0031 splits out of geo.mv_feature_observation_day.
 EXPECTED_MATVIEW_NAMES: frozenset[str] = frozenset(
     {
         "geo.mv_feature_observation_day",
+        "geo.mv_feature_observation_day_axis",
         "geo.mv_signal_observation_day",
         "geo.mv_drought_observation_day",
         "geo.mv_signal_cell_daily",
@@ -129,6 +133,8 @@ def _fresh_prior_state_rows(refreshed_at: datetime) -> list[dict[str, object]]:
             "duration_ms": 500,
             "row_count": 10,
             "outcome": "refreshed_concurrently",
+            "last_attempt_at": refreshed_at,
+            "consecutive_failures": 0,
         }
         for spec in MATVIEW_REFRESH_SPECS
     ]
@@ -205,6 +211,12 @@ class FakeSession:
         params = dict(parameters or {})
         self.statements.append((sql, params))
 
+        if "check_relations_exist" in sql:
+            # Preflight (`worker.py::preflight_required_relations`) always passes here: no scenario in
+            # this file exercises the missing-relation refusal, so every requested relation reports as
+            # existing, leaving the rest of this FakeSession's scripted flow unchanged.
+            names = params.get("qualified_names", [])
+            return FakeResult([{"qualified_name": name, "relation_exists": True} for name in names])
         if "select_matview_refresh_state" in sql:
             return FakeResult(list(self._prior_state_rows))
         if "upsert_matview_refresh_state" in sql:
@@ -284,9 +296,9 @@ def _fake_invocation(
 # --- The spec table itself: the denominator this lane must cover, hand-spelled against it. ---
 
 
-def test_the_spec_table_covers_exactly_the_hand_spelled_eleven_views() -> None:
+def test_the_spec_table_covers_exactly_the_hand_spelled_twelve_views() -> None:
     assert MATVIEW_REFRESH_QUALIFIED_NAMES == EXPECTED_MATVIEW_NAMES
-    assert len(MATVIEW_REFRESH_SPECS) == len(EXPECTED_MATVIEW_NAMES) == 11
+    assert len(MATVIEW_REFRESH_SPECS) == len(EXPECTED_MATVIEW_NAMES) == 12
 
 
 def test_every_spec_name_is_unique() -> None:
@@ -347,9 +359,10 @@ def test_work_item_shard_key_is_unique_per_microsecond_not_bucketed_to_a_window(
 
 def test_a_view_with_no_prior_state_is_always_eligible() -> None:
     spec = MATVIEW_REFRESH_SPECS[0]
-    eligible, reason = _eligibility(spec, None, "some-watermark", now=datetime(2026, 8, 15, tzinfo=UTC))
-    assert eligible
-    assert "never" in reason
+    verdict = _eligibility(spec, None, "some-watermark", now=datetime(2026, 8, 15, tzinfo=UTC))
+    assert verdict.eligible
+    assert not verdict.standing_failure
+    assert "never" in verdict.reason
 
 
 def test_an_unchanged_watermark_within_max_staleness_is_skipped() -> None:
@@ -358,9 +371,9 @@ def test_an_unchanged_watermark_within_max_staleness_is_skipped() -> None:
     prior = _PriorRefreshState(
         source_watermark="w1", refreshed_at=now - timedelta(seconds=spec.max_staleness_seconds - 1), duration_ms=100
     )
-    eligible, reason = _eligibility(spec, prior, "w1", now=now)
-    assert not eligible
-    assert reason == "watermark unchanged"
+    verdict = _eligibility(spec, prior, "w1", now=now)
+    assert not verdict.eligible
+    assert verdict.reason == "watermark unchanged"
 
 
 def test_an_unchanged_watermark_past_max_staleness_is_eligible_anyway() -> None:
@@ -369,9 +382,9 @@ def test_an_unchanged_watermark_past_max_staleness_is_eligible_anyway() -> None:
     prior = _PriorRefreshState(
         source_watermark="w1", refreshed_at=now - timedelta(seconds=spec.max_staleness_seconds + 1), duration_ms=100
     )
-    eligible, reason = _eligibility(spec, prior, "w1", now=now)
-    assert eligible
-    assert "stale" in reason
+    verdict = _eligibility(spec, prior, "w1", now=now)
+    assert verdict.eligible
+    assert "stale" in verdict.reason
 
 
 def test_a_changed_watermark_inside_min_interval_is_rate_limited() -> None:
@@ -380,9 +393,9 @@ def test_a_changed_watermark_inside_min_interval_is_rate_limited() -> None:
     prior = _PriorRefreshState(
         source_watermark="w1", refreshed_at=now - timedelta(seconds=spec.min_interval_seconds - 1), duration_ms=100
     )
-    eligible, reason = _eligibility(spec, prior, "w2", now=now)
-    assert not eligible
-    assert "min_interval_seconds" in reason
+    verdict = _eligibility(spec, prior, "w2", now=now)
+    assert not verdict.eligible
+    assert "min_interval_seconds" in verdict.reason
 
 
 def test_a_changed_watermark_past_min_interval_is_eligible() -> None:
@@ -391,9 +404,9 @@ def test_a_changed_watermark_past_min_interval_is_eligible() -> None:
     prior = _PriorRefreshState(
         source_watermark="w1", refreshed_at=now - timedelta(seconds=spec.min_interval_seconds + 1), duration_ms=100
     )
-    eligible, reason = _eligibility(spec, prior, "w2", now=now)
-    assert eligible
-    assert reason == "watermark changed"
+    verdict = _eligibility(spec, prior, "w2", now=now)
+    assert verdict.eligible
+    assert verdict.reason == "watermark changed"
 
 
 # --- _estimate_seconds / _watermark_signature / _cursor_completed_views: small pure helpers ---
@@ -559,7 +572,7 @@ async def test_a_steady_state_tick_with_everything_fresh_skips_every_view(monkey
     assert outcome.kind == "completed"
     assert session.refresh_statements() == []
     views = outcome.metrics["views"]
-    assert len(views) == 11
+    assert len(views) == 12
     assert all(entry["status"] == "skipped_unchanged" for entry in views)
 
 
@@ -585,6 +598,10 @@ async def test_a_lane_landing_data_makes_exactly_the_matching_view_eligible(monk
             "duration_ms": 500,
             "row_count": 10,
             "outcome": "refreshed_concurrently",
+            "last_attempt_at": (
+                stale_enough_for_forecast if spec.qualified_name == forecast_name else fresh_refreshed_at
+            ),
+            "consecutive_failures": 0,
         }
         for spec in MATVIEW_REFRESH_SPECS
     ]
@@ -715,3 +732,342 @@ async def test_trigger_reuses_the_same_persistent_run_across_calls(monkeypatch: 
     await trigger_matview_refresh(session, requested_by="test", now=datetime(2026, 8, 15, 2, 0, 0, tzinfo=UTC))
 
     assert seen_run_keys == [MATVIEW_REFRESH_RUN_KEY, MATVIEW_REFRESH_RUN_KEY]
+
+
+# --- The consecutive-failure backoff: the livelock this lane shipped with ---
+#
+# Production 2026-08-17: geo.mv_signal_observation_day, geo.mv_soil_survey_grid and
+# geo.mv_soil_survey_union all carried refreshed_at NULL with a real failure duration beside them, so
+# `_eligibility`'s "never successfully refreshed" branch re-admitted all three on every hourly tick --
+# ~449 s of guaranteed-doomed REFRESH per tick, 47 failed attempts against 2 succeeded over 48 hours.
+
+
+def test_backoff_doubles_from_the_min_interval_and_caps_at_the_views_own_max_staleness() -> None:
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_signal_observation_day")
+    assert _backoff_seconds(spec, 0) == 0.0
+    assert _backoff_seconds(spec, 1) == float(spec.min_interval_seconds)
+    assert _backoff_seconds(spec, 2) == float(spec.min_interval_seconds * 2)
+    # The cap is the spec's OWN ceiling, never an invented constant, and it is what keeps the backoff
+    # from becoming permanent silence: a fixed view is re-attempted within max_staleness_seconds.
+    assert _backoff_seconds(spec, 99) == float(spec.max_staleness_seconds)
+
+
+def test_no_backoff_can_exceed_the_interval_its_view_is_contractually_due_within() -> None:
+    for spec in MATVIEW_REFRESH_SPECS:
+        assert _backoff_seconds(spec, 10_000) <= spec.max_staleness_seconds
+
+
+def test_a_view_failing_every_attempt_is_withheld_instead_of_retried_on_every_tick() -> None:
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_soil_survey_grid")
+    now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
+    prior = _PriorRefreshState(
+        source_watermark="w1",
+        # The exact production shape: never once succeeded, so the pre-backoff gate read this row as
+        # "never refreshed" and returned eligible forever.
+        refreshed_at=None,
+        duration_ms=80_125,
+        last_attempt_at=now - timedelta(minutes=1),
+        consecutive_failures=3,
+    )
+    verdict = _eligibility(spec, prior, "w1", now=now)
+    assert not verdict.eligible
+    assert verdict.standing_failure
+    assert "3 consecutive failed refresh" in verdict.reason
+    assert "next attempt in" in verdict.reason
+
+
+def test_a_standing_failure_becomes_eligible_again_once_its_backoff_elapses() -> None:
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_soil_survey_grid")
+    now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
+    backoff = _backoff_seconds(spec, 3)
+    prior = _PriorRefreshState(
+        source_watermark="w1",
+        refreshed_at=None,
+        duration_ms=80_125,
+        last_attempt_at=now - timedelta(seconds=backoff + 1),
+        consecutive_failures=3,
+    )
+    verdict = _eligibility(spec, prior, "w1", now=now)
+    assert verdict.eligible
+    # STILL a standing failure: the view has not succeeded yet, it has merely earned another attempt.
+    assert verdict.standing_failure
+    assert "retrying after 3 consecutive failure" in verdict.reason
+
+
+def test_a_row_written_before_the_backoff_columns_existed_is_attempted_rather_than_withheld() -> None:
+    """A pre-20260817_0025 row has no last_attempt_at; withholding it against a clock that does not
+    exist would silence a view on the strength of missing data."""
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_soil_survey_grid")
+    now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
+    prior = _PriorRefreshState(
+        source_watermark="w1", refreshed_at=None, duration_ms=80_125, last_attempt_at=None, consecutive_failures=4
+    )
+    verdict = _eligibility(spec, prior, "w1", now=now)
+    assert verdict.eligible
+    assert verdict.standing_failure
+
+
+def test_a_successful_view_is_never_treated_as_standing_failing() -> None:
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_layer_feature_stats")
+    now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
+    prior = _PriorRefreshState(
+        source_watermark="w1",
+        refreshed_at=now - timedelta(seconds=60),
+        duration_ms=500,
+        last_attempt_at=now - timedelta(seconds=60),
+        consecutive_failures=0,
+    )
+    verdict = _eligibility(spec, prior, "w1", now=now)
+    assert not verdict.eligible
+    assert not verdict.standing_failure
+
+
+# --- Backoff must not buy silence: the report still fails, so the dead-letter census still fires ---
+
+
+def test_a_backed_off_view_still_fails_the_tick() -> None:
+    """The backoff suppresses the WORK, never the SIGNAL.
+
+    `execution/jobs_pulse_command.py` reds the hourly cron off a dead-lettered WORK ITEM count, and a
+    work item only reaches dead_letter because the handler returned `failed`. If a withheld view read
+    as healthy here, the first operator to clear the buried items would get a green pulse over three
+    permanently broken matviews -- the exact green-while-broken hole that census closed.
+    """
+    withheld = MatviewRefreshResult("v", "deferred_failing", False, 0.0, None, detail="backing off 21600s")
+    healthy = MatviewRefreshResult("v2", "refreshed_concurrently", True, 1.0, 10)
+    report = MatviewRefreshReport(results=(withheld, healthy))
+    assert report.has_failures
+    assert "v" in report.failure_summary()
+    assert "backing off" in report.failure_summary()
+
+
+def test_a_failed_view_and_a_backed_off_view_are_named_separately_in_one_summary() -> None:
+    failed = MatviewRefreshResult("v_failed", "failed", False, 3.0, None, detail="OperationalError")
+    withheld = MatviewRefreshResult("v_withheld", "deferred_failing", False, 0.0, None, detail="backing off 600s")
+    summary = MatviewRefreshReport(results=(failed, withheld)).failure_summary()
+    assert "refresh failed for: v_failed" in summary
+    assert "withheld this tick by backoff: v_withheld" in summary
+
+
+def test_a_backed_off_view_does_not_make_an_all_missing_tick_read_as_missing() -> None:
+    """`deferred_failing` is unattempted, so it must not join the all-attempted-missing denominator."""
+    withheld = MatviewRefreshResult("v", "deferred_failing", False, 0.0, None)
+    missing = MatviewRefreshResult("v2", "skipped_missing", False, 0.0, None)
+    summary = MatviewRefreshReport(results=(withheld, missing)).failure_summary()
+    assert "withheld this tick by backoff" in summary
+    assert "drizzle 0029 not applied" not in summary
+
+
+# --- Parallel workers are per view, not per lane ---
+
+
+def test_only_the_two_views_measured_to_fault_on_dev_shm_disable_their_parallel_workers() -> None:
+    """Per-spec, and the discriminator is `Parallel Hash` -- not "is the plan parallel".
+
+    Every plan in this lane allocates a DSM segment, so a default of 1 removes no exposure; only the
+    soil views carry a shared RESIZABLE hash table, which is what "could not resize shared memory
+    segment" reports. See jobs/AGENTS.md "The real discriminator is Parallel Hash, not parallelism".
+    """
+    disabled = {
+        spec.qualified_name
+        for spec in MATVIEW_REFRESH_SPECS
+        if spec.max_parallel_workers_per_gather == mv_module.MATVIEW_REFRESH_NO_PARALLEL_WORKERS
+    }
+    assert disabled == {"geo.mv_soil_survey_grid", "geo.mv_soil_survey_union"}
+    for spec in MATVIEW_REFRESH_SPECS:
+        if spec.qualified_name not in disabled:
+            assert (
+                spec.max_parallel_workers_per_gather
+                == mv_module.MATVIEW_REFRESH_DEFAULT_MAX_PARALLEL_WORKERS_PER_GATHER
+            )
+
+
+@pytest.mark.asyncio
+async def test_each_refresh_pins_its_own_spec_worker_count_not_a_lane_wide_one() -> None:
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_soil_survey_grid")
+    session = FakeSession()
+    await _refresh_one_matview(session, spec)
+    settings = [sql for sql, _ in session.statements if "max_parallel_workers_per_gather" in sql]
+    assert settings == ["SET LOCAL max_parallel_workers_per_gather = 0"]
+
+
+# --- The budget gate must be satisfiable by the view it guards ---
+
+
+def test_the_required_budget_is_capped_at_the_view_own_statement_timeout() -> None:
+    """Twice geo.mv_signal_cell_daily's measured 1,729 s is 3,458 s, which no tick of this lane ever
+    has -- so the uncapped rule made that view permanently unstartable while reporting the healthy
+    `skipped_budget`. The statement timeout is the bound that is actually true."""
+    heavy = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_signal_cell_daily")
+    assert _required_budget_seconds(heavy, 1_729.0) == float(heavy.statement_timeout_seconds)
+    # The doubling still governs wherever it is the smaller number, which is every other view.
+    small = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_layer_feature_stats")
+    assert _required_budget_seconds(small, 5.0) == 10.0
+
+
+def test_every_view_fits_inside_one_tick_budget_with_headroom() -> None:
+    """The invariant `_required_budget_seconds` relies on: a spec whose statement timeout EQUALS the
+    tick budget can only ever start on a tick where literally no time has elapsed, which is none."""
+    for spec in MATVIEW_REFRESH_SPECS:
+        assert spec.statement_timeout_seconds < MATVIEW_REFRESH_TIME_BUDGET_SECONDS
+
+
+# --- The whole handler, with a standing failure in the table ---
+
+
+@pytest.mark.asyncio
+async def test_a_backed_off_view_costs_no_refresh_and_still_reds_the_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(_FrozenDateTime, "fixed_now", now)
+    monkeypatch.setattr(mv_module, "datetime", _FrozenDateTime)
+
+    doomed = "geo.mv_soil_survey_grid"
+    prior_rows = [
+        dict(row)
+        if row["view_name"] != doomed
+        else {
+            **row,
+            "refreshed_at": None,
+            "duration_ms": 80_125,
+            "outcome": "failed",
+            "last_attempt_at": now - timedelta(minutes=1),
+            "consecutive_failures": 3,
+        }
+        for row in _fresh_prior_state_rows(now - timedelta(minutes=5))
+    ]
+    session = FakeSession(prior_state_rows=prior_rows)
+
+    async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
+        outcome = await matview_refresh_handler(_fake_invocation())
+
+    # No REFRESH at all: the doomed view is withheld and every other view's watermark is unchanged.
+    assert session.refresh_statements() == []
+    assert outcome.kind == "failed"
+    assert doomed in str(outcome.reason)
+    statuses = {entry["view"]: entry["status"] for entry in outcome.metrics["views"]}
+    assert statuses[doomed] == "deferred_failing"
+
+
+@pytest.mark.asyncio
+async def test_a_standing_failure_past_its_backoff_is_attempted_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(_FrozenDateTime, "fixed_now", now)
+    monkeypatch.setattr(mv_module, "datetime", _FrozenDateTime)
+
+    doomed = "geo.mv_soil_survey_grid"
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == doomed)
+    prior_rows = [
+        dict(row)
+        if row["view_name"] != doomed
+        else {
+            **row,
+            "refreshed_at": None,
+            "duration_ms": 80_125,
+            "outcome": "failed",
+            "last_attempt_at": now - timedelta(seconds=_backoff_seconds(spec, 3) + 1),
+            "consecutive_failures": 3,
+        }
+        for row in _fresh_prior_state_rows(now - timedelta(minutes=5))
+    ]
+    session = FakeSession(prior_state_rows=prior_rows)
+
+    async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
+        outcome = await matview_refresh_handler(_fake_invocation())
+
+    assert session.refresh_statements() == [f"REFRESH MATERIALIZED VIEW CONCURRENTLY {doomed}"]
+    assert outcome.kind == "completed"
+
+
+# --- BLOCKER 2: a yield must never swallow the failure signal ---
+#
+# `JobHandlerOutcome.yielded` PARKS the work item (worker.py::_apply_park raises max_attempts rather
+# than spending one), so it never fails, never dead-letters, and the pulse's dead-lettered-work-item
+# census sees nothing. Testing `budget_exhausted` before `report.has_failures` therefore reported a
+# GREEN tick over permanently-failing views for up to MAX_CONSECUTIVE_PARKS = 24 consecutive hours.
+
+
+@pytest.mark.asyncio
+async def test_budget_exhaustion_never_hides_a_standing_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One backed-off view plus an exhausted budget must land `failed`, never `yielded`."""
+    now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(_FrozenDateTime, "fixed_now", now)
+    monkeypatch.setattr(mv_module, "datetime", _FrozenDateTime)
+
+    doomed = "geo.mv_soil_survey_grid"
+    stale = "agri.mv_forecast_ml_daily_serving"
+    stale_spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == stale)
+    prior_rows = []
+    for row in _fresh_prior_state_rows(now - timedelta(minutes=5)):
+        entry = dict(row)
+        if entry["view_name"] == doomed:
+            entry.update(
+                refreshed_at=None,
+                duration_ms=86_320,
+                outcome="failed",
+                last_attempt_at=now - timedelta(minutes=1),
+                consecutive_failures=3,
+            )
+        elif entry["view_name"] == stale:
+            # Eligible (watermark moved, past its min_interval) but priced far beyond any budget, so
+            # the loop sets budget_exhausted on it.
+            entry.update(
+                refreshed_at=now - timedelta(seconds=stale_spec.min_interval_seconds + 60),
+                last_attempt_at=now - timedelta(seconds=stale_spec.min_interval_seconds + 60),
+                duration_ms=800_000,
+            )
+        prior_rows.append(entry)
+
+    session = FakeSession(
+        prior_state_rows=prior_rows,
+        watermark_overrides={
+            "matview_refresh_watermark_forecast_publication": {"watermark": "2026-08-14T00:00:00+00:00"}
+        },
+    )
+
+    async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
+        outcome = await matview_refresh_handler(_fake_invocation(seconds_remaining=10.0))
+
+    statuses = {entry["view"]: entry["status"] for entry in outcome.metrics["views"]}
+    # The preconditions this test depends on -- asserted, so it cannot silently stop testing anything.
+    assert statuses[doomed] == "deferred_failing"
+    assert statuses[stale] == "skipped_budget"
+    # The actual regression guard.
+    assert outcome.kind == "failed", "a budget-exhausted tick must not park over a standing failure"
+    assert doomed in str(outcome.reason)
+    assert session.refresh_statements() == []
+
+
+@pytest.mark.asyncio
+async def test_budget_exhaustion_alone_still_yields(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With nothing failing, an exhausted budget is still a healthy park -- the fix must not over-reach."""
+    now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(_FrozenDateTime, "fixed_now", now)
+    monkeypatch.setattr(mv_module, "datetime", _FrozenDateTime)
+
+    stale = "agri.mv_forecast_ml_daily_serving"
+    stale_spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == stale)
+    prior_rows = []
+    for row in _fresh_prior_state_rows(now - timedelta(minutes=5)):
+        entry = dict(row)
+        if entry["view_name"] == stale:
+            entry.update(
+                refreshed_at=now - timedelta(seconds=stale_spec.min_interval_seconds + 60),
+                last_attempt_at=now - timedelta(seconds=stale_spec.min_interval_seconds + 60),
+                duration_ms=800_000,
+            )
+        prior_rows.append(entry)
+
+    session = FakeSession(
+        prior_state_rows=prior_rows,
+        watermark_overrides={
+            "matview_refresh_watermark_forecast_publication": {"watermark": "2026-08-14T00:00:00+00:00"}
+        },
+    )
+
+    async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
+        outcome = await matview_refresh_handler(_fake_invocation(seconds_remaining=10.0))
+
+    assert outcome.kind == "yielded"
+    assert outcome.cursor is not None

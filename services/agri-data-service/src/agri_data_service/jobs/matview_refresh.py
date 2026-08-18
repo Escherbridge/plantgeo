@@ -1,4 +1,4 @@
-"""The uniform matview refresh lane: eleven views, one watermark-gated pass, one ledger row each.
+"""The uniform matview refresh lane: twelve views, one watermark-gated pass, one ledger row each.
 
 Owner directive, 2026-08-15: "all 21 layers need to match to reduce memory usage as much as
 possible" and "the application never runs an analytical query". Every aggregate the serving read
@@ -14,7 +14,7 @@ carries an explicit guardrail: it refreshes exactly the three `geo.mv_strategy_r
 views and nothing else, and forbids widening. Respecting that means every other matview needs a
 different lane, not a longer tuple passed into the same one.
 
-Two deliberate departures from that lane's template, both required by the scale here (eleven views
+Three deliberate departures from that lane's template, all required by the scale here (twelve views
 instead of three, and one of them -- `geo.mv_signal_cell_daily` -- rebuilding a ~3.2 GB rollup off a
 26 GB source on every REFRESH, concurrent or not):
 
@@ -40,8 +40,15 @@ instead of three, and one of them -- `geo.mv_signal_cell_daily` -- rebuilding a 
    stale past its own ceiling, is skipped with no REFRESH statement issued at all. In the steady state
    R2 measured (the signal plane 9-13 days stale, the box idle >90% of wall-clock), this makes the
    heaviest view refresh "approximately never" rather than on every tick forever.
+3. **A consecutive-failure backoff in front of that gate, and per-view session settings behind it.**
+   The gate above answers "has anything changed?"; it had no answer for "can this view succeed at
+   all?", and a view that cannot succeed keeps `refreshed_at = NULL` forever, which the gate read as
+   "never refreshed, try it" on every tick, forever. `_backoff_seconds` and `_EligibilityVerdict`
+   close that; `MatviewRefreshSpec.max_parallel_workers_per_gather` is per-view for a related
+   reason -- one view's fix is another view's regression. jobs/AGENTS.md, "The matview-refresh
+   lane's three self-inflicted stalls", carries the production measurements behind both.
 
-ONE WORK ITEM, ELEVEN VIEWS, BUDGET-AWARE -- WITH A DELIBERATE DEPARTURE FROM `has_budget_for`'S
+ONE WORK ITEM, TWELVE VIEWS, BUDGET-AWARE -- WITH A DELIBERATE DEPARTURE FROM `has_budget_for`'S
 USUAL USE. Unlike `strategy_mv_refresh`'s three views (which always finish inside one bounded call),
 an unlucky tick here could need to refresh several stale views in a row, including the ~5-minute
 `mv_signal_cell_daily` rebuild. `JobInvocation.seconds_remaining` is a SNAPSHOT taken once when the
@@ -50,7 +57,7 @@ is explicit: "one bounded step per call... a handler that wants a live clock is 
 much in one call"). Calling `invocation.has_budget_for(...)` naively before each of several REFRESH
 statements in the SAME call would therefore never notice time this very call already spent refreshing
 an earlier view -- the frozen snapshot would keep saying yes. This handler is deliberately the "doing
-too much in one call" case the docs warn about, on purpose, because eleven small watermark checks and
+too much in one call" case the docs warn about, on purpose, because twelve small watermark checks and
 zero-to-a-few real refreshes is still one bounded unit of work; the fix is to track this call's own
 elapsed wall-clock time explicitly (`_remaining_budget_seconds`) and subtract it from the snapshot
 before every comparison, rather than to split each view into its own call. Once the adjusted
@@ -95,6 +102,7 @@ from agri_data_service.jobs.registry import (
 from agri_data_service.jobs.worker import (
     ensure_job_definition,
     open_job_run,
+    preflight_required_relations,
     run_job_slice,
 )
 
@@ -119,13 +127,24 @@ MATVIEW_REFRESH_WORK_ITEM_KIND: Final = "matview_refresh_batch"
 # The one, never-rotating run this lane ever opens -- see the module docstring's departure #1.
 MATVIEW_REFRESH_RUN_KEY: Final = "matview-refresh:pulse"
 
-# --- Budget: a slice may need to refresh several stale views, including the ~5-minute
-# geo.mv_signal_cell_daily rebuild, in one tick. lease_seconds must exceed time_budget_seconds
-# (JobDefinitionSpec's own rule); 2400 > 1800 satisfies it with headroom for the ledger writes
-# around each individual REFRESH.
+# --- Budget: a slice may need to refresh several stale views, including the ~29-minute
+# geo.mv_signal_cell_daily rebuild, in one tick. Two orderings must hold, and the second one is new:
+# lease_seconds > time_budget_seconds (JobDefinitionSpec's own rule), and time_budget_seconds >
+# every statement_timeout_seconds in the spec table below -- otherwise the view whose cap equals the
+# budget can only start on a tick where zero time has elapsed, which is no tick at all. See
+# `_required_budget_seconds` and jobs/AGENTS.md "A view can be too big for its own lane".
+# 2700 > 2100 > 1900. A test pins the second ordering for every spec.
+#
+# 2_100 rather than 2_400: the numbers are chosen against the HOURLY cron this lane runs from, not
+# just against the spec table. A worst-case tick is the heaviest view at its 1_900 s cap plus ledger
+# overhead, ~32 minutes, which leaves ~25 minutes of slack before the next tick starts. 2_400 would
+# have cut that slack in half, and this lane holds no concurrency_key -- two overlapping ticks each
+# mint their own shard and would issue concurrent REFRESH CONCURRENTLY against the same views. See
+# jobs/AGENTS.md "The tick budget is sized against the cron, not the spec table" for the other
+# consequence (every later pulse lane lands `skipped_budget` on such a tick).
 MATVIEW_REFRESH_MAX_ATTEMPTS: Final = 3
-MATVIEW_REFRESH_LEASE_SECONDS: Final = 2_400
-MATVIEW_REFRESH_TIME_BUDGET_SECONDS: Final = 1_800
+MATVIEW_REFRESH_LEASE_SECONDS: Final = 2_700
+MATVIEW_REFRESH_TIME_BUDGET_SECONDS: Final = 2_100
 
 # Documentary only, exactly as strategy_mv_refresh.py's own schedule constant is: nothing in this
 # runtime parses cron syntax (job_definition.schedule is written and never read). This lane has no
@@ -147,7 +166,21 @@ BUDGET_SAFETY_FACTOR: Final = 2.0
 # parameter, so both are interpolated string constants rather than query parameters -- safe because
 # neither is ever derived from anything an operator or an upstream payload supplies.
 MATVIEW_REFRESH_WORK_MEM: Final = "32MB"
-MATVIEW_REFRESH_MAX_PARALLEL_WORKERS_PER_GATHER: Final = 1
+
+# PARALLELISM IS A PER-VIEW SETTING, NOT A LANE-WIDE ONE. The default below is NOT a mitigation and
+# must not be read as one: EVERY parallel plan in this lane allocates a dynamic-shared-memory segment
+# in /dev/shm, and 1 worker allocates one just as 2 do. What distinguishes the views that FAULT is
+# `Parallel Hash` -- a shared, RESIZABLE hash table -- which is literally what `could not resize
+# shared memory segment ... to 16777216 bytes` reports. The census plans allocate only fixed ~64 kB
+# tuple queues and have never faulted. The classification test for any view added here is therefore
+# "does its plan contain `Parallel Hash`?", not "is it parallel?"; jobs/AGENTS.md "The real
+# discriminator is Parallel Hash, not parallelism" carries the plans this was read off.
+#
+# So 1 is simply what shipped, kept unchanged so no currently-succeeding view has its plan disturbed
+# (three of them sit at 96%, 94% and 71% of their own statement timeouts), and 0 is set on exactly
+# the two views measured to fault.
+MATVIEW_REFRESH_DEFAULT_MAX_PARALLEL_WORKERS_PER_GATHER: Final = 1
+MATVIEW_REFRESH_NO_PARALLEL_WORKERS: Final = 0
 
 _WORKER_ID_ENVIRONMENT_VARIABLE: Final = "RAILWAY_REPLICA_ID"
 _WORKER_ID_MAX_LENGTH: Final = 255
@@ -159,6 +192,7 @@ MatviewRefreshOutcome = Literal[
     "skipped_unchanged",
     "skipped_missing",
     "skipped_budget",
+    "deferred_failing",
     "failed",
 ]
 
@@ -216,12 +250,17 @@ class MatviewRefreshSpec:
     # Used only when no prior duration is on record (a view's first-ever refresh); every later tick
     # estimates from agri.matview_refresh_state.duration_ms instead, which is a real measurement.
     default_estimate_seconds: float
+    # Overridden away from the default only where a view is measured to FAULT on a parallel plan's
+    # shared-memory segment; every other view keeps its workers because losing them costs wall-clock
+    # time it does not have. See the module constants above.
+    max_parallel_workers_per_gather: int = MATVIEW_REFRESH_DEFAULT_MAX_PARALLEL_WORKERS_PER_GATHER
 
 
 # Design doc section 14's MATVIEWS block, minus the three geo.mv_strategy_recommendations_* views
 # (which strategy_mv_refresh.py keeps under its own guardrail) and their own watermark/interval
-# table in section 5.2. Nine new matviews drizzle/0029 creates plus two pre-existing ones adopted
-# under this lane's discipline (geo.watershed_rollup, agri.mv_forecast_ml_daily_serving) = eleven.
+# table in section 5.2. Nine new matviews drizzle/0029 creates, plus two pre-existing ones adopted
+# under this lane's discipline (geo.watershed_rollup, agri.mv_forecast_ml_daily_serving), plus the
+# day axis drizzle/0031 splits out of geo.mv_feature_observation_day = twelve.
 MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
     MatviewRefreshSpec(
         qualified_name="geo.mv_layer_feature_stats",
@@ -229,7 +268,11 @@ MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
         min_interval_seconds=900,
         max_staleness_seconds=21_600,
         priority=0,
-        statement_timeout_seconds=60,
+        # 120 s, not the 60 s this spec shipped with. Measured on production 2026-08-17 this view
+        # refreshed in 41,841 ms -- 70% of a 60 s cap -- which is a marginal view one drift away
+        # from a permanent timeout, and a permanent timeout on this lane used to mean an unbounded
+        # retry loop. 120 s is the house statement-timeout convention (code_styleguides/sql.md).
+        statement_timeout_seconds=120,
         default_estimate_seconds=2.0,
     ),
     MatviewRefreshSpec(
@@ -238,7 +281,8 @@ MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
         min_interval_seconds=900,
         max_staleness_seconds=3_600,
         priority=0,
-        statement_timeout_seconds=60,
+        # Measured 17,696 ms on 2026-08-17; raised alongside its sibling above for the same reason.
+        statement_timeout_seconds=120,
         default_estimate_seconds=2.0,
     ),
     MatviewRefreshSpec(
@@ -251,17 +295,91 @@ MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
         default_estimate_seconds=2.0,
     ),
     MatviewRefreshSpec(
-        qualified_name="geo.mv_feature_observation_day",
+        qualified_name="geo.mv_feature_observation_day_axis",
         watermark_sql=_WATERMARK_FEATURES_UPDATED_AT,
-        # 3,600 s, not the 900 s the other geo.features-backed views use. This is the one census
-        # refresh that reads the geo.features heap AND its 1,467 MB of TOAST -- both `metric_counts`
-        # and `newest_observed_at` need `properties` -- and its watermark moves on every single
-        # ingest, so a 900 s floor would let it run on nearly every tick.
+        # THE HOT HALF of the feature census, split out by drizzle/0031. This is the relation every
+        # time slider's day axis is gated on, so it keeps the hourly cadence its wide sibling below
+        # gives up.
+        #
+        # WHAT THE SPLIT BUYS, CORRECTED AGAINST A REAL FULL-RELATION MEASUREMENT. A per-layer
+        # EXPLAIN made the count-only variant look ~33x cheaper (0.82 s against 27.0 s on one
+        # 184,943-row layer), and extrapolating that to ~22 s over 5.0M rows was WRONG. Refreshing
+        # this relation on production 2026-08-17 took 286,800 ms -- essentially the same wall clock
+        # as the combined statement's 283,049 ms. The scan and the `properties` detoast dominate at
+        # full scale, and BOTH variants pay them.
+        #
+        # The win is therefore NOT latency. It is (a) spill WIDTH -- 33 bytes per tuple against 511,
+        # roughly 165 MB against roughly 1.4 GiB, which is the only axis the 3 GB cap actually cares
+        # about -- and (b) reliability, because a 900 s cap over a 287 s statement is a refresh that
+        # completes instead of one that dies at 300 s and re-queues forever. Total refresh SECONDS
+        # per day go slightly UP, from ~7,200 s of failing wide-census attempts to ~6,888 s of
+        # succeeding axis refreshes plus ~1,132 s of six-hourly wide ones. That trade is deliberate
+        # and is stated rather than dressed up.
+        #
+        # The next real lever, measured but NOT taken here: `ix_features_layer_observation_day`
+        # covers (layer_id, day) INCLUDE (geometry_id) WHERE status = 'published', which is every
+        # column this aggregate needs. The only thing forcing a heap scan is the fire-perimeters
+        # `properties` COALESCE guard. Splitting the defining query into an index-only branch for the
+        # ten layers that carry no `fireDiscoveryDateTime` plus a heap branch for fire-perimeters
+        # alone could plausibly remove the detoast entirely. That is a DDL redesign needing its own
+        # measurement, not a cadence tweak.
         min_interval_seconds=3_600,
         max_staleness_seconds=21_600,
         priority=1,
-        statement_timeout_seconds=300,
-        default_estimate_seconds=20.0,
+        # 900 s. The axis measured 286,800 ms, so the 300 s cap this spec was first written with
+        # would have failed it on essentially every tick -- the same defect being fixed elsewhere in
+        # this table, freshly introduced.
+        statement_timeout_seconds=900,
+        default_estimate_seconds=300.0,
+    ),
+    MatviewRefreshSpec(
+        qualified_name="geo.mv_feature_observation_day",
+        watermark_sql=_WATERMARK_FEATURES_UPDATED_AT,
+        # THE WIDE HALF, and since drizzle/0031 it is no longer on the slider's critical path --
+        # the axis above is. What is left here is the three columns that force a Sort +
+        # GroupAggregate: `distinct_key_count` (count(DISTINCT ...) has no hash implementation) and
+        # `newest_observed_at` / `metric_counts` (both drag `properties` through the sort, at 511
+        # bytes per tuple and ~1.4 GiB of spill). Their two readers -- getMetricAtDate's unbboxed
+        # summary and the vegetation recency probe -- are per-day detail, not the axis, so this
+        # moves from hourly to SIX-HOURLY: 21,600 s floor, 86,400 s ceiling, priority 2 beside the
+        # other heavy rollup so it can never starve the axis.
+        #
+        # WHY 21_600 AND NOT 86_400, WHICH IS WHAT THE RE-GRAIN WANTED. Two of this relation's
+        # columns are not captions, and a day-long lag on either produces a FALSE STATEMENT rather
+        # than a merely stale one:
+        #
+        #   metric_counts       environmental-read-model.ts:4148-4154 reads it through a LEFT JOIN
+        #                       with COALESCE(..., 0), so NO ROW for (layer, today) is
+        #                       indistinguishable from zero observations, and :4204-4209 then emits
+        #                       "<label> recorded no observation on <date>." -- the exact sentence
+        #                       :4197's own comment says "asserts something false about the
+        #                       warehouse". A fabricated absence is the same class of defect the
+        #                       census DDL refuses to introduce by definition, and a scheduling
+        #                       choice may not smuggle it back in.
+        #   newest_observed_at  :1452-1455 selects `not_published` vs `stale` off it and returns the
+        #                       instant to the client. NULL here reads as "never published" for a
+        #                       layer the hourly axis knows has data. This is a STATUS DRIVER, not a
+        #                       caption; an earlier revision of this comment claimed otherwise and
+        #                       was wrong.
+        #
+        # Six hours bounds both windows and still cuts this relation's refresh cost ~83% (4 runs/day
+        # against up to 24). The RESIDUAL is real and is not closed here: inside one 6 h window the
+        # false sentence is still reachable for a brand-new day. Closing it properly is a TypeScript
+        # change -- serve the unbboxed summary off geo.v_observation_day_census so NULL stays
+        # distinguishable from 0, or suppress the sentence when the census holds no row -- and is
+        # tracked outside this lane.
+        min_interval_seconds=21_600,
+        max_staleness_seconds=86_400,
+        priority=2,
+        # 900 s, not 300 s, and this view is ALREADY OVER THE OLD CAP. Two reads of the live ledger
+        # on 2026-08-17: 283,049 ms `refreshed_concurrently` at 04:45, then 300,257 ms `failed` at
+        # 12:45 -- i.e. the 300 s timeout, to the millisecond. So this is a FOURTH view in an
+        # unbounded retry loop, and unlike the other three it is reached through the WATERMARK gate
+        # (its watermark moves on every ingest) rather than the never-succeeded branch, which is why
+        # it carries a non-NULL refreshed_at and was missed on the first pass. 900 s is what makes it
+        # completable again.
+        statement_timeout_seconds=900,
+        default_estimate_seconds=300.0,
     ),
     MatviewRefreshSpec(
         qualified_name="geo.mv_drought_observation_day",
@@ -289,6 +407,13 @@ MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
         priority=1,
         statement_timeout_seconds=300,
         default_estimate_seconds=20.0,
+        # This view does not fail on time and does not fail in GEOS: reproducing its defining query
+        # read-only raised `could not resize shared memory segment ... to 16777216 bytes: No space
+        # left on device` after 55.05 s, and the identical query with workers disabled ran past
+        # 280 s with no failure. `dynamic_shared_memory_type = posix` puts every Gather's segment in
+        # /dev/shm, which is tmpfs -- RAM, counted inside the 3 GB cgroup. Disabling parallelism here
+        # is the fix that most directly removes RAM the box does not have.
+        max_parallel_workers_per_gather=MATVIEW_REFRESH_NO_PARALLEL_WORKERS,
     ),
     MatviewRefreshSpec(
         qualified_name="geo.mv_soil_survey_union",
@@ -298,6 +423,12 @@ MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
         priority=1,
         statement_timeout_seconds=300,
         default_estimate_seconds=20.0,
+        # Same source, same Gather Merge plan, same /dev/shm exposure as its sibling above. This
+        # view ALSO carries the known `ST_CollectionExtract` omission at drizzle/0029:918, which is
+        # a separate defect with a separate fix -- so removing the memory fault here is expected to
+        # change WHICH error it reports, not to make it succeed. Both are real; neither hides the
+        # other, because the backoff below reports the standing failure by name either way.
+        max_parallel_workers_per_gather=MATVIEW_REFRESH_NO_PARALLEL_WORKERS,
     ),
     MatviewRefreshSpec(
         qualified_name="geo.watershed_rollup",
@@ -323,7 +454,12 @@ MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
         min_interval_seconds=86_400,
         max_staleness_seconds=259_200,
         priority=2,
-        statement_timeout_seconds=1_800,
+        # 1_900, not 1_800. This is the TIGHTEST margin in the whole table -- measured 1,729,192 ms
+        # against the old 1,800 s cap, 71 s of headroom, 96% -- so it gets the same treatment as the
+        # two views raised above rather than being left alone because its number was already large.
+        # It stays below MATVIEW_REFRESH_TIME_BUDGET_SECONDS, which is the ordering that lets
+        # `_required_budget_seconds` ever start it.
+        statement_timeout_seconds=1_900,
         default_estimate_seconds=300.0,
     ),
 )
@@ -331,6 +467,19 @@ MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
 MATVIEW_REFRESH_QUALIFIED_NAMES: Final[frozenset[str]] = frozenset(
     spec.qualified_name for spec in MATVIEW_REFRESH_SPECS
 )
+
+# The shared ledger this lane and jobs/strategy_mv_refresh.py both read/write through
+# _read_prior_refresh_state / _write_refresh_state / _write_observability_state. Deliberately the
+# ONLY entry in this lane's preflight, not the twelve views above: a single view being absent is
+# already handled gracefully per-spec (`_view_exists` -> `skipped_missing`, self-healing once the
+# relation appears -- see "Graceful skip, not a crash" in strategy_mv_refresh.py's sibling check),
+# but this table missing is not handled at all -- every read/write against it raises, and that raise
+# is what dead-lettered ten matview-refresh shards and thirteen strategy-mv-refresh ones in prod on
+# 2026-08-15/16 while minting a fresh, doomed work item on every single tick. See jobs/AGENTS.md
+# "Preflight".
+MATVIEW_REFRESH_STATE_RELATION: Final = "agri.matview_refresh_state"
+
+MATVIEW_REFRESH_REQUIRED_RELATIONS: Final[tuple[str, ...]] = (MATVIEW_REFRESH_STATE_RELATION,)
 
 
 class MatviewRefreshContextError(RuntimeError):
@@ -349,6 +498,15 @@ class MatviewRefreshResult:
     detail: str | None = None
 
 
+# A view with one of these statuses was never attempted this tick, so it is not evidence about
+# whether a REFRESH works -- only about the gate, the clock, or the backoff having done their jobs.
+_UNATTEMPTED_STATUSES: Final[frozenset[str]] = frozenset({"skipped_unchanged", "skipped_budget", "deferred_failing"})
+
+# `deferred_failing` sits in BOTH sets on purpose: the backoff suppresses the WORK, never the
+# SIGNAL. See jobs/AGENTS.md "Backoff must not buy silence".
+_FAILING_STATUSES: Final[frozenset[str]] = frozenset({"failed", "deferred_failing"})
+
+
 @dataclass(frozen=True, slots=True)
 class MatviewRefreshReport:
     """One tick's full result: every considered view, in the order it was evaluated or attempted."""
@@ -357,26 +515,40 @@ class MatviewRefreshReport:
 
     @property
     def has_failures(self) -> bool:
-        """True on a real REFRESH failure, or when every ATTEMPTED view turned out missing.
+        """True on a real REFRESH failure, on a standing failure held off by backoff, or on an
+        all-attempted-missing tick.
 
         A skipped-unchanged or skipped-budget view was never attempted at all -- it is not evidence
-        of anything wrong, only of the watermark gate or this tick's clock doing their job. But if
-        every view this tick DID attempt came back `skipped_missing`, that is the same degraded
+        of anything wrong. `deferred_failing` was not attempted either, and IS evidence: it means
+        the ledger records this view failing every attempt since its last success, and this tick
+        declined to spend the seconds proving it again. That must still fail the tick, or the first
+        operator who clears the buried work items gets a green pulse over a permanently broken view
+        -- the exact green-while-broken hole the pulse's dead-letter census was written to close.
+
+        If every view this tick DID attempt came back `skipped_missing`, that is the same degraded
         signal strategy_mv_refresh.py's own report gives for an all-missing tick: drizzle/0029
         probably has not been applied against this database yet.
         """
-        if any(result.status == "failed" for result in self.results):
+        if any(result.status in _FAILING_STATUSES for result in self.results):
             return True
-        attempted = [
-            result for result in self.results if result.status not in {"skipped_unchanged", "skipped_budget"}
-        ]
+        attempted = [result for result in self.results if result.status not in _UNATTEMPTED_STATUSES]
         return bool(attempted) and all(result.status == "skipped_missing" for result in attempted)
 
     def failure_summary(self) -> str:
-        """Name every view that failed, or -- on an all-attempted-missing tick -- every one that was missing."""
+        """Name every view that failed or is standing-failing, or -- on an all-attempted-missing
+        tick -- every one that was missing."""
+        parts: list[str] = []
         failed = [result.qualified_name for result in self.results if result.status == "failed"]
         if failed:
-            return f"materialized view refresh failed for: {', '.join(failed)}"
+            parts.append(f"materialized view refresh failed for: {', '.join(failed)}")
+        deferred = [result for result in self.results if result.status == "deferred_failing"]
+        if deferred:
+            parts.append(
+                "standing failure, refresh withheld this tick by backoff: "
+                + "; ".join(f"{result.qualified_name} ({result.detail})" for result in deferred)
+            )
+        if parts:
+            return " | ".join(parts)
         missing = [result.qualified_name for result in self.results if result.status == "skipped_missing"]
         return (
             "materialized view refresh found none of its attempted views (drizzle 0029 not applied "
@@ -452,6 +624,12 @@ class _PriorRefreshState:
     source_watermark: str
     refreshed_at: datetime | None
     duration_ms: int | None
+    # When the last ATTEMPT ran, successful or not, and how many failures have landed since the
+    # last success. `refreshed_at` cannot answer either question for a view that has never once
+    # succeeded -- see upsert_matview_refresh_state.sql. Defaulted so a row written before alembic
+    # 20260817_0025, or a test constructing this by hand, reads as "no standing failure on record".
+    last_attempt_at: datetime | None = None
+    consecutive_failures: int = 0
 
 
 async def _view_exists(session: AsyncSession, qualified_name: str) -> bool:
@@ -494,12 +672,10 @@ def _refresh_statement(qualified_name: str, *, concurrently: bool) -> TextClause
 
 
 async def _set_local_refresh_settings(session: AsyncSession, spec: MatviewRefreshSpec) -> None:
-    """Pin this refresh's own statement timeout and memory ceiling; `SET LOCAL` dies with its transaction."""
+    """Pin this refresh's own timeout, memory ceiling and worker count; `SET LOCAL` dies with its transaction."""
     await session.execute(text(f"SET LOCAL statement_timeout = '{spec.statement_timeout_seconds}s'"))
     await session.execute(text(f"SET LOCAL work_mem = '{MATVIEW_REFRESH_WORK_MEM}'"))
-    await session.execute(
-        text(f"SET LOCAL max_parallel_workers_per_gather = {MATVIEW_REFRESH_MAX_PARALLEL_WORKERS_PER_GATHER}")
-    )
+    await session.execute(text(f"SET LOCAL max_parallel_workers_per_gather = {spec.max_parallel_workers_per_gather}"))
 
 
 async def _execute_refresh(
@@ -600,23 +776,67 @@ async def _evaluate_watermark(session: AsyncSession, spec: MatviewRefreshSpec) -
     return _watermark_signature(row)
 
 
+def _optional_moment(row: Mapping[str, object], column: str) -> datetime | None:
+    """One nullable timestamptz column, degrading a wrongly-typed or absent value to None.
+
+    Not `lease.py::optional_column`, which RAISES on a wrongly-typed non-NULL; this lane must keep
+    reading its ledger rather than fail a tick over an observability field. `_DATETIME_TYPE` for the
+    reason that constant documents. The local binding is what makes the narrowing reach the return.
+    """
+    value = row.get(column)
+    return value if isinstance(value, _DATETIME_TYPE) else None
+
+
+def _optional_integer(row: Mapping[str, object], column: str) -> int | None:
+    """One nullable integer column, degrading a wrongly-typed or absent value to None.
+
+    `bool` is excluded explicitly: it is a subclass of `int` in Python, so `True` would otherwise be
+    read as the number 1.
+    """
+    value = row.get(column)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _optional_count(row: Mapping[str, object], column: str, *, default: int) -> int:
+    """One NOT NULL integer column, degrading a wrongly-typed or absent value to `default`."""
+    value = _optional_integer(row, column)
+    return default if value is None else value
+
+
 async def _read_prior_refresh_state(session: AsyncSession) -> dict[str, _PriorRefreshState]:
     """Every view this service has ever recorded a refresh outcome for, keyed by qualified name."""
     rows = await fetch_rows(session, _SELECT_MATVIEW_REFRESH_STATE, {})
     return {
         required_column(row, "view_name", str): _PriorRefreshState(
             source_watermark=required_column(row, "source_watermark", str),
-            refreshed_at=row.get("refreshed_at") if isinstance(row.get("refreshed_at"), _DATETIME_TYPE) else None,
-            duration_ms=row.get("duration_ms") if isinstance(row.get("duration_ms"), int) else None,
+            refreshed_at=_optional_moment(row, "refreshed_at"),
+            duration_ms=_optional_integer(row, "duration_ms"),
+            last_attempt_at=_optional_moment(row, "last_attempt_at"),
+            # Degrades to 0, not to an error: the column is NOT NULL with a 0 default in the schema,
+            # but a database that has not had alembic 20260817_0025 applied yet returns nothing for
+            # it, and reading that as "no standing failure on record" is the correct degradation --
+            # the next attempt records the first failure and the backoff starts from there.
+            consecutive_failures=_optional_count(row, "consecutive_failures", default=0),
         )
         for row in rows
     }
 
 
 # Outcomes that mean the view's contents actually moved -- the only ones that advance refreshed_at.
-_SUCCESSFUL_REFRESH_OUTCOMES: Final[frozenset[str]] = frozenset(
+#
+# PUBLIC, and imported by jobs/strategy_mv_refresh.py rather than restated there. Both lanes write
+# through the same upsert_matview_refresh_state.sql, and since alembic 20260817_0025 that statement
+# DERIVES `consecutive_failures` from whether `refreshed_at` arrived non-NULL -- which turned this
+# set from an observability detail into the thing that decides whether a view enters backoff. Two
+# spellings that disagreed (the strategy lane's copy omitted `self_healed_unpopulated`) is exactly
+# the drift that must not be possible now. The extra member is unreachable from that lane's own
+# MaterializedViewRefreshStatus literal, so sharing changes none of its behaviour today; it stops
+# the two from forking tomorrow.
+SUCCESSFUL_REFRESH_OUTCOMES: Final[frozenset[str]] = frozenset(
     {"refreshed_concurrently", "refreshed_full", "self_healed_unpopulated"}
 )
+
+_SUCCESSFUL_REFRESH_OUTCOMES: Final = SUCCESSFUL_REFRESH_OUTCOMES
 
 
 async def _write_refresh_state(
@@ -649,37 +869,109 @@ async def _write_refresh_state(
 _NEVER_REFRESHED_SORT_KEY: Final = datetime.min.replace(tzinfo=UTC)
 
 
+# A doubling cap, purely so a pathological counter cannot ask Python for 2**10000 before `min`
+# clamps it. 16 doublings already exceeds every max_staleness_seconds in the spec table.
+_MAX_BACKOFF_DOUBLINGS: Final = 16
+
+
+def _backoff_seconds(spec: MatviewRefreshSpec, consecutive_failures: int) -> float:
+    """How long a standing-failing view waits: doubling from its floor, capped at its own ceiling.
+
+    See jobs/AGENTS.md "Why the cap is max_staleness_seconds and not a tuning knob".
+    """
+    if consecutive_failures <= 0:
+        return 0.0
+    exponent = min(consecutive_failures - 1, _MAX_BACKOFF_DOUBLINGS)
+    return float(min(spec.min_interval_seconds * (2**exponent), spec.max_staleness_seconds))
+
+
+@dataclass(frozen=True, slots=True)
+class _EligibilityVerdict:
+    """One view's gate result: refresh it now, skip it quietly, or hold it off while it keeps failing.
+
+    `standing_failure` is independent of `eligible` on purpose. A view that has been failing and is
+    now due for its next attempt is BOTH -- it gets refreshed, and its failure is still on the
+    record until an attempt actually succeeds.
+    """
+
+    eligible: bool
+    standing_failure: bool
+    reason: str
+
+
+def _standing_failure_verdict(
+    spec: MatviewRefreshSpec,
+    prior: _PriorRefreshState,
+    *,
+    now: datetime,
+) -> _EligibilityVerdict:
+    """Decide whether a view with recorded consecutive failures has waited out its backoff."""
+    backoff = _backoff_seconds(spec, prior.consecutive_failures)
+    # A row written before alembic 20260817_0025 carries no last_attempt_at. Treating that as "the
+    # backoff is already spent" makes the first tick after the migration attempt the view once and
+    # record a real timestamp, rather than silently withholding it against a clock that does not
+    # exist yet.
+    waited = backoff if prior.last_attempt_at is None else (now - prior.last_attempt_at).total_seconds()
+    if waited < backoff:
+        return _EligibilityVerdict(
+            eligible=False,
+            standing_failure=True,
+            reason=(
+                f"{prior.consecutive_failures} consecutive failed refresh(es); backing off "
+                f"{backoff:.0f}s, {waited:.0f}s elapsed, next attempt in {backoff - waited:.0f}s"
+            ),
+        )
+    return _EligibilityVerdict(
+        eligible=True,
+        standing_failure=True,
+        reason=(
+            f"retrying after {prior.consecutive_failures} consecutive failure(s) "
+            f"and {waited:.0f}s of a {backoff:.0f}s backoff"
+        ),
+    )
+
+
 def _eligibility(
     spec: MatviewRefreshSpec,
     prior: _PriorRefreshState | None,
     current_watermark: str,
     *,
     now: datetime,
-) -> tuple[bool, str]:
-    """Design doc section 5.2's watermark gate: unchanged-and-fresh skips, changed-or-stale attempts.
+) -> _EligibilityVerdict:
+    """Design doc section 5.2's watermark gate, with a consecutive-failure backoff in front of it.
 
-    Clock skew here is tolerated deliberately, unlike a lease deadline (jobs/AGENTS.md "every
-    timestamp comes from the database"): the thresholds this gate compares against are measured in
-    minutes to days, and a lease loses correctness over seconds of skew while this gate only loses a
-    few seconds of scheduling precision, so a Python `datetime.now(UTC)` is used rather than a second
-    database round trip purely to fetch `now()`.
+    THE BACKOFF IS CHECKED FIRST and the ordering is the whole fix: the `refreshed_at is None` branch
+    below cannot tell a never-attempted view from one that can never succeed. jobs/AGENTS.md "A view
+    that can never succeed was eligible on every tick, forever" has the measurement, and its
+    "Two clocks, and which one governs what" note covers the deliberate Python-`now()` skew here.
     """
+    if prior is not None and prior.consecutive_failures > 0:
+        return _standing_failure_verdict(spec, prior, now=now)
     if prior is None or prior.refreshed_at is None:
-        return True, "never successfully refreshed"
+        return _EligibilityVerdict(eligible=True, standing_failure=False, reason="never successfully refreshed")
     elapsed_seconds = (now - prior.refreshed_at).total_seconds()
     watermark_changed = current_watermark != prior.source_watermark
     if watermark_changed:
         if elapsed_seconds < spec.min_interval_seconds:
-            return False, (
-                f"watermark changed but only {elapsed_seconds:.0f}s since the last refresh "
-                f"(min_interval_seconds={spec.min_interval_seconds})"
+            return _EligibilityVerdict(
+                eligible=False,
+                standing_failure=False,
+                reason=(
+                    f"watermark changed but only {elapsed_seconds:.0f}s since the last refresh "
+                    f"(min_interval_seconds={spec.min_interval_seconds})"
+                ),
             )
-        return True, "watermark changed"
+        return _EligibilityVerdict(eligible=True, standing_failure=False, reason="watermark changed")
     if elapsed_seconds >= spec.max_staleness_seconds:
-        return True, (
-            f"watermark unchanged but {elapsed_seconds:.0f}s stale (max_staleness_seconds={spec.max_staleness_seconds})"
+        return _EligibilityVerdict(
+            eligible=True,
+            standing_failure=False,
+            reason=(
+                f"watermark unchanged but {elapsed_seconds:.0f}s stale "
+                f"(max_staleness_seconds={spec.max_staleness_seconds})"
+            ),
         )
-    return False, "watermark unchanged"
+    return _EligibilityVerdict(eligible=False, standing_failure=False, reason="watermark unchanged")
 
 
 @dataclass(frozen=True, slots=True)
@@ -688,8 +980,7 @@ class _PlannedRefresh:
 
     spec: MatviewRefreshSpec
     current_watermark: str
-    eligible: bool
-    reason: str
+    verdict: _EligibilityVerdict
     prior: _PriorRefreshState | None
 
 
@@ -703,19 +994,15 @@ async def _plan_refreshes(
     """Evaluate every spec's watermark and eligibility, in declared order, before any REFRESH runs.
 
     Every spec is read here, whether or not it turns out eligible: the watermark queries are the
-    entire cost of the gate (each O(1) or O(small table) per design), and reading all eleven up front
+    entire cost of the gate (each O(1) or O(small table) per design), and reading all twelve up front
     is what lets the handler report a full picture of what it considered, not only what it refreshed.
     """
     plans = []
     for spec in specs:
         current_watermark = await _evaluate_watermark(session, spec)
         prior = prior_by_view.get(spec.qualified_name)
-        eligible, reason = _eligibility(spec, prior, current_watermark, now=now)
-        plans.append(
-            _PlannedRefresh(
-                spec=spec, current_watermark=current_watermark, eligible=eligible, reason=reason, prior=prior
-            )
-        )
+        verdict = _eligibility(spec, prior, current_watermark, now=now)
+        plans.append(_PlannedRefresh(spec=spec, current_watermark=current_watermark, verdict=verdict, prior=prior))
     return tuple(plans)
 
 
@@ -726,6 +1013,15 @@ def _estimate_seconds(spec: MatviewRefreshSpec, prior: _PriorRefreshState | None
     return spec.default_estimate_seconds
 
 
+def _required_budget_seconds(spec: MatviewRefreshSpec, estimate: float) -> float:
+    """The clock this tick must have left to START a refresh: twice the estimate, capped at the timeout.
+
+    See jobs/AGENTS.md "A view can be too big for its own lane" -- the uncapped rule made
+    `geo.mv_signal_cell_daily` permanently unstartable while reporting a healthy `skipped_budget`.
+    """
+    return min(BUDGET_SAFETY_FACTOR * estimate, float(spec.statement_timeout_seconds))
+
+
 def _budget_skipped_result(spec: MatviewRefreshSpec) -> MatviewRefreshResult:
     """This view was eligible but this tick's remaining budget could not safely cover it."""
     return MatviewRefreshResult(
@@ -734,7 +1030,22 @@ def _budget_skipped_result(spec: MatviewRefreshSpec) -> MatviewRefreshResult:
         used_concurrently=False,
         elapsed_seconds=0.0,
         row_count=None,
-        detail="this tick's remaining budget did not cover twice this view's estimated refresh time",
+        detail="this tick's remaining budget did not cover this view's estimated refresh time",
+    )
+
+
+def _deferred_failing_result(plan: _PlannedRefresh) -> MatviewRefreshResult:
+    """This view is failing every attempt and its backoff has not elapsed; no REFRESH was issued.
+
+    Its own status, never folded into `skipped_unchanged`: `has_failures` must tell them apart.
+    """
+    return MatviewRefreshResult(
+        qualified_name=plan.spec.qualified_name,
+        status="deferred_failing",
+        used_concurrently=False,
+        elapsed_seconds=0.0,
+        row_count=None,
+        detail=plan.verdict.reason,
     )
 
 
@@ -828,20 +1139,22 @@ async def matview_refresh_handler(invocation: JobInvocation) -> JobHandlerOutcom
     plans = await _plan_refreshes(session, MATVIEW_REFRESH_SPECS, prior_by_view, now=now)
 
     results: list[MatviewRefreshResult] = [
-        MatviewRefreshResult(
+        _deferred_failing_result(plan)
+        if plan.verdict.standing_failure
+        else MatviewRefreshResult(
             qualified_name=plan.spec.qualified_name,
             status="skipped_unchanged",
             used_concurrently=False,
             elapsed_seconds=0.0,
             row_count=None,
-            detail=plan.reason,
+            detail=plan.verdict.reason,
         )
         for plan in plans
-        if not plan.eligible
+        if not plan.verdict.eligible
     ]
 
     eligible = sorted(
-        (plan for plan in plans if plan.eligible),
+        (plan for plan in plans if plan.verdict.eligible),
         key=lambda plan: (
             plan.spec.priority,
             plan.prior.refreshed_at if plan.prior is not None and plan.prior.refreshed_at is not None
@@ -859,7 +1172,7 @@ async def matview_refresh_handler(invocation: JobInvocation) -> JobHandlerOutcom
         remaining_budget_seconds = _remaining_budget_seconds(
             invocation, handler_started=handler_started, monotonic_now=time.monotonic()
         )
-        if remaining_budget_seconds < BUDGET_SAFETY_FACTOR * estimate:
+        if remaining_budget_seconds < _required_budget_seconds(plan.spec, estimate):
             budget_exhausted = True
             results.append(_budget_skipped_result(plan.spec))
             continue
@@ -870,10 +1183,19 @@ async def matview_refresh_handler(invocation: JobInvocation) -> JobHandlerOutcom
 
     report = MatviewRefreshReport(results=tuple(results))
     metrics = report.to_metrics()
-    if budget_exhausted:
-        return JobHandlerOutcome.yielded(cursor={"completed_views": completed_now}, metrics=metrics)
+    # A FAILURE OUTRANKS A YIELD, and the order of these two branches is load-bearing. See
+    # jobs/AGENTS.md "A yield used to swallow the failure signal": `yielded` PARKS the work item
+    # (worker.py::_apply_park raises max_attempts rather than spending one), so it never fails, never
+    # dead-letters, and the pulse's dead-lettered-work-item census sees nothing. Testing
+    # budget_exhausted first therefore reported a GREEN tick over permanently-failing views for up to
+    # MAX_CONSECUTIVE_PARKS consecutive hours. Nothing is lost by preferring the failure: the cursor
+    # is an optimisation, not a correctness device -- a view refreshed earlier in this tick has its
+    # watermark and refreshed_at already committed, so the next tick's fresh plan skips it as
+    # `skipped_unchanged` with or without a cursor to remind it.
     if report.has_failures:
         return JobHandlerOutcome.failed("matview_refresh_failed", report.failure_summary(), metrics=metrics)
+    if budget_exhausted:
+        return JobHandlerOutcome.yielded(cursor={"completed_views": completed_now}, metrics=metrics)
     return JobHandlerOutcome.completed(metrics=metrics)
 
 
@@ -905,6 +1227,15 @@ async def trigger_matview_refresh(
     The caller owns the session and its engine's lifetime; this function commits the plan, then binds
     the session for the handler's own commits inside `run_job_slice`.
     """
+    worker_id = _default_worker_id()
+    refusal = await preflight_required_relations(
+        session,
+        definition_name=MATVIEW_REFRESH_DEFINITION_NAME,
+        worker_id=worker_id,
+        required_relations=MATVIEW_REFRESH_REQUIRED_RELATIONS,
+    )
+    if refusal is not None:
+        return refusal
     definition = await ensure_job_definition(session, matview_refresh_definition_spec())
     moment = now if now is not None else datetime.now(UTC)
     opened = await open_job_run(
@@ -926,7 +1257,7 @@ async def trigger_matview_refresh(
         return await run_job_slice(
             session,
             definition_name=MATVIEW_REFRESH_DEFINITION_NAME,
-            worker_id=_default_worker_id(),
+            worker_id=worker_id,
             job_run_id=opened.job_run_id,
         )
 

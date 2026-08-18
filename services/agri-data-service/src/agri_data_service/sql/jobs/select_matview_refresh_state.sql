@@ -14,5 +14,17 @@
 -- duration_ms and row_count ARE nullable, and NULL there means "recorded before any refresh of
 -- this view actually succeeded" -- a state a caller must treat as maximally stale, ordering it
 -- first rather than dividing by a missing timestamp.
-SELECT view_name, source_watermark, refreshed_at, duration_ms, row_count, outcome
+--
+-- last_attempt_at and consecutive_failures (alembic 20260817_0025) are the pair that tells a
+-- NEVER-ATTEMPTED view apart from a REPEATEDLY-FAILING one, which refreshed_at alone cannot do:
+--
+--   consecutive_failures = 0, last_attempt_at NULL   never attempted (or the row predates 0025)
+--   consecutive_failures = 0, last_attempt_at set    the most recent attempt landed cleanly
+--   consecutive_failures > 0                         standing failure; last_attempt_at is when the
+--                                                    most recent doomed attempt ran, and is the
+--                                                    clock the caller's backoff measures from.
+--
+-- consecutive_failures is NOT NULL with a 0 default, so it never needs a COALESCE on the read side.
+SELECT view_name, source_watermark, refreshed_at, duration_ms, row_count, outcome,
+       last_attempt_at, consecutive_failures
 FROM agri.matview_refresh_state

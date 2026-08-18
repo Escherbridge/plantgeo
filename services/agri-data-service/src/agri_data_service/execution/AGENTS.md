@@ -1585,8 +1585,81 @@ not run, `invalid` means it ran perfectly and found rows that are wrong. Both fa
 That carries `validate-streams`' own rule through unchanged — a backfill in flight is `incomplete` for
 weeks of correct operation and must not turn the hourly cron red.
 
+`dead_lettered` and `standing_dead_letters` draw that same distinction one level down, and they exist because
+**production reported SUCCESS hourly for roughly 24 hours with two lanes fully dead-lettering.** The
+tick that buried the work items was correctly loud once; every tick after it read
+
+```
+[info] lane_dispatched job_run_id=... lane_id=matview-refresh stop_reason=no_claimable_work succeeded=0
+```
+
+and exited 0 — which is *exactly* what a finished lane looks like, because on the numbers alone a lane
+with nothing left to claim and a lane with nothing left that *can* be claimed are the same lane.
+
+- **`dead_lettered`** — this tick exhausted a work item's retries and buried it. Read from
+  `JobSliceSummary.dead_lettered`.
+- **`standing_dead_letters`** — the lane is *carrying* buried work from an earlier tick. Counted by
+  `sql/jobs/count_dead_lettered_work_items.sql`: `agri.job_work_item` rows in `'dead_letter'`, joined
+  up to `agri.job_definition.name`, across every run that definition has ever opened. Issued
+  **unconditionally** per lane by `_fold_in_standing_dead_letters` — after a healthy slice, after a
+  slice that raised, whether or not a run was selected — because that independence is the whole point.
+  This is the branch that closes the 24-hour hole. It fails closed: a census that cannot be read leaves
+  the lane `raised`, never `ran`.
+
+  **This used to read `JobSliceSummary.run_status` against a `TERMINALLY_FAILED_RUN_STATUSES` set, and
+  that was wrong in both directions.** Recorded here so nobody re-proposes it:
+
+  - *It could not fire when it should.* `sql/jobs/select_open_job_run.sql` selects a run only while its
+    status is `'queued'`/`'running'`. The tick after `refresh_job_run_rollup.sql` rolls a run up to
+    `'failed'`/`'partial'` selects no run at all and reports `run_status=None`, i.e. healthy. The signal
+    covered exactly one tick — the tick that was already loud through `dead_lettered > 0`.
+  - *It fired when it must not.* The rollup counts a `'cancelled'` **work item** as `failed` and its run
+    `CASE` has no `'cancelled'` branch, so an operator cancellation — the only encoding cancellation has
+    here — rolls the run to `'partial'`/`'failed'`. With `jobs/matview_refresh.py`'s single
+    never-rotating run, one historical burial or cancellation pins that run at `'partial'` forever and
+    would red the hourly cron permanently, unclearably, while the old detail line advised the operator to
+    "cancel it deliberately" — which made it strictly worse.
+  - Nothing ever writes `'dead_letter'` or `'cancelled'` to `agri.job_run.status`. Two statements touch
+    that column: `insert_job_run.sql` writes `'queued'`, the rollup `CASE` writes `'running'`,
+    `'succeeded'`, `'failed'`, `'partial'`. Those five are the whole writable vocabulary.
+
+  An operator cancellation therefore never reds a tick: `'cancelled'` work items are not counted, and no
+  run status is read at all.
+
+Both fail the tick. `_log_tick_verdict` then emits exactly one terminal line per tick —
+`jobs_pulse_tick_failed` at **ERROR** naming every failing lane, or `jobs_pulse_tick_healthy` at INFO —
+because the misleading `lane_dispatched` INFO line lives in `jobs/dispatch.py` and a log scrape for
+ERROR over a fully dead lane previously found nothing at all. `stop_reason` is deliberately absent from
+the verdict line: `no_claimable_work` is a truthful answer even when everything is on fire, and
+repeating it beside a verdict would re-import the ambiguity the line exists to remove.
+
+**Why a non-zero exit is safe here, and what would make it unsafe.**
+`infra/cron-ingest/railway.json` sets `restartPolicyType: NEVER` alongside `cronSchedule: 0 * * * *`,
+and that image's `ENTRYPOINT` already propagates this verb's status
+(`... ; pulse_status=$?; [ $ingest_status -eq 0 ] && [ $pulse_status -eq 0 ]`). A non-zero exit therefore
+turns **one** hourly run red and Railway starts nothing in its place. That matters most for
+`standing_dead_letters`, which is a *standing* condition that repeats every hour until an operator
+requeues or cancels the buried work items — one red run per hour is the intended signal. If that restart
+policy is ever changed to `ON_FAILURE`, it becomes an unbounded loop of back-to-back 600-second ticks and
+must be demoted to an ERROR log with a zero exit *before* the policy is flipped.
+
+**Where a preflight-refusal signal hooks in.** A lane that refuses preflight is the same class of event:
+work that will not run, reported as though nothing needed to run. It lives in `_slice_outcome`
+(`jobs_pulse_command.py`), as a branch below the `dead_lettered` one, plus its own literal in
+`PulseLaneOutcome` and its own member of `FAILING_PULSE_OUTCOMES`. Nothing else has to change:
+`PulseSummary.failed`, `_log_tick_verdict` and the exit rule all read that one frozenset.
+
 `--skip-maintenance` runs only the two lane passes, for an operator draining lane work by hand; the
 scheduled tick must never use it. `--dry-run` lists all three namespaces and applies nothing.
+
+### No census telemetry, deliberately
+
+A `_probe_census_shards` helper used to time each shard of the observed-day census and fold
+`census shards=N slowest_shard_seconds=S` into every lane step's detail string. Its entire cost was
+re-reading the **whole** census a second time, per lane, per tick, to describe a fan-out that has since
+been measured away — see `ingest/AGENTS.md` § "The census was sharded for one day". It is gone with the
+sharding. Anyone who wants that number back should have `reconcile_lane` report its own census timing
+rather than read the census twice to observe it once.
 
 **Measured cost (prod, 2026-08-14):** the four lane steps took 57 s + 75 s + 68 s + 81 s = 281 s with
 both lanes fully settled and nothing to plan, before `validate-streams`. Against the cron's
