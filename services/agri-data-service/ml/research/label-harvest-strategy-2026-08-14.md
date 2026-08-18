@@ -1,5 +1,11 @@
 # Label-Harvest Strategy for the Recommendation Plane
 
+> **Partly superseded 2026-08-14** by [`label-plane-readiness-2026-08-14.md`](label-plane-readiness-2026-08-14.md).
+> Sections 1–4 and 7 below remain the grounded schema inventory. **Do not act on §5 (volume targets),
+> §6.1 (ECOCROP-first), §6.4 (GBIF download splitting), or §8 (Phases 0–4)** — the owner reversed them, and a
+> production census found that the 0.025 / 0.541 diagnostic in §2 is not reproducible from prod
+> (`expert_label_training_instance` holds 0 rows). See the readiness document for the current plan.
+
 **Date:** 2026-08-14
 **Scope:** `agri.expert_label` plane (alembic `20260814_0022`), release `literature-labels:2026-08-14:96cfec27be6fe1c7` (28 `agent_reviewed`, 0 `approved` — counts as reported in the track brief; not re-queried from prod for this document).
 **Problem:** Model A scored 0.025 accuracy against a 0.541 majority baseline under grouped leave-one-source-out CV because the current harvest carries effectively one label per species per source. This document grounds the schema, inventories the joinable signal streams, designs a multi-source label set, reconciles it against what the deployed system observes, and stages an executable plan.
