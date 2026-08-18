@@ -22,6 +22,26 @@
 --           the clock and from the two parameters above, so neither of the two lanes that load this
 --           file needed a signature change to acquire the backoff. See their clauses below.
 --
+-- WHY outcome CARRIES A DECLARED TYPE (name written without its leading colon, per the trap note
+-- above). It is the only parameter in this file used more than once -- as the `outcome` column's
+-- value and again inside the consecutive_failures CASE -- and SQLAlchemy renders a repeated named
+-- parameter as ONE placeholder ($6), not two. PostgreSQL then deduces that one placeholder's type
+-- from both sites: character varying(64) from the INSERT target column, text from the comparison
+-- against an untyped 'failed' literal. Two deductions for one parameter is error 42P08,
+-- `inconsistent types deduced for parameter $6`, raised at PARSE time -- so the statement never ran
+-- once, and BOTH lanes that load this file (jobs/matview_refresh.py and jobs/strategy_mv_refresh.py)
+-- failed on every tick from the moment the CASE was added.
+--
+-- The fix lives at the single load site, jobs/matview_refresh.py's UPSERT_MATVIEW_REFRESH_STATE,
+-- which binds outcome as sqlalchemy.String. Under asyncpg that renders `$6::VARCHAR` at BOTH
+-- occurrences, so the parameter's type is STATED once and deduced nowhere. Declaring it there
+-- rather than writing a cast into this file keeps the declaration next to the driver whose type
+-- inference is the thing being pinned, and covers every future reader of this statement.
+--
+-- The rule this file is the cautionary tale for: A BIND PARAMETER USED TWICE IN ONE STATEMENT NEEDS
+-- A DECLARED TYPE unless both sites already agree on one. Contrast check_relations_exist.sql, whose
+-- array parameter is used once inside an explicit CAST and needs nothing.
+--
 -- What this returns: exactly one row, the state as it now stands -- including the two derived
 -- columns -- so a caller can log what it believes it just wrote without a second read.
 --

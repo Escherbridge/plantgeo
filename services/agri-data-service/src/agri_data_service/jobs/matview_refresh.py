@@ -87,7 +87,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final, Literal
 
 import structlog
-from sqlalchemy import text
+from sqlalchemy import String, bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from agri_data_service.db.sql_queries import load_query_sql
@@ -602,7 +602,12 @@ _ROW_COUNT_ESTIMATE_SQL: Final = text(
 
 _SELECT_MATVIEW_REFRESH_STATE: Final = text(load_query_sql("jobs/select_matview_refresh_state.sql"))
 
-UPSERT_MATVIEW_REFRESH_STATE: Final = text(load_query_sql("jobs/upsert_matview_refresh_state.sql"))
+# `:outcome` is the one bind parameter this file reads TWICE, so its type is declared here
+# instead of being deduced per-site by the server. See upsert_matview_refresh_state.sql,
+# "WHY outcome CARRIES A DECLARED TYPE".
+UPSERT_MATVIEW_REFRESH_STATE: Final = text(load_query_sql("jobs/upsert_matview_refresh_state.sql")).bindparams(
+    bindparam("outcome", type_=String)
+)
 
 _UPSERT_MATVIEW_REFRESH_STATE: Final = UPSERT_MATVIEW_REFRESH_STATE
 

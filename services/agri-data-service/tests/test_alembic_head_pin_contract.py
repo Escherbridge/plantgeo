@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from agri_data_service.routes.health.contracts import EXPECTED_ALEMBIC_REVISION
 from tests.conftest import EXPECTED_ALEMBIC_HEAD
 
 _VERSIONS = Path(__file__).resolve().parent.parent / "alembic" / "versions"
@@ -64,6 +65,24 @@ def test_expected_alembic_head_matches_the_versions_directory() -> None:
         f"tests/conftest.py EXPECTED_ALEMBIC_HEAD is {EXPECTED_ALEMBIC_HEAD!r} but the head of "
         f"alembic/versions/ is {head!r}. Bump the constant in the SAME change as the revision: while "
         "they disagree, every agri_db-marked test refuses a database at head and silently does not run."
+    )
+
+
+def test_readiness_revision_pin_matches_the_versions_directory() -> None:
+    """The SECOND hand-maintained copy of the head, and the one an operator sees fail.
+
+    `sql/routes/health_migration.sql` demands EXACT equality, so a stale pin makes /ready report
+    migration=false against a database that is perfectly migrated -- indistinguishable, from outside,
+    from a deploy that ran before its migration. It went stale across BOTH 20260816_0024 and
+    20260817_0025 because the only test comparing it to a real head needs `AGRI_TEST_DATABASE_URL`,
+    which the sweep that shipped them did not set. This one needs no database, so it cannot run dark.
+    """
+    revisions, parents = _revision_graph()
+    (head,) = revisions - parents
+    assert head == EXPECTED_ALEMBIC_REVISION, (
+        f"routes/health/contracts.py EXPECTED_ALEMBIC_REVISION is {EXPECTED_ALEMBIC_REVISION!r} but "
+        f"the head of alembic/versions/ is {head!r}. Bump it in the SAME change as the revision: "
+        "while they disagree, /ready refuses to report the service ready at all."
     )
 
 

@@ -9,5 +9,10 @@ this file: the whole forecast-role and calling-login privilege matrix, which gov
 had no members and no DSN.
 """
 
-EXPECTED_ALEMBIC_REVISION = "20260814_0023"
+# Bumped past BOTH 20260816_0024 and 20260817_0025 at once: neither revision bumped it, and
+# health_migration.sql demands exact equality, so /ready reported migration=false against a
+# correctly-migrated production database. Only the agri_db-gated
+# test_expected_alembic_revision_matches_migrated_head_database compares this to a live head, and
+# that gate had been running dark. Every new revision bumps this line.
+EXPECTED_ALEMBIC_REVISION = "20260817_0025"
 REQUIRED_EXTENSIONS = ("postgis", "timescaledb", "vector", "pgcrypto")
