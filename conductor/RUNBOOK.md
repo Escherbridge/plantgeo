@@ -4,9 +4,15 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Last updated:** 2026-08-20. **READ §0 THEN §0.3-§0.10.** Client batch **shipped as
-`de3139e`**; agri batch **blocked NO-GO**; **new memory evidence in §12.6** (idle ~50 MB, one query → 1 GB);
-**dropping TimescaleDB is now AUTHORIZED but is measured NOT to be the cause — §12.7.** · **Branch:** `main` (level with `origin/main`) · **Last commit:** `e71e1cd fix(agri): pin the one parameter two lanes read twice, and the pin that went stale under it` (2026-08-18) · **Working tree is CLEAN — the batch this line used to call uncommitted shipped as `160388f`, `44c2133`, `5354df7`, `e71e1cd`.** **READ §0 FIRST: the memory cap is 2 GB, not 3 GB, and `geo.mv_signal_cell_daily` has been DROPPED — much of what follows assumes otherwise.** **§0.3-§0.10 (2026-08-20) add the ingestion write path, the application read path, the Parquet bucket, and the deprecation plan — and §0.4 records a BLOCKER (runtime layer creation ⇒ a DEFAULT partition is mandatory) that invalidates §0.1 step 1 as written.** **A PRODUCTION CHANGE WAS APPLIED 2026-08-17** — `TILE_CORS_ORIGIN` on `plantgeo-martin` (§2). Earlier "root-cause outage found and FIXED" framing stands; §2 and §9 remain the evidence.
+**Last updated:** 2026-08-21. **READ §0, THEN §0.17, THEN §0.16 / §0.18 / §0.19.** **Branch:** `main` · **HEAD:** `efa8c37` · **Working tree was CLEAN at the start of this run; this run added five artifacts (three dormant migrations + two operator scripts) and this runbook, and applied NOTHING to production.**
+
+**What changed 2026-08-21 — four new sections, and they supersede earlier ones where they disagree.** **§0.16** is the data-quality and QA assessment: the census per layer and per observation plane, freshness and rot, the job ledger and matview refresh state, the storage/index/bloat profile, the partitionwise probe, and what the QA gate does and does not prove — every number labelled with how it was obtained, CONFIRMED separated from UNVERIFIED, and **two headline claims REFUTED outright (§0.16.9)**. **§0.17** is why the map is broken *right now*, ranked by rendering unblocked per unit of work; **read it first if you are here to fix the outage.** **§0.18** is the target architecture — entity/observation split with sealed months on R2 — with the losing designs' grafts folded in and **17 recorded rejections so they stop being re-litigated (§0.18.8)**. **§0.19** is the merged programme plan with a gate class, precondition and reversal cost per item.
+
+**THREE THINGS THAT INVALIDATE EARLIER SECTIONS.** **(1) The partition swap's justification did not survive measurement.** A controlled probe (§0.16.7) found **byte-identical plan text** for all three census matviews with `enable_partitionwise_aggregate`/`_join` both off and on, because each joins the never-co-partitionable 11-row `geo.layers` before aggregating — so partitioning `geo.features` delivers **zero** relief to the workload blowing the cap, and all six tile functions already plan as a cheap composite-index `Nested Loop` **at z10 — the zoom at which tiles already return in 0.2-0.4 s. The z5/z6 plans, where tiles actually hang, were never captured** (correction 2026-08-21; see §0.16.7). §0.18.8 item 1 recommends **shelving** `drizzle/0030`-`0033` and `scripts/partition-features.mjs`; **that is an owner decision and the largest single call in the programme (§0.19.7).** §0.1 step 1, §0.8 and §10 should be read through that lens. **(2) The acute outage is NOT D0 and NOT the bandwidth cap.** D0 is measured fixed. The current cause is a Martin `statement_timeout` of **0** plus no cancel-on-disconnect leaking pool slots permanently (an abandoned tile query measured still `active` at **1,142 s**), stacked on unbounded tile functions — and the composite **times out entirely once gzip is requested, which every browser does**, so every prior latency figure in §9 understates what a browser sees. The client request budget **never sees a tile request** (§0.17.6). **(3) `mv_signal_cell_daily`'s degraded consumers are FOUR, not three** — the section carrying the stale count of three is **§0** (the HANDOFF list), **not §0.10**. §0.10 already names all four and flags the drift itself. *(Corrected 2026-08-21: an earlier draft of this line said "§0.10's count is wrong", which reproduced the very count-drift failure mode the paragraph exists to fix.)* **And those four consumers do NOT crash** — each returns a typed `pre_aggregated_plane_unbuilt` refusal via the `to_regclass` probe at `agent/tools.py:473`/`:901`. See §0.16.4, which carried the wrong verdict until 2026-08-21.
+
+**A FOURTH THING, found 2026-08-21 while closing a completeness review.** **Every `pg_stat_*` counter in this runbook is measured over an UNKNOWN window, and the database restarts often.** `pg_stat_database.stats_reset` is **NULL** on production, which does *not* mean "since forever": a crash/unclean restart discards cumulative stats and leaves `stats_reset` NULL again. That a discard already happened is provable from inside this file — §5 records **37.5 billion** lifetime reads with `stats_reset` NULL; §0.16.9 measured **1.06 billion** later. Counters cannot fall. Separately, a read at **2026-08-21 07:47:45 UTC caught the instance 0.56 s after a restart** (`pg_postmaster_start_time()`), and a re-read 20 s later showed counters *higher* than the 2026-08-20 pass — so counters **do** survive a clean restart and uptime is **not** a bound on the stats window. Net: treat "`idx_scan = 0`" as "zero over an unbounded-below window", never as "never read". This directly gates §0.19.3 item 11's `DROP INDEX`.
+
+**Older header context, still true:** the memory cap is **2 GB, not 3 GB** — everything below §0 assumes otherwise. `geo.mv_signal_cell_daily` was **DROPPED** 2026-08-18. §0.4's BLOCKER (runtime layer creation ⇒ a DEFAULT partition is mandatory) invalidates §0.1 step 1 as written. **A PRODUCTION CHANGE WAS APPLIED 2026-08-17** — `TILE_CORS_ORIGIN` on `plantgeo-martin` (§2). Correction to that entry: the fix is real and verified live, but §2/§9's framing of it as "the root-cause outage" no longer holds for the *current* outage — see §0.17.
 
 ---
 
@@ -478,7 +484,8 @@ comment at `:117`.
 
 **`drizzle/0029:533` still creates `geo.mv_signal_cell_daily`** and no DROP is recorded in any migration —
 the 2026-08-18 drop was out-of-band. A rebuild from migration history silently resurrects a 6,349 MB /
-1,729 s relation. Record the drop in a **new** `drizzle/0033_*`; **never edit `0029`**.
+1,729 s relation. **Corrected 2026-08-21:** this originally said "record the drop in a new `drizzle/0033_*`". **`0033` is taken** by the tile-function migration (§0.13 item 2), and the file has since been written as
+**`drizzle/0034_record_signal_cell_daily_drop.sql`** — on disk, dormant, unregistered (§0.19.1, §0.19.6 item 43). **Never edit `0029`**.
 
 **Most dangerous rejected deletion:** `src/lib/server/trpc/routers/contributions.ts` + `ContributionQueue.tsx`.
 The justification that `ModerationPanel` is a functional equivalent is **false** — `contributions.listPendingReview`
@@ -562,6 +569,36 @@ Six parallel slices with pre-declared exclusive file ownership; no collisions.
   purpose; remodelling during a swap mixes two failure domains.
 
 ### 0.13 Gated, not done — read before deploying anything
+
+> **STATUS AS OF 2026-08-21 (§0.19.1 has the evidence).** Item **2 is RESOLVED** —
+> `drizzle/0034_record_signal_cell_daily_drop.sql` is written and dormant. **Caveat on `0034`, found
+> 2026-08-21:** its header comment (lines 21-22) asserts the four agent tools "throw a hard database error
+> (relation does not exist)". **That is false** — they return a typed refusal (§0.16.4, `tools.py:473`/`:901`).
+> The file's *instruction* ("do NOT wrap these four callers in an existence guard") is still right, but for
+> the opposite reason: **the guard already exists.** **Correct those two comment lines before registering
+> `0034`** (§0.19.6 item 43) — as written they invite a future agent to "fix" a guard that is already there,
+> or to remove it, which would create the very hard error the header claims. The DDL itself is correct and
+> unaffected. Item **3 is WRITTEN, NOT RESOLVED** —
+> `drizzle/0036_features_partitioned_precondition.sql` is written and dormant, and it asserts more than
+> this item asked for (composite PK column order, and that `geo.features_default` is the *registered*
+> DEFAULT partition, not merely a same-named table). **But it asserts `relkind='p'` on `geo.features` and
+> RAISEs otherwise, so it is registrable ONLY if the partition swap actually proceeds** — and §0.18.8 item 1
+> / §0.19.7 recommend **shelving** the swap. Shelve the swap and `0036` becomes permanently dormant dead
+> code, never registrable. That consequence is now carried in §0.19.7's decision row. Item **4 has been measured and the answer inverts
+> it**: turning the two GUCs on changes nothing at all until the three census matviews are rewritten to
+> aggregate before joining `geo.layers` (§0.16.7) — flipping them at cutover, as this item says, would
+> prove nothing. Items **1, 5, 6, 7 remain open** exactly as written. **Newly gated since:**
+> **(8)** `drizzle/0035_soil_survey_union_collection_extract.sql` is written and dormant and needs its
+> *refresh outcome* watched, not just a clean DDL apply. **(9)** `scripts/recreate-features-matviews.mjs`
+> and `scripts/data-quality-report.mjs` are written and have **never been run against production**.
+> **(10)** Every registered migration must re-pin `src/lib/server/db/migration-contract.ts` in the same
+> commit or `Dockerfile:67`'s `npm test` gate fails the build — true of item 1 and of every migration
+> above. **(11)** Martin reports `v0.7.0` in `application_name` against `Dockerfile.martin:1`'s
+> `martin:1.10.1`; settle it with `railway logs -s plantgeo-martin | head` before trusting any
+> `martin.yaml` block other than `cors` and `postgres.functions`. **(12)** `plantgeo-ingest-cron` is
+> **CRASHED** and `plantgeo-cron-soilgrids` **FAILED** on the current deploy — every "ingestion is live"
+> premise in this runbook currently rests on a crashed service. **(13)** The whole partitioning premise is
+> now an owner decision, not a scheduling one (§0.18.8 item 1, §0.19.7).
 
 1. **`drizzle/0033` is NOT registered in `_journal.json`, deliberately.** `0030`-`0032` are already
    dormant and this repo ships migrations dormant on purpose (commit `44c2133`). Registering `0033`
@@ -728,6 +765,2103 @@ list, never this one.
 
 `geo.layers` holds 11 layers; the DEFAULT partition covers anything minted after (§0.4).
 
+
+---
+
+### 0.16 Data-quality and QA assessment, 2026-08-20/21
+
+Twelve read-only probes and audits ran against production between 2026-08-20 and 2026-08-21. Every number
+below carries the command or catalog view that produced it. **Two adversarial lenses re-ran a sample of the
+claims against live production; findings that survived both are marked CONFIRMED, findings measured only
+once are marked UNVERIFIED, and two headline claims were REFUTED outright and are corrected here rather
+than deleted.** §0.11's convention applies: a silent wrong answer is worse than a loud one, so an honest
+uncertainty marker beats a confident sentence.
+
+#### 0.16.1 The census — three different totals, all correct
+
+| source | total | how obtained |
+|---|---|---|
+| `pg_class.reltuples` | **5,025,009** | catalog estimate, no scan. Stale by definition — `last_autoanalyze` is NULL on `geo.features`. |
+| `geo.mv_layer_feature_stats` | **5,091,902** | matview, refreshed 2026-08-21 00:41 UTC. Published rows only. |
+| exact per-layer `count(*)` | **5,092,112** | eleven `SELECT count(*) WHERE layer_id=$1`, index-assisted via `idx_features_layer`, run 2026-08-20 |
+
+The three differ because ingestion is live (§0.15 measured +11,382 rows in hours) and because the matview
+counts `status='published'` while the per-layer scan does not. **Do not reconcile them — cite which one you
+used.** A single unfiltered `GROUP BY layer_id` over the whole table times out at 30 s on this box and has
+now failed for three separate agents; `readiness.py`'s own `geo_features_by_layer` check fails the same
+way. Use `mv_layer_feature_stats` when a snapshot is acceptable, and per-layer `count(*)` with a `layer_id`
+predicate when it is not.
+
+Published rows per layer, from `geo.mv_layer_feature_stats` (2026-08-21 00:41 UTC) — CONFIRMED, and within
+0.01% of the independent per-layer exact counts:
+
+| layer | published rows | share |
+|---|---|---|
+| fire-detections | 3,022,196 | 59.4% |
+| water-gauges | 1,417,935 | 27.8% |
+| soil-survey | 238,986 | 4.7% |
+| vegetation | 185,064 | 3.6% |
+| sensors | 184,733 | 3.6% |
+| weather-observations | 32,223 | 0.6% |
+| watersheds | 9,396 | 0.2% |
+| evacuation-zones | 651 | — |
+| burn-severity | 541 | — |
+| fire-perimeters | 177 | — |
+| interventions | **0 published** (2 rows, both `status='approved'`) | — |
+
+**The number that reorganises everything: 4,842,151 of 5,091,902 published rows — 95.1% — are time-series
+observations, not features.** Fire-detections, water-gauges, vegetation, sensors and weather-observations
+are all append-only reading logs. Only 249,751 rows (4.9%) are genuine entities. CONFIRMED. §0.18 is built
+on this one fact.
+
+`pg_stats` on the same table: `properties` avg_width **479 bytes (61% of the row)**, `geom` 198 (25%), the
+remaining seven columns 8-16 bytes each — ≈780 bytes/row heap. `layer_id` correlation **0.235** with
+n_distinct 10; `geom` correlation 0.044.
+
+#### 0.16.2 The three observation planes
+
+Checking one plane and concluding a lane is dead is a documented bug class here
+([[agri-zero-landing-bug-class]]). All three, measured 2026-08-20:
+
+| plane | rows | how |
+|---|---|---|
+| `agri.signal_observation` | ~46,068,872 | `pg_class.reltuples` — an exact count of a 46M-row / 26 GB heap is not affordable on this box |
+| `agri.forecast_observation` | 184,409 | exact `count(*)` (116 MB relation) |
+| `agri.normalized_source_feature` | **0** | exact `count(*)` — the plane is completely empty in production |
+
+`normalized_source_feature` being empty is not a bug found; it is the accurate current state, recorded so a
+future audit does not re-derive it. UNVERIFIED whether anything ever wrote to it.
+
+Canonical landing census (`seasonal_source_landing_census.sql`, run verbatim, 30 s cap) by `data_source`:
+
+| source | releases | landed | plane |
+|---|---|---|---|
+| `nasa-power-daily` | 1,600 | 1,600 | signal |
+| `open-meteo-era5-land-archive` | 202 | **194** | signal — **8 releases land nowhere** |
+| `open-meteo-era5-archive` | 8 | 8 | signal |
+| `sentinel2-ndvi-l2a` | 1 | 1 | **forecast, 0 signal** |
+| `kaggle-ghisaconus-mirror` | 1 | **0** | static mirror, by design |
+
+`sentinel2-ndvi-l2a` landing in `forecast_observation` and not `signal_observation` is exactly the
+false-negative shape the bug class warns about: a signal-only check calls the live NDVI lane dead. The 8
+zero-landing ERA5-Land releases were not drilled to `release_id`; that is cheap and unstarted.
+
+Per-source freshness via `agri.source_release` (avoids scanning `signal_observation`):
+`nasa-power-daily` observed_to 2026-08-06 · `open-meteo-era5-archive` 2026-08-02 ·
+`open-meteo-era5-land-archive` 2026-08-02 · `sentinel2-ndvi-l2a` 2026-08-05 ·
+`kaggle-ghisaconus-mirror` 2015-12-31 (static). **Climate/weather ingestion is stalled ~11 days across all
+three Open-Meteo/NASA sources** — a live stall, not a design gap, and every `climate-field-*` signal in
+`geo.v_observation_day_census` is frozen at 2026-08-06 (one at 2026-05-31) because of it.
+
+#### 0.16.3 Freshness and rot — which layers are moving
+
+Per-day `created_at` counts over a 90-day window, per layer, `layer_id`-filtered (all completed under
+13 s). CONFIRMED.
+
+| layer | verdict |
+|---|---|
+| fire-detections | **healthy** — 08-03 ramp, 08-09 backfill peak 871,843, steady 1,357-4,278/day since 08-13 |
+| water-gauges | **healthy** — 08-08 backfill peak 660,932, steady 7,977-17,674/day since 08-10 |
+| sensors | **healthy, declining** — peak ~14k/day mid-month, now ~7-9k/day. Worth watching. |
+| weather-observations | **healthy** — steady 630-2,528/day. **This is the NWS `geo.layers` layer, NOT the Open-Meteo/NASA climate signals of §0.16.2, which are STALLED ~11 days.** The same word names both; they are different lanes with different producers, and reading this row as "climate ingestion is healthy" is wrong. |
+| vegetation | **healthy** — 08-05 backfill 182,903, then 18-93/day (correct for a 5-day revisit) |
+| fire-perimeters | **healthy** — scattered but continuous, 1-111/day |
+| evacuation-zones | **healthy** — thin but continuous, 7-381/day |
+| burn-severity | **10 days static** — rows only on 08-05 (478) and 08-10 (63) |
+| soil-survey | **10 days static** — 08-05/06/08/10 only |
+| watersheds | **13 days static, exactly ONE load day** — all 9,396 rows on 08-07 |
+| interventions | **dead** — 2 rows on 08-06, nothing since; both stuck `approved` |
+
+For three of those the staleness is arguably correct — HUC12 boundaries and soil surveys do not change
+daily — but **that intent is written down nowhere**, and `validation/models.py:143-146` declares
+soil-survey, watersheds, burn-severity and interventions `kind="reference"` with **no
+`publication_cadence_days`**, so `validate-streams` applies *zero* staleness check to exactly those four.
+The layers that most need an alarm are structurally incapable of raising one. And `watersheds` has a
+complete, working producer — `ingest/watersheds.py`, CLI verb registered at `ingest/commands.py:264-267` —
+that **no cron and no lane ever invokes**: it is absent from `ingest-all`'s job list (`:484-497`) and there
+is no `infra/cron-watersheds` directory.
+
+Two corrections to claims held elsewhere in this runbook and in memory:
+
+- **"Only vegetation goes back 4 years" is true for `created_at`, false for `observed_at`.** Sampled
+  `properties->>'observedAt'` spans: fire-detections **2000-11-02 → 2026-08-20** (6× vegetation's depth),
+  vegetation 2022-08-05 → 2026-08-20, burn-severity 2020-11-24 → 2024-08-22, evacuation-zones 2025-04-14 →
+  2026-08-20. The old claim holds only for "when PlantGeo first held a row", never for event depth. Any UI
+  or agent-tool logic assuming only vegetation supports a multi-year slider is wrong.
+- **`fire-perimeters` is missing `observedAt` on 100% of its 177 rows** (exact, full-layer scan). Its own
+  tile function reads that key, so every MVT feature Martin serves for it carries `observed_at=NULL`, and
+  `geo.feature_observation_day(properties)` almost certainly returns NULL for every row — meaning
+  fire-perimeters likely never matches a slider-selected date at all. Plausible root cause of the unowned
+  §9 D11 "abrupt drop". UNVERIFIED as causation; the confirming query is
+  `SELECT count(*) FROM geo.features WHERE layer_id=<fire-perimeters> AND geo.feature_observation_day(properties) IS NULL`.
+
+Also: **`data_available_at` is 100% NULL on all eight layers measured so far — 467,040 rows, 9.2% of the
+table. The other three layers hold 90.8% of the rows and are UNMEASURED.** *(Rescoped 2026-08-21. The
+original sentence read "100% NULL on every layer that could be scanned … across the board", which
+generalised from 3.8% of the rows to all of them. It is corrected rather than deleted.)*
+
+| status | layers | rows | how |
+|---|---|---|---|
+| **100% NULL, CONFIRMED** | burn-severity 541/541 · evacuation-zones 651/651 · fire-perimeters 177/177 · interventions 2/2 · vegetation 185,064/185,064 · watersheds 9,396/9,396 | 195,831 (3.8%) | full-layer scan, 2026-08-20 |
+| **no non-NULL row exists, CONFIRMED** | weather-observations (32,223) · soil-survey (238,986) | 271,209 (5.3%) | existence probe, 2026-08-21 — scan **completed** inside 10 s and returned no row |
+| **UNMEASURED** | fire-detections (3,022,196) · water-gauges (1,417,935) · sensors (184,733) | **4,624,864 (90.8%)** | existence probe **timed out at 10 s** on all three; there is no supporting index |
+
+The exact probe, which is cheap because it stops at the first hit rather than counting (a positive answer
+returns fast; only a negative answer has to scan):
+
+```sql
+SET statement_timeout = '10s';
+SELECT 1 FROM geo.features WHERE layer_id = <id> AND data_available_at IS NOT NULL LIMIT 1;
+```
+
+A timeout here is **not** evidence of NULL — it is evidence that no non-NULL row was found in the first 10 s
+of an index-ordered scan. The three unmeasured layers are precisely the high-volume ingestion lanes most
+likely to have been wired to set the column, so this is the wrong 90% to be guessing about.
+
+`drizzle/0025` added it as the ML leakage boundary. **On the 9.2% measured, any backtest filtering on it is
+a no-op.** Whether that holds for the remaining 90.8% — and therefore whether `0025`'s leakage boundary is
+as dead as this runbook has been recording — is **open**. Closing it needs either the probe above run
+without a timeout in a maintenance window, or a partial index. Carried in §0.19.8.
+
+**Geometry quality is good, and it is the one cheerful result in the audit.** `TABLESAMPLE SYSTEM(0.2)`
+across the whole table joined to layers: **0 invalid geometries, 0 NULL `geom`, 0 NULL `geometry_id`, 1
+distinct SRID** in every sampled bucket, and exact full-layer censuses on the small layers confirm it.
+`geometry_columns` reports `geometry(GEOMETRY,4326)`, `coord_dimension=2` — enforced by column typmod for
+every row, not just the sample. Duplicate `properties->>'id'` is **structurally impossible** wherever the
+key exists: `features_layer_external_id_unique` is `indisvalid`, `indisready`, `indisunique`. The one
+exception is `interventions`, whose 2 rows have **NULL `geometry_id`** and **no `id` key at all** —
+confirming they are ungoverned seed rows, not producer output.
+
+Tile-function key coverage for the six layers Martin reads: burn-severity 0/541 missing a required key,
+evacuation-zones 0/651, sensors 0/184,733, watersheds 0/9,396 — clean. `interventions` 2/2 missing,
+`fire-perimeters` 177/177 missing (the `observedAt` gap above).
+
+Sampling note, itself evidence about the box: `TABLESAMPLE SYSTEM` at **3-5% reliably times out at 30 s**
+on `geo.features` regardless of target layer, while **0.2-0.5% completes in 1-11 s**. Calibrate accordingly.
+
+#### 0.16.4 Matview refresh state — three views have never once worked
+
+All 12 `MATVIEW_REFRESH_SPECS` (`jobs/matview_refresh.py`) cross-referenced against
+`agri.matview_refresh_state` and `pg_class`, 2026-08-20. CONFIRMED. The three
+`mv_strategy_recommendations_*` rows in the same table belong to the separate `strategy-mv-refresh` lane
+and are excluded from the 12.
+
+| state | views |
+|---|---|
+| **healthy** (6) | `mv_layer_feature_stats` (41,865 ms, 11 rows) · `mv_layer_hourly_activity` (5,069 ms, 446 rows) · `mv_drought_release_index` · `mv_feature_observation_day` (**428,066 ms = 7.1 min**, 11,225 rows) · `mv_drought_observation_day` · `agri.mv_forecast_ml_daily_serving` (0 rows — empty but not failing) |
+| **standing failure** (3) | `mv_signal_observation_day` — 5 consecutive failures, **never once succeeded**, 301 s against a 300 s cap · `mv_soil_survey_grid` — 4 failures at 300,555 ms each, **holding** 2,746 rows from a prior success (**not "serving" — nothing reads it**, see below), watermark frozen at 2026-08-10 · `mv_soil_survey_union` — 4 failures, **`relispopulated=false`, has never produced a single row** |
+| **skipped/missing** (2) | `mv_feature_observation_day_axis` (`skipped_missing` — `drizzle/0031` unregistered, exactly as designed) · `mv_signal_cell_daily` (`skipped_missing` — genuinely DROPPED 2026-08-18, `refreshed_at` frozen at 2026-08-16 16:40:15) |
+| **gated, not failing** (1) | `geo.watershed_rollup` — last success 2026-08-16 16:11:25 (230,207 ms, 2,162 rows); `last_attempt_at` NULL because its upstream watermark has not moved since 08-07. Not a failure. |
+
+The backoff machinery works — `consecutive_failures` increments instead of churning. But the perpetual
+`matview-refresh:pulse` logical run has been `status='running'` since 2026-08-16 02:35:33 with **74 work
+items: 2 succeeded, 70 failed, 2 unaccounted** — the states of the remaining 2 were not captured in the
+probe and are **UNMEASURED**, so quote the pair as "74 items, 70 failed" rather than implying the set is
+closed. Closing query:
+`SELECT status, count(*) FROM agri.job_work_item WHERE run_id = <the pulse run> GROUP BY status;`
+`agri.job_incident` count is **0**, so nothing escalates.
+
+**Neither soil matview has a reader.** *(Added 2026-08-21.)* A grep across `src/` and the agri service
+finds exactly two references outside the refresh specs, and both are comments recording a **deliberate
+non-repoint**: `src/lib/server/services/usda-soil.ts:1049` ("NOT REPOINTED at `geo.mv_soil_survey_union` in
+the 2026-08-15 pre-aggregation pass") and `:1151` (the same for `_grid`). Each gives a grain-mismatch
+reason — `_union` is grained `(zoom_tier, drainage_class)` against a viewport-scoped union; `_grid` is
+three fixed tiers against an unbounded doubling ladder — so both readers still run their own `GROUP BY` on
+purpose. **`mv_soil_survey_grid` is therefore not more urgent than `_union`; both have zero consumers.**
+This inverts the ranking §0.19.8 carried, and it means `drizzle/0035` repairs a relation nothing reads.
+The honest open question is whether either should be **repaired at all or dropped** alongside the §0.19.6
+item 46 matview retirement — they are exactly the "matviews serving nothing" pattern §0.18.8 item 4 rejects.
+
+Downstream consequence — **CORRECTED 2026-08-21, and the original verdict here was wrong.** The four agent
+SQL tools reading the dropped `geo.mv_signal_cell_daily` (`sql/agent/signal_value_on_day.sql`,
+`signal_neighbors_in_time.sql`, `signals_near_point.sql`, `nearest_signal_cells.sql`) **degrade gracefully;
+they do not error.** Each is guarded by a `to_regclass` plane probe *before any SQL runs*:
+`_unbuilt_planes()` at `agent/tools.py:473` and `_plane_refusal()` at `:496`, called at `:532` / `:752` /
+`:830` / `:901` respectively. The module comment above `:473` states the design intent outright — catching
+the raise and returning an empty list "would be the single most damaging thing this module could do:
+'no drought here' and 'the drought plane has never been built' would become the same answer."
+
+So the **user-visible symptom today is a typed `pre_aggregated_plane_unbuilt` refusal that names the
+missing plane**, not an exception and not a wrong answer. That is degraded service, and it still blocks
+point-in-time signal values, temporal signal neighbours, signals near a point and nearest signal cells —
+but it is **not a live incident**, and it does not carry the urgency the earlier "CRITICAL and current"
+label gave it. §0.10 always had this right; this section did not. The count of **four** (not the three
+named in §0) stands and is still the thing to correct when repointing.
+
+**This error escaped into a shipped artifact and must be fixed there too.**
+`drizzle/0034_record_signal_cell_daily_drop.sql` **lines 21-22** read: "each of these throws a hard
+database error (relation does not exist) rather than returning stale or empty data". **That is false.**
+The file's instruction two lines later — do NOT wrap these four callers in an existence guard — is
+**correct and must be kept**, but its stated reason is backwards: the guard is not missing, it is
+*already there*, and removing it is what would produce the hard error the comment describes. **Correct
+those two lines before registering `0034`** (§0.19.6 item 43). *(Not corrected in this pass: that file is
+outside this document's write scope. Recorded here as the action item.)*
+
+`agri.job_definition` holds exactly **4 rows**: `agri.ingest.archive_walk.firms-archive`,
+`agri.ingest.archive_walk.streamflow-archive` (both enabled, no cron schedule), `matview-refresh`
+(`0 * * * *`), `strategy-mv-refresh` (every 15 min). The climate/weather ingesters have **no
+`job_definition` row at all** — they run outside this ledger on Railway crons.
+
+#### 0.16.5 The gap-to-work loop covers 2 of 11 layers
+
+`ingest/lanes.py:228-230` — `BACKFILL_LANES` has exactly two members, `firms-archive` and
+`streamflow-archive`, and `resolve_lane` raises for anything else. `jobs_pulse_command.py`'s durable pass
+walks that registry; its maintenance pass (`jobs-reconcile-lane` + `jobs-plan-gaps`) is scoped to whatever
+pass 2 discovered — the same two. Confirmed live: `readiness.py`'s `job_ledger` section returns exactly two
+`archive_walk` rows. Pass 1's dispatchable lanes are only `matview-refresh` and `strategy-mv-refresh`
+(`register_dispatchable_lane` appears at `jobs/matview_refresh.py:1274` and
+`jobs/strategy_mv_refresh.py:502` and nowhere else) — **no ingestion lane is dispatchable.**
+
+`validate-streams` detects and reports gaps for all registered streams every hour. For the other **nine**
+layers nothing converts a detected hole into a claimable `job_work_item`. The loop in
+`docs/layer-lane-standard.md` §6 is **structurally absent** for them, not merely unscheduled.
+
+Two layers declare a history horizon they cannot walk: `weather-observations`
+(`HistoryCapability(supported=True)`, rolling ~92-day floor) and `fire-perimeters` (floor 2020-01-01), both
+declared in the 2026-08-10 wave (`ingest/AGENTS.md:706-741`) with — the file says so itself — no fetcher,
+lane or `FunctionSource` wired. `commands.py:321-344`'s `_build_backfillable_sources()` returns only
+`nws-sensors`, `sentinel2-ndvi`, `firms-archive-source`, `usgs-streamflow-archive-source`. An operator
+reading `supported=True` would reasonably assume a backfill path exists. It does not. `evacuation-zones`
+by contrast declares `supported=False` — an honest refusal, since Oregon's feed is current-state-only.
+
+`vegetation` and `sensors` are ingest-backfill-capable but are **not** registered lanes: closing a reported
+gap requires a human to notice the report and run the CLI. `drought_areas` (USDM, its own store, not
+`geo.layers`) is the same — `ingest-drought-history` exists, no lane, no schedule.
+
+Governed absences (`layer-lane-standard.md` §7) are structurally unimplemented for all 11 layers plus
+`drought_areas`. USDM's `not_published` weeks (2026-02-17, 02-24, 08-04) and MTBS's un-mapped 2023/2024
+fire years are each a one-time job-result string, never a persisted row a completeness engine can read as
+"certified absent". So nothing stops `validate-streams` re-reporting a legitimate absence as an open gap
+forever. USDM already suffered a real incident from this class — 26 of 29 release weeks silently missing,
+found and fixed 2026-08-05; nothing added since closes the structural gap, only that one bug.
+
+Three documentation traps worth naming, all live: **(a)** `infra/cron-soilgrids` warms
+`public.soil_grid_cache` (ISRIC point rasters for the soil-field popup), **not** the `soil-survey` layer —
+whose only producer is `src/lib/server/services/usda-soil.ts:11-62`, a lazy read-through cell warmer
+triggered by viewport pans, with a `backfillSoilSurvey()` that exists and is unscheduled. **(b)**
+`mtbs.py`'s own AGENTS.md says the module "emits rather than persists", which read in isolation would lead
+an auditor to conclude burn-severity has no forward producer to `geo.features`; the weekly
+`plantgeo-cron-mtbs` is real and does write real rows (478 landed 2026-08-05). **(c)** the stream catalog's
+`cadence_basis` citations reference six cron directories deleted in the 2026-08-14 consolidation — the
+values are still correct against the all-hourly reality, but the citations are dead.
+
+`interventions` has **no ingestion producer anywhere in the stack** — the only write path is the legacy
+TypeScript `POST /api/ingest/interventions`, which needs an authenticated external caller and is
+unscheduled. Recorded as the ingestion-architecture confirmation, not merely "zero rows today".
+
+#### 0.16.6 Storage, index and bloat profile
+
+Relations over 100 MB in `geo`/`agri`, by total size (catalog-only, no scan):
+
+| relation | heap | index | toast | total | reltuples |
+|---|---|---|---|---|---|
+| `agri.signal_observation` | 11 GB | **15 GB** | 0 | **26 GB** | 46,068,872 |
+| `geo.features` | 3,808 MB | 2,574 MB | 1,502 MB | **7,912 MB** | 5,025,009 |
+| `geo.geometry` | 1,173 MB | 1,361 MB | 437 MB | **2,977 MB** | 3,255,832 |
+| `geo.drought_areas` | 640 kB | 216 kB | 493 MB | 500 MB | 995 |
+| `agri.artifact` | 1,272 kB | 1,064 kB | 168 MB | 173 MB | 1,632 |
+| `agri.forecast_observation` | 76 MB | 40 MB | 0 | 116 MB | 184,409 |
+
+`agri.signal_observation` having **more index than heap**, with one six-column natural-key unique index
+(`uq_signal_observation_release_cell_signal_time`) at **11 GB by itself**, is the most consequential
+cautionary datum in this audit. It is what a generic observation table costs, sitting in this same
+database. §0.18 cites it as the reason not to build a second one.
+
+`agri.signal_observation` is also, at 26 GB, **~70% of the whole 37 GB database** — and §0.18's target
+architecture **does not cover it**. That is a deliberate scope boundary, stated in §0.18.1, not an
+oversight; read it before quoting any "the database shrinks to ~1.5 GB" figure.
+
+**READ THIS BEFORE QUOTING ANY NUMBER IN THE NEXT TABLE — the measurement window is UNKNOWN.**
+*(Added 2026-08-21 after a completeness review; the table below was originally published as if the counts
+were lifetime properties.)*
+
+| window fact | value | how |
+|---|---|---|
+| `pg_stat_database.stats_reset` | **NULL** | `SELECT stats_reset FROM pg_stat_database WHERE datname = current_database()` |
+| `pg_postmaster_start_time()` | **2026-08-21 07:47:45 UTC** | read at 07:47:45.855 — the instance was **0.56 s old**; re-read at 07:48:52 confirmed the same start time |
+| uptime at the §0.16.9 read | ~2 h 20 m | §0.16.9 |
+
+Three things follow, and they matter more than the counts:
+
+1. **`stats_reset = NULL` does not mean "since forever."** An unclean/crash restart discards cumulative
+   stats and leaves `stats_reset` NULL again. **A discard demonstrably already happened**: §5 records a
+   lifetime **37.5 billion** reads with `stats_reset` NULL; §0.16.9 measured **1.06 billion**
+   (848,950,016 + 207,723,551) later. Counters do not fall. So the window is bounded above by "since the
+   last crash restart" and its actual length is **UNMEASURED**.
+2. **Uptime is NOT the window.** Counters survive a *clean* restart (PG persists them at shutdown and
+   reloads them). Proof: the 2026-08-21 07:48 re-read below was taken **~20 s after a restart** and every
+   counter is *higher* than the 2026-08-20 pass. So the "these numbers are only ~2 h 20 m old" reading of
+   §0.16.9 is itself wrong — the true window is longer than uptime and shorter than lifetime, and nothing
+   measured pins it.
+3. **This box restarts, and often.** Two independent reads caught it at ~2 h 20 m old and at **0.56 s**
+   old. Combined with §0.18.5's 7-day memory max of **3.0 GB against a 2 GB cap**, OOM-restart is the
+   obvious hypothesis and it is **UNVERIFIED**. Settling it is one command against Railway:
+   `railway logs -s plantgeo-spatiotemporal-db | grep -i "out of memory\|received fast shutdown\|database system was not properly shut down"`.
+
+**The honest reading of every `idx_scan = 0` below is therefore "zero over a window of unknown length",
+never "never been read."** A weekly or monthly reader — an ops query, a backfill script, `readiness.py` —
+is invisible in a window this poorly bounded.
+
+All eleven `geo.features` indexes with cumulative scan counts (`pg_stat_user_indexes`; `geo.features` is
+confirmed **not** partitioned — no `pg_partitioned_table` row). **Two independent reads are shown**, the
+second taken 2026-08-21 07:48 UTC, ~20 s after a restart, expressly to test whether the zeros hold:
+
+| index | size | idx_scan (08-20) | idx_tup_read (08-20) | idx_scan (08-21) | idx_tup_read (08-21) |
+|---|---|---|---|---|---|
+| `features_layer_external_id_unique` | **832 MB** (833 on re-read) | **0** | 0 | **0** | **0** |
+| `ix_features_layer_geom` | 453 MB | 1,066 | 11,842,823 | 1,196 | 41,277,144 |
+| `idx_features_geom` | **314 MB** | **0** | 0 | **0** | **0** |
+| `ix_features_layer_observation_day` | 294 MB | 45 | 112,098,086 | 49 | 116,571,854 |
+| `features_pkey` | 212 MB | 394,097 | 404,892 | 404,860 | 415,697 |
+| `ix_features_geometry_id` | 158 MB | 84 | 59,473 | 86 | 62,431 |
+| `idx_features_layer_updated_at` | 75 MB | 1,879 | 1,091,699 | 2,204 | 1,092,028 |
+| `idx_features_layer_created_at` | 74 MB | 415 | 31,798,581 | 431 | 32,134,194 |
+| `idx_features_layer_status` | 64 MB | 14 | 1,449,178 | 17 | 1,715,673 |
+| `idx_features_layer` | 61 MB | 4,096 | **5,525,831,267** | 4,226 | **5,696,414,102** |
+| `ix_features_updated_at` | 36 MB | 476 | 11,687 | 490 | 16,724 |
+
+Table-level, same two reads: `seq_scan` 874 → **957**, `seq_tup_read` 3,356,554,005 → **3,530,839,202**,
+`n_tup_ins` 58,509 → 61,468, `n_tup_upd` 59,762 → 62,730, `last_autovacuum` and `last_autoanalyze` **both
+still NULL**.
+
+Three readings — **CONFIRMED as measurements over the unbounded window described above, NOT as lifetime
+properties.** The distinction is load-bearing for reading 1.
+
+1. **1,202,151,424 bytes (~1.15 GB) of index recorded zero read-scans across both samples.**
+   `features_layer_external_id_unique`'s zero read-scans is *expected* — it enforces `ON CONFLICT`
+   uniqueness on the write path, so it earns its keep there. `idx_features_geom` (314 MB) has zero scans
+   **and** no write-side rationale: it is fully covered by `ix_features_layer_geom`, and `pg_stats` MCV
+   puts **87.43%** of its content in fire-detections (59.96%) plus water-gauges (27.47%) — two layers no
+   tile function reads by geometry at all. Every INSERT, UPDATE and VACUUM pays GiST maintenance on ~4.4M
+   rows whose geometries are never read back through it.
+
+   **Strength of the evidence, stated precisely.** The second read is a genuinely independent sample and it
+   is not weak: every *other* index advanced between the two reads (`ix_features_layer_geom`'s
+   `idx_tup_read` more than tripled) while these two stayed at exactly 0/0. That rules out "the counters
+   were frozen." What it does **not** rule out is a reader whose period exceeds the window — and the window
+   length is unmeasured (see the box above), so a weekly or monthly ops query, a backfill script or a
+   `readiness.py` path would look identical to this.
+
+   **Verdict: droppable, pending a lifetime-window confirmation — NOT "droppable today."** *(Downgraded
+   2026-08-21; the original text read "Droppable today", which asserted a lifetime property from a window
+   of unknown length.)* The confirmation is cheap and is now a precondition on §0.19.3 item 11: re-read
+   `pg_stat_user_indexes` after **≥7 days of uninterrupted uptime** (check `pg_postmaster_start_time()` in
+   the same statement — this box restarts, so the clock will likely need restarting too), or install
+   `pg_stat_statements` in item 49's restart window and read the query set directly. `hypopg` is already
+   installed and can model the drop's planner effect without touching the index.
+2. **The ~213 MB redundancy figure is exact to the megabyte**: `idx_features_layer_status` 64 +
+   `idx_features_layer_created_at` 74 + `idx_features_layer_updated_at` 75 = 213 MB, all
+   `btree(layer_id, X)`. `idx_features_layer` itself (61 MB) is **not** part of that set — it is the
+   heaviest-used index on the table and is load-bearing. All three redundant ones do get some real scans,
+   so this is a consolidation candidate for the moment every index has to be re-created anyway, not an
+   urgent drop.
+3. **`idx_features_layer` reads ~1.35 million index tuples per scan.** *(Corrected 2026-08-21 — twice.)*
+   The arithmetic: 5,525,831,267 / 4,096 = **1,349,080**, and on the second read 5,696,414,102 / 4,226 =
+   **1,347,946**. The original text said **1,369,300**, which is simply wrong division, and then inferred
+   from it that the figure "happens to equal the water-gauges row count." **It does not** — water-gauges is
+   **1,417,935** published rows (§0.16.1), 5% away from the real quotient. **That clause is deleted; there
+   was no coincidence to reason from.**
+
+   The conclusion survives on magnitude alone and does not need the coincidence: **~1.35M tuples per scan
+   against a table whose largest layer is 3.0M rows means this index is serving whole-layer scans, not
+   lookups.** It is also stable across two independent reads, which is the stronger form of the same claim.
+   `seq_scan` on the table is 874 → 957 with `seq_tup_read` 3,356,554,005 → 3,530,839,202.
+
+   **One inconsistency is left standing rather than resolved, deliberately.** A completeness review noted
+   that 5.53 billion tuples over the ~2 h 20 m uptime of §0.16.9 implies ~657k tuples/sec sustained, which
+   is irreconcilable with §0.18.5's measured idle profile (`plantgeo-main` CPU avg 0.0001,
+   `plantgeo-martin` CPU avg 0.0031 over 10,081 samples). **The resolution is that the premise is wrong,
+   not the numbers**: uptime is not the counter window (counters survive clean restarts — see the box
+   above), so no rate can be derived from these figures at all. **Do not compute a throughput from any
+   `pg_stat_*` counter in this file until the window is pinned.**
+
+**`geo.features` shows NO measurable bloat.** The standard ioguix `pg_stats`-derived estimator gives actual
+5,368,324,096 B against an expected minimum of 5,437,612,032 B — actual is *smaller* than the naive model,
+so `pct_bloat` clamps to 0.00%. This **contradicts** the "`features_layer_external_id_unique` is ~2×
+bloated" inference that appears elsewhere in the evidence, which was arithmetic from key length, not a
+measurement. The per-index btree bloat estimator was **not** run; if that 832 MB matters, run it before
+acting on it.
+
+`geo.geometry` maintains Type-2 version history for roughly **108 closed versions**: `version_valid_to` and
+`superseded_by` both have `null_frac` 0.9999667 over 3,255,832 rows. `uq_geometry_version` is 402 MB with
+**0 scans**; `uq_geometry_grid_cell` 33 MB with 0 scans; `ix_geometry_asof` 400 MB / 216,206 scans;
+`uq_geometry_current` 356 MB / 53,604. Its write mix is `n_tup_ins` 10,149 vs `n_tup_upd` 203,271 —
+**20:1** — with `n_dead_tup` 39,006 against `n_live_tup` 10,149, and `last_autovacuum` NULL.
+`geo.features`'s own mix is 58,509 inserts vs 59,762 updates, roughly 1:1, also `last_autovacuum` NULL. A
+conformed dimension holding one row per *reading* is a second copy of the fact table with four extra
+indexes.
+
+**Extensions — this corrects the runbook and memory.** Only **9** extensions are actually
+`CREATE EXTENSION`'d: `btree_gist` 1.8, `hypopg` 1.4.3, `pg_buffercache` 1.6, `pgcrypto` 1.4, `plpgsql`,
+`postgis` 3.6.4, `timescaledb` 2.29.0, `timescaledb_toolkit` 1.24.0, `vector` 0.8.5. **`h3`, `h3_postgis`,
+`hll`, `pg_repack`, `postgis_sfcgal` and `roaringbitmap` are NOT installed** — merely *available* in the
+image (`pg_available_extensions.installed_version IS NULL`). Earlier phrasing said "installed and unused".
+Anyone planning `h3` spatial indexing or a `pg_repack` online repack hits "function does not exist" until
+`CREATE EXTENSION` runs first. Only `hypopg` and `pg_buffercache` are genuinely installed-and-idle.
+
+TimescaleDB re-confirmed: exactly one hypertable, `tracking.positions`, `num_chunks=0`,
+`compression_enabled=false`. Structurally idle, as §12.7 says.
+
+Settings, all `source=configuration file`: `shared_buffers` 256 MB · `work_mem` 16 MB ·
+`maintenance_work_mem` 128 MB · `effective_cache_size` 2 GB · `max_locks_per_transaction` 128 ·
+`autovacuum_max_workers` **3** (the 10→3 change is applied and persisted) · `random_page_cost` 1.1 ·
+`effective_io_concurrency` 256 · `max_parallel_workers_per_gather` 2 ·
+`enable_partitionwise_aggregate` **off** · `enable_partitionwise_join` **off**.
+
+#### 0.16.7 The partitionwise probe — partitioning buys the census matviews NOTHING
+
+A scratch schema (`partitionwise_probe_scratch`, 8,000 sampled rows in an 11-partition LIST table plus a
+default, dropped `CASCADE` and verified gone) isolated the question the whole partitioning plan rests on.
+CONFIRMED.
+
+- Against the **real** tables, `EXPLAIN` of all three census matview shapes produced **byte-identical plan
+  text** with `enable_partitionwise_aggregate`/`_join` off and on.
+- On the probe table, `mv_layer_feature_stats`'s shape as written (JOIN then GROUP BY) produced the same
+  global `Append → Hash Right Join → single HashAggregate` in both settings.
+- **Test A** (bare `GROUP BY layer_id`, no join): off = one global HashAggregate; on = **11 separate
+  per-partition HashAggregate nodes** under an Append. The GUCs do work.
+- **Test B** (control — join two *identically partitioned* tables on the partition key): on = per-partition
+  Hash Join + HashAggregate. Partitionwise join works when both sides match.
+- **Test C** (rewritten shape — aggregate on `layer_id` first, join `geo.layers` last): on reproduces Test
+  A's per-partition shape.
+
+**The blocker is join topology, not partitioning.** All three matviews join the 11-row `geo.layers` before
+aggregating, and `geo.layers` can never reasonably be co-partitioned with `geo.features` — it is minted at
+request time by `layersRouter.create` (§0.4). This is fixable at the SQL level with no schema change and no
+new index: defer the aggregate past the join. **Until that rewrite happens, partitioning `geo.features`
+delivers zero relief to the exact workload that is blowing the memory cap.** This is the literal trigger
+condition §0.13 item 4 named for doubting the premise, and it has now fired.
+
+Scope caveat, stated honestly: this is evidence about **plan shape** at 8,000-row/11-partition scale. Plan
+shape generalises — the planner's partitionwise decision is driven by partition compatibility, not row
+count. What does **not** generalise is whether the resulting per-partition working set at 5.09M real rows
+fits under the 1 GB-per-statement structural goal. That needs a real partitioned copy or a much larger
+bounded sample, and was out of scope for a fully reversible probe.
+
+Separately: all six composite tile functions already plan as `Nested Loop → Index Scan using
+ix_features_layer_geom`, cost 0.41..56.17, identical shape across all six **at z10** (source pulled from
+`pg_proc`, so this is the live body, not the dormant `0033`).
+
+**SCOPE CORRECTION, 2026-08-21 — this claim was over-generalised and is now bounded.** The original text
+concluded "tile latency is therefore not a justification for partitioning" without qualification. **The
+EXPLAIN was taken only at z10, which is a zoom where tiles already work** — §0.17.2 measures z10/181/373
+at 93,860 B in 0.40 s. The zooms that are actually broken are **z5 and z6**, and §0.17.2 measures them in
+the same run: z5/5/11 status **000 after 25 s**; z5/4/10 284 B after **102.10 s**; z6/11/22 **36.9 s** in
+one probe and a gzip timeout in another; `sensor_tiles` z6/11/22 = **3,886,077 B raw**. A total cost of
+**56.17 corresponds to a handful of rows — it cannot be the plan for a tile returning 3.9 MB.**
+
+**Corrected claim: tile latency *at z10* is not a partitioning justification. The z5/z6 plans were never
+captured, so nothing here is evidence either way about the zooms that hang.** Capturing them is read-only
+and cheap, and the plan is the whole point:
+
+```sql
+SET statement_timeout = '30s';
+EXPLAIN (COSTS, BUFFERS) SELECT geo.sensor_tiles(5,5,11);
+EXPLAIN (COSTS, BUFFERS) SELECT geo.sensor_tiles(6,11,22);
+```
+
+(no `ANALYZE` — actually executing a z5 tile is the thing measured at 102 s.) Run the same for
+`fire_risk_tiles`, `burn_severity_tiles`, `evacuation_zone_tiles`, `intervention_tiles`,
+`watershed_tiles`. Until that runs, **§0.18.8 item 1(b) rests on a z10 measurement and says so.**
+
+The sole remaining justification for the swap is the census-aggregate memory problem, and per the probe
+above that justification only exists *after* the matview SQL is rewritten. **That argument is unaffected by
+this correction** — item 1's grounds (a) and (c) stand on their own measurements.
+
+#### 0.16.8 What the QA gate actually proves
+
+| surface | count | what it proves |
+|---|---|---|
+| pytest files under `services/agri-data-service/tests/` | 141 | agri pipeline logic |
+| of those, Postgres-backed (`*_postgresql.py`) | 16 | real SQL, **only when `AGRI_TEST_DATABASE_URL` is set** |
+| using the shared `agri_db_*` fixture | 23 | policed by the no-silent-skip gate |
+| vitest files under `src/__tests__` | 106 | the Next.js app |
+| Playwright e2e specs | 3 | **100% network-mocked** |
+| CI workflow files | **0** | `.github` does not exist |
+
+Gated pytest baseline is **3,170 passed / 3 skipped**; ungated ~3,062. A ~3,062 result means the gate was
+not set.
+
+**What the gate cannot catch, ranked by the outages this project has actually had:**
+
+1. **The D0 CORS outage — the one that blanked every dynamic layer — would go undetected today.** Nothing
+   in this repo makes a real HTTP request to the deployed app or Martin and asserts on the response. The
+   Playwright suite hardcodes a permissive CORS header in its own mock, so it is structurally incapable of
+   detecting a CORS misconfiguration, a composite-source 404 (which `sources.ts:28-32` fans into every
+   dynamic layer), or a malformed/empty MVT — the three failure modes that matter most here. It also
+   requires `npm run dev` via its `webServer` config, violating the never-run-locally rule, so in practice
+   it is neither run automatically nor safely runnable by hand.
+2. **The only real-PostGIS coverage of the tile functions is frozen at migration ceiling 12.**
+   `postgis-spatial.test.ts`'s `MIGRATION_CEILING` is 12 against a registered journal head of 0029, and 21
+   behind the dormant `0033` that rewrites all six tile-function bodies. The one test that could catch a
+   syntax or semantic regression in those exact bodies before deploy structurally cannot, because it never
+   applies them.
+3. **No no-silent-skip gate exists on the vitest side.** `climate-field-sql-contract.test.ts` and
+   `postgis-spatial.test.ts` are the only two files in the whole vitest suite that parse reader SQL and
+   tile-function SQL against a real PostgreSQL/PostGIS parser — the file's own docstring says "a bind whose
+   type PostgreSQL cannot resolve (SQLSTATE 42846) is invisible without them", which is literally how the
+   climate-field bug shipped. Both `describe.skipIf` away on an unset env var with only a `console.warn`,
+   unconditionally, inside the enforced Docker build gate.
+4. **The pytest no-silent-skip gate only polices the `agri_db` marker family.** At least one real test —
+   `test_live_report_synthesis_returns_the_declared_schema`, the only end-to-end check of the Claude
+   structured-outputs round trip the location-analysis feature depends on — skips on every run where
+   `ANTHROPIC_API_KEY` is unset, and the sweep reports full green. Same failure shape as the incident that
+   motivated building the gate, keyed on a different variable.
+5. **No contract test ties `martin.yaml`'s published functions to `DYNAMIC_TILE_SOURCE_IDS`.** Editing
+   exactly one of the two files produces a working build, a passing suite, and a production-only 404 that
+   blanks the whole composite. `building_tiles` was already removed from the client list once.
+6. **`scripts/partition-features.mjs` has zero automated coverage of any of its ten phases.** The script
+   that will rewrite `geo.features`'s physical layout in production runs with no regression protection
+   beyond whatever the operator manually re-verifies each time.
+7. **`npm test` passes `--configLoader`, a flag with zero matches in vitest 3.2.7's own `dist/cli.js`** —
+   and `Dockerfile:67` runs `npm test` as a hard build gate. Either it fails every build (contradicting
+   "deploys green") or the flag is swallowed and the gate is not gating what it claims. **Verify directly
+   before citing `npm test` as evidence of anything.** UNVERIFIED which of the two it is.
+8. **The agri-data-service has zero automated enforcement on deploy.** The 141-file sweep, ruff and the
+   mypy baseline (679 errors, never green — diff against baseline, never gate on it) run only when a human
+   remembers `python scripts/check.py` with the correct `AGRI_TEST_DATABASE_URL` and `PGBIN`. The code that
+   most directly touches the 2 GB cap and the live database ships with the weakest enforcement in the
+   programme. Configured coverage thresholds (60%) are enforced by nothing.
+9. **The client request-budget test unit-tests the concurrency primitive, never its effect on layer load
+   time** — and the owner's #1 named complaint is literally about that mechanism.
+10. **Nothing anywhere exercises the *compressed* tile path** — which is the one every real browser uses,
+    and the one §0.17.2 measured hanging at 0 bytes while the identical uncompressed request returned 4 MB
+    in under a second. *(Added 2026-08-21; this was missing from the list.)* Every probe, every mock and
+    every latency figure in this repo's history was taken without `Accept-Encoding: gzip`. The smoke script
+    below closes it, and that is precisely why its `--compressed` flag is not optional.
+
+**The single highest-value QA artifact this programme could add is ~80 lines**: an un-mocked production
+smoke script — composite tile with an `Origin` header **and** `--compressed` at three zooms, `/api/ready`,
+`/catalog` membership diffed against `DYNAMIC_TILE_SOURCE_IDS` — run by the existing weekly cron. It would
+have caught D0. Scheduled as a numbered deliverable in §0.19, not left as a good intention.
+
+#### 0.16.9 REFUTED — two headline claims that did not survive
+
+Recorded in full, because a silent correction is worse than a loud one.
+
+**REFUTED: "`geo.features` runs a 5.6% heap hit ratio, therefore cache eviction is the direct mechanism
+behind the owner's rendering complaint."** The *measurement* reproduces and stands: heap
+826,240,292 read / 48,876,140 hit = **5.57%** in one pass; 856,985,458 / 55,365,003 = **6.1%** in an
+independent re-measure hours later; index 44.6%; TOAST 91.2%; database-wide 19.63% (848,950,016 /
+207,723,551). What does not survive is the causal step, on three grounds. **(a)** The "memory pinned at
+ceiling, CPU idle" observation it cites as corroboration is **already spoken for** by §0's verified
+per-query sort-spill diagnosis, and the acute rendering complaint is already attributed to D0 plus several
+named open defects. **(b)** The window-dating is wrong: `pg_postmaster_start_time()` showed the instance up
+only ~2 h 20 m when counters showing billions of block accesses were read — the "roughly one to two days of
+ingest" framing cannot be derived, and if that boot was an OOM restart the counters reset then too.
+**(c)** "Shrink it and it fits cache" ignores that `geo.features` shares a 2 GB container with
+`agri.signal_observation` (26 GB) and the rest of a 37 GB database. Also, `heap_blks_read` is a
+shared-buffer-miss counter, not a physical-disk counter; in this specific 256 MB / 2 GB / 37 GB environment
+the distinction narrows but does not vanish. **Treat the hit ratio as a real, striking measurement and a
+plausible contributing factor. Do not treat it as a proven root cause, and do not repeat "6.76 TB read from
+disk" as fact.** One thing the refutation *overstated* in turn: "no amount of partitioning changes total
+resident bytes" is true of disk footprint but understates partition pruning's effect on the per-query
+working set, which is what actually governs hit behaviour.
+
+**REFUTED: "`geo.sensor_tiles` never returns at the default zoom and is therefore THE broken composite
+member."** The composite failure is real and reproduces — it times out at both 5/5/11 and 6/11/22 with an
+`Origin` header, and the single-composite-source mechanism at `sources.ts:28-32` is exactly as described.
+The *attribution* is wrong. Re-probing live: `sensor_tiles/6/11/22` returned **200 / 3.9 MB / ~0.9 s on 4
+of 4 tries**, while `evacuation_zone_tiles/6/11/22` — which the original finding called healthy at 3.32 s —
+**timed out 4 of 4**. At the truer default-zoom tile 5/5/11, **five of six** members (sensor,
+evacuation_zone, burn_severity, intervention, watershed) independently hang; only `fire_risk` succeeds.
+Dropping only `sensor_tiles` from `DYNAMIC_TILE_SOURCE_IDS` would very likely not restore the other five.
+**This is a shared low-zoom cost/contention problem across most Martin function sources, not a
+`sensor_tiles`-specific defect** — root-cause it as such in §0.17.
+
+---
+
+### 0.17 Why the map is broken, 2026-08-20/21 — the acute section
+
+The owner's words: *"at the moment plantgeo is also basically non functional most of the layers do not
+render if they do they update very slowly because of the bandwith limitations i set as a cost control."*
+**The bandwidth limitation is not the cause.** This section says what is, in the order a fix should be
+attempted. Everything here was measured against live production between 2026-08-20 and 2026-08-21.
+
+#### 0.17.1 The one-paragraph answer
+
+Six of the eleven layers render through **one** MapLibre vector source built from **one** comma-joined
+Martin composite URL, and a composite 404s or hangs entirely if any single member does
+(`src/lib/map/sources.ts:28-32`). At the default camera that composite **does not complete**. Two
+mechanisms stack: **(1) the Martin role has `statement_timeout = 0` and Martin does not cancel on client
+disconnect**, so an abandoned tile query leaks a Postgres backend and a pool slot *permanently*, and eight
+slots is one page load's worth; **(2) the tile functions carry no day bound and no `LIMIT`**, so tile cost
+grows with history depth × feature count every hour ingestion runs, and several sources have crossed the
+point where a low-zoom tile cannot be built inside any reasonable time. D0 (the CORS blanking) is
+genuinely fixed and is *not* the current cause. The client request budget never sees a tile request at all.
+
+**PROVENANCE OF THIS WHOLE SECTION, AND IT IS A REAL LIMITATION.** *(Added 2026-08-21.)* Everything in
+§0.17 was derived from `curl`, `pg_stat_activity`, `EXPLAIN` and source reading. **The owner's actual
+symptom — "most of the layers do not render" — has never been observed by anyone working this programme.**
+No foregrounded browser session against production exists in the record; the one attempt was made in a
+backgrounded automation tab, where rAF is suspended and zero tile requests fire, producing a known false
+negative (§5). The default camera geometry driving the z5/z6 analysis is likewise **INFERRED** from
+viewport arithmetic and source `tileSize`, not observed. §0.17.9's `de3139e` defect statuses are
+**code-traced and spot-checked, never seen working.**
+
+**Consequence to hold onto: there is no baseline for the symptom the programme is organised around.**
+§0.17.7 predicts the five non-Martin layers (fire-detections, water-gauges, weather-observations,
+vegetation, soil-survey) are unaffected — that is the section's key triage claim and it is **untested**.
+If they are also blank, the diagnosis here is incomplete and Tier 1 will not clear the complaint; if they
+render fine, "most layers" really means "the six composite layers" and the triage is confirmed. **Post-fix
+is the worst possible moment to discover the baseline was wrong**, which is why §0.19.2 now opens with a
+browser baseline pass **ordered before item 1**.
+
+#### 0.17.2 Martin live probe results — the raw matrix
+
+Every probe below sent `-H "Origin: https://plantgeo-main-production.up.railway.app"` unless the row says
+otherwise. Without an `Origin` header a broken CORS config returns a clean 200 to curl while every browser
+is blocked, which is how D0 hid.
+
+**CORS is healthy.** `/catalog` lists **9** sources and exactly matches `martin.yaml` — no drift between
+config and what Martin serves. Three-way check on `/health` and on the composite: no `Origin` → 200 with no
+ACAO; correct origin → 200 **with** `access-control-allow-origin` echoing it; wrong origin → 200 with no
+ACAO; `OPTIONS` preflight → 200 for the correct origin, **400 for a wrong one**. The two-origin
+`martin.yaml:27-29` list is live. **D0 is fixed. Stop attributing the current outage to it.**
+
+**The composite, at the camera users actually get.** Default camera derives from
+`getClientCoverageBbox()`'s PNW bbox fitted to 1024×512 with 40 px padding — zoom **≈5.56-5.92**, centre
+≈(−118, 45.6), **6-9 composite tiles on first paint** (INFERRED from viewport geometry and source
+`tileSize`, not observed in a browser).
+
+| tile | uncompressed | **with `Accept-Encoding: gzip`** |
+|---|---|---|
+| z5/5/11 | status **000 after 25 s** | — |
+| z5/4/10 | 284 B after **102.10 s** | — |
+| z6/11/22 | 200, **4,063,189 B**, 0.87-0.98 s in one probe / **36.9 s** in another | **TIMED OUT, 0 bytes, at both 30 s and 60 s, reproduced twice** |
+| z8/43/93 | 203,311 B, **26.75 s cold** | 84,634 B |
+| z8/43/93 (immediate repeat) | 203,311 B, **0.307 s warm** | — |
+| z10/181/373 | 93,860 B, 0.40 s | 41,252 B, **8.78 s** |
+| z14/2903/5981 | — | 278 B, 0.72 s |
+
+**Two things in that table are the whole story.**
+
+**(i) The 87× cold/warm ratio on byte-identical output** (26.75 s → 0.307 s for the same 203,311 B) proves
+the cost is Postgres page-cache misses, not payload size. **No amount of compression or byte-shaving fixes
+this. Never asking again does.** CONFIRMED.
+
+**(ii) The composite hangs *specifically when gzip is requested*, which every real browser does by
+default.** Uncompressed z6/11/22 returned 4 MB in under a second in one probe; `--compressed` timed out at
+30 s and 60 s, twice. **Every prior latency figure in this runbook — including §9's 117 s cold
+`fire_risk_tiles` — was measured without `Accept-Encoding` and therefore understates what a browser sees.**
+This is very likely the dominant, previously-unmeasured mechanism behind "most layers do not render".
+CONFIRMED as reproduced twice; UNVERIFIED as to mechanism (compression buffering in Martin, in Railway's
+proxy, or an interaction with a large response — not root-caused).
+
+**Per-source matrix, 36 fetches (9 sources × 4 tiles).** Full CSV at
+`…/scratchpad/tileprobe/results.csv`.
+
+- **200 with bytes:** `watershed_tiles` 4/4 · `fire_risk_tiles` 3/4 (z14 empty) · `sensor_tiles` 3/4 (z14
+  empty) · `burn_severity_tiles` 2/4 · `evacuation_zone_tiles` 2/4
+- **204 everywhere, at every zoom and location tested:** `building_tiles`, `intervention_tiles`,
+  `osm_roads`, `osm_waterways` — **structurally empty**
+
+Latency is *not stable per source across probes*, which is itself the finding: `evacuation_zone_tiles`
+measured 3.32 s in one pass and timed out 4/4 in another; `sensor_tiles` measured "never returns at 60 s
+and 180 s" in one pass and 200/3.9 MB/0.9 s across 4/4 tries in another. **Do not build a fix around one
+source being the bad one** (§0.16.9). `fire_risk_tiles` at boise z6/11/23 stalled >60 s twice cold, then
+returned in 0.26-0.29 s three times warm — while the never-before-hit Seattle z6/10/22 returned
+57,583 B in 1.19 s on first try. Cold cost is tile-specific, not source-specific.
+
+**Payload sizes that are on their own a problem:** `sensor_tiles` z6/11/23 = **2,622,412 B raw /
+946,836 B gzip**; z6/11/22 = **3,886,077 B raw**. There is no zoom-based simplification and no feature cap
+anywhere in these functions. ~950 KB compressed for one z6 tile is several times a normal vector-tile
+budget, on every pan that crosses a sensor-dense low-zoom tile.
+
+#### 0.17.3 The leak — measured, and it is the reason the outage survives a reload
+
+`SELECT * FROM pg_db_role_setting` returns **zero rows** on production, and `infra/martin/martin.yaml` sets
+no timeout. So Martin runs with `statement_timeout = 0`. Martin also does not cancel on client disconnect.
+
+Measured directly: after a curl aborted a `sensor_tiles` request at 60 s, `pg_stat_activity` showed
+`SELECT "geo"."sensor_tiles"($1::integer,$2::integer,$3::integer) AS tile` still `active` in
+`IO/DataFileRead` at 793 s, then 848 s, then 986 s, then **1,142 s**. A second ran to 575 s. A z5 composite
+aborted at 25 s left `burn_severity_tiles` running at 70 s.
+
+**Contagion, measured directly.** With only **two** stuck queries against `pool_size: ${MARTIN_POOL_SIZE:8}`
+(`infra/martin/martin.yaml:39`): `burn_severity_tiles/6/11/22` went **0.38 s → status 000 at 30 s**, and
+`fire_risk_tiles/6/11/22` went **0.29 s → 5.02 s**. Under a separate 6-way concurrency test,
+`intervention_tiles/10/181/373` (an empty 204!) took **6.60 s** and `sensor_tiles/10/181/373` **6.86 s**,
+against 0.21-0.30 s solo immediately after.
+
+**The arithmetic that makes this total.** `src/components/map/MapView.tsx:80-89` constructs the map with
+**no `maxParallelImageRequests` override**, so MapLibre uses its default of **16** concurrent tile
+requests. The default view needs 6-9 composite tiles, each spawning six member queries. Pool is 8. One
+page load can exhaust the pool with queries that never complete, and from then on **every** tile request —
+including the fast ones — queues behind stuck backends. That is why the outage is both total and
+self-sustaining, and why it survives page reloads until Martin restarts.
+
+A later `pg_stat_activity` snapshot taken during a quiet window showed the healthy shape for contrast: 8
+Martin backends, **all `state='idle'`** on `ClientRead`, idle 462-1,011 s, plus the TimescaleDB background
+worker. No agri/ingestion connection present at all in that snapshot.
+
+**Note for the operator:** pid 105 was still running an abandoned `sensor_tiles` query at 1,142 s when the
+probe ended. Cancelling leaked backends is `pg_cancel_backend(<pid>)` and was outside the read-only briefs.
+
+#### 0.17.4 The one hazard every proposed fix got wrong
+
+Every design in the panel offered `ALTER ROLE <martin_role> SET statement_timeout = '20s'` as an
+alternative to the connection-string form. **Do not do that.** A read-only production query settled it:
+there is exactly **one login role — `postgres`, `rolsuper=true`** — and all 8 Martin backends run as it
+(`usename=postgres`, `application_name='Martin v0.7.0 - pid=1'`). There is no Martin role to alter.
+Applying a 20 s ceiling to `postgres` would impose it on ingestion, `scripts/migrate.mjs`, the readiness
+probe, and the 428 s / 900 s matview refreshes.
+
+**The only safe form is appending `?options=-c%20statement_timeout%3D20000` to `DATABASE_URL` on the
+`plantgeo-martin` Railway service.** That is a runtime variable change — no rebuild — unlike `martin.yaml`,
+which is baked in at build time (`Dockerfile.martin:3`) so a `railway service restart` reuses the old image
+and appears to do nothing. A dedicated least-privilege Martin role is separate, unstarted work.
+
+Related: `martin.yaml:42`'s `max_feature_count: 10000` is **structurally inert**. Every dynamic layer is
+registered under `functions:` (`:46-67`), not `tables:`, and `pg_stat_activity` shows Martin issuing a bare
+`SELECT "geo"."sensor_tiles"($1,$2,$3) AS tile` — there is no generated query for Martin to inject a LIMIT
+into. The cap applies only to `osm_roads`/`osm_waterways`, which have **0 rows**. The single configured
+guard against a runaway tile does nothing for any layer that draws.
+
+And `martin.yaml`'s `cache:` block is Martin's **internal tile cache** (`size_mb` / `tile_size_mb` /
+`tile_expiry` / `maxzoom`). **There is no HTTP `Cache-Control` knob in Martin's config.** Any plan step
+reading "add `Cache-Control` to Martin" is unimplementable as written and needs a proxy or CDN in front —
+see §0.19's staging of that, and its CORS hazard.
+
+#### 0.17.5 Caching — Martin honours revalidation and advertises nothing
+
+Martin sends a strong `ETag` and honours `If-None-Match`: **304, 0 bytes, 0.37 s**, verified. It sends
+**no `Cache-Control` and no `Last-Modified`**. Browser heuristic freshness is therefore **zero**, so every
+tile must be revalidated on every single page load — best case one full round trip per tile per load, worst
+case the 26-102 s cold path again. Martin's own internal cache expires at 5 minutes and caches only to
+z14 while the composite advertises maxzoom 22, so every tile above z14 is an uncached database query.
+
+The PMTiles basemap has ideal headers and is **not being edge-cached**: 1,411,574,646 B,
+`Cache-Control: public, max-age=31536000, immutable`, strong ETag, `Accept-Ranges` honoured (a 16 KB header
+range fetch takes 0.25-0.28 s), served via Cloudflare — and **`cf-cache-status: DYNAMIC`, not HIT**, on
+both ranges tested, with wildcard `ACAO: *`. This is not a "download 1.4 GB" problem; range requests work
+correctly. It *is* an every-range-round-trips-to-R2 problem on an immutable object shared by every user.
+UNVERIFIED whether a Cache Rule fixes it; that is one rule and two curls to find out, and **§0.18's entire
+serverless story depends on the answer.**
+
+#### 0.17.6 The request budget is aimed at the wrong path
+
+`grep -rn "transformRequest\|maxParallelImageRequests" src/components/map src/lib/map` returns **zero
+hits**. MapLibre is constructed at `MapView.tsx:80-89` with no request hooks, so it uses its own fetch at
+its default 16-way tile concurrency. `createBudgetedFetch` has exactly four call sites:
+`src/lib/trpc/client.ts:21` (lane `trpc`), `src/hooks/useFireData.ts:13` (`fires`),
+`src/hooks/useOfflineSync.ts:20` (`offline-sync`), `src/lib/offline/tile-cache.ts:12` (`tile-prefetch`).
+**Not one of them is a tile.**
+
+Cold-load arithmetic under `MAX_CONCURRENT_REQUESTS = 4` (`src/lib/net/request-budget.ts:24`),
+`SUSTAINED_REQUESTS_PER_SECOND = 5` (`:27`), `BURST_CAPACITY = 8` (`:30`): `activeLayers` defaults to `[]`
+(`src/stores/map-store.ts:91`), so first paint issues the headless capabilities query plus a small number
+of tRPC batches — and `httpBatchLink` collapses concurrent queries into single HTTP calls, so even ~20
+layer queries form a handful of fetches, all clearing the 8-token burst instantly. **The budget adds no
+measurable delay to a cold load.** Meanwhile the unmetered path carries a 105,636 B burn-severity tile, a
+793,110 B `/api/fires` response, and 16 concurrent tile requests against an 8-slot pool.
+
+**Conclusion, and it is the direct answer to the owner's diagnosis: the bandwidth ceiling set as a cost
+control does not reduce tile bandwidth and cannot — it never sees a tile request. Removing it would not fix
+the outage; tightening it would not have prevented it.** The one place concurrency *is* unbounded is
+exactly the place that overruns the server. The fix is to re-aim it, not remove it: pass `transformRequest`
+into the map constructor, route Martin-origin URLs onto a `"tiles"` lane, and set
+**`maxParallelImageRequests: 6`** — strictly *below* `pool_size: 8`, so the client can never queue more
+tile work than the server can hold. (6, not 8: setting it equal to the pool saturates it with a single tab
+and a second tab re-creates the measured contagion.)
+
+Secondary, low today but real later: all tRPC layers share a single budget lane, so the round-robin
+fairness the module was built for is inert. It becomes real the moment a user turns on several layers —
+background prefetch can head-of-line-block a foreground paint. And `query-persister.ts`'s private
+`MAX_CONCURRENT_REVALIDATIONS = 2` semaphore (`:801-832`) sits outside the shared budget, which its own
+`src/lib/net/AGENTS.md` names as the one deliberate gap.
+
+#### 0.17.7 Every registration mismatch that hides a layer
+
+Five places must agree for a dynamic layer to draw: a `geo.layers` row → published rows with
+`status='published'` → a `geo.*_tiles` function → a `martin.yaml` `functions:` entry → membership in
+`DYNAMIC_TILE_SOURCE_IDS`. The live counts: **8** tile functions in `geo`, **7** in `martin.yaml`, **6** in
+the client composite.
+
+| mismatch | consequence |
+|---|---|
+| **`interventions`: 2 rows, both `status='approved'`, 0 published.** Every tile function in the codebase gates on `'published'`. All five other links are correct — `martin.yaml` publishes it, `layers.ts` wires three style layers, `geo.layers` carries the row with `is_public=true`, so the slider catalogue lists it. | The layer serves a **valid, well-formed, permanently empty MVT** forever, with no error anywhere. Looks identical to "no data yet"; is actually a stuck publish workflow. |
+| **`geo.strategy_recommendations_tiles` exists (`drizzle/0027:123`) but is absent from `martin.yaml`**, and Martin runs `auto_publish: false` (`:43`). Meanwhile `StrategyLayer.tsx:15` sets `SOURCE_ID = "martin-dynamic"` and `:36`/`:64` add layers with `"source-layer": "strategy_recommendations"` — a name in no composite member. | Flipping the ML Strategy Recommendations switch does **nothing**, silently, with no console error and no capability row. Doubly dark: all three `mv_strategy_recommendations_*` are also empty. |
+| **`building_tiles` is the 7th `martin.yaml` function and the answer to the six-vs-seven discrepancy.** It touches neither `geo.features` nor `geo.layers`; `geo.osm_buildings` has **0 rows**; the client never requests it. | Registered-but-orphaned — the inverse of a hiding-layer bug. Documented so nobody re-investigates it. |
+| **`geo.osm_roads` / `osm_waterways` / `osm_buildings` are all exactly 0 rows** (exact `count(*)`, all three at their empty-table minimum size). | Three of nine published sources are permanently dead weight. An ingestion gap, not a serving defect, but it does contribute to "most layers do not render". |
+| **`fire_risk_tiles`' function name, source id and emitted MVT layer tag (`fire_risk`) have never matched the `geo.layers.name` / `LayerToggleId` they serve (`fire-perimeters`).** | No impact today — every consumer uses the same literal. But renaming either string in isolation breaks the layer with no compiler or schema error to catch it. |
+| **Capability catalogue publishes 24 layers; `layer-registry.ts` declares 27 toggles.** Missing: `soil` and `demand-heatmap` (both `warehouseLayerName` null — expected) and `strategy-recommendations` (claims a name the server never publishes, per `src/types/time-slider.ts:136`). `interventions` and `soil-survey` publish with `earliest=latest=null`. | The registry and the server disagree about what exists. |
+
+**Which layers a Martin incident actually takes down: 6 of 11, not 11 of 11.** fire-perimeters, sensors,
+evacuation-zones, burn-severity, interventions and watersheds ride the composite. fire-detections,
+water-gauges, weather-observations, vegetation and soil-survey render via component-mounted tRPC/API reads
+and are unaffected by Martin. That triage distinction is written down nowhere else.
+
+**Production is still running the pre-0033 (join-based) tile bodies** — confirmed by
+`pg_get_functiondef(geo.fire_risk_tiles)`, which still contains `JOIN geo.layers l ON f.layer_id = l.id`
+and has no `target_layer_id` variable. That is a second, independent source of truth for "0033 is dormant"
+beyond `_journal.json`, and it matters because journal registration and actual function replacement are
+two different failure points.
+
+#### 0.17.8 The non-tile read paths that are also slow
+
+- **`/api/fires`: 793,110 B uncompressed, 7.80-20.02 s cold / 0.59 s warm, `x-fire-count: 2000`, no bbox
+  filter accepted or sent, refetched every 120 s** by `useFireData`. That is **23.8 MB/hour per open tab**.
+  No `Content-Encoding` on the response even when `Accept-Encoding: gzip` is sent; GeoJSON compresses ~10:1.
+- **`getSliderCapabilities`: 45,807 B uncompressed, 6.75-10.69 s cold / 0.23-0.41 s warm**, 5-minute server
+  memo, no ETag, no `Cache-Control`. It gates **every** layer's day, so for ~11 s after each deploy and
+  after each cache expiry that lands cold, the whole map has no dates and every warehouse-backed layer
+  renders blank — indistinguishable from the tile outage, which is part of why the outage has been hard to
+  attribute. It is also **not persisted client-side**, so a cold offline start has no `serverCurrentDate`.
+- **`/api/ready` flaps.** One probe sequence: 503 `database:false`, then three consecutive 200s within
+  ~25 s; another later probe: clean 200 with all three checks true. `/api/health` 200 in 0.22-0.33 s
+  throughout. The probe timeout is 2,000 ms, and Railway's healthcheck reads it — a flap can pull the
+  instance out of rotation or restart it mid-session. Same I/O starvation root cause as the tiles.
+- **`/api/v1/features` has no ETag, no `If-None-Match`, no `updated-since`** (confirmed by source), and
+  paginates by `OFFSET` ordered by `asc(features.id)` — a **random uuid** — with `MAX_OFFSET_WITH_LAYER_ID
+  = 1_000_000`. A deep page re-scans and discards, and a random-uuid order is not stable under concurrent
+  insert, so a paging client can miss or repeat rows. It could not be measured with real data from outside:
+  **401, "Invalid or missing API key", 0.22 s** — a provisioned read-only test key is needed for any future
+  payload measurement.
+- **The dated fire-detections reader plans as a `Parallel Seq Scan` of the whole table.**
+  `EXPLAIN (COSTS)` on the exact statement at `environmental-read-model.ts:377-400`:
+  `Parallel Seq Scan on features f (cost=0.00..540780.44 rows=6437 width=527)`, `Workers Planned: 2`,
+  feeding a Sort on `properties->>'acqTime'`. The structurally identical water-gauges statement (`:518-548`)
+  returns `Index Scan using ix_features_layer_observation_day (cost=0.56..7792.72)`, total 8,112 — **66.7×
+  cheaper**. The comment at `:359-366` explains why: `geo.feature_observation_day()` COALESCEs
+  `observedAt`/`updatedAt`/`polygonDateTime` and knows nothing about FIRMS's `acqDate`. The doc-comment
+  calls it "a bounded-by-LIMIT scan"; **LIMIT bounds output, not the scan**, because the day expression is
+  unindexed and there is an `ORDER BY` above it. This is the mechanism behind the unowned §9 D11
+  live/historical asymmetry.
+
+#### 0.17.9 §9 defect status, re-verified in the current tree
+
+| defect | status |
+|---|---|
+| **D0** Martin CORS blanking every dynamic layer | **FIXED** — measured, §0.17.2 |
+| C2, D1, D3/D4/D5/D7/D10/D12 | shipped in `de3139e`, spot-checked present (`query-persister.ts` stamps `layerId`/`day`) |
+| C5 | looks fixed though unnamed — `api/fires/route.ts`'s ETag is now content-fingerprint-based |
+| **C1** 30-day IndexedDB TTL | **OPEN.** `query-persister.ts:309` returns `HISTORICAL_TTL_MS` (30 days, `:68`) whenever the selected day < `serverCurrentDate` — and every layer opens on `latestObservedDate`, which is by definition strictly before today. The 30-day class applies **universally**. Retuning the constant does not fix it; the predicate is what is wrong. |
+| **D6** 6-decimal bbox | **OPEN.** `viewport-bbox.ts:30` still `toFixed(6)` — a 10 cm pan mints a cold cache key for every layer. |
+| **D9** 5-minute capability poll | **OPEN.** `TimeSliderCapabilitiesLoader.tsx:8` still polls on a 5-minute `refetchInterval` that re-stamps the date mid-session. |
+| **D11** fire live/historical query-*shape* asymmetry | **OPEN, unowned.** Now has two candidate mechanisms: the seq-scan plan divergence above, and fire-perimeters' 100%-missing `observedAt` (§0.16.3). |
+| §10 join-free tile relations | **proposal only** — confirmed no `tile_*` relations exist in `drizzle/`. |
+| `mv_signal_observation_day` | **still fails every pulse** (301 s vs 300 s cap). Only its sibling `mv_feature_observation_day` was fixed by the 300→900 s raise. |
+
+#### 0.17.10 Ranked: user-visible rendering unblocked per unit of work
+
+**Do these in this order.** Everything in tier 1 is a variable, a header, or a one-line constant. Nothing
+in tier 1 touches a schema.
+
+**TIER 1 — hours, no schema, high confidence.**
+
+1. **`?options=-c%20statement_timeout%3D20000` on `plantgeo-martin`'s `DATABASE_URL`.** Converts a runaway
+   tile from a permanent pool leak into a fast, attributable failure. **Must be first — every subsequent
+   measurement is contaminated by leaked backends.** Also `pg_cancel_backend()` the currently leaked pids.
+   Reversal: delete the parameter. Risk: a legitimately slow tile now 500s instead of hanging, which is the
+   point and is visible.
+2. **`maxParallelImageRequests: 6` + `transformRequest` at `MapView.tsx:80-89`.** The client can never
+   again queue more tile work than the pool can hold. Reversal: one constructor option.
+3. **Un-crash `plantgeo-ingest-cron` (CRASHED) and `plantgeo-cron-soilgrids` (FAILED)** on the current
+   deploy, found incidentally 2026-08-21. Every "ingestion is live" premise in this programme — including
+   this runbook's own safety rules — currently rests on a crashed service.
+4. **Root-cause the missing `Content-Encoding`, then fix the layer that is actually broken.**
+   `next.config.ts` has **no `compress` key**, so Next's default (`true`) is already in force — "enable
+   gzip in next.config" is a **no-op** that will be reported as done. `/_next/static` chunks *are* gzipped
+   on the wire; route handlers are not. Diagnose with one `curl -I` against a static chunk versus a route
+   handler before changing anything.
+5. **Verify the Martin version.** Every `pg_stat_activity` row carries
+   `application_name = 'Martin v0.7.0 - pid=1'` against `Dockerfile.martin:1`'s `martin:1.10.1`. The
+   two-origin CORS list from `martin.yaml` *is* live, which argues the deployed image reads the current
+   config — so this may be a hardcoded string rather than a real mismatch. One command settles it:
+   `railway logs -s plantgeo-martin | head`. **Do it before relying on any `martin.yaml` block other than
+   `cors` and `postgres.functions`**, both verified working live.
+
+**TIER 2 — days, one migration each, deploy one function at a time.**
+
+6. **`LIMIT` inside each tile function's inner subquery before `ST_AsMVT`** — the only place the cap can be
+   enforced, since `max_feature_count` is inert (§0.17.4). **The `LIMIT` must carry an `ORDER BY` inside
+   the subquery** (e.g. `ORDER BY f.id`, or a zoom-aware rank), or tile contents become nondeterministic
+   across requests and any content fingerprint over them changes — the same tie-cut trap
+   `environmental-read-model.ts:367-372` documents for `acqTime`. Ship as a new `drizzle/00NN`, **one
+   function per deploy**, each fetched standalone with an `Origin` header before the composite sees it.
+   This converts the `sensor_tiles` hang into a truncated-but-rendering tile immediately.
+7. **A server-side day bound on the tile functions.** `src/lib/map/tile-layer-date-filter.ts:12-14` states
+   the current design outright: "Filtering in the style rather than in the tile query is what makes a scrub
+   free." That is a *good* property and should survive — but the live `geo.sensor_tiles` body
+   (`drizzle/0015:198-237`) has predicates only on layer name, `is_public`, status, `geom NOT NULL` and the
+   envelope, and the dormant `drizzle/0033:372-415` preserves that exactly ("same predicates, same tile
+   bytes"). Meanwhile `ix_features_layer_observation_day` (294 MB) exists and the tile path never touches
+   it. `sensors` spans 17 days with an estimated 26,734 published rows inside one z6 envelope. Cheapest
+   sufficient form: emit only the latest row per station inside the function
+   (`DISTINCT ON (properties->>'sensor_id') … ORDER BY … observed_day DESC`).
+8. **`CREATE INDEX CONCURRENTLY ix_features_fire_detection_day ON geo.features (layer_id, (COALESCE(substring(properties->>'observedAt',1,10), properties->>'acqDate'))) WHERE status = 'published'`.**
+   `->>`, `substring(text,int,int)` and `COALESCE` are all immutable, so **no `IMMUTABLE` wrapper function
+   is needed** — simpler than `drizzle/0015`'s `to_date` problem because it stays in text. ~200 MB, built
+   out of band with `lock_timeout='20min'` per `drizzle/0030`'s apply procedure, then a `DO $$` assert
+   migration. **This must happen before any partitioning** — `CREATE INDEX CONCURRENTLY` on a partitioned
+   parent **fails** on PG 18.4 (verified live; `drizzle/0030`'s "PG14+ supports this" comment is wrong).
+9. **`DROP INDEX CONCURRENTLY idx_features_geom`** — 314 MB, 0 scans, fully covered, 87.4% of it belonging
+   to two layers no tile function reads by geometry (§0.16.6).
+10. **Bbox cache keys quantized** (D6) — `viewport-bbox.ts:30`'s `toFixed(6)` to a z8-tile-envelope key or
+    2 decimals. Turns a near-zero cache hit rate into a near-one, and is the precondition for any CDN hit
+    rate later.
+11. **Stop the 5-minute capability poll re-stamping the date mid-session** (D9).
+
+**TIER 3 — needs a decision or a proxy, staged deliberately later.**
+
+12. **A CDN in front of Martin** to supply the `Cache-Control` Martin cannot. **Hazard, and it is severe:**
+    Cloudflare ignores `Vary` except `Accept-Encoding`, and Martin echoes a **per-origin** ACAO from
+    `martin.yaml:27-29`'s two-entry list — so a shared edge cache will hand origin A's cached response,
+    carrying A's ACAO, to origin B, blocking it in every browser behind a clean `curl 200`. **That is D0
+    wearing a CDN costume.** Either collapse tiles to a single `Access-Control-Allow-Origin: *` (they are
+    public) or set the header at the edge with a Transform Rule, and prove it with the wrong-`Origin` probe
+    before trusting it. Also note `NEXT_PUBLIC_DYNAMIC_TILES_URL` is inlined at build
+    (`src/lib/map/sources.ts:18`) — repointing it is a **full rebuild** through `Dockerfile`'s
+    check-data-boundary / type-check / lint / `npm test` gate, not a variable change.
+13. **A Cloudflare Cache Rule for `*.pmtiles` with range caching**, to turn `cf-cache-status: DYNAMIC` into
+    HIT. Free, and §0.18's whole serverless story is gated on whether it works.
+14. **Fix the `interventions` publish workflow** — find whatever should move `status` from `approved` to
+    `published` (likely under `src/lib/server/services/`), or decide `approved` should render and adjust
+    `intervention_tiles`' `WHERE` (and `0033`'s dormant copy). **A workflow bug, not an architecture one —
+    it must not gate the map.**
+15. **Register `strategy_recommendations_tiles`** in `martin.yaml` and `DYNAMIC_TILE_SOURCE_IDS`. Needs a
+    Martin **rebuild**, not a restart. Adding a composite member is the exact change that 404s all members,
+    and all three backing matviews are empty, so it would render nothing anyway. **Deferred until after
+    everything above, and only once it answers standalone.**
+
+**What NOT to do, so it stops being re-proposed:** do not remove or loosen the request budget (§0.17.6);
+do not drop only `sensor_tiles` from the composite (§0.16.9); do not raise `shared_buffers` (256 MB against
+a 7.9 GB table sharing a 2 GB container with a 26 GB relation — the working set does not fit at any
+setting); do not register `drizzle/0033` as part of the acute fix (six functions replaced at once, and its
+constant-`layer_id` pruning is moot if partitioning is deferred).
+
+---
+
+### 0.18 Target architecture — entity/observation split with sealed months on R2
+
+Three independent designs were built against the evidence in §0.16-§0.17 and judged by three lenses
+(feasibility-against-this-repo, scale-and-sync-correctness, operational-durability). **Two of three lenses
+picked the same design: the entity/observation split.** The scale lens preferred a manifest-addressed
+"cold ledger" and its best ideas are grafted in below, attributed. The rejected designs and the reasons are
+recorded in §0.18.8 — this runbook's convention is that a recorded rejection stops work being
+re-litigated.
+
+**The thesis in one sentence.** 95.1% of `geo.features` is the wrong shape (§0.16.1); split it by SHAPE —
+entities keep polymorphic `jsonb` because that is genuinely correct for them, observations move to narrow
+typed tables RANGE-partitioned by month — and every other goal the owner named stops being a separate
+project: **the monthly partition boundary IS the Parquet file boundary**, so "serverless" becomes an export
+rather than a new system; an append-only typed table has a natural monotone cursor, so "pull only what's
+new" becomes a `WHERE` clause instead of `OFFSET` over a random uuid; a sealed month is immutable, so it
+gets `Cache-Control: immutable` — the exact pattern the 1.41 GB PMTiles archive already proves works.
+
+**Why this design and not the cold-ledger one.** The cold ledger scored highest on scale (its manifest and
+z8-keyed live edge give genuinely O(1)-in-users origin load) and had the best falsification discipline in
+the packet. It lost on durability and feasibility for one reason: it **DETACHes and DROPs Postgres
+partitions past two months, leaving R2 as the only copy of the corpus with no named restore path**, and it
+retires Martin for six layers in favour of a tippecanoe pipeline that does not exist in this repo. The
+winning design keeps the full corpus in Postgres at ~1,456 MB, so a failure of Parquet, hyparquet, DuckDB,
+R2 or Cloudflare degrades to "slow" rather than "data unavailable". **The serverless tier is optional at
+runtime.** For a one-maintainer system with no CI, that is worth more than the better asymptote.
+
+#### 0.18.1 Data model — three tiers
+
+**SCOPE OF THIS ARCHITECTURE — read before quoting any size figure.** *(Added 2026-08-21.)* §0.18 covers
+the **`geo` schema only**. It does **not** cover `agri.signal_observation` — **26 GB (11 GB heap + 15 GB
+index), 46,068,872 rows, roughly 70% of the entire 37 GB database** (§0.16.6). That is deliberate, and the
+reasons are: it is not a map-rendering plane, so it is outside the acute outage; it is not read by any
+`geo` serving path; and its single largest object is one six-column natural-key unique index
+(`uq_signal_observation_release_cell_signal_time`, **11 GB alone**) whose necessity is a separate
+question from the entity/observation split.
+
+**The consequence must not be glossed.** Completing every item in §0.19 leaves the database at roughly
+**27 GB, not ~1.5 GB.** Any sentence of the form "the extraction shrinks the database so the cap can come
+back down" is about the `geo` schema alone. `agri.signal_observation` now has its own numbered items —
+§0.19.3 item 11a (audit the 11 GB index for redundancy) and §0.19.5 item 37a (its own Parquet export
+stream, which is also what item 41 actually depends on).
+
+**Tier 1 — `geo.features` stays and shrinks to entities (~249,751 rows).** soil-survey 238,986 ·
+watersheds 9,396 · evacuation-zones 651 · burn-severity 541 · fire-perimeters 177 · interventions 0-2.
+Polymorphic `properties jsonb` is **correct** here: heterogeneous, few, large per row, read whole, never
+aggregated. Three changes:
+
+- **`properties->'geometry'` is deleted from stored payloads.** Measured duplication: a watersheds row
+  carries `geom` **21,572 B** of WKB *and* `properties->'geometry'` **56,780 B** of GeoJSON inside a
+  16,237 B compressed blob; soil-survey 2,625 / 7,980 / 3,684; a water-gauges point is stored **four
+  times** (`geom`, `properties.geometry`, `properties.lat`+`lon`, and a `geo.geometry` row). **No read path
+  reads it** — `src/app/api/v1/features/route.ts:111-114` derives geometry from `ST_AsGeoJSON(features.geom)`
+  and `:133-134` then spreads `row.properties` verbatim, so the duplicate ships on the wire anyway. Reduce
+  `drizzle/0004_repair_ingested_geometries.sql:4-56`'s BEFORE trigger to validation-only (raise on invalid,
+  never write back); the writer supplies `geom` via `ST_GeomFromGeoJSON`. **Budget this honestly:**
+  `sql/ingest/refresh_features.sql`'s header documents its strip-asymmetry as load-bearing (the stored side
+  drops `geometry` AND `geometry_repaired`, the candidate side drops only `geometry`) and names the
+  inherited limit that a shape-only change goes undetected — **today the trigger's write-back is what makes
+  that change-detection test work at all.** Removing it forces a re-derivation of the change-detection
+  predicate, not just a key deletion.
+- **Two native columns replace two expression indexes.** `external_id text` and `observed_day date`.
+  `features_layer_external_id_unique` (832 MB, `(layer_id, (properties->>'id')) WHERE properties ? 'id'`,
+  **0 read scans**) becomes `UNIQUE (layer_id, external_id)` — a plain btree, ~15-30 MB at entity scale;
+  `ix_features_layer_observation_day` (294 MB) becomes `btree (layer_id, observed_day)`. With **no index
+  over `properties` left**, a measurement-only UPDATE becomes HOT-eligible — today `n_tup_upd` 59,762 ≈
+  `n_tup_ins` 58,509 means half the write traffic rewrites all eleven index entries across 2,573 MB of
+  index on a table where `last_autovacuum` is NULL.
+- **`idx_features_geom` is dropped** (314 MB, 0 scans, covered — §0.16.6).
+
+**One day semantic per stream, decided once at extraction and never `COALESCE`d at read time.** This is
+what removes the 66.7× plan divergence in §0.17.8. Measured basis for the mapping (§0.16.3): fire-detections
+carries `observedAt` on 100% of sampled rows; water-gauges carries **no** `observedAt` but `updatedAt` on
+all sampled rows; soil-survey carries **neither** (correctly — it is static); fire-perimeters carries it on
+**0 of 177**. Pick per stream, write it as a column, stop guessing.
+
+**Tier 2 — `geo.station`, the entity dimension the reading logs never had (~2,200 rows, <20 MB).**
+
+```sql
+CREATE TABLE geo.station (
+  station_id  int4 GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  stream      text NOT NULL,              -- 'streamflow' | 'sensor' | 'weather'
+  external_id text NOT NULL,              -- USGS siteNo, NWS station id
+  name        text,
+  geom        geometry(Point,4326) NOT NULL,
+  geometry_id uuid REFERENCES geo.geometry,
+  first_seen  date, last_seen date,
+  attrs       jsonb NOT NULL DEFAULT '{}',
+  UNIQUE (stream, external_id));
+CREATE INDEX ON geo.station USING gist (geom);
+```
+
+953 gauges carry 1,417,935 readings — **1,488 readings per station**, each re-storing `siteNo`, a
+46-character `siteName` ("SF COEUR D ALENE R ABV PLACER CR AT WALLACE ID"), `lat`, `lon`, `source` and a
+full GeoJSON Point in a 438-byte blob. This table stores each of those once. Sensors are worse per row:
+1,064 B, with the nested `readings` object repeating `unitCode` and `qualityControl` for all seven measures
+on every reading.
+
+**Tier 3 — one narrow typed table per stream, RANGE-partitioned by month.**
+
+```sql
+CREATE TABLE geo.streamflow_reading (
+  station_id  int4 NOT NULL REFERENCES geo.station,
+  observed_at timestamptz NOT NULL,
+  flow_cfs    real, gauge_height_ft real,
+  percentile  smallint, trend smallint, condition smallint,
+  PRIMARY KEY (station_id, observed_at)
+) PARTITION BY RANGE (observed_at);          -- ≈48 B/row
+```
+
+plus `geo.sensor_reading` (WIDE not tall — the seven NWS measures are always co-observed, so one 56 B row
+beats seven 20 B rows), `geo.weather_observation` on the same pattern,
+`geo.vegetation_observation(cell_id, observed_day, ndvi, cloud_pct, scene_id)` ≈32 B (grid-cell keyed, not
+station keyed), and `geo.fire_detection(detection_id int8 identity, observed_at, acq_day date, geom
+geometry(Point,4326), brightness, bright_t31, frp, confidence, satellite, daynight, scan, track)` ≈104 B
+including the point — fire detections have no station, each detection *is* the event.
+
+**Deliberately NOT one polymorphic `geo.observation` table.** Fire detections (brightness, bright_t31, frp,
+confidence, satellite) and gauge readings (flow_cfs, percentile, trend, condition) share **no** columns and
+differ 2× in cardinality. The cautionary template sits in this same database: `agri.signal_observation` is
+46,068,872 rows, 11 GB heap and **15 GB of index**, one six-column natural-key unique index at 11 GB by
+itself (§0.16.6). **Standing review rule: two streams may share a table only if they share every column.**
+The pressure to unify these five will be constant and must be resisted with that measurement.
+
+**Modelled size delta.** Row-width arithmetic from §0.16.1's ≈780 B/row heap and the per-layer census; the
+target widths are from the DDL above. INFERRED, not measured — the falsification is one `COPY` and an
+`ls -l` (§0.19).
+
+| relation | today | target |
+|---|---|---|
+| streamflow (1,417,935 rows) | ~1,509 MB | ~145 MB — **10.4×** |
+| fire detections (3,022,196) | ~4,696 MB | ~615 MB — **7.6×** |
+| sensors (184,733) | ~320 MB | ~22 MB — **14.5×** |
+| vegetation (185,064) | ~290 MB | ~15 MB |
+| weather (32,223) | ~55 MB | ~4 MB |
+| entity `geo.features` | ~1,000 MB | ~400 MB |
+| `geo.geometry` (3,255,832 rows for ~108 closed versions) | 2,977 MB | ~250 MB at ~255k entity rows |
+| **`geo.drought_areas`** — 995 rows, **493 MB of it TOAST** (compressed polygon payload) | **500 MB** | **500 MB — UNCHANGED. No design item touches it.** |
+| **subtotal, rows above** | 11,347 MB | **1,951 MB** |
+| **`geo` schema, measured relations >100 MB** | **11,389 MB** | **~1,951 MB** |
+
+**Two corrections to this table, both made 2026-08-21 after a completeness review.** *(Recorded rather
+than silently patched, per this file's convention.)* **(1)** The `geo.drought_areas` row was **missing
+entirely**. It is 500 MB — the third-largest `geo` relation — and it is a **rendered map layer with a live
+hourly producer**, so it is not a defensible omission. The design says nothing about its 493 MB of TOAST,
+so its target is recorded as **unchanged**, honestly, rather than assumed away. **(2)** The old totals did
+not add up: the today-column rows summed to 10,847 MB against a stated 10,882, and the target column to
+1,451 against a stated 1,456. Both are corrected above. The 42 MB gap between the 11,347 subtotal and the
+11,389 measured figure is row-width rounding across the six `geo.features` decomposition rows, and is left
+visible on purpose.
+
+*(Graft, from the cold-ledger design's judge: publish this table per-relation rather than as a single
+"~2 GB" assertion. It is the falsifiable artifact that makes "return the cap from 2 GB to 1 GB" checkable
+rather than aspirational, and it is the single most useful number for the owner's cost goal.)* That is
+exactly why the missing row mattered: **this table is the one number the owner is meant to check the
+programme against.**
+
+**The corrected number changes the conclusion, and the old sentence has to go.** It read: "Against
+`shared_buffers` 256 MB and `effective_cache_size` 2 GB, ~1.46 GB is a working set that plausibly fits."
+The real post-extraction `geo` schema is **~1,951 MB — 95% of the 2 GB `effective_cache_size`**, with
+nothing left over. And `effective_cache_size` is not a private allocation: it describes the whole
+container's page cache, which `agri.signal_observation` (26 GB, out of scope per the note above) competes
+for continuously.
+
+**Honest restatement: the extraction cuts the `geo` schema ~5.8× (11,389 → ~1,951 MB), which is a large
+and worthwhile win, but it does NOT by itself produce a working set that fits cache, and it is not on its
+own sufficient to justify lowering the cap back to 1 GB.** Two levers are available if that is the goal
+and neither is currently planned: `geo.drought_areas`' 493 MB TOAST, and `agri.signal_observation`'s 15 GB
+of index. §0.19.6 item 50 (lower the cap) should be read against ~1,951 MB, not ~1,456 MB. The §0.16.9
+caveat still applies on top: cache-fit is a *plausible* mechanism for the 5.57% heap hit ratio improving,
+never a proven one.
+
+#### 0.18.2 Sync protocol
+
+**Watermark: a single global `geo.revision_seq`, stamped on INSERT and re-stamped by a `BEFORE UPDATE`
+trigger.** A wall-clock or `observed_at` cursor is wrong here and the code says why:
+`sql/ingest/reopen_gap_windows.sql` republishes historical windows and caps at five generations *because it
+recurs*, and USDM/ERA5 backfill. A monotone revision is the only cursor that survives history being
+rewritten.
+
+**Known hazard, and it must be designed around rather than argued away.** Sequence values are allocated at
+*statement* time, not commit time. `writer.py:38` sets `INSERT_BATCH_SIZE = 100` and commits one bounded
+batch per transaction, and the hourly forward pass runs concurrently with two durable archive walks. **A
+transaction that allocated revision 1000 can commit after a client has advanced past 1005; those rows
+become permanently invisible to that client.** The winning design originally cited non-transactionality as
+a *benefit* and examined only the benign gap class. That reasoning is rejected. Mitigations, in order of
+preference:
+
+1. **Publish a lagging high-watermark.** The response's `high_watermark` is `min(revision)` over
+   in-flight transactions minus one, not the sequence's `last_value`. Clients never advance past a cursor
+   that could still be overtaken. This is cheap and it is the correct primary answer.
+2. **A nightly drift assertion** (graft, durability lens): any row whose `updated_at` exceeds the last
+   published watermark but whose `revision` does not, fails a check. This catches the real long-term
+   failure — a sixth reading table added in six months **without** the trigger, or a maintenance UPDATE
+   under `session_replication_role = replica`, making rows permanently invisible with no error anywhere.
+   That is the §0.11 matview-OID shape reproduced one level down, and it needs an alarm, not a comment.
+
+**Wire shape.**
+
+```
+GET /api/v1/sync/{stream}?since=<int8>&scope=<hash>&bbox=&from=&to=&limit=5000
+→ 200 { rows:[...], tombstones:[...], next_cursor:<int8>, high_watermark:<int8>,
+        sealed_through:"2026-07", retention_floor:<int8>, complete:true|false }
+     ETag: W/"<stream>:<high_watermark>"    Cache-Control: private, max-age=0
+```
+
+`WHERE revision > $since AND station_id = ANY($scope_stations) ORDER BY revision LIMIT $n` — an index scan
+on `(revision)` within the current partition, stable under concurrent insert. This replaces
+`ORDER BY features.id` + `OFFSET` over a random uuid (§0.17.8). `next_cursor` is the last row's revision,
+never a row count.
+
+**Tombstones.** `geo.tombstone(revision int8 PRIMARY KEY DEFAULT nextval('geo.revision_seq'), stream text,
+entity_key text, observed_at timestamptz, deleted_at timestamptz DEFAULT now())`, written by an AFTER
+DELETE trigger, retained 180 days, **with the retention floor published in every response** (graft, scale
+lens) so a client can tell whether it is inside the guarantee rather than discovering it via a reset. A
+client whose `since` predates the floor gets `410 Gone` and re-seeds from the sealed-month Parquet — cheap,
+because those bytes are on the edge. There is no tombstone mechanism anywhere today, so any local store
+monotonically accumulates rows the server no longer has.
+
+**ORDERING HAZARD — this bit the winning design's own migration and must not be repeated.** The AFTER
+DELETE trigger must be installed **after** the mass extraction completes, or gated on a session GUC the
+migration sets. Phase B5 alone deletes 1,417,935 water-gauges rows from `geo.features`; the full extraction
+deletes ~4.84M. With the trigger live, that emits ~4.84M tombstones instructing every synced client to
+delete data that merely **moved tables** — silent, client-side, no server error, no test.
+`geo.tombstone` also needs a named **pruner**, not only a writer; a retention policy with no pruner is the
+`interventions` pattern (registered everywhere, produced by nothing).
+
+**Scope is a durable subscription, not a request argument.** Today bbox and date are arguments and nothing
+persists what matters to a user, so there is nothing to diff a watermark against and eviction is
+relevance-blind LRU. Persist `{scope_id, bbox, streams[], day_from, day_to, station_ids[]}` in IndexedDB
+and send a hash. The server needs it only to resolve `station_ids` (a GiST lookup over ~2,200 rows,
+sub-millisecond) and to name sealed months; it does **not** persist per-client sync state — that is O(users)
+storage and the first thing to break at scale. Scope resolution is its own endpoint,
+`GET /api/v1/scope/resolve?bbox=`, and its answer is cacheable by bbox.
+
+**Bbox quantizes to the z8 tile envelope(s) covering the viewport** (graft, scale lens), not `toFixed(6)`.
+This kills D6 *and* is the precondition for any CDN hit rate: a z8 key is stable across any pan inside
+~150 km, and the key space over the PNW extent is ~70 keys rather than unbounded. It is probably the single
+largest perceived-speed win available on the client.
+
+**Capabilities become the watermark index.** `getSliderCapabilities` is already a server-computed,
+server-memoized, day-granularity per-layer watermark — 45,807 B, 6.75-10.69 s cold, no ETag, and **not
+persisted**. Extend it with `{stream: {high_watermark, sealed_through, earliest, latest, retention_floor}}`,
+gzip it (~6 KB), give it an ETag, and persist it. It is the single object a client fetches first and the
+only one it must have.
+
+**How a client offline for a month recovers.** (1) Fetch capabilities; compare `retention_floor` against
+its stored cursor. (2) If inside the floor: one or more `?since=` pages, plus tombstones, done. (3) If
+outside: `410 Gone` → discard the hot-window store, re-seed the sealed months from Parquet by content hash
+(most are already in `cold-artifacts` and are immutable, so this is usually a *diff*, not a download), then
+one `?since=<start of the current open month>` page. (4) **`410`/`resetRequired` must be a counted metric,
+not merely a response field** (graft, scale lens): if clients start re-seeding in the wild, the 180-day
+floor is wrong and nothing else in the system will say so.
+
+**Conflicts.** Reads are immutable artifacts or server-authoritative rows, so read conflicts do not exist.
+Writes exist only for contributions/interventions, where `src/lib/offline/sync-queue.ts` (`plantgeo-offline`
+v2, stores `sync-queue` + `sync-conflicts`, `SyncOperation`, `isSnapshotStale`, the 409 backstop, the
+`OfflinePanel` resolution UI) is **already fully built and has no producer** — nothing ever enqueues, so
+`pendingCount` is structurally always 0 and `SyncIndicator` reports a state that cannot occur. Wire the two
+mutation call sites to enqueue with the `updatedAt` they read and replay it as a precondition; the server
+returns 409 on mismatch. **Do not design a new mechanism, and do not build a CRDT/OT/merge layer** —
+last-writer-wins is not acceptable for a moderation queue and the server-side precondition is the whole
+answer, at roughly 40 lines because everything downstream exists.
+
+**Steady-state motion of the entire warehouse**, from the 90-day per-day census (§0.16.3): streamflow
+7,977-17,674 rows/day · sensors ~7-9k · fire-detections 1,357-4,278 · weather 630-2,528 · vegetation 18-93.
+At target widths that is **~1.4 MB/day raw, ~350 KB/day gzipped, unscoped, all streams combined.** A client
+polling once per 60 s pulls ~120 streamflow rows ≈ 1.7 KB raw / ~600 B gzip.
+
+#### 0.18.3 Client storage — extend `query-persister.ts`, do not rebuild it
+
+`src/lib/cache/query-persister.ts` is already a real local-first store, not an HTTP cache: two-store split
+(payload + ~100-byte metadata row, so a sweep never deserializes a ~98 KB payload), running byte totals,
+serialized capacity passes, a quota ceiling **learned from a refused write** rather than guessed per
+browser, a `navigator.storage.estimate()` backstop, LRU eviction, SWR revalidation with a generation guard
+and a 60 s/entry floor, and layer/day attribution stamped at write with a `JSON.parse(cacheKey)` fallback
+verified against 504 live production entries. Its 24 KB AGENTS.md carries the production profile behind
+every constant (504 entries / 49.57 MB / ~98 KB per entry; 235 of 504 expired-but-resident before the sweep
+existed; `getSoilField` alone 137 of 504). **A blank-page design rebuilds all of that and lands somewhere
+worse.** Three additions, zero replacements.
+
+**1. A third object store, `cold-artifacts`** (IndexedDB v3, an in-place upgrade of exactly the kind v2
+already performed). Key = content hash (`sha256:off:len`), value = the raw `ArrayBuffer` of a Parquet row
+group or a PMTiles byte range, plus a metadata row in the **existing** `StoredEntryMetadata` shape so the
+**existing** sweep evicts it with no new eviction code. Immutable-by-hash means **no TTL at all** — evicted
+by relevance and LRU, never by expiry.
+
+**2. One quota arbiter — this closes a live self-destruct bug.** Today `MAX_TOTAL_CACHE_BYTES = 512 MB` in
+`query-persister.ts` and `CACHE_SIZE_LIMIT_BYTES = 500 MB` in `sw.js:5` are two independent budgets against
+**one** origin quota. Once IndexedDB alone passes 500 MB — which its own budget explicitly permits, and
+which `src/lib/cache/AGENTS.md` justifies as "roughly a year of daily entries" — `sw.js:107` deletes 10% of
+the tile cache on **every subsequent tile write, forever**, while never reclaiming a byte of what actually
+filled the quota. The offline tile cache silently self-destructs and nothing observes it. Fix: a new
+`src/lib/cache/storage-budget.ts` owning `navigator.storage.estimate()` and the learned ceiling, handing
+out shares — **cold artifacts 40% / query cache 30% / tiles 30%**, tunable. `MAX_TOTAL_CACHE_BYTES` becomes
+a share, not a constant; keep the 16 MB `MIN_CACHE_BUDGET_BYTES` floor.
+
+**3. Freshness keyed on revision, which retires the TTL classes** and with them open defect C1. Today
+`resolveCacheTtlMs` (`:303-310`) picks `HISTORICAL_TTL_MS` (30 days, `:68`) vs `LIVE_TTL_MS` (5 min) by
+`date < serverCurrentDate` — and every layer opens on its *latest observed* day, which is by definition
+before today, so the 30-day class applies universally and the name means nothing. Replace the predicate: an
+entry is fresh iff `entry.revision >= lastSeenHighWatermark[stream]`, and the watermark arrives with the
+persisted capability payload on every cold start. Immutable artifacts: no TTL. Live edge (no `date` in the
+input): 5 min. Background revalidation stays — its own AGENTS.md correctly calls it a correctness
+mechanism, not a nicety — but becomes a no-op whenever the watermark has not moved.
+
+**Eviction should be relevance-ordered, not LRU** (graft, cold-ledger design). LRU is relevance-blind,
+which is precisely wrong for "only data that matters to the user". Score by scope membership × layer
+active × decay by day-distance from the slider, and never evict an in-scope immutable artifact before an
+out-of-scope mutable one. Every input already exists in the metadata store (`layerId`, `day`,
+`approxByteSize`, `lastAccessedAt`). **Caveat carried from the durability lens: a scoring bug evicts
+in-scope data and presents as a cache miss, never an error.** Keep LRU as the tiebreaker and log evictions
+of in-scope entries.
+
+**Offline guarantee, stated as a testable claim.** Today the honest answer to "can it serve a map view
+offline" is an unambiguous **no**: the client persists only 9 tRPC procedures
+(`CACHEABLE_LAYER_QUERIES` — streamflow, groundwater, vegetation index, drought, soil field, climate field,
+soil survey, watersheds, weather-for-bbox), no basemap, no vector tiles, no fires, no time axis — and
+"Download this area for offline" downloads **only Esri satellite imagery** (`tile-cache.ts`'s
+`TILE_TEMPLATES` has exactly one entry; a 500-tile walk is ~7 MB). A user who explicitly asks for offline
+coverage gets aerial photographs with no cartography and no data on them.
+
+After this design, following one online session with a scope set, a **region pack** yields: basemap PMTiles
+byte ranges for the scope bbox (~80 MB for PNW z0-12), per-layer geometry for the entity layers (~20 MB;
+measured z6 tiles: burn_severity 105,636 B, watershed 31,274 B, evacuation_zone 15,153 B), station
+registries (~2 MB), sealed months for the scope window (~25 MB/stream/month, **INFERRED**), the hot window
+as of last sync, and the persisted capabilities so the slider has a real domain. **≈160 MB for a 30-day PNW
+pack.** It does **not** yield live-only sources (`fire_risk_tiles`, `sensor_tiles`) — and **the UI must say
+so rather than render a silently empty map.**
+
+**Reading Parquet in the browser: hyparquet, not DuckDB-WASM.** hyparquet is pure JS at tens of KB and does
+the one thing needed — range-read specified row groups with a column projection. DuckDB-WASM is ~30-35 MB
+of wasm on a cold load, inside a deliberate bandwidth cost control; that is self-defeating. DuckDB stays
+where it already lives (`services/agri-data-service/pyproject.toml:28`, `duckdb>=1.1,<2`), server-side and
+build-side, where the consumers genuinely are `.sql` files. **hyparquet is the one unproven library bet in
+this design** and it is gated accordingly in §0.19, with a pre-chosen fallback: a Cloudflare Worker that
+slices the row group server-side and returns JSON — still serverless, still edge-cached, one Worker, no
+wasm.
+
+**Budget integration.** Every artifact fetch goes through `createBudgetedFetch` on named lanes — `"tiles"`,
+`"sync"`, `"scrub"` (foreground, user waiting), `"prefetch"`, `"revalidate"`. Merging
+`query-persister.ts`'s private `MAX_CONCURRENT_REVALIDATIONS = 2` semaphore (`:801-832`) onto the
+`"revalidate"` lane closes the gap its own `src/lib/net/AGENTS.md` names, and makes background
+revalidation visible in `getRequestBudgetSnapshot` so it can never head-of-line-block a foreground paint.
+**Budget by origin class** (graft): R2/Cloudflare fetches cost the 2 GB box nothing and belong on an
+`"r2"` lane with a ceiling of ~12; origin fetches (Martin, Next) keep the tight ceiling. Raise the global
+cap 4 → 8 only because lanes now mean something. The SW-mediated tile prefetch — currently a 500-request
+serial walk with no rate limit, no backoff, no abort, and invisible to `getRequestBudgetSnapshot` — moves
+onto a lane too.
+
+#### 0.18.4 What moves to Parquet on R2, and what must not
+
+**The monthly RANGE partition IS the Parquet file.** `geo.streamflow_reading_2026_07` exports to
+`r2://plantgeo-parquet/observations/stream=streamflow/month=2026-07/part-<sha>.parquet`. Nothing is
+transformed, reshaped or re-aggregated — **export a whole partition, not the result of a SELECT** (graft,
+scale lens): it eliminates the class of bug where the exporter's projection drifts from the table schema,
+and makes verify-then-detach a single coherent operation. This is exactly why the model fix must come
+first; exporting today's jsonb heap would produce files whose dominant content is duplicated station
+metadata and a second copy of every geometry.
+
+**Sealed vs live is the cold/warm boundary.** A month is *sealed* when `now()` passes its end plus a
+**7-day reopen grace** (the gap-reopen lane caps at five generations, so 7 days covers the observed
+republish window; a late republish bumps a generation suffix and rewrites the one file). Sealed months get
+`Cache-Control: public, max-age=31536000, immutable` — the exact header
+`tiles.aevani.com/pnw-2026-08-02.pmtiles` already carries. The current month is served only from Postgres,
+via `/api/v1/sync`.
+
+**Layout**, with `manifest/v1/latest.json` as the **only** mutable object (~20 KB, `max-age=60`, ETag);
+every data object carries its sha256 in the key. Split the row-group index into per-`(layer,month)` side
+files the moment `latest.json` exceeds ~100 KB gzipped — 11 layers × ~50 months × ~30 row groups × ~80 B is
+~1.3 MB, which would make the manifest larger than the 45,807 B capabilities payload it exists to replace.
+Publish atomically by copying `scripts/raster/publish-soil-rasters.py`'s discipline: immutable `<sha>.json`
+first, mutable pointer **last**, superseded objects retained 30 days so a client mid-sync against an older
+manifest keeps working.
+
+**What leaves Postgres.** All historical observation reads (the `MAX_ROWS = 2000`-bounded `DISTINCT ON`
+readers in `environmental-read-model.ts` collapse to "latest row per station in the current month", a
+partition-local index scan — today `readStreamflowGaugesOnDay` does `DISTINCT ON (f.properties->>'siteNo')`
+and `readWeatherOnDay` does `DISTINCT ON (ST_X(f.geom), ST_Y(f.geom))`, **undoing the modelling error on
+every single request, sorting on an unindexed jsonb extraction**). The four broken agent SQL tools
+(§0.16.4) repoint at DuckDB over `r2://` — DuckDB was chosen over Polars precisely because these consumers
+are `.sql` files with real spatial needs, and that reasoning holds here and nowhere else. **Delete those
+four files last**: they are the only surviving specification of the dropped rollup's grain and column set.
+And the census/rollup work the matviews serve moves off the 2 GB box entirely.
+
+**What must stay in Postgres, permanently — hand-waving this is how serverless designs fail.**
+
+1. **All writes.** Ingest upserts, `ON CONFLICT`, the `agri.job_*` durable ledger, transactions. DuckDB is
+   single-writer; Parquet is not a database.
+2. **The live edge.** A month still accumulating has no stable content hash. Definitionally un-artifactable.
+3. **Real spatial predicates over the hot window.** Point-in-polygon for soil-survey and watershed
+   containment, `ST_Intersects` for bbox scoping on `ix_features_layer_geom` and the `geo.station` GiST.
+   Parquet has no spatial index; a bbox/geohash column prunes row groups and nothing finer. After
+   extraction these run against ~250k rows, not 5.09M. Deep-history spatial questions route to DuckDB with
+   a **mandatory bbox + date bound enforced in the tool signature, not by convention**.
+4. **Martin MVT for the six entity-backed tile layers.** Retained — this design does not retire Martin.
+5. **Identity and mutable configuration.** Auth, teams, API keys, `geo.layers` (11 rows, mintable at
+   request time by `layersRouter.create`), contributions, moderation. `contributions.listPendingReview`
+   (`:82`) deliberately queries features across all layers and `submitObservation` (`:7`) has no equivalent
+   anywhere — write-heavy, latency-sensitive, unfinished scope. Not dead code, not a candidate.
+6. **Anything needing a serializable cross-stream read.** There is nothing like this today. Recorded so it
+   stays that way — introducing one punctures the design.
+
+**Registering the export lane is not optional** (graft, durability lens, and no design supplied it).
+`export-parquet` must appear **both** in `BACKFILL_LANES` (`ingest/lanes.py:228-230`) **and** as a
+`StreamDefinition` with a cadence. Without the first, `jobs-pulse`'s durable pass never discovers it and
+`jobs-plan-gaps` can never turn a missed stream-month into a claimable work item; without the second,
+`validate-streams` never reports the hole. A job-ledger work item alone gives a producer with no gap
+detection — two-thirds of the rot pattern that already afflicts 9 of 11 layers (§0.16.5).
+
+**And the freshness contract must reach past the stream catalog's blind spot** (graft, promoted to
+non-negotiable). The manifest carries `built_from_max_updated_at` per stream/layer, and `readiness.py`'s
+new Parquet section **fails** — not warns — when Postgres `max(updated_at)` exceeds it by more than that
+stream's declared cadence. But `validation/models.py:143-146` gives soil-survey, watersheds, burn-severity
+and interventions `kind="reference"` with **no** `publication_cadence_days`, so `validate-streams` applies
+zero staleness check to exactly those four. **Add an explicit `expected_refresh_days` to those four
+`StreamDefinition`s in the same change**, or every artifact built from them inherits the identical blind
+spot that has left watersheds frozen since 2026-08-07 with a complete producer and no invoker.
+
+**R2 write is not new capability.** `scripts/deploy-pmtiles.sh` exists and already takes
+`R2_BUCKET`/`R2_ENDPOINT`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`; `scripts/raster/publish-soil-rasters.py`
+already publishes six SoilGrids COGs under exactly that contract; `tiles.aevani.com` already serves a
+1.41 GB archive with correct `immutable` headers and working ranges. What is missing is credentials on the
+cron service and an export job. **Open risk:** `plantgeo-parquet` (id `79d5b0c0-059a-40a9-a90a-ef8d15bb5828`,
+region `sjc`) is a **Railway** bucket, not obviously the Cloudflare-fronted R2 that serves
+`tiles.aevani.com`. If it is not CDN-fronted, every "edge-cached" claim degrades to origin latency. First
+`curl -I -H Range -H Origin` against a published object settles it; the design does not depend on which
+bucket, so publish to the account already serving `tiles.aevani.com` if needed.
+
+**Also gate on the CDN itself.** `cf-cache-status` is **DYNAMIC, not HIT**, on both PMTiles ranges tested
+despite `max-age=31536000, immutable` and a strong ETag (§0.17.5). If a Cache Rule cannot change that, the
+serverless story is "R2 origin fetches with extra steps" and the byte model below is wrong. **Prove HIT
+before writing a single Parquet byte.**
+
+#### 0.18.5 Bandwidth arithmetic — today vs target
+
+**COLD, today, default camera** (all measured, §0.17):
+
+| item | bytes | latency |
+|---|---|---|
+| app shell (HTML 3,648 gz + 16 JS/CSS chunks 287,108 gz + 6 woff2 187,824) | **478,580** | 0.20 s TTFB |
+| terrain DEM, 8-12 × 76,714 B | ~770,000 | 0.59 s each |
+| Martin composite z6/11/22 | **4,063,189** | **36.9 s cold** / 1.0 s warm — **and it does not return at all with gzip** |
+| `/api/fires` (no bbox, no compression) | **793,110** | 7.80-20.02 s |
+| `getSliderCapabilities` (no compression, no ETag) | **45,807** | 6.75-10.69 s |
+| PMTiles ranges | ~200,000-400,000 | 0.25-0.28 s, `cf-cache-status: DYNAMIC` |
+| **total** | **6,550,686 B high / 2,287,497 B low** — **≈2.3-6.6 MB** | **26 s to never** |
+
+*(Sums shown 2026-08-21; the row previously read "≈2.5-6.4 MB" with no derivation.* **High bound** =
+478,580 + 770,000 + 4,063,189 + 793,110 + 45,807 + 400,000, i.e. the composite **returns**. **Low bound**
+= 478,580 + 770,000 + **0** + 793,110 + 45,807 + 200,000, i.e. the composite **returns nothing** — which
+is the case today for most cameras, and is the outage. Note what that means: **the low bound is the broken
+state, not a better one.**)
+
+**COLD, target, same camera and layer set:**
+
+| item | bytes | note |
+|---|---|---|
+| app shell | 478,580 | unchanged; already `immutable` + content-hashed |
+| terrain DEM | ~770,000 | unchanged (third-party, already cached well) |
+| Martin composite, day-bounded + `LIMIT` + gzip | ~85,000 | measured proxy: the same composite at z8/43/93 is 203,311 raw / **84,634 gzip** |
+| `/api/fires` → bbox-scoped + gzip | ~70,000 | INFERRED at ~10:1 GeoJSON compression, scoped to viewport |
+| capabilities + watermarks, gzipped + ETag'd | ~6,000 | from 45,807 raw |
+| PMTiles ranges | ~200,000-400,000 | same bytes, edge-cached once the Cache Rule lands |
+| **total** | **1,809,580 B high / 1,609,580 B low** — **≈1.6-1.8 MB** | **target < 3 s to useful paint** |
+
+*(Sums shown 2026-08-21. The two bounds differ only in the PMTiles range figure, 400,000 vs 200,000.)*
+
+**−30% to −72% bytes, depending on whether the composite returns today.** *(Corrected 2026-08-21; this
+read "roughly −70%", which is true only against the upper bound.* 1,809,580 vs 6,550,686 = **−72.4%**;
+1,609,580 vs 2,287,497 = **−29.6%**. *The single figure was the one most likely to be quoted onward — it
+is the headline the owner would hear about the bandwidth goal — so it gets the range, not the flattering
+end of it.)* And note the honest reading of the low end: the −30% case is measured against a **broken**
+today in which the composite returns nothing, so the target ships *more rendered layers* for 30% fewer
+bytes, which is a better result than the number looks.
+
+But **the byte cut is not the point and should not be sold as such**: the 87×
+cold/warm ratio on identical bytes (§0.17.2) proves the pathological tail is Postgres page-cache misses. The
+tail is removed by the `statement_timeout` + `LIMIT` + day-bound work in §0.17.10, not by compression.
+
+**WARM (second visit, same device):** app shell 0 (immutable), tiles 0 within Martin's 5-minute expiry then
+304, sealed observations 0 (immutable in IndexedDB), capabilities ~200 B via 304. **≈20-80 KB, first paint
+from disk.** Today a warm load must revalidate *every* tile on *every* load because Martin sends an ETag
+and no `Cache-Control`, and tRPC responses carry neither (and `revision` is hardcoded null at every
+producer), so every background revalidation is a full re-fetch and full re-serialize of a ~98 KB payload.
+
+**STEADY STATE, one open tab, one hour:** today `/api/fires` alone is 793,110 × 30 = **23.8 MB/hour =
+571 MB/day/tab**, plus a 5-minute 45,807 B capabilities poll, plus every pan re-minting cold cache keys via
+`toFixed(6)`. Target: one delta poll per 60 s per active stream — streamflow at ~12,000 rows/day steady is
+~120 rows/min ≈ 1.7 KB raw / **~600 B gzip**; all five streams unscoped ≈ **350 KB/day gzipped**. Against
+571 MB/day that is roughly **three orders of magnitude**, achieved by not re-sending data the client already
+holds rather than by refusing to send data at all.
+
+**Scrubbing the slider** — the interaction the whole time-slider programme exists to serve: a day already
+in IndexedDB costs **0 bytes, 0 ms**; a new day costs one range read per active layer, ~40-80 KB, with no
+footer round trip because the row-group index is inlined in the manifest. Today the same scrub is a full
+tRPC re-fetch at ~98 KB/entry against a 5.57%-hit-ratio heap.
+
+**Server-side cost at scale.** Today tile cost is O(N) Postgres queries against 8 pool slots at 0.3-102 s
+each, so the system effectively saturates at roughly **one user** — 6-9 composite tiles on first paint
+against an 8-slot pool. That has been hidden by the measured reality that both services sit essentially
+idle across a full 7-day window (`plantgeo-main` CPU avg 0.0001 / mem avg 111.0 MB; `plantgeo-martin` CPU
+avg 0.0031 / mem avg 177.5 MB, 10,081 sample points each), which independently settles the "~1 concurrent
+user" assumption. Target: Postgres serves the live edge and writes only; sealed reads are CDN. **Honest
+limit of this design: the sync endpoint is `private, max-age=0`, so it is O(N) in users, and its stated
+ceiling is ~100 concurrent, not 100k.** If that ceiling is ever approached, the cold-ledger design's fix is
+the graft to take: **drop the per-client cursor from the live-edge URL** and return the full bbox-scoped
+window keyed on the z8 tile alone, letting the client dedupe locally — that collapses the key space to
+~350 URLs refreshed once per 60 s, constant in N.
+
+One more measured item worth carrying: **the real database is `plantgeo-spatiotemporal-db`**, not the
+similarly-named near-idle `Aevani-Postgress` — querying the wrong one silently produces reassuring
+numbers. Its 7-day memory is **avg 1.91 GB, max 3.0 GB** against a stated 2 GB cap. Either the cap was not
+in force for the whole window (it was raised 2026-08-18, mid-window) or Railway's sampled metric reads
+above the enforced cgroup ceiling just before an OOM restart. **UNVERIFIED which.** Worth settling before
+claiming the cap holds.
+
+#### 0.18.6 What this design does NOT claim
+
+- It does not claim the byte cut fixes the outage. §0.17.10 fixes the outage; this fixes the model.
+- It does not claim the ~1,456 MB target makes the working set "fit cache" — see §0.16.9's refutation.
+- The Parquet size arithmetic (~25 MB/stream/month, ~60-150 MB for the whole observation corpus) is
+  **INFERRED from row widths, never measured.** One `COPY (SELECT … ) TO 'x.parquet' (FORMAT PARQUET,
+  COMPRESSION ZSTD, ROW_GROUP_SIZE 100000)` and an `ls -l` falsifies or confirms it in minutes. Threshold:
+  **>60 MB/month kills the cheap per-day range read**, and the fallback is smaller row groups (25k),
+  int16-scaled floats, and `(observed_day date, minute_of_day int16)` instead of `timestamptz`.
+- It does not claim hyparquet works here. That is a 30-line spike, and it is gated.
+- It does not claim R2 is edge-cached. That is one Cache Rule and two curls, and it is gated.
+
+#### 0.18.7 What the panel agreed on across all three designs
+
+Worth recording, because unanimity across independently-constructed designs is itself evidence:
+
+- **Split `geo.features` by shape.** All three. The 95.1% figure is the pivot.
+- **`properties.geometry` dies; `geom` survives.** All three.
+- **Native `external_id` + `observed_day`; the two expression indexes go.** All three.
+- **Drop `idx_features_geom`.** All three. **Caveat added 2026-08-21: all three designs inherited the same
+  premise — `idx_scan = 0` read as "never used" — from §0.16.6, and that premise is now known to describe a
+  window of unmeasured length, not a lifetime. Unanimity across three designs is not independent evidence
+  when all three read the same table.** The drop is still the right call on the balance of evidence (two
+  independent samples at 0/0 while every other index advanced; full coverage by `ix_features_layer_geom`;
+  87.4% of its content in two layers no tile function reads by geometry) — but it now carries the
+  ≥7-day-uptime precondition on §0.19.3 item 11 rather than shipping on the strength of the consensus.
+- **Per-stream narrow tables, never one polymorphic observation table**, with
+  `agri.signal_observation`'s 15 GB of index as the proof. All three.
+- **Keep and extend `query-persister.ts`; one quota arbiter; retire the TTL classes.** All three.
+- **Re-aim the request budget at tiles; do not remove it.** All three.
+- **Martin `statement_timeout` first, before any measurement.** All three.
+- **Do not raise `shared_buffers`.** All three.
+- **The offline write queue needs a producer, not a merge algorithm.** All three.
+
+#### 0.18.8 Recorded rejections — do not re-litigate
+
+1. **The `geo.features` LIST-partition swap on `layer_id` (`drizzle/0030`-`0033`,
+   `scripts/partition-features.mjs`, `docs/pending-migrations/0033-features-partitioning.md`). SHELVED, not
+   deleted — and this is the largest deliberate reversal in the programme.** Three independent reasons:
+   **(a)** the partitionwise probe measured **byte-identical plan text** for all three census matview shapes
+   with both GUCs on and off, because each joins the never-co-partitionable 11-row `geo.layers` before
+   aggregating (§0.16.7) — the exact workload blowing the cap gets zero relief; **(b) — WEAKENED 2026-08-21,
+   do not lean on this one:** all six tile functions already plan as a cheap composite-index `Nested Loop`
+   **at z10**, so tile latency *at z10* is not a justification either. **The EXPLAIN was never taken at z5
+   or z6, which are the zooms that actually hang** (§0.17.2: z5/5/11 status 000 at 25 s; z5/4/10 at 102 s;
+   `sensor_tiles` z6/11/22 = 3.9 MB raw, against a z10 plan whose total cost of 56.17 implies a handful of
+   rows). **Ground (b) is therefore not evidence for shelving as stated** — the shelve recommendation rests
+   on (a) and (c), which are unaffected. The z5/z6 `EXPLAIN` is read-only and named in §0.16.7; run it
+   before anyone re-opens this; **(c)** the extraction deletes 95.1% of the rows the swap exists to organise, leaving a ~250k-row
+   table for which partitioning is pure overhead. Against that: a 5M-row copy, ~6 GB of new relation, a
+   queued `ACCESS EXCLUSIVE` rename that blocks every reader behind it while it waits, six matviews to drop
+   and rebuild because their rewrite rules bind **by OID** (§0.11), a mandatory DEFAULT partition and drain
+   (§0.4), a PK change that must land in the same commit, `max_locks_per_transaction` 128 against ~145
+   relations, and the **permanent** loss of `CREATE INDEX CONCURRENTLY` on the parent. **What survives:**
+   `drizzle/0033`'s constant-`layer_id` pruning is still worth registering on its own merits as a plain
+   function rewrite; RANGE-by-month partitioning **is** used, on the new observation tables, where it is
+   free (create-empty, no copy) and maps 1:1 onto the Parquet layout; `partition-features.mjs` is the right
+   driver for those. Revisit `geo.features` partitioning only if extraction slips badly — and then it is
+   cheap, because the table is small.
+2. **Any engine migration.** Refuted across 14 agents (`docs/research/timescale-pivot-2026-08-17/report.md`):
+   Martin has no ClickHouse support, VictoriaMetrics is float64-only, and `pg_ivm`/`pg_partman`/`pg_duckdb`/
+   `citus` are not installable on Railway managed PG. A fixed constraint, and correct.
+3. **Iceberg / DuckLake / R2 Data Catalog.** 15+ months of open beta with no GA date, and the catalog is
+   the thing you would have to operate — which is the thing being removed. A Hive-partitioned prefix plus a
+   hand-written manifest gives atomic publish (write the pointer last), content addressing and time travel
+   in ~200 lines.
+4. **Materialized views, continuous aggregates and TimescaleDB in the target.** The owner's stated goal,
+   and the evidence agrees: `mv_signal_observation_day` has never once succeeded, `mv_soil_survey_union` has
+   never produced a row, `mv_soil_survey_grid` has been failing 10+ days **and neither soil matview has a
+   single reader** (§0.16.4, 2026-08-21 — both `usda-soil.ts` readers are documented as deliberately NOT
+   repointed, with grain-mismatch reasons), and the perpetual refresh run is 74 items / **70 failed** /
+   2 succeeded / 2 unaccounted (§0.16.4). Narrow reading tables make the census a native
+   `GROUP BY observed_at::date` over 48-byte rows; there is nothing left to pre-aggregate. TimescaleDB has
+   one hypertable at 0 chunks / 40 kB, so removing it is bookkeeping, not relief — sequence it last and
+   separately so any relief stays attributable (§12.7).
+5. **A polymorphic `geo.observation` table.** See §0.18.1 and the standing review rule.
+6. **A generic sync engine (ElectricSQL / PowerSync / Zero).** They solve bidirectional row-level sync over
+   a *live* Postgres — the opposite problem. Here 95% of the data is immutable append-only history that
+   wants CDN economics, and each adds a stateful server, which is what is being removed.
+7. **A CRDT / OT / merge-conflict layer.** The offline mutation queue has no producer; `pendingCount` is
+   structurally always 0. Server precondition + 409, using the machinery that already exists.
+8. **DuckDB-WASM in the browser.** ~30-35 MB of wasm inside a bandwidth cost control, to read a file whose
+   own footer already carries the index.
+9. **Removing or loosening the request budget as the fix for slowness.** Provably never sees a tile request
+   (§0.17.6). Re-aim it.
+10. **Raising `shared_buffers`.** 256 MB against a 7.9 GB table on a 2 GB container that also hosts a 26 GB
+    relation. Shrink the working set. `effective_cache_size` = 2 GB stays deliberately untouched.
+11. **`CLUSTER geo.features USING ix_features_layer_geom`.** Would buy most of the locality the 0.235
+    `layer_id` correlation is missing, but takes `ACCESS EXCLUSIVE` on 7.9 GB under live ingestion — and
+    extraction makes it moot by removing the scattered rows.
+12. **Rebuilding the client cache layer.** §0.18.3.
+13. **Fixing C1 by retuning `HISTORICAL_TTL_MS`.** The predicate is broken, not the constant.
+14. **Registering `drizzle/0033` as part of the acute fix.** Six functions replaced at once; one bad
+    function 404s the whole composite.
+15. **Deleting the four `mv_signal_cell_daily` consumer SQL files now.** They are the only surviving
+    specification of the dropped rollup's grain. Deleted **last**, after the replacement serves.
+16. **Real tombstones on the *cold* lane.** A month file is the truth for its month and entity layers ship
+    full snapshots, so absence means deletion for free. Tombstones exist only for the hot window.
+    Breaking point, stated so it can be detected: an entity layer above ~1M rows, or a month file large
+    enough that rewriting it for one deletion is wasteful.
+17. **Server-side per-user sync state.** No `sync_state` table, no per-client cursor storage, no
+    change-tracking triggers beyond the revision stamp. O(users) storage is the first thing to break.
+
+---
+
+### 0.19 Programme plan and gates
+
+One ordered plan, merging §0.13's outstanding list with the §0.18 architecture. Gate classes:
+**code-safe** (edits files, nothing applied) · **read-only** (queries production, no writes) ·
+**prod-mutating** (changes production state) · **deploy-gated** (needs a deploy or a rebuild) ·
+**owner-decision** (needs a human call).
+
+**NUMBERING CONVENTION.** Items **1-50** are the original programme and are cited by number from other
+sections, so they are **never renumbered**. Items added later carry a **letter suffix** on the item they
+sort after — `2a`, `11a`, `37a` — plus **item 0**, which sorts before item 1. Eight such items were added
+2026-08-21 to close scope gaps a completeness review found: **0** (browser baseline), **2a** (the gzip
+hang), **4a-4d** (ingestion — the owner's first stated goal, which had zero numbered items), **11a** and
+**37a** (`agri.signal_observation`, 70% of the database and previously in no item), **13a** (C1), and
+**43a** (`drizzle/0035`). Where a gap was closed by a *precondition* rather than a new item, the change is
+in the existing row.
+
+#### 0.19.0 READ THIS FIRST — the production cutover was deliberately NOT executed
+
+**This programme executed no production cutover.** Specifically, **none** of the following happened:
+
+- the `geo.features` partition swap (`scripts/partition-features.mjs --phase=create/copy/index/trigger/verify/swap/analyze/adopt`)
+- the post-swap matview re-creation
+- any migration registration in `drizzle/meta/_journal.json` (journal head is still **idx 29**;
+  `0030`-`0036` exist on disk and are all dormant)
+- any `src/lib/server/db/migration-contract.ts` re-pin
+- any deploy of `plantgeo-main` or rebuild of `plantgeo-martin`
+- any Martin restart
+- any cron quiesce window
+- any `ALTER SYSTEM`, `ALTER ROLE`, DDL, DML, `VACUUM`, `REINDEX` or `REFRESH` against production
+
+Production is untouched by this programme except that read-only probes ran and **left leaked Martin
+backends behind** (§0.17.3) — those need `pg_cancel_backend()`.
+
+**What an operator runs, in order, when the owner opens a window.** This list assumes the owner has decided
+to proceed with the *partition swap*, which §0.18.8 item 1 recommends **shelving**. If the swap is shelved,
+steps 3-9 drop out entirely and the window is only steps 1-2 and 10-12.
+
+1. **Quiesce.** Stop `plantgeo-ingest-cron`, `plantgeo-cron-mtbs`, `plantgeo-cron-soilgrids`, and pause
+   `plantgeo-main`. §0.15 measured **+11,382 rows in hours across seven of eleven layers** — the quiesce is
+   not optional politeness, and `--phase=verify`'s per-layer count equality can only be trusted against a
+   quiesced database.
+2. **`pg_cancel_backend()` any leaked Martin backends**, then confirm `pg_stat_activity` is quiet.
+3. **RE-RUN `node scripts/partition-features.mjs --phase=plan`. This is mandatory and it is not a
+   formality.** Two things move under you: (a) the census (see step 1), and (b) **the dependent-matview
+   list is a function of migration registration order** — the catalog reported **six** dependents on
+   2026-08-20, but registering `drizzle/0031` first makes it **seven** (`mv_feature_observation_day_axis`
+   appears only once 0031 lands). §0.11's OID trap is a silent-wrong-answer bug: a matview left pointing at
+   `geo.features_legacy` reads stale data forever with no error. **Use the list this run prints, never the
+   one written down in §0.11 or §0.15.**
+4. `--phase=create`, `--phase=copy` (with `--catchup`), `--phase=index`, `--phase=trigger`.
+   **Chunk index creation across transactions** — `max_locks_per_transaction` is 128 and the swap touches
+   ~145 relations (§0.13 item 5).
+5. `--phase=verify`. Per-layer counts must match exactly. They will not if step 1 was skipped.
+6. `--phase=swap`, then `--phase=analyze`.
+7. **`node scripts/recreate-features-matviews.mjs --phase=plan`, then `--phase=recreate`, then
+   `--phase=verify`.** Built this run (§0.19.1). It walks `pg_depend`/`pg_rewrite` outward from
+   `geo.features_legacy` at any depth, so it catches plain views too — notably
+   `geo.v_observation_day_census` (`drizzle/0032`), which `DROP MATERIALIZED VIEW … CASCADE` would destroy
+   silently. `--phase=verify` passes only when **no relation anywhere still resolves to the legacy heap**.
+   Note `mv_soil_survey_union` re-creating empty is **expected, not a regression** (§0.16.4) — do not
+   roll back a good swap over it.
+8. **The §0.8 step-6 smoke test is invalid as written** and must be run in this order: re-create
+   `mv_layer_feature_stats` **first**, *then* diff the 11 counts. Diffing before re-creation reads the
+   legacy heap and matches trivially.
+9. `--phase=adopt`. `--phase=rollback` exists if any step fails.
+10. **Register migrations.** Each registered migration must update `drizzle/meta/_journal.json` **and**
+    `src/lib/server/db/migration-contract.ts` (tag, `createdAt`, sha256) **in the same commit** —
+    `src/__tests__/security/readiness-migration-contract.test.ts` asserts the last journal entry's tag +
+    `when` + file sha256, and `Dockerfile:67` runs `npm test` as a hard build gate. **Miss this and the
+    deploy never ships.** Useful precedent that de-risks the whole ordering: `_journal.json` **already
+    skips idx 26** (no `0026` file exists) and production is current — so registering a new `0034`+ while
+    `0030`-`0033` stay dormant is proven safe, not novel.
+11. **Deploy `plantgeo-main`**, then **restart or rebuild `plantgeo-martin`.** Nothing in the pipeline
+    restarts Martin. `martin.yaml` is baked at **build** time (`Dockerfile.martin:3`), so a config change
+    needs a **rebuild**; a `DATABASE_URL` change needs only a restart.
+12. **Un-quiesce ingestion**, then fetch **one tile per rewritten source with an `Origin` header AND
+    `--compressed`** before calling anything done.
+
+#### 0.19.1 DONE this run
+
+| item | class | note |
+|---|---|---|
+| Twelve read-only production probes and audits | read-only | §0.16, §0.17. No writes. |
+| Two adversarial verification lenses over the findings | read-only | Two headline claims REFUTED (§0.16.9) |
+| Partitionwise probe with a scratch schema | prod-mutating (scratch only, fully reversed) | Created `partitionwise_probe_scratch`, `DROP SCHEMA … CASCADE`, verified 0 rows in `pg_namespace` after |
+| Three design proposals + three-lens judge panel | — | §0.18 |
+| **`drizzle/0034_record_signal_cell_daily_drop.sql`** | code-safe, **dormant** | `DROP MATERIALIZED VIEW IF EXISTS geo.mv_signal_cell_daily` + a `to_regclass IS NULL` assert in `drizzle/0030`'s `DO $$` style. Closes §0.13 item 2. |
+| **`drizzle/0035_soil_survey_union_collection_extract.sql`** | code-safe, **dormant** | Moves `ST_CollectionExtract(…,3)` into the `delineation` CTE so a repaired `GeometryCollection` cannot reach `ST_Union`. `0029`'s two existing extract calls only wrap the union's *output* — too late. Preconditions asserted in a `DO $$` block. |
+| **`drizzle/0036_features_partitioned_precondition.sql`** | code-safe, **dormant** | Four catalog-read-only `DO $$` asserts: `relkind='p'`; `features_layer_external_id_unique` exists **and** `indisvalid`/`indisready`; the PK is composite `(id, layer_id)` in that order; `geo.features_default` exists **and** is the registered DEFAULT partition via `pg_partitioned_table.partdefid`. Closes §0.13 item 3. |
+| **`scripts/recreate-features-matviews.mjs`** | code-safe, never run | Catalog-driven OID-trap repair, three phases. See §0.19.0 step 7. |
+| **`scripts/data-quality-report.mjs`** | code-safe, never run against prod | Repeatable read-only harness: session `statement_timeout=25000`, never full-scans `geo.features`, checks all three observation planes, reads `agri.matview_refresh_state`, and derives tile reachability by extracting each function's `l.name` literal from `pg_get_functiondef` and diffing against parsed `martin.yaml` + parsed `DYNAMIC_TILE_SOURCE_IDS`. 14 named thresholds gate the exit code. |
+
+**Nothing above is registered, applied, deployed or committed.** `_journal.json` is untouched.
+
+**Where each of these is actually scheduled** *(added 2026-08-21 — `0035` and `0036` were listed as DONE
+deliverables here while appearing in no tier at all, which reads as "handled" and is not)*: **`0034`** →
+§0.19.6 item **43**, with a required header correction. **`0035`** → §0.19.6 item **43a**, newly added,
+low priority, and carrying a deploy-block hazard. **`0036`** → **nowhere, and possibly never**: it asserts
+`relkind='p'` on `geo.features` and RAISEs otherwise, so it is registrable **only if the partition swap
+proceeds** — which §0.18.8 item 1 and §0.19.7 recommend **shelving**. Shelve the swap and `0036` is
+permanently dormant dead code. §0.13's status note has been corrected from "RESOLVED" accordingly.
+
+Three notes on the new files. `0035`'s DDL applying cleanly proves only that the SQL parsed — **watch
+`agri.matview_refresh_state` for the next `matview-refresh` tick's outcome** to confirm rows actually land.
+**And note what `0035` is for: `geo.mv_soil_survey_union` has ZERO readers** (§0.16.4 — `usda-soil.ts:1049`
+documents the deliberate non-repoint), so this repairs a relation nothing consumes. That is a reason to
+rank it low, and a reason to ask whether it should be dropped rather than fixed.
+`0036` couples to `scripts/partition-features.mjs`'s current rename targets (parent → bare `geo.features`,
+PK → `features_pkey`, default → `geo.features_default`); if that script's names change, `0036` must change
+in the same commit or it fails against a swap that actually succeeded.
+
+#### 0.19.2 TIER 1 — the acute fix. Do this before anything else.
+
+Full detail in §0.17.10. Nothing here touches a schema.
+
+| # | item | class | precondition | reversal cost |
+|---|---|---|---|---|
+| **0** | **BASELINE THE SYMPTOM IN A REAL FOREGROUNDED BROWSER — before touching anything.** Load production, assert `document.visibilityState === "visible"` **first** (§5's rAF trap has already produced one false negative here), then record **per layer** whether it draws, at the default camera **and** at z10. Capture the Network panel's per-request timing for the composite, `/api/fires` and `getSliderCapabilities`. **Explicitly cover the five non-Martin layers** — fire-detections, water-gauges, weather-observations, vegetation, soil-survey — which §0.17.7 predicts are unaffected; **that prediction is the section's key triage claim and is completely untested** | read-only | **none. Ordered before item 1.** The owner's actual symptom ("most of the layers do not render") has never been observed by this programme — §0.17 is entirely `curl` + `EXPLAIN` + source reading (§0.17.1) | n/a |
+| 1 | **`?options=-c%20statement_timeout%3D20000` on `plantgeo-martin`'s `DATABASE_URL`** | prod-mutating (a variable) | **(0)** — capture the baseline first, then this is the first *change*. Every later measurement is contaminated by leaked backends. **Do NOT use `ALTER ROLE`** — there is one login role, `postgres`, superuser (§0.17.4) | delete the parameter; restart |
+| 2 | `pg_cancel_backend()` the leaked pids | prod-mutating | (1) applied, else they re-accumulate | none (they are already abandoned) |
+| **2a** | **ROOT-CAUSE THE GZIP-SPECIFIC COMPOSITE HANG.** §0.17.2 measured z6/11/22 returning 4,063,189 B in **<1 s uncompressed** and **timing out at 0 bytes with `--compressed`, at both 30 s and 60 s, reproduced twice** — and every browser requests gzip by default. Three probes, in order: **(i)** the same tile via Martin's **Railway service URL** vs. the **public domain**, to separate Martin from the Railway edge proxy; **(ii)** `Accept-Encoding: identity` vs `gzip` vs `br` at z6/11/22, same tile, same origin; **(iii)** dump Martin's **own response headers** on the succeeding uncompressed request (`Content-Encoding`, `Transfer-Encoding`, `Content-Length`, `Vary`) | read-only | (1)+(2), so the pool is not leaking underneath the measurement. **This is a PRECONDITION of the Tier 1 hard gate** — the gate tests `--compressed` and no other item addresses this path | n/a |
+| 3 | **`maxParallelImageRequests: 6` + `transformRequest`** at `MapView.tsx:80-89` | code-safe → deploy-gated | none | one constructor option |
+| 4 | **Un-crash `plantgeo-ingest-cron` (CRASHED); fix `plantgeo-cron-soilgrids` (FAILED)** | prod-mutating | none. **Every "ingestion is live" premise currently rests on a crashed service** — including this runbook's own safety rules and §0.19.0 step 1's quiesce. **Expected symptom of the crash: the ~11-day climate/weather stall in §0.16.2.** Item (4a) states what should recover | n/a — restoring intended state |
+| **4a** | **After (4), verify the stall actually clears** — `agri.source_release.observed_to` must advance past **2026-08-06** for `nasa-power-daily` and past **2026-08-02** for `open-meteo-era5-archive` and `open-meteo-era5-land-archive` (§0.16.2). `SELECT data_source, observed_to FROM agri.source_release ...`. **If it does not advance, the crash was a symptom and not the cause**, and the stall is a separate live incident needing its own diagnosis | read-only | (4). Without this, an operator restarts a cron with **no stated expectation of what should recover** | n/a |
+| **4b** | **Register the `watersheds` producer that already exists and is called by nothing.** `ingest/watersheds.py` is complete and working, with a CLI verb at `ingest/commands.py:264-267` — but it is absent from `ingest-all`'s job list (`commands.py:484-497`) and there is no `infra/cron-watersheds` (§0.16.5). All 9,396 rows landed on a single day, 2026-08-07. Add it to `ingest-all` or give it a cron | code-safe → deploy-gated | none. This is a finished producer nobody calls — the cheapest ingestion item in the programme | remove the entry |
+| **4c** | **Add `expected_refresh_days` to the four `kind="reference"` streams** in `validation/models.py:143-146` (soil-survey, watersheds, burn-severity, interventions). Today they declare `kind="reference"` with **no `publication_cadence_days`**, so `validate-streams` applies **zero** staleness check to exactly the four layers that are 10-13 days static — **the layers that most need an alarm are structurally incapable of raising one** (§0.16.3) | code-safe → deploy-gated | none. **Pulled forward from item 38's Tier 4 cell** — it is independent of Parquet and does not belong behind it | revert the constants |
+| **4d** | **OWNER DECISION: does `BACKFILL_LANES` grow to cover the nine unlooped layers, or is that accepted debt?** `ingest/lanes.py:228-230` has exactly two members (`firms-archive`, `streamflow-archive`). `validate-streams` **detects** gaps hourly for every stream, but for the other **nine** layers nothing converts a detected hole into a claimable `job_work_item` — the `docs/layer-lane-standard.md` §6 loop is **structurally absent**, not merely unscheduled (§0.16.5). Same call covers the **governed-absence** plane (§7 of the same standard), unimplemented for all 11 layers plus `drought_areas`, which is why `validate-streams` will re-report a legitimate absence as an open gap forever | owner-decision | (4a), so the decision is made against a working baseline rather than a crashed one. **This is the owner's first stated goal — "a strong performant data model *with ingestion*"** | n/a |
+| 5 | **Root-cause the missing `Content-Encoding`**, then fix the real layer | read-only → deploy-gated | `next.config.ts` has no `compress` key, so "enable gzip in next.config" is a **no-op** | n/a |
+| 6 | **`railway logs -s plantgeo-martin \| head`** to settle v0.7.0 vs 1.10.1 | read-only | none. Do before trusting any `martin.yaml` block but `cors` and `postgres.functions` | none |
+| 7 | **The production smoke script** — composite with `Origin` **and** `--compressed` at three zooms, `/api/ready`, `/catalog` diffed against `DYNAMIC_TILE_SOURCE_IDS` — on the existing weekly cron | code-safe → deploy-gated | none. ~80 lines. **It would have caught D0**, and it is the only standing alarm on the read path (§0.16.8) | delete the cron entry |
+
+**HARD GATE after Tier 1.** Composite at z5/5/11 **and** z6/11/22, with `-H "Origin: …"` **and**
+`--compressed`, under 2 s, non-empty. Verify in a **real foregrounded browser** and assert
+`document.visibilityState === "visible"` first — a backgrounded tab suspends rAF, fires zero tile requests,
+and looks exactly like a total outage. That trap has already produced one false negative here. **If the
+gate fails, stop and re-plan** — Tier 2's day-bound and `LIMIT` work jumps ahead of everything else.
+**Compare against item 0's baseline, not against memory.**
+
+**THE `--compressed` HALF OF THIS GATE IS OWNED BY ITEM 2a, AND THAT OWNERSHIP IS NEW.** *(Added
+2026-08-21.)* Before 2a existed, this gate tested a defect **no item in the plan addressed**: nothing in
+§0.17 argues that the `statement_timeout` and concurrency fixes will incidentally resolve the gzip hang,
+and the evidence cuts the other way — the *uncompressed* path returned 4 MB in under a second on the same
+tile that timed out with `--compressed`. So a Tier 1 that completed items 1-7 could still fail this gate
+and send the operator into "stop and re-plan" with **no diagnostic step queued**. Run **2a** before
+declaring the gate failed; a gate failure whose only symptom is the compressed variant is a **2a result**,
+not a re-plan trigger.
+
+**STALE-CACHE WARNING FOR EVERY VERIFICATION IN TIERS 1-3 — C1 IS OPEN AND STAYS OPEN.** *(Added
+2026-08-21.)* `query-persister.ts:309` returns `HISTORICAL_TTL_MS` (30 days, `:68`) whenever the selected
+day < `serverCurrentDate`, and **every layer opens on `latestObservedDate`, which is by definition strictly
+before today — so the 30-day TTL applies universally, to every layer, for every returning user** (§0.17.9).
+The only scheduled remedy is Tier 4 item 32, behind items 17-31 — the entire extraction, revision sequence,
+sync endpoint and tombstone lane. §0.18.8 item 13 explicitly rejects the one-line mitigation (retuning the
+constant) because **the predicate, not the constant, is what is wrong.**
+
+Two consequences an operator must hold: **(1)** every post-fix check in Tiers 1-3 must be run with a
+**cleared IndexedDB or in a private window**, or a warm cache will serve up-to-30-day-old layer data and
+the map will look exactly as broken as before the fix; **(2)** real users are served stale data throughout,
+and "the layers are still wrong" reports during this period are ambiguous between the outage and C1. The
+interim fix that §0.18.8 item 13 does **not** reject is item **13a**: fix the *predicate* — freshness
+relative to the layer's own `latestObservedDate` rather than `serverCurrentDate`.
+
+**Tell the owner before Tier 1 ships: fixing the map will increase bandwidth cost**, because layers that
+never rendered will start rendering. The §0.18.5 budget is a budget, not a hope — instrument real
+bytes-per-cold-load and fail a check above 2.5 MB.
+
+#### 0.19.3 TIER 2 — bounded tiles and index hygiene
+
+| # | item | class | precondition | reversal cost |
+|---|---|---|---|---|
+| 8 | **`LIMIT` + `ORDER BY` inside each tile function's inner subquery** (§0.17.10 item 6 — the `ORDER BY` is not optional, or tile bytes become nondeterministic) | code-safe → deploy-gated | Tier 1 gate green. **One function per deploy**, verified standalone with an `Origin` header | `CREATE OR REPLACE` back |
+| 9 | **Server-side day bound / `DISTINCT ON` latest-per-station** in `sensor_tiles` and `fire_risk_tiles` | code-safe → deploy-gated | (8) shipped | `CREATE OR REPLACE` back |
+| 10 | **`CREATE INDEX CONCURRENTLY ix_features_fire_detection_day`** (§0.17.10 item 8) | prod-mutating | **must precede any partitioning** — CIC on a partitioned parent fails on PG 18.4 | `DROP INDEX CONCURRENTLY`. Temporary by design — dropped when fire-detections extracts |
+| 11 | **`DROP INDEX CONCURRENTLY idx_features_geom`** (314 MB, 0 scans across two samples) | prod-mutating | **CHANGED 2026-08-21 — was "none".** Re-read `pg_stat_user_indexes` after **≥7 days of uninterrupted uptime** and confirm `idx_scan = 0` still holds. Read `pg_postmaster_start_time()` in the same statement: **this box restarts often** (caught 0.56 s old on 2026-08-21), so the 7-day clock will likely have to be restarted more than once. Alternatively, install `pg_stat_statements` in item 49's restart window and read the query set directly. **Rationale: `stats_reset` is NULL but that is NOT lifetime — a crash discards stats silently (§0.16.6), and §5's 37.5 B reads vs §0.16.9's 1.06 B proves one already happened. "0 scans" currently means "0 over a window of unmeasured length", and a weekly ops query or backfill script is invisible in it.** Model the drop with `hypopg` first — it is installed and costs nothing | `CREATE INDEX CONCURRENTLY` — **and this is why the precondition exists**: the rebuild is a slow GiST CIC on a 5.09M-row table under a 2 GB cap and live ingest |
+| **11a** | **AUDIT `uq_signal_observation_release_cell_signal_time` — 11 GB, one index, on a table in NO other item of this programme.** `agri.signal_observation` is **26 GB (11 GB heap + 15 GB index), 46,068,872 rows, ~70% of the whole database**, and §0.18 covers the `geo` schema only (§0.18.1 scope note). This six-column natural-key unique index is larger than its own heap. Determine: is it redundant against the other indexes on the table, can it be narrowed, and is the uniqueness constraint it enforces still needed by the writer? **Read-only first** — `pg_stat_user_indexes` for the whole table plus `hypopg` to model any drop. **Decide nothing on a single stats window** — the same unbounded-window caveat as item 11 applies, and applies harder to a relation this size | read-only → owner-decision | none. **Independent of everything else in the programme** — it can run in parallel with any tier | n/a while read-only |
+| 12 | Bbox cache keys quantized to a z8 envelope (D6) | code-safe → deploy-gated | none | revert one function |
+| 13 | Stop the 5-min capability poll re-stamping the date (D9) | code-safe → deploy-gated | none | revert one prop |
+| **13a** | **Interim C1 fix — repair the PREDICATE, not the constant.** `query-persister.ts:309` classifies an entry as historical (30-day TTL, `:68`) whenever the selected day < `serverCurrentDate`; since every layer opens on `latestObservedDate`, which is always strictly before today, **every entry for every layer gets the 30-day TTL**. Rekey freshness to the **layer's own `latestObservedDate`**: a day at or after it is live and gets the short TTL; only days genuinely behind the layer's own frontier are historical. **§0.18.8 item 13 rejects retuning `HISTORICAL_TTL_MS` — it does NOT reject fixing the predicate**, which is the actual defect it names | code-safe → deploy-gated | none. **Alternative, if this is judged not worth doing before item 32: record a one-line owner decision that up-to-30-day staleness is ACCEPTED until Tier 4, with the reason.** What is not acceptable is leaving it unstated — the symptom (a warm map showing stale data) is easily misread as the layers still being broken after Tier 1 | revert one predicate |
+| 14 | One `storage-budget.ts` arbiter — fixes the SW self-eviction | code-safe → deploy-gated | none | revert; the two private constants return |
+| 15 | Persist `getSliderCapabilities` + add its ETag and gzip | code-safe → deploy-gated | none | revert |
+| 16 | bbox filter + `Cache-Control` + compression on `/api/fires` | code-safe → deploy-gated | (5) root-caused | revert |
+
+#### 0.19.4 TIER 3 — the extraction. Weeks, one stream at a time, dual-write.
+
+Order: **water-gauges first** (1,417,935 rows over 953 stations, and `readStreamflowGaugesOnDay` already
+does `DISTINCT ON (properties->>'siteNo')`, so the target shape is proven), then sensors,
+weather-observations, vegetation, **fire-detections last** (largest, trickiest day semantics).
+
+| # | item | class | precondition | reversal cost |
+|---|---|---|---|---|
+| 17 | `geo.revision_seq`, `geo.station`, `geo.tombstone`, first reading table, created **empty** with monthly partitions +2 months ahead | code-safe → deploy-gated | `schema.ts` + migration + contract re-pin in one commit | `DROP` — nothing reads them |
+| 18 | **Backfill script**, `created_at` batches of 50k, out of band, resumable | prod-mutating | (17) | `TRUNCATE` |
+| 19 | **Dual-write** in the ingest writer | code-safe → deploy-gated | (18) | feature flag |
+| 20 | **Nightly per-station-day count + checksum parity job, as a job-ledger work item that FAILS loudly** | code-safe → deploy-gated | (19). **Do not skip this to save a day** — this codebase has shipped exactly this failure class twice (USDM's 26-of-29 missing weeks; the test gate dark for a whole alembic revision) | n/a |
+| 21 | Repoint the reader behind a flag, default off; flip on; watch | code-safe → deploy-gated | (20) green | flag off, instantly |
+| 22 | **Delete that layer's rows from `geo.features`, in monthly batches** | prod-mutating | **seven consecutive clean nights of (20)**. Never one statement — ~4.84M deletes on a 2 GB box under live ingest is the shape that pins memory at the ceiling | **first genuinely hard-to-revert step.** Rows survive in the reading table; re-materialisation is one-way in practice |
+| 23 | Watch `n_dead_tup` after the first batch; manual `VACUUM` (not FULL) per batch if autovacuum does not keep up | prod-mutating | (22). `last_autovacuum` is NULL on this table and `autovacuum_max_workers` is 3. **`pg_repack` is NOT installed** (§0.16.6) | none |
+| 24 | Kill `properties.geometry`: trigger → validation-only, writer supplies `geom`, strip from `insert_features.sql`/`refresh_features.sql`, remove from the `route.ts:133` spread | code-safe → deploy-gated | **re-derive `refresh_features.sql`'s change-detection predicate first** (§0.18.1) — this is real unbudgeted work, not a key deletion | restore the trigger body |
+| 25 | Native `external_id` + `observed_day`; drop the two expression indexes for plain btrees | prod-mutating | (24) | re-create the expression indexes |
+| 26 | **Rekey `geo.geometry` to entities only** (3,255,832 → ~255k rows) — reuse `scripts/rekey-geometry-to-entity.sql`, which already exists, is idempotent, `REPEATABLE READ` + `LOCK TABLE` disciplined, and pre-measured | prod-mutating | (22) for each stream. **Handle per stream, not afterwards**, or it becomes the largest object in the database | script is one-way; take a snapshot |
+
+#### 0.19.5 TIER 4 — sync and Parquet
+
+| # | item | class | precondition | reversal cost |
+|---|---|---|---|---|
+| 27 | `revision` columns + `BEFORE UPDATE` trigger + **lagging high-watermark** (§0.18.2) | code-safe → deploy-gated | (17) | drop the column |
+| 28 | **Tombstone AFTER DELETE trigger** | code-safe → deploy-gated | **INSTALL ONLY AFTER (22) COMPLETES for every stream**, or gate on a session GUC. Firing it during the extraction emits ~4.84M tombstones telling clients to delete data that merely moved tables | drop the trigger |
+| 29 | Nightly revision-drift assertion (`updated_at` moved, `revision` did not) | code-safe → deploy-gated | (27) | n/a |
+| 30 | `geo.tombstone` **pruner** at the 180-day floor | code-safe → deploy-gated | (28) | n/a |
+| 31 | `GET /api/v1/sync/{stream}` + `GET /api/v1/scope/resolve` | code-safe → deploy-gated | (27). Old endpoints stay | remove the routes |
+| 32 | Client: scope record, delta consumer, revision-keyed freshness (retires C1), `cold-artifacts` store, relevance-ordered eviction | code-safe → deploy-gated | (31) | revert; IDB v3 upgrade is additive |
+| 33 | **GATE: prove `cf-cache-status: HIT`** on a repeated PMTiles range request via a Cache Rule | prod-mutating (a CF rule) | none. **If this fails, STOP — 34-39 are not worth building** | delete the rule |
+| 34 | **GATE: 30-line hyparquet spike** — publish one hand-built Parquet, range-read one row group with a column projection, from a browser, against the bucket's CORS | code-safe | (33). Pre-chosen fallback: a Cloudflare Worker that slices server-side and returns JSON | discard the spike |
+| 35 | **GATE: one-command Parquet size check** — `COPY (…) TO 'x.parquet' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 100000)` then `ls -l`. **Threshold: >60 MB/month kills the cheap per-day range read** | read-only | (17)/(18) for one stream | n/a |
+| 36 | Wire `R2_*` credentials as **Railway reference variables** (not copied secrets) on writer + reader; confirm the bucket is CDN-fronted with `curl -I -H Range -H Origin` | prod-mutating | (33)-(35) all green | unset variables |
+| 37 | **`export-parquet` job on the existing `agri.job_*` ledger** — one work item per (stream, month), whole-partition export, watermark-gated re-export, atomic publish (immutable `<sha>.json` first, mutable pointer last, 30-day retention of superseded objects) | code-safe → deploy-gated | (36) | stop the job; objects are additive |
+| **37a** | **A SECOND `export-parquet` STREAM FOR THE SIGNAL PLANE — this is item 41's real producer, and it did not exist.** Item 37 exports **one work item per (stream, month) for the new `geo` reading tables only** (`geo.streamflow_reading` etc., where the monthly RANGE partition *is* the Parquet file, §0.18.4). The four agent SQL tools of item 41 read a **signal-cell rollup derived from `agri.signal_observation`** — 46M rows, a different schema, a different grain, and **not exported by item 37 under any reading of it**. Either export the signal plane on the same job-ledger pattern, or define the rollup grain the four `sql/agent/*.sql` files still specify (§0.10 — they are its only surviving spec) and export *that*. **The grain decision comes first and is the real work here; the export job is the easy half** | code-safe → deploy-gated | (36). **Note: `agri.signal_observation` is NOT month-partitioned** — it is a plain 11 GB heap, so this export has no partition to lift and must range-scan. Budget it accordingly; it is not item 37's shape | stop the job; objects are additive |
+| 38 | **Register `export-parquet` in `BACKFILL_LANES` AND as a `StreamDefinition` with a cadence**; add `expected_refresh_days` to the four `kind="reference"` streams | code-safe → deploy-gated | (37), and (37a) if the signal plane ships. **Without both it has a producer and no gap detection** (§0.18.4). **The `expected_refresh_days` half was pulled forward to Tier 1 item 4c** — it is independent of Parquet and should not wait behind it; leave it here only as the cross-check that it actually landed | revert |
+| 39 | `readiness.py` Parquet/bucket freshness section (**fails**, not warns, on `built_from_max_updated_at` drift) + `JobRunnerDashboard.tsx:70`'s `gaps` tab | code-safe → deploy-gated | (37) | revert |
+| 40 | Client hyparquet range reader for sealed months | code-safe → deploy-gated | (34) green | feature flag |
+| 41 | **Repoint the four agent SQL tools at DuckDB-over-R2, then delete them LAST** | code-safe → deploy-gated | **CHANGED 2026-08-21 — was "(37) serving", which item 37 can never satisfy.** The real precondition is **(37a) serving**: item 37 exports the new `geo` reading tables, and these four tools read a rollup derived from `agri.signal_observation`, which item 37 never touches. **Priority note: this is NOT urgent.** The four tools currently return a typed `pre_aggregated_plane_unbuilt` refusal, not an error (§0.16.4, `tools.py:473`/`:901`) — degraded service, not a live incident. It was mis-ranked against the acute outage while §0.16.4 claimed they crash. They remain the only surviving spec of the dropped rollup's grain (§0.10) | keep the `to_regclass` guard **that already exists** so a DuckDB/R2 failure degrades to today's typed refusal |
+| 42 | Wire the two mutation call sites to enqueue into the existing offline queue; 409 precondition on replay | code-safe → deploy-gated | none | revert two call sites |
+
+#### 0.19.6 TIER 5 — matview retirement and the cap
+
+| # | item | class | precondition | reversal cost |
+|---|---|---|---|---|
+| 43 | **Register `drizzle/0034`** (records the `mv_signal_cell_daily` drop) — **before any other matview work.** `drizzle/0029:533` still creates it; a history replay resurrects a 6,349 MB / 1,729 s view. **Never edit `0029`** | contract re-pin in the same commit. **ALSO, added 2026-08-21: correct the file's header lines 21-22 in that same commit.** They claim the four agent tools "throw a hard database error (relation does not exist)" — **false**; they return a typed refusal (§0.16.4). Keep the "do NOT wrap these four callers in an existence guard" instruction, but state the true reason: **the guard already exists** at `tools.py:473`/`:901`. As written the comment invites a future agent to add a redundant guard or, worse, remove the real one and create the very error it describes | unregister |
+| **43a** | **Register `drizzle/0035_soil_survey_union_collection_extract.sql`** — written and dormant since this run, and scheduled in **no tier** until now | deploy-gated | contract re-pin in the same commit (§0.19.0 step 10). **HAZARD, and it is a hard deploy block with a non-obvious cause:** the file's `DO $$` guard does `IF COALESCE(is_populated, false) THEN RAISE EXCEPTION` on `geo.mv_soil_survey_union` (`:94-96`). **If the hourly `matview-refresh` lane ever succeeds on that view between now and the migration applying, the migration RAISEs, `preDeployCommand` fails, and the deploy is blocked by a data state a live job controls — nothing in the commit will explain it.** Mitigation: re-check `relispopulated` **immediately before merging**, or downgrade the assert to `RAISE NOTICE` + skip. **PRIORITY: LOW — `0035` repairs a relation with ZERO readers** (§0.16.4; both `usda-soil.ts` readers are deliberately not repointed). Consider whether it should be **dropped instead** alongside item 46 rather than repaired | unregister |
+| 44 | **Rewrite the three census matviews to aggregate before joining `geo.layers`** (§0.16.7 Test C) — SQL-level, no schema change, no new index. **This is the prerequisite that makes partitioning worth anything, and it may make it unnecessary** | code-safe → deploy-gated | none | revert the SQL |
+| 45 | Convert the eleven small matviews to incrementally-written tables (`DELETE WHERE day=:day` + `INSERT` on the existing watermark — **not** `ON CONFLICT DO UPDATE`, which cannot retract rows) | code-safe → prod-mutating at cutover | (44) | keep the matviews until the tables are proven |
+| 46 | **Delete the `MATVIEW_REFRESH_SPECS` set, the backoff state machine, and the perpetual 74-item/70-failure run** | code-safe → deploy-gated | (43), (45), and (41). **Name and rewrite the live consumers first**: `analytics.ts:43/:77/:120/:139` (`mv_layer_feature_stats`, `mv_layer_hourly_activity` — public dashboard procedures deliberately moved off `COUNT(*)` over 4.97M rows), `environmental-read-model.ts:1515/:4241` (`mv_feature_observation_day`, capability + recency), `usda-soil.ts:1049/:1151` (two soil readers explicitly not yet repointed). **An R2 manifest answers none of those without rewriting them** | re-register the specs |
+| 47 | Fix `scripts/apply-pre-aggregation.mjs:133`'s unguarded `REFRESH` — on a fresh or DR database it refreshes eight views then raises 42P01 and exits 1 | code-safe | none | revert |
+| 48 | **Turn ON `enable_partitionwise_aggregate` / `_join` and re-measure** | prod-mutating | (44). Per §0.16.7 they change nothing until the matviews are rewritten — **turning them on before (44) proves nothing** | `ALTER SYSTEM RESET` |
+| 49 | **Drop TimescaleDB + `timescaledb_toolkit`** — un-hypertable `tracking.positions` first, edit `shared_preload_libraries`, restart; bundle `pg_stat_statements`/`pg_qualstats`/`pg_stat_kcache` into the same restart | prod-mutating, restart window | **AFTER** the §12.2b client fixes and Tier 3, so any relief stays attributable. Measured NOT to be the cause (§12.7) | reinstall; the one hypertable is 0 chunks / 40 kB |
+| 50 | **Lower the memory cap from 2 GB toward 1 GB**, re-measure | owner-decision | Tier 3 complete and no statement's working set exceeds 1 GB. Settle the 3.0 GB 7-day max first (§0.18.5) | raise it back |
+
+#### 0.19.7 Owner decisions outstanding
+
+| decision | context |
+|---|---|
+| **Proceed with the `geo.features` partition swap, or shelve it?** | §0.18.8 item 1 recommends **shelve**. Three lines of evidence say it buys nothing the extraction does not buy more cheaply, and the shelving cost is six landed slices staying dormant. **This is the largest single call in the programme.** **Two corrections to what the owner is deciding against, both 2026-08-21: (i)** ground **(b)** of the recommendation — "tile latency is not a justification" — was measured **only at z10, a zoom where tiles already work**; the z5/z6 plans, where they hang, were never captured (§0.16.7). The shelve still stands on grounds (a) and (c), but (b) is not evidence as stated, and the read-only `EXPLAIN` that would settle it is named in §0.16.7. **(ii)** Shelving makes **`drizzle/0036` permanently dead** — it asserts `relkind='p'` and can only ever be registered on a partitioned table. Shelving does not merely park it; it retires it. |
+| Register `drizzle/0033` (six tile functions at once) | §0.13 item 1. Still an owner call; one bad function 404s the whole composite. Its constant-`layer_id` pruning is moot if partitioning is shelved — but the rewrite may still be worth registering **one function at a time** on its own merits. |
+| `tile_interventions` day column (§10 decision c) | Default: no. Unanswered since §12.5. |
+| Commit the pre-existing pulse batch (~456 lines in `jobs_pulse_command.py`) | Deliberately not swept into `de3139e`. |
+| FIRMS `INGEST_MAX_SOURCE_RECORDS` cap | 2,239 records currently drop silently past the 10,000 ceiling ([[agri-firms-record-cap-drops-silently]]). |
+| ML Phase B | Hard-blocked until drought covariates exist — a missing covariate index 36-38 makes `build_design_row` return `None` for every row. |
+| Does the app role hold `CREATE` on schema `geo`? | read-only; only needed if synchronous partition creation is chosen over the DEFAULT partition (§0.7). Moot if the swap is shelved. |
+
+#### 0.19.8 Carried forward from §0.13 and §7, unchanged in priority
+
+- **Clear the 15 standing dead letters** keeping the hourly pulse red (prod-mutating, operator action). The
+  three still-broken matviews will keep re-redding it via `deferred_failing`; that is intended.
+- **Re-scope `scripts/backfill-geometry.sql:31,199-209` and `scripts/rekey-geometry-to-entity.sql:37,152-158`**
+  off whole-table `LOCK TABLE geo.features IN SHARE MODE` — post-partition that takes 13 locks, not 1.
+  Code-safe. **Moot if the swap is shelved.**
+- **Prune `usda-soil.ts` `persistCell`'s three write-path joins to `geo.layers` by name (~`:884-926`)**.
+  Code-safe, found in slice B, in no slice's scope.
+- **§10's join-free tile relations** (11 `geo.tile_*` relations, zero jsonb, zero join, pre-projected to
+  3857) — proposal only, no `tile_*` relation exists. **Re-evaluate against §0.18**: Tier 2 items 8-9 may
+  deliver most of the benefit for a fraction of the work, and Tier 3 changes what a tile relation would
+  even read from.
+- **Re-verify the 2 GB cap and `autovacuum_max_workers=3` survive a Railway-initiated restart**, not just a
+  manual check. Read-only. `autovacuum_max_workers` was re-confirmed `source=configuration file` on
+  2026-08-20; survival across a *Railway-initiated* restart is still unverified.
+- **The 12-item layer-lane conformance backlog** (§8, 2026-08-15), highest blast radius first: 454 queued
+  `firms-archive` work items since 2026-08-08 · the signal plane on no schedule · `coverage_fill`'s
+  non-durable `Path.exists()` idempotence key on an ephemeral cron container · the agent drought tool
+  reading the 0-row `drought_polygon_snapshot` while the map serves `geo.drought_areas`.
+- **Deferred review findings**: a disposable-DB contract test for `to_regclass` semantics · repoint
+  `routes/ops.py` at `jobs/lease.py::failure_condition_name` · an `EXPLAIN` that actually demonstrates the
+  index-causation claim · the structurally-unreachable `MAX_OBSERVED_DAY_ROWS` cap.
+- **USDM and ERA5-Land as self-healing lanes**; the persistence audit; the 8 zero-landing ERA5-Land
+  releases (§0.16.2).
+- **A real foregrounded-browser visual verification pass** of everything `de3139e` shipped. Still only
+  code-traced plus one automation-tab attempt that produced a false negative. Now folded into §0.19.2's
+  hard gate.
+- **`drizzle/0035` needs its outcome watched**, not just its DDL applied (§0.19.1). **Now scheduled as
+  §0.19.6 item 43a**, with the `relispopulated` deploy-block hazard stated there.
+- **`geo.mv_soil_survey_grid`** is in standing failure at the 300 s boundary. **CORRECTED 2026-08-21: this
+  bullet previously read "unlike `union`, has a reader". That is FALSE — NEITHER soil matview has a
+  reader.** A grep across `src/` and the agri service finds only the two deliberate non-repoint comments,
+  `usda-soil.ts:1049` (`_union`) and `:1151` (`_grid`), each recording a real grain mismatch as the reason
+  the reader still runs its own `GROUP BY` (§0.16.4). So the one prioritisation statement about these two
+  views was **inverted**: `_grid` is not more urgent than `_union`; both have zero consumers, and
+  `drizzle/0035` repairs an unread relation. **Re-ranked: the honest question is not which to fix first but
+  whether either should be repaired at all, or dropped alongside §0.19.6 item 46's matview retirement.**
+  They are exactly the "matviews serving nothing" pattern §0.18.8 item 4 rejects. Still unowned.
+- **Close the `data_available_at` question on the three unmeasured layers** — fire-detections (3,022,196),
+  water-gauges (1,417,935) and sensors (184,733), **90.8% of the table**, where the existence probe timed
+  out (§0.16.3). Eight layers are confirmed 100% NULL; these three are **UNMEASURED**, and they are the
+  high-volume ingestion lanes most likely to actually set the column. Until they are read, "backtests
+  filtering on `data_available_at` are a no-op" is a claim about 9.2% of the rows, and `drizzle/0025`'s ML
+  leakage boundary may not be as dead as recorded. Read-only; needs either a maintenance window without a
+  statement timeout, or a partial index.
+- **Settle whether this database is OOM-restarting** (§0.16.6). Two reads caught it at ~2 h 20 m and at
+  **0.56 s** of uptime, `stats_reset` is NULL, and §0.18.5 measured a 7-day memory **max of 3.0 GB against
+  a 2 GB cap**. One command: `railway logs -s plantgeo-spatiotemporal-db | grep -i "out of memory\|database
+  system was not properly shut down"`. This gates item 11's ≥7-day-uptime precondition, and it is the
+  cheapest available check on whether the cap is actually holding.
+
+#### 0.19.9 Completeness review of §0.16-§0.19, 2026-08-21 — what was corrected, and what was rejected
+
+A completeness critic read §0.16-§0.19 in full against the live source tree and raised fifteen findings.
+**Thirteen were correct and are fixed in place above.** Two were correct in their conclusion but wrong in
+their reasoning, and one arithmetic correction was itself miscalculated — those are recorded here rather
+than silently absorbed, because this file's convention is that a recorded rejection stops work being
+re-litigated. **Two new production measurements were taken to close findings rather than guess at them**
+(both read-only): the stats-window probe in §0.16.6 and the `data_available_at` existence probe in §0.16.3.
+
+**Corrected in place** (section → what changed): §0/header → the "§0.10's count is wrong" pointer named the
+wrong section, and the tile-plan claim was unscoped · §0.10 → the stale "record it in a new `drizzle/0033`"
+line, superseded by the written `0034` · §0.13 → item 3 downgraded from RESOLVED, plus the `0034` header
+caveat · §0.16.3 → `data_available_at` rescoped from "across the board" to the 9.2% actually measured, and
+`weather-observations` disambiguated from the stalled climate signals · §0.16.4 → **the "four agent tools
+throw a hard database error" verdict, which was flatly false**, plus the soil-matview reader claim and the
+74/2/70 arithmetic · §0.16.6 → the unbounded stats window, a second independent index sample, "Droppable
+today" downgraded, and the 1,369,300 division error · §0.16.7 → the z10 scope caveat · §0.16.8 → the
+compressed tile path added to the blind-spot list · §0.17.1 → provenance: the symptom was never observed ·
+§0.18.1 → the missing `geo.drought_areas` row, two total-arithmetic errors, the `agri` scope statement, and
+the "plausibly fits" conclusion re-derived against 1,951 MB · §0.18.5 → sums shown, "−70%" replaced by the
+honest range · §0.18.7/§0.18.8 → the inherited premises flagged · §0.19 → eight new numbered items and
+four changed preconditions.
+
+**Rejected or amended, with reasoning:**
+
+1. **REJECTED IN MECHANISM, ACCEPTED IN CONCLUSION: "every index number comes from a ~2 h 20 m
+   post-restart stats window."** The conclusion — that these are not lifetime figures and cannot support
+   "never been read" — is **correct and is now acted on**. The stated mechanism is **wrong**: PostgreSQL
+   persists cumulative stats at clean shutdown and reloads them, so counters **survive** restarts and
+   uptime is not a bound on the window. Measured directly on 2026-08-21: a read taken **20 s after a
+   restart** showed every counter *higher* than the 2026-08-20 pass. **The window is therefore longer than
+   uptime and shorter than lifetime, and nothing measured pins it** — which is a weaker claim than the
+   critic's but justifies the same precondition on §0.19.3 item 11. **Do not re-derive a throughput rate
+   from any `pg_stat_*` counter in this file**; the 657k-tuples/sec inconsistency the critic raised
+   dissolves once the premise is dropped, and is recorded as resolved-by-refutation in §0.16.6 reading 3.
+2. **AMENDED: the corrected division was also wrong.** The critic gave 5,525,831,267 / 4,096 =
+   **1,348,884.6**. The correct quotient is **1,349,080** (the runbook's original 1,369,300 was wrong too).
+   Both the original and the correction are recorded in §0.16.6 reading 3. The critic's substantive point —
+   that the "happens to equal the water-gauges row count" inference is false — **stands**: water-gauges is
+   1,417,935, which matches neither figure.
+3. **AMENDED: the `data_available_at` scope was better than the critic assumed, and is now better still.**
+   The critic scoped the confirmed set at six layers / 3.8%. Two of the five "timed out" layers
+   (`weather-observations`, `soil-survey`) were re-probed on 2026-08-21 with an existence probe and
+   **completed**, confirming no non-NULL row. The confirmed set is **eight layers / 467,040 rows / 9.2%**;
+   the unmeasured remainder is **three layers / 4,624,864 rows / 90.8%**. The critic's core point — that a
+   claim covering the unmeasured 90% was stated without a hedge — **stands and is fixed.**
+4. **AMENDED: §0.18.5's low bound was also mis-stated, not just underived.** The critic computed
+   2,287,497 B and compared it to the published "≈2.5-6.4 MB". 2,287,497 B is **≈2.3 MB**, so the low bound
+   was wrong in the second digit as well as underived; the range is now published as **≈2.3-6.6 MB** with
+   both sums shown.
+
+**Not fixed here, and deliberately so: `drizzle/0034`'s header lines 21-22.** The critic is right that the
+false "throws a hard database error" claim propagated into that shipped artifact and will mislead whoever
+registers it. **That file is outside this document's write scope**, so the correction is recorded as a
+required precondition on §0.19.6 item 43 instead of being made silently. Anyone registering `0034` must
+fix those two lines in the same commit.
+
+---
+
+### 0.20 Independent codex-led outage diagnosis, 2026-08-21 — corroboration and four things §0.17 does not have
+
+**Provenance.** A second workflow ran concurrently with the one that produced §0.16-§0.19, deliberately
+isolated: read-only, forbidden from touching `conductor/RUNBOOK.md` or any file the other run owned.
+Four lanes, each driving the **codex CLI v0.145.0** (`codex exec -s read-only`) over a distinct hypothesis
+— client, Martin, empty-data, and one deliberately given no hypothesis at all — then every critical/high
+claim cross-verified by a Claude agent briefed to refute it. 12 agents, 1.29 M tokens, 76 minutes.
+Full document: `scratchpad/codex-outage-diagnosis.md` (615 lines).
+
+**Why this section exists rather than being merged into §0.17.** The two investigations reached the same
+mechanism independently, which is the strongest evidence in this runbook for anything about the outage.
+But they measured different magnitudes, and §0.17 contains none of the four items in §0.20.3. Keeping them
+separate preserves the independence; collapsing them would manufacture a false single narrative.
+
+#### 0.20.1 Where the two runs AGREE — treat these as the highest-confidence findings in §0.16-§0.20
+
+- **The owner's bandwidth cap cannot touch a map tile.** `src/lib/net/request-budget.ts` caps 4 concurrent
+  / 5 per second, but a full-tree grep for `transformRequest|RequestParameters|setTransformRequest` returns
+  **nothing**, and the only consumers of `createBudgetedFetch|runBudgeted|acquireRequestSlot` are
+  `useFireData.ts`, `useOfflineSync.ts`, `lib/offline/tile-cache.ts` and `lib/trpc/client.ts`. MapLibre's
+  own tile loader is not among them. Found independently by both runs and by both model families.
+  **The owner's stated theory of his own bug is wrong, and that is good news** — the cost control he set is
+  not what broke the map, so the fix does not require giving up the cost control.
+- **An unbounded statement against an 8-connection pool is the self-sustaining mechanism.** `pool_size: 8`
+  (`infra/martin/martin.yaml:39`) with no `statement_timeout` (§5). Both runs named it from the files
+  before either measured it.
+- **`max_feature_count: 10000` is dead configuration** for all six function-backed sources: they
+  `RETURN bytea`, which Martin cannot inspect or truncate. Codex-sourced, corroborated by measured
+  multi-MB `sensor_tiles` payloads in both runs.
+- **The ML Strategy Recommendations layer can never render**, via two independent defects at once: absent
+  from `martin.yaml` and from the live `/catalog`, **and** `StrategyLayer.tsx:36,64` requests source-layer
+  `"strategy_recommendations"` while `drizzle/0028:342` emits `'strategy-recommendations'`. Both models
+  found this before either saw the other's output. Scope it honestly: **one toggle, not "most layers."**
+- **Not causes**, checked and cleared by both: authentication, CSP, SSR/hydration, deck.gl interleaving.
+
+#### 0.20.2 Where they DISAGREE — and why the disagreement is the finding
+
+Cold-tile latency has no single value. §0.17.2 measured z5/5/11 at status 000 after **25 s** and z5/4/10 at
+284 B after **102.10 s**; the codex run measured the z5 composite at **300.17 s and 300.18 s** on two
+consecutive runs against a 400 s cap; individual Claude lanes inside the codex run reported 14.6 s, 19.4 s,
+81 s, 147.3 s, 193 s and >260 s, and one lane's figure was formally refuted by another that could not
+reproduce it.
+
+**Adjudication: nobody was wrong, and the variance *is* the result.** With a 5-minute tile cache and a pool
+that saturates without draining, the same URL legitimately costs 0.58 s or infinity depending on the minute
+it is requested. **Any single-sample latency figure for these endpoints — including the ones in §0.17.2 —
+should be read as one draw from a bimodal distribution, not as "the" cost.** Two consequences: no fix should
+be validated by a single timing, and the twin 300.17/300.18 s figures are the more interesting datum
+precisely because they are *not* variable — two runs terminating 10 ms apart against a 400 s client cap
+indicates a **hard 300 s cut in front of Martin** (Railway's edge proxy), not a slow query. A request killed
+at the edge never completes, so Martin never caches it, **so retrying never warms it**.
+
+Worth recording as method: codex refused to state any current latency at all, because its sandbox had no
+outbound HTTPS. That refusal was **more correct** than the Claude lanes' over-generalisation from single
+samples. Where a tool cannot measure, "I cannot measure this" outranks a confident number.
+
+#### 0.20.3 Four things §0.17 does not contain
+
+1. **The `/catalog` control that proves pool starvation rather than inferring it.** In one measured window:
+   `watershed_tiles/6/11/23` returned **000 after 60.01 s** having served in **0.30 s** minutes earlier;
+   the composite `/6/11/23` returned **000 after 60.03 s** having served in **0.91 s**;
+   `intervention_tiles/5/5/11` hung **150 s** despite returning **204 No Content in 0.22 s** at z6 — while
+   `GET /catalog`, the one endpoint touching no database, held steady at **0.30 s**. A layer that returns
+   *no rows* cannot hang on query cost. Martin's HTTP server is healthy; its Postgres pool is empty and does
+   not refill. This is the difference between a diagnosis and a demonstration.
+
+2. **`building_tiles` is empty at every zoom on Earth — undocumented anywhere before now.** `204 No Content`
+   at z10/181/373, z6/11/23, z4/2/5, z2/1/1 **and z0/0/0, the whole-world tile**, while five sibling layers
+   returned real bytes in the same sweep. A z0 world tile returning 204 admits no bbox explanation. Same for
+   `intervention_tiles`, which corroborates the standing note that interventions has no producer — but
+   **`building_tiles` appears in no memory note and no prior runbook section.** It is structurally the odd
+   one out too: no `geo.layers` join, no `status` predicate, just `b.is_public IS TRUE` plus the bbox test.
+   Next probe: row-count `geo.osm_buildings`. Zero rows means the OSM import never committed; rows but none
+   passing `b.is_public` means that flag is mis-set at import. Either way it is a data-completion gap, not a
+   query bug. **Caveat: this came from the lane that died (§0.20.4) and was never cross-verified.**
+
+3. **The `watersheds` time-slider row filters nothing, and the self-check built to catch that structurally
+   cannot.** `watershed_tiles` emits `observed_day` exactly like its four siblings, but both client
+   allowlists — `DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS` in `tile-layer-date-filter.ts` and
+   `DATE_FILTERABLE_TOGGLES_WITH_A_DAY_HERE` in `LayerManager.tsx` — contain exactly
+   `[fire-perimeters, evacuation-zones, burn-severity, sensors]`. This is **over**-inclusion (boundaries
+   drawn at every date), not empty-render, so it does **not** explain the acute symptom. The better finding
+   is the meta one: `reportDateFilterableToggleDrift()` exists to catch precisely this drift and compares
+   **the two client lists against each other**, never against which SQL functions actually emit the
+   attribute — a self-check that can only detect disagreement between two copies of the same mistake. Any
+   fix should re-point it at the server's emitted attributes.
+
+4. **Two things already fixed — do not "fix" them again.** The shared default-landing-date defect was
+   repaired 2026-08-09: `resolveLayerDate` defaults each layer to its **own** `latestObservedDate`, so a
+   layer opens on its own newest published day rather than a global date. And `UNINITIALIZED_DATE` cannot
+   reach the style filter — `isCalendarDate()` coerces it to `null` in `useDebouncedLayerDay`, and
+   `hasSelectableDay` gates it again; even if it leaked, any ISO date sorts lexicographically before
+   `"uninitialized"`, so the filter would show everything rather than hide everything.
+
+**A methodology rule earned the hard way, and it generalises past this outage.** `evacuation_zone_tiles`
+and `burn_severity_tiles` return **0 bytes at Boise z10/181/373** but **86,992 B and 22,070 B at z6/11/23**,
+and 149,235 / 97,257 B at z4/2/5. They are healthy; the Boise tile simply does not intersect the events.
+Event-based layers are geographically sparse and one city is not guaranteed to intersect them. **Probe
+`z1/0/0` first** — a cheap "does this table have rows anywhere on Earth" check — before concluding anything
+from a narrow high-zoom tile. A zero-byte 200 and a broken layer are indistinguishable without that step.
+
+#### 0.20.4 What this run got wrong, recorded because the failure mode will recur
+
+The `codex:data` lane **died** — it leaked literal tool-call markup into its JSON string fields and blew the
+StructuredOutput retry cap (5). `parallel()` resolved it to `null`, the barrier cleared with three lanes,
+and **the synthesis in `codex-outage-diagnosis.md` §§0-6 was written without ever seeing it.** Everything in
+§0.20.3 items 2-4 above was recovered by hand from the dead agent's transcript afterwards and is
+**single-source: it never passed through the cross-verification phase.** Weight it below §0.20.1
+accordingly. One thing raises confidence: its live probes ran in the healthy window, and other layers
+returned real payloads in the same sweep, so "204 everywhere" was measured against working siblings rather
+than against an already-starved server.
+
+A second, unrelated agent died in the §0.16-§0.19 run (`verify:evidence` on the heap-hit-ratio finding,
+lost to `API Error: Connection lost mid-response`). That finding survived on one adversarial lens instead of
+two — and was **independently refuted anyway** in §0.16.9, which is the system working.
+
+**The operational lesson, which is the durable part:** a killed workflow agent writes **no journal entry at
+all**, so "started with no result" is indistinguishable from "still running" — a dead lane read as healthy
+for 71 minutes. The only available liveness signal is transcript mtime. Any future monitor over these runs
+must treat a quiet transcript with no result as *probably dead*, not as *working*; both failures here were
+caught only after adding that check.
+
+#### 0.20.5 The fix order this run recommends, and one ordering trap
+
+Ranked by user-visible rendering unblocked per unit of work — and note this is a **different first move**
+than §0.17's tiering, because it optimises for "most map appears soonest" rather than for root-cause depth.
+
+1. **Split the single dynamic composite into six independent MapLibre sources**
+   (`src/lib/map/sources.ts:33-40`, plus the `source:` field on each dynamic layer in `layers.ts`).
+   Measured individually in one window: `watershed_tiles` 0.30 s, `intervention_tiles` 0.22 s,
+   `evacuation_zone_tiles` 0.49 s, `burn_severity_tiles` 4.55 s, `sensor_tiles` 15.32 s — and
+   `fire_risk_tiles` did not answer within 120 s. **All six layers ride one MapLibre source, so today the
+   five that work wait on the one that does not.** Splitting also permanently retires the "one missing
+   source 404s the whole TileJSON" failure class that `sources.ts:29-32` warns about in its own comment.
+   Risk: low-medium; six TileJSON fetches instead of one. `sources.ts:20-24` warns never to mix function
+   and table sources in one composite — splitting moves away from that hazard, never toward it. No Martin
+   redeploy.
+
+2. **ORDERING TRAP — do not take the smallest diff first.** Adding `statement_timeout` to Martin's
+   connection is a one-line change and it is the wrong first move. Applied before the z5 query cost is
+   understood, **it converts today's slow-but-sometimes-successful tiles into guaranteed 5xx**, turning an
+   intermittent outage into a deterministic one. Correct order: split → `EXPLAIN` the z5/z6 cost (§0.16.7
+   names this as the read-only measurement still missing, since its own EXPLAIN was taken at z10 where
+   tiles already work) → **then** `statement_timeout` → then cache expiry and a source `minzoom` floor.
+
+This ordering trap and §0.16.7's scope correction are the same gap seen from two directions: **nobody has
+yet captured a plan at the zooms that actually hang.** Until someone does, every proposed fix to the tile
+path is reasoning about a query it has not looked at.
 
 ---
 
