@@ -4,7 +4,7 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Last updated:** 2026-08-21. **READ §0, THEN §0.17, THEN §0.16 / §0.18 / §0.19.** **Branch:** `main` · **HEAD:** `efa8c37` · **Working tree was CLEAN at the start of this run; this run added five artifacts (three dormant migrations + two operator scripts) and this runbook, and applied NOTHING to production.**
+**Last updated:** 2026-08-21. **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
 
 **What changed 2026-08-21 — four new sections, and they supersede earlier ones where they disagree.** **§0.16** is the data-quality and QA assessment: the census per layer and per observation plane, freshness and rot, the job ledger and matview refresh state, the storage/index/bloat profile, the partitionwise probe, and what the QA gate does and does not prove — every number labelled with how it was obtained, CONFIRMED separated from UNVERIFIED, and **two headline claims REFUTED outright (§0.16.9)**. **§0.17** is why the map is broken *right now*, ranked by rendering unblocked per unit of work; **read it first if you are here to fix the outage.** **§0.18** is the target architecture — entity/observation split with sealed months on R2 — with the losing designs' grafts folded in and **17 recorded rejections so they stop being re-litigated (§0.18.8)**. **§0.19** is the merged programme plan with a gate class, precondition and reversal cost per item.
 
@@ -2865,6 +2865,125 @@ path is reasoning about a query it has not looked at.
 
 ---
 
+### 0.21 THE MAP IS FIXED — shipped and verified 2026-08-21. Supersedes §0.17's ranking and §0.16.7's cost figures.
+
+Owner confirmation, unprompted: *"this is immediately much better almost all layers render with caching
+working perfectly."* Three changes did it. Everything else this programme produced was scaffolding.
+
+#### 0.21.1 What shipped, and the measurement for each
+
+| change | where | evidence |
+|---|---|---|
+| **Composite split** — one MapLibre source per Martin function, replacing the single six-member composite | `src/lib/map/sources.ts`, `layers.ts`, `styles.ts` (`c1c0428`) | Five layers no longer wait on `fire_risk_tiles`, which did not answer in 120 s |
+| **Service worker cache-first for Martin tiles**, with consumer-driven refresh | `public/sw.js`, `src/lib/offline/tile-cache.ts`, `LayerRow.tsx` (`2b38c66`) | Cached tiles paint with **zero** network |
+| **`sensor_tiles` `DISTINCT ON`** | `drizzle/0038`, **applied to production 2026-08-21** | **14,258,826 → 745,755 bytes, 19.1×**; z6/11/22 3,920,849 → 222,682 B, 17.6× |
+
+`sensor_tiles` sizes were read **directly from Postgres** (`octet_length(geo.sensor_tiles(z,x,y))`), not through
+Martin, so its 5-minute `tile_expiry` cannot flatter them. All five function signatures verified unchanged
+after apply: `(z,x,y) -> bytea`, `STABLE`, `PARALLEL SAFE`, one overload each. Rollback text for all five
+captured to `scratchpad/rollback-0038.sql` (6,763 B) **before** applying.
+
+#### 0.21.2 CORRECTION — `EXPLAIN` cost is meaningless for these tile functions
+
+**This invalidates every cost-based conclusion earlier in this runbook, including §0.16.7's "186,000×
+explosion" and the tile-position mechanism in §0.17.**
+
+Plain `EXPLAIN` prices all five feature-backed tile functions **identically — 691,125.21 at z6/11/22, to the
+cent.** The layer is selected by NAME through a join, so `f.layer_id` arrives as a join variable and the
+planner estimates the whole envelope across all eleven layers. It hands the same 24,370-row estimate to
+`intervention_tiles` (**0 published rows**, 0.22 s) and to `sensor_tiles` (**186,904 rows**, no answer).
+
+Published rows, whole layer, measured 2026-08-21: **sensors 186,904 · evacuation-zones 651 ·
+burn-severity 541 · fire-perimeters 177 · interventions 0.** A `LIMIT` cannot bound a 177-row layer, so
+`0038`'s ceiling is a deliberate no-op on four of the five and the file says so.
+
+**Do not price these functions with `EXPLAIN` again.** Measure `octet_length()` of the actual output and
+wall-clock the call. Chasing the cost numbers is most of what produced this session's analysis loop.
+
+#### 0.21.3 The two real mechanisms, now separated
+
+- **`sensor_tiles` was overdraw, not extent.** 625 stations each publish 13–30 same-day readings **at one
+  identical coordinate**, so the tile carried 186,904 features. `DISTINCT ON (sensor_id, geom,
+  observation_day)` keeps all 23 observation days and drops the duplicates.
+- **`fire_risk_tiles` / `burn_severity_tiles` are cold TOAST reads** — 11.7 MB and 37.5 MB of geometry
+  against 256 MB `shared_buffers`. Measured **10.9 s / 28.4 s cold, 0.23 s / 0.42 s warm — 40–68×.**
+  **There is no SQL fix.** The client cache is the mitigation, which is precisely why cache-first beat
+  stale-while-revalidate: automatic revalidation would silently re-pay that 28 s.
+
+#### 0.21.4 Why the tile cache never revalidates itself
+
+Dynamic Martin tiles are **cache-first, and a hit fires no background fetch.** That is the design, not an
+omission: revalidating on every hit paints instantly but leaves origin load exactly where it was, which is
+the cost the cache exists to remove.
+
+What makes it safe: **a tile's bytes do not vary with the selected date.** No tile function has a date
+predicate — day filtering is a client-side MapLibre style filter over the `observed_day` MVT attribute — so
+moving the time slider needs **no refetch at all**, and a cached tile already carries every day it will be
+asked for. Only an ingest run landing new features changes what a tile should contain.
+
+So refresh is consumer-driven: a **Refresh** button per Martin-backed layer row, and
+`refreshDynamicTiles(sourceId)` under it. Dropping the service-worker entry alone is **not enough** —
+MapLibre keeps its own in-memory copy of every tile it has drawn, so the button also re-sets the source's
+tile template, which is the public API for "reload this source now". Without that it looks broken while
+working.
+
+Deliberately **not** folded into "Clear saved days" beside it: that control is destructive, is confirmed as
+such, and its copy promises downloaded tiles are left alone. Two intents, two buttons.
+
+**PMTiles stays excluded and must** — Range requests answered with 206, and `cache.put` throws on a partial
+response. `/catalog` and `/health` stay uncached. Nine matcher cases were tested before shipping.
+
+#### 0.21.5 Owner decisions, 2026-08-21
+
+- **Next session starts the Parquet path**, not further map polish. The map is good enough to build on.
+- **Keep the `sensors` layer for now.** It was the worst offender and is now one of the cheapest, so the
+  cost argument for removing it has largely evaporated. Revisit as a product question, not a performance one.
+- **Return to a greenfield state if possible.** Owner: *"we may not really want to invest much more in
+  something we are migrating to parquet — register now is still viable if needed."* See §0.21.6.
+- **Static layers stop revalidating:** soil-survey (SSURGO) and watersheds, **plus historical days for every
+  layer** — any day older than a layer's newest published day is settled.
+- **Backfills that correct a completed record become a manual admin action.** This is the answer to the
+  hazard that blocked the historical-days decision: a retracting backfill can no longer rely on automatic
+  revalidation to reach a client, so it must be triggered deliberately.
+
+#### 0.21.6 HAZARD — seven migrations applied to production but unregistered
+
+`drizzle/0030` – `0038` are hand-applied or dormant and **none is in `drizzle/meta/_journal.json`**. A rebuild
+from migration history would silently restore the **old 14 MB `sensor_tiles` body** and resurrect
+`geo.mv_signal_cell_daily` (6,349 MB, `drizzle/0029:533`), because no DROP is recorded there either.
+
+The owner's greenfield preference makes reconciling this lineage possibly not worth doing — but **the
+divergence must not be silent**, which is exactly how the `mv_signal_cell_daily` drop nearly got undone.
+Registering remains viable: add the entry **and** bump `src/lib/server/db/migration-contract.ts` in the same
+commit, because the readiness test pins the last journal entry's tag and sha256. Note the ordering risk:
+the migrator runs **every** registered file, and `0033`–`0036` sit ahead of `0038`.
+
+#### 0.21.7 Still open after this run
+
+- **tRPC-backed layers do not have the tile cache's discipline.** soil-survey, watersheds, water, vegetation,
+  drought, and the soil/climate fields go through the IndexedDB persister, which returns a hit in 0 ms **but
+  background-revalidates on every access**, and only engages when the query carries a bbox or date
+  (`isPersistableQueryKey`). §0.21.5's decision is the fix and it is not built.
+- **`interventions` has 0 published rows** — renders nothing because there is nothing to render.
+- **`building_tiles` returns 204 at every zoom including z0/0/0** (§0.20.3). Untouched.
+- **Strategy Recommendations still cannot render**: `geo.strategy_recommendations_tiles` is absent from
+  `infra/martin/martin.yaml` and `auto_publish` is false, so Martin 404s it. The client name mismatch was
+  fixed; the registration was deliberately **not** added, because declaring a source Martin 404s would leave
+  it permanently unresolved and re-create the all-layer stall the split just removed.
+
+#### 0.21.8 Process — what this session actually cost
+
+Roughly **10M tokens of agent analysis produced three shippable changes.** Each research wave corrected the
+previous one — partitioning was the fix until it delivered nothing; the bandwidth cap was the suspect until
+it provably could not touch a tile; cost exploded 186,000× until that proved a planner artifact. The
+corrections were individually right and collectively a loop, because each fresh agent re-derived from
+scratch and found the prior claim over-generalised.
+
+**Owner directive: stop running workflows on this project; work in small bite-sized steps.** The three fixes
+that mattered were each a single well-scoped edit. Honour this — it is a working instruction, not a mood.
+
+---
+
 ## 1. Goal
 
 Get the 3 GB-capped production database to a small, honest working set — the application runs **no analytical
@@ -3636,6 +3755,14 @@ unchanged and still correct, but is no longer the top of the queue.**
 ---
 
 ## 8. Session log
+
+### 2026-08-21 — the map got fixed; three changes, and a great deal of scaffolding around them
+
+- **Done:** composite split (`c1c0428`); service-worker cache-first for Martin tiles plus a per-layer Refresh (`2b38c66`); `drizzle/0038` `sensor_tiles` `DISTINCT ON` **applied to production** — 14,258,826 → 745,755 bytes (19.1×), read straight from Postgres so Martin's 5-minute cache cannot flatter it. Owner confirms almost all layers now render with caching working.
+- **Reviewed:** the composite-split lane caught that `getSources()` has ZERO callers and `styles.ts` hardcodes the source map — repointing layers alone would have failed MapLibre style validation and blanked the WHOLE map, not five-of-six. The tile-function lane overturned the brief it was given: `EXPLAIN` prices all five functions identically because the layer is chosen by name through a join (§0.21.2). Both corrections were load-bearing; neither was in its brief.
+- **In flight:** nothing. Working tree clean, level with origin at `2b38c66`. All workflows and monitors stopped at the owner's instruction.
+- **Blocked:** nothing blocking. `drizzle/0030`–`0038` are applied-or-dormant and unregistered (§0.21.6) — recorded, deliberately not reconciled, because the owner prefers a greenfield reset over investing further in a lineage that is being migrated to Parquet.
+- **Next:** start the Parquet path (§7 and §0.19.5 Tier 4, with gates 33 and 34 WAIVED) — the owner's chosen priority over further map polish.
 
 ### 2026-08-17 — owner directives folded in; client batch COMMITTED AND PUSHED as `de3139e`
 
