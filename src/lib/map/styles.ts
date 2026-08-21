@@ -1,6 +1,6 @@
 import type { StyleSpecification } from "maplibre-gl";
 import type { MapStyle } from "@/types/map";
-import { martinDynamicSource, martinOsmSource, terrainSource, pmtilesSource } from "./sources";
+import { martinDynamicSources, martinOsmSource, terrainSource, pmtilesSource } from "./sources";
 import { buildings3dLayer, getLayers } from "./layers";
 
 export type { MapStyle };
@@ -59,7 +59,10 @@ export const darkStyle: StyleSpecification = {
   sprite: "https://protomaps.github.io/basemaps-assets/sprites/v4/dark",
   sources: {
     protomaps: pmtilesSource,
-    "martin-dynamic": martinDynamicSource,
+    // One source per Martin function, spread in by id (sources.ts). NOT a single
+    // "martin-dynamic" composite any more: one source shared by six layers made every
+    // layer wait on the slowest member, so one unanswered tile function blanked all six.
+    ...martinDynamicSources,
     "martin-osm": martinOsmSource,
     "terrain-dem": terrainSource,
   },
@@ -163,7 +166,10 @@ export const lightStyle: StyleSpecification = {
   sprite: "https://protomaps.github.io/basemaps-assets/sprites/v4/light",
   sources: {
     protomaps: pmtilesSource,
-    "martin-dynamic": martinDynamicSource,
+    // One source per Martin function, spread in by id (sources.ts). NOT a single
+    // "martin-dynamic" composite any more: one source shared by six layers made every
+    // layer wait on the slowest member, so one unanswered tile function blanked all six.
+    ...martinDynamicSources,
     "martin-osm": martinOsmSource,
     "terrain-dem": terrainSource,
   },
@@ -283,7 +289,10 @@ export const satelliteStyle: StyleSpecification = {
     },
     "terrain-dem": terrainSource,
     protomaps: pmtilesSource,
-    "martin-dynamic": martinDynamicSource,
+    // One source per Martin function, spread in by id (sources.ts). NOT a single
+    // "martin-dynamic" composite any more: one source shared by six layers made every
+    // layer wait on the slowest member, so one unanswered tile function blanked all six.
+    ...martinDynamicSources,
     "martin-osm": martinOsmSource,
   },
   // terrain enabled on-demand via MapView controls

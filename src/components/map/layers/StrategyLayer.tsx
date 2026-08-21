@@ -12,7 +12,23 @@ interface StrategyLayerProps {
 
 const LAYER_FILL_ID = "strategy-recommendations-fill";
 const LAYER_OUTLINE_ID = "strategy-recommendations-outline";
-const SOURCE_ID = "martin-dynamic";
+// The Martin source id for geo.strategy_recommendations_tiles, matching the bare ids in
+// infra/martin/martin.yaml. This is NOT "martin-dynamic" any more -- that composite was
+// split into one source per function on 2026-08-21 (src/lib/map/sources.ts).
+//
+// Two registrations still have to land before this layer can draw, and neither is in this
+// file: geo.strategy_recommendations_tiles is absent from infra/martin/martin.yaml (Martin
+// runs auto_publish: false, so it serves nothing for this id), and the id is therefore also
+// absent from DYNAMIC_TILE_SOURCE_IDS, so no style declares the source. Until both land,
+// map.getSource() returns undefined and the effect below returns early -- the layer is inert
+// rather than broken, and adding the id to either list before Martin answers would leave a
+// source that never resolves, holding map.isStyleLoaded() false for the whole session.
+const SOURCE_ID = "strategy_recommendations_tiles";
+
+// The ST_AsMVT tag geo.strategy_recommendations_tiles actually emits (drizzle/0028, which
+// spells it 'strategy-recommendations'). It was "strategy_recommendations" here, with an
+// underscore, which matches nothing in the tile and renders nothing while reporting no error.
+const SOURCE_LAYER = "strategy-recommendations";
 
 export function StrategyLayer({ map, loaded }: StrategyLayerProps) {
   const activeLayers = useMapStore((s) => s.activeLayers);
@@ -33,7 +49,7 @@ export function StrategyLayer({ map, loaded }: StrategyLayerProps) {
           id: LAYER_FILL_ID,
           type: "fill",
           source: SOURCE_ID,
-          "source-layer": "strategy_recommendations",
+          "source-layer": SOURCE_LAYER,
           minzoom: 4,
           paint: {
             "fill-color": [
@@ -61,7 +77,7 @@ export function StrategyLayer({ map, loaded }: StrategyLayerProps) {
           id: LAYER_OUTLINE_ID,
           type: "line",
           source: SOURCE_ID,
-          "source-layer": "strategy_recommendations",
+          "source-layer": SOURCE_LAYER,
           minzoom: 4,
           paint: {
             "line-color": "#15803d",

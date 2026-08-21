@@ -58,7 +58,18 @@ function interpolateStops(
   ] as unknown as DataDrivenPropertyValueSpecification<string>;
 }
 
-const MARTIN_SOURCE = "martin-dynamic";
+// One MapLibre source per Martin function, named for the Martin source id it requests.
+// These replaced the single "martin-dynamic" composite on 2026-08-21: sharing one source
+// made every dynamic layer wait on the slowest member, so a tile function that never
+// answered (fire_risk_tiles, measured against production 2026-08-20) blanked all six
+// layers rather than only its own. Each id must exist in DYNAMIC_TILE_SOURCE_IDS
+// (src/lib/map/sources.ts), which is what actually declares the source in the style.
+const FIRE_RISK_SOURCE = "fire_risk_tiles";
+const SENSOR_SOURCE = "sensor_tiles";
+const EVACUATION_ZONE_SOURCE = "evacuation_zone_tiles";
+const BURN_SEVERITY_SOURCE = "burn_severity_tiles";
+const INTERVENTION_SOURCE = "intervention_tiles";
+const WATERSHED_SOURCE = "watershed_tiles";
 // Table-backed OSM tiles live in a separate composite: mixing them with the
 // function sources makes Martin declare vector_layers, which MapLibre then
 // validates against and rejects every function-backed layer. See sources.ts.
@@ -137,7 +148,7 @@ export const FIRE_PERIMETER_OUTLINE_COLOR = "#dc2626";
 export const firePerimetersLayer: LayerSpecification = {
   id: "fire-perimeters",
   type: "fill",
-  source: MARTIN_SOURCE,
+  source: FIRE_RISK_SOURCE,
   "source-layer": "fire_risk",
   minzoom: 4,
   layout: { visibility: "none" },
@@ -154,7 +165,7 @@ export const firePerimetersLayer: LayerSpecification = {
 export const firePerimetersOutlineLayer: LayerSpecification = {
   id: "fire-perimeters-outline",
   type: "line",
-  source: MARTIN_SOURCE,
+  source: FIRE_RISK_SOURCE,
   "source-layer": "fire_risk",
   minzoom: 4,
   layout: { visibility: "none" },
@@ -186,7 +197,7 @@ export const SENSOR_UNCLASSIFIED_LABEL = "Network not reported";
 export const sensorsLayer: LayerSpecification = {
   id: "sensors",
   type: "circle",
-  source: MARTIN_SOURCE,
+  source: SENSOR_SOURCE,
   "source-layer": "sensors",
   minzoom: 4,
   layout: { visibility: "none" },
@@ -217,7 +228,7 @@ export const EVACUATION_OUTLINE_COLOR = "#dc2626";
 export const evacuationZonesLayer: LayerSpecification = {
   id: "evacuation-zones",
   type: "fill",
-  source: MARTIN_SOURCE,
+  source: EVACUATION_ZONE_SOURCE,
   "source-layer": "evacuation_zones",
   minzoom: 4,
   layout: { visibility: "none" },
@@ -234,7 +245,7 @@ export const evacuationZonesLayer: LayerSpecification = {
 export const evacuationZonesOutlineLayer: LayerSpecification = {
   id: "evacuation-zones-outline",
   type: "line",
-  source: MARTIN_SOURCE,
+  source: EVACUATION_ZONE_SOURCE,
   "source-layer": "evacuation_zones",
   minzoom: 4,
   layout: { visibility: "none" },
@@ -275,7 +286,7 @@ export const BURN_SEVERITY_OUTLINE_COLOR = "#7f1d1d";
 export const burnSeverityLayer: LayerSpecification = {
   id: "burn-severity",
   type: "fill",
-  source: MARTIN_SOURCE,
+  source: BURN_SEVERITY_SOURCE,
   "source-layer": "burn_severity",
   minzoom: 4,
   layout: { visibility: "none" },
@@ -295,7 +306,7 @@ export const burnSeverityLayer: LayerSpecification = {
 export const burnSeverityOutlineLayer: LayerSpecification = {
   id: "burn-severity-outline",
   type: "line",
-  source: MARTIN_SOURCE,
+  source: BURN_SEVERITY_SOURCE,
   "source-layer": "burn_severity",
   minzoom: 4,
   layout: { visibility: "none" },
@@ -335,7 +346,7 @@ export const INTERVENTION_UNPRIORITIZED_POINT_LABEL = "Submitted site, not yet p
 export const interventionsLayer: LayerSpecification = {
   id: "interventions",
   type: "fill",
-  source: MARTIN_SOURCE,
+  source: INTERVENTION_SOURCE,
   "source-layer": "interventions",
   minzoom: 6,
   layout: { visibility: "none" },
@@ -352,7 +363,7 @@ export const interventionsLayer: LayerSpecification = {
 export const interventionsOutlineLayer: LayerSpecification = {
   id: "interventions-outline",
   type: "line",
-  source: MARTIN_SOURCE,
+  source: INTERVENTION_SOURCE,
   "source-layer": "interventions",
   minzoom: 6,
   layout: { visibility: "none" },
@@ -378,7 +389,7 @@ export const interventionsOutlineLayer: LayerSpecification = {
 export const interventionsPointsLayer: LayerSpecification = {
   id: "interventions-points",
   type: "circle",
-  source: MARTIN_SOURCE,
+  source: INTERVENTION_SOURCE,
   "source-layer": "interventions",
   minzoom: 6,
   layout: { visibility: "none" },
@@ -424,7 +435,7 @@ export const WATERSHED_BOUNDARY_COLOR = "#1565c0";
 export const watershedsLayer: LayerSpecification = {
   id: "watersheds-fill",
   type: "fill",
-  source: MARTIN_SOURCE,
+  source: WATERSHED_SOURCE,
   "source-layer": "watersheds",
   layout: { visibility: "none" },
   paint: {
@@ -439,7 +450,7 @@ export const watershedsLayer: LayerSpecification = {
 export const watershedsOutlineLayer: LayerSpecification = {
   id: "watersheds-outline",
   type: "line",
-  source: MARTIN_SOURCE,
+  source: WATERSHED_SOURCE,
   "source-layer": "watersheds",
   layout: { visibility: "none" },
   paint: {

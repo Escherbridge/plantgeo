@@ -25,11 +25,16 @@ const DYNAMIC_TILES_URL =
 // nothing draws geo.osm_buildings any more, so requesting its tiles bought nothing. The
 // Martin function is still live and still serves valid (empty) tiles, so restoring the layer
 // means re-listing the id here and nothing else.
-// An id may only be listed once Martin actually answers for it: this is a SINGLE MapLibre
-// source over every member, so a 404 on any one of them fails the whole TileJSON and blanks
-// every dynamic layer at once, not just the missing one. Martin runs `auto_publish: false`
-// and reads its function catalogue from infra/martin/martin.yaml at startup, so a new
-// function is served only after the Martin service itself redeploys.
+// Each id below now gets its OWN MapLibre vector source (createMartinDynamicSources), keyed
+// by the id itself. Until 2026-08-21 these were comma-joined into a SINGLE composite source,
+// which coupled all six layers into one fate: a 404 on any one member failed the whole
+// TileJSON, and — measured on production 2026-08-20 — one slow member (fire_risk_tiles did
+// not answer in 120s) held the shared source's tiles unresolved, so the five layers that did
+// answer in under 5s rendered nothing either. Split sources fail and stall independently.
+// Martin runs `auto_publish: false` and reads its function catalogue from
+// infra/martin/martin.yaml at startup, so a new function is served only after the Martin
+// service itself redeploys; an id may still only be listed here once Martin answers for it,
+// because a source declared in the style but never answered holds map.isStyleLoaded() false.
 const DYNAMIC_TILE_SOURCE_IDS = [
   "fire_risk_tiles",
   "sensor_tiles",
@@ -85,8 +90,28 @@ function createMartinCompositeSource(
   };
 }
 
-export function createMartinDynamicSource(baseUrl: string): SourceSpecification {
-  return createMartinCompositeSource(baseUrl, DYNAMIC_TILE_SOURCE_IDS);
+/** One MapLibre vector source over exactly one Martin source id. */
+export function createMartinFunctionSource(
+  baseUrl: string,
+  sourceId: string
+): SourceSpecification {
+  return createMartinCompositeSource(baseUrl, [sourceId]);
+}
+
+/**
+ * The function-backed dynamic sources, one MapLibre source per Martin function, keyed by the
+ * bare Martin source id (which is also what layers.ts puts in each layer's `source` field).
+ * Spread into a style's `sources` map — see styles.ts.
+ */
+export function createMartinDynamicSources(
+  baseUrl: string
+): Record<string, SourceSpecification> {
+  return Object.fromEntries(
+    DYNAMIC_TILE_SOURCE_IDS.map((sourceId) => [
+      sourceId,
+      createMartinFunctionSource(baseUrl, sourceId),
+    ])
+  );
 }
 
 export function createMartinOsmSource(baseUrl: string): SourceSpecification {
@@ -99,7 +124,7 @@ export function getSources(
 ): Record<string, SourceSpecification> {
   return {
     protomaps: createPmtilesSource(pmtilesArchiveUrl),
-    "martin-dynamic": createMartinDynamicSource(dynamicTilesUrl),
+    ...createMartinDynamicSources(dynamicTilesUrl),
     "martin-osm": createMartinOsmSource(dynamicTilesUrl),
     "terrain-dem": terrainSource,
     satellite: {
@@ -138,5 +163,5 @@ export const terrainSource: SourceSpecification = {
 
 export const pmtilesSource = createPmtilesSource(PMTILES_ARCHIVE_URL);
 
-export const martinDynamicSource = createMartinDynamicSource(DYNAMIC_TILES_URL);
+export const martinDynamicSources = createMartinDynamicSources(DYNAMIC_TILES_URL);
 export const martinOsmSource = createMartinOsmSource(DYNAMIC_TILES_URL);
