@@ -4,9 +4,684 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Last updated:** 2026-08-17, **handoff — read §7's "HANDOFF STATE" block first.** Client batch **shipped as
+**Last updated:** 2026-08-20. **READ §0 THEN §0.3-§0.10.** Client batch **shipped as
 `de3139e`**; agri batch **blocked NO-GO**; **new memory evidence in §12.6** (idle ~50 MB, one query → 1 GB);
-**dropping TimescaleDB is now AUTHORIZED but is measured NOT to be the cause — §12.7.** · **Branch:** `main` (level with `origin/main`) · **Last commit:** `890f430 chore(db): register 0028 and 0029 now that prod actually runs them` · **Working tree still carries the uncommitted review-fix batch (§8); nothing was committed.** **A PRODUCTION CHANGE WAS APPLIED 2026-08-17** — `TILE_CORS_ORIGIN` on `plantgeo-martin` (§2). Earlier "root-cause outage found and FIXED" framing stands; §2 and §9 remain the evidence.
+**dropping TimescaleDB is now AUTHORIZED but is measured NOT to be the cause — §12.7.** · **Branch:** `main` (level with `origin/main`) · **Last commit:** `e71e1cd fix(agri): pin the one parameter two lanes read twice, and the pin that went stale under it` (2026-08-18) · **Working tree is CLEAN — the batch this line used to call uncommitted shipped as `160388f`, `44c2133`, `5354df7`, `e71e1cd`.** **READ §0 FIRST: the memory cap is 2 GB, not 3 GB, and `geo.mv_signal_cell_daily` has been DROPPED — much of what follows assumes otherwise.** **§0.3-§0.10 (2026-08-20) add the ingestion write path, the application read path, the Parquet bucket, and the deprecation plan — and §0.4 records a BLOCKER (runtime layer creation ⇒ a DEFAULT partition is mandatory) that invalidates §0.1 step 1 as written.** **A PRODUCTION CHANGE WAS APPLIED 2026-08-17** — `TILE_CORS_ORIGIN` on `plantgeo-martin` (§2). Earlier "root-cause outage found and FIXED" framing stands; §2 and §9 remain the evidence.
+
+---
+
+## 0. HANDOFF — 2026-08-18. START HERE.
+
+**Supersedes the 3 GB memory-cap premise that every section below this one assumes.**
+
+### Goal
+
+Get PlantGeo's database under its Railway memory cap without a materialized view, a continuous aggregate, or
+TimescaleDB anywhere in the design. Owner's words: *"the main goal is to make it so that no materialized views or
+continuous aggregates + timescale db memory hogging features are needed."* The engine-migration path was
+investigated exhaustively and refuted — see `docs/research/timescale-pivot-2026-08-17/report.md`.
+
+### THE CAP IS 2 GB. IT WAS 1 GB THIS MORNING. NOTHING BELOW THIS SECTION KNOWS THAT.
+
+Every prior document — this runbook's §5, the memory notes, the whole research corpus — reasons about a **3 GB**
+cap. That was never re-verified. Measured and confirmed by the owner 2026-08-18:
+
+- The cap had been set to **1 GB**, which is **below the measured working set of a single query** (one census sort
+  measured ~1.4 GiB). At 1 GB those statements cannot succeed at any speed — they spill until they time out. The
+  Railway graph showed memory pinned flat at the ceiling with CPU near idle: a box waiting on I/O, not working.
+- **Uncapped it reached ~50 GB.** That is page cache, not working set — Postgres fills whatever it is given from a
+  43 GB data dir and Railway bills it via cgroup. This is the same mechanism §5's "the 3 GB reading is page cache"
+  finding describes, at a larger number.
+- **Owner raised it to 2 GB on 2026-08-18 as an explicit bridge, not a permanent setting.** The plan is to do the
+  structural work until no statement's working set exceeds 1 GB, then come back down.
+
+`effective_cache_size` is 2 GB, which was a 2× lie at a 1 GB cap and is now merely optimistic (100% of container;
+~1.25 GB would be textbook). **Deliberately left alone** — do not "fix" it without measuring, changing planner cost
+parameters on a degraded box is how you get a surprise.
+
+### State
+
+**Applied to production and verified:**
+
+| change | evidence |
+|---|---|
+| `autovacuum_max_workers` 10 → 3 | live, `context=sighup`, no restart. Was a **1.28 GB** worst-case floor against a **1 GB** cap — it exceeded the whole container. Confirmed still 3 on 2026-08-18. |
+| `hypopg` 1.4.3 + `pg_buffercache` installed | `CREATE EXTENSION` succeeded; `ALTER SYSTEM` **is** permitted on Railway managed PG |
+| alembic `20260817_0025` | hand-applied; `alembic_version` verified |
+| **`geo.mv_signal_cell_daily` DROPPED** | 2026-08-18. **Database 43 GB → 37 GB.** Was 6,349 MB (heap 3,796 + indexes 2,553), 24,958,092 rows, measured **1,729 s** rebuild. Zero in-database dependents confirmed before dropping. |
+| refresh backoff working | ledger shows `consecutive_failures` incrementing (soil_union 3, signal_observation_day 3, soil_survey_grid 2) instead of churning |
+| `mv_feature_observation_day` **now succeeds** | 2026-08-18 19:04 — the 300→900 s timeout raise fixed it. It is no longer one of the failing four. |
+
+**Commits on `main`:** `160388f` (backoff/preflight/unshard) · `44c2133` (drizzle 0030-0032, dormant) ·
+`5354df7` (runbook) · `e71e1cd` (the 42P08 fix + stale readiness pin).
+
+**Believed-correct but NOT verified:** whether the 2 GB cap survives a Railway-initiated restart; whether
+`ALTER SYSTEM autovacuum_max_workers` survives one. Both should be re-checked after the next deploy.
+
+**Broken / degraded right now:**
+- The four agent tools that read `mv_signal_cell_daily` — `sql/agent/signal_value_on_day.sql`,
+  `signal_neighbors_in_time.sql`, `signals_near_point.sql`, `nearest_signal_cells.sql` — **are degraded by design** until the Parquet path
+  exists. Owner accepted this explicitly.
+- Three views still fail every attempt, now backing off correctly: `mv_soil_survey_union` (never once succeeded —
+  real bug, see below), `mv_signal_observation_day` (300 s timeout), `mv_soil_survey_grid`.
+- `mv_feature_observation_day_axis` reports `skipped_missing`, `refreshed=NEVER` — because `drizzle/0031` shipped
+  **dormant**.
+
+**Review ledger:** the research corpus had an ACH crucible + contradiction mapping + adversarial personas
+(14 agents). The deploy batch `160388f` was reviewed by audit but **shipped a regression anyway** — see below. The
+`e71e1cd` fix was self-verified against production with live evidence. **The partitioning work below has no review
+verdict yet.**
+
+### Key context — the non-obvious material
+
+**1. A green test sweep is not evidence on this repo unless `AGRI_TEST_DATABASE_URL` was set.** `160388f` shipped
+with 3,062 Python + 1,320 JS tests passing and took **both** refresh lanes down in production. The test that catches
+it — `tests/test_strategy_mv_refresh_postgresql.py` — **already existed and was silently skipped**. With the gate
+set: 3,170 passed. Check the gate before trusting a pass count. Real-DB recipe: local `agri_sweep` on port **5442**.
+
+**2. The bug class, worth internalising: a named parameter used TWICE in one statement.** In
+`sql/jobs/upsert_matview_refresh_state.sql`, `:outcome` is read as the column value and again in the
+`consecutive_failures` CASE that 0025 added. **SQLAlchemy renders a repeated named parameter as ONE placeholder**,
+so PostgreSQL deduced `$6` from both sites: `ERROR 42P08: inconsistent types deduced for parameter $6 — text versus
+character varying`. Raised at **parse** time; the statement never ran once. Fix was
+`bindparam("outcome", type_=String)` at `jobs/matview_refresh.py:605`. **`check_relations_exist.sql` was innocent —
+an early diagnosis blamed it; do not "fix" it.**
+
+**3. Alembic is NOT run by the deploy pipeline.** No `preDeployCommand`, no migration step in
+`services/agri-data-service/railway.json` or its Dockerfile. **Hand-apply against `DATABASE_URL_SYNC` before
+pushing.** Drizzle migrations *are* automatic on `plantgeo-main` — but the migrator only executes files listed in
+`drizzle/meta/_journal.json`, so `0030`-`0032` shipped inert. Registering them is queued work with preconditions.
+
+**4. No index can rescue the census aggregates. Measured, closed.** `hypopg` showed `status = 'published'` matches
+**5,029,620 of ~5.03M rows — over 99.9%**. That predicate has no selectivity, so nothing beats a sequential scan of
+the 3,723 MB heap. `ix_features_layer_observation_day` **already exists in production** and the planner correctly
+rejects it; forcing it is 1.76% *worse*. `drizzle/0031`'s "next lever" note is **CLOSED — the lever does not
+exist.** The 166-row fire-perimeters guard was three orders of magnitude too small to matter.
+
+**5. `hypopg` cannot test GiST** (`access method "gist" is not supported`). So `drizzle/0030`'s composite index is
+**build-measure-drop**, not preview-then-build. Reversible but not free.
+
+**6. The jsonb→native-column fix is NOT a speed fix.** `drizzle/0031` measured **286,800 ms vs 283,049 ms** —
+marginally slower. It buys an **8.5× cut in peak allocation** (33 B/tuple vs 511) and reliability. On this box the
+binding constraint is **peak allocation, never latency.** No fix here makes it quick.
+
+**7. Geometry is stored TWICE.** `geo.features` carries an inline `geom` **and** a `geometry_id` FK into
+`geo.geometry`, which has its own `geom`. **All 5,029,850 rows carry both.** 5.03M features point at 3,255,832
+dimension rows. And the dimension's forward path is not maintained, so the duplicate is not reliably in sync.
+
+**8. `geo.features` has ZERO inbound foreign keys.** Verified. This is what unblocks partitioning — the constraint
+that made the hypertable conversion illegal (PK on `id` carrying FKs) does not apply here.
+
+**9. `water-gauges` is 1,392,454 rows over 953 distinct geometries** — a USGS reading log — and is served by **no
+tile function**. It owns **27.7%** of `idx_features_geom`, which every tile query's `&&` leg walks. fire-detections
+owns 59.9%, also with no tile function. **87.6% of the shared spatial index belongs to two layers that never use
+it**; the five style-baked tile layers own 0.21% of the tree they are forced to walk.
+
+**10. `mv_soil_survey_union`'s real bug** is a missing `ST_CollectionExtract(…, 3)` in the `delineation` CTE at
+`drizzle/0029_pre_aggregation_layer.sql:918` — the extract runs *after* the unions, too late to stop a MakeValid'd
+GeometryCollection reaching `ST_Union`. **Not** an SFCGAL problem; a backend swap is the wrong lever.
+
+### Decisions (2026-08-18, owner)
+
+- **Do not migrate engines.** Materialize/RisingWave have no geometry type; ClickHouse has no spatial index and
+  Martin has no ClickHouse support; VictoriaMetrics is float64-only; DuckDB is single-writer; `pg_ivm` is not among
+  Railway's 102 available extensions. Full reasoning and citations: `docs/research/timescale-pivot-2026-08-17/`.
+- **Raise the cap to 2 GB as a bridge**, not a destination. Come back to 1 GB after the structural work.
+- **Drop `mv_signal_cell_daily` now**, rebuild as Parquet later — chosen over export-first because the export
+  itself must read 6.3 GB on a constrained box.
+- **Execute partitioning, not just spec it.** Owner chose execution knowing this session already shipped one
+  regression from a green sweep.
+- **DuckDB over Polars** if/when the Parquet path is built — the consumers are SQL files, and DuckDB has real
+  spatial. **Skip Iceberg/DuckLake/R2 Data Catalog** — 15+ months in open beta, no GA date.
+- **No schema-per-layer.** Partitions give physical separation; schemas add `search_path` surface for no gain.
+
+### Assumptions
+
+- **The 2 GB cap holds and is enough for the partition-copy batches** · default taken: proceed · to reverse: the
+  copy of `fire-detections` (3,012,005 rows) is the one batch that could exceed it; chunk it by day if it does.
+- **The three degraded agent tools are not user-visible** · default taken: accept the gap · to reverse: rebuild
+  `mv_signal_cell_daily` from `drizzle/0029`, ~1,729 s.
+- **`geo.features.geom` is authoritative and the dimension is the stale copy** · default taken: partition on the
+  inline `geom` and leave the dimension alone · to reverse: cheap now, expensive after partitioning.
+- **~1 concurrent user** · default taken: treat this as a single-query working-set problem, not a concurrency one ·
+  **never actually measured** — Railway `http_requests` on `plantgeo-martin`/`plantgeo-main` would settle it.
+
+### Relevant files
+
+- `docs/research/timescale-pivot-2026-08-17/report.md` — the full verdict, 7 sections
+- `docs/research/timescale-pivot-2026-08-17/FACTS.md` — **669+ lines of measured ground truth and 9 corrections.**
+  Later corrections reverse earlier claims in the same file; the later one always wins.
+- `services/agri-data-service/src/agri_data_service/jobs/matview_refresh.py:605` — the `bindparam` fix; `:256`,
+  `:267-455` the twelve specs and their staleness ceilings
+- `drizzle/0029_pre_aggregation_layer.sql:918` — the soil-union `ST_CollectionExtract` bug
+- `drizzle/0030_features_layer_geom_tile_index.sql:5-13` — the 45.6 s BitmapAnd EXPLAIN, and `:32-40` the sound
+  rejection of per-layer partial GiST indexes
+- `drizzle/0031_observation_day_axis.sql:18-51` — the not-faster measurement; its "next lever" note is now CLOSED
+- `docs/research/timescale-pivot-2026-08-17/evidence/hypopg-covering-index-2026-08-17.md` — the plans that closed it
+
+### Environment
+
+- Branch `main`, level with origin at `e71e1cd`. Working tree clean except untracked `docs/research/`.
+- Prod: PostgreSQL **18.4**, PostGIS 3.6.4, TimescaleDB 2.29.0 (idle, drop authorized). Database **37 GB** after
+  the drop. Railway project **Aevani** `6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`, env
+  `b7cfa813-8a5c-4fcd-80f2-cab736d840a7`. Railway MCP authenticated as owner.
+- Prod DSN: `DATABASE_URL_SYNC` in `services/agri-data-service/.env` (gitignored). **Values live there only.**
+  Query with `services/agri-data-service/.venv/Scripts/python.exe` — **psycopg2, not psycopg3**: `conn.cursor()`,
+  never `conn.execute()`. `SET statement_timeout` on every statement.
+- Real-DB tests: gate is `AGRI_TEST_DATABASE_URL`; local `agri_sweep` on port **5442**.
+- Installed and unused on prod, all free to try: `h3`, `h3_postgis`, `pg_repack`, `hll`, `roaringbitmap`,
+  `postgis_sfcgal`. `pg_stat_statements`/`pg_qualstats`/`pg_stat_kcache` need the **same restart** as the
+  TimescaleDB drop — bundle them.
+
+### 0.1 Continuation plan
+
+1. **Execute the `geo.features` LIST partitioning on `layer_id`.** Owner-approved for execution. `geo.features` is
+   7,703 MB / 5,025,009 rows across 11 layers sharing one heap, one 311 MB GiST index over **5,028,934** entries,
+   one 1,467 MB jsonb TOAST relation, and an **819 MB** jsonb expression index
+   (`features_layer_external_id_unique`, larger than the PK and 2.6× the spatial index).
+   - **Never `ALTER` in place** — 7.7 GB on a 2 GB box is the same trap as `create_hypertable(migrate_data=>true)`.
+     Create new partitioned table → copy **per layer** → swap. Per-layer batching is natural: fire-perimeters
+     (166), burn-severity (541), evacuation-zones (643), watersheds (9,396) are instant; only fire-detections
+     (3,012,005) and water-gauges (1,392,454) are real batches.
+   - PK becomes `(id, layer_id)` — free, because there are zero inbound FKs.
+   - **Remodel `water-gauges` during the copy** — 1,392,454 rows over 953 geometries. This alone removes 27.7% of
+     the GiST tree.
+   - **Fix partition pruning:** SIX Martin-registered tile functions restrict on `l.name` through a join (§0.6 — five of them byte-identical),
+     and per `0030:32-40` equivalence classes propagate `f.layer_id = l.id` but never the restriction on `l.name`.
+     Resolve `name → layer_id` into a constant first so pruning happens at plan time.
+   - **Add a real-DB test with `AGRI_TEST_DATABASE_URL` set before shipping.** This is the specific lesson of
+     2026-08-17; do not repeat it.
+2. **Fix `mv_soil_survey_union`** — add `ST_CollectionExtract(…, 3)` in the `delineation` CTE, new migration. It has
+   never once produced a row.
+3. **Register `drizzle/0030`-`0032` in `_journal.json`**, in dependency order, honouring each file's hand-applied
+   precondition. `0031` is why `mv_feature_observation_day_axis` reports `skipped_missing`.
+4. **Build the Parquet path** for the dropped rollup and repoint the three agent SQL files. Hive-partition by
+   **month** (52 files, not 1,560). Spatially sort before writing if geometry ever moves — Parquet has no spatial
+   index, only bbox row-group pruning.
+5. **Convert the eleven small matviews to incrementally-written tables** — `DELETE WHERE day = :day` + `INSERT`,
+   watermark last, one transaction. **Not `ON CONFLICT DO UPDATE`** — upsert cannot delete, so a backfill that
+   retracts an observation silently orphans rows.
+6. **Drop TimescaleDB + `timescaledb_toolkit`** last, so each earlier change's relief stays measurable. Needs
+   `tracking.positions` un-hypertabled, a `shared_preload_libraries` edit, and a restart — bundle the three
+   diagnostic extensions into that same restart.
+7. **Then lower the cap back toward 1 GB** and confirm no statement's working set exceeds it.
+
+### 0.2 Open questions
+
+- **Does the 2 GB cap survive a Railway restart?** Trigger: the next deploy. Same for `ALTER SYSTEM`.
+- **Is `geo.features.geom` droppable in favour of the geometry dimension?** Trigger: before partitioning locks the
+  column layout in. Worth answering *now* — it is 311 MB of GiST plus the column's heap share.
+- **Real concurrency.** Trigger: if partitioning does not deliver, this premise is the next thing to doubt.
+- **Peak memory during a 1,729 s refresh** — now unmeasurable, the relation is dropped. If a rebuild is ever run,
+  capture it.
+
+
+### 0.3 Measured schema of `geo.features` (prod, 2026-08-20)
+
+Total **7,872 MB** = heap 3,790 + indexes 2,563 + TOAST 1,518. Live per-layer counts, which are the
+copy batches:
+
+| layer | rows | layer | rows |
+|---|---:|---|---:|
+| fire-detections | 3,019,709 | watersheds | 9,396 |
+| water-gauges | 1,413,932 | evacuation-zones | 648 |
+| soil-survey | 238,986 | burn-severity | 541 |
+| vegetation | 185,031 | fire-perimeters | 172 |
+| sensors | 180,654 | interventions | 2 (0 published) |
+| weather-observations | 31,569 | **total** | **5,080,640** |
+
+Columns: `id` uuid NOT NULL DEFAULT `gen_random_uuid()`; `layer_id` uuid NOT NULL; `properties` jsonb
+NOT NULL DEFAULT `'{}'`; `status` varchar(20) DEFAULT `'published'`; `review_note` text; `created_at`
+timestamptz DEFAULT `now()`; `updated_at` timestamptz DEFAULT `now()`; `geom` geometry(Geometry,4326);
+`geometry_id` uuid; `data_available_at` timestamptz.
+
+**Two OUTBOUND FKs** — §0's "zero inbound FKs" is right but was only half the picture. Both must be
+re-created on the new parent: `features_layer_id_layers_id_fk (layer_id) -> geo.layers(id) ON DELETE
+CASCADE` and `features_geometry_id_fkey (geometry_id) -> geo.geometry(geometry_id) ON DELETE RESTRICT`.
+The CASCADE is partition-aware, so layer deletion needs no change.
+
+**One row trigger the plan never mentioned:** `geo_features_sync_geom` BEFORE INSERT OR UPDATE OF
+`properties` FOR EACH ROW -> `geo.sync_feature_geom_from_properties()` (`drizzle/0001_handy_riptide.sql:185-187`,
+redefined `drizzle/0004_repair_ingested_geometries.sql:4`, `search_path` pinned
+`drizzle/0008_geometry_dimension.sql:113`). BEFORE-row triggers are legal on a partitioned parent and
+must be re-created there. The write path is not a plain INSERT.
+
+All 11 indexes, by size — every one must be re-created by **exact name**:
+`features_layer_external_id_unique` UNIQUE (layer_id, (properties->>'id')) WHERE (properties ? 'id') **830 MB** ·
+`ix_features_layer_geom` GIST (layer_id, geom) WHERE published AND geom NOT NULL **449 MB** ·
+`idx_features_geom` GIST (geom) **313 MB** · `ix_features_layer_observation_day` **292 MB** ·
+`features_pkey` **211 MB** · `ix_features_geometry_id` **158 MB** · `idx_features_layer_updated_at` **75 MB** ·
+`idx_features_layer_created_at` **74 MB** · `idx_features_layer_status` **64 MB** · `idx_features_layer` **61 MB** ·
+`ix_features_updated_at` **36 MB**.
+
+`ix_features_layer_geom` **exists in production** even though `drizzle/0030` is unregistered — it was
+hand-applied. Do not infer applied-state from `_journal.json`.
+
+**Grants: only `postgres`.** No application-role grants to replicate at swap, and RLS is disabled
+(`relrowsecurity=false`). One less swap-day trap than expected — verified, not assumed.
+
+**Four indexes become partly redundant once partitioned**, because `layer_id` is constant within every
+partition: `idx_features_layer` (61 MB, pure waste), and the leading `layer_id` column of
+`idx_features_layer_status`, `idx_features_layer_created_at`, `idx_features_layer_updated_at` (213 MB
+combined). Rebuild those three without the leading column and drop the first outright. Separately, per
+§0's note, `fire-detections` and `water-gauges` own 87.6% of `idx_features_geom` and are served by no
+tile function — per-partition indexing means simply **not** creating the geom index on those two.
+
+### 0.4 BLOCKER — layers are created at runtime, so a DEFAULT partition is mandatory
+
+**This is the single thing that would have taken production down, and no prior document contains it.**
+
+`layersRouter.create` is a `contributorProcedure` — team-editor, **not** admin-only — and mints a
+`geo.layers` row at request time: `const [layer] = await ctx.db.insert(layers).values(input).returning();`
+(`src/lib/server/trpc/routers/layers.ts:140-149`, insert at `:147`; gate `assertCanCreateInTeam` at `:143`).
+`geo.layers.id` is server-minted (`src/lib/server/db/schema.ts:162-164`) — no allowlist, no enum, no
+partition registry. Two live UI surfaces call it (`src/components/panels/LayerUpload.tsx:98,109-113`;
+`src/components/tools/DrawingToolbar.tsx:201,220` — **CORRECTED 2026-08-20: the path was wrong (`tools/`,
+not `map/`) and slice A has since DELETED that file, so `LayerUpload.tsx` is now the only UI surface. The
+blocker is unchanged: `layersRouter.create` is a `contributorProcedure` reachable over tRPC with no UI at
+all**), and the new id can immediately receive features —
+`layerId: z.string().uuid()` is accepted straight from the client (`src/lib/server/trpc/routers/contributions.ts:7-24`).
+
+Without a DEFAULT partition the first feature write into a contributor-created layer fails with
+`no partition of relation "features" found for row`: a 500 on `contributions.submitObservation`, and in
+ingestion a per-job hard failure that flips the cron exit code
+(`services/agri-data-service/src/agri_data_service/ingest/results.py:86-94`). Loud, not silent — but every run.
+
+Python ingestion never creates a layer; it resolves or raises `MissingIngestionLayerError`
+(`.../ingest/writer.py:96-98,164-170`). A second layer-creation helper with zero importers exists at
+`src/lib/server/services/layers.ts:19-22` — dead today, same hazard if revived.
+
+**Decision: create `geo.features_default` regardless**, plus a periodic drain into real per-layer
+partitions. Prior art for the drain exists in this repo for `agri.job_event` (RANGE/day, with an existing
+`job_event_default`): `services/agri-data-service/src/agri_data_service/db/maintenance.py`. Optionally
+also create the partition synchronously inside `layersRouter.create`'s transaction — but that needs the
+app role to hold `CREATE` on schema `geo`, which is **unverified**. The DEFAULT partition is not optional
+either way: without it, every future layer-creating code path is one merge away from the same outage.
+
+### 0.5 Write path — the ingestion moves
+
+`[lane]` = subagent-reported, not re-verified.
+
+| file:line | what it does | what must change |
+|---|---|---|
+| `src/lib/server/trpc/routers/layers.ts:140-149` | mints a layer with no matching partition | **BLOCKER** — see §0.4 |
+| `src/lib/server/db/schema.ts:221` | `id: uuid("id").defaultRandom().primaryKey()` — **single-column PK** | **BLOCKER.** -> `.notNull()` + `primaryKey({ columns: [table.id, table.layerId] })` in the trailing config array (`:240-250`). Idiom already used at `schema.ts:94,102,136,395`. Must land in the same PR as the DDL or the next `db:generate` proposes reverting the live PK. |
+| `drizzle/meta/_journal.json` | ends at `idx 29`; `0030`/`0031`/`0032` exist on disk, unregistered; `idx 26` has neither entry nor file | **BLOCKER.** `scripts/migrate.mjs:1-45` enumerates from the journal, not the directory — an unregistered file is skipped and **the deploy still reports success**. Also `src/__tests__/security/readiness-migration-contract.test.ts` pins the **last** journal entry's tag + sha256 against `src/lib/server/db/migration-contract.ts` (currently `0029_pre_aggregation_layer`), so any registration forces a contract bump in the same commit. |
+| `contributions.ts:37-45` `publishContribution`; `:48-65` `rejectContribution`; `interventions.ts:380-406` `transitionLifecycleState` | `.update(features).where(eq(features.id, ...))` — no `layer_id` in scope | Add a preceding `SELECT layer_id`, then `eq(features.layerId, ...)` in the WHERE. Otherwise every publish probes all N partitions. |
+| `interventions.ts:338-374` `castModerationVote` | selects the whole row at `:353-356` (so `feature.layerId` **is** in scope), updates at `:365-371` on `id` only | Cheapest fix on the list — add `eq(features.layerId, feature.layerId)`. Router already has `resolveInterventionsLayerId` (`:128-143`). |
+| `scripts/apply-pre-aggregation.mjs:87-90,98-99,216` | `CREATE INDEX CONCURRENTLY ... ON geo.features ...`, then `ANALYZE geo.features` | **Now known broken post-swap — see §0.7.** Must be rewritten for the parent/child topology. `drizzle/0029:72-89` hard-asserts both indexes exist. Note autovacuum does **not** analyze a partitioned parent, so the explicit `ANALYZE` at `:216` becomes load-bearing, not a tidy-up. |
+| `scripts/backfill-geometry.sql:31,199-209`; `scripts/rekey-geometry-to-entity.sql:37,152-158` | `LOCK TABLE geo.features ... IN SHARE MODE` then whole-table UPDATE | `LOCK TABLE` on a partitioned parent recurses to every partition — N+1 locks in one transaction against `max_locks_per_transaction`. Both are already-run one-shots still on disk and runnable. Re-scope or retire. |
+| `.../sql/ingest/link_feature_geometry.sql:113-118` | `UPDATE geo.features SET geometry_id = ...` | Confirm a `layer_id` predicate is present; add if not. |
+
+**Zero** `SET layer_id =`, **zero** `DELETE FROM geo.features` in `src/`, and **zero**
+`TRUNCATE`/`VACUUM FULL`/`CLUSTER`/`REINDEX`/`ctid` against the table. No cross-partition row MOVE exists
+today; if a `layer_id` UPDATE is ever introduced it executes as DELETE+INSERT and re-fires the trigger.
+
+### 0.6 Read path — application querying and partition pruning
+
+The decisive question at every site: does it constrain `layer_id` directly (**prunes**), or join
+`geo.layers` and filter on `l.name` (**does not prune at plan time**)? Equivalence classes propagate
+`f.layer_id = l.id` but never the restriction on `l.name`.
+
+**Six of the seven Martin-registered tile functions read `geo.features`, and all six fail to prune.**
+(§0.1 said five — it undercounts.) Registry verified at `infra/martin/martin.yaml:43-67`, `auto_publish: false`:
+`geo.burn_severity_tiles` (`drizzle/0015:63-104`, WHERE `:103`) · `geo.evacuation_zone_tiles` (`0015:116-155`, `:146`) ·
+`geo.fire_risk_tiles` (`0015:159-197`, `:185`) · `geo.sensor_tiles` (`0015:198-237`, `:225`) ·
+`geo.intervention_tiles` (`drizzle/0005:6-38`, `:32` — predates the observation-day column, so not byte-identical to the 0015 four) ·
+`geo.watershed_tiles` **detail branch only** (`drizzle/0023:131-207`, `:178`; coarser branches read `watershed_rollup`).
+`geo.building_tiles` reads `osm_buildings` and is unaffected. `geo.strategy_recommendations_tiles` exists
+in the DB but is **not registered in martin.yaml** — never served.
+
+`CREATE OR REPLACE FUNCTION` keeps names and signatures so `martin.yaml` needs no edit, but **Martin must
+be restarted** and its config is baked in by `Dockerfile.martin`, read once at container start. A missing
+or broken tile function 404s the *whole* composite and hides **every** layer.
+
+Highest-frequency application readers, all `l.name`-join, all needing the same mechanical fix:
+
+| file:line | why it matters |
+|---|---|
+| `src/lib/server/services/environmental-read-model.ts:4068-4100` `getMetricAtDate` | fires on **every date-slider scrub** — highest-frequency reader found |
+| `...:1373-1402` + `:1430-1451` `getPublishedVegetationIndex` | deepest layer (4 years, 184,409 rows), so the unpruned fan-out is proportionally worst |
+| `...:623-638` `getPublishedWeatherForPoint` | KNN `ORDER BY geom <-> ... LIMIT n` over an unpruned Append needs a MergeAppend of per-partition GiST-KNN scans — extra scrutiny |
+| `...:324-347`, `:378-397`, `:458-488`, `:510-525`, `:696-726`, `:787-802` | fire-detections / water-gauges / weather readers |
+| `src/lib/server/services/usda-soil.ts:974-1006`, `:1059-1099`, `:1159-1199` | needs a module-level resolved-id cache |
+| `src/lib/server/services/regional-context.ts:359-383` | fires on point-click |
+| `src/lib/server/trpc/routers/wildfire.ts:113-132`; `visualization.ts:106-131`, `:133-160`, `:162-192` | `visualization.*` take a **client-supplied** `layerName` — resolve via cached lookup before touching features |
+| `.../sql/agent/feature_value_near_point.sql:104-125`; `fire_history_near_point.sql:103-126` | `:surface_name` is a **bind parameter** — strictly worse for the planner than a literal |
+| `.../sql/execution/{load_observations,insert_spatial_cells,select_candidate_cell_keys,corpus_digest}.sql` | `layer.name = :layer_name` join |
+| `.../sql/jobs/matview_refresh_watermark_watershed_features.sql:12-14` | the refresh gate for `watershed_rollup` — every tick pays a full fan-out |
+| `scripts/export-ndvi-grid-tiles.py:41-48` | `DISTINCT ON` over an unpruned Append — the worst shape on the list |
+| `drizzle/0029:807-865` `mv_soil_survey_grid`; `:910-960` `mv_soil_survey_union`; `drizzle/0023:20-98` `watershed_rollup` | matviews carrying the same defect — do not ship it into a new relation |
+
+**The four reference implementations** — every fix above is a mechanical port of these:
+`interventions.ts:209-235` `listMySubmissions`, `:253-294` `listProposed`, `regional-context.ts:428-459`
+`readCommunityProposals`, `services/ingest.ts:56-64`. All resolve name -> `layer_id` constant first.
+
+**No-layer-predicate reads** (become cross-partition scans; some are correct by design):
+`src/app/api/v1/features/route.ts:41-90` pushes `eq(features.layerId, ...)` **only `if (layerId)`** (`:52`) —
+public paginated browse, unscoped `ORDER BY id LIMIT/OFFSET` becomes a cross-partition merge sort; either
+require `layer_id` or require bbox + cap. `contributions.ts:82-97` `listPendingReview` is deliberately
+all-layer (comment `:78-80`) — cannot prune without changing the product requirement; note prod's
+`idx_features_layer_status` leads with `layer_id` and will **not** serve a bare `status` filter, so add a
+per-partition partial index `WHERE status <> 'published'` or accept the scan.
+`.../sql/jobs/matview_refresh_watermark_features_updated_at{,_hourly}.sql` do `max(updated_at)` with no
+layer predicate — today an O(1) backwards walk on `ix_features_updated_at`, post-swap a MergeAppend over N
+per-partition indexes. **Re-measure**: this gate runs for *every* `geo.features`-backed matview.
+
+The census matviews (`drizzle/0029:140-306`, `:720-731`, `:757-767`; `drizzle/0031:134-154`) are all-layer
+**by design** — nothing to fix. Confirm `enable_partitionwise_aggregate` post-cutover.
+`geo.mv_layer_feature_stats` is the cheapest post-swap smoke test: refresh it and diff the 11 counts.
+
+**Readiness probe coupling:** `src/app/api/ready/route.ts:55,60` does `to_regclass('geo.features')` and
+`to_regclass('geo.features_layer_external_id_unique')`. If the unique index is not re-created at the parent
+under that **exact** name, readiness fails and the deploy is marked unhealthy.
+
+`sql/agent/observation_coverage_on_day.sql` and `observation_temporal_neighbors.sql` do **not** read
+`geo.features` (they read `geo.v_observation_day_census`); `src/lib/server/services/analytics.ts` does not
+either. Recorded so they are not re-audited.
+
+### 0.7 Resolved unknowns — tested against prod 2026-08-20
+
+| question | verdict |
+|---|---|
+| Is a **partial** UNIQUE index legal on a partitioned parent? (`features_layer_external_id_unique`, 830 MB — the plan is invalid as written if not) | **YES — VERIFIED.** `CREATE UNIQUE INDEX ... (layer_id, ((properties->>'id'))) WHERE (properties ? 'id')` succeeded on a PG 18.4 LIST-partitioned probe table. Global uniqueness holds because one `layer_id` implies exactly one partition. |
+| Is `PRIMARY KEY (id, layer_id)` legal? | **YES — VERIFIED** on the same probe. |
+| Does `CREATE INDEX CONCURRENTLY` work on a partitioned parent? (lanes disagreed; `drizzle/0030` comments claim "PG14+ supports this") | **NO — VERIFIED FALSE.** `ERROR: cannot create index on partitioned table "..." concurrently`. **The `0030` comment is wrong and `scripts/apply-pre-aggregation.mjs:87,98` is broken post-swap.** Verified workaround: `CREATE INDEX ON ONLY <parent>` (lands `indisvalid=false`) -> per-partition `CREATE INDEX CONCURRENTLY` -> `ALTER INDEX ... ATTACH PARTITION`; the parent flips valid only once **every** partition index is attached **and valid**. |
+| Are there grants or RLS to replicate at swap? | **NO — VERIFIED.** Sole grantee `postgres`; `relrowsecurity=false`. |
+| Peak memory of a 1,729 s refresh | Still unmeasurable — relation dropped. |
+| Does the app role hold `CREATE` on schema `geo`? | **STILL UNKNOWN** — only needed if synchronous partition creation is chosen over the DEFAULT partition. |
+| Does execution-time pruning rescue the `l.name`-join sites? | **NOT DERIVED, deliberately.** Plan-time pruning is what the fix guarantees; execution-time pruning is not a substitute inside a plpgsql tile function whose plan is cached across a long-lived Martin session. `EXPLAIN (ANALYZE, BUFFERS)` post-swap before deprioritising any site. |
+
+**Ingestion is live right now.** `pg_stat_activity` showed an active ingest backend mid-batch during this
+session, and it is what made the probe `CREATE INDEX CONCURRENTLY` time out at 30 s. The same contention
+will queue the swap's `ACCESS EXCLUSIVE` rename — and a queued `ACCESS EXCLUSIVE` blocks **every reader
+behind it while it waits**. Set a short `lock_timeout` on the rename and retry rather than letting it pile up.
+
+### 0.8 Swap window
+
+1. **Quiesce writers** — three Railway crons plus the app. Ingest commits per 100-row batch
+   (`writer.py:38,300-306`) and per 200-row repair page (`backfill.py:69`), so a stopped cron leaves no
+   partial batch; a running one holds `RowExclusiveLock`.
+2. **Copy per layer, verify, then rename.** Per-layer `INSERT ... SELECT` must run **outside** the migrator
+   transaction — every drizzle `.sql` runs in one transaction (stated at `drizzle/0031:27-28`), which is
+   also why no `CONCURRENTLY` can appear inside one. Follow the established pattern: expensive work
+   out-of-band, then ship a migration whose only executed DDL is a `DO $$` precondition assert
+   (`drizzle/0030:196-224`, `drizzle/0032:41-51`). Assert per-layer counts match before the rename.
+3. **Re-create on the new parent by exact name:** both outbound FKs, the `geo_features_sync_geom`
+   BEFORE-row trigger, and all 11 indexes (`features_layer_external_id_unique` and `ix_features_layer_geom`
+   especially — the readiness probe names the first).
+4. **`ANALYZE` the parent and every partition.** Autovacuum does not analyze a partitioned parent; the
+   expression index has no statistics until analyzed, and without them the planner reverts to the
+   sequential scan the index exists to replace.
+5. **Restart Martin; bounce `plantgeo-main`.** Martin's config is read once at start and a stale plpgsql
+   plan against the pre-swap OID would serve from the orphaned heap. The app pool is `max: 20` postgres-js
+   with server-side prepared statements (`src/lib/server/db/index.ts:7-9`) — bounce rather than reason
+   about plan invalidation across a two-step rename.
+6. **Un-quiesce ingestion last and watch the first cron exit code** — a missing partition surfaces there.
+   Then refresh `geo.mv_layer_feature_stats` and diff the 11 per-layer counts against the pre-swap census.
+
+### 0.9 Parquet bucket — provisioned 2026-08-20
+
+Railway object-storage bucket **`plantgeo-parquet`**, id `79d5b0c0-059a-40a9-a90a-ef8d15bb5828`, region
+**`sjc`** (US West), project Aevani, env production. Created for the rollup that replaces the dropped
+`geo.mv_signal_cell_daily`. Nothing is written to it yet.
+
+Still to wire: S3 credentials as service variables on the writer + reader services (prefer Railway
+reference variables over copied secrets); the export job (Hive-partition by **month**, 52 files, not 1,560);
+and the readiness reporting below.
+
+**Readiness surfaces to update — owner chose BOTH:**
+- `services/agri-data-service/scripts/readiness.py` — add a Parquet/bucket freshness check as another
+  fault-isolated section (every check there is already fault-isolated; a failed query reports and the rest
+  of the report still runs).
+- `src/components/panels/JobRunnerDashboard.tsx` — surface Parquet rollup coverage in the existing
+  `gaps` tab (tabs are `lanes | history | gaps`, `:70`). This is the admin UI at `/admin/jobs`.
+
+Note `layers.getIngestionCoverage` (`src/lib/server/trpc/routers/layers.ts:247`) is **not** a readiness
+surface — it is the spatial `INGEST_BBOX` badge. Don't extend it for this.
+
+### 0.10 Deprecation removal plan
+
+Summary of the cleanup triage: of 27 candidates, **13 delete now**, **9 repoint, not delete**, **5 need an
+owner call**, **8 rejected** (two for mis-scoped greps).
+
+**Delete now** — reachability proven zero across import graph, barrel files, dynamic-import path strings,
+and App-Router convention: `package.json:25` (`routing:serve`, targets a commented-out compose service) ·
+`db_check.ts` · the drawing/annotation/measure cluster (`src/components/tools/{AnnotationLayer,DrawingToolbar,VertexEditor,MeasureTool}.tsx`,
+`src/hooks/{useDrawing,useMeasurement}.ts`) · the fleet-tracking cluster
+(`src/components/tracking/{FleetPanel,GeofenceEditor,RouteHistory,VehicleMarker}.tsx`) · the imagery cluster
+(`src/components/imagery/{SplitView,PanoViewer,StreetCoverage}.tsx` **plus `src/stores/imagery-store.ts`**,
+which the original hunt missed) · the SSE live-flash subsystem (`src/components/map/LiveIndicator.tsx`,
+`src/hooks/useLiveLayer.ts`, `src/stores/realtime-store.ts`) · stores `drawing-store.ts`, `tracking-store.ts` ·
+stranded tests `src/__tests__/stores/drawing-store.test.ts`, `src/__tests__/hooks/use-live-layer.test.ts`.
+
+**Do NOT touch:** `src/components/tools/ServiceAreaDrawTool.tsx` — live, rendered at
+`src/components/panels/TeamDetails.tsx:6,410`. `src/hooks/useSSE.ts` — live via `MetricsBar.tsx`.
+
+**Order matters:** `src/components/tracking/GeofenceEditor.tsx:5` imports `@/stores/drawing-store`, coupling
+the tracking and drawing clusters. Leaves before stores, tests in the same commit as their subject, then
+**one** type-check/lint/test/build sweep at the end.
+
+**Repoint, do not delete** — headed by the `mv_signal_cell_daily` consumers. There are **FOUR**, not the
+three §0 names: `sql/agent/{signal_value_on_day,signal_neighbors_in_time,signals_near_point,nearest_signal_cells}.sql`.
+`nearest_signal_cells.sql:20,118` reads the identical relation and is guarded identically at
+`agent/tools.py:901` — a repoint driven off §0's list would miss it. None of them crash: each is guarded by
+a `to_regclass` probe (`tools.py:473`, `matview_refresh.py:640`) returning a typed
+`pre_aggregated_plane_unbuilt` refusal. **They are the only surviving specification of the rollup's grain and
+column set — deleting them destroys the spec for the Parquet replacement.** Delete them last, after Parquet lands.
+
+**One genuinely broken path, fix independently and first:** `scripts/apply-pre-aggregation.mjs:133` lists
+`geo.mv_signal_cell_daily` in `POPULATE_ORDER` and `runPhaseB()` issues `REFRESH MATERIALIZED VIEW` with **no
+existence guard**, unlike `matview_refresh.py:736`. On a fresh/DR database phase B refreshes eight real views,
+then raises 42P01 and exits 1. Add the same `to_regclass` guard, or drop the entry and fix the "nine matviews"
+comment at `:117`.
+
+**`drizzle/0029:533` still creates `geo.mv_signal_cell_daily`** and no DROP is recorded in any migration —
+the 2026-08-18 drop was out-of-band. A rebuild from migration history silently resurrects a 6,349 MB /
+1,729 s relation. Record the drop in a **new** `drizzle/0033_*`; **never edit `0029`**.
+
+**Most dangerous rejected deletion:** `src/lib/server/trpc/routers/contributions.ts` + `ContributionQueue.tsx`.
+The justification that `ModerationPanel` is a functional equivalent is **false** — `contributions.listPendingReview`
+(`:82`) queries features across all layers, `interventions.listProposed` (`:253`) is narrower, and
+`submitObservation` (`:7`) has no equivalent at all. `conductor/tracks/community_engagement_completion_20260805/plan.md:14`
+still carries Phase 1 as **pending**. That is unfinished scope, not dead code.
+
+**Also stale, rewrite rather than delete:** `infra/railway/README.md:12,15,129-312` describes services that no
+longer exist and calls the sole live production DB an unproven "replacement candidate"; `:212` cites
+`infra/local-warehouse/create-forecast-roles.sql`, deleted in `3fb9acf`. Its Martin CORS guidance (`:96`) and
+`## Deployment order` (`:313`) are still accurate.
+
+
+---
+
+### 0.11 CRITICAL — the seven matviews follow the OID, not the name
+
+**Found 2026-08-20 while writing the swap driver. It is not in any prior version of this plan, and it is
+a silent-wrong-answer bug, not a loud one.**
+
+A materialized view's query is stored as a rewrite rule that references the source relation by **OID**.
+`ALTER TABLE ... RENAME` does not rewrite that reference. So after the two-step swap
+(`features` -> `features_legacy`, `features_new` -> `features`), every matview built on the old heap
+keeps reading **`geo.features_legacy`** — successfully, silently, and forever. No error, no missing
+relation, just permanently frozen data diverging from the live table.
+
+Confirmed by `pg_depend`/`pg_rewrite` against production; the live dependents are:
+
+`geo.mv_feature_observation_day` (`drizzle/0029:166`) · `geo.mv_layer_feature_stats` (`:728`) ·
+`geo.mv_layer_hourly_activity` (`:763`) · `geo.mv_soil_survey_grid` (`:816`) ·
+`geo.mv_soil_survey_union` (`:919`) · `geo.watershed_rollup` (`drizzle/0023:36,176`) ·
+plus `geo.mv_feature_observation_day_axis` (`drizzle/0031:142`) once 0031 lands — seven in total.
+
+**Each must be dropped and re-created from its migration after the swap.** There is no swap without it,
+so the driver cannot refuse on it; `scripts/partition-features.mjs --phase=plan` enumerates the live list
+from the catalog and `--phase=swap` prints it as a `!!` block. **This needs an owner decision on
+sequencing**, because re-creating them is a full refresh of each — and `mv_soil_survey_union` has never
+once produced a row (§0.10), so it will re-create empty and that is expected, not a regression.
+
+Note this also means the post-swap smoke test in §0.8 step 6 is *invalid as written*: refreshing
+`geo.mv_layer_feature_stats` and diffing the 11 counts would read the **legacy** heap and match
+trivially. Re-create it first, then diff.
+
+### 0.12 What landed 2026-08-20 (code only — nothing applied to production)
+
+Six parallel slices with pre-declared exclusive file ownership; no collisions.
+
+| slice | result |
+|---|---|
+| **A — deletions** | 21 files deleted + the `routing:serve` script removed from `package.json`. Every basename and exported symbol grepped repo-wide before removal; all surviving hits were documentation, never live code. `ServiceAreaDrawTool.tsx` and `useSSE.ts` verified live and kept. Post-delete dangling-import sweep: zero matches. |
+| **B — service reads** | One shared `resolveCachedLayerId()` (module-level cache, caches hits only, never caches a miss — so a runtime-created layer per §0.4 is still found next call) + `clearLayerIdCache()`. Applied at 10 sites in `environmental-read-model.ts`, 3 in `usda-soil.ts`, 1 in `regional-context.ts`. Each resolver miss short-circuits to the exact empty terminal state the old zero-row join produced. |
+| **C — routers** | Read-path pruning in `wildfire.ts` + the three `visualization.ts` readers; write-path `layer_id` scoping in `publishContribution`, `rejectContribution`, `castModerationVote`, `transitionLifecycleState`. Kept the `geo.layers` join where `featureVisibilityCondition` genuinely reads `isPublic`/`teamId`, but moved its predicate from `l.name` to the resolved `l.id` — pruning fixed, authorization unchanged. |
+| **D — schema + DDL** | `schema.ts` composite PK `(id, layer_id)`. New `scripts/partition-features.mjs` (10 idempotent phases: plan/create/copy/index/trigger/verify/swap/analyze/adopt/rollback) and `docs/pending-migrations/0033-features-partitioning.md`. |
+| **E — agri SQL** | `apply-pre-aggregation.mjs` phase-B existence guard (the 42P01 crash) **and** topology-aware index builds using the verified `ON ONLY` -> per-partition CIC -> `ATTACH` path. Pruning fixes in 4 `sql/execution/*`, 1 `sql/jobs/*`, 2 `sql/agent/*`, and `export-ndvi-grid-tiles.py`. |
+| **F — tile functions** | `drizzle/0033_tile_function_partition_pruning.sql`, **shipped dormant**. Each of the six functions diffed against its live body: exactly three hunks each, nothing else. Signatures, volatility, `PARALLEL SAFE`, `search_path`, and every predicate preserved. |
+
+**Non-obvious decisions made inside the slices, recorded so they are not re-litigated:**
+
+- **`idx_features_geom` ceases to exist as a name.** A parent index requires a matching child on *every*
+  partition, but `fire-detections` and `water-gauges` deliberately get no geom index. So it becomes
+  per-partition `features_<slug>_geom_idx` on the other ten. Grep confirms nothing probes that name — but
+  stale prose references remain in `src/lib/server/AGENTS.md:1032`,
+  `services/agri-data-service/.../agent/AGENTS.md:220`, `agent/tools.py:248`,
+  `sql/agent/feature_value_near_point.sql:33`, `fire_history_near_point.sql:23`,
+  `tests/test_agent_graph.py:589`. Comments only, no functional break.
+- **Index names collide, constraint names do not.** Index names are unique per *schema*, so incoming
+  indexes are built with a `_swap` suffix and renamed inside the swap transaction. A failed rename rolls
+  the whole transaction back — a failed swap, never a corrupt one.
+- **The trigger is created after the copy, not before.** `sync_feature_geom_from_properties()` runs
+  `ST_MakeValid` since `drizzle/0004`, so copying with it attached costs a parse per row *and silently
+  rewrites* geometries stored before that repair landed.
+- **Copy chunking walks `created_at` boundaries via `ORDER BY ... OFFSET n LIMIT 1`** off
+  `idx_features_layer_created_at` — an index-only seek with flat memory. `ntile`/`percentile_disc` would
+  tuplestore the whole layer, which is exactly what a 2 GB cap cannot afford.
+- **Tile functions resolve the layer id at call time, not baked into DDL** — respects `0030`'s explicit
+  rejection of environment-specific ids in replayed DDL, and a 12th layer works with no new DDL.
+- The three `layer_id`-leading composite indexes (§0.3, ~213 MB of redundancy) are re-created
+  **unchanged** for now — narrowing them changes plan shapes on read paths rewritten in this same batch.
+  Recorded as a measured follow-up; the index list is a data structure, so it is a one-line change later.
+- `water-gauges` is **not** remodelled during the copy (§0.1 proposes it). The copy is byte-for-byte on
+  purpose; remodelling during a swap mixes two failure domains.
+
+### 0.13 Gated, not done — read before deploying anything
+
+1. **`drizzle/0033` is NOT registered in `_journal.json`, deliberately.** `0030`-`0032` are already
+   dormant and this repo ships migrations dormant on purpose (commit `44c2133`). Registering `0033`
+   means the next deploy replaces all six tile functions, and **a single bad tile function 404s the whole
+   composite and hides every layer**. Registration is an owner decision with two preconditions: register
+   it *and* bump `src/lib/server/db/migration-contract.ts` in the same commit (the readiness test pins the
+   last journal entry's tag + sha256), then **restart Martin** and fetch one tile per rewritten source
+   **with an `Origin` header** before calling it done. Nothing in the pipeline restarts Martin.
+2. **`0033` is claimed by the tile-function migration**, so the migration recording the out-of-band
+   `DROP MATERIALIZED VIEW geo.mv_signal_cell_daily` (§0.10) must be **`0034`**. `drizzle/0029:533` still
+   creates that relation and no DROP is recorded anywhere; a rebuild from migration history silently
+   resurrects a 6,349 MB / 1,729 s view.
+3. **The precondition-assert migration for the partitioned table is not written.** It should assert
+   `relkind='p'` on `geo.features`, plus `features_layer_external_id_unique` existing and `indisvalid`,
+   following `drizzle/0030:196-224`. It was in no slice's scope.
+4. **`enable_partitionwise_aggregate` / `_join` are OFF** (§0.7). Without them the censuses gain nothing
+   from partitioning. Turn on and re-measure as part of the cutover, not after.
+5. **`max_locks_per_transaction` is 128** and the swap touches ~145 relations — index creation must be
+   chunked across transactions, and the two ops scripts' `LOCK TABLE geo.features` now takes 13 locks.
+6. **Still unpruned, out of every slice's scope:** `usda-soil.ts` `persistCell` (~`:884-926`) joins
+   `geo.layers` by name in three places on the **write** path — not in §0.5's table, found during slice B.
+   And `scripts/backfill-geometry.sql:31,199-209` + `scripts/rekey-geometry-to-entity.sql:37,152-158`
+   still `LOCK TABLE geo.features IN SHARE MODE`.
+7. **Not started:** the Parquet export job, the DuckDB repoint of the four agent SQL tools, and the
+   readiness wiring in `readiness.py` + `JobRunnerDashboard`'s `gaps` tab (§0.9). The bucket exists and is
+   empty; no credentials have been wired to any service yet.
+
+
+---
+
+### 0.14 Review verdict + sweep evidence, 2026-08-20
+
+**Sweep — GREEN, and gated. This is the number to trust.**
+
+| suite | result |
+|---|---|
+| Python, `AGRI_TEST_DATABASE_URL` **and** `PGBIN` set | **3,170 passed, 3 skipped**, exit 0 |
+| TypeScript `tsc --noEmit` | exit 0 |
+| `eslint .` | exit 0 (warnings only, all in the vendored minified `static/datastar.js`) |
+| `vitest run` | **1,305 passed, 13 skipped**, exit 0 |
+| `next build` | exit 0 |
+
+3,170/3 matches the documented fully-gated baseline exactly; an ungated run is ~3,062. **Two near-misses
+worth keeping**, both of which would have produced a fake green:
+- The gate looked *unavailable* at first — `agri-sweep-db` binds IPv4-only, so `localhost` resolves to
+  `::1` and refuses, and its credentials are container-local, not the ones in CLAUDE.md. See
+  [[agri-real-db-testing-gap]].
+- A first sweep attempt reported `exit code 0` while running **zero** tests: pytest rejected an
+  unrecognised `--timeout` flag and the exit status came from the `tail` at the end of the pipe.
+  **Never read an exit code through a pipeline.**
+
+**Adversarial review: `/code-review high`, separate context, CHANGES-REQUIRED — 7 findings.** Six were
+dispatched for fix; the seventh is an owner decision recorded below. What the reviewer independently
+verified clean is itself useful: no dangling imports to the 19 deleted modules; `layers.name` is UNIQUE,
+so every scalar-subquery rewrite is row-for-row equivalent to the join it replaced; no FK and no
+`onConflict` targets `features.id`, so the PK change is safe at the ORM layer; `drizzle/0033`'s six tile
+functions reproduce the original predicates and MVT attribute lists exactly; and `partition-features.mjs`'s
+chunk predicates are disjoint and exhaustive **including** the `created_at IS NULL` bucket.
+
+| # | severity | finding |
+|---|---|---|
+| 1 | high | `visualization.ts:10` caches a **null miss** for the process lifetime — a runtime-created layer renders permanently empty. Inconsistent with the sibling resolver, which caches hits only. |
+| 2 | high | `environmental-read-model.ts:300` `layerIdByName` has **no invalidation**, but `layersRouter.delete` (`layers.ts:178`) falsifies the "an id never changes once minted" premise: delete + recreate under the same name silently empties ~10 readers until restart. |
+| 3 | medium | `apply-pre-aggregation.mjs:282` post-swap builds a **second** child index per partition then fails on `ATTACH`, because `partition-features.mjs` already attached them — aborting before `ANALYZE` and leaving duplicates. |
+| 4 | medium | `wildfire.ts:136` `getInterventions` is a public read that now **throws** where it previously returned `[]`. |
+| 5 | medium | `interventions.ts:394` dropped its post-update NOT_FOUND throw; a delete racing the new pre-flight SELECT resolves to `undefined`. Same shape in `castModerationVote` and both `contributions` mutations. |
+| 6 | low | `features/route.ts:52` enforces a 10k offset ceiling while `parsePageValue` still advertises 1,000,000. |
+
+**All six FIXED and re-verified 2026-08-20** — `tsc --noEmit` exit 0, `vitest run src/__tests__` 1,305
+passed / 13 skipped. Notes worth keeping:
+- **#1 + #2 collapsed into one resolver.** `visualization.ts`'s second cache was deleted outright rather
+  than patched, so there is now one resolver, one miss policy, one expiry, one invalidation path. Its
+  200-entry bound moved into the shared resolver, which is where every client-supplied name now lands.
+- **#2's strategy is TTL-first (60 s), explicit-evict-second, and that ordering is the point.** An
+  explicit evict alone cannot be correct here: the cache is per-process, so a delete handled by one Node
+  process leaves every other process stale until restart — and `geo.layers` rows also vanish out-of-band
+  via `features_layer_id_layers_id_fk ON DELETE CASCADE`, psql, and the ops scripts, none of which pass
+  through any call site. The TTL heals all of those with no call site at all. The evict is kept because
+  it makes the common in-process delete heal instantly instead of serving up to 60 s of empty reads.
+- **A rename was found that the review did not name.** `layersRouter.update` (`layers.ts:151-172`) can
+  rename a layer (`layerUpdateSchema` is `layerCreateSchema.partial()`), stranding the OLD name in the
+  cache pointing at a live id. The old name is not in scope there. TTL covers it; an explicit-evict-only
+  design would not have. Both mutation paths are now wired: `delete` returns the name and calls
+  `invalidateLayerId`; `update` calls `clearLayerIdCache()` when `input.name` is present.
+- **#3 detects by ATTACHMENT, not by name** — `partition-features.mjs` creates parent indexes with a
+  plain `CREATE INDEX`, so PostgreSQL generates and attaches the children itself under names this script
+  could never guess. An attached-but-invalid child is reported loudly rather than worked around, because
+  an attached child cannot be dropped while its parent requires it.
+- **#5 keeps a deliberate asymmetry in `contributions.ts`**: a *pre-flight* miss still returns `undefined`
+  (what this router has always answered for a feature that is simply gone), while passing the pre-flight
+  and then matching nothing — the actual race — now throws. `ContributionQueue.tsx:76-88` only wires
+  `onSuccess`, so throwing on the former would leave a deleted row on screen.
+
+**FINDING 7 — NOT FIXED, NEEDS AN OWNER DECISION.** `schema.ts:244` now declares the composite PK
+`(id, layer_id)` while the partition swap is deliberately **not applied**, so `schema.ts` and production
+disagree. The hazard is real in both directions and there is no configuration that is safe in both:
+
+- **Leave it composite (current state):** the next `npm run db:generate` emits a `DROP`/`ADD PRIMARY KEY`
+  against the live **5.08M-row unpartitioned heap**, inside a single-transaction migration that the deploy
+  pipeline runs automatically. On a 2 GB box that is not survivable.
+- **Revert it to single-column:** safe today, but the moment the swap runs, `db:generate` proposes
+  reverting production's PK back — the failure mode `slice D` warned about.
+
+The coupling is unavoidable: **`schema.ts` must flip in the same commit as the swap.** Until the swap is
+scheduled, treat `db:generate` as blocked. `migration-contract.ts` still pins `0029`, which is correct and
+intentional — `drizzle/0033` is dormant (§0.13).
+
+**RESOLVED 2026-08-20 — REVERTED to single-column `.primaryKey()`, `tsc --noEmit` exit 0.** The deciding
+argument is that the swap is **not imminent**: it is gated behind the `enable_partitionwise_aggregate`
+re-measurement (step 4 of the plan, which may refute the premise before 7.7 GB is moved), behind quiescing
+three crons, and behind the §0.11 owner decision on matview sequencing. Both hazards are real, but they are
+not symmetric in *when* they fire. Composite-while-prod-is-single-column arms a routine, unattended action
+— any `db:generate` by any developer or agent emits `DROP`/`ADD PRIMARY KEY` against the live 5.08M-row
+heap in an auto-deployed single-transaction migration. Single-column arms nothing today; its hazard fires
+only *after* the swap, at the exact moment the runbook already requires `schema.ts` to flip anyway. So the
+revert restores the invariant that makes `db:generate` safe — **`schema.ts` describes production** — and
+moves the remaining risk onto a step that is already documented as mandatory. The composite PK now lives as
+a comment at `schema.ts:242-245` naming the swap as its trigger; `docs/pending-migrations/0033-features-partitioning.md`
+is unchanged and still specifies `(id, layer_id)` as the target. `db:generate` is **no longer blocked**.
+
 
 ---
 
@@ -2004,3 +2679,20 @@ another workstream — same rule §3 applies to hypertable conversion.
 - **§10 decision (c)** — whether `tile_interventions` gains a day column — **remains unanswered.** Default taken:
   **no day column**, matching today's behaviour exactly (`intervention_tiles` emits none); adding one changes what
   the slider does to that layer.
+
+**Planner + lock settings measured 2026-08-20 — two of these change the plan.**
+
+| setting | value | consequence |
+|---|---|---|
+| `enable_partitionwise_aggregate` | **off** (default) | **This is the lever that makes partitioning pay off for memory, and it is currently disabled.** The all-layer census matviews (§0.6) are exactly the workload blowing the cap. With it off they aggregate over one flat Append and peak allocation is unchanged by partitioning. Turn it **on** and re-measure — otherwise the restructure buys pruning for the layer-scoped reads and nothing at all for the censuses. |
+| `enable_partitionwise_join` | **off** (default) | Same story for any join across partitioned relations. Enable with the above and measure both. |
+| `max_locks_per_transaction` | **128** | 12 partitions x 11 indexes + parents is ~145 relations. **Re-creating every index inside one transaction exceeds the lock budget.** The swap must chunk index creation across transactions, and `LOCK TABLE geo.features` in the two ops scripts (§0.5) now takes 13 locks, not 1. |
+| `maintenance_work_mem` | 128 MB | Per-index-build working memory during the copy. |
+| `work_mem` | 16 MB | Per-sort/hash node, and the censuses use many. |
+| `shared_buffers` | 256 MB | |
+| `effective_cache_size` | 2 GB | 100% of the container, as §0 records. Still deliberately left alone. |
+| `autovacuum_max_workers` | **3, `source=configuration file`** | The 2026-08-18 `ALTER SYSTEM` **persisted** — this partly answers §0.2's open question. Still unverified across a Railway-initiated restart. |
+| `lock_timeout` | 0 (no timeout) | Must be set explicitly on the rename per §0.8; the default will let it queue indefinitely. |
+
+Database is **37 GB** on PostgreSQL **18.4** — the `mv_signal_cell_daily` drop held.
+
