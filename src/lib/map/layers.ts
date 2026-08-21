@@ -4,6 +4,7 @@ import type {
   DataDrivenPropertyValueSpecification,
 } from "@maplibre/maplibre-gl-style-spec";
 import { styleBackedLayerEntries } from "@/lib/map/layer-registry";
+import type { LayerToggleId } from "@/lib/map/layer-registry";
 
 /**
  * One arm of a `match` paint expression: the feature value it matches, the colour it
@@ -74,6 +75,27 @@ const WATERSHED_SOURCE = "watershed_tiles";
 // function sources makes Martin declare vector_layers, which MapLibre then
 // validates against and rejects every function-backed layer. See sources.ts.
 const OSM_SOURCE = "martin-osm";
+
+/**
+ * Which Martin source a layer toggle draws from, for callers that need to act on a layer's
+ * TILES rather than its style layers -- currently the per-layer refresh in the layer panel,
+ * which drops that source's cached tiles so the next map request refetches them.
+ *
+ * Only toggles backed by a Martin function appear here. A toggle absent from this map either
+ * draws from a geojson source the owning component manages (soil-survey, drought-monitor,
+ * water-gauges) or draws nothing tiled at all, and in both cases has no tile cache to drop.
+ *
+ * Keyed by the toggle id in `LAYER_REGISTRY`, not by the MapLibre layer id: one toggle can own
+ * several style layers (fill + outline + points) that all share a single source.
+ */
+export const MARTIN_SOURCE_BY_LAYER_TOGGLE: Readonly<Partial<Record<LayerToggleId, string>>> = {
+  "fire-perimeters": FIRE_RISK_SOURCE,
+  sensors: SENSOR_SOURCE,
+  "evacuation-zones": EVACUATION_ZONE_SOURCE,
+  "burn-severity": BURN_SEVERITY_SOURCE,
+  interventions: INTERVENTION_SOURCE,
+  watersheds: WATERSHED_SOURCE,
+};
 
 // GeoJSON source for the tRPC-fed layer at the bottom of this file. It is not declared in
 // styles.ts, because a geojson source has no static URL to declare: the component owning

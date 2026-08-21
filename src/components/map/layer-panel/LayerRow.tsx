@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { Eye, EyeOff, Trash2 } from "lucide-react";
+import type maplibregl from "maplibre-gl";
+import { Eye, EyeOff, RefreshCw, Trash2 } from "lucide-react";
 import { LayerIcon } from "@/components/map/layer-panel/layer-icons";
 import { LayerSwatch } from "@/components/map/layer-panel/LayerSwatch";
 import { LayerTimeSlider } from "@/components/map/layer-panel/LayerTimeSlider";
@@ -12,6 +13,9 @@ import {
   type LegendContext,
 } from "@/lib/map/layer-legends";
 import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
+import { MARTIN_SOURCE_BY_LAYER_TOGGLE } from "@/lib/map/layers";
+import { useMap } from "@/lib/map/map-context";
+import { refreshDynamicTiles } from "@/lib/offline/tile-cache";
 import {
   useLayerOpacity,
   useLayerRenderState,
@@ -66,6 +70,66 @@ function formatSyncedBytes(byteCount: number): string {
  * see src/components/map/AGENTS.md §synced-days-track for the full home decision -- and is armed
  * by an explicit second confirmation rather than firing on the first click.
  */
+/**
+ * "Refresh" -- the friendly surface for the one thing that makes a cached tile refetch.
+ *
+ * Dynamic Martin tiles are served cache-first by the service worker and are NEVER revalidated
+ * on their own (see the routing comment in `public/sw.js`): a background revalidate on every
+ * hit would restore exactly the per-tile origin load the cache exists to remove. So refresh is
+ * the consumer's call, and this button is where a person makes it.
+ *
+ * Deliberately NOT merged into "Clear saved days" beside it. That control is destructive, is
+ * styled and confirmed as such, and its confirm copy promises downloaded map tiles are left
+ * alone. These are two different intents -- "show me new data" versus "stop storing this on my
+ * device" -- and collapsing them would break a stated promise to reuse one button.
+ *
+ * Only rendered for toggles backed by a Martin source. A geojson-backed layer has no tile cache
+ * to drop, and its data already revalidates through the query persister's own SWR path.
+ */
+function LayerRefreshControl({ layerId, label }: { layerId: LayerToggleId; label: string }) {
+  const sourceId = MARTIN_SOURCE_BY_LAYER_TOGGLE[layerId];
+  const map = useMap();
+  const [state, setState] = useState<"idle" | "refreshing" | "done">("idle");
+
+  // A layer that draws from geojson or from nothing tiled has no tile cache to drop.
+  if (!sourceId) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        if (state === "refreshing") return;
+        setState("refreshing");
+        await refreshDynamicTiles(sourceId);
+        // Dropping the service-worker entry is not enough on its own: MapLibre holds its own
+        // in-memory copy of every tile it has already drawn, so without this the refetch would
+        // not be visible until the user panned somewhere new. Re-setting the same URL template
+        // is the public API for "reload this source now".
+        const source = map?.getSource(sourceId);
+        if (source && "setTiles" in source) {
+          const vector = source as maplibregl.VectorTileSource;
+          if (Array.isArray(vector.tiles)) vector.setTiles([...vector.tiles]);
+        }
+        setState("done");
+        window.setTimeout(() => setState("idle"), 2_000);
+      }}
+      data-testid={`layer-refresh-${layerId}`}
+      aria-label={`Refresh ${label} from the server, discarding this device's cached tiles for it`}
+      title={`Fetch ${label} again from the server. Cached tiles for this layer are dropped and re-requested; saved days are kept.`}
+      className={cn(
+        "inline-flex w-fit items-center gap-1 self-start rounded-(--radius) border px-1.5 py-0.5 text-[10px] max-sm:min-h-11 max-sm:px-3",
+        "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+      )}
+    >
+      <RefreshCw
+        aria-hidden="true"
+        className={cn("h-3 w-3 shrink-0", state === "refreshing" && "animate-spin")}
+      />
+      <span>{state === "done" ? "Refreshed" : state === "refreshing" ? "Refreshing…" : "Refresh"}</span>
+    </button>
+  );
+}
+
 function LayerSyncResetControl({ layerId, label }: { layerId: LayerToggleId; label: string }) {
   const syncedDays = useSyncedDays(layerId);
   const syncIndexReady = useSyncIndexReady();
@@ -422,7 +486,10 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
               <div data-testid={`layer-time-slider-slot-${layerId}`}>
                 <LayerTimeSlider layerId={layerId} isFetchingCurrentDay={isFetchingSelectedDay} />
               </div>
-              <LayerSyncResetControl layerId={layerId} label={entry.label} />
+              <div className="flex flex-wrap items-center gap-1">
+                <LayerRefreshControl layerId={layerId} label={entry.label} />
+                <LayerSyncResetControl layerId={layerId} label={entry.label} />
+              </div>
             </>
           )}
         </div>

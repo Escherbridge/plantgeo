@@ -140,29 +140,35 @@ function networkFirst(request) {
 }
 
 /**
- * Serve the cached tile immediately when there is one, and refresh it in the background.
+ * Delete cached dynamic-tile entries, optionally narrowed to one Martin source id.
  *
- * The `cached || network` return is the whole point: a hit resolves in ~0 ms without ever
- * waiting on Martin, while the network promise keeps running to update the cache for next
- * time. A miss falls back to the network exactly as before. `event.waitUntil` keeps the worker
- * alive for the background half, which otherwise gets killed once respondWith settles.
+ * This is the ONLY thing that causes a dynamic tile to be fetched twice. See the routing
+ * comment in the fetch handler for why refresh is consumer-driven rather than automatic.
+ * Returns the number of entries dropped so a caller can report it.
  */
-function staleWhileRevalidate(request, event) {
+function refreshDynamicTiles(sourceId) {
   return caches.open(CACHE_NAME).then(function(cache) {
-    return cache.match(request).then(function(cached) {
-      var network = fetch(request).then(function(response) {
-        // cache.put throws on 206; Martin answers whole tiles with 200, and 204 (no features
-        // in this envelope) carries no body worth storing.
-        if (response.status === 200) {
-          cache.put(request, response.clone()).then(evictIfNeeded);
+    return cache.keys().then(function(keys) {
+      var doomed = keys.filter(function(request) {
+        if (!isDynamicTileRequest(request.url)) return false;
+        if (!sourceId) return true;
+        // Match the source segment exactly, so "sensor_tiles" never sweeps away a
+        // hypothetical "sensor_tiles_v2", and a comma-joined composite still matches.
+        try {
+          var segments = new URL(request.url).pathname.split('/').filter(Boolean);
+          // Martin path is {source}/{z}/{x}/{y}; the source sits 4 from the end.
+          var source = segments[segments.length - 4];
+          if (!source) return false;
+          return source.split(',').indexOf(sourceId) !== -1;
+        } catch (e) {
+          return false;
         }
-        return response;
-      }).catch(function() {
-        // Offline or Martin down: the cached copy is the answer if we have one.
-        return cached || Response.error();
       });
-      if (event && cached) event.waitUntil(network);
-      return cached || network;
+      return Promise.all(doomed.map(function(request) {
+        return cache.delete(request);
+      })).then(function() {
+        return doomed.length;
+      });
     });
   });
 }
@@ -198,11 +204,22 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  // Martin tiles: paint from cache now, refresh behind it. See DYNAMIC_TILE_URL_PATTERNS for
-  // why this is neither cacheFirst (would pin stale tiles) nor networkFirst (waits on every
-  // request even with a good copy in hand).
+  // Martin tiles: cache-first, and a hit does NOT trigger a background refresh.
+  //
+  // Refetching is consumer-driven on purpose. A background revalidate on every hit paints
+  // instantly but leaves origin load exactly where it was -- the map still issues one Martin
+  // request per tile per view, which is the cost this cache exists to remove. Since the whole
+  // point is "pull only what is missing or new", the cache never decides on its own that a
+  // tile is stale; a consumer says so by posting REFRESH_DYNAMIC_TILES.
+  //
+  // What makes cache-first safe here: a tile's bytes do not vary with the selected date. No
+  // tile function has a date predicate -- day filtering happens client-side as a MapLibre
+  // style filter over the `observed_day` MVT attribute -- so moving the time slider needs no
+  // refetch at all, and a cached tile already carries every day it will ever be asked for.
+  // Only an ingest run landing NEW features changes what a tile should contain, and that is
+  // exactly the moment a consumer should ask for a refresh.
   if (isDynamicTileRequest(url)) {
-    event.respondWith(staleWhileRevalidate(event.request, event));
+    event.respondWith(cacheFirst(event.request));
     return;
   }
 
@@ -253,6 +270,20 @@ self.addEventListener('message', function(event) {
       }
 
       prefetchNext(0);
+    });
+  } else if (event.data.type === 'REFRESH_DYNAMIC_TILES') {
+    // Consumer-driven tile invalidation: the only path that re-fetches a cached Martin tile.
+    // Pass `sourceId` (e.g. "sensor_tiles") to drop one layer, or omit it to drop all dynamic
+    // tiles while leaving prefetched basemap tiles and the app shell alone -- which is what
+    // separates this from CLEAR_TILE_CACHE below.
+    refreshDynamicTiles(event.data.sourceId || null).then(function(dropped) {
+      if (event.source && event.source.postMessage) {
+        event.source.postMessage({
+          type: 'REFRESH_DYNAMIC_TILES_COMPLETE',
+          sourceId: event.data.sourceId || null,
+          dropped: dropped,
+        });
+      }
     });
   } else if (event.data.type === 'CLEAR_TILE_CACHE') {
     caches.delete(CACHE_NAME).then(function() {

@@ -158,6 +158,44 @@ export async function getStorageEstimateMB(): Promise<{ usageMB: number; quotaMB
 }
 
 /**
+ * Drops cached Martin tiles so the next map request re-fetches them.
+ *
+ * Dynamic tiles are served cache-first by the service worker and are never revalidated on
+ * their own -- see the routing comment in `public/sw.js`. This is the one call that makes a
+ * cached tile refetch, and it exists because refresh is the consumer's decision, not the
+ * cache's: an automatic background revalidate would restore exactly the per-tile origin load
+ * the cache was added to remove.
+ *
+ * Call it when new data has actually landed (an ingest run completed, a contribution was
+ * published), NOT when the time slider moves -- tile bytes do not vary by date, since day
+ * filtering is a client-side style filter over the `observed_day` MVT attribute.
+ *
+ * @param sourceId Martin source id (e.g. `sensor_tiles`) to drop one layer; omit for all
+ *   dynamic tiles. Prefetched basemap tiles and the app shell are left intact either way.
+ * @returns entries dropped, or 0 when no service worker is controlling the page.
+ */
+export async function refreshDynamicTiles(sourceId?: string): Promise<number> {
+  if (typeof navigator === "undefined" || !navigator.serviceWorker?.controller) return 0;
+  const controller = navigator.serviceWorker.controller;
+  return new Promise<number>((resolve) => {
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type !== "REFRESH_DYNAMIC_TILES_COMPLETE") return;
+      if ((event.data.sourceId ?? null) !== (sourceId ?? null)) return;
+      navigator.serviceWorker.removeEventListener("message", handler);
+      clearTimeout(timeout);
+      resolve(typeof event.data.dropped === "number" ? event.data.dropped : 0);
+    };
+    // A worker that dies mid-message would otherwise leave this pending forever.
+    const timeout = setTimeout(() => {
+      navigator.serviceWorker.removeEventListener("message", handler);
+      resolve(0);
+    }, 5_000);
+    navigator.serviceWorker.addEventListener("message", handler);
+    controller.postMessage({ type: "REFRESH_DYNAMIC_TILES", sourceId: sourceId ?? null });
+  });
+}
+
+/**
  * Clears tile cache.
  */
 export async function clearTileCache(): Promise<void> {
