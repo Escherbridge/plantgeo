@@ -685,6 +685,52 @@ is unchanged and still specifies `(id, layer_id)` as the target. `db:generate` i
 
 ---
 
+### 0.15 First executable step taken — `--phase=plan` against production, 2026-08-20
+
+Committed as `79ae3be` (code) + `67a2f06` (runbook); working tree clean. Then
+`node scripts/partition-features.mjs --phase=plan` — **read-only, exit 0, no column drift**. It
+connects via `PARTITION_DATABASE_URL`, which takes precedence over `DATABASE_URL` precisely so an
+operator can point it at prod without exporting the DSN the app would pick up.
+
+**Swap state: not started.** `geo.features_new` absent, `geo.features_legacy` absent — a clean slate,
+so no earlier partial attempt has to be reconciled.
+
+**The census has MOVED, and that is the most useful thing this run produced.** Live total is
+**5,092,022** rows against the 5,080,640 recorded on 2026-08-20 — **+11,382 in hours**:
+
+| layer | recorded 2026-08-20 | live now | chunks |
+|---|---|---|---|
+| fire-detections | 3,019,709 | **3,022,314** | 14 |
+| water-gauges | 1,413,932 | **1,417,935** | 7 |
+| sensors | 180,654 | **184,733** | 1 |
+| vegetation | 185,031 | 185,064 | 1 |
+| weather-observations | 31,569 | 32,223 | 1 |
+| evacuation-zones | 648 | 651 | 1 |
+| fire-perimeters | 172 | 177 | 1 |
+| soil-survey / watersheds / burn-severity / interventions | unchanged | 238,986 / 9,396 / 541 / 2 | 1 each |
+
+This is §0.7's "ingestion is live right now" made concrete: **seven of eleven layers grew**. Two
+consequences. The copy is a moving target, which is what `--phase=copy --catchup` exists for — the
+quiesce in §0.8 is not optional politeness. And **`--phase=verify`'s per-layer count equality can only
+be trusted against a quiesced database**; run against a live one it will fail on the two big layers and
+that failure is correct, not a bug in the driver.
+
+Also note `interventions` now has **2 rows** — it was the last provably empty layer
+([[plantgeo-empty-layers-have-no-producer]]). It no longer is.
+
+**Dependents: the catalog reports SIX, not seven.** `mv_feature_observation_day` ·
+`mv_layer_feature_stats` · `mv_layer_hourly_activity` · `mv_soil_survey_grid` · `mv_soil_survey_union` ·
+`watershed_rollup`. This **confirms** §0.11 rather than contradicting it — the seventh,
+`mv_feature_observation_day_axis`, exists only once `drizzle/0031` is registered, and it is still
+dormant. **The count is a function of registration order**: register `0031` before the swap and the
+re-create list becomes seven. Re-run `--phase=plan` immediately before `--phase=swap` and use *that*
+list, never this one.
+
+`geo.layers` holds 11 layers; the DEFAULT partition covers anything minted after (§0.4).
+
+
+---
+
 ## 1. Goal
 
 Get the 3 GB-capped production database to a small, honest working set — the application runs **no analytical

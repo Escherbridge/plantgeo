@@ -19,8 +19,12 @@
 //
 // THE THREE FACTS THIS SCRIPT IS BUILT ON, all verified against production PG 18.4 on 2026-08-20:
 //   1. `PRIMARY KEY (id, layer_id)` on a LIST-partitioned parent is legal. The partition key must
-//      appear in every unique index, which is why `src/lib/server/db/schema.ts` had to move off a
-//      single-column PK in the same commit as this file.
+//      appear in every unique index, so `src/lib/server/db/schema.ts` must move off its single-column
+//      PK -- but in the commit that runs `--phase=swap`, NOT before it. It deliberately still
+//      declares the single-column PK, because that is what production has: a `schema.ts` that
+//      disagrees with production makes the next `npm run db:generate` emit a `DROP`/`ADD PRIMARY KEY`
+//      against the live 5M-row heap inside an auto-deployed single-transaction migration. See
+//      `conductor/RUNBOOK.md` 0.14 FINDING 7.
 //   2. A PARTIAL unique index on the parent is legal -- `features_layer_external_id_unique` over
 //      `(layer_id, ((properties->>'id'))) WHERE (properties ? 'id')` builds and enforces. Global
 //      uniqueness still holds because one `layer_id` implies exactly one partition.
