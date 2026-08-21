@@ -15,6 +15,14 @@ const mocks = vi.hoisted(() => ({
   getCachedGeoJSON: vi.fn(async () => null as unknown),
   cacheGeoJSON: vi.fn(async () => undefined),
   dbExecute: vi.fn(async () => [] as unknown[]),
+  /**
+   * A plausible `geo.layers.id` for `resolveCachedLayerId`'s own `db.select` call to resolve
+   * to. The soil procedure's detail/aggregate/summary tier readers all resolve
+   * `SOIL_SURVEY_LAYER_NAME` through it before their own `db.execute` read, so `db.select`
+   * must exist on the mocked `db` below -- without it `caller.getSoilSurvey` throws
+   * `db.select is not a function` before ever reaching `mocks.dbExecute`.
+   */
+  fakeLayerId: "11111111-1111-4111-8111-111111111111",
 }));
 
 vi.mock("@/lib/server/http/bounded-upstream", async (importOriginal) => {
@@ -30,8 +38,17 @@ vi.mock("@/lib/server/redis", () => ({
 // The SSURGO reader is warehouse-backed, so the router's soil procedure touches the DB
 // even here. `transaction` is present because a read-through write path runs inside one;
 // the callback gets the same execute stub, which is enough for the router-level cases.
+// `select` is shape-agnostic: resolveCachedLayerId's `.select({id}).from(layers).where(...)
+// .limit(1)` is the only `db.select` call the soil procedure's readers issue.
 vi.mock("@/lib/server/db", () => ({
   db: {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: async () => [{ id: mocks.fakeLayerId }],
+        }),
+      }),
+    }),
     execute: mocks.dbExecute,
     transaction: async (run: (tx: { execute: typeof mocks.dbExecute }) => unknown) =>
       run({ execute: mocks.dbExecute }),
@@ -50,6 +67,7 @@ import {
   WatershedResponseError,
 } from "@/lib/server/services/hydrosheds";
 import { MAX_SOIL_BBOX_SQUARE_DEGREES } from "@/lib/server/services/usda-soil";
+import { clearLayerIdCache } from "@/lib/server/services/environmental-read-model";
 import type { Context } from "@/lib/server/trpc/init";
 import { environmentalRouter } from "@/lib/server/trpc/routers/environmental";
 
@@ -70,6 +88,9 @@ beforeEach(() => {
   mocks.cacheGeoJSON.mockResolvedValue(undefined);
   mocks.dbExecute.mockReset();
   mocks.dbExecute.mockResolvedValue([]);
+  // resolveCachedLayerId memoizes a hit in module scope; clearing it keeps every test's
+  // resolver call going through the same fixed mock rather than a stale cross-test id.
+  clearLayerIdCache();
 });
 
 /** The URL the service asked for, as a parsed URL. */

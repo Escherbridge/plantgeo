@@ -38,13 +38,18 @@ ENVIRONMENT_LINE = re.compile(r"^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)$")
 
 # One row per cell: the newest observation the warehouse holds for it, with the cell polygon PostGIS
 # already normalised. Strictly SELECT; this script holds no write privilege of its own.
+#
+# `feature.layer_id = (SELECT id FROM geo.layers WHERE name = ...)` rather than a join: geo.features
+# is partitioned by layer_id, and a join filtered on layer.name never propagates into a
+# partition-pruning constant, so the DISTINCT ON below would sort every partition instead of just
+# vegetation's. The scalar subquery resolves the name once and lets the planner prune to one
+# partition before the sort ever runs.
 LATEST_CELL_QUERY = """
 SELECT DISTINCT ON (feature.properties ->> 'cellKey')
        feature.properties AS properties,
        ST_AsGeoJSON(feature.geom) AS geometry
 FROM geo.features AS feature
-JOIN geo.layers AS layer ON layer.id = feature.layer_id
-WHERE layer.name = %(layer_name)s
+WHERE feature.layer_id = (SELECT id FROM geo.layers WHERE name = %(layer_name)s)
   AND feature.properties ->> 'gridName' = %(grid_name)s
 ORDER BY feature.properties ->> 'cellKey',
          feature.properties ->> 'observedAt' DESC

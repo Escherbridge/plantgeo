@@ -368,8 +368,18 @@ export const interventionsRouter = router({
           reviewNote: input.note ?? `Vote cast: ${input.vote}`,
           updatedAt: new Date(),
         })
-        .where(eq(features.id, input.interventionId))
+        // `layer_id` pins the update to the one partition already found above,
+        // instead of an update-by-id probing every partition.
+        .where(
+          and(eq(features.id, input.interventionId), eq(features.layerId, feature.layerId))
+        )
         .returning(submissionProjection);
+
+      // The SELECT above prunes; it does not prove the row survived to the UPDATE. A delete
+      // racing between the two matches nothing, and that must error rather than resolve.
+      if (!updated) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
+      }
 
       return updated;
     }),
@@ -390,15 +400,30 @@ export const interventionsRouter = router({
         throw new TRPCError({ code: "FORBIDDEN", message: "Expert or Admin role required" });
       }
 
+      // Resolved first so the update below can pin `layer_id` and touch one
+      // partition instead of probing every partition for a bare `id` match.
+      const [feature] = await ctx.db
+        .select({ layerId: features.layerId })
+        .from(features)
+        .where(eq(features.id, input.interventionId))
+        .limit(1);
+      if (!feature) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
+      }
+
       const [updated] = await ctx.db
         .update(features)
         .set({
           status: input.targetState,
           updatedAt: new Date(),
         })
-        .where(eq(features.id, input.interventionId))
+        .where(
+          and(eq(features.id, input.interventionId), eq(features.layerId, feature.layerId))
+        )
         .returning(submissionProjection);
 
+      // Kept from before the pre-flight SELECT existed: the SELECT prunes the UPDATE to one
+      // partition, it does not stand in for checking that the UPDATE matched a row.
       if (!updated) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
       }

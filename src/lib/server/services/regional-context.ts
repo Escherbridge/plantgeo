@@ -20,6 +20,7 @@ import {
   getPublishedWeatherForBbox,
   getPublishedWeatherForPoint,
   getSliderCapabilities,
+  resolveCachedLayerId,
   resolveRequestedObservationDay,
   serverCurrentDate,
   type PublishedWeatherObservation,
@@ -362,13 +363,15 @@ async function readPublishedFirePerimeters(
   east: number,
   north: number
 ): Promise<{ perimeters: NearbyFirePerimeter[]; latestUpdatedAt: string | null }> {
+  const layerId = await resolveCachedLayerId(process.env.FIRES_LAYER_ID ?? "fire-perimeters");
+  if (layerId === null) return { perimeters: [], latestUpdatedAt: null };
+
   const rows = await db
     .select({ properties: features.properties, updatedAt: features.updatedAt })
     .from(features)
-    .innerJoin(layers, eq(features.layerId, layers.id))
     .where(
       and(
-        eq(layers.name, process.env.FIRES_LAYER_ID ?? "fire-perimeters"),
+        eq(features.layerId, layerId),
         eq(features.status, "published"),
         // `&&` is the bounding-box overlap operator the GiST index on geo.features.geom
         // ACTUALLY answers. The four ST_XMax/ST_XMin/ST_YMax/ST_YMin comparisons this

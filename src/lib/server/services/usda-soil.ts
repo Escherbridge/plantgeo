@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/server/db";
 import { fetchBoundedJson } from "@/lib/server/http/bounded-upstream";
+import { resolveCachedLayerId } from "@/lib/server/services/environmental-read-model";
 import {
   resolveZoomGranularity,
   type ZoomGranularity,
@@ -975,6 +976,8 @@ async function readDetailFeatures(
   bounds: [number, number, number, number]
 ): Promise<{ features: GeoJSON.Feature[]; truncated: boolean }> {
   const [west, south, east, north] = bounds;
+  const layerId = await resolveCachedLayerId(SOIL_SURVEY_LAYER_NAME);
+  if (layerId === null) return { features: [], truncated: false };
   const rows = await db.execute<{
     polygon_key: string | null;
     geometry: string | null;
@@ -985,8 +988,7 @@ async function readDetailFeatures(
       ST_AsGeoJSON(f.geom) AS geometry,
       f.properties AS properties
     FROM geo.features f
-    JOIN geo.layers l ON l.id = f.layer_id
-    WHERE l.name = ${SOIL_SURVEY_LAYER_NAME}
+    WHERE f.layer_id = ${layerId}
       AND f.status = 'published'
       AND f.geom IS NOT NULL
       AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
@@ -1061,6 +1063,8 @@ async function readAggregatedFeatures(
   toleranceDegrees: number
 ): Promise<{ features: GeoJSON.Feature[]; truncated: boolean }> {
   const [west, south, east, north] = bounds;
+  const layerId = await resolveCachedLayerId(SOIL_SURVEY_LAYER_NAME);
+  if (layerId === null) return { features: [], truncated: false };
   const rows = await db.execute<{
     drainage_class: string;
     geometry: string | null;
@@ -1078,8 +1082,7 @@ async function readAggregatedFeatures(
         END AS hydric,
         ST_SimplifyPreserveTopology(f.geom, ${toleranceDegrees}) AS geom
       FROM geo.features f
-      JOIN geo.layers l ON l.id = f.layer_id
-      WHERE l.name = ${SOIL_SURVEY_LAYER_NAME}
+      WHERE f.layer_id = ${layerId}
         AND f.status = 'published'
         AND f.geom IS NOT NULL
         AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
@@ -1161,6 +1164,8 @@ async function readSummaryFeatures(
 ): Promise<{ features: GeoJSON.Feature[]; truncated: boolean }> {
   const [west, south, east, north] = bounds;
   const step = soilSummaryCellDegrees(bounds);
+  const layerId = await resolveCachedLayerId(SOIL_SURVEY_LAYER_NAME);
+  if (layerId === null) return { features: [], truncated: false };
   const rows = await db.execute<{
     cell_col: string;
     cell_row: string;
@@ -1184,9 +1189,8 @@ async function readSummaryFeatures(
             THEN (f.properties->>'hydric')::boolean
         END AS hydric
       FROM geo.features f
-      JOIN geo.layers l ON l.id = f.layer_id
       LEFT JOIN geo.geometry g ON g.geometry_id = f.geometry_id
-      WHERE l.name = ${SOIL_SURVEY_LAYER_NAME}
+      WHERE f.layer_id = ${layerId}
         AND f.status = 'published'
         AND f.geom IS NOT NULL
         AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)

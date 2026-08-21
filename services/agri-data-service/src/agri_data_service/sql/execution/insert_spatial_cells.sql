@@ -35,6 +35,14 @@
 --     the parameter's type: a bare bind parameter carries no type of its own, and the database will
 --     not guess which kind of array it was handed, so naming text[] settles it.
 --
+--   feature.layer_id = (SELECT id FROM geo.layers WHERE name = :layer_name)
+--     Resolves the layer NAME to its id via an uncorrelated subquery rather than joining geo.layers
+--     onto the scan. geo.features is partitioned by layer_id: a join filtered on layer.name only
+--     restricts the layers side, so the planner can never fold it into a partition-pruning constant
+--     for the features side and must scan every partition. A scalar subquery on the (unpartitioned,
+--     11-row) layers table runs once as an init-plan and hands the Append node one concrete layer_id
+--     before it opens a single partition.
+--
 --   ST_Force2D(ST_Envelope(ST_Collect(feature.geom)))
 --     The footprint, read inside out. ST_Collect is an aggregate: it gathers all of the group's
 --     geometries into one multi-part geometry. ST_Envelope then returns the smallest upright
@@ -87,8 +95,7 @@ WITH selected AS (
         ST_Force2D(ST_Envelope(ST_Collect(feature.geom))) AS geometry,
         min((feature.properties->>'resolutionMetres')::integer) AS resolution_m
     FROM geo.features AS feature
-    INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
-    WHERE layer.name = :layer_name
+    WHERE feature.layer_id = (SELECT id FROM geo.layers WHERE name = :layer_name)
       AND feature.properties->>'cellKey' = ANY(CAST(:cell_keys AS text[]))
     GROUP BY 1
 )

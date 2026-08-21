@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, publicProcedure } from "@/lib/server/trpc/init";
+import { router, publicProcedure, type Context } from "@/lib/server/trpc/init";
 import { features, layers } from "@/lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
@@ -47,6 +47,20 @@ function unpublishedRisk(): never {
     code: "PRECONDITION_FAILED",
     message: "Validated warehouse-backed wildfire risk output is not published",
   });
+}
+
+/** The `geo.layers` row every intervention feature belongs to; mirrors `interventionsRouter`. */
+const INTERVENTIONS_LAYER_NAME = "interventions";
+
+/** Resolves the provisioned interventions layer; null when this environment has none. */
+async function findInterventionsLayerId(ctx: Context): Promise<string | null> {
+  const [layer] = await ctx.db
+    .select({ id: layers.id })
+    .from(layers)
+    .where(eq(layers.name, INTERVENTIONS_LAYER_NAME))
+    .limit(1);
+
+  return layer?.id ?? null;
 }
 
 export const wildfireRouter = router({
@@ -113,7 +127,13 @@ export const wildfireRouter = router({
   getInterventions: publicProcedure
     .input(z.object({ teamId: z.string().uuid().optional() }).optional())
     .query(async ({ ctx }) => {
-      const rows = await ctx.db
+      // An environment with no interventions layer has no interventions. This public read
+      // answered that with an empty collection when it joined `geo.layers` on `name`, and
+      // still does: resolving the id must not turn a bare read into a failed request.
+      const layerId = await findInterventionsLayerId(ctx);
+      if (layerId === null) return [];
+
+      return ctx.db
         .select({
           id: features.id,
           properties: features.properties,
@@ -121,14 +141,7 @@ export const wildfireRouter = router({
           createdAt: features.createdAt,
         })
         .from(features)
-        .innerJoin(layers, eq(features.layerId, layers.id))
-        .where(
-          and(
-            eq(layers.name, "interventions"),
-            eq(features.status, "published")
-          )
-        );
-      return rows;
+        .where(and(eq(features.layerId, layerId), eq(features.status, "published")));
     }),
 
   // `createIntervention` was retired here: it wrote unreviewed, unvalidated

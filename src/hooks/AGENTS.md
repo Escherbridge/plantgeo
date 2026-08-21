@@ -31,7 +31,7 @@ key's content is what is CURRENTLY painted, if the slider visited a different da
 `responseCacheRef` therefore stores `{ etag, data }` per cache key, so a 304 can restore the
 exact payload it is a 304 FOR, rather than leaving whatever a different key's fetch last left
 behind mislabelled as this key's answer. Bounded at `MAX_CACHED_RESPONSES` (LRU by
-delete-then-reinsert, same idiom as `upsertBoundedFeature` in `useLiveLayer.ts`) because this is
+delete-then-reinsert) because this is
 NOT a small cache: at `MAX_ROWS` (2,000 features, `environmental-read-model.ts`) and roughly
 1.0–1.6 KB of retained heap per parsed FIRMS feature, one full entry is ~2–2.4 MB. This hook
 mounts twice concurrently — `LayerManager.tsx` (always) and `FireDetails.tsx` (while the fire

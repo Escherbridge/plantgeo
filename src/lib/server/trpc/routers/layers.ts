@@ -9,6 +9,10 @@ import {
 } from "@/lib/server/trpc/init";
 import { layers, teamMembers } from "@/lib/server/db/schema";
 import {
+  clearLayerIdCache,
+  invalidateLayerId,
+} from "@/lib/server/services/environmental-read-model";
+import {
   identityFromSession,
   isPlatformAdmin,
   isTeamEditorRole,
@@ -168,6 +172,10 @@ export const layersRouter = router({
         .set({ ...data, updatedAt: new Date() })
         .where(eq(layers.id, id))
         .returning();
+      // A rename strands the previous name in the reader cache, and it is not in scope here.
+      if (input.name !== undefined) {
+        clearLayerIdCache();
+      }
       return layer;
     }),
 
@@ -175,7 +183,14 @@ export const layersRouter = router({
     .input(z.object({ id: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       await assertCanMutateLayer(ctx, input.id);
-      await ctx.db.delete(layers).where(eq(layers.id, input.id));
+      const [deleted] = await ctx.db
+        .delete(layers)
+        .where(eq(layers.id, input.id))
+        .returning({ name: layers.name });
+      // Readers cache name -> layer_id; a delete must not leave the old id resolvable.
+      if (deleted) {
+        invalidateLayerId(deleted.name);
+      }
       return { success: true };
     }),
 

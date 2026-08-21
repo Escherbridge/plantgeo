@@ -35,10 +35,13 @@
 --     re-bucket observations by whatever time zone the session happened to be in, which would move
 --     observations across day boundaries and silently change the history.
 --
---   INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
---     Features carry only a layer id, so they are joined to the layer table purely to filter by
---     layer name. INNER means a feature whose layer is missing contributes nothing, which is the
---     correct behaviour: an unattributable feature has no place in a governed sample.
+--   feature.layer_id = (SELECT id FROM geo.layers WHERE name = :layer_name)
+--     Resolves the layer NAME to its id via an uncorrelated subquery rather than joining geo.layers
+--     onto the scan. geo.features is partitioned by layer_id: a join filtered on layer.name only
+--     restricts the layers side, so the planner can never fold it into a partition-pruning constant
+--     for the features side and must scan every partition. A scalar subquery on the (unpartitioned,
+--     11-row) layers table runs once as an init-plan and hands the Append node one concrete layer_id
+--     before it opens a single partition.
 --
 --   GROUP BY 1, 2
 --     Collapses rows that agree on the first two selected expressions -- here the cell key and the
@@ -68,8 +71,7 @@ WITH observed AS (
         feature.properties->>'cellKey' AS entity_key,
         substring(feature.properties->>'observedAt', 1, 10)::date AS observed_day
     FROM geo.features AS feature
-    INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
-    WHERE layer.name = :layer_name
+    WHERE feature.layer_id = (SELECT id FROM geo.layers WHERE name = :layer_name)
       AND substring(feature.properties->>'observedAt', 1, 10)::date <= :cutoff_day
     GROUP BY 1, 2
 )

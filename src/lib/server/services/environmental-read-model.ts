@@ -289,6 +289,56 @@ function finiteNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * `geo.layers.name` -> `id`, resolved once per name so every geo.features reader below can
+ * filter on `layer_id` directly instead of joining `geo.layers` and filtering on `l.name`
+ * (see conductor/RUNBOOK.md §0.6 -- a join on `l.name` never prunes the partitioned table).
+ *
+ * A miss is never cached, since layers are created at runtime (RUNBOOK.md §0.4) and the next
+ * call must find one that did not exist a moment ago. A hit is not permanent either:
+ * `layersRouter.delete` retires names at runtime too, and a recreate under the same name mints
+ * a NEW id, so every entry expires. The TTL is the load-bearing half -- this cache is
+ * per-process and `geo.layers` rows also disappear out-of-band (the layer FK cascades, psql,
+ * ops scripts) -- and `invalidateLayerId` is the same-process fast path that heals immediately.
+ */
+const LAYER_ID_CACHE_TTL_MS = 60_000;
+
+/** Caps the cache: resolvers are reachable from public endpoints carrying client-supplied names. */
+const LAYER_ID_CACHE_LIMIT = 200;
+
+const layerIdByName = new Map<string, { id: string; expiresAt: number }>();
+
+/** Resolves a `geo.layers.name` to its `id`; null when no such layer is provisioned. */
+export async function resolveCachedLayerId(layerName: string): Promise<string | null> {
+  const cached = layerIdByName.get(layerName);
+  if (cached !== undefined && cached.expiresAt > Date.now()) return cached.id;
+  const [row] = await db
+    .select({ id: layers.id })
+    .from(layers)
+    .where(eq(layers.name, layerName))
+    .limit(1);
+  if (!row) {
+    layerIdByName.delete(layerName);
+    return null;
+  }
+  if (layerIdByName.size >= LAYER_ID_CACHE_LIMIT) layerIdByName.clear();
+  layerIdByName.set(layerName, {
+    id: row.id,
+    expiresAt: Date.now() + LAYER_ID_CACHE_TTL_MS,
+  });
+  return row.id;
+}
+
+/** Drops one memoized `geo.layers.name` -> `id` mapping; call from any path that deletes a layer. */
+export function invalidateLayerId(layerName: string): void {
+  layerIdByName.delete(layerName);
+}
+
+/** Drops every memoized `geo.layers.name` -> `id` mapping; for tests and for layer-deleting paths. */
+export function clearLayerIdCache(): void {
+  layerIdByName.clear();
+}
+
 /** Fire detections for one named day, or the live FIRMS lookback window. */
 type FireDetectionRow = { properties: unknown };
 
@@ -321,10 +371,15 @@ type FireDetectionRow = { properties: unknown };
  * subsets of the same day -- not just reordered, a different SET -- which silently changes both
  * what the client draws and what any content fingerprint over the result hashes to.
  */
+/** Canonical `geo.layers.name` for FIRMS fire detections; mirrors the producer's own env override. */
+const FIRMS_LAYER_ID = process.env.FIRMS_LAYER_ID ?? "fire-detections";
+
 async function readFireDetectionsOnDay(
   date: string,
   area: [number, number, number, number] | null
 ): Promise<FireDetectionRow[]> {
+  const layerId = await resolveCachedLayerId(FIRMS_LAYER_ID);
+  if (layerId === null) return [];
   const observedDayText = sql`COALESCE(
     substring(f.properties->>'observedAt', 1, 10),
     f.properties->>'acqDate'
@@ -332,8 +387,7 @@ async function readFireDetectionsOnDay(
   return db.execute<FireDetectionRow>(sql`
     SELECT f.properties
     FROM geo.features f
-    JOIN geo.layers l ON l.id = f.layer_id
-    WHERE l.name = ${process.env.FIRMS_LAYER_ID ?? "fire-detections"}
+    WHERE f.layer_id = ${layerId}
       AND f.status = 'published'
       AND ${observedDayText} = ${date}
       ${
@@ -375,26 +429,29 @@ export async function getPublishedFireDetections(
   }
 
   const since = new Date(Date.now() - dayRange * 86_400_000);
-  const rows = await db
-    .select({ properties: features.properties })
-    .from(features)
-    .innerJoin(layers, eq(features.layerId, layers.id))
-    .where(
-      and(
-        eq(layers.name, process.env.FIRMS_LAYER_ID ?? "fire-detections"),
-        eq(features.status, "published"),
-        gte(features.createdAt, since),
-        area ? gte(sql<number>`ST_X(${features.geom})`, area[0]) : undefined,
-        area ? lte(sql<number>`ST_X(${features.geom})`, area[2]) : undefined,
-        area ? gte(sql<number>`ST_Y(${features.geom})`, area[1]) : undefined,
-        area ? lte(sql<number>`ST_Y(${features.geom})`, area[3]) : undefined
-      )
-    )
-    // `features.id` breaks ties: `createdAt` is `defaultNow()`, so a batch insert gives many
-    // rows the SAME instant -- see the tiebreaker note on readFireDetectionsOnDay, same issue,
-    // same fix.
-    .orderBy(desc(features.createdAt), features.id)
-    .limit(MAX_ROWS);
+  const layerId = await resolveCachedLayerId(FIRMS_LAYER_ID);
+  const rows =
+    layerId === null
+      ? []
+      : await db
+          .select({ properties: features.properties })
+          .from(features)
+          .where(
+            and(
+              eq(features.layerId, layerId),
+              eq(features.status, "published"),
+              gte(features.createdAt, since),
+              area ? gte(sql<number>`ST_X(${features.geom})`, area[0]) : undefined,
+              area ? lte(sql<number>`ST_X(${features.geom})`, area[2]) : undefined,
+              area ? gte(sql<number>`ST_Y(${features.geom})`, area[1]) : undefined,
+              area ? lte(sql<number>`ST_Y(${features.geom})`, area[3]) : undefined
+            )
+          )
+          // `features.id` breaks ties: `createdAt` is `defaultNow()`, so a batch insert gives
+          // many rows the SAME instant -- see the tiebreaker note on readFireDetectionsOnDay,
+          // same issue, same fix.
+          .orderBy(desc(features.createdAt), features.id)
+          .limit(MAX_ROWS);
 
   return collectFireDetections(rows, day, dayRange);
 }
@@ -455,6 +512,9 @@ type StreamflowRow = { properties: unknown };
  * would drop every gauge whose last reading that day landed before 18:00, which is most of
  * them, and report a real day as unobserved.
  */
+/** Canonical `geo.layers.name` for USGS water gauges; mirrors the producer's own env override. */
+const WATER_GAUGES_LAYER_ID = process.env.WATER_GAUGES_LAYER_ID ?? "water-gauges";
+
 async function readStreamflowGaugesOnDay(
   date: string,
   west: number,
@@ -462,11 +522,12 @@ async function readStreamflowGaugesOnDay(
   east: number,
   north: number
 ): Promise<StreamflowRow[]> {
+  const layerId = await resolveCachedLayerId(WATER_GAUGES_LAYER_ID);
+  if (layerId === null) return [];
   return db.execute<StreamflowRow>(sql`
     SELECT DISTINCT ON (f.properties->>'siteNo') f.properties
     FROM geo.features f
-    JOIN geo.layers l ON l.id = f.layer_id
-    WHERE l.name = ${process.env.WATER_GAUGES_LAYER_ID ?? "water-gauges"}
+    WHERE f.layer_id = ${layerId}
       AND f.status = 'published'
       AND f.properties->>'siteNo' IS NOT NULL
       AND ${namedDaySql(sql`f.properties->>'updatedAt'`)} = ${date}::date
@@ -504,25 +565,30 @@ export async function getPublishedStreamflowGauges(
   const day = resolveRequestedObservationDay(date);
   if (day.kind === "unobserved") return [];
 
-  const rows: StreamflowRow[] =
-    day.kind === "historical"
-      ? await readStreamflowGaugesOnDay(day.date, west, south, east, north)
-      : await db
-          .select({ properties: features.properties })
-          .from(features)
-          .innerJoin(layers, eq(features.layerId, layers.id))
-          .where(
-            and(
-              eq(layers.name, process.env.WATER_GAUGES_LAYER_ID ?? "water-gauges"),
-              eq(features.status, "published"),
-              gte(sql<number>`ST_X(${features.geom})`, west),
-              lte(sql<number>`ST_X(${features.geom})`, east),
-              gte(sql<number>`ST_Y(${features.geom})`, south),
-              lte(sql<number>`ST_Y(${features.geom})`, north)
+  let rows: StreamflowRow[];
+  if (day.kind === "historical") {
+    rows = await readStreamflowGaugesOnDay(day.date, west, south, east, north);
+  } else {
+    const layerId = await resolveCachedLayerId(WATER_GAUGES_LAYER_ID);
+    rows =
+      layerId === null
+        ? []
+        : await db
+            .select({ properties: features.properties })
+            .from(features)
+            .where(
+              and(
+                eq(features.layerId, layerId),
+                eq(features.status, "published"),
+                gte(sql<number>`ST_X(${features.geom})`, west),
+                lte(sql<number>`ST_X(${features.geom})`, east),
+                gte(sql<number>`ST_Y(${features.geom})`, south),
+                lte(sql<number>`ST_Y(${features.geom})`, north)
+              )
             )
-          )
-          .orderBy(desc(features.createdAt))
-          .limit(MAX_ROWS);
+            .orderBy(desc(features.createdAt))
+            .limit(MAX_ROWS);
+  }
 
   const gauges = new Map<string, WaterGauge>();
   for (const row of rows) {
@@ -620,6 +686,12 @@ export async function getPublishedWeatherForPoint(
   //
   // Returned coordinates are still read from the same geom column the sort ranks -- never from
   // the properties copy, which can drift from it silently.
+  //
+  // Filtered on `f.layer_id` directly rather than joined to `geo.layers` on name: a join here
+  // would force the KNN `ORDER BY ... LIMIT` to plan as a MergeAppend of per-partition GiST-KNN
+  // scans instead of one pruned Index Scan (conductor/RUNBOOK.md §0.6).
+  const layerId = await resolveCachedLayerId(WEATHER_LAYER_ID);
+  if (layerId === null) return null;
   const rows = await db.execute<{
     properties: unknown;
     lon: number | null;
@@ -630,8 +702,7 @@ export async function getPublishedWeatherForPoint(
       ST_X(f.geom) AS lon,
       ST_Y(f.geom) AS lat
     FROM geo.features f
-    JOIN geo.layers l ON l.id = f.layer_id
-    WHERE l.name = ${WEATHER_LAYER_ID}
+    WHERE f.layer_id = ${layerId}
       AND f.status = 'published'
     ORDER BY f.geom <-> ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)
     LIMIT ${WEATHER_CANDIDATE_ROWS}
@@ -700,14 +771,15 @@ async function readWeatherOnDay(
   east: number,
   north: number
 ): Promise<WeatherDayRow[]> {
+  const layerId = await resolveCachedLayerId(WEATHER_LAYER_ID);
+  if (layerId === null) return [];
   return db.execute<WeatherDayRow>(sql`
     SELECT DISTINCT ON (ST_X(f.geom), ST_Y(f.geom))
       f.properties,
       ST_X(f.geom) AS lon,
       ST_Y(f.geom) AS lat
     FROM geo.features f
-    JOIN geo.layers l ON l.id = f.layer_id
-    WHERE l.name = ${WEATHER_LAYER_ID}
+    WHERE f.layer_id = ${layerId}
       AND f.status = 'published'
       AND ${namedDaySql(sql`f.properties->>'observedAt'`)} = ${date}::date
       ${/* Same restatement, same reason, as `readStreamflowGaugesOnDay`: this is the expression
@@ -784,22 +856,25 @@ export async function getPublishedWeatherForBbox(
     return observations;
   }
 
-  const rows = await db
-    .select({ properties: features.properties })
-    .from(features)
-    .innerJoin(layers, eq(features.layerId, layers.id))
-    .where(
-      and(
-        eq(layers.name, WEATHER_LAYER_ID),
-        eq(features.status, "published"),
-        gte(sql<number>`ST_X(${features.geom})`, west),
-        lte(sql<number>`ST_X(${features.geom})`, east),
-        gte(sql<number>`ST_Y(${features.geom})`, south),
-        lte(sql<number>`ST_Y(${features.geom})`, north)
-      )
-    )
-    .orderBy(desc(features.createdAt))
-    .limit(WEATHER_BBOX_MAX_ROWS);
+  const layerId = await resolveCachedLayerId(WEATHER_LAYER_ID);
+  const rows =
+    layerId === null
+      ? []
+      : await db
+          .select({ properties: features.properties })
+          .from(features)
+          .where(
+            and(
+              eq(features.layerId, layerId),
+              eq(features.status, "published"),
+              gte(sql<number>`ST_X(${features.geom})`, west),
+              lte(sql<number>`ST_X(${features.geom})`, east),
+              gte(sql<number>`ST_Y(${features.geom})`, south),
+              lte(sql<number>`ST_Y(${features.geom})`, north)
+            )
+          )
+          .orderBy(desc(features.createdAt))
+          .limit(WEATHER_BBOX_MAX_ROWS);
 
   const observations: PublishedWeatherObservation[] = [];
   for (const row of rows) {
@@ -1317,6 +1392,12 @@ export async function getPublishedVegetationIndex(
   if (day.kind === "unobserved") {
     return emptyVegetationCollection("not_forecastable", null);
   }
+  const layerId = await resolveCachedLayerId(VEGETATION_LAYER_ID);
+  if (layerId === null) {
+    // Same terminal state a zero-row join against a non-existent layer name would have
+    // produced below, reached without paying for either round trip.
+    return emptyVegetationCollection("not_published", null);
+  }
   const freshSince = new Date(Date.now() - VEGETATION_MAX_AGE_MS).toISOString();
   // The observation window as publisher-named days, for a named day only: (after, through].
   const windowThroughDay = day.kind === "historical" ? day.date : null;
@@ -1374,8 +1455,7 @@ export async function getPublishedVegetationIndex(
     WITH candidate AS (
       SELECT f.geometry_id, f.properties
       FROM geo.features f
-      JOIN geo.layers l ON l.id = f.layer_id
-      WHERE l.name = ${VEGETATION_LAYER_ID}
+      WHERE f.layer_id = ${layerId}
         AND f.status = 'published'
         AND f.geometry_id IS NOT NULL
         AND jsonb_typeof(f.properties->'ndvi') = 'number'
@@ -1442,8 +1522,7 @@ export async function getPublishedVegetationIndex(
         AND EXISTS (
           SELECT 1
           FROM geo.features f
-          JOIN geo.layers l ON l.id = f.layer_id
-          WHERE l.name = ${VEGETATION_LAYER_ID}
+          WHERE f.layer_id = ${layerId}
             AND f.status = 'published'
             AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
           LIMIT 1
@@ -4039,6 +4118,17 @@ export async function getMetricAtDate(
     );
   }
 
+  // `capability` above already proves a `geo.layers` row named `source.layerName` exists as of
+  // the last capability refresh; this is still resolved through the shared cache rather than
+  // assumed, so a resolver miss degrades to the same empty answer a zero-row join would have.
+  const layerId = await resolveCachedLayerId(source.layerName);
+  if (layerId === null) {
+    return emptyMetricCollection(
+      "not_published",
+      `${source.label} recorded no observation on ${date}.`
+    );
+  }
+
   // Polygon layers (fire perimeters reach ~58,000 vertices) are generalized to what
   // the client can resolve; points are returned untouched. Simplifying generalizes a
   // boundary, it never moves a value.
@@ -4069,8 +4159,7 @@ export async function getMetricAtDate(
     WITH candidate AS (
       SELECT f.id, f.geometry_id, f.properties
       FROM geo.features f
-      JOIN geo.layers l ON l.id = f.layer_id
-      WHERE l.name = ${source.layerName}
+      WHERE f.layer_id = ${layerId}
         AND f.status = 'published'
         AND ${OBSERVATION_DAY} = ${date}::date
         ${/* The same day, restated in the indexed expression. `OBSERVATION_DAY` above stays the

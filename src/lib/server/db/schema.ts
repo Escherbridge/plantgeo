@@ -239,6 +239,10 @@ export const features = geoSchema.table(
     dataAvailableAt: timestamp("data_available_at", { withTimezone: true }),
   },
   (table) => [
+    // Single-column to match production. The LIST-partition swap makes this
+    // primaryKey({ columns: [table.id, table.layerId] }) -- PostgreSQL requires the partition key in
+    // every unique index -- and that edit MUST land in the same commit as the swap, never before it.
+    // See docs/pending-migrations/0033-features-partitioning.md and conductor/RUNBOOK.md §0.14.
     uniqueIndex("features_layer_external_id_unique")
       .on(table.layerId, sql`(${table.properties} ->> 'id')`)
       .where(sql`${table.properties} ? 'id'`),

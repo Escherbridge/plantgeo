@@ -4,6 +4,7 @@ import { router, publicProcedure } from "@/lib/server/trpc/init";
 import { features, layers } from "@/lib/server/db/schema";
 import { identityFromSession } from "@/lib/server/security/access-control";
 import { featureVisibilityCondition } from "@/lib/server/security/layer-access";
+import { resolveCachedLayerId } from "@/lib/server/services/environmental-read-model";
 
 const viewportQuerySchema = z
   .object({
@@ -102,17 +103,33 @@ function coordinatePair(value: Record<string, unknown>): [number, number] | null
   return [longitude, latitude];
 }
 
+/**
+ * Every reader below resolves its client-supplied `layerName` through the one shared resolver, so
+ * it filters `features.layer_id` by a constant instead of joining `geo.layers` on `name` for every
+ * viewport request.
+ *
+ * Shared rather than a second local cache on purpose: that one memoized a MISS for the process
+ * lifetime, so a layer created at runtime (RUNBOOK.md §0.4) after one early lookup rendered empty
+ * forever. The shared resolver never caches a miss, expires its hits, and is bounded for exactly
+ * the reason this router needed a bound -- these three procedures are public and take the name
+ * from the client.
+ */
 export const visualizationRouter = router({
   getHeatmapData: publicProcedure
     .input(viewportQuerySchema)
     .query(async ({ ctx, input }) => {
+      const layerId = await resolveCachedLayerId(input.layerName);
+      if (layerId === null) return [];
+
       const rows = await ctx.db
         .select({ properties: projectedProperties(HEATMAP_PROPERTY_KEYS) })
         .from(features)
-        .innerJoin(layers, eq(features.layerId, layers.id))
+        // Joined on the resolved constant, not `name`, so the layer's own row is
+        // still in scope for `featureVisibilityCondition` without blocking pruning.
+        .innerJoin(layers, eq(layers.id, layerId))
         .where(
           and(
-            eq(layers.name, input.layerName),
+            eq(features.layerId, layerId),
             featureVisibilityCondition(identityFromSession(ctx.session)),
             viewportCondition(input.bbox)
           )
@@ -133,13 +150,16 @@ export const visualizationRouter = router({
   getPointData: publicProcedure
     .input(viewportQuerySchema)
     .query(async ({ ctx, input }) => {
+      const layerId = await resolveCachedLayerId(input.layerName);
+      if (layerId === null) return [];
+
       const rows = await ctx.db
         .select({ id: features.id, properties: features.properties })
         .from(features)
-        .innerJoin(layers, eq(features.layerId, layers.id))
+        .innerJoin(layers, eq(layers.id, layerId))
         .where(
           and(
-            eq(layers.name, input.layerName),
+            eq(features.layerId, layerId),
             featureVisibilityCondition(identityFromSession(ctx.session)),
             viewportCondition(input.bbox)
           )
@@ -162,13 +182,16 @@ export const visualizationRouter = router({
   getFlowData: publicProcedure
     .input(viewportQuerySchema)
     .query(async ({ ctx, input }) => {
+      const layerId = await resolveCachedLayerId(input.layerName);
+      if (layerId === null) return [];
+
       const rows = await ctx.db
         .select({ properties: projectedProperties(FLOW_PROPERTY_KEYS) })
         .from(features)
-        .innerJoin(layers, eq(features.layerId, layers.id))
+        .innerJoin(layers, eq(layers.id, layerId))
         .where(
           and(
-            eq(layers.name, input.layerName),
+            eq(features.layerId, layerId),
             featureVisibilityCondition(identityFromSession(ctx.session)),
             viewportCondition(input.bbox)
           )

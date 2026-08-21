@@ -7,15 +7,39 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * `queryChain` is the drizzle query-builder chain (`getPublishedFireDetections`'s path),
  * `dbExecute` is the raw `sql` path the slider-capability and metric-at-date queries use.
  * vi.hoisted keeps both ahead of the vi.mock factories' hoist point.
+ *
+ * Every refactored reader now issues `db.select(...).from(layers)...limit(1)` (via the shared
+ * `resolveCachedLayerId`) BEFORE its own `db.select(...).from(features)...limit(n)` -- both
+ * calls share this one mocked chain. `lastFromTable` is how `.limit()` tells them apart:
+ * keyed on the table `.from()` was last called with, not on call order, because two concurrent
+ * readers (a `Promise.all` in the test body) can race their own resolver call ahead of the
+ * other's. See resetQueryChain below.
  */
-const queryChain = vi.hoisted(() => ({
-  select: vi.fn((..._args: unknown[]) => queryChain),
-  from: vi.fn((..._args: unknown[]) => queryChain),
-  innerJoin: vi.fn((..._args: unknown[]) => queryChain),
-  where: vi.fn((..._args: unknown[]) => queryChain),
-  orderBy: vi.fn((..._args: unknown[]) => queryChain),
-  limit: vi.fn(() => Promise.resolve([] as unknown[])),
-}));
+const queryChain = vi.hoisted(() => {
+  const chain: {
+    lastFromTable: unknown;
+    featureRows: unknown[];
+    select: ReturnType<typeof vi.fn>;
+    from: ReturnType<typeof vi.fn>;
+    innerJoin: ReturnType<typeof vi.fn>;
+    where: ReturnType<typeof vi.fn>;
+    orderBy: ReturnType<typeof vi.fn>;
+    limit: ReturnType<typeof vi.fn>;
+  } = {
+    lastFromTable: undefined,
+    featureRows: [],
+    select: vi.fn((..._args: unknown[]) => chain),
+    from: vi.fn((table: unknown) => {
+      chain.lastFromTable = table;
+      return chain;
+    }),
+    innerJoin: vi.fn((..._args: unknown[]) => chain),
+    where: vi.fn((..._args: unknown[]) => chain),
+    orderBy: vi.fn((..._args: unknown[]) => chain),
+    limit: vi.fn(() => Promise.resolve([] as unknown[])),
+  };
+  return chain;
+});
 
 const dbExecute = vi.hoisted(() =>
   vi.fn((..._args: unknown[]) => Promise.resolve([] as unknown[]))
@@ -41,6 +65,7 @@ vi.mock("drizzle-orm", async (importOriginal) => {
 
 import { gte, lte } from "drizzle-orm";
 import {
+  clearLayerIdCache,
   clearSliderCapabilitiesCache,
   getMetricAtDate,
   getPublishedDroughtClassification,
@@ -52,7 +77,15 @@ import {
   resolveRequestedObservationDay,
   serverCurrentDate,
 } from "@/lib/server/services/environmental-read-model";
+import { layers } from "@/lib/server/db/schema";
 import { layerRegistryEntries } from "@/lib/map/layer-registry";
+
+/**
+ * A plausible `geo.layers.id` for `resolveCachedLayerId`'s own `db.select` call to resolve to.
+ * The exact value is inert -- every "main" query below is itself mocked (via `dbExecute` or via
+ * `queryChain.featureRows`), so nothing downstream inspects this UUID's bytes.
+ */
+const FAKE_LAYER_ID = "11111111-1111-4111-8111-111111111111";
 
 /**
  * Flattens a drizzle `sql` template back to its literal text, so a test can assert on the
@@ -157,12 +190,24 @@ function expectNoBareFractionalParameter(statement: unknown): void {
 }
 
 function resetQueryChain() {
+  queryChain.lastFromTable = undefined;
+  queryChain.featureRows = [];
   queryChain.select.mockReturnValue(queryChain);
-  queryChain.from.mockReturnValue(queryChain);
+  queryChain.from.mockImplementation((table: unknown) => {
+    queryChain.lastFromTable = table;
+    return queryChain;
+  });
   queryChain.innerJoin.mockReturnValue(queryChain);
   queryChain.where.mockReturnValue(queryChain);
   queryChain.orderBy.mockReturnValue(queryChain);
-  queryChain.limit.mockResolvedValue([]);
+  // A `.from(layers)` call is always `resolveCachedLayerId`'s own lookup (see the queryChain
+  // doc comment above); anything else is a reader's real feature select, answered from
+  // `queryChain.featureRows` -- set that field directly rather than re-mocking `.limit()`.
+  queryChain.limit.mockImplementation(() =>
+    Promise.resolve(
+      queryChain.lastFromTable === layers ? [{ id: FAKE_LAYER_ID }] : queryChain.featureRows
+    )
+  );
 }
 
 /** Runs `body` under a fixed IANA zone so a local-clock bug surfaces as a diff. */
@@ -185,6 +230,9 @@ beforeEach(() => {
   // into a whole-warehouse scan per request. Without this, the first test's fixture -- or the
   // default empty result -- would be served to every test after it.
   clearSliderCapabilitiesCache();
+  // `resolveCachedLayerId` memoizes a HIT in module scope too (a miss is never cached), so one
+  // test's cached `geo.layers.id` must not leak into the next test's call-count assertions.
+  clearLayerIdCache();
 });
 
 describe("serverCurrentDate", () => {
@@ -1522,13 +1570,16 @@ describe("the USGS -999999 no-data sentinel is never drawn", () => {
     try {
       vi.setSystemTime(Date.parse("2026-08-04T12:00:00Z"));
       const updatedAt = "2026-08-04T04:00:00.000-07:00";
-      queryChain.limit.mockResolvedValue([
+      // Set on the field the `.from(features)` branch reads, not via `.mockResolvedValue`,
+      // since that would also feed these rows to `resolveCachedLayerId`'s own `.from(layers)`
+      // call sharing this mock -- see resetQueryChain's table-based switch.
+      queryChain.featureRows = [
         gaugeRow("14105700", -999999, updatedAt),
         // Reverse flow is real at these gauges and reaches -172,000 cfs in production, so the
         // exclusion must compare exactly -- "negative means missing" would erase a measurement.
         gaugeRow("14211720", -15_700, updatedAt),
         gaugeRow("13206000", 42.5, updatedAt),
-      ]);
+      ];
 
       const gauges = await getPublishedStreamflowGauges("-125,41,-110,49");
 
@@ -1996,8 +2047,10 @@ describe("a named day is answered by that day, and today's answer is unchanged",
 
       expect(gauges.map((gauge) => gauge.siteNo)).toEqual(["13172500"]);
       expect(gauges[0].flowCfs).toBe(512);
-      // The live read pages by created_at, which for a past day returns today's rows only.
-      expect(queryChain.limit).not.toHaveBeenCalled();
+      // The live-edge FEATURE select (paging by created_at) is never reached for a past day --
+      // that data comes from db.execute instead. resolveCachedLayerId's own lookup still goes
+      // through db.select on every path though, so exactly one queryChain call is expected here.
+      expect(queryChain.limit).toHaveBeenCalledTimes(1);
 
       const statement = renderSqlText(dbExecute.mock.calls[0]?.[0]);
       expect(statement).toContain("SELECT DISTINCT ON (f.properties->>'siteNo')");
@@ -2037,9 +2090,9 @@ describe("a named day is answered by that day, and today's answer is unchanged",
 
     it("runs the live read, unchanged, for an omitted day and for the server's today", async () => {
       const [omitted, today] = await atServerToday(async () => {
-        queryChain.limit.mockResolvedValue([
+        queryChain.featureRows = [
           gaugeRow("13206000", 42.5, `${TODAY}T04:00:00.000-07:00`),
-        ]);
+        ];
         return Promise.all([
           getPublishedStreamflowGauges(VIEWPORT),
           getPublishedStreamflowGauges(VIEWPORT, TODAY),
@@ -2050,7 +2103,10 @@ describe("a named day is answered by that day, and today's answer is unchanged",
       expect(today).toHaveLength(1);
       // Today's answer is the query it has always been: no named-day statement is issued.
       expect(dbExecute).not.toHaveBeenCalled();
-      expect(queryChain.limit).toHaveBeenCalledTimes(2);
+      // Both concurrent calls race resolveCachedLayerId's cache before either populates it (a
+      // Promise.all starts both bodies synchronously), so each independently misses and calls
+      // the resolver's own `db.select` -- 2 resolver calls + 2 feature-select calls.
+      expect(queryChain.limit).toHaveBeenCalledTimes(4);
     });
 
     it("binds no bare fractional parameter on the named-day path", async () => {
@@ -2338,9 +2394,11 @@ describe("a named day is answered by that day, and today's answer is unchanged",
       expect(collection.features[0].properties?.observedAt).toBe(
         `${PAST_DAY}T10:42:00.000Z`
       );
-      // created_at is a "last touched" column the refresh path rewrites, so the live read's
-      // floor on it can never answer for a past day.
-      expect(queryChain.limit).not.toHaveBeenCalled();
+      // created_at is a "last touched" column the refresh path rewrites, so the live read's own
+      // FEATURE select can never answer for a past day -- that data comes from db.execute
+      // instead. resolveCachedLayerId's own lookup still goes through db.select regardless of
+      // day.kind, so exactly one queryChain call is expected here, not zero.
+      expect(queryChain.limit).toHaveBeenCalledTimes(1);
       expect(renderSqlText(dbExecute.mock.calls[0]?.[0])).toContain(
         "f.properties->>'acqDate'"
       );

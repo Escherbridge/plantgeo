@@ -1,7 +1,19 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { router, contributorProcedure, expertProcedure } from "@/lib/server/trpc/init";
 import { features, layers } from "@/lib/server/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+
+/**
+ * The error a review mutation raises when its UPDATE matched no row.
+ *
+ * Deliberately not raised by the pre-flight SELECT, which keeps returning `undefined` as this
+ * router always has for a feature that is simply gone. Passing the pre-flight and still matching
+ * nothing is a delete racing the mutation, and a review decision that applied to no row must not
+ * resolve as success.
+ */
+const contributionNotFound = () =>
+  new TRPCError({ code: "NOT_FOUND", message: "Contribution not found" });
 
 export const contributionsRouter = router({
   submitObservation: contributorProcedure
@@ -37,11 +49,23 @@ export const contributionsRouter = router({
   publishContribution: expertProcedure
     .input(z.object({ featureId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
+      // Resolved first so the update below can pin `layer_id` and touch one
+      // partition instead of probing every partition for a bare `id` match.
+      const [feature] = await ctx.db
+        .select({ layerId: features.layerId })
+        .from(features)
+        .where(eq(features.id, input.featureId))
+        .limit(1);
+      if (!feature) return undefined;
+
       const [updated] = await ctx.db
         .update(features)
         .set({ status: "published", reviewNote: null, updatedAt: new Date() })
-        .where(eq(features.id, input.featureId))
+        .where(
+          and(eq(features.id, input.featureId), eq(features.layerId, feature.layerId))
+        )
         .returning();
+      if (!updated) throw contributionNotFound();
       return updated;
     }),
 
@@ -53,6 +77,13 @@ export const contributionsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      const [feature] = await ctx.db
+        .select({ layerId: features.layerId })
+        .from(features)
+        .where(eq(features.id, input.featureId))
+        .limit(1);
+      if (!feature) return undefined;
+
       const [updated] = await ctx.db
         .update(features)
         .set({
@@ -60,8 +91,11 @@ export const contributionsRouter = router({
           reviewNote: input.reviewNote ?? null,
           updatedAt: new Date(),
         })
-        .where(eq(features.id, input.featureId))
+        .where(
+          and(eq(features.id, input.featureId), eq(features.layerId, feature.layerId))
+        )
         .returning();
+      if (!updated) throw contributionNotFound();
       return updated;
     }),
 

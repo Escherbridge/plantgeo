@@ -41,6 +41,14 @@
 --     one statement covers a whole batch of keys. The cast pins the parameter's type: a bare bind
 --     parameter has none of its own and the database will not guess which kind of array it received.
 --
+--   feature.layer_id = (SELECT id FROM geo.layers WHERE name = :layer_name)
+--     Resolves the layer NAME to its id via an uncorrelated subquery rather than joining geo.layers
+--     onto the scan. geo.features is partitioned by layer_id: a join filtered on layer.name only
+--     restricts the layers side, so the planner can never fold it into a partition-pruning constant
+--     for the features side and must scan every partition. A scalar subquery on the (unpartitioned,
+--     11-row) layers table runs once as an init-plan and hands the Append node one concrete layer_id
+--     before it opens a single partition.
+--
 --   avg / count / max / sum / array_agg(DISTINCT ...) inside the CTE
 --     The aggregates that describe one cell-day: its mean NDVI, how many source rows produced it, the
 --     latest moment any of those rows became available, the total pixels sampled, the worst cloud
@@ -133,8 +141,7 @@ WITH daily AS (
         max((feature.properties->>'cloudCover')::double precision) AS max_cloud_cover,
         array_agg(DISTINCT feature.properties->>'sceneId') AS scene_ids
     FROM geo.features AS feature
-    INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
-    WHERE layer.name = :layer_name
+    WHERE feature.layer_id = (SELECT id FROM geo.layers WHERE name = :layer_name)
       AND feature.properties->>'cellKey' = ANY(CAST(:cell_keys AS text[]))
       AND substring(feature.properties->>'observedAt', 1, 10)::date <= :cutoff_day
     GROUP BY 1, 2

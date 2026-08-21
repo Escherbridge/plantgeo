@@ -1,22 +1,52 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Chainable drizzle query-builder stub: every intermediate call returns the
-// same object, `.limit()` resolves to the rows the test configures.
-// vi.hoisted keeps this ahead of the vi.mock factory's hoist point.
-const queryChain = vi.hoisted(() => ({
-  select: vi.fn((..._args: unknown[]) => queryChain),
-  from: vi.fn((..._args: unknown[]) => queryChain),
-  innerJoin: vi.fn((..._args: unknown[]) => queryChain),
-  where: vi.fn((..._args: unknown[]) => queryChain),
-  orderBy: vi.fn((..._args: unknown[]) => queryChain),
-  limit: vi.fn(() => Promise.resolve([] as Array<{ properties: unknown }>)),
-}));
+/**
+ * Chainable drizzle query-builder stub: every intermediate call returns the same object.
+ * vi.hoisted keeps this ahead of the vi.mock factory's hoist point.
+ *
+ * `getPublishedWeatherForBbox` now resolves `WEATHER_LAYER_ID` through the shared
+ * `resolveCachedLayerId` (`db.select(...).from(layers)...limit(1)`) BEFORE its own
+ * `db.select(...).from(features)...limit(500)` -- both share this one mocked chain.
+ * `.limit()` tells them apart by the table `.from()` was last called with, not by call
+ * order: keyed on `lastFromTable === layers` -> a fake layer id, else -> `featureRows` (set
+ * directly by each test rather than via `.mockResolvedValue`, which would also feed the
+ * fixture to the resolver's own call).
+ */
+const queryChain = vi.hoisted(() => {
+  const chain: {
+    lastFromTable: unknown;
+    featureRows: unknown[];
+    select: ReturnType<typeof vi.fn>;
+    from: ReturnType<typeof vi.fn>;
+    innerJoin: ReturnType<typeof vi.fn>;
+    where: ReturnType<typeof vi.fn>;
+    orderBy: ReturnType<typeof vi.fn>;
+    limit: ReturnType<typeof vi.fn>;
+  } = {
+    lastFromTable: undefined,
+    featureRows: [],
+    select: vi.fn((..._args: unknown[]) => chain),
+    from: vi.fn((table: unknown) => {
+      chain.lastFromTable = table;
+      return chain;
+    }),
+    innerJoin: vi.fn((..._args: unknown[]) => chain),
+    where: vi.fn((..._args: unknown[]) => chain),
+    orderBy: vi.fn((..._args: unknown[]) => chain),
+    limit: vi.fn(() => Promise.resolve([] as Array<{ properties: unknown }>)),
+  };
+  return chain;
+});
+
+const FAKE_LAYER_ID = "11111111-1111-4111-8111-111111111111";
 
 vi.mock("@/lib/server/db", () => ({
   db: { select: (...args: unknown[]) => queryChain.select(...args) },
 }));
 
+import { layers } from "@/lib/server/db/schema";
 import {
+  clearLayerIdCache,
   getPublishedWeatherForBbox,
   isRenderableWeatherObservation,
   parseBbox,
@@ -89,11 +119,26 @@ describe("isRenderableWeatherObservation", () => {
 describe("getPublishedWeatherForBbox", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    queryChain.lastFromTable = undefined;
+    queryChain.featureRows = [];
     queryChain.select.mockReturnValue(queryChain);
-    queryChain.from.mockReturnValue(queryChain);
+    queryChain.from.mockImplementation((table: unknown) => {
+      queryChain.lastFromTable = table;
+      return queryChain;
+    });
     queryChain.innerJoin.mockReturnValue(queryChain);
     queryChain.where.mockReturnValue(queryChain);
     queryChain.orderBy.mockReturnValue(queryChain);
+    // A `.from(layers)` call is always resolveCachedLayerId's own lookup; anything else is
+    // the reader's real feature select, answered from `queryChain.featureRows`.
+    queryChain.limit.mockImplementation(() =>
+      Promise.resolve(
+        queryChain.lastFromTable === layers ? [{ id: FAKE_LAYER_ID }] : queryChain.featureRows
+      )
+    );
+    // resolveCachedLayerId memoizes a hit in module scope; clear it so every test's resolver
+    // call goes through this mock rather than a cached id from a previous test.
+    clearLayerIdCache();
   });
 
   it("rejects a malformed bbox before querying the warehouse", async () => {
@@ -105,7 +150,7 @@ describe("getPublishedWeatherForBbox", () => {
 
   it("returns fresh, complete observations and excludes incomplete ones", async () => {
     const observedAt = freshObservedAt();
-    queryChain.limit.mockResolvedValue([
+    queryChain.featureRows = [
       row({
         geometry: { type: "Point", coordinates: [-122, 45] },
         observedAt,
@@ -132,7 +177,7 @@ describe("getPublishedWeatherForBbox", () => {
         temperature: null,
         humidity: 40,
       }),
-    ]);
+    ];
 
     const result = await getPublishedWeatherForBbox(PNW_BBOX);
 
@@ -154,7 +199,7 @@ describe("getPublishedWeatherForBbox", () => {
 
   it("excludes stale observations", async () => {
     const staleObservedAt = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-    queryChain.limit.mockResolvedValue([
+    queryChain.featureRows = [
       row({
         geometry: { type: "Point", coordinates: [-122, 45] },
         observedAt: staleObservedAt,
@@ -163,14 +208,14 @@ describe("getPublishedWeatherForBbox", () => {
         temperature: 18,
         humidity: 60,
       }),
-    ]);
+    ];
 
     const result = await getPublishedWeatherForBbox(PNW_BBOX);
     expect(result).toHaveLength(0);
   });
 
   it("caps the warehouse read at the bbox row limit", async () => {
-    queryChain.limit.mockResolvedValue([]);
+    queryChain.featureRows = [];
     await getPublishedWeatherForBbox(PNW_BBOX);
     expect(queryChain.limit).toHaveBeenCalledWith(500);
   });

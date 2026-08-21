@@ -93,6 +93,10 @@ import {
 } from "@/lib/server/services/regional-context";
 import { buildSystemPrompt, buildTemporalSection } from "@/lib/server/services/ai-prompt";
 import { MAX_VIEWED_LAYERS, requestSchema } from "@/app/api/ai/regional-intelligence/route";
+// Not overridden by the partial mock above, so this resolves to the REAL implementation --
+// its module-scope cache is shared with regional-context.ts's own readPublishedFirePerimeters
+// (which resolves its layer id through it), and must not leak a hit across tests.
+import { clearLayerIdCache } from "@/lib/server/services/environmental-read-model";
 
 const SERVER_TODAY = "2026-08-09";
 
@@ -168,6 +172,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.dbSelectResults.length = 0;
   mocks.dbExecuteResults.length = 0;
+  // resolveCachedLayerId memoizes a hit in module scope; clearing it keeps the
+  // dbSelectResults queue's consumption order (readPublishedFirePerimeters's own resolver
+  // call, then readCommunityProposals's layer lookup) the same in every test.
+  clearLayerIdCache();
   mocks.getStrategyRecommendations.mockResolvedValue([]);
   mocks.getInterventionSuitability.mockResolvedValue({
     availability: "unavailable",

@@ -60,9 +60,13 @@
 --     longitude/latitude). Without the stamp PostGIS refuses to compare it against the stored
 --     geometries, which are all 4326.
 --
---   INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
---     Features carry only a layer id; the human-readable layer name lives on geo.layers. The join
---     exists so the caller can name a layer rather than pass an opaque uuid.
+--   feature.layer_id = (SELECT id FROM geo.layers WHERE name = :surface_name)
+--     Resolves the caller's layer NAME to its id via an uncorrelated subquery instead of joining
+--     geo.layers onto the scan. geo.features is partitioned by layer_id, and :surface_name is a
+--     bind parameter -- strictly worse for a join-based filter than even a literal, since the
+--     planner has no value to fold at all until execution. A scalar subquery on the
+--     (unpartitioned, 11-row) layers table runs once as an init-plan, and its single result is what
+--     lets the Append node prune to one partition at execution time instead of opening all eleven.
 --
 --   feature.status = 'published'
 --     geo.features carries a review status; drafts and rejected rows must not be quoted as
@@ -110,9 +114,8 @@ nearby AS (
         ST_X(ST_Centroid(feature.geom)) AS centroid_longitude,
         ST_Y(ST_Centroid(feature.geom)) AS centroid_latitude
     FROM geo.features AS feature
-    INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
     CROSS JOIN probe
-    WHERE layer.name = :surface_name
+    WHERE feature.layer_id = (SELECT id FROM geo.layers WHERE name = :surface_name)
       AND feature.status = 'published'
       AND feature.geom IS NOT NULL
       AND geo.feature_observation_day(feature.properties) = CAST(:day AS date)

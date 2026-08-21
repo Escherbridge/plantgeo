@@ -264,7 +264,8 @@ export default function DocsPage() {
                 name: "offset",
                 type: "integer",
                 required: false,
-                description: "Pagination offset (default 0)",
+                description:
+                  "Pagination offset (default 0; max 1,000,000 with layer_id, 10,000 without)",
               },
             ]}
             responseFormat={`// Content-Type: application/geo+json

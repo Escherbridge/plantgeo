@@ -4,8 +4,9 @@
 -- Loaded by: agri_data_service.agent.tools
 -- Params: longitude/latitude (double precision), radius_meters (double precision),
 --         bbox_degrees (double precision -- half-width of the index prefilter box, computed for
---         this latitude), layer_names (text[]), observed_day_from (text, an ISO yyyy-mm-dd
---         prefix), feature_limit (int)
+--         this latitude), layer_names (text[] -- the requested layer names, resolved to ids
+--         inline below -- see the layer_id predicate below), observed_day_from
+--         (text, an ISO yyyy-mm-dd prefix), feature_limit (int)
 --
 -- Parameter names appear above WITHOUT a leading colon -- see "Header/bind-param trap" in
 -- sql/AGENTS.md.
@@ -50,12 +51,21 @@
 --     *before* aggregation, so the summary below is computed over a bounded set no matter how many
 --     detections exist in a fire-heavy region.
 --
---   INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
---     Features carry only a layer id; the human-readable layer name lives on geo.layers. The join
---     exists so the caller can name layers ("fire-detections") rather than pass opaque uuids.
+--   feature.layer_id = ANY(SELECT id FROM geo.layers WHERE name = ANY(:layer_names))
+--     geo.features is partitioned by layer_id. Filtering on layer.name through the geo.layers join
+--     below never propagates far enough for the planner to prune partitions -- it only restricts
+--     the (unpartitioned) layers side. So the requested layer NAMEs (this tool usually asks for
+--     both "fire-detections" and "fire-perimeters" at once) are resolved to ids via an
+--     uncorrelated subquery, which runs once as an init-plan and hands the Append node concrete
+--     layer_ids before it opens a single partition. It legitimately cannot reduce to one partition
+--     when several layers are requested -- that is fine, two resolved ids still prune the Append
+--     down to two partitions instead of all eleven.
 --
---   layer.name = ANY(layer_names)
---     ANY(array) is the SQL spelling of "is in this list" for an array-typed bind parameter.
+--   INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
+--     Kept for its own reason, unrelated to pruning: the summary below reports each layer by its
+--     human-readable NAME ("fire-detections"), which lives only on geo.layers, and the LATERAL
+--     census join keys on that same name. The `layer_id = ANY(...)` predicate above is what does
+--     the pruning; this join only projects the name back for a partition that already survived it.
 --
 --   feature.status = 'published'
 --     geo.features carries a review status; drafts and rejected rows must not be summarised as
@@ -111,7 +121,7 @@ nearby AS (
     FROM geo.features AS feature
     INNER JOIN geo.layers AS layer ON layer.id = feature.layer_id
     CROSS JOIN probe
-    WHERE layer.name = ANY(:layer_names)
+    WHERE feature.layer_id = ANY(SELECT id FROM geo.layers WHERE name = ANY(:layer_names))
       AND feature.geom IS NOT NULL
       AND feature.status = 'published'
       AND feature.geom && ST_Expand(probe.geom, :bbox_degrees)
