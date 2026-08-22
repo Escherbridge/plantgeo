@@ -3646,9 +3646,16 @@ is consistent with this and needs no revision.
    real bucket name **`plantgeo-parquet-9ymvp7gv`** (Railway suffixes it — the display name is not the
    S3 name, and `OBJECT_STORE_BUCKET` needs the suffixed one). `OBJECT_STORE_REGION=auto`, which is
    what the credentials endpoint returns, **not** `sjc`.
-   - **The MCP plugin is unauthenticated in this harness; the CLI is not.** `railway bucket
-     credentials --bucket <name> --json` is the whole mechanism. There are no `${{...}}` reference
-     variables for buckets — the values are set literally.
+   - **CORRECTED — the Railway MCP is authenticated and works.** An earlier draft of this section
+     said it was not, repeating the harness's startup reminder without testing it. `whoami`,
+     `list_variables`, `set_variables`, `create_bucket` and `remove_bucket` all answer.
+     **Test an MCP before recording it as unavailable**; a stale startup reminder is not evidence.
+   - **The real, narrower limit: the MCP exposes NO bucket-credentials tool.** It can create and
+     remove buckets but cannot hand back the S3 access keys, so `railway bucket credentials
+     --bucket <name> --json` (CLI) remains the only way to retrieve them. There are also no
+     `${{...}}` reference variables for buckets — the five values are set literally.
+     (Separately and still true: the MCP cannot delete *services* — `remove_service`'s confirm
+     flag cannot be sent from this harness.)
    - Wired into the local gitignored `.env` **and onto all three cron services** (`plantgeo-ingest-cron`,
      `plantgeo-cron-mtbs`, `plantgeo-cron-soilgrids`) with `--skip-deploys`, since no deployed code reads
      them yet. Secret set via `--set-from-stdin` so it never lands in shell history.
