@@ -1,5 +1,14 @@
 # Backend Services Reference
 
+> **STATUS — 2026-08-22, body below untouched.** The architecture pivot
+> (`conductor/RUNBOOK.md` §0.23/§0.24) moves every data plane out of Postgres
+> into day-partitioned Parquet on Railway object storage, read by DuckDB+Polars;
+> Postgres is retained for community features only. Several services listed below
+> read or write the Postgres planes §0.24.1's stream table (`geo.features`,
+> `geo.drought_areas`, `agri.signal_observation`, `agri.forecast_observation`)
+> targets for migration — verify a service's storage backend against that table
+> before relying on this reference. Read RUNBOOK §0.23/§0.24 first.
+
 PlantGeo includes 30+ backend services that integrate with external APIs, perform geospatial computations, and manage system state. All services are located in `/src/lib/server/services/`.
 
 ## Fire Detection & Analysis Services

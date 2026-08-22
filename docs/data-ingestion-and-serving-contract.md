@@ -1,5 +1,15 @@
 # Data Ingestion and Serving Contract
 
+> **STATUS — 2026-08-22, body below untouched.** The architecture pivot
+> (`conductor/RUNBOOK.md` §0.23/§0.24) replaces this contract's Governing rule —
+> that environmental facts must be "published to the platform PostgreSQL
+> database" — with day-partitioned Parquet on Railway object storage, computed at
+> ingestion time and read by DuckDB+Polars; Postgres is retained for community
+> features only. The per-layer contract that now governs new ingestion work is
+> `conductor/code_styleguides/layer-lanes.md` (binding per RUNBOOK §0.24.6), not
+> this document. Read RUNBOOK §0.23/§0.24 before treating "PostgreSQL database"
+> below as the current serving target.
+
 **Status:** enforced phase-one boundary with an implementation backlog. Environmental
 read paths now use database publications or report `unavailable`; the inventory below
 records what still needs an ingestor or an approved static-asset/imagery exception.

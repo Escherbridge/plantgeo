@@ -1,5 +1,16 @@
 # Predictive Environmental Intelligence Specification
 
+> **STATUS — 2026-08-22, body below untouched.** ML is frozen
+> (`conductor/RUNBOOK.md` §0.24.5 — moving to
+> `services/agri-data-service/src/agri_data_service/ml/` and eventually a
+> separate Mojo service), and this spec's platform topology — "PlantGeo's single
+> PostGIS database" — is being retired by the same pivot (§0.23/§0.24): data
+> planes move to Parquet on Railway object storage, Postgres is community
+> features only. The product definitions and safety gates below are not
+> necessarily wrong, but the compute/serving topology they assume is superseded.
+> Read RUNBOOK §0.23/§0.24 before building against the "Platform topology"
+> section.
+
 **Status:** proposed architecture and safety gates; no models or production recommendations are enabled by this document.
 
 ## Decision and safety boundary

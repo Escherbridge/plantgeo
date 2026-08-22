@@ -1,5 +1,38 @@
 # The Layer Lane Standard
 
+> **RELATIONSHIP NOTE — added 2026-08-22, body below untouched.** A same-day naming
+> collision: `conductor/code_styleguides/layer-lanes.md` ("PlantGeo layer-lane
+> standard") was created 2026-08-22 alongside the architecture pivot
+> (`conductor/RUNBOOK.md` §0.23–§0.24, binding per §0.24.6). It does **not**
+> reference or explicitly supersede this file — the two were reconciled during a
+> docs audit, not by either author. Both files even carry the same OKF frontmatter
+> `type: layer-lane-standard`, which is a tooling/naming collision, not evidence
+> either document claims to replace the other.
+>
+> **They describe two different architectures for the same question — "when is a
+> layer done?" — and neither fully supersedes the other:**
+> - **`conductor/code_styleguides/layer-lanes.md` is authoritative for structure
+>   under the new Parquet/DuckDB architecture**: the `lanes/<layer-slug>/`
+>   directory shape, the `kind=observed`/`kind=forecast` Parquet split, Monte
+>   Carlo provenance columns, and the `lanes/` ↔ `ml/` import boundary. Use it for
+>   any new lane work.
+> - **This document (`layer-lane-standard.md`) is SUPERSEDED for its
+>   Postgres-specific mechanics** — §1's declaration against
+>   `agri.data_source`/`agri.spatial_cell`, §3's four Postgres planes
+>   (`agri.signal_observation`, `agri.forecast_observation`, `geo.features`,
+>   `geo.drought_areas`), §8's Postgres-ledger-driven cron triad, and §14's
+>   Postgres connection facts describe the architecture the pivot is leaving.
+> - **This document remains CURRENT on process-level outcomes that
+>   `layer-lanes.md` has not yet restated for Parquet**: §0's zero-row-success
+>   principle, §5–§7's gap-detection-as-a-loop and governed-absence discipline
+>   (partially restated in `layer-lanes.md` §4, but the work-item/cron mechanics
+>   are not), §9–§9.1's serving/catalogue-registration mandate, §10's time-slider
+>   wiring, and §11's agent-tool exposure contract. A Parquet lane still owes
+>   these outcomes; nothing in the new architecture has replaced them yet.
+>
+> Read `conductor/RUNBOOK.md` §0.23 (the pivot decision) and §0.24 (the stream
+> plan) before treating either document as a complete contract on its own.
+
 One contract per layer, seven planes deep. A layer is **not done** until every
 section below is satisfied — the recurring failure in this repo is a layer that
 is finished at one plane and silently absent at the next.

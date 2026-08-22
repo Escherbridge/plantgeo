@@ -1,0 +1,27 @@
+{
+  "id": "webworker_webgpu_acceleration_20260814",
+  "description": "Dedicated Web Worker data engine and WebGPU hardware acceleration manager for zero-copy buffer transfer and instant GPU-accelerated layer rendering with WebGL fallback",
+  "type": "feature",
+  "created_at": "2026-08-14T09:40:00Z",
+  "status": "completed",
+  "resolution": {
+    "resolved_at": "2026-08-15T00:00:00Z",
+    "outcome": "reverted",
+    "summary": "All three phases were built and wired into LayerManager.tsx between 2026-08-14 and 2026-08-15 (src/workers/layer-processor.worker.ts, src/lib/map/webgpu-accelerator.ts, src/types/webgpu.d.ts). Integration was found to be net-harmful and was removed: every result the pipeline computed was discarded (`void`), so the packing pass and the GPU readback ran on the MAIN thread, synchronously, on every change to fire/drought/vegetation data -- the opposite of the offload the track exists to deliver. `layer-processor.worker.ts` is a worker module but was imported directly rather than instantiated as a real Worker, which also installed its module-scope `message` listener on `window` (on the main thread `self` IS `window`). LayerManager.tsx:718-725 now carries a permanent comment recording the incident and forbidding re-import: 'No WebGPU/worker pipeline here, deliberately... Nothing here may import it.' The revert shipped in or immediately after commit de3139e (fix(map): make the slider tell the truth, and give it an offline memory).",
+    "orphaned_files": [
+      "src/workers/layer-processor.worker.ts (121 lines, unimported)",
+      "src/lib/map/webgpu-accelerator.ts (268 lines, unimported)",
+      "src/types/webgpu.d.ts (70 lines)",
+      "src/__tests__/lib/map/webgpu-accelerator.test.ts (74 lines, tests the unwired module in isolation)"
+    ],
+    "reconciled_against_pivot": "conductor/RUNBOOK.md §0.23/§0.24, reconciled 2026-08-22. Independent of the revert, the pivot removes any remaining motivation to retry this track: §0.21.5 records the owner's 2026-08-21 call to stop investing in the current rendering stack ('we may not really want to invest much more in something we are migrating to parquet'), and the client rendering path this track targeted is scheduled to change again under S19 (PMTiles generation) and S20 (Polars/DuckDB serving). Marked completed (outcome: reverted) rather than archived silently, so the orphaned files are not mistaken for in-progress work by a future session.",
+    "verification": "No test suite run performed as part of this archival pass (audit-only, no code changes authorized). Orphaned-file claim verified by grep: LayerManager.tsx contains no import of layer-processor.worker or webgpu-accelerator as of 2026-08-22.",
+    "follow_ups": [
+      "The four orphaned files listed above are dead code and candidates for deletion, but deleting application code is outside this archival pass's authority (conductor/ only). Flag to whichever track or session owns src/workers and src/lib/map next."
+    ]
+  },
+  "informed_by": [
+    "src/workers/action-network.worker.ts",
+    "src/components/map/LayerManager.tsx"
+  ]
+}

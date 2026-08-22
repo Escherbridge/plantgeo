@@ -4,7 +4,7 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Last updated:** 2026-08-21. **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
+**Last updated:** 2026-08-22. **ARCHITECTURE PIVOT — READ §0.23 FIRST: Postgres becomes a community-features database; every data plane moves to day-partitioned Parquet read by DuckDB+Polars, with Martin serving PMTiles. §0.16–§0.22 optimise a Postgres this project is leaving.** **§0.25 is the CURRENT HEAD OF THE PROGRAMME — wave 1 shipped green, the by-domain layering question is answered, and it retires `agri_sdk_layering` phases 4–8.** **§0.24 is the concurrent stream plan that executes it — 21 streams in 5 waves, each with a disjoint file boundary, governed by the new `conductor/code_styleguides/layer-lanes.md`.** **THE PARQUET PATH HAS STARTED — §0.22 carries the signal-plane grain decision and the traps for the export job.** **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
 
 **What changed 2026-08-21 — four new sections, and they supersede earlier ones where they disagree.** **§0.16** is the data-quality and QA assessment: the census per layer and per observation plane, freshness and rot, the job ledger and matview refresh state, the storage/index/bloat profile, the partitionwise probe, and what the QA gate does and does not prove — every number labelled with how it was obtained, CONFIRMED separated from UNVERIFIED, and **two headline claims REFUTED outright (§0.16.9)**. **§0.17** is why the map is broken *right now*, ranked by rendering unblocked per unit of work; **read it first if you are here to fix the outage.** **§0.18** is the target architecture — entity/observation split with sealed months on R2 — with the losing designs' grafts folded in and **17 recorded rejections so they stop being re-litigated (§0.18.8)**. **§0.19** is the merged programme plan with a gate class, precondition and reversal cost per item.
 
@@ -2981,6 +2981,654 @@ scratch and found the prior claim over-generalised.
 
 **Owner directive: stop running workflows on this project; work in small bite-sized steps.** The three fixes
 that mattered were each a single well-scoped edit. Honour this — it is a working instruction, not a mood.
+
+---
+
+### 0.22 THE SIGNAL-PLANE ROLLUP GRAIN — decided 2026-08-22. This is the Parquet path's first real decision.
+
+Continuation step 3 from §0.21's handoff. §0.19.6 item 37a called this "the real work; the export job is the
+easy half" and named the four `sql/agent/*.sql` files as its only surviving spec. They are, and they agree.
+
+**THE GRAIN IS RIGHT AND DOES NOT CHANGE. THE PAYLOAD IS WRONG.**
+
+#### 0.22.1 The grain, confirmed from four independent statements
+
+`(support_key, signal_name, normalized_unit, cell_id, observed_day)` — spelled out identically in
+`signal_value_on_day.sql:22`, `signal_neighbors_in_time.sql:21`, `signals_near_point.sql:18` and
+`nearest_signal_cells.sql:20`, and matching `drizzle/0029:533`'s `GROUP BY` and its `uq_mv_signal_cell_daily`.
+Between them the four reference exactly **13 rollup columns** and no more. Carry it forward unchanged: it is
+also the grain `geo.soil_field_observation` and `geo.climate_field_observation` serve, which is the property
+that stops the agent and the map disagreeing about the same day.
+
+#### 0.22.2 What was measured, and how
+
+Prod, read-only, `statement_timeout` set on every session. **60 cells across 4 independent blocks
+(`ORDER BY id LIMIT n OFFSET {0,400,900,1700}`) — 701,257 grain rows over 1,296,794 raw rows.**
+
+| fact | value | how |
+|---|---|---|
+| `agri.signal_observation` | 46,068,872 rows · 11 GB heap · **15 GB indexes** | `pg_class.reltuples`, `pg_table_size` |
+| grain cardinality | support_key 3 · signal_name 19 · unit 8 · cell 1,867 · day 1,560 | `pg_stats.n_distinct` |
+| extent | 2022-04-30 → 2026-08-06 | measured on the probe blocks |
+| collapse at grain | **1.81× – 1.88×**, four blocks agreeing | `count(*)` vs `count(DISTINCT grain)` |
+| implied full-plane rows | **~21.8M** — an ESTIMATE from a 3.2% cell sample, and an OVER-estimate | extrapolation |
+| groups where `min_value <> max_value` | **0 of 701,257** | `count(*) FILTER` |
+| group sizes | n=1 16% · n=2 81% · n=3 3% | `GROUP BY n` |
+
+The ~21.8M figure is deliberately labelled an over-estimate: the probes applied the quality filters but **not**
+the 19-triple governed join, so they count rows the rollup excludes. `surface_shortwave_radiation` alone
+appears under two support keys (`surface` and `era5-0.25deg`) where the contract admits one.
+
+#### 0.22.3 The finding — the rollup never aggregated measurements, it deduplicated releases
+
+**The rollup was designed for sub-daily sampling this data does not have.** Every governed lane delivers
+exactly one measurement per cell-day. The 1.85× collapse is **overlapping archive releases republishing the
+identical number** — which is why `min_value = max_value` on 100% of 701,257 measured rows.
+
+Consequences, each measured rather than reasoned:
+
+- **`min_value`, `max_value` and `avg_value` are the same number as `normalized_value` on every row.** In
+  Parquet this is the *expensive* redundancy: compression works within a column, not across them, so these are
+  three additional varying `float64` columns — 3 of the ~4 that dominate the file.
+- **`coverage_fraction` is the constant `1.0`; `allowed_client_exposure` has one distinct value.** This is the
+  *cheap* redundancy — RLE flattens a constant to nothing. **Keep both**: they cost ~0 and they preserve the
+  contract if upstream ever varies.
+- **`is_observed AND quality_flag = 'accepted'` removes ZERO rows.** The governed quality gate is currently
+  inert. Keep it as a guard; do not mistake it for evidence that rejected rows are being filtered.
+- **`observation_count` counts archive releases, not measurements.** This is the defect with teeth:
+  `signal_value_on_day.sql`'s neighbourhood mean is
+  `sum(avg_value * observation_count) / nullif(sum(observation_count), 0)`, which weights each cell by **how
+  many times an archive republished it**. The header at `:104` justifies the weight as "a cell built from one
+  reading vs one built from twenty-four" — a population that does not exist here.
+
+**The one anomaly, resolved.** 700 rows at offset 900 had `avg_value <> min_value`. They sit **entirely** in
+the `n=3` groups (700 of 4,104) and are float64 rounding: `v+v+v` is not exactly `3v`, so `avg()` drifts in the
+last bits while `min` and `max` stay exact. It confirms the finding — all three rows carry the identical value.
+
+#### 0.22.4 Owner decision, 2026-08-22 — export 10 columns, and fix the weight
+
+- **Drop `min_value`, `max_value`, `avg_value`.** The four agent statements' `spread` CTEs re-aggregate from
+  `normalized_value` instead: `min(normalized_value)`, `max(normalized_value)`. Provably identical output,
+  because the columns are provably identical values.
+- **Fix the weighted mean.** The cell-weighted mean becomes an unweighted mean across contributing cells,
+  removing the republication-count weighting. This is a correctness fix, not an optimisation.
+- **Keep `coverage_fraction` and `allowed_client_exposure`** — free under RLE, and contract-preserving.
+- **Keep `observation_count`, and re-document it** as a source-release count. It is the dedup audit trail, not
+  a measurement count, and no reader should weight by it.
+
+Net: **13 columns → 10**, and the 3 removed are the 3 most expensive in the file.
+
+#### 0.22.5 Traps for whoever builds the export
+
+- **`agri.signal_observation` is a plain 11 GB heap with no index leading on `observed_at`.** `min(observed_at)`
+  alone does not complete in 90 s. A month-scoped export across all cells is therefore a **full heap scan**, not
+  a range read. Batch by `cell_id` to ride `ix_signal_observation_cell_time_signal` (2,915 MB, 87,609 scans),
+  then sort to the grain in memory before writing — that is what produces the clustering the compression needs.
+- **The 11 GB `uq_signal_observation_release_cell_signal_time` index reports `idx_scan = 0`** but is a UNIQUE
+  constraint enforced on insert. Read it against §0-note 4: these counters are measured over an unbounded-below
+  window. Do **not** read `idx_scan = 0` as "droppable".
+- **Dispersed cell sampling flips the planner to a seq scan** and times out where a contiguous `OFFSET` block
+  of the same size succeeds. Probe with contiguous blocks at several offsets, not with a spread sample.
+- **`relative_humidity`'s unit is `%`.** Inlining the governed 19-triple `VALUES` list into a psycopg2 statement
+  that also takes parameters breaks interpolation. Pass the triples as `unnest(%s::text[], ...)` arrays instead.
+
+#### 0.22.6 MEASURED — one month of real Parquet output, 2026-08-22
+
+Continuation step 4. **July 2026, all 1,965 cells, the governed 19-triple join applied, exported at the decided
+10-column schema, sorted to the grain before writing.** Files at `C:/tmp/pq/` (scratch, not committed).
+
+| measurement | value |
+|---|---|
+| grain rows, July 2026 | **487,630** |
+| duplicate grain keys in the output | **0** — the grain is a true key, verified by counting |
+| **zstd** | **695,338 B — 0.7 MB — `1.43 B/row`** |
+| snappy | 874,945 B |
+| **13-column variant** (min/max/avg kept) | **2,647,775 B — 3.81× larger** |
+| distinct cells / days / signals | 1,867 · 31 · **18 of 19** |
+
+**The decision paid 3.81×, not the ~3× estimated.** Per-column compressed bytes make the reason plain:
+
+```
+normalized_value          650,609 B   93.9%
+cell_id                    40,007 B    5.8%
+newest_observed_at            734 B    0.1%
+observed_day                  575 B    0.1%
+signal_name / unit / support  645 B    0.0%
+observation_count             156 B    0.0%
+coverage_fraction             116 B    0.0%
+allowed_client_exposure        64 B    0.0%
+```
+
+**One column is 93.9% of the file.** Everything else is rounding error, which settles two things: keeping
+`coverage_fraction` and `allowed_client_exposure` costs **180 bytes per month** (§0.22.4 was right that they are
+free), and any future size work must target `normalized_value` alone — nothing else is worth touching.
+
+**Full-plane projection: ~24.5M rows, ~35 MB zstd.** Three independent routes agree: July's 15,730 grain
+rows/day × 1,560 days = 24.5M; 46.07M raw ÷ the 1.85× collapse = 24.9M. **CONFIRMED against the real thing:**
+the 2026-08-17 research recorded `geo.mv_signal_cell_daily` at **24,958,092 rows** before it was dropped — the
+projection above was derived from one month with no knowledge of that figure and lands **within 2%**. The
+~35 MB number can be trusted. Against the dropped
+`geo.mv_signal_cell_daily` at **6,349 MB**, that is a **~180× reduction** — and it is the number that makes the
+Parquet path worth walking.
+
+**A float32 option exists and is NOT taken.** A float64→float32 round-trip over all 487,630 values loses at most
+`5.7e-08` relative — far inside any geophysical tolerance — and would roughly halve the dominant column, so
+~35 MB becomes ~19 MB. **This is a data-fidelity decision, not a performance one, and it is left open.**
+
+#### 0.22.7 THREE CORRECTIONS to §0.22.2 and §0.22.3, from the July export
+
+1. **The ~21.8M row estimate was an UNDER-estimate, not the over-estimate §0.22.2 labelled it.** The reasoning
+   there was sound — the cell probes omitted the governed join, so they counted rows the rollup excludes — but
+   the 60 probe cells turned out to be less dense than average, and that dominated. The measured projection is
+   **~24.5M**. Recorded because the error was in the direction the stated reasoning ruled out.
+2. **`allowed_client_exposure` is a `boolean`, and its only value is `False`.** §0.22.3 said "one distinct
+   value" without naming the type — the four `sql/agent/*.sql` headers describe it as "what exposure the
+   governed plane permits" and never say it is a flag. **Every governed row currently says exposure is not
+   permitted**, while the map paints this data. That is either a misread of the column's meaning or an unset
+   default, and **it is unresolved** — do not build an exposure gate on it without settling that first.
+3. **The 1.85× collapse is a HISTORICAL BACKFILL artifact, not an ongoing property.** July 2026's
+   `observation_count` histogram is `{1: 487,258, 2: 372}` — mean **1.001**, duplicates on 0.076% of rows.
+   The overlapping archive re-releases are concentrated in the backfilled years. This does **not** weaken
+   §0.22.3's finding (`min = max` on 0 of 701,257 rows was measured across the full extent), but it does mean
+   `observation_count` is ~1 on current data and the deduplication buys almost nothing going forward.
+
+#### 0.22.8 A coverage gap the export surfaced
+
+**`surface_shortwave_radiation` has ZERO rows in July 2026** while every other `nasa-power-daily` signal has
+exactly 12,307. It is a governed signal under contract, so this is a live lane gap, not an absence by design —
+precisely what [`docs/layer-lane-standard.md`](../docs/layer-lane-standard.md)'s gap detection exists to turn
+into a work item. Found incidentally by exporting a month; **not investigated, not fixed.**
+
+Note also that the plane has **two cell populations**, which any export must expect: `nasa-power-daily` signals
+cover **397 cells**, the ERA5-Land signals cover **1,470**, and 397 + 1,470 = the 1,867 cells that carry data
+(of 1,965 in `agri.spatial_cell`).
+
+---
+
+
+---
+
+### 0.23 HANDOFF 2026-08-22 — THE ARCHITECTURE PIVOT: Postgres becomes a community-features database
+
+Owner decision this session, and it supersedes the programme above rather than extending it. **Read this
+before §0.16–§0.22; those sections optimise a Postgres the project is now leaving.**
+
+#### 0.23.1 Goal
+
+Move every data plane out of Postgres into **day-partitioned Parquet computed at ingestion time**, read by
+**DuckDB (spatial extension) + Polars**, with **Martin still serving tiles** — from generated PMTiles instead of
+PostGIS functions. **Postgres is retained for community features only.** The target this serves is explicit:
+stop paying for a service pinned near 40 GB.
+
+Owner, verbatim: *"postgres will only be used for the community features, everything else is duckdb with the
+geo extension + polars + martin for tile serving — this should serve everything we need without keeping a
+service at 40 gb ram. parquet files will make gap detection easier as well."* And on sequencing: *"I don't care
+if the map is no longer working; we need a better long-term solution focused on efficiency and compute at
+ingestion time, with parquet files being used like materialized views and continuous aggregates."*
+
+#### 0.23.2 FOUR RELATIONS ARE THE ENTIRE PROBLEM
+
+Catalog read, 2026-08-22, `pg_total_relation_size` — no scans:
+
+| relation | rows | size | geometry |
+|---|---|---|---|
+| `agri.signal_observation` | 46,068,872 | **26 GB** | no |
+| `geo.features` | 5,025,009 | **7,986 MB** | **yes** |
+| `geo.geometry` | 3,277,801 | **2,988 MB** | **yes** |
+| `geo.drought_areas` | **995** | **500 MB** | **yes** |
+| `agri.artifact` | 1,632 | 173 MB | no |
+| `agri.forecast_observation` | 184,409 | 116 MB | no |
+| *(31 further relations)* | | **all under 120 MB** | |
+
+**37.5 GB of ~40 GB sits in four relations.** Migrating those four is the whole RAM story; the other 31 are
+noise and must not absorb migration effort. Note `geo.drought_areas`: **995 rows occupying 500 MB.** Row count
+is worthless as a size proxy anywhere geometry is involved — size the geometry, never the rows.
+
+#### 0.23.3 The refutation this overrides, and why the override is coherent
+
+The 2026-08-17 verdict recorded that **no streaming/OLAP engine can replace PostGIS**. That finding is not
+being ignored — it is **out of scope for what is now proposed**, and the distinction matters:
+
+- It evaluated replacing PostGIS **in place**, keeping query-time compute and asking an engine to serve the
+  same live workload. This design **moves compute to ingestion time** and treats Parquet as the materialised
+  view — there is no live analytical query left to serve.
+- It found the rollup problem was **one 6.3 GB matview that has no geometry**. §0.22 measured that exact plane
+  at **1.43 B/row, ~35 MB for its whole history** against 6,349 MB — a ~180× reduction, which is the evidence
+  this pivot rests on.
+- **Martin v1.10.1 serves PMTiles and MBTiles from files**, not only PostGIS functions (`Dockerfile.martin:1`).
+  Tile serving therefore survives the removal of the geometry backend. This is the fact that dissolves the
+  apparent contradiction between "no Postgres" and "the map works".
+
+**Update `plantgeo-engine-migration-verdict` in memory**: it is superseded as a blocker, and its reasoning
+remains correct only for the in-place-replacement question it actually asked.
+
+#### 0.23.4 Decisions — owner, 2026-08-22. Do not re-litigate.
+
+1. **Postgres serves community features only.** Everything else leaves.
+2. **DuckDB + spatial extension** is the geo/analytical engine; **Polars** does the transforms.
+3. **Martin stays**, serving **generated PMTiles** rather than PostGIS tile functions.
+4. **Parquet files are the materialised views and continuous aggregates.** Compute happens **at ingestion**.
+5. **One Parquet file per day** for daily pulls, with **year/month/day striation in the path** — chosen by the
+   owner specifically because *"striation across month and years makes ingestion and gap checking easier"*.
+   Gap detection becomes an object listing, not a query.
+6. **Railway object storage is the target** — owner: *"it has to be railway, it's the main storage service."*
+   This retires the R2 option for data (R2 keeps serving basemap tiles at `tiles.aevani.com`).
+7. **The map may break during the transition, and that is accepted.** Long-term efficiency outranks continuity
+   of the fix shipped 2026-08-21.
+8. **The signal plane exports 10 columns**, per §0.22.4 — `min_value`/`max_value`/`avg_value` dropped.
+
+#### 0.23.5 State
+
+**Verified this session:** the sensor tile through production Martin — 222,867 B raw / 91,898 B gzipped, warm
+0.36–0.44 s, cold 46.8 s (§0.21's fix confirmed live). The signal-plane grain, measured and decided (§0.22).
+One month of real Parquet output, verified to have **0 duplicate grain keys** (§0.22.6).
+
+**Not started:** every export. Nothing has been written to object storage. The only Parquet on disk is the
+July 2026 proof at `C:/tmp/pq/` — scratch, uncommitted, safe to delete.
+
+**Uncommitted:** `conductor/RUNBOOK.md` carries §0.22 and this section and **is not committed**. Tree was clean
+at `70a0299`; this file is the only modification.
+
+**Missing from the toolchain — this blocks step 1:** `polars`, `boto3` and `s3fs` are **not installed** in
+`services/agri-data-service/.venv`. `pyarrow 21.0.0` and `duckdb 1.5.4` are present.
+
+#### 0.23.6 Assumptions — none of these were asked; each names its reversal cost
+
+- **Path layout `layer=<name>/year=YYYY/month=MM/day=DD/part-0.parquet`** (Hive-style, so DuckDB and Polars both
+  prune on it for free) · default taken · **to reverse:** re-upload under a new prefix — cheap now, expensive
+  once ingestion writes against it. **Confirm this before step 3.**
+- **zstd, not snappy** · measured 695,338 B vs 874,945 B on the same month, ~20% better · **to reverse:** re-export.
+- **float64 retained** · §0.22.6 left this open; float32 loses ≤5.7e-08 relative and would roughly halve the
+  dominant column (~35 MB → ~19 MB) · **to reverse:** re-export, but only cheap before the backfill runs.
+- ~~**Static layers get one file per layer, no day striation**~~ — **OVERTURNED 2026-08-22 by S0 (§0.24.9).**
+  Static layers write one dated partition on the release day, using the identical layout as daily lanes, so
+  every generic reader/lister/gap-detector works across all eleven with no special case.
+- **Community-feature tables live in `public`** and were not inventoried this session · **to reverse:** cheap
+  catalog read — but it decides what actually stays in Postgres, so do it before declaring the migration done.
+
+#### 0.23.7 Relevant files
+
+- [`conductor/RUNBOOK.md`](RUNBOOK.md) §0.22 — the grain decision, the measured Parquet numbers, and five traps
+  for the export job. §0.22.5 is the one to read before writing any exporter.
+- `services/agri-data-service/src/agri_data_service/sql/agent/{signal_value_on_day,signal_neighbors_in_time,signals_near_point,nearest_signal_cells}.sql`
+  — the four statements whose `spread` CTEs still reference the dropped `min_value`/`max_value`/`avg_value` and
+  still read `FROM geo.mv_signal_cell_daily`. **Deliberately untouched**: their aggregate edits are settled by
+  §0.22.4, but their source relation is not, and two passes over the same four files was not worth it.
+- `services/agri-data-service/src/agri_data_service/execution/{historical_parquet,historical_era5_parquet}.py`
+  — Parquet export code that already exists. Read before writing a new exporter.
+- `infra/martin/martin.yaml` — where PMTiles sources get registered when tile serving moves off PostGIS.
+- `services/agri-data-service/.env` — holds `DATABASE_URL_SYNC` (production). **Values stay here; never inline.**
+
+#### 0.23.8 Continuation plan — ordered by dependency, not by discovery
+
+1. **Install the toolchain**: `polars`, `boto3`, `s3fs` into `services/agri-data-service/.venv`. Everything
+   below is blocked on this. Verify with an import check, not with pip's exit code.
+2. **Wire the Railway bucket credentials as reference variables** (the previous plan's step 2; gates 33/34
+   waived). The Railway CLI is authenticated — the MCP plugin is not, and cannot be in a non-interactive
+   session. Nothing can be uploaded until this lands.
+3. **Confirm the path layout** in §0.23.6, then **export `agri.signal_observation`** day-by-day. Reuse the
+   measured query shape from §0.22.6 verbatim — 10 columns, governed 19-triple join passed as
+   `unnest(%s::text[],...)` arrays, **batched by `cell_id`** because no index leads on `observed_at`
+   (§0.22.5). 1,560 days, ~487k rows/month, ~35 MB total expected.
+4. **Export `agri.forecast_observation`** (184,409 rows, 116 MB) — same pattern, second non-geometry plane.
+5. **Export the three geometry relations** — `geo.drought_areas` (500 MB), then `geo.geometry` (2,988 MB), then
+   `geo.features` (7,986 MB). Geometry goes to Parquet as WKB; DuckDB's spatial extension reads it back.
+   **This is the hard half and its tile path is an open question — see §0.23.9.**
+6. **Update the runbook for the serverless read path**: how DuckDB+Polars answer what the tRPC readers and the
+   four agent SQL tools answer today, and where compute now happens. This is the section that replaces §0.10's
+   pre-aggregation design.
+7. **Only then** repoint the four `sql/agent/*.sql` files — one pass, both the `spread` CTE fix (§0.22.4) and
+   the new source, once the Parquet-backed relation has a name.
+
+#### 0.23.9 Open questions — each with the trigger that makes it live
+
+- **How do PMTiles get generated from Parquet?** Martin serves them; nothing in this repo *produces* them from
+  a Parquet geometry store. Tippecanoe is the usual answer and is not currently a dependency. **Live at step 5**,
+  and it gates whether the map comes back at all.
+- **What is the ingestion-time compute substrate?** Decision 4 says compute moves to ingestion, but the current
+  ingestion is a Python CLI on a Railway cron. Whether that stays and writes Parquet, or is replaced, is
+  undecided. **Live at step 3**, because it decides whether the exporter is a migration tool or the new
+  production writer.
+- **What actually remains in Postgres?** "Community features" was not inventoried. **Live before step 6.**
+- **`ingest/validation/models.py`'s `cadence_basis` strings cite SIX directories that do not exist** —
+  `infra/cron-{firms,streamflow,weather,ndvi,fire-perimeters,evacuation-zones}/railway.json`, all stale since
+  the 2026-08-14 cron consolidation. Only `cron-ingest`, `cron-mtbs` and `cron-soilgrids` are real; everything
+  else runs hourly from the shared `cron-ingest` via `run_all_ingestion_jobs`. **Two wave-1 agents disagreed
+  about this and the one quoting `models.py` was wrong** — the string reads like a citation and is not one.
+  Affects every lane's declared cadence, and therefore every gap-detection window built on it.
+- **`surface_shortwave_radiation` has zero rows in July 2026** while every sibling NASA-POWER signal has 12,307
+  (§0.22.8). A governed signal with a live gap, found incidentally and **not investigated**. **Live whenever
+  gap detection is built** — it is a ready-made test case for it.
+- **`allowed_client_exposure` is a boolean whose only value is `False`** across every governed row (§0.22.7),
+  while the map paints this data. Unresolved. **Live before any exposure gate is built on it.**
+
+---
+
+### 0.24 THE STREAM PLAN — how the pivot in §0.23 gets executed concurrently
+
+Owner instruction 2026-08-22: *"set up the runbook so that each stream is tackled separately in a concurrent
+manner."* This section is the execution structure for §0.23. **§0.23 is the decision; §0.24 is the work
+breakdown.** Every stream below has a disjoint file boundary so streams in the same wave can run at once
+without two agents editing one file.
+
+The lane contract every per-layer stream must satisfy is
+[`conductor/code_styleguides/layer-lanes.md`](code_styleguides/layer-lanes.md), written this session and
+binding from now on. Read it before opening any lane.
+
+#### 0.24.1 The streams, their boundaries, and their wave
+
+| # | stream | owns (nothing else may write here) | needs | wave |
+|---|---|---|---|---|
+| **S0** | **Parquet foundation & contract** — path layout, writer, schema registry, Railway object-store client | `…/agri_data_service/parquet/**` | — | **1** |
+| S1 | **Geometry export** — `geo.features` (7,986 MB), `geo.geometry` (2,988 MB) to WKB Parquet | `…/parquet/geometry/**` | S0 | 2 |
+| S2 | **Drought geometry** — `geo.drought_areas` (995 rows, **500 MB**) | the `drought` slug's five lattice files | S0 | 2 |
+| S3 | **Signal plane** — `agri.signal_observation`, 46M rows / 26 GB. **Spec already complete in §0.22** | the `signal` slug's five lattice files | S0 | 2 |
+| S4 | **Forecast-observation plane** — `agri.forecast_observation` (184,409 rows) | the `forecast-observation` slug's five lattice files | S0 | 2 |
+| **S5–S15** | **The eleven layer lanes — one stream each, fully independent** (§0.24.2) | `method/monte_carlo/<slug>.py`, `pipeline/lanes/<slug>.py`, `pipeline/validation/<slug>.py`, `planes/<slug>.py`, `warehouse/schemas/<slug>.py` — **one file per layer, NOT a `lanes/` package** (§0.24.8) | S0 | 2 |
+| S16 | **Ingestion dual-write** — every producer writes Postgres **and** Parquet | `…/execution/**`, `…/ingest/**` | S0 | 2 |
+| S17 | **Backfill & source validation** — reconcile written Parquet against source systems | `…/validation/**` | S1–S15 | 3 |
+| S18 | **Serving aggregates** — the rollups each serving surface actually reads | `…/aggregates/**` | S5–S15 | 3 |
+| S19 | **PMTiles generation + Martin repoint** | `infra/martin/**`, `scripts/tiles/**` | S1, S2 | 3 |
+| S20 | **Polars/DuckDB serving** — the read path that replaces tRPC-over-Postgres | `…/serving/**` | S18 | 4 |
+| S21 | **Ops, readiness & admin repoint** — `routes/ops.py` (1,874 lines) and the readiness probes | `…/routes/ops.py`, `…/routes/health/**` | S20 | 5 |
+
+**Wave 2 is eleven-plus-five streams running at once.** That is the point of the boundary column: S3 touching the `signal` slug's five files cannot collide with S9 touching the `sensors` slug's five, and neither may touch `parquet/`, which S0
+froze in wave 1.
+
+#### 0.24.2 The eleven lanes, and which of them can actually forecast
+
+From `geo.layers`, 2026-08-22. **Each is its own stream.**
+
+**RECONCILED 2026-08-22 at the wave-1 join.** All eleven lane contracts now exist under
+[`docs/lanes/`](../docs/lanes/), each written from the repo with `path:line` citations, and **each lane's own
+declaration wins over the starting classification below** (lane contract §2). Two changed on contact with the
+evidence: **`fire-perimeters` flipped from "yes" to `none`** — measured, only 6 of thousands of Type-2 dimension
+entries ever reached a second version, so there is almost no growth history to calibrate against and no honest
+way to validate a projection; and **`burn-severity`'s "probably not" resolved to a firm `none`** — its time axis
+is 5 discrete release dates across all history, and the layer already declares a typed `HistoryCapability(
+supported=False)` refusal that applies symmetrically forward.
+
+**Net: FIVE forecasting lanes, not six.** The `horizon` column below is now the declared value, not a guess.
+
+| lane | source system | 30-day Monte Carlo? |
+|---|---|---|
+| `weather-observations` | NASA POWER / ERA5-Land | **yes** — the core forecast lane |
+| `sensors` | **NOAA NWS `api.weather.gov`**, keyless | **30d**, but its own history is only ~3 weeks (NWS serves a rolling ~6 days) — must borrow a longer prior or gate on minimum history |
+| `water-gauges` | USGS NWIS | **30d**, but the dense record starts only 2026-05-24; the declared 2022 floor was borrowed from vegetation, not a source limit |
+| `vegetation` | Sentinel-2 NDVI (`sentinel2-ndvi-l2a`) | **yes** — 4 years of history, the deepest record |
+| `fire-detections` | FIRMS (**needs `NASA_FIRMS_KEY`**) | **30d — aggregate only** (count / summed FRP per cell-day). Raw per-detection forecasting cannot satisfy the identical-grain rule |
+| `fire-perimeters` | WFIGS `_Current` FeatureServer (NIFC), keyless | **none** — flipped; see above |
+| `burn-severity` | MTBS (USDA FS EDW), keyless | **none** — 5 discrete release dates, not a series |
+| `interventions` | community submissions | **no** — 0 published rows; demand-driven, not projectable |
+| `soil-survey` | USDA SSURGO | **no** — static; `horizon: none` |
+| `watersheds` | USGS WBD HUC12 | **no** — static; `horizon: none` |
+| `evacuation-zones` | **Oregon OEM only** — a real automated feed, but no equivalent exists for WA/ID/MT | **none** — forecasting a policy decision, not a physical process |
+
+**The Monte Carlo forecasts are what serve future dates to users.** That is their purpose, and it is why the
+lane standard couples each forecast to its own lane's observed stream at identical grain: the time slider must
+be able to cross today without changing shape, and without the user being shown a projection that reads like a
+measurement.
+
+#### 0.24.3 What each wave has to be true before the next starts
+
+- **Wave 1 → 2.** S0's path layout and schema registry are frozen. Sixteen streams are about to write against
+  it; changing it in wave 2 invalidates everything already written. **This is the one place where getting it
+  wrong is expensive** — §0.23.6's layout assumption must be confirmed here, not later.
+- **Wave 2 → 3.** Every producer stream has written at least one real partition and had it read back. Not
+  "code complete" — a file that a reader opened.
+- **Wave 3 → 4.** Aggregates exist for every surface the app actually reads. Enumerate the surfaces from the
+  tRPC routers before declaring this, not from memory.
+- **Wave 4 → 5.** The serving path answers the same questions as the current readers. Ops repointing against a
+  read path that is not yet answering is how a dashboard starts reporting green on an empty warehouse.
+
+#### 0.24.4 Repointing ops, readiness and admin — S21, and why it is last
+
+`routes/ops.py` is **1,874 lines** of Datastar-driven dashboard: lanes, walks, streams, sources and forecast
+panels, all reading the `agri.job_*` ledger and the observation planes directly through SQLAlchemy. It is the
+surface that tells the owner whether ingestion is alive, so **it must be repointed after the serving path
+works, never before** — a readiness panel that reads a half-migrated warehouse reports confidently and wrongly,
+and this runbook already records one audit whose citations could not be trusted.
+
+Two things it must keep doing after the move: reporting **zero-landing** per plane, and distinguishing a
+**governed absence** from a gap. Both get easier under Parquet — a missing day is a missing object path — but
+only if S17's validation writes governed absences as objects rather than leaving holes.
+
+#### 0.24.5 ML is frozen, deliberately
+
+Owner: *"for now leave ml models alone, I'll engage separately on this — we are swapping to mojo executables,
+but none of it matters until we have the right data sets and a solid user experience."*
+
+- **No stream in this plan touches model code.** ML is **already at `method/ml/`** (10 modules) and **does
+  not move** — an earlier draft of this section said it moves to a new top-level `ml/`, which was wrong
+  (§0.24.8). It is expected to leave for a separate **Mojo service**, which is a reason to keep its boundary
+  sharp rather than to relocate it first.
+- **The `monte_carlo` ↔ `ml` boundary is NOT yet enforced.** Both sit inside `method`, so the existing lattice
+  test does not separate them. Adding that rule to `tests/test_layer_import_contract.py` is a **wave-2
+  prerequisite** (layer-lanes §5); until then the boundary is convention only.
+- **Monte Carlo forecasting is not ML** under this split — it is a per-lane statistical projection with
+  declared provenance, and it belongs to the lane it forecasts.
+
+#### 0.24.6 Style-guide enforcement, and what it is protecting against
+
+[`conductor/code_styleguides/layer-lanes.md`](code_styleguides/layer-lanes.md) is binding for every stream
+S1–S15. The two rules that matter most while sixteen streams run concurrently:
+
+1. **A lane never imports another lane.** Shared needs go down to the foundation, in their own commit. A
+   `from ..lanes.` import inside `lanes/` is the failure mode that quietly re-couples streams the wave plan
+   just separated.
+2. **A lane writes only under its own `layer=<slug>/` prefix.** This is the only defect in the set that
+   corrupts *another agent's* output, and it will not show up as a test failure.
+
+Both belong in review, not in a linter's backlog: add them to the review checklist now, and mechanise later.
+
+#### 0.24.7 Traps carried forward into this plan
+
+Each of these is already measured elsewhere in this runbook and will otherwise be rediscovered per stream:
+
+- **`agri.signal_observation` has no index leading on `observed_at`** — day-partitioned export must batch by
+  `cell_id` (§0.22.5). Affects S3 directly, and S16 whenever it backfills.
+- **Never size a geometry relation by row count** — `geo.drought_areas` is 995 rows and 500 MB (§0.23.2).
+  Affects S1, S2 and S19's tiling budget.
+- **`EXPLAIN` cost is meaningless for the tile functions** — it prices a 0-row layer identically to a
+  186,904-row one (§0.21.2). Affects S19. Measure `octet_length()` and wall-clock instead.
+- **Restart Martin after any tile-source change** — a missing tile function 404s the whole composite and hides
+  every layer. Affects S19.
+- **FIRMS silently drops beyond 10,000 records** — a "0 written" result is by-design idempotency, not success.
+  Affects the `fire-detections` lane and S17's validation.
+- **`surface_shortwave_radiation` has zero rows in July 2026** while every sibling NASA-POWER signal has 12,307
+  (§0.22.8) — a ready-made first test case for S17.
+
+---
+
+#### 0.24.8 CORRECTION — the first draft of this plan contradicted an enforced contract
+
+**Written and corrected 2026-08-22, before any code was written against it.** Recorded rather than quietly
+fixed, because the failure mode will recur: this section was authored without reading
+`services/agri-data-service/tests/test_layer_import_contract.py`, which already exists and is enforced.
+
+**The repo has a six-layer dependency lattice**, shipped 2026-08-14/15 under track
+`agri_sdk_layering_20260805` (phases 0–3 of 9 — the later phases never landed, and `warehouse/`, `pipeline/`,
+`planes/`, `interface/` are still `AGENTS.md`-only stubs):
+
+```
+foundation → method → warehouse → pipeline → planes → interface
+```
+
+`foundation` may import nothing from `agri_data_service` and no `sqlalchemy`/`httpx`/`asyncpg`/`click`.
+**`method` may not import `sqlalchemy` or `httpx`** — it is the pure-computation layer.
+
+**Three defects this created, all now fixed:**
+
+1. **A top-level `lanes/<slug>/` package cannot exist under the lattice.** It would have held `ingest.py`
+   (needs `httpx`) beside `forecast.py` (a `method` module, where `httpx` is forbidden) — unclassifiable, and
+   violating the lattice by construction. **Corrected:** a lane is a *vertical slice across* the lattice —
+   one file per layer, named by slug. See [`code_styleguides/layer-lanes.md`](code_styleguides/layer-lanes.md) §1.
+2. **§0.24.5 said ML "moves to `…/agri_data_service/ml/`". It is already at `method/ml/`** (10 modules) and
+   does not move. **Corrected below.** `method/monte_carlo/` likewise already exists and already contains
+   `vegetation_ndvi_forecast.py` — the `vegetation` lane must bring that into conformance, **not write a
+   second vegetation forecaster beside it**.
+3. **The `lanes/` ↔ `ml/` import ban was unenforceable as stated.** `monte_carlo` and `ml` are *both* inside
+   `method`, so the lattice test does not separate them. **A new rule is required** and is now a wave-2
+   prerequisite: `method.monte_carlo` may not import `method.ml`, and vice versa. Until it is added to
+   `test_layer_import_contract.py`, that boundary is convention only.
+
+**The generalisable lesson:** this runbook's own §0.21.8 records ~10M tokens of analysis producing three
+changes, because each pass re-derived from scratch. This was the same failure at a smaller scale — a plan
+written from the conversation rather than from the tree. **Read the enforcement before writing the standard.**
+
+**Also inherited from the same track, and still open:** §0.24's stream table assigns `…/execution/**` and
+`…/ingest/**` to S16 using **pre-refactor paths**, while phases 4–8 of `agri_sdk_layering_20260805` intended to
+dissolve exactly those into `warehouse/`/`pipeline/`/`planes/`/`interface/`. That track is now marked
+**blocked**. **Owner call needed:** does the lattice refactor finish first, or does S16 write against today's
+paths and get moved later? Nothing in wave 2 should start on `execution/`/`ingest/` until this is answered.
+
+---
+
+#### 0.24.9 WAVE 1 IS COMPLETE — 2026-08-22. The contract is frozen; wave 2 may start.
+
+Twelve agents ran concurrently: S0 (the foundation) plus one per layer writing its lane contract. **Independent
+sweep at the join, run by the orchestrator rather than the authoring context: 3,149 passed, 110 skipped, 0
+failed; `ruff` clean; `mypy --strict` clean.** No agent wrote a sibling's file; nothing was committed.
+
+**The frozen interface lives in code, not here** — read the signatures directly, they are the contract:
+`foundation/parquet/paths.py` (170 lines, pure stdlib), `warehouse/parquet/schema.py` (131),
+`pipeline/parquet/objectstore.py` (284), plus `AGENTS.md` in each package and six `OBJECT_STORE_*` settings in
+`config.py`. 88 new tests under `tests/parquet/`.
+
+**Three design calls S0 froze that wave 2 must not re-open:**
+
+1. **The layer slug is ONE identifier for three things** — registry key, schema module
+   (`fire-detections` → `fire_detections.py`), and the `layer=<slug>/` write prefix. They cannot drift.
+2. **The schema registry autoloads instead of using a central dict.** A central file would serialise the
+   16-stream wave-2 fan-out onto a single edit point — the exact collision the wave plan exists to avoid.
+3. **Zero-row writes are REFUSED.** An empty Parquet file reads to gap detection as a *present* day, silently
+   converting a real hole into coverage. This is the single most important safety property in the foundation.
+
+**§0.23.6's static-layer assumption is OVERTURNED — by measurement, and the new answer is better.** That
+assumption said static layers (SSURGO, watersheds) get "one file per layer, no day striation". They instead
+write **one dated partition on the release day**, using the identical layout as daily lanes. The reason is
+decisive: every generic reader, lister and gap-detector then works across all eleven lanes with no special
+case. The `watersheds` lane contract independently reached the same place from the other direction — its
+measured production reality is a single load day across the whole set.
+
+**Deliberately NOT built: governed-absence markers.** `missing_partition_days` currently reads a governed
+absence as a gap. That convention must be **one decision for all sixteen streams** and is owned by S17;
+inventing it per-lane is how eleven incompatible absence conventions get created. Flagged in
+`foundation/parquet/AGENTS.md`.
+
+**All eleven lane contracts now exist** under [`docs/lanes/`](../docs/lanes/), each written from the repo with
+`path:line` citations. They are the wave-2 briefs. **Read the lane's contract before implementing the lane** —
+six of them corrected a claim this runbook or a briefing asserted, and §0.24.10 records why that matters.
+
+---
+
+### 0.25 HANDOFF 2026-08-22 (second) — wave 1 shipped, and the layering question is answered
+
+Supersedes §0.24.8's open owner call. **Wave 2 is unblocked.**
+
+#### 0.25.1 The structural decision, and what it retires
+
+Owner: *"the goal is separate parquets for each layer with dedicated ingest and execution layered in by domain
+while sharing used primitives from an ingest and execute path."*
+
+Grounding that changed the question: **`ingest/` is already 90% of that shape.** 44 modules — **12 domain
+producers** (`firms`, `mtbs`, `wfigs`, `sensors`, `watersheds`, `usgs_nwis`, `evacuation_zones`, `ndvi`,
+`vegetation`, `usdm`, `open_meteo*`) over **shared primitives** (`http`, `arcgis`, `geometry`, `identity`,
+`writer`, `policy`, `runner`, `source`, `upstream_retry`, `archive_walk`). **`execution/` is not**: 62 modules,
+**29,662 lines**, flat, mixing per-source `historical_*` with coverage, forecast and ML CLI wrappers.
+
+**Four decisions, 2026-08-22:**
+
+| # | decision | consequence |
+|---|---|---|
+| 1 | **`ingest/` producers move under per-domain packages** — `ingest/<domain>/` holds the producer plus domain-only helpers; shared primitives stay at `ingest/` root | a rename/move sweep across imports and tests; the largest mechanical diff in wave 2 |
+| 2 | **`execution/` splits the same way** — `execution/<domain>/` for that domain's `historical_*`, backfill, promotion; `contracts.py`, `coverage_*` and job plumbing stay at root as the shared execute path | the 29,662-line restructure; mirrors what `ingest/` already proves works |
+| 3 | **Governed absence is a MARKER OBJECT at the day's partition path** (§0.25.3) | gap detection stays a pure listing operation |
+| 4 | **`cli.py` is NOT dissolved now.** Wave 2 adds Parquet verbs to it as-is; the 52 existing command strings keep working | dissolving a 3,723-line file while 16 streams write into it is the exact collision the wave plan exists to prevent |
+
+**`agri_sdk_layering_20260805` phases 4–8 are SUPERSEDED, not deferred.** They intended to dissolve `db/`,
+`models/`, `ingest/`, `historical_*` and `cli.py` **into** the lattice's `warehouse/`/`pipeline/`/`planes/`/
+`interface/`. Decisions 1, 2 and 4 keep `ingest/` and `execution/` as first-class homes and layer them
+internally by domain instead. **Phases 0–3 stay — the six-layer lattice and its import contract remain in
+force.** Update that track's status accordingly; it is currently `blocked` pending exactly this call.
+
+#### 0.25.2 THE ENFORCEMENT GAP THIS OPENS — read before starting wave 2
+
+`tests/test_layer_import_contract.py` polices **only the six lattice directories**. **`ingest/` and
+`execution/` are not among them**, and never have been. So decisions 1 and 2 create a domain/primitive
+boundary with **no enforcement whatsoever** — nothing stops `execution/sensors/` importing
+`execution/vegetation/`, which is precisely the cross-lane coupling the whole wave plan exists to prevent.
+
+The lane contract's "a lane never imports another lane" rule is, in these two packages, **convention only**.
+The `method.monte_carlo` ↔ `method.ml` rule added this session (`SUBPACKAGE_FORBIDDEN_IMPORTS`) is the pattern
+to extend: add a rule asserting no `ingest.<domain>` imports another `ingest.<domain>`, and likewise for
+`execution`. **Do this in the same commit as the first domain package**, not after eleven of them exist.
+
+#### 0.25.3 Governed absence — the contract S0 refused to invent
+
+S0 deliberately left this out because it must be **one decision across all sixteen streams**; inventing it
+per-lane produces eleven incompatible absence semantics. Owner chose the marker object. The binding points:
+
+- **A marker object is written at the day's partition path** where the data partition would have gone. Gap
+  detection therefore stays a **pure listing operation** with no second lookup — the property the
+  `year=/month=/day=` striation was chosen for in the first place.
+- **It must be distinguishable from a data partition by key alone**, so a lister can classify without opening
+  anything.
+- **It carries its evidence**: the reason, the upstream response or status that justifies it, when it was
+  recorded, and by which run. An absence without evidence is indistinguishable from a silent failure.
+- **`missing_partition_days` must treat a marked day as covered-by-absence, NOT as a gap** — it currently
+  reads it as a gap (`foundation/parquet/AGENTS.md` flags this).
+- **S0's zero-row refusal STAYS.** An empty Parquet file must never be the absence mechanism; that is why the
+  refusal exists — an empty file reads to a lister as coverage.
+- Owner rule already recorded (§0.21.5): **a backfill that corrects a completed record is a manual admin
+  action.** Retracting an absence is therefore deliberate, never automatic.
+
+#### 0.25.4 State at handoff
+
+**Wave 1 complete and independently verified at the join** (orchestrator, not the authoring context):
+**3,149 passed · 110 skipped · 0 failed · `ruff` clean · `mypy --strict` clean.**
+
+Shipped: the frozen Parquet contract (585 lines across three lattice modules + 88 tests, §0.24.9); all
+**eleven lane contracts** under [`docs/lanes/`](../docs/lanes/); §0.22–§0.24 of this runbook;
+[`code_styleguides/layer-lanes.md`](code_styleguides/layer-lanes.md); the `monte_carlo`↔`ml` import rule;
+`polars`/`boto3`/`s3fs` in `pyproject.toml`; conductor-track and docs audits.
+
+**42 files changed. NOTHING COMMITTED. HEAD is still `70a0299`.**
+
+**Six lane contracts corrected a claim this runbook or a briefing asserted** — most consequentially that
+FIRMS **does** require `NASA_FIRMS_KEY`, that `geo.streamflow_reading` **does not exist**, and that
+`ingest/validation/models.py` cites **six `infra/cron-*` directories that are not there** (§0.24.7). Read the
+lane contract before implementing its lane.
+
+#### 0.25.5 Continuation plan
+
+1. **Wire the Railway bucket credentials** as reference variables and populate the six `OBJECT_STORE_*`
+   settings S0 added to `config.py`. The CLI is authenticated; the MCP plugin is not. Everything downstream
+   is blocked on this — the foundation is built but has nowhere to write.
+2. **Implement the absence marker** per §0.25.3 in `foundation/parquet/` and teach `missing_partition_days`
+   about it. **Before any lane writes**, so no lane invents its own.
+3. **Add the domain-isolation import rules** (§0.25.2) for `ingest` and `execution`, in the same commit as the
+   first domain package.
+4. **Move ONE domain end to end as the template** — recommend `weather-observations`: it is the core forecast
+   lane, its §0.22 export path is already measured, and its lane contract is the most complete. Prove the
+   `ingest/<domain>/` + `execution/<domain>/` shape once before repeating it ten times.
+5. **Then fan out the remaining ten lanes** against the proven template, per §0.24's wave 2.
+6. **`method/monte_carlo/` and `execution/` hold two near-identical copies of the NDVI forecaster** — the
+   `execution/` one is wired, the `method/` one is not. Converge them when `vegetation` moves; do not add
+   provenance columns to whichever one is opened first (§0.24.2, vegetation lane contract).
+
+#### 0.25.6 Open questions
+
+- **What actually stays in Postgres?** "Community features" was never inventoried. The `interventions` lane
+  contract recommends that lane stays — it is community-submitted, 0–2 rows, and Postgres is being retained
+  for exactly that. Nothing else has been classified.
+- **PMTiles still have no producer.** Martin serves them; nothing here makes them from a Parquet geometry
+  store. Gates whether the map returns (§0.23.9).
+- **`sensors` captures 16 measurement fields hourly and serves none of them**, and its history is ~3 weeks with
+  no deeper archive obtainable. Product decision, not implementation.
+- **`allowed_client_exposure` is `False` on every governed signal-plane row** while the map paints that data.
+  The `vegetation` lane contract established its own source is `true`, so this is scoped to the signal plane —
+  still unresolved there.
 
 ---
 

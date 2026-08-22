@@ -1,5 +1,14 @@
 # Holonic and Kimball modeling standard
 
+> **STATUS — 2026-08-22, body below untouched.** The architecture pivot
+> (`conductor/RUNBOOK.md` §0.23/§0.24) retires the Postgres materialized-view
+> warehouse this standard is built on: "Parquet files are the materialised views
+> and continuous aggregates" now (§0.23.1), computed at ingestion rather than as
+> Postgres holon/dimension/fact tables. The holon-envelope and conformed-dimension
+> *thinking* may still be worth preserving in Parquet-native form, but nothing
+> here has been re-specified for that. Read RUNBOOK §0.23/§0.24 before applying
+> this standard to new work.
+
 ## Purpose
 
 Every datum used by a PlantGeo model must be retained in the warehouse with

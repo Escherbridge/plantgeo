@@ -1,5 +1,21 @@
 # PlantGeo Railway Deployment Plan
 
+> **ARCHIVED 2026-08-22.** Moved here from `docs/railway-deployment-plan.md`
+> during a docs audit; not referenced from `docs/README.md` or elsewhere in the
+> tree. This plan's core mechanism — an `agri.job_schedules` table via migration
+> `0026_agri_job_schedules.sql`, replacing `infra/cron-*` with a single in-app
+> scheduler loop — does not match the repo: no `0026` migration or
+> `job_schedules` table exists anywhere in `drizzle/` or
+> `services/agri-data-service/alembic/versions/`, and current infra
+> (`infra/cron-ingest/`, `infra/cron-mtbs/`, `infra/cron-soilgrids/`) plus the
+> actually-adopted `agri.job_*` ledger design (`docs/runbooks/durable-backfill-lanes.md`)
+> took a different shape — one lane, one `JobRun`, Railway cron triggers per
+> lane family, not a consolidated scheduler. This plan appears to have been
+> superseded before it was ever implemented, independent of the 2026-08-22
+> architecture pivot (`conductor/RUNBOOK.md` §0.23/§0.24), which additionally
+> retires the Postgres data planes this plan assumed. Kept as a historical
+> record only.
+
 ## 1. Overview & Architectural Consolidation
 This deployment plan defines the transition from legacy individual Railway cron services to the **Postgres-backed In-App Job Runner** running inside `plantgeo-dataservice`.
 

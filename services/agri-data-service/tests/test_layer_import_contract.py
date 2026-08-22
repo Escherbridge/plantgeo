@@ -43,6 +43,19 @@ LAYER_FORBIDDEN_IMPORTS: dict[str, set[str]] = {
     "interface": set(),
 }
 
+# Sub-package rules INSIDE a single layer. The lattice above is keyed by layer directory, so it
+# cannot separate two packages that share a layer -- `method.monte_carlo` and `method.ml` are both
+# under `method` and the lattice happily lets them import each other.
+#
+# They must not. Monte Carlo forecasting is per-lane statistical projection that ships with the data
+# rebuild; `ml` is frozen and expected to leave for a separate Mojo service. Coupling them would tie
+# the rebuild to that runtime migration. See conductor/code_styleguides/layer-lanes.md section 5 and
+# conductor/RUNBOOK.md section 0.24.8, which records this rule as a wave-2 prerequisite.
+SUBPACKAGE_FORBIDDEN_IMPORTS: dict[str, set[str]] = {
+    "method/monte_carlo": {"agri_data_service.method.ml"},
+    "method/ml": {"agri_data_service.method.monte_carlo"},
+}
+
 
 def _get_imports(py_path: Path) -> list[tuple[int, str]]:
     tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
@@ -109,3 +122,25 @@ def test_layer_packages_actually_import() -> None:
                 failures.append(f"{module_name}: {type(exc).__name__}: {exc}")
 
     assert not failures, "Layer modules that failed to import:\n" + "\n".join(failures)
+
+
+def test_subpackage_import_contract() -> None:
+    """Enforce the boundaries the layer lattice cannot express, because both sides share a layer."""
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
+    violations: list[str] = []
+
+    for subpackage, forbidden in SUBPACKAGE_FORBIDDEN_IMPORTS.items():
+        sub_dir = pkg_root / subpackage
+        if not sub_dir.is_dir():
+            continue
+        for py_file in sub_dir.glob("**/*.py"):
+            for line_no, imp in _get_imports(py_file):
+                for forb in forbidden:
+                    if imp == forb or imp.startswith(forb + "."):
+                        violations.append(
+                            f"{py_file.relative_to(pkg_root)}:{line_no} imports '{imp}' "
+                            f"(forbidden inside '{subpackage}')"
+                        )
+
+    joined = '\n'.join(violations)
+    assert not violations, "Sub-package import contract violations found:" + '\n' + joined

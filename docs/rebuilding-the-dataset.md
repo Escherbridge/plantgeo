@@ -1,5 +1,14 @@
 # Rebuilding the dataset from a clone
 
+> **STATUS — 2026-08-22, body below untouched.** The architecture pivot
+> (`conductor/RUNBOOK.md` §0.23/§0.24) moves every data plane out of Postgres
+> into day-partitioned Parquet on Railway object storage, read by DuckDB+Polars.
+> The "local warehouse" Postgres bootstrap (port 5442) and the ingestion verbs
+> below describe the pre-pivot path. New or rebuilt layers should follow the lane
+> structure in `conductor/code_styleguides/layer-lanes.md` instead; the
+> Parquet-era equivalent of this rebuild guide has not been written yet. Read
+> RUNBOOK §0.23/§0.24 first.
+
 This page is for someone who has just cloned the repository and wants the map
 layers populated with real data on their own machine. It assumes the application
 already runs — see the cold start in the [repository README](../README.md) — and

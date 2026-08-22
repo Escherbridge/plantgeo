@@ -1,5 +1,13 @@
 # Historical ingestion runbook
 
+> **STATUS — 2026-08-22, body below untouched.** The architecture pivot
+> (`conductor/RUNBOOK.md` §0.23/§0.24) replaces the local-Podman-warehouse ->
+> Railway-serving-plane split described below with day-partitioned Parquet
+> written directly to Railway object storage, computed at ingestion time. New
+> backfills should follow RUNBOOK §0.23.8's continuation plan and the lane
+> contract in `conductor/code_styleguides/layer-lanes.md`, not the Postgres
+> warehouse path this runbook documents. Read RUNBOOK §0.23/§0.24 first.
+
 ## Status and definition of done
 
 The local Podman warehouse and local Parquet lake are the acquisition,

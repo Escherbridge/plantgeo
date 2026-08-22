@@ -1,6 +1,20 @@
 // PlantGeo Database Schema (DBML)
 // Generated from src/lib/server/db/schema.ts
 // Visualize at https://dbdiagram.io
+//
+// STATUS -- 2026-08-22, tables below untouched. The architecture pivot
+// (conductor/RUNBOOK.md SS0.23/SS0.24) moves every data plane out of this
+// schema into day-partitioned Parquet on Railway object storage, read by
+// DuckDB+Polars. Postgres is retained for community features only.
+// Tables that STAY in Postgres scope: users, sessions, accounts,
+// verification_tokens, teams, team_members, api_keys, strategy_requests,
+// request_votes, priority_zones, soil_grid_cache, watched_locations,
+// alert_subscriptions, environmental_alerts, ai_conversations, ai_messages.
+// Tables below that describe planes MOVING to Parquet lanes: geo.layers,
+// geo.features, geo.fire_detections, geo.poi, tracking.positions,
+// tracking.assets, tracking.geofences, tracking.alerts, water_gauges,
+// drought_data. Read RUNBOOK SS0.23/SS0.24 before trusting a geo/tracking
+// table's storage backend here.
 
 // ============================================
 // Auth Tables (public schema)

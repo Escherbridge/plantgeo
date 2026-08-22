@@ -1,5 +1,12 @@
 # Data Readiness & Usability Audit — 2026-08-02
 
+> **STATUS — HISTORICAL, doubly stale.** This audit already flagged its own
+> findings as unverified (no live database was queried) and PlantGeo memory
+> records it as unreliable — verify any citation before trusting it. It is now
+> also dated against a Postgres/PostGIS architecture that the 2026-08-22 pivot
+> (`conductor/RUNBOOK.md` §0.23/§0.24) is actively dismantling. Keep as a
+> point-in-time record only; do not use it to judge current data readiness.
+
 **Method:** static code, migration, and config reading. **No live database was queried** (the auditing lane had no shell access, and there is no `.env` at the repo root — only `.env.example`). Every "rows present" judgement below is therefore **UNVERIFIED**, not asserted. Restoring a `DATABASE_URL` and running a dozen read-only `COUNT`/`MIN`/`MAX` queries would close that column.
 
 **Correction applied post-audit:** the original pass claimed `services/agri-data-service/alembic/versions/` contained only `.gitkeep`. That is false — 14 migrations (`0001`–`0014`) are committed and tracked. The surviving, verified finding for that row is the narrower one: the agri service has **zero references from `src/`**.

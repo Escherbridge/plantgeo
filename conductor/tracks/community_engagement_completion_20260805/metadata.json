@@ -4,6 +4,18 @@
   "type": "feature",
   "created_at": "2026-08-05T00:00:00Z",
   "status": "active",
+  "pivot_reconciliation_20260822": {
+    "reconciled_at": "2026-08-22T00:00:00Z",
+    "verdict": "still valid, NOT superseded -- becomes more canonical post-pivot. §0.23.4 decision 1 retains Postgres for community features only; interventions/moderation/submissions are exactly that.",
+    "phase_status_20260822": {
+      "phase_1_moderation_loop": "PARTIAL. UI, role gating and tests shipped (src/components/panels/ContributionQueue.tsx, ModerationPanel.tsx, src/__tests__/security/moderation-route-access.test.tsx), most likely delivered via the later community_intervention_lifecycle_20260814 track (already archived complete; its metadata.json lists this track's spec as informed_by). reviewContribution and publishContribution are both real, distinct tRPC procedures (src/lib/server/trpc/routers/contributions.ts). But conductor/RUNBOOK.md records interventions at 2 rows, both status='approved', 0 published, as of the 2026-08-21/22 map-fix session -- the approve step runs, the publish step is never invoked by any UI path found. This is a live, confirmed gap against this phase's own acceptance criterion ('a contributor-submitted recommendation is publishable by an expert and visible on the map afterwards').",
+      "phase_2_sensors": "DONE. drizzle/0010_sensor_tile_properties.sql rewrote geo.sensor_tiles()'s SELECT list from sensor_type/status/name to network/sensor_id/station_name/observed_at, matching what the NWS producer actually writes -- the exact fix this phase's remaining item called for. Layer registered in layer-registry.ts.",
+      "phase_3_evacuation_zones": "DONE. drizzle/0009_evacuation_zone_tiles.sql shipped geo.evacuation_zone_tiles(), registered in martin.yaml.",
+      "phase_4_review_outcomes": "DONE, at a different component than the plan named. src/components/panels/CommunityDetails.tsx (not CommunityPanel.tsx, which no longer exists -- superseded by dedicated /community, /feed, /moderation routes) reads listMySubmissions and surfaces reviewNote, with a passing test (src/__tests__/components/CommunityDetails.test.tsx).",
+      "phase_5_ml_label_bridge": "Still BLOCKED on the owner's four open questions. No evidence of progress or resolution found."
+    },
+    "remaining_work": "One concrete defect (the approved-but-never-published intervention rows) plus the still-open Phase 5 decision. Everything else this track specified has shipped, mostly through a different, already-archived track."
+  },
   "informed_by": [
     "conductor/tracks/ingestion_warehouse_consolidation_20260803/spec.md"
   ],

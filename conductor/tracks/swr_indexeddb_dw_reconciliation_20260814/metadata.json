@@ -4,6 +4,16 @@
   "type": "feature",
   "created_at": "2026-08-14T09:40:00Z",
   "status": "active",
+  "pivot_reconciliation_20260822": {
+    "reconciled_at": "2026-08-22T00:00:00Z",
+    "verdict": "still valid, needs partial rescoping. This track is NOT the same mechanism as the cache-first service worker that shipped 2026-08-21 (§0.21) -- no duplication, but the boundary is worth stating since both are client-cache work from close dates.",
+    "boundary_vs_0.21_service_worker": "§0.21's public/sw.js + src/lib/offline/tile-cache.ts is cache-first for Martin-served dynamic TILES (fire, sensors, evacuation-zones, etc. -- anything Martin serves as MVT bytes), with consumer-driven refresh via a Refresh button, and deliberately never auto-revalidates. This track's src/lib/cache/query-persister.ts + indexeddb-store.ts is a react-query persister for tRPC-backed QUERIES (soil-survey, watersheds, water, vegetation, drought, soil/climate fields), which DOES background-revalidate on every access when the query carries a bbox or date. Two different serving paths, two different cache disciplines, by design.",
+    "phase_status_20260822": {
+      "phase_1_allowlist_swr_engine": "substantially shipped and live. query-persister.ts is 1,069 lines, last touched 2026-08-16 (after this track's creation), with TTL policy, per-layer/day attribution, a metadata store, and scanSyncedDays/clearLayerEntries -- confirmed operating by conductor/RUNBOOK.md §0.21.7 ('returns a hit in 0 ms but background-revalidates on every access'). Whether CACHEABLE_LAYER_QUERIES specifically includes environmental.getClimateField/getSoilSurvey/getWatersheds as this phase's plan names was not individually verified line-by-line in this pass.",
+      "phase_2_etag_dw_reconciliation": "NOT built, confirmed by grep (zero matches for ETag/etag/304 across src/lib/cache/*.ts and the tRPC routers) and independently confirmed by §0.21.7: 'tRPC-backed layers do not have the tile cache's discipline... §0.21.5's decision is the fix and it is not built.' Note the owner's §0.21.5 decision (static layers and historical days should stop revalidating entirely) is a DIFFERENT, newer ask than this phase's original scope (DW-revision-driven ETag/304 validation) -- both land on the same file, and whoever picks this phase back up should resolve which one it now means before writing code."
+    },
+    "rescoping_note": "§0.23.8 step 6 and S20 replace the tRPC-over-Postgres serving path this phase's ETag headers would attach to (environmental.ts, wildfire.ts) with a DuckDB/Polars read path. Emitting ETag/x-data-revision headers on routers that are scheduled for replacement risks being thrown away. Recommend: keep Phase 1's client-side engine active (backend-agnostic, still correct), but hold Phase 2 until S20 lands and re-target whatever router replaces environmental.ts/wildfire.ts rather than the current one."
+  },
   "informed_by": [
     "src/lib/cache/query-persister.ts",
     "src/lib/cache/indexeddb-store.ts"

@@ -1,5 +1,15 @@
 # PlantGeo Database Schema
 
+> **STATUS — 2026-08-22, body below untouched.** The architecture pivot
+> (`conductor/RUNBOOK.md` §0.23/§0.24) moves every data plane out of this schema
+> into day-partitioned Parquet on Railway object storage, read by DuckDB+Polars.
+> Postgres is retained for community features only. §0.23.2 names the four
+> relations that are actually being migrated — `agri.signal_observation` (26 GB),
+> `geo.features` (7,986 MB), `geo.geometry` (2,988 MB), `geo.drought_areas`
+> (500 MB) — everything else in this document, including the auth/community
+> tables, is unaffected by the pivot itself. Read RUNBOOK §0.23/§0.24 before
+> assuming any `geo`/`agri` table below still lives in Postgres.
+
 Complete documentation of the PostgreSQL + PostGIS database schema used in PlantGeo.
 
 ## Overview

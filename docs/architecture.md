@@ -1,5 +1,14 @@
 # PlantGeo System Architecture
 
+> **STATUS — 2026-08-22, body below untouched.** The architecture pivot
+> (`conductor/RUNBOOK.md` §0.23 decision, §0.24 execution plan) moves every data
+> plane out of Postgres into day-partitioned Parquet on Railway object storage,
+> read by DuckDB+Polars; Postgres is retained for community features only. This
+> document's "PostGIS-backed operational APIs" framing and its Martin/tile data
+> flows describe the architecture being replaced — Martin is moving from PostGIS
+> tile functions to generated PMTiles (§0.23.9, still an open question as of the
+> pivot). Read RUNBOOK §0.23/§0.24 before trusting a data-flow diagram here.
+
 This document describes the complete system architecture, data flows, and technical patterns used in PlantGeo.
 
 ## High-Level Architecture

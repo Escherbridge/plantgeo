@@ -1,15 +1,29 @@
 """Application configuration via Pydantic settings."""
 
+import re
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _MAX_PUBLISH_OUTPUTS = 1_000
 _MIN_TOKEN_LENGTH = 32
 _MIN_TOKEN_DIVERSITY = 10
+_BUCKET_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$")
+
+
+class ObjectStoreCredentials(BaseModel):
+    """Complete, validated coordinates for the S3-compatible Parquet warehouse bucket."""
+
+    model_config = ConfigDict(frozen=True)
+
+    endpoint_url: str
+    region: str
+    bucket: str
+    access_key_id: SecretStr
+    secret_access_key: SecretStr
 
 
 class Settings(BaseSettings):
@@ -135,6 +149,82 @@ class Settings(BaseSettings):
     # Copernicus EWDS credentials for the CEMS fire danger indices lane.
     ewds_url: str | None = None
     ewds_api_key: SecretStr | None = None
+
+    # Railway object storage (S3-compatible) -- the Parquet warehouse target. The names are ours,
+    # populated from the bucket service through Railway reference variables; see
+    # pipeline/parquet/AGENTS.md. Absent values are not an error until a write is attempted.
+    object_store_endpoint_url: str | None = None
+    object_store_region: str = "auto"
+    object_store_bucket: str | None = None
+    object_store_access_key_id: SecretStr | None = None
+    object_store_secret_access_key: SecretStr | None = None
+    # Optional root inside the bucket, OUTSIDE the frozen `layer=.../kind=...` layout, so one
+    # bucket can hold an isolated sandbox beside the real warehouse.
+    object_store_prefix: str = ""
+
+    @field_validator("object_store_endpoint_url")
+    @classmethod
+    def require_credential_free_object_store_endpoint(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("OBJECT_STORE_ENDPOINT_URL must be a credential-free HTTPS URL")
+        return value.rstrip("/")
+
+    @field_validator("object_store_bucket")
+    @classmethod
+    def require_valid_bucket_name(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip()
+        if not _BUCKET_NAME_PATTERN.match(normalized):
+            raise ValueError("OBJECT_STORE_BUCKET must be a 3-63 character lowercase S3 bucket name")
+        return normalized
+
+    @field_validator("object_store_prefix")
+    @classmethod
+    def normalize_object_store_prefix(cls, value: str) -> str:
+        normalized = value.strip().strip("/")
+        if not normalized:
+            return ""
+        if "\\" in normalized or ".." in normalized:
+            raise ValueError("OBJECT_STORE_PREFIX must not contain backslashes or parent traversal")
+        return f"{normalized}/"
+
+    @field_validator("object_store_region")
+    @classmethod
+    def require_object_store_region(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("OBJECT_STORE_REGION cannot be blank; it must match the bucket's signing region")
+        return normalized
+
+    def require_object_store(self) -> ObjectStoreCredentials:
+        """Return complete bucket coordinates, naming every variable still missing."""
+        endpoint_url = self.object_store_endpoint_url
+        bucket = self.object_store_bucket
+        access_key_id = self.object_store_access_key_id
+        secret_access_key = self.object_store_secret_access_key
+        missing = [
+            name
+            for name, value in (
+                ("OBJECT_STORE_ENDPOINT_URL", endpoint_url),
+                ("OBJECT_STORE_BUCKET", bucket),
+                ("OBJECT_STORE_ACCESS_KEY_ID", access_key_id),
+                ("OBJECT_STORE_SECRET_ACCESS_KEY", secret_access_key),
+            )
+            if value is None
+        ]
+        if endpoint_url is None or bucket is None or access_key_id is None or secret_access_key is None:
+            raise ValueError(f"object storage is not configured; set {', '.join(missing)}")
+        return ObjectStoreCredentials(
+            endpoint_url=endpoint_url,
+            region=self.object_store_region,
+            bucket=bucket,
+            access_key_id=access_key_id,
+            secret_access_key=secret_access_key,
+        )
 
     def _require_command_database_url(self, override: str | None, field_name: str) -> str:
         """Return `override` when set, else DATABASE_URL; blank/whitespace is unset. See db/AGENTS.md."""

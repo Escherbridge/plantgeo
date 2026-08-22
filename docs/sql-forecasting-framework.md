@@ -1,5 +1,14 @@
 # SQL-first forecasting framework
 
+> **STATUS — 2026-08-22, body below untouched.** The architecture pivot
+> (`conductor/RUNBOOK.md` §0.23/§0.24) freezes ML (§0.24.5 — moving to
+> `services/agri-data-service/src/agri_data_service/ml/` and eventually a
+> separate Mojo service) and moves the underlying data out of Postgres entirely.
+> Under the new architecture, each layer's own 30-day Monte Carlo forecast — not
+> this Postgres `forecast_series`/`forecast_receipt` framework — is what serves
+> forecasted values, per `conductor/code_styleguides/layer-lanes.md` §3. Read
+> RUNBOOK §0.23/§0.24 before building against this framework.
+
 **Status:** implementation contract. The schema and SQL baseline are enabled only for validated local inputs; no forecast or ML result is implied by installing it.
 
 ## Design

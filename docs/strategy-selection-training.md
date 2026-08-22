@@ -1,5 +1,14 @@
 # Strategy-selection training contract
 
+> **STATUS — 2026-08-22, body below untouched.** ML is frozen
+> (`conductor/RUNBOOK.md` §0.24.5 — moving to
+> `services/agri-data-service/src/agri_data_service/ml/` and eventually a
+> separate Mojo service), and the Postgres substrate this training contract
+> assumes is being retired by the same pivot (§0.23/§0.24). The
+> intervention-effect framing and label-boundary discipline below are unaffected
+> by the storage change, but nothing here has been re-verified against the
+> Parquet/lane architecture. Read RUNBOOK §0.23/§0.24 first.
+
 PlantGeo treats strategy selection as an intervention-effect problem, not as
 multiclass classification. A model estimates the outcome under each eligible
 strategy and under an explicit untreated control; a reviewed policy may then

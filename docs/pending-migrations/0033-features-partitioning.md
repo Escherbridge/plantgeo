@@ -1,5 +1,12 @@
 # 0033 — `geo.features` LIST-partitioned on `layer_id`
 
+> **STATUS — 2026-08-22.** `geo.features` (7,986 MB) is one of the four
+> relations `conductor/RUNBOOK.md` §0.23.2 names as the entire Postgres-size
+> problem, and S1 in §0.24.1's stream plan exports it to WKB Parquet. Partitioning
+> it in place may now be moot, or may still be worth doing before export to make
+> a large copy cheaper — that call has not been made. Confirm against the export
+> plan before running `scripts/partition-features.mjs`.
+
 Status: **code written, NOT applied, NOT journaled, NOT pinned.** Nothing in this document has run
 against production.
 

@@ -1,5 +1,12 @@
 # 0029 — the pre-aggregation layer
 
+> **STATUS — 2026-08-22.** The architecture pivot (`conductor/RUNBOOK.md`
+> §0.23/§0.24) moves `geo.mv_signal_cell_daily` and the relations this migration
+> pre-aggregates out of Postgres entirely — Parquet files become "the
+> materialised views and continuous aggregates" instead (§0.23.1). Confirm this
+> migration is still wanted against the Parquet export plan before applying it;
+> it may now be optimizing a relation slated for retirement.
+
 Status: **written, reviewed, NOT applied, NOT journaled, NOT pinned.**
 
 `drizzle/0029_pre_aggregation_layer.sql` sits in `drizzle/` rather than beside this file because

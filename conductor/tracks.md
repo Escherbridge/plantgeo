@@ -7,19 +7,30 @@ type: work-registry
 Per [`README.md`](./README.md), this file is the sole current work registry.
 Material under `retros/` contains completed tracks and retrospectives. Status vocabulary: active, planned, blocked, complete, historical.
 
-Registry updated 2026-08-14.
+Registry updated 2026-08-22.
+
+**2026-08-22 — reconciled against the architecture pivot.** `conductor/RUNBOOK.md`
+§0.23 (Postgres becomes a community-features-only database; every data plane
+moves to day-partitioned Parquet read by DuckDB+Polars, Martin serves generated
+PMTiles) and §0.24 (the 21-stream, 5-wave execution plan, governed by
+`conductor/code_styleguides/layer-lanes.md`) supersede or re-scope several
+tracks below. Verdicts are evidence-based (working tree + git history), not
+taken from each track's own status field, several of which were stale. Full
+detail for each verdict lives in that track's own `metadata.json` under a
+`pivot_reconciliation_20260822` key; this table carries the summary. See
+"Pivot reconciliation notes" below for the single most load-bearing finding
+(`agri_sdk_layering_20260805` vs §0.24).
 
 ## Active & Incomplete Tracks
 
 | Track | Status | Type | Summary |
 |-------|--------|------|---------|
-| [agri_sdk_layering_20260805](tracks/agri_sdk_layering_20260805/) | planned | refactor | Restructure agri_data_service (36,438 lines) into six layers with a lint-enforceable dependency rule, separating pure Monte Carlo and ML method code over a shared foundation, dissolving the 2,474-line cli.py into thin command wiring, and exposing a public importable SDK surface without changing any of the 52 CLI command strings |
-| [cds_only_products_20260808](tracks/cds_only_products_20260808/) | planned | feature | Backfill the three Copernicus products Open-Meteo does not redistribute -- AgERA5 agrometeorological indicators on the classic CDS host with zero new credential plumbing, CEMS fire danger indices behind a new, separately-registered EWDS host and key, and seasonal forecasts scoped as a later, lower-confidence phase -- reusing historical_era5.py's working cdsapi client, checkpointing and raw-cache shape as the integration template rather than inventing a second one |
-| [community_engagement_completion_20260805](tracks/community_engagement_completion_20260805/) | active | feature | Close the community engagement loop: make expert moderation reachable so submitted interventions can reach the map, restore the sensors layer whose removal premise is now false, publish evacuation-zones end to end, return review outcomes to submitters, and decide whether community submissions become ML labels |
-| [mycelium_cloud_seeding_spike_20260802](tracks/mycelium_cloud_seeding_spike_20260802/) | active | research-spike | Feasibility spikes for INA-fungal products (soil amendment, growth media, animal feed) that rely on natural spore transport for bioprecipitation |
-| [swr_indexeddb_dw_reconciliation_20260814](tracks/swr_indexeddb_dw_reconciliation_20260814/) | active | feature | IndexedDB Stale-While-Revalidate (SWR) cache layer with background Data Warehouse (DW) revision reconciliation, ETag HTTP 304 validation, and 100% geospatial layer coverage |
-| [upstream_dataset_expansion_20260806](tracks/upstream_dataset_expansion_20260806/) | planned | feature | Retire the CDS ERA5-Land soil lane for its keyless Open-Meteo equivalent, close the et0-model trap that would silently persist an all-NULL signal, and add four new upstream datasets -- fire-weather VPD, GloFAS river discharge, CAMS air quality, and ensemble forecast uncertainty -- through the durable-backfill and Railway-cron standards already established |
-| [webworker_webgpu_acceleration_20260814](tracks/webworker_webgpu_acceleration_20260814/) | active | feature | Dedicated Web Worker data engine and WebGPU hardware acceleration manager for zero-copy buffer transfer and instant GPU-accelerated layer rendering with WebGL fallback |
+| [agri_sdk_layering_20260805](tracks/agri_sdk_layering_20260805/) | blocked | refactor | Restructure agri_data_service into six layers with a lint-enforceable dependency rule. **Phases 0-3 of 9 shipped** (`foundation/`, `method/ml/`, `method/monte_carlo/`, the path-arithmetic fix, the AST contract test) 2026-08-14/15 and are retained. **Phases 4-8 are blocked**: they would restructure `ingest/`, `execution/`, `db/`, `models/`, `cli.py`, `routes/` -- the same trees §0.24's S1-S21 streams now own. Owner decision needed on phases 4-8 and on a `method/ml/` vs top-level `ml/` naming conflict; see notes below. |
+| [cds_only_products_20260808](tracks/cds_only_products_20260808/) | planned | feature | Backfill AgERA5 and CEMS from Copernicus CDS/EWDS. Still valid, not superseded (new upstream sources are independent of the storage-backend pivot). Contract-class scaffolding exists (`historical_agera5.py`, `historical_cems.py`) but is unwired -- no CLI verbs, no tests, no backfill run. Needs light rescoping so its eventual persistence target is a Parquet lane, not a Postgres warehouse row. |
+| [community_engagement_completion_20260805](tracks/community_engagement_completion_20260805/) | active | feature | Close the community engagement loop. **Not superseded -- more canonical post-pivot**, since §0.23.4 retains Postgres for community features only. Sensors (phase 2), evacuation-zones (phase 3) and review-outcome surfacing (phase 4) are all confirmed **done**, mostly via the already-archived `community_intervention_lifecycle_20260814`. Phase 1 (moderation) is partial: the UI/gating path works, but `interventions` sits at 2 rows, both `status='approved'`, 0 published -- the publish step is never invoked. Phase 5 (ML label bridge) stays blocked on the owner's four open questions. |
+| [mycelium_cloud_seeding_spike_20260802](tracks/mycelium_cloud_seeding_spike_20260802/) | blocked | research-spike | Feasibility spikes for INA-fungal products. Orthogonal to the pivot. All 5 core spikes already returned verdicts (PARTIAL/VALIDATED) and `spikes/README.md` records a track-level conclusion, but the track's own plan requires an explicit owner call among three next steps (close / run spike 006 / commission follow-up desk items) that has not been made. Left `blocked`, not archived -- see notes below. |
+| [swr_indexeddb_dw_reconciliation_20260814](tracks/swr_indexeddb_dw_reconciliation_20260814/) | active | feature | IndexedDB SWR cache for tRPC-backed queries (distinct from the Martin-tile cache-first service worker shipped 2026-08-21 in §0.21 -- no overlap). Phase 1 (allowlist + SWR engine) is shipped and live. Phase 2 (ETag/304, DW-revision headers on `environmental.ts`/`wildfire.ts`) is confirmed **not built**; needs rescoping to target whatever router S20's DuckDB/Polars serving path ships as a replacement, rather than the current one. |
+| [upstream_dataset_expansion_20260806](tracks/upstream_dataset_expansion_20260806/) | blocked | feature | VPD, GloFAS, CAMS and Ensemble upstream lanes. Still valid, needs rescoping -- not superseded. Code for all four exists (shipped 2026-08-06, commit `c01ed48`) but the track's own 2026-08-06 review already recorded it as built-and-blocked: no `historical_writer.py` persist verbs, a still-unwritten CHECK-constraint migration, an unimplemented et0 structural guard, and no serving-side reads. No progress evidenced since. GloFAS and CAMS do not map cleanly onto any of §0.24.2's 11 named lanes -- an open scoping question for the owner. |
 
 ## Completed Tracks & Retrospectives
 
@@ -73,3 +84,64 @@ Registry updated 2026-08-14.
 | [restoration_ag_demo_20260726](retros/restoration_ag_demo_20260726/) | completed | product-governance | Evaluation-only, goal-specific predictive demo for restoration-agriculture evidence and operational signals |
 | [seasonal_forecast_feedback_20260726](retros/seasonal_forecast_feedback_20260726/) | completed | infrastructure | Evaluation-only seasonal forecasting, time-honest residual feedback, and ML feature lineage |
 | [strategy_selection_governance_20260726](retros/strategy_selection_governance_20260726/) | completed | governance | Research-only intervention-effect label, training, and selection lineage governance |
+| [webworker_webgpu_acceleration_20260814](retros/webworker_webgpu_acceleration_20260814/) | completed (reverted) | feature | Dedicated Web Worker + WebGPU rendering pipeline. Built and integrated 2026-08-14/15, then reverted: every result it computed was discarded (`void`), so the "offload" ran synchronously on the main thread, and the worker module was imported directly rather than instantiated, installing its message listener on `window`. `LayerManager.tsx:718-725` now permanently forbids re-importing it. Archived 2026-08-22 during the pivot-reconciliation pass; the pivot independently removes any remaining motivation to retry (owner, §0.21.5: "we may not really want to invest much more in something we are migrating to parquet"). Orphaned files (`src/workers/layer-processor.worker.ts`, `src/lib/map/webgpu-accelerator.ts`) are dead code, flagged for deletion by whoever next owns those directories -- not deleted here (out of this pass's `conductor/`-only scope). |
+
+## Pivot reconciliation notes — 2026-08-22
+
+Written while auditing the seven tracks in `tracks/` against `conductor/RUNBOOK.md`
+§0.23 (the Parquet/DuckDB/Polars pivot) and §0.24 (the 21-stream execution plan).
+Full evidence for each is in that track's `metadata.json` under
+`pivot_reconciliation_20260822`; this is the index.
+
+- **`agri_sdk_layering_20260805` vs §0.24 — the load-bearing reconciliation.**
+  This track is not hypothetical-overlap with the lane plan; it is
+  **partially executed already**. `foundation/`, `method/ml/` and
+  `method/monte_carlo/` exist in the tree with real code (landed in commits
+  `7d917d0` and `4a685a1`, 2026-08-14/15), and `tests/test_layer_import_contract.py`
+  enforces the layering. That is Phases 0-3 of the track's own 9. Phases 4-8
+  — moving `db/`, `models/`, `ingest/`, the `historical_*` family and `cli.py`
+  into `warehouse/`, `pipeline/`, `planes/`, `interface/` — did **not** ship;
+  those four directories exist only as stub `AGENTS.md` + empty `__init__.py`
+  pairs. §0.24.1 assigns those same source trees (`.../execution/**`,
+  `.../ingest/**`) to S16 and reads them from S1-S15, using the pre-refactor
+  path names — meaning §0.24 was written without accounting for what Phases
+  0-3 already moved. Recommendation: **§0.24 governs going forward**; do not
+  resume agri_sdk_layering Phases 4-8 as specified, since they would
+  restructure the exact trees 16+ concurrent streams are about to write
+  against. Phases 0-3's output should stay as-is — it doesn't collide with
+  any declared S0-S21 boundary. One concrete, already-real conflict needs an
+  owner call: §0.24.5 says ML "moves to `.../agri_data_service/ml/`", but ML
+  code already lives at `method/ml/` (nested, from Phase 3) — the two plans
+  disagree on ML's home path today, not hypothetically.
+
+- **`swr_indexeddb_dw_reconciliation_20260814` and
+  `webworker_webgpu_acceleration_20260814` vs the 2026-08-21 cache-first
+  service worker (§0.21).** Checked for overlap; found none for the SWR
+  track — the service worker caches Martin-served MVT tiles (cache-first,
+  consumer-refreshed), the SWR track caches tRPC query results
+  (background-revalidating IndexedDB persister) — different serving paths by
+  design. The webworker/WebGPU track has no relationship to the service
+  worker at all; its own history (built, integrated, reverted before the
+  pivot even started) is unrelated to §0.21 and is documented in its own
+  retro.
+
+- **`community_engagement_completion_20260805`'s `interventions` (0
+  published rows) and `sensors` (restored) layers** — checked directly.
+  Sensors: fully restored, including the `geo.sensor_tiles()` SELECT-list fix
+  (`drizzle/0010`) the track's own plan flagged as outstanding. Interventions:
+  still 0 published, but the more precise finding is that 2 rows exist at
+  `status='approved'` with no path to `'published'` — a moderation-workflow
+  gap, not an empty layer with no producer.
+
+- **Tracks with no direct pivot interaction, reconciled for completeness
+  only:** `cds_only_products_20260808` and `upstream_dataset_expansion_20260806`
+  (new upstream data sources, valid regardless of storage backend, but their
+  eventual persistence target moves from Postgres to Parquet lanes) and
+  `mycelium_cloud_seeding_spike_20260802` (unrelated domain; left `blocked`
+  pending an owner decision the track's own plan already calls for, not
+  archived on this pass's own authority).
+
+No track in this batch was found fully complete against its own acceptance
+criteria; `webworker_webgpu_acceleration_20260814` is the one archival this
+pass made, and its "completed" outcome is a revert, not a shipped feature —
+see its retro for the distinction.
