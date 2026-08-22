@@ -43,7 +43,19 @@ from agri_data_service.execution.backfill_types import (
     four_calendar_years_before,
 )
 from agri_data_service.execution.coverage_contract import contiguous_ranges
-from agri_data_service.execution.historical_backfill import (
+from agri_data_service.execution.plan_continuation import (
+    ContinuationLane,
+    ContinuationPlan,
+    ContinuationSource,
+    frontier_probe_cells,
+    plan_family,
+    retarget_window_suffix,
+)
+from agri_data_service.execution.weather_observations.era5_land import (
+    OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS,
+    HistoricalOpenMeteoArchivePlan,
+)
+from agri_data_service.execution.weather_observations.nasa_power import (
     NASA_POWER_MAX_RESPONSE_BYTES,
     NASA_POWER_SIGNAL_SPECIFICATIONS,
     NASA_POWER_TIMEOUT_SECONDS,
@@ -52,18 +64,6 @@ from agri_data_service.execution.historical_backfill import (
     historical_nasa_plan_checksum,
     nasa_power_daily_point_url,
     nasa_power_observed_value,
-)
-from agri_data_service.execution.historical_open_meteo import (
-    OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS,
-    HistoricalOpenMeteoArchivePlan,
-)
-from agri_data_service.execution.plan_continuation import (
-    ContinuationLane,
-    ContinuationPlan,
-    ContinuationSource,
-    frontier_probe_cells,
-    plan_family,
-    retarget_window_suffix,
 )
 from agri_data_service.ingest.http import UpstreamError
 from agri_data_service.ingest.open_meteo import archive_daily_request, fetch_archive_daily
@@ -74,9 +74,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from agri_data_service.execution.backfill_types import AnalysisGridCell
     from agri_data_service.execution.coverage_census import LaneCell
     from agri_data_service.execution.coverage_contract import SignalReconciliation
-    from agri_data_service.execution.historical_backfill import AnalysisGridCell
     from agri_data_service.ingest.open_meteo import OpenMeteoArchiveModel
 
 _ABSENCE_RELEASE_SQL: Final = text(load_query_sql("execution/coverage_absence_release.sql"))

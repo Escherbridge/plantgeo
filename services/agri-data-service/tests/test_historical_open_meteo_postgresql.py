@@ -23,7 +23,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from agri_data_service.execution.contracts import canonical_json_bytes
-from agri_data_service.execution.historical_open_meteo import (
+from agri_data_service.execution.historical_writer import (
+    finalize_open_meteo_release_set,
+    persist_open_meteo_archive_chunk,
+)
+from agri_data_service.execution.weather_observations.era5_land import (
     OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS,
     HistoricalOpenMeteoArchivePlan,
     OpenMeteoArchiveCapture,
@@ -32,10 +36,6 @@ from agri_data_service.execution.historical_open_meteo import (
     initialize_historical_open_meteo_checkpoint,
     parse_open_meteo_archive_payload,
     record_historical_open_meteo_result,
-)
-from agri_data_service.execution.historical_writer import (
-    finalize_open_meteo_release_set,
-    persist_open_meteo_archive_chunk,
 )
 from agri_data_service.models.historical import (
     CellSourceCrosswalk,

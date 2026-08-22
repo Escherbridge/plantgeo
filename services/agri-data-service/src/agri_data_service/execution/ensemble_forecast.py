@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple
 
 from pydantic import Field, field_validator, model_validator
 
+from agri_data_service.execution.backfill_types import AnalysisGridCell  # noqa: TC001
 from agri_data_service.execution.contracts import ContractModel, canonical_json_bytes
-from agri_data_service.execution.historical_backfill import AnalysisGridCell  # noqa: TC001
 from agri_data_service.execution.open_meteo_lane import (
     DEFAULT_CHUNK_CONCURRENCY,
     OpenMeteoLane,

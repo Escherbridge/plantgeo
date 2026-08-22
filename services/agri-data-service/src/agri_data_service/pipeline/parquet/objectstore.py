@@ -19,7 +19,6 @@ from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 
 from agri_data_service.config import ObjectStoreCredentials, Settings, settings
 from agri_data_service.foundation.canonical import sha256_digest
-from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.paths import (
     absence_marker_path,
     day_prefix,
@@ -36,6 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from datetime import date
 
+    from agri_data_service.foundation.parquet.absence import GovernedAbsence
     from agri_data_service.foundation.parquet.paths import PartitionKind
 
 PARQUET_CONTENT_TYPE: Final = "application/vnd.apache.parquet"

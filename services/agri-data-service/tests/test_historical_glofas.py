@@ -31,8 +31,8 @@ from agri_data_service.ingest.open_meteo import OpenMeteoRateLimitError
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from agri_data_service.execution.historical_backfill import AnalysisGridCell
     from agri_data_service.execution.historical_glofas import GlofasFloodChunk, GlofasFloodChunkResult
+    from agri_data_service.execution.weather_observations.nasa_power import AnalysisGridCell
 
 WINDOW_END = date(2026, 4, 30)
 WINDOW_START = WINDOW_END.replace(year=WINDOW_END.year - 4)

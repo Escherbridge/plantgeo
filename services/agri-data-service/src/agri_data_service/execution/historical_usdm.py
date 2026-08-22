@@ -17,8 +17,8 @@ import httpx
 import shapefile  # type: ignore[import-untyped]
 from pydantic import Field, field_validator, model_validator
 
+from agri_data_service.execution.backfill_types import HistoricalBackfillWindow  # noqa: TC001
 from agri_data_service.execution.contracts import ContractModel, canonical_json_bytes
-from agri_data_service.execution.historical_backfill import HistoricalBackfillWindow  # noqa: TC001
 from agri_data_service.execution.source_ingestion import SourceDefinition  # noqa: TC001
 
 if TYPE_CHECKING:

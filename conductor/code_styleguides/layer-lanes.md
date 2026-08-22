@@ -138,7 +138,32 @@ runtime migration — needs an explicit new rule in
 - `method.ml` may not import `method.monte_carlo`
 
 Until that rule exists, this boundary is convention only. **Adding it is a
-prerequisite for wave 2**, not a nice-to-have.
+prerequisite for wave 2**, not a nice-to-have. *(Landed 2026-08-22 as
+`SUBPACKAGE_FORBIDDEN_IMPORTS`.)*
+
+### 5a. Domain packages in `ingest/` and `execution/` — enforced 2026-08-22
+
+Neither directory is one of the six lattice layers, so **the lattice test never
+policed them and never has**. RUNBOOK §0.25.1 decisions 1 and 2 put producers
+under `<parent>/<domain>/` with shared primitives at `<parent>/` root, which
+created a boundary with no enforcement at all. `test_layer_import_contract.py`
+now carries `test_domain_packages_do_not_import_each_other`:
+
+- **No `ingest.<domain>` or `execution.<domain>` may import a sibling domain.**
+- **Default-deny.** Every subpackage of `ingest/` or `execution/` counts as a
+  domain unless it is declared in `DOMAIN_PARENT_SHARED_SUBPACKAGES`. A domain
+  added later is policed the day it lands, with nothing to remember to register
+  — the opposite bias from an allow-list, whose forgotten entry is silently
+  unenforced.
+- **Relative imports are resolved before the check.** `from ..sibling import x`
+  parses to a bare module name that no absolute-prefix match would ever catch.
+- A rule that can only pass vacuously is not a rule: a synthetic two-domain
+  fixture proves the check actually fires, in both import forms.
+
+**Making the boundary true costs an extraction first.** `weather-observations`
+could not move until four value types left `historical_backfill.py`, because
+five sibling domains imported them from there. **The shared half moves down;
+the dependents never move sideways.**
 
 **Monte Carlo forecasting is not ML** under this split: it is a per-lane
 statistical projection with declared provenance, and it belongs to the lane it

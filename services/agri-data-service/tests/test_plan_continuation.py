@@ -19,13 +19,6 @@ from agri_data_service.execution.backfill_types import (
     HistoricalBackfillWindow,
     four_calendar_years_before,
 )
-from agri_data_service.execution.historical_backfill import (
-    HistoricalNasaBackfillPlan,
-)
-from agri_data_service.execution.historical_open_meteo import (
-    OPEN_METEO_ARCHIVE_SCHEMA_VERSION,
-    HistoricalOpenMeteoArchivePlan,
-)
 from agri_data_service.execution.plan_continuation import (
     CONTINUATION_NOTE_SENTINEL,
     CellFrontier,
@@ -47,6 +40,13 @@ from agri_data_service.execution.plan_continuation import (
     sibling_plan_candidates,
     superseding_sibling,
     write_continuation_plan,
+)
+from agri_data_service.execution.weather_observations.era5_land import (
+    OPEN_METEO_ARCHIVE_SCHEMA_VERSION,
+    HistoricalOpenMeteoArchivePlan,
+)
+from agri_data_service.execution.weather_observations.nasa_power import (
+    HistoricalNasaBackfillPlan,
 )
 
 PLANS_ROOT = Path(__file__).resolve().parent.parent / "plans"

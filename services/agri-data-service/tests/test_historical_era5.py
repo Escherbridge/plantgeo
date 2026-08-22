@@ -20,7 +20,6 @@ from pydantic import SecretStr
 
 from agri_data_service.cli import cli
 from agri_data_service.config import settings
-from agri_data_service.execution.historical_backfill import HistoricalSignalObservation
 from agri_data_service.execution.historical_era5 import (
     ERA5_LAND_VARIABLE_ALIASES,
     Era5LandMonthlyResult,
@@ -47,6 +46,7 @@ from agri_data_service.execution.historical_era5_parquet import (
 )
 from agri_data_service.execution.historical_writer import _insert_era5_observations
 from agri_data_service.execution.source_ingestion import SourceDefinition
+from agri_data_service.execution.weather_observations.nasa_power import HistoricalSignalObservation
 
 EXPECTED_PERIOD_COUNT = 49
 EXPECTED_PARAMETER_COUNT = 6

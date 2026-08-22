@@ -100,22 +100,6 @@ from agri_data_service.execution.ensemble_forecast import (
     write_ensemble_forecast_checkpoint,
     write_ensemble_forecast_staged_document,
 )
-from agri_data_service.execution.historical_backfill import (
-    HistoricalNasaBackfillPlan,
-    HistoricalNasaCheckpoint,
-    HistoricalNasaFinalization,
-    cache_historical_nasa_result,
-    fetch_nasa_power_daily,
-    historical_nasa_checkpoint_path,
-    historical_nasa_plan_checksum,
-    initialize_historical_nasa_checkpoint,
-    load_cached_historical_nasa_result,
-    load_historical_nasa_checkpoint,
-    rebind_historical_nasa_checkpoint_for_finalization,
-    record_historical_nasa_result,
-    write_historical_nasa_checkpoint,
-    write_historical_nasa_release_plan,
-)
 from agri_data_service.execution.historical_cams import (
     CamsAirQualityChunk,
     CamsAirQualityChunkResult,
@@ -177,26 +161,6 @@ from agri_data_service.execution.historical_glofas import (
     rederive_historical_glofas_checkpoint_state,
     run_glofas_flood_chunks,
     write_historical_glofas_checkpoint,
-)
-from agri_data_service.execution.historical_open_meteo import (
-    HistoricalOpenMeteoArchivePlan,
-    HistoricalOpenMeteoCheckpoint,
-    OpenMeteoArchiveChunk,
-    OpenMeteoArchiveChunkResult,
-    OpenMeteoArchiveFetchError,
-    cache_historical_open_meteo_result,
-    historical_open_meteo_checkpoint_path,
-    historical_open_meteo_plan_checksum,
-    historical_open_meteo_release_manifest,
-    initialize_historical_open_meteo_checkpoint,
-    load_cached_historical_open_meteo_result,
-    load_historical_open_meteo_checkpoint,
-    open_meteo_observed_values_by_parameter,
-    record_historical_open_meteo_result,
-    rederive_historical_open_meteo_checkpoint_state,
-    run_open_meteo_archive_chunks,
-    unanswered_open_meteo_parameters,
-    write_historical_open_meteo_checkpoint,
 )
 from agri_data_service.execution.historical_parquet import (
     historical_nasa_parquet_root,
@@ -290,6 +254,42 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
     select_candidate_cell_keys,
     simulate_cells,
     summarize_holdout,
+)
+from agri_data_service.execution.weather_observations.era5_land import (
+    HistoricalOpenMeteoArchivePlan,
+    HistoricalOpenMeteoCheckpoint,
+    OpenMeteoArchiveChunk,
+    OpenMeteoArchiveChunkResult,
+    OpenMeteoArchiveFetchError,
+    cache_historical_open_meteo_result,
+    historical_open_meteo_checkpoint_path,
+    historical_open_meteo_plan_checksum,
+    historical_open_meteo_release_manifest,
+    initialize_historical_open_meteo_checkpoint,
+    load_cached_historical_open_meteo_result,
+    load_historical_open_meteo_checkpoint,
+    open_meteo_observed_values_by_parameter,
+    record_historical_open_meteo_result,
+    rederive_historical_open_meteo_checkpoint_state,
+    run_open_meteo_archive_chunks,
+    unanswered_open_meteo_parameters,
+    write_historical_open_meteo_checkpoint,
+)
+from agri_data_service.execution.weather_observations.nasa_power import (
+    HistoricalNasaBackfillPlan,
+    HistoricalNasaCheckpoint,
+    HistoricalNasaFinalization,
+    cache_historical_nasa_result,
+    fetch_nasa_power_daily,
+    historical_nasa_checkpoint_path,
+    historical_nasa_plan_checksum,
+    initialize_historical_nasa_checkpoint,
+    load_cached_historical_nasa_result,
+    load_historical_nasa_checkpoint,
+    rebind_historical_nasa_checkpoint_for_finalization,
+    record_historical_nasa_result,
+    write_historical_nasa_checkpoint,
+    write_historical_nasa_release_plan,
 )
 from agri_data_service.ingest.commands import register_ingest_commands
 from agri_data_service.jobs import (

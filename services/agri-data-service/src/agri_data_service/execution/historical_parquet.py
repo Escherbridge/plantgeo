@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from agri_data_service.execution.contracts import ContractModel, canonical_json_bytes
-from agri_data_service.execution.historical_backfill import (
+from agri_data_service.execution.weather_observations.nasa_power import (
     HistoricalNasaBackfillPlan,
     HistoricalNasaCheckpoint,
     historical_nasa_plan_checksum,

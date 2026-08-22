@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Literal
 import pytest
 
 from agri_data_service.execution.contracts import canonical_json_bytes, reject_sensitive_fields
-from agri_data_service.execution.historical_backfill import (
-    NASA_POWER_SIGNAL_SPECIFICATIONS,
-    AnalysisGridCell,
+from agri_data_service.execution.open_meteo_lane import (
+    RATE_LIMIT_BACKOFF_SECONDS,
+    canonical_location_document,
 )
-from agri_data_service.execution.historical_open_meteo import (
+from agri_data_service.execution.weather_observations.era5_land import (
     OPEN_METEO_ARCHIVE_LANE,
     OPEN_METEO_ARCHIVE_PRODUCTS,
     OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS,
@@ -44,9 +44,9 @@ from agri_data_service.execution.historical_open_meteo import (
     require_accounted_open_meteo_result,
     unanswered_open_meteo_parameters,
 )
-from agri_data_service.execution.open_meteo_lane import (
-    RATE_LIMIT_BACKOFF_SECONDS,
-    canonical_location_document,
+from agri_data_service.execution.weather_observations.nasa_power import (
+    NASA_POWER_SIGNAL_SPECIFICATIONS,
+    AnalysisGridCell,
 )
 from agri_data_service.ingest.open_meteo import (
     OPEN_METEO_API_KEY_VARIABLE,
@@ -676,7 +676,7 @@ async def test_the_key_reaches_the_wire_and_nothing_durable(monkeypatch: pytest.
         requested.append(url)
         return payload.decode("utf-8")
 
-    monkeypatch.setattr("agri_data_service.execution.historical_open_meteo.fetch_archive_daily", answer)
+    monkeypatch.setattr("agri_data_service.execution.weather_observations.era5_land.fetch_archive_daily", answer)
     result = await fetch_open_meteo_archive_chunk(plan, chunk, client=object(), retrieved_at=RETRIEVED_AT)
 
     assert len(requested) == 1
@@ -805,7 +805,7 @@ async def test_an_unrecognised_refusal_fails_immediately_without_sleeping(monkey
     async def record_wait(seconds: float) -> None:
         waits.append(seconds)
 
-    monkeypatch.setattr("agri_data_service.execution.historical_open_meteo.fetch_archive_daily", refuse)
+    monkeypatch.setattr("agri_data_service.execution.weather_observations.era5_land.fetch_archive_daily", refuse)
     with pytest.raises(OpenMeteoArchiveFetchError):
         await fetch_open_meteo_archive_chunk(plan, chunk, client=_RateLimitedClient("unknown"), sleep=record_wait)
     assert attempts == 1
@@ -830,7 +830,7 @@ async def test_an_exhausted_hourly_quota_fails_immediately_without_sleeping(
     async def record_wait(seconds: float) -> None:
         waits.append(seconds)
 
-    monkeypatch.setattr("agri_data_service.execution.historical_open_meteo.fetch_archive_daily", refuse)
+    monkeypatch.setattr("agri_data_service.execution.weather_observations.era5_land.fetch_archive_daily", refuse)
     with pytest.raises(OpenMeteoArchiveFetchError) as raised:
         await fetch_open_meteo_archive_chunk(plan, chunk, client=_RateLimitedClient("hour"), sleep=record_wait)
     assert raised.value.chunk_key == chunk.key
@@ -852,7 +852,7 @@ async def test_a_minutely_quota_is_retried_then_surfaced(monkeypatch: pytest.Mon
     async def record_wait(seconds: float) -> None:
         waits.append(seconds)
 
-    monkeypatch.setattr("agri_data_service.execution.historical_open_meteo.fetch_archive_daily", refuse)
+    monkeypatch.setattr("agri_data_service.execution.weather_observations.era5_land.fetch_archive_daily", refuse)
     with pytest.raises(OpenMeteoArchiveFetchError):
         await fetch_open_meteo_archive_chunk(plan, chunk, client=_RateLimitedClient("minute"), sleep=record_wait)
     assert waits == [70.0, 70.0, 70.0]
@@ -875,7 +875,7 @@ async def test_a_recovered_rate_limit_still_produces_an_accounted_result(monkeyp
     async def no_wait(_seconds: float) -> None:
         return None
 
-    monkeypatch.setattr("agri_data_service.execution.historical_open_meteo.fetch_archive_daily", flaky)
+    monkeypatch.setattr("agri_data_service.execution.weather_observations.era5_land.fetch_archive_daily", flaky)
     result = await fetch_open_meteo_archive_chunk(
         plan,
         chunk,

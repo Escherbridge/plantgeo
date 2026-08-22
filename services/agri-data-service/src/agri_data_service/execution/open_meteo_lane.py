@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from agri_data_service.execution.historical_backfill import AnalysisGridCell
+    from agri_data_service.execution.backfill_types import AnalysisGridCell
     from agri_data_service.ingest.open_meteo_endpoint import OpenMeteoEndpoint, OpenMeteoProductRequest
 
 # Only a minutely refusal is waited out; every other scope, including an unrecognised body, fails

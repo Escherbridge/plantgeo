@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Final
 
 ABSENCE_SCHEMA_VERSION: Final = 1
@@ -42,7 +42,7 @@ class GovernedAbsence:
             "schema_version": ABSENCE_SCHEMA_VERSION,
             "reason": self.reason,
             "upstream_response": self.upstream_response,
-            "recorded_at": self.recorded_at.astimezone(timezone.utc).isoformat(),
+            "recorded_at": self.recorded_at.astimezone(UTC).isoformat(),
             "run_id": self.run_id,
         }
         return json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")

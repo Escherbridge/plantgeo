@@ -17,7 +17,11 @@ from agri_data_service.execution.backfill_types import (
     HistoricalBackfillWindow,
     four_calendar_years_before,
 )
-from agri_data_service.execution.historical_backfill import (
+from agri_data_service.execution.weather_observations.era5_land import (
+    OPEN_METEO_ARCHIVE_SCHEMA_VERSION,
+    HistoricalOpenMeteoArchivePlan,
+)
+from agri_data_service.execution.weather_observations.nasa_power import (
     NASA_POWER_DAILY_SCHEMA_VERSION,
     NASA_POWER_MAX_RESPONSE_BYTES,
     NASA_POWER_TIMEOUT_SECONDS,
@@ -26,10 +30,6 @@ from agri_data_service.execution.historical_backfill import (
     historical_nasa_plan_checksum,
     nasa_power_daily_point_url,
     nasa_power_observed_value,
-)
-from agri_data_service.execution.historical_open_meteo import (
-    OPEN_METEO_ARCHIVE_SCHEMA_VERSION,
-    HistoricalOpenMeteoArchivePlan,
 )
 from agri_data_service.ingest.http import UpstreamError
 from agri_data_service.ingest.open_meteo import archive_daily_request, fetch_archive_daily

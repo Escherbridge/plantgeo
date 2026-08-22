@@ -27,18 +27,18 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVICE_ROOT / "src"))
 
 from agri_data_service.execution.contracts import canonical_json_bytes  # noqa: E402
-from agri_data_service.execution.historical_backfill import (  # noqa: E402
-    HistoricalNasaBackfillPlan,
-    historical_nasa_plan_checksum,
-)
 from agri_data_service.execution.historical_era5 import (  # noqa: E402
     HistoricalEra5LandBackfillPlan,
     historical_era5_plan_checksum,
 )
-from agri_data_service.execution.historical_open_meteo import (  # noqa: E402
+from agri_data_service.execution.weather_observations.era5_land import (  # noqa: E402
     OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS,
     HistoricalOpenMeteoArchivePlan,
     historical_open_meteo_plan_checksum,
+)
+from agri_data_service.execution.weather_observations.nasa_power import (  # noqa: E402
+    HistoricalNasaBackfillPlan,
+    historical_nasa_plan_checksum,
 )
 
 REPOSITORY_ROOT = SERVICE_ROOT.parent.parent

@@ -3617,9 +3617,113 @@ lane contract before implementing its lane.
    `execution/` one is wired, the `method/` one is not. Converge them when `vegetation` moves; do not add
    provenance columns to whichever one is opened first (§0.24.2, vegetation lane contract).
 
+---
+
+### 0.26 WAVE 2 IN PROGRESS — 2026-08-22 (third session). Steps 1–3 done, step 4 half done.
+
+**HEAD moved.** `70a0299` → **`fa523df`** (wave 1's 42 files, committed verbatim) → **`185b704`**
+(absence marker) → **`00b1fc1`** (shared-type extraction) → the domain package. §0.25.4's "42 files
+changed, NOTHING COMMITTED" is now historical; the tree is clean.
+
+#### 0.26.1 The Postgres boundary is answered — owner call, 2026-08-22
+
+Supersedes the first bullet of §0.25.6. Owner: *"postgres does not need to stay only the community
+intervention feed features rather then the analytics data for the social features is fine but
+analytics happens on and with parquet if possible."* Recorded as the **classification rule**, so
+the inventory can be mechanical rather than another decision:
+
+> **Postgres keeps every community/social feature table and its operational data** — interventions,
+> users, engagement, comments, activity. **Analytics COMPUTE moves to Parquet + DuckDB** wherever it
+> can. **Postgres is never queried analytically**, including for social features.
+
+The `interventions` lane contract's recommendation (that lane stays, §8 of `docs/lanes/interventions.md`)
+is consistent with this and needs no revision.
+
+#### 0.26.2 Steps 1–3, and what each actually took
+
+1. **Bucket credentials — DONE and round-tripped.** Railway bucket `plantgeo-parquet`
+   (`79d5b0c0-059a-40a9-a90a-ef8d15bb5828`), region **`sjc`**, endpoint **`https://t3.storageapi.dev`**,
+   real bucket name **`plantgeo-parquet-9ymvp7gv`** (Railway suffixes it — the display name is not the
+   S3 name, and `OBJECT_STORE_BUCKET` needs the suffixed one). `OBJECT_STORE_REGION=auto`, which is
+   what the credentials endpoint returns, **not** `sjc`.
+   - **The MCP plugin is unauthenticated in this harness; the CLI is not.** `railway bucket
+     credentials --bucket <name> --json` is the whole mechanism. There are no `${{...}}` reference
+     variables for buckets — the values are set literally.
+   - Wired into the local gitignored `.env` **and onto all three cron services** (`plantgeo-ingest-cron`,
+     `plantgeo-cron-mtbs`, `plantgeo-cron-soilgrids`) with `--skip-deploys`, since no deployed code reads
+     them yet. Secret set via `--set-from-stdin` so it never lands in shell history.
+   - **Verified by a real round trip against the live bucket**: put → `size_of` 28 → list → delete →
+     `size_of` None. The foundation now has somewhere to write.
+   - **Trap:** `uv sync` alone **removes pytest and ruff** — dev deps are an *extra*, not a dependency
+     group. Use `uv sync --extra dev`, or the next `pytest` run fails with `ModuleNotFoundError:
+     agri_data_service` and looks like a broken install.
+
+2. **Governed absence — DONE** (`185b704`), per §0.25.3. `absent.json` at the day's partition path;
+   `foundation/parquet/absence.py` owns the evidence payload (reason, upstream response, recorded-at,
+   run id — all mandatory, schema-versioned, UTC-normalised). `partition_day_statuses` classifies each
+   day `data` / `absent` / `conflict` / `missing`; `missing_partition_days` now reports only `missing`.
+   `write_partition` and `write_absence` **refuse each other in both directions** — retraction stays a
+   manual admin action. The zero-row refusal is untouched.
+
+3. **Domain isolation — DONE, and it is default-deny.** Every subpackage of `ingest/` or `execution/`
+   counts as a domain unless declared shared in `DOMAIN_PARENT_SHARED_SUBPACKAGES` (currently
+   `execution/historical_writer`, `ingest/validation`). A domain added later is policed the day it lands.
+   Relative imports are resolved before matching, and a synthetic two-domain fixture proves the rule
+   fires — with one real domain it could otherwise only ever pass vacuously.
+
+#### 0.26.3 Step 4 — the extraction nobody had costed
+
+**`historical_backfill.py` was the blocker, and it was not on any list.** It owned four value types —
+`AnalysisGridCell`, `HistoricalBackfillWindow`, `HistoricalSignalObservation`, `HistoricalCoverageAudit` —
+that **five sibling domains** (CAMS, GloFAS, CEMS, AgERA5, ERA5) imported from it. Moving NASA into
+`execution/weather_observations/` would therefore have made all five import the weather domain: the exact
+cross-domain coupling step 3's new rule forbids, created by step 4 itself.
+
+**Resolution: the shared half moves down, the dependents never move sideways.** The four types now live at
+`execution/backfill_types.py` (`00b1fc1`). `coverage_fill` and `plan_continuation` import shared types and
+NASA specifics from separate modules, so the domain dependency is visible in the import block rather than
+hidden behind a re-export. **Generalise this before each of the remaining ten moves: grep what the target
+module exports to its siblings first — the move is blocked until the shared half leaves.**
+
+**Landed:** `execution/weather_observations/` holding `nasa_power.py` (was `historical_backfill.py`) and
+`era5_land.py` (was `historical_open_meteo.py`), 17 files' imports rewritten, plus `AGENTS.md`.
+
+**Deliberately still at root:** `historical_writer/nasa.py` and `historical_writer/open_meteo.py`. That
+package is already organised per source over shared internals (`_shared`, `_results`, `_release_sets`) used
+by CAMS, GloFAS and USDM; splitting it would either duplicate them or export private modules across
+packages. Revisit when a second domain moves and the shared surface is measured.
+
+**NOT done — step 4 is half complete.** `ingest/weather_observations/` does not exist yet. `ingest/open_meteo.py`
+mixes the current-conditions `WEATHER_LAYER` producer with Open-Meteo client primitives that
+`open_meteo_air_quality`, `open_meteo_ensemble` and `open_meteo_flood` all use — **the same shared/domain
+entanglement as `historical_backfill.py`, and it needs the same extraction first.** Note §0.24.2's trap 3:
+that producer writes `geo.features`, not `agri.signal_observation`, so confirm which of the two
+`weather-observations` producers any given change is aimed at.
+
+#### 0.26.4 A runbook claim that does not survive checking
+
+**§0.24.9 and §0.25.4 both say wave 1 ended `mypy --strict` clean. It does not, over the full `src` tree.**
+`jobs/matview_refresh.py:667` carries two errors (`no-any-return`, `call-overload`), last touched in
+`e71e1cd` and untouched by any commit this session — so the wave-1 sweep was run at a narrower scope than
+the claim implies. **Verified state after this session: 3,175 passed · 110 skipped · `ruff` clean over
+`src tests plans` · `mypy --strict src` = 2 pre-existing errors in that one file.** Fix or waive it
+explicitly rather than letting the next session rediscover it.
+
+#### 0.26.5 Continuation
+
+1. **Extract the shared Open-Meteo client primitives out of `ingest/open_meteo.py`**, then create
+   `ingest/weather_observations/`. Same shape as §0.26.3; the default-deny rule already covers it.
+2. **Then fan out the remaining ten lanes** (§0.24 wave 2), grepping each target's sibling exports first.
+3. **Nothing has written a real Parquet partition yet.** Wave 2 → 3's gate is a file a reader opened, not
+   code complete. The bucket is live and empty; the first lane to land a partition proves the whole chain.
+4. `method/monte_carlo/` and `execution/` still hold two near-identical NDVI forecasters — unchanged, still
+   converge when `vegetation` moves (§0.25.5 item 6).
+
+---
+
 #### 0.25.6 Open questions
 
-- **What actually stays in Postgres?** "Community features" was never inventoried. The `interventions` lane
+- ~~**What actually stays in Postgres?**~~ **ANSWERED 2026-08-22 — see §0.26.1.** The `interventions` lane
   contract recommends that lane stays — it is community-submitted, 0–2 rows, and Postgres is being retained
   for exactly that. Nothing else has been classified.
 - **PMTiles still have no producer.** Martin serves them; nothing here makes them from a Parquet geometry

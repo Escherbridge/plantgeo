@@ -6,7 +6,7 @@ marked day is covered-by-absence, never a gap — and data and absence never coe
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 

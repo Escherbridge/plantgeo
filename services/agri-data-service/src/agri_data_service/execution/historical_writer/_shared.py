@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from agri_data_service.execution.historical_backfill import AnalysisGridCell
+    from agri_data_service.execution.backfill_types import AnalysisGridCell
     from agri_data_service.execution.source_ingestion import SourceDefinition
 
 WGS84_SRID = 4326

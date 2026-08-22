@@ -21,6 +21,9 @@ from typing import TYPE_CHECKING, cast
 import httpx
 import pytest
 
+from agri_data_service.execution.backfill_types import (
+    four_calendar_years_before,
+)
 from agri_data_service.execution.coverage_census import LaneCell
 from agri_data_service.execution.coverage_contract import DayCoverage, DayState, SignalReconciliation
 from agri_data_service.execution.coverage_fill import (
@@ -53,18 +56,15 @@ from agri_data_service.execution.coverage_fill import (
     unprobed_refusal,
     write_fill_plan,
 )
-from agri_data_service.execution.backfill_types import (
-    four_calendar_years_before,
-)
-from agri_data_service.execution.historical_backfill import (
-    NASA_POWER_MAX_RESPONSE_BYTES,
-    HistoricalNasaBackfillPlan,
-)
 from agri_data_service.execution.plan_continuation import (
     ContinuationLane,
     ContinuationSource,
     frontier_probe_cells,
     load_continuation_source,
+)
+from agri_data_service.execution.weather_observations.nasa_power import (
+    NASA_POWER_MAX_RESPONSE_BYTES,
+    HistoricalNasaBackfillPlan,
 )
 
 if TYPE_CHECKING:

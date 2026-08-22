@@ -9,13 +9,6 @@ from geoalchemy2 import WKTElement
 from sqlalchemy import func, select
 
 from agri_data_service.execution.contracts import reject_sensitive_fields
-from agri_data_service.execution.historical_open_meteo import (
-    OPEN_METEO_ARCHIVE_SCHEMA_VERSION,
-    historical_open_meteo_plan_checksum,
-    historical_open_meteo_release_manifest,
-    open_meteo_archive_chunk_url,
-    require_accounted_open_meteo_result,
-)
 from agri_data_service.execution.historical_writer._release_sets import _finalize_historical_release_set
 from agri_data_service.execution.historical_writer._results import (
     HistoricalOpenMeteoWriteResult,
@@ -37,6 +30,13 @@ from agri_data_service.execution.provenance import (
     ensure_source_release,
     require_validation_timestamp,
 )
+from agri_data_service.execution.weather_observations.era5_land import (
+    OPEN_METEO_ARCHIVE_SCHEMA_VERSION,
+    historical_open_meteo_plan_checksum,
+    historical_open_meteo_release_manifest,
+    open_meteo_archive_chunk_url,
+    require_accounted_open_meteo_result,
+)
 from agri_data_service.models.historical import CellSourceCrosswalk, SignalCoverageAudit, SignalObservation
 from agri_data_service.models.provenance import Artifact, ReleaseValidationState, SourceRelease
 
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from agri_data_service.execution.historical_open_meteo import (
+    from agri_data_service.execution.weather_observations.era5_land import (
         HistoricalOpenMeteoArchivePlan,
         HistoricalOpenMeteoCheckpoint,
         OpenMeteoArchiveChunk,

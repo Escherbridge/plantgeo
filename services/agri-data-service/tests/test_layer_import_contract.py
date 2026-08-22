@@ -56,6 +56,26 @@ SUBPACKAGE_FORBIDDEN_IMPORTS: dict[str, set[str]] = {
     "method/ml": {"agri_data_service.method.monte_carlo"},
 }
 
+# Domain isolation inside `ingest/` and `execution/`, which the six-layer lattice above does not
+# police at all -- neither directory is one of its layers, and never has been. RUNBOOK sections
+# 0.25.1 (decisions 1 and 2) and 0.25.2: producers move under `<parent>/<domain>/` while shared
+# primitives stay at `<parent>/` root, and no domain package may import a sibling domain package.
+#
+# Deliberately DEFAULT-DENY: every subpackage of a parent below counts as a domain unless it is
+# named in DOMAIN_PARENT_SHARED_SUBPACKAGES. A domain added later is therefore policed the day it
+# lands, with nothing to remember to register -- the opposite bias from an allow-list, where the
+# forgotten entry is silently unenforced.
+DOMAIN_PARENTS: tuple[str, ...] = ("ingest", "execution")
+
+DOMAIN_PARENT_SHARED_SUBPACKAGES: dict[str, set[str]] = {
+    # Organised per source over shared internals (`_shared`, `_results`, `_release_sets`) that
+    # CAMS, GloFAS and USDM all use; splitting it would export private modules across packages.
+    # See execution/weather_observations/AGENTS.md.
+    "execution": {"historical_writer"},
+    # Cross-source ingest validation models, not one source's producer.
+    "ingest": {"validation"},
+}
+
 
 def _get_imports(py_path: Path) -> list[tuple[int, str]]:
     tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
@@ -68,6 +88,28 @@ def _get_imports(py_path: Path) -> list[tuple[int, str]]:
             if node.module:
                 imports.append((node.lineno, node.module))
     return imports
+
+
+def _resolved_imports(py_path: Path, pkg_root: Path) -> list[tuple[int, str]]:
+    """Return imports as absolute `agri_data_service.*` names, resolving relative ones.
+
+    `_get_imports` reports `from .sibling import x` as bare `sibling`, which no absolute-prefix
+    check can ever match -- a relative import would slip past domain isolation silently.
+    """
+    tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
+    package_parts = ("agri_data_service", *py_path.relative_to(pkg_root).parts[:-1])
+    resolved: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            resolved.extend((node.lineno, alias.name) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if not node.level:
+                if node.module:
+                    resolved.append((node.lineno, node.module))
+                continue
+            base = package_parts[: len(package_parts) - node.level + 1]
+            resolved.append((node.lineno, ".".join((*base, node.module) if node.module else base)))
+    return resolved
 
 
 def test_layer_import_contract() -> None:
@@ -135,12 +177,86 @@ def test_subpackage_import_contract() -> None:
             continue
         for py_file in sub_dir.glob("**/*.py"):
             for line_no, imp in _get_imports(py_file):
-                for forb in forbidden:
-                    if imp == forb or imp.startswith(forb + "."):
-                        violations.append(
-                            f"{py_file.relative_to(pkg_root)}:{line_no} imports '{imp}' "
-                            f"(forbidden inside '{subpackage}')"
-                        )
+                violations.extend(
+                    f"{py_file.relative_to(pkg_root)}:{line_no} imports '{imp}' "
+                    f"(forbidden inside '{subpackage}')"
+                    for forb in forbidden
+                    if imp == forb or imp.startswith(forb + ".")
+                )
 
     joined = '\n'.join(violations)
     assert not violations, "Sub-package import contract violations found:" + '\n' + joined
+
+
+def _domain_packages(pkg_root: Path, parent: str) -> list[str]:
+    """Return every subpackage of `parent` that counts as a domain, newest-safe by default-deny."""
+    parent_dir = pkg_root / parent
+    if not parent_dir.is_dir():
+        return []
+    shared = DOMAIN_PARENT_SHARED_SUBPACKAGES.get(parent, set())
+    return sorted(
+        child.name
+        for child in parent_dir.iterdir()
+        if child.is_dir() and (child / "__init__.py").is_file() and child.name not in shared
+    )
+
+
+def _domain_isolation_violations(pkg_root: Path, parent: str) -> list[str]:
+    """Return every import of one domain package by a sibling domain package under `parent`."""
+    domains = _domain_packages(pkg_root, parent)
+    violations: list[str] = []
+    for domain in domains:
+        siblings = {f"agri_data_service.{parent}.{other}" for other in domains if other != domain}
+        for py_file in (pkg_root / parent / domain).glob("**/*.py"):
+            for line_no, imp in _resolved_imports(py_file, pkg_root):
+                violations.extend(
+                    f"{py_file.relative_to(pkg_root)}:{line_no} imports '{imp}' "
+                    f"-- a domain package may not import sibling domain '{sibling}'"
+                    for sibling in siblings
+                    if imp == sibling or imp.startswith(sibling + ".")
+                )
+    return violations
+
+
+def test_domain_packages_do_not_import_each_other() -> None:
+    """No `ingest.<domain>` or `execution.<domain>` may import a sibling domain (RUNBOOK §0.25.2).
+
+    This is the cross-lane coupling the whole wave-2 boundary exists to prevent, and until this
+    test existed it was convention only: the six-layer lattice does not cover `ingest/` or
+    `execution/` at all.
+    """
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
+    violations = [v for parent in DOMAIN_PARENTS for v in _domain_isolation_violations(pkg_root, parent)]
+
+    assert not violations, "Domain isolation violations found:\n" + "\n".join(violations)
+
+
+def test_domain_isolation_catches_an_absolute_and_a_relative_sibling_import(tmp_path: Path) -> None:
+    """Prove the rule fires. With one real domain the check above can only ever pass vacuously."""
+    parent_dir = tmp_path / "execution"
+    for domain in ("weather_observations", "fire_detections"):
+        (parent_dir / domain).mkdir(parents=True)
+        (parent_dir / domain / "__init__.py").write_text("", encoding="utf-8")
+    (parent_dir / "weather_observations" / "nasa_power.py").write_text(
+        "from agri_data_service.execution.fire_detections.firms import fetch\n", encoding="utf-8"
+    )
+    (parent_dir / "fire_detections" / "firms.py").write_text(
+        "from ..weather_observations import nasa_power\n", encoding="utf-8"
+    )
+
+    violations = _domain_isolation_violations(tmp_path, "execution")
+
+    expected_violation_count = 2  # one absolute import, one relative import
+    assert len(violations) == expected_violation_count, violations
+    assert any("nasa_power.py:1" in v and "fire_detections.firms" in v for v in violations)
+    assert any("firms.py:1" in v and "weather_observations" in v for v in violations)
+
+
+def test_domain_isolation_actually_has_domains_to_police() -> None:
+    """A default-deny rule that silently matches nothing is indistinguishable from no rule at all."""
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
+    discovered = {parent: _domain_packages(pkg_root, parent) for parent in DOMAIN_PARENTS}
+
+    assert "weather_observations" in discovered["execution"], (
+        f"the first domain package is missing; discovered {discovered}"
+    )

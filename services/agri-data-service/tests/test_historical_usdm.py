@@ -13,7 +13,6 @@ from click.testing import CliRunner
 
 from agri_data_service.cli import cli
 from agri_data_service.config import settings
-from agri_data_service.execution.historical_backfill import HistoricalBackfillWindow
 from agri_data_service.execution.historical_usdm import (
     USDM_SHAPEFILE_SCHEMA_VERSION,
     HistoricalUsdmBackfillPlan,
@@ -27,6 +26,7 @@ from agri_data_service.execution.historical_usdm import (
     record_historical_usdm_result,
 )
 from agri_data_service.execution.source_ingestion import SourceDefinition
+from agri_data_service.execution.weather_observations.nasa_power import HistoricalBackfillWindow
 
 EXPECTED_ISSUE_DATE_COUNT = 208
 EXPECTED_POLYGON_COUNT = 2

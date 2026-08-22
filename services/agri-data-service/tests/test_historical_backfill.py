@@ -12,7 +12,12 @@ from click.testing import CliRunner
 from agri_data_service.cli import cli
 from agri_data_service.config import settings
 from agri_data_service.execution import historical_parquet
-from agri_data_service.execution.historical_backfill import (
+from agri_data_service.execution.historical_parquet import (
+    historical_nasa_parquet_root,
+    materialize_historical_nasa_parquet,
+)
+from agri_data_service.execution.source_ingestion import SourceDefinition
+from agri_data_service.execution.weather_observations.nasa_power import (
     NASA_POWER_DAILY_SCHEMA_VERSION,
     NASA_POWER_SIGNAL_SPECIFICATIONS,
     AnalysisGridCell,
@@ -37,11 +42,6 @@ from agri_data_service.execution.historical_backfill import (
     write_historical_nasa_checkpoint,
     write_historical_nasa_release_plan,
 )
-from agri_data_service.execution.historical_parquet import (
-    historical_nasa_parquet_root,
-    materialize_historical_nasa_parquet,
-)
-from agri_data_service.execution.source_ingestion import SourceDefinition
 
 EXPECTED_FOUR_YEAR_DAY_COUNT = 1462
 EXPECTED_T2M_VALUES = 2

@@ -9,12 +9,6 @@ from geoalchemy2 import WKTElement
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
-from agri_data_service.execution.historical_backfill import (
-    historical_nasa_plan_checksum,
-    historical_nasa_release_manifest,
-    nasa_power_daily_url,
-    require_complete_nasa_result,
-)
 from agri_data_service.execution.historical_writer._release_sets import _finalize_historical_release_set
 from agri_data_service.execution.historical_writer._results import (
     HistoricalNasaWriteResult,
@@ -33,6 +27,12 @@ from agri_data_service.execution.provenance import (
     ensure_source_release,
     require_validation_timestamp,
 )
+from agri_data_service.execution.weather_observations.nasa_power import (
+    historical_nasa_plan_checksum,
+    historical_nasa_release_manifest,
+    nasa_power_daily_url,
+    require_complete_nasa_result,
+)
 from agri_data_service.models.historical import (
     CellSourceCrosswalk,
     SignalCoverageAudit,
@@ -50,8 +50,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from agri_data_service.execution.historical_backfill import (
-        AnalysisGridCell,
+    from agri_data_service.execution.backfill_types import AnalysisGridCell
+    from agri_data_service.execution.weather_observations.nasa_power import (
         HistoricalNasaBackfillPlan,
         HistoricalNasaCheckpoint,
         NasaPowerDailyResult,

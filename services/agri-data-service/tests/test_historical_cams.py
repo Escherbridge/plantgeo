@@ -36,8 +36,8 @@ from agri_data_service.ingest.open_meteo_air_quality import HOURS_PER_DAY
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from agri_data_service.execution.historical_backfill import AnalysisGridCell
     from agri_data_service.execution.historical_cams import CamsAirQualityChunk, CamsAirQualityChunkResult
+    from agri_data_service.execution.weather_observations.nasa_power import AnalysisGridCell
 
 WINDOW_END = date(2026, 4, 30)
 WINDOW_START = WINDOW_END.replace(year=WINDOW_END.year - 4)

@@ -19,19 +19,19 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 from agri_data_service.execution.contracts import canonical_json_bytes
-from agri_data_service.execution.historical_backfill import (
-    HistoricalNasaBackfillPlan,
-    historical_nasa_plan_checksum,
-)
 from agri_data_service.execution.historical_era5 import (
     ERA5_LAND_SIGNAL_SPECIFICATIONS,
     HistoricalEra5LandBackfillPlan,
     _reject_unaccepted_era5_licences,
 )
-from agri_data_service.execution.historical_open_meteo import (
+from agri_data_service.execution.weather_observations.era5_land import (
     OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS,
     OPEN_METEO_ARCHIVE_SOIL_MOISTURE_PARAMETERS,
     HistoricalOpenMeteoArchivePlan,
+)
+from agri_data_service.execution.weather_observations.nasa_power import (
+    HistoricalNasaBackfillPlan,
+    historical_nasa_plan_checksum,
 )
 
 PLANS_ROOT = Path(__file__).resolve().parent.parent / "plans"
