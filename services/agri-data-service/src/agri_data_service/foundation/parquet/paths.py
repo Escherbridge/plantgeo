@@ -16,10 +16,12 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 PartitionKind = Literal["observed", "forecast"]
+PartitionDayStatus = Literal["data", "absent", "conflict", "missing"]
 
 PARTITION_KINDS: Final[tuple[PartitionKind, ...]] = ("observed", "forecast")
 PARQUET_SUFFIX: Final = ".parquet"
 PART_FILE_STEM: Final = "part-"
+ABSENCE_FILE_NAME: Final = "absent.json"
 
 # Explicit budgets at the boundary; every one of these has a wrong answer that is silently plausible.
 MAX_PART_INDEX: Final = 9_999
@@ -37,6 +39,15 @@ _PARTITION_PATH_PATTERN: Final = re.compile(
     r"/month=(?P<month>\d{2})"
     r"/day=(?P<day>\d{2})"
     r"/part-(?P<part_index>\d+)\.parquet$"
+)
+
+_ABSENCE_PATH_PATTERN: Final = re.compile(
+    r"^layer=(?P<layer>[a-z0-9]+(?:-[a-z0-9]+)*)"
+    r"/kind=(?P<kind>observed|forecast)"
+    r"/year=(?P<year>\d{4})"
+    r"/month=(?P<month>\d{2})"
+    r"/day=(?P<day>\d{2})"
+    r"/absent\.json$"
 )
 
 
@@ -57,6 +68,20 @@ class PartitionPath:
     def key(self) -> str:
         """Rebuild the relative object key this instance was parsed from."""
         return partition_path(self.layer, self.kind, self.day, self.part_index)
+
+
+@dataclass(frozen=True, slots=True)
+class AbsenceMarkerPath:
+    """One governed-absence marker, decomposed: the inverse of `absence_marker_path`."""
+
+    layer: str
+    kind: PartitionKind
+    day: date
+
+    @property
+    def key(self) -> str:
+        """Rebuild the relative object key this instance was parsed from."""
+        return absence_marker_path(self.layer, self.kind, self.day)
 
 
 def validate_layer_slug(slug: str) -> str:
@@ -131,6 +156,66 @@ def try_parse_partition_path(path: str) -> PartitionPath | None:
     return PartitionPath(layer=match["layer"], kind=kind, day=day, part_index=part_index)
 
 
+def absence_marker_path(layer: str, kind: PartitionKind, day: date) -> str:
+    """Return the relative object key marking one stream-day as a governed absence."""
+    return f"{day_prefix(layer, kind, day)}{ABSENCE_FILE_NAME}"
+
+
+def try_parse_absence_marker_path(path: str) -> AbsenceMarkerPath | None:
+    """Decompose a relative object key, returning `None` for anything that is not an absence marker."""
+    match = _ABSENCE_PATH_PATTERN.match(path.replace("\\", "/"))
+    if match is None:
+        return None
+    try:
+        day = date(int(match["year"]), int(match["month"]), int(match["day"]))
+    except ValueError:
+        return None
+    kind: PartitionKind = "observed" if match["kind"] == "observed" else "forecast"
+    return AbsenceMarkerPath(layer=match["layer"], kind=kind, day=day)
+
+
+def partition_day_statuses(
+    *,
+    layer: str,
+    kind: PartitionKind,
+    first_day: date,
+    last_day: date,
+    keys: Iterable[str],
+) -> dict[date, PartitionDayStatus]:
+    """Classify every day in `[first_day, last_day]` from `keys` alone, in chronological order.
+
+    `data` = at least one part file; `absent` = a governed-absence marker; `conflict` = both,
+    which only a manual admin action should ever produce; `missing` = neither, a real gap.
+    """
+    validate_layer_slug(layer)
+    validate_partition_kind(kind)
+    if last_day < first_day:
+        raise PartitionPathError(f"gap window {first_day}..{last_day} runs backwards")
+    span = (last_day - first_day).days + 1
+    if span > MAX_GAP_WINDOW_DAYS:
+        raise PartitionPathError(f"gap window of {span} days exceeds the {MAX_GAP_WINDOW_DAYS}-day budget")
+    data_days: set[date] = set()
+    absent_days: set[date] = set()
+    for key in keys:
+        parsed = try_parse_partition_path(key)
+        if parsed is not None and parsed.layer == layer and parsed.kind == kind:
+            data_days.add(parsed.day)
+            continue
+        marker = try_parse_absence_marker_path(key)
+        if marker is not None and marker.layer == layer and marker.kind == kind:
+            absent_days.add(marker.day)
+    statuses: dict[date, PartitionDayStatus] = {}
+    for offset in range(span):
+        day = first_day + timedelta(days=offset)
+        if day in data_days:
+            statuses[day] = "conflict" if day in absent_days else "data"
+        elif day in absent_days:
+            statuses[day] = "absent"
+        else:
+            statuses[day] = "missing"
+    return statuses
+
+
 def missing_partition_days(
     *,
     layer: str,
@@ -139,21 +224,9 @@ def missing_partition_days(
     last_day: date,
     keys: Iterable[str],
 ) -> tuple[date, ...]:
-    """Return the days in `[first_day, last_day]` that `keys` holds no part file for."""
-    validate_layer_slug(layer)
-    validate_partition_kind(kind)
-    if last_day < first_day:
-        raise PartitionPathError(f"gap window {first_day}..{last_day} runs backwards")
-    span = (last_day - first_day).days + 1
-    if span > MAX_GAP_WINDOW_DAYS:
-        raise PartitionPathError(f"gap window of {span} days exceeds the {MAX_GAP_WINDOW_DAYS}-day budget")
-    present = {
-        parsed.day
-        for parsed in (try_parse_partition_path(key) for key in keys)
-        if parsed is not None and parsed.layer == layer and parsed.kind == kind
-    }
-    candidates = (first_day + timedelta(days=offset) for offset in range(span))
-    return tuple(day for day in candidates if day not in present)
+    """Return the days in `[first_day, last_day]` covered by neither a part file nor an absence marker."""
+    statuses = partition_day_statuses(layer=layer, kind=kind, first_day=first_day, last_day=last_day, keys=keys)
+    return tuple(day for day, status in statuses.items() if status == "missing")
 
 
 def _validated_year(year: int) -> int:

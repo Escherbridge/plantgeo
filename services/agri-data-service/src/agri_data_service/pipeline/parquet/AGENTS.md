@@ -39,8 +39,14 @@ bucket can hold an isolated sandbox beside the real warehouse.
   schema the null gate. Sorting to the grain is what produces the clustering the compression needs
   (RUNBOOK §0.22.5).
 - **A zero-row write is refused.** An empty Parquet file reads to gap detection as a *present*
-  day, silently converting a real hole into apparent coverage. Governed absences need a marker
-  convention that does not exist yet (S17); until it does, an absent day must stay absent.
+  day, silently converting a real hole into apparent coverage. The absence mechanism is
+  `write_absence` (settled 2026-08-22, RUNBOOK §0.25.3): an `absent.json` marker at the day's
+  partition path carrying `GovernedAbsence` evidence, never an empty data file.
+- **Data and absence refuse to coexist, in both directions.** `write_partition` refuses a day
+  carrying an absence marker; `write_absence` refuses a day already holding a part file.
+  Retracting either side is a manual admin action (§0.21.5) — there is deliberately no API here
+  that does it. Reading a marker's evidence back is S17's concern; the backend seam has no `get`
+  yet on purpose.
 - **A receipt carries the sha256 of the uploaded bytes.** That is an upload-integrity digest, not
   a cross-version reproducibility claim: `pq.write_table` stamps the writing pyarrow version into
   the file, so the same rows written by a different pyarrow need not be byte-identical.

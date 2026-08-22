@@ -19,11 +19,14 @@ from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 
 from agri_data_service.config import ObjectStoreCredentials, Settings, settings
 from agri_data_service.foundation.canonical import sha256_digest
+from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.paths import (
+    absence_marker_path,
     day_prefix,
     month_prefix,
     partition_path,
     stream_prefix,
+    try_parse_absence_marker_path,
     try_parse_partition_path,
     year_prefix,
 )
@@ -36,6 +39,7 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.paths import PartitionKind
 
 PARQUET_CONTENT_TYPE: Final = "application/vnd.apache.parquet"
+ABSENCE_CONTENT_TYPE: Final = "application/json"
 MAX_LISTED_KEYS: Final = 500_000
 _ABSENT_OBJECT_CODES: Final = frozenset({"404", "NoSuchKey", "NotFound"})
 
@@ -50,6 +54,14 @@ class ParquetSchemaMismatchError(ParquetWriteError):
 
 class EmptyPartitionError(ParquetWriteError):
     """Raised on a zero-row write: an empty file reads as a present day and hides a real gap."""
+
+
+class GovernedAbsenceConflictError(ParquetWriteError):
+    """Raised when data and a governed absence would coexist on one stream-day.
+
+    Retracting either side is a manual admin action (RUNBOOK §0.21.5, §0.25.3), never something
+    a lane's automatic write path does on its own.
+    """
 
 
 class ObjectStoreBackend(Protocol):
@@ -82,6 +94,18 @@ class ParquetWriteReceipt:
     kind: PartitionKind
     day: date
     row_count: int
+    byte_count: int
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class AbsenceWriteReceipt:
+    """Provenance for one written governed-absence marker."""
+
+    key: str
+    relative_path: str
+    kind: PartitionKind
+    day: date
     byte_count: int
     sha256: str
 
@@ -181,6 +205,11 @@ class ObjectStore:
                 f"refusing to write a zero-row {layer!r} {kind} partition for {day}: "
                 "an empty file reads as a present day and hides the gap"
             )
+        if self.absence_exists(layer, kind, day):
+            raise GovernedAbsenceConflictError(
+                f"{layer!r} {kind} {day} carries a governed-absence marker; "
+                "retracting it is a manual admin action, not something a write may do implicitly"
+            )
         payload = _serialize_parquet(conformed, stream.compression)
         relative_path = partition_path(layer, kind, day, part_index)
         key = self.key_for(relative_path)
@@ -196,6 +225,35 @@ class ObjectStore:
             sha256=sha256_digest(payload),
         )
 
+    def write_absence(
+        self,
+        absence: GovernedAbsence,
+        *,
+        layer: str,
+        kind: PartitionKind,
+        day: date,
+    ) -> AbsenceWriteReceipt:
+        """Mark one stream-day as deliberately empty, refusing when data already covers it."""
+        day_scope = self.key_for(day_prefix(layer, kind, day))
+        for existing in self._backend.list_keys(day_scope):
+            if try_parse_partition_path(self.relative_key(existing)) is not None:
+                raise GovernedAbsenceConflictError(
+                    f"{layer!r} {kind} {day} already holds data ({self.relative_key(existing)}); "
+                    "correcting a completed record is a manual admin action"
+                )
+        payload = absence.to_json_bytes()
+        relative_path = absence_marker_path(layer, kind, day)
+        key = self.key_for(relative_path)
+        self._backend.put(key, payload, content_type=ABSENCE_CONTENT_TYPE)
+        return AbsenceWriteReceipt(
+            key=key,
+            relative_path=relative_path,
+            kind=kind,
+            day=day,
+            byte_count=len(payload),
+            sha256=sha256_digest(payload),
+        )
+
     def list_partition_keys(
         self,
         layer: str,
@@ -204,12 +262,12 @@ class ObjectStore:
         year: int | None = None,
         month: int | None = None,
     ) -> tuple[str, ...]:
-        """Return every part file of one stream as a relative path, narrowed by year and month."""
+        """Return every part file and absence marker of one stream as a relative path, narrowed by year and month."""
         scope = self._listing_scope(layer, kind, year, month)
         found: list[str] = []
         for key in self._backend.list_keys(self.key_for(scope)):
             relative_path = self.relative_key(key)
-            if try_parse_partition_path(relative_path) is None:
+            if try_parse_partition_path(relative_path) is None and try_parse_absence_marker_path(relative_path) is None:
                 continue
             found.append(relative_path)
             if len(found) > MAX_LISTED_KEYS:
@@ -219,6 +277,10 @@ class ObjectStore:
     def partition_exists(self, layer: str, kind: PartitionKind, day: date, part_index: int = 0) -> bool:
         """Report whether one part file has been written, without downloading it."""
         return self._backend.size_of(self.key_for(partition_path(layer, kind, day, part_index))) is not None
+
+    def absence_exists(self, layer: str, kind: PartitionKind, day: date) -> bool:
+        """Report whether one stream-day carries a governed-absence marker, without downloading it."""
+        return self._backend.size_of(self.key_for(absence_marker_path(layer, kind, day))) is not None
 
     def day_key_prefix(self, layer: str, kind: PartitionKind, day: date) -> str:
         """Return the absolute bucket prefix holding every part file for one stream-day."""

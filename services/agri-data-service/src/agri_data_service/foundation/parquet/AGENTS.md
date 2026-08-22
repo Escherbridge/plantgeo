@@ -35,9 +35,14 @@ files has misused the layout."* Callers get keys from
 `ObjectStore.list_partition_keys`, which already narrows by year and month so a listing over
 1,560 days is bounded.
 
-**Governed absences are not modelled here.** A day upstream genuinely cannot serve is S17's
-concern and needs a marker convention that does not exist yet — until it does, such a day reads
-as a gap. Do not invent the convention inside a lane; it must be one decision for every stream.
+**Governed absences are a marker object, settled 2026-08-22 (RUNBOOK §0.25.3).** A day upstream
+genuinely cannot serve gets `absent.json` at the day's partition path — classifiable by key
+alone, so gap detection stays a listing. `absence.py` owns the evidence payload (reason,
+upstream response, recorded-at, run id — all mandatory); `partition_day_statuses` classifies
+each day as `data` / `absent` / `conflict` / `missing`, and `missing_partition_days` reports
+only `missing`. A `conflict` day (data AND marker) is never produced by the write path — only a
+manual admin action can create or resolve one. The zero-row write refusal stays: an empty
+Parquet file is never the absence mechanism.
 
 ## Static layers use the same layout
 RUNBOOK §0.23.6 assumed static layers (`soil-survey`, `watersheds`, `evacuation-zones`) would get
