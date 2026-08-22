@@ -38,15 +38,17 @@ import httpx
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.execution.backfill_types import (
+    HistoricalBackfillWindow,
+    four_calendar_years_before,
+)
 from agri_data_service.execution.coverage_contract import contiguous_ranges
 from agri_data_service.execution.historical_backfill import (
     NASA_POWER_MAX_RESPONSE_BYTES,
     NASA_POWER_SIGNAL_SPECIFICATIONS,
     NASA_POWER_TIMEOUT_SECONDS,
-    HistoricalBackfillWindow,
     HistoricalNasaBackfillPlan,
     extract_nasa_power_parameter_values,
-    four_calendar_years_before,
     historical_nasa_plan_checksum,
     nasa_power_daily_point_url,
     nasa_power_observed_value,

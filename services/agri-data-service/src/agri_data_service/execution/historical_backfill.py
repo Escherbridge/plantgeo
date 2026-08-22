@@ -14,6 +14,12 @@ from typing import TYPE_CHECKING, Literal
 import httpx
 from pydantic import Field, field_validator, model_validator
 
+from agri_data_service.execution.backfill_types import (
+    AnalysisGridCell,
+    HistoricalBackfillWindow,
+    HistoricalCoverageAudit,
+    HistoricalSignalObservation,
+)
 from agri_data_service.execution.contracts import ContractModel, canonical_json_bytes
 from agri_data_service.execution.source_ingestion import SourceDefinition  # noqa: TC001
 
@@ -58,43 +64,6 @@ NASA_POWER_SIGNAL_SPECIFICATIONS: dict[str, tuple[str, str]] = {
     "T2MDEW": ("dew_point_temperature", "C"),
     "WS2M": ("wind_speed", "m/s"),
 }
-
-
-class HistoricalBackfillWindow(ContractModel):
-    """One inclusive four-calendar-year historical window."""
-
-    start_date: date
-    end_date: date
-
-    @model_validator(mode="after")
-    def require_exact_four_calendar_years(self) -> HistoricalBackfillWindow:
-        expected_start = four_calendar_years_before(self.end_date)
-        if self.start_date != expected_start:
-            raise ValueError(
-                "historical backfill windows must start exactly four calendar years before end_date "
-                f"({expected_start.isoformat()})"
-            )
-        return self
-
-    @property
-    def day_count(self) -> int:
-        """Return the inclusive number of daily observations per signal."""
-        return (self.end_date - self.start_date).days + 1
-
-
-class AnalysisGridCell(ContractModel):
-    """One stable analysis-grid centroid authorized for an upstream point request."""
-
-    cell_key: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$")
-    latitude: float = Field(ge=-90, le=90)
-    longitude: float = Field(ge=-180, le=180)
-
-    @field_validator("latitude", "longitude", mode="before")
-    @classmethod
-    def require_finite_coordinate(cls, value: object) -> object:
-        if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
-            raise ValueError("analysis-cell coordinates must be finite numeric values")
-        return value
 
 
 class NasaPowerDailyPlan(ContractModel):
@@ -247,42 +216,6 @@ class HistoricalNasaCheckpoint(ContractModel):
         if keys != sorted(keys) or len(keys) != len(set(keys)):
             raise ValueError("historical receipts must be sorted and unique by cell_key")
         return value
-
-
-@dataclass(frozen=True)
-class HistoricalSignalObservation:
-    """One normalized source value or explicitly preserved source missingness."""
-
-    cell_key: str
-    source_parameter: str
-    signal_name: str
-    observed_at: datetime
-    original_value: float | None
-    original_unit: str
-    normalized_value: float | None
-    normalized_unit: str
-    quality_flag: str
-    is_observed: bool
-    payload_checksum: str
-    # What fraction of the sub-daily observations a daily row was actually reduced from. It maps
-    # onto `agri.signal_observation.coverage_fraction` (CHECK 0..1). Lanes whose provider publishes
-    # one value per day leave it at 1; a lane that reduces hours to a day -- CAMS -- must set it, or
-    # an 18-of-24-hour mean is written as `accepted` with no per-row trace that the day was partial.
-    coverage_fraction: float = 1.0
-
-
-@dataclass(frozen=True)
-class HistoricalCoverageAudit:
-    """Per-cell, per-signal evidence that a requested date window is complete or not."""
-
-    cell_key: str
-    source_parameter: str
-    signal_name: str
-    window_start: datetime
-    window_end: datetime
-    expected_observation_count: int
-    received_observation_count: int
-    status: str
 
 
 @dataclass(frozen=True)
@@ -801,15 +734,6 @@ def _retry_delay(response: httpx.Response, attempt: int, retry_base_seconds: flo
 
 def _inclusive_dates(window: HistoricalBackfillWindow) -> list[date]:
     return [window.start_date + timedelta(days=offset) for offset in range(window.day_count)]
-
-
-def four_calendar_years_before(value: date) -> date:
-    try:
-        return value.replace(year=value.year - 4)
-    except ValueError:
-        # A February 29 end date maps to February 28 when the matching past
-        # calendar year is not a leap year.
-        return value.replace(year=value.year - 4, day=28)
 
 
 def _format_coordinate(value: float) -> str:

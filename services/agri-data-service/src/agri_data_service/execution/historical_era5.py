@@ -32,13 +32,13 @@ import xarray as xr
 from pydantic import Field, field_validator, model_validator
 
 from agri_data_service.config import settings
-from agri_data_service.execution.contracts import ContractModel, canonical_json_bytes
-from agri_data_service.execution.historical_backfill import (
+from agri_data_service.execution.backfill_types import (
     AnalysisGridCell,
     HistoricalBackfillWindow,
     HistoricalCoverageAudit,
     HistoricalSignalObservation,
 )
+from agri_data_service.execution.contracts import ContractModel, canonical_json_bytes
 from agri_data_service.execution.source_ingestion import SourceDefinition  # noqa: TC001
 
 if TYPE_CHECKING:

@@ -12,15 +12,17 @@ from typing import TYPE_CHECKING, Final, Literal
 import httpx
 from pydantic import ValidationError
 
+from agri_data_service.execution.backfill_types import (
+    AnalysisGridCell,
+    HistoricalBackfillWindow,
+    four_calendar_years_before,
+)
 from agri_data_service.execution.historical_backfill import (
     NASA_POWER_DAILY_SCHEMA_VERSION,
     NASA_POWER_MAX_RESPONSE_BYTES,
     NASA_POWER_TIMEOUT_SECONDS,
-    AnalysisGridCell,
-    HistoricalBackfillWindow,
     HistoricalNasaBackfillPlan,
     extract_nasa_power_parameter_values,
-    four_calendar_years_before,
     historical_nasa_plan_checksum,
     nasa_power_daily_point_url,
     nasa_power_observed_value,

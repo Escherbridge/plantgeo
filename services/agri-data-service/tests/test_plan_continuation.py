@@ -15,10 +15,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-from agri_data_service.execution.historical_backfill import (
+from agri_data_service.execution.backfill_types import (
     HistoricalBackfillWindow,
-    HistoricalNasaBackfillPlan,
     four_calendar_years_before,
+)
+from agri_data_service.execution.historical_backfill import (
+    HistoricalNasaBackfillPlan,
 )
 from agri_data_service.execution.historical_open_meteo import (
     OPEN_METEO_ARCHIVE_SCHEMA_VERSION,

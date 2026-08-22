@@ -53,10 +53,12 @@ from agri_data_service.execution.coverage_fill import (
     unprobed_refusal,
     write_fill_plan,
 )
+from agri_data_service.execution.backfill_types import (
+    four_calendar_years_before,
+)
 from agri_data_service.execution.historical_backfill import (
     NASA_POWER_MAX_RESPONSE_BYTES,
     HistoricalNasaBackfillPlan,
-    four_calendar_years_before,
 )
 from agri_data_service.execution.plan_continuation import (
     ContinuationLane,

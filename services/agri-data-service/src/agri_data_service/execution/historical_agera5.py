@@ -10,11 +10,11 @@ from typing import Final, Literal
 
 from pydantic import Field, field_validator
 
-from agri_data_service.execution.contracts import ContractModel, canonical_json_bytes
-from agri_data_service.execution.historical_backfill import (
+from agri_data_service.execution.backfill_types import (
     AnalysisGridCell,  # noqa: TC001
     HistoricalBackfillWindow,  # noqa: TC001
 )
+from agri_data_service.execution.contracts import ContractModel, canonical_json_bytes
 from agri_data_service.execution.historical_era5 import _require_cds_credentials
 from agri_data_service.execution.source_ingestion import SourceDefinition  # noqa: TC001
 
