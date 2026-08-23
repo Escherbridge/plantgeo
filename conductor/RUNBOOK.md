@@ -3716,7 +3716,46 @@ the claim implies. **Verified state after this session: 3,175 passed · 110 skip
 `src tests plans` · `mypy --strict src` = 2 pre-existing errors in that one file.** Fix or waive it
 explicitly rather than letting the next session rediscover it.
 
-#### 0.26.5 Continuation
+#### 0.26.5 THE WAVE 2 → 3 GATE IS PASSED — real partitions, read back, 2026-08-22
+
+Four real signal-plane partitions are in the bucket, written from production and **downloaded back
+out and validated**, not merely written. The gate was "a file a reader opened," and this is it.
+
+| day | rows | bytes | B/row | support keys |
+|---|---|---|---|---|
+| 2026-08-01 | **15,730** | 83,271 | 5.29 | `era5-land-0.1deg` 11,760 + `surface` 3,970 |
+| 2026-08-02 | **15,730** | 83,013 | 5.28 | `era5-land-0.1deg` 11,760 + `surface` 3,970 |
+| 2026-08-05 | 3,970 | 26,126 | 6.58 | `surface` only |
+| 2026-08-06 | 3,970 | 26,163 | 6.59 | `surface` only |
+
+**Three independent corroborations that the exporter is correct**, each a number it was not given:
+
+1. **15,730 grain rows/day is EXACTLY §0.22.6's measured July figure**, arrived at by a different
+   code path against different days. That is the projection's own input reproduced.
+2. **397 cells × 10 signals = 3,970 exactly** — a lane contracted for **11** NASA signals.
+   `surface_shortwave_radiation` is missing, which is §0.22.8's radiation gap **rediscovered
+   independently**. It remains unexplained and is still the designated first validation case.
+3. **1,470 ERA5-Land cells × 8 signals = 11,760**, matching the lane contract's measured
+   1,470-of-1,568 (the 98 absent cells are Pacific-edge water and are not a gap).
+   ERA5-Land stops after 2026-08-02 while NASA continues to 08-06 — exactly what the 9-day vs
+   5-day publication lags predict.
+
+Verified on readback: schema equals the registry, **0 duplicate grain keys**, rows sorted to the
+grain, and `partition_day_statuses` over the real listing returns
+`08-01 data · 08-02 data · 08-03 missing · 08-04 missing · 08-05 data · 08-06 data`. The absence
+machinery, the lister and the writer are proven against the live bucket, not a fake.
+
+**The exporter is `pipeline/lanes/signal.py` + `sql/pipeline/signal_plane_day_export.sql`.** Its
+governed CTE is transcribed **verbatim** from `drizzle/0029:534-614`, the defining query of the
+dropped `geo.mv_signal_cell_daily`, with only two deliberate differences (day/cell scoping, and the
+three columns §0.22.3 measured equal to `normalized_value`). **Exporting a different population
+than that rollup served would silently change what every downstream reader sees** — that is why it
+is a transcription and not a new query, and why the next ten lanes copy its shape.
+
+**Measured cost:** 8.1 s for 1,965 cells on a NASA-only day, 18.0 s cold / 3.0 s warm on a
+both-producer day, batching 250 cells per statement.
+
+#### 0.26.6 Continuation
 
 1. **Extract the shared Open-Meteo client primitives out of `ingest/open_meteo.py`**, then create
    `ingest/weather_observations/`. Same shape as §0.26.3; the default-deny rule already covers it.
