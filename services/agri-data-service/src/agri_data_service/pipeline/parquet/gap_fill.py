@@ -22,8 +22,13 @@ fails the tick. See `AGENTS.md` in this directory for the operational notes.
 A STATIC LOOKUP HAS NO BACKLOG AT ALL, AND THAT IS THE SECOND MECHANISM HERE. `daily_series` and
 `release_series` lanes get the window walk above. A `static_lookup` lane instead reads its SOURCE
 WATERMARK, and owes exactly one snapshot dated at that watermark -- or nothing, when a partition
-dated at or after it already exists. Nothing can be "missed", because no calendar day ever carried
-an obligation for a reference fact.
+already covers it AND was exported at or after the source's own change instant. Nothing can be
+"missed", because no calendar day ever carried an obligation for a reference fact.
+
+THE ONE SNAPSHOT A STATIC LANE OWES MAY BE A DAY IT ALREADY HOLDS. When the source changed again
+later on the same UTC day, the version owed IS that day, re-exported: `write_partition` overwrites
+by key, so the fill path below needs no separate correction mode. The census reads the export
+instant out of the SAME listing it takes the days from, so this costs no extra object-store call.
 """
 
 from __future__ import annotations
@@ -46,7 +51,7 @@ from agri_data_service.foundation.parquet.paths import (
     try_parse_absence_marker_path,
     try_parse_partition_path,
 )
-from agri_data_service.pipeline.parquet.objectstore import EmptyPartitionError
+from agri_data_service.pipeline.parquet.objectstore import EmptyPartitionError, oldest_export_instant
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -302,30 +307,36 @@ def _static_lane_census(
     if reading is not None and reading.error is not None:
         return _census_shell(lane, static_state="watermark_unread", error=reading.error)
     try:
-        keys = store.list_partition_keys(lane.slug, GAP_FILL_PARTITION_KIND)
+        listed = store.list_partition_objects(lane.slug, GAP_FILL_PARTITION_KIND)
     except Exception as error:  # per-lane isolation: an unreadable listing must not end the census
         return _census_shell(lane, static_state="watermark_unread", error=_listing_failure(lane, error))
     data_days = {
         parsed.day
-        for key in keys
-        if (parsed := try_parse_partition_path(key)) is not None
+        for entry in listed
+        if (parsed := try_parse_partition_path(entry.relative_path)) is not None
         and parsed.layer == lane.slug
         and parsed.kind == GAP_FILL_PARTITION_KIND
     }
     marker_days = {
         marker.day
-        for key in keys
-        if (marker := try_parse_absence_marker_path(key)) is not None
+        for entry in listed
+        if (marker := try_parse_absence_marker_path(entry.relative_path)) is not None
         and marker.layer == lane.slug
         and marker.kind == GAP_FILL_PARTITION_KIND
     }
+    newest_day = max(data_days, default=None)
     watermark = None if reading is None else reading.watermark
     try:
         # Handed to the resolver APART, from the sets already built above: for a version stamp a part
         # file and a governed absence make opposite claims. See `resolve_static_lane`.
         verdict = resolve_static_lane(
             watermark=watermark,
-            newest_data_day=max(data_days, default=None),
+            newest_data_day=newest_day,
+            newest_data_instant=(
+                None
+                if newest_day is None
+                else oldest_export_instant(listed, layer=lane.slug, kind=GAP_FILL_PARTITION_KIND, day=newest_day)
+            ),
             newest_marker_day=max(marker_days, default=None),
             today=today,
         )

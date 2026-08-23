@@ -3,6 +3,18 @@
 Layer L2: may import `foundation` and `warehouse`; may NOT import method, planes, or interface.
 See `AGENTS.md` in this directory for the credential wiring, the mockable backend seam, and why
 this path is synchronous.
+
+A LISTING CARRIES THE EXPORT INSTANT, NOT JUST THE KEY. `list_objects_v2` already returns
+`LastModified` on every entry, and discarding it cost a `static_lookup` lane the only signal that
+separates two exports made on the same UTC day -- the day in the key is a VERSION STAMP, so once
+day D holds a snapshot the key alone says nothing about WHICH state of the source that snapshot
+read. One listing method therefore returns both, so no caller can reach a key-only path by accident.
+
+ONE STREAM-DAY'S EXPORT INSTANT IS THE OLDEST OF ITS PART FILES, never the newest. A re-export that
+rewrote `part-0` but left an older `part-1` beside it publishes a MIXTURE, and the oldest part is
+the one that says so; the newest would report the whole day as freshly captured. An unknown instant
+on any part collapses the answer to `None`, because a partly unattributed set is not a freshness
+claim.
 """
 
 from __future__ import annotations
@@ -10,6 +22,7 @@ from __future__ import annotations
 import io
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Final, Protocol
 
 import boto3  # type: ignore[import-untyped]
@@ -32,7 +45,7 @@ from agri_data_service.foundation.parquet.paths import (
 from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema, get_stream_schema
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
     from datetime import date
 
     from agri_data_service.foundation.parquet.absence import GovernedAbsence
@@ -64,12 +77,28 @@ class GovernedAbsenceConflictError(ParquetWriteError):
     """
 
 
+@dataclass(frozen=True, slots=True)
+class ListedObject:
+    """One object a listing returned: its bucket key, and when the store last wrote it."""
+
+    key: str
+    last_modified: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ListedPartition:
+    """One part file or absence marker of the frozen layout, with the instant it was exported."""
+
+    relative_path: str
+    last_modified: datetime | None
+
+
 class ObjectStoreBackend(Protocol):
     """The whole object-store surface the warehouse needs; implement it to test without a network."""
 
     def put(self, key: str, payload: bytes, *, content_type: str) -> None: ...
 
-    def list_keys(self, prefix: str) -> Iterator[str]: ...
+    def list_objects(self, prefix: str) -> Iterator[ListedObject]: ...
 
     def size_of(self, key: str) -> int | None: ...
 
@@ -133,15 +162,15 @@ class BotoObjectStoreBackend:
         """Upload one object, overwriting any object already at `key`."""
         self.client.put_object(Bucket=self.bucket, Key=key, Body=payload, ContentType=content_type)
 
-    def list_keys(self, prefix: str) -> Iterator[str]:
-        """Yield every key under `prefix`, following continuation tokens to the end of the listing."""
+    def list_objects(self, prefix: str) -> Iterator[ListedObject]:
+        """Yield every object under `prefix`, following continuation tokens to the end of the listing."""
         token: str | None = None
         while True:
             request: dict[str, object] = {"Bucket": self.bucket, "Prefix": prefix}
             if token is not None:
                 request["ContinuationToken"] = token
             response = self.client.list_objects_v2(**request)
-            yield from _listed_keys(response)
+            yield from _listed_objects(response)
             next_token = response.get("NextContinuationToken")
             if not isinstance(next_token, str) or not next_token:
                 return
@@ -235,10 +264,10 @@ class ObjectStore:
     ) -> AbsenceWriteReceipt:
         """Mark one stream-day as deliberately empty, refusing when data already covers it."""
         day_scope = self.key_for(day_prefix(layer, kind, day))
-        for existing in self._backend.list_keys(day_scope):
-            if try_parse_partition_path(self.relative_key(existing)) is not None:
+        for existing in self._backend.list_objects(day_scope):
+            if try_parse_partition_path(self.relative_key(existing.key)) is not None:
                 raise GovernedAbsenceConflictError(
-                    f"{layer!r} {kind} {day} already holds data ({self.relative_key(existing)}); "
+                    f"{layer!r} {kind} {day} already holds data ({self.relative_key(existing.key)}); "
                     "correcting a completed record is a manual admin action"
                 )
         payload = absence.to_json_bytes()
@@ -254,6 +283,26 @@ class ObjectStore:
             sha256=sha256_digest(payload),
         )
 
+    def list_partition_objects(
+        self,
+        layer: str,
+        kind: PartitionKind,
+        *,
+        year: int | None = None,
+        month: int | None = None,
+    ) -> tuple[ListedPartition, ...]:
+        """Return one stream's part files and absence markers WITH their export instants, narrowed by year and month."""
+        scope = self._listing_scope(layer, kind, year, month)
+        found: list[ListedPartition] = []
+        for listed in self._backend.list_objects(self.key_for(scope)):
+            relative_path = self.relative_key(listed.key)
+            if try_parse_partition_path(relative_path) is None and try_parse_absence_marker_path(relative_path) is None:
+                continue
+            found.append(ListedPartition(relative_path=relative_path, last_modified=listed.last_modified))
+            if len(found) > MAX_LISTED_KEYS:
+                raise ValueError(f"listing {scope!r} exceeded the {MAX_LISTED_KEYS}-key budget")
+        return tuple(found)
+
     def list_partition_keys(
         self,
         layer: str,
@@ -263,16 +312,17 @@ class ObjectStore:
         month: int | None = None,
     ) -> tuple[str, ...]:
         """Return every part file and absence marker of one stream as a relative path, narrowed by year and month."""
-        scope = self._listing_scope(layer, kind, year, month)
-        found: list[str] = []
-        for key in self._backend.list_keys(self.key_for(scope)):
-            relative_path = self.relative_key(key)
-            if try_parse_partition_path(relative_path) is None and try_parse_absence_marker_path(relative_path) is None:
-                continue
-            found.append(relative_path)
-            if len(found) > MAX_LISTED_KEYS:
-                raise ValueError(f"listing {scope!r} exceeded the {MAX_LISTED_KEYS}-key budget")
-        return tuple(found)
+        return tuple(
+            listed.relative_path for listed in self.list_partition_objects(layer, kind, year=year, month=month)
+        )
+
+    def day_export_instant(self, layer: str, kind: PartitionKind, day: date) -> datetime | None:
+        """Return when one stream-day's part files were exported, from a listing scoped to that day alone."""
+        listed = tuple(
+            ListedPartition(relative_path=self.relative_key(entry.key), last_modified=entry.last_modified)
+            for entry in self._backend.list_objects(self.day_key_prefix(layer, kind, day))
+        )
+        return oldest_export_instant(listed, layer=layer, kind=kind, day=day)
 
     def partition_exists(self, layer: str, kind: PartitionKind, day: date, part_index: int = 0) -> bool:
         """Report whether one part file has been written, without downloading it."""
@@ -322,8 +372,35 @@ def _serialize_parquet(table: pa.Table, compression: str) -> bytes:
     return buffer.getvalue()
 
 
-def _listed_keys(response: Mapping[str, object]) -> Iterator[str]:
-    """Pull object keys out of an untrusted `list_objects_v2` response."""
+def oldest_export_instant(
+    listed: Iterable[ListedPartition],
+    *,
+    layer: str,
+    kind: PartitionKind,
+    day: date,
+) -> datetime | None:
+    """Return the OLDEST instant among one stream-day's part files, from a listing already made.
+
+    `None` means the question cannot be answered: either no part file covers that day, or one of
+    them carries no instant. This module's docstring says why the oldest is the honest answer.
+    """
+    oldest: datetime | None = None
+    for entry in listed:
+        parsed = try_parse_partition_path(entry.relative_path)
+        if parsed is None or parsed.layer != layer or parsed.kind != kind or parsed.day != day:
+            continue
+        if entry.last_modified is None:
+            return None
+        oldest = entry.last_modified if oldest is None else min(oldest, entry.last_modified)
+    return oldest
+
+
+def _listed_objects(response: Mapping[str, object]) -> Iterator[ListedObject]:
+    """Pull object keys and their last-modified instants out of an untrusted `list_objects_v2` response.
+
+    A `LastModified` that is absent, of the wrong type, or timezone-naive is reported as `None`: an
+    unknown instant degrades a currency answer to day resolution, where a wrong one would shift it.
+    """
     contents = response.get("Contents")
     if not isinstance(contents, list):
         return
@@ -331,8 +408,11 @@ def _listed_keys(response: Mapping[str, object]) -> Iterator[str]:
         if not isinstance(item, Mapping):
             continue
         key = item.get("Key")
-        if isinstance(key, str):
-            yield key
+        if not isinstance(key, str):
+            continue
+        last_modified = item.get("LastModified")
+        reported = last_modified if isinstance(last_modified, datetime) and last_modified.tzinfo is not None else None
+        yield ListedObject(key=key, last_modified=reported)
 
 
 def _client_error_code(exc: ClientError) -> str | None:

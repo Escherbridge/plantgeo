@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
-from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.parquet.objectstore import ListedObject, ObjectStore
 from agri_data_service.planes.sensors import (
     SensorsPlaneError,
     read_sensors_readings,
@@ -43,14 +43,15 @@ class LocalFileBackend:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(payload)
 
-    def list_keys(self, prefix: str) -> Iterator[str]:
+    def list_objects(self, prefix: str) -> Iterator[ListedObject]:
         if not self.root.exists():
             return
         for path in sorted(self.root.rglob("*")):
             if path.is_file():
                 relative = path.relative_to(self.root).as_posix()
                 if relative.startswith(prefix):
-                    yield relative
+                    # A file's mtime is this backend's honest analogue of S3's `LastModified`.
+                    yield ListedObject(key=relative, last_modified=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC))
 
     def size_of(self, key: str) -> int | None:
         path = self.root / key

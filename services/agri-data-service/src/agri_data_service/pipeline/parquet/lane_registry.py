@@ -351,8 +351,12 @@ async def _read_source_watermark(
     watermark_at = _coerce_instant(row["watermark_at"], column="watermark_at", slug=slug)
     if watermark_at is None:
         return SourceWatermark(day=None, basis=f"{slug}: no published rows ({evidence}; row_count={row_count})")
+    # The instant rides ALONGSIDE the day it folds to; the day alone cannot separate two changes
+    # made on one UTC date. See `foundation/parquet/lane_contract.py`.
+    watermark_utc = watermark_at.astimezone(UTC)
     return SourceWatermark(
-        day=watermark_at.astimezone(UTC).date(),
+        day=watermark_utc.date(),
+        instant=watermark_utc,
         basis=f"{slug}: GREATEST({evidence}) over {row_count} published rows",
     )
 
@@ -420,6 +424,10 @@ async def _calendar_watermark(
     and the dimension is current while that still reaches `today + CALENDAR_REQUIRED_FORWARD_DAYS`.
     Returning the newest held version while coverage suffices is what makes the generic rule -- a
     partition dated at or after the watermark means current -- resolve without a special case.
+
+    It carries NO instant, and cannot: a computed requirement has no source change time to compare
+    an export against. That is the honest unknown-instant case, and `resolve_static_lane` settles it
+    at day resolution while saying in its detail that the answer is day-resolution.
     """
     newest = newest_covered_day(
         layer=CALENDAR_STREAM,
@@ -429,6 +437,7 @@ async def _calendar_watermark(
     required = required_calendar_version_day(today=today, newest_version_day=newest)
     return SourceWatermark(
         day=required,
+        instant=None,
         basis=(
             f"{CALENDAR_STREAM}: pure computation, no source system. Newest version held "
             f"{'none' if newest is None else newest.isoformat()}; each version covers "

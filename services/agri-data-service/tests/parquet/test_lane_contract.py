@@ -3,11 +3,14 @@
 Everything here is stdlib-pure: no store, no session, no clock. The driver's use of these rules is
 pinned in `test_gap_fill.py`; what is pinned here is the rules themselves, because they are what
 decides whether a reference set is "current" or owes a snapshot.
+
+The sub-day cases below are named for `evacuation-zones` on purpose: that lane is the one where the
+day-resolution answer was a life-safety defect rather than a staleness annoyance.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -29,6 +32,12 @@ from agri_data_service.foundation.parquet.paths import absence_marker_path, part
 TODAY = date(2026, 8, 22)
 CHANGED_ON = date(2026, 8, 7)
 EXPECTED_NATURE_COUNT = 3
+
+# Two instants on ONE UTC day: an Oregon OEM zone that was Be Ready in the morning and Go Now that
+# afternoon. The day cannot tell them apart, which is exactly why the watermark carries the instant.
+BE_READY_AT = datetime(2026, 8, 7, 9, 15, tzinfo=UTC)
+GO_NOW_AT = datetime(2026, 8, 7, 16, 40, tzinfo=UTC)
+EVACUATION_BASIS = "evacuation-zones: GREATEST(feature_updated_at) over 412 published rows"
 
 
 def test_there_are_exactly_three_natures_and_each_validates() -> None:
@@ -66,6 +75,7 @@ def test_a_version_at_or_after_the_watermark_is_current_and_owes_nothing() -> No
         verdict = resolve_static_lane(
             watermark=SourceWatermark(day=CHANGED_ON, basis="max(updated_at)"),
             newest_data_day=held,
+            newest_data_instant=None,
             newest_marker_day=None,
             today=TODAY,
         )
@@ -78,6 +88,7 @@ def test_a_version_older_than_the_watermark_owes_one_snapshot_dated_at_the_water
     verdict = resolve_static_lane(
         watermark=SourceWatermark(day=CHANGED_ON, basis="max(updated_at)"),
         newest_data_day=date(2026, 7, 1),
+        newest_data_instant=None,
         newest_marker_day=None,
         today=TODAY,
     )
@@ -90,6 +101,7 @@ def test_a_lane_that_has_never_written_owes_its_first_version() -> None:
     verdict = resolve_static_lane(
         watermark=SourceWatermark(day=CHANGED_ON, basis="max(updated_at)"),
         newest_data_day=None,
+        newest_data_instant=None,
         newest_marker_day=None,
         today=TODAY,
     )
@@ -102,6 +114,7 @@ def test_an_empty_source_is_reported_as_empty_rather_than_as_a_day_owed() -> Non
     verdict = resolve_static_lane(
         watermark=SourceWatermark(day=None, basis="max(updated_at)=null"),
         newest_data_day=None,
+        newest_data_instant=None,
         newest_marker_day=None,
         today=TODAY,
     )
@@ -112,7 +125,13 @@ def test_an_empty_source_is_reported_as_empty_rather_than_as_a_day_owed() -> Non
 
 def test_not_reading_the_watermark_is_its_own_state_not_zero_gaps() -> None:
     """ "Nobody looked" and "the source says we are current" both show no missing days. They differ."""
-    verdict = resolve_static_lane(watermark=None, newest_data_day=CHANGED_ON, newest_marker_day=None, today=TODAY)
+    verdict = resolve_static_lane(
+        watermark=None,
+        newest_data_day=CHANGED_ON,
+        newest_data_instant=None,
+        newest_marker_day=None,
+        today=TODAY,
+    )
 
     assert verdict.state == "watermark_unread"
     assert verdict.version_day is None
@@ -125,9 +144,112 @@ def test_a_watermark_after_today_is_a_clock_disagreement_and_is_refused() -> Non
         resolve_static_lane(
             watermark=SourceWatermark(day=date(2026, 8, 23), basis="max(updated_at)"),
             newest_data_day=None,
+            newest_data_instant=None,
             newest_marker_day=None,
             today=TODAY,
         )
+
+
+def test_a_source_change_later_the_same_day_makes_the_held_version_stale() -> None:
+    """EVACUATION ZONES: an Oregon OEM level moves Be Ready -> Go Now within hours of one UTC day.
+
+    A snapshot exported at 09:15 cannot hold a change the source made at 16:40, however current its
+    version stamp looks. Comparing days alone answered `current` here and served a stale evacuation
+    level until UTC midnight -- the defect this rule closes.
+    """
+    verdict = resolve_static_lane(
+        watermark=SourceWatermark(day=CHANGED_ON, instant=GO_NOW_AT, basis=EVACUATION_BASIS),
+        newest_data_day=CHANGED_ON,
+        newest_data_instant=BE_READY_AT,
+        newest_marker_day=None,
+        today=TODAY,
+    )
+
+    assert verdict.state == "stale"
+    # THE SAME DAY, re-exported. A static lane re-exports its whole population, so correcting a
+    # version means overwriting it -- the partition layout does not grow a second axis.
+    assert verdict.version_day == CHANGED_ON
+    assert "BEFORE" in verdict.detail
+
+
+def test_an_export_at_or_after_the_source_change_captured_it_and_is_current() -> None:
+    """An export READS the source at write time, so writing after the change means holding it."""
+    for exported_at in (GO_NOW_AT, GO_NOW_AT + timedelta(minutes=1)):
+        verdict = resolve_static_lane(
+            watermark=SourceWatermark(day=CHANGED_ON, instant=GO_NOW_AT, basis=EVACUATION_BASIS),
+            newest_data_day=CHANGED_ON,
+            newest_data_instant=exported_at,
+            newest_marker_day=None,
+            today=TODAY,
+        )
+
+        assert verdict.state == "current"
+        assert verdict.version_day is None
+
+
+def test_an_unknown_instant_falls_back_to_day_resolution_and_says_so_in_the_verdict() -> None:
+    """A lane that re-exported on every tick forever would be a worse bug than the one being fixed.
+
+    The calendar dimension is pure computation and has no source instant to offer; a backend may
+    equally be unable to report an export instant. Both settle at the day, and BOTH say in `detail`
+    that the answer was day-resolution, because reporting certainty nobody has is this module's one
+    unforgivable move.
+    """
+    no_source_instant = resolve_static_lane(
+        watermark=SourceWatermark(day=CHANGED_ON, basis="calendar: pure computation, no source system"),
+        newest_data_day=CHANGED_ON,
+        newest_data_instant=BE_READY_AT,
+        newest_marker_day=None,
+        today=TODAY,
+    )
+    no_export_instant = resolve_static_lane(
+        watermark=SourceWatermark(day=CHANGED_ON, instant=GO_NOW_AT, basis=EVACUATION_BASIS),
+        newest_data_day=CHANGED_ON,
+        newest_data_instant=None,
+        newest_marker_day=None,
+        today=TODAY,
+    )
+
+    for verdict in (no_source_instant, no_export_instant):
+        assert verdict.state == "current"
+        assert verdict.version_day is None
+        assert "DAY-RESOLUTION" in verdict.detail
+    assert "the source reported no change instant" in no_source_instant.detail
+    assert "no export instant" in no_export_instant.detail
+
+
+def test_a_later_version_day_is_current_without_consulting_either_instant() -> None:
+    """The day IS the version stamp, so a later version supersedes whatever the two clocks report."""
+    verdict = resolve_static_lane(
+        watermark=SourceWatermark(day=CHANGED_ON, instant=GO_NOW_AT, basis=EVACUATION_BASIS),
+        newest_data_day=date(2026, 8, 20),
+        newest_data_instant=BE_READY_AT,
+        newest_marker_day=None,
+        today=TODAY,
+    )
+
+    assert verdict.state == "current"
+    assert "later than the source watermark" in verdict.detail
+
+
+def test_a_timezone_naive_instant_is_refused_on_both_sides_of_the_comparison() -> None:
+    """Assuming a zone for a version stamp shifts it by up to a day, which is the error being fixed."""
+    with pytest.raises(LaneContractError, match="timezone-naive"):
+        SourceWatermark(day=CHANGED_ON, instant=datetime(2026, 8, 7, 16, 40), basis=EVACUATION_BASIS)  # noqa: DTZ001
+    with pytest.raises(LaneContractError, match="timezone-naive"):
+        resolve_static_lane(
+            watermark=SourceWatermark(day=CHANGED_ON, instant=GO_NOW_AT, basis=EVACUATION_BASIS),
+            newest_data_day=CHANGED_ON,
+            newest_data_instant=datetime(2026, 8, 7, 9, 15),  # noqa: DTZ001
+            newest_marker_day=None,
+            today=TODAY,
+        )
+
+
+def test_an_empty_source_cannot_carry_a_change_instant() -> None:
+    """No published rows means nothing changed; a day-less watermark holding an instant is incoherent."""
+    with pytest.raises(LaneContractError, match="nothing that changed"):
+        SourceWatermark(day=None, instant=GO_NOW_AT, basis="max(updated_at)=null")
 
 
 def test_a_governed_absence_at_the_watermark_is_a_failed_read_and_never_latches_to_current() -> None:
@@ -138,6 +260,7 @@ def test_a_governed_absence_at_the_watermark_is_a_failed_read_and_never_latches_
     verdict = resolve_static_lane(
         watermark=watermark,
         newest_data_day=newest_data_day(layer="watersheds", kind="observed", keys=keys),
+        newest_data_instant=None,
         newest_marker_day=newest_marker_day(layer="watersheds", kind="observed", keys=keys),
         today=TODAY,
     )
@@ -160,6 +283,7 @@ def test_a_marker_beside_an_up_to_date_part_file_still_reads_as_current() -> Non
     verdict = resolve_static_lane(
         watermark=SourceWatermark(day=CHANGED_ON, basis="max(updated_at)"),
         newest_data_day=newest_data_day(layer="watersheds", kind="observed", keys=keys),
+        newest_data_instant=None,
         newest_marker_day=newest_marker_day(layer="watersheds", kind="observed", keys=keys),
         today=TODAY,
     )
@@ -173,6 +297,7 @@ def test_an_empty_source_stays_empty_rather_than_stale_when_a_marker_covers_it()
     verdict = resolve_static_lane(
         watermark=SourceWatermark(day=None, basis="max(updated_at)=null"),
         newest_data_day=None,
+        newest_data_instant=None,
         newest_marker_day=CHANGED_ON,
         today=TODAY,
     )

@@ -12,13 +12,21 @@ import pytest
 
 from agri_data_service.config import ObjectStoreCredentials, Settings
 from agri_data_service.foundation.canonical import sha256_digest
-from agri_data_service.foundation.parquet.paths import missing_partition_days, partition_path
+from agri_data_service.foundation.parquet.paths import (
+    absence_marker_path,
+    missing_partition_days,
+    partition_path,
+)
 from agri_data_service.pipeline.parquet.objectstore import (
     PARQUET_CONTENT_TYPE,
+    BotoObjectStoreBackend,
     EmptyPartitionError,
+    ListedObject,
+    ListedPartition,
     ObjectStore,
     ParquetSchemaMismatchError,
     conform_to_stream_schema,
+    oldest_export_instant,
     polars_storage_options,
 )
 from agri_data_service.warehouse.parquet.schema import (
@@ -43,22 +51,61 @@ JULY_FOURTH = date(2026, 7, 4)
 EXPECTED_ROW_COUNT = 3
 EXPECTED_YEAR_KEY_COUNT = 2
 
+# Three instants on ONE UTC day: the whole point is that the day cannot tell them apart.
+EARLIEST = datetime(2026, 7, 4, 1, 0, tzinfo=UTC)
+EXPORTED_AT = datetime(2026, 7, 4, 6, 0, tzinfo=UTC)
+RE_EXPORTED_AT = datetime(2026, 7, 4, 18, 30, tzinfo=UTC)
+NAIVE_INSTANT = datetime(2026, 7, 4, 6, 0)  # noqa: DTZ001 - the untrusted shape the parser must refuse
+
+
+class StubS3Api:
+    """A `_S3Api` serving canned `list_objects_v2` pages, so the untrusted-response parse runs whole."""
+
+    def __init__(self, pages: list[dict[str, object]]) -> None:
+        self.pages = pages
+        self.requests: list[dict[str, object]] = []
+
+    def put_object(self, **kwargs: object) -> object:  # noqa: ARG002 - the `_S3Api` shape it must satisfy
+        raise AssertionError("this stub only lists")
+
+    def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+        self.requests.append(dict(kwargs))
+        return self.pages[len(self.requests) - 1]
+
+    def head_object(self, **kwargs: object) -> dict[str, object]:  # noqa: ARG002 - same
+        raise AssertionError("this stub only lists")
+
 
 class RecordingBackend:
-    """In-memory `ObjectStoreBackend`: the whole writer runs with no network and no credentials."""
+    """In-memory `ObjectStoreBackend`: the whole writer runs with no network and no credentials.
 
-    def __init__(self) -> None:
+    Every put stamps `stamps_puts_at`, which defaults to `None` -- an UNKNOWN export instant, the
+    same thing a backend that cannot report one gives. Tests that care about sub-day currency pin
+    the instant with `set_last_modified`; nothing here ever reads the wall clock, because a listing
+    whose instants moved between runs would make those tests decide differently each time.
+    """
+
+    def __init__(self, *, stamps_puts_at: datetime | None = None) -> None:
         self.objects: dict[str, bytes] = {}
         self.content_types: dict[str, str] = {}
+        self.last_modified: dict[str, datetime | None] = {}
+        self.stamps_puts_at = stamps_puts_at
 
     def put(self, key: str, payload: bytes, *, content_type: str) -> None:
         self.objects[key] = payload
         self.content_types[key] = content_type
+        self.last_modified[key] = self.stamps_puts_at
 
-    def list_keys(self, prefix: str) -> Iterator[str]:
+    def set_last_modified(self, key: str, instant: datetime | None) -> None:
+        """Pin one already-written key's export instant, as a re-export would move it."""
+        if key not in self.objects:
+            raise KeyError(f"cannot stamp {key!r}: nothing has been put there")
+        self.last_modified[key] = instant
+
+    def list_objects(self, prefix: str) -> Iterator[ListedObject]:
         for key in sorted(self.objects):
             if key.startswith(prefix):
-                yield key
+                yield ListedObject(key=key, last_modified=self.last_modified.get(key))
 
     def size_of(self, key: str) -> int | None:
         payload = self.objects.get(key)
@@ -209,6 +256,101 @@ def test_listing_narrows_by_year_and_month() -> None:
     )
     with pytest.raises(ValueError, match="requires the year"):
         store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", month=7)
+
+
+def test_a_listing_surfaces_the_export_instant_beside_every_key() -> None:
+    """The day in a key is a version stamp, so WHEN a part file was exported is the only sub-day signal."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend, prefix="sandbox")
+    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+    relative_path = partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH)
+    backend.set_last_modified(store.key_for(relative_path), EXPORTED_AT)
+
+    listed = store.list_partition_objects(SIGNAL_PLANE_STREAM, "observed")
+
+    assert listed == (ListedPartition(relative_path=relative_path, last_modified=EXPORTED_AT),)
+    # The key-only view still answers, and now DERIVES from that one listing rather than making its own.
+    assert store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed") == (relative_path,)
+
+
+def test_a_stream_days_export_instant_is_the_oldest_of_its_part_files() -> None:
+    """A re-export that rewrote part-0 and left an older part-1 published a MIXTURE, and must report as one."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    for part_index, instant in ((0, RE_EXPORTED_AT), (1, EXPORTED_AT)):
+        store.write_partition(
+            signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH, part_index=part_index
+        )
+        key = store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, part_index))
+        backend.set_last_modified(key, instant)
+
+    assert store.day_export_instant(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH) == EXPORTED_AT
+
+
+def test_one_unknown_instant_leaves_the_whole_stream_day_unanswered() -> None:
+    """A partly unattributed set is not a freshness claim; so is a day holding no part file at all."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+    backend.set_last_modified(store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH)), EXPORTED_AT)
+    store.write_partition(
+        signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH, part_index=1
+    )  # left unstamped, exactly as a backend that cannot report the instant leaves it
+
+    assert store.day_export_instant(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH) is None
+    assert store.day_export_instant(SIGNAL_PLANE_STREAM, "observed", date(2026, 7, 3)) is None
+
+
+def test_the_export_instant_reads_only_that_streams_own_part_files_on_that_day() -> None:
+    """Another lane, another kind, another day, and an absence marker must not answer this question."""
+    listed = (
+        ListedPartition(
+            relative_path=partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH), last_modified=EXPORTED_AT
+        ),
+        ListedPartition(relative_path=partition_path("watersheds", "observed", JULY_FOURTH), last_modified=EARLIEST),
+        ListedPartition(
+            relative_path=partition_path(SIGNAL_PLANE_STREAM, "forecast", JULY_FOURTH), last_modified=EARLIEST
+        ),
+        ListedPartition(
+            relative_path=partition_path(SIGNAL_PLANE_STREAM, "observed", date(2026, 7, 3)), last_modified=EARLIEST
+        ),
+        ListedPartition(
+            relative_path=absence_marker_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH), last_modified=EARLIEST
+        ),
+    )
+
+    assert oldest_export_instant(listed, layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH) == EXPORTED_AT
+    assert oldest_export_instant((), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH) is None
+
+
+def test_the_boto_listing_keeps_last_modified_across_continuation_pages() -> None:
+    """`list_objects_v2` already carries the instant on every entry; paging and narrowing must not drop it."""
+    stub = StubS3Api(
+        [
+            {"Contents": [{"Key": "first", "LastModified": EXPORTED_AT}], "NextContinuationToken": "page-2"},
+            {
+                "Contents": [
+                    {"Key": "naive", "LastModified": NAIVE_INSTANT},
+                    {"Key": "absent"},
+                    {"Key": "not-an-instant", "LastModified": "2026-07-04T06:00:00Z"},
+                    {"NoKeyAtAll": True},
+                    "not-a-mapping",
+                ]
+            },
+        ]
+    )
+
+    listed = list(BotoObjectStoreBackend(bucket="plantgeo-warehouse", client=stub).list_objects("layer=signal/"))
+
+    assert listed == [
+        ListedObject(key="first", last_modified=EXPORTED_AT),
+        # Unknown beats wrong: a naive, absent, or mistyped instant degrades currency to day resolution,
+        # where a guessed zone would shift it by up to a day.
+        ListedObject(key="naive", last_modified=None),
+        ListedObject(key="absent", last_modified=None),
+        ListedObject(key="not-an-instant", last_modified=None),
+    ]
+    assert [request.get("ContinuationToken") for request in stub.requests] == [None, "page-2"]
 
 
 def test_partition_exists_answers_without_downloading() -> None:

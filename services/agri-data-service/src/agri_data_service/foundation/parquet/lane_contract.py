@@ -9,11 +9,21 @@ them, so the layout invited one interpretation -- "the day this was observed" --
 where no observation happened. A HUC12 boundary is not a measurement taken on a date; it is a
 reference fact with a VERSION, and the day in its path is a version stamp. There is therefore no
 per-day obligation for a static lane to miss.
+
+A VERSION STAMP IS COARSER THAN THE CHANGE IT STANDS FOR, and that gap is the second defect this
+module closes. Folding the source's change time down to a UTC date makes every later change on the
+SAME day invisible: after day D's first snapshot a day-only comparison reads `current` until UTC
+midnight. On `evacuation-zones` that is a life-safety failure, because an Oregon OEM level moves
+from Be Ready to Go Now within hours. So the watermark carries the INSTANT beside the day, and
+currency inside the watermark day is decided by comparing the export instant against it. The day in
+the path does not change -- a static lane's export is a full re-export of the whole population, so
+re-exporting day D IS how that version is corrected.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC
 from typing import TYPE_CHECKING, Final, Literal
 
 from agri_data_service.foundation.parquet.paths import (
@@ -23,7 +33,7 @@ from agri_data_service.foundation.parquet.paths import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from datetime import date
+    from datetime import date, datetime
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
 
@@ -85,17 +95,30 @@ class SourceWatermark:
 
     `day` is `None` when the source holds nothing at all -- an honest empty population, not a
     failure and not a gap. `basis` names the columns that produced the day, so a version stamp is
-    never an unattributed number.
+    never an unattributed number. `instant` is that same change time BEFORE it was folded to a day,
+    and is `None` for a lane with no source system to ask; without it currency can only be settled
+    at day resolution, which cannot see a second change made later the same day.
     """
 
     day: date | None
     basis: str
+    instant: datetime | None = None
 
     def __post_init__(self) -> None:
         if not self.basis.strip():
             raise LaneContractError(
                 "a source watermark must cite the columns it came from; an uncited version stamp reads "
                 "as a measurement and cannot be re-derived"
+            )
+        if self.instant is not None and self.instant.tzinfo is None:
+            raise LaneContractError(
+                "a source watermark instant came back timezone-naive; assuming a zone for a version stamp "
+                f"would shift it by up to a day and could read a stale export as current ({self.basis})"
+            )
+        if self.day is None and self.instant is not None:
+            raise LaneContractError(
+                "a source watermark with no day cannot carry a change instant; an empty population has "
+                f"nothing that changed ({self.basis})"
             )
 
 
@@ -157,19 +180,80 @@ class StaticLaneVerdict:
     detail: str
 
 
+def _render_instant(value: datetime) -> str:
+    """Render one instant for a verdict's detail string, always in UTC so two are comparable by eye."""
+    return value.astimezone(UTC).isoformat()
+
+
+def _resolve_watermark_day(
+    *,
+    watermark: SourceWatermark,
+    version_day: date,
+    export_instant: datetime | None,
+) -> StaticLaneVerdict:
+    """Decide currency for a version stamped ON the watermark day, where the day alone cannot.
+
+    An export READS the source at write time, so a part file written at or after the source's own
+    change instant necessarily captured that change; written before it, it cannot hold that change
+    however recent its version stamp looks. When either instant is unknown the two states are
+    indistinguishable, and the verdict says so rather than dressing a day-resolution answer up as an
+    instant-resolution one.
+    """
+    if watermark.instant is None or export_instant is None:
+        unknown = (
+            "the source reported no change instant"
+            if watermark.instant is None
+            else "the store reported no export instant for that version"
+        )
+        return StaticLaneVerdict(
+            state="current",
+            version_day=None,
+            detail=(
+                f"version {version_day.isoformat()} is current at the source watermark day, but {unknown}, "
+                "so this is a DAY-RESOLUTION answer: a source change made later the same day would not be "
+                f"seen ({watermark.basis})"
+            ),
+        )
+    if export_instant >= watermark.instant:
+        return StaticLaneVerdict(
+            state="current",
+            version_day=None,
+            detail=(
+                f"version {version_day.isoformat()} was exported at {_render_instant(export_instant)}, at or "
+                f"after the source's own change at {_render_instant(watermark.instant)}, so that export read "
+                f"the current state and this reference set is current ({watermark.basis})"
+            ),
+        )
+    return StaticLaneVerdict(
+        state="stale",
+        version_day=watermark.day,
+        detail=(
+            f"version {version_day.isoformat()} was exported at {_render_instant(export_instant)}, BEFORE the "
+            f"source changed at {_render_instant(watermark.instant)} the SAME day, so it cannot hold that "
+            f"change and must be re-exported at the same version day ({watermark.basis})"
+        ),
+    )
+
+
 def resolve_static_lane(
     *,
     watermark: SourceWatermark | None,
     newest_data_day: date | None,
+    newest_data_instant: datetime | None,
     newest_marker_day: date | None,
     today: date,
 ) -> StaticLaneVerdict:
     """Decide a static lane's coverage from its watermark and what the object listing already holds.
 
-    THE RULE, and it is the whole watermark model: if a PART FILE already exists dated at or after
-    the watermark, there is nothing to do -- not a gap, not an absence, just current. Otherwise ONE
+    THE RULE, and it is the whole watermark model: if a PART FILE already exists dated AFTER the
+    watermark day, there is nothing to do -- not a gap, not an absence, just current. Otherwise ONE
     snapshot is owed, dated at the WATERMARK day, never at the cron's run date. Nothing can be
     "missed" because no day carried an obligation in the first place.
+
+    ON the watermark day the day cannot decide it, and `_resolve_watermark_day` compares
+    `newest_data_instant` -- when that day's part files were exported -- against the watermark's own
+    instant. A `stale` verdict there names the SAME day as the version owed: a static lane re-exports
+    its whole population, so overwriting day D is exactly how that version is corrected.
 
     A GOVERNED ABSENCE IS NOT COVERAGE HERE, AND THAT ASYMMETRY IS THE POINT. For a `daily_series` a
     marker is terminal: the day is settled and the source genuinely had nothing to give. For a
@@ -203,14 +287,25 @@ def resolve_static_lane(
             f"source watermark {watermark.day.isoformat()} is later than {today.isoformat()}; writing an "
             f"observed partition dated in the future is never right. Basis: {watermark.basis}"
         )
-    if newest_data_day is not None and newest_data_day >= watermark.day:
+    if newest_data_instant is not None and newest_data_instant.tzinfo is None:
+        raise LaneContractError(
+            "the newest version's export instant came back timezone-naive; comparing it against a version "
+            f"stamp would shift the answer by up to a day. Basis: {watermark.basis}"
+        )
+    if newest_data_day is not None and newest_data_day > watermark.day:
         return StaticLaneVerdict(
             state="current",
             version_day=None,
             detail=(
-                f"version {newest_data_day.isoformat()} is at or after the source watermark "
+                f"version {newest_data_day.isoformat()} is later than the source watermark "
                 f"{watermark.day.isoformat()}, so this reference set is current ({watermark.basis})"
             ),
+        )
+    if newest_data_day is not None and newest_data_day == watermark.day:
+        return _resolve_watermark_day(
+            watermark=watermark,
+            version_day=newest_data_day,
+            export_instant=newest_data_instant,
         )
     if newest_marker_day is not None and newest_marker_day >= watermark.day:
         return StaticLaneVerdict(

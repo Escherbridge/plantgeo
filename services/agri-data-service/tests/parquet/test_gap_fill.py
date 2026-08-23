@@ -38,6 +38,7 @@ from agri_data_service.pipeline.parquet.objectstore import (
     ABSENCE_CONTENT_TYPE,
     PARQUET_CONTENT_TYPE,
     EmptyPartitionError,
+    ListedObject,
     ObjectStore,
 )
 from tests.parquet.test_objectstore_writer import RecordingBackend
@@ -107,7 +108,7 @@ class FakeClock:
 class RaisingBackend(RecordingBackend):
     """A backend whose listing fails, standing in for a bucket this tick cannot read."""
 
-    def list_keys(self, prefix: str) -> Iterator[str]:
+    def list_objects(self, prefix: str) -> Iterator[ListedObject]:
         raise OSError(f"bucket unreachable while listing {prefix}")
 
 
