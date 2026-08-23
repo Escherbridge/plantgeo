@@ -3755,7 +3755,93 @@ is a transcription and not a new query, and why the next ten lanes copy its shap
 **Measured cost:** 8.1 s for 1,965 cells on a NASA-only day, 18.0 s cold / 3.0 s warm on a
 both-producer day, batching 250 cells per statement.
 
-#### 0.26.6 Continuation
+#### 0.26.6 ALL TEN REMAINING LANES LANDED — 2026-08-22, ten concurrent agents
+
+Eleven streams now register and autoload. `interventions` is deliberately absent — its contract
+establishes that lane stays in Postgres, consistent with §0.26.1.
+
+| stream | cols | sort key | geom |
+|---|---|---|---|
+| `signal` | 10 | support_key, signal_name, normalized_unit, cell_id, observed_day | |
+| `weather-observations` | 13 | latitude, longitude, observed_at | |
+| `vegetation` | 10 | cell_id, observed_day | |
+| `fire-detections` | 8 | cell_longitude, cell_latitude, observed_day | |
+| `sensors` | 11 | sensor_id, observed_day, measurement_name | |
+| `water-gauges` | 14 | site_number, observed_at | |
+| `fire-perimeters` | 17 | observed_day, unique_fire_identifier | WKB |
+| `burn-severity` | 23 | observed_day, fire_id | WKB |
+| `soil-survey` | 15 | mupolygonkey | WKB |
+| `watersheds` | 12 | huc12 | WKB |
+| `evacuation-zones` | 23 | snapshot_day, natural_key | WKB |
+
+**A SECOND real partition set is written and read back — the geometry shape, not just the scalar
+one.** `watersheds` release 2026-08-07: **10 parts, 9,396 rows, 162,626,113 B**, 374.6 s over the
+public proxy. On readback: schema matches the registry, rows sorted by `huc12`, WKB header
+`0103000000` (little-endian Polygon), and **`partition_day_statuses` reads all ten parts as ONE
+present day** — the part-N spillage design and gap detection agree, which was the open question
+the multi-part design raised.
+
+**THE SIZE PICTURE JUST CHANGED, AND IT INVERTS §0.22.6's HEADLINE.** `watersheds` alone is
+**162 MB at 17.3 KB/row** against the entire 24.5M-row signal plane's projected **~35 MB**. The
+~180× reduction that justified the Parquet path was measured on a plane with **no geometry**;
+it does not transfer to the five WKB lanes, and nothing has yet costed `soil-survey` (the lane
+doc measures the PNW envelope alone at **1,507,623 delineations** — roughly 160× watersheds' row
+count). **Do not carry the ~35 MB figure into a whole-warehouse storage estimate.** Cost the
+geometry lanes before sizing the bucket or promising a Railway volume reduction.
+
+**Where the lanes deviated from the template, with evidence — these are the useful findings:**
+- **`geo.features` lanes need no cell-batching.** `ix_features_layer_observation_day` on
+  `(layer_id, geo.feature_observation_day(properties))` already exists in production (verified
+  directly). `signal`'s `CELL_BATCH_SIZE` loop exists *only* because `agri.signal_observation` is
+  an 11 GB heap with no index leading on `observed_at`. Copying it would have been cargo-cult.
+- **`sensors` exports all 16 captured measurement fields**, not the 4 served, on a **tall** grain
+  rather than ~48 mostly-null wide columns — because NWS serves a rolling ~6-day window, so a
+  field not captured is gone permanently within a week. **This answers §0.25.6's sensors question.**
+- **`fire-perimeters` scopes on `geo.feature_observation_day(properties)`, not the job's run
+  date** — the naive alternative replays one snapshot every day it runs, forever.
+- **`evacuation-zones` refused the tile layer's `COALESCE(observedAt, updatedAt)` fallback**,
+  which would launder PlantGeo's polling clock into a fabricated observation time.
+- **`watersheds` separated two dates that both look like "the release day"** —
+  `geo.features.created_at` (one load day, 9,396 rows) vs WBD's per-basin `loaddate` (some 2013).
+- **`burn-severity` found MTBS bypasses `agri.source_release`/`data_source` entirely**, so
+  `allowed_client_exposure` cannot be joined and is a literal `FALSE` — which **contradicts
+  `geo.layers.is_public = true` for that layer**. Pre-existing discrepancy, not fixed, flagged.
+- **`fire-detections` chose a cell-day aggregate** (0.005°, the finest existing tile rollup)
+  because per-hotspot lat/lon cannot satisfy the identical-grain rule. It also notes VIIRS and
+  MODIS FRP differ by ~an order of magnitude for the same fire and are **not** split by
+  instrument — an inherited limitation, documented rather than silently engineered around.
+
+**A defect the fan-out caught in the just-committed template:** `signal.py` annotated
+`cell_ids: Sequence[int]` while both `agri.spatial_cell.id` and `agri.signal_observation.cell_id`
+are **`uuid`**. The exports were correct (asyncpg returns `UUID`, passed straight through) but the
+annotation lied while nine lanes copied it. Fixed in `f2e668a`.
+
+#### 0.26.7 SECOND ENFORCEMENT GAP, FOUND AND CLOSED
+
+§0.25.2's rule — added earlier this session — covers **subpackages** of `ingest/` and `execution/`.
+**Lanes are not subpackages.** They are flat modules in `pipeline/lanes/` and `warehouse/schemas/`,
+so `layer-lanes.md` §1's "a lane never imports another lane" was **still unenforced** for the very
+directories the ten lanes landed in. `test_lanes_do_not_import_each_other` now covers
+`pipeline/lanes`, `warehouse/schemas`, `method/monte_carlo`, `pipeline/validation`.
+
+**Closing it exposed a hole in the checker itself.** `from . import sibling` resolved to the
+*package* and discarded the imported name, so that form passed silently — found **only** because
+the synthetic fixture asserts the rule fires. The resolver now also yields `module.name` per
+alias, and violations dedupe by `(file, line)`. **The lesson generalises: a rule with no failing
+fixture is a rule you have not tested, and both isolation rules added this session needed one to
+find a real bug.** The ten real lanes cross nothing today — verified.
+
+#### 0.26.8 A documentation gap worth naming
+
+`docs/lanes/weather-observations.md` describes the governed NASA POWER / ERA5-Land archive across
+all seven of its sections — but that archive is the **`signal` stream**, already exported. The
+producer the `weather-observations` *lane* needs (`ingest/open_meteo.py`'s `WEATHER_LAYER`
+current-conditions poll into `geo.features`) has **no contract content at all**: no declared
+cadence, horizon, historical depth, or known-gaps list. The lane was built from the code with the
+gap stated rather than an invented contract. **Write that half of the contract before the lane is
+scheduled**, or its history horizon and gap detection have nothing to check against.
+
+#### 0.26.9 Continuation
 
 1. **Extract the shared Open-Meteo client primitives out of `ingest/open_meteo.py`**, then create
    `ingest/weather_observations/`. Same shape as §0.26.3; the default-deny rule already covers it.
