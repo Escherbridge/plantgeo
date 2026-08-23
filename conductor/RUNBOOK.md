@@ -3841,6 +3841,100 @@ cadence, horizon, historical depth, or known-gaps list. The lane was built from 
 gap stated rather than an invented contract. **Write that half of the contract before the lane is
 scheduled**, or its history horizon and gap detection have nothing to check against.
 
+### 0.28 HANDOFF 2026-08-23 — the forecast strategy changed. Read this before §0.27.
+
+**HEAD `1c21a20`, pushed, tree clean.** §0.27 remains accurate about what was BUILT; this section
+supersedes its forecast strategy and retracts one claim.
+
+#### 0.28.1 Four owner decisions, 2026-08-23
+
+| # | decision | consequence |
+|---|---|---|
+| 1 | **Per-kind schema lookup.** `get_stream_schema(layer, kind)` returns the observed schema, or observed + the six provenance columns for `kind=forecast` | Unblocks all five forecasters. Observed files stay byte-identical to what is already written. `layer-lanes.md` §2 relaxes from "identical column names" to **identical measurement columns** |
+| 2 | **NWP first. Monte Carlo survives ONLY where it can serve to train ML** | The bootstrap forecasters are no longer the product. Real Open-Meteo forecast/ensemble output is the forecast; MC is retained only as a labelled climatology baseline feeding ML training, and is deleted anywhere it cannot earn that keep |
+| 3 | **Fire-risk: chartered, feature plane BUILDABLE, model training blocked** on the Mojo runtime call. **Seasonality must influence the model output** — fires are heavily seasonal | Build the cell-day covariate plane now; write no Python model that will be thrown away. A comprehensive **ML→Mojo conversion lane** is chartered alongside it |
+| 4 | **Ingest all Open-Meteo products, forward AND historical.** Quota is not a constraint at the $99 tier, "especially if we limit forecast out" | Both directions proceed. Bound the forecast horizon rather than the ingest breadth |
+
+#### 0.28.2 RETRACTION — "a snapshot day the cron misses is lost, deliberately" (§0.27.2) is WRONG
+
+Owner: *"all those 3 lanes are static one time reads with no historicals."* A HUC12 boundary is not a
+measurement taken on a date; it is a reference fact with a **version**. The day in its partition path
+is a version stamp, not an observation time, so **there was never a per-day obligation to miss.**
+
+The fix, in flight at handoff: three declared lane natures — `daily_series` (forecastable),
+`release_series` (discrete dated publications: USDM weekly, MTBS quarterly), `static_lookup` (never
+forecastable) — plus **watermark-driven re-snapshot** for static lanes. Each declares a source
+watermark (`max(updated_at)`); if a partition exists dated at or after it, there is nothing to do.
+The partition day becomes the SOURCE's change date, not the cron's run date.
+
+#### 0.28.3 The temporal model, as designed (not yet built)
+
+- **`dim_date`** — one row per day; seasonality as meteorological/astronomical season **and cyclical
+  sin/cos day-of-year**, because that is the form a model consumes and it has no Dec-31→Jan-1 discontinuity.
+- **`dim_time_of_day`** — separate dimension, 96 rows at 15-min or 24 hourly, reused every day.
+  **Crossing it into `dim_date` would multiply to millions of rows for nothing.** Needed because
+  `sensors` is hourly and `water-gauges` keeps per-poll instants.
+- **Daylight is NOT an attribute of either.** It depends on date AND latitude — 06:00 is dark in
+  Missoula in January and bright in June. It belongs in a **solar fact per `(cell_id, date)`**:
+  sunrise, sunset, solar noon, daylight seconds. Pure deterministic computation from lat/lon/date,
+  no API, ~3M tiny rows. Gives photoperiod as a real covariate for vegetation and ET.
+
+#### 0.28.4 Monte Carlo: what it actually is, and why it was demoted
+
+The five landed forecasters are **seasonal anomaly bootstraps** — climatology plus resampled
+residuals. They answer *"what does a typical mid-September look like here"*, never *"what will happen
+this mid-September"*. They carry **no information about the future state**, so by construction they
+cannot have skill beyond climatology. Publishing them as low/mid/high made them **look** like
+forecasts while carrying no predictive content — the wrong-but-plausible output the engineering
+principles exist to prevent.
+
+**Any forecast, from any source, must be scored against what actually happened AND against the
+climatology baseline. If it does not beat climatology it is not a forecast.** Evaluation machinery
+already exists: `method/ml/seasonal_evaluation.py`, `conformal_calibration.py`.
+
+The domain knowledge inside those bootstraps is worth keeping even as the framing changes: log-space
+so discharge cannot go negative, a hurdle model for zero-inflated fire counts, an outright refusal
+for circular wind direction. Preserve those as **draw strategies**, not as five separate forecasters.
+
+#### 0.28.5 Geometry and the time-series contract — the settled answer
+
+**Do not forecast shapes.** Forecasting polygon evolution is a different and much harder problem and
+nothing here needs it. Geometry participates by being **reduced to a cell-indexed scalar first**.
+
+`fire-detections` already proves the pattern: raw hotspots have no forecastable grain (an exact future
+lat/lon is not predictable), so it aggregates to a 0.005° cell-day count. **The time-series contract
+is keyed on cell × time × metric, never on geometry.** A geometry lane contributes a measurement
+*over* space; the polygon itself stays observed-only. The three static lookups contribute nothing.
+
+Contouring cell scores back into a displayable region is a **rendering** step, not a forecast step —
+which is exactly how fire-risk should surface.
+
+#### 0.28.6 Cron status at handoff — ticked, but the parquet verb is UNCONFIRMED
+
+`plantgeo-ingest-cron` deployed SUCCESS on `abf777f`/`1c21a20` via `railway redeploy --from-source`
+(plain `redeploy` reuses the prior snapshot; a Dockerfile change never takes effect through it). A
+real tick fired **2026-08-23 02:11:17 UTC** and `ingest-all` was still running at 02:13.
+**`parquet-gap-fill` runs THIRD, after `jobs-pulse`'s 600s budget, and was NOT observed before this
+handoff was written.** Verifying it is continuation step 1 — do not assume it ran.
+
+What IS proven: one manual `parquet-gap-fill` tick wrote a real drought release (5 rows, 3.8 MB,
+13.2s) and the re-census showed `data_days: 1` with the day gone from the missing list.
+
+#### 0.28.7 Continuation
+
+1. **Confirm the cron's parquet verb actually ran.** `railway logs --service plantgeo-ingest-cron`,
+   look for the `parquet-gap-fill` JSON. If the ENTRYPOINT is wrong the run is silently 2/3 useful.
+2. **Land the per-kind schema lookup** (decision 1) — it unblocks five finished forecasters.
+3. **Integrate the lane-nature + calendar agent's work**, in flight at handoff (see §0.28.2).
+4. **Wire every Open-Meteo product**, forward and historical (decision 4). `ingest/open_meteo*.py`
+   already has archive, air-quality, ensemble and flood modules; ensemble and flood are **built but
+   persist-blocked** from the 2026-08-06 expansion wave. Surface as layers where possible.
+   **Forecast layers appear in the timeslider ONLY where a genuine forecast source exists.**
+5. **Build the fire-risk FEATURE plane** (decision 3) — cell-day covariates from fire detections,
+   burn severity, NDVI, soil moisture and seasonality. No model until the Mojo call.
+6. **Sub-daily dimension and the solar fact table** (§0.28.3).
+7. **Refactor the five bootstraps into one harness** with pluggable draw strategies (§0.28.4).
+
 ### 0.27 HANDOFF 2026-08-22 (third) — twelve streams, an armed cron, and one blocker
 
 **HEAD `abf777f`, PUSHED to origin/main.** Tree clean. Sweep: **3,528 passed · 110 skipped ·

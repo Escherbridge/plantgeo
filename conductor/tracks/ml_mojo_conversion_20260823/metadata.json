@@ -1,0 +1,9 @@
+{
+  "slug": "ml_mojo_conversion_20260823",
+  "title": "ML to Mojo conversion",
+  "status": "chartered",
+  "created_on": "2026-08-23",
+  "depends_on": [],
+  "runbook_section": "0.28",
+  "note": "Gives the standing ML freeze an address. Gates fire-risk MODEL TRAINING only, never its data work. 10 modules in method/ml; inventory port/retire/stays-Python before planning. Monte Carlo is now a training input, not a parallel product (RUNBOOK 0.28.4)."
+}

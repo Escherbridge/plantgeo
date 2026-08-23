@@ -1,0 +1,11 @@
+{
+  "slug": "fire_risk_zone_forecast_20260823",
+  "title": "Fire-risk zone forecast (1-2 weeks ahead)",
+  "status": "chartered",
+  "created_on": "2026-08-23",
+  "depends_on": [
+    "ml_mojo_conversion_20260823"
+  ],
+  "runbook_section": "0.28",
+  "note": "Feature/label/evaluation planes are NOT blocked and are the long pole. Model training is blocked on the Mojo runtime call. Predicts a per-cell scalar risk score, never a polygon -- contouring is a rendering step (RUNBOOK 0.28.5). Seasonality must influence output; fires are heavily seasonal."
+}

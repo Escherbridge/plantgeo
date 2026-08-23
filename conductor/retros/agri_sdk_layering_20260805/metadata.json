@@ -3,7 +3,7 @@
   "description": "Restructure agri_data_service (36,438 lines) into six layers with a lint-enforceable dependency rule, separating pure Monte Carlo and ML method code over a shared foundation, dissolving the 2,474-line cli.py into thin command wiring, and exposing a public importable SDK surface without changing any of the 52 CLI command strings",
   "type": "refactor",
   "created_at": "2026-08-05T00:00:00Z",
-  "status": "superseded",
+  "status": "archived",
   "pivot_reconciliation_20260822": {
     "reconciled_at": "2026-08-22T00:00:00Z",
     "verdict": "Phases 0-3 of 9 shipped and are real, in the tree, and unaffected by the pivot. Phases 4-8 are blocked: their target directories are the same ones \u00a70.24's 21-stream plan just assigned to S1-S21, and continuing this track's own plan would collide with that assignment.",
@@ -22,5 +22,7 @@
   "activation_gate": "Phase 0 must land first and independently: the golden 52-leaf command surface fixture, the AST layering contract test, and the cron container smoke script must all be green against an unmodified tree before any code moves. Phase 1 must precede every move because two modules resolve paths by __file__ depth and relocate silently wrong. Phase 6 is the only phase permitted to restructure cli.py; it ships as 6a then 6b in separate releases, with at least one full weekly cron cycle (cron-drought, 0 14 * * 4) observed green between them. Phase 3 is blocked on the owner's answer to spec open question 1 (covariate_wind_model.py reader/estimator split) and Phase 4 on open question 2.",
   "resolution": {
     "phases_4_to_8_superseded_20260822": "Owner decision 2026-08-22 (RUNBOOK 0.25.1): ingest/ and execution/ stay as first-class packages and get per-domain sub-packages, rather than being dissolved into warehouse/pipeline/planes/interface. Phases 0-3 (the six-layer lattice and tests/test_layer_import_contract.py) REMAIN IN FORCE. cli.py is not dissolved now."
-  }
+  },
+  "archived_on": "2026-08-23",
+  "archive_reason": "Phases 0-3 SHIPPED and still in force -- the six-layer lattice and its import contract are load-bearing for all twelve Parquet streams. Phases 4-8 are SUPERSEDED, not deferred: RUNBOOK 0.25.1 decisions 1/2/4 keep ingest/ and execution/ as first-class homes layered internally by domain, instead of dissolving them into warehouse/pipeline/planes/interface."
 }
