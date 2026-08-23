@@ -44,13 +44,51 @@ only `missing`. A `conflict` day (data AND marker) is never produced by the writ
 manual admin action can create or resolve one. The zero-row write refusal stays: an empty
 Parquet file is never the absence mechanism.
 
-## Static layers use the same layout
+## Static layers use the same layout — but their `day=` means something else
 RUNBOOK §0.23.6 assumed static layers (`soil-survey`, `watersheds`, `evacuation-zones`) would get
 "one file per layer, no day striation". **They do not.** A static layer writes a single dated
-partition on its release day. One layout keeps every generic reader, lister and gap detector
-working across all eleven lanes; a second layout would fork all three. The assumption's own stated
-reversal cost — "re-partition that layer alone" — is what makes reversing this cheap if a static
-layer ever proves it needs to.
+partition per version. One layout keeps every generic reader, lister and gap detector working
+across all thirteen lanes; a second layout would fork all three.
+
+**The same path renders for all of them, and that is exactly what invited the defect this
+directory now guards against.** For a series lane `day=` is an observation or release date; for a
+static lane it is a **version stamp**. `lane_contract.py` makes that difference declarable rather
+than assumed:
+
+- `LaneNature` — `daily_series` / `release_series` / `static_lookup`, with
+  `nature_has_time_axis`, `nature_permits_forecast` (a static lookup **never** may) and
+  `nature_permits_cadence` (only a release series has a rhythm to step over).
+- `SourceWatermark` — a source's own "when did this last change", plus the columns that produced
+  it. An uncited version stamp reads as a measurement and cannot be re-derived, so `basis` is
+  mandatory.
+- `resolve_static_lane` — the whole watermark rule: a version at or after the watermark is
+  `current`; otherwise ONE snapshot is owed, **dated at the watermark**, never at a run date. A
+  watermark nobody read is `watermark_unread`, which is a different claim from `current`.
+- `newest_covered_day` — the static-lane equivalent of `partition_day_statuses`, still a listing.
+
+## `calendar.py` — the conformed date dimension's generator
+Pure computation from a date range: one row per civil day carrying year, quarter, month,
+day-of-month, day-of-year, ISO year/week/weekday, month start/end flags, the WMO meteorological
+season, and **cyclical `day_of_year_sin`/`day_of_year_cos`**. It lives here because it has **no
+source system** — there is no session to hand it and no query it could get wrong.
+
+The cyclical pair is RUNBOOK §0.28.3's requirement, not decoration: a raw `day_of_year` puts
+31 December 364 units from 1 January, which a model reads as maximally dissimilar when they are one
+day apart. The phase divides by the day's **own** year length, so a leap year does not drift the
+cycle. **Time of day, astronomical season and daylight are deliberately absent** — §0.28.3 puts the
+first two in a separate dimension (crossing 96 rows into 10,000 days multiplies to millions for
+nothing) and daylight in a solar fact per `(cell, date)`, because it depends on latitude too.
+
+A version stamped `D` covers `[floor, D + CALENDAR_VERSION_FORWARD_DAYS]` (800) and must reach
+`today + CALENDAR_REQUIRED_FORWARD_DAYS` (400), so a 30-day horizon from any as-of date always
+resolves and the dimension regenerates roughly annually rather than daily. Covering exactly the
+requirement would make it stale the next morning — the churn the static nature exists to remove.
+
+**No business calendar.** No fiscal years, no holidays, no trading days: unsourced policy in a
+dimension every lane keys to is worse than no dimension. It is also **not** a `dim_time` collapsing
+the clocks — `docs/holonic-kimball-modeling.md` keeps observed / valid / available /
+warehouse-recorded as separate role-named facts, and lanes key their own role-named date columns to
+this one **by value**. No lane schema gains a foreign-key column for it.
 
 ## Bounds
 `MAX_PART_INDEX` (9,999), `MIN/MAX_PARTITION_YEAR` (four-digit rendering), `MAX_GAP_WINDOW_DAYS`

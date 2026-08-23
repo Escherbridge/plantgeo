@@ -18,6 +18,12 @@ mid-round does still favour the earlier slugs -- by at most one day each, not by
 A PARTIALLY DRAINED BACKLOG IS THE EXPECTED STEADY STATE, NOT A FAILURE. The wall-clock budget stops
 the walk cleanly at a day boundary and the summary reports what remains; only a lane that RAISED
 fails the tick. See `AGENTS.md` in this directory for the operational notes.
+
+A STATIC LOOKUP HAS NO BACKLOG AT ALL, AND THAT IS THE SECOND MECHANISM HERE. `daily_series` and
+`release_series` lanes get the window walk above. A `static_lookup` lane instead reads its SOURCE
+WATERMARK, and owes exactly one snapshot dated at that watermark -- or nothing, when a partition
+dated at or after it already exists. Nothing can be "missed", because no calendar day ever carried
+an obligation for a reference fact.
 """
 
 from __future__ import annotations
@@ -30,15 +36,30 @@ from typing import TYPE_CHECKING, Final, Literal
 from sqlalchemy import text
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
-from agri_data_service.foundation.parquet.paths import partition_day_statuses
+from agri_data_service.foundation.parquet.lane_contract import (
+    LaneContractError,
+    nature_has_time_axis,
+    newest_covered_day,
+    resolve_static_lane,
+)
+from agri_data_service.foundation.parquet.paths import (
+    partition_day_statuses,
+    try_parse_absence_marker_path,
+    try_parse_partition_path,
+)
 from agri_data_service.pipeline.parquet.objectstore import EmptyPartitionError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from datetime import date
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from agri_data_service.foundation.parquet.lane_contract import (
+        LaneNature,
+        SourceWatermark,
+        StaticLaneState,
+    )
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
@@ -60,7 +81,10 @@ GAP_CENSUS_REPORT_DAY_SAMPLE: Final = 10
 # (jobs/lease.py::LEASE_STATEMENT_TIMEOUT_SECONDS, and cli.py's loader verbs).
 _STATEMENT_TIMEOUT: Final = text("SET LOCAL statement_timeout = '120s'")
 
-LaneFillOutcome = Literal["complete", "filled", "budget_exhausted", "raised", "no_window"]
+# `current` is a static lane at or ahead of its source watermark. It is deliberately NOT folded
+# into `complete`: "this reference set matches its source" and "this window has no gaps left" are
+# different claims about different clocks, and an operator scanning a summary needs to see which.
+LaneFillOutcome = Literal["complete", "filled", "budget_exhausted", "raised", "no_window", "current"]
 LaneDayOutcome = Literal["written", "absent", "raised"]
 
 # The outcomes that mean this tick found something WRONG, as opposed to found work still to do.
@@ -68,12 +92,24 @@ LaneDayOutcome = Literal["written", "absent", "raised"]
 FAILING_LANE_OUTCOMES: Final[frozenset[str]] = frozenset({"raised"})
 
 
+class GapFillContractError(RuntimeError):
+    """Raised when a lane is asked a question its nature cannot answer."""
+
+
+@dataclass(frozen=True, slots=True)
+class LaneWatermarkReading:
+    """One attempt to read a static lane's source watermark: the answer, or why there is none."""
+
+    watermark: SourceWatermark | None = None
+    error: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class LaneGapCensus:
     """One lane's coverage as the object listing reports it, before anything is written."""
 
     slug: str
-    window_kind: str
+    nature: LaneNature
     history_floor: date
     publication_lag_days: int
     floor_basis: str
@@ -84,20 +120,34 @@ class LaneGapCensus:
     conflict_days: int
     missing_days: tuple[date, ...]
     truncated: bool
+    forecastable: bool = False
+    cadence_days: int = 1
+    # Static lanes only. `static_state` is `None` for a lane with a real time axis, which is what
+    # keeps "this lane has no watermark" distinguishable from "its watermark was not read".
+    static_state: StaticLaneState | None = None
+    source_watermark: date | None = None
+    watermark_basis: str | None = None
+    static_detail: str | None = None
     error: str | None = None
 
     @property
     def window_days(self) -> int:
-        """Total calendar days between the lane's floor and its settled cutoff, inclusive."""
+        """Total calendar days between the lane's floor and its settled cutoff, inclusive.
+
+        For a `static_lookup` lane both ends are its watermark day, so this is 1 when a version is
+        known and 0 when it is not -- a static lane has no window, and does not pretend to.
+        """
         if self.first_day is None or self.last_day is None:
             return 0
         return (self.last_day - self.first_day).days + 1
 
     def to_report(self) -> dict[str, object]:
-        """Render the census row `--dry-run` echoes: counts, the newest few gaps, and the floor's citation."""
+        """Render the census row `--dry-run` echoes: nature, counts, the newest gaps, and the citations."""
         return {
             "lane": self.slug,
-            "window_kind": self.window_kind,
+            "nature": self.nature,
+            "forecastable": self.forecastable,
+            "cadence_days": self.cadence_days,
             "history_floor": self.history_floor.isoformat(),
             "publication_lag_days": self.publication_lag_days,
             "window_first_day": None if self.first_day is None else self.first_day.isoformat(),
@@ -110,6 +160,10 @@ class LaneGapCensus:
             "missing_truncated": self.truncated,
             "newest_missing_days": [day.isoformat() for day in self.missing_days[:GAP_CENSUS_REPORT_DAY_SAMPLE]],
             "oldest_missing_day": None if not self.missing_days else self.missing_days[-1].isoformat(),
+            "static_state": self.static_state,
+            "source_watermark": None if self.source_watermark is None else self.source_watermark.isoformat(),
+            "watermark_basis": self.watermark_basis,
+            "static_detail": self.static_detail,
             "floor_basis": self.floor_basis,
             "error": self.error,
         }
@@ -186,83 +240,141 @@ class GapFillSummary:
 
 
 def lane_window(lane: LaneRegistration, *, today: date) -> tuple[date, date] | None:
-    """Return the settled `[first, last]` day range this lane may fill, or `None` when it has none.
+    """Return the settled `[first, last]` day range a SERIES lane may fill, or `None` when it has none.
 
     `last` is `today - publication_lag_days`: a day the upstream has not published yet is not a gap,
-    and asking for it would write a partition thinner than the day really is.
+    and asking for it would write a partition thinner than the day really is. `first` is the
+    declared history floor.
 
-    `first` is the declared history floor for a daily series, but for a `current_snapshot` lane it is
-    `last` -- those three exports broadcast the caller's day onto every row and apply no date
-    predicate, so filling a historical day would stamp today's state onto a past date. A snapshot day
-    the cron missed is lost rather than fabricated, and that is the correct trade.
+    A `static_lookup` lane is REFUSED rather than answered. It has no window: its partition day is a
+    version stamp keyed to a source watermark, not a position on the calendar, and handing back some
+    plausible-looking day range is exactly how the old `current_snapshot` model came to re-snapshot
+    the newest settled day forever.
     """
+    if not nature_has_time_axis(lane.nature):
+        raise GapFillContractError(
+            f"lane {lane.slug!r} is a static_lookup and has no settled window; its coverage comes from "
+            "`resolve_static_lane` against its source watermark, not from the calendar"
+        )
     last_day = today - timedelta(days=lane.publication_lag_days)
     if last_day < lane.history_floor:
         return None
-    if lane.window_kind == "current_snapshot":
-        return last_day, last_day
     return lane.history_floor, last_day
 
 
-def build_lane_census(
+def _census_shell(lane: LaneRegistration, **overrides: object) -> LaneGapCensus:
+    """Build one census row with the lane's own declared fields already filled in."""
+    fields: dict[str, object] = {
+        "slug": lane.slug,
+        "nature": lane.nature,
+        "forecastable": lane.forecastable,
+        "cadence_days": lane.cadence_days,
+        "history_floor": lane.history_floor,
+        "publication_lag_days": lane.publication_lag_days,
+        "floor_basis": lane.floor_basis,
+        "first_day": None,
+        "last_day": None,
+        "data_days": 0,
+        "absent_days": 0,
+        "conflict_days": 0,
+        "missing_days": (),
+        "truncated": False,
+    }
+    fields.update(overrides)
+    return LaneGapCensus(**fields)  # type: ignore[arg-type]
+
+
+def _listing_failure(lane: LaneRegistration, error: Exception) -> str:
+    """The message a per-lane listing failure carries; it must never read as 'no gaps found'."""
+    return f"listing {lane.slug!r} failed: {type(error).__name__}: {error}"
+
+
+def _static_lane_census(
     lane: LaneRegistration,
     store: ObjectStore,
     *,
     today: date,
-    max_days_per_lane: int | None = None,
+    reading: LaneWatermarkReading | None,
 ) -> LaneGapCensus:
-    """Classify one lane's window from the object LISTING alone -- never by opening a file.
+    """Classify one `static_lookup` lane against its source watermark and the objects already written.
 
-    A governed-absence marker counts as covered, not as a gap: `missing_partition_days` already
-    treats it that way, which is what stops the driver re-attempting a day the source truly has
-    nothing for on every tick forever.
+    THE COUNTS ARE OVER THE WHOLE STREAM, not over a window, because a static lane has none: a
+    reference set holds N versions, and how many of them exist is the useful number. `missing_days`
+    holds at most one entry -- the version the source says is owed.
     """
-    window = lane_window(lane, today=today)
-    if window is None:
-        return LaneGapCensus(
-            slug=lane.slug,
-            window_kind=lane.window_kind,
-            history_floor=lane.history_floor,
-            publication_lag_days=lane.publication_lag_days,
-            floor_basis=lane.floor_basis,
-            first_day=None,
-            last_day=None,
-            data_days=0,
-            absent_days=0,
-            conflict_days=0,
-            missing_days=(),
-            truncated=False,
-        )
-    first_day, last_day = window
+    if reading is not None and reading.error is not None:
+        return _census_shell(lane, static_state="watermark_unread", error=reading.error)
     try:
         keys = store.list_partition_keys(lane.slug, GAP_FILL_PARTITION_KIND)
+    except Exception as error:  # per-lane isolation: an unreadable listing must not end the census
+        return _census_shell(lane, static_state="watermark_unread", error=_listing_failure(lane, error))
+    data_days = {
+        parsed.day
+        for key in keys
+        if (parsed := try_parse_partition_path(key)) is not None
+        and parsed.layer == lane.slug
+        and parsed.kind == GAP_FILL_PARTITION_KIND
+    }
+    marker_days = {
+        marker.day
+        for key in keys
+        if (marker := try_parse_absence_marker_path(key)) is not None
+        and marker.layer == lane.slug
+        and marker.kind == GAP_FILL_PARTITION_KIND
+    }
+    watermark = None if reading is None else reading.watermark
+    try:
+        verdict = resolve_static_lane(
+            watermark=watermark,
+            newest_covered_day=newest_covered_day(
+                layer=lane.slug, kind=GAP_FILL_PARTITION_KIND, keys=keys
+            ),
+            today=today,
+        )
+    except LaneContractError as error:
+        return _census_shell(lane, static_state="watermark_unread", error=f"{lane.slug}: {error}")
+    version_day = watermark.day if watermark is not None else None
+    return _census_shell(
+        lane,
+        first_day=version_day,
+        last_day=version_day,
+        data_days=len(data_days),
+        absent_days=len(marker_days - data_days),
+        conflict_days=len(marker_days & data_days),
+        missing_days=() if verdict.version_day is None else (verdict.version_day,),
+        static_state=verdict.state,
+        source_watermark=version_day,
+        watermark_basis=None if watermark is None else watermark.basis,
+        static_detail=verdict.detail,
+    )
+
+
+def _series_lane_census(
+    lane: LaneRegistration,
+    store: ObjectStore,
+    *,
+    today: date,
+    max_days_per_lane: int | None,
+) -> LaneGapCensus:
+    """Classify one `daily_series` or `release_series` lane's settled window from the LISTING alone."""
+    window = lane_window(lane, today=today)
+    if window is None:
+        return _census_shell(lane)
+    first_day, last_day = window
+    try:
         statuses = partition_day_statuses(
             layer=lane.slug,
             kind=GAP_FILL_PARTITION_KIND,
             first_day=first_day,
             last_day=last_day,
-            keys=keys,
+            keys=store.list_partition_keys(lane.slug, GAP_FILL_PARTITION_KIND),
         )
     except Exception as error:  # per-lane isolation: an unreadable listing must not end the census
-        return LaneGapCensus(
-            slug=lane.slug,
-            window_kind=lane.window_kind,
-            history_floor=lane.history_floor,
-            publication_lag_days=lane.publication_lag_days,
-            floor_basis=lane.floor_basis,
-            first_day=first_day,
-            last_day=last_day,
-            data_days=0,
-            absent_days=0,
-            conflict_days=0,
-            missing_days=(),
-            truncated=False,
-            error=f"listing {lane.slug!r} failed: {type(error).__name__}: {error}",
-        )
+        return _census_shell(lane, first_day=first_day, last_day=last_day, error=_listing_failure(lane, error))
     # NEWEST-FIRST. `partition_day_statuses` answers chronologically; this reversal is the whole
     # reason one driver serves both the leading edge and the backlog. See the module docstring.
     #
-    # Cadence filters the candidates BEFORE they become work: a weekly source only publishes on its
+    # Cadence filters the candidates BEFORE they become work: a release series only publishes on its
     # own step from the floor, so the six intervening days are not gaps the driver should chase.
     # It never suppresses a day that already holds data or a marker -- those are read from the
     # listing above and reported as-is, so a real partition off the expected step stays visible.
@@ -271,21 +383,39 @@ def build_lane_census(
         for day, status in sorted(statuses.items(), reverse=True)
         if status == "missing" and (day - lane.history_floor).days % lane.cadence_days == 0
     )
-    truncated = max_days_per_lane is not None and len(missing) > max_days_per_lane
-    return LaneGapCensus(
-        slug=lane.slug,
-        window_kind=lane.window_kind,
-        history_floor=lane.history_floor,
-        publication_lag_days=lane.publication_lag_days,
-        floor_basis=lane.floor_basis,
+    return _census_shell(
+        lane,
         first_day=first_day,
         last_day=last_day,
         data_days=sum(1 for status in statuses.values() if status == "data"),
         absent_days=sum(1 for status in statuses.values() if status == "absent"),
         conflict_days=sum(1 for status in statuses.values() if status == "conflict"),
         missing_days=missing if max_days_per_lane is None else missing[:max_days_per_lane],
-        truncated=truncated,
+        truncated=max_days_per_lane is not None and len(missing) > max_days_per_lane,
     )
+
+
+def build_lane_census(
+    lane: LaneRegistration,
+    store: ObjectStore,
+    *,
+    today: date,
+    max_days_per_lane: int | None = None,
+    reading: LaneWatermarkReading | None = None,
+) -> LaneGapCensus:
+    """Classify one lane's coverage from the object LISTING alone -- never by opening a file.
+
+    A governed-absence marker counts as covered, not as a gap: `missing_partition_days` already
+    treats it that way, which is what stops the driver re-attempting a day the source truly has
+    nothing for on every tick forever.
+
+    `reading` is a static lane's watermark, resolved by the caller because reading it needs a
+    database session and this function deliberately stays synchronous and listing-only. Omitting it
+    for a static lane reports `watermark_unread` -- honestly "we did not look", never "no gaps".
+    """
+    if nature_has_time_axis(lane.nature):
+        return _series_lane_census(lane, store, today=today, max_days_per_lane=max_days_per_lane)
+    return _static_lane_census(lane, store, today=today, reading=reading)
 
 
 def build_gap_census(
@@ -294,10 +424,19 @@ def build_gap_census(
     *,
     today: date,
     max_days_per_lane: int | None = None,
+    watermarks: Mapping[str, LaneWatermarkReading] | None = None,
 ) -> tuple[LaneGapCensus, ...]:
     """Census every requested lane, isolating one lane's listing failure from the rest."""
+    readings = watermarks or {}
     return tuple(
-        build_lane_census(lane, store, today=today, max_days_per_lane=max_days_per_lane) for lane in lanes
+        build_lane_census(
+            lane,
+            store,
+            today=today,
+            max_days_per_lane=max_days_per_lane,
+            reading=readings.get(lane.slug),
+        )
+        for lane in lanes
     )
 
 
@@ -309,6 +448,10 @@ def gap_census_report(census: Sequence[LaneGapCensus]) -> dict[str, object]:
         "missing_days": sum(len(entry.missing_days) for entry in census),
         "lanes_with_gaps": [entry.slug for entry in census if entry.missing_days],
         "lanes_with_errors": [entry.slug for entry in census if entry.error is not None],
+        # Reported separately from `lanes_with_gaps` so an operator can tell a reference set that
+        # MATCHES its source from one nobody asked about. Both show zero missing days.
+        "static_lanes_current": [entry.slug for entry in census if entry.static_state == "current"],
+        "static_lanes_unread": [entry.slug for entry in census if entry.static_state == "watermark_unread"],
     }
 
 
@@ -381,6 +524,11 @@ def _seeded_progress(census: LaneGapCensus, *, today: date) -> _LaneProgress:
     progress = _LaneProgress(census=census, pending=list(census.missing_days))
     if census.error is not None:
         progress.stopped, progress.outcome, progress.detail = True, "raised", census.error
+    elif census.static_state == "current":
+        # NOT `complete`, and not a gap of zero. This reference set matches its source.
+        progress.stopped, progress.outcome, progress.detail = True, "current", census.static_detail
+    elif census.static_state in {"source_empty", "watermark_unread"}:
+        progress.stopped, progress.outcome, progress.detail = True, "no_window", census.static_detail
     elif census.first_day is None:
         progress.stopped, progress.outcome = True, "no_window"
         progress.detail = (
@@ -398,6 +546,38 @@ def _utc_now() -> datetime:
 async def _pin_statement_timeout(session: AsyncSession) -> None:
     """Pin the transaction-local statement timeout; `SET LOCAL` dies with each rollback, so re-pin per day."""
     await session.execute(_STATEMENT_TIMEOUT)
+
+
+async def resolve_lane_watermarks(
+    session: AsyncSession,
+    store: ObjectStore,
+    *,
+    lanes: Sequence[LaneRegistration],
+    today: date,
+) -> dict[str, LaneWatermarkReading]:
+    """Read every static lane's source watermark, isolating one failed read from the rest of the tick.
+
+    Only `static_lookup` lanes declare a resolver, so a run over series lanes alone touches nothing
+    here. A lane whose read raises gets a reading carrying the reason, which its census reports as
+    `watermark_unread` -- never as zero gaps, which would read as "current" and is a different claim.
+    """
+    readings: dict[str, LaneWatermarkReading] = {}
+    for lane in lanes:
+        resolver = lane.watermark
+        if resolver is None:
+            continue
+        await _pin_statement_timeout(session)
+        try:
+            readings[lane.slug] = LaneWatermarkReading(watermark=await resolver(session, store, today=today))
+        except Exception as error:  # one unreadable watermark must not end the tick
+            readings[lane.slug] = LaneWatermarkReading(
+                error=f"reading {lane.slug!r}'s source watermark failed: {type(error).__name__}: {error}"
+            )
+        finally:
+            # Same discipline as a lane-day: these reads are read-only, and holding one snapshot
+            # across a whole tick would pin a production xmin horizon for nothing.
+            await session.rollback()
+    return readings
 
 
 async def _fill_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
@@ -460,7 +640,12 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
     lane its turn -- but every OTHER lane keeps going, and the raised lane's detail names the day.
     """
     deadline = monotonic() + time_budget_seconds
-    census = build_gap_census(lanes, store, today=today, max_days_per_lane=max_days_per_lane)
+    # Static lanes' source watermarks are read FIRST, before any listing: the census cannot classify
+    # a reference set without knowing what version its source is on.
+    watermarks = await resolve_lane_watermarks(session, store, lanes=lanes, today=today)
+    census = build_gap_census(
+        lanes, store, today=today, max_days_per_lane=max_days_per_lane, watermarks=watermarks
+    )
     progress = [_seeded_progress(entry, today=today) for entry in census]
     by_slug = {lane.slug: lane for lane in lanes}
 

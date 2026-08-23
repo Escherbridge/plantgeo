@@ -39,9 +39,12 @@ named by the layer slug taken verbatim from `geo.layers.name`:
 | the DuckDB/Polars serving read | `planes/<slug>.py` | planes is the serving layer |
 | the why: source, cadence, horizon, known gaps | `AGENTS.md` in each directory | per the repo's directory-level docs rule |
 
-The eleven slugs: `soil-survey`, `fire-detections`, `vegetation`,
+The eleven original slugs: `soil-survey`, `fire-detections`, `vegetation`,
 `burn-severity`, `evacuation-zones`, `interventions`, `fire-perimeters`,
-`water-gauges`, `sensors`, `weather-observations`, `watersheds`.
+`water-gauges`, `sensors`, `weather-observations`, `watersheds`. Since added:
+`signal` and `drought` (both `agri.*` streams rather than `geo.layers` rows), and
+`calendar` (§1a) — thirteen registered streams, with `interventions` staying in
+Postgres per RUNBOOK §0.26.1.
 
 - **A lane never imports another lane** — no `method/monte_carlo/sensors.py`
   importing `method/monte_carlo/vegetation.py`, and no cross-slug import at any
@@ -53,6 +56,56 @@ The eleven slugs: `soil-survey`, `fire-detections`, `vegetation`,
 - **The lattice test is the enforcement, and it must be extended** — see §5. A
   lane that satisfies this document but fails
   `test_layer_import_contract.py` is wrong, not the test.
+
+## 1a. Every lane declares a NATURE, and it is part of this contract
+
+*Added 2026-08-22. Supersedes `window_kind`/`current_snapshot`, which no longer exist.*
+
+`layer=<slug>/kind=…/year=/month=/day=` renders identically for every stream, so the layout
+silently invited one reading — "the day this was observed" — onto lanes where nothing was
+observed. A lane therefore **declares** what its partition day means:
+
+| nature | the `day=` is | gap-fill | forecastable |
+|---|---|---|---|
+| `daily_series` | the observation day | every day in `[floor, today − lag]` | may be |
+| `release_series` | the publication's own valid/issue date | cadence steps only, in that window | may be, where the release history supports it |
+| `static_lookup` | a **version stamp** | one snapshot at the source watermark, or nothing at all | **never** |
+
+- **A `static_lookup` is reference data with a version, not a measurement taken on a date.** A
+  HUC12 boundary, an SSURGO delineation, an evacuation-area set, a date dimension. There is no
+  per-day obligation for one to miss, and **the earlier claim that "a snapshot day the cron missed
+  is lost, deliberately" is retracted** — it described a defect, not a trade.
+- **A `static_lookup` declares a SOURCE WATERMARK** — the source's own "when did this last change".
+  A partition dated at or after it means *current*; otherwise ONE snapshot is owed, **dated at the
+  watermark**, never at the run date. It declares no publication lag: a version stamp is not
+  settled by waiting.
+- **A watermark column must be a CHANGE event, never a poll clock.** A column a re-fetch of
+  unchanged ground advances (`geo.geometry.last_confirmed_at`) launders the polling clock into the
+  version stamp and restores the churn. Cite the columns on the watermark itself.
+- **Only a `release_series` may declare a cadence above one day.** A daily series that skips days
+  is either not daily or not a series. An *irregular* release series keeps cadence 1 and lets its
+  own export record the non-release days as governed absences — a fixed step would walk past real
+  releases.
+- **`forecastable` is bounded by the nature and proven against the filesystem.** The nature is the
+  ceiling; shipping `method/monte_carlo/<module>.py` is the claim. A lane claiming a horizon with no
+  module, or a module with no claim, **fails a test** — §2's "declare `horizon: none` and ship no
+  forecaster" is the same fact stated twice, and the two are not allowed to drift.
+- **Report *current* distinctly from *not looked at*.** Both show zero missing days and they are
+  different claims.
+
+### The conformed calendar dimension
+
+One shared `calendar` stream, nature `static_lookup`, so every lane's day arithmetic — above all
+`as_of + 1..30` — resolves identically instead of twelve lanes re-deriving it. Lanes **key** their
+own role-named date columns to it **by value**; no lane schema gains a foreign-key column, and the
+observed / valid / available / warehouse-recorded clocks stay separate
+(`docs/holonic-kimball-modeling.md`). It is pure computation, so its generator lives in
+`foundation` and it must not pretend to be a database-backed lane.
+
+Seasonality is carried as **cyclical `day_of_year_sin`/`day_of_year_cos`** plus the WMO
+meteorological season (RUNBOOK §0.28.3). Time of day, astronomical season and daylight belong
+elsewhere — a separate sub-daily dimension and a solar fact per `(cell, date)` — because crossing
+them in multiplies the row count for nothing and daylight is not a function of the date alone.
 
 ## 2. Observed and forecast are separate streams that share one grain
 
@@ -174,6 +227,9 @@ forecasts.
 A lane change is not done until each is true:
 
 - [ ] `test_layer_import_contract.py` passes, including the new §5 rule.
+- [ ] The lane declares a §1a nature, and it matches what the source actually is.
+- [ ] A `static_lookup` declares a source watermark built from CHANGE columns, not a poll clock.
+- [ ] `forecastable` and the presence of `method/monte_carlo/<module>.py` agree.
 - [ ] No cross-slug import at any layer.
 - [ ] No write outside the lane's own `layer=<slug>/` prefix.
 - [ ] `kind=observed` and `kind=forecast` share grain, units, and column names.

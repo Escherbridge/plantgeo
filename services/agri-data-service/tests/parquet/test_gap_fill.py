@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -18,18 +18,21 @@ from click.testing import CliRunner
 
 from agri_data_service.cli import cli
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.foundation.parquet.lane_contract import LaneNature, SourceWatermark
 from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path
 from agri_data_service.pipeline.parquet.gap_fill import (
+    GapFillContractError,
     GapFillSummary,
+    LaneWatermarkReading,
     build_gap_census,
     gap_census_report,
     lane_window,
+    resolve_lane_watermarks,
     run_gap_fill,
 )
 from agri_data_service.pipeline.parquet.lane_registry import (
     LaneRegistration,
     LaneRunResult,
-    LaneWindowKind,
 )
 from agri_data_service.pipeline.parquet.objectstore import (
     ABSENCE_CONTENT_TYPE,
@@ -114,9 +117,11 @@ def stub_lane(  # noqa: PLR0913 - one knob per behaviour a driver test needs to 
     *,
     floor: date = FLOOR,
     lag: int = 0,
-    window_kind: LaneWindowKind = "daily_series",
+    nature: LaneNature = "daily_series",
     raises_on: Collection[date] = (),
     empty_on: Collection[date] = (),
+    watermark_day: date | None = None,
+    watermark_raises: bool = False,
 ) -> LaneRegistration:
     """A registration whose adapter records everything it was handed, then behaves as scripted."""
 
@@ -134,13 +139,20 @@ def stub_lane(  # noqa: PLR0913 - one knob per behaviour a driver test needs to 
             raise RuntimeError(f"{slug} export blew up on {day}")
         return LaneRunResult(part_count=1, row_count=5, byte_count=50, absence_recorded=False)
 
+    async def watermark(_session: Any, _store: ObjectStore, *, today: date) -> SourceWatermark:  # noqa: ARG001
+        if watermark_raises:
+            raise OSError(f"{slug} watermark query blew up")
+        return SourceWatermark(day=watermark_day, basis=f"test fixture watermark for {slug}")
+
+    is_static = nature == "static_lookup"
     return LaneRegistration(
         slug=slug,
         adapter=adapter,
         history_floor=floor,
-        publication_lag_days=lag,
-        window_kind=window_kind,
+        publication_lag_days=0 if is_static else lag,
+        nature=nature,
         floor_basis=f"test fixture for {slug}",
+        watermark=watermark if is_static else None,
     )
 
 
@@ -357,17 +369,180 @@ async def test_a_listing_failure_fails_that_lane_and_only_that_lane() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_current_snapshot_lane_only_ever_fills_the_newest_settled_day() -> None:
-    """Its export broadcasts the day onto every row, so filling a past day would fabricate history."""
+async def test_a_static_lane_writes_one_snapshot_dated_at_its_watermark_not_at_the_run_date() -> None:
+    """A HUC12 boundary is a reference fact with a version; the partition day is that version stamp."""
     calls: list[LaneCall] = []
     store = ObjectStore(RecordingBackend())
-    lane = stub_lane("watersheds", calls, floor=date(2026, 8, 7), window_kind="current_snapshot")
+    changed_on = date(2026, 8, 7)
+    lane = stub_lane("watersheds", calls, nature="static_lookup", watermark_day=changed_on)
 
     summary = await drive([lane], store)
 
-    assert pairs(calls) == [("watersheds", TODAY)]
-    assert lane_window(lane, today=TODAY) == (TODAY, TODAY)
+    assert pairs(calls) == [("watersheds", changed_on)]
+    assert changed_on != TODAY, "the point of the model is that the run date does not date the snapshot"
     assert summary.lanes[0].considered == 1
+    assert summary.lanes[0].written == 1
+
+
+@pytest.mark.asyncio
+async def test_a_static_lane_at_its_watermark_is_current_and_writes_nothing() -> None:
+    """Not a gap, not an absence, just current -- and reported with its own outcome, never `complete`."""
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    changed_on = date(2026, 8, 7)
+    seed_partition(backend, "watersheds", changed_on)
+    lane = stub_lane("watersheds", calls, nature="static_lookup", watermark_day=changed_on)
+
+    summary = await drive([lane], ObjectStore(backend))
+
+    assert calls == [], "a current reference set must not be re-exported on every tick"
+    verdict = summary.lanes[0]
+    assert verdict.outcome == "current"
+    assert verdict.detail is not None
+    assert "is current" in verdict.detail
+    assert not summary.failed
+
+
+@pytest.mark.asyncio
+async def test_a_version_written_after_the_watermark_still_counts_as_current() -> None:
+    """The rule is "at or after", so the legacy daily re-snapshots already in the bucket satisfy it."""
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    seed_partition(backend, "watersheds", TODAY)
+    lane = stub_lane("watersheds", calls, nature="static_lookup", watermark_day=date(2026, 8, 7))
+
+    summary = await drive([lane], ObjectStore(backend))
+
+    assert calls == []
+    assert summary.lanes[0].outcome == "current"
+
+
+@pytest.mark.asyncio
+async def test_a_static_lane_whose_source_changed_again_writes_the_new_version() -> None:
+    """The old version stays; a NEW partition lands at the new watermark day. Nothing is overwritten."""
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    seed_partition(backend, "watersheds", date(2026, 8, 7))
+    changed_again = date(2026, 8, 20)
+    lane = stub_lane("watersheds", calls, nature="static_lookup", watermark_day=changed_again)
+
+    summary = await drive([lane], ObjectStore(backend))
+
+    assert pairs(calls) == [("watersheds", changed_again)]
+    assert summary.lanes[0].outcome == "filled"
+
+
+@pytest.mark.asyncio
+async def test_a_static_lane_with_no_published_rows_is_source_empty_not_a_gap() -> None:
+    """An empty source has no version to stamp, which is honest rather than a day owed."""
+    calls: list[LaneCall] = []
+    lane = stub_lane("soil-survey", calls, nature="static_lookup", watermark_day=None)
+
+    summary = await drive([lane], ObjectStore(RecordingBackend()))
+
+    assert calls == []
+    assert summary.lanes[0].outcome == "no_window"
+    assert summary.lanes[0].detail is not None
+    assert "nothing to snapshot" in summary.lanes[0].detail
+    assert not summary.failed
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_watermark_fails_that_lane_rather_than_reading_as_current() -> None:
+    """"We could not ask the source" must never render identically to "the source says we are current"."""
+    calls: list[LaneCall] = []
+    lane = stub_lane("watersheds", calls, nature="static_lookup", watermark_raises=True)
+
+    summary = await drive([lane], ObjectStore(RecordingBackend()))
+
+    assert calls == []
+    assert summary.lanes[0].outcome == "raised"
+    assert summary.lanes[0].detail is not None
+    assert "OSError" in summary.lanes[0].detail
+    assert summary.failed
+
+
+@pytest.mark.asyncio
+async def test_a_watermark_dated_after_today_is_refused_as_a_clock_disagreement() -> None:
+    """Writing an observed partition dated in the future is never right, whatever the source claims."""
+    calls: list[LaneCall] = []
+    lane = stub_lane(
+        "watersheds", calls, nature="static_lookup", watermark_day=TODAY + timedelta(days=1)
+    )
+
+    summary = await drive([lane], ObjectStore(RecordingBackend()))
+
+    assert calls == []
+    assert summary.lanes[0].outcome == "raised"
+    assert summary.lanes[0].detail is not None
+    assert "later than" in summary.lanes[0].detail
+    assert summary.failed
+
+
+def test_a_census_with_no_watermark_reports_unread_rather_than_zero_gaps() -> None:
+    """A listing-only census did not look; saying so is the difference between honest and plausible."""
+    calls: list[LaneCall] = []
+    lane = stub_lane("watersheds", calls, nature="static_lookup", watermark_day=date(2026, 8, 7))
+
+    census = build_gap_census([lane], ObjectStore(RecordingBackend()), today=TODAY)
+
+    entry = census[0]
+    assert entry.static_state == "watermark_unread"
+    assert entry.missing_days == ()
+    assert entry.source_watermark is None
+    report = gap_census_report(census)
+    assert report["static_lanes_unread"] == ["watersheds"]
+    assert report["static_lanes_current"] == []
+    assert report["lanes_with_gaps"] == []
+
+
+def test_the_census_reports_nature_and_forecastability_for_every_lane() -> None:
+    """An operator must be able to see at a glance which streams are static and which are series."""
+    calls: list[LaneCall] = []
+    lanes = [
+        stub_lane("signal", calls),
+        stub_lane("drought", calls, nature="release_series"),
+        stub_lane("watersheds", calls, nature="static_lookup", watermark_day=date(2026, 8, 7)),
+    ]
+
+    report = gap_census_report(build_gap_census(lanes, ObjectStore(RecordingBackend()), today=TODAY))
+
+    rows = {row["lane"]: row for row in report["lanes"]}  # type: ignore[union-attr]
+    assert rows["signal"]["nature"] == "daily_series"
+    assert rows["drought"]["nature"] == "release_series"
+    assert rows["watersheds"]["nature"] == "static_lookup"
+    assert all(row["forecastable"] is False for row in rows.values()), "stub lanes ship no forecaster"
+
+
+def test_a_static_lane_is_refused_a_settled_window_rather_than_handed_a_plausible_one() -> None:
+    """`current_snapshot` collapsed to "the newest settled day", which is what re-snapshotted daily."""
+    calls: list[LaneCall] = []
+    lane = stub_lane("watersheds", calls, nature="static_lookup", watermark_day=date(2026, 8, 7))
+
+    with pytest.raises(GapFillContractError, match="has no settled window"):
+        lane_window(lane, today=TODAY)
+
+
+@pytest.mark.asyncio
+async def test_only_static_lanes_are_asked_for_a_watermark() -> None:
+    """A series lane is driven by its publication lag; two clocks on one lane would disagree."""
+    calls: list[LaneCall] = []
+    lanes = [
+        stub_lane("signal", calls),
+        stub_lane("watersheds", calls, nature="static_lookup", watermark_day=date(2026, 8, 7)),
+    ]
+
+    readings = await resolve_lane_watermarks(
+        RecordingSession(),  # type: ignore[arg-type]
+        ObjectStore(RecordingBackend()),
+        lanes=lanes,
+        today=TODAY,
+    )
+
+    assert set(readings) == {"watersheds"}
+    assert readings["watersheds"] == LaneWatermarkReading(
+        watermark=SourceWatermark(day=date(2026, 8, 7), basis="test fixture watermark for watersheds")
+    )
 
 
 @pytest.mark.asyncio
@@ -438,6 +613,35 @@ def test_dry_run_reports_the_census_and_writes_nothing(monkeypatch: pytest.Monke
     assert report["lanes"][0]["history_floor"] == "2026-05-24"
     assert "docs/lanes/water-gauges.md" in report["lanes"][0]["floor_basis"]
     assert backend.objects == {}, "--dry-run must not write a single object"
+
+
+def test_skip_watermarks_keeps_a_static_lane_dry_run_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `--dry-run` that silently opens the loader DSN is a footgun; this is the escape hatch.
+
+    The loader DSN falls back to `DATABASE_URL`, which in this repo's own `.env` is PRODUCTION, so an
+    operator auditing the census must be able to keep the verb entirely offline.
+    """
+    store = ObjectStore(RecordingBackend())
+
+    def _stub_from_settings(_cls: type[ObjectStore], _source: object = None) -> ObjectStore:
+        return store
+
+    def _refuse_session(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("--skip-watermarks must not open a database session")
+
+    monkeypatch.setattr(ObjectStore, "from_settings", classmethod(_stub_from_settings))
+    monkeypatch.setattr("agri_data_service.cli.local_source_loader_session", _refuse_session)
+
+    result = CliRunner().invoke(
+        cli, ["parquet-gap-fill", "--layer", "watersheds", "--dry-run", "--skip-watermarks"]
+    )
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["static_lanes_unread"] == ["watersheds"]
+    assert report["lanes"][0]["nature"] == "static_lookup"
+    assert report["lanes"][0]["source_watermark"] is None
+    assert report["lanes"][0]["missing_days"] == 0
 
 
 def test_an_unknown_layer_is_refused_before_anything_is_listed() -> None:

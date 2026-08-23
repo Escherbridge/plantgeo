@@ -19,13 +19,22 @@ lane keys to. It is also NOT a `dim_time` that collapses the clocks: `docs/holon
 is explicit that observed, valid, available and warehouse-recorded instants stay separate
 role-named facts. Lanes KEY their own role-named date columns to this dimension; none of them
 surrender the distinction between which clock a date came from.
+
+WHAT IT DELIBERATELY LEAVES TO OTHER STRUCTURES, per RUNBOOK section 0.28.3:
+  * time of day -- a SEPARATE dimension of 24 or 96 rows reused every day. Crossing it into this
+    one would multiply to millions of rows for nothing.
+  * daylight and photoperiod -- they depend on date AND latitude (06:00 is dark in Missoula in
+    January and bright in June), so they belong in a solar fact per (cell, date), never here.
+  * astronomical season -- its boundaries are solar events, so it belongs with that same fact.
+    The METEOROLOGICAL season below is a fixed three-month grouping and is pure date arithmetic.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Final
+from typing import Final, Literal
 
 CALENDAR_STREAM: Final = "calendar"
 
@@ -47,6 +56,14 @@ MAX_CALENDAR_DAYS: Final = 40_000
 
 MONTHS_PER_QUARTER: Final = 3
 
+# The WMO three-month groupings. A fixed month mapping and nothing more -- no solar event, no
+# hemisphere assumption beyond the northern naming these labels already carry.
+MeteorologicalSeason = Literal["DJF", "MAM", "JJA", "SON"]
+
+_SEASON_BY_MONTH: Final[tuple[MeteorologicalSeason, ...]] = (
+    "DJF", "DJF", "MAM", "MAM", "MAM", "JJA", "JJA", "JJA", "SON", "SON", "SON", "DJF",
+)  # fmt: skip
+
 
 class CalendarError(ValueError):
     """Raised when a requested calendar span runs backwards or exceeds the day budget."""
@@ -67,18 +84,32 @@ class CalendarDay:
     iso_day_of_week: int
     is_month_start: bool
     is_month_end: bool
+    meteorological_season: MeteorologicalSeason
+    day_of_year_sin: float
+    day_of_year_cos: float
+
+
+def days_in_year(year: int) -> int:
+    """365, or 366 in a leap year. Derived from the calendar rather than a leap-year rule restated."""
+    return date(year, 12, 31).timetuple().tm_yday
 
 
 def calendar_day_for(day: date) -> CalendarDay:
     """Decompose one civil day. Pure, total, and independent of locale, timezone and clock."""
     iso_year, iso_week, iso_day_of_week = day.isocalendar()
+    day_of_year = day.timetuple().tm_yday
+    # CYCLICAL SEASONALITY, per RUNBOOK section 0.28.3: "that is the form a model consumes and it
+    # has no Dec-31 to Jan-1 discontinuity". A raw day_of_year puts 31 December 364 units away from
+    # 1 January, which a model reads as maximally dissimilar when they are one day apart. The phase
+    # is taken over THIS year's own length, so a leap year does not shift the cycle by a day.
+    angle = 2.0 * math.pi * (day_of_year - 1) / days_in_year(day.year)
     return CalendarDay(
         calendar_day=day,
         year=day.year,
         quarter=(day.month - 1) // MONTHS_PER_QUARTER + 1,
         month=day.month,
         day_of_month=day.day,
-        day_of_year=day.timetuple().tm_yday,
+        day_of_year=day_of_year,
         iso_year=iso_year,
         iso_week=iso_week,
         # ISO 8601: Monday is 1, Sunday is 7. Deliberately NOT `date.weekday()`'s 0-6, so a reader
@@ -86,6 +117,9 @@ def calendar_day_for(day: date) -> CalendarDay:
         iso_day_of_week=iso_day_of_week,
         is_month_start=day.day == 1,
         is_month_end=(day + timedelta(days=1)).month != day.month,
+        meteorological_season=_SEASON_BY_MONTH[day.month - 1],
+        day_of_year_sin=math.sin(angle),
+        day_of_year_cos=math.cos(angle),
     )
 
 

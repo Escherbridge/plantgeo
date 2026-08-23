@@ -28,6 +28,17 @@ SENSORS_SCHEMA = register_stream_schema(
   `quantile` or `draw_index`) belong in the same schema, nullable on the observed side.
 - **No cross-lane imports.** A shared column set moves down into `foundation`, in its own commit.
 
+## `calendar.py` is a dimension, not a layer
+The conformed date dimension is registered here like any other stream, but it is not a
+`geo.layers` slug and has no source system: every column is a function of `calendar_day` alone, and
+the generator is `foundation/parquet/calendar.py` (stdlib only). It is `static_lookup` and
+`horizon: none`, so it never writes `kind=forecast`.
+
+**Lanes key to it by value; no lane schema gains a foreign-key column for it.** A lane's own
+role-named date column — `observed_day`, `release_day`, `snapshot_day`, `valid_date`, `issued_on` —
+joins to `calendar_day`. Collapsing those roles into one key is exactly what
+`docs/holonic-kimball-modeling.md` forbids.
+
 ## `signal` is already registered elsewhere
 The signal plane's ten-column schema is frozen owner-decided truth and lives in
 `warehouse/parquet/schema.py` (`SIGNAL_PLANE_SCHEMA`). If S3 adds `signal.py` here it must

@@ -52,6 +52,9 @@ def build_calendar_table(version_day: date, *, floor: date) -> pa.Table:
             "iso_day_of_week": pa.array([entry.iso_day_of_week for entry in days], pa.int8()),
             "is_month_start": pa.array([entry.is_month_start for entry in days], pa.bool_()),
             "is_month_end": pa.array([entry.is_month_end for entry in days], pa.bool_()),
+            "meteorological_season": pa.array([entry.meteorological_season for entry in days], pa.string()),
+            "day_of_year_sin": pa.array([entry.day_of_year_sin for entry in days], pa.float64()),
+            "day_of_year_cos": pa.array([entry.day_of_year_cos for entry in days], pa.float64()),
         }
     ).cast(CALENDAR_SCHEMA.arrow_schema)
 

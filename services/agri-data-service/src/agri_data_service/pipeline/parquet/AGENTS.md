@@ -58,7 +58,7 @@ a thread pool for no caller that exists. **If a route ever needs it, run it in a
 than making this async.**
 
 ## `lane_registry.py` — why it is here and not in `pipeline/lanes/`
-It imports all eleven lane modules. A module *inside* `pipeline/lanes/` that did that would
+It imports all thirteen lane modules. A module *inside* `pipeline/lanes/` that did that would
 (correctly) fail `test_layer_import_contract.py::test_lanes_do_not_import_each_other`, because
 `layer-lanes.md` §1's "a lane never imports another lane" is enforced there by directory. **The
 registry is not a lane** — it is the one module allowed to know all of them, and it lives beside the
@@ -98,13 +98,57 @@ gap-days**. Three are worth knowing without reading the table:
   lag 2 is a deliberately shallow guess so being wrong costs dozens of phantom days, not thousands.
   Write that half of the contract and measure the real floor before trusting it.
 
-### Three lanes refuse historical backfill by construction
-`evacuation_zones_day_export.sql`, `watersheds_day_export.sql` and `soil_survey_day_export.sql` all
-**broadcast** the caller's day onto every row and apply no date predicate — Postgres holds no record
-of what those current-state feeds published on any day but today. Filling one of their historical
-gaps would stamp today's state onto a past date, which is fabrication, not backfill. They carry
-`window_kind="current_snapshot"` and `lane_window` collapses them to the newest settled day. **A
-snapshot day the cron missed is lost, deliberately.**
+### Every lane declares a NATURE, and it says what the partition day means
+The vocabulary lives in `foundation/parquet/lane_contract.py`; the registrations pick one each.
+
+| nature | the partition day is | gap-fill | forecastable |
+|---|---|---|---|
+| `daily_series` | the observation day | every day in `[floor, today − lag]` | may be |
+| `release_series` | the publication's own valid/issue date | every cadence step in that window | may be |
+| `static_lookup` | a **version stamp** | one snapshot at the source watermark, or nothing | **never** |
+
+`LaneWindowKind` and `current_snapshot` are **gone**. That model registered three reference lanes
+as a daily series with a collapsed window, which meant re-snapshotting the newest settled day on
+every tick and calling any tick they missed a permanent loss. Both halves were wrong: a HUC12
+boundary is not a measurement taken on a date, so no calendar day ever carried an obligation.
+
+`lane_window` now **refuses** a static lane rather than answering with a plausible-looking range —
+handing one back is precisely how the old model came to churn.
+
+### Static lanes are watermark-driven, not schedule-driven
+Each `static_lookup` lane declares a `watermark` resolver. `resolve_lane_watermarks` runs them
+first, before any listing, and `resolve_static_lane` applies one rule: **a partition dated at or
+after the watermark means there is nothing to do — not a gap, not an absence, just current.**
+Otherwise exactly one snapshot is owed, dated at the **watermark day**, never at the run date.
+
+- **Every watermark column is a CHANGE event, never a poll clock.** `geo.features.updated_at`
+  qualifies only because `sql/ingest/refresh_features.sql` moves it inside an UPDATE gated on
+  `properties IS DISTINCT FROM next_properties` — an unchanged re-fetch moves nothing.
+  `geo.geometry.last_confirmed_at` is deliberately **excluded everywhere**: `usda-soil.ts:769,833`
+  advances it on every re-fetch of unchanged ground, and a poll clock inside a version stamp would
+  reinstate the daily churn.
+- **`created_at` rides alongside `updated_at`** because an insert moves only the former
+  (`drizzle/0022:13`), so neither column alone sees every change.
+- **`soil-survey` takes `GREATEST(saverest vintage, feature created_at)`.** The vintage alone would
+  never advance for a lazily-warmed survey area carrying an old `saverest`, and those delineations
+  would then never reach a release.
+- **The census reports `current` distinctly from `watermark_unread`.** Both show zero missing days
+  and they are different claims; a listing-only `--dry-run` over a lane whose DSN it could not
+  resolve says so rather than implying the lane is fine.
+- **A watermark later than today is refused** as a clock disagreement — an observed partition dated
+  in the future is never right.
+- **`--dry-run` now opens the loader DSN when a static lane is in scope**, because coverage cannot
+  be told from the listing alone. That DSN falls back to `DATABASE_URL`, which in this repo's `.env`
+  is **production** — one read-only aggregate, rolled back, but a surprise nonetheless.
+  **`--skip-watermarks` keeps the audit entirely offline** and reports `watermark_unread`.
+
+### `calendar` is the thirteenth stream and has no source system
+The conformed date dimension. `static_lookup`, `horizon: none`, floor **derived** as
+`min(history_floor)` over the twelve database-backed lanes. Its generator is
+`foundation/parquet/calendar.py` (stdlib only) and its lane module takes **no `AsyncSession`** —
+the registry's `_fill_calendar` absorbs the uniform adapter shape so the lie stays in one annotated
+place. Its watermark comes from the clock and its own listing: a version covers 800 days forward
+and must reach `today + 400`, so it regenerates roughly annually instead of daily.
 
 ## `gap_fill.py` — the driver a Railway cron runs
 - **Newest-first is the design, not a preference.** A newly published day *is* the newest missing day,

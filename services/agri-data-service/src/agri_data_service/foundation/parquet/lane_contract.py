@@ -14,8 +14,18 @@ per-day obligation for a static lane to miss.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
+
+from agri_data_service.foundation.parquet.paths import (
+    try_parse_absence_marker_path,
+    try_parse_partition_path,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from datetime import date
+
+    from agri_data_service.foundation.parquet.paths import PartitionKind
 
 # daily_series   -- genuine per-day observations. The partition day IS the observation day.
 #                   Forecastable. Every cadence step in the window is a candidate to fill.
@@ -87,6 +97,28 @@ class SourceWatermark:
                 "a source watermark must cite the columns it came from; an uncited version stamp reads "
                 "as a measurement and cannot be re-derived"
             )
+
+
+def newest_covered_day(*, layer: str, kind: PartitionKind, keys: Iterable[str]) -> date | None:
+    """Return the newest day of one stream that holds a part file or an absence marker, from keys alone.
+
+    A static lane has no window to diff, so `partition_day_statuses` -- which needs one -- cannot
+    answer its coverage question. What it needs instead is the newest VERSION already published,
+    across the whole stream, and that is still a listing rather than a scan: `layer-lanes.md` §4's
+    rule holds here unchanged.
+    """
+    newest: date | None = None
+    for key in keys:
+        parsed = try_parse_partition_path(key)
+        if parsed is not None and parsed.layer == layer and parsed.kind == kind:
+            newest = parsed.day if newest is None else max(newest, parsed.day)
+            continue
+        marker = try_parse_absence_marker_path(key)
+        if marker is not None and marker.layer == layer and marker.kind == kind:
+            # A governed absence at a version day means the source was asked at that version and
+            # had nothing. That is coverage, not a gap -- the same rule the series lanes apply.
+            newest = marker.day if newest is None else max(newest, marker.day)
+    return newest
 
 
 @dataclass(frozen=True, slots=True)

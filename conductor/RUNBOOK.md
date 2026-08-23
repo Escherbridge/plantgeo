@@ -3846,6 +3846,25 @@ scheduled**, or its history horizon and gap detection have nothing to check agai
 **HEAD `1c21a20`, pushed, tree clean.** §0.27 remains accurate about what was BUILT; this section
 supersedes its forecast strategy and retracts one claim.
 
+#### 0.28.0 CORRECTION -- `96617bc` is mislabelled, and this is the honest record
+
+*Written 2026-08-23 by the session that landed the work `96617bc` half-swept in.*
+
+`96617bc` reads `docs(conductor): handoff`. **It is not a docs commit.** A `git add -A` run while an
+agent was mid-write swept in **7 code files**: `foundation/parquet/calendar.py`,
+`foundation/parquet/lane_contract.py`, `pipeline/lanes/calendar.py`, `warehouse/schemas/calendar.py`
+and the three `sql/pipeline/lane_watermark_*.sql` files. **No sweep ever ran against that
+combination** -- it was a partial cut of an agent's in-flight tree, and its message describes none
+of it.
+
+History was NOT rewritten: `96617bc` is pushed and level with `origin/main`, so force-pushing shared
+history to correct a message is the more expensive error. The framing is corrected **here** instead,
+and the follow-up commit carries the rest of that agent's work plus the first sweep that ever
+covered it.
+
+**Do not cite `96617bc` as evidence that anything was verified.** The verified point is the commit
+that follows it.
+
 #### 0.28.1 Four owner decisions, 2026-08-23
 
 | # | decision | consequence |
@@ -3925,7 +3944,10 @@ What IS proven: one manual `parquet-gap-fill` tick wrote a real drought release 
 1. **Confirm the cron's parquet verb actually ran.** `railway logs --service plantgeo-ingest-cron`,
    look for the `parquet-gap-fill` JSON. If the ENTRYPOINT is wrong the run is silently 2/3 useful.
 2. **Land the per-kind schema lookup** (decision 1) — it unblocks five finished forecasters.
-3. **Integrate the lane-nature + calendar agent's work**, in flight at handoff (see §0.28.2).
+3. ~~**Integrate the lane-nature + calendar agent's work**, in flight at handoff (see §0.28.2).~~
+   **DONE — see §0.28.8 for the as-built record**, including one deviation from §0.28.3 worth
+   knowing (the sin/cos and meteorological-season columns landed in `dim_date`; time-of-day,
+   astronomical season and daylight deliberately did not).
 4. **Wire every Open-Meteo product**, forward and historical (decision 4). `ingest/open_meteo*.py`
    already has archive, air-quality, ensemble and flood modules; ensemble and flood are **built but
    persist-blocked** from the 2026-08-06 expansion wave. Surface as layers where possible.
@@ -3934,6 +3956,105 @@ What IS proven: one manual `parquet-gap-fill` tick wrote a real drought release 
    burn severity, NDVI, soil moisture and seasonality. No model until the Mojo call.
 6. **Sub-daily dimension and the solar fact table** (§0.28.3).
 7. **Refactor the five bootstraps into one harness** with pluggable draw strategies (§0.28.4).
+
+#### 0.28.8 LANE NATURES, WATERMARKS AND THE CALENDAR — AS BUILT, 2026-08-23
+
+**§0.28.2's retraction is now CODE, and §0.28.3's date dimension is BUILT.** This is the "as built"
+half of that design — §0.28.7 item 3's "integrate the lane-nature + calendar agent's work" is this
+section. The retracted sentence is §0.27.2's *"a snapshot day the cron misses is lost,
+deliberately"*: what it framed as a deliberate trade was a defect — three reference lanes registered
+as a daily series with a collapsed window, re-snapshotting the newest settled day every hourly tick
+forever. **`window_kind` and `current_snapshot` no longer exist.** §0.27.2 now carries an inline
+strike-through pointing here.
+
+**Three natures, declared per lane** (`foundation/parquet/lane_contract.py`, binding via
+`code_styleguides/layer-lanes.md` §1a):
+
+| nature | `day=` means | lanes |
+|---|---|---|
+| `daily_series` | the observation day | `fire-detections`, `fire-perimeters`, `sensors`, `signal`, `vegetation`, `water-gauges`, `weather-observations` |
+| `release_series` | the publication's own valid/issue date | `burn-severity`, `drought` |
+| `static_lookup` | a **version stamp** | `evacuation-zones`, `soil-survey`, `watersheds`, **`calendar`** |
+
+**Watermark model.** Each `static_lookup` lane declares a source watermark — the source's own "when
+did this last change". A partition dated at or after it means **current**: not a gap, not an
+absence. Otherwise ONE snapshot is owed, dated **at the watermark**, never at the run date. Static
+lanes declare `publication_lag_days=0`; a version stamp is not settled by waiting.
+
+- **Every watermark column is a CHANGE event.** `geo.features.updated_at` qualifies *only* because
+  `sql/ingest/refresh_features.sql` moves it inside an UPDATE gated on
+  `properties IS DISTINCT FROM next_properties` — verified by reading that file, and it is what
+  makes the whole model possible. `created_at` rides alongside because an insert moves only that
+  (`drizzle/0022:13`).
+- **`geo.geometry.last_confirmed_at` is excluded everywhere, and it is the trap.**
+  `src/lib/server/services/usda-soil.ts:769,833` advances it on every re-fetch of unchanged ground.
+  It is a poll clock; putting it in a version stamp would restore the daily churn.
+- **`soil-survey` = `GREATEST(saverest vintage, feature created_at)`** — the vintage alone never
+  advances for a lazily-warmed survey area carrying an old `saverest`, so those delineations would
+  never reach a release.
+- **`current` is reported separately from `watermark_unread`.** Both show zero missing days; they
+  are different claims. A `--dry-run` over series lanes alone still opens no database.
+- **A watermark later than today is refused** as a clock disagreement.
+
+**THREE watermark SQL files, not the four the brief estimated** —
+`sql/pipeline/lane_watermark_{watersheds,evacuation_zones,soil_survey}.sql`. The fourth static lane
+is `calendar`, which by the brief's own constraint has no Postgres source, so its watermark is a
+Python resolver over the clock and its own object listing instead.
+
+**`forecastable` is bounded by nature and PROVEN against the filesystem.** `static_lookup` can never
+be forecastable (enforced at construction). For the rest, `forecast_module` names the real module
+and a test asserts `method/monte_carlo/` holds **exactly** those five stems, in both directions.
+**§0.27.1's "six that can honestly forecast" is off by one: there are FIVE** — `fire-detections`,
+`sensors`, `signal`, `vegetation` (as `vegetation_ndvi_forecast.py`, the one module whose stem is
+not its slug), `water-gauges`. `fire-perimeters` and `weather-observations` are daily series that
+ship no forecaster, which is allowed: the nature is the ceiling, the module is the claim.
+
+**`burn-severity` keeps `cadence_days=1`, and that answers §0.27.5 item 5.** Its five MTBS releases
+sit on no fixed step from the floor, so any cadence above one would step straight past real
+releases. The ~2,000 honest absence markers are the price of an *irregular* release series.
+
+**The conformed calendar dimension — stream 13, and §0.28.3's `dim_date` half.**
+`foundation/parquet/calendar.py` (stdlib only) generates it; `warehouse/schemas/calendar.py` holds
+the schema; `pipeline/lanes/calendar.py` writes it and **takes no `AsyncSession`**, because it has no
+source system. **Fourteen columns:** `calendar_day` (grain), `year`, `quarter`, `month`,
+`day_of_month`, `day_of_year`, `iso_year`, `iso_week`, `iso_day_of_week`, `is_month_start`,
+`is_month_end`, `meteorological_season`, `day_of_year_sin`, `day_of_year_cos`.
+
+The last three are §0.28.3's, not the brief's: **cyclical sin/cos day-of-year** because that is the
+form a model consumes and it has no Dec-31→Jan-1 discontinuity (the phase is taken over the day's
+OWN year length, so a leap year does not drift the cycle), and the **meteorological** season because
+it is a fixed three-month grouping. **Astronomical season, time-of-day and daylight are
+deliberately NOT here** — §0.28.3 puts the first two in a separate dimension and daylight in a solar
+fact per `(cell, date)`, since it depends on latitude as well as date.
+
+Floor **derived** as `min(history_floor)` over the twelve database-backed lanes = **2000-11-02**
+(`fire-detections`); each version covers 800 days forward and must reach `today + 400`, so a 30-day
+horizon from any as-of date resolves and the lane regenerates roughly annually rather than daily.
+**10,225 rows at today's floor, spilling to two parts, which `partition_day_statuses` reads as ONE
+day.** No fiscal years, holidays or trading days — unsourced policy in a dimension every lane keys
+to is worse than no dimension. **Lanes key to it BY VALUE; no lane schema gained a column**, and the
+observed/valid/available/warehouse-recorded clocks stay separate per
+`docs/holonic-kimball-modeling.md`.
+
+**A FOOTGUN THIS CHANGE CREATED, FOUND BY TRIPPING IT.** `--dry-run` used to be a pure object
+listing with no database at all. Reading a watermark needs a session, so a dry run with a static
+lane in scope now opens the loader DSN — **and `LOCAL_SOURCE_LOADER_DATABASE_URL` is unset in this
+repo's `.env`, so it falls back to `DATABASE_URL` = PRODUCTION.** Invoking the verb during
+verification therefore issued **one read-only aggregate SELECT against prod** (rolled back, 120 s
+statement timeout, zero objects written). Disclosed rather than quietly dropped, because the same
+surprise is waiting for the next operator. **`--skip-watermarks` now keeps the audit offline**, and
+the flag's help text and the `--dry-run` help text both name the connection explicitly.
+
+The unintended read did corroborate the model against reality: watersheds' watermark came back
+`2026-08-07T18:38:59.832394+00:00` over **9,396 published rows** — the load day and row count
+§0.26.6 recorded, arrived at by a completely different query.
+
+**Not done, deliberately:** no `docs/lanes/calendar.md` (there is no source contract to document —
+the rationale is in the two `AGENTS.md` files), no `planes/calendar.py` or
+`pipeline/validation/calendar.py` (nothing to serve yet, and validating pure computation against a
+source system it does not have would be theatre), and §0.27.3's `kind=forecast` schema blocker is
+untouched. **Nothing was written to the real bucket and no database was written to at all** —
+every test runs on `RecordingBackend`/`RecordingSession`.
 
 ### 0.27 HANDOFF 2026-08-22 (third) — twelve streams, an armed cron, and one blocker
 
@@ -3986,8 +4107,13 @@ releases. Self-terminating, but give it a cadence.
 **Three lanes refuse historical backfill by construction.** `evacuation-zones`, `watersheds` and
 `soil-survey` broadcast the caller's day with no date predicate, because Postgres holds no record of
 what those current-state feeds published on a past day. Backfilling them would stamp today's state
-onto a past date — fabrication. They collapse to one newest-day snapshot; **a snapshot day the cron
-misses is lost, deliberately.**
+onto a past date — fabrication. They collapse to one newest-day snapshot; ~~**a snapshot day the
+cron misses is lost, deliberately.**~~
+
+> **RETRACTED — declared in §0.28.2, built in §0.28.8.** The first two sentences stand: those
+> exports genuinely cannot reconstruct a past day. The conclusion does not. Their partition day is
+> a **version stamp**, not an observation time, so no calendar day ever carried an obligation and
+> nothing can be "missed". They are now `static_lookup` lanes driven by a **source watermark**.
 
 #### 0.27.3 THE BLOCKER — forecasts cannot be written, and all five agents found it independently
 

@@ -305,8 +305,10 @@ from agri_data_service.models.strategy import Strategy
 from agri_data_service.pipeline.parquet.gap_fill import (
     DEFAULT_GAP_FILL_TIME_BUDGET_SECONDS,
     GapFillSummary,
+    LaneWatermarkReading,
     build_gap_census,
     gap_census_report,
+    resolve_lane_watermarks,
     run_gap_fill,
 )
 from agri_data_service.pipeline.parquet.lane_registry import (
@@ -3745,6 +3747,40 @@ def _gap_fill_failure_reason(exc: Exception) -> str:
     return f"parquet-gap-fill input is invalid: {exc}"
 
 
+async def _read_gap_fill_watermarks(
+    lanes: tuple[LaneRegistration, ...],
+    store: ObjectStore,
+    *,
+    today: date,
+) -> dict[str, LaneWatermarkReading]:
+    """Open one loader session purely to read the static lanes' source watermarks."""
+    loader_database_url = settings.require_local_source_loader_database_url()
+    async with local_source_loader_session(loader_database_url) as session:
+        return await resolve_lane_watermarks(session, store, lanes=lanes, today=today)
+
+
+def _dry_run_watermarks(
+    lanes: tuple[LaneRegistration, ...],
+    store: ObjectStore,
+    *,
+    today: date,
+) -> dict[str, LaneWatermarkReading]:
+    """Resolve the static lanes' watermarks for `--dry-run`, degrading to 'unread' rather than failing.
+
+    A dry run over series lanes alone stays a pure object listing and opens no database at all. When
+    a `static_lookup` lane IS in scope, its watermark is the only thing separating "this reference
+    set is current" from "nobody looked", so the session is worth opening -- but a census that cannot
+    reach Postgres must still print, saying plainly which lanes it could not answer for.
+    """
+    if not any(lane.watermark is not None for lane in lanes):
+        return {}
+    try:
+        return asyncio.run(_read_gap_fill_watermarks(lanes, store, today=today))
+    except (SQLAlchemyError, ValueError) as exc:
+        reason = f"no source watermark was read: {type(exc).__name__}: {exc}"
+        return {lane.slug: LaneWatermarkReading(error=reason) for lane in lanes if lane.watermark is not None}
+
+
 async def _parquet_gap_fill(
     lanes: tuple[LaneRegistration, ...],
     *,
@@ -3795,16 +3831,27 @@ async def _parquet_gap_fill(
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Report the gap census -- each lane's window, its data/absent/missing day counts, its newest "
-    "gaps and its floor's citation -- WITHOUT writing a single object. This is how the cron is audited.",
+    help="Report the gap census -- each lane's nature, window, data/absent/missing day counts, newest "
+    "gaps, source watermark and floor citation -- WITHOUT writing a single object. This is how the "
+    "cron is audited. NOTE: when a static_lookup lane is in scope this OPENS THE LOADER DSN and runs "
+    "one read-only aggregate per such lane, because a reference set's coverage cannot be told from "
+    "the object listing alone. Pass --skip-watermarks to keep the audit offline.",
+)
+@click.option(
+    "--skip-watermarks",
+    is_flag=True,
+    help="Never read a static lane's source watermark, keeping the run a pure object listing with no "
+    "database connection at all. Those lanes then report `watermark_unread` -- honestly 'nobody "
+    "looked', which is NOT the same claim as 'current'. Only meaningful with --dry-run.",
 )
 @click.pass_context
-def parquet_gap_fill(
+def parquet_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable knob of a single tick
     context: click.Context,
     layer_slugs: tuple[str, ...],
     time_budget_seconds: float,
     max_days_per_lane: int | None,
     dry_run: bool,
+    skip_watermarks: bool,
 ) -> None:
     """Fill every Parquet stream's missing observed days, newest first, inside one wall-clock budget.
 
@@ -3812,6 +3859,15 @@ def parquet_gap_fill(
     the newest missing day of its lane, so ordering gaps newest-first keeps every leading edge current
     while years of history stay unfilled behind it. Lanes are visited round-robin, one day each per
     round, so the ~9,400-day `fire-detections` window cannot consume a tick before `signal` writes.
+
+    EVERY LANE DECLARES A NATURE, AND `--dry-run` PRINTS IT. `daily_series` and `release_series`
+    lanes get the window walk above. A `static_lookup` lane -- reference data with a version and no
+    time axis -- gets none: it reads its SOURCE WATERMARK, owes exactly one snapshot dated at that
+    watermark, and reports `current` while a partition dated at or after it already exists. A tick
+    such a lane sits out costs nothing, because no calendar day ever carried an obligation for it.
+    `current` and `watermark_unread` are reported separately for exactly this reason -- both show
+    zero missing days, and they are different claims. Reading a watermark needs the loader DSN even
+    under --dry-run; `--skip-watermarks` keeps the audit offline and says `watermark_unread` instead.
 
     A day the export genuinely has no rows for is recorded as a GOVERNED ABSENCE, whose evidence says
     only what this run observed -- that the day-scoped query over this warehouse returned zero rows --
@@ -3831,8 +3887,13 @@ def parquet_gap_fill(
     run_id = f"parquet-gap-fill:{uuid.uuid4()}"
     try:
         if dry_run:
+            store = ObjectStore.from_settings()
             census = build_gap_census(
-                lanes, ObjectStore.from_settings(), today=today, max_days_per_lane=max_days_per_lane
+                lanes,
+                store,
+                today=today,
+                max_days_per_lane=max_days_per_lane,
+                watermarks={} if skip_watermarks else _dry_run_watermarks(lanes, store, today=today),
             )
             click.echo(json.dumps(gap_census_report(census), sort_keys=True))
             return

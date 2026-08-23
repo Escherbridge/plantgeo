@@ -3,9 +3,11 @@
 Layer L3: may import foundation, method, warehouse, pipeline; may NOT import interface.
 
 STATIC layer, `horizon: none` (docs/lanes/soil-survey.md section 7): this lane writes only
-`kind=observed` -- there is no `kind=forecast` sibling to read. It is also `window_kind=
-"current_snapshot"` (pipeline/parquet/lane_registry.py): every release day is a full re-export of
-the whole published SSURGO set, so "latest release" and "current state" mean the same day.
+`kind=observed` -- there is no `kind=forecast` sibling to read. Its nature is `static_lookup`
+(`foundation/parquet/lane_contract.py`): every release is a full re-export of the whole published
+SSURGO set, dated at the source's own vintage watermark rather than at a run date, so "latest
+release day" and "current state" still mean the same partition -- there are simply far fewer of
+them now that the lane no longer re-snapshots on a schedule.
 
 No DuckDB spatial extension is used here -- it is not installable offline in this environment
 (`INSTALL spatial` requires network), and this repo carries no `shapely` dependency either. The
@@ -97,7 +99,7 @@ def resolve_soil_survey_release(store: ObjectStore, day: date) -> SoilSurveyRele
 def resolve_latest_soil_survey_release(store: ObjectStore) -> SoilSurveyRelease | None:
     """Find the most recently written release day from the object listing alone -- never a scan.
 
-    This lane is a `current_snapshot`: every release is a full re-export, so the newest release day
+    This lane is a `static_lookup`: every release is a full re-export, so the newest release day
     already IS the current published state. `None` means the lane has never been exported.
     """
     keys = store.list_partition_keys(SOIL_SURVEY_STREAM, SOIL_SURVEY_KIND)

@@ -1,21 +1,21 @@
-"""The lane registry: eleven streams, four return shapes folded into one, and floors that are cited.
+"""The lane registry: thirteen streams, three natures, four return shapes folded into one, cited floors.
 
 The exporters themselves are exercised by their own lane tests; what is pinned here is the
 integration surface -- that every registered slug has a schema the writer can autoload, that the
-divergent return shapes normalise, that the three current-state lanes refuse a historical window,
-and that no floor is uncited.
+divergent return shapes normalise, that every lane's declared NATURE agrees with what the lane
+actually ships, and that no floor is uncited.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from agri_data_service.foundation.parquet.paths import validate_layer_slug
-from agri_data_service.pipeline.parquet.gap_fill import lane_window
+from agri_data_service.pipeline.parquet.gap_fill import GapFillContractError, lane_window
 from agri_data_service.pipeline.parquet.lane_registry import (
     LANE_REGISTRATIONS,
     LANE_REGISTRY,
@@ -39,13 +39,15 @@ from tests.parquet.test_objectstore_writer import RecordingBackend
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-EXPECTED_LANE_COUNT = 12
+EXPECTED_LANE_COUNT = 13
 AUGUST_SIXTH = date(2026, 8, 6)
 
-# RUNBOOK section 0.26.6's table, which is the wave-2 join's own record of what landed.
+# RUNBOOK section 0.26.6's table -- the wave-2 join's own record of what landed -- plus `calendar`,
+# the conformed date dimension, which is a registered stream with no source system.
 EXPECTED_SLUGS = frozenset(
     {
         "burn-severity",
+        "calendar",
         "drought",
         "evacuation-zones",
         "fire-detections",
@@ -60,10 +62,28 @@ EXPECTED_SLUGS = frozenset(
     }
 )
 
-# The three whose export broadcasts the caller's day onto every row and applies no date predicate.
-CURRENT_SNAPSHOT_SLUGS = frozenset({"evacuation-zones", "soil-survey", "watersheds"})
+# Reference data with a VERSION and no time axis: the partition day is a version stamp, so these
+# lanes are watermark-driven rather than schedule-driven and are never forecastable.
+STATIC_LOOKUP_SLUGS = frozenset({"calendar", "evacuation-zones", "soil-survey", "watersheds"})
 
-_LANE_MODULE_DIRECTORY = Path(__file__).resolve().parents[2] / "src" / "agri_data_service" / "pipeline" / "lanes"
+# Discrete dated publications: each release IS a dated fact, so the partition day is its own
+# valid/issue date rather than a day anyone observed.
+RELEASE_SERIES_SLUGS = frozenset({"burn-severity", "drought"})
+
+# The five lanes that ship a `method/monte_carlo/<module>.py`, mapped to that module's stem. Only
+# `vegetation` diverges from its slug: `vegetation_ndvi_forecast.py` predates `layer-lanes.md` §3,
+# which says bring it into conformance rather than writing a second forecaster beside it.
+EXPECTED_FORECAST_MODULES = {
+    "fire-detections": "fire_detections",
+    "sensors": "sensors",
+    "signal": "signal",
+    "vegetation": "vegetation_ndvi_forecast",
+    "water-gauges": "water_gauges",
+}
+
+_SOURCE_ROOT = Path(__file__).resolve().parents[2] / "src" / "agri_data_service"
+_LANE_MODULE_DIRECTORY = _SOURCE_ROOT / "pipeline" / "lanes"
+_MONTE_CARLO_DIRECTORY = _SOURCE_ROOT / "method" / "monte_carlo"
 
 # Lane modules that deliberately carry NO gap-fill registration, each with the reason it is exempt.
 # DEFAULT-DENY, and for the reason RUNBOOK section 0.26.7 gives: a stream added later is policed the
@@ -124,8 +144,8 @@ def absence_receipt(*, size: int = 128) -> AbsenceWriteReceipt:
     )
 
 
-def test_exactly_the_twelve_streams_are_registered_and_interventions_is_not() -> None:
-    """RUNBOOK section 0.26.1 keeps `interventions` in Postgres; a twelfth entry here would move it."""
+def test_exactly_the_thirteen_streams_are_registered_and_interventions_is_not() -> None:
+    """RUNBOOK section 0.26.1 keeps `interventions` in Postgres; an entry here would move it."""
     assert set(registered_lane_slugs()) == EXPECTED_SLUGS
     assert len(LANE_REGISTRATIONS) == EXPECTED_LANE_COUNT
     assert "interventions" not in LANE_REGISTRY
@@ -200,20 +220,69 @@ def test_water_gauges_does_not_inherit_the_borrowed_2022_floor() -> None:
     assert water_gauges.history_floor.year != LANE_REGISTRY["vegetation"].history_floor.year
 
 
-def test_the_current_state_lanes_refuse_a_historical_window() -> None:
-    """Their export broadcasts the day onto every row, so a past day would be today's state, fabricated."""
+def test_every_lane_declares_the_nature_its_shape_actually_has() -> None:
+    """The nature says what the partition day MEANS, and getting it wrong is what caused daily churn."""
+    for registration in LANE_REGISTRATIONS:
+        if registration.slug in STATIC_LOOKUP_SLUGS:
+            assert registration.nature == "static_lookup", registration.slug
+        elif registration.slug in RELEASE_SERIES_SLUGS:
+            assert registration.nature == "release_series", registration.slug
+        else:
+            assert registration.nature == "daily_series", registration.slug
+
+
+def test_a_series_lane_gets_a_window_and_a_static_lane_is_refused_one() -> None:
+    """`current_snapshot` collapsed to "the newest settled day"; that is exactly the churn being removed."""
     today = date(2026, 8, 22)
 
     for registration in LANE_REGISTRATIONS:
+        if registration.nature == "static_lookup":
+            with pytest.raises(GapFillContractError, match="has no settled window"):
+                lane_window(registration, today=today)
+            continue
         window = lane_window(registration, today=today)
         assert window is not None, registration.slug
-        first_day, last_day = window
-        if registration.slug in CURRENT_SNAPSHOT_SLUGS:
-            assert registration.window_kind == "current_snapshot"
-            assert first_day == last_day, registration.slug
+        first_day, _last_day = window
+        assert first_day == registration.history_floor, registration.slug
+
+
+def test_every_static_lane_declares_a_source_watermark_and_no_series_lane_does() -> None:
+    """A static lane with no watermark is schedule-driven again; a series lane with one has two clocks."""
+    for registration in LANE_REGISTRATIONS:
+        if registration.nature == "static_lookup":
+            assert registration.watermark is not None, registration.slug
+            assert registration.publication_lag_days == 0, registration.slug
         else:
-            assert registration.window_kind == "daily_series"
-            assert first_day == registration.history_floor, registration.slug
+            assert registration.watermark is None, registration.slug
+
+
+def test_forecastability_agrees_with_the_forecasters_that_actually_ship() -> None:
+    """`layer-lanes.md` §2 makes claiming a horizon and shipping a forecaster the SAME fact.
+
+    A lane claiming forecastable with no module would advertise a projection nobody can produce; a
+    module with no claim is dead code the driver will never reach. Both are caught here, in both
+    directions, against the filesystem rather than against another declaration.
+    """
+    shipped = {path.stem for path in _MONTE_CARLO_DIRECTORY.glob("*.py") if path.stem != "__init__"}
+
+    assert shipped == set(EXPECTED_FORECAST_MODULES.values()), (
+        "method/monte_carlo/ no longer holds exactly the modules the registry names. Add or remove the "
+        "matching `forecast_module=` on the lane's LaneRegistration in the same change."
+    )
+    for registration in LANE_REGISTRATIONS:
+        expected = EXPECTED_FORECAST_MODULES.get(registration.slug)
+        assert registration.forecast_module == expected, registration.slug
+        assert registration.forecastable is (expected is not None), registration.slug
+        if expected is not None:
+            assert (_MONTE_CARLO_DIRECTORY / f"{expected}.py").is_file(), registration.slug
+
+
+def test_no_static_lookup_lane_is_forecastable() -> None:
+    """Reference data has no time axis, so there is nothing a forecast of it could mean."""
+    for registration in LANE_REGISTRATIONS:
+        if registration.nature == "static_lookup":
+            assert not registration.forecastable, registration.slug
+            assert registration.forecast_module is None, registration.slug
 
 
 def test_a_lane_whose_floor_has_not_settled_yet_has_no_window() -> None:
@@ -223,7 +292,7 @@ def test_a_lane_whose_floor_has_not_settled_yet_has_no_window() -> None:
         adapter=LANE_REGISTRY["signal"].adapter,
         history_floor=date(2026, 8, 20),
         publication_lag_days=9,
-        window_kind="daily_series",
+        nature="daily_series",
         floor_basis="test fixture",
     )
 
@@ -237,7 +306,7 @@ def test_a_registration_must_cite_its_floor_and_declare_a_non_negative_lag() -> 
             adapter=LANE_REGISTRY["signal"].adapter,
             history_floor=date(2022, 4, 30),
             publication_lag_days=9,
-            window_kind="daily_series",
+            nature="daily_series",
             floor_basis="   ",
         )
     with pytest.raises(LaneRegistryError, match="negative publication lag"):
@@ -246,9 +315,92 @@ def test_a_registration_must_cite_its_floor_and_declare_a_non_negative_lag() -> 
             adapter=LANE_REGISTRY["signal"].adapter,
             history_floor=date(2022, 4, 30),
             publication_lag_days=-1,
-            window_kind="daily_series",
+            nature="daily_series",
             floor_basis="test fixture",
         )
+
+
+def test_a_static_lookup_may_not_claim_a_forecaster() -> None:
+    """The nature is the CEILING on forecastability, enforced at construction rather than by review."""
+    with pytest.raises(LaneRegistryError, match="no time axis to project along"):
+        LaneRegistration(
+            slug="watersheds",
+            adapter=LANE_REGISTRY["watersheds"].adapter,
+            history_floor=date(2026, 8, 7),
+            publication_lag_days=0,
+            nature="static_lookup",
+            watermark=LANE_REGISTRY["watersheds"].watermark,
+            forecast_module="watersheds",
+            floor_basis="test fixture",
+        )
+
+
+def test_only_a_release_series_may_declare_a_cadence_above_one_day() -> None:
+    """A daily series that skips days is either not daily or not a series."""
+    with pytest.raises(LaneRegistryError, match="only a release_series has a publication rhythm"):
+        LaneRegistration(
+            slug="signal",
+            adapter=LANE_REGISTRY["signal"].adapter,
+            history_floor=date(2022, 4, 30),
+            publication_lag_days=9,
+            nature="daily_series",
+            cadence_days=7,
+            floor_basis="test fixture",
+        )
+
+
+def test_a_static_lookup_without_a_watermark_is_refused() -> None:
+    """Without one it is schedule-driven again, re-snapshotting whatever day the cron ran on."""
+    with pytest.raises(LaneRegistryError, match="declares no source watermark"):
+        LaneRegistration(
+            slug="watersheds",
+            adapter=LANE_REGISTRY["watersheds"].adapter,
+            history_floor=date(2026, 8, 7),
+            publication_lag_days=0,
+            nature="static_lookup",
+            floor_basis="test fixture",
+        )
+
+
+def test_a_series_lane_carrying_a_watermark_is_refused() -> None:
+    """Two clocks on one lane disagree, and the disagreement is invisible until a day goes missing."""
+    with pytest.raises(LaneRegistryError, match="declares a source watermark"):
+        LaneRegistration(
+            slug="signal",
+            adapter=LANE_REGISTRY["signal"].adapter,
+            history_floor=date(2022, 4, 30),
+            publication_lag_days=9,
+            nature="daily_series",
+            watermark=LANE_REGISTRY["watersheds"].watermark,
+            floor_basis="test fixture",
+        )
+
+
+def test_a_static_lookup_may_not_declare_a_publication_lag() -> None:
+    """A version stamp is not settled by waiting; subtracting a lag would date it before the change."""
+    with pytest.raises(LaneRegistryError, match="publication lag"):
+        LaneRegistration(
+            slug="watersheds",
+            adapter=LANE_REGISTRY["watersheds"].adapter,
+            history_floor=date(2026, 8, 7),
+            publication_lag_days=1,
+            nature="static_lookup",
+            watermark=LANE_REGISTRY["watersheds"].watermark,
+            floor_basis="test fixture",
+        )
+
+
+def test_the_calendar_dimension_covers_every_lane_floor_and_has_no_source_system() -> None:
+    """It is PURE COMPUTATION, so its floor is derived from the lanes rather than measured anywhere."""
+    calendar = LANE_REGISTRY["calendar"]
+    database_backed_floors = [
+        registration.history_floor for registration in LANE_REGISTRATIONS if registration.slug != "calendar"
+    ]
+
+    assert calendar.nature == "static_lookup"
+    assert not calendar.forecastable
+    assert calendar.history_floor == min(database_backed_floors)
+    assert "no source system" in calendar.floor_basis
 
 
 def test_the_four_return_shapes_fold_into_one_result() -> None:
@@ -339,6 +491,70 @@ async def test_a_soil_survey_key_list_that_hit_the_ceiling_is_refused_not_trunca
         )
 
     assert session.params == [{"key_ceiling": MAX_SOIL_SURVEY_POLYGON_KEYS + 1}]
+
+
+@pytest.mark.asyncio
+async def test_a_watermark_query_answer_becomes_a_cited_version_day() -> None:
+    """The version stamp is the source's own change time in UTC, and the basis names what produced it."""
+    changed_at = datetime(2026, 8, 7, 23, 30, tzinfo=UTC)
+    session = ScriptedSession(
+        [
+            [
+                {
+                    "feature_updated_at": changed_at,
+                    "feature_created_at": datetime(2026, 8, 7, 9, 0, tzinfo=UTC),
+                    "watermark_at": changed_at,
+                    "row_count": 9396,
+                }
+            ]
+        ]
+    )
+    resolver = LANE_REGISTRY["watersheds"].watermark
+    assert resolver is not None
+
+    watermark = await resolver(session, ObjectStore(RecordingBackend()), today=date(2026, 8, 22))  # type: ignore[arg-type]
+
+    assert watermark.day == date(2026, 8, 7)
+    assert "feature_updated_at=2026-08-07T23:30:00+00:00" in watermark.basis
+    assert "over 9396 published rows" in watermark.basis
+
+
+@pytest.mark.asyncio
+async def test_a_source_with_no_published_rows_yields_a_null_watermark_not_a_fabricated_day() -> None:
+    """count(*)=0 makes every max() NULL; that is an empty population, never "changed today"."""
+    session = ScriptedSession(
+        [[{"source_vintage_at": None, "feature_created_at": None, "watermark_at": None, "row_count": 0}]]
+    )
+    resolver = LANE_REGISTRY["soil-survey"].watermark
+    assert resolver is not None
+
+    watermark = await resolver(session, ObjectStore(RecordingBackend()), today=date(2026, 8, 22))  # type: ignore[arg-type]
+
+    assert watermark.day is None
+    assert "no published rows" in watermark.basis
+
+
+@pytest.mark.asyncio
+async def test_a_timezone_naive_watermark_is_refused_rather_than_assumed_to_be_utc() -> None:
+    """Assuming a zone for a version stamp would silently shift it by up to a day."""
+    session = ScriptedSession(
+        [
+            [
+                {
+                    "feature_updated_at": datetime(2026, 8, 7, 23, 30),  # noqa: DTZ001 - the defect under test
+                    "feature_created_at": None,
+                    "geometry_version_valid_from": None,
+                    "watermark_at": datetime(2026, 8, 7, 23, 30),  # noqa: DTZ001 - the defect under test
+                    "row_count": 12,
+                }
+            ]
+        ]
+    )
+    resolver = LANE_REGISTRY["evacuation-zones"].watermark
+    assert resolver is not None
+
+    with pytest.raises(LaneRegistryError, match="timezone-naive"):
+        await resolver(session, ObjectStore(RecordingBackend()), today=date(2026, 8, 22))  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

@@ -45,6 +45,15 @@ CALENDAR_SCHEMA: Final = register_stream_schema(
                 pa.field("iso_day_of_week", pa.int8(), nullable=False),
                 pa.field("is_month_start", pa.bool_(), nullable=False),
                 pa.field("is_month_end", pa.bool_(), nullable=False),
+                # The WMO three-month grouping: a fixed month mapping, not a solar event. The
+                # ASTRONOMICAL season is deliberately absent -- its boundaries are equinoxes and
+                # solstices, which belong with RUNBOOK section 0.28.3's solar fact per (cell, date).
+                pa.field("meteorological_season", pa.string(), nullable=False),
+                # Cyclical day-of-year, per RUNBOOK section 0.28.3: the form a model consumes, with
+                # no 31-December-to-1-January discontinuity. Phase is taken over the day's OWN year
+                # length, so a leap year does not shift the cycle.
+                pa.field("day_of_year_sin", pa.float64(), nullable=False),
+                pa.field("day_of_year_cos", pa.float64(), nullable=False),
             ]
         ),
         sort_columns=CALENDAR_GRAIN,
