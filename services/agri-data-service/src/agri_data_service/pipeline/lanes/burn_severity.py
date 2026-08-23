@@ -15,6 +15,7 @@ from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.burn_severity import BURN_SEVERITY_SCHEMA, BURN_SEVERITY_STREAM
 
 if TYPE_CHECKING:
@@ -82,7 +83,13 @@ async def export_burn_severity_release_day(
             recorded_at=datetime.now(UTC),
             run_id=run_id,
         )
-        return store.write_absence(absence, layer=BURN_SEVERITY_STREAM, kind="observed", day=release_day)
+        return store.write_absence(
+            absence,
+            layer=BURN_SEVERITY_STREAM,
+            kind="observed",
+            zoom=LANE_BASE_ZOOM_TIER,
+            day=release_day,
+        )
 
     sorted_table = table.sort_by([(column, "ascending") for column in BURN_SEVERITY_SCHEMA.sort_columns])
     return tuple(
@@ -90,6 +97,7 @@ async def export_burn_severity_release_day(
             sorted_table.slice(start, MAX_ROWS_PER_PART),
             layer=BURN_SEVERITY_STREAM,
             kind="observed",
+            zoom=LANE_BASE_ZOOM_TIER,
             day=release_day,
             part_index=part_index,
         )

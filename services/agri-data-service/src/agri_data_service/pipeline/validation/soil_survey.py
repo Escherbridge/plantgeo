@@ -9,6 +9,12 @@ agrees with itself. Two checks per `docs/lanes/soil-survey.md` section 6: a per-
 delineation count on `mupolygonkey` (never `mukey`, see the 683-into-98 collapse it documents),
 and a vintage-staleness check (`sacatalog.saverest` republishing past what was written) -- this
 lane is STATIC, not never-changing, so detecting a republish is the point.
+
+THE TIER IS PINNED, NOT A PARAMETER: `WRITTEN_ZOOM_TIER`, the rung the exporter lands on. The
+delineation count is the check that makes this non-negotiable -- it counts `mupolygonkey` values per
+survey area and diffs the total against SDA's, which is exactly the shape a blended listing corrupts
+by an integer factor. A count doubled by reading two rungs looks like the source having republished
+with more detail, which is precisely the verdict this module is here to issue truthfully.
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ from typing import TYPE_CHECKING, Final, Literal, Protocol
 import polars as pl
 
 from agri_data_service.foundation.parquet.paths import try_parse_partition_path
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.warehouse.schemas.soil_survey import SOIL_SURVEY_STREAM
 
 if TYPE_CHECKING:
@@ -32,9 +39,14 @@ if TYPE_CHECKING:
     import httpx
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 _KIND: Final[PartitionKind] = "observed"
+
+# The rung the lane's own export lands on: the most detailed one, the one nothing generalised.
+# Derived from the ladder so adding a rung above cannot leave this validator checking a stale tier.
+WRITTEN_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 
 # One network call per requested area; a validator asking for "every survey area" in one pass
 # would be an unbounded scan of the source system, not a bounded reconciliation.
@@ -146,15 +158,15 @@ def _validated_area_symbol(value: str) -> str:
 
 
 def _resolve_latest_release_day(store: ObjectStore) -> date | None:
-    """Find the most recently written release day from the object listing alone."""
-    keys = store.list_partition_keys(SOIL_SURVEY_STREAM, _KIND)
+    """Find the most recently written release day at the written tier, from the object listing alone."""
+    keys = store.list_partition_keys(SOIL_SURVEY_STREAM, _KIND, WRITTEN_ZOOM_TIER)
     days = {parsed.day for parsed in (try_parse_partition_path(key) for key in keys) if parsed is not None}
     return max(days) if days else None
 
 
 def _relative_paths_for_day(store: ObjectStore, day: date) -> tuple[str, ...]:
-    """List one day's part files, sorted by part index."""
-    keys = store.list_partition_keys(SOIL_SURVEY_STREAM, _KIND, year=day.year, month=day.month)
+    """List one day's part files at the written tier, sorted by part index."""
+    keys = store.list_partition_keys(SOIL_SURVEY_STREAM, _KIND, WRITTEN_ZOOM_TIER, year=day.year, month=day.month)
     candidates = (try_parse_partition_path(key) for key in keys)
     parts = sorted(
         (parsed for parsed in candidates if parsed is not None and parsed.day == day),

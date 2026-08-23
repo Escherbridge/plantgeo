@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from agri_data_service.foundation.parquet.paths import partition_path
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes import watersheds as watersheds_lane
 from agri_data_service.pipeline.lanes.watersheds import (
     export_watersheds_release,
@@ -102,7 +103,7 @@ async def test_the_export_lands_at_the_observed_partition_sorted_to_the_grain() 
     expected_rows = 3
     assert len(receipts) == 1
     receipt = receipts[0]
-    assert receipt.key == partition_path(WATERSHEDS_STREAM, "observed", AUGUST_SEVENTH, 0)
+    assert receipt.key == partition_path(WATERSHEDS_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SEVENTH, 0)
     assert receipt.kind == "observed"
     assert receipt.row_count == expected_rows
 
@@ -122,10 +123,11 @@ async def test_a_release_larger_than_one_part_spills_across_part_files(
 
     assert [receipt.row_count for receipt in receipts] == [2, 2, 1]
     assert [receipt.key for receipt in receipts] == [
-        partition_path(WATERSHEDS_STREAM, "observed", AUGUST_SEVENTH, part_index) for part_index in range(3)
+        partition_path(WATERSHEDS_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SEVENTH, part_index)
+        for part_index in range(3)
     ]
     # Every part still reads as one present day; gap detection lists the directory, never a file.
-    assert store.list_partition_keys(WATERSHEDS_STREAM, "observed") == tuple(
+    assert store.list_partition_keys(WATERSHEDS_STREAM, "observed", LANE_BASE_ZOOM_TIER) == tuple(
         receipt.relative_path for receipt in receipts
     )
 

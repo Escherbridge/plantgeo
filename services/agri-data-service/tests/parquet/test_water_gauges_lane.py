@@ -16,6 +16,7 @@ import pytest
 
 import agri_data_service.pipeline.lanes.water_gauges as water_gauges_lane
 from agri_data_service.foundation.parquet.paths import partition_path
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.water_gauges import (
     MAX_ROWS_PER_DAY,
     WaterGaugesExportError,
@@ -141,6 +142,6 @@ async def test_the_export_lands_at_the_observed_partition_sorted_to_the_grain() 
     receipt = await export_water_gauges_day(session, store, day=AUGUST_SIXTH)  # type: ignore[arg-type]
 
     expected_rows = 3
-    assert receipt.key == partition_path(WATER_GAUGES_STREAM, "observed", AUGUST_SIXTH)
+    assert receipt.key == partition_path(WATER_GAUGES_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH)
     assert receipt.kind == "observed"
     assert receipt.row_count == expected_rows

@@ -19,10 +19,18 @@ from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.planes.fire_perimeters import fire_perimeters_base_uri, read_fire_perimeters_day
 from agri_data_service.warehouse.schemas.fire_perimeters import FIRE_PERIMETERS_SCHEMA, FIRE_PERIMETERS_STREAM
-from tests.parquet.test_objectstore_writer import RecordingBackend
+from tests.parquet.test_objectstore_writer import (
+    BASE_TIER,
+    DETAIL_TIER,
+    UNPUBLISHED_ZOOM,
+    RecordingBackend,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+# The rung a lane export lands on, and the zoom a viewport asks for to be served it.
+BASE_TIER_REQUEST = BASE_TIER
 
 AUGUST_SIXTH = date(2026, 8, 6)
 AUGUST_SEVENTH = date(2026, 8, 7)
@@ -80,7 +88,7 @@ def materialize_backend(backend: RecordingBackend, root: Path) -> None:
 def test_a_day_with_no_part_files_reads_as_an_honest_empty_typed_frame(tmp_path: Path) -> None:
     store = ObjectStore(RecordingBackend())
 
-    frame = read_fire_perimeters_day(store, day=AUGUST_SIXTH, base_uri=str(tmp_path))
+    frame = read_fire_perimeters_day(store, requested_zoom=BASE_TIER_REQUEST, day=AUGUST_SIXTH, base_uri=str(tmp_path))
 
     assert frame.height == 0
     assert frame.columns == list(FIRE_PERIMETERS_SCHEMA.column_names)
@@ -94,11 +102,14 @@ def test_a_future_date_answers_empty_rather_than_falling_through_to_the_newest_o
         fire_perimeters_table([fire_perimeter_row(unique_fire_identifier="2026-CA-000001")]),
         layer=FIRE_PERIMETERS_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=AUGUST_SIXTH,
     )
     materialize_backend(backend, tmp_path)
 
-    frame = read_fire_perimeters_day(store, day=FAR_FUTURE_DAY, base_uri=str(tmp_path))
+    frame = read_fire_perimeters_day(
+        store, requested_zoom=BASE_TIER_REQUEST, day=FAR_FUTURE_DAY, base_uri=str(tmp_path)
+    )
 
     assert frame.height == 0
     assert frame.columns == list(FIRE_PERIMETERS_SCHEMA.column_names)
@@ -116,11 +127,12 @@ def test_a_governed_absence_marker_reads_as_zero_rows_not_an_error(tmp_path: Pat
         ),
         layer=FIRE_PERIMETERS_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=AUGUST_SIXTH,
     )
     materialize_backend(backend, tmp_path)
 
-    frame = read_fire_perimeters_day(store, day=AUGUST_SIXTH, base_uri=str(tmp_path))
+    frame = read_fire_perimeters_day(store, requested_zoom=BASE_TIER_REQUEST, day=AUGUST_SIXTH, base_uri=str(tmp_path))
 
     assert frame.height == 0
     assert frame.columns == list(FIRE_PERIMETERS_SCHEMA.column_names)
@@ -134,12 +146,13 @@ def test_a_day_split_across_several_part_files_reads_as_one_grain_sorted_table(t
             fire_perimeters_table([fire_perimeter_row(unique_fire_identifier=fire_id)]),
             layer=FIRE_PERIMETERS_STREAM,
             kind="observed",
+            zoom=BASE_TIER,
             day=AUGUST_SIXTH,
             part_index=part_index,
         )
     materialize_backend(backend, tmp_path)
 
-    frame = read_fire_perimeters_day(store, day=AUGUST_SIXTH, base_uri=str(tmp_path))
+    frame = read_fire_perimeters_day(store, requested_zoom=BASE_TIER_REQUEST, day=AUGUST_SIXTH, base_uri=str(tmp_path))
 
     assert frame.height == EXPECTED_MULTI_PART_ROW_COUNT
     assert frame["unique_fire_identifier"].to_list() == [
@@ -157,11 +170,12 @@ def test_geometry_survives_as_binary_wkb_with_no_srid_header(tmp_path: Path) -> 
         fire_perimeters_table([fire_perimeter_row(unique_fire_identifier="2026-CA-000001", geometry_wkb=wkb)]),
         layer=FIRE_PERIMETERS_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=AUGUST_SIXTH,
     )
     materialize_backend(backend, tmp_path)
 
-    frame = read_fire_perimeters_day(store, day=AUGUST_SIXTH, base_uri=str(tmp_path))
+    frame = read_fire_perimeters_day(store, requested_zoom=BASE_TIER_REQUEST, day=AUGUST_SIXTH, base_uri=str(tmp_path))
 
     assert frame["geometry_wkb"].to_list() == [wkb]
     assert frame.schema["geometry_wkb"] == pl.Binary
@@ -175,6 +189,7 @@ def test_a_different_day_never_leaks_into_the_answer(tmp_path: Path) -> None:
         fire_perimeters_table([fire_perimeter_row(unique_fire_identifier="2026-CA-000001", observed_day=AUGUST_SIXTH)]),
         layer=FIRE_PERIMETERS_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=AUGUST_SIXTH,
     )
     store.write_partition(
@@ -183,11 +198,12 @@ def test_a_different_day_never_leaks_into_the_answer(tmp_path: Path) -> None:
         ),
         layer=FIRE_PERIMETERS_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=AUGUST_SEVENTH,
     )
     materialize_backend(backend, tmp_path)
 
-    frame = read_fire_perimeters_day(store, day=AUGUST_SIXTH, base_uri=str(tmp_path))
+    frame = read_fire_perimeters_day(store, requested_zoom=BASE_TIER_REQUEST, day=AUGUST_SIXTH, base_uri=str(tmp_path))
 
     assert frame["unique_fire_identifier"].to_list() == ["2026-CA-000001"]
 
@@ -203,3 +219,57 @@ def test_fire_perimeters_base_uri_composes_bucket_and_prefix() -> None:
     store = ObjectStore(RecordingBackend(), prefix="sandbox")
 
     assert fire_perimeters_base_uri(credentials, store) == "s3://plantgeo-warehouse/sandbox/"
+
+
+# --- the zoom axis: one rung per read, and a blend that is not expressible ------------------------
+
+
+def test_two_tiers_of_one_day_never_stack_into_one_incident_list(tmp_path: Path) -> None:
+    """One incident published at two rungs sorts to adjacent rows and reads as a re-report, not a re-generalisation."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_partition(
+        fire_perimeters_table([fire_perimeter_row(unique_fire_identifier="2026-CA-000001")]),
+        layer=FIRE_PERIMETERS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=AUGUST_SIXTH,
+    )
+    store.write_partition(
+        fire_perimeters_table([fire_perimeter_row(unique_fire_identifier="2026-CA-000009")]),
+        layer=FIRE_PERIMETERS_STREAM,
+        kind="observed",
+        zoom=DETAIL_TIER,
+        day=AUGUST_SIXTH,
+    )
+    materialize_backend(backend, tmp_path)
+
+    at_base = read_fire_perimeters_day(store, requested_zoom=BASE_TIER, day=AUGUST_SIXTH, base_uri=str(tmp_path))
+    at_detail = read_fire_perimeters_day(store, requested_zoom=DETAIL_TIER, day=AUGUST_SIXTH, base_uri=str(tmp_path))
+
+    assert at_base["unique_fire_identifier"].to_list() == ["2026-CA-000001"]
+    assert at_detail["unique_fire_identifier"].to_list() == ["2026-CA-000009"]
+
+
+def test_a_request_between_two_rungs_is_served_by_the_rung_below_it(tmp_path: Path) -> None:
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_partition(
+        fire_perimeters_table([fire_perimeter_row(unique_fire_identifier="2026-CA-000009")]),
+        layer=FIRE_PERIMETERS_STREAM,
+        kind="observed",
+        zoom=DETAIL_TIER,
+        day=AUGUST_SIXTH,
+    )
+    store.write_partition(
+        fire_perimeters_table([fire_perimeter_row(unique_fire_identifier="2026-CA-000001")]),
+        layer=FIRE_PERIMETERS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=AUGUST_SIXTH,
+    )
+    materialize_backend(backend, tmp_path)
+
+    served = read_fire_perimeters_day(store, requested_zoom=UNPUBLISHED_ZOOM, day=AUGUST_SIXTH, base_uri=str(tmp_path))
+
+    assert served["unique_fire_identifier"].to_list() == ["2026-CA-000009"]

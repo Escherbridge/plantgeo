@@ -15,6 +15,12 @@ is no parameter that could widen it, so a caller cannot request "forecast" here 
 silently blended in from the `signal` stream. A day nothing was ever polled for -- including every
 future date -- reads back as a genuinely empty, correctly-typed frame, never an exception and never a
 fallback to another stream's data.
+
+`zoom` gets no such shortcut and IS a required argument, because unlike `kind` the ladder has four
+live rungs rather than one: the scan starts inside `zoom=NN/`, so a window reads exactly the tier
+its `requested_zoom` resolved to. Globbing from the `kind=observed` prefix would stack every rung's
+copy of each poll, and since this grain keeps the full (latitude, longitude, observed_at) instant,
+the duplicates would look like a station that suddenly started reporting four times as often.
 """
 
 from __future__ import annotations
@@ -24,7 +30,8 @@ from typing import TYPE_CHECKING, Final, Literal
 
 import polars as pl
 
-from agri_data_service.foundation.parquet.paths import MAX_GAP_WINDOW_DAYS, stream_prefix
+from agri_data_service.foundation.parquet.paths import MAX_GAP_WINDOW_DAYS, zoom_prefix
+from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.warehouse.schemas.weather_observations import (
     WEATHER_OBSERVATIONS_SCHEMA,
     WEATHER_OBSERVATIONS_STREAM,
@@ -34,6 +41,7 @@ if TYPE_CHECKING:
     from datetime import date
 
     from agri_data_service.config import ObjectStoreCredentials
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 # The only partition kind this side lane ever writes. Baked in here rather than accepted as a
@@ -56,18 +64,25 @@ class WeatherObservationsServingError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class WeatherObservationsReading:
-    """One `kind=observed` window, its kind spelled out so it can never be mistaken for a forecast."""
+    """One `kind=observed` window at one tier: kind and zoom both spelled out on the answer itself.
+
+    `zoom` is the tier that actually answered, which is at or BELOW the `requested_zoom` that asked
+    -- a z11 viewport is served the z9 rung. Naming it here is the same courtesy the lane pays with
+    `kind`: a caller comparing two readings can see they came from different resolutions instead of
+    inferring one grid from the other's coordinates.
+    """
 
     kind: Literal["observed"]
+    zoom: ZoomTier
     first_day: date
     last_day: date
     frame: pl.DataFrame
 
 
-def weather_observations_scan_pattern(*, root: str) -> str:
-    """Return the glob `read_weather_observations_window` scans, rooted at `root`, for `kind=observed` only."""
+def weather_observations_scan_pattern(*, root: str, zoom: ZoomTier) -> str:
+    """Return the glob `read_weather_observations_window` scans: `kind=observed` at exactly one tier."""
     normalized_root = root if root.endswith("/") else f"{root}/"
-    return f"{normalized_root}{stream_prefix(WEATHER_OBSERVATIONS_STREAM, OBSERVED_KIND)}**/*.parquet"
+    return f"{normalized_root}{zoom_prefix(WEATHER_OBSERVATIONS_STREAM, OBSERVED_KIND, zoom)}**/*.parquet"
 
 
 def bucket_object_root(*, credentials: ObjectStoreCredentials, store: ObjectStore) -> str:
@@ -78,6 +93,7 @@ def bucket_object_root(*, credentials: ObjectStoreCredentials, store: ObjectStor
 def read_weather_observations_window(
     *,
     root: str,
+    requested_zoom: int,
     first_day: date,
     last_day: date,
     storage_options: dict[str, str] | None = None,
@@ -97,8 +113,9 @@ def read_weather_observations_window(
         raise WeatherObservationsServingError(
             f"serving window of {span_days} days exceeds the {MAX_GAP_WINDOW_DAYS}-day budget"
         )
+    zoom = serving_zoom_tier(requested_zoom)
     scanned = pl.scan_parquet(
-        weather_observations_scan_pattern(root=root),
+        weather_observations_scan_pattern(root=root, zoom=zoom),
         hive_partitioning=False,
         schema=_WEATHER_OBSERVATIONS_POLARS_SCHEMA,
         storage_options=storage_options,
@@ -109,14 +126,19 @@ def read_weather_observations_window(
         .sort(list(WEATHER_OBSERVATIONS_SCHEMA.sort_columns))
         .collect()
     )
-    return WeatherObservationsReading(kind=OBSERVED_KIND, first_day=first_day, last_day=last_day, frame=frame)
+    return WeatherObservationsReading(
+        kind=OBSERVED_KIND, zoom=zoom, first_day=first_day, last_day=last_day, frame=frame
+    )
 
 
 def read_weather_observations_day(
     *,
     root: str,
+    requested_zoom: int,
     day: date,
     storage_options: dict[str, str] | None = None,
 ) -> WeatherObservationsReading:
     """Read one day's `kind=observed` readings; a future or never-polled day comes back empty, honestly."""
-    return read_weather_observations_window(root=root, first_day=day, last_day=day, storage_options=storage_options)
+    return read_weather_observations_window(
+        root=root, requested_zoom=requested_zoom, first_day=day, last_day=day, storage_options=storage_options
+    )

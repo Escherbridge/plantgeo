@@ -2,15 +2,26 @@
 
 Layer L3 (planes): may import `foundation`, `method`, `warehouse`, `pipeline`; may NOT import
 `interface`. This module replaces reading `agri.signal_observation` over tRPC -- it scans the
-Hive-partitioned `layer=signal/kind=<observed|forecast>/year=/month=/day=/part-*.parquet` layout
-straight out of object storage via Polars, using `polars_storage_options` as the credential seam
-(`pipeline.parquet.objectstore`).
+Hive-partitioned `layer=signal/kind=<observed|forecast>/zoom=NN/year=/month=/day=/part-*.parquet`
+layout straight out of object storage via Polars, using `polars_storage_options` as the credential
+seam (`pipeline.parquet.objectstore`).
 
 `kind` is a partition, never a column a caller filters after the fact: every public function here
 takes `kind` as a required, explicit keyword, scopes its glob to exactly that partition, and stamps
 the requested kind back onto every returned row. There is no code path that unions `observed` and
 `forecast` frames -- a caller wanting both calls this module twice and keeps the two results apart,
 by construction. See `conductor/code_styleguides/layer-lanes.md` section 2.
+
+`zoom` is a partition on the same terms, and the scan targets already name it: `month_prefix` and
+`day_prefix` both sit under `zoom=NN/`, so a target list is tier-scoped by construction rather than
+by a filter applied afterwards. Every public function takes a `requested_zoom` and resolves it once
+through `serving_zoom_tier`; there is no signature here that accepts more than one zoom.
+
+Unlike `kind`, the resolved tier is NOT stamped as a column. The `kind` stamp exists because Polars'
+Hive injection is inconsistent across empty and non-empty scans and because callers concatenate two
+kinds' frames; no caller ever builds a frame spanning two tiers, so a per-row tier stamp would
+disambiguate a situation that cannot arise, at the cost of a column the registered schema does not
+have.
 """
 
 from __future__ import annotations
@@ -22,6 +33,7 @@ import polars as pl
 
 from agri_data_service.config import Settings, settings
 from agri_data_service.foundation.parquet.paths import day_prefix, month_prefix
+from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.pipeline.parquet.objectstore import polars_storage_options
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_STREAM, get_stream_schema
 
@@ -31,6 +43,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.config import ObjectStoreCredentials
     from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 # A serving read has no legitimate reason to scan more than about a year at once; a caller wanting
 # a deeper history should page by year rather than materialise one unbounded frame in memory.
@@ -93,14 +106,14 @@ def _polars_schema(kind: PartitionKind) -> pl.Schema:
     return empty.schema
 
 
-def _month_scan_target(source: SignalPlaneSource, kind: PartitionKind, *, year: int, month: int) -> str:
-    """Return the Hive-partitioned glob for one calendar month of one kind's stream."""
-    return f"{source.root_uri}{month_prefix(SIGNAL_PLANE_STREAM, kind, year, month)}**/*.parquet"
+def _month_scan_target(source: SignalPlaneSource, kind: PartitionKind, *, zoom: ZoomTier, year: int, month: int) -> str:
+    """Return the Hive-partitioned glob for one calendar month of one kind's stream at one tier."""
+    return f"{source.root_uri}{month_prefix(SIGNAL_PLANE_STREAM, kind, zoom, year, month)}**/*.parquet"
 
 
-def _day_scan_target(source: SignalPlaneSource, kind: PartitionKind, *, day: date) -> str:
-    """Return the Hive-partitioned glob for one exact day of one kind's stream, no month scan needed."""
-    return f"{source.root_uri}{day_prefix(SIGNAL_PLANE_STREAM, kind, day)}*.parquet"
+def _day_scan_target(source: SignalPlaneSource, kind: PartitionKind, *, zoom: ZoomTier, day: date) -> str:
+    """Return the Hive-partitioned glob for one exact day of one kind's stream at one tier, no month scan needed."""
+    return f"{source.root_uri}{day_prefix(SIGNAL_PLANE_STREAM, kind, zoom, day)}*.parquet"
 
 
 def _year_months_spanned(first_day: date, last_day: date) -> tuple[tuple[int, int], ...]:
@@ -145,22 +158,23 @@ def _scan(  # noqa: PLR0913 - one argument per read-scoping dimension, all keywo
     return frame.with_columns(pl.lit(kind).alias("kind"))
 
 
-def read_signal_value_on_day(
+def read_signal_value_on_day(  # noqa: PLR0913 - one argument per read-scoping dimension, all keyword-only
     source: SignalPlaneSource,
     *,
     kind: PartitionKind,
+    requested_zoom: int,
     day: date,
     cell_ids: Sequence[str] | None = None,
     signal_names: Sequence[str] | None = None,
 ) -> pl.DataFrame:
-    """Return one day's rows of ONE kind, narrowed to the given cells/signals if given.
+    """Return one day's rows of ONE kind at ONE tier, narrowed to the given cells/signals if given.
 
     `kind="observed"` can only ever return settled measurements; `kind="forecast"` can only ever
     return projected quantiles. A day with nothing written -- not yet landed, or a governed
     absence -- comes back as a zero-row, correctly typed frame, never an error and never a value
-    borrowed from the other kind.
+    borrowed from the other kind, and never a value borrowed from another rung of the ladder.
     """
-    target = _day_scan_target(source, kind, day=day)
+    target = _day_scan_target(source, kind, zoom=serving_zoom_tier(requested_zoom), day=day)
     frame = _scan(
         source, kind, targets=(target,), first_day=day, last_day=day, cell_ids=cell_ids, signal_names=signal_names
     )
@@ -171,16 +185,21 @@ def read_signal_time_window(  # noqa: PLR0913 - one argument per read-scoping di
     source: SignalPlaneSource,
     *,
     kind: PartitionKind,
+    requested_zoom: int,
     first_day: date,
     last_day: date,
     cell_ids: Sequence[str] | None = None,
     signal_names: Sequence[str] | None = None,
 ) -> pl.DataFrame:
-    """Return every row of ONE kind in `[first_day, last_day]`, narrowed to the given cells/signals.
+    """Return every row of ONE kind at ONE tier in `[first_day, last_day]`, narrowed to the given cells/signals.
 
     Bounded to `MAX_TIME_WINDOW_DAYS`: a serving read has no legitimate use scanning more than
     that in one call. Months with no partitions at all are silently absent from the result rather
     than raising -- the same "empty is a normal answer" rule `read_signal_value_on_day` follows.
+
+    Every month in the window resolves to the SAME tier, computed once before the loop. Resolving
+    per month would let a ladder change part way through a long window hand back a frame whose cell
+    grid changes mid-series, which a `[first_day, last_day]` label would not reveal.
     """
     span_days = (last_day - first_day).days + 1
     if span_days > MAX_TIME_WINDOW_DAYS:
@@ -188,8 +207,9 @@ def read_signal_time_window(  # noqa: PLR0913 - one argument per read-scoping di
             f"time window {first_day.isoformat()}..{last_day.isoformat()} spans {span_days} days, "
             f"over the {MAX_TIME_WINDOW_DAYS}-day serving-read budget; page by year instead"
         )
+    zoom = serving_zoom_tier(requested_zoom)
     targets = tuple(
-        _month_scan_target(source, kind, year=year, month=month)
+        _month_scan_target(source, kind, zoom=zoom, year=year, month=month)
         for year, month in _year_months_spanned(first_day, last_day)
     )
     frame = _scan(

@@ -35,8 +35,9 @@
 -- so the two queries answer about exactly the same population. `uq_geometry_current` and
 -- `ix_features_geometry_id` carry the same joins the export rides.
 --
--- row_count is returned so an operator can see the population this watermark describes; the
--- release itself refuses a key list past MAX_SOIL_SURVEY_POLYGON_KEYS rather than truncating.
+-- row_count is returned so an operator can see the population this watermark describes; the release
+-- itself has no ceiling to breach -- lane_registry_soil_survey_polygon_keys.sql pages the key walk
+-- and the export flushes each page to a part file, so the whole set is never read at once.
 SELECT
     max(g.version_valid_from) AS source_vintage_at,
     max(f.created_at) AS feature_created_at,

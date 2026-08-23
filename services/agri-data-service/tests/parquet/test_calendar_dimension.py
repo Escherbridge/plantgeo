@@ -30,6 +30,7 @@ from agri_data_service.foundation.parquet.calendar import (
     required_calendar_version_day,
 )
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.calendar import build_calendar_table, export_calendar_version
 from agri_data_service.pipeline.parquet.lane_registry import CALENDAR_HISTORY_FLOOR, LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
@@ -200,7 +201,12 @@ def test_writing_a_version_lands_under_the_calendar_prefix_and_reads_back_as_one
     assert sum(part.num_rows for part in read_back) == sum(receipt.row_count for receipt in receipts)
     assert read_back[0].column("calendar_day").to_pylist()[0] == CALENDAR_HISTORY_FLOOR
     assert partition_day_statuses(
-        layer=CALENDAR_STREAM, kind="observed", first_day=TODAY, last_day=TODAY, keys=list(backend.objects)
+        layer=CALENDAR_STREAM,
+        kind="observed",
+        zoom=LANE_BASE_ZOOM_TIER,
+        first_day=TODAY,
+        last_day=TODAY,
+        keys=list(backend.objects),
     ) == {TODAY: "data"}
 
 

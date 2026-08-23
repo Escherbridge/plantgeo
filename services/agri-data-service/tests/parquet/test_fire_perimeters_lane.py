@@ -16,6 +16,7 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import pytest
 
 from agri_data_service.foundation.parquet.paths import partition_path
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.fire_perimeters import (
     FirePerimetersExportError,
     FirePerimetersExportOutcome,
@@ -122,8 +123,8 @@ async def test_a_day_with_no_incidents_records_a_governed_absence_rather_than_an
 
     assert outcome.parts == ()
     assert outcome.absence is not None
-    assert store.absence_exists(FIRE_PERIMETERS_STREAM, "observed", AUGUST_SIXTH)
-    assert not store.partition_exists(FIRE_PERIMETERS_STREAM, "observed", AUGUST_SIXTH)
+    assert store.absence_exists(FIRE_PERIMETERS_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH)
+    assert not store.partition_exists(FIRE_PERIMETERS_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH)
 
 
 @pytest.mark.asyncio
@@ -143,7 +144,7 @@ async def test_the_export_lands_at_the_observed_partition_sorted_to_the_grain() 
     assert outcome.absence is None
     assert len(outcome.parts) == 1
     receipt = outcome.parts[0]
-    assert receipt.key == partition_path(FIRE_PERIMETERS_STREAM, "observed", AUGUST_SIXTH, 0)
+    assert receipt.key == partition_path(FIRE_PERIMETERS_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH, 0)
     assert receipt.kind == "observed"
     assert receipt.row_count == expected_rows
 
@@ -172,7 +173,9 @@ async def test_a_day_whose_geometry_bytes_exceed_the_part_budget_spills_into_mul
     assert outcome.absence is None
     assert len(outcome.parts) == expected_part_count
     for part_index, receipt in enumerate(outcome.parts):
-        assert receipt.key == partition_path(FIRE_PERIMETERS_STREAM, "observed", AUGUST_SIXTH, part_index)
+        assert receipt.key == partition_path(
+            FIRE_PERIMETERS_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH, part_index
+        )
         assert receipt.row_count == 1
     # Grain-sorted before chunking: part-0 carries the lexicographically smaller natural key.
     first_part = pq.read_table(pq_buffer(backend, outcome.parts[0].key))

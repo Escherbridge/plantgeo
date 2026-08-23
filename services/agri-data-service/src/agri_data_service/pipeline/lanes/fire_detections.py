@@ -14,6 +14,7 @@ from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_SCHEMA, FIRE_DETECTIONS_STREAM
 
 if TYPE_CHECKING:
@@ -94,5 +95,17 @@ async def export_fire_detections_day(  # noqa: PLR0913 - one caller-supplied coo
             recorded_at=now if now is not None else datetime.now(UTC),
             run_id=run_id,
         )
-        return store.write_absence(absence, layer=FIRE_DETECTIONS_STREAM, kind="observed", day=day)
-    return store.write_partition(table, layer=FIRE_DETECTIONS_STREAM, kind="observed", day=day)
+        return store.write_absence(
+            absence,
+            layer=FIRE_DETECTIONS_STREAM,
+            kind="observed",
+            zoom=LANE_BASE_ZOOM_TIER,
+            day=day,
+        )
+    return store.write_partition(
+        table,
+        layer=FIRE_DETECTIONS_STREAM,
+        kind="observed",
+        zoom=LANE_BASE_ZOOM_TIER,
+        day=day,
+    )

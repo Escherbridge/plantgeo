@@ -12,6 +12,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_SCHEMA, SIGNAL_PLANE_STREAM
 
 if TYPE_CHECKING:
@@ -76,4 +77,4 @@ async def export_signal_day(
     zero-row table precisely so that cannot happen by accident.
     """
     table = await read_signal_day(session, day=day, cell_ids=cell_ids)
-    return store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="observed", day=day)
+    return store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=LANE_BASE_ZOOM_TIER, day=day)

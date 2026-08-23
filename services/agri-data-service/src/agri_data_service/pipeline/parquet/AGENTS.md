@@ -27,8 +27,37 @@ injects.
 
 Missing configuration is not an error until a write is attempted: `require_object_store()` raises
 naming **every** variable still unset, so wiring is one round trip rather than four.
-`OBJECT_STORE_PREFIX` sits *outside* the frozen `layer=.../kind=...` layout and exists so one
-bucket can hold an isolated sandbox beside the real warehouse.
+`OBJECT_STORE_PREFIX` sits *outside* the frozen `layer=.../kind=.../zoom=...` layout and exists so
+one bucket can hold an isolated sandbox beside the real warehouse.
+
+## Every operation names ONE zoom tier, and none may span the ladder
+`zoom=NN` sits between `kind=` and `year=` (owner, 2026-08-23), two-digit zero-padded so a
+lexicographic listing walks the ladder in numeric order. `foundation/parquet/zoom.py` owns the four
+published rungs; `zoom_prefix(layer, kind, zoom)` is the prefix that covers exactly one of them.
+
+**`zoom` is a required argument of every write, listing, existence check and prune here. There is
+deliberately no "all tiers" mode and no default.** One convenient tier-less listing is all it takes
+to hand a reader four resolutions of the same day as though they were one population: nothing
+raises, the row counts merely quadruple and the geometry silently disagrees with itself. A caller
+that genuinely wants the whole ladder asks four times and knows it asked.
+
+The prune is scoped the same way and for the same reason — removing a day's surplus parts at z13
+must not reach the z09 parts of that same day, which are a **different resolution** of it rather
+than an older export of it. `oldest_export_instant` ignores other tiers for the mirror-image
+reason: a coarse rung derived hours after the base one would otherwise drag the base day's
+freshness back to the derivation's clock.
+
+**Cross-tier agreement of one day is NOT this module's invariant.** `write_absence` still refuses to
+mark a day that already holds data, but only at the tier being marked: the four tiers of one day
+live under four disjoint prefixes, so policing them together would cost four listings per marker and
+still race. "Every tier of a published day is present" is the **derivation step's** obligation,
+because derivation is the only thing that knows a coarse tier was computed from a base one.
+
+Read-side consequences of the same rule live one directory over, and they differ on purpose:
+`planes/AGENTS.md` (every public function takes a `requested_zoom` and resolves it once through
+`serving_zoom_tier`, which walks **down** — z11 reads the z9 rung) and
+`pipeline/validation/__init__.py` (every module pins `WRITTEN_ZOOM_TIER = ZOOM_TIERS[-1]` and takes
+no `zoom` argument at all, because a validator has no viewport and the writer writes one rung).
 
 ## Rules the writer enforces, and why each is fail-closed
 - **The layer slug selects the schema.** `write_partition(table, layer="sensors", ...)` looks up
@@ -42,11 +71,11 @@ bucket can hold an isolated sandbox beside the real warehouse.
   day, silently converting a real hole into apparent coverage. The absence mechanism is
   `write_absence` (settled 2026-08-22, RUNBOOK §0.25.3): an `absent.json` marker at the day's
   partition path carrying `GovernedAbsence` evidence, never an empty data file.
-- **Data and absence refuse to coexist, in both directions.** `write_partition` refuses a day
-  carrying an absence marker; `write_absence` refuses a day already holding a part file.
-  Retracting either side is a manual admin action (§0.21.5) — there is deliberately no API here
-  that does it. Reading a marker's evidence back is S17's concern; the backend seam has no `get`
-  yet on purpose.
+- **Data and absence refuse to coexist, in both directions — at one tier.** `write_partition`
+  refuses a day carrying an absence marker; `write_absence` refuses a day already holding a part
+  file. Both checks are scoped to the tier being written, per the zoom section above. Retracting
+  either side is a manual admin action (§0.21.5) — there is deliberately no API here that does it.
+  Reading a marker's evidence back is S17's concern; the backend seam has no `get` yet on purpose.
 - **A receipt carries the sha256 of the uploaded bytes.** That is an upload-integrity digest, not
   a cross-version reproducibility claim: `pq.write_table` stamps the writing pyarrow version into
   the file, so the same rows written by a different pyarrow need not be byte-identical.

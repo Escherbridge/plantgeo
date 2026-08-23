@@ -4,6 +4,13 @@ Layer L5 planes: may import `foundation`, `method`, `warehouse`, `pipeline`; may
 `interface`. See `docs/lanes/vegetation.md` for source system, grain and known-gap evidence, and
 `conductor/code_styleguides/layer-lanes.md` section 2 for why `kind` is a partition, never a column
 branch, and is never blended.
+
+`zoom` is a partition on the same terms, and the danger it carries is specific to this lane: NDVI is
+an INDEX, so four tiers of one cell-day are four different averages of the same reflectance, all in
+`[-1, 1]` and all individually plausible. A scan spanning the ladder produces several rows per
+(cell_id, observed_day) that disagree by a little, and nothing downstream -- not the schema, not the
+sort, not a range check -- can tell that apart from genuine sub-cell variation. Every read therefore
+resolves one `requested_zoom` through `serving_zoom_tier` and globs inside that rung alone.
 """
 
 from __future__ import annotations
@@ -15,9 +22,10 @@ import polars as pl
 
 from agri_data_service.foundation.parquet.paths import (
     MAX_GAP_WINDOW_DAYS,
-    stream_prefix,
     validate_partition_kind,
+    zoom_prefix,
 )
+from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_SCHEMA, VEGETATION_PLANE_STREAM
 
@@ -26,6 +34,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.config import ObjectStoreCredentials
     from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 
@@ -63,19 +72,22 @@ class VegetationWindow:
 
     first_day: date
     last_day: date
+    zoom: ZoomTier
     observed: pl.DataFrame
     forecast: pl.DataFrame
 
 
-def vegetation_scan_pattern(*, root: str, kind: PartitionKind) -> str:
-    """Return the glob `read_vegetation_partition` scans for one kind, rooted at `root`.
+def vegetation_scan_pattern(*, root: str, kind: PartitionKind, zoom: ZoomTier) -> str:
+    """Return the glob `read_vegetation_partition` scans for one kind at one tier, rooted at `root`.
 
-    `root` is everything before the frozen `layer=.../kind=.../` layout: `s3://<bucket>/<prefix>`
-    in production (see `bucket_object_root`), or a local directory in tests. The returned pattern
-    starts INSIDE `kind=<kind>/`, so the other kind's bytes are never even listed, let alone opened.
+    `root` is everything before the frozen `layer=.../kind=.../zoom=.../` layout:
+    `s3://<bucket>/<prefix>` in production (see `bucket_object_root`), or a local directory in tests.
+    The returned pattern starts INSIDE `zoom=NN/`, so neither the other kind's bytes nor any other
+    rung's are even listed, let alone opened.
     """
     normalized_root = root if root.endswith("/") else f"{root}/"
-    return f"{normalized_root}{stream_prefix(VEGETATION_PLANE_STREAM, validate_partition_kind(kind))}**/*.parquet"
+    stream_at_tier = zoom_prefix(VEGETATION_PLANE_STREAM, validate_partition_kind(kind), zoom)
+    return f"{normalized_root}{stream_at_tier}**/*.parquet"
 
 
 def bucket_object_root(*, credentials: ObjectStoreCredentials, store: ObjectStore) -> str:
@@ -83,15 +95,16 @@ def bucket_object_root(*, credentials: ObjectStoreCredentials, store: ObjectStor
     return f"s3://{credentials.bucket}/{store.prefix}" if store.prefix else f"s3://{credentials.bucket}/"
 
 
-def read_vegetation_partition(
+def read_vegetation_partition(  # noqa: PLR0913 - one argument per read-scoping dimension, none foldable
     *,
     root: str,
     kind: PartitionKind,
+    requested_zoom: int,
     first_day: date,
     last_day: date,
     storage_options: dict[str, str] | None = None,
 ) -> pl.DataFrame:
-    """Read one partition kind's vegetation rows in `[first_day, last_day]`; the other kind is never opened.
+    """Read one kind's vegetation rows at one tier in `[first_day, last_day]`; nothing else is opened.
 
     Empty is a valid, honest answer, not a defect to paper over -- see `_typed_empty_schema`.
     Rows are returned in the schema's own column order, sorted to its registered grain
@@ -103,7 +116,7 @@ def read_vegetation_partition(
     span_days = (last_day - first_day).days + 1
     if span_days > MAX_GAP_WINDOW_DAYS:
         raise VegetationServingError(f"serving window of {span_days} days exceeds the {MAX_GAP_WINDOW_DAYS}-day budget")
-    pattern = vegetation_scan_pattern(root=root, kind=validated_kind)
+    pattern = vegetation_scan_pattern(root=root, kind=validated_kind, zoom=serving_zoom_tier(requested_zoom))
     frame = pl.scan_parquet(
         pattern,
         hive_partitioning=False,
@@ -124,18 +137,37 @@ def read_vegetation_partition(
 def read_vegetation_window(
     *,
     root: str,
+    requested_zoom: int,
     first_day: date,
     last_day: date,
     storage_options: dict[str, str] | None = None,
 ) -> VegetationWindow:
-    """Read both partition kinds for one window, each kept in its own named field, never blended."""
+    """Read both partition kinds at ONE tier for one window, each kept in its own named field, never blended.
+
+    One tier answers both halves, and `VegetationWindow.zoom` records which. Reading the settled half
+    at one rung and the projected half at another would hand a caller two frames whose `cell_id`
+    values name grids of different sizes -- and since the field names promise only that the two are
+    not blended, nothing would stop a caller from joining them on `cell_id` anyway.
+    """
+    zoom = serving_zoom_tier(requested_zoom)
     return VegetationWindow(
         first_day=first_day,
         last_day=last_day,
+        zoom=zoom,
         observed=read_vegetation_partition(
-            root=root, kind="observed", first_day=first_day, last_day=last_day, storage_options=storage_options
+            root=root,
+            kind="observed",
+            requested_zoom=zoom,
+            first_day=first_day,
+            last_day=last_day,
+            storage_options=storage_options,
         ),
         forecast=read_vegetation_partition(
-            root=root, kind="forecast", first_day=first_day, last_day=last_day, storage_options=storage_options
+            root=root,
+            kind="forecast",
+            requested_zoom=zoom,
+            first_day=first_day,
+            last_day=last_day,
+            storage_options=storage_options,
         ),
     )

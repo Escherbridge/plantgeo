@@ -25,6 +25,10 @@ from agri_data_service.planes.sensors import (
     sensors_plane_coverage,
 )
 from agri_data_service.warehouse.schemas.sensors import SENSORS_SCHEMA, SENSORS_STREAM
+from tests.parquet.test_objectstore_writer import BASE_TIER, DETAIL_TIER, UNPUBLISHED_ZOOM
+
+# The rung a lane export lands on, and the zoom a viewport asks for to be served it.
+BASE_TIER_REQUEST = BASE_TIER
 
 JULY_THIRTIETH = date(2026, 7, 30)
 AUGUST_FIRST = date(2026, 8, 1)
@@ -105,7 +109,11 @@ def _store(tmp_path: Path) -> ObjectStore:
 def test_coverage_classifies_data_absent_and_missing_days(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.write_partition(
-        sensor_table(day=AUGUST_FIRST, station_id="KMSO"), layer=SENSORS_STREAM, kind="observed", day=AUGUST_FIRST
+        sensor_table(day=AUGUST_FIRST, station_id="KMSO"),
+        layer=SENSORS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=AUGUST_FIRST,
     )
     store.write_absence(
         GovernedAbsence(
@@ -116,10 +124,13 @@ def test_coverage_classifies_data_absent_and_missing_days(tmp_path: Path) -> Non
         ),
         layer=SENSORS_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=AUGUST_SECOND,
     )
 
-    coverage = sensors_plane_coverage(store, kind="observed", first_day=AUGUST_FIRST, last_day=AUGUST_THIRD)
+    coverage = sensors_plane_coverage(
+        store, kind="observed", requested_zoom=BASE_TIER_REQUEST, first_day=AUGUST_FIRST, last_day=AUGUST_THIRD
+    )
 
     assert coverage.data_days == (AUGUST_FIRST,)
     assert coverage.absent_days == (AUGUST_SECOND,)
@@ -135,6 +146,7 @@ def test_reading_returns_exactly_the_written_tall_rows_without_fabricating_missi
         sensor_table(day=AUGUST_FIRST, station_id="KMSO", measurements=("temperature", "windSpeed")),
         layer=SENSORS_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=AUGUST_FIRST,
     )
 
@@ -143,6 +155,7 @@ def test_reading_returns_exactly_the_written_tall_rows_without_fabricating_missi
         bucket_root=tmp_path.as_posix(),
         storage_options={},
         kind="observed",
+        requested_zoom=BASE_TIER_REQUEST,
         first_day=AUGUST_FIRST,
         last_day=AUGUST_FIRST,
     )
@@ -157,7 +170,11 @@ def test_forecast_kind_never_falls_through_to_observed_data(tmp_path: Path) -> N
     """`kind` is a partition, not a column branch: a forecast read must never surface observed rows."""
     store = _store(tmp_path)
     store.write_partition(
-        sensor_table(day=AUGUST_FIRST, station_id="KMSO"), layer=SENSORS_STREAM, kind="observed", day=AUGUST_FIRST
+        sensor_table(day=AUGUST_FIRST, station_id="KMSO"),
+        layer=SENSORS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=AUGUST_FIRST,
     )
 
     result = read_sensors_readings(
@@ -165,6 +182,7 @@ def test_forecast_kind_never_falls_through_to_observed_data(tmp_path: Path) -> N
         bucket_root=tmp_path.as_posix(),
         storage_options={},
         kind="forecast",
+        requested_zoom=BASE_TIER_REQUEST,
         first_day=AUGUST_FIRST,
         last_day=AUGUST_FIRST,
     )
@@ -185,6 +203,7 @@ def test_sensor_id_and_measurement_name_filters_narrow_the_read(tmp_path: Path) 
         ),
         layer=SENSORS_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=AUGUST_FIRST,
     )
 
@@ -193,6 +212,7 @@ def test_sensor_id_and_measurement_name_filters_narrow_the_read(tmp_path: Path) 
         bucket_root=tmp_path.as_posix(),
         storage_options={},
         kind="observed",
+        requested_zoom=BASE_TIER_REQUEST,
         first_day=AUGUST_FIRST,
         last_day=AUGUST_FIRST,
         sensor_ids=("KMSO",),
@@ -207,10 +227,18 @@ def test_sensor_id_and_measurement_name_filters_narrow_the_read(tmp_path: Path) 
 def test_window_spanning_two_months_is_covered(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.write_partition(
-        sensor_table(day=JULY_THIRTIETH, station_id="KGPI"), layer=SENSORS_STREAM, kind="observed", day=JULY_THIRTIETH
+        sensor_table(day=JULY_THIRTIETH, station_id="KGPI"),
+        layer=SENSORS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=JULY_THIRTIETH,
     )
     store.write_partition(
-        sensor_table(day=AUGUST_FIRST, station_id="KGPI"), layer=SENSORS_STREAM, kind="observed", day=AUGUST_FIRST
+        sensor_table(day=AUGUST_FIRST, station_id="KGPI"),
+        layer=SENSORS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=AUGUST_FIRST,
     )
 
     result = read_sensors_readings(
@@ -218,6 +246,7 @@ def test_window_spanning_two_months_is_covered(tmp_path: Path) -> None:
         bucket_root=tmp_path.as_posix(),
         storage_options={},
         kind="observed",
+        requested_zoom=BASE_TIER_REQUEST,
         first_day=JULY_THIRTIETH,
         last_day=AUGUST_FIRST,
     )
@@ -230,7 +259,9 @@ def test_backwards_window_is_refused(tmp_path: Path) -> None:
     store = _store(tmp_path)
 
     with pytest.raises(SensorsPlaneError, match="runs backwards"):
-        sensors_plane_coverage(store, kind="observed", first_day=AUGUST_SECOND, last_day=AUGUST_FIRST)
+        sensors_plane_coverage(
+            store, kind="observed", requested_zoom=BASE_TIER_REQUEST, first_day=AUGUST_SECOND, last_day=AUGUST_FIRST
+        )
 
 
 def test_empty_window_returns_a_correctly_typed_zero_row_frame_without_scanning(tmp_path: Path) -> None:
@@ -241,6 +272,7 @@ def test_empty_window_returns_a_correctly_typed_zero_row_frame_without_scanning(
         bucket_root=tmp_path.as_posix(),
         storage_options={},
         kind="observed",
+        requested_zoom=BASE_TIER_REQUEST,
         first_day=AUGUST_FIRST,
         last_day=AUGUST_THIRD,
     )
@@ -248,3 +280,106 @@ def test_empty_window_returns_a_correctly_typed_zero_row_frame_without_scanning(
     assert result.readings.height == 0
     assert set(result.readings.columns) == set(SENSORS_SCHEMA.column_names)
     assert result.coverage.missing_days == (AUGUST_FIRST, AUGUST_SECOND, AUGUST_THIRD)
+
+
+# --- the zoom axis: one rung per read, and a blend that is not expressible ------------------------
+
+
+def test_two_tiers_of_one_station_day_never_stack_into_one_reading(tmp_path: Path) -> None:
+    """The tall grain hides duplication: two rungs give two rows per (sensor, day, measurement)."""
+    store = _store(tmp_path)
+    store.write_partition(
+        sensor_table(day=AUGUST_FIRST, station_id="KMSO"),
+        layer=SENSORS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=AUGUST_FIRST,
+    )
+    store.write_partition(
+        sensor_table(day=AUGUST_FIRST, station_id="KDLN"),
+        layer=SENSORS_STREAM,
+        kind="observed",
+        zoom=DETAIL_TIER,
+        day=AUGUST_FIRST,
+    )
+
+    at_base = read_sensors_readings(
+        store,
+        bucket_root=tmp_path.as_posix(),
+        storage_options={},
+        kind="observed",
+        requested_zoom=BASE_TIER,
+        first_day=AUGUST_FIRST,
+        last_day=AUGUST_FIRST,
+    )
+    at_detail = read_sensors_readings(
+        store,
+        bucket_root=tmp_path.as_posix(),
+        storage_options={},
+        kind="observed",
+        requested_zoom=DETAIL_TIER,
+        first_day=AUGUST_FIRST,
+        last_day=AUGUST_FIRST,
+    )
+
+    assert at_base.readings["sensor_id"].to_list() == ["KMSO"]
+    assert at_detail.readings["sensor_id"].to_list() == ["KDLN"]
+    assert at_base.zoom == BASE_TIER
+    assert at_detail.zoom == DETAIL_TIER
+
+
+def test_coverage_and_the_row_glob_always_name_the_same_rung(tmp_path: Path) -> None:
+    """The half-scoped trap: a ladder-wide listing would call a day covered that the glob cannot read."""
+    store = _store(tmp_path)
+    store.write_partition(
+        sensor_table(day=AUGUST_FIRST, station_id="KMSO"),
+        layer=SENSORS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=AUGUST_FIRST,
+    )
+
+    at_detail = read_sensors_readings(
+        store,
+        bucket_root=tmp_path.as_posix(),
+        storage_options={},
+        kind="observed",
+        requested_zoom=DETAIL_TIER,
+        first_day=AUGUST_FIRST,
+        last_day=AUGUST_FIRST,
+    )
+
+    assert at_detail.coverage.zoom == at_detail.zoom == DETAIL_TIER
+    assert at_detail.coverage.missing_days == (AUGUST_FIRST,), "z13's day says nothing about z9"
+    assert at_detail.readings.height == 0
+
+
+def test_a_request_between_two_rungs_is_served_by_the_rung_below_it(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.write_partition(
+        sensor_table(day=AUGUST_FIRST, station_id="KDLN"),
+        layer=SENSORS_STREAM,
+        kind="observed",
+        zoom=DETAIL_TIER,
+        day=AUGUST_FIRST,
+    )
+    store.write_partition(
+        sensor_table(day=AUGUST_FIRST, station_id="KMSO"),
+        layer=SENSORS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=AUGUST_FIRST,
+    )
+
+    served = read_sensors_readings(
+        store,
+        bucket_root=tmp_path.as_posix(),
+        storage_options={},
+        kind="observed",
+        requested_zoom=UNPUBLISHED_ZOOM,
+        first_day=AUGUST_FIRST,
+        last_day=AUGUST_FIRST,
+    )
+
+    assert served.zoom == DETAIL_TIER
+    assert served.readings["sensor_id"].to_list() == ["KDLN"]

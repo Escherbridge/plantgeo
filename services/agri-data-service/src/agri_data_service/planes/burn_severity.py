@@ -14,6 +14,12 @@ below). `resolve_burn_severity_as_of` answers the second: given an arbitrary cal
 time-slider position that will usually fall between two releases -- it finds the newest release
 published at or before it and reads THAT release once, naming which one answered. Neither function
 ever blends two releases into one answer (`layer-lanes.md` #2).
+
+`zoom` IS a parameter, unlike `kind`, and is required: `kind` has one legal value on this lane while
+the ladder has four live rungs, so there is a real choice and a default would only decide it quietly.
+The listing that finds a release day and the scan that reads it name the SAME rung -- resolving one
+release day at one resolution and reading it at another would answer "as of" with a release day that
+is real and rows that are not the ones it names.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from typing import TYPE_CHECKING, Final
 import polars as pl
 
 from agri_data_service.foundation.parquet.paths import try_parse_absence_marker_path, try_parse_partition_path
+from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.warehouse.schemas.burn_severity import (
     BURN_SEVERITY_GRAIN,
     BURN_SEVERITY_SCHEMA,
@@ -35,6 +42,7 @@ if TYPE_CHECKING:
     from datetime import date
 
     from agri_data_service.config import ObjectStoreCredentials
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 # The only stream this lane ever writes (docs/lanes/burn-severity.md #7). Kept as a private constant
@@ -76,6 +84,7 @@ class BurnSeverityAsOfAnswer:
 
     requested_day: date
     release_day: date | None
+    zoom: ZoomTier
     is_governed_absence: bool
     rows: pl.DataFrame
     exposure_contradiction: str = BURN_SEVERITY_EXPOSURE_CONTRADICTION
@@ -85,10 +94,11 @@ def read_burn_severity_release_day(
     store: ObjectStore,
     *,
     day: date,
+    requested_zoom: int,
     base_uri: str,
     storage_options: Mapping[str, str] | None = None,
 ) -> pl.DataFrame:
-    """Read every fire MTBS published in the release dated to exactly `day`, sorted to the grain.
+    """Read every fire MTBS published in the release dated to exactly `day`, at one tier, sorted to the grain.
 
     `store.list_partition_keys` discovers every `part-N.parquet` written for `day`, however many the
     exporter's row-count spillover produced (`pipeline/lanes/burn_severity.py` `MAX_ROWS_PER_PART`);
@@ -103,7 +113,7 @@ def read_burn_severity_release_day(
     returns for a real bucket; pass `None` (or omit it) when `base_uri` is a local path, e.g. a test.
     `base_uri` for a production caller is `burn_severity_base_uri(credentials, store)`.
     """
-    part_keys = _observed_day_part_keys(store, day)
+    part_keys = _observed_day_part_keys(store, serving_zoom_tier(requested_zoom), day)
     if not part_keys:
         return _empty_burn_severity_frame()
     root = base_uri.rstrip("/")
@@ -117,10 +127,11 @@ def resolve_burn_severity_as_of(
     store: ObjectStore,
     *,
     requested_day: date,
+    requested_zoom: int,
     base_uri: str,
     storage_options: Mapping[str, str] | None = None,
 ) -> BurnSeverityAsOfAnswer:
-    """Answer "what had MTBS published as of `requested_day`", naming exactly which release answered.
+    """Answer "what had MTBS published as of `requested_day`", naming exactly which release and tier answered.
 
     Only `kind="observed"` is ever consulted -- this lane writes no `kind=forecast` stream, so there
     is nothing to fall through to, silently or otherwise. The candidate release day is chosen from a
@@ -131,12 +142,14 @@ def resolve_burn_severity_as_of(
     this deployment's bounding box) answers with `is_governed_absence=True` and zero rows, never with
     the silence of "day not found."
     """
-    candidates = _known_release_days(store)
+    zoom = serving_zoom_tier(requested_zoom)
+    candidates = _known_release_days(store, zoom)
     eligible = {day: absent for day, absent in candidates.items() if day <= requested_day}
     if not eligible:
         return BurnSeverityAsOfAnswer(
             requested_day=requested_day,
             release_day=None,
+            zoom=zoom,
             is_governed_absence=False,
             rows=_empty_burn_severity_frame(),
         )
@@ -145,25 +158,30 @@ def resolve_burn_severity_as_of(
     rows = (
         _empty_burn_severity_frame()
         if is_absence
-        else read_burn_severity_release_day(store, day=release_day, base_uri=base_uri, storage_options=storage_options)
+        else read_burn_severity_release_day(
+            store, day=release_day, requested_zoom=zoom, base_uri=base_uri, storage_options=storage_options
+        )
     )
     return BurnSeverityAsOfAnswer(
         requested_day=requested_day,
         release_day=release_day,
+        zoom=zoom,
         is_governed_absence=is_absence,
         rows=rows,
     )
 
 
-def _known_release_days(store: ObjectStore) -> dict[date, bool]:
-    """List every known observed release day, mapping day -> "is a governed absence".
+def _known_release_days(store: ObjectStore, zoom: ZoomTier) -> dict[date, bool]:
+    """List every known observed release day AT ONE TIER, mapping day -> "is a governed absence".
 
     Unscoped by year/month on purpose: resolving "as of" requires seeing every release this lane has
     ever recorded, and that whole history is five releases today (docs/lanes/burn-severity.md #3,
-    #5) -- nowhere near `ObjectStore`'s 500,000-key listing budget.
+    #5) -- nowhere near `ObjectStore`'s 500,000-key listing budget. Scoped by TIER on purpose too:
+    a governed absence is recorded per rung, so a release absent at z13 and present at z09 would
+    otherwise collapse into one `days[...] = True` whose value depends on listing order.
     """
     days: dict[date, bool] = {}
-    for key in store.list_partition_keys(BURN_SEVERITY_STREAM, _OBSERVED_KIND):
+    for key in store.list_partition_keys(BURN_SEVERITY_STREAM, _OBSERVED_KIND, zoom):
         partition = try_parse_partition_path(key)
         if partition is not None:
             days.setdefault(partition.day, False)
@@ -174,9 +192,9 @@ def _known_release_days(store: ObjectStore) -> dict[date, bool]:
     return days
 
 
-def _observed_day_part_keys(store: ObjectStore, day: date) -> tuple[str, ...]:
-    """Return every `part-N.parquet` relative key written for exactly this release day, ascending."""
-    candidates = store.list_partition_keys(BURN_SEVERITY_STREAM, _OBSERVED_KIND, year=day.year, month=day.month)
+def _observed_day_part_keys(store: ObjectStore, zoom: ZoomTier, day: date) -> tuple[str, ...]:
+    """Return every `part-N.parquet` relative key written for exactly this release day at one tier, ascending."""
+    candidates = store.list_partition_keys(BURN_SEVERITY_STREAM, _OBSERVED_KIND, zoom, year=day.year, month=day.month)
     return tuple(
         sorted(key for key in candidates if (parsed := try_parse_partition_path(key)) is not None and parsed.day == day)
     )

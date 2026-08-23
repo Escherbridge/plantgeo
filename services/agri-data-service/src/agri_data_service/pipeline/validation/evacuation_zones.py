@@ -11,6 +11,13 @@ Oregon's feed answers only "what does the upstream currently say" -- it has no c
 structure and no record of a past day's state (`docs/lanes/evacuation-zones.md` section 3). A real
 live comparison is therefore only possible when the snapshot under test IS today's; every other day
 gets internal-consistency checks only, and this module says so rather than skipping silently.
+
+THE TIER IS PINNED, NOT A PARAMETER. This validator asks "did the lane write what Oregon published",
+and the lane writes exactly one rung -- `WRITTEN_ZOOM_TIER`, derived from the ladder rather than
+spelled as a literal. A `zoom` argument would let a caller aim it at a rung the writer never touches,
+where every day lists `missing` and the report reads as a total ingest outage instead of "derivation
+has not run", a different defect with a different owner. This is where `planes/AGENTS.md`'s
+resolve-a-requested-zoom rule deliberately does not apply: a validator has no viewport.
 """
 
 from __future__ import annotations
@@ -22,9 +29,10 @@ import polars as pl
 
 from agri_data_service.foundation.parquet.paths import (
     partition_day_statuses,
-    stream_prefix,
     validate_partition_kind,
+    zoom_prefix,
 )
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.evacuation_zones import EVACUATION_ZONES_BOUNDS, fetch_evacuation_zones
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.pipeline.parquet.objectstore import conform_to_stream_schema
@@ -41,7 +49,12 @@ if TYPE_CHECKING:
     import pyarrow as pa  # type: ignore[import-untyped]
 
     from agri_data_service.foundation.parquet.paths import PartitionDayStatus, PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+
+# The rung the lane's own export lands on: the most detailed one, the one nothing generalised.
+# Derived from the ladder so adding a rung above cannot leave this validator checking a stale tier.
+WRITTEN_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 
 # Pinned so scanning a day with zero part files (a real gap, or before this lane's first snapshot)
 # returns a correctly-typed zero-row frame rather than `polars.exceptions.ComputeError` on an empty
@@ -93,16 +106,29 @@ class EvacuationZonesValidationReport:
 
 
 def _evacuation_zones_scan_pattern(*, root: str, kind: PartitionKind) -> str:
-    """Return the glob rooted at `root` for one partition kind's subtree of the frozen layout."""
+    """Return the glob rooted at `root` for one partition kind at the WRITTEN tier, never the whole ladder."""
     normalized_root = root if root.endswith("/") else f"{root}/"
-    return f"{normalized_root}{stream_prefix(EVACUATION_ZONES_STREAM, validate_partition_kind(kind))}**/*.parquet"
+    written = zoom_prefix(EVACUATION_ZONES_STREAM, validate_partition_kind(kind), WRITTEN_ZOOM_TIER)
+    return f"{normalized_root}{written}**/*.parquet"
 
 
 def _snapshot_day_status(store: ObjectStore, day: date) -> PartitionDayStatus:
-    """Classify one day by listing alone -- data, absent, conflict, or a real gap -- never by opening a file."""
-    keys = store.list_partition_keys(EVACUATION_ZONES_STREAM, "observed", year=day.year, month=day.month)
+    """Classify one day at the written tier by listing alone -- data, absent, conflict, or a real gap.
+
+    Never opens a file, and never spans the ladder: `_internal_consistency` treats a repeated
+    `natural_key` within one `snapshot_day` as a grain violation, so a scan reaching two rungs would
+    report every zone as duplicated and blame Oregon's feed for the reader's own blend.
+    """
+    keys = store.list_partition_keys(
+        EVACUATION_ZONES_STREAM, "observed", WRITTEN_ZOOM_TIER, year=day.year, month=day.month
+    )
     return partition_day_statuses(
-        layer=EVACUATION_ZONES_STREAM, kind="observed", first_day=day, last_day=day, keys=keys
+        layer=EVACUATION_ZONES_STREAM,
+        kind="observed",
+        zoom=WRITTEN_ZOOM_TIER,
+        first_day=day,
+        last_day=day,
+        keys=keys,
     )[day]
 
 

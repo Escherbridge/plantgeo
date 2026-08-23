@@ -20,6 +20,11 @@ must get right:
   (`partition_exists`, `absence_exists`), and takes an injected `PartitionContentReader` for the
   partition's actual bytes -- a real implementation is the caller's to wire (e.g. one boto3
   `get_object`), so this module carries no network client of its own beyond the USGS fetch below.
+* The zoom tier is PINNED to `WRITTEN_ZOOM_TIER`, not accepted as an argument. All three checks
+  below name one exact object key or one exact tier -- `absence_exists`, `partition_exists`, and the
+  `partition_path` handed to the content reader -- so they must agree on which rung they mean or the
+  three shapes stop being mutually exclusive: a day could be absent at one tier, present at another,
+  and read back from a third. The lane writes one rung, so this names that one.
 """
 
 from __future__ import annotations
@@ -27,11 +32,12 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
 
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from agri_data_service.foundation.parquet.paths import partition_path
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.source import HistoryWindow
 from agri_data_service.ingest.usgs_nwis import NWIS_ARCHIVE_BOUNDS, fetch_streamflow_history
@@ -42,9 +48,14 @@ if TYPE_CHECKING:
 
     import pyarrow as pa
 
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
     SourceDayFetcher = Callable[[date, str], Awaitable["Sequence[Mapping[str, object]]"]]
+
+# The rung the lane's own export lands on: the most detailed one, the one nothing generalised.
+# Derived from the ladder so adding a rung above cannot leave this validator checking a stale tier.
+WRITTEN_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 
 
 class WaterGaugesValidationError(RuntimeError):
@@ -156,7 +167,7 @@ async def validate_water_gauges_day(
         f"{len(source_records)} NWIS daily-value records across {len(source_sites)} sites for {day.isoformat()}"
     )
 
-    if store.absence_exists(WATER_GAUGES_STREAM, "observed", day):
+    if store.absence_exists(WATER_GAUGES_STREAM, "observed", WRITTEN_ZOOM_TIER, day):
         return WaterGaugesValidationReport(
             lane=WATER_GAUGES_STREAM,
             day=day,
@@ -170,7 +181,7 @@ async def validate_water_gauges_day(
             ok=not source_sites,
         )
 
-    if not store.partition_exists(WATER_GAUGES_STREAM, "observed", day):
+    if not store.partition_exists(WATER_GAUGES_STREAM, "observed", WRITTEN_ZOOM_TIER, day):
         return WaterGaugesValidationReport(
             lane=WATER_GAUGES_STREAM,
             day=day,
@@ -184,7 +195,7 @@ async def validate_water_gauges_day(
             ok=not source_sites,
         )
 
-    key = store.key_for(partition_path(WATER_GAUGES_STREAM, "observed", day))
+    key = store.key_for(partition_path(WATER_GAUGES_STREAM, "observed", WRITTEN_ZOOM_TIER, day))
     payload = read_partition(key)
     if payload is None:
         raise WaterGaugesValidationError(

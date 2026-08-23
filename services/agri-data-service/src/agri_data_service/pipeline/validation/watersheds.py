@@ -12,6 +12,14 @@ Two checks, deliberately different in what they need:
     warehouse going stale) or added/retired one is not visible from the release alone.
 Nothing invokes this automatically today (docs/lanes/watersheds.md section 6); it is a callable
 reconciliation pass, not a registered cron.
+
+THE TIER IS PINNED, NOT A PARAMETER: `WRITTEN_ZOOM_TIER`, the rung the exporter lands on. Both
+checks depend on it. `check_tohuc_integrity` walks `huc12 -> tohuc` edges within one release, and a
+scan spanning the ladder would hand it several copies of each basin, turning a clean topology into
+duplicate keys. `compare_against_source` diffs the release's basins against USGS's, where a generalised
+rung's coarser boundary would read as the warehouse having gone stale against a boundary USGS never
+changed. Serving may legitimately read a coarser rung (`planes/watersheds.py`); a reconciliation
+against the source may not, because only the base tier is what this lane transcribed from USGS.
 """
 
 from __future__ import annotations
@@ -24,6 +32,7 @@ from urllib.parse import urlencode
 import polars as pl
 
 from agri_data_service.foundation.parquet.paths import day_prefix
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.http import UpstreamPayloadError, fetch_bounded_json
 from agri_data_service.ingest.watersheds import (
     WBDHU12_BATCH_SIZE,
@@ -39,10 +48,16 @@ if TYPE_CHECKING:
 
     import httpx
 
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
+
 # The only stream this lane ever writes (`horizon: none`, docs/lanes/watersheds.md section 7);
 # hardcoded rather than an accepted parameter so this validator has no code path that could ever
 # read a `kind=forecast` partition that does not exist.
 _OBSERVED_KIND: Final = "observed"
+
+# The rung the lane's own export lands on: the most detailed one, the one nothing generalised.
+# Derived from the ladder so adding a rung above cannot leave this validator checking a stale tier.
+WRITTEN_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 
 _LANE: Final = WATERSHEDS_STREAM
 
@@ -117,8 +132,9 @@ def _row_to_written(row: Mapping[str, object]) -> WrittenWatershedRow:
 
 
 def _watersheds_release_glob(root: str, day: date) -> str:
-    """Every part file of one release day -- a release is many parts and must read as one glob."""
-    return f"{root.rstrip('/')}/{day_prefix(WATERSHEDS_STREAM, _OBSERVED_KIND, day)}part-*.parquet"
+    """Every part file of one release day at the WRITTEN tier -- a release is many parts, read as one glob."""
+    written = day_prefix(WATERSHEDS_STREAM, _OBSERVED_KIND, WRITTEN_ZOOM_TIER, day)
+    return f"{root.rstrip('/')}/{written}part-*.parquet"
 
 
 def read_written_watersheds(

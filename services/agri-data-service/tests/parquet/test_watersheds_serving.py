@@ -40,10 +40,20 @@ from agri_data_service.planes.watersheds import (
     watersheds_object_store_root,
 )
 from agri_data_service.warehouse.schemas.watersheds import WATERSHEDS_SCHEMA, WATERSHEDS_STREAM
-from tests.parquet.test_objectstore_writer import RecordingBackend
+from tests.parquet.test_objectstore_writer import (
+    BASE_TIER,
+    DETAIL_TIER,
+    UNPUBLISHED_ZOOM,
+    RecordingBackend,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
+
+# The rung a lane export lands on, and the zoom a viewport asks for to be served it.
+BASE_TIER_REQUEST = BASE_TIER
 
 RELEASE_DAY = date(2026, 8, 7)
 # 2013-01-18, the same fixture value `tests/test_ingest_watersheds.py` uses to lock down
@@ -107,7 +117,9 @@ def _table(rows: list[dict[str, object]]) -> pa.Table:
     return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(WATERSHEDS_SCHEMA.arrow_schema)
 
 
-def _write_local_release(tmp_path: Path, parts: list[list[dict[str, object]]], *, day: date = RELEASE_DAY) -> str:
+def _write_local_release(
+    tmp_path: Path, parts: list[list[dict[str, object]]], *, day: date = RELEASE_DAY, zoom: ZoomTier = BASE_TIER
+) -> str:
     """Write real Parquet bytes through the proven writer, then land them on local disk for Polars.
 
     `RecordingBackend` needs no network or credentials; persisting its bytes to `tmp_path` lets
@@ -118,7 +130,7 @@ def _write_local_release(tmp_path: Path, parts: list[list[dict[str, object]]], *
     store = ObjectStore(backend)
     for part_index, rows in enumerate(parts):
         receipt = store.write_partition(
-            _table(rows), layer=WATERSHEDS_STREAM, kind="observed", day=day, part_index=part_index
+            _table(rows), layer=WATERSHEDS_STREAM, kind="observed", zoom=zoom, day=day, part_index=part_index
         )
         target = tmp_path / receipt.relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -137,14 +149,20 @@ def test_ten_parts_read_as_one_release_day_matching_partition_day_statuses() -> 
             _table([_watershed_row(f"17080001010{part_index}")]),
             layer=WATERSHEDS_STREAM,
             kind="observed",
+            zoom=BASE_TIER,
             day=RELEASE_DAY,
             part_index=part_index,
         )
 
-    assert list_observed_release_days(store) == (RELEASE_DAY,)
-    keys = store.list_partition_keys(WATERSHEDS_STREAM, "observed")
+    assert list_observed_release_days(store, requested_zoom=BASE_TIER_REQUEST) == (RELEASE_DAY,)
+    keys = store.list_partition_keys(WATERSHEDS_STREAM, "observed", BASE_TIER)
     assert partition_day_statuses(
-        layer=WATERSHEDS_STREAM, kind="observed", first_day=RELEASE_DAY, last_day=RELEASE_DAY, keys=keys
+        layer=WATERSHEDS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        first_day=RELEASE_DAY,
+        last_day=RELEASE_DAY,
+        keys=keys,
     ) == {RELEASE_DAY: "data"}
 
 
@@ -152,16 +170,24 @@ def test_resolve_latest_observed_release_day_never_borrows_from_the_future() -> 
     backend = RecordingBackend()
     store = ObjectStore(backend)
     store.write_partition(
-        _table([_watershed_row("170800010101")]), layer=WATERSHEDS_STREAM, kind="observed", day=RELEASE_DAY
+        _table([_watershed_row("170800010101")]),
+        layer=WATERSHEDS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=RELEASE_DAY,
     )
 
     before_first_release = date(2020, 1, 1)
     far_future = date(2030, 1, 1)
 
-    assert resolve_latest_observed_release_day(store, as_of=before_first_release) is None
-    assert resolve_latest_observed_release_day(store, as_of=RELEASE_DAY) == RELEASE_DAY
+    assert (
+        resolve_latest_observed_release_day(store, requested_zoom=BASE_TIER_REQUEST, as_of=before_first_release) is None
+    )
+    assert (
+        resolve_latest_observed_release_day(store, requested_zoom=BASE_TIER_REQUEST, as_of=RELEASE_DAY) == RELEASE_DAY
+    )
     # Nothing has been observed to have changed since the only release -- forward-filled, not empty.
-    assert resolve_latest_observed_release_day(store, as_of=far_future) == RELEASE_DAY
+    assert resolve_latest_observed_release_day(store, requested_zoom=BASE_TIER_REQUEST, as_of=far_future) == RELEASE_DAY
 
 
 def test_watersheds_object_store_root_matches_the_frozen_layout() -> None:
@@ -230,7 +256,7 @@ def _two_part_release(tmp_path: Path) -> str:
 def test_lookup_by_huc12_prunes_by_file_range_and_returns_the_right_basin(tmp_path: Path) -> None:
     root = _two_part_release(tmp_path)
 
-    found = lookup_watershed_by_huc12(root, RELEASE_DAY, "170800010201")
+    found = lookup_watershed_by_huc12(root, RELEASE_DAY, requested_zoom=BASE_TIER_REQUEST, huc12="170800010201")
 
     assert found is not None
     assert found.huc12 == "170800010201"
@@ -242,7 +268,7 @@ def test_lookup_by_huc12_prunes_by_file_range_and_returns_the_right_basin(tmp_pa
 def test_lookup_by_huc12_is_an_honest_empty_for_an_unknown_code(tmp_path: Path) -> None:
     root = _two_part_release(tmp_path)
 
-    assert lookup_watershed_by_huc12(root, RELEASE_DAY, "999999999999") is None
+    assert lookup_watershed_by_huc12(root, RELEASE_DAY, requested_zoom=BASE_TIER_REQUEST, huc12="999999999999") is None
 
 
 def test_lookup_by_huc12_refuses_a_non_unique_match(tmp_path: Path) -> None:
@@ -253,14 +279,18 @@ def test_lookup_by_huc12_refuses_a_non_unique_match(tmp_path: Path) -> None:
     root = _write_local_release(tmp_path, [duplicated])
 
     with pytest.raises(ValueError, match="not unique"):
-        lookup_watershed_by_huc12(root, RELEASE_DAY, "170800010100")
+        lookup_watershed_by_huc12(root, RELEASE_DAY, requested_zoom=BASE_TIER_REQUEST, huc12="170800010100")
 
 
 def test_find_containing_watersheds_returns_only_the_basin_that_contains_the_point(tmp_path: Path) -> None:
     root = _two_part_release(tmp_path)
 
-    inside_a = find_containing_watersheds(root, RELEASE_DAY, longitude=-121.5, latitude=45.5)
-    inside_neither = find_containing_watersheds(root, RELEASE_DAY, longitude=0.0, latitude=0.0)
+    inside_a = find_containing_watersheds(
+        root, RELEASE_DAY, requested_zoom=BASE_TIER_REQUEST, longitude=-121.5, latitude=45.5
+    )
+    inside_neither = find_containing_watersheds(
+        root, RELEASE_DAY, requested_zoom=BASE_TIER_REQUEST, longitude=0.0, latitude=0.0
+    )
 
     assert {boundary.huc12 for boundary in inside_a} == {"170800010100", "170800010101"}
     assert inside_neither == ()
@@ -416,3 +446,67 @@ async def test_validate_watersheds_release_composes_both_checks(tmp_path: Path) 
     assert len(report.source_failures) == expected_source_failure_count
     assert "republished upstream" in by_huc12["170800010100"].reason
     assert "added upstream" in by_huc12["170800010300"].reason
+
+
+# --- the zoom axis: one rung per read, and a blend that is not expressible ------------------------
+
+
+def test_two_tiers_of_one_release_would_make_a_huc12_lookup_report_a_false_duplicate(tmp_path: Path) -> None:
+    """The PostGIS era generalised HUC12 at 4/6/8/10/12; this is that ladder, uniform and enforced.
+
+    One basin published at two rungs matches `huc12 == ...` twice, and the lookup's own "not unique"
+    refusal -- whose real job is catching a release that genuinely duplicates a basin -- would blame
+    the release for a duplicate the READER introduced.
+    """
+    _write_local_release(tmp_path, [[_watershed_row("170800010201", geom=_polygon_wkb(SQUARE_A))]], zoom=BASE_TIER)
+    _write_local_release(tmp_path, [[_watershed_row("170800010201", geom=_polygon_wkb(SQUARE_B))]], zoom=DETAIL_TIER)
+    root = tmp_path.as_posix()
+
+    at_base = lookup_watershed_by_huc12(root, RELEASE_DAY, requested_zoom=BASE_TIER, huc12="170800010201")
+    at_detail = lookup_watershed_by_huc12(root, RELEASE_DAY, requested_zoom=DETAIL_TIER, huc12="170800010201")
+
+    assert at_base is not None
+    assert at_detail is not None
+    assert at_base.geom == _polygon_wkb(SQUARE_A)
+    assert at_detail.geom == _polygon_wkb(SQUARE_B), "one basin, two generalisations, never one row set"
+
+
+def test_a_point_lookup_reads_one_rung_so_a_basin_is_never_returned_twice(tmp_path: Path) -> None:
+    _write_local_release(tmp_path, [[_watershed_row("170800010201", geom=_polygon_wkb(SQUARE_A))]], zoom=BASE_TIER)
+    _write_local_release(tmp_path, [[_watershed_row("170800010201", geom=_polygon_wkb(SQUARE_A))]], zoom=DETAIL_TIER)
+
+    containing = find_containing_watersheds(
+        tmp_path.as_posix(), RELEASE_DAY, requested_zoom=BASE_TIER, longitude=-121.5, latitude=45.5
+    )
+
+    assert len(containing) == 1
+    assert containing[0].huc12 == "170800010201"
+
+
+def test_release_discovery_and_the_scan_always_name_the_same_rung() -> None:
+    """A day discovered at one resolution and read at another names a release the scan cannot find."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_partition(
+        _table([_watershed_row("170800010101")]),
+        layer=WATERSHEDS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=RELEASE_DAY,
+    )
+
+    assert list_observed_release_days(store, requested_zoom=BASE_TIER) == (RELEASE_DAY,)
+    assert list_observed_release_days(store, requested_zoom=DETAIL_TIER) == ()
+    assert resolve_latest_observed_release_day(store, requested_zoom=DETAIL_TIER, as_of=RELEASE_DAY) is None
+
+
+def test_a_request_between_two_rungs_is_served_by_the_rung_below_it(tmp_path: Path) -> None:
+    _write_local_release(tmp_path, [[_watershed_row("170800010201", geom=_polygon_wkb(SQUARE_B))]], zoom=DETAIL_TIER)
+    _write_local_release(tmp_path, [[_watershed_row("170800010201", geom=_polygon_wkb(SQUARE_A))]], zoom=BASE_TIER)
+
+    served = lookup_watershed_by_huc12(
+        tmp_path.as_posix(), RELEASE_DAY, requested_zoom=UNPUBLISHED_ZOOM, huc12="170800010201"
+    )
+
+    assert served is not None
+    assert served.geom == _polygon_wkb(SQUARE_B), "rounding UP would serve z13 geometry to a z11 viewport"

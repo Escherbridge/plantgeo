@@ -11,6 +11,7 @@ day-resolution answer was a life-safety defect rather than a staleness annoyance
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -29,9 +30,17 @@ from agri_data_service.foundation.parquet.lane_contract import (
 )
 from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path
 
+if TYPE_CHECKING:
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
+
 TODAY = date(2026, 8, 22)
 CHANGED_ON = date(2026, 8, 7)
 EXPECTED_NATURE_COUNT = 3
+
+# The tier a lane's own export writes, and the coarsest rung derived from it. Named by minimum zoom,
+# as the ladder is: every "newest day" question below is asked of ONE of them.
+BASE_TIER: ZoomTier = 13
+WHOLE_WORLD_TIER: ZoomTier = 0
 
 # Two instants on ONE UTC day: an Oregon OEM zone that was Be Ready in the morning and Go Now that
 # afternoon. The day cannot tell them apart, which is exactly why the watermark carries the instant.
@@ -280,14 +289,14 @@ def test_an_empty_source_cannot_carry_a_change_instant() -> None:
 
 def test_a_governed_absence_at_the_watermark_is_a_failed_read_and_never_latches_to_current() -> None:
     """THE ABSENCE LATCH: one zero-row export used to freeze a static lane at `current` forever."""
-    keys = [absence_marker_path("watersheds", "observed", CHANGED_ON)]
+    keys = [absence_marker_path("watersheds", "observed", BASE_TIER, CHANGED_ON)]
     watermark = SourceWatermark(day=CHANGED_ON, basis="watersheds: GREATEST(feature_updated_at) over 9396 rows")
 
     verdict = resolve_static_lane(
         watermark=watermark,
-        newest_data_day=newest_data_day(layer="watersheds", kind="observed", keys=keys),
+        newest_data_day=newest_data_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys),
         newest_data_instant=None,
-        newest_marker_day=newest_marker_day(layer="watersheds", kind="observed", keys=keys),
+        newest_marker_day=newest_marker_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys),
         today=TODAY,
     )
 
@@ -296,21 +305,21 @@ def test_a_governed_absence_at_the_watermark_is_a_failed_read_and_never_latches_
     assert verdict.version_day == CHANGED_ON
     assert "failed read" in verdict.detail
     # The merged view is precisely the trap: it cannot tell the two claims apart.
-    assert newest_covered_day(layer="watersheds", kind="observed", keys=keys) == CHANGED_ON
+    assert newest_covered_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys) == CHANGED_ON
 
 
 def test_a_marker_beside_an_up_to_date_part_file_still_reads_as_current() -> None:
     """Refusing markers as coverage must not make a genuinely current reference set look stale."""
     keys = [
-        absence_marker_path("watersheds", "observed", date(2026, 7, 1)),
-        partition_path("watersheds", "observed", CHANGED_ON),
+        absence_marker_path("watersheds", "observed", BASE_TIER, date(2026, 7, 1)),
+        partition_path("watersheds", "observed", BASE_TIER, CHANGED_ON),
     ]
 
     verdict = resolve_static_lane(
         watermark=SourceWatermark(day=CHANGED_ON, basis="max(updated_at)"),
-        newest_data_day=newest_data_day(layer="watersheds", kind="observed", keys=keys),
+        newest_data_day=newest_data_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys),
         newest_data_instant=None,
-        newest_marker_day=newest_marker_day(layer="watersheds", kind="observed", keys=keys),
+        newest_marker_day=newest_marker_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys),
         today=TODAY,
     )
 
@@ -324,9 +333,9 @@ def test_a_marker_beside_an_up_to_date_part_file_still_reads_as_current() -> Non
     # to stale, now decided by the two clocks rather than by the fallback.
     at_instant_resolution = resolve_static_lane(
         watermark=SourceWatermark(day=CHANGED_ON, instant=GO_NOW_AT, basis=EVACUATION_BASIS),
-        newest_data_day=newest_data_day(layer="watersheds", kind="observed", keys=keys),
+        newest_data_day=newest_data_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys),
         newest_data_instant=GO_NOW_AT,
-        newest_marker_day=newest_marker_day(layer="watersheds", kind="observed", keys=keys),
+        newest_marker_day=newest_marker_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys),
         today=TODAY,
     )
 
@@ -351,28 +360,49 @@ def test_an_empty_source_stays_empty_rather_than_stale_when_a_marker_covers_it()
 def test_the_two_coverage_kinds_are_reported_apart_from_the_same_listing() -> None:
     """A part file and a marker make opposite claims about a version stamp, so they scan apart."""
     keys = [
-        partition_path("watersheds", "observed", date(2026, 8, 1)),
-        absence_marker_path("watersheds", "observed", CHANGED_ON),
+        partition_path("watersheds", "observed", BASE_TIER, date(2026, 8, 1)),
+        absence_marker_path("watersheds", "observed", BASE_TIER, CHANGED_ON),
     ]
 
-    assert newest_data_day(layer="watersheds", kind="observed", keys=keys) == date(2026, 8, 1)
-    assert newest_marker_day(layer="watersheds", kind="observed", keys=keys) == CHANGED_ON
-    assert newest_data_day(layer="watersheds", kind="observed", keys=[]) is None
-    assert newest_marker_day(layer="watersheds", kind="observed", keys=[]) is None
+    assert newest_data_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys) == date(2026, 8, 1)
+    assert newest_marker_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys) == CHANGED_ON
+    assert newest_data_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=[]) is None
+    assert newest_marker_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=[]) is None
 
 
 def test_the_newest_covered_day_counts_part_files_and_absence_markers_alike() -> None:
     """A governed absence at a version day means the source was asked at that version; that is coverage."""
     keys = [
-        partition_path("watersheds", "observed", date(2026, 8, 1)),
-        partition_path("watersheds", "observed", date(2026, 8, 1), part_index=3),
-        absence_marker_path("watersheds", "observed", CHANGED_ON),
-        # Neither this lane nor this stream: both must be ignored, or one lane's coverage would be
-        # answered from another's objects.
-        partition_path("soil-survey", "observed", TODAY),
-        partition_path("watersheds", "forecast", TODAY),
+        partition_path("watersheds", "observed", BASE_TIER, date(2026, 8, 1)),
+        partition_path("watersheds", "observed", BASE_TIER, date(2026, 8, 1), part_index=3),
+        absence_marker_path("watersheds", "observed", BASE_TIER, CHANGED_ON),
+        # Neither this lane, nor this stream, nor this TIER: all three must be ignored, or one lane's
+        # coverage would be answered from another's objects.
+        partition_path("soil-survey", "observed", BASE_TIER, TODAY),
+        partition_path("watersheds", "forecast", BASE_TIER, TODAY),
+        partition_path("watersheds", "observed", WHOLE_WORLD_TIER, TODAY),
         "layer=watersheds/kind=observed/not-a-partition.txt",
     ]
 
-    assert newest_covered_day(layer="watersheds", kind="observed", keys=keys) == CHANGED_ON
-    assert newest_covered_day(layer="watersheds", kind="observed", keys=[]) is None
+    assert newest_covered_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys) == CHANGED_ON
+    assert newest_covered_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=[]) is None
+
+
+def test_a_coarse_tier_snapshot_never_answers_for_the_tier_below_it() -> None:
+    """THE BLENDING TRAP, at its smallest: a z0 version says nothing about whether z13 was written.
+
+    Every key here is the same lane, the same stream and the same version day -- only the tier
+    differs. Tier-blind, all three questions would answer `CHANGED_ON` for the base tier and a lane
+    whose most detailed rung has never been written would be reported current, which is precisely the
+    reading that lets a real gap go unfilled forever.
+    """
+    keys = [
+        partition_path("watersheds", "observed", WHOLE_WORLD_TIER, CHANGED_ON),
+        absence_marker_path("watersheds", "observed", WHOLE_WORLD_TIER, CHANGED_ON),
+    ]
+
+    assert newest_data_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys) is None
+    assert newest_marker_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys) is None
+    assert newest_covered_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys) is None
+    # And the coarse tier still answers for ITSELF, so this is scoping rather than blanket refusal.
+    assert newest_covered_day(layer="watersheds", kind="observed", zoom=WHOLE_WORLD_TIER, keys=keys) == CHANGED_ON

@@ -18,6 +18,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
 from agri_data_service.foundation.parquet.paths import partition_path
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.evacuation_zones import (
     MAX_ROWS_PER_PART,
     export_evacuation_zones_day,
@@ -135,7 +136,9 @@ async def test_export_spills_a_large_snapshot_across_sequential_parts() -> None:
 
     assert [receipt.row_count for receipt in receipts] == [MAX_ROWS_PER_PART, remainder]
     assert [receipt.key for receipt in receipts] == [
-        store.key_for(partition_path(EVACUATION_ZONES_STREAM, "observed", AUGUST_SIXTH, part_index=index))
+        store.key_for(
+            partition_path(EVACUATION_ZONES_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH, part_index=index)
+        )
         for index in range(len(receipts))
     ]
     assert all(receipt.kind == "observed" for receipt in receipts)

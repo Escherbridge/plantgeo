@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
+from agri_data_service.foundation.parquet.zoom import ZoomTier, ZoomTierError
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.planes.fire_detections import (
     KIND_COLUMN,
@@ -24,10 +25,20 @@ from agri_data_service.planes.fire_detections import (
     scan_fire_detections_kind,
 )
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_STREAM
-from tests.parquet.test_objectstore_writer import RecordingBackend, with_forecast_provenance
+from tests.parquet.test_objectstore_writer import (
+    BASE_TIER,
+    DETAIL_TIER,
+    UNPUBLISHED_ZOOM,
+    RecordingBackend,
+    with_forecast_provenance,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+# The rung a lane export lands on, and the zoom a viewport asks for to be served it. A request
+# BETWEEN two rungs (`UNPUBLISHED_ZOOM`, z11) resolves DOWN to `DETAIL_TIER`, never up.
+BASE_TIER_REQUEST = BASE_TIER
 
 AUGUST_SIXTH = date(2026, 8, 6)
 AUGUST_SEVENTH = date(2026, 8, 7)
@@ -61,14 +72,16 @@ def _persist_to_disk(backend: RecordingBackend, base_dir: Path) -> None:
         target.write_bytes(payload)
 
 
-def _write_and_persist(base_dir: Path, *, kind: str, day: date, **table_kwargs: object) -> None:
+def _write_and_persist(
+    base_dir: Path, *, kind: str, day: date, zoom: ZoomTier = BASE_TIER, **table_kwargs: object
+) -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
     table = _cell_day_table(observed_day=day, **table_kwargs)  # type: ignore[arg-type]
     if kind == "forecast":
         # A forecast partition carries the six provenance columns on top of the observed grain.
         table = with_forecast_provenance(table, issued_on=day)
-    store.write_partition(table, layer=FIRE_DETECTIONS_STREAM, kind=kind, day=day)  # type: ignore[arg-type]
+    store.write_partition(table, layer=FIRE_DETECTIONS_STREAM, kind=kind, zoom=zoom, day=day)  # type: ignore[arg-type]
     _persist_to_disk(backend, base_dir)
 
 
@@ -76,7 +89,7 @@ def test_scan_one_kind_returns_only_that_kind_stamped(tmp_path: Path) -> None:
     base_uri = tmp_path.as_posix()
     _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH)
 
-    table = scan_fire_detections_kind(base_uri, kind="observed").collect()
+    table = scan_fire_detections_kind(base_uri, kind="observed", requested_zoom=BASE_TIER_REQUEST).collect()
 
     expected_row_count = 1
     assert table.height == expected_row_count
@@ -89,7 +102,7 @@ def test_a_null_frp_sum_is_never_coerced_to_zero_on_read(tmp_path: Path) -> None
     base_uri = tmp_path.as_posix()
     _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH, frp_sum=None)
 
-    table = scan_fire_detections_kind(base_uri, kind="observed").collect()
+    table = scan_fire_detections_kind(base_uri, kind="observed", requested_zoom=BASE_TIER_REQUEST).collect()
 
     assert table["frp_sum"].to_list() == [None]
     assert table["frp_observation_count"].to_list() == [0]
@@ -100,7 +113,7 @@ def test_missing_kind_returns_empty_typed_frame_not_an_error(tmp_path: Path) -> 
     base_uri = tmp_path.as_posix()
     _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH)
 
-    table = scan_fire_detections_kind(base_uri, kind="forecast").collect()
+    table = scan_fire_detections_kind(base_uri, kind="forecast", requested_zoom=BASE_TIER_REQUEST).collect()
 
     assert table.height == 0
     assert table[KIND_COLUMN].to_list() == []
@@ -120,13 +133,22 @@ def test_missing_kind_returns_empty_typed_frame_not_an_error(tmp_path: Path) -> 
 def test_read_fire_detections_kind_window_rejects_backwards_range(tmp_path: Path) -> None:
     with pytest.raises(FireDetectionsServingError, match="backwards"):
         read_fire_detections_kind_window(
-            tmp_path.as_posix(), kind="observed", first_day=AUGUST_EIGHTH, last_day=AUGUST_SIXTH
+            tmp_path.as_posix(),
+            kind="observed",
+            requested_zoom=BASE_TIER_REQUEST,
+            first_day=AUGUST_EIGHTH,
+            last_day=AUGUST_SIXTH,
         )
 
 
 def test_window_request_rejects_a_backwards_range() -> None:
     with pytest.raises(FireDetectionsServingError, match="backwards"):
-        FireDetectionsWindowRequest(first_day=AUGUST_EIGHTH, last_day=AUGUST_SIXTH, as_of_day=AUGUST_SIXTH)
+        FireDetectionsWindowRequest(
+            first_day=AUGUST_EIGHTH,
+            last_day=AUGUST_SIXTH,
+            as_of_day=AUGUST_SIXTH,
+            requested_zoom=BASE_TIER_REQUEST,
+        )
 
 
 def test_window_splits_by_as_of_day_never_blending_kinds(tmp_path: Path) -> None:
@@ -135,7 +157,9 @@ def test_window_splits_by_as_of_day_never_blending_kinds(tmp_path: Path) -> None
     _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH, cell_longitude=-116.2)
     _write_and_persist(tmp_path, kind="forecast", day=AUGUST_EIGHTH, cell_longitude=-116.195)
 
-    request = FireDetectionsWindowRequest(first_day=AUGUST_SIXTH, last_day=AUGUST_EIGHTH, as_of_day=AUGUST_SIXTH)
+    request = FireDetectionsWindowRequest(
+        first_day=AUGUST_SIXTH, last_day=AUGUST_EIGHTH, as_of_day=AUGUST_SIXTH, requested_zoom=BASE_TIER_REQUEST
+    )
     result = read_fire_detections_window(base_uri, request)
 
     expected_row_count = 2
@@ -151,7 +175,9 @@ def test_window_never_reads_observed_data_that_falls_after_as_of_day(tmp_path: P
     _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH, cell_longitude=-116.2)
     _write_and_persist(tmp_path, kind="observed", day=AUGUST_SEVENTH, cell_longitude=-116.195)
 
-    request = FireDetectionsWindowRequest(first_day=AUGUST_SIXTH, last_day=AUGUST_SEVENTH, as_of_day=AUGUST_SIXTH)
+    request = FireDetectionsWindowRequest(
+        first_day=AUGUST_SIXTH, last_day=AUGUST_SEVENTH, as_of_day=AUGUST_SIXTH, requested_zoom=BASE_TIER_REQUEST
+    )
     result = read_fire_detections_window(base_uri, request)
 
     expected_row_count = 1
@@ -164,7 +190,9 @@ def test_window_entirely_in_the_future_reads_only_forecast(tmp_path: Path) -> No
     base_uri = tmp_path.as_posix()
     _write_and_persist(tmp_path, kind="forecast", day=AUGUST_EIGHTH)
 
-    request = FireDetectionsWindowRequest(first_day=AUGUST_SEVENTH, last_day=AUGUST_EIGHTH, as_of_day=AUGUST_SIXTH)
+    request = FireDetectionsWindowRequest(
+        first_day=AUGUST_SEVENTH, last_day=AUGUST_EIGHTH, as_of_day=AUGUST_SIXTH, requested_zoom=BASE_TIER_REQUEST
+    )
     result = read_fire_detections_window(base_uri, request)
 
     expected_row_count = 1
@@ -178,7 +206,9 @@ def test_window_entirely_settled_reads_only_observed_even_with_no_forecast_parti
     base_uri = tmp_path.as_posix()
     _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH)
 
-    request = FireDetectionsWindowRequest(first_day=AUGUST_SIXTH, last_day=AUGUST_SIXTH, as_of_day=AUGUST_SEVENTH)
+    request = FireDetectionsWindowRequest(
+        first_day=AUGUST_SIXTH, last_day=AUGUST_SIXTH, as_of_day=AUGUST_SEVENTH, requested_zoom=BASE_TIER_REQUEST
+    )
     result = read_fire_detections_window(base_uri, request)
 
     expected_row_count = 1
@@ -190,7 +220,9 @@ def test_the_as_of_day_itself_is_served_from_observed_not_forecast(tmp_path: Pat
     base_uri = tmp_path.as_posix()
     _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH)
 
-    request = FireDetectionsWindowRequest(first_day=AUGUST_SIXTH, last_day=AUGUST_SIXTH, as_of_day=AUGUST_SIXTH)
+    request = FireDetectionsWindowRequest(
+        first_day=AUGUST_SIXTH, last_day=AUGUST_SIXTH, as_of_day=AUGUST_SIXTH, requested_zoom=BASE_TIER_REQUEST
+    )
     result = read_fire_detections_window(base_uri, request)
 
     assert result[KIND_COLUMN].to_list() == ["observed"]
@@ -201,9 +233,52 @@ def test_window_of_a_single_day_before_epoch_start_still_bounds_correctly(tmp_pa
     base_uri = tmp_path.as_posix()
     _write_and_persist(tmp_path, kind="forecast", day=AUGUST_SEVENTH)
     request = FireDetectionsWindowRequest(
-        first_day=AUGUST_SIXTH + timedelta(days=1), last_day=AUGUST_SEVENTH, as_of_day=AUGUST_SIXTH
+        first_day=AUGUST_SIXTH + timedelta(days=1),
+        last_day=AUGUST_SEVENTH,
+        as_of_day=AUGUST_SIXTH,
+        requested_zoom=BASE_TIER_REQUEST,
     )
 
     result = read_fire_detections_window(base_uri, request)
 
     assert result["observed_day"].to_list() == [AUGUST_SEVENTH]
+
+
+# --- the zoom axis: one rung per read, and a blend that is not expressible ------------------------
+
+
+def test_two_tiers_of_one_cell_day_never_stack_into_one_answer(tmp_path: Path) -> None:
+    """The silent defect this axis exists to prevent: two rungs of ONE cell-day read as one population.
+
+    Both partitions are the same layer, kind and day; only `zoom=` differs. A glob rooted at the
+    `kind=observed` prefix matches both, and the resulting frame is entirely well-formed -- real
+    cells, real counts, correct dtypes -- while every aggregate over it is doubled.
+    """
+    base_uri = tmp_path.as_posix()
+    _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH, zoom=BASE_TIER, cell_longitude=-116.2)
+    _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH, zoom=DETAIL_TIER, cell_longitude=-116.9)
+
+    at_base = scan_fire_detections_kind(base_uri, kind="observed", requested_zoom=BASE_TIER).collect()
+    at_detail = scan_fire_detections_kind(base_uri, kind="observed", requested_zoom=DETAIL_TIER).collect()
+
+    assert at_base["cell_longitude"].to_list() == [-116.2]
+    assert at_detail["cell_longitude"].to_list() == [-116.9]
+
+
+def test_a_request_between_two_rungs_is_served_by_the_rung_below_it(tmp_path: Path) -> None:
+    """z11 reads the z9 tier: the most detailed geometry actually published at or under the request."""
+    base_uri = tmp_path.as_posix()
+    _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH, zoom=DETAIL_TIER, cell_longitude=-116.9)
+    _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH, zoom=BASE_TIER, cell_longitude=-116.2)
+
+    served = scan_fire_detections_kind(base_uri, kind="observed", requested_zoom=UNPUBLISHED_ZOOM).collect()
+
+    assert served["cell_longitude"].to_list() == [-116.9], "rounding UP would serve z13 bytes to a z11 viewport"
+
+
+def test_a_window_request_refuses_an_off_scale_zoom_at_construction() -> None:
+    """Refused where the backwards-window check lives, not part way through a scan that opened files."""
+    with pytest.raises(ZoomTierError, match="outside the web-map scale"):
+        FireDetectionsWindowRequest(
+            first_day=AUGUST_SIXTH, last_day=AUGUST_SIXTH, as_of_day=AUGUST_SIXTH, requested_zoom=99
+        )

@@ -13,6 +13,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.objectstore import conform_to_stream_schema
 from agri_data_service.warehouse.schemas.evacuation_zones import (
     EVACUATION_ZONES_SCHEMA,
@@ -76,6 +77,13 @@ async def export_evacuation_zones_day(
     table = await read_evacuation_zones_snapshot(session, snapshot_day=day)
     parts = split_into_parts(table) or (table,)
     return tuple(
-        store.write_partition(part, layer=EVACUATION_ZONES_STREAM, kind="observed", day=day, part_index=index)
+        store.write_partition(
+            part,
+            layer=EVACUATION_ZONES_STREAM,
+            kind="observed",
+            zoom=LANE_BASE_ZOOM_TIER,
+            day=day,
+            part_index=index,
+        )
         for index, part in enumerate(parts)
     )

@@ -10,6 +10,14 @@ Geometry dominates the row (~17.3 KB/row, measured on the real 9,396-row/10-part
 `ObjectStoreBackend` deliberately has no `get` (`pipeline/parquet/AGENTS.md`), so every read here
 goes through Polars/DuckDB's own `s3://` scan (`polars_storage_options`, the seam that module
 documents) rather than downloading whole objects through the writer's backend.
+
+`zoom` IS a parameter, required on every public function, and this is the lane where the ladder was
+always going to be load-bearing: the PostGIS era generalised HUC12 boundaries at 4/6/8/10/12
+(`drizzle/0023_watershed_zoom_generalization.sql:149-155`), which is exactly the per-layer breakpoint
+table `foundation/parquet/zoom.py` retired. One rung answers each request. Reading two would make
+`lookup_watershed_by_huc12` raise "not unique" -- the same code raises the same message when a
+release genuinely duplicates a basin -- and would make `find_containing_watersheds` return one basin
+several times with edges that disagree along shared boundaries.
 """
 
 from __future__ import annotations
@@ -23,6 +31,7 @@ import polars as pl
 
 from agri_data_service.config import settings as _default_settings
 from agri_data_service.foundation.parquet.paths import day_prefix, try_parse_partition_path
+from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore, polars_storage_options
 from agri_data_service.warehouse.schemas.watersheds import WATERSHEDS_SCHEMA, WATERSHEDS_STREAM
 
@@ -30,6 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from agri_data_service.config import ObjectStoreCredentials, Settings
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 # The only stream this lane ever writes (`horizon: none`, docs/lanes/watersheds.md section 7).
 _OBSERVED_KIND: Final = "observed"
@@ -143,51 +153,56 @@ def watersheds_release_source(source: Settings | None = None) -> tuple[str, dict
     return root, polars_storage_options(credentials)
 
 
-def _watersheds_release_glob(root: str, day: date) -> str:
-    """Every part file of one release day -- a release is many parts and must read as one glob."""
-    return f"{root.rstrip('/')}/{day_prefix(WATERSHEDS_STREAM, _OBSERVED_KIND, day)}part-*.parquet"
+def _watersheds_release_glob(root: str, zoom: ZoomTier, day: date) -> str:
+    """Every part file of one release day AT ONE TIER -- a release is many parts and must read as one glob."""
+    return f"{root.rstrip('/')}/{day_prefix(WATERSHEDS_STREAM, _OBSERVED_KIND, zoom, day)}part-*.parquet"
 
 
 def scan_watersheds_release(
     root: str,
     day: date,
     *,
+    requested_zoom: int,
     storage_options: Mapping[str, str] | None = None,
 ) -> pl.LazyFrame:
-    """Lazily scan one release day; nothing is read until a caller filters, selects, and collects.
+    """Lazily scan one release day at one tier; nothing is read until a caller filters, selects, and collects.
 
-    `hive_partitioning=False` is deliberate: the frozen layout's `year=/month=/day=` segments name
-    this module's own understanding of "day" (via `list_observed_release_days`, `day_prefix`), not
-    a second, Polars-inferred date column to reconcile against.
+    `hive_partitioning=False` is deliberate: the frozen layout's `zoom=/year=/month=/day=` segments
+    name this module's own understanding of "day" and "tier" (via `list_observed_release_days`,
+    `day_prefix`), not a second, Polars-inferred set of columns to reconcile against.
     """
     return pl.scan_parquet(
-        _watersheds_release_glob(root, day),
+        _watersheds_release_glob(root, serving_zoom_tier(requested_zoom), day),
         storage_options=dict(storage_options) if storage_options is not None else None,
         hive_partitioning=False,
     )
 
 
-def list_observed_release_days(store: ObjectStore) -> tuple[date, ...]:
-    """Every distinct day carrying at least one observed part file, sorted ascending.
+def list_observed_release_days(store: ObjectStore, *, requested_zoom: int) -> tuple[date, ...]:
+    """Every distinct day carrying at least one observed part file AT ONE TIER, sorted ascending.
 
     A ten-part release collapses to one entry here: both this and
     `foundation.parquet.paths.partition_day_statuses` derive "day" the same way, by parsing each
     key's `day=` segment, never by reading row content.
     """
-    keys = store.list_partition_keys(WATERSHEDS_STREAM, _OBSERVED_KIND)
+    keys = store.list_partition_keys(WATERSHEDS_STREAM, _OBSERVED_KIND, serving_zoom_tier(requested_zoom))
     days = {parsed.day for parsed in (try_parse_partition_path(key) for key in keys) if parsed is not None}
     return tuple(sorted(days))
 
 
-def resolve_latest_observed_release_day(store: ObjectStore, *, as_of: date) -> date | None:
-    """The newest observed release at or before `as_of`; never a release dated after it.
+def resolve_latest_observed_release_day(store: ObjectStore, *, requested_zoom: int, as_of: date) -> date | None:
+    """The newest observed release at or before `as_of` at one tier; never a release dated after it.
 
     A HUC12 boundary is a rarely-republished snapshot (docs/lanes/watersheds.md section 7), so a
     request for a date after the newest release is honestly answered by that release -- nothing
     has been observed to have changed since. A request before this lane's first release has no
     honest answer and gets `None`, never the newest release borrowed backwards in time.
+
+    "Newest" is newest AT THE REQUESTED TIER. That reuse-the-newest rule reaches forward in time and
+    would happily reach across the ladder too if the listing let it, promising a generalised boundary
+    for a rung the derivation step has not produced.
     """
-    eligible = tuple(day for day in list_observed_release_days(store) if day <= as_of)
+    eligible = tuple(day for day in list_observed_release_days(store, requested_zoom=requested_zoom) if day <= as_of)
     return eligible[-1] if eligible else None
 
 
@@ -196,16 +211,23 @@ def lookup_watershed_by_huc12(
     day: date,
     huc12: str,
     *,
+    requested_zoom: int,
     storage_options: Mapping[str, str] | None = None,
 ) -> WatershedBoundary | None:
-    """One basin by its national key; the release is sorted by huc12, so this prunes by file range.
+    """One basin by its national key at one tier; the release is sorted by huc12, so this prunes by file range.
 
     Predicate pushdown on `huc12 == ...` lets Polars skip whole part files whose stored min/max
     huc12 range excludes the code, without decoding their geometry -- the release-wide equivalent
     `find_containing_watersheds` below never gets, because no such range exists for a point test.
+
+    The "not unique" refusal below is why the tier scoping is not cosmetic: one basin published at
+    two rungs matches this filter twice, and the message would blame the release for a duplicate the
+    reader introduced.
     """
     frame = (
-        scan_watersheds_release(root, day, storage_options=storage_options).filter(pl.col("huc12") == huc12).collect()
+        scan_watersheds_release(root, day, requested_zoom=requested_zoom, storage_options=storage_options)
+        .filter(pl.col("huc12") == huc12)
+        .collect()
     )
     if frame.height == 0:
         return None
@@ -214,15 +236,16 @@ def lookup_watershed_by_huc12(
     return _row_to_boundary(frame.row(0, named=True))
 
 
-def find_containing_watersheds(
+def find_containing_watersheds(  # noqa: PLR0913 - one parameter per point/release input, none foldable
     root: str,
     day: date,
     *,
     longitude: float,
     latitude: float,
+    requested_zoom: int,
     storage_options: Mapping[str, str] | None = None,
 ) -> tuple[WatershedBoundary, ...]:
-    """Every basin whose polygon contains one point -- a full-release geometry scan, honestly.
+    """Every basin whose polygon contains one point at one tier -- a full-release geometry scan, honestly.
 
     No bounding-box column exists in this export to prune spatially before decoding geometry, so
     unlike the huc12 lookup above this cannot skip a single part file. What is bounded is
@@ -230,7 +253,7 @@ def find_containing_watersheds(
     never a second Python-side copy of the release held alongside the DataFrame.
     """
     frame = (
-        scan_watersheds_release(root, day, storage_options=storage_options)
+        scan_watersheds_release(root, day, requested_zoom=requested_zoom, storage_options=storage_options)
         .select(list(WATERSHEDS_SCHEMA.column_names))
         .collect(engine="streaming")
     )

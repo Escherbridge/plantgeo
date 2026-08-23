@@ -14,12 +14,14 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from agri_data_service.foundation.parquet.paths import validate_layer_slug
+from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path, validate_layer_slug
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.lanes import soil_survey as soil_survey_lane
+from agri_data_service.pipeline.lanes.soil_survey import POLYGON_KEY_BATCH_SIZE
 from agri_data_service.pipeline.parquet.gap_fill import GapFillContractError, lane_window
 from agri_data_service.pipeline.parquet.lane_registry import (
     LANE_REGISTRATIONS,
     LANE_REGISTRY,
-    MAX_SOIL_SURVEY_POLYGON_KEYS,
     LaneRegistration,
     LaneRegistryError,
     LaneRunResult,
@@ -35,6 +37,7 @@ from agri_data_service.pipeline.parquet.objectstore import (
 )
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 from tests.parquet.test_objectstore_writer import RecordingBackend
+from tests.parquet.test_soil_survey_lane import soil_survey_row
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -120,11 +123,13 @@ class ScriptedSession:
 
 def receipt(*, rows: int, size: int, part_index: int = 0) -> ParquetWriteReceipt:
     """One part-file receipt, shaped as `ObjectStore.write_partition` returns it."""
+    relative_path = partition_path("signal", "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH, part_index)
     return ParquetWriteReceipt(
-        key=f"layer=signal/kind=observed/year=2026/month=08/day=06/part-{part_index}.parquet",
-        relative_path=f"layer=signal/kind=observed/year=2026/month=08/day=06/part-{part_index}.parquet",
+        key=relative_path,
+        relative_path=relative_path,
         stream="signal",
         kind="observed",
+        zoom=LANE_BASE_ZOOM_TIER,
         day=AUGUST_SIXTH,
         row_count=rows,
         byte_count=size,
@@ -134,10 +139,12 @@ def receipt(*, rows: int, size: int, part_index: int = 0) -> ParquetWriteReceipt
 
 def absence_receipt(*, size: int = 128) -> AbsenceWriteReceipt:
     """One governed-absence receipt, shaped as `ObjectStore.write_absence` returns it."""
+    relative_path = absence_marker_path("signal", "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH)
     return AbsenceWriteReceipt(
-        key="layer=signal/kind=observed/year=2026/month=08/day=06/absent.json",
-        relative_path="layer=signal/kind=observed/year=2026/month=08/day=06/absent.json",
+        key=relative_path,
+        relative_path=relative_path,
         kind="observed",
+        zoom=LANE_BASE_ZOOM_TIER,
         day=AUGUST_SIXTH,
         byte_count=size,
         sha256="0" * 64,
@@ -473,22 +480,83 @@ async def test_an_unresolvable_layer_id_fails_closed_rather_than_exporting_the_w
         )
 
 
+def _soil_survey_key_page(keys: Sequence[str]) -> list[dict[str, object]]:
+    """One page of the keyset walk, shaped as `lane_registry_soil_survey_polygon_keys.sql` returns it."""
+    return [{"mupolygonkey": key} for key in keys]
+
+
 @pytest.mark.asyncio
-async def test_a_soil_survey_key_list_that_hit_the_ceiling_is_refused_not_truncated() -> None:
-    """A truncated release reads back as a complete one -- the exact wrong-but-plausible output to refuse."""
-    over_budget = [{"mupolygonkey": str(index)} for index in range(MAX_SOIL_SURVEY_POLYGON_KEYS + 1)]
-    session = ScriptedSession([over_budget])
+async def test_the_soil_survey_key_walk_pages_by_last_key_rather_than_reading_the_whole_set() -> None:
+    """A page bound to the previous page's last key is what lets this lane exceed any single read.
+
+    The walk stops on an EMPTY page rather than on a short one: `LIMIT` is the only thing that can
+    shorten a page, so the extra round trip is one query per export against ~7,500, and the
+    invariant "a page with rows is never the last page unless the next one is empty" needs no
+    reasoning about why a driver returned fewer rows than asked for.
+    """
+    session = ScriptedSession(
+        [
+            _soil_survey_key_page(["poly-1", "poly-2"]),
+            [soil_survey_row("poly-1", AUGUST_SIXTH), soil_survey_row("poly-2", AUGUST_SIXTH)],
+            _soil_survey_key_page([]),
+        ]
+    )
     store = ObjectStore(RecordingBackend())
 
-    with pytest.raises(LaneRegistryError, match="truncated key list"):
-        await LANE_REGISTRY["soil-survey"].adapter(
-            session,  # type: ignore[arg-type]
-            store,
-            day=AUGUST_SIXTH,
-            run_id="test-run",
-        )
+    result = await LANE_REGISTRY["soil-survey"].adapter(
+        session,  # type: ignore[arg-type]
+        store,
+        day=AUGUST_SIXTH,
+        run_id="test-run",
+    )
 
-    assert session.params == [{"key_ceiling": MAX_SOIL_SURVEY_POLYGON_KEYS + 1}]
+    expected_rows = 2
+    assert result == LaneRunResult(
+        part_count=1, row_count=expected_rows, byte_count=result.byte_count, absence_recorded=False
+    )
+    assert session.params[0] == {"after_key": "", "page_size": POLYGON_KEY_BATCH_SIZE}
+    assert session.params[2] == {"after_key": "poly-2", "page_size": POLYGON_KEY_BATCH_SIZE}
+
+
+@pytest.mark.asyncio
+async def test_a_release_bigger_than_the_retired_key_ceiling_streams_instead_of_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`MAX_SOIL_SURVEY_POLYGON_KEYS` made this lane raise every tick once production passed 200,000.
+
+    It was never a claim about how many delineations SSURGO holds -- its own comment said so -- and
+    the PNW envelope is 1,507,623. Deleting it without streaming would merely move the failure from
+    a loud refusal to an unbounded read, so what is pinned here is that a multi-page walk writes
+    multi-part output and consumes every page.
+    """
+    monkeypatch.setattr(soil_survey_lane, "ROWS_PER_PART", 2)
+    pages = [(f"poly-{index}", f"poly-{index + 1}") for index in range(0, 6, 2)]
+    answers: list[Sequence[dict[str, object]]] = []
+    for page in pages:
+        answers.append(_soil_survey_key_page(page))
+        answers.append([soil_survey_row(key, AUGUST_SIXTH) for key in page])
+    answers.append(_soil_survey_key_page([]))
+    session = ScriptedSession(answers)
+    backend = RecordingBackend()
+
+    result = await LANE_REGISTRY["soil-survey"].adapter(
+        session,  # type: ignore[arg-type]
+        ObjectStore(backend),
+        day=AUGUST_SIXTH,
+        run_id="test-run",
+    )
+
+    expected_parts = 3
+    expected_rows = 6
+    assert result.part_count == expected_parts
+    assert result.row_count == expected_rows
+    assert len(backend.objects) == expected_parts, "every reported part is a real object the prune must keep"
+    assert [params["after_key"] for params in session.params if params is not None and "after_key" in params] == [
+        "",
+        "poly-1",
+        "poly-3",
+        "poly-5",
+    ]
 
 
 @pytest.mark.asyncio

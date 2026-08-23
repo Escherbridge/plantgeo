@@ -24,7 +24,12 @@ from agri_data_service.planes.burn_severity import (
     resolve_burn_severity_as_of,
 )
 from agri_data_service.warehouse.schemas.burn_severity import BURN_SEVERITY_SCHEMA, BURN_SEVERITY_STREAM
-from tests.parquet.test_objectstore_writer import RecordingBackend
+from tests.parquet.test_objectstore_writer import (
+    BASE_TIER,
+    DETAIL_TIER,
+    UNPUBLISHED_ZOOM,
+    RecordingBackend,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,6 +37,9 @@ if TYPE_CHECKING:
 # The real governed release dates for fire years 2020 and 2022 (ingest/mtbs.py MTBS_ANNUAL_RELEASE_DATES) --
 # two of this lane's whole-history five, used here to exercise "as of" resolution honestly rather than
 # against invented dates.
+# The rung a lane export lands on, and the zoom a viewport asks for to be served it.
+BASE_TIER_REQUEST = BASE_TIER
+
 EARLIER_RELEASE = date(2022, 4, 28)
 LATER_RELEASE = date(2024, 8, 22)
 BETWEEN_RELEASES = date(2023, 6, 1)
@@ -97,7 +105,9 @@ def materialize_backend(backend: RecordingBackend, root: Path) -> None:
 def test_a_day_with_no_part_files_reads_as_an_honest_empty_typed_frame(tmp_path: Path) -> None:
     store = ObjectStore(RecordingBackend())
 
-    frame = read_burn_severity_release_day(store, day=EARLIER_RELEASE, base_uri=str(tmp_path))
+    frame = read_burn_severity_release_day(
+        store, requested_zoom=BASE_TIER_REQUEST, day=EARLIER_RELEASE, base_uri=str(tmp_path)
+    )
 
     assert frame.height == 0
     assert frame.columns == list(BURN_SEVERITY_SCHEMA.column_names)
@@ -113,11 +123,14 @@ def test_a_future_date_answers_empty_rather_than_falling_through_to_the_newest_o
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=EARLIER_RELEASE,
     )
     materialize_backend(backend, tmp_path)
 
-    frame = read_burn_severity_release_day(store, day=FAR_FUTURE_DAY, base_uri=str(tmp_path))
+    frame = read_burn_severity_release_day(
+        store, requested_zoom=BASE_TIER_REQUEST, day=FAR_FUTURE_DAY, base_uri=str(tmp_path)
+    )
 
     assert frame.height == 0
     assert frame.columns == list(BURN_SEVERITY_SCHEMA.column_names)
@@ -135,11 +148,14 @@ def test_a_governed_absence_marker_reads_as_zero_rows_not_an_error(tmp_path: Pat
         ),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=EARLIER_RELEASE,
     )
     materialize_backend(backend, tmp_path)
 
-    frame = read_burn_severity_release_day(store, day=EARLIER_RELEASE, base_uri=str(tmp_path))
+    frame = read_burn_severity_release_day(
+        store, requested_zoom=BASE_TIER_REQUEST, day=EARLIER_RELEASE, base_uri=str(tmp_path)
+    )
 
     assert frame.height == 0
     assert frame.columns == list(BURN_SEVERITY_SCHEMA.column_names)
@@ -153,12 +169,15 @@ def test_a_release_split_across_several_part_files_reads_as_one_grain_sorted_tab
             burn_severity_table([burn_severity_row(fire_id=fire_id, observed_day=LATER_RELEASE)]),
             layer=BURN_SEVERITY_STREAM,
             kind="observed",
+            zoom=BASE_TIER,
             day=LATER_RELEASE,
             part_index=part_index,
         )
     materialize_backend(backend, tmp_path)
 
-    frame = read_burn_severity_release_day(store, day=LATER_RELEASE, base_uri=str(tmp_path))
+    frame = read_burn_severity_release_day(
+        store, requested_zoom=BASE_TIER_REQUEST, day=LATER_RELEASE, base_uri=str(tmp_path)
+    )
 
     assert frame.height == EXPECTED_MULTI_PART_ROW_COUNT
     assert frame["fire_id"].to_list() == ["2022PNW00001", "2022PNW00002", "2022PNW00003"]
@@ -172,11 +191,14 @@ def test_geometry_survives_as_binary_wkb_with_no_srid_header(tmp_path: Path) -> 
         burn_severity_table([burn_severity_row(fire_id="2022PNW00001", observed_day=LATER_RELEASE, geom=wkb)]),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=LATER_RELEASE,
     )
     materialize_backend(backend, tmp_path)
 
-    frame = read_burn_severity_release_day(store, day=LATER_RELEASE, base_uri=str(tmp_path))
+    frame = read_burn_severity_release_day(
+        store, requested_zoom=BASE_TIER_REQUEST, day=LATER_RELEASE, base_uri=str(tmp_path)
+    )
 
     assert frame["geom"].to_list() == [wkb]
     assert frame.schema["geom"] == pl.Binary
@@ -190,17 +212,21 @@ def test_a_different_release_never_leaks_into_an_exact_day_answer(tmp_path: Path
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=EARLIER_RELEASE,
     )
     store.write_partition(
         burn_severity_table([burn_severity_row(fire_id="2022PNW00099", observed_day=LATER_RELEASE)]),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=LATER_RELEASE,
     )
     materialize_backend(backend, tmp_path)
 
-    frame = read_burn_severity_release_day(store, day=EARLIER_RELEASE, base_uri=str(tmp_path))
+    frame = read_burn_severity_release_day(
+        store, requested_zoom=BASE_TIER_REQUEST, day=EARLIER_RELEASE, base_uri=str(tmp_path)
+    )
 
     assert frame["fire_id"].to_list() == ["2020PNW00001"]
 
@@ -228,17 +254,21 @@ def test_as_of_between_two_releases_resolves_to_the_older_one_and_names_it(tmp_p
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=EARLIER_RELEASE,
     )
     store.write_partition(
         burn_severity_table([burn_severity_row(fire_id="2022PNW00001", observed_day=LATER_RELEASE)]),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=LATER_RELEASE,
     )
     materialize_backend(backend, tmp_path)
 
-    answer = resolve_burn_severity_as_of(store, requested_day=BETWEEN_RELEASES, base_uri=str(tmp_path))
+    answer = resolve_burn_severity_as_of(
+        store, requested_zoom=BASE_TIER_REQUEST, requested_day=BETWEEN_RELEASES, base_uri=str(tmp_path)
+    )
 
     assert answer.release_day == EARLIER_RELEASE
     assert answer.is_governed_absence is False
@@ -254,17 +284,21 @@ def test_as_of_past_the_newest_release_answers_the_newest_release_not_a_projecti
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=EARLIER_RELEASE,
     )
     store.write_partition(
         burn_severity_table([burn_severity_row(fire_id="2022PNW00001", observed_day=LATER_RELEASE)]),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=LATER_RELEASE,
     )
     materialize_backend(backend, tmp_path)
 
-    answer = resolve_burn_severity_as_of(store, requested_day=FAR_FUTURE_DAY, base_uri=str(tmp_path))
+    answer = resolve_burn_severity_as_of(
+        store, requested_zoom=BASE_TIER_REQUEST, requested_day=FAR_FUTURE_DAY, base_uri=str(tmp_path)
+    )
 
     assert answer.release_day == LATER_RELEASE
     assert answer.rows["fire_id"].to_list() == ["2022PNW00001"]
@@ -277,11 +311,14 @@ def test_as_of_before_the_earliest_release_is_an_honest_absence_not_a_zero_row_r
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=EARLIER_RELEASE,
     )
     materialize_backend(backend, tmp_path)
 
-    answer = resolve_burn_severity_as_of(store, requested_day=BEFORE_ANY_RELEASE, base_uri=str(tmp_path))
+    answer = resolve_burn_severity_as_of(
+        store, requested_zoom=BASE_TIER_REQUEST, requested_day=BEFORE_ANY_RELEASE, base_uri=str(tmp_path)
+    )
 
     assert answer.release_day is None
     assert answer.is_governed_absence is False
@@ -302,11 +339,14 @@ def test_as_of_a_governed_absence_release_reports_the_absence_rather_than_a_data
         ),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=LATER_RELEASE,
     )
     materialize_backend(backend, tmp_path)
 
-    answer = resolve_burn_severity_as_of(store, requested_day=FAR_FUTURE_DAY, base_uri=str(tmp_path))
+    answer = resolve_burn_severity_as_of(
+        store, requested_zoom=BASE_TIER_REQUEST, requested_day=FAR_FUTURE_DAY, base_uri=str(tmp_path)
+    )
 
     assert answer.release_day == LATER_RELEASE
     assert answer.is_governed_absence is True
@@ -321,18 +361,124 @@ def test_as_of_never_blends_two_releases_into_one_answer(tmp_path: Path) -> None
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=EARLIER_RELEASE,
     )
     store.write_partition(
         burn_severity_table([burn_severity_row(fire_id="2022PNW00001", observed_day=LATER_RELEASE)]),
         layer=BURN_SEVERITY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=LATER_RELEASE,
     )
     materialize_backend(backend, tmp_path)
 
-    answer = resolve_burn_severity_as_of(store, requested_day=LATER_RELEASE, base_uri=str(tmp_path))
+    answer = resolve_burn_severity_as_of(
+        store, requested_zoom=BASE_TIER_REQUEST, requested_day=LATER_RELEASE, base_uri=str(tmp_path)
+    )
 
     assert answer.release_day == LATER_RELEASE
     assert answer.rows.height == 1
     assert answer.rows["fire_id"].to_list() == ["2022PNW00001"]
+
+
+# --- the zoom axis: one rung per read, and a blend that is not expressible ------------------------
+
+
+def test_two_tiers_of_one_release_never_stack_into_one_as_of_answer(tmp_path: Path) -> None:
+    """One MTBS cohort at two rungs is one release generalised twice, not two releases."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_partition(
+        burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
+        layer=BURN_SEVERITY_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=EARLIER_RELEASE,
+    )
+    store.write_partition(
+        burn_severity_table([burn_severity_row(fire_id="2020PNW00009", observed_day=EARLIER_RELEASE)]),
+        layer=BURN_SEVERITY_STREAM,
+        kind="observed",
+        zoom=DETAIL_TIER,
+        day=EARLIER_RELEASE,
+    )
+    materialize_backend(backend, tmp_path)
+
+    at_base = resolve_burn_severity_as_of(
+        store, requested_zoom=BASE_TIER, requested_day=EARLIER_RELEASE, base_uri=str(tmp_path)
+    )
+    at_detail = resolve_burn_severity_as_of(
+        store, requested_zoom=DETAIL_TIER, requested_day=EARLIER_RELEASE, base_uri=str(tmp_path)
+    )
+
+    assert at_base.rows["fire_id"].to_list() == ["2020PNW00001"]
+    assert at_detail.rows["fire_id"].to_list() == ["2020PNW00009"]
+    assert at_base.zoom == BASE_TIER
+    assert at_detail.zoom == DETAIL_TIER
+
+
+def test_a_governed_absence_at_one_rung_does_not_mark_the_release_absent_at_another(tmp_path: Path) -> None:
+    """`_known_release_days` maps day -> "is absent"; unscoped, the verdict would depend on listing order."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_absence(
+        GovernedAbsence(
+            reason="this cohort held no fire inside the deployment bounding box at this resolution",
+            upstream_response="geo.features query returned 0 rows",
+            recorded_at=datetime.now(UTC),
+            run_id="run-1",
+        ),
+        layer=BURN_SEVERITY_STREAM,
+        kind="observed",
+        zoom=DETAIL_TIER,
+        day=EARLIER_RELEASE,
+    )
+    store.write_partition(
+        burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
+        layer=BURN_SEVERITY_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=EARLIER_RELEASE,
+    )
+    materialize_backend(backend, tmp_path)
+
+    at_base = resolve_burn_severity_as_of(
+        store, requested_zoom=BASE_TIER, requested_day=EARLIER_RELEASE, base_uri=str(tmp_path)
+    )
+    at_detail = resolve_burn_severity_as_of(
+        store, requested_zoom=DETAIL_TIER, requested_day=EARLIER_RELEASE, base_uri=str(tmp_path)
+    )
+
+    assert at_base.is_governed_absence is False
+    assert at_base.rows.height == 1
+    assert at_detail.is_governed_absence is True
+    assert at_detail.rows.height == 0
+
+
+def test_a_request_between_two_rungs_is_answered_by_the_rung_below_it(tmp_path: Path) -> None:
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_partition(
+        burn_severity_table([burn_severity_row(fire_id="2020PNW00009", observed_day=EARLIER_RELEASE)]),
+        layer=BURN_SEVERITY_STREAM,
+        kind="observed",
+        zoom=DETAIL_TIER,
+        day=EARLIER_RELEASE,
+    )
+    store.write_partition(
+        burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=LATER_RELEASE)]),
+        layer=BURN_SEVERITY_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=LATER_RELEASE,
+    )
+    materialize_backend(backend, tmp_path)
+
+    answer = resolve_burn_severity_as_of(
+        store, requested_zoom=UNPUBLISHED_ZOOM, requested_day=FAR_FUTURE_DAY, base_uri=str(tmp_path)
+    )
+
+    assert answer.zoom == DETAIL_TIER
+    assert answer.release_day == EARLIER_RELEASE, "z9's newest release, not z13's"
+    assert answer.rows["fire_id"].to_list() == ["2020PNW00009"]

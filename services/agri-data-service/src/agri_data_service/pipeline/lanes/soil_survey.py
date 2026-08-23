@@ -9,27 +9,34 @@ republication vintage, not a periodic re-sample. So `day` here names the export 
 day (broadcast onto every row as `release_day`), never a predicate on when a delineation was
 observed -- see `sql/pipeline/soil_survey_day_export.sql` for the full reasoning.
 
-Combines both proven shapes rather than picking one: batched reads on the way IN, like
-`signal.read_signal_day`, because a release's key list can be enormous (the PNW envelope alone
-measures 1,507,623 delineations, docs/lanes/soil-survey.md section 5 point 8) and this lane's
-rows each carry a polygon, unlike signal's scalar observations. Sliced part files on the way
-OUT, like `watersheds.export_watersheds_release`, because a geometry relation must never be
-sized by row count alone -- geo.drought_areas is 995 rows and 500 MB.
+THE WHOLE RELEASE IS NEVER IN MEMORY AT ONCE, AND THAT IS WHY THIS LANE CAN RUN AT ALL. The PNW
+envelope alone measures 1,507,623 delineations (docs/lanes/soil-survey.md section 5 point 8) and
+every row of this lane carries a polygon, unlike signal's scalar observations -- so a release read
+into one table before any of it is written would be sized by the population rather than by a
+budget. The export therefore STREAMS: the caller hands it key batches, each batch is read,
+buffered, and flushed to `part-N` as soon as `ROWS_PER_PART` rows are in hand. Peak memory is one
+part plus one batch, whatever the population is.
+
+STREAMING IS ALSO WHAT MAKES THE PARTS ORDERED RATHER THAN MERELY SORTED. Key batches arrive in
+`mupolygonkey` order, which IS this stream's grain (`SOIL_SURVEY_GRAIN`), so part N's keys all
+precede part N+1's; `write_partition` sorting each part to the grain then produces one global
+order across the whole release. The earlier read-everything-then-slice shape could only sort
+within an arbitrary slice of an unsorted table.
 """
 
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa  # type: ignore[import-untyped]
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.soil_survey import SOIL_SURVEY_SCHEMA, SOIL_SURVEY_STREAM
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import AsyncIterator, Sequence
     from datetime import date
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,7 +57,9 @@ _PRODUCER: Final = "usda-sda"
 # not working around a missing index. It exists to keep one Postgres round trip -- the array
 # parameter and the full SSURGO attribute set plus WKB per delineation it returns -- bounded,
 # given the measured scale of a real release (see the module docstring). Smaller than signal's
-# 250: signal's rows are scalar observations, this lane's rows each carry a polygon.
+# 250: signal's rows are scalar observations, this lane's rows each carry a polygon. It is also
+# the page size the registry's keyset walk pages the KEY list by, so one batch is one round trip
+# on each side of the export rather than two unrelated numbers that happen to be near each other.
 POLYGON_KEY_BATCH_SIZE: Final = 200
 
 # Bounds one PART FILE's row count, independent of POLYGON_KEY_BATCH_SIZE above -- that constant
@@ -99,31 +108,51 @@ async def read_soil_survey_release(
     return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(SOIL_SURVEY_SCHEMA.arrow_schema)
 
 
+def _write_part(store: ObjectStore, part: pa.Table, *, day: date, part_index: int) -> ParquetWriteReceipt:
+    """Upload one part file of this release at the base tier, the only rung a lane export writes."""
+    return store.write_partition(
+        part,
+        layer=SOIL_SURVEY_STREAM,
+        kind="observed",
+        zoom=LANE_BASE_ZOOM_TIER,
+        day=day,
+        part_index=part_index,
+    )
+
+
 async def export_soil_survey_release(
     session: AsyncSession,
     store: ObjectStore,
     *,
     day: date,
-    mupolygonkeys: Sequence[str],
+    mupolygonkey_batches: AsyncIterator[Sequence[str]],
 ) -> tuple[ParquetWriteReceipt, ...]:
-    """Export one release of the current SSURGO snapshot, spilling across parts as needed.
+    """Stream one release of the current SSURGO snapshot to `part-0..part-N`, a bounded buffer at a time.
 
-    A batch that matches nothing currently published (every requested key has since been
-    superseded or was never real) still reaches `store.write_partition` with a zero-row table on
-    its one (and only) part, so the writer's own `EmptyPartitionError` surfaces the governed
-    absence, rather than this function silently returning no receipts for a caller to misread as
-    "nothing to export" -- the same contract `export_watersheds_release` uses for the same
-    reason.
+    EVERY PART IS RETURNED, AND THE COUNT IS THE PRUNE'S ONLY INPUT. `gap_fill._prune_surplus`
+    deletes `part-<n>` for n at or above the number written, so a streamed export that reported
+    fewer parts than it uploaded would ask the store to delete its own newest objects. The receipt
+    tuple is therefore the whole record of the upload, never a sample of it -- which is also why
+    the receipts, unlike the rows, are allowed to grow with the population: ~3,000 small frozen
+    dataclasses for the full PNW universe, against the ~26 GB of geometry that never lands here.
+
+    A release that matches nothing currently published -- every requested key superseded, or the
+    lazily-warmed set still empty -- still makes exactly one `store.write_partition` call, with a
+    zero-row table, so the writer's own `EmptyPartitionError` surfaces the governed absence rather
+    than this function returning no receipts for a caller to misread as "nothing to export". That
+    is the same contract `export_watersheds_release` uses, for the same reason.
     """
-    table = await read_soil_survey_release(session, mupolygonkeys=mupolygonkeys, release_day=day)
-    part_count = max(1, math.ceil(table.num_rows / ROWS_PER_PART))
-    return tuple(
-        store.write_partition(
-            table.slice(part_index * ROWS_PER_PART, ROWS_PER_PART),
-            layer=SOIL_SURVEY_STREAM,
-            kind="observed",
-            day=day,
-            part_index=part_index,
-        )
-        for part_index in range(part_count)
-    )
+    receipts: list[ParquetWriteReceipt] = []
+    buffered = SOIL_SURVEY_SCHEMA.arrow_schema.empty_table()
+    async for batch in mupolygonkey_batches:
+        read = await read_soil_survey_release(session, mupolygonkeys=batch, release_day=day)
+        buffered = pa.concat_tables([buffered, read])
+        while buffered.num_rows >= ROWS_PER_PART:
+            receipts.append(_write_part(store, buffered.slice(0, ROWS_PER_PART), day=day, part_index=len(receipts)))
+            # `combine_chunks` copies the carried-over rows into fresh buffers. A bare `slice` is a
+            # view, so the remainder would pin every batch it was ever concatenated with alive and
+            # the "bounded buffer" would grow with the release after all.
+            buffered = buffered.slice(ROWS_PER_PART).combine_chunks()
+    if buffered.num_rows or not receipts:
+        receipts.append(_write_part(store, buffered, day=day, part_index=len(receipts)))
+    return tuple(receipts)

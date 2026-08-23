@@ -16,6 +16,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.weather_observations import (
     WEATHER_OBSERVATIONS_SCHEMA,
     WEATHER_OBSERVATIONS_STREAM,
@@ -80,4 +81,10 @@ async def export_weather_observations_day(
     cannot happen by accident.
     """
     table = await read_weather_observations_day(session, day=day, layer_id=layer_id)
-    return store.write_partition(table, layer=WEATHER_OBSERVATIONS_STREAM, kind="observed", day=day)
+    return store.write_partition(
+        table,
+        layer=WEATHER_OBSERVATIONS_STREAM,
+        kind="observed",
+        zoom=LANE_BASE_ZOOM_TIER,
+        day=day,
+    )

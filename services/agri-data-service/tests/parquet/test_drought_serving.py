@@ -21,6 +21,7 @@ from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.pipeline.validation.drought import (
+    WRITTEN_ZOOM_TIER,
     reconcile_drought_releases,
     written_release_span,
 )
@@ -32,10 +33,20 @@ from agri_data_service.planes.drought import (
     resolve_drought_release_day,
 )
 from agri_data_service.warehouse.schemas.drought import DROUGHT_SCHEMA, DROUGHT_STREAM
-from tests.parquet.test_objectstore_writer import RecordingBackend
+from tests.parquet.test_objectstore_writer import (
+    BASE_TIER,
+    DETAIL_TIER,
+    UNPUBLISHED_ZOOM,
+    RecordingBackend,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
+
+# The rung a lane export lands on, and the zoom a viewport asks for to be served it.
+BASE_TIER_REQUEST = BASE_TIER
 
 AUGUST_FOURTH = date(2026, 8, 4)  # a real USDM release Tuesday (ingest/usdm.py TUESDAY == 1)
 AUGUST_ELEVENTH = date(2026, 8, 11)
@@ -80,16 +91,19 @@ def _release_table(day: date, categories: dict[int, bytes]) -> pa.Table:
     ).cast(DROUGHT_SCHEMA.arrow_schema)
 
 
-def _write_local_release(
+def _write_local_release(  # noqa: PLR0913 - one parameter per partition coordinate; a fixture builder names them all
     tmp_path: Path,
     store: ObjectStore,
     backend: RecordingBackend,
     *,
     day: date,
     categories: dict[int, bytes],
+    zoom: ZoomTier = BASE_TIER,
 ) -> None:
     """Write one release through the real writer, then mirror its bytes onto local disk for Polars."""
-    receipt = store.write_partition(_release_table(day, categories), layer=DROUGHT_STREAM, kind="observed", day=day)
+    receipt = store.write_partition(
+        _release_table(day, categories), layer=DROUGHT_STREAM, kind="observed", zoom=zoom, day=day
+    )
     _mirror_receipt_to_disk(tmp_path, backend, receipt.relative_path, receipt.key)
 
 
@@ -120,7 +134,9 @@ def test_resolve_drought_release_day_answers_the_newest_release_at_or_before(tmp
     _write_local_release(tmp_path, store, backend, day=AUGUST_FOURTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)})
     _write_local_release(tmp_path, store, backend, day=AUGUST_ELEVENTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)})
 
-    resolved = resolve_drought_release_day(store, on_or_before=WEDNESDAY_AFTER_FOURTH, now=TODAY)
+    resolved = resolve_drought_release_day(
+        store, requested_zoom=BASE_TIER_REQUEST, on_or_before=WEDNESDAY_AFTER_FOURTH, now=TODAY
+    )
 
     assert resolved == AUGUST_FOURTH
 
@@ -130,7 +146,9 @@ def test_resolve_drought_release_names_which_valid_date_answered(tmp_path: Path)
     store = ObjectStore(backend)
     _write_local_release(tmp_path, store, backend, day=AUGUST_FOURTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)})
 
-    answer = resolve_drought_release(store, tmp_path.as_posix(), on_or_before=WEDNESDAY_AFTER_FOURTH, now=TODAY)
+    answer = resolve_drought_release(
+        store, tmp_path.as_posix(), requested_zoom=BASE_TIER_REQUEST, on_or_before=WEDNESDAY_AFTER_FOURTH, now=TODAY
+    )
 
     assert answer is not None
     assert answer.requested_day == WEDNESDAY_AFTER_FOURTH
@@ -143,7 +161,10 @@ def test_a_request_before_any_release_answers_none(tmp_path: Path) -> None:
     store = ObjectStore(backend)
     _write_local_release(tmp_path, store, backend, day=AUGUST_FOURTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)})
 
-    assert resolve_drought_release_day(store, on_or_before=date(2020, 1, 1), now=TODAY) is None
+    assert (
+        resolve_drought_release_day(store, requested_zoom=BASE_TIER_REQUEST, on_or_before=date(2020, 1, 1), now=TODAY)
+        is None
+    )
 
 
 def test_a_genuinely_future_request_refuses_rather_than_reusing_the_newest_release(tmp_path: Path) -> None:
@@ -152,7 +173,9 @@ def test_a_genuinely_future_request_refuses_rather_than_reusing_the_newest_relea
     store = ObjectStore(backend)
     _write_local_release(tmp_path, store, backend, day=AUGUST_FOURTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)})
 
-    resolved = resolve_drought_release_day(store, on_or_before=date(2027, 1, 1), now=TODAY)
+    resolved = resolve_drought_release_day(
+        store, requested_zoom=BASE_TIER_REQUEST, on_or_before=date(2027, 1, 1), now=TODAY
+    )
 
     assert resolved is None
 
@@ -164,6 +187,7 @@ def test_a_release_spanning_multiple_part_files_reads_as_one_table(tmp_path: Pat
         _release_table(AUGUST_FOURTH, {0: _multipolygon_wkb(_BIG_SQUARE)}),
         layer=DROUGHT_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=AUGUST_FOURTH,
         part_index=0,
     )
@@ -171,20 +195,21 @@ def test_a_release_spanning_multiple_part_files_reads_as_one_table(tmp_path: Pat
         _release_table(AUGUST_FOURTH, {4: _multipolygon_wkb(_SMALL_SQUARE)}),
         layer=DROUGHT_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=AUGUST_FOURTH,
         part_index=1,
     )
     _mirror_receipt_to_disk(tmp_path, backend, receipt_a.relative_path, receipt_a.key)
     _mirror_receipt_to_disk(tmp_path, backend, receipt_b.relative_path, receipt_b.key)
 
-    table = read_drought_release(tmp_path.as_posix(), AUGUST_FOURTH)
+    table = read_drought_release(tmp_path.as_posix(), AUGUST_FOURTH, requested_zoom=BASE_TIER_REQUEST)
 
     assert sorted(table.column("dm_category").to_pylist()) == [0, 4]
 
 
 def test_reading_a_day_with_no_partition_raises(tmp_path: Path) -> None:
     with pytest.raises(DroughtServingError):
-        read_drought_release(tmp_path.as_posix(), AUGUST_FOURTH)
+        read_drought_release(tmp_path.as_posix(), AUGUST_FOURTH, requested_zoom=BASE_TIER_REQUEST)
 
 
 # --- planes/drought.py: the point-containment lookup over nested severity classes ----------------
@@ -203,13 +228,31 @@ def test_the_point_lookup_returns_the_most_severe_covering_class(tmp_path: Path)
     root = tmp_path.as_posix()
 
     inside_both = most_severe_class_at_point(
-        store, root, longitude=0.0, latitude=0.0, on_or_before=WEDNESDAY_AFTER_FOURTH, now=TODAY
+        store,
+        root,
+        requested_zoom=BASE_TIER_REQUEST,
+        longitude=0.0,
+        latitude=0.0,
+        on_or_before=WEDNESDAY_AFTER_FOURTH,
+        now=TODAY,
     )
     inside_only_d0 = most_severe_class_at_point(
-        store, root, longitude=5.0, latitude=5.0, on_or_before=WEDNESDAY_AFTER_FOURTH, now=TODAY
+        store,
+        root,
+        requested_zoom=BASE_TIER_REQUEST,
+        longitude=5.0,
+        latitude=5.0,
+        on_or_before=WEDNESDAY_AFTER_FOURTH,
+        now=TODAY,
     )
     outside_everything = most_severe_class_at_point(
-        store, root, longitude=50.0, latitude=50.0, on_or_before=WEDNESDAY_AFTER_FOURTH, now=TODAY
+        store,
+        root,
+        requested_zoom=BASE_TIER_REQUEST,
+        longitude=50.0,
+        latitude=50.0,
+        on_or_before=WEDNESDAY_AFTER_FOURTH,
+        now=TODAY,
     )
 
     assert inside_both.dm_category == _D4_EXCEPTIONAL_DROUGHT
@@ -227,7 +270,13 @@ def test_a_future_point_request_answers_with_no_release_at_all(tmp_path: Path) -
     _write_local_release(tmp_path, store, backend, day=AUGUST_FOURTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)})
 
     answer = most_severe_class_at_point(
-        store, tmp_path.as_posix(), longitude=0.0, latitude=0.0, on_or_before=date(2027, 1, 1), now=TODAY
+        store,
+        tmp_path.as_posix(),
+        requested_zoom=BASE_TIER_REQUEST,
+        longitude=0.0,
+        latitude=0.0,
+        on_or_before=date(2027, 1, 1),
+        now=TODAY,
     )
 
     assert answer.valid_date is None
@@ -251,6 +300,7 @@ async def test_reconcile_classifies_every_week_and_only_asks_usdm_when_the_listi
         _release_table(written_day, {0: _multipolygon_wkb(_BIG_SQUARE)}),
         layer=DROUGHT_STREAM,
         kind="observed",
+        zoom=WRITTEN_ZOOM_TIER,
         day=written_day,
     )
     store.write_absence(
@@ -262,12 +312,13 @@ async def test_reconcile_classifies_every_week_and_only_asks_usdm_when_the_listi
         ),
         layer=DROUGHT_STREAM,
         kind="observed",
+        zoom=WRITTEN_ZOOM_TIER,
         day=recorded_absent_day,
     )
     # A conflict is never produced by the write path (both calls above refuse it); injected directly
     # into the backend's listing to prove the classifier surfaces one if a manual admin action makes one.
-    backend.objects[partition_path(DROUGHT_STREAM, "observed", conflict_day)] = b"not-real-parquet"
-    backend.objects[absence_marker_path(DROUGHT_STREAM, "observed", conflict_day)] = b"{}"
+    backend.objects[partition_path(DROUGHT_STREAM, "observed", WRITTEN_ZOOM_TIER, conflict_day)] = b"not-real-parquet"
+    backend.objects[absence_marker_path(DROUGHT_STREAM, "observed", WRITTEN_ZOOM_TIER, conflict_day)] = b"{}"
 
     source = _FakeSourceCheck(published=frozenset({source_gap_day}))
 
@@ -311,13 +362,94 @@ def test_written_release_span_reads_the_object_store_never_a_hardcoded_floor() -
         _release_table(date(2022, 8, 9), {0: _multipolygon_wkb(_BIG_SQUARE)}),
         layer=DROUGHT_STREAM,
         kind="observed",
+        zoom=WRITTEN_ZOOM_TIER,
         day=date(2022, 8, 9),
     )
     store.write_partition(
         _release_table(date(2026, 8, 18), {0: _multipolygon_wkb(_BIG_SQUARE)}),
         layer=DROUGHT_STREAM,
         kind="observed",
+        zoom=WRITTEN_ZOOM_TIER,
         day=date(2026, 8, 18),
     )
 
     assert written_release_span(store) == (date(2022, 8, 9), date(2026, 8, 18))
+
+
+# --- the zoom axis: one rung per read, and a blend that is not expressible ------------------------
+
+
+def test_two_tiers_of_one_release_never_reach_the_point_test_together(tmp_path: Path) -> None:
+    """The nested-severity query takes `max(dm_category)` over every covering polygon.
+
+    Two rungs of one release both carry `valid_date == day`, both pass `read_drought_release`'s own
+    consistency check, and both reach DuckDB -- so a coarse rung's generalised D4 boundary can win
+    the max for a point the requested resolution puts outside it.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    _write_local_release(
+        tmp_path,
+        store,
+        backend,
+        day=AUGUST_FOURTH,
+        categories={0: _multipolygon_wkb(_BIG_SQUARE)},
+        zoom=BASE_TIER,
+    )
+    _write_local_release(
+        tmp_path,
+        store,
+        backend,
+        day=AUGUST_FOURTH,
+        categories={4: _multipolygon_wkb(_BIG_SQUARE)},
+        zoom=DETAIL_TIER,
+    )
+    root = tmp_path.as_posix()
+
+    at_base = most_severe_class_at_point(
+        store, root, requested_zoom=BASE_TIER, longitude=0.0, latitude=0.0, on_or_before=AUGUST_FOURTH, now=TODAY
+    )
+    at_detail = most_severe_class_at_point(
+        store, root, requested_zoom=DETAIL_TIER, longitude=0.0, latitude=0.0, on_or_before=AUGUST_FOURTH, now=TODAY
+    )
+
+    assert at_base.dm_category == _D0_ABNORMALLY_DRY
+    assert at_detail.dm_category == _D4_EXCEPTIONAL_DROUGHT
+    assert at_base.zoom == BASE_TIER
+    assert at_detail.zoom == DETAIL_TIER
+
+
+def test_a_release_the_requested_rung_lacks_answers_none_rather_than_borrowing_one(tmp_path: Path) -> None:
+    """At a resolution the derivation has not reached, the honest answer is "not published here"."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    _write_local_release(
+        tmp_path, store, backend, day=AUGUST_FOURTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)}, zoom=BASE_TIER
+    )
+
+    resolved = resolve_drought_release_day(
+        store, requested_zoom=DETAIL_TIER, on_or_before=WEDNESDAY_AFTER_FOURTH, now=TODAY
+    )
+
+    assert resolved is None
+
+
+def test_the_listing_and_the_read_always_name_the_same_rung(tmp_path: Path) -> None:
+    """z11 resolves to z9 once, for both halves; resolving twice could straddle a ladder change."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    _write_local_release(
+        tmp_path, store, backend, day=AUGUST_FOURTH, categories={4: _multipolygon_wkb(_SMALL_SQUARE)}, zoom=DETAIL_TIER
+    )
+    _write_local_release(
+        tmp_path, store, backend, day=AUGUST_ELEVENTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)}, zoom=BASE_TIER
+    )
+
+    answer = resolve_drought_release(
+        store, tmp_path.as_posix(), requested_zoom=UNPUBLISHED_ZOOM, on_or_before=TODAY, now=TODAY
+    )
+
+    assert answer is not None
+    assert answer.zoom == DETAIL_TIER
+    assert answer.valid_date == AUGUST_FOURTH, "z9's newest release, not z13's"
+    assert answer.areas.column("dm_category").to_pylist() == [_D4_EXCEPTIONAL_DROUGHT]

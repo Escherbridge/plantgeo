@@ -5,6 +5,12 @@ Layer L3: may import `foundation`, `method`, `warehouse`, `pipeline`; may NOT im
 (`warehouse/schemas/fire_perimeters.py`), never read off the bytes. This lane declares
 `horizon: none` (`docs/lanes/fire-perimeters.md` #7) and writes only `kind=observed`, so this
 module never accepts a `kind` argument -- there is no `kind=forecast` partition to point one at.
+
+`zoom` is the opposite case and IS required: four rungs are published, so a request that did not name
+one would have to guess, and the guess would show up as a perimeter drawn at a resolution nobody
+asked for rather than as an error. A day listed across the whole ladder would also return one
+incident once per rung, and `FIRE_PERIMETERS_GRAIN` sorting would file the copies next to each other
+where they read as an incident that was re-reported, not as one that was re-generalised.
 """
 
 from __future__ import annotations
@@ -14,6 +20,7 @@ from typing import TYPE_CHECKING, Final
 import polars as pl
 
 from agri_data_service.foundation.parquet.paths import try_parse_partition_path
+from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.warehouse.schemas.fire_perimeters import (
     FIRE_PERIMETERS_GRAIN,
     FIRE_PERIMETERS_SCHEMA,
@@ -25,6 +32,7 @@ if TYPE_CHECKING:
     from datetime import date
 
     from agri_data_service.config import ObjectStoreCredentials
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 # The only stream this lane ever writes (docs/lanes/fire-perimeters.md #7). Kept as a private
@@ -46,10 +54,11 @@ def read_fire_perimeters_day(
     store: ObjectStore,
     *,
     day: date,
+    requested_zoom: int,
     base_uri: str,
     storage_options: Mapping[str, str] | None = None,
 ) -> pl.DataFrame:
-    """Read every WFIGS incident this lane wrote for one UTC day, sorted to the registered grain.
+    """Read every WFIGS incident this lane wrote for one UTC day at one tier, sorted to the registered grain.
 
     `store.list_partition_keys` -- the same listing gap detection already uses -- discovers every
     `part-N.parquet` file for `day`, however many the exporter's geometry-byte spillover produced
@@ -65,7 +74,7 @@ def read_fire_perimeters_day(
     returns for a real bucket; pass `None` (or omit it) when `base_uri` is a local path, e.g. in a
     test. `base_uri` for a production caller is `fire_perimeters_base_uri(credentials, store)`.
     """
-    part_keys = _observed_day_part_keys(store, day)
+    part_keys = _observed_day_part_keys(store, serving_zoom_tier(requested_zoom), day)
     if not part_keys:
         return _empty_fire_perimeters_frame()
     root = base_uri.rstrip("/")
@@ -75,15 +84,15 @@ def read_fire_perimeters_day(
     return frame.sort(list(FIRE_PERIMETERS_GRAIN))
 
 
-def _observed_day_part_keys(store: ObjectStore, day: date) -> tuple[str, ...]:
-    """Return every `part-N.parquet` relative key written for exactly this UTC day, in ascending order.
+def _observed_day_part_keys(store: ObjectStore, zoom: ZoomTier, day: date) -> tuple[str, ...]:
+    """Return every `part-N.parquet` relative key written for exactly this UTC day at one tier, ascending.
 
     `list_partition_keys` also returns any `absent.json` governed-absence marker for the month;
     `try_parse_partition_path` returns `None` for one of those, which is what filters it out here
     -- an absence marker is not a source of rows, and its presence or absence changes nothing about
     what this function answers.
     """
-    candidates = store.list_partition_keys(FIRE_PERIMETERS_STREAM, _OBSERVED_KIND, year=day.year, month=day.month)
+    candidates = store.list_partition_keys(FIRE_PERIMETERS_STREAM, _OBSERVED_KIND, zoom, year=day.year, month=day.month)
     return tuple(
         sorted(key for key in candidates if (parsed := try_parse_partition_path(key)) is not None and parsed.day == day)
     )

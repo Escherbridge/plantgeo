@@ -16,6 +16,7 @@ from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.fire_perimeters import (
     FIRE_PERIMETERS_GRAIN,
     FIRE_PERIMETERS_SCHEMA,
@@ -126,7 +127,13 @@ async def export_fire_perimeters_day(
             recorded_at=datetime.now(UTC),
             run_id=run_id,
         )
-        absence_receipt = store.write_absence(absence, layer=FIRE_PERIMETERS_STREAM, kind="observed", day=day)
+        absence_receipt = store.write_absence(
+            absence,
+            layer=FIRE_PERIMETERS_STREAM,
+            kind="observed",
+            zoom=LANE_BASE_ZOOM_TIER,
+            day=day,
+        )
         return FirePerimetersExportOutcome(parts=(), absence=absence_receipt)
 
     sorted_table = table.sort_by([(column, "ascending") for column in FIRE_PERIMETERS_GRAIN])
@@ -136,6 +143,7 @@ async def export_fire_perimeters_day(
             sorted_table.take(pa.array(indices)),
             layer=FIRE_PERIMETERS_STREAM,
             kind="observed",
+            zoom=LANE_BASE_ZOOM_TIER,
             day=day,
             part_index=part_index,
         )

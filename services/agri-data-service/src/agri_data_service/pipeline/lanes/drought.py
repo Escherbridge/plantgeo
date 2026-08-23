@@ -15,6 +15,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.drought import DROUGHT_SCHEMA, DROUGHT_STREAM
 
 if TYPE_CHECKING:
@@ -95,6 +96,7 @@ async def export_drought_release(
             table.slice(part_index * rows_per_part, rows_per_part),
             layer=DROUGHT_STREAM,
             kind="observed",
+            zoom=LANE_BASE_ZOOM_TIER,
             day=day,
             part_index=part_index,
         )

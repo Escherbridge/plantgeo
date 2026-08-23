@@ -46,11 +46,21 @@ from agri_data_service.planes.soil_survey import (
     wkb_polygon_contains_point,
 )
 from agri_data_service.warehouse.schemas.soil_survey import SOIL_SURVEY_SCHEMA, SOIL_SURVEY_STREAM
-from tests.parquet.test_objectstore_writer import RecordingBackend
+from tests.parquet.test_objectstore_writer import (
+    BASE_TIER,
+    DETAIL_TIER,
+    UNPUBLISHED_ZOOM,
+    RecordingBackend,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
+
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
+
+# The rung a lane export lands on, and the zoom a viewport asks for to be served it.
+BASE_TIER_REQUEST = BASE_TIER
 
 RELEASE_DAY = date(2026, 8, 8)
 GEOMETRY_ID = "11111111-1111-1111-1111-111111111111"
@@ -130,18 +140,26 @@ def _rows_to_table(rows: Sequence[dict[str, object]]) -> pa.Table:
     return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(SOIL_SURVEY_SCHEMA.arrow_schema)
 
 
-def _write_release(
+def _write_release(  # noqa: PLR0913 - one parameter per partition coordinate; a fixture builder names them all
     tmp_path: Path,
     *,
     day: date,
     parts: Sequence[Sequence[dict[str, object]]],
+    zoom: ZoomTier = BASE_TIER,
+    store: ObjectStore | None = None,
+    backend: RecordingBackend | None = None,
 ) -> tuple[ObjectStore, Callable[[str], str]]:
     """Write one release, one `pyarrow.Table` per part, to an in-memory backend mirrored to disk."""
-    backend = RecordingBackend()
-    store = ObjectStore(backend)
+    backend = RecordingBackend() if backend is None else backend
+    store = ObjectStore(backend) if store is None else store
     for part_index, rows in enumerate(parts):
         store.write_partition(
-            _rows_to_table(rows), layer=SOIL_SURVEY_STREAM, kind="observed", day=day, part_index=part_index
+            _rows_to_table(rows),
+            layer=SOIL_SURVEY_STREAM,
+            kind="observed",
+            zoom=zoom,
+            day=day,
+            part_index=part_index,
         )
     for key, payload in backend.objects.items():
         path = tmp_path / key
@@ -194,8 +212,8 @@ def test_resolving_an_unwritten_day_is_an_honest_none_not_a_fallback(tmp_path: P
     one_row = [_soil_survey_row(mupolygonkey="poly-1", geometry_wkb=wkb_polygon([_square(0, 0, 1, 1)]))]
     store, _ = _write_release(tmp_path, day=RELEASE_DAY, parts=[one_row])
 
-    assert resolve_soil_survey_release(store, date(2099, 1, 1)) is None
-    latest = resolve_latest_soil_survey_release(store)
+    assert resolve_soil_survey_release(store, date(2099, 1, 1), requested_zoom=BASE_TIER_REQUEST) is None
+    latest = resolve_latest_soil_survey_release(store, requested_zoom=BASE_TIER_REQUEST)
     assert latest is not None
     assert latest.day == RELEASE_DAY
 
@@ -213,11 +231,12 @@ def test_a_governed_absence_day_resolves_to_no_release_not_an_error() -> None:
         ),
         layer=SOIL_SURVEY_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=absence_day,
     )
 
-    assert resolve_soil_survey_release(store, absence_day) is None
-    assert resolve_latest_soil_survey_release(store) is None
+    assert resolve_soil_survey_release(store, absence_day, requested_zoom=BASE_TIER_REQUEST) is None
+    assert resolve_latest_soil_survey_release(store, requested_zoom=BASE_TIER_REQUEST) is None
 
 
 def test_a_multi_part_release_reads_as_one_day(tmp_path: Path) -> None:
@@ -229,7 +248,7 @@ def test_a_multi_part_release_reads_as_one_day(tmp_path: Path) -> None:
         [_soil_survey_row(mupolygonkey="poly-3", geometry_wkb=wkb_polygon([_square(10, 10, 11, 11)]))],
     ]
     store, path_for = _write_release(tmp_path, day=RELEASE_DAY, parts=parts)
-    release = resolve_soil_survey_release(store, RELEASE_DAY)
+    release = resolve_soil_survey_release(store, RELEASE_DAY, requested_zoom=BASE_TIER_REQUEST)
     assert release is not None
     assert len(release.relative_paths) == EXPECTED_PART_COUNT
 
@@ -249,7 +268,9 @@ def test_soil_survey_at_point_resolves_the_latest_release_by_default(tmp_path: P
         parts=[[_soil_survey_row(mupolygonkey="poly-1", geometry_wkb=wkb_polygon([_square(0, 0, 1, 1)]))]],
     )
 
-    result = soil_survey_at_point(store, longitude=0.5, latitude=0.5, storage_options={}, path_for=path_for)
+    result = soil_survey_at_point(
+        store, requested_zoom=BASE_TIER_REQUEST, longitude=0.5, latitude=0.5, storage_options={}, path_for=path_for
+    )
 
     assert result.release_day == RELEASE_DAY
     assert result.matches["mupolygonkey"].to_list() == ["poly-1"]
@@ -263,7 +284,13 @@ def test_soil_survey_at_point_on_a_never_written_day_is_an_honest_empty_answer(t
     )
 
     result = soil_survey_at_point(
-        store, longitude=0.5, latitude=0.5, storage_options={}, path_for=path_for, day=date(2099, 1, 1)
+        store,
+        requested_zoom=BASE_TIER_REQUEST,
+        longitude=0.5,
+        latitude=0.5,
+        storage_options={},
+        path_for=path_for,
+        day=date(2099, 1, 1),
     )
 
     assert result.release_day is None
@@ -277,7 +304,7 @@ def test_an_empty_mupolygonkey_list_is_refused(tmp_path: Path) -> None:
         day=RELEASE_DAY,
         parts=[[_soil_survey_row(mupolygonkey="poly-1", geometry_wkb=wkb_polygon([_square(0, 0, 1, 1)]))]],
     )
-    release = resolve_soil_survey_release(store, RELEASE_DAY)
+    release = resolve_soil_survey_release(store, RELEASE_DAY, requested_zoom=BASE_TIER_REQUEST)
     assert release is not None
 
     with pytest.raises(SoilSurveyReadError, match="at least one key"):
@@ -290,7 +317,7 @@ def test_max_matches_below_one_is_refused(tmp_path: Path) -> None:
         day=RELEASE_DAY,
         parts=[[_soil_survey_row(mupolygonkey="poly-1", geometry_wkb=wkb_polygon([_square(0, 0, 1, 1)]))]],
     )
-    release = resolve_soil_survey_release(store, RELEASE_DAY)
+    release = resolve_soil_survey_release(store, RELEASE_DAY, requested_zoom=BASE_TIER_REQUEST)
     assert release is not None
 
     with pytest.raises(SoilSurveyReadError, match="max_matches must be at least 1"):
@@ -550,3 +577,72 @@ async def test_an_invalid_area_symbol_is_refused_before_any_read_or_call(tmp_pat
         )
 
     assert fake.calls == []
+
+
+# --- the zoom axis: one rung per read, and a blend that is not expressible ------------------------
+
+
+def test_two_tiers_of_one_release_never_stack_into_one_point_lookup(tmp_path: Path) -> None:
+    """A delineation published at two rungs matches the point test twice, against a cap of eight.
+
+    `DEFAULT_MAX_POINT_MATCHES` bounds the answer, so duplication does not just add noise -- it
+    silently halves the number of DISTINCT soils a boundary-adjacent lookup can report.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    _write_release(
+        tmp_path,
+        day=RELEASE_DAY,
+        parts=[[_soil_survey_row(mupolygonkey="poly-base", geometry_wkb=wkb_polygon([_square(0, 0, 1, 1)]))]],
+        zoom=BASE_TIER,
+        store=store,
+        backend=backend,
+    )
+    _, path_for = _write_release(
+        tmp_path,
+        day=RELEASE_DAY,
+        parts=[[_soil_survey_row(mupolygonkey="poly-detail", geometry_wkb=wkb_polygon([_square(0, 0, 1, 1)]))]],
+        zoom=DETAIL_TIER,
+        store=store,
+        backend=backend,
+    )
+
+    at_base = soil_survey_at_point(
+        store, requested_zoom=BASE_TIER, longitude=0.5, latitude=0.5, storage_options={}, path_for=path_for
+    )
+    at_detail = soil_survey_at_point(
+        store, requested_zoom=DETAIL_TIER, longitude=0.5, latitude=0.5, storage_options={}, path_for=path_for
+    )
+
+    assert at_base.matches["mupolygonkey"].to_list() == ["poly-base"]
+    assert at_detail.matches["mupolygonkey"].to_list() == ["poly-detail"]
+    assert at_base.zoom == BASE_TIER
+    assert at_detail.zoom == DETAIL_TIER
+
+
+def test_a_release_pins_its_own_tier_so_a_later_scan_cannot_drift_off_it(tmp_path: Path) -> None:
+    """`SoilSurveyRelease.relative_paths` are keys under one `zoom=` prefix; the tier travels with them."""
+    store, _ = _write_release(
+        tmp_path,
+        day=RELEASE_DAY,
+        parts=[[_soil_survey_row(mupolygonkey="poly-detail", geometry_wkb=wkb_polygon([_square(0, 0, 1, 1)]))]],
+        zoom=DETAIL_TIER,
+    )
+
+    release = resolve_latest_soil_survey_release(store, requested_zoom=UNPUBLISHED_ZOOM)
+
+    assert release is not None
+    assert release.zoom == DETAIL_TIER, "z11 resolves DOWN to z9, never up to z13"
+    assert all("zoom=09/" in relative_path for relative_path in release.relative_paths)
+
+
+def test_a_rung_the_derivation_has_not_reached_resolves_to_no_release(tmp_path: Path) -> None:
+    store, _ = _write_release(
+        tmp_path,
+        day=RELEASE_DAY,
+        parts=[[_soil_survey_row(mupolygonkey="poly-1", geometry_wkb=wkb_polygon([_square(0, 0, 1, 1)]))]],
+        zoom=BASE_TIER,
+    )
+
+    assert resolve_latest_soil_survey_release(store, requested_zoom=DETAIL_TIER) is None
+    assert resolve_soil_survey_release(store, RELEASE_DAY, requested_zoom=DETAIL_TIER) is None

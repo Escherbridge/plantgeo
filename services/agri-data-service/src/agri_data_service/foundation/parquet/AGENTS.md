@@ -1,24 +1,35 @@
-# `foundation/parquet` — the frozen object-key layout
+# `foundation/parquet` — the object-key layout
 
 ## Responsibility
 Compute, parse, and diff the partition paths of the object-store Parquet warehouse. Pure
 mechanism: no I/O, no clients, no domain knowledge of any layer. Stream **S0** owns this file;
 sixteen downstream streams read it and none of them redefine it.
 
-## The layout, and it is frozen
+## The layout
 
 ```
-layer=<slug>/kind=observed|forecast/year=YYYY/month=MM/day=DD/part-0.parquet
+layer=<slug>/kind=observed|forecast/zoom=NN/year=YYYY/month=MM/day=DD/part-0.parquet
+layer=<slug>/kind=observed|forecast/zoom=NN/year=YYYY/month=MM/day=DD/absent.json
 ```
 
 Confirms RUNBOOK §0.23.6's layout assumption with `kind=` inserted per
-`code_styleguides/layer-lanes.md` §2. Every component is Hive-style `name=value`, which is what
-lets DuckDB and Polars prune on `layer`, `kind`, `year`, `month` and `day` without being told the
-partitioning scheme.
+`code_styleguides/layer-lanes.md` §2, and `zoom=` inserted by owner decision 2026-08-23. Every
+component is Hive-style `name=value`, which is what lets DuckDB and Polars prune on `layer`, `kind`,
+`zoom`, `year`, `month` and `day` without being told the partitioning scheme. There are exactly
+**two** object kinds: a part file and an absence marker.
 
 - **`kind` is a partition, not a column branch.** Observed and forecast are sibling streams at
   identical grain. A reader that blends them cannot say which it answered from, and per
   `engineering-principles.md` a wrong-but-plausible answer is worse than an honest gap.
+- **`zoom` sits ABOVE `year`, and it is an axis, not a version.** The DAY remains the version stamp;
+  every tier of one day describes that same day at a different resolution. Above the date components
+  a reader prunes a whole tier by directory before opening a byte, and serving resolves to a path
+  template instead of a scan — which is the entire point of the placement. `zoom_prefix` is the
+  listing that owns one tier of one stream.
+- **Zoom is required on every builder, never defaulted.** A default writes four tiers into one
+  prefix and the mistake stays invisible until serving reads the wrong resolution, long after the
+  run that caused it. A key without `zoom=` is not of this layout and does not parse; the objects
+  written before the axis existed are discarded and re-drained, never migrated.
 - **`part-N.parquet` allows a day to spill across files.** Gap detection lists the day directory,
   so any number of parts still reads as one present day. `part-0` is the norm; index 0-9999.
 - **Paths here are always *relative*.** A bucket-root prefix (`OBJECT_STORE_PREFIX`) lives outside
@@ -26,6 +37,30 @@ partitioning scheme.
   bucket exists.
 - **Separators are normalised on parse** (`\` becomes `/`) because a local staging mirror on
   Windows is a real producer path, and a backslash key would otherwise parse as absent.
+
+## `zoom.py` — one ladder, for every layer
+`ZOOM_TIERS = (0, 5, 9, 13)`, named by each rung's **minimum zoom** because an adjective
+(`coarse`, `detail`) stops being true the moment the ladder changes. `serving_zoom_tier` maps an
+arbitrary requested zoom to the rung at or below it — z11 is served by the z9 tier, the most
+detailed geometry actually published at or under the request; rounding up would answer a z11
+viewport with z13 bytes nobody budgeted for. `zoom_tier_span` gives the inclusive request range a
+rung answers, and the four spans tile `0..22` (`MAX_REQUEST_ZOOM`, what Martin's composite
+advertises) with no gap and no overlap.
+
+**The ladder is uniform on purpose.** The PostGIS era cut per-layer breakpoints — watersheds at
+4/6/8/10/12 (`drizzle/0023_watershed_zoom_generalization.sql:149-155`), strategy recommendations at
+6/11 (`drizzle/0028_strategy_recommendations_real_geometry.sql:376,393`) — and no reader could name
+a path until it knew its layer's private table. Do not build per-layer tier tables here.
+
+`ZoomTierError` is the module's own error, matching `CalendarError` / `LaneContractError` /
+`GovernedAbsenceError`; it is **not** a `PartitionPathError`, so a caller wanting both catches
+`ValueError`. `zoom=` renders zero-padded to two digits (`zoom=00`, `zoom=05`) for the same reason
+`month=` does: unpadded, `zoom=13` sorts between `zoom=0` and `zoom=5` and a lexicographic tier walk
+silently runs out of order.
+
+**Gap detection is per tier.** `partition_day_statuses` and `missing_partition_days` take a `zoom`
+and ignore keys of any other tier. A day published at z0 says nothing about whether z13 was written,
+and blending them reports coverage over a real gap.
 
 ## Why gap detection is a listing, never a scan
 `missing_partition_days` diffs an expected date range against the days recoverable from a set of

@@ -28,6 +28,13 @@ or governed-absent, and did the source confirm any reading existed for that day 
 set of stations) rather than field-level content, precisely so none of that normal per-station or
 per-field variation is mistaken for a defect. Field-level content comparison would require reading
 the Parquet bytes back, which is `planes/sensors.py`'s concern, not this one's.
+
+THE TIER IS PINNED, NOT A PARAMETER: `WRITTEN_ZOOM_TIER`, the rung the exporter lands on. The check
+below is partition-level existence, and existence is only meaningful OF A RUNG. Pointing it at a
+tier no export targets would report "the lane wrote neither a partition nor a governed absence" for
+every day inside the retention window and charge each one to the sensors lane -- a fail, on a module
+whose whole discipline is refusing to report a verdict the evidence does not support. Serving may
+read a coarser rung (`planes/sensors.py` resolves a `requested_zoom`); this may not.
 """
 
 from __future__ import annotations
@@ -45,9 +52,15 @@ if TYPE_CHECKING:
 
     import httpx
 
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.warehouse.schemas.sensors import SENSORS_STREAM
+
+# The rung the lane's own export lands on: the most detailed one, the one nothing generalised.
+# Derived from the ladder so adding a rung above cannot leave this validator checking a stale tier.
+WRITTEN_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 
 NWS_API_BASE_URL: Final = "https://api.weather.gov"
 NWS_ACCEPT_HEADER: Final = "application/geo+json"
@@ -205,8 +218,8 @@ async def reconcile_observed_day(  # noqa: PLR0913
         )
 
     resolved_headers = nws_request_headers() if headers is None else headers
-    wrote_data = store.partition_exists(SENSORS_STREAM, "observed", day)
-    wrote_absence = store.absence_exists(SENSORS_STREAM, "observed", day)
+    wrote_data = store.partition_exists(SENSORS_STREAM, "observed", WRITTEN_ZOOM_TIER, day)
+    wrote_absence = store.absence_exists(SENSORS_STREAM, "observed", WRITTEN_ZOOM_TIER, day)
     source_had_data, source_summary = await _source_confirms_day(client, station_ids, day=day, headers=resolved_headers)
 
     if source_had_data and not (wrote_data or wrote_absence):

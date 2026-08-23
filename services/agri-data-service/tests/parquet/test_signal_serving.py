@@ -38,6 +38,7 @@ from agri_data_service.method.monte_carlo.signal import (
 )
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.pipeline.validation.signal import (
+    WRITTEN_ZOOM_TIER,
     SignalLaneOutcome,
     SignalValidationError,
     classify_signal_day,
@@ -53,15 +54,25 @@ from agri_data_service.planes.signal import (
 )
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_SCHEMA, SIGNAL_PLANE_STREAM
 from tests.parquet.test_governed_absence import sample_absence
-from tests.parquet.test_objectstore_writer import RecordingBackend, with_forecast_provenance
+from tests.parquet.test_objectstore_writer import (
+    BASE_TIER,
+    DETAIL_TIER,
+    UNPUBLISHED_ZOOM,
+    RecordingBackend,
+    with_forecast_provenance,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 # === shared fixtures =============================================================================
+
+# The rung a lane export lands on, and the zoom a viewport asks for to be served it.
+BASE_TIER_REQUEST = BASE_TIER
 
 A_DAY = date(2026, 7, 15)
 EXPECTED_FULL_LATTICE_CELLS = 397
@@ -88,8 +99,10 @@ def _signal_table(
     ).cast(SIGNAL_PLANE_SCHEMA.arrow_schema)
 
 
-def _write_partition(base: Path, *, kind: PartitionKind, day: date, table: pa.Table) -> None:
-    relative = partition_path(SIGNAL_PLANE_STREAM, kind, day)
+def _write_partition(
+    base: Path, *, kind: PartitionKind, day: date, table: pa.Table, zoom: ZoomTier = BASE_TIER
+) -> None:
+    relative = partition_path(SIGNAL_PLANE_STREAM, kind, zoom, day)
     path = base / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, path)
@@ -103,7 +116,7 @@ class TestSignalPlaneServingRead:
         _write_partition(tmp_path, kind="observed", day=A_DAY, table=_signal_table(day=A_DAY, cell_ids=["c1", "c2"]))
         source = SignalPlaneSource(root_uri=tmp_path.as_posix())
 
-        frame = read_signal_value_on_day(source, kind="observed", day=A_DAY)
+        frame = read_signal_value_on_day(source, kind="observed", requested_zoom=BASE_TIER_REQUEST, day=A_DAY)
 
         expected_row_count = 2
         assert frame.height == expected_row_count
@@ -121,8 +134,8 @@ class TestSignalPlaneServingRead:
         )
         source = SignalPlaneSource(root_uri=tmp_path.as_posix())
 
-        observed = read_signal_value_on_day(source, kind="observed", day=A_DAY)
-        forecast = read_signal_value_on_day(source, kind="forecast", day=A_DAY)
+        observed = read_signal_value_on_day(source, kind="observed", requested_zoom=BASE_TIER_REQUEST, day=A_DAY)
+        forecast = read_signal_value_on_day(source, kind="forecast", requested_zoom=BASE_TIER_REQUEST, day=A_DAY)
 
         assert observed["normalized_value"].to_list() == [1.0]
         assert observed["kind"].to_list() == ["observed"]
@@ -139,7 +152,7 @@ class TestSignalPlaneServingRead:
         )
         source = SignalPlaneSource(root_uri=tmp_path.as_posix())
 
-        frame = read_signal_value_on_day(source, kind="forecast", day=A_DAY)
+        frame = read_signal_value_on_day(source, kind="forecast", requested_zoom=BASE_TIER_REQUEST, day=A_DAY)
 
         assert frame["normalized_value"].to_list() == [99.0]
         assert frame["kind"].to_list() == ["forecast"]
@@ -149,7 +162,7 @@ class TestSignalPlaneServingRead:
     def test_a_day_with_nothing_written_returns_an_empty_typed_frame_not_an_error(self, tmp_path: Path) -> None:
         source = SignalPlaneSource(root_uri=tmp_path.as_posix())
 
-        frame = read_signal_value_on_day(source, kind="observed", day=A_DAY)
+        frame = read_signal_value_on_day(source, kind="observed", requested_zoom=BASE_TIER_REQUEST, day=A_DAY)
 
         expected_columns = {"support_key", "signal_name", "cell_id", "observed_day", "normalized_value", "kind"}
         assert frame.height == 0
@@ -160,7 +173,9 @@ class TestSignalPlaneServingRead:
         _write_partition(tmp_path, kind="observed", day=A_DAY, table=table)
         source = SignalPlaneSource(root_uri=tmp_path.as_posix())
 
-        frame = read_signal_value_on_day(source, kind="observed", day=A_DAY, cell_ids=["c2"])
+        frame = read_signal_value_on_day(
+            source, kind="observed", requested_zoom=BASE_TIER_REQUEST, day=A_DAY, cell_ids=["c2"]
+        )
 
         assert frame["cell_id"].to_list() == ["c2"]
 
@@ -174,7 +189,9 @@ class TestSignalPlaneServingRead:
         _write_partition(tmp_path, kind="observed", day=A_DAY, table=table)
         source = SignalPlaneSource(root_uri=tmp_path.as_posix())
 
-        frame = read_signal_value_on_day(source, kind="observed", day=A_DAY, signal_names=["wind_speed"])
+        frame = read_signal_value_on_day(
+            source, kind="observed", requested_zoom=BASE_TIER_REQUEST, day=A_DAY, signal_names=["wind_speed"]
+        )
 
         assert frame["signal_name"].to_list() == ["wind_speed"]
 
@@ -185,7 +202,9 @@ class TestSignalPlaneServingRead:
         _write_partition(tmp_path, kind="observed", day=last_day, table=_signal_table(day=last_day, cell_ids=["c1"]))
         source = SignalPlaneSource(root_uri=tmp_path.as_posix())
 
-        frame = read_signal_time_window(source, kind="observed", first_day=first_day, last_day=last_day)
+        frame = read_signal_time_window(
+            source, kind="observed", requested_zoom=BASE_TIER_REQUEST, first_day=first_day, last_day=last_day
+        )
 
         expected_row_count = 2
         assert frame.height == expected_row_count
@@ -199,7 +218,9 @@ class TestSignalPlaneServingRead:
         )
         source = SignalPlaneSource(root_uri=tmp_path.as_posix())
 
-        frame = read_signal_time_window(source, kind="observed", first_day=date(2026, 5, 1), last_day=present_day)
+        frame = read_signal_time_window(
+            source, kind="observed", requested_zoom=BASE_TIER_REQUEST, first_day=date(2026, 5, 1), last_day=present_day
+        )
 
         assert frame.height == 1
         assert frame["observed_day"].to_list() == [present_day]
@@ -207,7 +228,13 @@ class TestSignalPlaneServingRead:
     def test_a_window_with_nothing_written_anywhere_returns_an_empty_frame(self, tmp_path: Path) -> None:
         source = SignalPlaneSource(root_uri=tmp_path.as_posix())
 
-        frame = read_signal_time_window(source, kind="observed", first_day=date(2026, 1, 1), last_day=date(2026, 1, 31))
+        frame = read_signal_time_window(
+            source,
+            kind="observed",
+            requested_zoom=BASE_TIER_REQUEST,
+            first_day=date(2026, 1, 1),
+            last_day=date(2026, 1, 31),
+        )
 
         assert frame.height == 0
 
@@ -218,6 +245,7 @@ class TestSignalPlaneServingRead:
             read_signal_time_window(
                 source,
                 kind="observed",
+                requested_zoom=BASE_TIER_REQUEST,
                 first_day=date(2020, 1, 1),
                 last_day=date(2020, 1, 1) + timedelta(days=MAX_TIME_WINDOW_DAYS + 1),
             )
@@ -226,7 +254,13 @@ class TestSignalPlaneServingRead:
         source = SignalPlaneSource(root_uri=tmp_path.as_posix())
 
         with pytest.raises(SignalPlaneReadError, match="backwards"):
-            read_signal_time_window(source, kind="observed", first_day=A_DAY, last_day=A_DAY - timedelta(days=1))
+            read_signal_time_window(
+                source,
+                kind="observed",
+                requested_zoom=BASE_TIER_REQUEST,
+                first_day=A_DAY,
+                last_day=A_DAY - timedelta(days=1),
+            )
 
     def test_source_root_uri_always_ends_with_a_slash(self) -> None:
         source = SignalPlaneSource(root_uri="C:/tmp/no-trailing-slash")
@@ -606,7 +640,7 @@ class TestFindMissingExportPartitions:
         backend = RecordingBackend()
         store = ObjectStore(backend)
         table = _signal_table(day=A_DAY, cell_ids=["c1"])
-        store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="observed", day=A_DAY)
+        store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=A_DAY)
 
         missing = find_missing_export_partitions(
             store, kind="observed", first_day=A_DAY, last_day=A_DAY + timedelta(days=2)
@@ -619,8 +653,10 @@ class TestFindMissingExportPartitions:
         store = ObjectStore(backend)
         marked_day = A_DAY + timedelta(days=1)
         table = _signal_table(day=A_DAY, cell_ids=["c1"])
-        store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="observed", day=A_DAY)
-        store.write_absence(sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=marked_day)
+        store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=A_DAY)
+        store.write_absence(
+            sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=marked_day
+        )
 
         missing = find_missing_export_partitions(store, kind="observed", first_day=A_DAY, last_day=marked_day)
 
@@ -638,8 +674,74 @@ class TestFindMissingExportPartitions:
         backend = RecordingBackend()
         store = ObjectStore(backend)
         table = with_forecast_provenance(_signal_table(day=A_DAY, cell_ids=["c1"]), issued_on=A_DAY)
-        store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="forecast", day=A_DAY)
+        store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="forecast", zoom=BASE_TIER, day=A_DAY)
 
         missing = find_missing_export_partitions(store, kind="observed", first_day=A_DAY, last_day=A_DAY)
 
         assert missing == (A_DAY,)
+
+    def test_a_derived_coarse_rung_never_satisfies_a_base_tier_export_gap(self) -> None:
+        """The coarse rung is DOWNSTREAM of the base one; counting it as evidence is exactly backwards."""
+        backend = RecordingBackend()
+        store = ObjectStore(backend)
+        table = _signal_table(day=A_DAY, cell_ids=["c1"])
+        store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=DETAIL_TIER, day=A_DAY)
+
+        missing = find_missing_export_partitions(store, kind="observed", first_day=A_DAY, last_day=A_DAY)
+
+        assert missing == (A_DAY,)
+        assert WRITTEN_ZOOM_TIER != DETAIL_TIER, "the pinned tier is the base rung, not a derived one"
+
+
+class TestSignalPlaneZoomAxis:
+    """One rung per read: `zoom` is a partition on the same terms as `kind`."""
+
+    def test_two_tiers_of_one_signal_day_never_stack_into_one_frame(self, tmp_path: Path) -> None:
+        _write_partition(
+            tmp_path, kind="observed", day=A_DAY, table=_signal_table(day=A_DAY, cell_ids=["c1"]), zoom=BASE_TIER
+        )
+        _write_partition(
+            tmp_path, kind="observed", day=A_DAY, table=_signal_table(day=A_DAY, cell_ids=["c9"]), zoom=DETAIL_TIER
+        )
+        source = SignalPlaneSource(root_uri=tmp_path.as_posix())
+
+        at_base = read_signal_value_on_day(source, kind="observed", requested_zoom=BASE_TIER, day=A_DAY)
+        at_detail = read_signal_value_on_day(source, kind="observed", requested_zoom=DETAIL_TIER, day=A_DAY)
+
+        assert at_base["cell_id"].to_list() == ["c1"]
+        assert at_detail["cell_id"].to_list() == ["c9"]
+
+    def test_a_request_between_two_rungs_is_served_by_the_rung_below_it(self, tmp_path: Path) -> None:
+        _write_partition(
+            tmp_path, kind="observed", day=A_DAY, table=_signal_table(day=A_DAY, cell_ids=["c9"]), zoom=DETAIL_TIER
+        )
+        _write_partition(
+            tmp_path, kind="observed", day=A_DAY, table=_signal_table(day=A_DAY, cell_ids=["c1"]), zoom=BASE_TIER
+        )
+        source = SignalPlaneSource(root_uri=tmp_path.as_posix())
+
+        served = read_signal_value_on_day(source, kind="observed", requested_zoom=UNPUBLISHED_ZOOM, day=A_DAY)
+
+        assert served["cell_id"].to_list() == ["c9"], "rounding UP would serve z13 bytes to a z11 viewport"
+
+    def test_a_month_spanning_window_reads_one_rung_end_to_end(self, tmp_path: Path) -> None:
+        """A tier resolved per month could change the cell grid mid-series with nothing to signal it."""
+        first_day, last_day = date(2026, 6, 28), date(2026, 7, 2)
+        _write_partition(
+            tmp_path,
+            kind="observed",
+            day=first_day,
+            table=_signal_table(day=first_day, cell_ids=["c9"]),
+            zoom=DETAIL_TIER,
+        )
+        _write_partition(
+            tmp_path, kind="observed", day=last_day, table=_signal_table(day=last_day, cell_ids=["c1"]), zoom=BASE_TIER
+        )
+        source = SignalPlaneSource(root_uri=tmp_path.as_posix())
+
+        frame = read_signal_time_window(
+            source, kind="observed", requested_zoom=DETAIL_TIER, first_day=first_day, last_day=last_day
+        )
+
+        assert frame["cell_id"].to_list() == ["c9"]
+        assert frame["observed_day"].to_list() == [first_day]

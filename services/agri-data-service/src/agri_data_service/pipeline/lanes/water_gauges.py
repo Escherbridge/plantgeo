@@ -13,6 +13,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.water_gauges import WATER_GAUGES_SCHEMA, WATER_GAUGES_STREAM
 
 if TYPE_CHECKING:
@@ -76,4 +77,4 @@ async def export_water_gauges_day(
     `write_partition` refuses a zero-row table by design.
     """
     table = await read_water_gauges_day(session, day=day)
-    return store.write_partition(table, layer=WATER_GAUGES_STREAM, kind="observed", day=day)
+    return store.write_partition(table, layer=WATER_GAUGES_STREAM, kind="observed", zoom=LANE_BASE_ZOOM_TIER, day=day)

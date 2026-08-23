@@ -15,6 +15,13 @@ point-in-polygon test below is a minimal, dependency-free reader for the plain (
 Polygon/MultiPolygon WKB `ST_AsBinary` produces (`warehouse/schemas/soil_survey.py`'s
 `geometry_wkb` column) -- see `AGENTS.md` in this directory for why that is an honest trade, not a
 shortcut, given the schema carries no bounding-box column to index or prune on.
+
+`zoom` IS required on every function that resolves a release, and a `SoilSurveyRelease` carries the
+tier it resolved at so the read cannot drift off it: `relative_paths` are already tier-pinned keys,
+so once a release is resolved, every downstream scan is confined to that rung by construction rather
+than by remembering to pass an argument along. This is also the lane where a blended scan would be
+worst: a delineation published at two rungs makes the point lookup return the same `mupolygonkey`
+twice against `DEFAULT_MAX_POINT_MATCHES=8`, so the cap silently halves the distinct soils reported.
 """
 
 from __future__ import annotations
@@ -26,6 +33,7 @@ from typing import TYPE_CHECKING, Final
 import polars as pl
 
 from agri_data_service.foundation.parquet.paths import try_parse_partition_path
+from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.warehouse.schemas.soil_survey import SOIL_SURVEY_SCHEMA, SOIL_SURVEY_STREAM
 
 if TYPE_CHECKING:
@@ -34,6 +42,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.config import ObjectStoreCredentials
     from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 # This lane writes only this one kind; see the module docstring.
@@ -63,29 +72,37 @@ class SoilSurveyGeometryDecodeError(SoilSurveyReadError):
 
 @dataclass(frozen=True, slots=True)
 class SoilSurveyRelease:
-    """One release day's part files, resolved from an object LISTING -- never a scan."""
+    """One release day's part files AT ONE TIER, resolved from an object LISTING -- never a scan.
+
+    `zoom` is not decoration: `relative_paths` are keys under one `zoom=NN/` prefix, so this object
+    is the seam that keeps every later scan on one rung without re-passing the tier.
+    """
 
     day: date
+    zoom: ZoomTier
     relative_paths: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class SoilSurveyPointLookupResult:
-    """One point lookup's answer: which release day it actually ran against, and what matched."""
+    """One point lookup's answer: which release day and tier it actually ran against, and what matched."""
 
     release_day: date | None
+    zoom: ZoomTier
     matches: pl.DataFrame
 
 
-def resolve_soil_survey_release(store: ObjectStore, day: date) -> SoilSurveyRelease | None:
-    """Resolve one named release day's part files, or `None` when nothing was written for it.
+def resolve_soil_survey_release(store: ObjectStore, day: date, *, requested_zoom: int) -> SoilSurveyRelease | None:
+    """Resolve one named release day's part files at one tier, or `None` when nothing was written for it.
 
-    `None` covers both a day nobody ever exported and a day the writer marked a governed absence
-    for -- both mean "no data to read", and this function never falls through to another day to
-    answer instead (`layer-lanes.md` section 2: a future- or gap-date request is an honest empty
-    answer, never a silent substitution).
+    `None` covers a day nobody ever exported, a day the writer marked a governed absence for, and a
+    day this tier has not been derived to yet -- all three mean "no data to read at this
+    resolution", and this function never falls through to another day or another rung to answer
+    instead (`layer-lanes.md` section 2: a future- or gap-date request is an honest empty answer,
+    never a silent substitution).
     """
-    keys = store.list_partition_keys(SOIL_SURVEY_STREAM, SOIL_SURVEY_KIND, year=day.year, month=day.month)
+    zoom = serving_zoom_tier(requested_zoom)
+    keys = store.list_partition_keys(SOIL_SURVEY_STREAM, SOIL_SURVEY_KIND, zoom, year=day.year, month=day.month)
     candidates = (try_parse_partition_path(key) for key in keys)
     parts = sorted(
         (parsed for parsed in candidates if parsed is not None and parsed.day == day),
@@ -93,22 +110,25 @@ def resolve_soil_survey_release(store: ObjectStore, day: date) -> SoilSurveyRele
     )
     if not parts:
         return None
-    return SoilSurveyRelease(day=day, relative_paths=tuple(part.key for part in parts))
+    return SoilSurveyRelease(day=day, zoom=zoom, relative_paths=tuple(part.key for part in parts))
 
 
-def resolve_latest_soil_survey_release(store: ObjectStore) -> SoilSurveyRelease | None:
-    """Find the most recently written release day from the object listing alone -- never a scan.
+def resolve_latest_soil_survey_release(store: ObjectStore, *, requested_zoom: int) -> SoilSurveyRelease | None:
+    """Find the most recently written release day at one tier from the object listing alone -- never a scan.
 
     This lane is a `static_lookup`: every release is a full re-export, so the newest release day
-    already IS the current published state. `None` means the lane has never been exported.
+    already IS the current published state. `None` means the lane has never been exported AT THIS
+    TIER, which for a rung the derivation step has not reached is the honest answer rather than the
+    base tier's release wearing a resolution it does not have.
     """
-    keys = store.list_partition_keys(SOIL_SURVEY_STREAM, SOIL_SURVEY_KIND)
+    zoom = serving_zoom_tier(requested_zoom)
+    keys = store.list_partition_keys(SOIL_SURVEY_STREAM, SOIL_SURVEY_KIND, zoom)
     parsed = [parsed for parsed in (try_parse_partition_path(key) for key in keys) if parsed is not None]
     if not parsed:
         return None
     latest_day = max(entry.day for entry in parsed)
     parts = sorted((entry for entry in parsed if entry.day == latest_day), key=lambda entry: entry.part_index)
-    return SoilSurveyRelease(day=latest_day, relative_paths=tuple(part.key for part in parts))
+    return SoilSurveyRelease(day=latest_day, zoom=zoom, relative_paths=tuple(part.key for part in parts))
 
 
 def s3_path_for(credentials: ObjectStoreCredentials, store: ObjectStore) -> Callable[[str], str]:
@@ -192,22 +212,28 @@ def soil_survey_at_point(  # noqa: PLR0913 - one parameter per required lookup i
     *,
     longitude: float,
     latitude: float,
+    requested_zoom: int,
     storage_options: Mapping[str, str],
     path_for: Callable[[str], str],
     day: date | None = None,
     max_matches: int = DEFAULT_MAX_POINT_MATCHES,
 ) -> SoilSurveyPointLookupResult:
-    """Answer "what soil is at this location" for the current release, or one named release day.
+    """Answer "what soil is at this location" at one tier, for the current release or one named release day.
 
     `day=None` resolves the most recently written release. A `day` with no partition (a future
-    date, or a day the lane recorded a governed absence for) returns `release_day=None` and an
-    empty, schema-shaped result -- never a silent fall-through to whatever the latest release
-    happens to hold instead.
+    date, a day the lane recorded a governed absence for, or a day this tier has not been derived
+    to) returns `release_day=None` and an empty, schema-shaped result -- never a silent
+    fall-through to whatever the latest release happens to hold instead.
     """
-    release = resolve_latest_soil_survey_release(store) if day is None else resolve_soil_survey_release(store, day)
+    zoom = serving_zoom_tier(requested_zoom)
+    release = (
+        resolve_latest_soil_survey_release(store, requested_zoom=zoom)
+        if day is None
+        else resolve_soil_survey_release(store, day, requested_zoom=zoom)
+    )
     if release is None:
         empty = pl.from_arrow(SOIL_SURVEY_SCHEMA.arrow_schema.empty_table())
-        return SoilSurveyPointLookupResult(release_day=None, matches=empty)  # type: ignore[arg-type]
+        return SoilSurveyPointLookupResult(release_day=None, zoom=zoom, matches=empty)  # type: ignore[arg-type]
     matches = find_soil_survey_at_point(
         release,
         longitude=longitude,
@@ -216,7 +242,7 @@ def soil_survey_at_point(  # noqa: PLR0913 - one parameter per required lookup i
         path_for=path_for,
         max_matches=max_matches,
     )
-    return SoilSurveyPointLookupResult(release_day=release.day, matches=matches)
+    return SoilSurveyPointLookupResult(release_day=release.day, zoom=release.zoom, matches=matches)
 
 
 def _unpack_uint32(data: bytes, offset: int, byte_order: str) -> int:

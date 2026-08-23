@@ -5,6 +5,12 @@ import `method`, `planes`, or `interface`. Compares WRITTEN state (this object s
 against the SOURCE SYSTEM (USDM's own archive) -- never against `geo.drought_areas` or any other
 local intermediate table. Two things this repo wrote agreeing with each other proves only that the
 code agrees with itself; it says nothing about what USDM actually published.
+
+THE TIER IS PINNED, NOT A PARAMETER, for the same reason `kind` is: the lane writes exactly one of
+each, so accepting either as an argument would only let a caller point this at something the writer
+never produces. A rung the derivation step has not reached would list every Tuesday as `missing`,
+and each one would then be charged to USDM as a `source_gap` -- one live request per week of the
+window, all of them answering a question the warehouse's own layout already made nonsense.
 """
 
 from __future__ import annotations
@@ -13,6 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
 from agri_data_service.foundation.parquet.paths import partition_day_statuses, try_parse_partition_path
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.usdm import fetch_drought_release
 from agri_data_service.ingest.usdm_history import usdm_release_weeks
 from agri_data_service.warehouse.schemas.drought import DROUGHT_STREAM
@@ -23,10 +30,15 @@ if TYPE_CHECKING:
     import httpx
 
     from agri_data_service.foundation.parquet.paths import PartitionDayStatus
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 # The only stream this lane ever writes (docs/lanes/drought.md section 5); never `"forecast"`.
 DROUGHT_OBSERVED_KIND: Final = "observed"
+
+# The rung the lane's own export lands on: the most detailed one, the one nothing generalised.
+# Derived from the ladder so adding a rung above cannot leave this validator checking a stale tier.
+WRITTEN_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 
 NOT_CHECKED_ALREADY_WRITTEN: Final = "not checked against USDM: this warehouse already wrote the release"
 NOT_CHECKED_ALREADY_RECORDED: Final = "not checked against USDM: a governed-absence marker is already recorded"
@@ -111,10 +123,11 @@ async def reconcile_drought_releases(
     weeks = usdm_release_weeks(first_day, last_day)
     if not weeks:
         return DroughtReconciliationReport(first_day=first_day, last_day=last_day, weeks=())
-    keys = store.list_partition_keys(DROUGHT_STREAM, DROUGHT_OBSERVED_KIND)
+    keys = store.list_partition_keys(DROUGHT_STREAM, DROUGHT_OBSERVED_KIND, WRITTEN_ZOOM_TIER)
     statuses = partition_day_statuses(
         layer=DROUGHT_STREAM,
         kind=DROUGHT_OBSERVED_KIND,
+        zoom=WRITTEN_ZOOM_TIER,
         first_day=weeks[0].release_date,
         last_day=weeks[-1].release_date,
         keys=keys,
@@ -150,13 +163,13 @@ async def _reconcile_week(
 
 
 def written_release_span(store: ObjectStore) -> tuple[date, date] | None:
-    """Return `(oldest, newest)` `valid_date` this warehouse has actually written, or `None`.
+    """Return `(oldest, newest)` `valid_date` this warehouse has actually written at the written tier, or `None`.
 
     Computed from the object store's own listing -- never from `geo.drought_areas` or any other
     local intermediate table -- so a reconciliation window is never anchored to the unverified
     ~2022-08 floor `docs/lanes/drought.md` section 7 explicitly flags as inferred, not measured.
     """
-    keys = store.list_partition_keys(DROUGHT_STREAM, DROUGHT_OBSERVED_KIND)
+    keys = store.list_partition_keys(DROUGHT_STREAM, DROUGHT_OBSERVED_KIND, WRITTEN_ZOOM_TIER)
     written_days = {parsed.day for parsed in (try_parse_partition_path(key) for key in keys) if parsed is not None}
     if not written_days:
         return None

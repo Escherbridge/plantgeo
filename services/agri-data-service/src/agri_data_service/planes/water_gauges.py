@@ -15,6 +15,13 @@ caller that later combines two calls' output can still trace every row back to w
 No function here unions `kind=observed` with `kind=forecast`, and none falls back from one to the
 other.
 
+`zoom` is a partition on the same terms, and the glob starts inside `zoom=NN/` rather than inside
+`kind=<kind>/` for a sharper reason than tidiness: this lane's grain is (site, instant), so a scan
+spanning the ladder returns the SAME gauge tick once per published rung. Nothing about that frame
+looks malformed -- the site numbers are real, the flows are real -- and a mean discharge computed
+over it is simply wrong by a factor of however many tiers happen to exist. Every public function
+therefore takes a `requested_zoom` and resolves it once through `serving_zoom_tier`.
+
 `docs/lanes/water-gauges.md` section 4 measured 37% of one day's rows geometry-orphaned. The
 exporter keeps those rows rather than filtering them (`pipeline/lanes/water_gauges.py`), and nothing
 below re-introduces that filter -- `geometry_linked` is carried through as an ordinary column.
@@ -26,7 +33,8 @@ from typing import TYPE_CHECKING, Final
 
 import polars as pl
 
-from agri_data_service.foundation.parquet.paths import stream_prefix
+from agri_data_service.foundation.parquet.paths import zoom_prefix
+from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.warehouse.schemas.water_gauges import WATER_GAUGES_SCHEMA, WATER_GAUGES_STREAM
 
 if TYPE_CHECKING:
@@ -35,6 +43,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.config import ObjectStoreCredentials
     from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 _empty_observed_frame = pl.from_arrow(WATER_GAUGES_SCHEMA.arrow_schema.empty_table())
 # `pl.from_arrow` returns `DataFrame | Series`; a `pa.Table` input always yields a `DataFrame`. This
@@ -59,26 +68,27 @@ def water_gauges_partition_root(credentials: ObjectStoreCredentials, *, prefix: 
     return f"s3://{credentials.bucket}/{root_prefix}"
 
 
-def _partition_glob(root: str, kind: PartitionKind) -> str:
-    """Return the glob covering every part file of exactly one kind under `root`, never the other."""
+def _partition_glob(root: str, kind: PartitionKind, zoom: ZoomTier) -> str:
+    """Return the glob covering one kind at ONE tier under `root`, never the other kind and never a second rung."""
     normalized_root = root if root.endswith("/") else f"{root}/"
-    return f"{normalized_root}{stream_prefix(WATER_GAUGES_STREAM, kind)}**/*.parquet"
+    return f"{normalized_root}{zoom_prefix(WATER_GAUGES_STREAM, kind, zoom)}**/*.parquet"
 
 
 def scan_water_gauges_observed(
     root: str,
     *,
+    requested_zoom: int,
     storage_options: Mapping[str, str] | None = None,
 ) -> pl.LazyFrame:
-    """Return a lazy frame over every `kind=observed` part file under `root`, stamped `kind="observed"`.
+    """Return a lazy frame over one tier's `kind=observed` part files under `root`, stamped `kind="observed"`.
 
     Keeps the exporter's true (site, instant) grain -- no aggregation, no `geometry_linked` filter.
-    Hive-inferred `layer=`/`kind=`/`year=`/`month=`/`day=` path columns are dropped in favour of the
-    file's own registered columns plus an explicitly stamped `kind`, rather than trusting the
+    Hive-inferred `layer=`/`kind=`/`zoom=`/`year=`/`month=`/`day=` path columns are dropped in favour
+    of the file's own registered columns plus an explicitly stamped `kind`, rather than trusting the
     inferred path column's name to keep meaning "which kind this is" under a naming change upstream.
     """
     frame = pl.scan_parquet(
-        _partition_glob(root, "observed"),
+        _partition_glob(root, "observed", serving_zoom_tier(requested_zoom)),
         hive_partitioning=True,
         schema=_OBSERVED_POLARS_SCHEMA,
         missing_columns="insert",
@@ -90,10 +100,11 @@ def scan_water_gauges_observed(
 def scan_water_gauges_forecast(
     root: str,
     *,
+    requested_zoom: int,
     storage_options: Mapping[str, str] | None = None,
     empty_schema: Mapping[str, pl.DataType] | None = None,
 ) -> pl.LazyFrame:
-    """Return a lazy frame over every `kind=forecast` part file under `root`, stamped `kind="forecast"`.
+    """Return a lazy frame over one tier's `kind=forecast` part files under `root`, stamped `kind="forecast"`.
 
     No forecast Parquet schema is registered for this lane yet -- no `pipeline/lanes/water_gauges.py`
     forecast exporter exists at time of writing, confirmed by grep, not assumed -- so this function
@@ -102,7 +113,7 @@ def scan_water_gauges_forecast(
     to resolve rather than raise; leaving it unset means a genuinely empty `root` surfaces Polars'
     own `pl.exceptions.ComputeError` rather than a fabricated empty success.
     """
-    glob = _partition_glob(root, "forecast")
+    glob = _partition_glob(root, "forecast", serving_zoom_tier(requested_zoom))
     options = dict(storage_options) if storage_options else None
     if empty_schema is not None:
         frame = pl.scan_parquet(
@@ -117,9 +128,10 @@ def scan_water_gauges_forecast(
     return frame.with_columns(pl.lit("forecast").alias("kind"))
 
 
-def read_water_gauges_observed(
+def read_water_gauges_observed(  # noqa: PLR0913 -- every argument is an independent, documented filter axis
     root: str,
     *,
+    requested_zoom: int,
     first_day: date,
     last_day: date,
     site_numbers: Sequence[str] | None = None,
@@ -133,7 +145,7 @@ def read_water_gauges_observed(
     """
     if last_day < first_day:
         raise ValueError(f"day range {first_day}..{last_day} runs backwards")
-    frame = scan_water_gauges_observed(root, storage_options=storage_options).filter(
+    frame = scan_water_gauges_observed(root, requested_zoom=requested_zoom, storage_options=storage_options).filter(
         pl.col("observed_day").is_between(first_day, last_day)
     )
     if site_numbers is not None:
@@ -145,6 +157,7 @@ def read_water_gauges_forecast(  # noqa: PLR0913 -- every argument is an indepen
     root: str,
     *,
     day_column: str,
+    requested_zoom: int,
     first_day: date,
     last_day: date,
     site_numbers: Sequence[str] | None = None,
@@ -160,9 +173,9 @@ def read_water_gauges_forecast(  # noqa: PLR0913 -- every argument is an indepen
     """
     if last_day < first_day:
         raise ValueError(f"day range {first_day}..{last_day} runs backwards")
-    frame = scan_water_gauges_forecast(root, storage_options=storage_options, empty_schema=empty_schema).filter(
-        pl.col(day_column).is_between(first_day, last_day)
-    )
+    frame = scan_water_gauges_forecast(
+        root, requested_zoom=requested_zoom, storage_options=storage_options, empty_schema=empty_schema
+    ).filter(pl.col(day_column).is_between(first_day, last_day))
     if site_numbers is not None:
         frame = frame.filter(pl.col("site_number").is_in(list(site_numbers)))
     return frame.collect()

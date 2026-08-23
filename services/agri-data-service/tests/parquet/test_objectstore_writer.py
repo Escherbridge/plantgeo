@@ -1,4 +1,9 @@
-"""The object store and partition writer, exercised end to end against an in-memory backend."""
+"""The object store and partition writer, exercised end to end against an in-memory backend.
+
+Every call here names a ZOOM TIER, because the store has no call that does not. The tests that
+matter most are the ones where the same layer, stream and day exist at two tiers at once: nothing in
+a blended answer looks wrong, so only an explicit assertion that the tiers stay apart can catch it.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +22,7 @@ from agri_data_service.foundation.parquet.paths import (
     missing_partition_days,
     partition_path,
 )
+from agri_data_service.foundation.parquet.zoom import ZoomTier, ZoomTierError
 from agri_data_service.pipeline.parquet.objectstore import (
     PARQUET_CONTENT_TYPE,
     BotoObjectStoreBackend,
@@ -50,6 +56,14 @@ OBJECT_STORE_ENV_NAMES = (
 JULY_FOURTH = date(2026, 7, 4)
 EXPECTED_ROW_COUNT = 3
 EXPECTED_YEAR_KEY_COUNT = 2
+
+# The tier a lane's own export writes, and a coarser rung derived from it. Named by minimum zoom, as
+# the ladder is; z11 below is a legitimate REQUEST and an illegitimate tier, which is the difference
+# the store must refuse to blur.
+BASE_TIER: ZoomTier = 13
+DETAIL_TIER: ZoomTier = 9
+WHOLE_WORLD_TIER: ZoomTier = 0
+UNPUBLISHED_ZOOM = 11
 
 # Three instants on ONE UTC day: the whole point is that the day cannot tell them apart.
 EARLIEST = datetime(2026, 7, 4, 1, 0, tzinfo=UTC)
@@ -176,15 +190,20 @@ def test_write_partition_lands_at_the_frozen_key_and_returns_a_receipt() -> None
     backend = RecordingBackend()
     store = ObjectStore(backend)
 
-    receipt = store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+    receipt = store.write_partition(
+        signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH
+    )
 
-    expected_key = partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH)
+    expected_key = partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH)
     assert receipt.key == expected_key
     assert receipt.relative_path == expected_key
     assert list(backend.objects) == [expected_key]
     assert backend.content_types[expected_key] == PARQUET_CONTENT_TYPE
     assert receipt.stream == SIGNAL_PLANE_STREAM
     assert receipt.kind == "observed"
+    # A receipt that cannot say which tier it wrote is not provenance: the same layer, stream and day
+    # exist four times over, and only this field separates them once the receipt leaves the writer.
+    assert receipt.zoom == BASE_TIER
     assert receipt.day == JULY_FOURTH
     assert receipt.row_count == EXPECTED_ROW_COUNT
     assert receipt.byte_count == len(backend.objects[expected_key])
@@ -196,7 +215,9 @@ def test_written_bytes_carry_the_registered_schema_sorted_to_the_grain() -> None
     backend = RecordingBackend()
     store = ObjectStore(backend)
 
-    receipt = store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+    receipt = store.write_partition(
+        signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH
+    )
     table = pq.read_table(io.BytesIO(backend.objects[receipt.key]))
 
     assert table.schema.equals(SIGNAL_PLANE_SCHEMA.arrow_schema)
@@ -209,7 +230,9 @@ def test_written_bytes_use_zstd() -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
 
-    receipt = store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+    receipt = store.write_partition(
+        signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH
+    )
     metadata = pq.ParquetFile(io.BytesIO(backend.objects[receipt.key])).metadata
 
     assert metadata.row_group(0).column(0).compression == "ZSTD"
@@ -219,7 +242,9 @@ def test_the_store_prefix_wraps_the_layout_without_disturbing_it() -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend, prefix="sandbox")
 
-    receipt = store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+    receipt = store.write_partition(
+        signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH
+    )
 
     assert store.prefix == "sandbox/"
     assert receipt.key == f"sandbox/{receipt.relative_path}"
@@ -233,28 +258,30 @@ def test_listing_returns_relative_paths_that_feed_gap_detection() -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend, prefix="sandbox")
     for day in (date(2026, 7, 1), date(2026, 7, 3)):
-        store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=day)
+        store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=day)
     store.write_partition(
         with_forecast_provenance(signal_rows(), issued_on=date(2026, 7, 1)),
         layer=SIGNAL_PLANE_STREAM,
         kind="forecast",
+        zoom=BASE_TIER,
         day=date(2026, 7, 2),
     )
     backend.put(
-        "sandbox/layer=signal/kind=observed/year=2026/month=07/day=02/manifest.json",
+        "sandbox/layer=signal/kind=observed/zoom=13/year=2026/month=07/day=02/manifest.json",
         b"{}",
         content_type="application/json",
     )
 
-    keys = store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed")
+    keys = store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", BASE_TIER)
 
     assert keys == (
-        partition_path(SIGNAL_PLANE_STREAM, "observed", date(2026, 7, 1)),
-        partition_path(SIGNAL_PLANE_STREAM, "observed", date(2026, 7, 3)),
+        partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, date(2026, 7, 1)),
+        partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, date(2026, 7, 3)),
     )
     assert missing_partition_days(
         layer=SIGNAL_PLANE_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         first_day=date(2026, 7, 1),
         last_day=date(2026, 7, 3),
         keys=keys,
@@ -264,30 +291,91 @@ def test_listing_returns_relative_paths_that_feed_gap_detection() -> None:
 def test_listing_narrows_by_year_and_month() -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=date(2026, 6, 30))
-    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+    store.write_partition(
+        signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=date(2026, 6, 30)
+    )
+    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
 
-    assert len(store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", year=2026)) == EXPECTED_YEAR_KEY_COUNT
-    assert store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", year=2026, month=7) == (
-        partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH),
+    assert (
+        len(store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, year=2026)) == EXPECTED_YEAR_KEY_COUNT
+    )
+    assert store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, year=2026, month=7) == (
+        partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH),
     )
     with pytest.raises(ValueError, match="requires the year"):
-        store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", month=7)
+        store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, month=7)
 
 
 def test_a_listing_surfaces_the_export_instant_beside_every_key() -> None:
     """The day in a key is a version stamp, so WHEN a part file was exported is the only sub-day signal."""
     backend = RecordingBackend()
     store = ObjectStore(backend, prefix="sandbox")
-    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
-    relative_path = partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH)
+    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
+    relative_path = partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH)
     backend.set_last_modified(store.key_for(relative_path), EXPORTED_AT)
 
-    listed = store.list_partition_objects(SIGNAL_PLANE_STREAM, "observed")
+    listed = store.list_partition_objects(SIGNAL_PLANE_STREAM, "observed", BASE_TIER)
 
     assert listed == (ListedPartition(relative_path=relative_path, last_modified=EXPORTED_AT),)
     # The key-only view still answers, and now DERIVES from that one listing rather than making its own.
-    assert store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed") == (relative_path,)
+    assert store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", BASE_TIER) == (relative_path,)
+
+
+def test_a_listing_returns_one_tier_and_the_ladder_is_never_blended() -> None:
+    """THE SEMANTIC TRAP: one tier-less listing hands a reader four resolutions of the same day.
+
+    Same layer, same stream, same day, three tiers. A blended listing returns three keys, every one
+    of them parses, nothing raises -- and a reader that unions them reports one day's population
+    three times over at three different generalizations. The only defence is that no call can ask
+    for a stream without naming a tier.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend, prefix="sandbox")
+    for tier in (BASE_TIER, DETAIL_TIER, WHOLE_WORLD_TIER):
+        store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=tier, day=JULY_FOURTH)
+
+    per_tier = {
+        tier: store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", tier)
+        for tier in (BASE_TIER, DETAIL_TIER, WHOLE_WORLD_TIER)
+    }
+
+    assert per_tier == {
+        BASE_TIER: (partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH),),
+        DETAIL_TIER: (partition_path(SIGNAL_PLANE_STREAM, "observed", DETAIL_TIER, JULY_FOURTH),),
+        WHOLE_WORLD_TIER: (partition_path(SIGNAL_PLANE_STREAM, "observed", WHOLE_WORLD_TIER, JULY_FOURTH),),
+    }
+    # Three objects, three tiers, one day: the tiers coexist rather than overwrite, which is what
+    # makes a tier-less listing a blend rather than a duplicate.
+    assert len(backend.objects) == len(per_tier)
+    assert (
+        store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", DETAIL_TIER, year=2026, month=7)
+        == per_tier[DETAIL_TIER]
+    )
+
+
+def test_a_zoom_that_is_not_a_published_tier_is_refused_at_every_store_entry_point() -> None:
+    """z11 is a legitimate REQUEST and an illegitimate tier; only the ladder may name a directory.
+
+    Resolving a request to a rung is `serving_zoom_tier`'s job. If the store accepted z11 it would
+    write under a prefix no reader resolves, and the rows would be stranded rather than served.
+    """
+    store = ObjectStore(RecordingBackend())
+
+    for call in (
+        lambda: store.partition_exists(SIGNAL_PLANE_STREAM, "observed", UNPUBLISHED_ZOOM, JULY_FOURTH),  # type: ignore[arg-type]
+        lambda: store.absence_exists(SIGNAL_PLANE_STREAM, "observed", UNPUBLISHED_ZOOM, JULY_FOURTH),  # type: ignore[arg-type]
+        lambda: store.day_key_prefix(SIGNAL_PLANE_STREAM, "observed", UNPUBLISHED_ZOOM, JULY_FOURTH),  # type: ignore[arg-type]
+        lambda: store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", UNPUBLISHED_ZOOM),  # type: ignore[arg-type]
+        lambda: store.write_partition(
+            signal_rows(),
+            layer=SIGNAL_PLANE_STREAM,
+            kind="observed",
+            zoom=UNPUBLISHED_ZOOM,  # type: ignore[arg-type]
+            day=JULY_FOURTH,
+        ),
+    ):
+        with pytest.raises(ZoomTierError, match="not one of the published tiers"):
+            call()
 
 
 def day_export_instant(store: ObjectStore, day: date) -> datetime | None:
@@ -298,9 +386,10 @@ def day_export_instant(store: ObjectStore, day: date) -> datetime | None:
     production caller and a second listing per lane-day for the tests that used it.
     """
     return oldest_export_instant(
-        store.list_partition_objects(SIGNAL_PLANE_STREAM, "observed"),
+        store.list_partition_objects(SIGNAL_PLANE_STREAM, "observed", BASE_TIER),
         layer=SIGNAL_PLANE_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=day,
     )
 
@@ -311,9 +400,14 @@ def test_a_stream_days_export_instant_is_the_oldest_of_its_part_files() -> None:
     store = ObjectStore(backend)
     for part_index, instant in ((0, RE_EXPORTED_AT), (1, EXPORTED_AT)):
         store.write_partition(
-            signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH, part_index=part_index
+            signal_rows(),
+            layer=SIGNAL_PLANE_STREAM,
+            kind="observed",
+            zoom=BASE_TIER,
+            day=JULY_FOURTH,
+            part_index=part_index,
         )
-        key = store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, part_index))
+        key = store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, part_index))
         backend.set_last_modified(key, instant)
 
     assert day_export_instant(store, JULY_FOURTH) == EXPORTED_AT
@@ -323,10 +417,12 @@ def test_one_unknown_instant_leaves_the_whole_stream_day_unanswered() -> None:
     """A partly unattributed set is not a freshness claim; so is a day holding no part file at all."""
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
-    backend.set_last_modified(store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH)), EXPORTED_AT)
+    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
+    backend.set_last_modified(
+        store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH)), EXPORTED_AT
+    )
     store.write_partition(
-        signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH, part_index=1
+        signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH, part_index=1
     )  # left unstamped, exactly as a backend that cannot report the instant leaves it
 
     assert day_export_instant(store, JULY_FOURTH) is None
@@ -337,12 +433,17 @@ def re_export(store: ObjectStore, backend: RecordingBackend, *, part_count: int,
     """Write `part_count` parts over one day, stamp them all, then prune what this export did not write."""
     for part_index in range(part_count):
         store.write_partition(
-            signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH, part_index=part_index
+            signal_rows(),
+            layer=SIGNAL_PLANE_STREAM,
+            kind="observed",
+            zoom=BASE_TIER,
+            day=JULY_FOURTH,
+            part_index=part_index,
         )
         backend.set_last_modified(
-            store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, part_index)), at
+            store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, part_index)), at
         )
-    store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, written_part_count=part_count)
+    store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, written_part_count=part_count)
 
 
 def test_a_shrinking_re_export_removes_the_parts_it_no_longer_wrote() -> None:
@@ -358,30 +459,34 @@ def test_a_shrinking_re_export_removes_the_parts_it_no_longer_wrote() -> None:
 
     re_export(store, backend, part_count=2, at=RE_EXPORTED_AT)
 
-    assert store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed") == (
-        partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 0),
-        partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 1),
+    assert store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", BASE_TIER) == (
+        partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, 0),
+        partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, 1),
     )
     # The latch is gone with them: min() and max() over the day now agree on the newer export.
     assert day_export_instant(store, JULY_FOURTH) == RE_EXPORTED_AT
 
 
-def test_the_prune_touches_only_this_layer_kind_day_and_surplus_index() -> None:
-    """A prune that could reach another lane, kind, day, part still in use, or a marker is not shippable."""
+def test_the_prune_touches_only_this_layer_kind_tier_day_and_surplus_index() -> None:
+    """A prune that could reach another lane, kind, TIER, day, part still in use, or a marker is not shippable."""
     backend = RecordingBackend()
     store = ObjectStore(backend, prefix="sandbox")
     survivors = (
-        partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 0),  # still written by this export
-        partition_path(SIGNAL_PLANE_STREAM, "observed", date(2026, 7, 3), 2),  # another day
-        partition_path("watersheds", "observed", JULY_FOURTH, 2),  # another layer
-        partition_path(SIGNAL_PLANE_STREAM, "forecast", JULY_FOURTH, 2),  # another kind
-        absence_marker_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH),  # never a part file
+        partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, 0),  # still written by this export
+        partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, date(2026, 7, 3), 2),  # another day
+        partition_path("watersheds", "observed", BASE_TIER, JULY_FOURTH, 2),  # another layer
+        partition_path(SIGNAL_PLANE_STREAM, "forecast", BASE_TIER, JULY_FOURTH, 2),  # another kind
+        # The same lane, stream, day and surplus index at a COARSER tier. It is a different resolution
+        # of this day, not an older export of it, so this prune has no business reaching it -- and the
+        # export that wrote it never told this prune how many parts IT wrote.
+        partition_path(SIGNAL_PLANE_STREAM, "observed", DETAIL_TIER, JULY_FOURTH, 1),
+        absence_marker_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH),  # never a part file
     )
-    doomed = partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 1)
+    doomed = partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, 1)
     for relative_path in (*survivors, doomed):
         backend.put(store.key_for(relative_path), b"parquet", content_type=PARQUET_CONTENT_TYPE)
 
-    result = store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, written_part_count=1)
+    result = store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, written_part_count=1)
 
     assert result.removed == (doomed,)
     assert result.failures == ()
@@ -393,19 +498,19 @@ def test_a_prune_refuses_to_be_told_the_export_wrote_nothing() -> None:
     """`written_part_count=0` would delete the whole day; a prune may only ever trail a completed write."""
     store = ObjectStore(RecordingBackend())
     with pytest.raises(ValueError, match="every part of the day"):
-        store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, written_part_count=0)
+        store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, written_part_count=0)
 
 
 def test_a_refused_delete_is_reported_and_never_raised() -> None:
     """The rows this export wrote are correct, so a prune failure reports the survivor, never undoes them."""
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    orphan = partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 1)
-    for relative_path in (partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 0), orphan):
+    orphan = partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, 1)
+    for relative_path in (partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, 0), orphan):
         backend.put(store.key_for(relative_path), b"parquet", content_type=PARQUET_CONTENT_TYPE)
     backend.refuses_delete_of.add(store.key_for(orphan))
 
-    result = store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, written_part_count=1)
+    result = store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, written_part_count=1)
 
     assert result.removed == ()
     assert len(result.failures) == 1
@@ -425,7 +530,7 @@ def test_an_unlistable_day_reports_the_orphan_rather_than_failing_the_export() -
 
     store = ObjectStore(UnlistableBackend())
 
-    result = store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, written_part_count=1)
+    result = store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, written_part_count=1)
 
     assert result.removed == ()
     assert "OSError" in result.failures[0]
@@ -437,12 +542,12 @@ def test_a_clean_prune_with_nothing_to_remove_says_nothing() -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
     backend.put(
-        store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 0)),
+        store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, 0)),
         b"parquet",
         content_type=PARQUET_CONTENT_TYPE,
     )
 
-    result = store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, written_part_count=1)
+    result = store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH, written_part_count=1)
 
     assert (result.removed, result.failures, result.report) == ((), (), None)
 
@@ -457,26 +562,46 @@ def test_the_boto_backend_deletes_through_delete_object() -> None:
     assert client.deletes == [{"Bucket": "tiles", "Key": "prefix/layer=signal/part-3.parquet"}]
 
 
-def test_the_export_instant_reads_only_that_streams_own_part_files_on_that_day() -> None:
-    """Another lane, another kind, another day, and an absence marker must not answer this question."""
+def test_the_export_instant_reads_only_that_streams_own_part_files_on_that_day_at_that_tier() -> None:
+    """Another lane, kind, TIER, day, and an absence marker must not answer this question.
+
+    The coarse-tier entry is the one that matters: a derived tier is written after the base it came
+    from, so folding it in would answer a `min()` with a clock that belongs to the derivation step
+    and quietly move a static lane's freshness claim onto the wrong export.
+    """
     listed = (
         ListedPartition(
-            relative_path=partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH), last_modified=EXPORTED_AT
-        ),
-        ListedPartition(relative_path=partition_path("watersheds", "observed", JULY_FOURTH), last_modified=EARLIEST),
-        ListedPartition(
-            relative_path=partition_path(SIGNAL_PLANE_STREAM, "forecast", JULY_FOURTH), last_modified=EARLIEST
+            relative_path=partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH),
+            last_modified=EXPORTED_AT,
         ),
         ListedPartition(
-            relative_path=partition_path(SIGNAL_PLANE_STREAM, "observed", date(2026, 7, 3)), last_modified=EARLIEST
+            relative_path=partition_path("watersheds", "observed", BASE_TIER, JULY_FOURTH), last_modified=EARLIEST
         ),
         ListedPartition(
-            relative_path=absence_marker_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH), last_modified=EARLIEST
+            relative_path=partition_path(SIGNAL_PLANE_STREAM, "forecast", BASE_TIER, JULY_FOURTH),
+            last_modified=EARLIEST,
+        ),
+        ListedPartition(
+            relative_path=partition_path(SIGNAL_PLANE_STREAM, "observed", DETAIL_TIER, JULY_FOURTH),
+            last_modified=EARLIEST,
+        ),
+        ListedPartition(
+            relative_path=partition_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, date(2026, 7, 3)),
+            last_modified=EARLIEST,
+        ),
+        ListedPartition(
+            relative_path=absence_marker_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH),
+            last_modified=EARLIEST,
         ),
     )
 
-    assert oldest_export_instant(listed, layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH) == EXPORTED_AT
-    assert oldest_export_instant((), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH) is None
+    assert (
+        oldest_export_instant(listed, layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
+        == EXPORTED_AT
+    )
+    assert (
+        oldest_export_instant((), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH) is None
+    )
 
 
 def test_the_boto_listing_keeps_last_modified_across_continuation_pages() -> None:
@@ -513,10 +638,10 @@ def test_partition_exists_answers_without_downloading() -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
 
-    assert not store.partition_exists(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH)
-    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
-    assert store.partition_exists(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH)
-    assert not store.partition_exists(SIGNAL_PLANE_STREAM, "forecast", JULY_FOURTH)
+    assert not store.partition_exists(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH)
+    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
+    assert store.partition_exists(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH)
+    assert not store.partition_exists(SIGNAL_PLANE_STREAM, "forecast", BASE_TIER, JULY_FOURTH)
 
 
 def test_a_missing_column_is_refused_rather_than_written_thin() -> None:
@@ -525,7 +650,7 @@ def test_a_missing_column_is_refused_rather_than_written_thin() -> None:
     thin = signal_rows().drop_columns(["coverage_fraction"])
 
     with pytest.raises(ParquetSchemaMismatchError):
-        store.write_partition(thin, layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+        store.write_partition(thin, layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
     assert backend.objects == {}
 
 
@@ -540,7 +665,7 @@ def test_a_null_in_a_non_nullable_column_is_refused() -> None:
     )
 
     with pytest.raises(ParquetSchemaMismatchError):
-        store.write_partition(holed, layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+        store.write_partition(holed, layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
     assert backend.objects == {}
 
 
@@ -554,6 +679,7 @@ def test_a_zero_row_partition_is_refused() -> None:
             SIGNAL_PLANE_SCHEMA.arrow_schema.empty_table(),
             layer=SIGNAL_PLANE_STREAM,
             kind="observed",
+            zoom=BASE_TIER,
             day=JULY_FOURTH,
         )
     assert backend.objects == {}
@@ -564,7 +690,7 @@ def test_an_unregistered_layer_cannot_be_written() -> None:
     store = ObjectStore(backend)
 
     with pytest.raises(LookupError):
-        store.write_partition(signal_rows(), layer="no-such-lane", kind="observed", day=JULY_FOURTH)
+        store.write_partition(signal_rows(), layer="no-such-lane", kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
     assert backend.objects == {}
 
 

@@ -21,6 +21,7 @@ import pytest
 
 from agri_data_service.config import ObjectStoreCredentials
 from agri_data_service.foundation.parquet.paths import partition_path
+from agri_data_service.foundation.parquet.zoom import ZoomTier, ZoomTierError
 from agri_data_service.planes.water_gauges import (
     read_water_gauges_forecast,
     read_water_gauges_observed,
@@ -29,9 +30,13 @@ from agri_data_service.planes.water_gauges import (
     water_gauges_partition_root,
 )
 from agri_data_service.warehouse.schemas.water_gauges import WATER_GAUGES_SCHEMA, WATER_GAUGES_STREAM
+from tests.parquet.test_objectstore_writer import BASE_TIER, DETAIL_TIER, UNPUBLISHED_ZOOM
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+# The rung a lane export lands on, and the zoom a viewport asks for to be served it.
+BASE_TIER_REQUEST = BASE_TIER
 
 DAY_ONE = date(2026, 7, 4)
 DAY_TWO = date(2026, 7, 5)
@@ -65,16 +70,16 @@ def _observed_row(
     }
 
 
-def _write_observed_day(root: Path, day: date, rows: list[dict[str, object]]) -> None:
+def _write_observed_day(root: Path, day: date, rows: list[dict[str, object]], *, zoom: ZoomTier = BASE_TIER) -> None:
     table = pa.Table.from_pylist(rows).cast(WATER_GAUGES_SCHEMA.arrow_schema)
-    path = root / partition_path(WATER_GAUGES_STREAM, "observed", day)
+    path = root / partition_path(WATER_GAUGES_STREAM, "observed", zoom, day)
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, path)
 
 
-def _write_forecast_day(root: Path, day: date, rows: list[dict[str, object]]) -> None:
+def _write_forecast_day(root: Path, day: date, rows: list[dict[str, object]], *, zoom: ZoomTier = BASE_TIER) -> None:
     table = pa.Table.from_pylist(rows)
-    path = root / partition_path(WATER_GAUGES_STREAM, "forecast", day)
+    path = root / partition_path(WATER_GAUGES_STREAM, "forecast", zoom, day)
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, path)
 
@@ -94,7 +99,7 @@ def test_scan_observed_returns_every_sub_daily_reading_without_collapsing_the_gr
         ],
     )
 
-    frame = scan_water_gauges_observed(str(tmp_path)).collect()
+    frame = scan_water_gauges_observed(str(tmp_path), requested_zoom=BASE_TIER_REQUEST).collect()
 
     assert frame.height == 2
     assert frame["flow_cfs"].to_list() == [10.0, 11.0]
@@ -117,7 +122,7 @@ def test_geometry_orphaned_rows_are_not_filtered(tmp_path: Path) -> None:
         ],
     )
 
-    frame = scan_water_gauges_observed(str(tmp_path)).collect()
+    frame = scan_water_gauges_observed(str(tmp_path), requested_zoom=BASE_TIER_REQUEST).collect()
 
     assert frame.height == 1
     assert frame["geometry_linked"].to_list() == [False]
@@ -134,14 +139,14 @@ def test_a_silent_gauge_tick_keeps_its_null_flow_rather_than_being_dropped(tmp_p
         ],
     )
 
-    frame = scan_water_gauges_observed(str(tmp_path)).collect()
+    frame = scan_water_gauges_observed(str(tmp_path), requested_zoom=BASE_TIER_REQUEST).collect()
 
     assert frame.height == 1
     assert frame["flow_cfs"].to_list() == [None]
 
 
 def test_an_empty_root_resolves_to_a_correctly_typed_zero_row_frame_rather_than_raising(tmp_path: Path) -> None:
-    frame = scan_water_gauges_observed(str(tmp_path)).collect()
+    frame = scan_water_gauges_observed(str(tmp_path), requested_zoom=BASE_TIER_REQUEST).collect()
 
     assert frame.height == 0
     assert frame.schema["site_number"] == pl.Utf8
@@ -164,7 +169,9 @@ def test_read_observed_prunes_to_the_requested_day_range(tmp_path: Path) -> None
             ],
         )
 
-    frame = read_water_gauges_observed(str(tmp_path), first_day=DAY_TWO, last_day=DAY_TWO)
+    frame = read_water_gauges_observed(
+        str(tmp_path), requested_zoom=BASE_TIER_REQUEST, first_day=DAY_TWO, last_day=DAY_TWO
+    )
 
     assert frame["observed_day"].to_list() == [DAY_TWO]
 
@@ -183,14 +190,16 @@ def test_read_observed_narrows_by_site_number(tmp_path: Path) -> None:
         ],
     )
 
-    frame = read_water_gauges_observed(str(tmp_path), first_day=DAY_ONE, last_day=DAY_ONE, site_numbers=("B",))
+    frame = read_water_gauges_observed(
+        str(tmp_path), requested_zoom=BASE_TIER_REQUEST, first_day=DAY_ONE, last_day=DAY_ONE, site_numbers=("B",)
+    )
 
     assert frame["site_number"].to_list() == ["B"]
 
 
 def test_read_observed_refuses_a_backwards_day_range(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="backwards"):
-        read_water_gauges_observed(str(tmp_path), first_day=DAY_TWO, last_day=DAY_ONE)
+        read_water_gauges_observed(str(tmp_path), requested_zoom=BASE_TIER_REQUEST, first_day=DAY_TWO, last_day=DAY_ONE)
 
 
 _FORECAST_ROW: dict[str, object] = {
@@ -228,8 +237,8 @@ def test_scan_forecast_carries_provenance_and_never_blends_with_observed(tmp_pat
     )
     _write_forecast_day(tmp_path, DAY_TWO, [_FORECAST_ROW])
 
-    observed_frame = scan_water_gauges_observed(str(tmp_path)).collect()
-    forecast_frame = scan_water_gauges_forecast(str(tmp_path)).collect()
+    observed_frame = scan_water_gauges_observed(str(tmp_path), requested_zoom=BASE_TIER_REQUEST).collect()
+    forecast_frame = scan_water_gauges_forecast(str(tmp_path), requested_zoom=BASE_TIER_REQUEST).collect()
 
     assert set(observed_frame["kind"].to_list()) == {"observed"}
     assert set(forecast_frame["kind"].to_list()) == {"forecast"}
@@ -242,12 +251,14 @@ def test_scan_forecast_carries_provenance_and_never_blends_with_observed(tmp_pat
 def test_scan_forecast_without_a_schema_hint_raises_on_a_genuinely_empty_root(tmp_path: Path) -> None:
     """No forecast schema is registered for this lane yet; an empty root must not fabricate success."""
     with pytest.raises(pl.exceptions.ComputeError):
-        scan_water_gauges_forecast(str(tmp_path)).collect()
+        scan_water_gauges_forecast(str(tmp_path), requested_zoom=BASE_TIER_REQUEST).collect()
 
 
 def test_scan_forecast_resolves_a_genuinely_empty_root_when_given_an_explicit_schema(tmp_path: Path) -> None:
     frame = scan_water_gauges_forecast(
-        str(tmp_path), empty_schema={"site_number": pl.Utf8, "flow_cfs": pl.Float64}
+        str(tmp_path),
+        requested_zoom=BASE_TIER_REQUEST,
+        empty_schema={"site_number": pl.Utf8, "flow_cfs": pl.Float64},
     ).collect()
 
     assert frame.height == 0
@@ -258,14 +269,18 @@ def test_read_forecast_prunes_by_a_caller_named_day_column(tmp_path: Path) -> No
     _write_forecast_day(tmp_path, DAY_ONE, [{**_FORECAST_ROW, "valid_day": DAY_ONE}])
     _write_forecast_day(tmp_path, DAY_TWO, [{**_FORECAST_ROW, "valid_day": DAY_TWO}])
 
-    frame = read_water_gauges_forecast(str(tmp_path), day_column="valid_day", first_day=DAY_TWO, last_day=DAY_TWO)
+    frame = read_water_gauges_forecast(
+        str(tmp_path), day_column="valid_day", requested_zoom=BASE_TIER_REQUEST, first_day=DAY_TWO, last_day=DAY_TWO
+    )
 
     assert frame["valid_day"].to_list() == [DAY_TWO]
 
 
 def test_read_forecast_refuses_a_backwards_day_range(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="backwards"):
-        read_water_gauges_forecast(str(tmp_path), day_column="valid_day", first_day=DAY_TWO, last_day=DAY_ONE)
+        read_water_gauges_forecast(
+            str(tmp_path), day_column="valid_day", requested_zoom=BASE_TIER_REQUEST, first_day=DAY_TWO, last_day=DAY_ONE
+        )
 
 
 def test_water_gauges_partition_root_builds_the_bucket_uri() -> None:
@@ -279,3 +294,58 @@ def test_water_gauges_partition_root_builds_the_bucket_uri() -> None:
 
     assert water_gauges_partition_root(credentials) == "s3://plantgeo-warehouse/"
     assert water_gauges_partition_root(credentials, prefix="/sandbox/") == "s3://plantgeo-warehouse/sandbox/"
+
+
+# --- the zoom axis: one rung per read, and a blend that is not expressible ------------------------
+
+
+def test_two_tiers_of_one_gauge_day_never_stack_into_one_answer(tmp_path: Path) -> None:
+    """The same (site, instant) published at two rungs must not read back as two ticks.
+
+    Nothing about the blended frame looks wrong -- one real site, two real timestamps -- and a mean
+    discharge over it is simply doubled in weight. Only an explicit per-tier assertion catches it.
+    """
+    tick = datetime(2026, 7, 4, 1, tzinfo=UTC)
+    _write_observed_day(
+        tmp_path,
+        DAY_ONE,
+        [_observed_row(site_number="A", observed_at=tick, observed_day=DAY_ONE, flow_cfs=10.0)],
+        zoom=BASE_TIER,
+    )
+    _write_observed_day(
+        tmp_path,
+        DAY_ONE,
+        [_observed_row(site_number="A", observed_at=tick, observed_day=DAY_ONE, flow_cfs=99.0)],
+        zoom=DETAIL_TIER,
+    )
+
+    at_base = scan_water_gauges_observed(str(tmp_path), requested_zoom=BASE_TIER).collect()
+    at_detail = scan_water_gauges_observed(str(tmp_path), requested_zoom=DETAIL_TIER).collect()
+
+    assert at_base["flow_cfs"].to_list() == [10.0]
+    assert at_detail["flow_cfs"].to_list() == [99.0]
+
+
+def test_a_request_between_two_rungs_is_served_by_the_rung_below_it(tmp_path: Path) -> None:
+    tick = datetime(2026, 7, 4, 1, tzinfo=UTC)
+    _write_observed_day(
+        tmp_path,
+        DAY_ONE,
+        [_observed_row(site_number="A", observed_at=tick, observed_day=DAY_ONE, flow_cfs=99.0)],
+        zoom=DETAIL_TIER,
+    )
+    _write_observed_day(
+        tmp_path,
+        DAY_ONE,
+        [_observed_row(site_number="A", observed_at=tick, observed_day=DAY_ONE, flow_cfs=10.0)],
+        zoom=BASE_TIER,
+    )
+
+    served = scan_water_gauges_observed(str(tmp_path), requested_zoom=UNPUBLISHED_ZOOM).collect()
+
+    assert served["flow_cfs"].to_list() == [99.0], "rounding UP would serve z13 bytes to a z11 viewport"
+
+
+def test_an_off_scale_zoom_is_refused_rather_than_clamped(tmp_path: Path) -> None:
+    with pytest.raises(ZoomTierError, match="outside the web-map scale"):
+        scan_water_gauges_observed(str(tmp_path), requested_zoom=99).collect()

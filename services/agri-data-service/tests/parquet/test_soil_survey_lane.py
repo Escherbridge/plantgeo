@@ -1,4 +1,4 @@
-"""The soil-survey release exporter: batching, grain conformance, part-spilling, refusal paths.
+"""The soil-survey release exporter: streaming, grain conformance, part-spilling, refusal paths.
 
 The governed SQL itself is exercised against a real database elsewhere; these tests pin the
 behaviour that is pure Python -- that mupolygonkeys are read in bounded batches (this lane's
@@ -8,6 +8,12 @@ bound into every row rather than derived from source data, that a release larger
 part's row budget spills across `part-N` files, and that an empty input or a batch matching
 nothing currently published is refused rather than silently reporting success with nothing
 written.
+
+THE STREAMING TESTS ARE THE POINT OF THIS FILE NOW. The export used to read a whole release into
+one table before writing any of it, behind a 200,000-key ceiling that production passed -- so the
+lane raised every tick and never wrote an object. What replaced it can only be trusted if the
+parts genuinely land AS the key walk advances, so that is asserted directly (against the backend's
+own object count at the moment each batch is pulled) rather than inferred from the result.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from agri_data_service.foundation.parquet.paths import partition_path
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes import soil_survey as soil_survey_lane
 from agri_data_service.pipeline.lanes.soil_survey import (
     POLYGON_KEY_BATCH_SIZE,
@@ -30,7 +37,7 @@ from agri_data_service.warehouse.schemas.soil_survey import SOIL_SURVEY_SCHEMA, 
 from tests.parquet.test_objectstore_writer import RecordingBackend
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import AsyncIterator, Callable, Sequence
 
 AUGUST_EIGHTH = date(2026, 8, 8)
 
@@ -83,6 +90,23 @@ class RecordingSession:
         requested = [key.removeprefix("usda-sda:") for key in batch]
         served = requested if self._known is None else [key for key in requested if key in self._known]
         return _Result([soil_survey_row(key, release_day) for key in served])
+
+
+async def key_batches(
+    mupolygonkeys: Sequence[str],
+    *,
+    size: int = POLYGON_KEY_BATCH_SIZE,
+    on_pull: Callable[[], None] | None = None,
+) -> AsyncIterator[tuple[str, ...]]:
+    """Stand in for the registry's keyset walk: hand the export one bounded key page at a time.
+
+    `on_pull` fires immediately BEFORE each page is yielded, which is what lets a test observe the
+    store as the walk advances rather than only after it has finished.
+    """
+    for start in range(0, len(mupolygonkeys), size):
+        if on_pull is not None:
+            on_pull()
+        yield tuple(mupolygonkeys[start : start + size])
 
 
 @pytest.mark.asyncio
@@ -151,14 +175,15 @@ async def test_the_export_lands_at_the_observed_partition_sorted_to_the_grain() 
         session,  # type: ignore[arg-type]
         store,
         day=AUGUST_EIGHTH,
-        mupolygonkeys=mupolygonkeys,
+        mupolygonkey_batches=key_batches(mupolygonkeys),
     )
 
     expected_rows = 3
     assert len(receipts) == 1
     receipt = receipts[0]
-    assert receipt.key == partition_path(SOIL_SURVEY_STREAM, "observed", AUGUST_EIGHTH, 0)
+    assert receipt.key == partition_path(SOIL_SURVEY_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_EIGHTH, 0)
     assert receipt.kind == "observed"
+    assert receipt.zoom == LANE_BASE_ZOOM_TIER
     assert receipt.row_count == expected_rows
 
 
@@ -178,17 +203,111 @@ async def test_a_release_larger_than_one_part_spills_across_part_files(
         session,  # type: ignore[arg-type]
         store,
         day=AUGUST_EIGHTH,
-        mupolygonkeys=mupolygonkeys,
+        mupolygonkey_batches=key_batches(mupolygonkeys),
     )
 
     assert [receipt.row_count for receipt in receipts] == [2, 2, 1]
     assert [receipt.key for receipt in receipts] == [
-        partition_path(SOIL_SURVEY_STREAM, "observed", AUGUST_EIGHTH, part_index) for part_index in range(3)
+        partition_path(SOIL_SURVEY_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_EIGHTH, part_index)
+        for part_index in range(3)
     ]
     # Every part still reads as one present day; gap detection lists the directory, never a file.
-    assert store.list_partition_keys(SOIL_SURVEY_STREAM, "observed") == tuple(
+    assert store.list_partition_keys(SOIL_SURVEY_STREAM, "observed", LANE_BASE_ZOOM_TIER) == tuple(
         receipt.relative_path for receipt in receipts
     )
+
+
+@pytest.mark.asyncio
+async def test_parts_land_as_the_key_walk_advances_rather_than_after_it_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The release is never held whole: this is the defect that kept the lane from ever writing.
+
+    Production passed the old 200,000-key ceiling, so a read-everything export raised on every
+    tick. Asserting the RESULT would pass just as well for an export that buffered all 1,507,623
+    delineations and wrote at the end, so what is pinned here is the store's own object count at
+    the moment each key page is pulled.
+    """
+    monkeypatch.setattr(soil_survey_lane, "ROWS_PER_PART", 2)
+    session = RecordingSession()
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    objects_when_pulled: list[int] = []
+
+    receipts = await export_soil_survey_release(
+        session,  # type: ignore[arg-type]
+        store,
+        day=AUGUST_EIGHTH,
+        mupolygonkey_batches=key_batches(
+            [f"poly-{index}" for index in range(6)],
+            size=2,
+            on_pull=lambda: objects_when_pulled.append(len(backend.objects)),
+        ),
+    )
+
+    # One page of two keys fills exactly one part, so page N is pulled with N-1 parts already up.
+    assert objects_when_pulled == [0, 1, 2]
+    assert [receipt.row_count for receipt in receipts] == [2, 2, 2]
+
+
+@pytest.mark.asyncio
+async def test_the_receipts_count_every_part_uploaded_so_the_prune_cannot_delete_a_live_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`gap_fill._prune_surplus` deletes `part-<n>` for n at or above the reported count.
+
+    A streamed export that under-reported would hand the store a licence to delete objects it had
+    just written, which is why the receipt tuple has to be the whole upload rather than a sample.
+    """
+    monkeypatch.setattr(soil_survey_lane, "ROWS_PER_PART", 2)
+    session = RecordingSession()
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+
+    receipts = await export_soil_survey_release(
+        session,  # type: ignore[arg-type]
+        store,
+        day=AUGUST_EIGHTH,
+        mupolygonkey_batches=key_batches([f"poly-{index}" for index in range(7)], size=3),
+    )
+
+    assert len(receipts) == len(backend.objects)
+    assert [receipt.relative_path for receipt in receipts] == sorted(backend.objects)
+    surplus = store.prune_surplus_parts(
+        SOIL_SURVEY_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_EIGHTH, written_part_count=len(receipts)
+    )
+    assert surplus.removed == ()
+    assert len(backend.objects) == len(receipts)
+
+
+@pytest.mark.asyncio
+async def test_streamed_parts_carry_the_key_order_across_files_not_only_inside_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Key pages arrive in `mupolygonkey` order, which IS the grain, so the parts tile that order.
+
+    The read-everything shape could only sort within an arbitrary slice of an unsorted table; the
+    streamed one makes part N's keys all precede part N+1's, which is what a range-pruning reader
+    needs from the min/max statistics Parquet writes per part.
+    """
+    monkeypatch.setattr(soil_survey_lane, "ROWS_PER_PART", 2)
+    session = RecordingSession()
+    store = ObjectStore(RecordingBackend())
+    ordered = [f"poly-{index}" for index in range(6)]
+
+    receipts = await export_soil_survey_release(
+        session,  # type: ignore[arg-type]
+        store,
+        day=AUGUST_EIGHTH,
+        mupolygonkey_batches=key_batches(ordered, size=2),
+    )
+
+    served = [key.removeprefix("usda-sda:") for batch in session.batches for key in batch]
+    assert served == ordered, "the export must consume the key walk in the order it is handed"
+    assert [receipt.relative_path for receipt in receipts] == [
+        partition_path(SOIL_SURVEY_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_EIGHTH, part_index)
+        for part_index in range(3)
+    ], "part indices are assigned in walk order, so the files tile the key range in sequence"
 
 
 @pytest.mark.asyncio
@@ -218,7 +337,7 @@ async def test_a_batch_matching_nothing_published_is_refused_rather_than_silentl
             session,  # type: ignore[arg-type]
             store,
             day=AUGUST_EIGHTH,
-            mupolygonkeys=["poly-1"],
+            mupolygonkey_batches=key_batches(["poly-1"]),
         )
 
     assert backend.objects == {}

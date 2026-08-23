@@ -8,6 +8,14 @@ is no code path that could silently fall through to a `kind=forecast` this lane 
 reasoning as `pipeline/parquet/AGENTS.md` ("this path is synchronous, deliberately"): boto3
 listing, the Polars scan, and DuckDB's spatial query are all blocking calls; a route that needs
 this should run it in an executor rather than this module pretending to be async.
+
+`zoom`, unlike `kind`, IS a parameter here and is required on every public function: the ladder has
+four live rungs where this lane's `kind` has one, so there is a real choice to make and hiding it
+behind a default would only make the wrong rung the quiet one. A `requested_zoom` is resolved once
+through `serving_zoom_tier` and used for BOTH the release-day listing and the release read, because
+a release day discovered at one rung and read at another is not the same release: the discovery
+would name a day the read then finds empty, and `read_drought_release` would raise "no partition
+found" for a release that plainly exists one rung over.
 """
 
 from __future__ import annotations
@@ -20,6 +28,7 @@ import polars as pl
 
 from agri_data_service.config import settings as _default_settings
 from agri_data_service.foundation.parquet.paths import day_prefix, try_parse_partition_path
+from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.pipeline.parquet.objectstore import conform_to_stream_schema, polars_storage_options
 from agri_data_service.warehouse.schemas.drought import DROUGHT_SCHEMA, DROUGHT_STREAM
 
@@ -31,6 +40,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.config import ObjectStoreCredentials, Settings
     from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 # The only stream this lane ever writes (docs/lanes/drought.md section 5); never `"forecast"`.
@@ -43,10 +53,11 @@ class DroughtServingError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class DroughtReleaseAnswer:
-    """One USDM release's rows, tagged with the `valid_date` that actually answered the request."""
+    """One USDM release's rows, tagged with the `valid_date` and the tier that actually answered."""
 
     requested_day: date
     valid_date: date
+    zoom: ZoomTier
     areas: pa.Table
 
 
@@ -56,11 +67,14 @@ class DroughtCoverageAnswer:
 
     `valid_date` is `None` only when no release exists at or before `requested_day` at all;
     `dm_category` is `None` whenever a release was found but no class polygon covers the point
-    (USDM's D0 boundary does not cover the whole map).
+    (USDM's D0 boundary does not cover the whole map). `zoom` names the rung the point test ran
+    against: a coarser rung's generalised boundary can put a point just outside a class the base
+    tier puts it inside, so the answer is only interpretable alongside the resolution that produced it.
     """
 
     requested_day: date
     valid_date: date | None
+    zoom: ZoomTier
     dm_category: int | None
 
 
@@ -78,20 +92,25 @@ def drought_release_source(source: Settings | None = None) -> tuple[str, dict[st
     return root, polars_storage_options(credentials)
 
 
-def list_observed_drought_release_days(store: ObjectStore) -> tuple[date, ...]:
-    """Every distinct `valid_date` carrying at least one observed part file, sorted ascending.
+def list_observed_drought_release_days(store: ObjectStore, *, requested_zoom: int) -> tuple[date, ...]:
+    """Every distinct `valid_date` carrying at least one observed part file AT ONE TIER, sorted ascending.
 
     A release spilling across several part files collapses to one entry here, and a governed
     absence marker never appears: it fails `try_parse_partition_path`, so a Tuesday USDM did not
     publish is silently excluded rather than resolving as though it answered anything.
+
+    A release the requested tier has not been generalised to yet is likewise absent, and that is the
+    honest reading: at that resolution it has not been published.
     """
-    keys = store.list_partition_keys(DROUGHT_STREAM, DROUGHT_KIND)
+    keys = store.list_partition_keys(DROUGHT_STREAM, DROUGHT_KIND, serving_zoom_tier(requested_zoom))
     days = {parsed.day for parsed in (try_parse_partition_path(key) for key in keys) if parsed is not None}
     return tuple(sorted(days))
 
 
-def resolve_drought_release_day(store: ObjectStore, *, on_or_before: date, now: date) -> date | None:
-    """Return the newest USDM release `valid_date` at or before `on_or_before`, or `None`.
+def resolve_drought_release_day(
+    store: ObjectStore, *, requested_zoom: int, on_or_before: date, now: date
+) -> date | None:
+    """Return the newest USDM release `valid_date` at or before `on_or_before` at one tier, or `None`.
 
     Refuses outright when `on_or_before` is later than `now`: this lane ships no `kind=forecast`
     sibling, so a genuinely future day must answer empty rather than silently reusing the newest
@@ -105,7 +124,8 @@ def resolve_drought_release_day(store: ObjectStore, *, on_or_before: date, now: 
     """
     if on_or_before > now:
         return None
-    eligible = tuple(day for day in list_observed_drought_release_days(store) if day <= on_or_before)
+    released = list_observed_drought_release_days(store, requested_zoom=requested_zoom)
+    eligible = tuple(day for day in released if day <= on_or_before)
     return eligible[-1] if eligible else None
 
 
@@ -113,17 +133,22 @@ def read_drought_release(
     root: str,
     day: date,
     *,
+    requested_zoom: int,
     storage_options: Mapping[str, str] | None = None,
 ) -> pa.Table:
-    """Read exactly one release day's part files as one table, sorted to the grain.
+    """Read exactly one release day's part files at one tier as one table, sorted to the grain.
 
     `root` is the URI every part file of this stream lives under, already forward-slashed: an
     `s3://bucket/prefix` root in production (`drought_release_source`), or a local directory's
-    `Path.as_posix()` in tests. The glob is scoped to `day`'s own partition folder, so this scan
-    never opens a byte belonging to any other release -- the Hive layout's own directory striation
-    is what prunes it, not a predicate applied after a wider read.
+    `Path.as_posix()` in tests. The glob is scoped to `day`'s own partition folder AT ONE TIER, so
+    this scan never opens a byte belonging to any other release or any other resolution of this one
+    -- the Hive layout's own directory striation is what prunes it, not a predicate applied after a
+    wider read. That matters more here than the row count suggests: the class polygons of two tiers
+    would BOTH satisfy `valid_date == day`, pass the check below, and reach the point test as one
+    nested-severity set whose boundaries contradict each other.
     """
-    glob = f"{root.rstrip('/')}/{day_prefix(DROUGHT_STREAM, DROUGHT_KIND, day)}*.parquet"
+    zoom = serving_zoom_tier(requested_zoom)
+    glob = f"{root.rstrip('/')}/{day_prefix(DROUGHT_STREAM, DROUGHT_KIND, zoom, day)}*.parquet"
     try:
         collected = pl.scan_parquet(
             glob,
@@ -140,25 +165,31 @@ def read_drought_release(
     return table
 
 
-def resolve_drought_release(
+def resolve_drought_release(  # noqa: PLR0913 - one parameter per request/credential input, none foldable
     store: ObjectStore,
     root: str,
     *,
+    requested_zoom: int,
     on_or_before: date,
     now: date,
     storage_options: Mapping[str, str] | None = None,
 ) -> DroughtReleaseAnswer | None:
-    """Answer a daily-slider request from the newest weekly release at or before it.
+    """Answer a daily-slider request from the newest weekly release at or before it, at one tier.
 
     Returns `None` when no release covers `on_or_before` at all (before the archive floor, or the
     request is itself in the future); the caller must render that as an honest empty answer, never
     interpolate between two weekly releases to manufacture one.
+
+    The tier resolves once here and is passed to the read as an exact rung, so the listing that
+    chose `valid_date` and the scan that reads it can never disagree about which resolution is
+    in play.
     """
-    valid_date = resolve_drought_release_day(store, on_or_before=on_or_before, now=now)
+    zoom = serving_zoom_tier(requested_zoom)
+    valid_date = resolve_drought_release_day(store, requested_zoom=zoom, on_or_before=on_or_before, now=now)
     if valid_date is None:
         return None
-    areas = read_drought_release(root, valid_date, storage_options=storage_options)
-    return DroughtReleaseAnswer(requested_day=on_or_before, valid_date=valid_date, areas=areas)
+    areas = read_drought_release(root, valid_date, requested_zoom=zoom, storage_options=storage_options)
+    return DroughtReleaseAnswer(requested_day=on_or_before, valid_date=valid_date, zoom=zoom, areas=areas)
 
 
 def most_severe_class_at_point(  # noqa: PLR0913 - one parameter per point/window/credential input, none foldable
@@ -167,6 +198,7 @@ def most_severe_class_at_point(  # noqa: PLR0913 - one parameter per point/windo
     *,
     longitude: float,
     latitude: float,
+    requested_zoom: int,
     on_or_before: date,
     now: date,
     storage_options: Mapping[str, str] | None = None,
@@ -182,11 +214,16 @@ def most_severe_class_at_point(  # noqa: PLR0913 - one parameter per point/windo
     among the matches wins, which is the correct answer whether or not the nesting invariant holds
     exactly for a given release.
     """
-    answer = resolve_drought_release(store, root, on_or_before=on_or_before, now=now, storage_options=storage_options)
+    zoom = serving_zoom_tier(requested_zoom)
+    answer = resolve_drought_release(
+        store, root, requested_zoom=zoom, on_or_before=on_or_before, now=now, storage_options=storage_options
+    )
     if answer is None:
-        return DroughtCoverageAnswer(requested_day=on_or_before, valid_date=None, dm_category=None)
+        return DroughtCoverageAnswer(requested_day=on_or_before, valid_date=None, zoom=zoom, dm_category=None)
     dm_category = _most_severe_covering_class(answer.areas, longitude=longitude, latitude=latitude)
-    return DroughtCoverageAnswer(requested_day=on_or_before, valid_date=answer.valid_date, dm_category=dm_category)
+    return DroughtCoverageAnswer(
+        requested_day=on_or_before, valid_date=answer.valid_date, zoom=answer.zoom, dm_category=dm_category
+    )
 
 
 def _most_severe_covering_class(areas: pa.Table, *, longitude: float, latitude: float) -> int | None:

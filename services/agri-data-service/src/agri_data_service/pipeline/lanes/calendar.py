@@ -22,6 +22,7 @@ from agri_data_service.foundation.parquet.calendar import (
     calendar_days,
     calendar_version_span,
 )
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.calendar import CALENDAR_SCHEMA
 
 if TYPE_CHECKING:
@@ -73,6 +74,7 @@ def export_calendar_version(
             table.slice(part_index * ROWS_PER_PART, ROWS_PER_PART),
             layer=CALENDAR_STREAM,
             kind="observed",
+            zoom=LANE_BASE_ZOOM_TIER,
             day=day,
             part_index=part_index,
         )

@@ -19,6 +19,7 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import pytest
 
 from agri_data_service.foundation.parquet.paths import partition_path
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes import drought as drought_lane
 from agri_data_service.pipeline.lanes.drought import (
     export_drought_release,
@@ -104,7 +105,7 @@ async def test_the_export_lands_at_the_observed_partition_sorted_to_the_grain() 
     expected_rows = 3
     assert len(receipts) == 1
     receipt = receipts[0]
-    assert receipt.key == partition_path(DROUGHT_STREAM, "observed", AUGUST_FOURTH, 0)
+    assert receipt.key == partition_path(DROUGHT_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_FOURTH, 0)
     assert receipt.kind == "observed"
     assert receipt.row_count == expected_rows
 
@@ -128,10 +129,13 @@ async def test_a_release_heavier_than_the_byte_budget_spills_across_part_files(
     assert len(receipts) > 1
     assert sum(receipt.row_count for receipt in receipts) == expected_total_rows
     assert [receipt.key for receipt in receipts] == [
-        partition_path(DROUGHT_STREAM, "observed", AUGUST_FOURTH, part_index) for part_index in range(len(receipts))
+        partition_path(DROUGHT_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_FOURTH, part_index)
+        for part_index in range(len(receipts))
     ]
     # Every part still reads as one present release; gap detection lists the directory, never a file.
-    assert store.list_partition_keys(DROUGHT_STREAM, "observed") == tuple(receipt.relative_path for receipt in receipts)
+    assert store.list_partition_keys(DROUGHT_STREAM, "observed", LANE_BASE_ZOOM_TIER) == tuple(
+        receipt.relative_path for receipt in receipts
+    )
 
 
 @pytest.mark.asyncio

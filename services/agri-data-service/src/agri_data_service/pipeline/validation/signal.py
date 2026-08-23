@@ -23,6 +23,12 @@ must catch: `surface_shortwave_radiation` carrying zero rows for NASA POWER in J
 sibling NASA signal carries the full lattice, with no governed-absence row explaining it.
 `execution.coverage_contract.DayState.MISSING` already captures exactly that per signal, with no
 cross-signal comparison needed -- see `classify_signal_day`.
+
+THE TIER IS PINNED, NOT A PARAMETER. Check 1 asks whether the export pipeline ran, and the export
+pipeline writes exactly `WRITTEN_ZOOM_TIER`. Accepting a `zoom` argument here would let a caller aim
+"did the export run?" at a rung no export ever targets, where the honest answer is always "no" and
+the report would read as this lane's own failure rather than as derivation lag -- precisely the
+attribution error the two-checks split above exists to prevent.
 """
 
 from __future__ import annotations
@@ -39,6 +45,7 @@ from agri_data_service.execution.coverage_contract import (
     LaneCoverageContract,
 )
 from agri_data_service.foundation.parquet.paths import missing_partition_days
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_STREAM
 
 if TYPE_CHECKING:
@@ -49,7 +56,12 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+
+# The rung the lane's own export lands on: the most detailed one, the one nothing generalised.
+# Derived from the ladder so adding a rung above cannot leave this validator checking a stale tier.
+WRITTEN_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 
 # Every contract currently declared belongs to this plane -- `agri.signal_observation` and
 # `agri.signal_coverage_audit` back no other Parquet stream (docs/lanes/weather-observations.md
@@ -230,18 +242,28 @@ def find_missing_export_partitions(
     first_day: date,
     last_day: date,
 ) -> tuple[date, ...]:
-    """Days in `[first_day, last_day]` with neither a part file nor a governed-absence marker.
+    """Days in `[first_day, last_day]` with neither a part file nor a governed-absence marker at the written tier.
 
     Discovered by LISTING object keys, never by opening one -- `layer-lanes.md` section 4. This
     catches a defect distinct from `validate_signal_export_day`'s: the export PIPELINE itself never
     ran (or failed) for a contracted day, as opposed to the source holding a genuine gap the export
     faithfully transcribed.
+
+    Scoped to `WRITTEN_ZOOM_TIER` on both halves -- the listing and the census -- so "the export
+    never ran for this day" is a claim about the rung the export actually targets. A listing that
+    spanned the ladder would count a derived coarse rung as evidence the base export ran, which is
+    exactly backwards: the coarse rung is DOWNSTREAM of the base one and cannot exist without it.
     """
     if last_day < first_day:
         raise SignalValidationError(f"partition window {first_day.isoformat()}..{last_day.isoformat()} runs backwards")
     keys: list[str] = []
     for year in range(first_day.year, last_day.year + 1):
-        keys.extend(store.list_partition_keys(SIGNAL_PLANE_STREAM, kind, year=year))
+        keys.extend(store.list_partition_keys(SIGNAL_PLANE_STREAM, kind, WRITTEN_ZOOM_TIER, year=year))
     return missing_partition_days(
-        layer=SIGNAL_PLANE_STREAM, kind=kind, first_day=first_day, last_day=last_day, keys=keys
+        layer=SIGNAL_PLANE_STREAM,
+        kind=kind,
+        zoom=WRITTEN_ZOOM_TIER,
+        first_day=first_day,
+        last_day=last_day,
+        keys=keys,
     )

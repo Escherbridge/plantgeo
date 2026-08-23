@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from agri_data_service.foundation.parquet.paths import partition_path
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.weather_observations import (
     WeatherObservationsExportError,
     export_weather_observations_day,
@@ -130,6 +131,6 @@ async def test_the_export_lands_at_the_observed_partition_sorted_to_the_grain() 
     receipt = await export_weather_observations_day(session, store, day=AUGUST_SIXTH, layer_id=LAYER_ID)  # type: ignore[arg-type]
 
     expected_rows = 2
-    assert receipt.key == partition_path(WEATHER_OBSERVATIONS_STREAM, "observed", AUGUST_SIXTH)
+    assert receipt.key == partition_path(WEATHER_OBSERVATIONS_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH)
     assert receipt.kind == "observed"
     assert receipt.row_count == expected_rows

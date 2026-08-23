@@ -29,6 +29,18 @@ THE ONE SNAPSHOT A STATIC LANE OWES MAY BE A DAY IT ALREADY HOLDS. When the sour
 later on the same UTC day, the version owed IS that day, re-exported: `write_partition` overwrites
 by key, so the fill path below needs no separate correction mode. The census reads the export
 instant out of the SAME listing it takes the days from, so this costs no extra object-store call.
+
+THIS DRIVER FILLS ONE ZOOM TIER -- THE BASE ONE -- AND CENSUSES THAT SAME TIER. A lane adapter
+exports the ungeneralized population, which is the most detailed rung of the ladder; the coarser
+rungs are DERIVED from those objects in Polars/DuckDB (RUNBOOK §0.32.2 decision 2), never from a
+day-scoped Postgres query. A driver that "filled" a derived tier would be inventing a generalization
+nobody computed, exactly as filling `kind=forecast` would invent a projection nobody issued -- so the
+tier is a module constant here rather than a caller's argument, for the same reason the kind is.
+
+COVERAGE IS THEREFORE PER TIER AND EVERY CENSUS ROW SAYS WHICH ONE. `partition_day_statuses` ignores
+keys of another tier, and nothing above it may put them back: a day present at `zoom=00` says
+nothing about whether the base tier was ever written for it, and a census that added the two together
+would report a covered day over a real gap and then decline to fill it.
 """
 
 from __future__ import annotations
@@ -51,6 +63,7 @@ from agri_data_service.foundation.parquet.paths import (
     try_parse_absence_marker_path,
     try_parse_partition_path,
 )
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.parquet.objectstore import EmptyPartitionError, oldest_export_instant
 
 if TYPE_CHECKING:
@@ -65,6 +78,7 @@ if TYPE_CHECKING:
         StaticLaneState,
     )
     from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
@@ -72,6 +86,11 @@ if TYPE_CHECKING:
 # lane's own `method/monte_carlo/<slug>.py`, from an issue date rather than from a gap census, and
 # a driver that "filled a missing forecast day" would be inventing a projection nobody issued.
 GAP_FILL_PARTITION_KIND: Final[PartitionKind] = "observed"
+
+# The BASE tier: the most detailed rung of the ladder, which is the only one a lane's day export
+# writes. Taken from the ladder's own top rather than written as a literal, so a rung added above z13
+# moves the base with it -- the base is "the tier nothing generalized", not the number 13.
+GAP_FILL_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 
 # Matches `jobs-pulse`'s own tick budget: generous enough that a healthy incremental tick never trips
 # it, short enough that one stuck lane cannot consume an entire hourly cadence.
@@ -118,6 +137,9 @@ class LaneGapCensus:
 
     slug: str
     nature: LaneNature
+    # WHICH TIER this census asked about. A coverage row that cannot name its tier is not coverage:
+    # every count below is over one rung of the ladder, and the other three are unexamined.
+    zoom: ZoomTier
     history_floor: date
     publication_lag_days: int
     floor_basis: str
@@ -154,6 +176,7 @@ class LaneGapCensus:
         return {
             "lane": self.slug,
             "nature": self.nature,
+            "zoom": self.zoom,
             "forecastable": self.forecastable,
             "cadence_days": self.cadence_days,
             "history_floor": self.history_floor.isoformat(),
@@ -268,11 +291,12 @@ def lane_window(lane: LaneRegistration, *, today: date) -> tuple[date, date] | N
     return lane.history_floor, last_day
 
 
-def _census_shell(lane: LaneRegistration, **overrides: object) -> LaneGapCensus:
-    """Build one census row with the lane's own declared fields already filled in."""
+def _census_shell(lane: LaneRegistration, zoom: ZoomTier, **overrides: object) -> LaneGapCensus:
+    """Build one census row with the lane's own declared fields and the tier it was taken at filled in."""
     fields: dict[str, object] = {
         "slug": lane.slug,
         "nature": lane.nature,
+        "zoom": zoom,
         "forecastable": lane.forecastable,
         "cadence_days": lane.cadence_days,
         "history_floor": lane.history_floor,
@@ -299,27 +323,31 @@ def _static_lane_census(
     lane: LaneRegistration,
     store: ObjectStore,
     *,
+    zoom: ZoomTier,
     today: date,
     reading: LaneWatermarkReading | None,
 ) -> LaneGapCensus:
-    """Classify one `static_lookup` lane against its source watermark and the objects already written.
+    """Classify one `static_lookup` lane's TIER against its source watermark and the objects already written.
 
-    THE COUNTS ARE OVER THE WHOLE STREAM, not over a window, because a static lane has none: a
-    reference set holds N versions, and how many of them exist is the useful number. `missing_days`
-    holds at most one entry -- the version the source says is owed.
+    THE COUNTS ARE OVER THE WHOLE STREAM AT ONE TIER, not over a window, because a static lane has
+    none: a reference set holds N versions, and how many of them exist is the useful number.
+    `missing_days` holds at most one entry -- the version the source says is owed.
     """
     if reading is not None and reading.error is not None:
-        return _census_shell(lane, static_state="watermark_unread", error=reading.error)
+        return _census_shell(lane, zoom, static_state="watermark_unread", error=reading.error)
     try:
-        listed = store.list_partition_objects(lane.slug, GAP_FILL_PARTITION_KIND)
+        listed = store.list_partition_objects(lane.slug, GAP_FILL_PARTITION_KIND, zoom)
     except Exception as error:  # per-lane isolation: an unreadable listing must not end the census
-        return _census_shell(lane, static_state="watermark_unread", error=_listing_failure(lane, error))
+        return _census_shell(lane, zoom, static_state="watermark_unread", error=_listing_failure(lane, error))
+    # The listing is already tier-scoped by its prefix; the tier is re-checked from the PARSED key
+    # anyway, so a store prefix or a hand-placed object cannot smuggle another rung into these sets.
     data_days = {
         parsed.day
         for entry in listed
         if (parsed := try_parse_partition_path(entry.relative_path)) is not None
         and parsed.layer == lane.slug
         and parsed.kind == GAP_FILL_PARTITION_KIND
+        and parsed.zoom == zoom
     }
     marker_days = {
         marker.day
@@ -327,6 +355,7 @@ def _static_lane_census(
         if (marker := try_parse_absence_marker_path(entry.relative_path)) is not None
         and marker.layer == lane.slug
         and marker.kind == GAP_FILL_PARTITION_KIND
+        and marker.zoom == zoom
     }
     newest_day = max(data_days, default=None)
     watermark = None if reading is None else reading.watermark
@@ -339,16 +368,19 @@ def _static_lane_census(
             newest_data_instant=(
                 None
                 if newest_day is None
-                else oldest_export_instant(listed, layer=lane.slug, kind=GAP_FILL_PARTITION_KIND, day=newest_day)
+                else oldest_export_instant(
+                    listed, layer=lane.slug, kind=GAP_FILL_PARTITION_KIND, zoom=zoom, day=newest_day
+                )
             ),
             newest_marker_day=max(marker_days, default=None),
             today=today,
         )
     except LaneContractError as error:
-        return _census_shell(lane, static_state="watermark_unread", error=f"{lane.slug}: {error}")
+        return _census_shell(lane, zoom, static_state="watermark_unread", error=f"{lane.slug}: {error}")
     version_day = watermark.day if watermark is not None else None
     return _census_shell(
         lane,
+        zoom,
         first_day=version_day,
         last_day=version_day,
         data_days=len(data_days),
@@ -366,24 +398,26 @@ def _series_lane_census(
     lane: LaneRegistration,
     store: ObjectStore,
     *,
+    zoom: ZoomTier,
     today: date,
     max_days_per_lane: int | None,
 ) -> LaneGapCensus:
-    """Classify one `daily_series` or `release_series` lane's settled window from the LISTING alone."""
+    """Classify one `daily_series` or `release_series` lane's settled window AT ONE TIER, from the LISTING alone."""
     window = lane_window(lane, today=today)
     if window is None:
-        return _census_shell(lane)
+        return _census_shell(lane, zoom)
     first_day, last_day = window
     try:
         statuses = partition_day_statuses(
             layer=lane.slug,
             kind=GAP_FILL_PARTITION_KIND,
+            zoom=zoom,
             first_day=first_day,
             last_day=last_day,
-            keys=store.list_partition_keys(lane.slug, GAP_FILL_PARTITION_KIND),
+            keys=store.list_partition_keys(lane.slug, GAP_FILL_PARTITION_KIND, zoom),
         )
     except Exception as error:  # per-lane isolation: an unreadable listing must not end the census
-        return _census_shell(lane, first_day=first_day, last_day=last_day, error=_listing_failure(lane, error))
+        return _census_shell(lane, zoom, first_day=first_day, last_day=last_day, error=_listing_failure(lane, error))
     # NEWEST-FIRST. `partition_day_statuses` answers chronologically; this reversal is the whole
     # reason one driver serves both the leading edge and the backlog. See the module docstring.
     #
@@ -398,6 +432,7 @@ def _series_lane_census(
     )
     return _census_shell(
         lane,
+        zoom,
         first_day=first_day,
         last_day=last_day,
         data_days=sum(1 for status in statuses.values() if status == "data"),
@@ -416,19 +451,22 @@ def build_lane_census(
     max_days_per_lane: int | None = None,
     reading: LaneWatermarkReading | None = None,
 ) -> LaneGapCensus:
-    """Classify one lane's coverage from the object LISTING alone -- never by opening a file.
+    """Classify one lane's coverage OF THE BASE TIER from the object LISTING alone -- never by opening a file.
 
     A governed-absence marker counts as covered, not as a gap: `missing_partition_days` already
     treats it that way, which is what stops the driver re-attempting a day the source truly has
     nothing for on every tick forever.
 
-    `reading` is a static lane's watermark, resolved by the caller because reading it needs a
-    database session and this function deliberately stays synchronous and listing-only. Omitting it
-    for a static lane reports `watermark_unread` -- honestly "we did not look", never "no gaps".
+    The tier is `GAP_FILL_ZOOM_TIER` rather than an argument, because this census exists to feed THIS
+    driver, and this driver can only write the tier its lane adapters export. Auditing a derived tier
+    is a different question with a different mechanism, and it must not borrow this answer: the row
+    carries its `zoom` so no reader can mistake one for the other.
     """
     if nature_has_time_axis(lane.nature):
-        return _series_lane_census(lane, store, today=today, max_days_per_lane=max_days_per_lane)
-    return _static_lane_census(lane, store, today=today, reading=reading)
+        return _series_lane_census(
+            lane, store, zoom=GAP_FILL_ZOOM_TIER, today=today, max_days_per_lane=max_days_per_lane
+        )
+    return _static_lane_census(lane, store, zoom=GAP_FILL_ZOOM_TIER, today=today, reading=reading)
 
 
 def build_gap_census(
@@ -468,25 +506,29 @@ def gap_census_report(census: Sequence[LaneGapCensus]) -> dict[str, object]:
     }
 
 
-def zero_row_absence(
+def zero_row_absence(  # noqa: PLR0913 - one coordinate of the marked day per arg, none foldable
     slug: str,
     *,
+    zoom: ZoomTier,
     day: date,
     run_id: str,
     observed: str,
     recorded_at: datetime,
 ) -> GovernedAbsence:
-    """Build the evidence for a day whose export query genuinely returned nothing.
+    """Build the evidence for a day whose export query genuinely returned nothing, at the tier it was asked of.
 
     THE PAYLOAD CLAIMS ONLY WHAT THIS RUN OBSERVED. It says the day-scoped export query over this
     warehouse's own tables returned zero rows; it never says the upstream source system was asked,
     because this driver does not contact one. Reconciling the two is `pipeline/validation/<slug>.py`.
+    The tier is named in the evidence as well as in the key, because a marker lifted out of its path
+    would otherwise read as a claim about the whole ladder when it settles exactly one rung.
     """
     return GovernedAbsence(
-        reason=f"the {slug} day export returned zero rows for {day.isoformat()}",
+        reason=f"the {slug} z{zoom} day export returned zero rows for {day.isoformat()}",
         upstream_response=(
             f"pipeline/lanes/{slug.replace('-', '_')}.py's day-scoped export query over this warehouse's own "
-            f"tables returned 0 rows for {day.isoformat()}, and the writer refused it: {observed}. "
+            f"tables returned 0 rows for {day.isoformat()} at zoom tier {zoom}, and the writer refused it: "
+            f"{observed}. "
             "THIS RUN DID NOT CONTACT THE UPSTREAM SOURCE SYSTEM -- this records what Postgres held at "
             f"export time, never a claim about what {slug}'s source published. Reconciling the two against "
             "the live source is pipeline/validation's job, not this driver's."
@@ -616,9 +658,17 @@ async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per
         await session.rollback()
         try:
             receipt = store.write_absence(
-                zero_row_absence(lane.slug, day=day, run_id=run_id, observed=str(empty), recorded_at=now()),
+                zero_row_absence(
+                    lane.slug,
+                    zoom=GAP_FILL_ZOOM_TIER,
+                    day=day,
+                    run_id=run_id,
+                    observed=str(empty),
+                    recorded_at=now(),
+                ),
                 layer=lane.slug,
                 kind=GAP_FILL_PARTITION_KIND,
+                zoom=GAP_FILL_ZOOM_TIER,
                 day=day,
             )
         except Exception as conflict:  # a marker that cannot be written is a real failure, not an absence
@@ -654,15 +704,20 @@ async def _read_watermark(
 
 
 def _prune_surplus(store: ObjectStore, lane: LaneRegistration, *, day: date, written_part_count: int) -> str | None:
-    """Trail a completed static re-export with the prune removing the parts it no longer wrote."""
+    """Trail a completed static re-export with the prune removing the parts it no longer wrote.
+
+    Scoped to the tier that was just written: the same day's coarser tiers hold a DIFFERENT
+    resolution of it, not an older export of it, and a prune that reached them would delete a
+    derivation this export never replaced.
+    """
     try:
         return store.prune_surplus_parts(
-            lane.slug, GAP_FILL_PARTITION_KIND, day, written_part_count=written_part_count
+            lane.slug, GAP_FILL_PARTITION_KIND, GAP_FILL_ZOOM_TIER, day, written_part_count=written_part_count
         ).report
     except Exception as error:  # the rows are written and correct; no prune may ever undo that
         return (
-            f"pruning surplus parts of {lane.slug} {day.isoformat()} failed, so parts from a larger earlier "
-            f"export may still be published beside this one: {type(error).__name__}: {error}"
+            f"pruning surplus parts of {lane.slug} z{GAP_FILL_ZOOM_TIER} {day.isoformat()} failed, so parts from "
+            f"a larger earlier export may still be published beside this one: {type(error).__name__}: {error}"
         )
 
 

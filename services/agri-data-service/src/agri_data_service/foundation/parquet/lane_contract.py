@@ -4,8 +4,8 @@ Layer L0: stdlib only. May NOT import any first-party module outside `foundation
 SQLAlchemy, httpx, asyncpg, or click. See `AGENTS.md` in this directory for the rationale.
 
 THE PARTITION DAY IS NOT ONE THING ACROSS TWELVE STREAMS, and pretending it was is the defect
-this module closes. `layer=<slug>/kind=observed/year=/month=/day=` renders the same for all of
-them, so the layout invited one interpretation -- "the day this was observed" -- onto three lanes
+this module closes. `layer=<slug>/kind=observed/zoom=NN/year=/month=/day=` renders the same for all
+of them, so the layout invited one interpretation -- "the day this was observed" -- onto three lanes
 where no observation happened. A HUC12 boundary is not a measurement taken on a date; it is a
 reference fact with a VERSION, and the day in its path is a version stamp. There is therefore no
 per-day obligation for a static lane to miss.
@@ -18,6 +18,11 @@ from Be Ready to Go Now within hours. So the watermark carries the INSTANT besid
 currency inside the watermark day is decided by comparing the export instant against it. The day in
 the path does not change -- a static lane's export is a full re-export of the whole population, so
 re-exporting day D IS how that version is corrected.
+
+EVERY QUESTION HERE IS ASKED OF ONE ZOOM TIER, and the tier is required rather than defaulted. A
+version stamp belongs to a tier: `zoom=00` holding day D says nothing about whether `zoom=13` was
+ever written for it, so a tier-blind "newest covered day" would answer a z13 reader with a z0
+snapshot and report a reference set current while its most detailed tier is empty.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ if TYPE_CHECKING:
     from datetime import date, datetime
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 # daily_series   -- genuine per-day observations. The partition day IS the observation day.
 #                   Forecastable. Every cadence step in the window is a candidate to fill.
@@ -122,53 +128,61 @@ class SourceWatermark:
             )
 
 
-def _newest_matching_day(
+def _newest_matching_day(  # noqa: PLR0913 - the six name one tier of one stream and which objects count
     layer: str,
     kind: PartitionKind,
+    zoom: ZoomTier,
     keys: Iterable[str],
     *,
     include_data: bool,
     include_markers: bool,
 ) -> date | None:
-    """Return the newest day of one stream among the object kinds asked for, from keys alone."""
+    """Return the newest day of one stream at one tier among the object kinds asked for, from keys alone."""
     newest: date | None = None
     for key in keys:
         parsed = try_parse_partition_path(key)
         if parsed is not None:
-            if include_data and parsed.layer == layer and parsed.kind == kind:
+            if include_data and parsed.layer == layer and parsed.kind == kind and parsed.zoom == zoom:
                 newest = parsed.day if newest is None else max(newest, parsed.day)
             continue
         marker = try_parse_absence_marker_path(key)
-        if marker is not None and include_markers and marker.layer == layer and marker.kind == kind:
+        if (
+            marker is not None
+            and include_markers
+            and marker.layer == layer
+            and marker.kind == kind
+            and marker.zoom == zoom
+        ):
             newest = marker.day if newest is None else max(newest, marker.day)
     return newest
 
 
-def newest_data_day(*, layer: str, kind: PartitionKind, keys: Iterable[str]) -> date | None:
-    """Return the newest day of one stream that holds a real part file, from keys alone.
+def newest_data_day(*, layer: str, kind: PartitionKind, zoom: ZoomTier, keys: Iterable[str]) -> date | None:
+    """Return the newest day of one stream's tier that holds a real part file, from keys alone.
 
     A static lane has no window to diff, so `partition_day_statuses` -- which needs one -- cannot
     answer its coverage question. What it needs instead is the newest VERSION already published,
     across the whole stream, and that is still a listing rather than a scan: `layer-lanes.md` §4's
     rule holds here unchanged.
     """
-    return _newest_matching_day(layer, kind, keys, include_data=True, include_markers=False)
+    return _newest_matching_day(layer, kind, zoom, keys, include_data=True, include_markers=False)
 
 
-def newest_marker_day(*, layer: str, kind: PartitionKind, keys: Iterable[str]) -> date | None:
-    """Return the newest day of one stream that holds a governed-absence marker, from keys alone."""
-    return _newest_matching_day(layer, kind, keys, include_data=False, include_markers=True)
+def newest_marker_day(*, layer: str, kind: PartitionKind, zoom: ZoomTier, keys: Iterable[str]) -> date | None:
+    """Return the newest day of one stream's tier that holds a governed-absence marker, from keys alone."""
+    return _newest_matching_day(layer, kind, zoom, keys, include_data=False, include_markers=True)
 
 
-def newest_covered_day(*, layer: str, kind: PartitionKind, keys: Iterable[str]) -> date | None:
-    """Return the newest day of one stream holding EITHER a part file or an absence marker.
+def newest_covered_day(*, layer: str, kind: PartitionKind, zoom: ZoomTier, keys: Iterable[str]) -> date | None:
+    """Return the newest day of one stream's tier holding EITHER a part file or an absence marker.
 
     This merged answer may NOT decide whether a static lane is current -- `resolve_static_lane` takes
     the two days apart, because for a version stamp a marker and a part file make opposite claims.
     See that function's docstring for the asymmetry. It remains the right answer for a lane asking
-    only "how far has this stream been carried", such as the calendar dimension's own watermark.
+    only "how far has this TIER of the stream been carried", such as the calendar dimension's own
+    watermark -- and it is never the answer for the ladder as a whole, which has four of them.
     """
-    return _newest_matching_day(layer, kind, keys, include_data=True, include_markers=True)
+    return _newest_matching_day(layer, kind, zoom, keys, include_data=True, include_markers=True)
 
 
 @dataclass(frozen=True, slots=True)

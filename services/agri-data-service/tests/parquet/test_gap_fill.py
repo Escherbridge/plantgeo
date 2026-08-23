@@ -4,6 +4,11 @@ Every test here runs against the in-memory `RecordingBackend` and a session fake
 SQL -- the lane exports themselves are pinned by their own lane tests. What is pinned here is the
 DRIVER's behaviour: which days it picks, in what order, what it does when one raises, and that a
 `--dry-run` census writes nothing at all.
+
+The driver writes and censuses ONE tier -- `GAP_FILL_ZOOM_TIER`, the base rung its lane adapters
+export -- so every seed below lands there. The tests that seed another rung are the interesting
+ones: a day present at `zoom=00` is not coverage of the base tier, and a census that thought it was
+would report the lane complete and never fill the day.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.lane_contract import LaneNature, SourceWatermark
 from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path
 from agri_data_service.pipeline.parquet.gap_fill import (
+    GAP_FILL_ZOOM_TIER,
     GapFillContractError,
     GapFillSummary,
     LaneGapCensus,
@@ -43,10 +49,12 @@ from agri_data_service.pipeline.parquet.objectstore import (
     ListedObject,
     ObjectStore,
 )
-from tests.parquet.test_objectstore_writer import RecordingBackend
+from tests.parquet.test_objectstore_writer import BASE_TIER, WHOLE_WORLD_TIER, RecordingBackend
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator, Sequence
+
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 TODAY = date(2026, 8, 22)
 RUN_ID = "parquet-gap-fill:test"
@@ -173,14 +181,14 @@ ZONES_BASIS = "evacuation-zones: GREATEST(max(updated_at)) over 12 published row
 def seed_parts(backend: RecordingBackend, store: ObjectStore, *, count: int, at: datetime, day: date) -> None:
     """Land `count` part files over one stream-day, all stamped as one export at `at`."""
     for part_index in range(count):
-        key = store.key_for(partition_path(ZONES, "observed", day, part_index))
+        key = store.key_for(partition_path(ZONES, "observed", BASE_TIER, day, part_index))
         backend.put(key, b"parquet", content_type=PARQUET_CONTENT_TYPE)
         backend.set_last_modified(key, at)
 
 
 def held_parts(store: ObjectStore) -> tuple[str, ...]:
     """Every object the zones stream currently holds, as relative paths -- orphans included."""
-    return store.list_partition_keys(ZONES, "observed")
+    return store.list_partition_keys(ZONES, "observed", BASE_TIER)
 
 
 def static_lane(  # noqa: PLR0913 - one knob per behaviour the static driver path needs to provoke
@@ -227,15 +235,21 @@ def static_lane(  # noqa: PLR0913 - one knob per behaviour the static driver pat
     )
 
 
-def seed_partition(backend: RecordingBackend, slug: str, day: date) -> None:
-    """Land a part file for one stream-day, at exactly the key the writer's layout would use."""
-    backend.put(partition_path(slug, "observed", day), b"parquet", content_type=PARQUET_CONTENT_TYPE)
+def seed_partition(backend: RecordingBackend, slug: str, day: date, *, zoom: ZoomTier = BASE_TIER) -> None:
+    """Land a part file for one stream-day at one tier, at exactly the key the writer's layout would use.
+
+    The default is the tier the driver itself fills; a test naming another one is asserting that the
+    driver does NOT read it as coverage.
+    """
+    backend.put(partition_path(slug, "observed", zoom, day), b"parquet", content_type=PARQUET_CONTENT_TYPE)
 
 
 def seed_absence(backend: RecordingBackend, slug: str, day: date) -> None:
     """Land a governed-absence marker for one stream-day, exactly as `write_absence` would."""
     marker = GovernedAbsence(reason="seeded", upstream_response="seeded", recorded_at=FROZEN_NOW, run_id="seed")
-    backend.put(absence_marker_path(slug, "observed", day), marker.to_json_bytes(), content_type=ABSENCE_CONTENT_TYPE)
+    backend.put(
+        absence_marker_path(slug, "observed", BASE_TIER, day), marker.to_json_bytes(), content_type=ABSENCE_CONTENT_TYPE
+    )
 
 
 async def drive(  # noqa: PLR0913 - one knob per driver parameter a test needs to vary
@@ -290,6 +304,27 @@ async def test_a_day_carrying_an_absence_marker_is_not_re_attempted() -> None:
     assert [call.day for call in calls] == days_newest_first(WINDOW_DAYS)[2:]
     assert calls[0].day == third
     assert summary.lanes[0].considered == WINDOW_DAYS - 2
+
+
+@pytest.mark.asyncio
+async def test_a_day_published_at_another_tier_is_not_coverage_of_the_tier_being_filled() -> None:
+    """THE BLENDING TRAP at driver scale: a z0 part file says nothing about whether the base tier exists.
+
+    The day is seeded at the whole-world rung only. Counted as coverage, the newest day would be
+    dropped from the walk and the base tier would stay empty for as long as the coarse object
+    survives -- a gap the census would keep reporting as filled. Contrast
+    `test_a_day_carrying_an_absence_marker_is_not_re_attempted`, where coverage at the SAME tier
+    correctly removes the day.
+    """
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    newest = days_newest_first(1)[0]
+    seed_partition(backend, "signal", newest, zoom=WHOLE_WORLD_TIER)
+
+    summary = await drive([stub_lane("signal", calls)], ObjectStore(backend))
+
+    assert [call.day for call in calls] == days_newest_first(WINDOW_DAYS)
+    assert summary.lanes[0].considered == WINDOW_DAYS
 
 
 @pytest.mark.asyncio
@@ -379,13 +414,16 @@ async def test_a_zero_row_day_becomes_an_absence_that_never_claims_the_upstream_
 
     summary = await drive([stub_lane("signal", calls, empty_on={newest})], ObjectStore(backend))
 
-    marker_key = absence_marker_path("signal", "observed", newest)
+    marker_key = absence_marker_path("signal", "observed", BASE_TIER, newest)
     assert backend.content_types[marker_key] == ABSENCE_CONTENT_TYPE
     absence = GovernedAbsence.from_json_bytes(backend.objects[marker_key])
     assert absence.run_id == RUN_ID
     assert absence.recorded_at == FROZEN_NOW
     assert newest.isoformat() in absence.reason
     assert "returned 0 rows" in absence.upstream_response
+    # The key already carries the tier; the evidence repeats it, so a marker read on its own still
+    # settles one rung rather than reading as a claim about the whole ladder.
+    assert f"zoom tier {GAP_FILL_ZOOM_TIER}" in absence.upstream_response
     assert "DID NOT CONTACT THE UPSTREAM SOURCE SYSTEM" in absence.upstream_response
     assert summary.lanes[0].absent == 1
     assert summary.lanes[0].written == WINDOW_DAYS - 1
@@ -407,7 +445,7 @@ async def test_a_recorded_absence_is_covered_on_the_next_tick() -> None:
     # The stub writes no part file, so the other four days stay missing on purpose -- what this pins
     # is that the ONE day the driver marked absent is now covered and is never handed to a lane again.
     assert newest in [call.day for call in first_calls]
-    assert absence_marker_path("signal", "observed", newest) in backend.objects
+    assert absence_marker_path("signal", "observed", BASE_TIER, newest) in backend.objects
     assert newest not in [call.day for call in second_calls]
     assert [call.day for call in second_calls] == days_newest_first(WINDOW_DAYS)[1:]
 
@@ -563,6 +601,27 @@ def test_a_census_with_no_watermark_reports_unread_rather_than_zero_gaps() -> No
     assert report["static_lanes_unread"] == ["watersheds"]
     assert report["static_lanes_current"] == []
     assert report["lanes_with_gaps"] == []
+
+
+def test_every_census_row_names_the_tier_it_was_taken_at() -> None:
+    """A coverage row that cannot name its tier is not coverage: three of the four rungs went unexamined.
+
+    The driver fills the BASE rung -- the ungeneralized population a lane's own export produces --
+    and the coarser rungs are derived from those objects rather than from a day-scoped query, so
+    this census is an answer about one rung and says which.
+    """
+    calls: list[LaneCall] = []
+    lanes = [
+        stub_lane("signal", calls),
+        stub_lane("watersheds", calls, nature="static_lookup", watermark_day=date(2026, 8, 7)),
+    ]
+
+    census = build_gap_census(lanes, ObjectStore(RecordingBackend()), today=TODAY)
+
+    assert GAP_FILL_ZOOM_TIER == BASE_TIER, "the driver fills the most detailed rung, the one nothing generalized"
+    assert [entry.zoom for entry in census] == [GAP_FILL_ZOOM_TIER, GAP_FILL_ZOOM_TIER]
+    rows = gap_census_report(census)["lanes"]
+    assert [row["zoom"] for row in rows] == [GAP_FILL_ZOOM_TIER, GAP_FILL_ZOOM_TIER]  # type: ignore[union-attr]
 
 
 def test_the_census_reports_nature_and_forecastability_for_every_lane() -> None:
@@ -817,7 +876,7 @@ def test_a_census_with_no_export_instant_still_falls_back_to_day_resolution() ->
     store = ObjectStore(backend)
     lane = static_lane(backend, part_counts=[1], export_instants=[BE_READY_AT])
     backend.put(
-        store.key_for(partition_path(ZONES, "observed", VERSION_DAY, 0)),
+        store.key_for(partition_path(ZONES, "observed", BASE_TIER, VERSION_DAY, 0)),
         b"x",
         content_type=PARQUET_CONTENT_TYPE,
     )
@@ -855,11 +914,41 @@ async def test_a_shrinking_re_export_leaves_no_orphan_and_the_lane_converges_to_
     assert exports == [2], "the stale lane must re-export exactly once"
     assert summary.lanes[0].outcome == "filled"
     assert held_parts(store) == (
-        partition_path(ZONES, "observed", VERSION_DAY, 0),
-        partition_path(ZONES, "observed", VERSION_DAY, 1),
+        partition_path(ZONES, "observed", BASE_TIER, VERSION_DAY, 0),
+        partition_path(ZONES, "observed", BASE_TIER, VERSION_DAY, 1),
     ), "the two parts this smaller export did not write must be gone, not published beside it"
     # The latch is gone with them: the day's oldest and newest part now agree on the new export.
     assert zones_census(store, lane, instant=GO_NOW_AT).static_state == "current"
+
+
+@pytest.mark.asyncio
+async def test_the_post_export_prune_never_reaches_another_tiers_parts_of_the_same_day() -> None:
+    """A coarser rung of this version is a different RESOLUTION of it, never an older export of it.
+
+    The base tier shrinks from four parts to two, so `part-2` and `part-3` are surplus there. The z0
+    object at the same day and the same index was written by the derivation step, which this export
+    never replaced -- deleting it would silently drop the tier that serves whole-world viewports and
+    leave nothing to say it had gone.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend, prefix="sandbox")
+    lane = static_lane(backend, part_counts=[2], export_instants=[AFTER_GO_NOW], watermark_instants=[GO_NOW_AT])
+    seed_parts(backend, store, count=4, at=BE_READY_AT, day=VERSION_DAY)
+    derived = partition_path(ZONES, "observed", WHOLE_WORLD_TIER, VERSION_DAY, 3)
+    backend.put(store.key_for(derived), b"parquet", content_type=PARQUET_CONTENT_TYPE)
+
+    summary = await drive([lane], store)
+
+    assert summary.lanes[0].outcome == "filled"
+    assert held_parts(store) == (
+        partition_path(ZONES, "observed", BASE_TIER, VERSION_DAY, 0),
+        partition_path(ZONES, "observed", BASE_TIER, VERSION_DAY, 1),
+    )
+    assert backend.deleted == [
+        store.key_for(partition_path(ZONES, "observed", BASE_TIER, VERSION_DAY, 2)),
+        store.key_for(partition_path(ZONES, "observed", BASE_TIER, VERSION_DAY, 3)),
+    ]
+    assert store.key_for(derived) in backend.objects
 
 
 @pytest.mark.asyncio
@@ -944,7 +1033,7 @@ async def test_a_prune_that_cannot_remove_an_orphan_reports_it_on_a_succeeding_d
     store = ObjectStore(backend)
     lane = static_lane(backend, part_counts=[1], export_instants=[AFTER_GO_NOW], watermark_instants=[GO_NOW_AT])
     seed_parts(backend, store, count=2, at=BE_READY_AT, day=VERSION_DAY)
-    orphan = partition_path(ZONES, "observed", VERSION_DAY, 1)
+    orphan = partition_path(ZONES, "observed", BASE_TIER, VERSION_DAY, 1)
     backend.refuses_delete_of.add(store.key_for(orphan))
 
     summary = await drive([lane], store)

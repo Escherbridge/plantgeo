@@ -14,6 +14,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.watersheds import WATERSHEDS_SCHEMA, WATERSHEDS_STREAM
 
 if TYPE_CHECKING:
@@ -71,6 +72,7 @@ async def export_watersheds_release(
             table.slice(part_index * ROWS_PER_PART, ROWS_PER_PART),
             layer=WATERSHEDS_STREAM,
             kind="observed",
+            zoom=LANE_BASE_ZOOM_TIER,
             day=day,
             part_index=part_index,
         )

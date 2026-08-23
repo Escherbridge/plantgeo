@@ -25,6 +25,21 @@ published beside the current one. They also pin `oldest_export_instant` to the O
 holds the lane `stale` forever and re-exports 162 MB on every tick. `prune_surplus_parts` closes
 both, and runs only AFTER every new part is written: a prune that ran first and then failed would
 leave the day EMPTY, which reads as a present-but-thin version and is worse than the orphan.
+
+EVERY OPERATION HERE NAMES ONE ZOOM TIER, AND NONE OF THEM MAY SPAN THE LADDER. `zoom` is a required
+argument of every write, listing, existence check and prune -- there is deliberately no "all tiers"
+mode and no default. One convenient tier-less listing is all it takes to hand a reader four
+resolutions of the same day as though they were one population: nothing raises, the row counts merely
+quadruple and the geometry silently disagrees with itself. A caller that genuinely wants the whole
+ladder asks four times and knows it asked. The prune is scoped the same way and for the same reason
+-- removing a day's surplus parts at z13 must not reach the z09 parts of that same day, which are a
+different resolution of it rather than an older export of it.
+
+CROSS-TIER AGREEMENT OF ONE DAY IS NOT THIS MODULE'S INVARIANT. `write_absence` still refuses to mark
+a day that already holds data, but only at the tier being marked: the four tiers of one day live
+under four disjoint prefixes, so policing them together would cost four listings per marker and still
+race. "Every tier of a published day is present" is the DERIVATION step's obligation, because
+derivation is the only thing that knows a coarse tier was computed from a base one.
 """
 
 from __future__ import annotations
@@ -47,10 +62,10 @@ from agri_data_service.foundation.parquet.paths import (
     day_prefix,
     month_prefix,
     partition_path,
-    stream_prefix,
     try_parse_absence_marker_path,
     try_parse_partition_path,
     year_prefix,
+    zoom_prefix,
 )
 from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema, get_stream_schema
 
@@ -60,6 +75,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.parquet.absence import GovernedAbsence
     from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 PARQUET_CONTENT_TYPE: Final = "application/vnd.apache.parquet"
 ABSENCE_CONTENT_TYPE: Final = "application/json"
@@ -129,12 +145,13 @@ class _S3Api(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class ParquetWriteReceipt:
-    """Provenance for one written partition: what landed, where, and its integrity digest."""
+    """Provenance for one written partition: what landed, at which tier, where, and its integrity digest."""
 
     key: str
     relative_path: str
     stream: str
     kind: PartitionKind
+    zoom: ZoomTier
     day: date
     row_count: int
     byte_count: int
@@ -143,11 +160,12 @@ class ParquetWriteReceipt:
 
 @dataclass(frozen=True, slots=True)
 class AbsenceWriteReceipt:
-    """Provenance for one written governed-absence marker."""
+    """Provenance for one written governed-absence marker, including the tier it settles."""
 
     key: str
     relative_path: str
     kind: PartitionKind
+    zoom: ZoomTier
     day: date
     byte_count: int
     sha256: str
@@ -155,7 +173,7 @@ class AbsenceWriteReceipt:
 
 @dataclass(frozen=True, slots=True)
 class SurplusPruneResult:
-    """What a post-export prune removed from one stream-day, and every removal it could not make.
+    """What a post-export prune removed from one stream-day at one tier, and every removal it could not make.
 
     The rows this export wrote are correct, so a failed prune must never fail the export -- but an
     unreported one leaves the orphan that pins the lane `stale`, so `report` renders both halves.
@@ -258,12 +276,13 @@ class ObjectStore:
             raise ValueError(f"key {key!r} does not live under this store's prefix {self._prefix!r}")
         return key[len(self._prefix) :]
 
-    def write_partition(
+    def write_partition(  # noqa: PLR0913 - one partition coordinate per arg, and none may be defaulted
         self,
         table: pa.Table,
         *,
         layer: str,
         kind: PartitionKind,
+        zoom: ZoomTier,
         day: date,
         part_index: int = 0,
     ) -> ParquetWriteReceipt:
@@ -272,16 +291,16 @@ class ObjectStore:
         conformed = conform_to_stream_schema(table, stream)
         if conformed.num_rows == 0:
             raise EmptyPartitionError(
-                f"refusing to write a zero-row {layer!r} {kind} partition for {day}: "
+                f"refusing to write a zero-row {layer!r} {kind} z{zoom} partition for {day}: "
                 "an empty file reads as a present day and hides the gap"
             )
-        if self.absence_exists(layer, kind, day):
+        if self.absence_exists(layer, kind, zoom, day):
             raise GovernedAbsenceConflictError(
-                f"{layer!r} {kind} {day} carries a governed-absence marker; "
+                f"{layer!r} {kind} z{zoom} {day} carries a governed-absence marker; "
                 "retracting it is a manual admin action, not something a write may do implicitly"
             )
         payload = _serialize_parquet(conformed, stream.compression)
-        relative_path = partition_path(layer, kind, day, part_index)
+        relative_path = partition_path(layer, kind, zoom, day, part_index)
         key = self.key_for(relative_path)
         self._backend.put(key, payload, content_type=PARQUET_CONTENT_TYPE)
         return ParquetWriteReceipt(
@@ -289,6 +308,7 @@ class ObjectStore:
             relative_path=relative_path,
             stream=stream.name,
             kind=kind,
+            zoom=zoom,
             day=day,
             row_count=conformed.num_rows,
             byte_count=len(payload),
@@ -301,24 +321,26 @@ class ObjectStore:
         *,
         layer: str,
         kind: PartitionKind,
+        zoom: ZoomTier,
         day: date,
     ) -> AbsenceWriteReceipt:
-        """Mark one stream-day as deliberately empty, refusing when data already covers it."""
-        day_scope = self.key_for(day_prefix(layer, kind, day))
+        """Mark one stream-day AT ONE TIER as deliberately empty, refusing when data already covers it."""
+        day_scope = self.key_for(day_prefix(layer, kind, zoom, day))
         for existing in self._backend.list_objects(day_scope):
             if try_parse_partition_path(self.relative_key(existing.key)) is not None:
                 raise GovernedAbsenceConflictError(
-                    f"{layer!r} {kind} {day} already holds data ({self.relative_key(existing.key)}); "
+                    f"{layer!r} {kind} z{zoom} {day} already holds data ({self.relative_key(existing.key)}); "
                     "correcting a completed record is a manual admin action"
                 )
         payload = absence.to_json_bytes()
-        relative_path = absence_marker_path(layer, kind, day)
+        relative_path = absence_marker_path(layer, kind, zoom, day)
         key = self.key_for(relative_path)
         self._backend.put(key, payload, content_type=ABSENCE_CONTENT_TYPE)
         return AbsenceWriteReceipt(
             key=key,
             relative_path=relative_path,
             kind=kind,
+            zoom=zoom,
             day=day,
             byte_count=len(payload),
             sha256=sha256_digest(payload),
@@ -328,12 +350,18 @@ class ObjectStore:
         self,
         layer: str,
         kind: PartitionKind,
+        zoom: ZoomTier,
         *,
         year: int | None = None,
         month: int | None = None,
     ) -> tuple[ListedPartition, ...]:
-        """Return one stream's part files and absence markers WITH their export instants, narrowed by year and month."""
-        scope = self._listing_scope(layer, kind, year, month)
+        """Return ONE TIER's part files and absence markers WITH their export instants, narrowed by year and month.
+
+        `zoom` is required, and there is no mode that returns the whole ladder. See the module
+        docstring: a tier-less listing blends four resolutions of the same day into one population
+        and nothing about the result looks wrong.
+        """
+        scope = self._listing_scope(layer, kind, zoom, year, month)
         found: list[ListedPartition] = []
         for listed in self._backend.list_objects(self.key_for(scope)):
             relative_path = self.relative_key(listed.key)
@@ -348,43 +376,46 @@ class ObjectStore:
         self,
         layer: str,
         kind: PartitionKind,
+        zoom: ZoomTier,
         *,
         year: int | None = None,
         month: int | None = None,
     ) -> tuple[str, ...]:
-        """Return every part file and absence marker of one stream as a relative path, narrowed by year and month."""
+        """Return every part file and absence marker of ONE TIER as a relative path, narrowed by year and month."""
         return tuple(
-            listed.relative_path for listed in self.list_partition_objects(layer, kind, year=year, month=month)
+            listed.relative_path for listed in self.list_partition_objects(layer, kind, zoom, year=year, month=month)
         )
 
     def prune_surplus_parts(
         self,
         layer: str,
         kind: PartitionKind,
+        zoom: ZoomTier,
         day: date,
         *,
         written_part_count: int,
     ) -> SurplusPruneResult:
-        """Remove one stream-day's parts left behind by a SHRINKING full re-export. Never raises.
+        """Remove one stream-day's parts AT ONE TIER left behind by a SHRINKING full re-export. Never raises.
 
         Call this only AFTER every part of that re-export has landed: `written_part_count` is how
         many parts it wrote, so `part-<n>` for n >= it can only be surplus from an older, larger
-        export of the SAME day. The module docstring says why the order may never be reversed.
+        export of the SAME day AT THE SAME TIER. The module docstring says why the order may never be
+        reversed, and why another tier's parts of this same day are never surplus.
         """
         if written_part_count <= 0:
             raise ValueError(
-                f"refusing to prune {layer!r} {kind} {day.isoformat()} with written_part_count="
+                f"refusing to prune {layer!r} {kind} z{zoom} {day.isoformat()} with written_part_count="
                 f"{written_part_count}: that would delete every part of the day, and a prune may only "
                 "ever trail a completed write"
             )
         try:
-            listed = tuple(self._backend.list_objects(self.day_key_prefix(layer, kind, day)))
+            listed = tuple(self._backend.list_objects(self.day_key_prefix(layer, kind, zoom, day)))
         except Exception as error:  # an unprunable day is a reportable orphan, never a failed export
             return SurplusPruneResult(
                 removed=(),
                 failures=(
-                    f"listing {layer!r} {kind} {day.isoformat()} for surplus parts failed, so parts from a "
-                    f"larger earlier export may still be published beside this one: "
+                    f"listing {layer!r} {kind} z{zoom} {day.isoformat()} for surplus parts failed, so parts "
+                    f"from a larger earlier export may still be published beside this one: "
                     f"{type(error).__name__}: {error}",
                 ),
             )
@@ -393,9 +424,15 @@ class ObjectStore:
         for entry in listed:
             relative_path = self.relative_key(entry.key)
             # Every coordinate is re-checked from the PARSED path, never inferred from the prefix: an
-            # absence marker parses as `None` here, and another lane, kind or day cannot match.
+            # absence marker parses as `None` here, and another lane, kind, TIER or day cannot match.
             parsed = try_parse_partition_path(relative_path)
-            if parsed is None or parsed.layer != layer or parsed.kind != kind or parsed.day != day:
+            if (
+                parsed is None
+                or parsed.layer != layer
+                or parsed.kind != kind
+                or parsed.zoom != zoom
+                or parsed.day != day
+            ):
                 continue
             if parsed.part_index < written_part_count:
                 continue
@@ -410,27 +447,28 @@ class ObjectStore:
             removed.append(relative_path)
         return SurplusPruneResult(removed=tuple(removed), failures=tuple(failures))
 
-    def partition_exists(self, layer: str, kind: PartitionKind, day: date, part_index: int = 0) -> bool:
-        """Report whether one part file has been written, without downloading it."""
-        return self._backend.size_of(self.key_for(partition_path(layer, kind, day, part_index))) is not None
+    def partition_exists(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date, part_index: int = 0) -> bool:
+        """Report whether one part file of one tier has been written, without downloading it."""
+        return self._backend.size_of(self.key_for(partition_path(layer, kind, zoom, day, part_index))) is not None
 
-    def absence_exists(self, layer: str, kind: PartitionKind, day: date) -> bool:
-        """Report whether one stream-day carries a governed-absence marker, without downloading it."""
-        return self._backend.size_of(self.key_for(absence_marker_path(layer, kind, day))) is not None
+    def absence_exists(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> bool:
+        """Report whether one stream-day carries a governed-absence marker AT THIS TIER, without downloading it."""
+        return self._backend.size_of(self.key_for(absence_marker_path(layer, kind, zoom, day))) is not None
 
-    def day_key_prefix(self, layer: str, kind: PartitionKind, day: date) -> str:
-        """Return the absolute bucket prefix holding every part file for one stream-day."""
-        return self.key_for(day_prefix(layer, kind, day))
+    def day_key_prefix(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> str:
+        """Return the absolute bucket prefix holding every part file for one stream-day at one tier."""
+        return self.key_for(day_prefix(layer, kind, zoom, day))
 
     @staticmethod
-    def _listing_scope(layer: str, kind: PartitionKind, year: int | None, month: int | None) -> str:
+    def _listing_scope(layer: str, kind: PartitionKind, zoom: ZoomTier, year: int | None, month: int | None) -> str:
+        """Narrow a listing to one tier, then optionally to a year and a month inside it."""
         if year is None:
             if month is not None:
                 raise ValueError("narrowing a listing to a month requires the year as well")
-            return stream_prefix(layer, kind)
+            return zoom_prefix(layer, kind, zoom)
         if month is None:
-            return year_prefix(layer, kind, year)
-        return month_prefix(layer, kind, year, month)
+            return year_prefix(layer, kind, zoom, year)
+        return month_prefix(layer, kind, zoom, year, month)
 
 
 def conform_to_stream_schema(table: pa.Table, stream: ParquetStreamSchema) -> pa.Table:
@@ -463,17 +501,20 @@ def oldest_export_instant(
     *,
     layer: str,
     kind: PartitionKind,
+    zoom: ZoomTier,
     day: date,
 ) -> datetime | None:
-    """Return the OLDEST instant among one stream-day's part files, from a listing already made.
+    """Return the OLDEST instant among one stream-day's part files AT ONE TIER, from a listing already made.
 
-    `None` means the question cannot be answered: either no part file covers that day, or one of
-    them carries no instant. This module's docstring says why the oldest is the honest answer.
+    `None` means the question cannot be answered: either no part file covers that day at that tier,
+    or one of them carries no instant. This module's docstring says why the oldest is the honest
+    answer. Another tier's parts are ignored rather than folded in: a coarse tier derived hours after
+    the base one would otherwise drag the base day's freshness back to the derivation's clock.
     """
     oldest: datetime | None = None
     for entry in listed:
         parsed = try_parse_partition_path(entry.relative_path)
-        if parsed is None or parsed.layer != layer or parsed.kind != kind or parsed.day != day:
+        if parsed is None or parsed.layer != layer or parsed.kind != kind or parsed.zoom != zoom or parsed.day != day:
             continue
         if entry.last_modified is None:
             return None

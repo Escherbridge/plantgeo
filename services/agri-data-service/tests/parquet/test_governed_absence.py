@@ -2,6 +2,10 @@
 
 RUNBOOK §0.25.3: one absence convention for every stream, decided before any lane writes. A
 marked day is covered-by-absence, never a gap — and data and absence never coexist silently.
+
+A MARKER SETTLES ONE ZOOM TIER, NOT A DAY. "The source had nothing for this day" is asserted per
+rung, because that is the only claim a listing of one rung can support; the refusal that keeps data
+and absence apart is scoped the same way, and the tests below say so both directions.
 """
 
 from __future__ import annotations
@@ -32,7 +36,13 @@ from agri_data_service.pipeline.parquet.objectstore import (
     ObjectStore,
 )
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_STREAM
-from tests.parquet.test_objectstore_writer import JULY_FOURTH, RecordingBackend, signal_rows
+from tests.parquet.test_objectstore_writer import (
+    BASE_TIER,
+    JULY_FOURTH,
+    WHOLE_WORLD_TIER,
+    RecordingBackend,
+    signal_rows,
+)
 
 
 def sample_absence() -> GovernedAbsence:
@@ -48,33 +58,33 @@ def sample_absence() -> GovernedAbsence:
 
 
 def test_the_marker_lands_inside_the_day_prefix() -> None:
-    key = absence_marker_path("sensors", "observed", JULY_FOURTH)
+    key = absence_marker_path("sensors", "observed", BASE_TIER, JULY_FOURTH)
 
-    assert key == f"{day_prefix('sensors', 'observed', JULY_FOURTH)}{ABSENCE_FILE_NAME}"
+    assert key == f"{day_prefix('sensors', 'observed', BASE_TIER, JULY_FOURTH)}{ABSENCE_FILE_NAME}"
     assert key.endswith("/absent.json")
 
 
 def test_a_marker_key_round_trips_through_parse() -> None:
-    key = absence_marker_path("fire-detections", "forecast", JULY_FOURTH)
+    key = absence_marker_path("fire-detections", "forecast", BASE_TIER, JULY_FOURTH)
 
     parsed = try_parse_absence_marker_path(key)
 
-    assert parsed == AbsenceMarkerPath(layer="fire-detections", kind="forecast", day=JULY_FOURTH)
+    assert parsed == AbsenceMarkerPath(layer="fire-detections", kind="forecast", zoom=BASE_TIER, day=JULY_FOURTH)
     assert parsed is not None
     assert parsed.key == key
 
 
 def test_markers_and_part_files_are_mutually_unparseable() -> None:
     """Classifiable by key alone: neither parser ever accepts the other's objects."""
-    marker_key = absence_marker_path("sensors", "observed", JULY_FOURTH)
-    part_key = partition_path("sensors", "observed", JULY_FOURTH)
+    marker_key = absence_marker_path("sensors", "observed", BASE_TIER, JULY_FOURTH)
+    part_key = partition_path("sensors", "observed", BASE_TIER, JULY_FOURTH)
 
     assert try_parse_partition_path(marker_key) is None
     assert try_parse_absence_marker_path(part_key) is None
 
 
 def test_marker_parse_normalises_backslashes_like_the_partition_parse() -> None:
-    key = absence_marker_path("sensors", "observed", JULY_FOURTH).replace("/", "\\")
+    key = absence_marker_path("sensors", "observed", BASE_TIER, JULY_FOURTH).replace("/", "\\")
 
     parsed = try_parse_absence_marker_path(key)
 
@@ -83,7 +93,10 @@ def test_marker_parse_normalises_backslashes_like_the_partition_parse() -> None:
 
 
 def test_an_impossible_calendar_day_is_not_a_marker() -> None:
-    assert try_parse_absence_marker_path("layer=sensors/kind=observed/year=2026/month=02/day=31/absent.json") is None
+    assert (
+        try_parse_absence_marker_path("layer=sensors/kind=observed/zoom=13/year=2026/month=02/day=31/absent.json")
+        is None
+    )
 
 
 # --- day classification ----------------------------------------------------------------------
@@ -92,14 +105,14 @@ def test_an_impossible_calendar_day_is_not_a_marker() -> None:
 def test_statuses_classify_data_absent_conflict_and_missing_chronologically() -> None:
     first = JULY_FOURTH
     keys = [
-        partition_path("sensors", "observed", first),
-        absence_marker_path("sensors", "observed", first + timedelta(days=1)),
-        partition_path("sensors", "observed", first + timedelta(days=2)),
-        absence_marker_path("sensors", "observed", first + timedelta(days=2)),
+        partition_path("sensors", "observed", BASE_TIER, first),
+        absence_marker_path("sensors", "observed", BASE_TIER, first + timedelta(days=1)),
+        partition_path("sensors", "observed", BASE_TIER, first + timedelta(days=2)),
+        absence_marker_path("sensors", "observed", BASE_TIER, first + timedelta(days=2)),
     ]
 
     statuses = partition_day_statuses(
-        layer="sensors", kind="observed", first_day=first, last_day=first + timedelta(days=3), keys=keys
+        layer="sensors", kind="observed", zoom=BASE_TIER, first_day=first, last_day=first + timedelta(days=3), keys=keys
     )
 
     assert list(statuses.items()) == [
@@ -112,12 +125,12 @@ def test_statuses_classify_data_absent_conflict_and_missing_chronologically() ->
 
 def test_statuses_ignore_other_layers_and_kinds() -> None:
     keys = [
-        absence_marker_path("vegetation", "observed", JULY_FOURTH),
-        absence_marker_path("sensors", "forecast", JULY_FOURTH),
+        absence_marker_path("vegetation", "observed", BASE_TIER, JULY_FOURTH),
+        absence_marker_path("sensors", "forecast", BASE_TIER, JULY_FOURTH),
     ]
 
     statuses = partition_day_statuses(
-        layer="sensors", kind="observed", first_day=JULY_FOURTH, last_day=JULY_FOURTH, keys=keys
+        layer="sensors", kind="observed", zoom=BASE_TIER, first_day=JULY_FOURTH, last_day=JULY_FOURTH, keys=keys
     )
 
     assert statuses == {JULY_FOURTH: "missing"}
@@ -126,10 +139,18 @@ def test_statuses_ignore_other_layers_and_kinds() -> None:
 def test_missing_partition_days_treats_a_marked_day_as_covered() -> None:
     """The §0.25.3 binding point: covered-by-absence is not a gap."""
     marked = JULY_FOURTH + timedelta(days=1)
-    keys = [partition_path("sensors", "observed", JULY_FOURTH), absence_marker_path("sensors", "observed", marked)]
+    keys = [
+        partition_path("sensors", "observed", BASE_TIER, JULY_FOURTH),
+        absence_marker_path("sensors", "observed", BASE_TIER, marked),
+    ]
 
     missing = missing_partition_days(
-        layer="sensors", kind="observed", first_day=JULY_FOURTH, last_day=marked + timedelta(days=1), keys=keys
+        layer="sensors",
+        kind="observed",
+        zoom=BASE_TIER,
+        first_day=JULY_FOURTH,
+        last_day=marked + timedelta(days=1),
+        keys=keys,
     )
 
     assert missing == (marked + timedelta(days=1),)
@@ -195,12 +216,14 @@ def test_write_absence_lands_at_the_frozen_key_with_json_content_type() -> None:
     store = ObjectStore(backend)
     absence = sample_absence()
 
-    receipt = store.write_absence(absence, layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+    receipt = store.write_absence(absence, layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
 
-    expected_key = absence_marker_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH)
+    expected_key = absence_marker_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH)
     assert receipt.key == expected_key
     assert receipt.relative_path == expected_key
     assert receipt.kind == "observed"
+    # Which rung this marker settles. Without it a receipt claims the day, and the day has four.
+    assert receipt.zoom == BASE_TIER
     assert receipt.day == JULY_FOURTH
     assert backend.content_types[expected_key] == ABSENCE_CONTENT_TYPE
     assert GovernedAbsence.from_json_bytes(backend.objects[expected_key]) == absence
@@ -210,19 +233,23 @@ def test_write_absence_lands_at_the_frozen_key_with_json_content_type() -> None:
 def test_write_absence_refuses_a_day_that_already_holds_data() -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
 
     with pytest.raises(GovernedAbsenceConflictError, match="already holds data"):
-        store.write_absence(sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+        store.write_absence(
+            sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH
+        )
 
 
 def test_write_partition_refuses_a_day_marked_absent() -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_absence(sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+    store.write_absence(sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
 
     with pytest.raises(GovernedAbsenceConflictError, match="manual admin action"):
-        store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+        store.write_partition(
+            signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH
+        )
 
 
 def test_the_listing_feeds_markers_to_gap_detection() -> None:
@@ -230,34 +257,101 @@ def test_the_listing_feeds_markers_to_gap_detection() -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
     marked = JULY_FOURTH + timedelta(days=1)
-    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
-    store.write_absence(sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=marked)
+    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
+    store.write_absence(sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=marked)
 
-    keys = store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed")
+    keys = store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", BASE_TIER)
     missing = missing_partition_days(
-        layer=SIGNAL_PLANE_STREAM, kind="observed", first_day=JULY_FOURTH, last_day=marked, keys=keys
+        layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, first_day=JULY_FOURTH, last_day=marked, keys=keys
     )
 
-    assert absence_marker_path(SIGNAL_PLANE_STREAM, "observed", marked) in keys
+    assert absence_marker_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, marked) in keys
     assert missing == ()
+
+
+def test_a_marker_at_one_tier_does_not_cover_that_day_at_another() -> None:
+    """A coarse rung's governed absence is not an answer about the base rung, and must not close its gap.
+
+    Reading it as one would stop the driver ever attempting the day at the tier that is genuinely
+    missing -- a marker is terminal, so the gap would never be revisited.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_absence(
+        sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=WHOLE_WORLD_TIER, day=JULY_FOURTH
+    )
+
+    coarse_keys = store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", WHOLE_WORLD_TIER)
+    base_keys = store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed", BASE_TIER)
+
+    assert coarse_keys == (absence_marker_path(SIGNAL_PLANE_STREAM, "observed", WHOLE_WORLD_TIER, JULY_FOURTH),)
+    assert base_keys == ()
+    assert (
+        missing_partition_days(
+            layer=SIGNAL_PLANE_STREAM,
+            kind="observed",
+            zoom=WHOLE_WORLD_TIER,
+            first_day=JULY_FOURTH,
+            last_day=JULY_FOURTH,
+            keys=coarse_keys,
+        )
+        == ()
+    )
+    # The same listing, censused at the base tier, still reports the real gap.
+    assert missing_partition_days(
+        layer=SIGNAL_PLANE_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        first_day=JULY_FOURTH,
+        last_day=JULY_FOURTH,
+        keys=coarse_keys,
+    ) == (JULY_FOURTH,)
+    assert store.absence_exists(SIGNAL_PLANE_STREAM, "observed", WHOLE_WORLD_TIER, JULY_FOURTH) is True
+    assert store.absence_exists(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH) is False
+
+
+def test_the_two_sided_refusal_is_scoped_to_the_tier_being_written() -> None:
+    """Data at one rung must not block a marker at another: they are separate claims about separate rungs.
+
+    Whether the four tiers of one published day AGREE is the derivation step's invariant, not the
+    writer's -- the tiers live under four disjoint prefixes, so policing them here would cost four
+    listings per marker and still race. What the writer owes is that no ONE rung ever holds both.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
+
+    receipt = store.write_absence(
+        sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=WHOLE_WORLD_TIER, day=JULY_FOURTH
+    )
+
+    assert receipt.zoom == WHOLE_WORLD_TIER
+    assert receipt.relative_path == absence_marker_path(SIGNAL_PLANE_STREAM, "observed", WHOLE_WORLD_TIER, JULY_FOURTH)
+    # And at the tier that DOES hold data, the refusal still stands.
+    with pytest.raises(GovernedAbsenceConflictError, match="already holds data"):
+        store.write_absence(
+            sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH
+        )
 
 
 def test_absence_exists_answers_without_downloading() -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
 
-    assert store.absence_exists(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH) is False
-    store.write_absence(sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
-    assert store.absence_exists(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH) is True
+    assert store.absence_exists(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH) is False
+    store.write_absence(sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
+    assert store.absence_exists(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH) is True
 
 
 def test_the_store_prefix_wraps_the_marker_too() -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend, prefix="sandbox")
 
-    receipt = store.write_absence(sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH)
+    receipt = store.write_absence(
+        sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH
+    )
 
-    relative = absence_marker_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH)
+    relative = absence_marker_path(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH)
     assert receipt.key == f"sandbox/{relative}"
     assert receipt.relative_path == relative
     assert list(backend.objects) == [f"sandbox/{relative}"]

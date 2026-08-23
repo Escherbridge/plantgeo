@@ -43,7 +43,7 @@ from agri_data_service.warehouse.schemas.weather_observations import (
     WEATHER_OBSERVATIONS_SCHEMA,
     WEATHER_OBSERVATIONS_STREAM,
 )
-from tests.parquet.test_objectstore_writer import RecordingBackend
+from tests.parquet.test_objectstore_writer import BASE_TIER, DETAIL_TIER, UNPUBLISHED_ZOOM, RecordingBackend
 from tests.parquet.test_weather_observations_lane import (
     AUGUST_SIXTH,
     LAYER_ID,
@@ -56,6 +56,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 FAR_FUTURE_DAY = date(2099, 1, 1)
+
+# The rung a lane export lands on, and the zoom a viewport asks for to be served it.
+BASE_TIER_REQUEST = BASE_TIER
 
 
 def _table_from_rows(rows: Sequence[dict[str, object]]) -> pa.Table:
@@ -75,12 +78,14 @@ def _materialize(backend: RecordingBackend, root: Path) -> None:
 # --- planes/weather_observations.py: the serving read --------------------------------------------
 
 
-def test_scan_pattern_only_ever_targets_the_observed_kind() -> None:
-    """There is no parameter that could widen this to `kind=forecast` -- the path is hard-coded."""
-    pattern = weather_observations_scan_pattern(root="s3://bucket/prefix")
+def test_scan_pattern_only_ever_targets_the_observed_kind_at_one_tier() -> None:
+    """No parameter widens this to `kind=forecast`, and none widens it past one rung of the ladder."""
+    pattern = weather_observations_scan_pattern(root="s3://bucket/prefix", zoom=BASE_TIER)
 
-    assert pattern == f"s3://bucket/prefix/layer={WEATHER_OBSERVATIONS_STREAM}/kind=observed/**/*.parquet"
+    assert pattern == (f"s3://bucket/prefix/layer={WEATHER_OBSERVATIONS_STREAM}/kind=observed/zoom=13/**/*.parquet")
     assert "kind=forecast" not in pattern
+    # The glob starts INSIDE `zoom=`, so the wildcard can never reach a sibling rung.
+    assert pattern.index("zoom=13") < pattern.index("**")
 
 
 def test_bucket_object_root_honors_an_empty_or_set_store_prefix() -> None:
@@ -114,12 +119,13 @@ def test_read_weather_observations_day_preserves_every_distinct_instant_at_one_p
         _table_from_rows([first_poll, second_poll]),
         layer=WEATHER_OBSERVATIONS_STREAM,
         kind="observed",
+        zoom=BASE_TIER,
         day=AUGUST_SIXTH,
     )
     _materialize(backend, tmp_path)
     root = tmp_path.resolve().as_posix()
 
-    reading = read_weather_observations_day(root=root, day=AUGUST_SIXTH)
+    reading = read_weather_observations_day(root=root, requested_zoom=BASE_TIER_REQUEST, day=AUGUST_SIXTH)
 
     expected_row_count = 2
     assert reading.kind == OBSERVED_KIND
@@ -131,7 +137,7 @@ def test_read_weather_observations_day_is_an_honest_empty_when_nothing_was_ever_
     """A stream nothing has ever been written to hits the zero-glob-match path, not an exception."""
     root = tmp_path.resolve().as_posix()
 
-    reading = read_weather_observations_day(root=root, day=AUGUST_SIXTH)
+    reading = read_weather_observations_day(root=root, requested_zoom=BASE_TIER_REQUEST, day=AUGUST_SIXTH)
 
     assert reading.frame.is_empty()
     assert reading.frame.columns == list(WEATHER_OBSERVATIONS_SCHEMA.column_names)
@@ -144,11 +150,17 @@ def test_read_weather_observations_day_is_an_honest_empty_for_a_future_date_not_
     row = weather_observation_row(43.6150, -116.2023, external_id="a")
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_partition(_table_from_rows([row]), layer=WEATHER_OBSERVATIONS_STREAM, kind="observed", day=AUGUST_SIXTH)
+    store.write_partition(
+        _table_from_rows([row]),
+        layer=WEATHER_OBSERVATIONS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=AUGUST_SIXTH,
+    )
     _materialize(backend, tmp_path)
     root = tmp_path.resolve().as_posix()
 
-    reading = read_weather_observations_day(root=root, day=FAR_FUTURE_DAY)
+    reading = read_weather_observations_day(root=root, requested_zoom=BASE_TIER_REQUEST, day=FAR_FUTURE_DAY)
 
     assert reading.frame.is_empty()
     assert reading.kind == OBSERVED_KIND
@@ -158,12 +170,75 @@ def test_read_weather_observations_window_refuses_a_backwards_or_oversized_windo
     root = tmp_path.resolve().as_posix()
 
     with pytest.raises(WeatherObservationsServingError, match="backwards"):
-        read_weather_observations_window(root=root, first_day=AUGUST_SIXTH, last_day=date(2026, 8, 1))
+        read_weather_observations_window(
+            root=root, requested_zoom=BASE_TIER_REQUEST, first_day=AUGUST_SIXTH, last_day=date(2026, 8, 1)
+        )
 
     with pytest.raises(WeatherObservationsServingError, match="budget"):
         read_weather_observations_window(
-            root=root, first_day=date(2000, 1, 1), last_day=date(2000, 1, 1) + timedelta(days=MAX_GAP_WINDOW_DAYS + 1)
+            root=root,
+            requested_zoom=BASE_TIER_REQUEST,
+            first_day=date(2000, 1, 1),
+            last_day=date(2000, 1, 1) + timedelta(days=MAX_GAP_WINDOW_DAYS + 1),
         )
+
+
+# --- the zoom axis: one rung per read, and a blend that is not expressible ------------------------
+
+
+def test_two_tiers_of_one_poll_never_stack_into_one_reading(tmp_path: Path) -> None:
+    """One poll published at two rungs must not read back as a station that polled twice as often."""
+    at_base = weather_observation_row(43.6150, -116.2023, external_id="a")
+    at_detail = dict(at_base)
+    at_detail["external_id"] = "b"
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_partition(
+        _table_from_rows([at_base]),
+        layer=WEATHER_OBSERVATIONS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=AUGUST_SIXTH,
+    )
+    store.write_partition(
+        _table_from_rows([at_detail]),
+        layer=WEATHER_OBSERVATIONS_STREAM,
+        kind="observed",
+        zoom=DETAIL_TIER,
+        day=AUGUST_SIXTH,
+    )
+    _materialize(backend, tmp_path)
+    root = tmp_path.resolve().as_posix()
+
+    base_reading = read_weather_observations_day(root=root, requested_zoom=BASE_TIER, day=AUGUST_SIXTH)
+    detail_reading = read_weather_observations_day(root=root, requested_zoom=DETAIL_TIER, day=AUGUST_SIXTH)
+
+    assert base_reading.frame["external_id"].to_list() == ["a"]
+    assert detail_reading.frame["external_id"].to_list() == ["b"]
+    assert base_reading.zoom == BASE_TIER
+    assert detail_reading.zoom == DETAIL_TIER
+
+
+def test_a_reading_names_the_tier_that_answered_not_the_zoom_that_asked(tmp_path: Path) -> None:
+    """z11 is served the z9 rung, and the reading says so rather than letting the caller assume z11."""
+    row = weather_observation_row(43.6150, -116.2023, external_id="a")
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_partition(
+        _table_from_rows([row]),
+        layer=WEATHER_OBSERVATIONS_STREAM,
+        kind="observed",
+        zoom=DETAIL_TIER,
+        day=AUGUST_SIXTH,
+    )
+    _materialize(backend, tmp_path)
+
+    reading = read_weather_observations_day(
+        root=tmp_path.resolve().as_posix(), requested_zoom=UNPUBLISHED_ZOOM, day=AUGUST_SIXTH
+    )
+
+    assert reading.zoom == DETAIL_TIER
+    assert reading.frame.height == 1
 
 
 # --- pipeline/validation/weather_observations.py: what can and cannot be reconciled --------------

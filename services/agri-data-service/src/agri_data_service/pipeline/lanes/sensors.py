@@ -13,6 +13,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.sensors import SENSORS_SCHEMA, SENSORS_STREAM
 
 if TYPE_CHECKING:
@@ -79,4 +80,4 @@ async def export_sensors_day(
     accident.
     """
     table = await read_sensors_day(session, day=day, station_ids=station_ids)
-    return store.write_partition(table, layer=SENSORS_STREAM, kind="observed", day=day)
+    return store.write_partition(table, layer=SENSORS_STREAM, kind="observed", zoom=LANE_BASE_ZOOM_TIER, day=day)

@@ -6,6 +6,13 @@ Layer L3 pipeline: may import `foundation` and `warehouse`; may NOT import `meth
 See `conductor/code_styleguides/layer-lanes.md` section 4 and `docs/lanes/vegetation.md` sections
 5.1-5.3 and 6 for the sparse/cloud-gated grain and the known release-duplication defect this module
 must surface rather than be fooled by.
+
+THE TIER IS PINNED, NOT A PARAMETER. `written_partition_keys` is whatever the caller listed, and
+this module decides which of those keys count: only the rung the exporter actually writes. That
+matters even though the caller supplies the keys -- a caller that listed generously would otherwise
+have a derived coarse rung silently answer "the base export ran for this day", and on a lane whose
+genuine absences are cloud-gated and frequent, a false "covered" is indistinguishable from the
+sparsity the module exists to respect.
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.foundation.parquet.paths import missing_partition_days
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 
 if TYPE_CHECKING:
@@ -26,7 +34,13 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
+
 _SOURCE_RECONCILIATION_SQL: Final = text(load_query_sql("pipeline/vegetation_source_reconciliation.sql"))
+
+# The rung the lane's own export lands on: the most detailed one, the one nothing generalised.
+# Derived from the ladder so adding a rung above cannot leave this validator checking a stale tier.
+WRITTEN_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 
 # Mirrors `pipeline/lanes/vegetation.py`'s own `CELL_BATCH_SIZE`: the same array-parameter and
 # result-set bound, not a freshly invented number.
@@ -123,6 +137,7 @@ def reconcile_against_source(
     days_without_a_written_partition = missing_partition_days(
         layer=VEGETATION_PLANE_STREAM,
         kind="observed",
+        zoom=WRITTEN_ZOOM_TIER,
         first_day=first_day,
         last_day=last_day,
         keys=written_partition_keys,

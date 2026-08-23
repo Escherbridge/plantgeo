@@ -17,6 +17,12 @@ actually reported (`warehouse/schemas/sensors.py`). This module never pivots to 
 never fabricates the twelve-or-so measurement names a given row does not carry -- a station that
 reported 3 of 16 fields on a day contributes exactly 3 rows, and a caller asking for a measurement
 name a station never reported gets zero rows for it, never a null standing in for "not reported".
+
+`zoom` is a partition on the same terms as `kind`, and BOTH halves of every read name the same tier:
+the coverage listing and the row glob. Scoping only one of them is the trap -- a listing over the
+whole ladder reports a day covered because SOME rung holds it, while the glob under a single rung
+returns nothing for it, so `data_days` and the frame disagree and the tall grain hides it. Scoping
+only the listing is worse: coverage says one day, and the frame quietly carries four copies of it.
 """
 
 from __future__ import annotations
@@ -27,13 +33,15 @@ from typing import TYPE_CHECKING, Final
 
 import polars as pl
 
-from agri_data_service.foundation.parquet.paths import MONTHS_PER_YEAR, partition_day_statuses, stream_prefix
+from agri_data_service.foundation.parquet.paths import MONTHS_PER_YEAR, partition_day_statuses, zoom_prefix
+from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.warehouse.schemas.sensors import SENSORS_SCHEMA, SENSORS_STREAM
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from agri_data_service.foundation.parquet.paths import PartitionDayStatus, PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 # A serving read stays bounded even if a caller forgets to narrow it: one year plus margin
@@ -47,9 +55,14 @@ class SensorsPlaneError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class SensorsPlaneCoverage:
-    """Per-day partition status for one requested window of exactly one kind."""
+    """Per-day partition status for one requested window of exactly one kind at exactly one tier.
+
+    `zoom` is part of the claim, not decoration: "2026-08-06 is missing" is only true OF A TIER, and
+    a coverage record that does not say which one invites a caller to read it as a lane-wide gap.
+    """
 
     kind: PartitionKind
+    zoom: ZoomTier
     first_day: date
     last_day: date
     statuses: Mapping[date, PartitionDayStatus]
@@ -77,9 +90,10 @@ class SensorsPlaneCoverage:
 
 @dataclass(frozen=True, slots=True)
 class SensorsPlaneResult:
-    """One kind-scoped serving read: its coverage evidence plus the rows it could actually answer."""
+    """One kind- and tier-scoped serving read: its coverage evidence plus the rows it could actually answer."""
 
     kind: PartitionKind
+    zoom: ZoomTier
     coverage: SensorsPlaneCoverage
     readings: pl.DataFrame
 
@@ -110,18 +124,20 @@ def sensors_plane_coverage(
     store: ObjectStore,
     *,
     kind: PartitionKind,
+    requested_zoom: int,
     first_day: date,
     last_day: date,
 ) -> SensorsPlaneCoverage:
-    """Classify every day in [first_day, last_day] for one kind by LISTING objects, never scanning them."""
+    """Classify every day in [first_day, last_day] for one kind at one tier by LISTING objects, never scanning."""
     _validate_window(first_day, last_day)
+    zoom = serving_zoom_tier(requested_zoom)
     keys: list[str] = []
     for year, month in _year_months(first_day, last_day):
-        keys.extend(store.list_partition_keys(SENSORS_STREAM, kind, year=year, month=month))
+        keys.extend(store.list_partition_keys(SENSORS_STREAM, kind, zoom, year=year, month=month))
     statuses = partition_day_statuses(
-        layer=SENSORS_STREAM, kind=kind, first_day=first_day, last_day=last_day, keys=keys
+        layer=SENSORS_STREAM, kind=kind, zoom=zoom, first_day=first_day, last_day=last_day, keys=keys
     )
-    return SensorsPlaneCoverage(kind=kind, first_day=first_day, last_day=last_day, statuses=statuses)
+    return SensorsPlaneCoverage(kind=kind, zoom=zoom, first_day=first_day, last_day=last_day, statuses=statuses)
 
 
 def _empty_readings_frame() -> pl.DataFrame:
@@ -131,8 +147,9 @@ def _empty_readings_frame() -> pl.DataFrame:
     return frame
 
 
-def _sensors_glob(bucket_root: str, store: ObjectStore, kind: PartitionKind) -> str:
-    return f"{bucket_root.rstrip('/')}/{store.key_for(stream_prefix(SENSORS_STREAM, kind))}**/*.parquet"
+def _sensors_glob(bucket_root: str, store: ObjectStore, kind: PartitionKind, zoom: ZoomTier) -> str:
+    """Return the glob covering ONE tier of one kind, the same tier the coverage listing walked."""
+    return f"{bucket_root.rstrip('/')}/{store.key_for(zoom_prefix(SENSORS_STREAM, kind, zoom))}**/*.parquet"
 
 
 def read_sensors_readings(  # noqa: PLR0913
@@ -141,12 +158,13 @@ def read_sensors_readings(  # noqa: PLR0913
     bucket_root: str,
     storage_options: Mapping[str, str],
     kind: PartitionKind,
+    requested_zoom: int,
     first_day: date,
     last_day: date,
     sensor_ids: Sequence[str] | None = None,
     measurement_names: Sequence[str] | None = None,
 ) -> SensorsPlaneResult:
-    """Read one kind's readings over one bounded window: list for coverage, then a Hive-pruned scan.
+    """Read one kind's readings at one tier over one bounded window: list for coverage, then a Hive-pruned scan.
 
     `bucket_root` is the bucket-and-prefix URI a Parquet path lives under (e.g.
     `s3://plantgeo-warehouse` in production, using `store.prefix` beneath it; a local directory
@@ -161,11 +179,15 @@ def read_sensors_readings(  # noqa: PLR0913
     (no writer exists for this lane as of this module) answers honestly rather than raising on a
     glob that matches zero files.
     """
-    coverage = sensors_plane_coverage(store, kind=kind, first_day=first_day, last_day=last_day)
+    coverage = sensors_plane_coverage(
+        store, kind=kind, requested_zoom=requested_zoom, first_day=first_day, last_day=last_day
+    )
+    # `coverage.zoom` rather than a second resolve: the glob must read the very tier the listing
+    # censused, or `data_days` describes one rung and `readings` another.
     if not coverage.data_days:
-        return SensorsPlaneResult(kind=kind, coverage=coverage, readings=_empty_readings_frame())
+        return SensorsPlaneResult(kind=kind, zoom=coverage.zoom, coverage=coverage, readings=_empty_readings_frame())
 
-    glob = _sensors_glob(bucket_root, store, kind)
+    glob = _sensors_glob(bucket_root, store, kind, coverage.zoom)
     lazy = pl.scan_parquet(glob, storage_options=dict(storage_options), hive_partitioning=False)
     lazy = lazy.filter(pl.col("observed_day").is_between(first_day, last_day, closed="both"))
     if sensor_ids is not None:
@@ -177,6 +199,7 @@ def read_sensors_readings(  # noqa: PLR0913
     missing_columns = set(SENSORS_SCHEMA.column_names) - set(readings.columns)
     if missing_columns:
         raise SensorsPlaneError(
-            f"sensors {kind} Parquet is missing columns the registered schema requires: {sorted(missing_columns)}"
+            f"sensors {kind} z{coverage.zoom} Parquet is missing columns the registered schema "
+            f"requires: {sorted(missing_columns)}"
         )
-    return SensorsPlaneResult(kind=kind, coverage=coverage, readings=readings)
+    return SensorsPlaneResult(kind=kind, zoom=coverage.zoom, coverage=coverage, readings=readings)

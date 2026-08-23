@@ -20,6 +20,7 @@ import pytest
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.fire_detections import (
     FireDetectionsExportError,
     export_fire_detections_day,
@@ -142,7 +143,7 @@ async def test_the_export_lands_at_the_observed_partition_sorted_to_the_grain() 
 
     expected_rows = 2
     assert isinstance(receipt, ParquetWriteReceipt)
-    assert receipt.key == partition_path(FIRE_DETECTIONS_STREAM, "observed", AUGUST_SIXTH)
+    assert receipt.key == partition_path(FIRE_DETECTIONS_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH)
     assert receipt.kind == "observed"
     assert receipt.row_count == expected_rows
 
@@ -169,7 +170,7 @@ async def test_a_zero_row_day_is_recorded_as_a_governed_absence_not_a_silent_zer
         now=recorded_at,
     )
 
-    expected_key = absence_marker_path(FIRE_DETECTIONS_STREAM, "observed", AUGUST_SIXTH)
+    expected_key = absence_marker_path(FIRE_DETECTIONS_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH)
     assert receipt.key == expected_key
     assert list(backend.objects) == [expected_key]
     absence = GovernedAbsence.from_json_bytes(backend.objects[expected_key])

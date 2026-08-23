@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from agri_data_service.foundation.parquet.paths import partition_path
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.vegetation import (
     CELL_BATCH_SIZE,
     VegetationExportError,
@@ -112,6 +113,6 @@ async def test_the_export_lands_at_the_observed_partition_sorted_to_the_grain() 
 
     receipt = await export_vegetation_day(session, store, day=AUGUST_SIXTH, cell_ids=cell_ids)  # type: ignore[arg-type]
 
-    assert receipt.key == partition_path(VEGETATION_PLANE_STREAM, "observed", AUGUST_SIXTH)
+    assert receipt.key == partition_path(VEGETATION_PLANE_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH)
     assert receipt.kind == "observed"
     assert receipt.row_count == len(cell_ids)

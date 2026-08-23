@@ -39,6 +39,7 @@ from agri_data_service.foundation.parquet.lane_contract import (
     validate_lane_nature,
 )
 from agri_data_service.foundation.parquet.paths import validate_layer_slug
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.burn_severity import export_burn_severity_release_day
 from agri_data_service.pipeline.lanes.calendar import export_calendar_version
 from agri_data_service.pipeline.lanes.drought import export_drought_release
@@ -47,7 +48,7 @@ from agri_data_service.pipeline.lanes.fire_detections import export_fire_detecti
 from agri_data_service.pipeline.lanes.fire_perimeters import export_fire_perimeters_day
 from agri_data_service.pipeline.lanes.sensors import export_sensors_day
 from agri_data_service.pipeline.lanes.signal import export_signal_day
-from agri_data_service.pipeline.lanes.soil_survey import export_soil_survey_release
+from agri_data_service.pipeline.lanes.soil_survey import POLYGON_KEY_BATCH_SIZE, export_soil_survey_release
 from agri_data_service.pipeline.lanes.vegetation import export_vegetation_day
 from agri_data_service.pipeline.lanes.water_gauges import export_water_gauges_day
 from agri_data_service.pipeline.lanes.watersheds import export_watersheds_release
@@ -71,7 +72,7 @@ from agri_data_service.warehouse.schemas.watersheds import WATERSHEDS_STREAM
 from agri_data_service.warehouse.schemas.weather_observations import WEATHER_OBSERVATIONS_STREAM
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.elements import TextClause
@@ -88,12 +89,6 @@ _SOIL_SURVEY_POLYGON_KEYS_SQL: Final = text(load_query_sql("pipeline/lane_regist
 _WATERSHEDS_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark_watersheds.sql"))
 _EVACUATION_ZONES_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark_evacuation_zones.sql"))
 _SOIL_SURVEY_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark_soil_survey.sql"))
-
-# 200,000 keys is 400 parts at soil_survey.ROWS_PER_PART, and at the 17.3 KB/row that RUNBOOK
-# section 0.26.6 measured for the comparable watersheds geometry lane that is roughly 3.5 GB for one
-# release day -- already far past what one cron tick can write. The ceiling is therefore a refusal
-# to attempt something absurd, not a claim about how many delineations SSURGO holds.
-MAX_SOIL_SURVEY_POLYGON_KEYS: Final = 200_000
 
 
 class LaneRegistryError(RuntimeError):
@@ -281,17 +276,39 @@ async def _sensor_station_ids(session: AsyncSession, *, day: date) -> tuple[str,
     return tuple(_coerce_text(row["station_id"], column="sensors.sensor_id") for row in result.mappings())
 
 
-async def _soil_survey_polygon_keys(session: AsyncSession) -> tuple[str, ...]:
-    """Read the published SSURGO delineation keys, refusing a result that hit the query's ceiling."""
-    result = await session.execute(_SOIL_SURVEY_POLYGON_KEYS_SQL, {"key_ceiling": MAX_SOIL_SURVEY_POLYGON_KEYS + 1})
-    keys = tuple(_coerce_text(row["mupolygonkey"], column="soil-survey.mupolygonkey") for row in result.mappings())
-    if len(keys) > MAX_SOIL_SURVEY_POLYGON_KEYS:
-        raise LaneRegistryError(
-            f"soil-survey holds more than {MAX_SOIL_SURVEY_POLYGON_KEYS} published delineations; exporting a "
-            "truncated key list would write a partial release that reads back as a complete one. Raise "
-            "MAX_SOIL_SURVEY_POLYGON_KEYS deliberately, or shard the release, before running this lane."
+async def _soil_survey_polygon_key_batches(session: AsyncSession) -> AsyncIterator[tuple[str, ...]]:
+    """Walk the published SSURGO delineation keys one keyset page at a time, never as one list.
+
+    THE POPULATION IS THE REASON, AND IT IS MEASURED. The PNW envelope holds 1,507,623 delineations
+    (docs/lanes/soil-survey.md section 5 point 8) and production passed 200,000 on 2026-08-23 -- so
+    the ceiling that used to guard a single read-everything query was not protecting this lane, it
+    was failing it on every tick, which is why soil-survey has never written one object. A page is
+    `POLYGON_KEY_BATCH_SIZE` keys, the same bound the export's own row read uses, so one page is one
+    round trip on each side.
+
+    Paging by the LAST KEY rather than by OFFSET is what keeps the walk bounded: an offset walk
+    re-sorts the whole distinct set for every page, and page N costs N times page 1.
+    """
+    after_key = ""
+    while True:
+        result = await session.execute(
+            _SOIL_SURVEY_POLYGON_KEYS_SQL, {"after_key": after_key, "page_size": POLYGON_KEY_BATCH_SIZE}
         )
-    return keys
+        page = tuple(_coerce_text(row["mupolygonkey"], column="soil-survey.mupolygonkey") for row in result.mappings())
+        if not page:
+            return
+        yield page
+        after_key = page[-1]
+
+
+async def _batches_after(
+    first: tuple[str, ...],
+    rest: AsyncIterator[tuple[str, ...]],
+) -> AsyncIterator[tuple[str, ...]]:
+    """Re-attach the page already pulled to prove a release is not empty, so no page is read twice."""
+    yield first
+    async for page in rest:
+        yield page
 
 
 # --- Source watermarks: the clock a static lane keys to ----------------------------------------
@@ -428,11 +445,16 @@ async def _calendar_watermark(
     It carries NO instant, and cannot: a computed requirement has no source change time to compare
     an export against. That is the honest unknown-instant case, and `resolve_static_lane` settles it
     at day resolution while saying in its detail that the answer is day-resolution.
+
+    The listing names `LANE_BASE_ZOOM_TIER` because that is the rung `pipeline/lanes/calendar.py`
+    actually writes. A tier-less question does not exist here: versions held at a derived tier would
+    say the dimension is current when the tier the lane writes was never carried forward.
     """
     newest = newest_covered_day(
         layer=CALENDAR_STREAM,
         kind="observed",
-        keys=store.list_partition_keys(CALENDAR_STREAM, "observed"),
+        zoom=LANE_BASE_ZOOM_TIER,
+        keys=store.list_partition_keys(CALENDAR_STREAM, "observed", LANE_BASE_ZOOM_TIER),
     )
     required = required_calendar_version_day(today=today, newest_version_day=newest)
     return SourceWatermark(
@@ -611,14 +633,23 @@ async def _fill_soil_survey(
     day: date,
     run_id: str,  # noqa: ARG001 - uniform adapter shape; the driver records this lane's absences
 ) -> LaneRunResult:
-    """Export every published SSURGO delineation under `day`, its source watermark's vintage date."""
-    mupolygonkeys = await _soil_survey_polygon_keys(session)
-    if not mupolygonkeys:
-        # Soil-survey is warmed lazily by viewport reads (docs/lanes/soil-survey.md section 2), so
-        # "nothing published yet" is a real, honest empty state rather than a broken lane.
+    """Stream every published SSURGO delineation under `day`, its source watermark's vintage date.
+
+    The first key page is pulled HERE rather than inside the export, because an empty first page is
+    the one answer the streaming export cannot phrase for itself: it would reach `write_partition`
+    with a zero-row table and surface the writer's generic refusal, losing the fact that this lane's
+    emptiness is a KNOWN, honest state -- soil-survey is warmed lazily by viewport reads
+    (docs/lanes/soil-survey.md section 2). The page is handed straight back to the export, so
+    proving the release non-empty costs no second query.
+    """
+    batches = _soil_survey_polygon_key_batches(session)
+    first_batch = await anext(batches, None)
+    if first_batch is None:
         raise _refuse_empty_day(SOIL_SURVEY_STREAM, day=day, subject="published SSURGO delineation")
     return normalise_export_outcome(
-        await export_soil_survey_release(session, store, day=day, mupolygonkeys=mupolygonkeys)
+        await export_soil_survey_release(
+            session, store, day=day, mupolygonkey_batches=_batches_after(first_batch, batches)
+        )
     )
 
 
