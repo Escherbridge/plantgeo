@@ -3841,6 +3841,59 @@ cadence, horizon, historical depth, or known-gaps list. The lane was built from 
 gap stated rather than an invented contract. **Write that half of the contract before the lane is
 scheduled**, or its history horizon and gap detection have nothing to check against.
 
+### 0.34 OWNER DECISIONS 2026-08-23 (session 6 close) — completeness, and one pass not two
+
+Two decisions taken at handoff. They change §0.33.3's ordering, so read this before acting on it.
+
+#### 0.34.1 Fix the half-written-release hazard across ALL LANES, and audit for missing ones
+
+The owner's instruction was **"fix and complete all lanes, check if new ones need to be added and
+wired in"** — deliberately wider than the soil-survey patch that surfaced it. §0.33.2 hazard 2 is
+pre-existing for **every multi-part lane** (watersheds, drought, evacuation-zones, burn-severity,
+calendar, fire-perimeters, soil-survey); streaming only raised soil-survey's exposure from ~10 parts
+to ~3,016. So the fix is per-mechanism, not per-lane.
+
+**MECHANISM CHOSEN: the per-day completion marker, written LAST and required by the census.** The
+cheaper `resolve_static_lane` rule was on the table and is REJECTED, on evidence gathered this same
+session:
+
+> The contract rule only fires when a failure was actually *recorded* as `raised`. **A container
+> replaced mid-write records nothing.** That is not hypothetical here — a push at 19:30Z on
+> 2026-08-23 deployed over the running 18:04Z tick and killed it roughly one minute before its
+> parquet phase. Deploys replacing a mid-tick container is the NORMAL case in this environment, and
+> a fix blind to it is not a fix.
+
+**COST, stated plainly: this adds a THIRD object kind** to a layout `paths.py` has deliberately held
+at exactly two, and every "exactly two kinds" assertion in the codebase becomes false. That is a real
+regression in a constraint that has caught bugs. It is accepted because a day that cannot say whether
+it finished is worse than a layout with three kinds. If a later reader wants to reverse it, the
+alternative is the `resolve_static_lane` rule and its known blind spot — do not reverse it without
+solving the kill-mid-write case some other way.
+
+**Also in scope, per "check if new ones need to be added":** `soil-field` is the KNOWN missing lane
+(§0.32.5 — zoom-tiered, `agri.spatial_cell`, no lane at all). Audit the rest rather than assuming it
+is the only one: every plane, every producer, and every `geo.layers` row should map to a lane or have
+a recorded reason it does not.
+
+#### 0.34.2 FUSE the drain and the tier derivation — one pass, not two
+
+§0.33.3 listed A (tier derivation) and B (bulk drain) as independent. **They are now ONE slice.**
+Each drained day writes its base z13 tier and immediately derives z9/z5/z0 from what is already in
+memory.
+
+Why: the drain walks 13,037 lane-days once; a separate derivation walks all of them again, re-reading
+every object it just wrote. Fusing also means the warehouse is **never in a state where the base tier
+exists and the coarse tiers do not** — which is exactly the state §0.33.2 hazard 1 describes, where
+the map looks empty above z13.
+
+Cost accepted: a derivation bug now fails the drain too, and two pieces that would each be simpler
+alone are coupled. Mitigate by keeping the derivation function pure and independently tested — the
+fusion belongs in the driver, not in the transform.
+
+**Ordering is unchanged and still matters: build → run → THEN stop the cron.** Stopping it first
+freezes the warehouse with nothing replacing it.
+
+
 ### 0.33 STATE AT END OF SESSION 6 — the zoom axis shipped; what remains, in order
 
 **HEAD `68da7af`, PUSHED, gate-green.** Four commits landed today. §0.32 holds the decisions, §0.31
