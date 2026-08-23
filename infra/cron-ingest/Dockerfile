@@ -65,10 +65,25 @@ USER plantgeo
 # code is the run's verdict. restartPolicyType NEVER plus the hourly schedule is now the
 # concurrency guard that the deleted in-memory `ingestionInFlight` flag used to be.
 #
-# Both verbs run unconditionally and the exit code is their AND -- deliberately not `&&`.
-# `&&` would skip the pulse whenever any single ingestion source failed, which is exactly
+# All THREE verbs run unconditionally and the exit code is their AND -- deliberately not `&&`.
+# `&&` would skip the later verbs whenever any single ingestion source failed, which is exactly
 # backwards: the durable archive lanes and the dispatchable lanes have nothing to do with
 # whether FIRMS answered, and starving them for an hour over an unrelated upstream outage
 # is how a backfill silently stops advancing. So each verb gets its turn, each verdict is
-# captured, and the run is green only if both were.
-ENTRYPOINT ["/bin/sh", "-c", "agri-cli ingest-all; ingest_status=$?; agri-cli jobs-pulse --time-budget-seconds 600; pulse_status=$?; [ $ingest_status -eq 0 ] && [ $pulse_status -eq 0 ]"]
+# captured, and the run is green only if all were.
+#
+# `parquet-gap-fill` (added 2026-08-22) is the Parquet warehouse's ONLY writer, and it is both the
+# incremental load and the historical backfill -- not two jobs. Each lane declares a history floor
+# and a publication lag; the window is [floor, today - lag]; gap detection over that window returns
+# missing days NEWEST-FIRST, so a newly published day is simply the newest gap. The driver walks
+# lanes round-robin, one day per lane per round, because sequential order would let
+# fire-detections' ~9,400-day window consume the whole tick before signal wrote anything.
+#
+# 900s, and the three budgets are sized to fit inside the hourly schedule with restartPolicyType
+# NEVER as the concurrency guard. A partially drained backlog is the EXPECTED steady state, not a
+# failure: at ~15,000 missing days across twelve streams this converges over many ticks, and the
+# verb exits zero while a backlog remains. It exits non-zero only on real failure.
+#
+# It needs the six OBJECT_STORE_* variables, already set on this service (RUNBOOK section 0.26.2).
+# A tick with object storage unconfigured fails closed, naming every variable still missing.
+ENTRYPOINT ["/bin/sh", "-c", "agri-cli ingest-all; ingest_status=$?; agri-cli jobs-pulse --time-budget-seconds 600; pulse_status=$?; agri-cli parquet-gap-fill --time-budget-seconds 900; parquet_status=$?; [ $ingest_status -eq 0 ] && [ $pulse_status -eq 0 ] && [ $parquet_status -eq 0 ]"]
