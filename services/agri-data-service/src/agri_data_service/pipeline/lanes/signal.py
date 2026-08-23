@@ -17,6 +17,7 @@ from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_SCHEMA, SIGN
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import date
+    from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,7 +41,7 @@ async def read_signal_day(
     session: AsyncSession,
     *,
     day: date,
-    cell_ids: Sequence[int],
+    cell_ids: Sequence[UUID],
 ) -> pa.Table:
     """Return one day of the governed signal plane for `cell_ids`, at the exported grain.
 
@@ -68,7 +69,7 @@ async def export_signal_day(
     store: ObjectStore,
     *,
     day: date,
-    cell_ids: Sequence[int],
+    cell_ids: Sequence[UUID],
 ) -> ParquetWriteReceipt:
     """Export one settled day of the signal plane to its `kind=observed` partition.
 
