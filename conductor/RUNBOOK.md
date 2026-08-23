@@ -3841,6 +3841,117 @@ cadence, horizon, historical depth, or known-gaps list. The lane was built from 
 gap stated rather than an invented contract. **Write that half of the contract before the lane is
 scheduled**, or its history horizon and gap detection have nothing to check against.
 
+### 0.32 OWNER DECISIONS 2026-08-23 (sixth session, late) — the zoom axis, and Postgres becomes a cut-off
+
+**HEAD `3b7ecfb`, PUSHED, gate-green.** This section is decisions; §0.31 is the measurements they
+rest on. Read §0.31 first — several of these decisions exist because a measurement refuted a belief.
+
+#### 0.32.1 THE FORWARD PATH — Postgres is a one-time cut-off, not a source
+
+| # | decision | consequence |
+|---|---|---|
+| 1 | **Upstream API → Parquet directly** | Every lane's forward path writes Parquet straight from its upstream API. The Postgres exporters become BACKFILL-ONLY — they are the drain tool, not the pipeline |
+| 2 | **Stop the cron; bulk-drain Postgres → Parquet; then the API takes over** | The 13,037 remaining lane-days are data ALREADY in Postgres. Draining them through a 600 s budget behind an 86-minute `ingest-all`, one day per lane per round, is absurd when it can be one focused job |
+| 3 | **Each lane deprecates its Postgres source once its drain completes** | Per-lane, not big-bang. A lane is done when its history is in Parquet and its forward writer is API-direct |
+
+**Do not stop the cron until the drain exists.** Stopping it now freezes the warehouse with nothing
+replacing it. Order: build drain → run drain → then stop cron.
+
+#### 0.32.2 THE ZOOM AXIS — four decisions taken together
+
+| # | decision | consequence |
+|---|---|---|
+| 1 | **`zoom=` becomes a partition key, ABOVE `year=`** | `layer=X/kind=observed/zoom=Z/year=/month=/day=/part-N.parquet`. Polars/DuckDB prune a whole tier by directory before reading a byte; routing becomes a path template, not a scan |
+| 2 | **Tiers derived in Polars/DuckDB FROM THE BASE PARQUET** | The only option consistent with 0.32.1. `geo.mv_soil_survey_grid`, `geo.watershed_rollup` and the soil-field lattice stay where they are and are NOT the source |
+| 3 | **ONE uniform ladder for every layer** — z0 / z5 / z9 / z13 | One routing rule, one census shape, and a new layer inherits it free. Watersheds' HUC12/10/8/6/4 is mapped ONTO the ladder, not kept native |
+| 4 | **Chunked streaming export; `MAX_SOIL_SURVEY_POLYGON_KEYS` DELETED** | Most granular data possible — all delineations — PLUS every zoom tier. Bounded batches to `part-0..part-N` keep memory flat, so the lane scales to the full 1,507,623-delineation PNW universe |
+
+**Zoom is REQUIRED on every path call, never defaulted.** A default silently files everything under
+one tier and the mistake stays invisible until serving.
+
+#### 0.32.3 What these supersede — three things a later reader must not restore
+
+1. **§0.30.3's "do not change the partition path layout" freeze is RETIRED for the zoom axis.** That
+   rule correctly governed the sub-day fix, which had no business touching the layout. This does.
+   **The DAY remains the version stamp**; zoom is ORTHOGONAL, not a second version.
+2. **The soil-survey cap decision in §0.31.1 is void.** There is no cap, and "raise it to N" was
+   also rejected. Granularity is the goal, not a tolerated cost.
+3. **The zoom-bloat hypothesis is REFUTED — do not re-adopt it.** `geo.features` carries no
+   zoom/LOD/generalization column anywhere; every existing tier lives in a SEPARATE matview. The
+   SSURGO insert (`usda-soil.ts:916-928`) is a strict upsert on `properties->>'id' = polygonKey`, so
+   the 238,986 rows are 238,986 real delineations — one per delineation, never one per zoom. The
+   cap's own comment already said as much: *"a refusal to attempt something absurd, not a claim about
+   how many delineations SSURGO holds"* (`lane_registry.py:92-96`).
+
+#### 0.32.4 Migration — the existing 2,274 objects are DISCARDED, not migrated
+
+Every object in the bucket sits at the pre-zoom layout. Because the bulk drain rewrites everything
+from Postgres anyway, **the drain writes the new layout directly and the old objects are deleted.**
+Do not write a path-rewriting migration, and do not add a backward-compatible parse — a path without
+`zoom=` must fail to parse cleanly. A compatibility shim here would outlive its purpose and quietly
+admit un-zoomed writes forever.
+
+#### 0.32.5 `soil-field` HAS NO LANE — the gap the zoom research surfaced
+
+The zoom-tiered WEATHER aggregation is not soil-survey; it is **`soil-field`** (soil moisture / VPD).
+`SOIL_FIELD_TIERS` detail z9 / regional z7, Gaussian-kernel lattice, backed by `agri.spatial_cell`
+via `geo.soil_field_observation` — it never touches `geo.features`. **None of the twelve lanes covers
+it**, and `signal_plane_day_export.sql` exports `cell_id` with NO cell geometry. It needs a lane.
+
+#### 0.32.6 Window parity — MEASURED, and essentially already correct
+
+Measured against production 2026-08-23:
+
+| layer | earliest published day | declared floor | verdict |
+|---|---|---|---|
+| fire-perimeters | 2025-07-28 | 2025-07-28 | exact |
+| weather-observations | 2026-08-03 | 2026-08-01 | 2 phantom days, immaterial |
+
+**`fire-detections`' 2000-11-02 floor is REAL** — it matches FIRMS' own `MODIS_SP` archive floor
+(2000-11-01), corroborated across 3.0M+ rows. Its ~9,000-day share of the drain is genuine work, NOT
+a phantom-floor artefact. An earlier guess in this session that window parity would cut the drain by
+two-thirds was WRONG and is retracted.
+
+**`weather-observations` holds only 21 days in Postgres (2026-08-03 → today, 34,819 rows).** There is
+no deeper weather history to drain. Years of it must come from the Open-Meteo historical API writing
+Parquet directly — decision 0.32.1 arriving on its own evidence.
+
+#### 0.32.7 New lanes approved for this push
+
+All three: **Open-Meteo ensemble + flood/GloFAS + CAMS** (built 2026-08-06, persist-blocked; closes
+`upstream_dataset_expansion_20260806`), the **fire-risk cell-day feature plane** (feature plane only —
+training stays blocked on Mojo), and **Open-Meteo forward+historical for the existing weather lanes**
+(the only way to deepen weather-observations past 21 days, per §0.32.6).
+
+#### 0.32.8 `3b7ecfb` — the orphan-part blocker, found by review and fixed
+
+`ceeb2c9` shipped the sub-day fix and was live in production carrying a blocker that four adversarial
+reviewers found, two of them converging on it independently.
+
+A shrinking same-day re-export left orphans: day D exports as `part-0..part-3`; the source changes;
+the re-export writes only `part-0` and `part-1`; the older two remain. **Two failures at once** — the
+orphans are read by anything scanning the day prefix, so evacuation-zones would serve a RETRACTED
+evacuation level beside the current one; and `oldest_export_instant` is a `min()` across the day, so
+it reads the ORPHAN's timestamp, pins the lane below its watermark, and re-exports every tick forever.
+
+`prune_surplus_parts` (`objectstore.py:360`) closes it: **write every new part first, then** remove
+`part-<n>` for n >= the count just written, scoped to one layer/kind/day. Never the reverse — a
+prune-then-write that fails midway leaves the day EMPTY, which reads as present-but-thin and is worse
+than the orphan. A prune failure is REPORTED, never raised: the rows are written and correct.
+
+Also closed: the PUT-vs-SELECT race (the export instant is upload-completion time, so a source change
+inside the export window read as captured). The driver now re-reads the watermark after the export
+and re-exports when it moved, bounded by `MAX_STATIC_EXPORT_ATTEMPTS`, and reports UNPROVEN when it
+cannot show the window was clean.
+
+**The blocker was caused by the orchestrator's brief**, which told the agent to use the OLDEST
+LastModified as "conservative" AND separately to note-but-not-fix the surplus-part problem. Those two
+instructions combine into the defect. Recorded because the lesson is about briefs, not agents.
+
+Gate: **3,747 passed / 3 skipped**, ruff clean, 421 files formatted, mypy at the 2 pre-existing
+`matview_refresh` errors. Parquet suite 474 → 491.
+
+
 ### 0.31 SESSION 6, 2026-08-23 — the sub-day fix landed, and soil-survey is not what §0.29.1 says
 
 **HEAD `deba827` (UNPUSHED — `origin/main` is `ef789f7`).** s1's sub-day version fix is in the

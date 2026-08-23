@@ -120,3 +120,52 @@ becomes a sharding parameter instead of a refusal.
   one.
 - **`ObjectStore.write_partition` still refuses a zero-row write and still refuses to overwrite a
   governed absence.** Provisioning is not exempt from those guarantees.
+
+## Owner decisions 2026-08-23 (sixth session, second round) — the zoom axis
+
+Four decisions, taken together. They deliberately RETIRE §0.30.3's "do not change the partition
+path layout" freeze — that rule governed the sub-day fix, which had no business changing the layout;
+this does.
+
+| # | decision | consequence |
+|---|---|---|
+| 1 | **`zoom=` becomes a partition key**, above `year=` | `layer=X/kind=observed/zoom=Z/year=/month=/day=/part-N.parquet`. Polars/DuckDB prune a whole zoom level by directory before reading a byte, and routing becomes a path template rather than a scan |
+| 2 | **Tiers are derived in Polars/DuckDB from the base Parquet**, never from Postgres | The only choice consistent with "the API loads incrementals". `geo.mv_soil_survey_grid`, `geo.watershed_rollup` and the soil-field Gaussian lattice stay where they are and are NOT the source |
+| 3 | **One uniform zoom ladder for every layer** | One routing rule, one census shape, and a new layer inherits the ladder free. Watersheds' HUC12/10/8/6/4 hierarchy must be mapped onto it rather than kept native |
+| 4 | **Chunked streaming export, and `MAX_SOIL_SURVEY_POLYGON_KEYS` is DELETED** | Most granular data possible, all delineations, plus every zoom tier. Memory stays flat via bounded batches to `part-0..part-N`, so the lane scales to the full 1,507,623-delineation PNW universe. The cap was a write-batch guard, never a bloat claim |
+
+### What this supersedes
+
+- **§0.30.3's layout freeze** — retired deliberately, by owner decision, for the zoom axis only. The
+  DAY remains the version stamp; zoom is an orthogonal axis, not a second version.
+- **The soil-survey cap decision** (§0.31.1, and the "raise to 250,000" I was about to take). There
+  is no cap. Granularity is the goal, not a tolerated cost.
+- **The zoom-bloat hypothesis is REFUTED and must not be re-adopted.** `geo.features` carries no
+  zoom/LOD column; every existing tier lives in a separate matview. The SSURGO insert
+  (`usda-soil.ts:916-928`) is a strict upsert on `properties->>'id' = polygonKey`, so the 238,986
+  rows are 238,986 real delineations, one per delineation, never one per zoom.
+
+### Migration: the existing 2,274 objects are obsolete
+
+Every object in the bucket today sits at the pre-zoom layout. Because the plan is to stop the cron
+and BULK DRAIN Postgres from scratch anyway, the drain writes the new layout directly and the old
+objects are deleted rather than migrated. Do not write a path-rewriting migration.
+
+### The gap this research surfaced, now in scope
+
+**`soil-field` (soil moisture / VPD) has NO Parquet lane at all.** It is zoom-tiered already
+(`SOIL_FIELD_TIERS`, detail z9 / regional z7, Gaussian-kernel lattice), lives in `agri.spatial_cell`
+rather than `geo.features`, and none of the twelve lanes covers it —
+`signal_plane_day_export.sql` exports `cell_id` with no cell geometry. It needs a lane.
+
+### Window parity — measured, and essentially already correct
+
+Measured against production 2026-08-23: `fire-perimeters` earliest published day is **2025-07-28**,
+exactly its declared floor; `weather-observations` is **2026-08-03** against a declared 2026-08-01
+(two phantom days, immaterial). `fire-detections`' 2000-11-02 floor is REAL — it matches FIRMS'
+`MODIS_SP` archive floor and is corroborated across 3.0M+ rows, so its ~9,000-day share of the drain
+is genuine work, not a phantom-floor artefact.
+
+**`weather-observations` holds only 21 days in Postgres (2026-08-03 → today).** There is no deeper
+weather history to drain. Years of it must come from the Open-Meteo historical API writing Parquet
+directly — which is decision 2 of §0.31.5 arriving on its own.
