@@ -1,0 +1,86 @@
+{
+  "slug": "parquet_duckdb_pivot_20260823",
+  "title": "Parquet/DuckDB pivot — the twelve-lane warehouse and its serving path",
+  "status": "active",
+  "created_on": "2026-08-23",
+  "depends_on": [],
+  "runbook_section": "0.29",
+  "note": "Chartered retroactively 2026-08-23: waves 1-3 already shipped (RUNBOOK 0.21-0.29) with no track, so the largest workstream in the repo was tracked only in prose. This records wave 4. The owner call behind it all is RUNBOOK 0.28/plantgeo-parquet-duckdb-pivot: Postgres keeps ONLY community features, every plane becomes day-partitioned Parquet on Railway storage read by DuckDB+Polars, Martin serves PMTiles. Map breakage during the transition is accepted.",
+  "shipped_before_this_track": [
+    "Twelve lanes with validation, serving and forecasters (abf777f)",
+    "Lane natures, watermark-driven static lanes, conformed calendar dimension (b794e98)",
+    "Per-kind schema lookup, unblocking the five forecasters (269d299)",
+    "Three of four adversarial-review defects (ef789f7)"
+  ],
+  "wave_4_scope": [
+    "Sub-day version fix for evacuation-zones (LIFE-SAFETY, first)",
+    "Pay down what the latch fix created: auto-retraction, census test gap, matview re-publish visibility, doc surfaces",
+    "Fire-risk feature plane (feature plane only; training blocked on Mojo)",
+    "Wire all Open-Meteo products, forward and historical"
+  ],
+  "partitions": {
+    "computed_at": "2026-08-23T09:30:00Z",
+    "computed_at_commit": "ef789f7",
+    "confidence": "planned",
+    "note": "HYPOTHESIS, not fact. Slices s1 and s2 both touch pipeline/parquet/gap_fill.py and MUST NOT run concurrently -- s2 depends_on s1. Re-verify every owns list with a real grep if HEAD has moved past ef789f7.",
+    "slices": [
+      {
+        "id": "s1",
+        "task": "Sub-day version fix: widen ObjectStoreBackend to surface LastModified, carry the watermark instant, re-export the same day when the instant advances. NO partition-layout change.",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/objectstore.py",
+          "services/agri-data-service/src/agri_data_service/foundation/parquet/lane_contract.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/gap_fill.py",
+          "services/agri-data-service/tests/parquet/test_objectstore_writer.py",
+          "services/agri-data-service/tests/parquet/test_lane_contract.py"
+        ],
+        "model": "opus",
+        "depends_on": []
+      },
+      {
+        "id": "s2",
+        "task": "Auto-retract a governed absence when the retry returns rows, and drive the absence latch through _static_lane_census in a test. Owner relaxed the manual-admin guarantee 2026-08-23.",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/foundation/parquet/absence.py",
+          "services/agri-data-service/tests/parquet/test_gap_fill.py",
+          "services/agri-data-service/tests/parquet/test_governed_absence.py"
+        ],
+        "model": "opus",
+        "depends_on": ["s1"]
+      },
+      {
+        "id": "s3",
+        "task": "Fire-risk cell-day feature plane: covariates from fire detections, burn severity, NDVI, soil moisture and seasonality. No Python model -- training is blocked on Mojo.",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/fire_risk.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/fire_risk.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/planes/fire_risk.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/parquet/test_fire_risk_lane.py", "status": "future"}
+        ],
+        "model": "opus",
+        "depends_on": []
+      },
+      {
+        "id": "s4",
+        "task": "Wire every Open-Meteo product forward and historical. Ensemble and flood modules are built but persist-blocked from the 2026-08-06 wave.",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/ingest/open_meteo.py",
+          "services/agri-data-service/src/agri_data_service/ingest/open_meteo_lane.py"
+        ],
+        "model": "sonnet",
+        "depends_on": []
+      },
+      {
+        "id": "s5",
+        "task": "Doc surfaces that contradict the code after ef789f7: offline-mode is no longer an opt-in flag.",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md",
+          "services/agri-data-service/README.md"
+        ],
+        "model": "haiku",
+        "depends_on": []
+      }
+    ]
+  }
+}

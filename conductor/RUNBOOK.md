@@ -3841,6 +3841,52 @@ cadence, horizon, historical depth, or known-gaps list. The lane was built from 
 gap stated rather than an invented contract. **Write that half of the contract before the lane is
 scheduled**, or its history horizon and gap detection have nothing to check against.
 
+### 0.30 HANDOFF 2026-08-23 — wave 4 is decided, and the pivot finally has a track
+
+**HEAD `ef789f7`, PUSHED, tree clean.** Read §0.29 next for what wave 3 actually did and what it
+left broken. This section is the decisions on top of it.
+
+#### 0.30.1 Four owner decisions, 2026-08-23 (end of fifth session)
+
+| # | decision | consequence |
+|---|---|---|
+| 1 | **Wave 4 is all four scopes**, ordered: sub-day fix → pay-down → fire-risk feature plane → Open-Meteo products | The life-safety item leads. Everything else is feature work stacked on a serving path known to be wrong |
+| 2 | **Sub-day fix = widen `ObjectStoreBackend` to surface `LastModified`.** The sidecar-object fork is REJECTED | S3 already returns it in `list_objects_v2` `Contents` and `_listed_keys` throws it away. Costs a Protocol signature and test fakes; **zero extra API calls, zero on-disk change, no third object kind** |
+| 3 | **Auto-retract a governed absence when the retry returns rows** | See the flag below — this RELAXES an existing guarantee and was not the recommended option |
+| 4 | **Charter the pivot as a real track** | `conductor/tracks/parquet_duckdb_pivot_20260823/` now exists with prebaked partitions at `ef789f7`, registered in `tracks.md`. Waves 1-3 ran with no track at all |
+
+#### 0.30.2 FLAGGED — decision 3 relaxes a guarantee, deliberately
+
+`GovernedAbsence` states that **"retracting it is a manual admin action"**. Auto-retraction removes
+that. The owner chose it over shipping a retraction verb, with the trade understood: without it a
+latched lane raises `GovernedAbsenceConflictError` **every tick forever** and nobody can clear it.
+
+**Recorded as a relaxation, not an oversight**, so a later reader does not "fix" the auto-retraction
+back into a manual gate without knowing it was chosen. The recommendation at the time was an
+explicit verb; the owner overrode it. If auto-retraction ever erases an absence that was genuinely
+correct, THIS is the decision to revisit.
+
+#### 0.30.3 The one thing wave 4 must not do
+
+**Do not change the partition path layout.** The day stays the version stamp. A static lane's export
+is a full re-export of the whole population, so overwriting day D with the newer state is exactly
+what "this version" means. An agent proposed a sidecar object and was correctly stopped; that fork
+is closed by decision 2.
+
+#### 0.30.4 Environment corrections
+
+- **`origin/main` == `ef789f7`.** The three wave-3 commits are pushed.
+- **`main` is no longer the only branch.** `codex/strategy-selection-benchmark` exists at `31ce91f`
+  ("feat: add local warehouse dev launcher"), which contradicts the standing "everything lives on
+  main, no branches" note. Unreviewed and unmerged; nobody has said what it is for.
+- **Pin `ruff` exactly.** The pin is `ruff>=0.5`, installed is `0.15.22`, and the formatter drift
+  reddened the gate's first stage across 36 files that nobody had touched. `ecb559a` swept it, but
+  nothing stops it recurring.
+- **AgentGraph `interrupt_after` is not a gate.** Every agent dispatches up front; it only stops the
+  run afterwards. A write agent placed after six reviewers ran *alongside* them and never saw their
+  findings. Sequence waves as two separate missions, not one list. The file-claim ledger works
+  correctly and protects against collision, never against ordering.
+
 ### 0.29 REVIEW + FIXES 2026-08-23 (fifth session) — b794e98 got its adversarial pass
 
 **Read this before §0.28: it CORRECTS two of §0.28's claims and records four defects §0.28 shipped
