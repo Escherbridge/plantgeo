@@ -322,6 +322,68 @@ def _innovation_pools(
     return padded, pool_sizes
 
 
+@dataclass(frozen=True, slots=True)
+class ProvenancedForecastRow:
+    """One quantile of one simulated horizon step, carrying every column layer-lanes.md section 3 requires.
+
+    `forecast_run_id` is the run's `parameter_checksum` (see `canonical_parameter_text`) -- which is
+    also the literal integer `simulate_horizon_quantiles` seeds `PCG64` with (`int(checksum, 16)`),
+    so recording it alone reproduces this row's exact draws without replaying the ~25-field
+    canonicalisation. `random_seed` is the separate, caller-declared `SimulationRequest.seed`: kept
+    for audit because it is a distinct, human-meaningful value, but it is only one of the fields
+    folded into `forecast_run_id` and does not alone reproduce a run.
+    """
+
+    forecast_run_id: str
+    random_seed: int
+    ensemble_size: int
+    horizon_days: int
+    issued_on: date
+    quantile: float
+    valid_day: date
+    metric_value: float
+    innovation_pool_size: int
+
+
+def provenanced_forecast_rows(
+    *,
+    history: SeasonalHistory,
+    quantiles: tuple[HorizonQuantiles, ...],
+    request: SimulationRequest,
+    forecast_run_id: str,
+) -> tuple[ProvenancedForecastRow, ...]:
+    """Reshape wide per-horizon p10/p50/p90 quantiles into one contract-provenanced row per quantile.
+
+    `forecast_run_id` must be the `parameter_checksum` that actually produced `quantiles` -- passing
+    a different value would let a row's recorded provenance disagree with the draws it reports.
+    Never let a forecast row inherit an observed row's provenance (layer-lanes.md section 3): every
+    field here comes from this run's own `history`/`request`, never from an `ObservedDay`. Quantiles
+    come from the ensemble (`simulate_horizon_quantiles`'s own `numpy.percentile` over simulated
+    paths), never from a distribution fitted after the fact.
+    """
+    if not forecast_run_id.strip():
+        raise ValueError("forecast_run_id must be non-blank; it is this run's sole reproducibility key")
+    return tuple(
+        ProvenancedForecastRow(
+            forecast_run_id=forecast_run_id,
+            random_seed=request.seed,
+            ensemble_size=request.simulation_count,
+            horizon_days=step.horizon_step,
+            issued_on=history.cutoff_day,
+            quantile=quantile_level,
+            valid_day=step.valid_day,
+            metric_value=quantile_value,
+            innovation_pool_size=step.innovation_pool_size,
+        )
+        for step in quantiles
+        for quantile_level, quantile_value in (
+            (LOW_QUANTILE, step.low_value),
+            (MEDIAN_QUANTILE, step.median_value),
+            (HIGH_QUANTILE, step.high_value),
+        )
+    )
+
+
 def simulate_horizon_quantiles(
     *,
     history: SeasonalHistory,

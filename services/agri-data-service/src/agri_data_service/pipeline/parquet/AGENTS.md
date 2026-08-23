@@ -57,6 +57,73 @@ Railway cron, never on the Sanic event loop; boto3 has no async client, and wrap
 a thread pool for no caller that exists. **If a route ever needs it, run it in an executor rather
 than making this async.**
 
+## `lane_registry.py` — why it is here and not in `pipeline/lanes/`
+It imports all eleven lane modules. A module *inside* `pipeline/lanes/` that did that would
+(correctly) fail `test_layer_import_contract.py::test_lanes_do_not_import_each_other`, because
+`layer-lanes.md` §1's "a lane never imports another lane" is enforced there by directory. **The
+registry is not a lane** — it is the one module allowed to know all of them, and it lives beside the
+writer they all publish through.
+
+### Four return shapes, one result
+The eleven exporters landed concurrently with divergent signatures. `normalise_export_outcome` folds
+them into `LaneRunResult(part_count, row_count, byte_count, absence_recorded)`:
+
+| exporter shape | lanes | folded by |
+|---|---|---|
+| `ParquetWriteReceipt` | signal, vegetation, weather-observations, water-gauges, sensors | `_from_parts((receipt,))` |
+| `tuple[ParquetWriteReceipt, ...]` | watersheds, evacuation-zones, soil-survey | `_from_parts(receipts)` |
+| `ParquetWriteReceipt \| AbsenceWriteReceipt` | fire-detections, burn-severity | `isinstance` dispatch |
+| `FirePerimetersExportOutcome` | fire-perimeters | its own `parts`/`absence` fields |
+
+An **empty** tuple is refused rather than folded: a day that produced no object is a gap, and
+reporting it as a completed export would hide one.
+
+Each lane's adapter resolves its own arguments (`agri.spatial_cell` ids, a `geo.layers` id, the day's
+sensor stations, the published SSURGO keys) from `sql/pipeline/lane_registry_*.sql`, so the driver
+never has to know that five lanes take five different second arguments.
+
+### Floors, lags, and which are guesses
+Every `history_floor`/`publication_lag_days` pair carries a `floor_basis` citation on the
+registration itself, echoed by `--dry-run`, because **a wrong floor invents thousands of phantom
+gap-days**. Three are worth knowing without reading the table:
+
+- **`signal` uses lag 9, not 5.** NASA POWER publishes at 5 days and ERA5-Land at 9; the larger is
+  the safe one, since at 5 the four newest days are declared missing while ERA5-Land genuinely has
+  not published them.
+- **`water-gauges` floors at 2026-05-24, NOT 2022-08-05.** That code constant is explicitly
+  *borrowed* from the vegetation layer and nothing confirms the archive walk reached it; the dense
+  record starts 2026-05-24, and the bare `min(observed_day)` of 1990-10-01 is a documented trap.
+- **`weather-observations` is the one FALLBACK.** RUNBOOK §0.26.8: the lane doc describes the
+  `signal` stream, and the producer this lane actually exports has no contract at all. 2026-08-01 /
+  lag 2 is a deliberately shallow guess so being wrong costs dozens of phantom days, not thousands.
+  Write that half of the contract and measure the real floor before trusting it.
+
+### Three lanes refuse historical backfill by construction
+`evacuation_zones_day_export.sql`, `watersheds_day_export.sql` and `soil_survey_day_export.sql` all
+**broadcast** the caller's day onto every row and apply no date predicate — Postgres holds no record
+of what those current-state feeds published on any day but today. Filling one of their historical
+gaps would stamp today's state onto a past date, which is fabrication, not backfill. They carry
+`window_kind="current_snapshot"` and `lane_window` collapses them to the newest settled day. **A
+snapshot day the cron missed is lost, deliberately.**
+
+## `gap_fill.py` — the driver a Railway cron runs
+- **Newest-first is the design, not a preference.** A newly published day *is* the newest missing day,
+  so one ordering serves the incremental tick and the backfill with no second job to keep in sync.
+- **Round-robin across lanes, one day per lane per round.** Sequential order would let
+  `fire-detections`' ~9,400-day window eat a whole tick before `signal` wrote anything.
+- **A governed-absence marker counts as covered.** `missing_partition_days` already treats it that
+  way; that is what stops a genuinely empty day being re-attempted every hour forever.
+- **The absence payload claims only what the run observed.** It states that the day-scoped export
+  query over *this warehouse's own tables* returned zero rows, and explicitly says the upstream was
+  not contacted. Reconciling against the live source is `pipeline/validation/<slug>.py`'s job.
+- **A remaining backlog is not a failure.** Only a lane that raised, whose listing failed, or whose
+  absence marker was refused sets a non-zero exit — matching `jobs-pulse`'s exit philosophy, and safe
+  under `restartPolicyType: NEVER`.
+- **The session is rolled back after every day, success included.** These reads are read-only, so
+  holding one snapshot across a 600-second tick would pin a production xmin horizon for nothing — and
+  after a failed statement, that rollback is what makes per-lane isolation real rather than asserted.
+  `SET LOCAL statement_timeout` dies with it, so the 120 s pin is re-applied per day.
+
 ## Reading it back
 `polars_storage_options(credentials)` returns the Polars/`object_store` connection dict for
 `pl.scan_parquet`/DuckDB `httpfs`. It is credentials in a dictionary — never log the result.

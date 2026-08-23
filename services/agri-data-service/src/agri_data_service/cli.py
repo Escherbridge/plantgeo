@@ -302,6 +302,20 @@ from agri_data_service.jobs import (
     shutdown_signal,
 )
 from agri_data_service.models.strategy import Strategy
+from agri_data_service.pipeline.parquet.gap_fill import (
+    DEFAULT_GAP_FILL_TIME_BUDGET_SECONDS,
+    GapFillSummary,
+    build_gap_census,
+    gap_census_report,
+    run_gap_fill,
+)
+from agri_data_service.pipeline.parquet.lane_registry import (
+    LANE_REGISTRATIONS,
+    LaneRegistryError,
+    registered_lane_slugs,
+    resolve_lanes,
+)
+from agri_data_service.pipeline.parquet.objectstore import ObjectStore, ParquetWriteError
 from agri_data_service.seed.strategies import STRATEGY_SEEDS
 from alembic import command
 
@@ -312,6 +326,7 @@ _OPEN_METEO_PENDING_PREVIEW = 8
 _MAX_RUN_PLAN_OUTPUTS = 1_000
 _MAX_RUN_PLAN_KEYS = 10_000
 _MAX_RUN_PLAN_KEY_LENGTH = 500
+_GAP_FILL_FAILED_EXIT_CODE = 1
 
 # Runtime query SQL lives in sql/cli/, loaded once per process; see src/agri_data_service/sql/AGENTS.md.
 _MATERIALIZE_FORECAST_ITERATION = text(load_query_sql("cli/materialize_forecast_iteration.sql"))
@@ -326,6 +341,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.execution.vegetation_ndvi_forecast import SeasonalHistory
     from agri_data_service.jobs import JobSliceSummary
+    from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
 
 
 @click.group()
@@ -3706,6 +3722,134 @@ def _load_run_plan(path: Path) -> tuple[list[str], list[str], list[ExpectedOutpu
         expected_shards,
         outputs,
     )
+
+
+def _gap_fill_lanes(layer_slugs: tuple[str, ...]) -> tuple[LaneRegistration, ...]:
+    """Resolve `--layer` against the STATIC registry before any listing or query, naming what is known."""
+    if not layer_slugs:
+        return LANE_REGISTRATIONS
+    try:
+        return resolve_lanes(layer_slugs)
+    except LaneRegistryError as exc:
+        raise click.BadParameter(str(exc), param_hint="--layer") from exc
+
+
+def _gap_fill_failure_reason(exc: Exception) -> str:
+    """Degrade one failure the driver itself could not isolate into an operator-facing sentence."""
+    if isinstance(exc, LaneRegistryError):
+        return f"parquet-gap-fill refused: {exc}"
+    if isinstance(exc, ParquetWriteError):
+        return f"parquet-gap-fill could not write a partition: {exc}"
+    if isinstance(exc, SQLAlchemyError):
+        return "parquet-gap-fill could not reach the warehouse"
+    return f"parquet-gap-fill input is invalid: {exc}"
+
+
+async def _parquet_gap_fill(
+    lanes: tuple[LaneRegistration, ...],
+    *,
+    today: date,
+    run_id: str,
+    time_budget_seconds: float,
+    max_days_per_lane: int | None,
+) -> GapFillSummary:
+    """Open one loader session for the whole tick and drive every requested lane through it."""
+    loader_database_url = settings.require_local_source_loader_database_url()
+    store = ObjectStore.from_settings()
+    async with local_source_loader_session(loader_database_url) as session:
+        return await run_gap_fill(
+            session,
+            store,
+            lanes=lanes,
+            today=today,
+            run_id=run_id,
+            time_budget_seconds=time_budget_seconds,
+            max_days_per_lane=max_days_per_lane,
+        )
+
+
+@cli.command("parquet-gap-fill")
+@click.option(
+    "--layer",
+    "layer_slugs",
+    multiple=True,
+    help="Restrict this tick to one or more registered stream slugs (e.g. signal, water-gauges); "
+    f"repeatable. Default: every registered lane -- {', '.join(registered_lane_slugs())}.",
+)
+@click.option(
+    "--time-budget-seconds",
+    type=click.FloatRange(min=0.0),
+    default=DEFAULT_GAP_FILL_TIME_BUDGET_SECONDS,
+    show_default=True,
+    help="Stop STARTING a new lane-day once this many seconds of this tick have elapsed. A day "
+    "already in hand always finishes its own export; this never kills one mid-write.",
+)
+@click.option(
+    "--max-days-per-lane",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Cap how many missing days each lane may attempt this tick. Default: uncapped, bounded only "
+    "by the time budget. Lanes are walked round-robin, so an uncapped deep lane still cannot starve a "
+    "shallow one of its leading edge.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report the gap census -- each lane's window, its data/absent/missing day counts, its newest "
+    "gaps and its floor's citation -- WITHOUT writing a single object. This is how the cron is audited.",
+)
+@click.pass_context
+def parquet_gap_fill(
+    context: click.Context,
+    layer_slugs: tuple[str, ...],
+    time_budget_seconds: float,
+    max_days_per_lane: int | None,
+    dry_run: bool,
+) -> None:
+    """Fill every Parquet stream's missing observed days, newest first, inside one wall-clock budget.
+
+    ONE MECHANISM SERVES BOTH THE INCREMENTAL TICK AND THE BACKFILL. A newly published day is simply
+    the newest missing day of its lane, so ordering gaps newest-first keeps every leading edge current
+    while years of history stay unfilled behind it. Lanes are visited round-robin, one day each per
+    round, so the ~9,400-day `fire-detections` window cannot consume a tick before `signal` writes.
+
+    A day the export genuinely has no rows for is recorded as a GOVERNED ABSENCE, whose evidence says
+    only what this run observed -- that the day-scoped query over this warehouse returned zero rows --
+    and never claims the upstream source system was asked, because this verb never contacts one. A
+    marked day is covered, not a gap, so it is not re-attempted on the next tick.
+
+    EXIT CODE 0 means the tick ran, and days may still remain. A partially drained backlog is the
+    expected steady state of a multi-tick driver, not an incident, and so is a lane whose window is
+    already fully covered or whose floor has not settled past its publication lag yet.
+
+    EXIT CODE 1 means a lane's own export raised, its object listing could not be read, or a
+    governed-absence marker was refused. Per-lane isolation means one such lane never stops another
+    lane's turn; it only changes THIS TICK'S exit code, once every other lane has had its rounds.
+    """
+    lanes = _gap_fill_lanes(layer_slugs)
+    today = datetime.now(UTC).date()
+    run_id = f"parquet-gap-fill:{uuid.uuid4()}"
+    try:
+        if dry_run:
+            census = build_gap_census(
+                lanes, ObjectStore.from_settings(), today=today, max_days_per_lane=max_days_per_lane
+            )
+            click.echo(json.dumps(gap_census_report(census), sort_keys=True))
+            return
+        summary = asyncio.run(
+            _parquet_gap_fill(
+                lanes,
+                today=today,
+                run_id=run_id,
+                time_budget_seconds=time_budget_seconds,
+                max_days_per_lane=max_days_per_lane,
+            )
+        )
+    except (LaneRegistryError, ParquetWriteError, SQLAlchemyError, ValueError) as exc:
+        raise click.ClickException(_gap_fill_failure_reason(exc)) from exc
+    click.echo(json.dumps(summary.to_summary(), sort_keys=True))
+    if summary.failed:
+        context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 
 def _string_list(value: object, field_name: str) -> list[str]:
