@@ -4,58 +4,37 @@
   "status": "active",
   "created_on": "2026-08-23",
   "depends_on": [],
-  "runbook_section": "0.32",
+  "runbook_section": "0.33",
   "note": "Chartered retroactively 2026-08-23: waves 1-3 already shipped (RUNBOOK 0.21-0.29) with no track, so the largest workstream in the repo was tracked only in prose. This records wave 4. The owner call behind it all is RUNBOOK 0.28/plantgeo-parquet-duckdb-pivot: Postgres keeps ONLY community features, every plane becomes day-partitioned Parquet on Railway storage read by DuckDB+Polars, Martin serves PMTiles. Map breakage during the transition is accepted.",
   "shipped_before_this_track": [
     "Twelve lanes with validation, serving and forecasters (abf777f)",
     "Lane natures, watermark-driven static lanes, conformed calendar dimension (b794e98)",
     "Per-kind schema lookup, unblocking the five forecasters (269d299)",
     "Three of four adversarial-review defects (ef789f7)",
-    "Sub-day version fix + orphan-part blocker (ceeb2c9, 3b7ecfb)"
+    "Sub-day version fix + orphan-part blocker (ceeb2c9, 3b7ecfb)",
+    "Zoom axis end to end + soil-survey streaming export, cap deleted (68da7af)"
   ],
   "wave_4_scope": [
-    "DONE: sub-day version fix for evacuation-zones, plus the orphan-part blocker its review found (ceeb2c9, 3b7ecfb)",
-    "Zoom axis: zoom= partition key above year=, uniform z0/z5/z9/z13 ladder, tiers derived in Polars/DuckDB from base Parquet",
-    "Chunked streaming export; MAX_SOIL_SURVEY_POLYGON_KEYS deleted (no cap, full granularity)",
-    "Bulk drain Postgres -> Parquet, then stop the cron, then deprecate each lane's Postgres source",
-    "Forward path becomes upstream API -> Parquet directly; Postgres is a one-time cut-off",
-    "soil-field lane (zoom-tiered, agri.spatial_cell) -- has NO lane today",
-    "New lanes: Open-Meteo ensemble/flood/CAMS, fire-risk feature plane, Open-Meteo forward+historical",
-    "interface/http serving API over the twelve planes, then repoint the Next.js tRPC procedures"
+    "DONE ceeb2c9/3b7ecfb: sub-day version fix + the orphan-part blocker its review found",
+    "DONE fe32aef: conductor decisions -- zoom axis, Postgres demoted to a cut-off",
+    "DONE 68da7af: zoom= partition key, uniform z0/z5/z9/z13 ladder, soil-survey streaming export (cap DELETED)",
+    "A. Tier derivation z9/z5/z0 from base z13 in Polars/DuckDB -- BLOCKS everything visual",
+    "B. Bulk Postgres drain (13,037 lane-days, 69% fire-detections), then stop the cron",
+    "C. interface/http serving API -- coverage must REPRODUCE getSliderCapabilities' contract",
+    "D. Next.js repoint of the six ready tRPC procedures",
+    "E. Forward path per lane: upstream API -> Parquet, deprecate that lane's Postgres source",
+    "F. New lanes: soil-field (has none), Open-Meteo ensemble/flood/CAMS, fire-risk feature plane",
+    "G. Static lookups leave the lane registry (soil-survey, watersheds); needs its own coverage check"
   ],
   "partitions": {
-    "computed_at": "2026-08-23T20:40:00Z",
-    "computed_at_commit": "3b7ecfb",
+    "computed_at": "2026-08-23T23:10:00Z",
+    "computed_at_commit": "68da7af",
     "confidence": "planned",
-    "note": "HYPOTHESIS, not fact -- re-verify every owns list with a real grep if HEAD has moved past 3b7ecfb. z0 is the FOUNDATION and blocks everything: it changes foundation/parquet/paths.py, which every other slice imports, and it deliberately breaks every call site at type-check time. Run z0 ALONE, take its broken-call-site report, and only then fan out z1-z4. The prior partition set (computed at ef789f7) is superseded: its s1/s2 shipped, and s3/s4/s5 are re-scoped by the zoom axis.",
+    "note": "HYPOTHESIS -- re-verify every owns list with a real grep if HEAD has moved past 68da7af. The z0-z4 slices from the previous set all SHIPPED in 68da7af; this is the next wave. d1 (tier derivation) blocks anything visual: the ladder exists but only its top rung has data, so serving at z0/z5/z9 honestly returns empty until it lands. d2 (drain) and d1 are independent. d3 depends on d1 for coarse tiers to be servable, but its endpoints can be built against the base tier first.",
     "slices": [
       {
-        "id": "z0",
-        "task": "FOUNDATION, runs alone: add the zoom= partition key above year=, the uniform z0/z5/z9/z13 ladder, and a tier-resolution helper. Zoom is REQUIRED, never defaulted. No backward-compatible parse -- a path without zoom= must fail cleanly.",
-        "owns": [
-          "services/agri-data-service/src/agri_data_service/foundation/parquet/paths.py",
-          "services/agri-data-service/tests/parquet/test_paths.py"
-        ],
-        "model": "opus",
-        "depends_on": []
-      },
-      {
-        "id": "z1",
-        "task": "Teach the object store and the gap census the zoom axis: listing, pruning and coverage become per (layer, kind, zoom, day).",
-        "owns": [
-          "services/agri-data-service/src/agri_data_service/pipeline/parquet/objectstore.py",
-          "services/agri-data-service/src/agri_data_service/pipeline/parquet/gap_fill.py",
-          "services/agri-data-service/tests/parquet/test_objectstore_writer.py",
-          "services/agri-data-service/tests/parquet/test_gap_fill.py"
-        ],
-        "model": "opus",
-        "depends_on": [
-          "z0"
-        ]
-      },
-      {
-        "id": "z2",
-        "task": "Tier derivation in Polars/DuckDB from the base Parquet -- never from Postgres matviews. Geometry generalization per ladder step.",
+        "id": "d1",
+        "task": "Derive zoom tiers z9/z5/z0 from the base z13 Parquet in Polars/DuckDB. Geometry generalization per ladder step. NEVER from the Postgres matviews.",
         "owns": [
           {
             "path": "services/agri-data-service/src/agri_data_service/warehouse/parquet/tiers.py",
@@ -67,36 +46,27 @@
           }
         ],
         "model": "opus",
-        "depends_on": [
-          "z0"
-        ]
+        "depends_on": []
       },
       {
-        "id": "z3",
-        "task": "Chunked streaming export, no row cap: delete MAX_SOIL_SURVEY_POLYGON_KEYS and batch to part-0..part-N so memory stays flat at any population.",
+        "id": "d2",
+        "task": "Bulk Postgres -> Parquet drain as ONE focused job writing the new zoom layout. Delete the old-layout objects. Order: build, run, THEN stop the cron.",
         "owns": [
-          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
-          "services/agri-data-service/src/agri_data_service/sql/pipeline/lane_registry_soil_survey_polygon_keys.sql"
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/drain.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_drain.py",
+            "status": "future"
+          }
         ],
         "model": "opus",
-        "depends_on": [
-          "z0"
-        ]
+        "depends_on": []
       },
       {
-        "id": "z4",
-        "task": "The twelve planes/*.py readers take a zoom argument and resolve it through the ladder to a partition path.",
-        "owns": [
-          "services/agri-data-service/src/agri_data_service/planes/"
-        ],
-        "model": "sonnet",
-        "depends_on": [
-          "z0"
-        ]
-      },
-      {
-        "id": "z5",
-        "task": "interface/http serving API over the twelve planes: per-day, window, as-of, coverage; bbox pushdown; zoom routing; four-state provenance envelope.",
+        "id": "d3",
+        "task": "interface/http serving API over the twelve planes: per-day, window, as-of, coverage. bbox pushdown, zoom routing, four-state envelope. Coverage REPRODUCES getSliderCapabilities' shape and stays whole-warehouse.",
         "owns": [
           {
             "path": "services/agri-data-service/src/agri_data_service/interface/http/",
@@ -110,10 +80,43 @@
         ],
         "model": "opus",
         "depends_on": [
-          "z0",
-          "z4"
+          "d1"
+        ]
+      },
+      {
+        "id": "d4",
+        "task": "Repoint the six ready tRPC procedures onto parquet-plane-client.ts: drought, water-gauges, weather-observations, signal, vegetation, fire-detections. NOT soil-survey or burn-severity (no data yet).",
+        "owns": [
+          "src/lib/server/trpc/routers/environmental.ts",
+          "src/lib/server/trpc/routers/wildfire.ts"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "d3"
+        ]
+      },
+      {
+        "id": "d5",
+        "task": "soil-field lane: zoom-tiered, sourced from agri.spatial_cell, has NO lane today. signal_plane_day_export.sql exports cell_id with no cell geometry.",
+        "owns": [
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/soil_field.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_soil_field_lane.py",
+            "status": "future"
+          }
+        ],
+        "model": "opus",
+        "depends_on": [
+          "d1"
         ]
       }
     ]
-  }
+  },
+  "open_decisions": [
+    "Half-written release reads as `current`: completion marker (adds a 3rd object kind) vs a resolve_static_lane rule that a day whose last export raised must re-export (cheaper, stays in the contract module). See RUNBOOK 0.33.2.",
+    "AGRI_DATA_SERVICE_URL and AGRI_PARQUET_SERVICE_URL both point at one service, deliberately (different failure policies). Collapsible at parquet-plane-client.ts:54."
+  ]
 }

@@ -3841,6 +3841,111 @@ cadence, horizon, historical depth, or known-gaps list. The lane was built from 
 gap stated rather than an invented contract. **Write that half of the contract before the lane is
 scheduled**, or its history horizon and gap detection have nothing to check against.
 
+### 0.33 STATE AT END OF SESSION 6 — the zoom axis shipped; what remains, in order
+
+**HEAD `68da7af`, PUSHED, gate-green.** Four commits landed today. §0.32 holds the decisions, §0.31
+the measurements. This section is only: what is done, what is left, and what will bite.
+
+#### 0.33.1 Shipped today
+
+| commit | what |
+|---|---|
+| `ceeb2c9` | sub-day version fix (owner committed mid-session) |
+| `3b7ecfb` | the orphan-part blocker its review found, + the PUT-vs-SELECT race |
+| `fe32aef` | conductor: zoom-axis decisions, Postgres demoted to a cut-off |
+| `68da7af` | the zoom axis end to end, and `MAX_SOIL_SURVEY_POLYGON_KEYS` deleted |
+
+**Gate at `68da7af`: 3,936 passed / 3 skipped** (from 3,747 — net +189 tests), `ruff` clean, 423
+files formatted, `mypy` at the two pre-existing `matview_refresh.py` errors, `tsc` exit 0, 353 TS
+tests across 26 files.
+
+Client-side, additive and green, NOT yet wired to anything: `src/lib/map/zoom-tiers.ts` (the ladder,
+mirrored from Python, `zoom=05` zero-padded), `src/lib/server/services/parquet-envelope.ts` (the
+four-state union), `src/lib/server/services/parquet-plane-client.ts` (built on
+`http/bounded-upstream.ts`; wire format isolated to `:197-320` so freezing it is ONE edit).
+
+#### 0.33.2 TWO DEFERRED HAZARDS — read these before touching the warehouse
+
+1. **Nothing derives the coarse rungs.** A serving read at z0/z5/z9 honestly returns empty. The map
+   WILL look empty above z13 until the derivation step lands. Correct by design; it will read as a
+   regression to anyone who does not know. See `planes/soil_survey.py:99-104` and
+   `planes/evacuation_zones.py:127-131`, which say so in their own docstrings rather than borrowing
+   the base tier.
+2. **A half-written release can read as `current`.** `oldest_export_instant` catches a re-export
+   MIXTURE, not a first export that never finished: every part of an incomplete first export is new,
+   so the oldest instant still sits at or after the watermark. Pre-existing for every multi-part
+   lane, but streaming moves soil-survey from a ~10-part upload to ~3,016, which changes the odds
+   materially. **Two closed fixes, OWNER DECISION NEEDED:** a per-day completion marker written last
+   and required by the census (stronger, but adds a third object kind to a layout deliberately held
+   at two), or a rule in `resolve_static_lane` that a day whose last export `raised` must be
+   re-exported regardless of instant (cheaper, stays inside the contract module).
+
+#### 0.33.3 WHAT REMAINS, in dependency order
+
+**A. Tier derivation (BLOCKS everything visual).** Derive z9/z5/z0 from the base z13 Parquet in
+Polars/DuckDB — never from the Postgres matviews (§0.32.2 decision 2). Until this lands the ladder
+exists but only its top rung has data. Home: `warehouse/parquet/tiers.py` (does not exist yet).
+
+**B. The bulk Postgres drain.** One focused job, not the hourly trickle (§0.32.1 decision 2).
+13,037 lane-days remain, **69% of it `fire-detections` alone** whose 2000-11-02 floor is REAL
+(§0.32.6). It writes the NEW layout directly; the 2,274 old-layout objects are deleted, not
+migrated. **Order matters: build drain → run drain → THEN stop the cron.** Stopping it first freezes
+the warehouse with nothing replacing it.
+
+**C. `interface/http` serving API.** `interface/` is still an EMPTY STUB and the twelve planes still
+have ZERO callers. Its own docstring says `interface/http` is where they belong and that it is the
+only package that may import `planes`. Endpoints: per-day, window, as-of, coverage. bbox pushdown
+into the scan. Zoom routing via `serving_zoom_tier`. The four-state envelope.
+**The coverage endpoint must REPRODUCE `getSliderCapabilities`' existing contract**, not invent one
+— then `time-slider-store.ts`, `layer-coverage-track.ts` and `LayerTimeSlider.tsx` need ZERO changes.
+It must stay whole-warehouse (no bbox, no zoom) or the 5–30 min memoization fragments per viewport.
+
+**D. The Next.js repoint.** Six tRPC procedures move onto the client already built. Only these have
+BOTH a tRPC path and Parquet data: drought, water-gauges, weather-observations (all three 100%
+backfilled), plus signal, vegetation, fire-detections (thin but correct). `soil-survey` cannot go
+until it has actually written; `burn-severity` until the walk reaches 2020-2024.
+**fire-detections' live path is REST `/api/fires?date=` with NO bbox**, not tRPC — its tRPC
+procedure has no caller.
+
+**E. Forward path per lane.** Upstream API → Parquet directly, then that lane deprecates its Postgres
+source (§0.32.1). `weather-observations` holds only 21 days in Postgres, so Open-Meteo historical is
+the ONLY way to deepen it.
+
+**F. New lanes.** `soil-field` (zoom-tiered, `agri.spatial_cell`, has NO lane at all — §0.32.5),
+Open-Meteo ensemble/flood/CAMS (persist-blocked since 2026-08-06), the fire-risk feature plane
+(no model — training blocked on Mojo).
+
+**G. Static lookups leave the lane registry** (§0.31.5): `soil-survey` and `watersheds` to a
+provisioning config area; `evacuation-zones` and `calendar` STAY. Note the new coverage check the
+move needs — `build_gap_census` is also the safety net.
+
+#### 0.33.4 Smaller things left behind, none hidden
+
+- `tests/parquet/test_zoom_ladder.py:39,44` carry two unused `type: ignore[arg-type]` that mypy
+  flags as `unused-ignore`. Harmless, not failing anything.
+- `MAX_PART_INDEX = 9,999` is now a reachable ceiling: 9,999 × `ROWS_PER_PART` 500 = 4,999,500 rows.
+  The PNW universe (~3,016 parts) fits with 3.3× headroom and raises loudly rather than truncating.
+  Matters only if anyone LOWERS `ROWS_PER_PART`.
+- The `calendar` lane has no geometry, so it writes `zoom=13` like everyone else. **A `zoom=13`
+  prefix therefore does not imply geometry** — the derivation step must not assume it does.
+- `LANE_BASE_ZOOM_TIER` lives in `pipeline/lanes/__init__.py:35` and `GAP_FILL_ZOOM_TIER` in
+  `gap_fill.py:93`. Both are `ZOOM_TIERS[-1]` so they cannot drift, but `foundation/parquet/zoom.py`
+  is where ONE definition belongs if a later pass wants to collapse them.
+- Two env vars now point at one service: `AGRI_DATA_SERVICE_URL` (pre-existing, forecasts, degrades
+  to unavailable) and `AGRI_PARQUET_SERVICE_URL` (new, must THROW rather than draw an empty map).
+  Deliberate — different failure policies — but collapsible at `parquet-plane-client.ts:54`.
+- Docs corrected by measurement this session: `wildfire.ts:72-74` and `src/lib/server/AGENTS.md:826-830`
+  still claim `/api/fires` "takes no parameters". **False** — `useFireData.ts:111` sends `?date=`.
+
+#### 0.33.5 A claim from this session that is WRONG — do not act on it
+
+A subagent reported that ~102 of 107 frontend test files fail repo-wide under the default `jsdom`
+environment and that only `// @vitest-environment node` files pass. **It does not reproduce.** The
+same file passes under the default config and under `npm test`'s exact flags, and the full run is
+353 passed across 26 files. Seven files carry the node pragma, not three. Likely contention from
+three agents writing concurrently. **The frontend suite is fine.**
+
+
 ### 0.32 OWNER DECISIONS 2026-08-23 (sixth session, late) — the zoom axis, and Postgres becomes a cut-off
 
 **HEAD `3b7ecfb`, PUSHED, gate-green.** This section is decisions; §0.31 is the measurements they
