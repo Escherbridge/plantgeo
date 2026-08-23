@@ -3841,6 +3841,101 @@ cadence, horizon, historical depth, or known-gaps list. The lane was built from 
 gap stated rather than an invented contract. **Write that half of the contract before the lane is
 scheduled**, or its history horizon and gap detection have nothing to check against.
 
+### 0.27 HANDOFF 2026-08-22 (third) — twelve streams, an armed cron, and one blocker
+
+**HEAD `abf777f`, PUSHED to origin/main.** Tree clean. Sweep: **3,528 passed · 110 skipped ·
+`ruff` clean · `mypy --strict` clean** except the two pre-existing `matview_refresh.py:667`
+errors §0.26.4 records.
+
+#### 0.27.1 What is code-complete
+
+All **twelve** streams (the eleven `geo.layers` lanes plus `drought`) now carry the full
+`layer-lanes.md` §1 set: `warehouse/schemas/<slug>.py`, `pipeline/lanes/<slug>.py`,
+`pipeline/validation/<slug>.py`, `planes/<slug>.py`, and `method/monte_carlo/<slug>.py` for the six
+that can honestly forecast. The six `horizon: none` lanes ship **no** forecaster — §2 says an empty
+forecast module reads as unfinished work rather than a settled property.
+
+`interventions` stays in Postgres (§0.26.1). `drought` was **stream S2 all along** and was missed by
+the first fan-out because that was scoped to `geo.layers`; **`forecast-observation` (S4) and
+`agri.artifact` are still uncovered** — see §0.27.5.
+
+#### 0.27.2 THE CRON IS ARMED, AND ONE REAL TICK HAS RUN
+
+`infra/cron-ingest/Dockerfile` runs `agri-cli parquet-gap-fill --time-budget-seconds 900` as a third
+verb, hourly, all three verbs' exit codes AND-ed (never `&&`, so an unrelated FIRMS outage cannot
+starve the backfill).
+
+**Incremental and backfill are ONE mechanism.** Window = `[history_floor, today - publication_lag]`;
+missing days returned **newest-first**, so a newly published day *is* the newest gap. Lanes walk
+**round-robin, one day per lane per round**, because sequential order would let `fire-detections`'
+~9,400-day window eat a whole tick before `signal` wrote anything.
+
+**Proven end to end against production**, not merely unit-tested:
+```
+{"lane":"drought","outcome":"filled","written":1,"parts":1,"rows":5,"bytes":3827547,"seconds":13.2}
+```
+and the re-run census then reported `data_days: 1` with that day gone from the missing list — so a
+second tick does not rewrite it. **Idempotency is measured, not assumed.**
+
+**Gap census, measured 2026-08-22: 15,083 missing days across 11 lanes** (before `drought` joined).
+Every floor carries a `floor_basis` **citation as a data field**, echoed by `--dry-run`, because a
+wrong floor invents thousands of phantom gap-days. Three worth knowing: `signal` uses lag **9**
+(ERA5-Land), not NASA's 5; `water-gauges` floors at **2026-05-24**, rejecting both the borrowed 2022
+constant and the 1990 `min()` trap; **`weather-observations` is the ONE guessed floor**, labelled
+`FALLBACK` and pinned by a test that asserts it says so.
+
+**`cadence_days` was added** so a weekly source is not registered as a daily one: `drought` chases
+**211** Tuesday candidates instead of 1,472 days. **`burn-severity` is still `cadence_days=1` and
+quarterly** — it will write ~2,000 honest-but-pointless absence markers before reaching its five real
+releases. Self-terminating, but give it a cadence.
+
+**Three lanes refuse historical backfill by construction.** `evacuation-zones`, `watersheds` and
+`soil-survey` broadcast the caller's day with no date predicate, because Postgres holds no record of
+what those current-state feeds published on a past day. Backfilling them would stamp today's state
+onto a past date — fabrication. They collapse to one newest-day snapshot; **a snapshot day the cron
+misses is lost, deliberately.**
+
+#### 0.27.3 THE BLOCKER — forecasts cannot be written, and all five agents found it independently
+
+`ObjectStore.write_partition` resolves a schema **by layer name alone, never by `kind`**, so
+`kind=observed` and `kind=forecast` share one schema — and there is **nowhere to put §3's six
+mandatory provenance columns** (`forecast_run_id`, `random_seed`, `ensemble_size`, `horizon_days`,
+`issued_on`, `quantile`/`draw_index`). §2's "identical column names" and §3's six columns are in
+direct tension.
+
+**Five working Monte Carlo implementations exist and none can write a partition.** Each agent
+reported it separately and declined to fix it unilaterally. **Owner decision needed:** a per-kind
+schema lookup, or nullable provenance columns on the observed side. Nothing forecast-related ships
+until this is settled.
+
+#### 0.27.4 What is real in the bucket, and the size picture
+
+`signal` 4 days · `watersheds` 1 ten-part release · `drought` 1 release. **That is all** — the other
+nine lanes have code but have never written. `signal` alone is 1,564 days short.
+
+**§0.22.6's ~35 MB projection does not describe the shipped layout.** It measured July as ONE monthly
+file at 1.43 B/row; day partitions measure **5.29 B/row** (3.7× worse — zstd has less to work with per
+file), so the signal plane is **~130 MB**. And geometry breaks it entirely: `watersheds` alone is
+**162 MB for 9,396 rows**, `drought` is **~765 KB/row**. **Do not size the warehouse from the signal
+figure.** Owner has said storage is not a constraint, but the runbook should stop asserting a number
+for a layout that was not shipped.
+
+#### 0.27.5 Continuation, in priority order
+
+1. **Settle §0.27.3.** Everything forecast-shaped is blocked behind it.
+2. **Watch a real hourly cron tick** and confirm it fills gaps in prod. The deploy of `abf777f` was
+   in flight at handoff; `railway redeploy --from-source` is required (plain `redeploy` reuses the
+   prior snapshot and a Dockerfile change never takes effect).
+3. **Write the missing half of `docs/lanes/weather-observations.md`** — it documents the `signal`
+   stream, not the lane bearing its name (§0.26.8) — then replace that lane's guessed floor.
+4. **Cover the two remaining streams:** `agri.forecast_observation` (S4, 116 MB) and `agri.artifact`
+   (173 MB, in no plan at all).
+5. **Give `burn-severity` a cadence** (§0.27.2).
+6. **`planes/drought.py` needs DuckDB's spatial extension**, a one-time network fetch per machine. It
+   will fail closed in a container the first time something serves from it. Not in the cron path today.
+7. **Converge the two NDVI forecasters.** The `execution/` copy is wired, the `method/` one was brought
+   into contract conformance — repointing callers needs files outside any lane's ownership.
+
 #### 0.26.9 Continuation
 
 1. **Extract the shared Open-Meteo client primitives out of `ingest/open_meteo.py`**, then create
