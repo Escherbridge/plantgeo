@@ -64,9 +64,15 @@ class StubS3Api:
     def __init__(self, pages: list[dict[str, object]]) -> None:
         self.pages = pages
         self.requests: list[dict[str, object]] = []
+        self.deletes: list[dict[str, object]] = []
 
     def put_object(self, **kwargs: object) -> object:  # noqa: ARG002 - the `_S3Api` shape it must satisfy
         raise AssertionError("this stub only lists")
+
+    def delete_object(self, **kwargs: object) -> object:
+        # Recorded APART from `requests`, which indexes `pages`; one shared list would desync paging.
+        self.deletes.append(dict(kwargs))
+        return {}
 
     def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
         self.requests.append(dict(kwargs))
@@ -90,11 +96,22 @@ class RecordingBackend:
         self.content_types: dict[str, str] = {}
         self.last_modified: dict[str, datetime | None] = {}
         self.stamps_puts_at = stamps_puts_at
+        self.deleted: list[str] = []
+        self.refuses_delete_of: set[str] = set()
 
     def put(self, key: str, payload: bytes, *, content_type: str) -> None:
         self.objects[key] = payload
         self.content_types[key] = content_type
         self.last_modified[key] = self.stamps_puts_at
+
+    def delete(self, key: str) -> None:
+        """Remove one object, or refuse it when the test pinned this key as unremovable."""
+        if key in self.refuses_delete_of:
+            raise OSError(f"bucket refused to delete {key}")
+        self.deleted.append(key)
+        self.objects.pop(key, None)
+        self.content_types.pop(key, None)
+        self.last_modified.pop(key, None)
 
     def set_last_modified(self, key: str, instant: datetime | None) -> None:
         """Pin one already-written key's export instant, as a re-export would move it."""
@@ -273,6 +290,21 @@ def test_a_listing_surfaces_the_export_instant_beside_every_key() -> None:
     assert store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed") == (relative_path,)
 
 
+def day_export_instant(store: ObjectStore, day: date) -> datetime | None:
+    """Answer a stream-day's export instant exactly as `_static_lane_census` does: one listing, then fold.
+
+    The store deliberately ships no day-scoped convenience wrapper for this. The census already holds
+    a whole-stream listing and folds it per day, so a wrapper would have been public API with no
+    production caller and a second listing per lane-day for the tests that used it.
+    """
+    return oldest_export_instant(
+        store.list_partition_objects(SIGNAL_PLANE_STREAM, "observed"),
+        layer=SIGNAL_PLANE_STREAM,
+        kind="observed",
+        day=day,
+    )
+
+
 def test_a_stream_days_export_instant_is_the_oldest_of_its_part_files() -> None:
     """A re-export that rewrote part-0 and left an older part-1 published a MIXTURE, and must report as one."""
     backend = RecordingBackend()
@@ -284,7 +316,7 @@ def test_a_stream_days_export_instant_is_the_oldest_of_its_part_files() -> None:
         key = store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, part_index))
         backend.set_last_modified(key, instant)
 
-    assert store.day_export_instant(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH) == EXPORTED_AT
+    assert day_export_instant(store, JULY_FOURTH) == EXPORTED_AT
 
 
 def test_one_unknown_instant_leaves_the_whole_stream_day_unanswered() -> None:
@@ -297,8 +329,132 @@ def test_one_unknown_instant_leaves_the_whole_stream_day_unanswered() -> None:
         signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH, part_index=1
     )  # left unstamped, exactly as a backend that cannot report the instant leaves it
 
-    assert store.day_export_instant(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH) is None
-    assert store.day_export_instant(SIGNAL_PLANE_STREAM, "observed", date(2026, 7, 3)) is None
+    assert day_export_instant(store, JULY_FOURTH) is None
+    assert day_export_instant(store, date(2026, 7, 3)) is None
+
+
+def re_export(store: ObjectStore, backend: RecordingBackend, *, part_count: int, at: datetime) -> None:
+    """Write `part_count` parts over one day, stamp them all, then prune what this export did not write."""
+    for part_index in range(part_count):
+        store.write_partition(
+            signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=JULY_FOURTH, part_index=part_index
+        )
+        backend.set_last_modified(
+            store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, part_index)), at
+        )
+    store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, written_part_count=part_count)
+
+
+def test_a_shrinking_re_export_removes_the_parts_it_no_longer_wrote() -> None:
+    """THE BLOCKER. Orphans left by a smaller re-export serve superseded rows and latch the lane stale.
+
+    Four parts at T1, then a re-export writing two at T2. Without the prune, `part-2` and `part-3`
+    survive holding the SUPERSEDED population, and `oldest_export_instant` -- a `min()` across the
+    day -- keeps answering T1, so every later tick judges the lane stale and re-exports forever.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend, prefix="sandbox")
+    re_export(store, backend, part_count=4, at=EXPORTED_AT)
+
+    re_export(store, backend, part_count=2, at=RE_EXPORTED_AT)
+
+    assert store.list_partition_keys(SIGNAL_PLANE_STREAM, "observed") == (
+        partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 0),
+        partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 1),
+    )
+    # The latch is gone with them: min() and max() over the day now agree on the newer export.
+    assert day_export_instant(store, JULY_FOURTH) == RE_EXPORTED_AT
+
+
+def test_the_prune_touches_only_this_layer_kind_day_and_surplus_index() -> None:
+    """A prune that could reach another lane, kind, day, part still in use, or a marker is not shippable."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend, prefix="sandbox")
+    survivors = (
+        partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 0),  # still written by this export
+        partition_path(SIGNAL_PLANE_STREAM, "observed", date(2026, 7, 3), 2),  # another day
+        partition_path("watersheds", "observed", JULY_FOURTH, 2),  # another layer
+        partition_path(SIGNAL_PLANE_STREAM, "forecast", JULY_FOURTH, 2),  # another kind
+        absence_marker_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH),  # never a part file
+    )
+    doomed = partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 1)
+    for relative_path in (*survivors, doomed):
+        backend.put(store.key_for(relative_path), b"parquet", content_type=PARQUET_CONTENT_TYPE)
+
+    result = store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, written_part_count=1)
+
+    assert result.removed == (doomed,)
+    assert result.failures == ()
+    assert backend.deleted == [store.key_for(doomed)]
+    assert all(store.key_for(relative_path) in backend.objects for relative_path in survivors)
+
+
+def test_a_prune_refuses_to_be_told_the_export_wrote_nothing() -> None:
+    """`written_part_count=0` would delete the whole day; a prune may only ever trail a completed write."""
+    store = ObjectStore(RecordingBackend())
+    with pytest.raises(ValueError, match="every part of the day"):
+        store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, written_part_count=0)
+
+
+def test_a_refused_delete_is_reported_and_never_raised() -> None:
+    """The rows this export wrote are correct, so a prune failure reports the survivor, never undoes them."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    orphan = partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 1)
+    for relative_path in (partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 0), orphan):
+        backend.put(store.key_for(relative_path), b"parquet", content_type=PARQUET_CONTENT_TYPE)
+    backend.refuses_delete_of.add(store.key_for(orphan))
+
+    result = store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, written_part_count=1)
+
+    assert result.removed == ()
+    assert len(result.failures) == 1
+    assert orphan in result.failures[0]
+    assert "still published beside this export" in result.failures[0]
+    assert store.key_for(orphan) in backend.objects  # reported, not silently believed gone
+    assert result.report is not None
+    assert orphan in result.report
+
+
+def test_an_unlistable_day_reports_the_orphan_rather_than_failing_the_export() -> None:
+    """A prune that cannot even list must say the orphan may survive; silence would read as a clean prune."""
+
+    class UnlistableBackend(RecordingBackend):
+        def list_objects(self, prefix: str) -> Iterator[ListedObject]:
+            raise OSError(f"bucket unreachable while listing {prefix}")
+
+    store = ObjectStore(UnlistableBackend())
+
+    result = store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, written_part_count=1)
+
+    assert result.removed == ()
+    assert "OSError" in result.failures[0]
+    assert "may still be published beside this one" in result.failures[0]
+
+
+def test_a_clean_prune_with_nothing_to_remove_says_nothing() -> None:
+    """No orphan, no failure, no line in the lane's detail -- a prune is silent when it is a no-op."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    backend.put(
+        store.key_for(partition_path(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, 0)),
+        b"parquet",
+        content_type=PARQUET_CONTENT_TYPE,
+    )
+
+    result = store.prune_surplus_parts(SIGNAL_PLANE_STREAM, "observed", JULY_FOURTH, written_part_count=1)
+
+    assert (result.removed, result.failures, result.report) == ((), (), None)
+
+
+def test_the_boto_backend_deletes_through_delete_object() -> None:
+    """The real backend's delete is one `delete_object` at the bucket and key the layout named."""
+    client = StubS3Api([])
+    backend = BotoObjectStoreBackend(bucket="tiles", client=client)
+
+    backend.delete("prefix/layer=signal/part-3.parquet")
+
+    assert client.deletes == [{"Bucket": "tiles", "Key": "prefix/layer=signal/part-3.parquet"}]
 
 
 def test_the_export_instant_reads_only_that_streams_own_part_files_on_that_day() -> None:

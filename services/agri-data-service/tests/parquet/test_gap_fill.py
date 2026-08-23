@@ -23,6 +23,7 @@ from agri_data_service.foundation.parquet.paths import absence_marker_path, part
 from agri_data_service.pipeline.parquet.gap_fill import (
     GapFillContractError,
     GapFillSummary,
+    LaneGapCensus,
     LaneWatermarkReading,
     build_gap_census,
     gap_census_report,
@@ -33,6 +34,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
 from agri_data_service.pipeline.parquet.lane_registry import (
     LaneRegistration,
     LaneRunResult,
+    resolve_lanes,
 )
 from agri_data_service.pipeline.parquet.objectstore import (
     ABSENCE_CONTENT_TYPE,
@@ -44,7 +46,7 @@ from agri_data_service.pipeline.parquet.objectstore import (
 from tests.parquet.test_objectstore_writer import RecordingBackend
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterator
+    from collections.abc import Collection, Iterator, Sequence
 
 TODAY = date(2026, 8, 22)
 RUN_ID = "parquet-gap-fill:test"
@@ -154,6 +156,74 @@ def stub_lane(  # noqa: PLR0913 - one knob per behaviour a driver test needs to 
         nature=nature,
         floor_basis=f"test fixture for {slug}",
         watermark=watermark if is_static else None,
+    )
+
+
+ZONES = "evacuation-zones"
+VERSION_DAY = date(2026, 8, 20)
+# Four instants on ONE UTC day: a version stamp cannot tell them apart, which is the whole point.
+BE_READY_AT = datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
+GO_NOW_AT = datetime(2026, 8, 20, 14, 0, tzinfo=UTC)
+AFTER_GO_NOW = datetime(2026, 8, 20, 15, 0, tzinfo=UTC)
+LATER_CHANGE = datetime(2026, 8, 20, 16, 0, tzinfo=UTC)
+LATEST_CHANGE = datetime(2026, 8, 20, 17, 0, tzinfo=UTC)
+ZONES_BASIS = "evacuation-zones: GREATEST(max(updated_at)) over 12 published rows"
+
+
+def seed_parts(backend: RecordingBackend, store: ObjectStore, *, count: int, at: datetime, day: date) -> None:
+    """Land `count` part files over one stream-day, all stamped as one export at `at`."""
+    for part_index in range(count):
+        key = store.key_for(partition_path(ZONES, "observed", day, part_index))
+        backend.put(key, b"parquet", content_type=PARQUET_CONTENT_TYPE)
+        backend.set_last_modified(key, at)
+
+
+def held_parts(store: ObjectStore) -> tuple[str, ...]:
+    """Every object the zones stream currently holds, as relative paths -- orphans included."""
+    return store.list_partition_keys(ZONES, "observed")
+
+
+def static_lane(  # noqa: PLR0913 - one knob per behaviour the static driver path needs to provoke
+    backend: RecordingBackend,
+    *,
+    part_counts: Sequence[int],
+    export_instants: Sequence[datetime],
+    watermark_instants: Sequence[datetime | None] = (),
+    version_day: date = VERSION_DAY,
+    exports: list[int] | None = None,
+) -> LaneRegistration:
+    """A `static_lookup` lane that REALLY writes part files, so a shrinking re-export can be watched.
+
+    Each element of `part_counts` is one export's whole population and `export_instants` stamps it,
+    standing in for the store's own `LastModified`. `watermark_instants` is consumed one READ at a
+    time, so "the source changed during this export's window" is expressed as two different values
+    inside a single export's bracket. Both sequences hold their last value once exhausted.
+    """
+    reads = [0]
+    written = exports if exports is not None else []
+
+    def at(values: Sequence[Any], index: int) -> Any:
+        return values[min(index, len(values) - 1)]
+
+    async def adapter(session: Any, store: ObjectStore, *, day: date, run_id: str) -> LaneRunResult:  # noqa: ARG001
+        count = at(part_counts, len(written))
+        written.append(count)
+        seed_parts(backend, store, count=count, at=at(export_instants, len(written) - 1), day=day)
+        return LaneRunResult(part_count=count, row_count=count * 5, byte_count=count * 50, absence_recorded=False)
+
+    async def watermark(_session: Any, _store: ObjectStore, *, today: date) -> SourceWatermark:  # noqa: ARG001
+        instant = at(watermark_instants, reads[0]) if watermark_instants else None
+        reads[0] += 1
+        return SourceWatermark(day=version_day, instant=instant, basis=ZONES_BASIS)
+
+    return LaneRegistration(
+        slug=ZONES,
+        adapter=adapter,
+        history_floor=version_day,
+        publication_lag_days=0,
+        nature="static_lookup",
+        floor_basis=f"test fixture for {ZONES}",
+        watermark=watermark,
     )
 
 
@@ -705,3 +775,240 @@ def test_an_unknown_layer_is_refused_before_anything_is_listed() -> None:
 
     assert result.exit_code != 0
     assert "interventions" in result.output
+
+
+def zones_census(store: ObjectStore, lane: LaneRegistration, *, instant: datetime | None) -> LaneGapCensus:
+    """Census the zones lane against a watermark pinned at `instant`, through the REAL census path."""
+    return build_gap_census(
+        [lane],
+        store,
+        today=TODAY,
+        watermarks={
+            ZONES: LaneWatermarkReading(watermark=SourceWatermark(day=VERSION_DAY, instant=instant, basis=ZONES_BASIS))
+        },
+    )[0]
+
+
+def test_the_census_feeds_the_stores_real_export_instant_into_the_resolver() -> None:
+    """THE WIRING, not the resolver. Replacing `newest_data_instant` with `None` must fail here.
+
+    The sub-day comparison was asserted only on the pure resolver with hand-built arguments, so the
+    census could have passed the literal `None` and every test still passed. This drives the census
+    against a store whose part file was stamped BEFORE the source changed, and the only way to reach
+    `stale` is for the listing's instant to arrive at the resolver.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    lane = static_lane(backend, part_counts=[1], export_instants=[BE_READY_AT])
+    seed_parts(backend, store, count=1, at=BE_READY_AT, day=VERSION_DAY)
+
+    stale = zones_census(store, lane, instant=GO_NOW_AT)
+
+    assert stale.static_state == "stale"
+    assert stale.missing_days == (VERSION_DAY,)
+    assert "BEFORE the source changed" in (stale.static_detail or "")
+    # And the converse, so the wiring cannot pass by always answering `stale` either.
+    assert zones_census(store, lane, instant=BE_READY_AT).static_state == "current"
+
+
+def test_a_census_with_no_export_instant_still_falls_back_to_day_resolution() -> None:
+    """The unstamped listing is the honest unknown, and must not be mistaken for a stale export."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    lane = static_lane(backend, part_counts=[1], export_instants=[BE_READY_AT])
+    backend.put(
+        store.key_for(partition_path(ZONES, "observed", VERSION_DAY, 0)),
+        b"x",
+        content_type=PARQUET_CONTENT_TYPE,
+    )
+
+    census = zones_census(store, lane, instant=GO_NOW_AT)
+
+    assert census.static_state == "current"
+    assert "DAY-RESOLUTION" in (census.static_detail or "")
+
+
+@pytest.mark.asyncio
+async def test_a_shrinking_re_export_leaves_no_orphan_and_the_lane_converges_to_current() -> None:
+    """THE BLOCKER, end to end through the driver: stale -> re-export -> the SAME day -> current.
+
+    Day D holds four parts exported before the source changed, so the lane is stale. The re-export's
+    population has shrunk to two. Without the prune, `part-2` and `part-3` survive holding the
+    SUPERSEDED evacuation levels, `oldest_export_instant` keeps answering the OLD instant, and the
+    lane is judged stale again on every tick forever -- re-exporting the whole population each time.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend, prefix="sandbox")
+    exports: list[int] = []
+    lane = static_lane(
+        backend,
+        part_counts=[2],
+        export_instants=[AFTER_GO_NOW],
+        watermark_instants=[GO_NOW_AT],
+        exports=exports,
+    )
+    seed_parts(backend, store, count=4, at=BE_READY_AT, day=VERSION_DAY)
+    assert zones_census(store, lane, instant=GO_NOW_AT).static_state == "stale"
+
+    summary = await drive([lane], store)
+
+    assert exports == [2], "the stale lane must re-export exactly once"
+    assert summary.lanes[0].outcome == "filled"
+    assert held_parts(store) == (
+        partition_path(ZONES, "observed", VERSION_DAY, 0),
+        partition_path(ZONES, "observed", VERSION_DAY, 1),
+    ), "the two parts this smaller export did not write must be gone, not published beside it"
+    # The latch is gone with them: the day's oldest and newest part now agree on the new export.
+    assert zones_census(store, lane, instant=GO_NOW_AT).static_state == "current"
+
+
+@pytest.mark.asyncio
+async def test_a_source_that_moves_during_the_export_window_forces_a_re_export() -> None:
+    """The export instant is PUT time, so a change between the select and the upload reads as captured.
+
+    The watermark is read on each side of the export. Two different values mean the source moved
+    inside the window and the snapshot's vintage is unknown, so the day is exported again rather
+    than published as current on the strength of an upload instant that proves nothing.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    exports: list[int] = []
+    lane = static_lane(
+        backend,
+        part_counts=[2],
+        export_instants=[AFTER_GO_NOW],
+        # Read 0 is the census's own. Reads 1 and 2 bracket export 1 and DIFFER, so it raced; reads
+        # 3 and 4 bracket export 2 and agree, so it settles. The sequence holds its last value.
+        watermark_instants=[GO_NOW_AT, GO_NOW_AT, LATER_CHANGE],
+        exports=exports,
+    )
+    seed_parts(backend, store, count=1, at=BE_READY_AT, day=VERSION_DAY)
+
+    summary = await drive([lane], store)
+
+    assert exports == [2, 2], "the raced export must be redone, and the quiet retry must settle it"
+    verdict = summary.lanes[0]
+    assert verdict.outcome == "filled"
+    assert "DURING attempt 1" in (verdict.detail or "")
+
+
+@pytest.mark.asyncio
+async def test_a_source_racing_every_attempt_is_reported_rather_than_latched_current() -> None:
+    """A bounded retry that gives up LOUDLY is the correct failure mode; silence is the one being fixed."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    exports: list[int] = []
+    lane = static_lane(
+        backend,
+        part_counts=[2],
+        export_instants=[AFTER_GO_NOW],
+        # Both brackets straddle a change: reads 1/2 differ, and so do reads 3/4.
+        watermark_instants=[GO_NOW_AT, GO_NOW_AT, LATER_CHANGE, LATER_CHANGE, LATEST_CHANGE],
+        exports=exports,
+    )
+    seed_parts(backend, store, count=1, at=BE_READY_AT, day=VERSION_DAY)
+
+    summary = await drive([lane], store)
+
+    assert exports == [2, 2], "bounded: it must not retry forever"
+    detail = summary.lanes[0].detail or ""
+    assert "every one of 2 export attempts" in detail
+    assert "re-export it" in detail
+
+
+@pytest.mark.asyncio
+async def test_a_quiet_source_exports_once_and_says_nothing_about_racing() -> None:
+    """The bracket must be silent on the ordinary path, or every static export would read as suspect."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    exports: list[int] = []
+    lane = static_lane(
+        backend,
+        part_counts=[2],
+        export_instants=[AFTER_GO_NOW],
+        watermark_instants=[GO_NOW_AT],
+        exports=exports,
+    )
+    seed_parts(backend, store, count=1, at=BE_READY_AT, day=VERSION_DAY)
+
+    summary = await drive([lane], store)
+
+    assert exports == [2]
+    assert summary.lanes[0].detail is None
+
+
+@pytest.mark.asyncio
+async def test_a_prune_that_cannot_remove_an_orphan_reports_it_on_a_succeeding_day() -> None:
+    """The rows are written and correct, so this may not fail the export -- but it may not vanish either."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    lane = static_lane(backend, part_counts=[1], export_instants=[AFTER_GO_NOW], watermark_instants=[GO_NOW_AT])
+    seed_parts(backend, store, count=2, at=BE_READY_AT, day=VERSION_DAY)
+    orphan = partition_path(ZONES, "observed", VERSION_DAY, 1)
+    backend.refuses_delete_of.add(store.key_for(orphan))
+
+    summary = await drive([lane], store)
+
+    verdict = summary.lanes[0]
+    assert verdict.outcome == "filled", "a prune failure must never fail the export"
+    assert verdict.written == 1
+    assert orphan in (verdict.detail or "")
+    assert "still published beside this export" in (verdict.detail or "")
+
+
+class WatermarkRow:
+    """One aggregated watermark row: `row_count` is a count, every other column is the timestamp."""
+
+    def __init__(self, *, watermark_at: datetime | None, row_count: int) -> None:
+        self.watermark_at = watermark_at
+        self.row_count = row_count
+
+    def __getitem__(self, column: str) -> object:
+        return self.row_count if column == "row_count" else self.watermark_at
+
+
+class WatermarkSession:
+    """A session whose one statement returns a single canned watermark row; executes no real SQL."""
+
+    def __init__(self, row: WatermarkRow) -> None:
+        self.row = row
+
+    async def execute(self, statement: Any, params: dict[str, Any] | None = None) -> Any:  # noqa: ARG002
+        return self
+
+    def mappings(self) -> list[WatermarkRow]:
+        return [self.row]
+
+    async def rollback(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_the_real_zones_watermark_resolver_carries_the_instant_beside_the_day() -> None:
+    """THE PRODUCER END of the wiring. Dropping `instant=` from the reader must fail here.
+
+    This runs the REGISTERED `evacuation-zones` resolver, not a fixture, so the day/instant pair is
+    asserted where production actually builds it. Without the instant the whole sub-day comparison
+    silently degrades to the day-resolution fallback, which is what the day already could not decide.
+    """
+    (lane,) = resolve_lanes([ZONES])
+    assert lane.watermark is not None
+    session = WatermarkSession(WatermarkRow(watermark_at=GO_NOW_AT, row_count=12))
+
+    watermark = await lane.watermark(session, ObjectStore(RecordingBackend()), today=TODAY)  # type: ignore[arg-type]
+
+    assert watermark.instant == GO_NOW_AT
+    assert watermark.day == VERSION_DAY
+    assert "12 published rows" in watermark.basis
+
+
+@pytest.mark.asyncio
+async def test_a_source_with_no_rows_carries_neither_a_day_nor_an_instant() -> None:
+    """An empty population has nothing that changed, and the contract refuses an instant without a day."""
+    (lane,) = resolve_lanes([ZONES])
+    assert lane.watermark is not None
+    session = WatermarkSession(WatermarkRow(watermark_at=None, row_count=0))
+
+    watermark = await lane.watermark(session, ObjectStore(RecordingBackend()), today=TODAY)  # type: ignore[arg-type]
+
+    assert (watermark.day, watermark.instant) == (None, None)

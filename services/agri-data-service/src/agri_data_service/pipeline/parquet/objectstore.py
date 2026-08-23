@@ -15,6 +15,16 @@ rewrote `part-0` but left an older `part-1` beside it publishes a MIXTURE, and t
 the one that says so; the newest would report the whole day as freshly captured. An unknown instant
 on any part collapses the answer to `None`, because a partly unattributed set is not a freshness
 claim.
+
+A FULL RE-EXPORT MUST REMOVE THE PARTS IT NO LONGER WRITES, and that is why this module can delete.
+A `static_lookup` export rewrites the whole population, so a re-export whose population SHRANK
+writes `part-0` and `part-1` over a day that used to hold `part-0` .. `part-3` and leaves the last
+two behind. Those orphans are read by anything scanning the day prefix, so the day serves the new
+rows AND the superseded ones together -- on `evacuation-zones` that is a retracted evacuation level
+published beside the current one. They also pin `oldest_export_instant` to the OLD export, which
+holds the lane `stale` forever and re-exports 162 MB on every tick. `prune_surplus_parts` closes
+both, and runs only AFTER every new part is written: a prune that ran first and then failed would
+leave the day EMPTY, which reads as a present-but-thin version and is worse than the orphan.
 """
 
 from __future__ import annotations
@@ -98,15 +108,19 @@ class ObjectStoreBackend(Protocol):
 
     def put(self, key: str, payload: bytes, *, content_type: str) -> None: ...
 
+    def delete(self, key: str) -> None: ...
+
     def list_objects(self, prefix: str) -> Iterator[ListedObject]: ...
 
     def size_of(self, key: str) -> int | None: ...
 
 
 class _S3Api(Protocol):
-    """The three boto3 S3 calls this module makes, typed at the boundary rather than as `Any`."""
+    """The four boto3 S3 calls this module makes, typed at the boundary rather than as `Any`."""
 
     def put_object(self, **kwargs: object) -> object: ...
+
+    def delete_object(self, **kwargs: object) -> object: ...
 
     def list_objects_v2(self, **kwargs: object) -> Mapping[str, object]: ...
 
@@ -140,6 +154,29 @@ class AbsenceWriteReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class SurplusPruneResult:
+    """What a post-export prune removed from one stream-day, and every removal it could not make.
+
+    The rows this export wrote are correct, so a failed prune must never fail the export -- but an
+    unreported one leaves the orphan that pins the lane `stale`, so `report` renders both halves.
+    """
+
+    removed: tuple[str, ...]
+    failures: tuple[str, ...]
+
+    @property
+    def report(self) -> str | None:
+        """Render what happened for a caller to surface, or `None` when there was nothing to say."""
+        if not self.removed and not self.failures:
+            return None
+        lines = []
+        if self.removed:
+            lines.append(f"removed {len(self.removed)} surplus part file(s): {', '.join(self.removed)}")
+        lines.extend(self.failures)
+        return "; ".join(lines)
+
+
+@dataclass(frozen=True, slots=True)
 class BotoObjectStoreBackend:
     """`ObjectStoreBackend` over one boto3 S3 client and one bucket."""
 
@@ -161,6 +198,10 @@ class BotoObjectStoreBackend:
     def put(self, key: str, payload: bytes, *, content_type: str) -> None:
         """Upload one object, overwriting any object already at `key`."""
         self.client.put_object(Bucket=self.bucket, Key=key, Body=payload, ContentType=content_type)
+
+    def delete(self, key: str) -> None:
+        """Remove one object; S3 treats deleting an absent key as success, and so does this."""
+        self.client.delete_object(Bucket=self.bucket, Key=key)
 
     def list_objects(self, prefix: str) -> Iterator[ListedObject]:
         """Yield every object under `prefix`, following continuation tokens to the end of the listing."""
@@ -316,13 +357,58 @@ class ObjectStore:
             listed.relative_path for listed in self.list_partition_objects(layer, kind, year=year, month=month)
         )
 
-    def day_export_instant(self, layer: str, kind: PartitionKind, day: date) -> datetime | None:
-        """Return when one stream-day's part files were exported, from a listing scoped to that day alone."""
-        listed = tuple(
-            ListedPartition(relative_path=self.relative_key(entry.key), last_modified=entry.last_modified)
-            for entry in self._backend.list_objects(self.day_key_prefix(layer, kind, day))
-        )
-        return oldest_export_instant(listed, layer=layer, kind=kind, day=day)
+    def prune_surplus_parts(
+        self,
+        layer: str,
+        kind: PartitionKind,
+        day: date,
+        *,
+        written_part_count: int,
+    ) -> SurplusPruneResult:
+        """Remove one stream-day's parts left behind by a SHRINKING full re-export. Never raises.
+
+        Call this only AFTER every part of that re-export has landed: `written_part_count` is how
+        many parts it wrote, so `part-<n>` for n >= it can only be surplus from an older, larger
+        export of the SAME day. The module docstring says why the order may never be reversed.
+        """
+        if written_part_count <= 0:
+            raise ValueError(
+                f"refusing to prune {layer!r} {kind} {day.isoformat()} with written_part_count="
+                f"{written_part_count}: that would delete every part of the day, and a prune may only "
+                "ever trail a completed write"
+            )
+        try:
+            listed = tuple(self._backend.list_objects(self.day_key_prefix(layer, kind, day)))
+        except Exception as error:  # an unprunable day is a reportable orphan, never a failed export
+            return SurplusPruneResult(
+                removed=(),
+                failures=(
+                    f"listing {layer!r} {kind} {day.isoformat()} for surplus parts failed, so parts from a "
+                    f"larger earlier export may still be published beside this one: "
+                    f"{type(error).__name__}: {error}",
+                ),
+            )
+        removed: list[str] = []
+        failures: list[str] = []
+        for entry in listed:
+            relative_path = self.relative_key(entry.key)
+            # Every coordinate is re-checked from the PARSED path, never inferred from the prefix: an
+            # absence marker parses as `None` here, and another lane, kind or day cannot match.
+            parsed = try_parse_partition_path(relative_path)
+            if parsed is None or parsed.layer != layer or parsed.kind != kind or parsed.day != day:
+                continue
+            if parsed.part_index < written_part_count:
+                continue
+            try:
+                self._backend.delete(entry.key)
+            except Exception as error:  # same: report the survivor, never lose the written rows
+                failures.append(
+                    f"removing surplus part {relative_path} failed, so it is still published beside this "
+                    f"export: {type(error).__name__}: {error}"
+                )
+                continue
+            removed.append(relative_path)
+        return SurplusPruneResult(removed=tuple(removed), failures=tuple(failures))
 
     def partition_exists(self, layer: str, kind: PartitionKind, day: date, part_index: int = 0) -> bool:
         """Report whether one part file has been written, without downloading it."""

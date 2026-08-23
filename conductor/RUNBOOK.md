@@ -3841,6 +3841,166 @@ cadence, horizon, historical depth, or known-gaps list. The lane was built from 
 gap stated rather than an invented contract. **Write that half of the contract before the lane is
 scheduled**, or its history horizon and gap detection have nothing to check against.
 
+### 0.31 SESSION 6, 2026-08-23 — the sub-day fix landed, and soil-survey is not what §0.29.1 says
+
+**HEAD `deba827` (UNPUSHED — `origin/main` is `ef789f7`).** s1's sub-day version fix is in the
+working tree, gate-clean, under adversarial review, NOT yet committed. Read §0.30 for the decisions
+this session executed against.
+
+#### 0.31.1 CORRECTION — §0.29.1 is WRONG about soil-survey, on both the state and the reason
+
+§0.29.1 records: *"`soil-survey` writing NOTHING is CORRECT: its Postgres source is filled only by
+lazy viewport read-through nobody has triggered, so the watermark is `None` → `source_empty`."*
+
+**Both halves are false.** Measured against production 2026-08-23 via
+`LOCAL_SOURCE_LOADER_DATABASE_URL`:
+
+| probe | result |
+|---|---|
+| watermark join returns rows? | `t` — the source is NOT empty |
+| bounded count vs the cap | **200,001** against a cap of 200,000 → `export_would_refuse = t` |
+
+The real blocker is `MAX_SOIL_SURVEY_POLYGON_KEYS: Final = 200_000` (`lane_registry.py:96`),
+enforced at `lane_registry.py:288-293` and called from the **export** path (`lane_registry.py:615`),
+not the watermark path. The lane resolves `stale`, attempts its export, and raises
+`LaneRegistryError` every tick — *"exporting a truncated key list would write a partial release that
+reads back as a complete one. Raise MAX_SOIL_SURVEY_POLYGON_KEYS deliberately, or shard the
+release."*
+
+**Consequence: soil-survey is not waiting on a backfill and will never drain on its own.** It is
+waiting on a decision. Any plan that assumes it joins the warehouse by waiting is wrong.
+
+#### 0.31.2 CORRECTION — the leading-edge lag is BY DESIGN, not backlog starvation
+
+Every lane's newest partition day sits 1-9 days behind today. That is NOT the round-robin spending
+its budget on history; it is `lane_window()`'s settling rule, `last_day = today -
+publication_lag_days` (`gap_fill.py:239-259`). Measured 2026-08-23, five of six exact:
+
+| lane | `publication_lag_days` | `today − lag` | measured newest |
+|---|---:|---|---|
+| signal | 9 | 2026-08-14 | 2026-08-14 |
+| vegetation | 7 | 2026-08-16 | 2026-08-16 |
+| burn-severity | 7 | 2026-08-16 | 2026-08-16 |
+| fire-detections | 2 | 2026-08-21 | 2026-08-21 |
+| fire-perimeters | 1 | 2026-08-22 | 2026-08-22 |
+| drought | 4 (cadence 7) | 2026-08-19 | 2026-08-18 — weekly step |
+
+The driver keeps the leading edge current AND drains backlog at the same time, exactly as designed.
+**A serving cut-over must therefore expose a coverage endpoint**: a client asking for "today"
+legitimately gets nothing, because today is not settled yet.
+
+#### 0.31.3 `burn-severity`'s 383-markers-zero-parts IS correct — do not "fix" it
+
+It looks identical to soil-survey's symptom and is not the same thing. Its source holds 541 real
+rows at five MTBS release dates 2020-11-24..2024-08-22 (`lane_registry.py:650-669`, `cadence_days=1`
+deliberate for an irregular release series). The newest-first walk is currently near 2025-07-30 and
+has ~1,700 days to go before it reaches them. It will serve eventually.
+
+#### 0.31.4 THE CRON IS ARMED AND DRAINING — measured, with backfill proof
+
+`plantgeo-ingest-cron` (`3ae3cc37`), schedule `0 * * * *`, latest deployment SUCCESS 18:04:08Z,
+instance RUNNING. Bucket `plantgeo-parquet-9ymvp7gv`: **2,274 objects / 677.1 MB**, up from
+§0.29.1's 1,240 — **+1,034 in one day**.
+
+Backfill depth, not just leading edge — the fifteen most recent writes at 18:02Z were all **2025**
+partition-days, descending, five lanes interleaved at ~21 s per round:
+
+    18:02:11Z fire-perimeters 2025-08-05    18:02:10Z fire-detections 2025-08-04
+    18:02:08Z vegetation      2025-08-06    18:02:08Z burn-severity   2025-07-30
+    18:02:05Z signal          2025-07-25
+
+Per-lane depth: drought reaches back to 2022-08-09 (211 days), signal to 2025-07-25 (386 days).
+Static lanes correctly idle: `watersheds` still 10 parts at one version day, `evacuation-zones` 4
+parts at 2026-08-23, neither re-snapshotted.
+
+The 86-minute trap held again: the 18:04Z tick was still in `ingest-all` at 19:01Z.
+
+#### 0.31.5 OWNER DECISION — static lookups leave the lane registry
+
+**`soil-survey` and `watersheds` drop out of `lane_registry.py`** into a separate config area for
+provisioning static lookups, alongside things like sensor station locations. **`evacuation-zones`
+and `calendar` STAY.**
+
+The line: a lane belongs in the gap-fill registry when something must *react* to it on a cron
+cadence. HUC12 boundaries, SSURGO delineations and sensor station locations are immutable reference
+geometry wanting deliberate provisioning; OEM evacuation levels move within hours of a fire (the
+entire reason for wave 4's sub-day fix), and the calendar dimension computes itself.
+
+**This dissolves the soil-survey blocker rather than working around it.** An hourly driver can only
+refuse a 200,001-key release; a provisioning step can shard it deliberately, which is exactly what
+the cap's own error message asks for. The cap becomes a sharding parameter, not a refusal.
+
+Three things the move must not lose:
+
+1. **The layout does not change.** `watersheds`'s 10 parts stay where they are; `planes/watersheds.py`
+   and `planes/soil_survey.py` keep reading by path. This changes who WRITES, not what or where.
+2. **The gap census is also the safety net.** Once they leave the registry, `build_gap_census` no
+   longer covers them and nothing notices if their objects go stale or vanish. The config area must
+   carry its own coverage check or the move trades a noisy failure for a silent one.
+3. `write_partition`'s zero-row refusal and governed-absence refusal still apply. Provisioning is
+   not exempt.
+
+#### 0.31.6 THE SERVING GAP, measured — the planes have ZERO callers
+
+The pivot built a warehouse writer and twelve readers and never connected them to anything.
+
+- All twelve `planes/*.py` read Parquet from S3 via Polars with predicate pushdown. They work.
+- `grep -r "from agri_data_service.planes import"` across the whole service returns **ZERO matches**.
+  Nothing in `routes/`, `app.py`, `cli.py` or `jobs/` imports any plane. They are exercised only by
+  `tests/parquet/test_*_serving.py`.
+- `interface/` is an EMPTY STUB — `__init__.py` and `AGENTS.md` only. Its own docstring declares it
+  layer L4, says `interface/http` holds HTTP routes, and says it MAY import `planes`. **No other
+  package may.** So the blueprint has a designated home that was never built.
+- `src/lib/server` has zero parquet/duckdb/polars/S3 references. Every core layer the Next.js client
+  reads comes from Postgres through tRPC (`environmental-read-model.ts`, 4,432 lines).
+
+**The cut-over splits three ways and only one is a wiring job:**
+
+| bucket | layers | cost |
+|---|---|---|
+| tRPC-served, Parquet has data | fire-detections, drought, vegetation, weather-observations, water-gauges, signal | build the HTTP surface, repoint the procedure |
+| tRPC-served, Parquet has NO data | soil-survey (cap-blocked, §0.31.1), burn-severity (walk hasn't arrived, §0.31.3) | cannot cut over yet |
+| **Martin/PostGIS tiles only, no tRPC path at all** | fire-perimeters, burn-severity, evacuation-zones, sensors | NOT wiring — needs PMTiles generation, a separate build |
+
+#### 0.31.7 s1 LANDED — sub-day version collapse closed, gate-clean
+
+`ObjectStoreBackend.list_keys` became `list_objects` carrying `LastModified`; `SourceWatermark`
+gained `instant`; `resolve_static_lane` compares the EXPORT instant against the SOURCE instant when
+both fall on the watermark day. **Zero extra API calls, zero layout change** — the instant comes from
+the listing already made. 8 files, +510/-46.
+
+The unknown-instant fallback (chosen, and it is a real decision): falls back to day resolution and
+returns `current`, but stamps **"DAY-RESOLUTION"** into the verdict `detail` so a reader can see the
+answer was not instant-resolved. Rationale: a lane that re-exports every tick forever is a worse bug
+than the one being fixed — `watersheds` is 162 MB per export and the OLD code did exactly that.
+
+**Gate: 3,730 passed / 3 skipped / exit 0** (baseline 3,719 — the +11 are s1's new tests; only 3
+skips confirms the real-DB gate was live). `ruff check` passed, `ruff format --check` 421 files
+already formatted, `mypy` still exactly the 2 pre-existing `matview_refresh.py` errors.
+
+s1 deliberately left three defects, one of which reorders the queue: **a governed absence at the
+watermark day makes the owed re-export raise forever.** That is s2's auto-retraction, and s1's fix
+makes it MORE likely to bite because it creates more re-export attempts. s2 is now more urgent, not
+less.
+
+#### 0.31.8 Operational — things learned the expensive way
+
+- **AgentGraph missions are for IMPLEMENTATION only** (owner, 2026-08-23). Mission workers lack the
+  permission and skill access ordinary subagents have. Research, verification and review go to
+  regular subagents; missions write code.
+- **The claim ledger works.** s1 tried to write a scratch file `_s1_objectstore.py` into the service
+  root and made one unclaimed edit; both were refused and the agent recovered. The write boundary is
+  real — which is exactly why write scope must be approved up front.
+- **The prebaked partition needed widening.** The `LastModified` change touches THREE backend fakes,
+  not one: `RecordingBackend` (`test_objectstore_writer.py:47`), `RaisingBackend`
+  (`test_gap_fill.py:107`) and `LocalFileBackend` (`test_sensors_serving.py:35`). A partition that
+  lists only the first sends an agent into a wall.
+- **Production is fragile under scans.** A six-way `count(*)` over `geo.features` timed out at 120 s.
+  Use `EXISTS` and `LIMIT`-bounded counts (see §0.31.1's probes) — RAM is per-query here (§12.6).
+- **The AgentGraph run log nests every event under an `event` key.** A parser reading `type` at the
+  top level silently reports zero of everything and looks like a dead mission.
+
+
 ### 0.30 HANDOFF 2026-08-23 — wave 4 is decided, and the pivot finally has a track
 
 **HEAD `ef789f7`, PUSHED, tree clean.** Read §0.29 next for what wave 3 actually did and what it

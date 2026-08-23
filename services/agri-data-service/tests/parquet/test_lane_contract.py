@@ -70,17 +70,43 @@ def test_a_watermark_must_cite_what_produced_it() -> None:
         SourceWatermark(day=CHANGED_ON, basis="   ")
 
 
-def test_a_version_at_or_after_the_watermark_is_current_and_owes_nothing() -> None:
-    for held in (CHANGED_ON, TODAY):
-        verdict = resolve_static_lane(
-            watermark=SourceWatermark(day=CHANGED_ON, basis="max(updated_at)"),
-            newest_data_day=held,
-            newest_data_instant=None,
-            newest_marker_day=None,
-            today=TODAY,
-        )
-        assert verdict.state == "current"
-        assert verdict.version_day is None
+def test_a_version_after_the_watermark_is_current_on_the_day_alone() -> None:
+    """A LATER version day supersedes the watermark outright; no instant is consulted to say so."""
+    verdict = resolve_static_lane(
+        watermark=SourceWatermark(day=CHANGED_ON, basis="max(updated_at)"),
+        newest_data_day=TODAY,
+        newest_data_instant=None,
+        newest_marker_day=None,
+        today=TODAY,
+    )
+
+    assert verdict.state == "current"
+    assert verdict.version_day is None
+    # WHICH resolution answered, not merely that the answer was `current`. This case never reaches
+    # `_resolve_watermark_day`, so a day-resolution caveat here would mean the branching had moved.
+    assert "later than the source watermark" in verdict.detail
+    assert "DAY-RESOLUTION" not in verdict.detail
+
+
+def test_a_version_on_the_watermark_day_with_no_instant_is_current_only_at_day_resolution() -> None:
+    """Equal days cannot decide themselves, so this is the fallback -- and it must admit that it is.
+
+    Before the watermark carried an instant this case was indistinguishable from the one above. It
+    now answers through `_resolve_watermark_day`, and asserting only `current` would let the whole
+    sub-day comparison be deleted without a test noticing.
+    """
+    verdict = resolve_static_lane(
+        watermark=SourceWatermark(day=CHANGED_ON, basis="max(updated_at)"),
+        newest_data_day=CHANGED_ON,
+        newest_data_instant=None,
+        newest_marker_day=None,
+        today=TODAY,
+    )
+
+    assert verdict.state == "current"
+    assert verdict.version_day is None
+    assert "DAY-RESOLUTION" in verdict.detail
+    assert "the source reported no change instant" in verdict.detail
 
 
 def test_a_version_older_than_the_watermark_owes_one_snapshot_dated_at_the_watermark() -> None:
@@ -290,6 +316,22 @@ def test_a_marker_beside_an_up_to_date_part_file_still_reads_as_current() -> Non
 
     assert verdict.state == "current"
     assert verdict.version_day is None
+    # No instant on either side, so this is the day-resolution arm; naming it keeps the test from
+    # passing for a reason it never meant to assert.
+    assert "DAY-RESOLUTION" in verdict.detail
+
+    # And the same asymmetry at INSTANT resolution: the marker still must not drag a captured export
+    # to stale, now decided by the two clocks rather than by the fallback.
+    at_instant_resolution = resolve_static_lane(
+        watermark=SourceWatermark(day=CHANGED_ON, instant=GO_NOW_AT, basis=EVACUATION_BASIS),
+        newest_data_day=newest_data_day(layer="watersheds", kind="observed", keys=keys),
+        newest_data_instant=GO_NOW_AT,
+        newest_marker_day=newest_marker_day(layer="watersheds", kind="observed", keys=keys),
+        today=TODAY,
+    )
+
+    assert at_instant_resolution.state == "current"
+    assert "DAY-RESOLUTION" not in at_instant_resolution.detail
 
 
 def test_an_empty_source_stays_empty_rather_than_stale_when_a_marker_covers_it() -> None:

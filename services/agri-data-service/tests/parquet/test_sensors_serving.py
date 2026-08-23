@@ -7,7 +7,7 @@ bucket, with `storage_options={}` standing in for `polars_storage_options(creden
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pyarrow as pa  # type: ignore[import-untyped]
@@ -32,16 +32,35 @@ AUGUST_SECOND = date(2026, 8, 2)
 AUGUST_THIRD = date(2026, 8, 3)
 
 
+FIRST_EXPORT_INSTANT = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+
+
 class LocalFileBackend:
-    """`ObjectStoreBackend` over a temp directory: the exact key layout, real bytes, no network."""
+    """`ObjectStoreBackend` over a temp directory: the exact key layout, real bytes, no network.
+
+    Export instants are STAMPED PER PUT from a fixed base, never read off the filesystem. An earlier
+    revision returned `st_mtime`, which is the wall clock: the instants would then move between runs
+    and a currency test could decide differently each time, which is exactly what `RecordingBackend`
+    promises not to do. Put order is the honest analogue of export order, and it is reproducible.
+    """
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        self.last_modified: dict[str, datetime] = {}
+        self.deleted: list[str] = []
 
     def put(self, key: str, payload: bytes, *, content_type: str) -> None:  # noqa: ARG002
         path = self.root / key
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(payload)
+        self.last_modified[key] = FIRST_EXPORT_INSTANT + timedelta(seconds=len(self.last_modified))
+
+    def delete(self, key: str) -> None:
+        path = self.root / key
+        if path.exists():
+            path.unlink()
+        self.last_modified.pop(key, None)
+        self.deleted.append(key)
 
     def list_objects(self, prefix: str) -> Iterator[ListedObject]:
         if not self.root.exists():
@@ -50,8 +69,7 @@ class LocalFileBackend:
             if path.is_file():
                 relative = path.relative_to(self.root).as_posix()
                 if relative.startswith(prefix):
-                    # A file's mtime is this backend's honest analogue of S3's `LastModified`.
-                    yield ListedObject(key=relative, last_modified=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC))
+                    yield ListedObject(key=relative, last_modified=self.last_modified.get(relative))
 
     def size_of(self, key: str) -> int | None:
         path = self.root / key

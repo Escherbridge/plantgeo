@@ -89,3 +89,34 @@ genuine forecast source exists.
   local `agri_sweep` port 5442, plus `PGBIN`. Without it ~110 tests silently skip.
 - **Any forecast must beat a climatology baseline** or it is not a forecast (§0.28.4).
 - **Never self-approve.** `b794e98` shipped unreviewed and had four real defects.
+
+## Owner decision 2026-08-23 (sixth session) — static lookups leave the lane registry
+
+**`soil-survey` and `watersheds` are dropped from `lane_registry.py`** and move to a separate
+config area for provisioning static lookups. `evacuation-zones` and `calendar` STAY.
+
+The line this draws: a lane belongs in the gap-fill registry when something must *react* to it on a
+cron cadence. HUC12 boundaries and SSURGO delineations change on multi-year timescales and want
+deliberate provisioning; OEM evacuation levels move within hours of a fire (which is what wave 4's
+sub-day fix exists for), and the calendar dimension computes itself. Two clocks, two mechanisms.
+
+**This dissolves the soil-survey blocker rather than working around it.** Measured against
+production 2026-08-23: the watermark join returns rows (so §0.29.1's `source_empty` reading is
+wrong), and a bounded count returns 200,001 against `MAX_SOIL_SURVEY_POLYGON_KEYS = 200_000`
+(`lane_registry.py:96`), so `_soil_survey_polygon_keys` (`lane_registry.py:288-293`, called from the
+export at `:615`) raises every tick. An hourly driver can only refuse; a provisioning step can
+**shard the release deliberately**, which is what the cap's own error message asks for. The cap
+becomes a sharding parameter instead of a refusal.
+
+### What must not be lost in the move
+
+- **The partition layout does not change.** `watersheds` already holds 10 manual parts at
+  `day=2026-08-07`; those objects stay exactly where they are, and `planes/watersheds.py` /
+  `planes/soil_survey.py` keep reading them by path. This is a change to who WRITES, not to what is
+  written or where.
+- **The gap census is also the safety net.** Once these two leave the registry, nothing notices if
+  their objects go missing or go stale — `build_gap_census` will no longer cover them. The new
+  config area must carry its own coverage check, or the move trades a noisy failure for a silent
+  one.
+- **`ObjectStore.write_partition` still refuses a zero-row write and still refuses to overwrite a
+  governed absence.** Provisioning is not exempt from those guarantees.

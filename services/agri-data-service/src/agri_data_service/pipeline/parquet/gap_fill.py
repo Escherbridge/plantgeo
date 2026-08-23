@@ -85,6 +85,10 @@ GAP_CENSUS_REPORT_DAY_SAMPLE: Final = 10
 # (jobs/lease.py::LEASE_STATEMENT_TIMEOUT_SECONDS, and cli.py's loader verbs).
 _STATEMENT_TIMEOUT: Final = text("SET LOCAL statement_timeout = '120s'")
 
+# How many times one static lane-day export may be attempted in a tick before the export-window race
+# is reported rather than retried. Two: one export, and one re-export if the source moved under it.
+MAX_STATIC_EXPORT_ATTEMPTS: Final = 2
+
 # `current` is a static lane at or ahead of its source watermark. It is deliberately NOT folded
 # into `complete`: "this reference set matches its source" and "this window has no gaps left" are
 # different claims about different clocks, and an operator scanning a summary needs to see which.
@@ -589,7 +593,7 @@ async def resolve_lane_watermarks(
     return readings
 
 
-async def _fill_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
+async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
     session: AsyncSession,
     store: ObjectStore,
     lane: LaneRegistration,
@@ -626,6 +630,127 @@ async def _fill_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per a
     await session.rollback()
     outcome: LaneDayOutcome = "absent" if result.absence_recorded else "written"
     return outcome, result.part_count, result.row_count, result.byte_count, None
+
+
+async def _read_watermark(
+    session: AsyncSession,
+    store: ObjectStore,
+    lane: LaneRegistration,
+    *,
+    today: date,
+) -> tuple[SourceWatermark | None, str | None]:
+    """Read one static lane's watermark for the race bracket, reporting the reason instead of raising."""
+    resolver = lane.watermark
+    if resolver is None:
+        return None, None
+    await _pin_statement_timeout(session)
+    try:
+        return await resolver(session, store, today=today), None
+    except Exception as error:  # an unproven window is reportable; it is never a failed export
+        return None, f"{type(error).__name__}: {error}"
+    finally:
+        # Same discipline as a lane-day: read-only, so never hold the snapshot past the answer.
+        await session.rollback()
+
+
+def _prune_surplus(store: ObjectStore, lane: LaneRegistration, *, day: date, written_part_count: int) -> str | None:
+    """Trail a completed static re-export with the prune removing the parts it no longer wrote."""
+    try:
+        return store.prune_surplus_parts(
+            lane.slug, GAP_FILL_PARTITION_KIND, day, written_part_count=written_part_count
+        ).report
+    except Exception as error:  # the rows are written and correct; no prune may ever undo that
+        return (
+            f"pruning surplus parts of {lane.slug} {day.isoformat()} failed, so parts from a larger earlier "
+            f"export may still be published beside this one: {type(error).__name__}: {error}"
+        )
+
+
+async def _fill_static_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
+    session: AsyncSession,
+    store: ObjectStore,
+    lane: LaneRegistration,
+    *,
+    day: date,
+    run_id: str,
+    now: Callable[[], datetime],
+    today: date,
+) -> tuple[LaneDayOutcome, int, int, int, str | None]:
+    """Export one STATIC lane-day, prune what it no longer wrote, and prove the source held still.
+
+    THE EXPORT INSTANT IS PUT TIME, NOT SELECT TIME, and that gap is a race this lane cannot survive
+    silently. A source change committed after the export's SELECT but before its PUT lands inside the
+    window, so the part file's `LastModified` is at or after the source's own change instant and
+    `_resolve_watermark_day` reads it as captured -- permanently, because every later tick compares
+    the same two unchanged instants. The snapshot then serves a superseded evacuation level while the
+    lane reports `current`.
+
+    So the window is BRACKETED: the watermark is read immediately before the export and again after
+    it. A read taken before the SELECT cannot be later than the SELECT, so two equal instants prove
+    nothing changed in between and the PUT instant honestly means captured. A moved instant means the
+    snapshot's vintage is unknown, and the day is re-exported rather than published as current.
+    Bounded by `MAX_STATIC_EXPORT_ATTEMPTS`: a source changing faster than one export takes is
+    REPORTED, which is the correct failure mode, not latched, which is the one this closes.
+
+    A lane whose source has no change instant at all (the computed calendar) is not exposed: its
+    verdict already resolves at day resolution and never claims instant-resolution currency.
+    """
+    notes: list[str] = []
+    outcome: LaneDayOutcome = "raised"
+    parts = rows = written_bytes = 0
+    detail: str | None = None
+    for attempt in range(1, MAX_STATIC_EXPORT_ATTEMPTS + 1):
+        before, before_error = await _read_watermark(session, store, lane, today=today)
+        outcome, parts, rows, written_bytes, detail = await _export_one_day(
+            session, store, lane, day=day, run_id=run_id, now=now
+        )
+        if outcome != "written" or parts <= 0:
+            break
+        # WRITE FIRST, PRUNE SECOND. A prune that ran first and then failed would leave the day EMPTY,
+        # which reads as a present-but-thin version and is worse than the orphan it was removing.
+        pruned = _prune_surplus(store, lane, day=day, written_part_count=parts)
+        if pruned is not None:
+            notes.append(pruned)
+        after, after_error = await _read_watermark(session, store, lane, today=today)
+        unread = before_error or after_error
+        if unread is not None:
+            notes.append(
+                "the source watermark could not be re-read around this export, so it is UNPROVEN whether the "
+                f"source changed between its select and its upload: {unread}"
+            )
+            break
+        if before is None or after is None or before.instant is None or after.instant is None:
+            break
+        if after.instant == before.instant:
+            break
+        if attempt == MAX_STATIC_EXPORT_ATTEMPTS:
+            notes.append(
+                f"the source changed again during every one of {MAX_STATIC_EXPORT_ATTEMPTS} export attempts, so "
+                f"this snapshot of {day.isoformat()} may predate the source change at "
+                f"{after.instant.isoformat()} while its upload instant reads as current -- re-export it"
+            )
+            break
+        notes.append(
+            f"the source changed at {after.instant.isoformat()} DURING attempt {attempt}'s export window, so "
+            "that snapshot's vintage is unknown and the day is being re-exported"
+        )
+    return outcome, parts, rows, written_bytes, "; ".join(note for note in (detail, *notes) if note) or None
+
+
+async def _fill_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
+    session: AsyncSession,
+    store: ObjectStore,
+    lane: LaneRegistration,
+    *,
+    day: date,
+    run_id: str,
+    now: Callable[[], datetime],
+    today: date,
+) -> tuple[LaneDayOutcome, int, int, int, str | None]:
+    """Export one lane-day. A static lane also prunes and brackets its window; see `_fill_static_day`."""
+    if lane.watermark is None:
+        return await _export_one_day(session, store, lane, day=day, run_id=run_id, now=now)
+    return await _fill_static_day(session, store, lane, day=day, run_id=run_id, now=now, today=today)
 
 
 async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable knob of a single tick
@@ -669,7 +794,7 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
             day = entry.pending.pop(0)
             started = monotonic()
             outcome, parts, rows, written_bytes, detail = await _fill_one_day(
-                session, store, by_slug[entry.census.slug], day=day, run_id=run_id, now=now
+                session, store, by_slug[entry.census.slug], day=day, run_id=run_id, now=now, today=today
             )
             entry.seconds += monotonic() - started
             entry.parts += parts
@@ -677,10 +802,15 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
             entry.written_bytes += written_bytes
             if outcome == "raised":
                 entry.stopped, entry.outcome, entry.detail = True, "raised", detail
-            elif outcome == "absent":
-                entry.absent += 1
             else:
-                entry.written += 1
+                if outcome == "absent":
+                    entry.absent += 1
+                else:
+                    entry.written += 1
+                # A pruned orphan and an unproven export window are both reported on a SUCCEEDING day,
+                # so the detail has to survive an outcome that is not `raised` or it is swallowed.
+                if detail is not None:
+                    entry.detail = detail
         if not progressed:
             break
 
