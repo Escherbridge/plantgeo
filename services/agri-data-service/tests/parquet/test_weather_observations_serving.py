@@ -92,7 +92,9 @@ def test_bucket_object_root_honors_an_empty_or_set_store_prefix() -> None:
         secret_access_key="secret-key",
     )
 
-    assert bucket_object_root(credentials=credentials, store=ObjectStore(RecordingBackend())) == "s3://plantgeo-parquet/"
+    assert (
+        bucket_object_root(credentials=credentials, store=ObjectStore(RecordingBackend())) == "s3://plantgeo-parquet/"
+    )
     assert (
         bucket_object_root(credentials=credentials, store=ObjectStore(RecordingBackend(), prefix="sandbox"))
         == "s3://plantgeo-parquet/sandbox/"

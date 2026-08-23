@@ -122,8 +122,7 @@ async def test_a_release_larger_than_one_part_spills_across_part_files(
 
     assert [receipt.row_count for receipt in receipts] == [2, 2, 1]
     assert [receipt.key for receipt in receipts] == [
-        partition_path(WATERSHEDS_STREAM, "observed", AUGUST_SEVENTH, part_index)
-        for part_index in range(3)
+        partition_path(WATERSHEDS_STREAM, "observed", AUGUST_SEVENTH, part_index) for part_index in range(3)
     ]
     # Every part still reads as one present day; gap detection lists the directory, never a file.
     assert store.list_partition_keys(WATERSHEDS_STREAM, "observed") == tuple(

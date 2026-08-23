@@ -48,9 +48,7 @@ async def read_watersheds_release(session: AsyncSession, *, release_day: date) -
     for row in result.mappings():
         for name, values in columns.items():
             values.append(row[name])
-    return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(
-        WATERSHEDS_SCHEMA.arrow_schema
-    )
+    return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(WATERSHEDS_SCHEMA.arrow_schema)
 
 
 async def export_watersheds_release(

@@ -59,9 +59,7 @@ async def read_signal_day(
             for name, values in columns.items():
                 values.append(row[name])
 
-    return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(
-        SIGNAL_PLANE_SCHEMA.arrow_schema
-    )
+    return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(SIGNAL_PLANE_SCHEMA.arrow_schema)
 
 
 async def export_signal_day(

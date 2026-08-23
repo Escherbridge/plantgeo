@@ -668,7 +668,5 @@ async def find_missing_relations(session: AsyncSession, qualified_names: Sequenc
     if not qualified_names:
         return ()
     rows = await fetch_rows(session, _CHECK_RELATIONS_EXIST, {"qualified_names": list(qualified_names)})
-    existing = {
-        required_column(row, "qualified_name", str) for row in rows if bool(row.get("relation_exists"))
-    }
+    existing = {required_column(row, "qualified_name", str) for row in rows if bool(row.get("relation_exists"))}
     return tuple(name for name in qualified_names if name not in existing)

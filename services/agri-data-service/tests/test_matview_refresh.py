@@ -712,9 +712,7 @@ async def test_trigger_reuses_the_same_persistent_run_across_calls(monkeypatch: 
             parameters=spec.parameters,
         )
 
-    async def _fake_open_job_run(
-        session: object, definition: object, *, logical_run_key: str, **kwargs: object
-    ) -> Any:
+    async def _fake_open_job_run(session: object, definition: object, *, logical_run_key: str, **kwargs: object) -> Any:
         del session, definition, kwargs
         seen_run_keys.append(logical_run_key)
         return SimpleNamespace(job_run_id="run-id", logical_run_key=logical_run_key, created=True)

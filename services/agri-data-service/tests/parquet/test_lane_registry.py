@@ -157,9 +157,7 @@ def test_every_lane_module_is_either_registered_or_explicitly_declared_unregiste
     `drought` proved the point the day it landed: it appeared in `pipeline/lanes/` from a concurrent
     agent, is a first-class stream, and would have had no gap-fill entry with nothing failing.
     """
-    modules = {
-        path.stem.replace("_", "-") for path in _LANE_MODULE_DIRECTORY.glob("*.py") if path.stem != "__init__"
-    }
+    modules = {path.stem.replace("_", "-") for path in _LANE_MODULE_DIRECTORY.glob("*.py") if path.stem != "__init__"}
     registered = set(registered_lane_slugs())
     exempt = set(UNREGISTERED_LANE_MODULES)
 

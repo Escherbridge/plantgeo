@@ -69,9 +69,7 @@ async def read_drought_release(session: AsyncSession, *, valid_date: date) -> pa
     for row in result.mappings():
         for name, values in columns.items():
             values.append(row[name])
-    return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(
-        DROUGHT_SCHEMA.arrow_schema
-    )
+    return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(DROUGHT_SCHEMA.arrow_schema)
 
 
 async def export_drought_release(

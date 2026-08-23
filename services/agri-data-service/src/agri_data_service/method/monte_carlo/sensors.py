@@ -243,9 +243,7 @@ def measurement_family(measurement_name: str) -> MeasurementFamily:
     try:
         return _MEASUREMENT_FAMILIES[measurement_name]
     except KeyError as exc:
-        raise ValueError(
-            f"{measurement_name!r} is not one of the sixteen captured NWS measurement fields"
-        ) from exc
+        raise ValueError(f"{measurement_name!r} is not one of the sixteen captured NWS measurement fields") from exc
 
 
 def eligible_history(
@@ -336,8 +334,7 @@ def build_continuous_history(
     if len(kept) < MIN_HISTORY_DAYS:
         raise InsufficientSensorHistoryError(
             SensorForecastRefusalReason.HISTORY_BELOW_MINIMUM,
-            f"{len(kept)} observed days at or before {cutoff_day.isoformat()}, "
-            f"below the required {MIN_HISTORY_DAYS}",
+            f"{len(kept)} observed days at or before {cutoff_day.isoformat()}, below the required {MIN_HISTORY_DAYS}",
             sensor_id=sensor_id,
             measurement_name=measurement_name,
         )
@@ -403,8 +400,7 @@ def build_zero_inflated_history(
     if len(kept) < MIN_HISTORY_DAYS:
         raise InsufficientSensorHistoryError(
             SensorForecastRefusalReason.HISTORY_BELOW_MINIMUM,
-            f"{len(kept)} observed days at or before {cutoff_day.isoformat()}, "
-            f"below the required {MIN_HISTORY_DAYS}",
+            f"{len(kept)} observed days at or before {cutoff_day.isoformat()}, below the required {MIN_HISTORY_DAYS}",
             sensor_id=sensor_id,
             measurement_name=measurement_name,
         )

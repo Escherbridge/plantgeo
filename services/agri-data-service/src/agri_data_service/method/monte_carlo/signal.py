@@ -459,9 +459,7 @@ def climatology_baseline(history: SeasonalHistory, valid_day: date) -> float:
     return history.climatology_by_day_of_year[day_of_year_index(valid_day) - 1]
 
 
-def history_checksum(
-    observations: tuple[ObservedSignalDay, ...], cutoff_day: date, spec: SignalSeriesSpec
-) -> str:
+def history_checksum(observations: tuple[ObservedSignalDay, ...], cutoff_day: date, spec: SignalSeriesSpec) -> str:
     """Return a sha256 digest over the ordered governed history one simulation consumed."""
     parts = [
         "|".join((row.observed_day.isoformat(), format(row.value, FLOAT_FINGERPRINT_FORMAT), row.observation_checksum))

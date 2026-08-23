@@ -231,9 +231,7 @@ class GapFillSummary:
             "parts": sum(lane.parts for lane in self.lanes),
             "rows": sum(lane.rows for lane in self.lanes),
             "bytes": sum(lane.written_bytes for lane in self.lanes),
-            "budget_exhausted_lanes": [
-                lane.slug for lane in self.lanes if lane.outcome == "budget_exhausted"
-            ],
+            "budget_exhausted_lanes": [lane.slug for lane in self.lanes if lane.outcome == "budget_exhausted"],
             "failed": self.failed,
             "failing_lanes": [lane.slug for lane in self.failing_lanes],
         }
@@ -326,9 +324,7 @@ def _static_lane_census(
     try:
         verdict = resolve_static_lane(
             watermark=watermark,
-            newest_covered_day=newest_covered_day(
-                layer=lane.slug, kind=GAP_FILL_PARTITION_KIND, keys=keys
-            ),
+            newest_covered_day=newest_covered_day(layer=lane.slug, kind=GAP_FILL_PARTITION_KIND, keys=keys),
             today=today,
         )
     except LaneContractError as error:
@@ -643,9 +639,7 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
     # Static lanes' source watermarks are read FIRST, before any listing: the census cannot classify
     # a reference set without knowing what version its source is on.
     watermarks = await resolve_lane_watermarks(session, store, lanes=lanes, today=today)
-    census = build_gap_census(
-        lanes, store, today=today, max_days_per_lane=max_days_per_lane, watermarks=watermarks
-    )
+    census = build_gap_census(lanes, store, today=today, max_days_per_lane=max_days_per_lane, watermarks=watermarks)
     progress = [_seeded_progress(entry, today=today) for entry in census]
     by_slug = {lane.slug: lane for lane in lanes}
 

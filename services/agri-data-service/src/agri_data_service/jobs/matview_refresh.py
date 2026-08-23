@@ -205,9 +205,7 @@ MatviewRefreshOutcome = Literal[
 # them materialise a window relative to now(), so a source-only watermark would skip a refresh they
 # needed. drizzle/0029 states both as a MUST on the views themselves. ---
 
-_WATERMARK_FEATURES_UPDATED_AT: Final = text(
-    load_query_sql("jobs/matview_refresh_watermark_features_updated_at.sql")
-)
+_WATERMARK_FEATURES_UPDATED_AT: Final = text(load_query_sql("jobs/matview_refresh_watermark_features_updated_at.sql"))
 
 _WATERMARK_FEATURES_UPDATED_AT_HOURLY: Final = text(
     load_query_sql("jobs/matview_refresh_watermark_features_updated_at_hourly.sql")
@@ -221,17 +219,11 @@ _WATERMARK_DROUGHT_AREAS_LIVE_EDGE: Final = text(
 
 _WATERMARK_SOURCE_RELEASE: Final = text(load_query_sql("jobs/matview_refresh_watermark_source_release.sql"))
 
-_WATERMARK_SOIL_SURVEY_COVERAGE: Final = text(
-    load_query_sql("jobs/matview_refresh_watermark_soil_survey_coverage.sql")
-)
+_WATERMARK_SOIL_SURVEY_COVERAGE: Final = text(load_query_sql("jobs/matview_refresh_watermark_soil_survey_coverage.sql"))
 
-_WATERMARK_WATERSHED_FEATURES: Final = text(
-    load_query_sql("jobs/matview_refresh_watermark_watershed_features.sql")
-)
+_WATERMARK_WATERSHED_FEATURES: Final = text(load_query_sql("jobs/matview_refresh_watermark_watershed_features.sql"))
 
-_WATERMARK_FORECAST_PUBLICATION: Final = text(
-    load_query_sql("jobs/matview_refresh_watermark_forecast_publication.sql")
-)
+_WATERMARK_FORECAST_PUBLICATION: Final = text(load_query_sql("jobs/matview_refresh_watermark_forecast_publication.sql"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -583,9 +575,7 @@ _VIEW_EXISTS_SQL: Final = text("SELECT to_regclass(:qualified_name) IS NOT NULL 
 # relations and sql/AGENTS.md's LOADED-ONCE rule allows each .sql file exactly one
 # `load_query_sql` call site anywhere under src/. This module owns the load; that lane imports the
 # compiled clause. Two loader calls on one path is how a query quietly acquires two copies.
-SELECT_MATERIALIZED_VIEW_UNIQUE_INDEX: Final = text(
-    load_query_sql("jobs/select_materialized_view_unique_index.sql")
-)
+SELECT_MATERIALIZED_VIEW_UNIQUE_INDEX: Final = text(load_query_sql("jobs/select_materialized_view_unique_index.sql"))
 
 _SELECT_UNIQUE_INDEX: Final = SELECT_MATERIALIZED_VIEW_UNIQUE_INDEX
 
@@ -1162,7 +1152,8 @@ async def matview_refresh_handler(invocation: JobInvocation) -> JobHandlerOutcom
         (plan for plan in plans if plan.verdict.eligible),
         key=lambda plan: (
             plan.spec.priority,
-            plan.prior.refreshed_at if plan.prior is not None and plan.prior.refreshed_at is not None
+            plan.prior.refreshed_at
+            if plan.prior is not None and plan.prior.refreshed_at is not None
             else _NEVER_REFRESHED_SORT_KEY,
         ),
     )

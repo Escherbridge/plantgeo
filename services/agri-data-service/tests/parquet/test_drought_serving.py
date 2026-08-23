@@ -118,9 +118,7 @@ def test_resolve_drought_release_day_answers_the_newest_release_at_or_before(tmp
     backend = RecordingBackend()
     store = ObjectStore(backend)
     _write_local_release(tmp_path, store, backend, day=AUGUST_FOURTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)})
-    _write_local_release(
-        tmp_path, store, backend, day=AUGUST_ELEVENTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)}
-    )
+    _write_local_release(tmp_path, store, backend, day=AUGUST_ELEVENTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)})
 
     resolved = resolve_drought_release_day(store, on_or_before=WEDNESDAY_AFTER_FOURTH, now=TODAY)
 
@@ -132,9 +130,7 @@ def test_resolve_drought_release_names_which_valid_date_answered(tmp_path: Path)
     store = ObjectStore(backend)
     _write_local_release(tmp_path, store, backend, day=AUGUST_FOURTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)})
 
-    answer = resolve_drought_release(
-        store, tmp_path.as_posix(), on_or_before=WEDNESDAY_AFTER_FOURTH, now=TODAY
-    )
+    answer = resolve_drought_release(store, tmp_path.as_posix(), on_or_before=WEDNESDAY_AFTER_FOURTH, now=TODAY)
 
     assert answer is not None
     assert answer.requested_day == WEDNESDAY_AFTER_FOURTH

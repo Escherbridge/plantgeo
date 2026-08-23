@@ -101,6 +101,7 @@ SliceStopReason = Literal[
 # or claims a shard, rather than burning its retry budget on a step certain to raise.
 PREFLIGHT_MISSING_RELATIONS_STOP_REASON: Final[SliceStopReason] = "preflight_missing_relations"
 
+
 def slice_summary_is_failing(summary: JobSliceSummary) -> bool:
     """True when one slice's landing means this tick found something wrong, not merely nothing to do.
 

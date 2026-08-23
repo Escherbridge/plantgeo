@@ -105,7 +105,7 @@ def test_an_empty_source_is_reported_as_empty_rather_than_as_a_day_owed() -> Non
 
 
 def test_not_reading_the_watermark_is_its_own_state_not_zero_gaps() -> None:
-    """"Nobody looked" and "the source says we are current" both show no missing days. They differ."""
+    """ "Nobody looked" and "the source says we are current" both show no missing days. They differ."""
     verdict = resolve_static_lane(watermark=None, newest_covered_day=CHANGED_ON, today=TODAY)
 
     assert verdict.state == "watermark_unread"

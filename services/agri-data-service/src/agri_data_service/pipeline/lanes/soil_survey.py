@@ -91,16 +91,12 @@ async def read_soil_survey_release(
     for start in range(0, len(mupolygonkeys), POLYGON_KEY_BATCH_SIZE):
         batch = list(mupolygonkeys[start : start + POLYGON_KEY_BATCH_SIZE])
         natural_keys = [_natural_key(key) for key in batch]
-        result = await session.execute(
-            _RELEASE_EXPORT_SQL, {"natural_keys": natural_keys, "release_day": release_day}
-        )
+        result = await session.execute(_RELEASE_EXPORT_SQL, {"natural_keys": natural_keys, "release_day": release_day})
         for row in result.mappings():
             for name, values in columns.items():
                 values.append(row[name])
 
-    return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(
-        SOIL_SURVEY_SCHEMA.arrow_schema
-    )
+    return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(SOIL_SURVEY_SCHEMA.arrow_schema)
 
 
 async def export_soil_survey_release(

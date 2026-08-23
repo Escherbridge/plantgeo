@@ -269,9 +269,7 @@ async def validate_soil_survey_release(  # noqa: PLR0913 - one parameter per req
                     lane=SOIL_SURVEY_STREAM,
                     area_symbol=area,
                     kind="source_query_failed",
-                    detail=(
-                        f"survey area {area}: could not reach USDA SDA: {type(error).__name__}: {error}"
-                    ),
+                    detail=(f"survey area {area}: could not reach USDA SDA: {type(error).__name__}: {error}"),
                     source_response=None,
                 )
             )

@@ -172,9 +172,7 @@ def test_a_different_day_never_leaks_into_the_answer(tmp_path: Path) -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
     store.write_partition(
-        fire_perimeters_table(
-            [fire_perimeter_row(unique_fire_identifier="2026-CA-000001", observed_day=AUGUST_SIXTH)]
-        ),
+        fire_perimeters_table([fire_perimeter_row(unique_fire_identifier="2026-CA-000001", observed_day=AUGUST_SIXTH)]),
         layer=FIRE_PERIMETERS_STREAM,
         kind="observed",
         day=AUGUST_SIXTH,

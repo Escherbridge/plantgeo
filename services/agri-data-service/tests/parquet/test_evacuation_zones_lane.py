@@ -114,9 +114,7 @@ async def test_the_read_conforms_to_the_registered_schema_and_sorts_to_the_grain
 def test_split_into_parts_bounds_row_count_and_preserves_order() -> None:
     remainder = 7
     total = MAX_ROWS_PER_PART * 2 + remainder
-    table = pa.table(
-        {"natural_key": pa.array([f"or-oem-evacuation-areas:{index:04d}" for index in range(total)])}
-    )
+    table = pa.table({"natural_key": pa.array([f"or-oem-evacuation-areas:{index:04d}" for index in range(total)])})
 
     parts = split_into_parts(table)
 

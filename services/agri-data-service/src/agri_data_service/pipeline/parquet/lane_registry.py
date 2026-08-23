@@ -95,6 +95,7 @@ _SOIL_SURVEY_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark
 # to attempt something absurd, not a claim about how many delineations SSURGO holds.
 MAX_SOIL_SURVEY_POLYGON_KEYS: Final = 200_000
 
+
 class LaneRegistryError(RuntimeError):
     """Raised when a lane's arguments cannot be resolved, or an export reports an impossible shape."""
 
@@ -282,9 +283,7 @@ async def _sensor_station_ids(session: AsyncSession, *, day: date) -> tuple[str,
 
 async def _soil_survey_polygon_keys(session: AsyncSession) -> tuple[str, ...]:
     """Read the published SSURGO delineation keys, refusing a result that hit the query's ceiling."""
-    result = await session.execute(
-        _SOIL_SURVEY_POLYGON_KEYS_SQL, {"key_ceiling": MAX_SOIL_SURVEY_POLYGON_KEYS + 1}
-    )
+    result = await session.execute(_SOIL_SURVEY_POLYGON_KEYS_SQL, {"key_ceiling": MAX_SOIL_SURVEY_POLYGON_KEYS + 1})
     keys = tuple(_coerce_text(row["mupolygonkey"], column="soil-survey.mupolygonkey") for row in result.mappings())
     if len(keys) > MAX_SOIL_SURVEY_POLYGON_KEYS:
         raise LaneRegistryError(
@@ -490,9 +489,7 @@ async def _fill_weather_observations(
 ) -> LaneRunResult:
     """Export one settled day of the Open-Meteo current-conditions side lane."""
     layer_id = await _layer_id(session, WEATHER_OBSERVATIONS_STREAM)
-    return normalise_export_outcome(
-        await export_weather_observations_day(session, store, day=day, layer_id=layer_id)
-    )
+    return normalise_export_outcome(await export_weather_observations_day(session, store, day=day, layer_id=layer_id))
 
 
 async def _fill_water_gauges(
@@ -860,9 +857,7 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
 # dimension covers every day any lane can key to it. Deriving it is what stops the calendar and the
 # deepest lane (`fire-detections`, 2000-11-02) drifting apart when a floor is next corrected.
 
-CALENDAR_HISTORY_FLOOR: Final[date] = min(
-    registration.history_floor for registration in _DATABASE_BACKED_REGISTRATIONS
-)
+CALENDAR_HISTORY_FLOOR: Final[date] = min(registration.history_floor for registration in _DATABASE_BACKED_REGISTRATIONS)
 
 CALENDAR_REGISTRATION: Final = LaneRegistration(
     slug=CALENDAR_STREAM,

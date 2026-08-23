@@ -238,9 +238,7 @@ def test_a_multi_part_release_reads_as_one_day(tmp_path: Path) -> None:
     )
     assert sorted(by_key["mupolygonkey"].to_list()) == ["poly-1", "poly-3"]
 
-    at_point = find_soil_survey_at_point(
-        release, longitude=10.5, latitude=10.5, storage_options={}, path_for=path_for
-    )
+    at_point = find_soil_survey_at_point(release, longitude=10.5, latitude=10.5, storage_options={}, path_for=path_for)
     assert at_point["mupolygonkey"].to_list() == ["poly-3"]
 
 

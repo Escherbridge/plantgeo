@@ -151,9 +151,7 @@ def test_window_never_reads_observed_data_that_falls_after_as_of_day(tmp_path: P
     _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH, cell_longitude=-116.2)
     _write_and_persist(tmp_path, kind="observed", day=AUGUST_SEVENTH, cell_longitude=-116.195)
 
-    request = FireDetectionsWindowRequest(
-        first_day=AUGUST_SIXTH, last_day=AUGUST_SEVENTH, as_of_day=AUGUST_SIXTH
-    )
+    request = FireDetectionsWindowRequest(first_day=AUGUST_SIXTH, last_day=AUGUST_SEVENTH, as_of_day=AUGUST_SIXTH)
     result = read_fire_detections_window(base_uri, request)
 
     expected_row_count = 1
@@ -166,9 +164,7 @@ def test_window_entirely_in_the_future_reads_only_forecast(tmp_path: Path) -> No
     base_uri = tmp_path.as_posix()
     _write_and_persist(tmp_path, kind="forecast", day=AUGUST_EIGHTH)
 
-    request = FireDetectionsWindowRequest(
-        first_day=AUGUST_SEVENTH, last_day=AUGUST_EIGHTH, as_of_day=AUGUST_SIXTH
-    )
+    request = FireDetectionsWindowRequest(first_day=AUGUST_SEVENTH, last_day=AUGUST_EIGHTH, as_of_day=AUGUST_SIXTH)
     result = read_fire_detections_window(base_uri, request)
 
     expected_row_count = 1
@@ -182,9 +178,7 @@ def test_window_entirely_settled_reads_only_observed_even_with_no_forecast_parti
     base_uri = tmp_path.as_posix()
     _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH)
 
-    request = FireDetectionsWindowRequest(
-        first_day=AUGUST_SIXTH, last_day=AUGUST_SIXTH, as_of_day=AUGUST_SEVENTH
-    )
+    request = FireDetectionsWindowRequest(first_day=AUGUST_SIXTH, last_day=AUGUST_SIXTH, as_of_day=AUGUST_SEVENTH)
     result = read_fire_detections_window(base_uri, request)
 
     expected_row_count = 1
@@ -196,9 +190,7 @@ def test_the_as_of_day_itself_is_served_from_observed_not_forecast(tmp_path: Pat
     base_uri = tmp_path.as_posix()
     _write_and_persist(tmp_path, kind="observed", day=AUGUST_SIXTH)
 
-    request = FireDetectionsWindowRequest(
-        first_day=AUGUST_SIXTH, last_day=AUGUST_SIXTH, as_of_day=AUGUST_SIXTH
-    )
+    request = FireDetectionsWindowRequest(first_day=AUGUST_SIXTH, last_day=AUGUST_SIXTH, as_of_day=AUGUST_SIXTH)
     result = read_fire_detections_window(base_uri, request)
 
     assert result[KIND_COLUMN].to_list() == ["observed"]

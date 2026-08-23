@@ -198,14 +198,13 @@ def test_subpackage_import_contract() -> None:
         for py_file in sub_dir.glob("**/*.py"):
             for line_no, imp in _get_imports(py_file):
                 violations.extend(
-                    f"{py_file.relative_to(pkg_root)}:{line_no} imports '{imp}' "
-                    f"(forbidden inside '{subpackage}')"
+                    f"{py_file.relative_to(pkg_root)}:{line_no} imports '{imp}' (forbidden inside '{subpackage}')"
                     for forb in forbidden
                     if imp == forb or imp.startswith(forb + ".")
                 )
 
-    joined = '\n'.join(violations)
-    assert not violations, "Sub-package import contract violations found:" + '\n' + joined
+    joined = "\n".join(violations)
+    assert not violations, "Sub-package import contract violations found:" + "\n" + joined
 
 
 def _domain_packages(pkg_root: Path, parent: str) -> list[str]:

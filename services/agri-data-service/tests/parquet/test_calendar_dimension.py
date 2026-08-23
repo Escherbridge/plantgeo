@@ -79,9 +79,7 @@ def test_month_start_and_end_flags_are_computed_not_assumed() -> None:
 
 def _circle_distance(left: CalendarDay, right: CalendarDay) -> float:
     """Euclidean distance between two days on the day-of-year unit circle."""
-    return math.hypot(
-        left.day_of_year_sin - right.day_of_year_sin, left.day_of_year_cos - right.day_of_year_cos
-    )
+    return math.hypot(left.day_of_year_sin - right.day_of_year_sin, left.day_of_year_cos - right.day_of_year_cos)
 
 
 def test_the_meteorological_season_is_a_fixed_month_grouping() -> None:
@@ -156,18 +154,14 @@ def test_the_dimension_regenerates_about_once_a_year_rather_than_once_a_day() ->
     last_still_covering = TODAY - timedelta(days=slack_days)
     first_too_old = last_still_covering - timedelta(days=1)
 
-    assert required_calendar_version_day(today=TODAY, newest_version_day=last_still_covering) == (
-        last_still_covering
-    )
+    assert required_calendar_version_day(today=TODAY, newest_version_day=last_still_covering) == (last_still_covering)
     assert required_calendar_version_day(today=TODAY, newest_version_day=first_too_old) == TODAY
     assert required_calendar_version_day(today=TODAY, newest_version_day=None) == TODAY
 
 
 def test_a_future_dated_version_is_clamped_rather_than_reported_as_a_future_watermark() -> None:
     """`resolve_static_lane` refuses a watermark after today; a version that still covers is current."""
-    assert required_calendar_version_day(
-        today=TODAY, newest_version_day=TODAY + timedelta(days=5)
-    ) == TODAY
+    assert required_calendar_version_day(today=TODAY, newest_version_day=TODAY + timedelta(days=5)) == TODAY
 
 
 def test_the_table_conforms_to_the_registered_schema_and_covers_every_lane_floor() -> None:

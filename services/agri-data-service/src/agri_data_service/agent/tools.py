@@ -487,9 +487,7 @@ async def _unbuilt_planes(relations: Sequence[str]) -> list[dict[str, Any]]:
         for name in unknown:
             resolved[name] = observed.get(name, False)
     return [
-        {"relation": name, "state": "missing_or_unpopulated"}
-        for name in relations
-        if not resolved.get(name, False)
+        {"relation": name, "state": "missing_or_unpopulated"} for name in relations if not resolved.get(name, False)
     ]
 
 

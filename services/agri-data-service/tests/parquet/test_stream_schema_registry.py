@@ -231,7 +231,7 @@ def test_forecast_resolves_for_a_lane_that_has_to_be_autoloaded() -> None:
 
     assert forecast.column_names[-FORECAST_PROVENANCE_COLUMN_COUNT:] == FORECAST_PROVENANCE_COLUMNS
     observed_names = get_stream_schema("fire-detections").column_names
-    assert forecast.column_names[: -FORECAST_PROVENANCE_COLUMN_COUNT] == observed_names
+    assert forecast.column_names[:-FORECAST_PROVENANCE_COLUMN_COUNT] == observed_names
 
 
 def test_no_registered_lane_declares_a_provenance_column_on_its_observed_side() -> None:

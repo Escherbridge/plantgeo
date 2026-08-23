@@ -59,9 +59,7 @@ async def read_water_gauges_day(session: AsyncSession, *, day: date) -> pa.Table
         for name, values in columns.items():
             values.append(row[name])
 
-    return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(
-        WATER_GAUGES_SCHEMA.arrow_schema
-    )
+    return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(WATER_GAUGES_SCHEMA.arrow_schema)
 
 
 async def export_water_gauges_day(

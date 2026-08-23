@@ -55,9 +55,7 @@ async def read_evacuation_zones_snapshot(session: AsyncSession, *, snapshot_day:
 
 def split_into_parts(table: pa.Table) -> tuple[pa.Table, ...]:
     """Slice an already grain-sorted table into row-bounded parts, preserving that order."""
-    return tuple(
-        table.slice(offset, MAX_ROWS_PER_PART) for offset in range(0, table.num_rows, MAX_ROWS_PER_PART)
-    )
+    return tuple(table.slice(offset, MAX_ROWS_PER_PART) for offset in range(0, table.num_rows, MAX_ROWS_PER_PART))
 
 
 async def export_evacuation_zones_day(

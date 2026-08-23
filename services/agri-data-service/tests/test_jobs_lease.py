@@ -797,9 +797,7 @@ async def test_find_missing_relations_reports_only_what_to_regclass_could_not_re
             {"qualified_name": "geo.mv_layer_feature_stats", "relation_exists": True},
         ],
     )
-    missing = await find_missing_relations(
-        session, ["agri.matview_refresh_state", "geo.mv_layer_feature_stats"]
-    )
+    missing = await find_missing_relations(session, ["agri.matview_refresh_state", "geo.mv_layer_feature_stats"])
     assert missing == ("agri.matview_refresh_state",)
     assert session.parameters_for("check_relations_exist")["qualified_names"] == [
         "agri.matview_refresh_state",

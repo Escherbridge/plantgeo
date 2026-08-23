@@ -119,9 +119,7 @@ async def reconcile_drought_releases(
         last_day=weeks[-1].release_date,
         keys=keys,
     )
-    verdicts = tuple(
-        [await _reconcile_week(week.release_date, statuses[week.release_date], source) for week in weeks]
-    )
+    verdicts = tuple([await _reconcile_week(week.release_date, statuses[week.release_date], source) for week in weeks])
     return DroughtReconciliationReport(first_day=first_day, last_day=last_day, weeks=verdicts)
 
 

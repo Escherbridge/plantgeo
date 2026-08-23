@@ -148,9 +148,7 @@ def test_evidence_round_trips_through_json_bytes() -> None:
 
 def test_recorded_at_is_serialised_in_utc() -> None:
     eastern_noon = sample_absence().recorded_at.astimezone(timezone(timedelta(hours=-4)))
-    absence = GovernedAbsence(
-        reason="r", upstream_response="u", recorded_at=eastern_noon, run_id="run-1"
-    )
+    absence = GovernedAbsence(reason="r", upstream_response="u", recorded_at=eastern_noon, run_id="run-1")
 
     assert b'"recorded_at": "2026-07-05T08:30:00+00:00"' in absence.to_json_bytes()
 
@@ -174,8 +172,10 @@ def test_bytes_that_are_not_json_are_refused() -> None:
 
 
 def test_a_wrong_schema_version_is_refused() -> None:
-    payload = sample_absence().to_json_bytes().replace(
-        f'"schema_version": {ABSENCE_SCHEMA_VERSION}'.encode(), b'"schema_version": 99'
+    payload = (
+        sample_absence()
+        .to_json_bytes()
+        .replace(f'"schema_version": {ABSENCE_SCHEMA_VERSION}'.encode(), b'"schema_version": 99')
     )
 
     with pytest.raises(GovernedAbsenceError, match="schema_version"):

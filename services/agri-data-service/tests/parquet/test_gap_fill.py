@@ -449,7 +449,7 @@ async def test_a_static_lane_with_no_published_rows_is_source_empty_not_a_gap() 
 
 @pytest.mark.asyncio
 async def test_an_unreadable_watermark_fails_that_lane_rather_than_reading_as_current() -> None:
-    """"We could not ask the source" must never render identically to "the source says we are current"."""
+    """ "We could not ask the source" must never render identically to "the source says we are current"."""
     calls: list[LaneCall] = []
     lane = stub_lane("watersheds", calls, nature="static_lookup", watermark_raises=True)
 
@@ -466,9 +466,7 @@ async def test_an_unreadable_watermark_fails_that_lane_rather_than_reading_as_cu
 async def test_a_watermark_dated_after_today_is_refused_as_a_clock_disagreement() -> None:
     """Writing an observed partition dated in the future is never right, whatever the source claims."""
     calls: list[LaneCall] = []
-    lane = stub_lane(
-        "watersheds", calls, nature="static_lookup", watermark_day=TODAY + timedelta(days=1)
-    )
+    lane = stub_lane("watersheds", calls, nature="static_lookup", watermark_day=TODAY + timedelta(days=1))
 
     summary = await drive([lane], ObjectStore(RecordingBackend()))
 
@@ -562,9 +560,7 @@ async def test_max_days_per_lane_caps_the_walk() -> None:
     calls: list[LaneCall] = []
     capped_days = 2
 
-    summary = await drive(
-        [stub_lane("signal", calls)], ObjectStore(RecordingBackend()), max_days_per_lane=capped_days
-    )
+    summary = await drive([stub_lane("signal", calls)], ObjectStore(RecordingBackend()), max_days_per_lane=capped_days)
 
     assert [call.day for call in calls] == days_newest_first(capped_days)
     assert summary.lanes[0].considered == capped_days
@@ -632,9 +628,7 @@ def test_skip_watermarks_keeps_a_static_lane_dry_run_offline(monkeypatch: pytest
     monkeypatch.setattr(ObjectStore, "from_settings", classmethod(_stub_from_settings))
     monkeypatch.setattr("agri_data_service.cli.local_source_loader_session", _refuse_session)
 
-    result = CliRunner().invoke(
-        cli, ["parquet-gap-fill", "--layer", "watersheds", "--dry-run", "--skip-watermarks"]
-    )
+    result = CliRunner().invoke(cli, ["parquet-gap-fill", "--layer", "watersheds", "--dry-run", "--skip-watermarks"])
 
     assert result.exit_code == 0, result.output
     report = json.loads(result.output)

@@ -128,13 +128,10 @@ async def test_a_release_heavier_than_the_byte_budget_spills_across_part_files(
     assert len(receipts) > 1
     assert sum(receipt.row_count for receipt in receipts) == expected_total_rows
     assert [receipt.key for receipt in receipts] == [
-        partition_path(DROUGHT_STREAM, "observed", AUGUST_FOURTH, part_index)
-        for part_index in range(len(receipts))
+        partition_path(DROUGHT_STREAM, "observed", AUGUST_FOURTH, part_index) for part_index in range(len(receipts))
     ]
     # Every part still reads as one present release; gap detection lists the directory, never a file.
-    assert store.list_partition_keys(DROUGHT_STREAM, "observed") == tuple(
-        receipt.relative_path for receipt in receipts
-    )
+    assert store.list_partition_keys(DROUGHT_STREAM, "observed") == tuple(receipt.relative_path for receipt in receipts)
 
 
 @pytest.mark.asyncio

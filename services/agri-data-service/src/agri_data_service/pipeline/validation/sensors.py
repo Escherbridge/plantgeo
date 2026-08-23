@@ -268,9 +268,7 @@ async def reconcile_sensors_window(  # noqa: PLR0913
     moment = datetime.now(UTC) if now is None else now
     return tuple(
         [
-            await reconcile_observed_day(
-                client, store, day=day, station_ids=station_ids, now=moment, headers=headers
-            )
+            await reconcile_observed_day(client, store, day=day, station_ids=station_ids, now=moment, headers=headers)
             for day in _daterange(first_day, last_day)
         ]
     )

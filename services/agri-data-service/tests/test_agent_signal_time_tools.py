@@ -917,9 +917,7 @@ async def test_feature_value_near_point_refuses_a_stream_surface_by_name() -> No
         ),
     ],
 )
-async def test_surface_tools_refuse_a_name_outside_the_catalogue(
-    tool_name: str, arguments: dict[str, object]
-) -> None:
+async def test_surface_tools_refuse_a_name_outside_the_catalogue(tool_name: str, arguments: dict[str, object]) -> None:
     """An unknown surface is refused with the catalogue listed, never answered as empty."""
     session = RecordingSession()
     call = getattr(agent_tools, f"query_{tool_name}")

@@ -52,9 +52,7 @@ async def read_vegetation_day(
     sorts it to the grain, which is what produces the clustering the compression depends on.
     """
     if not cell_ids:
-        raise VegetationExportError(
-            "a vegetation-plane export needs at least one cell; an empty batch scans nothing"
-        )
+        raise VegetationExportError("a vegetation-plane export needs at least one cell; an empty batch scans nothing")
 
     columns: dict[str, list[object]] = {name: [] for name in VEGETATION_PLANE_SCHEMA.column_names}
     for start in range(0, len(cell_ids), CELL_BATCH_SIZE):
