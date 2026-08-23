@@ -881,12 +881,20 @@ async function persistCell(
       // 4a. Refresh the features that already exist, repointing them at the current
       //     version. `properties` is written whole, so the drizzle/0004 trigger
       //     recomputes geom from properties.geometry.
+      // updated_at only advances on real content change; status='published' still applies
+      // unconditionally so a re-publish of unchanged ground does not drift the watermark.
       await tx.execute(sql`
         UPDATE geo.features f
         SET properties = incoming.properties,
             geometry_id = incoming.geometry_id,
             status = 'published',
-            updated_at = now()
+            updated_at = CASE
+              WHEN (f.properties - 'geometry' - 'geometry_repaired')
+                   IS DISTINCT FROM (incoming.properties - 'geometry' - 'geometry_repaired')
+                OR f.geometry_id IS DISTINCT FROM incoming.geometry_id
+              THEN now()
+              ELSE f.updated_at
+            END
         FROM (
           SELECT
             elem->>'polygonKey' AS polygon_key,

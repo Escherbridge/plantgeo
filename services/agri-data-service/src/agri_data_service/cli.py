@@ -3765,12 +3765,11 @@ def _dry_run_watermarks(
     *,
     today: date,
 ) -> dict[str, LaneWatermarkReading]:
-    """Resolve the static lanes' watermarks for `--dry-run`, degrading to 'unread' rather than failing.
+    """Resolve the static lanes' watermarks when --read-watermarks asks, degrading to 'unread' on failure.
 
-    A dry run over series lanes alone stays a pure object listing and opens no database at all. When
-    a `static_lookup` lane IS in scope, its watermark is the only thing separating "this reference
-    set is current" from "nobody looked", so the session is worth opening -- but a census that cannot
-    reach Postgres must still print, saying plainly which lanes it could not answer for.
+    Reached only on explicit opt-in, never by default: the loader DSN falls back to DATABASE_URL,
+    which is production here. A census that cannot reach Postgres must still print, saying plainly
+    which lanes it could not answer for. See pipeline/parquet/AGENTS.md.
     """
     if not any(lane.watermark is not None for lane in lanes):
         return {}
@@ -3833,16 +3832,17 @@ async def _parquet_gap_fill(
     is_flag=True,
     help="Report the gap census -- each lane's nature, window, data/absent/missing day counts, newest "
     "gaps, source watermark and floor citation -- WITHOUT writing a single object. This is how the "
-    "cron is audited. NOTE: when a static_lookup lane is in scope this OPENS THE LOADER DSN and runs "
-    "one read-only aggregate per such lane, because a reference set's coverage cannot be told from "
-    "the object listing alone. Pass --skip-watermarks to keep the audit offline.",
+    "cron is audited. Offline by default -- it opens no database connection at all, and static_lookup "
+    "lanes report `watermark_unread` rather than a coverage claim. Pass --read-watermarks to also "
+    "resolve those lanes' source watermarks, which DOES open the loader DSN.",
 )
 @click.option(
-    "--skip-watermarks",
-    is_flag=True,
-    help="Never read a static lane's source watermark, keeping the run a pure object listing with no "
-    "database connection at all. Those lanes then report `watermark_unread` -- honestly 'nobody "
-    "looked', which is NOT the same claim as 'current'. Only meaningful with --dry-run.",
+    "--read-watermarks/--skip-watermarks",
+    default=False,
+    help="Read each static lane's source watermark under --dry-run, which OPENS THE LOADER DSN. "
+    "Default is --skip-watermarks: the audit stays a pure object listing with no database connection, "
+    "and those lanes report `watermark_unread` -- honestly 'nobody looked', which is NOT the same "
+    "claim as 'current'. Only meaningful with --dry-run.",
 )
 @click.pass_context
 def parquet_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable knob of a single tick
@@ -3851,7 +3851,7 @@ def parquet_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable knob
     time_budget_seconds: float,
     max_days_per_lane: int | None,
     dry_run: bool,
-    skip_watermarks: bool,
+    read_watermarks: bool,
 ) -> None:
     """Fill every Parquet stream's missing observed days, newest first, inside one wall-clock budget.
 
@@ -3866,8 +3866,9 @@ def parquet_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable knob
     watermark, and reports `current` while a partition dated at or after it already exists. A tick
     such a lane sits out costs nothing, because no calendar day ever carried an obligation for it.
     `current` and `watermark_unread` are reported separately for exactly this reason -- both show
-    zero missing days, and they are different claims. Reading a watermark needs the loader DSN even
-    under --dry-run; `--skip-watermarks` keeps the audit offline and says `watermark_unread` instead.
+    zero missing days, and they are different claims. Reading a watermark needs the loader DSN, which
+    falls back to DATABASE_URL, so --dry-run NEVER reads one unless `--read-watermarks` asks: a dry
+    run is offline by default and says `watermark_unread` instead.
 
     A day the export genuinely has no rows for is recorded as a GOVERNED ABSENCE, whose evidence says
     only what this run observed -- that the day-scoped query over this warehouse returned zero rows --
@@ -3893,7 +3894,7 @@ def parquet_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable knob
                 store,
                 today=today,
                 max_days_per_lane=max_days_per_lane,
-                watermarks={} if skip_watermarks else _dry_run_watermarks(lanes, store, today=today),
+                watermarks=_dry_run_watermarks(lanes, store, today=today) if read_watermarks else {},
             )
             click.echo(json.dumps(gap_census_report(census), sort_keys=True))
             return

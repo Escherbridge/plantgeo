@@ -129,6 +129,23 @@ class TestSignalPlaneServingRead:
         assert forecast["normalized_value"].to_list() == [99.0]
         assert forecast["kind"].to_list() == ["forecast"]
 
+    def test_a_real_forecast_partitions_provenance_columns_do_not_refuse_the_read(self, tmp_path: Path) -> None:
+        """A `kind=forecast` file is observed PLUS six provenance columns; the observed pin made Polars refuse it."""
+        _write_partition(
+            tmp_path,
+            kind="forecast",
+            day=A_DAY,
+            table=with_forecast_provenance(_signal_table(day=A_DAY, cell_ids=["c1"], value=99.0), issued_on=A_DAY),
+        )
+        source = SignalPlaneSource(root_uri=tmp_path.as_posix())
+
+        frame = read_signal_value_on_day(source, kind="forecast", day=A_DAY)
+
+        assert frame["normalized_value"].to_list() == [99.0]
+        assert frame["kind"].to_list() == ["forecast"]
+        # Projected back down to the observed grain: provenance is written, not yet served.
+        assert set(frame.columns) == {*SIGNAL_PLANE_SCHEMA.column_names, "kind"}
+
     def test_a_day_with_nothing_written_returns_an_empty_typed_frame_not_an_error(self, tmp_path: Path) -> None:
         source = SignalPlaneSource(root_uri=tmp_path.as_posix())
 

@@ -99,26 +99,53 @@ class SourceWatermark:
             )
 
 
-def newest_covered_day(*, layer: str, kind: PartitionKind, keys: Iterable[str]) -> date | None:
-    """Return the newest day of one stream that holds a part file or an absence marker, from keys alone.
+def _newest_matching_day(
+    layer: str,
+    kind: PartitionKind,
+    keys: Iterable[str],
+    *,
+    include_data: bool,
+    include_markers: bool,
+) -> date | None:
+    """Return the newest day of one stream among the object kinds asked for, from keys alone."""
+    newest: date | None = None
+    for key in keys:
+        parsed = try_parse_partition_path(key)
+        if parsed is not None:
+            if include_data and parsed.layer == layer and parsed.kind == kind:
+                newest = parsed.day if newest is None else max(newest, parsed.day)
+            continue
+        marker = try_parse_absence_marker_path(key)
+        if marker is not None and include_markers and marker.layer == layer and marker.kind == kind:
+            newest = marker.day if newest is None else max(newest, marker.day)
+    return newest
+
+
+def newest_data_day(*, layer: str, kind: PartitionKind, keys: Iterable[str]) -> date | None:
+    """Return the newest day of one stream that holds a real part file, from keys alone.
 
     A static lane has no window to diff, so `partition_day_statuses` -- which needs one -- cannot
     answer its coverage question. What it needs instead is the newest VERSION already published,
     across the whole stream, and that is still a listing rather than a scan: `layer-lanes.md` §4's
     rule holds here unchanged.
     """
-    newest: date | None = None
-    for key in keys:
-        parsed = try_parse_partition_path(key)
-        if parsed is not None and parsed.layer == layer and parsed.kind == kind:
-            newest = parsed.day if newest is None else max(newest, parsed.day)
-            continue
-        marker = try_parse_absence_marker_path(key)
-        if marker is not None and marker.layer == layer and marker.kind == kind:
-            # A governed absence at a version day means the source was asked at that version and
-            # had nothing. That is coverage, not a gap -- the same rule the series lanes apply.
-            newest = marker.day if newest is None else max(newest, marker.day)
-    return newest
+    return _newest_matching_day(layer, kind, keys, include_data=True, include_markers=False)
+
+
+def newest_marker_day(*, layer: str, kind: PartitionKind, keys: Iterable[str]) -> date | None:
+    """Return the newest day of one stream that holds a governed-absence marker, from keys alone."""
+    return _newest_matching_day(layer, kind, keys, include_data=False, include_markers=True)
+
+
+def newest_covered_day(*, layer: str, kind: PartitionKind, keys: Iterable[str]) -> date | None:
+    """Return the newest day of one stream holding EITHER a part file or an absence marker.
+
+    This merged answer may NOT decide whether a static lane is current -- `resolve_static_lane` takes
+    the two days apart, because for a version stamp a marker and a part file make opposite claims.
+    See that function's docstring for the asymmetry. It remains the right answer for a lane asking
+    only "how far has this stream been carried", such as the calendar dimension's own watermark.
+    """
+    return _newest_matching_day(layer, kind, keys, include_data=True, include_markers=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,15 +160,25 @@ class StaticLaneVerdict:
 def resolve_static_lane(
     *,
     watermark: SourceWatermark | None,
-    newest_covered_day: date | None,
+    newest_data_day: date | None,
+    newest_marker_day: date | None,
     today: date,
 ) -> StaticLaneVerdict:
     """Decide a static lane's coverage from its watermark and what the object listing already holds.
 
-    THE RULE, and it is the whole watermark model: if a partition already exists dated at or after
+    THE RULE, and it is the whole watermark model: if a PART FILE already exists dated at or after
     the watermark, there is nothing to do -- not a gap, not an absence, just current. Otherwise ONE
     snapshot is owed, dated at the WATERMARK day, never at the cron's run date. Nothing can be
     "missed" because no day carried an obligation in the first place.
+
+    A GOVERNED ABSENCE IS NOT COVERAGE HERE, AND THAT ASYMMETRY IS THE POINT. For a `daily_series` a
+    marker is terminal: the day is settled and the source genuinely had nothing to give. For a
+    `static_lookup` the day is a VERSION STAMP, so "nothing at version W" contradicts a watermark
+    that asserts version W exists over N published rows -- it is a FAILED READ of that version, not a
+    settled fact, and it must be retried. Counting it as coverage latched the lane to `current`
+    forever, because a static watermark is meant to sit still and would never move past the marker.
+    `source_empty` already exists for the honestly-empty source, and it is reached from
+    `watermark.day is None` above, never from a marker.
 
     `watermark=None` means nobody read it this run (a listing-only `--dry-run`), which is reported
     as `watermark_unread` rather than silently as zero gaps.
@@ -166,13 +203,24 @@ def resolve_static_lane(
             f"source watermark {watermark.day.isoformat()} is later than {today.isoformat()}; writing an "
             f"observed partition dated in the future is never right. Basis: {watermark.basis}"
         )
-    if newest_covered_day is not None and newest_covered_day >= watermark.day:
+    if newest_data_day is not None and newest_data_day >= watermark.day:
         return StaticLaneVerdict(
             state="current",
             version_day=None,
             detail=(
-                f"version {newest_covered_day.isoformat()} is at or after the source watermark "
+                f"version {newest_data_day.isoformat()} is at or after the source watermark "
                 f"{watermark.day.isoformat()}, so this reference set is current ({watermark.basis})"
+            ),
+        )
+    if newest_marker_day is not None and newest_marker_day >= watermark.day:
+        return StaticLaneVerdict(
+            state="stale",
+            version_day=watermark.day,
+            detail=(
+                f"a governed absence at version {newest_marker_day.isoformat()} is the only coverage at or "
+                f"after the source watermark {watermark.day.isoformat()}, but that watermark asserts this "
+                f"version HAS rows ({watermark.basis}). For a static lookup the day is a version stamp, so "
+                "an empty read of it is a failed read to RETRY, never a settled absence"
             ),
         )
     return StaticLaneVerdict(
@@ -180,7 +228,7 @@ def resolve_static_lane(
         version_day=watermark.day,
         detail=(
             f"the source changed at {watermark.day.isoformat()} and the newest version held is "
-            f"{'none' if newest_covered_day is None else newest_covered_day.isoformat()} "
+            f"{'none' if newest_data_day is None else newest_data_day.isoformat()} "
             f"({watermark.basis})"
         ),
     )

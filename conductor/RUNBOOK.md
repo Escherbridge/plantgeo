@@ -3841,6 +3841,96 @@ cadence, horizon, historical depth, or known-gaps list. The lane was built from 
 gap stated rather than an invented contract. **Write that half of the contract before the lane is
 scheduled**, or its history horizon and gap detection have nothing to check against.
 
+### 0.29 REVIEW + FIXES 2026-08-23 (fifth session) — b794e98 got its adversarial pass
+
+**Read this before §0.28: it CORRECTS two of §0.28's claims and records four defects §0.28 shipped
+without knowing.** Commits: `269d299` (per-kind schema lookup), `ecb559a` (ruff format sweep), and
+the defect-fix commit that follows this section.
+
+#### 0.29.1 THE CRON IS CONFIRMED WORKING — §0.28.6's open question is CLOSED, positively
+
+`parquet-gap-fill` **runs and writes**. Measured against the live bucket: **1,240 objects** (882 part
+files + 358 governed-absence markers) across all twelve lanes, up from 15. The verb starts **~86
+minutes** into a tick, third behind `ingest-all` (which has NO time budget) and `jobs-pulse`'s 600s.
+
+**The trap that cost this session an hour, recorded so nobody repeats it:** a 58-minute watch of the
+03:01Z tick saw ZERO writes and was read as "the verb never runs". The first write of that very tick
+landed at **04:27:50Z** — 17 minutes after the watch stopped. *Do not conclude a tick is dead until
+at least ~95 minutes after container start.*
+
+Two independent proofs the NEW code is live: `layer=calendar/.../day=2026-08-23/part-0.parquet`
+written 04:27:50Z (the calendar lane exists only in `b794e98`), and `watersheds` still holding ONLY
+its 10 manual parts from 00:35Z — **not** re-snapshotted, which is the `static_lookup` watermark
+model working. The old code rewrote 162 MB hourly.
+
+Schedule is hourly, observed ticks are ~1-2h apart: a run exceeds its hour, so `restartPolicyType
+NEVER` skips the overlapping tick. At ~408 objects/tick the 15,083-day backlog drains in ~37 ticks.
+`soil-survey` writing NOTHING is CORRECT: its Postgres source is filled only by lazy viewport
+read-through nobody has triggered, so the watermark is `None` → `source_empty`.
+
+#### 0.29.2 FOUR CONFIRMED DEFECTS in `b794e98`, found by five adversarial agents
+
+`b794e98` shipped unreviewed by its own admission. Five Opus reviewers found four real defects.
+
+| # | defect | status |
+|---|---|---|
+| 1 | **Absence latch.** `newest_covered_day()` counted an absence marker as coverage, so a static lane whose export hit zero rows wrote a marker AT the watermark day and then read `current` **forever** | **FIXED** |
+| 2 | **Sub-day version collapse.** The watermark truncates to a UTC date and compares `>=`, so after day D's first snapshot every later same-day change reads `current` until midnight — on **evacuation-zones**, where OEM levels change repeatedly during an active fire | **DEFERRED — needs an owner call** |
+| 3 | **`--dry-run` opened a PRODUCTION session** by default | **FIXED** |
+| 4 | **Ungated `updated_at`.** `usda-soil.ts` advanced it on every re-fetch of unchanged ground | **FIXED** |
+
+**§0.28.8 IS WRONG IN KIND about #3.** It credits `--skip-watermarks` with closing that footgun.
+It did not: the flag was opt-in, so the DEFAULT dry run still resolved `LOCAL_SOURCE_LOADER_DATABASE_URL`,
+found it unset, and fell back to `DATABASE_URL` = **prod**. It is closed NOW, by flipping the default.
+
+**§0.28.8's change-clock claim is TRUE PER FILE and FALSE GLOBALLY.** `refresh_features.sql` and
+`link_feature_geometry.sql` are genuinely change-gated. There is a **third** writer of
+`geo.features.updated_at` — `usda-soil.ts` step 4a — and it was ungated. Now fixed.
+
+**§0.27.1's "six lanes can forecast" is FIVE**, already corrected in §0.28.8 and re-verified here
+against the filesystem in both directions.
+
+#### 0.29.3 THE ONE DECISION THIS SESSION REFUSED TO MAKE
+
+Defect #2 cannot be fixed without somewhere to record *which instant* a version was exported at.
+The partition day is the version stamp and there is no room in the layout for two versions of one
+day. **The agent was forbidden from changing the partition layout unilaterally and correctly
+stopped.** Two forks:
+
+1. **Widen `ObjectStoreBackend`** to surface `LastModified`, which the S3 `Contents` entries already
+   carry and `_listed_keys` currently discards. Costs a Protocol signature, a backend and test fakes.
+   **Zero extra API calls, zero on-disk change. This is the recommended fork.**
+2. **A sidecar object at the day prefix.** Costs a write per export, a new parser, and a THIRD object
+   kind in a layout `paths.py` constrains to exactly two.
+
+Until this lands, **evacuation-zones can serve a stale evacuation level for up to a day.** That is a
+life-safety layer; treat it as the top of the queue.
+
+#### 0.29.4 Three things the fixes CREATED or LEFT, none of them hidden
+
+1. **No marker-retraction path.** The latch fix is only net-positive if a marker can be cleared. Once
+   a lane is `stale` with a marker at W and the retry returns rows, `GovernedAbsenceConflictError`
+   ("retracting it is a manual admin action") fires **every tick, forever**. Ship a retraction verb
+   or accept a known-red lane.
+2. **Re-publish is now invisible to the matview watermark.** The `usda-soil.ts` fix deliberately
+   leaves `status='published'` unconditional while freezing `updated_at`, and
+   `scripts/apply-pre-aggregation.mjs` declares `max(updated_at)` the watermark for every
+   `geo.features`-backed matview. A re-publish of unchanged ground can now be missed.
+3. **The absence latch is unit-covered but NOT driven through `_static_lane_census`** — which is the
+   exact shape of the bug. Two agents wanted `test_gap_fill.py`; the claim ledger correctly refused
+   the second, and the handover test arrived after the owner had finished.
+
+#### 0.29.5 Gate
+
+**3,719 passed · 3 skipped · exit 0** with `AGRI_TEST_DATABASE_URL` set (local `agri_sweep`, port
+5442) and `PGBIN` set. `ruff check` clean. `ruff format --check` **now clean** — `ecb559a` swept 36
+files that had drifted because the pin is `ruff>=0.5` and the installed ruff is 0.15.22. **Pin ruff
+exactly** so the gate cannot rot again. `mypy` unchanged at the two pre-existing
+`matview_refresh.py` errors. `npm run type-check` exit 0.
+
+Doc surfaces still contradicting the code: `pipeline/parquet/AGENTS.md` and `README.md` both still
+describe offline-mode as an opt-in flag.
+
 ### 0.28 HANDOFF 2026-08-23 — the forecast strategy changed. Read this before §0.27.
 
 **HEAD `1c21a20`, pushed, tree clean.** §0.27 remains accurate about what was BUILT; this section

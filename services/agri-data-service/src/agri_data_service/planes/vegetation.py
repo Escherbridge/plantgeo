@@ -9,7 +9,7 @@ branch, and is never blended.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 import polars as pl
 
@@ -18,32 +18,33 @@ from agri_data_service.foundation.parquet.paths import (
     stream_prefix,
     validate_partition_kind,
 )
+from agri_data_service.warehouse.parquet.schema import get_stream_schema
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_SCHEMA, VEGETATION_PLANE_STREAM
 
 if TYPE_CHECKING:
     from datetime import date
-
-    import pyarrow as pa  # type: ignore[import-untyped]
 
     from agri_data_service.config import ObjectStoreCredentials
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 
-def _polars_schema_of(arrow_schema: pa.Schema) -> pl.Schema:
-    """Return the Polars schema equivalent of an Arrow schema, narrowed from `pl.from_arrow`'s union return."""
-    converted = pl.from_arrow(arrow_schema.empty_table())
+def _typed_empty_schema(kind: PartitionKind) -> pl.Schema:
+    """Return this lane's registered Arrow contract FOR THIS KIND as a Polars schema for `scan_parquet`.
+
+    Keyed on `kind` because the two contracts stopped being one object: a `kind=forecast` file
+    carries the six provenance columns on top of the observed grain (`warehouse/parquet/schema.py`).
+    Pinning the observed schema over a forecast file makes Polars refuse the read outright with
+    "extra column in file outside of expected schema", so the hint widens exactly as the file does.
+
+    The hint is also what lets a `kind` subtree with zero written files (e.g. `kind="forecast"`,
+    which this lane has never written -- `docs/lanes/vegetation.md` section 5.2) return a correctly
+    typed zero-row frame instead of raising `polars.exceptions.ComputeError` on an empty glob.
+    """
+    converted = pl.from_arrow(get_stream_schema(VEGETATION_PLANE_STREAM, kind).arrow_schema.empty_table())
     if not isinstance(converted, pl.DataFrame):
         raise TypeError("pl.from_arrow of a pyarrow Table must return a polars DataFrame")
     return converted.schema
-
-
-# Reused directly from the schema's own registered Arrow contract so an empty scan is typed
-# identically to a populated one -- `pl.scan_parquet(..., schema=...)` is what lets a `kind`
-# subtree with zero written files (e.g. `kind="forecast"`, which this lane has never written --
-# `docs/lanes/vegetation.md` section 5.2) return zero rows instead of raising
-# `polars.exceptions.ComputeError` on an empty glob.
-_VEGETATION_POLARS_SCHEMA: Final = _polars_schema_of(VEGETATION_PLANE_SCHEMA.arrow_schema)
 
 
 class VegetationServingError(ValueError):
@@ -92,7 +93,7 @@ def read_vegetation_partition(
 ) -> pl.DataFrame:
     """Read one partition kind's vegetation rows in `[first_day, last_day]`; the other kind is never opened.
 
-    Empty is a valid, honest answer, not a defect to paper over -- see `_VEGETATION_POLARS_SCHEMA`.
+    Empty is a valid, honest answer, not a defect to paper over -- see `_typed_empty_schema`.
     Rows are returned in the schema's own column order, sorted to its registered grain
     (`cell_id`, `observed_day`), matching exactly what `pipeline/lanes/vegetation.py` wrote.
     """
@@ -106,9 +107,12 @@ def read_vegetation_partition(
     frame = pl.scan_parquet(
         pattern,
         hive_partitioning=False,
-        schema=_VEGETATION_POLARS_SCHEMA,
+        schema=_typed_empty_schema(validated_kind),
         storage_options=storage_options,
     )
+    # Projected back down to the OBSERVED column names so both kinds hand callers one uniform
+    # shape; forecast provenance is written but not yet served (`VegetationWindow` keeps the two
+    # frames apart by field name, so a wider forecast side would buy a caller nothing here).
     return (
         frame.filter(pl.col("observed_day").is_between(first_day, last_day))
         .select(list(VEGETATION_PLANE_SCHEMA.column_names))

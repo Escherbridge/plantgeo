@@ -39,7 +39,6 @@ from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.lane_contract import (
     LaneContractError,
     nature_has_time_axis,
-    newest_covered_day,
     resolve_static_lane,
 )
 from agri_data_service.foundation.parquet.paths import (
@@ -322,9 +321,12 @@ def _static_lane_census(
     }
     watermark = None if reading is None else reading.watermark
     try:
+        # Handed to the resolver APART, from the sets already built above: for a version stamp a part
+        # file and a governed absence make opposite claims. See `resolve_static_lane`.
         verdict = resolve_static_lane(
             watermark=watermark,
-            newest_covered_day=newest_covered_day(layer=lane.slug, kind=GAP_FILL_PARTITION_KIND, keys=keys),
+            newest_data_day=max(data_days, default=None),
+            newest_marker_day=max(marker_days, default=None),
             today=today,
         )
     except LaneContractError as error:

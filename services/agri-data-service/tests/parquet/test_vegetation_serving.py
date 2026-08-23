@@ -52,7 +52,7 @@ from agri_data_service.planes.vegetation import (
     vegetation_scan_pattern,
 )
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_SCHEMA, VEGETATION_PLANE_STREAM
-from tests.parquet.test_objectstore_writer import RecordingBackend
+from tests.parquet.test_objectstore_writer import RecordingBackend, with_forecast_provenance
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -153,6 +153,29 @@ def test_read_vegetation_partition_is_an_honest_empty_when_the_kind_was_never_wr
 
     assert table.is_empty()
     assert table.columns == list(VEGETATION_PLANE_SCHEMA.column_names)
+
+
+def test_a_real_forecast_partitions_provenance_columns_do_not_refuse_the_read(tmp_path: Path) -> None:
+    """A `kind=forecast` file is observed PLUS six provenance columns; the observed pin made Polars refuse it."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_partition(
+        with_forecast_provenance(_vegetation_table(AUGUST_FIRST, ["c1"]), issued_on=AUGUST_FIRST),
+        layer=VEGETATION_PLANE_STREAM,
+        kind="forecast",
+        day=AUGUST_FIRST,
+    )
+    _materialize(backend, tmp_path)
+    root = tmp_path.resolve().as_posix()
+
+    table = read_vegetation_partition(root=root, kind="forecast", first_day=AUGUST_FIRST, last_day=AUGUST_THIRD)
+    window = read_vegetation_window(root=root, first_day=AUGUST_FIRST, last_day=AUGUST_THIRD)
+
+    assert table.height == 1
+    # Projected back down to the observed grain so both kinds hand callers one uniform shape.
+    assert table.columns == list(VEGETATION_PLANE_SCHEMA.column_names)
+    assert window.forecast.height == 1
+    assert window.observed.is_empty()
 
 
 def test_read_vegetation_window_never_blends_observed_and_forecast(tmp_path: Path) -> None:

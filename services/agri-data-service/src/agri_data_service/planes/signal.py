@@ -74,16 +74,20 @@ class SignalPlaneSource:
         return cls.from_credentials(credentials, prefix=resolved.object_store_prefix)
 
 
-def _polars_schema() -> pl.Schema:
-    """The signal plane's registered Arrow schema, translated to Polars dtypes for `scan_parquet`.
+def _polars_schema(kind: PartitionKind) -> pl.Schema:
+    """The signal plane's registered Arrow schema FOR THIS KIND, in Polars dtypes for `scan_parquet`.
 
     Passed explicitly to `scan_parquet` so a month with zero partitions returns an empty, correctly
     typed frame instead of raising -- Polars' own documented behaviour for an otherwise-unmatched
     glob is to fail closed, which is wrong here: a day with no data (not yet landed, or a governed
     absence) is a normal, expected serving answer, not an error.
+
+    Keyed on `kind` because the two contracts stopped being one object: a `kind=forecast` file
+    carries the six provenance columns on top of the observed grain (`warehouse/parquet/schema.py`).
+    Pinning the observed schema over a forecast file makes Polars refuse the read outright with
+    "extra column in file outside of expected schema", so the hint widens exactly as the file does.
     """
-    schema = get_stream_schema(SIGNAL_PLANE_STREAM)
-    empty = pl.from_arrow(schema.arrow_schema.empty_table())
+    empty = pl.from_arrow(get_stream_schema(SIGNAL_PLANE_STREAM, kind).arrow_schema.empty_table())
     if not isinstance(empty, pl.DataFrame):
         raise SignalPlaneReadError("the signal plane's empty Arrow table did not convert to a Polars DataFrame")
     return empty.schema
@@ -124,13 +128,15 @@ def _scan(  # noqa: PLR0913 - one argument per read-scoping dimension, all keywo
     cell_ids: Sequence[str] | None,
     signal_names: Sequence[str] | None,
 ) -> pl.LazyFrame:
-    schema = get_stream_schema(SIGNAL_PLANE_STREAM)
+    # Projected back down to the OBSERVED column names so both kinds hand callers one uniform
+    # shape; forecast provenance is written but not yet served.
+    observed = get_stream_schema(SIGNAL_PLANE_STREAM, "observed")
     frame = pl.scan_parquet(
         list(targets),
         hive_partitioning=True,
-        schema=_polars_schema(),
+        schema=_polars_schema(kind),
         storage_options=dict(source.storage_options),
-    ).select(schema.column_names)
+    ).select(observed.column_names)
     frame = frame.filter(pl.col("observed_day").is_between(first_day, last_day))
     if cell_ids is not None:
         frame = frame.filter(pl.col("cell_id").is_in(list(cell_ids)))
