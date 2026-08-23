@@ -67,6 +67,17 @@ SUBPACKAGE_FORBIDDEN_IMPORTS: dict[str, set[str]] = {
 # forgotten entry is silently unenforced.
 DOMAIN_PARENTS: tuple[str, ...] = ("ingest", "execution")
 
+# The same "a lane never imports another lane" rule, for the directories where lanes are FLAT
+# MODULES rather than subpackages. `layer-lanes.md` section 1 puts one file per layer per lattice
+# layer, so the domain-package walk above -- which looks for subdirectories -- cannot see them.
+# Ten lanes landed here concurrently and none of them crossed; this test is what keeps that true.
+SIBLING_MODULE_DIRECTORIES: tuple[str, ...] = (
+    "pipeline/lanes",
+    "warehouse/schemas",
+    "method/monte_carlo",
+    "pipeline/validation",
+)
+
 DOMAIN_PARENT_SHARED_SUBPACKAGES: dict[str, set[str]] = {
     # Organised per source over shared internals (`_shared`, `_results`, `_release_sets`) that
     # CAMS, GloFAS and USDM all use; splitting it would export private modules across packages.
@@ -93,8 +104,14 @@ def _get_imports(py_path: Path) -> list[tuple[int, str]]:
 def _resolved_imports(py_path: Path, pkg_root: Path) -> list[tuple[int, str]]:
     """Return imports as absolute `agri_data_service.*` names, resolving relative ones.
 
-    `_get_imports` reports `from .sibling import x` as bare `sibling`, which no absolute-prefix
-    check can ever match -- a relative import would slip past domain isolation silently.
+    Two forms would otherwise slip past an absolute-prefix check:
+      * `from .sibling import x` -- `_get_imports` reports it as bare `sibling`.
+      * `from . import sibling` -- the module resolves to the PACKAGE, and the thing actually
+        imported is a name in `node.names`. Discarding it hid a real cross-lane import.
+
+    So each `from X import a, b` also yields `X.a` and `X.b`. That over-reports for plain symbol
+    imports (`X.SomeClass`), which is harmless here: every caller matches against known
+    module/package prefixes, and no symbol shares a prefix with a sibling module.
     """
     tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
     package_parts = ("agri_data_service", *py_path.relative_to(pkg_root).parts[:-1])
@@ -103,12 +120,15 @@ def _resolved_imports(py_path: Path, pkg_root: Path) -> list[tuple[int, str]]:
         if isinstance(node, ast.Import):
             resolved.extend((node.lineno, alias.name) for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            if not node.level:
-                if node.module:
-                    resolved.append((node.lineno, node.module))
+            if node.level:
+                base = package_parts[: len(package_parts) - node.level + 1]
+                module = ".".join((*base, node.module) if node.module else base)
+            elif node.module:
+                module = node.module
+            else:
                 continue
-            base = package_parts[: len(package_parts) - node.level + 1]
-            resolved.append((node.lineno, ".".join((*base, node.module) if node.module else base)))
+            resolved.append((node.lineno, module))
+            resolved.extend((node.lineno, f"{module}.{alias.name}") for alias in node.names)
     return resolved
 
 
@@ -204,18 +224,20 @@ def _domain_packages(pkg_root: Path, parent: str) -> list[str]:
 def _domain_isolation_violations(pkg_root: Path, parent: str) -> list[str]:
     """Return every import of one domain package by a sibling domain package under `parent`."""
     domains = _domain_packages(pkg_root, parent)
-    violations: list[str] = []
+    # Keyed by (file, line) for the same reason as `_sibling_module_violations`.
+    violations: dict[tuple[str, int], str] = {}
     for domain in domains:
         siblings = {f"agri_data_service.{parent}.{other}" for other in domains if other != domain}
         for py_file in (pkg_root / parent / domain).glob("**/*.py"):
             for line_no, imp in _resolved_imports(py_file, pkg_root):
-                violations.extend(
-                    f"{py_file.relative_to(pkg_root)}:{line_no} imports '{imp}' "
-                    f"-- a domain package may not import sibling domain '{sibling}'"
-                    for sibling in siblings
-                    if imp == sibling or imp.startswith(sibling + ".")
-                )
-    return violations
+                for sibling in siblings:
+                    if imp == sibling or imp.startswith(sibling + "."):
+                        violations.setdefault(
+                            (str(py_file.relative_to(pkg_root)), line_no),
+                            f"{py_file.relative_to(pkg_root)}:{line_no} imports '{imp}' "
+                            f"-- a domain package may not import sibling domain '{sibling}'",
+                        )
+    return [violations[key] for key in sorted(violations)]
 
 
 def test_domain_packages_do_not_import_each_other() -> None:
@@ -229,6 +251,59 @@ def test_domain_packages_do_not_import_each_other() -> None:
     violations = [v for parent in DOMAIN_PARENTS for v in _domain_isolation_violations(pkg_root, parent)]
 
     assert not violations, "Domain isolation violations found:\n" + "\n".join(violations)
+
+
+def _sibling_module_violations(pkg_root: Path, directory: str) -> list[str]:
+    """Return every import of one lane module by a sibling lane module in the same directory."""
+    lane_dir = pkg_root / directory
+    if not lane_dir.is_dir():
+        return []
+    package = f"agri_data_service.{directory.replace('/', '.')}"
+    modules = {path.stem for path in lane_dir.glob("*.py") if path.stem != "__init__"}
+    # Keyed by (file, line): `_resolved_imports` reports one `from X import a` twice on purpose,
+    # and a reader wants the offending LINE named once, not once per matching form.
+    violations: dict[tuple[str, int], str] = {}
+    for path in sorted(lane_dir.glob("*.py")):
+        if path.stem == "__init__":
+            continue
+        siblings = {f"{package}.{other}" for other in modules if other != path.stem}
+        for line_no, imp in _resolved_imports(path, pkg_root):
+            for sibling in siblings:
+                if imp == sibling or imp.startswith(sibling + "."):
+                    violations.setdefault(
+                        (str(path.relative_to(pkg_root)), line_no),
+                        f"{path.relative_to(pkg_root)}:{line_no} imports '{imp}' "
+                        f"-- a lane may not import sibling lane '{sibling}'",
+                    )
+    return [violations[key] for key in sorted(violations)]
+
+
+def test_lanes_do_not_import_each_other() -> None:
+    """`layer-lanes.md` §1: a lane never imports another lane. Shared needs move DOWN the lattice.
+
+    A cross-lane import is what quietly re-couples streams the wave plan exists to separate, and it
+    is invisible to the layer lattice because both sides sit in the same layer directory.
+    """
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
+    violations = [v for d in SIBLING_MODULE_DIRECTORIES for v in _sibling_module_violations(pkg_root, d)]
+
+    assert not violations, "Cross-lane import violations found:\n" + "\n".join(violations)
+
+
+def test_the_cross_lane_rule_actually_fires(tmp_path: Path) -> None:
+    """Eleven real lanes currently cross nothing, so without this the rule proves nothing."""
+    lane_dir = tmp_path / "pipeline" / "lanes"
+    lane_dir.mkdir(parents=True)
+    (lane_dir / "__init__.py").write_text("", encoding="utf-8")
+    (lane_dir / "signal.py").write_text(
+        "from agri_data_service.pipeline.lanes.vegetation import read_vegetation_day\n", encoding="utf-8"
+    )
+    (lane_dir / "vegetation.py").write_text("from . import signal\n", encoding="utf-8")
+
+    violations = _sibling_module_violations(tmp_path, "pipeline/lanes")
+
+    expected_violation_count = 2  # one absolute import, one relative import
+    assert len(violations) == expected_violation_count, violations
 
 
 def test_domain_isolation_catches_an_absolute_and_a_relative_sibling_import(tmp_path: Path) -> None:
