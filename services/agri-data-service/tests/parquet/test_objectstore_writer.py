@@ -21,7 +21,11 @@ from agri_data_service.pipeline.parquet.objectstore import (
     conform_to_stream_schema,
     polars_storage_options,
 )
-from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_SCHEMA, SIGNAL_PLANE_STREAM
+from agri_data_service.warehouse.parquet.schema import (
+    FORECAST_PROVENANCE_FIELDS,
+    SIGNAL_PLANE_SCHEMA,
+    SIGNAL_PLANE_STREAM,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -80,6 +84,28 @@ def signal_rows(*, cell_ids: tuple[str, ...] = ("c3", "c1", "c2")) -> pa.Table:
             "allowed_client_exposure": pa.array([False] * count, pa.bool_()),
         }
     )
+
+
+def with_forecast_provenance(table: pa.Table, *, issued_on: date, horizon_days: int = 1) -> pa.Table:
+    """Append the six `kind=forecast` provenance columns to an observed-shaped table.
+
+    A forecast partition is the observed columns PLUS provenance, so a test that writes one from an
+    observed fixture has to say what issued it. Before `get_stream_schema` took a kind, the two
+    contracts were the same object and these tests wrote observed rows under `kind=forecast`; that
+    is the very confusion the per-kind lookup removes, so the fixtures state the provenance now.
+    """
+    count = table.num_rows
+    for field in FORECAST_PROVENANCE_FIELDS:
+        values: list[object] = {
+            "forecast_run_id": ["f" * 64] * count,
+            "random_seed": [20260823] * count,
+            "ensemble_size": [64] * count,
+            "horizon_days": [horizon_days] * count,
+            "issued_on": [issued_on] * count,
+            "quantile": [0.5] * count,
+        }[field.name]
+        table = table.append_column(field, pa.array(values, field.type))
+    return table
 
 
 def test_write_partition_lands_at_the_frozen_key_and_returns_a_receipt() -> None:
@@ -144,7 +170,12 @@ def test_listing_returns_relative_paths_that_feed_gap_detection() -> None:
     store = ObjectStore(backend, prefix="sandbox")
     for day in (date(2026, 7, 1), date(2026, 7, 3)):
         store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", day=day)
-    store.write_partition(signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="forecast", day=date(2026, 7, 2))
+    store.write_partition(
+        with_forecast_provenance(signal_rows(), issued_on=date(2026, 7, 1)),
+        layer=SIGNAL_PLANE_STREAM,
+        kind="forecast",
+        day=date(2026, 7, 2),
+    )
     backend.put(
         "sandbox/layer=signal/kind=observed/year=2026/month=07/day=02/manifest.json",
         b"{}",

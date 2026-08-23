@@ -1,4 +1,4 @@
-"""The Parquet schema registry, and the ten-column signal plane it ships registered."""
+"""The Parquet schema registry, its per-kind lookup, and the ten-column signal plane it ships registered."""
 
 from __future__ import annotations
 
@@ -7,19 +7,36 @@ import pytest
 
 from agri_data_service.foundation.parquet.paths import PartitionPathError
 from agri_data_service.warehouse.parquet.schema import (
+    FORECAST_PROVENANCE_COLUMNS,
+    FORECAST_PROVENANCE_FIELDS,
+    FORECAST_PROVENANCE_GRAIN,
     SIGNAL_PLANE_GRAIN,
     SIGNAL_PLANE_SCHEMA,
     SIGNAL_PLANE_STREAM,
     ParquetStreamSchema,
     StreamSchemaConflictError,
     StreamSchemaError,
+    forecast_stream_schema,
     get_stream_schema,
+    observed_stream_schema,
     register_stream_schema,
     registered_stream_names,
     stream_schema_module,
 )
 
 SIGNAL_PLANE_COLUMN_COUNT = 10
+FORECAST_PROVENANCE_COLUMN_COUNT = 6
+
+# The exact six of `conductor/code_styleguides/layer-lanes.md` section 3, with the types every one
+# of the five shipped forecasters already emits (e.g. `method/monte_carlo/sensors.py:232-238`).
+EXPECTED_FORECAST_PROVENANCE_FIELDS = (
+    ("forecast_run_id", pa.string(), False),
+    ("random_seed", pa.int64(), False),
+    ("ensemble_size", pa.int32(), False),
+    ("horizon_days", pa.int16(), False),
+    ("issued_on", pa.date32(), False),
+    ("quantile", pa.float64(), False),
+)
 
 EXPECTED_SIGNAL_PLANE_FIELDS = (
     ("support_key", pa.string(), False),
@@ -131,3 +148,125 @@ def test_a_stream_must_declare_a_grain_that_exists_in_its_schema() -> None:
             arrow_schema=pa.schema([pa.field("value", pa.float64(), nullable=False)]),
             sort_columns=(),
         )
+
+
+# --- The per-kind lookup: RUNBOOK section 0.28.1 decision 1 -------------------------------------
+
+
+def test_provenance_is_the_exact_six_columns_the_contract_names_in_order() -> None:
+    """layer-lanes.md section 3's six, typed as every shipped forecaster already emits them."""
+    actual = tuple((field.name, field.type, field.nullable) for field in FORECAST_PROVENANCE_FIELDS)
+
+    assert actual == EXPECTED_FORECAST_PROVENANCE_FIELDS
+    assert len(actual) == FORECAST_PROVENANCE_COLUMN_COUNT
+    assert tuple(name for name, _type, _nullable in EXPECTED_FORECAST_PROVENANCE_FIELDS) == (
+        FORECAST_PROVENANCE_COLUMNS
+    )
+
+
+def test_provenance_is_quantile_not_draw_index() -> None:
+    """Section 3 offers `quantile` OR `draw_index`; all five shipped forecasters chose `quantile`."""
+    assert "quantile" in FORECAST_PROVENANCE_COLUMNS
+    assert "draw_index" not in FORECAST_PROVENANCE_COLUMNS
+
+
+def test_provenance_is_never_nullable() -> None:
+    """A column that is unconditionally NULL is a placeholder, not provenance; a forecast row always has all six."""
+    assert all(not field.nullable for field in FORECAST_PROVENANCE_FIELDS)
+
+
+def test_observed_returns_the_registered_object_itself_so_files_stay_byte_identical() -> None:
+    """The additive-only guarantee: nothing about the observed side may move, not even by a copy."""
+    assert get_stream_schema(SIGNAL_PLANE_STREAM) is SIGNAL_PLANE_SCHEMA
+    assert get_stream_schema(SIGNAL_PLANE_STREAM, "observed") is SIGNAL_PLANE_SCHEMA
+    assert observed_stream_schema(SIGNAL_PLANE_STREAM) is SIGNAL_PLANE_SCHEMA
+
+
+def test_deriving_the_forecast_side_does_not_disturb_the_observed_side() -> None:
+    """Reading `forecast` must not mutate, re-register, or reorder what the observed writer uses."""
+    before = SIGNAL_PLANE_SCHEMA.column_names
+
+    get_stream_schema(SIGNAL_PLANE_STREAM, "forecast")
+
+    assert SIGNAL_PLANE_SCHEMA.column_names == before
+    assert get_stream_schema(SIGNAL_PLANE_STREAM) is SIGNAL_PLANE_SCHEMA
+    assert SIGNAL_PLANE_SCHEMA.sort_columns == SIGNAL_PLANE_GRAIN
+
+
+def test_forecast_is_the_observed_columns_in_order_then_the_six() -> None:
+    """Identical MEASUREMENT columns, per decision 1's relaxation of section 2; provenance appends."""
+    forecast = get_stream_schema(SIGNAL_PLANE_STREAM, "forecast")
+
+    assert forecast.column_names == SIGNAL_PLANE_SCHEMA.column_names + FORECAST_PROVENANCE_COLUMNS
+    for name, expected_type, expected_nullable in EXPECTED_SIGNAL_PLANE_FIELDS:
+        field = forecast.arrow_schema.field(name)
+        assert (field.type, field.nullable) == (expected_type, expected_nullable)
+
+
+def test_forecast_keeps_the_lane_slug_as_its_name_and_the_lane_codec() -> None:
+    """`name` is simultaneously the registry key and the `layer=<slug>/` prefix; the kind is the partition."""
+    forecast = get_stream_schema(SIGNAL_PLANE_STREAM, "forecast")
+
+    assert forecast.name == SIGNAL_PLANE_STREAM
+    assert forecast.compression == SIGNAL_PLANE_SCHEMA.compression
+
+
+def test_forecast_grain_extends_the_observed_grain_so_the_pre_write_sort_leaves_no_ties() -> None:
+    """A forecast partition holds one row per quantile per cell-day; the observed grain alone is not a key."""
+    forecast = get_stream_schema(SIGNAL_PLANE_STREAM, "forecast")
+
+    assert forecast.sort_columns == SIGNAL_PLANE_GRAIN + FORECAST_PROVENANCE_GRAIN
+    assert FORECAST_PROVENANCE_GRAIN == ("issued_on", "horizon_days", "quantile")
+    assert set(forecast.sort_columns) <= set(forecast.column_names)
+
+
+def test_the_forecast_side_is_cached_not_rebuilt_per_call() -> None:
+    """Every write would otherwise rebuild an Arrow schema; identity also lets callers compare cheaply."""
+    assert get_stream_schema(SIGNAL_PLANE_STREAM, "forecast") is get_stream_schema(SIGNAL_PLANE_STREAM, "forecast")
+
+
+def test_forecast_resolves_for_a_lane_that_has_to_be_autoloaded() -> None:
+    """The per-kind lookup goes through the same autoload as the observed one, not a second mechanism."""
+    forecast = get_stream_schema("fire-detections", "forecast")
+
+    assert forecast.column_names[-FORECAST_PROVENANCE_COLUMN_COUNT:] == FORECAST_PROVENANCE_COLUMNS
+    observed_names = get_stream_schema("fire-detections").column_names
+    assert forecast.column_names[: -FORECAST_PROVENANCE_COLUMN_COUNT] == observed_names
+
+
+def test_no_registered_lane_declares_a_provenance_column_on_its_observed_side() -> None:
+    """A lane that did would make the same name mean two things across the two kinds."""
+    for name in registered_stream_names():
+        observed = get_stream_schema(name)
+        assert not set(observed.column_names) & set(FORECAST_PROVENANCE_COLUMNS), name
+
+
+def test_an_observed_schema_that_already_claims_a_provenance_name_is_refused() -> None:
+    """Silently shadowing it would let a lane's own `quantile` be overwritten by the forecast run's."""
+    clashing = ParquetStreamSchema(
+        name="provenance-collision-probe",
+        arrow_schema=pa.schema(
+            [
+                pa.field("cell_id", pa.string(), nullable=False),
+                pa.field("quantile", pa.float64(), nullable=False),
+            ]
+        ),
+        sort_columns=("cell_id",),
+    )
+
+    with pytest.raises(StreamSchemaConflictError, match="quantile"):
+        forecast_stream_schema(clashing)
+
+
+def test_an_unknown_kind_is_refused_rather_than_falling_through_to_observed() -> None:
+    """A typo silently serving observed rows as a forecast is the wrong-but-plausible output to prevent."""
+    with pytest.raises(PartitionPathError):
+        get_stream_schema(SIGNAL_PLANE_STREAM, "predicted")  # type: ignore[arg-type]
+
+
+def test_an_unregistered_stream_still_names_its_module_when_asked_for_a_forecast() -> None:
+    """The forecast path must not swallow the missing-lane diagnostic the observed path gives."""
+    with pytest.raises(StreamSchemaError) as caught:
+        get_stream_schema("no-such-lane", "forecast")
+
+    assert "agri_data_service.warehouse.schemas.no_such_lane" in str(caught.value)

@@ -2,6 +2,9 @@
 
 from agri_data_service.warehouse.parquet.schema import (
     DEFAULT_PARQUET_COMPRESSION,
+    FORECAST_PROVENANCE_COLUMNS,
+    FORECAST_PROVENANCE_FIELDS,
+    FORECAST_PROVENANCE_GRAIN,
     LANE_SCHEMA_PACKAGE,
     SIGNAL_PLANE_GRAIN,
     SIGNAL_PLANE_SCHEMA,
@@ -10,7 +13,9 @@ from agri_data_service.warehouse.parquet.schema import (
     ParquetStreamSchema,
     StreamSchemaConflictError,
     StreamSchemaError,
+    forecast_stream_schema,
     get_stream_schema,
+    observed_stream_schema,
     register_stream_schema,
     registered_stream_names,
     stream_schema_module,
@@ -18,6 +23,9 @@ from agri_data_service.warehouse.parquet.schema import (
 
 __all__ = [
     "DEFAULT_PARQUET_COMPRESSION",
+    "FORECAST_PROVENANCE_COLUMNS",
+    "FORECAST_PROVENANCE_FIELDS",
+    "FORECAST_PROVENANCE_GRAIN",
     "LANE_SCHEMA_PACKAGE",
     "SIGNAL_PLANE_GRAIN",
     "SIGNAL_PLANE_SCHEMA",
@@ -26,7 +34,9 @@ __all__ = [
     "ParquetStreamSchema",
     "StreamSchemaConflictError",
     "StreamSchemaError",
+    "forecast_stream_schema",
     "get_stream_schema",
+    "observed_stream_schema",
     "register_stream_schema",
     "registered_stream_names",
     "stream_schema_module",

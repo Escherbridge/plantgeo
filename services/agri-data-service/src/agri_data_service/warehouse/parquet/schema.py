@@ -12,7 +12,11 @@ from typing import Final, Literal
 
 import pyarrow as pa  # type: ignore[import-untyped]
 
-from agri_data_service.foundation.parquet.paths import validate_layer_slug
+from agri_data_service.foundation.parquet.paths import (
+    PartitionKind,
+    validate_layer_slug,
+    validate_partition_kind,
+)
 
 ParquetCompression = Literal["zstd", "snappy"]
 
@@ -56,6 +60,50 @@ class ParquetStreamSchema:
 
 _REGISTRY: Final[dict[str, ParquetStreamSchema]] = {}
 
+# Derived `kind=forecast` contracts, cached per stream. Never registered: a lane declares its
+# OBSERVED columns and nothing else, and the forecast side is computed from them.
+_FORECAST_REGISTRY: Final[dict[str, ParquetStreamSchema]] = {}
+
+
+# --- Forecast provenance ------------------------------------------------------------------------
+# The six columns `conductor/code_styleguides/layer-lanes.md` section 3 requires on EVERY
+# `kind=forecast` row. They live only on the forecast side, per RUNBOOK section 0.28.1 decision 1:
+# carrying them nullable on the observed side would make six unconditionally-NULL columns, and
+# "a column that is unconditionally NULL is not provenance, it is a placeholder"
+# (`warehouse/schemas/weather_observations.py:71-75`). AGENTS.md carries the type evidence.
+
+FORECAST_PROVENANCE_FIELDS: Final[tuple[pa.Field, ...]] = (
+    pa.field("forecast_run_id", pa.string(), nullable=False),
+    pa.field("random_seed", pa.int64(), nullable=False),
+    pa.field("ensemble_size", pa.int32(), nullable=False),
+    pa.field("horizon_days", pa.int16(), nullable=False),
+    pa.field("issued_on", pa.date32(), nullable=False),
+    pa.field("quantile", pa.float64(), nullable=False),
+)
+
+FORECAST_PROVENANCE_COLUMNS: Final[tuple[str, ...]] = tuple(field.name for field in FORECAST_PROVENANCE_FIELDS)
+
+# The observed grain is a cell-DAY; a forecast partition holds many rows per cell-day -- one per
+# reported quantile, and potentially per issue day. These three finish the key so the sort before
+# every write is total, because an ordering that leaves ties is not reproducible evidence.
+FORECAST_PROVENANCE_GRAIN: Final[tuple[str, ...]] = ("issued_on", "horizon_days", "quantile")
+
+
+def forecast_stream_schema(observed: ParquetStreamSchema) -> ParquetStreamSchema:
+    """Derive a lane's forecast contract: its observed columns, in order, plus the six provenance columns."""
+    collisions = tuple(name for name in FORECAST_PROVENANCE_COLUMNS if name in observed.arrow_schema.names)
+    if collisions:
+        raise StreamSchemaConflictError(
+            f"stream {observed.name!r} declares forecast provenance column(s) {collisions} on its observed "
+            "side; provenance belongs to kind=forecast alone, so the two would disagree on the same name"
+        )
+    return ParquetStreamSchema(
+        name=observed.name,
+        arrow_schema=pa.schema([*observed.arrow_schema, *FORECAST_PROVENANCE_FIELDS]),
+        sort_columns=observed.sort_columns + FORECAST_PROVENANCE_GRAIN,
+        compression=observed.compression,
+    )
+
 
 def stream_schema_module(name: str) -> str:
     """Return the module a lane's schema is autoloaded from: slug `fire-detections` maps to `fire_detections`."""
@@ -71,8 +119,8 @@ def register_stream_schema(spec: ParquetStreamSchema) -> ParquetStreamSchema:
     return spec
 
 
-def get_stream_schema(name: str) -> ParquetStreamSchema:
-    """Return the registered contract for `name`, autoloading the lane's schema module if needed."""
+def observed_stream_schema(name: str) -> ParquetStreamSchema:
+    """Return the registered observed contract for `name`, autoloading the lane's schema module if needed."""
     registered = _REGISTRY.get(name)
     if registered is not None:
         return registered
@@ -87,6 +135,17 @@ def get_stream_schema(name: str) -> ParquetStreamSchema:
     if autoloaded is None:
         raise StreamSchemaError(f"{module_name} imported but registered no schema named {name!r}")
     return autoloaded
+
+
+def get_stream_schema(name: str, kind: PartitionKind = "observed") -> ParquetStreamSchema:
+    """Return one stream-kind's contract: the observed schema, or observed plus provenance for `forecast`."""
+    observed = observed_stream_schema(name)
+    if validate_partition_kind(kind) == "observed":
+        return observed
+    cached = _FORECAST_REGISTRY.get(name)
+    if cached is None:
+        cached = _FORECAST_REGISTRY.setdefault(name, forecast_stream_schema(observed))
+    return cached
 
 
 def registered_stream_names() -> tuple[str, ...]:

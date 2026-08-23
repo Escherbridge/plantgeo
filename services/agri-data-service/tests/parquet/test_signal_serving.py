@@ -53,7 +53,7 @@ from agri_data_service.planes.signal import (
 )
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_SCHEMA, SIGNAL_PLANE_STREAM
 from tests.parquet.test_governed_absence import sample_absence
-from tests.parquet.test_objectstore_writer import RecordingBackend
+from tests.parquet.test_objectstore_writer import RecordingBackend, with_forecast_provenance
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -620,7 +620,7 @@ class TestFindMissingExportPartitions:
         """A forecast partition must never satisfy an observed-day gap check, or vice versa."""
         backend = RecordingBackend()
         store = ObjectStore(backend)
-        table = _signal_table(day=A_DAY, cell_ids=["c1"])
+        table = with_forecast_provenance(_signal_table(day=A_DAY, cell_ids=["c1"]), issued_on=A_DAY)
         store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="forecast", day=A_DAY)
 
         missing = find_missing_export_partitions(store, kind="observed", first_day=A_DAY, last_day=A_DAY)

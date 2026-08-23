@@ -16,6 +16,7 @@ import polars as pl
 import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.foundation.parquet.paths import stream_prefix
+from agri_data_service.warehouse.parquet.schema import get_stream_schema
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_SCHEMA, FIRE_DETECTIONS_STREAM
 
 if TYPE_CHECKING:
@@ -38,8 +39,13 @@ def _stream_glob(base_uri: str, kind: PartitionKind) -> str:
     return f"{base_uri.rstrip('/')}/{stream_prefix(FIRE_DETECTIONS_STREAM, kind)}{_GLOB_SUFFIX}"
 
 
-def _typed_empty_schema() -> pl.Schema:
-    """Mirror the registered Arrow contract as a Polars schema, verified empirically as the escape hatch.
+def _typed_empty_schema(kind: PartitionKind) -> pl.Schema:
+    """Mirror the registered Arrow contract FOR THIS KIND as a Polars schema, the empirical escape hatch.
+
+    Keyed on `kind` because the two contracts stopped being one object: a `kind=forecast` file carries
+    the six provenance columns on top of the observed grain (`warehouse/parquet/schema.py`). Pinning
+    the observed schema over a forecast file makes Polars refuse the read outright with "extra column
+    in file outside of expected schema", so the hint has to widen exactly as the file does.
 
     Without a `schema=` hint, `pl.scan_parquet` on a glob matching zero files raises `ComputeError`
     ("expanded paths were empty") rather than returning an empty frame -- indistinguishable from a real
@@ -49,7 +55,7 @@ def _typed_empty_schema() -> pl.Schema:
     detection (a real absence vs a missing prefix) is `foundation/parquet/paths.py`'s job, done by
     listing keys, never by scanning content from here.
     """
-    empty_frame = pl.from_arrow(pa.table(FIRE_DETECTIONS_SCHEMA.arrow_schema.empty_table()))
+    empty_frame = pl.from_arrow(pa.table(get_stream_schema(FIRE_DETECTIONS_STREAM, kind).arrow_schema.empty_table()))
     if not isinstance(empty_frame, pl.DataFrame):
         raise TypeError("pl.from_arrow of a pyarrow Table unexpectedly returned a Series, not a DataFrame")
     return empty_frame.schema
@@ -72,9 +78,14 @@ def scan_fire_detections_kind(
     frame = pl.scan_parquet(
         _stream_glob(base_uri, kind),
         hive_partitioning=True,
-        schema=_typed_empty_schema(),
+        schema=_typed_empty_schema(kind),
         storage_options=dict(storage_options) if storage_options else {},
     )
+    # Projected back down to the OBSERVED columns so both kinds hand callers one uniform shape --
+    # `read_fire_detections_as_of_window` concatenates an observed and a forecast frame and a wider
+    # forecast side would refuse to stack. Forecast provenance is therefore written but not yet
+    # served: surfacing `quantile` means deciding what a multi-quantile cell-day looks like to a
+    # reader, which is a serving decision this lookup deliberately does not make.
     return frame.select(list(FIRE_DETECTIONS_SCHEMA.column_names)).with_columns(pl.lit(kind).alias(KIND_COLUMN))
 
 

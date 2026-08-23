@@ -197,8 +197,8 @@ class ObjectStore:
         day: date,
         part_index: int = 0,
     ) -> ParquetWriteReceipt:
-        """Conform `table` to the layer's registered schema, sort it to the grain, and upload one part file."""
-        stream = get_stream_schema(layer)
+        """Conform `table` to the layer's schema FOR THIS KIND, sort it to the grain, and upload one part file."""
+        stream = get_stream_schema(layer, kind)
         conformed = conform_to_stream_schema(table, stream)
         if conformed.num_rows == 0:
             raise EmptyPartitionError(

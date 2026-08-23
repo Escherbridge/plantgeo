@@ -24,7 +24,7 @@ from agri_data_service.planes.fire_detections import (
     scan_fire_detections_kind,
 )
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_STREAM
-from tests.parquet.test_objectstore_writer import RecordingBackend
+from tests.parquet.test_objectstore_writer import RecordingBackend, with_forecast_provenance
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -65,6 +65,9 @@ def _write_and_persist(base_dir: Path, *, kind: str, day: date, **table_kwargs: 
     backend = RecordingBackend()
     store = ObjectStore(backend)
     table = _cell_day_table(observed_day=day, **table_kwargs)  # type: ignore[arg-type]
+    if kind == "forecast":
+        # A forecast partition carries the six provenance columns on top of the observed grain.
+        table = with_forecast_provenance(table, issued_on=day)
     store.write_partition(table, layer=FIRE_DETECTIONS_STREAM, kind=kind, day=day)  # type: ignore[arg-type]
     _persist_to_disk(backend, base_dir)
 
