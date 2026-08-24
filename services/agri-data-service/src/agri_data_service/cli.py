@@ -302,6 +302,12 @@ from agri_data_service.jobs import (
     shutdown_signal,
 )
 from agri_data_service.models.strategy import Strategy
+from agri_data_service.pipeline.parquet.drain import (
+    DEFAULT_DAYS_PER_LANE_TURN,
+    DEFAULT_MAX_CONSECUTIVE_FAILURES,
+    DrainSummary,
+    run_drain,
+)
 from agri_data_service.pipeline.parquet.gap_fill import (
     DEFAULT_GAP_FILL_TIME_BUDGET_SECONDS,
     GapFillSummary,
@@ -3911,6 +3917,151 @@ def parquet_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable knob
         raise click.ClickException(_gap_fill_failure_reason(exc)) from exc
     click.echo(json.dumps(summary.to_summary(), sort_keys=True))
     if summary.failed:
+        context.exit(_GAP_FILL_FAILED_EXIT_CODE)
+
+
+async def _parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of a single drain
+    lanes: tuple[LaneRegistration, ...],
+    *,
+    today: date,
+    run_id: str,
+    max_consecutive_failures: int,
+    days_per_lane_turn: int,
+    max_days_per_lane: int | None,
+    time_budget_seconds: float | None,
+    stream_progress: bool,
+) -> DrainSummary:
+    """Open one loader session for the whole drain and walk every requested lane's history through it."""
+    loader_database_url = settings.require_local_source_loader_database_url()
+    store = ObjectStore.from_settings()
+
+    def announce(slug: str, day: date, outcome: str, detail: str | None) -> None:
+        # One line per finished day, to STDERR so a caller can still pipe the JSON summary on stdout.
+        note = "" if detail is None else f" {detail[:160]}"
+        click.echo(f"{slug} {day.isoformat()} {outcome}{note}", err=True)
+
+    async with local_source_loader_session(loader_database_url) as session:
+        return await run_drain(
+            session,
+            store,
+            lanes=lanes,
+            today=today,
+            run_id=run_id,
+            max_consecutive_failures=max_consecutive_failures,
+            days_per_lane_turn=days_per_lane_turn,
+            max_days_per_lane=max_days_per_lane,
+            time_budget_seconds=time_budget_seconds,
+            on_day=announce if stream_progress else None,
+        )
+
+
+@cli.command("parquet-drain")
+@click.option(
+    "--layer",
+    "layer_slugs",
+    multiple=True,
+    help="Restrict the drain to one or more registered stream slugs; repeatable. "
+    f"Default: every registered lane -- {', '.join(registered_lane_slugs())}.",
+)
+@click.option(
+    "--time-budget-seconds",
+    type=click.FloatRange(min=0.0),
+    default=None,
+    help="Stop STARTING a new lane-day after this many seconds. UNSET BY DEFAULT, which is the whole "
+    "point of this verb: the hourly cron's 600-second ceiling is what made a separate drain necessary. "
+    "A day already in hand always finishes; this never kills one mid-write.",
+)
+@click.option(
+    "--max-days-per-lane",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Cap how many missing days each lane may attempt. Default: uncapped -- drain the whole history.",
+)
+@click.option(
+    "--days-per-lane-turn",
+    type=click.IntRange(min=1),
+    default=DEFAULT_DAYS_PER_LANE_TURN,
+    show_default=True,
+    help="Days one lane drains before the walk moves on. Round-robin, so a drain interrupted at any "
+    "point has made progress on EVERY lane rather than finishing some and never starting others.",
+)
+@click.option(
+    "--max-consecutive-failures",
+    type=click.IntRange(min=1),
+    default=DEFAULT_MAX_CONSECUTIVE_FAILURES,
+    show_default=True,
+    help="Consecutive failures that stop one lane. Unlike the hourly tick, a single failing day does "
+    "NOT stop a lane here -- one unparseable day in 2003 must not cost fire-detections the other 9,000. "
+    "Any success resets the count.",
+)
+@click.option(
+    "--progress/--no-progress",
+    default=True,
+    show_default=True,
+    help="Stream one line per finished lane-day to STDERR. The JSON summary still goes to stdout, so "
+    "`--progress` and piping the summary are not in conflict.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report the census -- what the drain WOULD walk, per lane -- without writing a single object.",
+)
+@click.pass_context
+def parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of a single drain
+    context: click.Context,
+    layer_slugs: tuple[str, ...],
+    time_budget_seconds: float | None,
+    max_days_per_lane: int | None,
+    days_per_lane_turn: int,
+    max_consecutive_failures: int,
+    progress: bool,
+    dry_run: bool,
+) -> None:
+    """Drain every lane's whole Postgres history into Parquet, coarse zoom rungs included.
+
+    THIS IS THE ONE-TIME CUT-OFF, not a scheduled job (RUNBOOK section 0.32.1 decision 2). The
+    remaining lane-days are data ALREADY in Postgres; pushing them through the hourly cron one day
+    per lane per round, behind an 86-minute `ingest-all`, would take months. Once a lane's history
+    is here, its forward path writes Parquet directly and its Postgres exporter is backfill-only.
+
+    EVERY DAY GOES THROUGH THE SAME PATH THE HOURLY TICK USES -- the lane-day advisory lock, the
+    prune, the coarse rungs, then the completion marker. So this verb may safely run WHILE the cron
+    runs, which is the documented order: build the drain, run it, and only THEN stop the cron.
+    Stopping it first freezes the warehouse with nothing replacing it. A day the two runs collide on
+    is reported `contended` and retried on a later turn, which is healthy, not an error.
+
+    RESUMING IS JUST RUNNING IT AGAIN. There is no checkpoint file: the census re-reads the bucket,
+    and a day carrying its completion marker is no longer missing. That is the same rule the cron
+    uses, so the two can never disagree about what is done.
+
+    EXIT CODE 0 means the walk finished with nothing left. EXIT CODE 1 means at least one lane-day
+    failed or at least one lane stopped early; the summary names them.
+    """
+    lanes = _gap_fill_lanes(layer_slugs)
+    today = datetime.now(UTC).date()
+    run_id = f"parquet-drain:{uuid.uuid4()}"
+    try:
+        if dry_run:
+            store = ObjectStore.from_settings()
+            census = build_gap_census(lanes, store, today=today, max_days_per_lane=max_days_per_lane)
+            click.echo(json.dumps(gap_census_report(census), sort_keys=True))
+            return
+        summary = asyncio.run(
+            _parquet_drain(
+                lanes,
+                today=today,
+                run_id=run_id,
+                max_consecutive_failures=max_consecutive_failures,
+                days_per_lane_turn=days_per_lane_turn,
+                max_days_per_lane=max_days_per_lane,
+                time_budget_seconds=time_budget_seconds,
+                stream_progress=progress,
+            )
+        )
+    except (LaneRegistryError, ParquetWriteError, SQLAlchemyError, ValueError) as exc:
+        raise click.ClickException(_gap_fill_failure_reason(exc)) from exc
+    click.echo(json.dumps(summary.to_report(), sort_keys=True))
+    if summary.failures or any(lane.stopped_reason for lane in summary.lanes):
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 
