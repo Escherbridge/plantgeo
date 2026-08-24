@@ -176,17 +176,21 @@ class GeometrySimplification:
     this geometry, so an invalid coarse ring would not merely look wrong, it would report the wrong
     drought class for a location.
 
-    `min_area_degrees_squared` drops a feature the tier cannot render: below roughly one pixel there
-    is nothing to draw, and carrying it costs bytes at precisely the rung where bytes are scarcest.
-    It is expressed in squared degrees rather than a projected area on purpose -- the geometry is
-    EPSG:4326 with no projection applied anywhere in this warehouse, so a square-metre threshold
-    would be a fabricated conversion that varies with latitude.
+    `min_area_tier_squares` drops a feature the tier cannot render: below roughly one pixel there is
+    nothing to draw, and carrying it costs bytes at precisely the rung where bytes are scarcest.
+
+    IT IS A MULTIPLE OF THE TIER'S OWN RESOLUTION, NOT AN ABSOLUTE AREA, and that is the whole
+    point: one fixed threshold cannot be right at 0.01, 0.2 and 5.0 degrees at once -- it would drop
+    nothing at z9 and everything at z0, or the reverse. `1.0` means "smaller than one square of this
+    tier's grid". The unit underneath is squared degrees rather than a projected area because the
+    geometry is EPSG:4326 with no projection applied anywhere in this warehouse, so a square-metre
+    threshold would be a fabricated conversion that varies with latitude.
     """
 
     geometry_column: str
     dissolve: HierarchicalDissolve | None = None
     aggregations: tuple[ColumnAggregation, ...] = ()
-    min_area_degrees_squared: float | None = None
+    min_area_tier_squares: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,11 +430,12 @@ def _derive_geometry_tier(
             f"SELECT * REPLACE (ST_AsWKB({geometry}) AS {geometry}) FROM generalised "
             f"WHERE NOT ST_IsEmpty({geometry})"
         )
-        if strategy.min_area_degrees_squared is not None:
+        if strategy.min_area_tier_squares is not None:
             # An area test, not a bounding-box one: a long thin river reach has a wide envelope and
             # nothing to draw, and dropping by envelope would keep exactly the features that cost
             # the most bytes for the least ink.
-            wrapped += f" AND ST_Area({geometry}) >= {strategy.min_area_degrees_squared}"
+            minimum_area = strategy.min_area_tier_squares * tolerance * tolerance
+            wrapped += f" AND ST_Area({geometry}) >= {minimum_area}"
         derived = session.execute(wrapped).arrow()
     finally:
         if connection is None:
