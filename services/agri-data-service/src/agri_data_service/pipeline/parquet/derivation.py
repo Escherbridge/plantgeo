@@ -119,8 +119,18 @@ def derive_and_write_day_tiers(  # noqa: PLR0913 - one coordinate of the day bei
     day complete. The caller catches this and treats the whole day as unfinished; the next tick
     redoes it.
 
-    `base_table` lets a caller that ALREADY holds the day's rows -- the bulk drain does -- skip the
-    read-back entirely. Every other caller passes nothing and the base rung is read from the store.
+    `base_table` lets a caller that ALREADY holds the day's rows skip the read-back entirely. NO
+    CALLER PASSES IT TODAY and that is worth stating plainly rather than implying otherwise: every
+    path into this function runs through `gap_fill._finalize_written_day`, which receives counts
+    from a lane adapter, never a table. The parameter exists for the forward API-direct writers of
+    RUNBOOK 0.32.1 decision 1, which WILL hold the rows they just fetched.
+
+    THE MEMORY RISK IS REAL AND NAMED: the read-back materialises the whole base day at once, which
+    is precisely what `soil-survey`'s ~3,016-part streaming export avoids on the write side. At its
+    full 1.5M-delineation universe that table is gigabytes. `MAX_DERIVATION_ROWS` refuses rather
+    than swaps, so the failure is loud -- but a lane that trips it needs this function taught to
+    fold rung-by-rung over batches, which is only correct for aggregates that are associative
+    (`sum`/`min`/`max`/`all`/`any`) and NOT for `mean`.
     """
     source = base_table if base_table is not None else pl.from_arrow(store.read_partition(layer, kind, 13, day))
     if not isinstance(source, pl.DataFrame):  # pragma: no cover - a chunked read would be a store change
@@ -139,12 +149,36 @@ def derive_and_write_day_tiers(  # noqa: PLR0913 - one coordinate of the day bei
             # Not an error and not an absence: the base day held rows, but every one of them was
             # dropped at this rung -- an unlocated gauge, or a feature below the tier's area floor.
             # A governed absence would claim upstream had nothing, which is false.
+            #
+            # IT MUST STILL RETRACT WHATEVER THIS RUNG HELD BEFORE. A `continue` here skips
+            # `_write_tier`, which is the only place a rung is pruned or re-marked -- so an earlier,
+            # larger derivation's parts AND its completion marker would survive, and every reader at
+            # this zoom would go on being served rows the base day no longer contains, from a rung
+            # that still claims to be finished. That is the stable lie this whole contract exists to
+            # prevent, arrived at from the other direction.
             notes.append(
                 f"{layer} z{tier} {day.isoformat()}: every base row was dropped at this rung, so it holds no parts"
             )
+            _retract_tier(store, layer=layer, kind=kind, tier=tier, day=day)
             continue
         reports.append(_write_tier(store, derived, layer=layer, kind=kind, tier=tier, day=day, run_id=run_id, now=now))
     return DerivationResult(tiers=tuple(reports), notes=tuple(notes))
+
+
+def _retract_tier(store: ObjectStore, *, layer: str, kind: PartitionKind, tier: ZoomTier, day: date) -> None:
+    """Empty one rung: clear its completion claim FIRST, then delete every part it held.
+
+    `retract_partition_tier` rather than `prune_surplus_parts(written_part_count=0)`: that prune
+    REFUSES zero on purpose, because a prune may only ever trail a completed write. Emptying a rung
+    is a different intent and has its own named operation.
+    """
+    pruned = store.retract_partition_tier(layer, kind, tier, day)
+    if pruned.failures:
+        raise TierWriteError(
+            f"{layer} z{tier} {day.isoformat()}: this rung derived to no rows, but the parts a previous derivation "
+            f"left there could not be removed, so readers at this zoom would keep being served rows the base day no "
+            f"longer holds: {'; '.join(pruned.failures)}"
+        )
 
 
 def _write_tier(  # noqa: PLR0913 - one coordinate of the rung being written per arg

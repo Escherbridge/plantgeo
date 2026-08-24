@@ -37,7 +37,10 @@ WATER_GAUGES_SCHEMA: Final = register_stream_schema(
                 # Grain half 1/2. Never null: a gauge with no site number is dropped before it can
                 # ever be written (ingest/identity.py, build_streamflow_gauge_identity raises
                 # MissingNativeKeyError, caught in ingest/usgs_nwis.py's build_gauge_write).
-                pa.field("site_number", pa.string(), nullable=False),
+                # NULLABLE because the coarse rungs null it:
+                # a coarse cell merges several gauges and can honestly name none of them
+                # (see this module's TierDerivation). The base z13 rung always carries it.
+                pa.field("site_number", pa.string(), nullable=True),
                 # Grain half 2/2. The true UTC instant of the reading, parsed from properties'
                 # `updatedAt`. May fall on a different UTC calendar day than `observed_day` below --
                 # see that field's comment. Never null for the same reason as site_number: a row
@@ -54,7 +57,10 @@ WATER_GAUGES_SCHEMA: Final = register_stream_schema(
                 pa.field("observed_day", pa.date32(), nullable=False),
                 # Always a string (possibly empty) -- ingest/usgs_nwis.py's parse_gauge and
                 # parse_daily_value_series both coalesce a missing siteName to "".
-                pa.field("site_name", pa.string(), nullable=False),
+                # NULLABLE because the coarse rungs null it:
+                # a coarse cell merges several gauges and can honestly name none of them
+                # (see this module's TierDerivation). The base z13 rung always carries it.
+                pa.field("site_name", pa.string(), nullable=True),
                 # From properties' `geogLocation`. The parser (ingest/usgs_nwis.py:229-234) requires
                 # the geoLocation/geogLocation objects to exist but not that latitude/longitude keys
                 # are populated inside them, so nullable here is honest about what the source
@@ -117,18 +123,34 @@ WATER_GAUGES_TIER_DERIVATION: Final = register_tier_derivation(
         strategy=GridAggregation(
             longitude_column="longitude",
             latitude_column="latitude",
-            key_columns=("site_number", "observed_at", "observed_day"),
+            # NEITHER `site_number` NOR `observed_at` MAY BE A KEY. Both are unique per base row --
+            # the gauge's identity and its reading instant -- so keying on them makes every group a
+            # singleton and z9/z5/z0 become three verbatim copies of z13 with snapped coordinates:
+            # four times the storage, zero coarsening. The DAY is the only time grain a coarse rung
+            # can honestly hold.
+            key_columns=("observed_day",),
             aggregations=(
-                ColumnAggregation("site_name", "first"),  # constant for one gauge site across all readings
+                ColumnAggregation("site_number", "null"),  # one gauge's identity; a merged cell has none
+                ColumnAggregation("site_name", "null"),  # likewise -- a cell of several gauges has no one name
+                ColumnAggregation("observed_at", "max"),  # newest reading instant among the merged gauges
                 ColumnAggregation("flow_cfs", "mean"),  # intensive measurement; does not add across gauges
                 ColumnAggregation("percentile", "mean"),  # intensive measurement; does not add across gauges
-                ColumnAggregation("condition", "first"),  # constant for one reading instant
-                ColumnAggregation("trend", "first"),  # constant for one reading instant
+                # NULLED, NOT `first`. These are HAZARD fields, and `first` would hand a merged cell
+                # one arbitrary gauge's verdict -- reporting "normal" for a cell in which another
+                # gauge is at flood stage. There is no aggregate in the vocabulary that means "the
+                # most severe of these" (the values are free-text, not an ordered enum), so the
+                # honest coarse answer is no answer. A reader that needs a gauge's condition reads
+                # the base rung, where it is per-gauge and true.
+                ColumnAggregation("condition", "null"),
+                ColumnAggregation("trend", "null"),
                 ColumnAggregation("source", "first"),  # constant across the lane; always "USGS NWIS"
                 ColumnAggregation("geometry_linked", "all"),  # gate; coarse cell is linked only if every row in it was
                 ColumnAggregation("data_available_at", "max"),  # most recent ML leakage boundary among merged cells
                 ColumnAggregation("ingested_at", "max"),  # most recent warehouse persistence instant among merged cells
             ),
         ),
+        # Relaxed to nullable ONLY so the coarse rungs above may null them. Named here so a
+        # NULL at the base rung still fails the write loudly, as it did before the zoom axis.
+        base_non_null_columns=("site_name", "site_number"),
     )
 )

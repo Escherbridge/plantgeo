@@ -90,6 +90,7 @@ from agri_data_service.foundation.parquet.paths import (
     zoom_prefix,
 )
 from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema, get_stream_schema
+from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, base_non_null_columns
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -356,6 +357,7 @@ class ObjectStore:
                 f"refusing to write a zero-row {layer!r} {kind} z{zoom} partition for {day}: "
                 "an empty file reads as a present day and hides the gap"
             )
+        _refuse_null_base_columns(conformed, layer=layer, zoom=zoom, day=day)
         if self.absence_exists(layer, kind, zoom, day):
             raise GovernedAbsenceConflictError(
                 f"{layer!r} {kind} z{zoom} {day} carries a governed-absence marker; "
@@ -560,6 +562,39 @@ class ObjectStore:
             )
         return pa.concat_tables(tables)
 
+    def retract_partition_tier(
+        self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date
+    ) -> SurplusPruneResult:
+        """Empty ONE rung of one day: clear its completion claim, then delete every part it holds.
+
+        DELIBERATELY NOT `prune_surplus_parts(written_part_count=0)`, which refuses that argument on
+        purpose -- a prune may only ever TRAIL a completed write, and asking it to remove everything
+        is how a bug empties a day it meant to shrink. Retraction is a different intent and gets a
+        different name: a derived rung that now yields no rows must stop serving the rows it used to,
+        and the day's base rung is untouched by it.
+
+        THE MARKER GOES FIRST. While the parts are being removed the rung is briefly a partial read,
+        and an UNMARKED partial read is what the census calls `incomplete` and redoes -- whereas a
+        MARKED one is a rung asserting it finished while its rows vanish underneath it.
+
+        Failures are RETURNED, not raised, matching `prune_surplus_parts`: the caller decides
+        whether a rung it could not empty is fatal, and here it always is.
+        """
+        self.clear_completion_marker(layer, kind, zoom, day)
+        removed: list[str] = []
+        failures: list[str] = []
+        for relative_path in self.list_partition_keys(layer, kind, zoom, year=day.year, month=day.month):
+            partition = try_parse_partition_path(relative_path)
+            if partition is None or partition.day != day:
+                continue
+            try:
+                self._backend.delete(self.key_for(relative_path))
+            except Exception as error:
+                failures.append(f"{relative_path}: {type(error).__name__}: {error}")
+            else:
+                removed.append(relative_path)
+        return SurplusPruneResult(removed=tuple(removed), failures=tuple(failures))
+
     def prune_surplus_parts(
         self,
         layer: str,
@@ -644,6 +679,32 @@ class ObjectStore:
         if month is None:
             return year_prefix(layer, kind, zoom, year)
         return month_prefix(layer, kind, zoom, year, month)
+
+
+def _refuse_null_base_columns(table: pa.Table, *, layer: str, zoom: ZoomTier, day: date) -> None:
+    """At the BASE rung only, refuse a null in a column the lane declared must never be null there.
+
+    Eight fields across six lanes are `nullable=True` in their arrow schema for one reason: their
+    COARSE rungs null them, and pyarrow will not cast a null into a non-nullable field. That
+    relaxation also removed the check that used to make a NULL `sensor_id` fail this write loudly.
+    `TierDerivation.base_non_null_columns` names them back, and this is where the naming bites.
+
+    Derived rungs are skipped deliberately -- nulling those columns is exactly what they are for.
+    """
+    if zoom != BASE_ZOOM_TIER:
+        return
+    offenders = [
+        column
+        for column in base_non_null_columns(layer)
+        if column in table.column_names and table.column(column).null_count > 0
+    ]
+    if offenders:
+        raise ParquetWriteError(
+            f"refusing to write the BASE rung of {layer!r} for {day.isoformat()}: column(s) {offenders} hold nulls, "
+            f"and this lane declares them non-null at z{BASE_ZOOM_TIER}. They are nullable in the arrow schema only "
+            f"so the coarse rungs may null them; a null here means the producer regressed, not that the tier axis "
+            f"permits it"
+        )
 
 
 def conform_to_stream_schema(table: pa.Table, stream: ParquetStreamSchema) -> pa.Table:

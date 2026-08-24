@@ -207,6 +207,18 @@ class TierDerivation:
 
     stream: str
     strategy: TierStrategy
+    # Columns that MUST be non-null at the base rung even though the arrow schema permits null.
+    #
+    # THIS EXISTS TO GIVE BACK A GUARD THE ZOOM AXIS TOOK AWAY. Eight fields across six lanes were
+    # relaxed from `nullable=False` to `nullable=True` for one reason only: their coarse rungs null
+    # them, and pyarrow refuses to cast a null into a non-nullable field. But that relaxation also
+    # silenced the check that made a NULL `sensor_id` or `external_id` fail the BASE export loudly
+    # -- a producer regression would now write nulls into the record of truth in silence.
+    #
+    # Naming them here restores exactly that check at exactly the rung that needs it:
+    # `write_partition` enforces this list when it is writing the base tier, and ignores it for the
+    # derived tiers, which are the whole reason the column is nullable.
+    base_non_null_columns: tuple[str, ...] = ()
 
 
 _DERIVATIONS: Final[dict[str, TierDerivation]] = {}
@@ -243,6 +255,11 @@ def tier_derivation(stream: str) -> TierDerivation:
             f"lane that declares nothing would publish a rung nobody decided the contents of"
         )
     return autoloaded
+
+
+def base_non_null_columns(stream: str) -> tuple[str, ...]:
+    """Return the columns `stream` requires to be non-null at its BASE rung, or `()` if it declares none."""
+    return tier_derivation(stream).base_non_null_columns
 
 
 def registered_tier_derivations() -> tuple[str, ...]:
@@ -321,8 +338,14 @@ _POLARS_AGGREGATES: Final[Mapping[str, Callable[[pl.Expr], pl.Expr]]] = {
     "mean": lambda column: column.mean(),
     "min": lambda column: column.min(),
     "max": lambda column: column.max(),
-    "all": lambda column: column.all(),
-    "any": lambda column: column.any(),
+    # `all`/`any` DEFAULT TO ignore_nulls=True, so an all-null group folds to True/False rather
+    # than to null -- and for `all` that means an EXPOSURE GATE FAILS OPEN: a coarse cell whose
+    # every row had an unknown `allowed_client_exposure` would claim every row permitted it.
+    # DuckDB's `bool_and`/`bool_or` return NULL for that group, so this is the same engine
+    # divergence the `sum` entry above guards against, in the one place where the wrong answer
+    # publishes data rather than merely miscounting it.
+    "all": lambda column: column.all(ignore_nulls=False),
+    "any": lambda column: column.any(ignore_nulls=False),
     "first": lambda column: column.first(),
     # A TYPED null, produced by a never-taken branch off the column itself. `pl.lit(None)` would
     # land as Null dtype and the write would then be refused by `conform_to_stream_schema` for the
@@ -582,6 +605,22 @@ def validate_derivation_against_schema(stream: str) -> tuple[str, ...]:
             f"{stream}: column {missing!r} is neither grain nor aggregated, so `derive_tier` will refuse it"
             for missing in sorted(set(columns) - named)
         )
+    nulled = {aggregation.column for aggregation in aggregations if aggregation.how == "null"}
+    derivation = tier_derivation(stream)
+    for column in derivation.base_non_null_columns:
+        field = columns.get(column)
+        if field is None:
+            problems.append(f"{stream}: {column!r} is declared base-non-null but is not a column of its schema")
+        elif not field.nullable:
+            problems.append(
+                f"{stream}: {column!r} is declared base-non-null while its arrow field is ALREADY nullable=False, so "
+                f"the declaration is redundant -- either the field should be relaxed or the declaration dropped"
+            )
+        elif column not in nulled:
+            problems.append(
+                f"{stream}: {column!r} is declared base-non-null but no coarse rung nulls it, so nothing explains why "
+                f"its arrow field is nullable at all"
+            )
     if isinstance(strategy, GeometrySimplification) and strategy.geometry_column not in columns:
         problems.append(
             f"{stream}: the derivation names geometry column {strategy.geometry_column!r}, which its schema lacks"
@@ -605,6 +644,7 @@ __all__ = [
     "TierPassthrough",
     "TierStrategy",
     "ZoomTier",
+    "base_non_null_columns",
     "derive_tier",
     "floor_to_resolution",
     "register_tier_derivation",

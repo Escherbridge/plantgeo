@@ -78,6 +78,21 @@ DEFAULT_MAX_CONSECUTIVE_FAILURES: Final = 3
 # map layer improves together rather than the last six staying empty until the very end.
 DEFAULT_DAYS_PER_LANE_TURN: Final = 25
 
+# How many times ONE day may come back `contended` before the drain gives up on it this run.
+#
+# WITHOUT THIS THE DRAIN CAN SPIN FOREVER, and the collision is not hypothetical -- it is the
+# expected endgame of every lane. The drain fills OLDEST-first and the hourly cron fills
+# NEWEST-first, so the last day a lane has left is exactly the day the cron is most likely to be
+# holding. A requeue with no cap plus the default `time_budget_seconds=None` is then an infinite
+# loop that reports progress: the day is popped, contended, pushed back, popped again, forever.
+#
+# Five, because a cron tick is bounded at 600 seconds and a lane-day is far shorter: five turns
+# through the round-robin is long enough that a genuine collision has cleared, and short enough
+# that a stuck lock (see `postgres_lane_day_lock`'s pool precondition) surfaces in minutes rather
+# than never. A day that exhausts this is left PENDING and reported, so re-running the drain takes
+# it -- the bucket is the checkpoint, and nothing about it has been written.
+MAX_CONTENDED_RETRIES_PER_DAY: Final = 5
+
 
 def _utc_now() -> datetime:
     """The completion marker's `completed_at`; injectable so a test pins a deterministic payload."""
@@ -107,6 +122,8 @@ class DrainLaneProgress:
     contended: int = 0
     failed: int = 0
     consecutive_failures: int = 0
+    contended_retries: dict[date, int] = field(default_factory=dict)
+    abandoned: list[DrainDayFailure] = field(default_factory=list)
     parts: int = 0
     rows: int = 0
     written_bytes: int = 0
@@ -151,6 +168,7 @@ class DrainSummary:
             "days_written": self.days_written,
             "days_remaining": self.days_remaining,
             "failures": len(self.failures),
+            "abandoned_contended": sum(len(lane.abandoned) for lane in self.lanes),
             "lanes": [
                 {
                     "lane": lane.slug,
@@ -161,6 +179,7 @@ class DrainSummary:
                     "contended": lane.contended,
                     "failed": lane.failed,
                     "remaining": len(lane.pending),
+                    "abandoned_contended": len(lane.abandoned),
                     "rows": lane.rows,
                     "parts": lane.parts,
                     "megabytes": round(lane.written_bytes / 1_048_576, 1),
@@ -305,7 +324,24 @@ async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being dra
         # the one gap nothing else would ever come back for, since the cron fills newest-first and
         # this day is old.
         lane.contended += 1
-        lane.pending.append(day)
+        seen = lane.contended_retries.get(day, 0) + 1
+        lane.contended_retries[day] = seen
+        if seen < MAX_CONTENDED_RETRIES_PER_DAY:
+            lane.pending.append(day)
+        else:
+            # Left pending-no-more and RECORDED rather than retried into an infinite loop. Nothing
+            # was written for this day, so re-running the drain simply takes it again.
+            lane.abandoned.append(
+                DrainDayFailure(
+                    slug=lane.slug,
+                    day=day,
+                    outcome="contended",
+                    detail=(
+                        f"another run held this lane-day on {seen} separate turns, so the drain stopped retrying it "
+                        f"this run rather than spinning on it; nothing was written and a later run will take it"
+                    ),
+                )
+            )
     if outcome in FAILING_LANE_OUTCOMES and outcome != "blocked":
         lane.failed += 1
         lane.consecutive_failures += 1

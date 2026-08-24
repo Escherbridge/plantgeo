@@ -88,8 +88,12 @@ SENSORS_SCHEMA: Final = register_stream_schema(
                 # Station position from `geo.features.geom`, the maintained point
                 # `geo.sync_feature_geom_from_properties` derives from the station's NWS-reported
                 # location. NULL when a station was ingested with no position in its GeoJSON
-                # (ingest/sensors.py:433-439), so GridAggregation must permit it. Holds the cell
-                # ORIGIN's centroid, not any single observation's location.
+                # (ingest/sensors.py:433-439), so GridAggregation must permit it -- a row with no
+                # position has no coarse rung and is dropped from the derived tiers.
+                # THIS IS THE STATION'S OWN LOCATION, not a cell centroid. The sentence that stood
+                # here said the opposite, copied from `signal`/`vegetation`, whose coordinates
+                # really are a cell's representative point because those lanes have no per-row
+                # position at all. This lane does: every value is one weather station's own site.
                 pa.field("station_longitude", pa.float64(), nullable=True),
                 pa.field("station_latitude", pa.float64(), nullable=True),
             ]
@@ -121,5 +125,8 @@ SENSORS_TIER_DERIVATION: Final = register_tier_derivation(
                 ColumnAggregation("data_available_at", "max"),  # newest availability across stations
             ),
         ),
+        # Relaxed to nullable ONLY so the coarse rungs above may null them. Named here so a
+        # NULL at the base rung still fails the write loudly, as it did before the zoom axis.
+        base_non_null_columns=("feature_id", "sensor_id"),
     )
 )

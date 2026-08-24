@@ -137,11 +137,19 @@ WEATHER_OBSERVATIONS_TIER_DERIVATION: Final = register_tier_derivation(
                 # speed), which the closed aggregate vocabulary cannot express per column. Nulled
                 # rather than fabricated: no direction is recoverable, a wrong one is not.
                 ColumnAggregation("wind_direction_deg", "null"),
-                ColumnAggregation("precipitation_mm", "sum"),  # additive depth over the merged area
+                # NOT `sum`. Depth is not additive across the stations reporting it: four stations
+                # in one coarse cell each measuring 1 mm did not see 4 mm fall, and this lane's rows
+                # are per-station instantaneous polls, so summing double-counts along BOTH axes at
+                # once -- stations per cell and polls per station. Every sibling measurement above
+                # takes `mean` for the same reason; precipitation only looks additive.
+                ColumnAggregation("precipitation_mm", "mean"),
                 ColumnAggregation("source", "first"),  # constant across the lane
                 ColumnAggregation("feature_id", "null"),  # one base row's identity; a merged cell has none
                 ColumnAggregation("ingested_at", "max"),  # newest persistence instant among merged rows
             ),
         ),
+        # Relaxed to nullable ONLY so the coarse rungs above may null them. Named here so a
+        # NULL at the base rung still fails the write loudly, as it did before the zoom axis.
+        base_non_null_columns=("external_id", "feature_id", "wind_direction_deg"),
     )
 )

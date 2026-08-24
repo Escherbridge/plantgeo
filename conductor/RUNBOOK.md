@@ -3841,6 +3841,147 @@ cadence, horizon, historical depth, or known-gaps list. The lane was built from 
 gap stated rather than an invented contract. **Write that half of the contract before the lane is
 scheduled**, or its history horizon and gap detection have nothing to check against.
 
+### 0.37 SESSION 8 (2026-08-24) — the zoom ladder has rungs, and what a review found on them
+
+d1's build half. The map was empty above z13 BY DESIGN since the zoom axis shipped (§0.33.2 hazard
+1); it is not any more, for every day written from here on. §0.36 is the state this started from.
+
+#### 0.37.1 THE DEPLOY HAPPENED — `3ab85a6` is in production
+
+§0.36.8 step 1 is closed. `main` was pushed and both `plantgeo-main` and `plantgeo-ingest-cron`
+redeployed SUCCESS at 21:58 on 2026-08-23. **The completion marker now runs for real**: the claim
+§0.36.2 flagged as "believed-correct but never verified by a cron tick" is being tested every hour
+from that moment. It also unblocks the purge, which was pointless before it.
+
+#### 0.37.2 FOUR OWNER DECISIONS, taken at the top of the session
+
+| # | decision | why it was a genuine fork |
+|---|---|---|
+| 1 | **Push now** | the mechanism had never run in production, and pushing is the only thing that tests it |
+| 2 | **ENRICH the three coordinate-less lanes** rather than passthrough or a lane-aware resolver | `signal`, `vegetation` and `sensors` carry no position at all, so they could not be re-floored. The alternatives were 4x storage on the biggest lanes, or changing `serving_zoom_tier`'s signature for all twelve planes |
+| 3 | **Fuse tier derivation into `gap_fill` too**, not the drain alone | otherwise every day written AFTER the drain is invisible above z13 until d2 |
+| 4 | **Hierarchical dissolve where a lane has a real hierarchy** | only `watersheds` does. `agri.spatial_cell.parent_cell_id` LOOKS like a second one and is populated on **0 of 1,965 rows** — measured 2026-08-23. Do not re-adopt it on the strength of the column existing |
+
+#### 0.37.3 The resolution ladder, and the number that was wrong twice
+
+`TIER_RESOLUTION_DEGREES = {9: 0.01, 5: 0.2, 0: 5.0}` — four web-map pixels at each tier's OWN zoom,
+rounded to a clean decimal. A tier answers a SPAN (`zoom_tier_span`), so a request at the top of a
+span is over-generalised; that is the stated price of one uniform ladder, not an oversight.
+
+**`min_area_tier_squares` is UNSET on every geometry lane, and the first two attempts were both
+wrong.** A fixed absolute area is wrong at three resolutions at once. Scaling it to the tier fixed
+that and introduced something worse: at `1.0`, one z0 grid square is 5.0 x 5.0 = **25 square
+degrees**, while the whole PNW universe is roughly 10 x 10 — so every feature in every geometry lane
+dropped and z0 (which answers z0–z4, i.e. continent zoom) went blank. Simplification alone already
+delivers the byte win. The knob stays for a future lane whose features are genuinely global.
+
+#### 0.37.4 THE ENRICHMENT — three lanes gained a position, verified against production
+
+`signal` and `vegetation` project `ST_X/ST_Y(agri.spatial_cell.centroid)` as `cell_longitude` /
+`cell_latitude`, NOT NULL (centroid is populated on 1,965 of 1,965 rows). `sensors` projects
+`ST_X/ST_Y(ST_Centroid(geo.features.geom))` as `station_longitude` / `station_latitude`, NULLABLE —
+a row pushed through the older HTTP route may carry no geometry.
+
+**Columns are APPENDED, never inserted**, so no existing reader's column order moves. This is safe
+only because the purge and the drain rewrite every object anyway. On any other day it is a migration.
+
+Run against PRODUCTION on 2026-08-24, real rows, zero null coordinates:
+`signal` 11 rows / 12 columns at (-116.0, 43.0) · `vegetation` at (-119.875, 42.125) ·
+`sensors` 172 rows at (-117.498, 46.268).
+
+Two stale claims corrected in passing: the signal export's header said its `cell_ids` parameter was
+`bigint[]` — **it is `uuid[]`**, and the foreign key proves it — and a comment claimed the new
+coordinates joined the GROUP BY when they ride the lane's own newest-release `array_agg` instead
+(deliberately: grouping on a PostGIS geometry compares it structurally).
+
+#### 0.37.5 ORDERING: coarse rungs are written BEFORE the base marker, and it is load-bearing
+
+Only the base tier is censused — `build_gap_census` walks `GAP_FILL_ZOOM_TIER` and nothing else — so
+**the base marker is the only signal that can bring a day back for another attempt.** Mark it first
+and then fail to derive, and the day is stranded base-complete: never revisited, permanently empty
+above z13, **on a green tick**. Deriving first makes the identical failure self-healing, because an
+unmarked day is simply re-exported.
+
+`tests/parquet/test_derivation_and_drain.py::test_the_base_marker_is_written_after_every_coarse_rung`
+pins it by intercepting every marker write and asserting the base one lands last. Do not delete it.
+
+#### 0.37.6 `duckdb` spatial LOADS on this host — `planes/soil_survey.py:13` is WRONG
+
+That header states the extension "is not installable offline in this environment (`INSTALL spatial`
+requires network)", which is why that lane hand-rolls a WKB point-in-polygon reader in `struct`.
+**Tested 2026-08-23: `LOAD spatial` succeeds and `ST_SimplifyPreserveTopology` works.** The
+hand-rolled reader remains a defensible choice for a SERVING path that must not depend on an
+extension — but it is not a reason for a batch path to avoid one, and the stated reason is false.
+
+#### 0.37.7 THE REVIEW — ten findings, six of them real defects
+
+`/code-review high` over `e2c099b..HEAD`. **Every review pass on this workstream has returned
+changes-required; this is the fourth.** All fixed:
+
+| finding | why it mattered |
+|---|---|
+| `precipitation_mm` took `sum` | depth is not additive across the stations reporting it, and these rows are per-station instantaneous polls — it double-counted along BOTH axes at once. Now `mean` |
+| a `contended` day requeued forever | the drain fills oldest-first and the cron newest-first, so **every lane's endgame is precisely the day the cron holds**. With the default `time_budget_seconds=None` that is an infinite loop that reports progress. Capped at `MAX_CONTENDED_RETRIES_PER_DAY = 5` |
+| an emptied rung skipped its prune | a rung deriving to zero rows `continue`d past the only code that prunes or re-marks it, so an earlier derivation's parts AND its completion marker survived — serving rows the base day no longer held, from a rung still claiming to be finished |
+| `all`/`any` ignored nulls | Polars defaults to `ignore_nulls=True`, so an all-null `allowed_client_exposure` folded to **True — an exposure gate failing OPEN**. DuckDB's `bool_and` returns NULL. The same engine divergence as the `sum` bug, in the one place where the wrong answer publishes data rather than miscounting it |
+| `water-gauges` keyed on `site_number` + `observed_at` | both unique per base row, so every group was a singleton and z9/z5/z0 were verbatim copies of z13 at four times the storage |
+| eight fields relaxed to nullable | that silently removed the guard which made a NULL `sensor_id` fail the BASE export loudly. `TierDerivation.base_non_null_columns` names them back and `write_partition` enforces it at z13 only |
+
+Plus two smaller ones: `ST_X` on the unconstrained `geometry(GEOMETRY,4326)` column would abort a
+whole day's export on one non-point row (now `ST_Centroid` first), and a field comment claiming the
+sensors coordinates were "the cell ORIGIN's centroid" said the exact opposite of the SQL producing
+them.
+
+A note on `water-gauges`: `condition` and `trend` are now NULLED at coarse rungs rather than taking
+one arbitrary gauge's value. They are hazard fields, and `first` would report "normal" for a cell in
+which another gauge sits at flood stage. There is no aggregate in the vocabulary meaning "the most
+severe of these" — the values are free text, not an ordered enum — so the honest coarse answer is no
+answer.
+
+#### 0.37.8 What the MISSION got wrong, and the lesson that generalises
+
+`.agentgraph/runs/d1-lane-tiers/` — 5 agents, 0 errors, ~$3.95, 16 files. All five reported clean.
+
+One agent nonetheless imported `warehouse.parquet.tier_derivation` (**no such module**), passed
+`method=` where the field is `strategy=`, and **never called `register_tier_derivation` at all** —
+consistently, across all five of its files. It had the entire `tiers.py` as a reference. The brief
+was not the problem; the absence of an interpreter was.
+
+**An agent that cannot run code cannot check an API it was handed.** d0's lesson was "budget a
+host-side FIXTURE pass". d1 adds: budget a host-side **API-conformance** pass as well. The thing
+that found all of it was ~40 lines of throwaway Python that imported every lane, derived every rung
+against a synthetic day, and cast the result back to the storage contract. It is now
+`test_every_lane_derives_a_real_row_at_every_rung`. Write that script BEFORE reading the diff.
+
+#### 0.37.9 Gate, and one flake worth not chasing
+
+**4,007 passed / 3 skipped** with the real-DB env from §0.36.7 set (baseline was 3,948/3; 60 tests
+added). `ruff` clean across `src/ tests/ scripts/`; `mypy` at its two pre-existing
+`matview_refresh.py:657` errors.
+
+**One real-DB test ERRORS per full run, and it is a DIFFERENT test each run** —
+`test_covariate_wind_lane` and `test_vegetation_ndvi_release_materialisation` have each done it
+once. Both PASS in isolation. It is a teardown race in the shared sweep database, unrelated to this
+work; do not read it as a regression, and do not spend a session chasing it without first confirming
+it reproduces on a clean checkout.
+
+#### 0.37.10 Still open after this session
+
+- **The drain has not been RUN.** Built, reviewed, and exercised against the real bucket in
+  `--dry-run` only: **13,565 missing lane-days, `fire-detections` 9,203 of them (68%)** — closely
+  matching the 13,037 / 69% §0.33.3 predicted.
+- **The purge has not been run** (`--confirm` still never used). It must precede the drain, or the
+  drain SKIPS days that read as covered because objects written at the OLD schema sit there with no
+  coarse rungs.
+- **`soil-survey` remains blocked by the 200,000-key cap** and drains nothing regardless.
+- **The coarse-rung memory ceiling is untested at scale.** `derive_and_write_day_tiers` reads the
+  whole base day back at once; `soil-survey`'s 1.5M-delineation universe would be gigabytes.
+  `MAX_DERIVATION_ROWS` refuses loudly rather than swapping, but a lane that trips it needs a
+  batched fold — correct only for associative aggregates, NEVER for `mean`.
+- **`wind_direction_deg` is nulled at every coarse rung.** An honest coarse bearing needs a vector
+  mean (atan2 of mean sine and cosine, speed-weighted) that the closed vocabulary cannot express per
+  column. Reversible; nobody has asked for it.
+
 ### 0.36 HANDOFF — session 7 close (2026-08-23), d0 done, d1 is next
 
 §0.35 holds the detail and the reasoning. This section is only what a fresh session needs to start

@@ -110,8 +110,14 @@ SELECT
     -- (maintained by geo.sync_feature_geom_from_properties), NOT the representative point of
     -- any cell. A pushed row may lack geometry, so these are NULLABLE; ST_X(NULL) returns NULL
     -- as wanted, never a fabricated 0,0 (the Gulf of Guinea, the classic version of this bug).
-    ST_X(winning_observation.geom) AS station_longitude,
-    ST_Y(winning_observation.geom) AS station_latitude
+    -- ST_Centroid FIRST, and it is not decoration. geo.features.geom is declared
+    -- `geometry(GEOMETRY,4326)` -- UNCONSTRAINED as to type -- so a single non-point row (a pushed
+    -- station recorded as a small polygon, say) would make bare ST_X raise and blank the WHOLE
+    -- day's export, not just that row. ST_Centroid accepts any geometry and is the identity on a
+    -- Point, so the common case is unchanged and the pathological one degrades to a representative
+    -- point instead of an outage.
+    ST_X(ST_Centroid(winning_observation.geom)) AS station_longitude,
+    ST_Y(ST_Centroid(winning_observation.geom)) AS station_latitude
 FROM winning_observation
 CROSS JOIN LATERAL jsonb_each(COALESCE(winning_observation.readings, '{}'::jsonb)) AS measurement(key, value)
 WHERE measurement.key <> 'textDescription'

@@ -133,5 +133,8 @@ WATERSHEDS_TIER_DERIVATION: Final = register_tier_derivation(
                 ColumnAggregation(column="feature_id", how="null"),
             ),
         ),
+        # Relaxed to nullable ONLY so the coarse rungs above may null them. Named here so a
+        # NULL at the base rung still fails the write loudly, as it did before the zoom axis.
+        base_non_null_columns=("feature_id",),
     ),
 )

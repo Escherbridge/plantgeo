@@ -101,5 +101,8 @@ VEGETATION_PLANE_TIER_DERIVATION: Final = register_tier_derivation(
                 ColumnAggregation("allowed_client_exposure", "all"),  # gate: coarse cell exposed only if all were
             ),
         ),
+        # Relaxed to nullable ONLY so the coarse rungs above may null them. Named here so a
+        # NULL at the base rung still fails the write loudly, as it did before the zoom axis.
+        base_non_null_columns=("cell_id", "observation_checksum"),
     )
 )
