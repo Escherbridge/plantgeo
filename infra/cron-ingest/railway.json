@@ -5,7 +5,6 @@
     "dockerfilePath": "infra/cron-ingest/Dockerfile"
   },
   "deploy": {
-    "cronSchedule": "0 * * * *",
     "restartPolicyType": "NEVER"
   }
 }

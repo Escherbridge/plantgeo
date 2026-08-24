@@ -2,6 +2,19 @@
 # It runs every ingestion source to completion and exits non-zero if any source failed,
 # so a failed FIRMS fetch is a failed cron run rather than a line in a server log.
 #
+# THE SCHEDULE IS CURRENTLY REMOVED, ON PURPOSE (2026-08-24, owner call). `cronSchedule` is gone
+# from railway.json while the Parquet backlog drains, because the two jobs collide: measured against
+# production, a `signal` lane-day costs ~8 s with the database to itself and ~25 MINUTES while a cron
+# tick runs beside it -- both processes sitting on IO/DataFileRead, competing for the same disk. The
+# same verbs now run continuously and SEQUENTIALLY from
+# services/agri-data-service/continuous-warehouse-loop.sh, which is what removes the collision.
+#
+# TO SWITCH BACK, once the backlog is drained: restore `"cronSchedule": "0 * * * *"` to
+# infra/cron-ingest/railway.json and stop the loop script. Nothing else here changed, and nothing
+# needs undoing. Note the schedule reads hourly but has never behaved that way -- `ingest-all` alone
+# is ~86 minutes, so each tick overruns the hour and Railway skips the next trigger; the observed
+# cadence was every two hours (markers landed at 05, 07, 09, 11 and 13 UTC on 2026-08-24).
+#
 # ONE SERVICE, ONE PULSE (2026-08-14). This image used to back a fan-out of one Railway cron
 # service per verb; eleven of those were deleted and folded into the single hourly ENTRYPOINT
 # below, because `ingest-all` already runs the eight forward sources plus the geometry repair
