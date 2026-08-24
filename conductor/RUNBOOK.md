@@ -3841,6 +3841,115 @@ cadence, horizon, historical depth, or known-gaps list. The lane was built from 
 gap stated rather than an invented contract. **Write that half of the contract before the lane is
 scheduled**, or its history horizon and gap detection have nothing to check against.
 
+### 0.38 HANDOFF — session 8 close (2026-08-24), d1 BUILT and DEPLOYED, the drain is what remains
+
+§0.37 holds the detail. This is what a fresh session needs: what is true, what is running, and the
+one decision that is genuinely open.
+
+#### 0.38.1 State
+
+| commit | what | verified |
+|---|---|---|
+| `2eabe6e` | `warehouse/parquet/tiers.py` — the pure z13 -> z9/z5/z0 derivation | smoke-tested by hand; 51 tests |
+| `e2c099b` | the area floor scales with its tier | — |
+| `8ce71fd` | 13 lane derivations + the 3-lane coordinate enrichment + the `gap_fill` fusion | queries verified against PRODUCTION |
+| `3e5027f` | `pipeline/parquet/drain.py` + the `parquet-drain` verb | dry-run against the real bucket |
+| `1dc2959` | six real defects a `/code-review high` found, plus the tests it said were missing | gate green |
+| `ae63b02` | the cell join moves out of the hot path; the drain gets its own 600 s clock | A/B timed against production |
+| `67b9958` | RUNBOOK 0.37 | docs |
+
+**PUSHED AND DEPLOYED.** `plantgeo-ingest-cron` and `plantgeo-main` both redeployed SUCCESS. The
+hourly cron now runs the enrichment, the fusion and the restructured SQL.
+
+**Gate: 4,007 passed / 3 skipped**, ruff clean, mypy at its two pre-existing
+`matview_refresh.py:657` errors. One real-DB test errors per full run and it is a DIFFERENT one each
+time, passing in isolation — a teardown race, see §0.37.9. Do not chase it.
+
+#### 0.38.2 What is PROVEN in production, not merely tested
+
+- **The completion marker works.** 1,041 markers written by ordinary cron ticks (§0.37.11).
+- **The four-rung ladder works.** One real `drought` day derived end to end against the live bucket:
+  base 5 rows / 6 columns -> z9 410,068 B -> z5 158,514 B -> z0 137,951 B, all three rungs carrying
+  their completion marker, verified by re-listing the bucket rather than by return value. The
+  monotonic byte fall is the simplification doing its job; the row count holds at 5 because drought
+  is simplify-only and all five USDM classes are meant to survive.
+- **The enriched queries return real coordinates.** signal at (-116.0, 43.0), vegetation at
+  (-119.875, 42.125), sensors 172 rows at (-117.498, 46.268), zero nulls, twelve columns each.
+
+#### 0.38.3 THE OPEN DECISION: the drain is not a one-sitting job, and the estimate that said it was
+
+The full drain was approved on the understanding it would take "likely hours". **The measurement
+says otherwise and the owner should re-decide rather than have it started on the old estimate.**
+
+Census as of session close — four lanes are 99.5% of the work:
+
+| lane | missing days |
+|---|---|
+| `fire-detections` | 9,202 |
+| `burn-severity` | 1,724 |
+| `signal` | 1,337 |
+| `vegetation` | 1,231 |
+| everything else | 67 |
+| **total** | **13,561** |
+
+The cost driver is `signal`: one 250-cell batch of a cold day measured **135 s**, and `signal.py`
+walks 1,965 cells in `CELL_BATCH_SIZE = 250` batches — roughly eight statements, so a cold signal day
+is on the order of ten to twenty minutes. At that rate 1,337 days is not hours.
+
+Three honest options, none of them yet taken:
+
+1. **Drain the cheap lanes now and leave the four expensive ones running in the background.**
+   `fire-perimeters` (67 days) finishes immediately; the rest streams progress and resumes freely,
+   because THE BUCKET IS THE CHECKPOINT — re-running the verb skips every day that carries its
+   completion marker.
+2. **Fix `signal`'s query first.** It was ALREADY over the cron's 120 s ceiling before the
+   enrichment (§0.37.12), which is very likely why it has 1,337 missing days at all: the cron has
+   been cancelling them tick after tick. An `EXPLAIN ANALYZE` has NOT been run — that is the
+   cheapest next diagnostic and nobody has spent it yet.
+3. **Accept the runtime** and let it run for days, resuming as needed.
+
+#### 0.38.4 THE PURGE STILL HAS NOT RUN, and the drain is partly blocked on it
+
+`scripts/purge_parquet_layout.py --confirm` has still never been executed. Dry run at session close:
+**2,795 objects selected**, plus 2,274 unparsable legacy objects that are equally condemned
+(RUNBOOK 0.32.4) but need `--include-unparsable` to go.
+
+It matters more than it looks. The ~1,043 days that already carry a base rung and a completion
+marker read as COVERED, so **the drain skips them** — and every one was written at the old schema
+with no coarse rungs and no coordinate columns. Without the purge those days stay permanently
+un-tiered and permanently ten-column, because nothing will ever revisit a day that says it finished.
+
+The cheaper alternative nobody has costed: retract just those completion markers, leaving the parts,
+so the census calls the days `incomplete` and the drain re-exports them. `retract_partition_tier`
+(added this session) already does exactly this for one rung.
+
+#### 0.38.5 Assumptions, highest reversal cost first
+
+- **`min_area_tier_squares` unset on every geometry lane** · to reverse: setting it to 1.0 EMPTIES
+  z0 for the whole PNW (§0.37.3). If a future lane needs it, set it per lane, never globally.
+- **`wind_direction_deg` and the water-gauge hazard fields are nulled at coarse rungs** · to
+  reverse: needs a vector mean and an ordered severity enum respectively, neither of which the
+  closed aggregate vocabulary can express.
+- **The base rung's NOT NULL guard is a DECLARATION now, not a schema constraint**
+  (`TierDerivation.base_non_null_columns`) · to reverse: it is enforced only in `write_partition`
+  and only at z13, so a producer bypassing that function bypasses the check.
+- **The coarse-rung derivation reads the whole base day into memory** · to reverse: `soil-survey`'s
+  1.5M-delineation universe would be gigabytes. It refuses loudly at `MAX_DERIVATION_ROWS` rather
+  than swapping, and soil-survey writes nothing today anyway (key cap), so this has never been hit.
+
+#### 0.38.6 Continuation plan, in order
+
+1. **Take the §0.38.3 decision.** It gates everything below and nothing above.
+2. **`EXPLAIN ANALYZE` the signal export** against production — the cheapest unspent diagnostic, and
+   the one that decides whether option 2 is even available.
+3. **Purge** (or retract markers — §0.38.4), then drain. Order matters; the drain skips covered days.
+4. **Run the drain**, streaming progress. Resume by re-running it; there is no checkpoint file.
+5. **Only then stop the cron.** Unchanged and still load-bearing: build -> run -> THEN stop.
+   Stopping first freezes the warehouse with nothing replacing it.
+6. **d3 serving** — `interface/http` is still an EMPTY STUB and the twelve planes still have ZERO
+   callers, so none of this is visible on the map yet. That is expected, not a regression.
+
+
 ### 0.37 SESSION 8 (2026-08-24) — the zoom ladder has rungs, and what a review found on them
 
 d1's build half. The map was empty above z13 BY DESIGN since the zoom axis shipped (§0.33.2 hazard
