@@ -3982,6 +3982,57 @@ it reproduces on a clean checkout.
   mean (atan2 of mean sine and cosine, speed-weighted) that the closed vocabulary cannot express per
   column. Reversible; nobody has asked for it.
 
+#### 0.37.11 THE COMPLETION MARKER IS NOW VERIFIED IN PRODUCTION — §0.36.2's open claim is closed
+
+§0.36.2 recorded the honest caveat that "nothing has ever written a `_complete.json` in production;
+the whole mechanism is proven by tests and one dry-run listing, never by a real cron tick."
+
+**It has now. Measured against the live bucket on 2026-08-24:**
+
+```
+objects in bucket:   5,069
+completion markers:  1,041      all at zoom=13
+oldest marker:       2026-08-24T05:29:48Z
+newest marker:       2026-08-24T11:48:27Z
+by layer:  drought 209 · fire-detections 222 · signal 222 · vegetation 205 · water-gauges 91 ·
+           fire-perimeters 44 · sensors 25 · weather-observations 20 · calendar 1 ·
+           evacuation-zones 1 · watersheds 1
+```
+
+Every one was written by an ordinary hourly tick of the deployed cron, across eleven of the twelve
+layers, in the hours after the `3ab85a6` deploy. The mechanism works in production, not merely in
+tests. `soil-survey` is the one layer with no marker, which is correct and expected: it is still
+blocked by the 200,000-key cap and writes nothing at all (memory
+`plantgeo-soil-survey-blocked-by-key-cap`).
+
+All 1,041 sit at `zoom=13` because the coarse rungs did not exist yet when they were written. The
+drain rewrites them.
+
+#### 0.37.12 `signal` WAS ALREADY OVER THE CRON'S CEILING — measured, and it is not the enrichment
+
+Suspecting the coordinate enrichment had made `signal` slower, the pre-enrichment query was fetched
+out of git and timed against production beside the new one, same day, same 250-cell batch:
+
+| query | time | rows | columns |
+|---|---|---|---|
+| `signal` BEFORE the enrichment (from `e2c099b`) | **160.0 s** | 2,750 | 10 |
+| `signal` AFTER, with the join moved out of the hot path | **135.6 s** | 2,750 | 12 + coordinates |
+
+**Both exceed the cron's 120 s statement timeout, and the older one is the slower.** The enrichment
+did not cause this. State the caveat with the number: BEFORE ran first against a cold cache and
+AFTER ran second against a warm one, so the 160 -> 136 improvement is confounded and must NOT be
+quoted as a speed-up. What the measurement does establish is the thing that mattered: the new query
+is not materially worse, and the ceiling was already being hit without it.
+
+**This is very likely why `signal` has 1,338 missing days.** The cron has been cancelling them at
+120 s, tick after tick, and reporting the lane as `raised` rather than as a lane that cannot fit.
+The drain's own 600 s budget (`DRAIN_STATEMENT_TIMEOUT_SECONDS`) is what lets those days land at
+all -- which is the concrete reason the two jobs needed two timeouts rather than one.
+
+A caution for whoever sizes the drain: one 250-cell batch is ~135 s and `signal.py` walks 1,965
+cells in `CELL_BATCH_SIZE = 250` batches, so a single cold `signal` day is roughly eight statements.
+Measure the per-lane cost before assuming the whole 13,565-day backlog drains in one sitting.
+
 ### 0.36 HANDOFF — session 7 close (2026-08-23), d0 done, d1 is next
 
 §0.35 holds the detail and the reasoning. This section is only what a fresh session needs to start
