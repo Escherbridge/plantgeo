@@ -124,8 +124,7 @@ WITH governed AS (
         observation.data_available_at,
         observation.id AS observation_id,
         release.retrieved_at AS release_retrieved_at,
-        source.allowed_client_exposure,
-        cell.centroid
+        source.allowed_client_exposure
     FROM agri.forecast_series AS series
     INNER JOIN agri.spatial_cell AS cell ON cell.id = series.spatial_cell_id
     INNER JOIN agri.forecast_observation AS observation ON observation.series_id = series.id
@@ -138,9 +137,10 @@ WITH governed AS (
       AND observation.observed_at >= (:observed_day)::timestamp AT TIME ZONE 'UTC'
       AND observation.observed_at < ((:observed_day)::date + 1)::timestamp AT TIME ZONE 'UTC'
       AND observation.quality_flag = 'accepted'
-)
+),
+aggregated AS (
 SELECT
-    cell_id::text AS cell_id,
+    cell_id,
     grid_name,
     metric_name,
     metric_unit,
@@ -153,18 +153,31 @@ SELECT
         AS data_available_at,
     COUNT(*)::bigint AS release_count,
     (array_agg(allowed_client_exposure ORDER BY release_retrieved_at DESC, observation_id DESC))[1]
-        AS allowed_client_exposure,
-    -- Cell coordinates from the spatial cell's centroid. These are the representative point of
-    -- the CELL, never the location of any individual observation -- a reader must not treat them
-    -- as where a measurement was taken.
-    -- They ride the same newest-release array_agg the other carried columns use, rather than
-    -- joining the GROUP BY. Both are correct (centroid is functionally dependent on cell_id), but
-    -- grouping on a PostGIS geometry compares it structurally, which is far more expensive than
-    -- comparing the uuid the cell is already grouped by -- and it would silently split a cell whose
-    -- centroid were ever rewritten with identical coordinates in a different binary encoding.
-    ST_X((array_agg(centroid ORDER BY release_retrieved_at DESC, observation_id DESC))[1])
-        AS cell_longitude,
-    ST_Y((array_agg(centroid ORDER BY release_retrieved_at DESC, observation_id DESC))[1])
-        AS cell_latitude
+        AS allowed_client_exposure
 FROM governed
 GROUP BY cell_id, grid_name, metric_name, metric_unit, observed_day
+)
+-- THE CELL'S POSITION IS RESOLVED AFTER THE AGGREGATE, NOT CARRIED THROUGH IT. Carrying
+-- `cell.centroid` down the per-observation CTE puts a PostGIS geometry on every row and then pushes
+-- it through `array_agg`; on the sibling `signal` lane that measured as the difference between
+-- finishing inside the 120 s statement timeout and being CANCELLED at 151 s (2026-08-24). This lane
+-- is far smaller, but the shape of the query should not differ from its sibling's for no reason.
+--
+-- INNER is safe for the same reason the CTE's own joins are: `spatial_cell_id` is a foreign key, so
+-- a cell that fails to resolve is a broken invariant rather than a row to carry with no position.
+SELECT
+    aggregated.cell_id::text AS cell_id,
+    aggregated.grid_name,
+    aggregated.metric_name,
+    aggregated.metric_unit,
+    aggregated.observed_day,
+    aggregated.metric_value,
+    aggregated.observation_checksum,
+    aggregated.data_available_at,
+    aggregated.release_count,
+    aggregated.allowed_client_exposure,
+    -- The representative point of the CELL, never any individual observation's location.
+    ST_X(cell.centroid) AS cell_longitude,
+    ST_Y(cell.centroid) AS cell_latitude
+FROM aggregated
+INNER JOIN agri.spatial_cell AS cell ON cell.id = aggregated.cell_id

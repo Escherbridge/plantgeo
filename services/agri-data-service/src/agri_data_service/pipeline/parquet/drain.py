@@ -93,6 +93,16 @@ DEFAULT_DAYS_PER_LANE_TURN: Final = 25
 # it -- the bucket is the checkpoint, and nothing about it has been written.
 MAX_CONTENDED_RETRIES_PER_DAY: Final = 5
 
+# The per-statement budget a DRAIN uses, five times the hourly tick's.
+#
+# The cron's 120 s is right FOR THE CRON: its whole tick is 600 s, so a statement running longer
+# than a fifth of it starves every other lane of a turn. A drain has no tick to protect and a much
+# worse worst case -- `signal` reads an 11 GB heap one cell batch at a time (RUNBOOK 0.22.5), and a
+# cold day of it measured 151 s against production on 2026-08-24, which the cron's ceiling CANCELS
+# outright. Sharing one number means either the cron overruns or the drain can never finish that
+# lane; these are two jobs with two budgets.
+DRAIN_STATEMENT_TIMEOUT_SECONDS: Final = 600
+
 
 def _utc_now() -> datetime:
     """The completion marker's `completed_at`; injectable so a test pins a deterministic payload."""
@@ -227,6 +237,7 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
     days_per_lane_turn: int = DEFAULT_DAYS_PER_LANE_TURN,
     max_days_per_lane: int | None = None,
     time_budget_seconds: float | None = None,
+    statement_timeout_seconds: int = DRAIN_STATEMENT_TIMEOUT_SECONDS,
     on_day: Callable[[str, date, str, str | None], None] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = _utc_now,
@@ -274,6 +285,7 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
                     lane_day_lock=lane_day_lock,
                     monotonic=monotonic,
                     max_consecutive_failures=max_consecutive_failures,
+                    statement_timeout_seconds=statement_timeout_seconds,
                     on_day=on_day,
                 )
         if not advanced:
@@ -293,6 +305,7 @@ async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being dra
     lane_day_lock: LaneDayLock,
     monotonic: Callable[[], float],
     max_consecutive_failures: int,
+    statement_timeout_seconds: int,
     on_day: Callable[[str, date, str, str | None], None] | None,
 ) -> None:
     """Fill one day through the cron's own per-day path, then fold the outcome into the lane tally."""
@@ -307,6 +320,7 @@ async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being dra
         now=now,
         today=today,
         lane_day_lock=lane_day_lock,
+        statement_timeout_seconds=statement_timeout_seconds,
     )
     lane.seconds += monotonic() - began
     lane.parts += parts
@@ -361,6 +375,7 @@ async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being dra
 __all__ = [
     "DEFAULT_DAYS_PER_LANE_TURN",
     "DEFAULT_MAX_CONSECUTIVE_FAILURES",
+    "DRAIN_STATEMENT_TIMEOUT_SECONDS",
     "DrainDayFailure",
     "DrainLaneProgress",
     "DrainSummary",

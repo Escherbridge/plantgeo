@@ -99,6 +99,7 @@ if TYPE_CHECKING:
     from datetime import date
 
     from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.sql.elements import TextClause
 
     from agri_data_service.foundation.parquet.lane_contract import (
         LaneNature,
@@ -138,7 +139,25 @@ GAP_CENSUS_REPORT_DAY_SAMPLE: Final = 10
 
 # Transaction-local, matching the 120 s convention every other direct SQL caller in this service uses
 # (jobs/lease.py::LEASE_STATEMENT_TIMEOUT_SECONDS, and cli.py's loader verbs).
-_STATEMENT_TIMEOUT: Final = text("SET LOCAL statement_timeout = '120s'")
+#
+# IT IS A DEFAULT, NOT A CONSTANT, AND THE DRAIN RAISES IT. 120 s is right for the hourly tick,
+# whose whole budget is 600 s: a statement allowed to run longer than a fifth of the tick starves
+# every other lane of its turn. A bulk drain has no tick to protect and a very different worst case
+# -- `signal` reads an 11 GB heap one cell batch at a time (RUNBOOK 0.22.5) and a cold day of it
+# measured 151 s against production on 2026-08-24, which the cron's ceiling CANCELS. Two jobs with
+# different budgets need two timeouts; sharing one means either the cron overruns or the drain
+# cannot finish.
+DEFAULT_STATEMENT_TIMEOUT_SECONDS: Final = 120
+
+
+def statement_timeout(seconds: int) -> TextClause:
+    """Return the `SET LOCAL` that bounds one transaction's statements.
+
+    Interpolated rather than bound: `SET` does not accept a bind parameter in PostgreSQL, so the
+    value is coerced through `int()` at the boundary instead -- a caller cannot smuggle anything
+    else through, and the failure for a non-integer is a TypeError here rather than SQL anywhere.
+    """
+    return text(f"SET LOCAL statement_timeout = '{int(seconds)}s'")
 
 # How many times one static lane-day export may be attempted in a tick before the export-window race
 # is reported rather than retried. Two: one export, and one re-export if the source moved under it.
@@ -748,9 +767,11 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-async def _pin_statement_timeout(session: AsyncSession) -> None:
+async def _pin_statement_timeout(
+    session: AsyncSession, seconds: int = DEFAULT_STATEMENT_TIMEOUT_SECONDS
+) -> None:
     """Pin the transaction-local statement timeout; `SET LOCAL` dies with each rollback, so re-pin per day."""
-    await session.execute(_STATEMENT_TIMEOUT)
+    await session.execute(statement_timeout(seconds))
 
 
 async def resolve_lane_watermarks(
@@ -794,6 +815,7 @@ async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per
     run_id: str,
     now: Callable[[], datetime],
     derive_tiers: TierDeriver = derive_and_write_day_tiers,
+    statement_timeout_seconds: int = DEFAULT_STATEMENT_TIMEOUT_SECONDS,
 ) -> tuple[LaneDayOutcome, int, int, int, str | None]:
     """Export one lane-day, returning `(outcome, parts, rows, bytes, detail)` and never raising.
 
@@ -808,7 +830,7 @@ async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per
     database for no benefit -- and after a failed statement the rollback is what lets the NEXT lane
     run at all, which is what makes per-lane isolation real rather than asserted.
     """
-    await _pin_statement_timeout(session)
+    await _pin_statement_timeout(session, statement_timeout_seconds)
     try:
         result = await lane.adapter(session, store, day=day, run_id=run_id)
     except EmptyPartitionError as empty:
@@ -1023,6 +1045,7 @@ async def _fill_static_day(  # noqa: PLR0913 - one caller-supplied coordinate pe
     now: Callable[[], datetime],
     today: date,
     derive_tiers: TierDeriver = derive_and_write_day_tiers,
+    statement_timeout_seconds: int = DEFAULT_STATEMENT_TIMEOUT_SECONDS,
 ) -> tuple[LaneDayOutcome, int, int, int, str | None]:
     """Export one STATIC lane-day, prune what it no longer wrote, and prove the source held still.
 
@@ -1050,7 +1073,14 @@ async def _fill_static_day(  # noqa: PLR0913 - one caller-supplied coordinate pe
     for attempt in range(1, MAX_STATIC_EXPORT_ATTEMPTS + 1):
         before, before_error = await _read_watermark(session, store, lane, today=today)
         outcome, parts, rows, written_bytes, detail = await _export_one_day(
-            session, store, lane, day=day, run_id=run_id, now=now, derive_tiers=derive_tiers
+            session,
+            store,
+            lane,
+            day=day,
+            run_id=run_id,
+            now=now,
+            derive_tiers=derive_tiers,
+            statement_timeout_seconds=statement_timeout_seconds,
         )
         # `parts <= 0` is not re-checked: `_finalize_written_day` already returns `raised` in that
         # case, so `written` implies at least one part landed.
@@ -1176,6 +1206,7 @@ async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate p
     today: date,
     lane_day_lock: LaneDayLock,
     derive_tiers: TierDeriver = derive_and_write_day_tiers,
+    statement_timeout_seconds: int = DEFAULT_STATEMENT_TIMEOUT_SECONDS,
 ) -> tuple[LaneDayOutcome, int, int, int, str | None]:
     """Export one lane-day under its advisory lock. Static lanes also bracket their window.
 
@@ -1205,10 +1236,25 @@ async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate p
             )
         if lane.watermark is None:
             return await _export_one_day(
-                session, store, lane, day=day, run_id=run_id, now=now, derive_tiers=derive_tiers
+                session,
+                store,
+                lane,
+                day=day,
+                run_id=run_id,
+                now=now,
+                derive_tiers=derive_tiers,
+                statement_timeout_seconds=statement_timeout_seconds,
             )
         return await _fill_static_day(
-            session, store, lane, day=day, run_id=run_id, now=now, today=today, derive_tiers=derive_tiers
+            session,
+            store,
+            lane,
+            day=day,
+            run_id=run_id,
+            now=now,
+            today=today,
+            derive_tiers=derive_tiers,
+            statement_timeout_seconds=statement_timeout_seconds,
         )
 
 
@@ -1225,6 +1271,7 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
     now: Callable[[], datetime] = _utc_now,
     lane_day_lock: LaneDayLock = postgres_lane_day_lock,
     derive_tiers: TierDeriver = derive_and_write_day_tiers,
+    statement_timeout_seconds: int = DEFAULT_STATEMENT_TIMEOUT_SECONDS,
 ) -> GapFillSummary:
     """Fill every lane's newest missing day, then its next-newest, until the wall-clock budget is spent.
 
@@ -1264,6 +1311,7 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
                 today=today,
                 lane_day_lock=lane_day_lock,
                 derive_tiers=derive_tiers,
+                statement_timeout_seconds=statement_timeout_seconds,
             )
             entry.seconds += monotonic() - started
             entry.parts += parts

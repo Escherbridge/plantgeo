@@ -305,6 +305,7 @@ from agri_data_service.models.strategy import Strategy
 from agri_data_service.pipeline.parquet.drain import (
     DEFAULT_DAYS_PER_LANE_TURN,
     DEFAULT_MAX_CONSECUTIVE_FAILURES,
+    DRAIN_STATEMENT_TIMEOUT_SECONDS,
     DrainSummary,
     run_drain,
 )
@@ -3929,6 +3930,7 @@ async def _parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable 
     days_per_lane_turn: int,
     max_days_per_lane: int | None,
     time_budget_seconds: float | None,
+    statement_timeout_seconds: int,
     stream_progress: bool,
 ) -> DrainSummary:
     """Open one loader session for the whole drain and walk every requested lane's history through it."""
@@ -3951,6 +3953,7 @@ async def _parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable 
             days_per_lane_turn=days_per_lane_turn,
             max_days_per_lane=max_days_per_lane,
             time_budget_seconds=time_budget_seconds,
+            statement_timeout_seconds=statement_timeout_seconds,
             on_day=announce if stream_progress else None,
         )
 
@@ -3995,6 +3998,15 @@ async def _parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable 
     "Any success resets the count.",
 )
 @click.option(
+    "--statement-timeout-seconds",
+    type=click.IntRange(min=1),
+    default=DRAIN_STATEMENT_TIMEOUT_SECONDS,
+    show_default=True,
+    help="Per-statement budget, five times the hourly tick's 120 s. The cron's ceiling is sized to "
+    "protect its own 600 s tick; a drain has no tick to protect, and `signal` reads an 11 GB heap one "
+    "cell batch at a time -- a cold day measured 151 s, which the cron's ceiling cancels outright.",
+)
+@click.option(
     "--progress/--no-progress",
     default=True,
     show_default=True,
@@ -4014,6 +4026,7 @@ def parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of
     max_days_per_lane: int | None,
     days_per_lane_turn: int,
     max_consecutive_failures: int,
+    statement_timeout_seconds: int,
     progress: bool,
     dry_run: bool,
 ) -> None:
@@ -4055,6 +4068,7 @@ def parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of
                 days_per_lane_turn=days_per_lane_turn,
                 max_days_per_lane=max_days_per_lane,
                 time_budget_seconds=time_budget_seconds,
+                statement_timeout_seconds=statement_timeout_seconds,
                 stream_progress=progress,
             )
         )
