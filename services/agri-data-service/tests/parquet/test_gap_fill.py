@@ -23,8 +23,14 @@ from click.testing import CliRunner
 
 from agri_data_service.cli import cli
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.lane_contract import LaneNature, SourceWatermark
-from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path
+from agri_data_service.foundation.parquet.paths import (
+    absence_marker_path,
+    completion_marker_path,
+    partition_path,
+    try_parse_partition_path,
+)
 from agri_data_service.pipeline.parquet.gap_fill import (
     GAP_FILL_ZOOM_TIER,
     GapFillContractError,
@@ -44,6 +50,7 @@ from agri_data_service.pipeline.parquet.lane_registry import (
 )
 from agri_data_service.pipeline.parquet.objectstore import (
     ABSENCE_CONTENT_TYPE,
+    COMPLETION_CONTENT_TYPE,
     PARQUET_CONTENT_TYPE,
     EmptyPartitionError,
     ListedObject,
@@ -86,17 +93,36 @@ def pairs(calls: list[LaneCall]) -> list[tuple[str, date]]:
     return [(call.slug, call.day) for call in calls]
 
 
-class RecordingSession:
-    """Records the statement-timeout pins and rollbacks the driver issues; executes no real SQL."""
+class GrantedLock:
+    """The one-column result `pg_try_advisory_lock` returns, canned as granted."""
 
-    def __init__(self) -> None:
+    def __init__(self, granted: bool = True) -> None:
+        self.granted = granted
+
+    def scalar(self) -> bool:
+        return self.granted
+
+
+class RecordingSession:
+    """Records the statement-timeout pins and rollbacks the driver issues; executes no real SQL.
+
+    `execute` answers every statement with a GRANTED advisory lock, because the driver now takes one
+    per lane-day and these tests are not about contention. Answering here rather than making every
+    test pass `lane_day_lock=` keeps the fake faithful to the real session -- an uncontended Postgres
+    grants the lock -- and leaves the injectable seam for the tests that ARE about serialisation,
+    which inject a lock yielding `False`.
+    """
+
+    def __init__(self, lock_granted: bool = True) -> None:
         self.statements: list[str] = []
         self.bound: list[dict[str, Any] | None] = []
         self.rollbacks = 0
+        self.lock_granted = lock_granted
 
-    async def execute(self, statement: Any, params: dict[str, Any] | None = None) -> None:
+    async def execute(self, statement: Any, params: dict[str, Any] | None = None) -> GrantedLock:
         self.statements.append(str(statement))
         self.bound.append(params)
+        return GrantedLock(self.lock_granted)
 
     async def rollback(self) -> None:
         self.rollbacks += 1
@@ -187,8 +213,16 @@ def seed_parts(backend: RecordingBackend, store: ObjectStore, *, count: int, at:
 
 
 def held_parts(store: ObjectStore) -> tuple[str, ...]:
-    """Every object the zones stream currently holds, as relative paths -- orphans included."""
-    return store.list_partition_keys(ZONES, "observed", BASE_TIER)
+    """Every PART FILE the zones stream currently holds, as relative paths -- orphans included.
+
+    The listing returns all three object kinds, so absence and completion markers are filtered out
+    here: this helper answers "which parts are published", and a prune's whole subject is parts.
+    """
+    return tuple(
+        key
+        for key in store.list_partition_keys(ZONES, "observed", BASE_TIER)
+        if try_parse_partition_path(key) is not None
+    )
 
 
 def static_lane(  # noqa: PLR0913 - one knob per behaviour the static driver path needs to provoke
@@ -252,6 +286,24 @@ def seed_absence(backend: RecordingBackend, slug: str, day: date) -> None:
     )
 
 
+def seed_completion(
+    backend: RecordingBackend, slug: str, day: date, *, part_count: int = 1, zoom: ZoomTier = BASE_TIER
+) -> None:
+    """Land a completion marker for one stream-day, asserting that an export finished.
+
+    Days seeded by `seed_partition` or `seed_parts` now need this marker to count as `data` rather
+    than `incomplete`. The driver writes it automatically; manual seeds do not.
+    """
+    marker = PartitionCompletion(
+        part_count=part_count, row_count=part_count * 5, completed_at=FROZEN_NOW, run_id="seed"
+    )
+    backend.put(
+        completion_marker_path(slug, "observed", zoom, day),
+        marker.to_json_bytes(),
+        content_type=COMPLETION_CONTENT_TYPE,
+    )
+
+
 async def drive(  # noqa: PLR0913 - one knob per driver parameter a test needs to vary
     lanes: list[LaneRegistration],
     store: ObjectStore,
@@ -297,6 +349,7 @@ async def test_a_day_carrying_an_absence_marker_is_not_re_attempted() -> None:
     backend = RecordingBackend()
     newest, second, third = days_newest_first(3)
     seed_partition(backend, "signal", newest)
+    seed_completion(backend, "signal", newest)
     seed_absence(backend, "signal", second)
 
     summary = await drive([stub_lane("signal", calls)], ObjectStore(backend))
@@ -459,8 +512,15 @@ async def test_the_session_is_rolled_back_after_every_day_and_the_timeout_re_pin
     await drive([stub_lane("signal", calls)], ObjectStore(RecordingBackend()), session=session)
 
     assert session.rollbacks == WINDOW_DAYS
-    assert len(session.statements) == WINDOW_DAYS
-    assert all("statement_timeout" in statement for statement in session.statements)
+    # Counted by KIND, not in total: each lane-day now also takes and releases its advisory lock, so
+    # a bare length assertion would break every time the driver learns another per-day statement
+    # while saying nothing about the property this test is actually about.
+    pins = [statement for statement in session.statements if "statement_timeout" in statement]
+    assert len(pins) == WINDOW_DAYS, "the timeout must be re-pinned once per day; SET LOCAL dies with each rollback"
+    locks = [statement for statement in session.statements if "pg_try_advisory_lock" in statement]
+    unlocks = [statement for statement in session.statements if "pg_advisory_unlock" in statement]
+    assert len(locks) == WINDOW_DAYS, "every lane-day is claimed exactly once"
+    assert len(unlocks) == WINDOW_DAYS, "and released exactly once -- a leaked lock outlives the tick"
 
 
 @pytest.mark.asyncio
@@ -500,6 +560,7 @@ async def test_a_static_lane_at_its_watermark_is_current_and_writes_nothing() ->
     backend = RecordingBackend()
     changed_on = date(2026, 8, 7)
     seed_partition(backend, "watersheds", changed_on)
+    seed_completion(backend, "watersheds", changed_on)
     lane = stub_lane("watersheds", calls, nature="static_lookup", watermark_day=changed_on)
 
     summary = await drive([lane], ObjectStore(backend))
@@ -518,6 +579,7 @@ async def test_a_version_written_after_the_watermark_still_counts_as_current() -
     calls: list[LaneCall] = []
     backend = RecordingBackend()
     seed_partition(backend, "watersheds", TODAY)
+    seed_completion(backend, "watersheds", TODAY)
     lane = stub_lane("watersheds", calls, nature="static_lookup", watermark_day=date(2026, 8, 7))
 
     summary = await drive([lane], ObjectStore(backend))
@@ -703,6 +765,7 @@ def test_the_census_counts_data_absent_and_missing_days_without_opening_a_file()
     backend = RecordingBackend()
     newest, second, third = days_newest_first(3)
     seed_partition(backend, "signal", newest)
+    seed_completion(backend, "signal", newest)
     seed_absence(backend, "signal", second)
 
     census = build_gap_census([stub_lane("signal", calls)], ObjectStore(backend), today=TODAY)
@@ -860,6 +923,7 @@ def test_the_census_feeds_the_stores_real_export_instant_into_the_resolver() -> 
     store = ObjectStore(backend)
     lane = static_lane(backend, part_counts=[1], export_instants=[BE_READY_AT])
     seed_parts(backend, store, count=1, at=BE_READY_AT, day=VERSION_DAY)
+    seed_completion(backend, ZONES, VERSION_DAY, part_count=1)
 
     stale = zones_census(store, lane, instant=GO_NOW_AT)
 
@@ -880,6 +944,7 @@ def test_a_census_with_no_export_instant_still_falls_back_to_day_resolution() ->
         b"x",
         content_type=PARQUET_CONTENT_TYPE,
     )
+    seed_completion(backend, ZONES, VERSION_DAY, part_count=1)
 
     census = zones_census(store, lane, instant=GO_NOW_AT)
 
@@ -1027,7 +1092,7 @@ async def test_a_quiet_source_exports_once_and_says_nothing_about_racing() -> No
 
 
 @pytest.mark.asyncio
-async def test_a_prune_that_cannot_remove_an_orphan_reports_it_on_a_succeeding_day() -> None:
+async def test_a_prune_that_cannot_remove_an_orphan_withholds_the_mark_and_reports_it() -> None:
     """The rows are written and correct, so this may not fail the export -- but it may not vanish either."""
     backend = RecordingBackend()
     store = ObjectStore(backend)
@@ -1043,6 +1108,14 @@ async def test_a_prune_that_cannot_remove_an_orphan_reports_it_on_a_succeeding_d
     assert verdict.written == 1
     assert orphan in (verdict.detail or "")
     assert "still published beside this export" in (verdict.detail or "")
+    # AND THE DAY IS NOT MARKED COMPLETE. Without this the test passes whether or not the mark is
+    # withheld, so the behaviour RUNBOOK 0.35.2 records as the fix would be entirely unguarded: a
+    # completion claim over a surviving orphan is exactly the two-generation mixture the marker
+    # exists to make impossible.
+    assert completion_marker_path(ZONES, "observed", BASE_TIER, VERSION_DAY) not in backend.objects, (
+        "a day whose surplus parts survived may not claim it finished"
+    )
+    assert "NOT being marked complete" in (verdict.detail or "")
 
 
 class WatermarkRow:
@@ -1064,6 +1137,10 @@ class WatermarkSession:
 
     async def execute(self, statement: Any, params: dict[str, Any] | None = None) -> Any:  # noqa: ARG002
         return self
+
+    def scalar(self) -> bool:
+        """Every advisory-lock probe this session sees is granted; contention is not its subject."""
+        return True
 
     def mappings(self) -> list[WatermarkRow]:
         return [self.row]

@@ -18,6 +18,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.pipeline.validation.drought import (
@@ -26,7 +27,9 @@ from agri_data_service.pipeline.validation.drought import (
     written_release_span,
 )
 from agri_data_service.planes.drought import (
+    DROUGHT_KIND,
     DroughtServingError,
+    list_observed_drought_release_days,
     most_severe_class_at_point,
     read_drought_release,
     resolve_drought_release,
@@ -91,6 +94,31 @@ def _release_table(day: date, categories: dict[int, bytes]) -> pa.Table:
     ).cast(DROUGHT_SCHEMA.arrow_schema)
 
 
+def _write_complete_release(
+    store: ObjectStore, *, day: date, categories: dict[int, bytes], zoom: ZoomTier = BASE_TIER
+) -> None:
+    """Write one release AND the completion marker that makes it a published release.
+
+    A bare `write_partition` leaves an unfinished upload, which every reader in this lane now
+    correctly declines to publish. Tests whose subject is "this release exists" want both.
+    """
+    receipt = store.write_partition(
+        _release_table(day, categories), layer=DROUGHT_STREAM, kind="observed", zoom=zoom, day=day
+    )
+    store.write_completion_marker(
+        PartitionCompletion(
+            part_count=1,
+            row_count=receipt.row_count,
+            completed_at=datetime(2026, 8, 22, tzinfo=UTC),
+            run_id="test",
+        ),
+        layer=DROUGHT_STREAM,
+        kind="observed",
+        zoom=zoom,
+        day=day,
+    )
+
+
 def _write_local_release(  # noqa: PLR0913 - one parameter per partition coordinate; a fixture builder names them all
     tmp_path: Path,
     store: ObjectStore,
@@ -103,6 +131,20 @@ def _write_local_release(  # noqa: PLR0913 - one parameter per partition coordin
     """Write one release through the real writer, then mirror its bytes onto local disk for Polars."""
     receipt = store.write_partition(
         _release_table(day, categories), layer=DROUGHT_STREAM, kind="observed", zoom=zoom, day=day
+    )
+    # The marker LAST, as the driver writes it. Without it this release is an unfinished upload and
+    # `list_observed_drought_release_days` correctly declines to publish it.
+    store.write_completion_marker(
+        PartitionCompletion(
+            part_count=1,
+            row_count=receipt.row_count,
+            completed_at=datetime(2026, 8, 22, tzinfo=UTC),
+            run_id="test",
+        ),
+        layer=DROUGHT_STREAM,
+        kind="observed",
+        zoom=zoom,
+        day=day,
     )
     _mirror_receipt_to_disk(tmp_path, backend, receipt.relative_path, receipt.key)
 
@@ -293,15 +335,12 @@ async def test_reconcile_classifies_every_week_and_only_asks_usdm_when_the_listi
     written_day = date(2026, 7, 7)
     recorded_absent_day = date(2026, 7, 14)
     conflict_day = date(2026, 7, 21)
-    source_gap_day = date(2026, 7, 28)
-    unrecorded_absence_day = date(2026, 8, 4)
+    incomplete_day = date(2026, 7, 28)
+    source_gap_day = date(2026, 8, 4)
+    unrecorded_absence_day = date(2026, 8, 11)
 
-    store.write_partition(
-        _release_table(written_day, {0: _multipolygon_wkb(_BIG_SQUARE)}),
-        layer=DROUGHT_STREAM,
-        kind="observed",
-        zoom=WRITTEN_ZOOM_TIER,
-        day=written_day,
+    _write_complete_release(
+        store, day=written_day, categories={0: _multipolygon_wkb(_BIG_SQUARE)}, zoom=WRITTEN_ZOOM_TIER
     )
     store.write_absence(
         GovernedAbsence(
@@ -319,6 +358,8 @@ async def test_reconcile_classifies_every_week_and_only_asks_usdm_when_the_listi
     # into the backend's listing to prove the classifier surfaces one if a manual admin action makes one.
     backend.objects[partition_path(DROUGHT_STREAM, "observed", WRITTEN_ZOOM_TIER, conflict_day)] = b"not-real-parquet"
     backend.objects[absence_marker_path(DROUGHT_STREAM, "observed", WRITTEN_ZOOM_TIER, conflict_day)] = b"{}"
+    # An incomplete write: partition exists but no completion marker.
+    backend.objects[partition_path(DROUGHT_STREAM, "observed", WRITTEN_ZOOM_TIER, incomplete_day)] = b"not-real-parquet"
 
     source = _FakeSourceCheck(published=frozenset({source_gap_day}))
 
@@ -328,11 +369,13 @@ async def test_reconcile_classifies_every_week_and_only_asks_usdm_when_the_listi
     assert verdicts[written_day].status == "written"
     assert verdicts[recorded_absent_day].status == "recorded_absence"
     assert verdicts[conflict_day].status == "conflict"
+    assert verdicts[incomplete_day].status == "warehouse_incomplete"
     assert verdicts[source_gap_day].status == "source_gap"
     assert verdicts[unrecorded_absence_day].status == "unrecorded_absence"
     assert report.gaps == (verdicts[source_gap_day],)
     assert report.conflicts == (verdicts[conflict_day],)
-    # The three already-settled weeks (written, recorded-absent, conflict) never touch the source.
+    assert report.incomplete_writes == (verdicts[incomplete_day],)
+    # The four already-settled weeks (written, recorded-absent, conflict, incomplete) never touch the source.
     assert sorted(source.checked) == [source_gap_day, unrecorded_absence_day]
 
 
@@ -358,19 +401,11 @@ def test_written_release_span_reads_the_object_store_never_a_hardcoded_floor() -
     store = ObjectStore(backend)
     assert written_release_span(store) is None
 
-    store.write_partition(
-        _release_table(date(2022, 8, 9), {0: _multipolygon_wkb(_BIG_SQUARE)}),
-        layer=DROUGHT_STREAM,
-        kind="observed",
-        zoom=WRITTEN_ZOOM_TIER,
-        day=date(2022, 8, 9),
+    _write_complete_release(
+        store, day=date(2022, 8, 9), categories={0: _multipolygon_wkb(_BIG_SQUARE)}, zoom=WRITTEN_ZOOM_TIER
     )
-    store.write_partition(
-        _release_table(date(2026, 8, 18), {0: _multipolygon_wkb(_BIG_SQUARE)}),
-        layer=DROUGHT_STREAM,
-        kind="observed",
-        zoom=WRITTEN_ZOOM_TIER,
-        day=date(2026, 8, 18),
+    _write_complete_release(
+        store, day=date(2026, 8, 18), categories={0: _multipolygon_wkb(_BIG_SQUARE)}, zoom=WRITTEN_ZOOM_TIER
     )
 
     assert written_release_span(store) == (date(2022, 8, 9), date(2026, 8, 18))
@@ -453,3 +488,36 @@ def test_the_listing_and_the_read_always_name_the_same_rung(tmp_path: Path) -> N
     assert answer.zoom == DETAIL_TIER
     assert answer.valid_date == AUGUST_FOURTH, "z9's newest release, not z13's"
     assert answer.areas.column("dm_category").to_pylist() == [_D4_EXCEPTIONAL_DROUGHT]
+
+
+def test_half_written_releases_are_excluded_from_listing_and_resolution(tmp_path: Path) -> None:
+    """A partition with parts but no completion marker must never appear published."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+
+    # Write one complete release (with completion marker)
+    _write_local_release(tmp_path, store, backend, day=AUGUST_FOURTH, categories={0: _multipolygon_wkb(_BIG_SQUARE)})
+
+    # Inject a half-written release: partition exists but no completion marker
+    incomplete_day = date(2026, 8, 18)
+    incomplete_key = partition_path(DROUGHT_STREAM, DROUGHT_KIND, BASE_TIER, incomplete_day)
+    backend.objects[incomplete_key] = b"not-real-parquet-but-exists"
+    # Deliberately do NOT write the completion marker
+
+    # The listing should only include the complete release
+    listed_days = list_observed_drought_release_days(store, requested_zoom=BASE_TIER_REQUEST)
+    assert listed_days == (AUGUST_FOURTH,), "only the completed release appears"
+    assert incomplete_day not in listed_days, "the half-written release is excluded"
+
+    # Resolution should likewise not find the incomplete release
+    resolved = resolve_drought_release_day(
+        store, requested_zoom=BASE_TIER_REQUEST, on_or_before=incomplete_day, now=TODAY
+    )
+    assert resolved == AUGUST_FOURTH, "resolves to the last COMPLETE release, not the incomplete one"
+
+    # A request strictly after the complete release but before/at the incomplete day answers None
+    # (if incomplete days leaked through, this would wrongly resolve to incomplete_day)
+    resolved_gap = resolve_drought_release_day(
+        store, requested_zoom=BASE_TIER_REQUEST, on_or_before=date(2026, 8, 10), now=TODAY
+    )
+    assert resolved_gap == AUGUST_FOURTH, "still answers from the last complete release"

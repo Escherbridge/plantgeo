@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.pipeline.parquet.objectstore import ListedObject, ObjectStore
 from agri_data_service.planes.sensors import (
     SensorsPlaneError,
@@ -31,6 +32,7 @@ from tests.parquet.test_objectstore_writer import BASE_TIER, DETAIL_TIER, UNPUBL
 BASE_TIER_REQUEST = BASE_TIER
 
 JULY_THIRTIETH = date(2026, 7, 30)
+JULY_THIRTY_FIRST = date(2026, 7, 31)
 AUGUST_FIRST = date(2026, 8, 1)
 AUGUST_SECOND = date(2026, 8, 2)
 AUGUST_THIRD = date(2026, 8, 3)
@@ -106,15 +108,36 @@ def _store(tmp_path: Path) -> ObjectStore:
     return ObjectStore(LocalFileBackend(tmp_path))
 
 
-def test_coverage_classifies_data_absent_and_missing_days(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    store.write_partition(
-        sensor_table(day=AUGUST_FIRST, station_id="KMSO"),
+def _write_complete_partition(store: ObjectStore, table: pa.Table, *, kind: str, zoom: int, day: date) -> None:
+    """Write a partition AND its completion marker: the fixture every reader test needs.
+
+    A part file without `_complete.json` beside it is an unfinished export, and under the new
+    contract it must NOT be counted as covered or served. Every test asserting "this day is
+    published" must write both, or the day resolves as `incomplete` and vanishes from `data_days`.
+    """
+    receipt = store.write_partition(table, layer=SENSORS_STREAM, kind=kind, zoom=zoom, day=day)
+    store.write_completion_marker(
+        PartitionCompletion(
+            part_count=1,
+            row_count=receipt.row_count,
+            completed_at=datetime(2026, 8, 22, tzinfo=UTC),
+            run_id="test",
+        ),
         layer=SENSORS_STREAM,
-        kind="observed",
-        zoom=BASE_TIER,
-        day=AUGUST_FIRST,
+        kind=kind,
+        zoom=zoom,
+        day=day,
     )
+
+
+def test_coverage_classifies_data_absent_missing_and_incomplete_days(tmp_path: Path) -> None:
+    """Coverage distinguishes all five partition statuses: data, absent, missing, incomplete, conflict."""
+    store = _store(tmp_path)
+    # "data": a complete export with both parts and a completion marker
+    _write_complete_partition(
+        store, sensor_table(day=AUGUST_FIRST, station_id="KMSO"), kind="observed", zoom=BASE_TIER, day=AUGUST_FIRST
+    )
+    # "absent": a governed-absence marker
     store.write_absence(
         GovernedAbsence(
             reason="no station in the coverage box reported anything",
@@ -127,24 +150,45 @@ def test_coverage_classifies_data_absent_and_missing_days(tmp_path: Path) -> Non
         zoom=BASE_TIER,
         day=AUGUST_SECOND,
     )
+    # "incomplete": part files with NO completion marker -- an export killed mid-upload. This is the
+    # one case that must NOT go through `_write_complete_partition`, whose whole job is the marker.
+    store.write_partition(
+        sensor_table(day=JULY_THIRTIETH, station_id="KDLN"),
+        layer=SENSORS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=JULY_THIRTIETH,
+    )
 
     coverage = sensors_plane_coverage(
-        store, kind="observed", requested_zoom=BASE_TIER_REQUEST, first_day=AUGUST_FIRST, last_day=AUGUST_THIRD
+        store, kind="observed", requested_zoom=BASE_TIER_REQUEST, first_day=JULY_THIRTIETH, last_day=AUGUST_THIRD
     )
 
     assert coverage.data_days == (AUGUST_FIRST,)
     assert coverage.absent_days == (AUGUST_SECOND,)
-    assert coverage.missing_days == (AUGUST_THIRD,)
+    # July 31 is inside the window and nothing was written for it, so it is missing alongside Aug 3.
+    assert coverage.missing_days == (JULY_THIRTY_FIRST, AUGUST_THIRD)
+    assert coverage.incomplete_days == (JULY_THIRTIETH,)
     assert coverage.conflict_days == ()
+    # THE ARITHMETIC THAT MOTIVATED `incomplete_days`: without it the accessors stop summing to the
+    # window and an unfinished day vanishes from coverage entirely.
+    window_days = (AUGUST_THIRD - JULY_THIRTIETH).days + 1
+    assert (
+        len(coverage.data_days)
+        + len(coverage.absent_days)
+        + len(coverage.missing_days)
+        + len(coverage.incomplete_days)
+        + len(coverage.conflict_days)
+    ) == window_days
 
 
 def test_reading_returns_exactly_the_written_tall_rows_without_fabricating_missing_measurements(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         sensor_table(day=AUGUST_FIRST, station_id="KMSO", measurements=("temperature", "windSpeed")),
-        layer=SENSORS_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=AUGUST_FIRST,
@@ -169,9 +213,9 @@ def test_reading_returns_exactly_the_written_tall_rows_without_fabricating_missi
 def test_forecast_kind_never_falls_through_to_observed_data(tmp_path: Path) -> None:
     """`kind` is a partition, not a column branch: a forecast read must never surface observed rows."""
     store = _store(tmp_path)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         sensor_table(day=AUGUST_FIRST, station_id="KMSO"),
-        layer=SENSORS_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=AUGUST_FIRST,
@@ -194,14 +238,14 @@ def test_forecast_kind_never_falls_through_to_observed_data(tmp_path: Path) -> N
 
 def test_sensor_id_and_measurement_name_filters_narrow_the_read(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         pa.concat_tables(
             [
                 sensor_table(day=AUGUST_FIRST, station_id="KMSO", measurements=("temperature", "windSpeed")),
                 sensor_table(day=AUGUST_FIRST, station_id="KDLN", measurements=("temperature",)),
             ]
         ),
-        layer=SENSORS_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=AUGUST_FIRST,
@@ -226,16 +270,16 @@ def test_sensor_id_and_measurement_name_filters_narrow_the_read(tmp_path: Path) 
 
 def test_window_spanning_two_months_is_covered(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         sensor_table(day=JULY_THIRTIETH, station_id="KGPI"),
-        layer=SENSORS_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=JULY_THIRTIETH,
     )
-    store.write_partition(
+    _write_complete_partition(
+        store,
         sensor_table(day=AUGUST_FIRST, station_id="KGPI"),
-        layer=SENSORS_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=AUGUST_FIRST,
@@ -288,16 +332,16 @@ def test_empty_window_returns_a_correctly_typed_zero_row_frame_without_scanning(
 def test_two_tiers_of_one_station_day_never_stack_into_one_reading(tmp_path: Path) -> None:
     """The tall grain hides duplication: two rungs give two rows per (sensor, day, measurement)."""
     store = _store(tmp_path)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         sensor_table(day=AUGUST_FIRST, station_id="KMSO"),
-        layer=SENSORS_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=AUGUST_FIRST,
     )
-    store.write_partition(
+    _write_complete_partition(
+        store,
         sensor_table(day=AUGUST_FIRST, station_id="KDLN"),
-        layer=SENSORS_STREAM,
         kind="observed",
         zoom=DETAIL_TIER,
         day=AUGUST_FIRST,
@@ -331,9 +375,9 @@ def test_two_tiers_of_one_station_day_never_stack_into_one_reading(tmp_path: Pat
 def test_coverage_and_the_row_glob_always_name_the_same_rung(tmp_path: Path) -> None:
     """The half-scoped trap: a ladder-wide listing would call a day covered that the glob cannot read."""
     store = _store(tmp_path)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         sensor_table(day=AUGUST_FIRST, station_id="KMSO"),
-        layer=SENSORS_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=AUGUST_FIRST,
@@ -356,16 +400,16 @@ def test_coverage_and_the_row_glob_always_name_the_same_rung(tmp_path: Path) -> 
 
 def test_a_request_between_two_rungs_is_served_by_the_rung_below_it(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         sensor_table(day=AUGUST_FIRST, station_id="KDLN"),
-        layer=SENSORS_STREAM,
         kind="observed",
         zoom=DETAIL_TIER,
         day=AUGUST_FIRST,
     )
-    store.write_partition(
+    _write_complete_partition(
+        store,
         sensor_table(day=AUGUST_FIRST, station_id="KMSO"),
-        layer=SENSORS_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=AUGUST_FIRST,
@@ -383,3 +427,41 @@ def test_a_request_between_two_rungs_is_served_by_the_rung_below_it(tmp_path: Pa
 
     assert served.zoom == DETAIL_TIER
     assert served.readings["sensor_id"].to_list() == ["KDLN"]
+
+
+def test_an_incomplete_day_inside_the_window_contributes_no_rows(tmp_path: Path) -> None:
+    """The census and the rows must agree: a day reported unpublished may not appear in the reading.
+
+    This lane globs the WHOLE tier and then narrows, so the narrowing is the only thing standing
+    between a reader and every unfinished export under that prefix. Filtering by the requested date
+    RANGE instead of by the censused days served the prefix of a killed upload while `coverage`
+    simultaneously reported that day as `incomplete` -- a reader handed rows for a day its own
+    coverage says does not exist.
+    """
+    store = _store(tmp_path)
+    _write_complete_partition(
+        store, sensor_table(day=AUGUST_FIRST, station_id="KMSO"), kind="observed", zoom=BASE_TIER, day=AUGUST_FIRST
+    )
+    # A killed upload: parts on disk, no completion marker.
+    store.write_partition(
+        sensor_table(day=AUGUST_SECOND, station_id="KDLN"),
+        layer=SENSORS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=AUGUST_SECOND,
+    )
+
+    result = read_sensors_readings(
+        store,
+        bucket_root=tmp_path.as_posix(),
+        storage_options={},
+        kind="observed",
+        requested_zoom=BASE_TIER_REQUEST,
+        first_day=AUGUST_FIRST,
+        last_day=AUGUST_SECOND,
+    )
+
+    assert result.coverage.data_days == (AUGUST_FIRST,)
+    assert result.coverage.incomplete_days == (AUGUST_SECOND,)
+    served = sorted(set(result.readings["observed_day"].to_list()))
+    assert served == [AUGUST_FIRST], "an incomplete day must contribute no rows, however the window is asked for"

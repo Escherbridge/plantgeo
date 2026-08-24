@@ -22,6 +22,8 @@ import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
+from agri_data_service.foundation.parquet.paths import completion_marker_path
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.pipeline.validation.soil_survey import (
     MAX_VALIDATION_AREAS,
@@ -152,8 +154,9 @@ def _write_release(  # noqa: PLR0913 - one parameter per partition coordinate; a
     """Write one release, one `pyarrow.Table` per part, to an in-memory backend mirrored to disk."""
     backend = RecordingBackend() if backend is None else backend
     store = ObjectStore(backend) if store is None else store
+    written_rows = 0
     for part_index, rows in enumerate(parts):
-        store.write_partition(
+        receipt = store.write_partition(
             _rows_to_table(rows),
             layer=SOIL_SURVEY_STREAM,
             kind="observed",
@@ -161,6 +164,21 @@ def _write_release(  # noqa: PLR0913 - one parameter per partition coordinate; a
             day=day,
             part_index=part_index,
         )
+        written_rows += receipt.row_count
+    # The marker LAST, exactly as the driver writes it: a release without one is an unfinished
+    # upload, and every reader in this file would correctly refuse to resolve it.
+    store.write_completion_marker(
+        PartitionCompletion(
+            part_count=len(parts),
+            row_count=written_rows,
+            completed_at=datetime(2026, 8, 22, tzinfo=UTC),
+            run_id="test",
+        ),
+        layer=SOIL_SURVEY_STREAM,
+        kind="observed",
+        zoom=zoom,
+        day=day,
+    )
     for key, payload in backend.objects.items():
         path = tmp_path / key
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -579,6 +597,38 @@ async def test_an_invalid_area_symbol_is_refused_before_any_read_or_call(tmp_pat
     assert fake.calls == []
 
 
+async def test_validator_ignores_incomplete_release_and_finds_last_complete_one(tmp_path: Path) -> None:
+    """Validator must reconcile the last COMPLETE release, not a half-written newer one."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    complete_day = date(2026, 8, 7)
+    incomplete_day = date(2026, 8, 8)
+
+    # Write a complete release
+    # BASE_TIER, not DETAIL_TIER: the validator pins `WRITTEN_ZOOM_TIER` (the rung the exporter
+    # lands on) and never reads a derived one, so a fixture written at z09 is invisible to it.
+    rows_complete = [_validation_row("id-1", (0, 0, 1, 1), "ID001")]
+    store_complete, path_for = _write_release(
+        tmp_path, day=complete_day, parts=[rows_complete], zoom=BASE_TIER, store=store, backend=backend
+    )
+
+    # A newer release whose upload was killed: its parts are there, its completion marker is not.
+    rows_incomplete = [_validation_row("id-2", (1, 1, 2, 2), "ID001")]
+    _write_release(tmp_path, day=incomplete_day, parts=[rows_incomplete], zoom=BASE_TIER, store=store, backend=backend)
+    marker_key = completion_marker_path(SOIL_SURVEY_STREAM, "observed", BASE_TIER, incomplete_day)
+    assert marker_key in backend.objects, "the fixture must have written a marker for this test to remove"
+    del backend.objects[marker_key]
+
+    # Validator should validate the complete day, not the incomplete newer one
+    fake = FakeSdaClient({"ID001": _sda("ID001", delineation_count=1, saverest=_ORIGINAL_VINTAGE)})
+    report = await validate_soil_survey_release(
+        store_complete, fake, survey_area_symbols=["ID001"], storage_options={}, path_for=path_for
+    )
+
+    assert report.release_day == complete_day, f"validator used {report.release_day}, expected {complete_day}"
+    assert report.passed
+
+
 # --- the zoom axis: one rung per read, and a blend that is not expressible ------------------------
 
 
@@ -646,3 +696,73 @@ def test_a_rung_the_derivation_has_not_reached_resolves_to_no_release(tmp_path: 
 
     assert resolve_latest_soil_survey_release(store, requested_zoom=DETAIL_TIER) is None
     assert resolve_soil_survey_release(store, RELEASE_DAY, requested_zoom=DETAIL_TIER) is None
+
+
+# --- Completion marker enforcement: incomplete releases must not be served -------------------------
+
+
+def test_incomplete_newest_release_does_not_shadow_last_complete_one(tmp_path: Path) -> None:
+    """A half-written newest release (parts without _complete.json) must not shadow the last good one.
+
+    This is the exact failure the completion marker exists to prevent: a deploy replacing a
+    mid-export container leaves a prefix of parts behind, and without the marker check, the newest
+    day with any parts becomes "latest" even though it holds half a release.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    complete_day = date(2026, 8, 8)
+    incomplete_day = date(2026, 8, 9)
+
+    # Write a complete release on day 1
+    _write_release(
+        tmp_path,
+        day=complete_day,
+        parts=[[_soil_survey_row(mupolygonkey="poly-complete", geometry_wkb=wkb_polygon([_square(0, 0, 1, 1)]))]],
+        zoom=BASE_TIER,
+        store=store,
+        backend=backend,
+    )
+
+    # Write an incomplete release on day 2 by removing its completion marker
+    _write_release(
+        tmp_path,
+        day=incomplete_day,
+        parts=[[_soil_survey_row(mupolygonkey="poly-incomplete", geometry_wkb=wkb_polygon([_square(2, 2, 3, 3)]))]],
+        zoom=BASE_TIER,
+        store=store,
+        backend=backend,
+    )
+    # Remove the completion marker for the newer day to simulate a killed mid-upload
+    incomplete_marker_key = completion_marker_path(SOIL_SURVEY_STREAM, "observed", BASE_TIER, incomplete_day)
+    if incomplete_marker_key in backend.objects:
+        del backend.objects[incomplete_marker_key]
+
+    # Latest should resolve to the complete day, not the incomplete newer one
+    latest = resolve_latest_soil_survey_release(store, requested_zoom=BASE_TIER_REQUEST)
+    assert latest is not None
+    assert latest.day == complete_day, f"expected {complete_day}, got {latest.day} (incomplete day shadowed complete)"
+
+
+def test_named_incomplete_day_resolves_to_none(tmp_path: Path) -> None:
+    """A day holding parts but no completion marker resolves to None, same as a never-exported day."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    incomplete_day = date(2026, 8, 9)
+
+    # Write a release and immediately remove its completion marker
+    _write_release(
+        tmp_path,
+        day=incomplete_day,
+        parts=[[_soil_survey_row(mupolygonkey="poly-1", geometry_wkb=wkb_polygon([_square(0, 0, 1, 1)]))]],
+        zoom=BASE_TIER,
+        store=store,
+        backend=backend,
+    )
+    marker_key = completion_marker_path(SOIL_SURVEY_STREAM, "observed", BASE_TIER, incomplete_day)
+    if marker_key in backend.objects:
+        del backend.objects[marker_key]
+
+    # Named resolution of an incomplete day must return None
+    assert resolve_soil_survey_release(store, incomplete_day, requested_zoom=BASE_TIER_REQUEST) is None
+    # Latest also returns None when the only release is incomplete
+    assert resolve_latest_soil_survey_release(store, requested_zoom=BASE_TIER_REQUEST) is None

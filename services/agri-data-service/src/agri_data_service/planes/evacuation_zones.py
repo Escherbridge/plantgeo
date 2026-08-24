@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Final, Literal
 import polars as pl
 
 from agri_data_service.foundation.parquet.paths import (
+    UNFILLED_PARTITION_STATUSES,
     partition_day_statuses,
     validate_partition_kind,
     zoom_prefix,
@@ -147,6 +148,12 @@ def _newest_answerable_day(
     can only ever name a day this resolution actually holds. A coarse rung whose derivation has not
     caught up is genuinely older at that rung, and saying so is the honest answer; borrowing the base
     tier's newest day would promise a snapshot at a resolution that does not exist yet.
+
+    Candidates EXCLUDE the statuses that still owe work -- "missing" and "incomplete" -- and nothing
+    else. A "conflict" day stays a candidate deliberately: `resolve_evacuation_zones_as_of` answers
+    it with an explicit `conflicted` status, and filtering it out here would make that refusal
+    unreachable and silently hand back an older day as though nothing were wrong. Answering includes
+    answering "I refuse to guess".
     """
     keys = store.list_partition_keys(EVACUATION_ZONES_STREAM, "observed", zoom)
     statuses = partition_day_statuses(
@@ -157,7 +164,7 @@ def _newest_answerable_day(
         last_day=as_of,
         keys=keys,
     )
-    candidates = [(day, status) for day, status in statuses.items() if status != "missing"]
+    candidates = [(day, status) for day, status in statuses.items() if status not in UNFILLED_PARTITION_STATUSES]
     return max(candidates, key=lambda pair: pair[0]) if candidates else None
 
 

@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Final
 import polars as pl
 
 from agri_data_service.config import settings as _default_settings
-from agri_data_service.foundation.parquet.paths import day_prefix, try_parse_partition_path
+from agri_data_service.foundation.parquet.paths import completed_partition_days, day_prefix, try_parse_partition_path
 from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore, polars_storage_options
 from agri_data_service.warehouse.schemas.watersheds import WATERSHEDS_SCHEMA, WATERSHEDS_STREAM
@@ -179,15 +179,19 @@ def scan_watersheds_release(
 
 
 def list_observed_release_days(store: ObjectStore, *, requested_zoom: int) -> tuple[date, ...]:
-    """Every distinct day carrying at least one observed part file AT ONE TIER, sorted ascending.
+    """Every distinct day carrying a COMPLETED observed release AT ONE TIER, sorted ascending.
 
-    A ten-part release collapses to one entry here: both this and
-    `foundation.parquet.paths.partition_day_statuses` derive "day" the same way, by parsing each
-    key's `day=` segment, never by reading row content.
+    A ten-part release collapses to one entry here. A day holding part files without a completion
+    marker is a half-written release and is excluded. Both this and
+    `foundation.parquet.paths.partition_day_statuses` derive "day" the same way and apply the same
+    completion rule, by parsing each key's `day=` segment and intersecting with
+    `completed_partition_days`, never by reading row content.
     """
-    keys = store.list_partition_keys(WATERSHEDS_STREAM, _OBSERVED_KIND, serving_zoom_tier(requested_zoom))
-    days = {parsed.day for parsed in (try_parse_partition_path(key) for key in keys) if parsed is not None}
-    return tuple(sorted(days))
+    tier = serving_zoom_tier(requested_zoom)
+    keys = store.list_partition_keys(WATERSHEDS_STREAM, _OBSERVED_KIND, tier)
+    completed = completed_partition_days(keys, layer=WATERSHEDS_STREAM, kind=_OBSERVED_KIND, zoom=tier)
+    days_with_parts = {parsed.day for parsed in (try_parse_partition_path(key) for key in keys) if parsed is not None}
+    return tuple(sorted(days_with_parts & completed))
 
 
 def resolve_latest_observed_release_day(store: ObjectStore, *, requested_zoom: int, as_of: date) -> date | None:

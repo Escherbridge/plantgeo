@@ -27,7 +27,7 @@ import duckdb
 import polars as pl
 
 from agri_data_service.config import settings as _default_settings
-from agri_data_service.foundation.parquet.paths import day_prefix, try_parse_partition_path
+from agri_data_service.foundation.parquet.paths import completed_partition_days, day_prefix, try_parse_partition_path
 from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.pipeline.parquet.objectstore import conform_to_stream_schema, polars_storage_options
 from agri_data_service.warehouse.schemas.drought import DROUGHT_SCHEMA, DROUGHT_STREAM
@@ -99,12 +99,22 @@ def list_observed_drought_release_days(store: ObjectStore, *, requested_zoom: in
     absence marker never appears: it fails `try_parse_partition_path`, so a Tuesday USDM did not
     publish is silently excluded rather than resolving as though it answered anything.
 
+    A half-written release (parts exist but no completion marker) is likewise excluded: it fails
+    the `completed_partition_days` filter below. A release the writer stopped uploading mid-way
+    through is not a complete published release, and counting it would make the reader resolve a
+    `valid_date` it cannot then serve (no completion marker → `resolve_drought_release_day` finds
+    the day → `read_drought_release` opens the glob and sees rows, but validation forbids serving
+    an incomplete partition → the day falsely looks published when it is not). This is the honest
+    reading at a given resolution: only completed exports are enumerable.
+
     A release the requested tier has not been generalised to yet is likewise absent, and that is the
     honest reading: at that resolution it has not been published.
     """
-    keys = store.list_partition_keys(DROUGHT_STREAM, DROUGHT_KIND, serving_zoom_tier(requested_zoom))
+    zoom = serving_zoom_tier(requested_zoom)
+    keys = store.list_partition_keys(DROUGHT_STREAM, DROUGHT_KIND, zoom)
     days = {parsed.day for parsed in (try_parse_partition_path(key) for key in keys) if parsed is not None}
-    return tuple(sorted(days))
+    completed = completed_partition_days(keys, layer=DROUGHT_STREAM, kind=DROUGHT_KIND, zoom=zoom)
+    return tuple(sorted(days & completed))
 
 
 def resolve_drought_release_day(

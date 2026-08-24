@@ -21,6 +21,7 @@ from agri_data_service.foundation.parquet.paths import (
     MAX_GAP_WINDOW_DAYS,
     PartitionPathError,
     absence_marker_path,
+    completion_marker_path,
     partition_path,
 )
 from agri_data_service.method.monte_carlo.vegetation_ndvi_forecast import (
@@ -38,6 +39,7 @@ from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.pipeline.validation.vegetation import (
     CELL_BATCH_SIZE,
     DUPLICATE_SOURCE_RELEASES,
+    INCOMPLETE_PARTITION,
     MISSING_FROM_PARQUET,
     WRITTEN_ZOOM_TIER,
     SourceCellDay,
@@ -406,9 +408,29 @@ def test_reconcile_does_not_flag_a_day_the_source_never_held() -> None:
     assert report.source_day_count == 0
 
 
-def test_reconcile_treats_a_written_partition_as_covering_its_day() -> None:
+def test_reconcile_reports_a_partition_without_completion_marker_as_incomplete() -> None:
+    """A day holding part files but no completion marker is a killed mid-upload, not a covered day."""
     source_cell_days = (SourceCellDay(cell_id="c1", observed_day=AUGUST_FIRST, source_release_count=1),)
     written = (partition_path(VEGETATION_PLANE_STREAM, "observed", WRITTEN_ZOOM_TIER, AUGUST_FIRST),)
+
+    report = reconcile_against_source(
+        source_cell_days=source_cell_days, written_partition_keys=written, first_day=AUGUST_FIRST, last_day=AUGUST_FIRST
+    )
+
+    assert not report.is_clean
+    incomplete_findings = [f for f in report.findings if f.kind == INCOMPLETE_PARTITION]
+    assert len(incomplete_findings) == 1
+    assert incomplete_findings[0].observed_day == AUGUST_FIRST
+    assert "completion marker" in incomplete_findings[0].detail
+
+
+def test_reconcile_treats_a_completed_partition_as_covering_its_day() -> None:
+    """A partition WITH its completion marker is a finished export and counts as covered."""
+    source_cell_days = (SourceCellDay(cell_id="c1", observed_day=AUGUST_FIRST, source_release_count=1),)
+    written = (
+        partition_path(VEGETATION_PLANE_STREAM, "observed", WRITTEN_ZOOM_TIER, AUGUST_FIRST),
+        completion_marker_path(VEGETATION_PLANE_STREAM, "observed", WRITTEN_ZOOM_TIER, AUGUST_FIRST),
+    )
 
     report = reconcile_against_source(
         source_cell_days=source_cell_days, written_partition_keys=written, first_day=AUGUST_FIRST, last_day=AUGUST_FIRST

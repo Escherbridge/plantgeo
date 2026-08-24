@@ -16,6 +16,8 @@ import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.config import ObjectStoreCredentials
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
+from agri_data_service.foundation.parquet.paths import completion_marker_path
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.planes.burn_severity import (
     BURN_SEVERITY_EXPOSURE_CONTRADICTION,
@@ -102,6 +104,40 @@ def materialize_backend(backend: RecordingBackend, root: Path) -> None:
         destination.write_bytes(payload)
 
 
+def _write_complete_partition(  # noqa: PLR0913 - one partition coordinate per arg, none foldable
+    store: ObjectStore,
+    table: pa.Table,
+    *,
+    kind: str = "observed",
+    zoom: int,
+    day: date,
+    part_index: int = 0,
+    part_count: int = 1,
+) -> None:
+    """Write a part AND the completion marker that makes its day a published one.
+
+    `write_partition` alone leaves an unfinished upload -- only the gap-fill driver marks a day
+    complete -- so a fixture that stops there builds a day every reader correctly refuses to serve.
+    A test whose subject IS the unfinished case writes the part and then removes the marker, which
+    is why this stays a helper rather than moving into the writer.
+    """
+    receipt = store.write_partition(
+        table, layer=BURN_SEVERITY_STREAM, kind=kind, zoom=zoom, day=day, part_index=part_index
+    )
+    store.write_completion_marker(
+        PartitionCompletion(
+            part_count=part_count,
+            row_count=receipt.row_count,
+            completed_at=datetime(2026, 8, 22, tzinfo=UTC),
+            run_id="test",
+        ),
+        layer=BURN_SEVERITY_STREAM,
+        kind=kind,
+        zoom=zoom,
+        day=day,
+    )
+
+
 def test_a_day_with_no_part_files_reads_as_an_honest_empty_typed_frame(tmp_path: Path) -> None:
     store = ObjectStore(RecordingBackend())
 
@@ -119,9 +155,9 @@ def test_a_future_date_answers_empty_rather_than_falling_through_to_the_newest_o
     """`kind` is a partition, not a column branch: a date nothing was written for gets its own empty answer."""
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=EARLIER_RELEASE,
@@ -165,9 +201,9 @@ def test_a_release_split_across_several_part_files_reads_as_one_grain_sorted_tab
     backend = RecordingBackend()
     store = ObjectStore(backend)
     for part_index, fire_id in enumerate(("2022PNW00003", "2022PNW00001", "2022PNW00002")):
-        store.write_partition(
+        _write_complete_partition(
+            store,
             burn_severity_table([burn_severity_row(fire_id=fire_id, observed_day=LATER_RELEASE)]),
-            layer=BURN_SEVERITY_STREAM,
             kind="observed",
             zoom=BASE_TIER,
             day=LATER_RELEASE,
@@ -187,9 +223,9 @@ def test_geometry_survives_as_binary_wkb_with_no_srid_header(tmp_path: Path) -> 
     backend = RecordingBackend()
     store = ObjectStore(backend)
     wkb = b"\x01\x03\x00\x00\x00"
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2022PNW00001", observed_day=LATER_RELEASE, geom=wkb)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=LATER_RELEASE,
@@ -208,16 +244,16 @@ def test_a_different_release_never_leaks_into_an_exact_day_answer(tmp_path: Path
     """A day only ever reads its own directory -- another release's rows never appear beside it."""
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=EARLIER_RELEASE,
     )
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2022PNW00099", observed_day=LATER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=LATER_RELEASE,
@@ -250,16 +286,16 @@ def test_burn_severity_base_uri_composes_bucket_and_prefix() -> None:
 def test_as_of_between_two_releases_resolves_to_the_older_one_and_names_it(tmp_path: Path) -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=EARLIER_RELEASE,
     )
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2022PNW00001", observed_day=LATER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=LATER_RELEASE,
@@ -280,16 +316,16 @@ def test_as_of_past_the_newest_release_answers_the_newest_release_not_a_projecti
     """This lane ships no `kind=forecast` stream -- a future date resolves to the newest past release."""
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=EARLIER_RELEASE,
     )
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2022PNW00001", observed_day=LATER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=LATER_RELEASE,
@@ -307,9 +343,9 @@ def test_as_of_past_the_newest_release_answers_the_newest_release_not_a_projecti
 def test_as_of_before_the_earliest_release_is_an_honest_absence_not_a_zero_row_release(tmp_path: Path) -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=EARLIER_RELEASE,
@@ -357,16 +393,16 @@ def test_as_of_never_blends_two_releases_into_one_answer(tmp_path: Path) -> None
     """The as-of answer contains exactly one release's rows, never a union of the two nearest ones."""
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=EARLIER_RELEASE,
     )
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2022PNW00001", observed_day=LATER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=LATER_RELEASE,
@@ -389,16 +425,16 @@ def test_two_tiers_of_one_release_never_stack_into_one_as_of_answer(tmp_path: Pa
     """One MTBS cohort at two rungs is one release generalised twice, not two releases."""
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=EARLIER_RELEASE,
     )
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2020PNW00009", observed_day=EARLIER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=DETAIL_TIER,
         day=EARLIER_RELEASE,
@@ -434,9 +470,9 @@ def test_a_governed_absence_at_one_rung_does_not_mark_the_release_absent_at_anot
         zoom=DETAIL_TIER,
         day=EARLIER_RELEASE,
     )
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=EARLIER_RELEASE,
@@ -459,16 +495,16 @@ def test_a_governed_absence_at_one_rung_does_not_mark_the_release_absent_at_anot
 def test_a_request_between_two_rungs_is_answered_by_the_rung_below_it(tmp_path: Path) -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2020PNW00009", observed_day=EARLIER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=DETAIL_TIER,
         day=EARLIER_RELEASE,
     )
-    store.write_partition(
+    _write_complete_partition(
+        store,
         burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=LATER_RELEASE)]),
-        layer=BURN_SEVERITY_STREAM,
         kind="observed",
         zoom=BASE_TIER,
         day=LATER_RELEASE,
@@ -482,3 +518,61 @@ def test_a_request_between_two_rungs_is_answered_by_the_rung_below_it(tmp_path: 
     assert answer.zoom == DETAIL_TIER
     assert answer.release_day == EARLIER_RELEASE, "z9's newest release, not z13's"
     assert answer.rows["fire_id"].to_list() == ["2020PNW00009"]
+
+
+# --- incomplete releases: parts without a completion marker serve zero rows ----------------------
+
+
+def test_a_day_with_parts_but_no_completion_marker_reads_as_zero_rows(tmp_path: Path) -> None:
+    """An upload killed part-way through left parts behind, but they are a prefix, not the release."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    _write_complete_partition(
+        store,
+        burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
+        kind="observed",
+        zoom=BASE_TIER,
+        day=EARLIER_RELEASE,
+    )
+    # Remove the completion marker: the parts survive, so the day is a killed upload.
+    del backend.objects[completion_marker_path(BURN_SEVERITY_STREAM, "observed", BASE_TIER, EARLIER_RELEASE)]
+    materialize_backend(backend, tmp_path)
+
+    frame = read_burn_severity_release_day(
+        store, requested_zoom=BASE_TIER_REQUEST, day=EARLIER_RELEASE, base_uri=str(tmp_path)
+    )
+
+    assert frame.height == 0
+    assert frame.columns == list(BURN_SEVERITY_SCHEMA.column_names)
+
+
+def test_as_of_never_selects_an_incomplete_release_as_the_answer(tmp_path: Path) -> None:
+    """An incomplete release is not counted as a published release for as-of resolution."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    # Write a complete earlier release
+    _write_complete_partition(
+        store,
+        burn_severity_table([burn_severity_row(fire_id="2020PNW00001", observed_day=EARLIER_RELEASE)]),
+        kind="observed",
+        zoom=BASE_TIER,
+        day=EARLIER_RELEASE,
+    )
+    # Write an incomplete later release
+    _write_complete_partition(
+        store,
+        burn_severity_table([burn_severity_row(fire_id="2022PNW00099", observed_day=LATER_RELEASE)]),
+        kind="observed",
+        zoom=BASE_TIER,
+        day=LATER_RELEASE,
+    )
+    # Remove the marker: the parts survive, so the later release is a killed upload.
+    del backend.objects[completion_marker_path(BURN_SEVERITY_STREAM, "observed", BASE_TIER, LATER_RELEASE)]
+    materialize_backend(backend, tmp_path)
+
+    answer = resolve_burn_severity_as_of(
+        store, requested_zoom=BASE_TIER_REQUEST, requested_day=FAR_FUTURE_DAY, base_uri=str(tmp_path)
+    )
+
+    assert answer.release_day == EARLIER_RELEASE, "incomplete later release is not selected"
+    assert answer.rows["fire_id"].to_list() == ["2020PNW00001"]

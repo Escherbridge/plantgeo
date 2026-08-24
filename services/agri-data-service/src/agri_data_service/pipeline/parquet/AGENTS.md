@@ -73,12 +73,45 @@ no `zoom` argument at all, because a validator has no viewport and the writer wr
   partition path carrying `GovernedAbsence` evidence, never an empty data file.
 - **Data and absence refuse to coexist, in both directions — at one tier.** `write_partition`
   refuses a day carrying an absence marker; `write_absence` refuses a day already holding a part
-  file. Both checks are scoped to the tier being written, per the zoom section above. Retracting
-  either side is a manual admin action (§0.21.5) — there is deliberately no API here that does it.
-  Reading a marker's evidence back is S17's concern; the backend seam has no `get` yet on purpose.
+  file (including an incomplete day). Both checks are scoped to the tier being written, per the zoom
+  section above. Retracting either side is a manual admin action (§0.21.5) — there is deliberately
+  no API here that does it. Reading a marker's evidence back is S17's concern; the backend seam has
+  no `get` yet on purpose.
+- **Completion markers (`_complete.json`) are the third object kind (§0.34.1).** A day holding parts
+  WITHOUT this marker is a release whose upload was killed part-way through; its parts are real but
+  they are a prefix of the day, not the complete day. The marker is written LAST, after the prune,
+  and is what lets gap detection distinguish `data` (complete) from `incomplete` (partial).
 - **A receipt carries the sha256 of the uploaded bytes.** That is an upload-integrity digest, not
   a cross-version reproducibility claim: `pq.write_table` stamps the writing pyarrow version into
   the file, so the same rows written by a different pyarrow need not be byte-identical.
+
+## The write protocol — as it shipped after two adversarial reviews (§0.35.1)
+
+**Order: retract at first part → parts → prune → mark.** `write_partition` retracts any existing
+completion marker as it uploads `part-0`, AFTER the empty-row and governed-absence refusals but
+BEFORE writing the first new part. A failed attempt that writes nothing — a statement timeout, a
+transient database error, a source that now returns zero rows — leaves a previously-complete day
+exactly as it found it. Then parts upload, surplus parts are pruned, and the completion marker is
+written last.
+
+**A failed prune withholds the mark rather than failing the day.** Marking a day whose surplus
+parts survived would publish a completion claim over a two-generation mixture. The rows are never
+lost and the day counts as `written` in the driver's census, but it is not marked. It stays
+`incomplete` and the next tick repairs it.
+
+**A failed mark is `raised`.** The parts are on disk but the completion claim is missing, so the
+day resolves as `incomplete` and is re-exported on the next tick (an unfinished SERIES day is now
+re-exported, which is why the prune moved into the shared per-day path — it was static-lanes-only
+before §0.35).
+
+**A governed absence retracts any completion marker.** `write_absence` removes `_complete.json` if
+it exists, because an absence claim and a data claim cannot coexist.
+
+**The whole lane-day runs under a session-scoped Postgres advisory lock.** Two drivers on one
+lane-day can interleave so the slower one's prune deletes parts the faster one just wrote, then
+stamps a completion marker whose `part_count` matches the truncated remainder exactly — the bucket
+and its receipt agreeing on a population that lost rows, which no later census or audit can detect.
+The lock is taken before any object is touched and held until the session closes (§0.35.4).
 
 ## This path is synchronous, deliberately
 `python.md` calls for async I/O, and this module is sync. It runs from the ingestion CLI and the
@@ -184,18 +217,44 @@ and must reach `today + 400`, so it regenerates roughly annually instead of dail
   so one ordering serves the incremental tick and the backfill with no second job to keep in sync.
 - **Round-robin across lanes, one day per lane per round.** Sequential order would let
   `fire-detections`' ~9,400-day window eat a whole tick before `signal` wrote anything.
-- **A governed-absence marker counts as covered.** `missing_partition_days` already treats it that
-  way; that is what stops a genuinely empty day being re-attempted every hour forever.
+- **A governed-absence marker counts as covered.** `unfilled_partition_days` excludes it; that is
+  what stops a genuinely empty day being re-attempted every hour forever. **An incomplete day
+  (parts but no completion marker) counts as unfilled** and is re-exported — which is how a killed
+  upload repairs itself on the next tick.
 - **The absence payload claims only what the run observed.** It states that the day-scoped export
   query over *this warehouse's own tables* returned zero rows, and explicitly says the upstream was
   not contacted. Reconciling against the live source is `pipeline/validation/<slug>.py`'s job.
-- **A remaining backlog is not a failure.** Only a lane that raised, whose listing failed, or whose
-  absence marker was refused sets a non-zero exit — matching `jobs-pulse`'s exit philosophy, and safe
-  under `restartPolicyType: NEVER`.
 - **The session is rolled back after every day, success included.** These reads are read-only, so
   holding one snapshot across a 600-second tick would pin a production xmin horizon for nothing — and
   after a failed statement, that rollback is what makes per-lane isolation real rather than asserted.
   `SET LOCAL statement_timeout` dies with it, so the 120 s pin is re-applied per day.
+
+## Five lane-day outcomes, and what each one means to an operator
+
+**`LaneDayOutcome`** classifies what happened to one lane-day attempt. The driver's census groups
+by outcome; an operator reading a failed tick needs to know what each one means and what to DO.
+
+- **`written`** — parts uploaded, pruned, and marked. The day is complete. Nothing to do.
+- **`absent`** — a governed-absence marker was written because the export query returned zero rows.
+  The day is covered. Nothing to do unless the absence is unexpected (then reconcile against the
+  upstream source via `pipeline/validation/<slug>.py`).
+- **`raised`** — the export, prune, or mark raised an exception. The day failed and needs
+  investigation. Check the logs for the exception; common causes: statement timeout, transient
+  database error, object store unavailable, schema mismatch. The lane STOPPED on this day (newer
+  days behind it were not attempted this tick).
+- **`blocked`** — the export returned zero rows over a day that ALREADY holds parts (an incomplete
+  day whose parts are real but the source now says there is nothing). `write_absence` refuses to
+  mark it because data and absence cannot coexist. The day needs an ADMIN decision: either manually
+  retract the parts (make it `missing` so the next tick can govern it absent), or manually mark it
+  complete if the parts are the correct answer. **The lane KEEPS DRAINING** — this outcome does not
+  stop the tick, because newer days may still be fillable. The blocked day stays blocked until an
+  admin resolves it.
+- **`contended`** — another run holds this lane-day's advisory lock. NOT a failure; the other run is
+  working on it. Nothing to do. Not counted in `written`, `absent`, or any failure tally.
+
+**A remaining backlog after a tick is not a failure.** Only outcomes in `FAILING_LANE_OUTCOMES`
+(`raised`, `blocked`) set a non-zero exit code — matching `jobs-pulse`'s exit philosophy, and safe
+under `restartPolicyType: NEVER`. A tick that wrote 50 days and has 500 still unfilled exits 0.
 
 ## Reading it back
 `polars_storage_options(credentials)` returns the Polars/`object_store` connection dict for

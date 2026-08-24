@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Final, Literal, Protocol
 
 import polars as pl
 
-from agri_data_service.foundation.parquet.paths import try_parse_partition_path
+from agri_data_service.foundation.parquet.paths import completed_partition_days, try_parse_partition_path
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.warehouse.schemas.soil_survey import SOIL_SURVEY_STREAM
 
@@ -158,15 +158,27 @@ def _validated_area_symbol(value: str) -> str:
 
 
 def _resolve_latest_release_day(store: ObjectStore) -> date | None:
-    """Find the most recently written release day at the written tier, from the object listing alone."""
+    """Find the most recently written release day at the written tier, from the object listing alone.
+
+    Only completed releases are candidates: a half-written newest release must not shadow the last
+    good one and falsely pass validation.
+    """
     keys = store.list_partition_keys(SOIL_SURVEY_STREAM, _KIND, WRITTEN_ZOOM_TIER)
-    days = {parsed.day for parsed in (try_parse_partition_path(key) for key in keys) if parsed is not None}
-    return max(days) if days else None
+    completed = completed_partition_days(keys, layer=SOIL_SURVEY_STREAM, kind=_KIND, zoom=WRITTEN_ZOOM_TIER)
+    return max(completed) if completed else None
 
 
 def _relative_paths_for_day(store: ObjectStore, day: date) -> tuple[str, ...]:
-    """List one day's part files at the written tier, sorted by part index."""
+    """List one day's part files at the written tier, sorted by part index.
+
+    Returns an empty tuple if the day has no completion marker: validation reconciles what was
+    SUCCESSFULLY written, and a half-uploaded release is not a completed write. The caller decides
+    whether an empty tuple is an honest gap or a finding.
+    """
     keys = store.list_partition_keys(SOIL_SURVEY_STREAM, _KIND, WRITTEN_ZOOM_TIER, year=day.year, month=day.month)
+    completed = completed_partition_days(keys, layer=SOIL_SURVEY_STREAM, kind=_KIND, zoom=WRITTEN_ZOOM_TIER)
+    if day not in completed:
+        return ()
     candidates = (try_parse_partition_path(key) for key in keys)
     parts = sorted(
         (parsed for parsed in candidates if parsed is not None and parsed.day == day),

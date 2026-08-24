@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Final
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
-from agri_data_service.foundation.parquet.paths import missing_partition_days
+from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 
@@ -47,6 +47,7 @@ WRITTEN_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 CELL_BATCH_SIZE: Final = 200
 
 MISSING_FROM_PARQUET: Final = "missing_from_parquet"
+INCOMPLETE_PARTITION: Final = "incomplete_partition"
 DUPLICATE_SOURCE_RELEASES: Final = "duplicate_source_releases"
 
 
@@ -132,9 +133,12 @@ def reconcile_against_source(
     a gap: Sentinel-2 NDVI is cloud-gated and genuinely sparse (`docs/lanes/vegetation.md` section
     5.3), so an honest missing day must not be turned into a false alarm. A day the source DOES hold
     but the Parquet plane has no partition or absence marker for is a real export gap.
+
+    Days holding part files without a completion marker are reported distinctly from missing days:
+    an operator reading "0 missing" over a lane that crashes mid-export every night is being misled.
     """
     source_days = {row.observed_day for row in source_cell_days}
-    days_without_a_written_partition = missing_partition_days(
+    statuses = partition_day_statuses(
         layer=VEGETATION_PLANE_STREAM,
         kind="observed",
         zoom=WRITTEN_ZOOM_TIER,
@@ -142,6 +146,9 @@ def reconcile_against_source(
         last_day=last_day,
         keys=written_partition_keys,
     )
+    days_without_a_written_partition = tuple(day for day, status in statuses.items() if status == "missing")
+    incomplete_days = tuple(day for day, status in statuses.items() if status == "incomplete")
+
     findings = [
         VegetationReconciliationFinding(
             observed_day=day,
@@ -153,6 +160,18 @@ def reconcile_against_source(
         )
         for day in sorted(day for day in days_without_a_written_partition if day in source_days)
     ]
+    findings.extend(
+        VegetationReconciliationFinding(
+            observed_day=day,
+            kind=INCOMPLETE_PARTITION,
+            detail=(
+                f"{VEGETATION_PLANE_STREAM!r} kind=observed holds part files for {day.isoformat()} "
+                f"with no completion marker; the export was killed mid-upload and serves a PREFIX of "
+                f"the release rather than the whole day"
+            ),
+        )
+        for day in sorted(day for day in incomplete_days if day in source_days)
+    )
     duplicated_cell_counts_by_day: dict[date, int] = {}
     for row in source_cell_days:
         if row.source_release_count > 1:

@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Final
 
 import polars as pl
 
-from agri_data_service.foundation.parquet.paths import try_parse_partition_path
+from agri_data_service.foundation.parquet.paths import completed_partition_days, try_parse_partition_path
 from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.warehouse.schemas.soil_survey import SOIL_SURVEY_SCHEMA, SOIL_SURVEY_STREAM
 
@@ -95,14 +95,18 @@ class SoilSurveyPointLookupResult:
 def resolve_soil_survey_release(store: ObjectStore, day: date, *, requested_zoom: int) -> SoilSurveyRelease | None:
     """Resolve one named release day's part files at one tier, or `None` when nothing was written for it.
 
-    `None` covers a day nobody ever exported, a day the writer marked a governed absence for, and a
-    day this tier has not been derived to yet -- all three mean "no data to read at this
-    resolution", and this function never falls through to another day or another rung to answer
-    instead (`layer-lanes.md` section 2: a future- or gap-date request is an honest empty answer,
-    never a silent substitution).
+    `None` covers a day nobody ever exported, a day the writer marked a governed absence for, a day
+    this tier has not been derived to yet, and a day whose export was killed mid-upload (part files
+    present but no completion marker) -- all four mean "no data to read at this resolution", and
+    this function never falls through to another day or another rung to answer instead
+    (`layer-lanes.md` section 2: a future- or gap-date request is an honest empty answer, never a
+    silent substitution).
     """
     zoom = serving_zoom_tier(requested_zoom)
     keys = store.list_partition_keys(SOIL_SURVEY_STREAM, SOIL_SURVEY_KIND, zoom, year=day.year, month=day.month)
+    completed = completed_partition_days(keys, layer=SOIL_SURVEY_STREAM, kind=SOIL_SURVEY_KIND, zoom=zoom)
+    if day not in completed:
+        return None
     candidates = (try_parse_partition_path(key) for key in keys)
     parts = sorted(
         (parsed for parsed in candidates if parsed is not None and parsed.day == day),
@@ -119,14 +123,19 @@ def resolve_latest_soil_survey_release(store: ObjectStore, *, requested_zoom: in
     This lane is a `static_lookup`: every release is a full re-export, so the newest release day
     already IS the current published state. `None` means the lane has never been exported AT THIS
     TIER, which for a rung the derivation step has not reached is the honest answer rather than the
-    base tier's release wearing a resolution it does not have.
+    base tier's release wearing a resolution it does not have. Only completed releases are
+    candidates: a half-written newest release must not shadow the last good one.
     """
     zoom = serving_zoom_tier(requested_zoom)
     keys = store.list_partition_keys(SOIL_SURVEY_STREAM, SOIL_SURVEY_KIND, zoom)
-    parsed = [parsed for parsed in (try_parse_partition_path(key) for key in keys) if parsed is not None]
-    if not parsed:
+    completed = completed_partition_days(keys, layer=SOIL_SURVEY_STREAM, kind=SOIL_SURVEY_KIND, zoom=zoom)
+    if not completed:
         return None
-    latest_day = max(entry.day for entry in parsed)
+    parsed = [parsed for parsed in (try_parse_partition_path(key) for key in keys) if parsed is not None]
+    completed_entries = [entry for entry in parsed if entry.day in completed]
+    if not completed_entries:
+        return None
+    latest_day = max(entry.day for entry in completed_entries)
     parts = sorted((entry for entry in parsed if entry.day == latest_day), key=lambda entry: entry.part_index)
     return SoilSurveyRelease(day=latest_day, zoom=zoom, relative_paths=tuple(part.key for part in parts))
 

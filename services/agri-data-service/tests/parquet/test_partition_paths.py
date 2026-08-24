@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import (
     MAX_GAP_WINDOW_DAYS,
     MAX_PART_INDEX,
@@ -13,6 +14,7 @@ from agri_data_service.foundation.parquet.paths import (
     PartitionKind,
     PartitionPathError,
     absence_marker_path,
+    completion_marker_path,
     day_prefix,
     layer_prefix,
     missing_partition_days,
@@ -38,6 +40,14 @@ TIER_Z0: ZoomTier = 0
 TIER_Z5: ZoomTier = 5
 TIER_Z9: ZoomTier = 9
 TIER_Z13: ZoomTier = 13
+
+
+def _completion_marker(layer: str, kind: str, zoom: ZoomTier, day: date) -> tuple[str, bytes]:
+    """Build a completion marker key and payload for test fixtures that need to mark a day finished."""
+    marker = PartitionCompletion(
+        part_count=1, row_count=1, completed_at=datetime(2026, 8, 22, tzinfo=UTC), run_id="test"
+    )
+    return completion_marker_path(layer, kind, zoom, day), marker.to_json_bytes()
 
 
 def test_partition_path_renders_the_layout_exactly() -> None:
@@ -271,9 +281,14 @@ def test_every_builder_refuses_a_zoom_off_the_ladder(zoom: int) -> None:
 
 
 def test_missing_partition_days_reports_only_the_absent_days() -> None:
+    """Completion markers make the days with parts count as covered; days without parts are missing."""
+    marker_1, _ = _completion_marker("vegetation", "observed", TIER_Z13, date(2026, 7, 1))
+    marker_3, _ = _completion_marker("vegetation", "observed", TIER_Z13, date(2026, 7, 3))
     keys = [
         partition_path("vegetation", "observed", TIER_Z13, date(2026, 7, 1)),
+        marker_1,
         partition_path("vegetation", "observed", TIER_Z13, date(2026, 7, 3)),
+        marker_3,
     ]
 
     missing = missing_partition_days(
@@ -326,8 +341,10 @@ def test_missing_partition_days_ignores_another_tier_of_the_same_stream() -> Non
 
 def test_partition_day_statuses_classifies_each_tier_independently() -> None:
     """One day may be data at one tier, a governed absence at another, and a gap at a third."""
+    marker_z0, _ = _completion_marker("drought", "observed", TIER_Z0, FIRST_JULY)
     keys = [
         partition_path("drought", "observed", TIER_Z0, FIRST_JULY),
+        marker_z0,
         absence_marker_path("drought", "observed", TIER_Z5, FIRST_JULY),
     ]
 
@@ -366,7 +383,9 @@ def test_partition_day_statuses_reports_a_conflict_only_within_one_tier() -> Non
 
 
 def test_missing_partition_days_counts_a_multi_part_day_as_present() -> None:
-    keys = [partition_path("signal", "observed", TIER_Z13, FIRST_JULY, part_index=index) for index in (1, 2)]
+    """Multiple parts with a completion marker mean the day is finished; this tests multi-part counting."""
+    marker, _ = _completion_marker("signal", "observed", TIER_Z13, FIRST_JULY)
+    keys = [partition_path("signal", "observed", TIER_Z13, FIRST_JULY, part_index=index) for index in (1, 2)] + [marker]
 
     missing = missing_partition_days(
         layer="signal",

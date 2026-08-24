@@ -28,7 +28,11 @@ from agri_data_service.foundation.parquet.lane_contract import (
     resolve_static_lane,
     validate_lane_nature,
 )
-from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path
+from agri_data_service.foundation.parquet.paths import (
+    absence_marker_path,
+    completion_marker_path,
+    partition_path,
+)
 
 if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.zoom import ZoomTier
@@ -313,6 +317,9 @@ def test_a_marker_beside_an_up_to_date_part_file_still_reads_as_current() -> Non
     keys = [
         absence_marker_path("watersheds", "observed", BASE_TIER, date(2026, 7, 1)),
         partition_path("watersheds", "observed", BASE_TIER, CHANGED_ON),
+        # The release FINISHED. Without this the part file is a killed upload and the lane is stale,
+        # which is correct but is a different test than the one this is.
+        completion_marker_path("watersheds", "observed", BASE_TIER, CHANGED_ON),
     ]
 
     verdict = resolve_static_lane(
@@ -361,6 +368,7 @@ def test_the_two_coverage_kinds_are_reported_apart_from_the_same_listing() -> No
     """A part file and a marker make opposite claims about a version stamp, so they scan apart."""
     keys = [
         partition_path("watersheds", "observed", BASE_TIER, date(2026, 8, 1)),
+        completion_marker_path("watersheds", "observed", BASE_TIER, date(2026, 8, 1)),
         absence_marker_path("watersheds", "observed", BASE_TIER, CHANGED_ON),
     ]
 

@@ -37,6 +37,23 @@ day-scoped Postgres query. A driver that "filled" a derived tier would be invent
 nobody computed, exactly as filling `kind=forecast` would invent a projection nobody issued -- so the
 tier is a module constant here rather than a caller's argument, for the same reason the kind is.
 
+EVERY LANE-DAY IS WRITTEN EXPORT -> PRUNE -> MARK, THE FIRST PART WRITE RETRACTS ANY EARLIER
+MARK, AND THE MARK IS WHAT MAKES THE DAY COUNT (owner, RUNBOOK 0.34.1/0.35.1). Retraction lives in
+`objectstore.write_partition` at `part_index == 0`, NOT here: clearing it before the export was
+attempted stripped the claim off an intact release every time an unrelated attempt failed.
+
+The completion marker is not a soil-survey patch: the half-written
+release it closes was reachable on EVERY multi-part lane, and streaming soil-survey from ~10 parts
+to ~3,016 only changed the odds. So the fix lives here, in the one function every lane-day passes
+through, rather than thirteen times in `pipeline/lanes/`. A day whose census says `incomplete` is
+filled exactly like one that says `missing`; the two are reported apart so an operator can tell a
+backlog from a lane that crashes half-way through the same day every hour.
+
+THE PRUNE IS NO LONGER A STATIC-LANE PRIVILEGE, and that follows directly from the marker. Before
+it, a series day holding any part at all read as covered and was never re-exported, so a shrinking
+re-export could not happen there. Now an unfinished series day IS re-exported, so it can -- and an
+unpruned day would publish the tail of the older, larger export beside the new one.
+
 COVERAGE IS THEREFORE PER TIER AND EVERY CENSUS ROW SAYS WHICH ONE. `partition_day_statuses` ignores
 keys of another tier, and nothing above it may put them back: a day present at `zoom=00` says
 nothing about whether the base tier was ever written for it, and a census that added the two together
@@ -46,28 +63,38 @@ would report a covered day over a real gap and then decline to fill it.
 from __future__ import annotations
 
 import time
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal
 
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.lane_contract import (
     LaneContractError,
     nature_has_time_axis,
     resolve_static_lane,
 )
 from agri_data_service.foundation.parquet.paths import (
+    UNFILLED_PARTITION_STATUSES,
+    completed_partition_days,
     partition_day_statuses,
     try_parse_absence_marker_path,
     try_parse_partition_path,
 )
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
-from agri_data_service.pipeline.parquet.objectstore import EmptyPartitionError, oldest_export_instant
+from agri_data_service.pipeline.parquet.objectstore import (
+    EmptyPartitionError,
+    GovernedAbsenceConflictError,
+    SurplusPruneResult,
+    oldest_export_instant,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+    from contextlib import AbstractAsyncContextManager
     from datetime import date
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,6 +108,11 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+
+    # One lane-day's mutual exclusion, injectable so a test need not fake Postgres advisory
+    # functions. Yields whether the lock was granted, and releases on exit; the real one is
+    # `postgres_lane_day_lock` and the always-granted test seam is `unlocked_lane_day`.
+    LaneDayLock = Callable[[AsyncSession, str], AbstractAsyncContextManager[bool]]
 
 # This driver fills settled OBSERVED days only. `kind=forecast` partitions are produced by each
 # lane's own `method/monte_carlo/<slug>.py`, from an issue date rather than from a gap census, and
@@ -111,12 +143,23 @@ MAX_STATIC_EXPORT_ATTEMPTS: Final = 2
 # `current` is a static lane at or ahead of its source watermark. It is deliberately NOT folded
 # into `complete`: "this reference set matches its source" and "this window has no gaps left" are
 # different claims about different clocks, and an operator scanning a summary needs to see which.
-LaneFillOutcome = Literal["complete", "filled", "budget_exhausted", "raised", "no_window", "current"]
-LaneDayOutcome = Literal["written", "absent", "raised"]
+LaneFillOutcome = Literal["complete", "filled", "budget_exhausted", "raised", "blocked", "no_window", "current"]
+LaneDayOutcome = Literal["written", "absent", "raised", "blocked", "contended"]
 
 # The outcomes that mean this tick found something WRONG, as opposed to found work still to do.
 # Named once so the summary, the exit rule and any log line cannot disagree about what failure is.
-FAILING_LANE_OUTCOMES: Final[frozenset[str]] = frozenset({"raised"})
+#
+# `contended` is deliberately NOT here: another run holding the lane-day is the lock doing its job,
+# not a fault, and the day stays work for the next tick. Counting it as failure would turn every
+# overlapping backfill into a red tick.
+#
+# `blocked` is failure that must NOT stop the lane, and it is its own outcome for exactly that
+# reason. A day holding parts whose re-export now yields zero rows cannot be resolved by this
+# driver -- `write_absence` refuses to govern a day that still holds data, and only an admin can
+# decide whether those parts are still valid. Reported as `raised` it would stop the lane on its
+# NEWEST day and starve every older missing day behind it, every tick, forever. So it fails the
+# tick loudly and lets the lane keep draining its backlog.
+FAILING_LANE_OUTCOMES: Final[frozenset[str]] = frozenset({"raised", "blocked"})
 
 
 class GapFillContractError(RuntimeError):
@@ -148,6 +191,10 @@ class LaneGapCensus:
     data_days: int
     absent_days: int
     conflict_days: int
+    # Days holding part files with no completion marker: an export that started and never finished.
+    # Counted apart from `missing_days` (which they are also inside, because they owe the same work)
+    # so a summary can distinguish a backlog from a lane dying half-way through the same day.
+    incomplete_days: int
     missing_days: tuple[date, ...]
     truncated: bool
     forecastable: bool = False
@@ -187,6 +234,7 @@ class LaneGapCensus:
             "data_days": self.data_days,
             "absent_days": self.absent_days,
             "conflict_days": self.conflict_days,
+            "incomplete_days": self.incomplete_days,
             "missing_days": len(self.missing_days),
             "missing_truncated": self.truncated,
             "newest_missing_days": [day.isoformat() for day in self.missing_days[:GAP_CENSUS_REPORT_DAY_SAMPLE]],
@@ -209,6 +257,11 @@ class LaneFillVerdict:
     considered: int
     written: int
     absent: int
+    # Days this driver may not resolve on its own. Reported apart from `written`/`absent` because
+    # they are neither, and apart from a raised lane because the lane kept working.
+    blocked: int
+    # Days another run was already writing. Not failure, not progress -- see `postgres_lane_day_lock`.
+    contended: int
     remaining: int
     parts: int
     rows: int
@@ -224,6 +277,8 @@ class LaneFillVerdict:
             "considered": self.considered,
             "written": self.written,
             "absent": self.absent,
+            "blocked": self.blocked,
+            "contended": self.contended,
             "remaining": self.remaining,
             "parts": self.parts,
             "rows": self.rows,
@@ -263,6 +318,9 @@ class GapFillSummary:
             "rows": sum(lane.rows for lane in self.lanes),
             "bytes": sum(lane.written_bytes for lane in self.lanes),
             "budget_exhausted_lanes": [lane.slug for lane in self.lanes if lane.outcome == "budget_exhausted"],
+            "blocked": sum(lane.blocked for lane in self.lanes),
+            "blocked_lanes": [lane.slug for lane in self.lanes if lane.blocked],
+            "contended": sum(lane.contended for lane in self.lanes),
             "failed": self.failed,
             "failing_lanes": [lane.slug for lane in self.failing_lanes],
         }
@@ -307,6 +365,7 @@ def _census_shell(lane: LaneRegistration, zoom: ZoomTier, **overrides: object) -
         "data_days": 0,
         "absent_days": 0,
         "conflict_days": 0,
+        "incomplete_days": 0,
         "missing_days": (),
         "truncated": False,
     }
@@ -332,6 +391,13 @@ def _static_lane_census(
     THE COUNTS ARE OVER THE WHOLE STREAM AT ONE TIER, not over a window, because a static lane has
     none: a reference set holds N versions, and how many of them exist is the useful number.
     `missing_days` holds at most one entry -- the version the source says is owed.
+
+    AN UNFINISHED OLD VERSION IS REPORTED, NEVER RE-EXPORTED, and that asymmetry is the point. A
+    static lane's partition day is a VERSION STAMP, so re-exporting a stranded 2026-08-20 today
+    would write today's population under that day's key and manufacture a version that never
+    existed. The half-release therefore stays on disk as garbage only an admin may retract -- but
+    the lane must not report `current` while it sits there, so `static_detail` names it and
+    `incomplete_days` counts it.
     """
     if reading is not None and reading.error is not None:
         return _census_shell(lane, zoom, static_state="watermark_unread", error=reading.error)
@@ -341,7 +407,7 @@ def _static_lane_census(
         return _census_shell(lane, zoom, static_state="watermark_unread", error=_listing_failure(lane, error))
     # The listing is already tier-scoped by its prefix; the tier is re-checked from the PARSED key
     # anyway, so a store prefix or a hand-placed object cannot smuggle another rung into these sets.
-    data_days = {
+    part_days = {
         parsed.day
         for entry in listed
         if (parsed := try_parse_partition_path(entry.relative_path)) is not None
@@ -349,6 +415,18 @@ def _static_lane_census(
         and parsed.kind == GAP_FILL_PARTITION_KIND
         and parsed.zoom == zoom
     }
+    # THE SET THAT DECIDES CURRENCY. A static lane's whole verdict hangs off its newest data day, so
+    # a release killed part-way through uploading -- every part of it newer than the watermark --
+    # would otherwise resolve the lane `current` on top of half a snapshot. That is RUNBOOK 0.33.2
+    # hazard 2 verbatim, and restricting the set to days that ASSERTED completion is what closes it.
+    # Asked of the shared primitive rather than re-derived here: two spellings of "which days
+    # completed" is how the census and the readers drift apart.
+    complete_days = part_days & completed_partition_days(
+        (entry.relative_path for entry in listed),
+        layer=lane.slug,
+        kind=GAP_FILL_PARTITION_KIND,
+        zoom=zoom,
+    )
     marker_days = {
         marker.day
         for entry in listed
@@ -357,7 +435,7 @@ def _static_lane_census(
         and marker.kind == GAP_FILL_PARTITION_KIND
         and marker.zoom == zoom
     }
-    newest_day = max(data_days, default=None)
+    newest_day = max(complete_days, default=None)
     watermark = None if reading is None else reading.watermark
     try:
         # Handed to the resolver APART, from the sets already built above: for a version stamp a part
@@ -378,19 +456,34 @@ def _static_lane_census(
     except LaneContractError as error:
         return _census_shell(lane, zoom, static_state="watermark_unread", error=f"{lane.slug}: {error}")
     version_day = watermark.day if watermark is not None else None
+    stranded = sorted(part_days - complete_days - marker_days, reverse=True)
+    detail = verdict.detail
+    if stranded:
+        named = ", ".join(day.isoformat() for day in stranded[:GAP_CENSUS_REPORT_DAY_SAMPLE])
+        stranded_note = (
+            f"{len(stranded)} version(s) hold part files with no completion marker and cannot be "
+            f"repaired by this driver -- a static lane's day is a version stamp, so re-exporting one "
+            f"today would date the CURRENT population as that version. Retracting them is an admin "
+            f"action: {named}"
+        )
+        detail = f"{detail}; {stranded_note}" if detail else stranded_note
     return _census_shell(
         lane,
         zoom,
         first_day=version_day,
         last_day=version_day,
-        data_days=len(data_days),
-        absent_days=len(marker_days - data_days),
-        conflict_days=len(marker_days & data_days),
+        data_days=len(complete_days),
+        # Both arithmetics run over `part_days`, not `complete_days`: a governed absence sitting
+        # beside ANY data is the contradiction worth escalating, whether or not that data finished,
+        # and scoring it against the completed set alone would quietly downgrade it to `absent`.
+        absent_days=len(marker_days - part_days),
+        conflict_days=len(marker_days & part_days),
+        incomplete_days=len(part_days - complete_days - marker_days),
         missing_days=() if verdict.version_day is None else (verdict.version_day,),
         static_state=verdict.state,
         source_watermark=version_day,
         watermark_basis=None if watermark is None else watermark.basis,
-        static_detail=verdict.detail,
+        static_detail=detail,
     )
 
 
@@ -425,10 +518,14 @@ def _series_lane_census(
     # own step from the floor, so the six intervening days are not gaps the driver should chase.
     # It never suppresses a day that already holds data or a marker -- those are read from the
     # listing above and reported as-is, so a real partition off the expected step stays visible.
+    # The cadence filter guards `missing` ONLY. An `incomplete` day is one this lane demonstrably
+    # exported before, so whether it sits on the declared step is already settled by the fact that
+    # something wrote it -- and suppressing it here would strand a half-written off-step day forever.
     missing = tuple(
         day
         for day, status in sorted(statuses.items(), reverse=True)
-        if status == "missing" and (day - lane.history_floor).days % lane.cadence_days == 0
+        if status in UNFILLED_PARTITION_STATUSES
+        and (status != "missing" or (day - lane.history_floor).days % lane.cadence_days == 0)
     )
     return _census_shell(
         lane,
@@ -438,6 +535,7 @@ def _series_lane_census(
         data_days=sum(1 for status in statuses.values() if status == "data"),
         absent_days=sum(1 for status in statuses.values() if status == "absent"),
         conflict_days=sum(1 for status in statuses.values() if status == "conflict"),
+        incomplete_days=sum(1 for status in statuses.values() if status == "incomplete"),
         missing_days=missing if max_days_per_lane is None else missing[:max_days_per_lane],
         truncated=max_days_per_lane is not None and len(missing) > max_days_per_lane,
     )
@@ -455,7 +553,13 @@ def build_lane_census(
 
     A governed-absence marker counts as covered, not as a gap: `missing_partition_days` already
     treats it that way, which is what stops the driver re-attempting a day the source truly has
-    nothing for on every tick forever.
+    nothing for on every tick forever. A day holding parts WITHOUT a completion marker is the
+    opposite case and counts as work -- but only for a SERIES lane, where it is reported as
+    `incomplete_days` and appears in `missing_days` too, because repairing it is the same operation
+    as filling a day never attempted. A STATIC lane's `missing_days` still holds only the version its
+    watermark owes: its day is a version stamp, not a calendar position, so an unfinished old version
+    is reported through `incomplete_days` and `static_detail` and left for an admin. See
+    `_static_lane_census`.
 
     The tier is `GAP_FILL_ZOOM_TIER` rather than an argument, because this census exists to feed THIS
     driver, and this driver can only write the tier its lane adapters export. Auditing a derived tier
@@ -498,6 +602,9 @@ def gap_census_report(census: Sequence[LaneGapCensus]) -> dict[str, object]:
         "lane_count": len(census),
         "missing_days": sum(len(entry.missing_days) for entry in census),
         "lanes_with_gaps": [entry.slug for entry in census if entry.missing_days],
+        # Surfaced by name, not just summed: a lane accumulating unfinished days every tick is
+        # crashing mid-export, and that reads as ordinary backlog in a `missing_days` total.
+        "lanes_with_unfinished_days": [entry.slug for entry in census if entry.incomplete_days],
         "lanes_with_errors": [entry.slug for entry in census if entry.error is not None],
         # Reported separately from `lanes_with_gaps` so an operator can tell a reference set that
         # MATCHES its source from one nobody asked about. Both show zero missing days.
@@ -546,6 +653,8 @@ class _LaneProgress:
     pending: list[date]
     written: int = 0
     absent: int = 0
+    blocked: int = 0
+    contended: int = 0
     parts: int = 0
     rows: int = 0
     written_bytes: int = 0
@@ -559,12 +668,19 @@ class _LaneProgress:
         outcome = self.outcome
         if outcome == "complete" and (self.written or self.absent):
             outcome = "filled"
+        # `blocked` outranks `complete`, `filled` and `budget_exhausted`: those all say the tick went
+        # as well as it could, and a day needing an admin says the opposite. Only `raised` outranks
+        # it, because a raised lane stopped taking turns and that is the more severe fact.
+        if self.blocked and outcome != "raised":
+            outcome = "blocked"
         return LaneFillVerdict(
             slug=self.census.slug,
             outcome=outcome,
             considered=len(self.census.missing_days),
             written=self.written,
             absent=self.absent,
+            blocked=self.blocked,
+            contended=self.contended,
             remaining=len(self.pending),
             parts=self.parts,
             rows=self.rows,
@@ -572,6 +688,36 @@ class _LaneProgress:
             seconds=self.seconds,
             detail=self.detail,
         )
+
+
+def _record_day_outcome(entry: _LaneProgress, outcome: LaneDayOutcome, detail: str | None) -> None:
+    """Fold one finished lane-day into its lane's running tally, and decide whether the lane goes on.
+
+    Only `raised` stops the lane. `blocked` is a failure the lane must survive: it lands on the
+    NEWEST missing day, so stopping there would starve every older gap behind it on every tick
+    forever -- see `FAILING_LANE_OUTCOMES`.
+    """
+    if outcome == "raised":
+        entry.stopped, entry.outcome, entry.detail = True, "raised", detail
+        return
+    if outcome == "blocked":
+        entry.blocked += 1
+        entry.detail = detail
+        return
+    if outcome == "contended":
+        # Not a failure and not progress: another run owns this day. It is left out of every tally
+        # so the tick's counts stay a record of what THIS run did.
+        entry.contended += 1
+        entry.detail = detail
+        return
+    if outcome == "absent":
+        entry.absent += 1
+    else:
+        entry.written += 1
+    # A pruned orphan, a withheld completion mark and an unproven export window are all reported on a
+    # SUCCEEDING day, so the detail has to survive an outcome that is not `raised` or it is swallowed.
+    if detail is not None:
+        entry.detail = detail
 
 
 def _seeded_progress(census: LaneGapCensus, *, today: date) -> _LaneProgress:
@@ -646,6 +792,12 @@ async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per
 ) -> tuple[LaneDayOutcome, int, int, int, str | None]:
     """Export one lane-day, returning `(outcome, parts, rows, bytes, detail)` and never raising.
 
+    THE COMPLETION MARKER IS RETRACTED BY THE FIRST PART WRITE, NOT HERE. `write_partition`
+    retracts it as it uploads `part-0`, so an attempt that fails before writing anything -- a
+    statement timeout, a transient database error, a source that now returns nothing -- leaves a
+    previously-complete day exactly as it found it. Retracting up front instead would have stripped
+    the completion claim off an intact release every time an unrelated export attempt failed.
+
     The session is rolled back on EVERY path, success included. These exports are read-only, so
     holding one snapshot open across a 600-second tick would pin the xmin horizon of a production
     database for no benefit -- and after a failed statement the rollback is what lets the NEXT lane
@@ -671,6 +823,20 @@ async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per
                 zoom=GAP_FILL_ZOOM_TIER,
                 day=day,
             )
+        except GovernedAbsenceConflictError as conflict:
+            # The day still holds parts and its export now yields nothing. Only an admin can say
+            # whether those parts remain valid, so this driver refuses to guess -- but it also
+            # refuses to stop the lane over it, because this day is the NEWEST one and every older
+            # gap sits behind it. See FAILING_LANE_OUTCOMES.
+            return (
+                "blocked",
+                0,
+                0,
+                0,
+                f"{day.isoformat()}: the export returned zero rows but the day still holds part "
+                f"files, so it can be neither written nor governed as absent without an admin "
+                f"deciding whether those parts are still valid: {conflict}",
+            )
         except Exception as conflict:  # a marker that cannot be written is a real failure, not an absence
             return "raised", 0, 0, 0, f"{day.isoformat()}: absence marker refused: {conflict}"
         return "absent", 0, 0, receipt.byte_count, None
@@ -678,8 +844,89 @@ async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per
         await session.rollback()
         return "raised", 0, 0, 0, f"{day.isoformat()}: {type(error).__name__}: {error}"
     await session.rollback()
-    outcome: LaneDayOutcome = "absent" if result.absence_recorded else "written"
-    return outcome, result.part_count, result.row_count, result.byte_count, None
+    if result.absence_recorded:
+        # A governed absence is ONE object and cannot be half-written, so it asserts its own
+        # completion and never gets a marker. Writing one here would put two markers on a day whose
+        # only honest reading is `absent`.
+        return "absent", result.part_count, result.row_count, result.byte_count, None
+    return _finalize_written_day(
+        store,
+        lane,
+        day=day,
+        parts=result.part_count,
+        rows=result.row_count,
+        written_bytes=result.byte_count,
+        run_id=run_id,
+        now=now,
+    )
+
+
+def _finalize_written_day(  # noqa: PLR0913 - one coordinate of the day being closed per arg
+    store: ObjectStore,
+    lane: LaneRegistration,
+    *,
+    day: date,
+    parts: int,
+    rows: int,
+    written_bytes: int,
+    run_id: str,
+    now: Callable[[], datetime],
+) -> tuple[LaneDayOutcome, int, int, int, str | None]:
+    """Close a written lane-day: prune what this export no longer wrote, then assert that it finished.
+
+    PRUNE BEFORE MARK. The marker's `part_count` is the export's own claim about what the day holds,
+    so asserting it while a larger earlier export's tail is still published would make the marker
+    disagree with the bucket at the very moment it was written.
+
+    A FAILED MARK IS `raised`, not a note on an otherwise successful day, and that is deliberate: an
+    unmarked day is re-exported next tick, so a mark that keeps failing is a lane silently
+    re-exporting the same day every hour forever while reporting success. The same reasoning already
+    makes an absence marker that cannot be written a failure rather than an absence.
+
+    A FAILED PRUNE STILL DOES NOT FAIL THE DAY -- the rows this export wrote are correct and no prune
+    may undo that -- BUT IT WITHHOLDS THE MARK. Marking a day whose surplus parts survived would
+    publish a completion claim over a two-generation mixture, which is the one statement this marker
+    exists to make trustworthy. Leaving it unmarked keeps the day `incomplete`, so the next tick
+    re-exports and re-prunes it: the outcome stays self-healing instead of becoming a stable lie.
+    """
+    if parts <= 0:
+        return (
+            "raised",
+            parts,
+            rows,
+            written_bytes,
+            f"{day.isoformat()}: the export reported {parts} part files while reporting data, so there "
+            "is nothing a completion marker could honestly claim",
+        )
+    notes: list[str] = []
+    # WRITE FIRST, PRUNE SECOND. A prune that ran first and then failed would leave the day EMPTY,
+    # which reads as a present-but-thin version and is worse than the orphan it was removing.
+    pruned = _prune_surplus(store, lane, day=day, written_part_count=parts)
+    report = pruned.report
+    if report is not None:
+        notes.append(report)
+    if pruned.failures:
+        notes.append(
+            f"{day.isoformat()}: the day is NOT being marked complete, because a surplus part from a "
+            "larger earlier export is still published beside this one and a completion marker over "
+            "that mixture would be false. The next tick re-exports and re-prunes this day."
+        )
+        return "written", parts, rows, written_bytes, "; ".join(notes)
+    try:
+        store.write_completion_marker(
+            PartitionCompletion(part_count=parts, row_count=rows, completed_at=now(), run_id=run_id),
+            layer=lane.slug,
+            kind=GAP_FILL_PARTITION_KIND,
+            zoom=GAP_FILL_ZOOM_TIER,
+            day=day,
+        )
+    except Exception as error:  # the rows are published but nothing may read them as finished
+        notes.append(
+            f"{day.isoformat()}: the {parts} part file(s) uploaded but the completion marker did not, so "
+            f"this day stays unfinished and will be re-exported: {type(error).__name__}: {error}"
+        )
+        return "raised", parts, rows, written_bytes, "; ".join(notes)
+    return "written", parts, rows, written_bytes, "; ".join(notes) or None
 
 
 async def _read_watermark(
@@ -703,8 +950,14 @@ async def _read_watermark(
         await session.rollback()
 
 
-def _prune_surplus(store: ObjectStore, lane: LaneRegistration, *, day: date, written_part_count: int) -> str | None:
-    """Trail a completed static re-export with the prune removing the parts it no longer wrote.
+def _prune_surplus(
+    store: ObjectStore, lane: LaneRegistration, *, day: date, written_part_count: int
+) -> SurplusPruneResult:
+    """Trail ANY completed export with the prune removing the parts it no longer wrote.
+
+    Static lanes are no longer the only ones that need this. Before the completion marker, a series
+    day holding any part at all read as covered and was never revisited, so a shrinking re-export
+    could not arise there; now an unfinished series day IS re-exported, and it can.
 
     Scoped to the tier that was just written: the same day's coarser tiers hold a DIFFERENT
     resolution of it, not an older export of it, and a prune that reached them would delete a
@@ -713,11 +966,17 @@ def _prune_surplus(store: ObjectStore, lane: LaneRegistration, *, day: date, wri
     try:
         return store.prune_surplus_parts(
             lane.slug, GAP_FILL_PARTITION_KIND, GAP_FILL_ZOOM_TIER, day, written_part_count=written_part_count
-        ).report
+        )
     except Exception as error:  # the rows are written and correct; no prune may ever undo that
-        return (
-            f"pruning surplus parts of {lane.slug} z{GAP_FILL_ZOOM_TIER} {day.isoformat()} failed, so parts from "
-            f"a larger earlier export may still be published beside this one: {type(error).__name__}: {error}"
+        # Returned as a FAILURE result rather than a prose note: the caller withholds the completion
+        # mark on any failure, and a string it had to pattern-match would make that decision fragile.
+        return SurplusPruneResult(
+            removed=(),
+            failures=(
+                f"pruning surplus parts of {lane.slug} z{GAP_FILL_ZOOM_TIER} {day.isoformat()} failed, so parts "
+                f"from a larger earlier export may still be published beside this one: "
+                f"{type(error).__name__}: {error}",
+            ),
         )
 
 
@@ -759,13 +1018,15 @@ async def _fill_static_day(  # noqa: PLR0913 - one caller-supplied coordinate pe
         outcome, parts, rows, written_bytes, detail = await _export_one_day(
             session, store, lane, day=day, run_id=run_id, now=now
         )
-        if outcome != "written" or parts <= 0:
+        # `parts <= 0` is not re-checked: `_finalize_written_day` already returns `raised` in that
+        # case, so `written` implies at least one part landed.
+        if outcome != "written":
             break
-        # WRITE FIRST, PRUNE SECOND. A prune that ran first and then failed would leave the day EMPTY,
-        # which reads as a present-but-thin version and is worse than the orphan it was removing.
-        pruned = _prune_surplus(store, lane, day=day, written_part_count=parts)
-        if pruned is not None:
-            notes.append(pruned)
+        # `_export_one_day` already pruned this attempt and marked it complete. Its note moves into
+        # `notes` rather than staying in `detail`, which the next attempt would overwrite and lose.
+        if detail is not None:
+            notes.append(detail)
+            detail = None
         after, after_error = await _read_watermark(session, store, lane, today=today)
         unread = before_error or after_error
         if unread is not None:
@@ -792,6 +1053,64 @@ async def _fill_static_day(  # noqa: PLR0913 - one caller-supplied coordinate pe
     return outcome, parts, rows, written_bytes, "; ".join(note for note in (detail, *notes) if note) or None
 
 
+def _lane_day_lock_key(lane: LaneRegistration, day: date) -> str:
+    """The advisory-lock identity of one lane-day-tier: the unit two writers must never share."""
+    return f"parquet-gap-fill:{lane.slug}:{GAP_FILL_PARTITION_KIND}:z{GAP_FILL_ZOOM_TIER}:{day.isoformat()}"
+
+
+@asynccontextmanager
+async def postgres_lane_day_lock(session: AsyncSession, key: str) -> AsyncIterator[bool]:
+    """Hold one lane-day's SESSION-scoped advisory lock for the block, yielding whether it was taken.
+
+    SESSION-scoped, not transaction-scoped, and that is the whole reason this is not
+    `execution/provenance.py::advisory_lock`. That helper takes `pg_advisory_xact_lock`, which the
+    very next `session.rollback()` releases -- and this driver rolls back immediately after every
+    export, BEFORE the prune that deletes objects and the mark that publishes the day. A transaction
+    lock would cover the read and leave the destructive half unguarded, which is exactly backwards.
+    A session lock survives those rollbacks.
+
+    TRY, never wait. This driver runs on a wall-clock budget; blocking on a lane-day another run is
+    already writing would spend the tick queueing to redo work that is being done. The day stays
+    missing and the next tick takes it.
+
+    `pg_advisory_unlock` is not transactional either, so the release survives the caller's next
+    rollback and needs none of its own. A failed release is swallowed: the lock dies with the
+    connection, and losing a tick over it would be the larger fault.
+
+    PRECONDITION, AND IT LIVES IN ANOTHER MODULE: a session lock belongs to one BACKEND, and
+    SQLAlchemy returns the connection to the pool on every rollback -- which this driver does between
+    acquire and release on every path. Acquire and release land on the same backend only because
+    `db/engine.py:121` pins `pool_size=1, max_overflow=0` for this engine. RAISE THAT POOL AND THIS
+    BREAKS SILENTLY: the unlock goes to a different connection, the original holds the lock for its
+    lifetime, every later tick reports `contended` for that lane-day, and the day is never filled --
+    on a green tick, because `contended` is deliberately not a failure. Anything changing that pool
+    must move this to an explicitly checked-out connection first.
+    """
+    held = await session.execute(select(func.pg_try_advisory_lock(func.hashtextextended(key, 0))))
+    granted = bool(held.scalar())
+    try:
+        yield granted
+    finally:
+        if granted:
+            # No rollback of its own on either side. Every export path already rolls back before
+            # returning, and `pg_advisory_unlock` is not transactional, so wrapping this in one
+            # would only add a transaction per lane-day for nothing -- and this driver's whole
+            # session discipline is "never hold a snapshot you do not need".
+            with suppress(Exception):  # the lock dies with the connection; never fail a tick over it
+                await session.execute(select(func.pg_advisory_unlock(func.hashtextextended(key, 0))))
+
+
+@asynccontextmanager
+async def unlocked_lane_day(session: AsyncSession, key: str) -> AsyncIterator[bool]:  # noqa: ARG001
+    """A lane-day lock that never contends: the seam a test injects when serialisation is not the subject.
+
+    It exists so that exercising this driver does not oblige every fake session to answer
+    `pg_try_advisory_lock`, exactly as `monotonic` and `now` are injected rather than faked. A test
+    that IS about serialisation injects one yielding `False` instead.
+    """
+    yield True
+
+
 async def _fill_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
     session: AsyncSession,
     store: ObjectStore,
@@ -801,11 +1120,32 @@ async def _fill_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per a
     run_id: str,
     now: Callable[[], datetime],
     today: date,
+    lane_day_lock: LaneDayLock,
 ) -> tuple[LaneDayOutcome, int, int, int, str | None]:
-    """Export one lane-day. A static lane also prunes and brackets its window; see `_fill_static_day`."""
-    if lane.watermark is None:
-        return await _export_one_day(session, store, lane, day=day, run_id=run_id, now=now)
-    return await _fill_static_day(session, store, lane, day=day, run_id=run_id, now=now, today=today)
+    """Export one lane-day under its advisory lock. Static lanes also bracket their window.
+
+    THE LOCK SPANS THE WHOLE DAY, export and prune and mark together, because the prune DELETES.
+    Two unsynchronised runs on one lane-day can otherwise interleave so that the slower one's prune
+    removes parts the faster one just wrote and then stamps a completion marker whose `part_count`
+    matches the truncated remainder exactly -- the bucket and its receipt agreeing on a population
+    that lost rows, which no later census or audit can detect. Nothing else in this path is
+    serialised: `cli.py`'s `parquet-gap-fill` verb takes no lease, and RUNBOOK 0.33.3 B has the bulk
+    drain running CONCURRENTLY with this driver by design ("build drain -> run drain -> THEN stop
+    the cron"), so the overlap is planned rather than hypothetical.
+    """
+    async with lane_day_lock(session, _lane_day_lock_key(lane, day)) as granted:
+        if not granted:
+            return (
+                "contended",
+                0,
+                0,
+                0,
+                f"{day.isoformat()}: another run holds this lane-day, so it was skipped rather than "
+                "written twice; it stays missing and the next tick will take it",
+            )
+        if lane.watermark is None:
+            return await _export_one_day(session, store, lane, day=day, run_id=run_id, now=now)
+        return await _fill_static_day(session, store, lane, day=day, run_id=run_id, now=now, today=today)
 
 
 async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable knob of a single tick
@@ -819,6 +1159,7 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
     max_days_per_lane: int | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = _utc_now,
+    lane_day_lock: LaneDayLock = postgres_lane_day_lock,
 ) -> GapFillSummary:
     """Fill every lane's newest missing day, then its next-newest, until the wall-clock budget is spent.
 
@@ -849,27 +1190,26 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
             day = entry.pending.pop(0)
             started = monotonic()
             outcome, parts, rows, written_bytes, detail = await _fill_one_day(
-                session, store, by_slug[entry.census.slug], day=day, run_id=run_id, now=now, today=today
+                session,
+                store,
+                by_slug[entry.census.slug],
+                day=day,
+                run_id=run_id,
+                now=now,
+                today=today,
+                lane_day_lock=lane_day_lock,
             )
             entry.seconds += monotonic() - started
             entry.parts += parts
             entry.rows += rows
             entry.written_bytes += written_bytes
-            if outcome == "raised":
-                entry.stopped, entry.outcome, entry.detail = True, "raised", detail
-            else:
-                if outcome == "absent":
-                    entry.absent += 1
-                else:
-                    entry.written += 1
-                # A pruned orphan and an unproven export window are both reported on a SUCCEEDING day,
-                # so the detail has to survive an outcome that is not `raised` or it is swallowed.
-                if detail is not None:
-                    entry.detail = detail
+            _record_day_outcome(entry, outcome, detail)
         if not progressed:
             break
 
     for entry in progress:
-        if entry.pending and not entry.stopped:
+        # A blocked lane keeps its own outcome even with days left over: "one of your days needs an
+        # admin" is the fact worth surfacing, and `budget_exhausted` reads as a healthy backlog.
+        if entry.pending and not entry.stopped and not entry.blocked:
             entry.outcome = "budget_exhausted"
     return GapFillSummary(lanes=tuple(entry.verdict() for entry in progress), run_id=run_id)

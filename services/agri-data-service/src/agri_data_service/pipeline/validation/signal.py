@@ -44,7 +44,7 @@ from agri_data_service.execution.coverage_contract import (
     DayState,
     LaneCoverageContract,
 )
-from agri_data_service.foundation.parquet.paths import missing_partition_days
+from agri_data_service.foundation.parquet.paths import missing_partition_days, partition_day_statuses
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_STREAM
 
@@ -253,6 +253,10 @@ def find_missing_export_partitions(
     never ran for this day" is a claim about the rung the export actually targets. A listing that
     spanned the ladder would count a derived coarse rung as evidence the base export ran, which is
     exactly backwards: the coarse rung is DOWNSTREAM of the base one and cannot exist without it.
+
+    Returns strictly `missing` days. Days holding part files without a completion marker are
+    `incomplete` -- a distinct defect reported by `find_incomplete_export_partitions` -- so an
+    operator can distinguish "never attempted" from "attempted and killed mid-upload".
     """
     if last_day < first_day:
         raise SignalValidationError(f"partition window {first_day.isoformat()}..{last_day.isoformat()} runs backwards")
@@ -267,3 +271,33 @@ def find_missing_export_partitions(
         last_day=last_day,
         keys=keys,
     )
+
+
+def find_incomplete_export_partitions(
+    store: ObjectStore,
+    *,
+    kind: PartitionKind,
+    first_day: date,
+    last_day: date,
+) -> tuple[date, ...]:
+    """Days in `[first_day, last_day]` holding part files without a completion marker at the written tier.
+
+    Parallel to `find_missing_export_partitions`, scoped the same way, but reports the distinct
+    failure mode where the export DID run but was killed part-way through uploading. An operator
+    reading "0 missing" over a lane that crashes mid-export every night is being misled; this
+    check surfaces the incomplete days so both counts are honest.
+    """
+    if last_day < first_day:
+        raise SignalValidationError(f"partition window {first_day.isoformat()}..{last_day.isoformat()} runs backwards")
+    keys: list[str] = []
+    for year in range(first_day.year, last_day.year + 1):
+        keys.extend(store.list_partition_keys(SIGNAL_PLANE_STREAM, kind, WRITTEN_ZOOM_TIER, year=year))
+    statuses = partition_day_statuses(
+        layer=SIGNAL_PLANE_STREAM,
+        kind=kind,
+        zoom=WRITTEN_ZOOM_TIER,
+        first_day=first_day,
+        last_day=last_day,
+        keys=keys,
+    )
+    return tuple(day for day, status in statuses.items() if status == "incomplete")

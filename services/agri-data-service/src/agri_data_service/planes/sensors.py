@@ -87,6 +87,11 @@ class SensorsPlaneCoverage:
         """Days carrying both data and an absence marker: only a manual admin slip produces this."""
         return tuple(sorted(day for day, status in self.statuses.items() if status == "conflict"))
 
+    @property
+    def incomplete_days(self) -> tuple[date, ...]:
+        """Days holding part files but no completion marker: an export killed part-way through."""
+        return tuple(sorted(day for day, status in self.statuses.items() if status == "incomplete"))
+
 
 @dataclass(frozen=True, slots=True)
 class SensorsPlaneResult:
@@ -189,7 +194,12 @@ def read_sensors_readings(  # noqa: PLR0913
 
     glob = _sensors_glob(bucket_root, store, kind, coverage.zoom)
     lazy = pl.scan_parquet(glob, storage_options=dict(storage_options), hive_partitioning=False)
-    lazy = lazy.filter(pl.col("observed_day").is_between(first_day, last_day, closed="both"))
+    # THE CENSUS DECIDES WHICH DAYS ARE READ, not the requested range. A range filter would let any
+    # `incomplete` day inside the window contribute the prefix of a killed upload, so this function
+    # would hand back rows for a day its own `coverage` simultaneously reports as unpublished. The
+    # glob spans the whole tier, so the day set is the only thing standing between the reader and
+    # every unfinished export in it.
+    lazy = lazy.filter(pl.col("observed_day").is_in(list(coverage.data_days)))
     if sensor_ids is not None:
         lazy = lazy.filter(pl.col("sensor_id").is_in(list(sensor_ids)))
     if measurement_names is not None:

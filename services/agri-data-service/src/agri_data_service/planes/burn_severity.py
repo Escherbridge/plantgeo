@@ -29,7 +29,11 @@ from typing import TYPE_CHECKING, Final
 
 import polars as pl
 
-from agri_data_service.foundation.parquet.paths import try_parse_absence_marker_path, try_parse_partition_path
+from agri_data_service.foundation.parquet.paths import (
+    completed_partition_days,
+    try_parse_absence_marker_path,
+    try_parse_partition_path,
+)
 from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.warehouse.schemas.burn_severity import (
     BURN_SEVERITY_GRAIN,
@@ -179,11 +183,16 @@ def _known_release_days(store: ObjectStore, zoom: ZoomTier) -> dict[date, bool]:
     #5) -- nowhere near `ObjectStore`'s 500,000-key listing budget. Scoped by TIER on purpose too:
     a governed absence is recorded per rung, so a release absent at z13 and present at z09 would
     otherwise collapse into one `days[...] = True` whose value depends on listing order.
+
+    A day holding part files WITHOUT a completion marker is an upload killed part-way through and
+    is NOT counted as a published release -- its parts are a prefix of the day, not the day.
     """
+    keys = list(store.list_partition_keys(BURN_SEVERITY_STREAM, _OBSERVED_KIND, zoom))
+    completed = completed_partition_days(keys, layer=BURN_SEVERITY_STREAM, kind=_OBSERVED_KIND, zoom=zoom)
     days: dict[date, bool] = {}
-    for key in store.list_partition_keys(BURN_SEVERITY_STREAM, _OBSERVED_KIND, zoom):
+    for key in keys:
         partition = try_parse_partition_path(key)
-        if partition is not None:
+        if partition is not None and partition.day in completed:
             days.setdefault(partition.day, False)
             continue
         marker = try_parse_absence_marker_path(key)
@@ -193,8 +202,17 @@ def _known_release_days(store: ObjectStore, zoom: ZoomTier) -> dict[date, bool]:
 
 
 def _observed_day_part_keys(store: ObjectStore, zoom: ZoomTier, day: date) -> tuple[str, ...]:
-    """Return every `part-N.parquet` relative key written for exactly this release day at one tier, ascending."""
-    candidates = store.list_partition_keys(BURN_SEVERITY_STREAM, _OBSERVED_KIND, zoom, year=day.year, month=day.month)
+    """Return every `part-N.parquet` relative key written for exactly this release day at one tier, ascending.
+
+    A day whose parts exist without a completion marker is an upload killed part-way through and
+    answers as an empty tuple -- its parts are a prefix of the release, not the release.
+    """
+    candidates = list(
+        store.list_partition_keys(BURN_SEVERITY_STREAM, _OBSERVED_KIND, zoom, year=day.year, month=day.month)
+    )
+    completed = completed_partition_days(candidates, layer=BURN_SEVERITY_STREAM, kind=_OBSERVED_KIND, zoom=zoom)
+    if day not in completed:
+        return ()
     return tuple(
         sorted(key for key in candidates if (parsed := try_parse_partition_path(key)) is not None and parsed.day == day)
     )

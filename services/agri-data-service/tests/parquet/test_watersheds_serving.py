@@ -18,7 +18,8 @@ import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
 from agri_data_service.config import ObjectStoreCredentials
-from agri_data_service.foundation.parquet.paths import partition_day_statuses
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
+from agri_data_service.foundation.parquet.paths import completion_marker_path, partition_day_statuses
 from agri_data_service.ingest.http import UpstreamPayloadError
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.pipeline.validation.watersheds import (
@@ -117,6 +118,17 @@ def _table(rows: list[dict[str, object]]) -> pa.Table:
     return pa.table({name: pa.array(values) for name, values in columns.items()}).cast(WATERSHEDS_SCHEMA.arrow_schema)
 
 
+def _mark_complete(backend: RecordingBackend, *, day: date, zoom: ZoomTier, part_count: int, row_count: int) -> None:
+    """Mark a day complete in the test backend by writing its completion marker."""
+    marker_key = completion_marker_path(WATERSHEDS_STREAM, "observed", zoom, day)
+    backend.objects[marker_key] = PartitionCompletion(
+        part_count=part_count,
+        row_count=row_count,
+        completed_at=datetime(2026, 8, 22, tzinfo=UTC),
+        run_id="test",
+    ).to_json_bytes()
+
+
 def _write_local_release(
     tmp_path: Path, parts: list[list[dict[str, object]]], *, day: date = RELEASE_DAY, zoom: ZoomTier = BASE_TIER
 ) -> str:
@@ -142,9 +154,15 @@ def _write_local_release(
 
 
 def test_ten_parts_read_as_one_release_day_matching_partition_day_statuses() -> None:
+    """A ten-part day with a completion marker reads as ONE "data" day and is served.
+
+    The test's whole point is that a ten-part release collapses to one entry in the day list and
+    agrees with `partition_day_statuses`. It now needs the completion marker to still agree.
+    """
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    for part_index in range(10):
+    part_count = 10
+    for part_index in range(part_count):
         store.write_partition(
             _table([_watershed_row(f"17080001010{part_index}")]),
             layer=WATERSHEDS_STREAM,
@@ -153,6 +171,7 @@ def test_ten_parts_read_as_one_release_day_matching_partition_day_statuses() -> 
             day=RELEASE_DAY,
             part_index=part_index,
         )
+    _mark_complete(backend, day=RELEASE_DAY, zoom=BASE_TIER, part_count=part_count, row_count=part_count)
 
     assert list_observed_release_days(store, requested_zoom=BASE_TIER_REQUEST) == (RELEASE_DAY,)
     keys = store.list_partition_keys(WATERSHEDS_STREAM, "observed", BASE_TIER)
@@ -166,6 +185,37 @@ def test_ten_parts_read_as_one_release_day_matching_partition_day_statuses() -> 
     ) == {RELEASE_DAY: "data"}
 
 
+def test_nine_parts_with_no_marker_reads_as_incomplete_and_is_not_served() -> None:
+    """A day holding part files without a completion marker is a half-written release and is excluded.
+
+    The day reads as "incomplete" from `partition_day_statuses` and is absent from
+    `list_observed_release_days` -- both apply the same completion rule.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    for part_index in range(9):
+        store.write_partition(
+            _table([_watershed_row(f"17080001010{part_index}")]),
+            layer=WATERSHEDS_STREAM,
+            kind="observed",
+            zoom=BASE_TIER,
+            day=RELEASE_DAY,
+            part_index=part_index,
+        )
+    # Deliberately no _mark_complete call -- the export was killed part-way through.
+
+    assert list_observed_release_days(store, requested_zoom=BASE_TIER_REQUEST) == ()
+    keys = store.list_partition_keys(WATERSHEDS_STREAM, "observed", BASE_TIER)
+    assert partition_day_statuses(
+        layer=WATERSHEDS_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        first_day=RELEASE_DAY,
+        last_day=RELEASE_DAY,
+        keys=keys,
+    ) == {RELEASE_DAY: "incomplete"}
+
+
 def test_resolve_latest_observed_release_day_never_borrows_from_the_future() -> None:
     backend = RecordingBackend()
     store = ObjectStore(backend)
@@ -176,6 +226,7 @@ def test_resolve_latest_observed_release_day_never_borrows_from_the_future() -> 
         zoom=BASE_TIER,
         day=RELEASE_DAY,
     )
+    _mark_complete(backend, day=RELEASE_DAY, zoom=BASE_TIER, part_count=1, row_count=1)
 
     before_first_release = date(2020, 1, 1)
     far_future = date(2030, 1, 1)
@@ -494,6 +545,7 @@ def test_release_discovery_and_the_scan_always_name_the_same_rung() -> None:
         zoom=BASE_TIER,
         day=RELEASE_DAY,
     )
+    _mark_complete(backend, day=RELEASE_DAY, zoom=BASE_TIER, part_count=1, row_count=1)
 
     assert list_observed_release_days(store, requested_zoom=BASE_TIER) == (RELEASE_DAY,)
     assert list_observed_release_days(store, requested_zoom=DETAIL_TIER) == ()

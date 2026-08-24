@@ -16,7 +16,24 @@ Confirms RUNBOOK §0.23.6's layout assumption with `kind=` inserted per
 `code_styleguides/layer-lanes.md` §2, and `zoom=` inserted by owner decision 2026-08-23. Every
 component is Hive-style `name=value`, which is what lets DuckDB and Polars prune on `layer`, `kind`,
 `zoom`, `year`, `month` and `day` without being told the partitioning scheme. There are exactly
-**two** object kinds: a part file and an absence marker.
+**three** object kinds: a part file, an absence marker, and a completion marker.
+
+- **`part-N.parquet`** — the data, one or more per day (index 0-9999).
+- **`absent.json`** — a governed absence: the day is deliberately empty because the upstream source
+  genuinely cannot serve it. Evidence payload (reason, upstream response, recorded-at, run id) lives
+  in `absence.py`; gap detection classifies by key alone and stays a listing.
+- **`_complete.json`** — the export finished and all parts of this day are present. Written LAST,
+  after the prune. A day holding parts WITHOUT this marker is a release whose upload was killed
+  part-way through; its parts are real but they are a prefix of the day, not the day itself.
+
+**Why a three-object layout when two-objects was a deliberate design rule (RUNBOOK §0.23)?** A day
+that cannot say whether it finished is worse than a layout with three kinds. Parts upload one at a
+time, so a container killed mid-export leaves a prefix behind. Every part of that prefix is NEW, so
+freshness signals read at-or-after the source watermark and the day wrongly resolves as `current` —
+half a release published as a finished one. Deploys replacing a mid-tick container is the normal
+case in this environment (§0.34.1). The cheaper alternative — a rule in `resolve_static_lane` that a
+day whose last export `raised` must be re-exported — was rejected because it only fires when a
+failure was RECORDED, and a container replaced mid-write records nothing.
 
 - **`kind` is a partition, not a column branch.** Observed and forecast are sibling streams at
   identical grain. A reader that blends them cannot say which it answered from, and per
@@ -30,8 +47,6 @@ component is Hive-style `name=value`, which is what lets DuckDB and Polars prune
   prefix and the mistake stays invisible until serving reads the wrong resolution, long after the
   run that caused it. A key without `zoom=` is not of this layout and does not parse; the objects
   written before the axis existed are discarded and re-drained, never migrated.
-- **`part-N.parquet` allows a day to spill across files.** Gap detection lists the day directory,
-  so any number of parts still reads as one present day. `part-0` is the norm; index 0-9999.
 - **Paths here are always *relative*.** A bucket-root prefix (`OBJECT_STORE_PREFIX`) lives outside
   this layout and is applied by `pipeline/parquet/objectstore.py`. Nothing in this module knows a
   bucket exists.
@@ -73,11 +88,25 @@ files has misused the layout."* Callers get keys from
 **Governed absences are a marker object, settled 2026-08-22 (RUNBOOK §0.25.3).** A day upstream
 genuinely cannot serve gets `absent.json` at the day's partition path — classifiable by key
 alone, so gap detection stays a listing. `absence.py` owns the evidence payload (reason,
-upstream response, recorded-at, run id — all mandatory); `partition_day_statuses` classifies
-each day as `data` / `absent` / `conflict` / `missing`, and `missing_partition_days` reports
-only `missing`. A `conflict` day (data AND marker) is never produced by the write path — only a
-manual admin action can create or resolve one. The zero-row write refusal stays: an empty
-Parquet file is never the absence mechanism.
+upstream response, recorded-at, run id — all mandatory). The zero-row write refusal stays: an
+empty Parquet file is never the absence mechanism.
+
+**Completion markers are the third object kind (§0.34.1).** `partition_day_statuses` now
+classifies each day as one of FIVE statuses:
+
+- **`data`** — ≥1 part file AND a completion marker. A finished release; gap detection counts
+  this as covered.
+- **`incomplete`** — part files but NO completion marker. A release whose upload was killed
+  part-way through. The parts are real but they are a prefix of the day, not the complete day.
+  Gap detection counts this as unfilled (distinct from `missing`: a day nobody wrote at all).
+- **`absent`** — a governed-absence marker. Gap detection counts this as covered.
+- **`conflict`** — data and a governed absence together. Never produced by the write path; only a
+  manual admin action can create or resolve one. Not counted as covered.
+- **`missing`** — nothing at all. Unfilled.
+
+`missing_partition_days` reports only `missing` (what a human operator needs to see).
+`unfilled_partition_days` reports `missing` + `incomplete` (what the driver fills). A `conflict`
+day is never produced by the write path — only a manual admin action can create or resolve one.
 
 ## Static layers use the same layout — but their `day=` means something else
 RUNBOOK §0.23.6 assumed static layers (`soil-survey`, `watersheds`, `evacuation-zones`) would get

@@ -32,6 +32,7 @@ from datetime import UTC
 from typing import TYPE_CHECKING, Final, Literal
 
 from agri_data_service.foundation.parquet.paths import (
+    completed_partition_days,
     try_parse_absence_marker_path,
     try_parse_partition_path,
 )
@@ -137,12 +138,31 @@ def _newest_matching_day(  # noqa: PLR0913 - the six name one tier of one stream
     include_data: bool,
     include_markers: bool,
 ) -> date | None:
-    """Return the newest day of one stream at one tier among the object kinds asked for, from keys alone."""
+    """Return the newest day of one stream at one tier among the object kinds asked for, from keys alone.
+
+    A PART FILE ONLY COUNTS WHEN ITS DAY ALSO ASSERTED COMPLETION. "How far has this tier been
+    carried" is a coverage question, and half an upload has carried nothing -- so a release killed
+    mid-write must not answer it. Without this the calendar dimension would compute its required
+    version from a version it never finished writing, and this module would hold a second, quieter
+    definition of coverage than the one `partition_day_statuses` applies.
+
+    A governed-absence marker needs no such test: it is one object and cannot be half-written.
+    """
+    materialised = tuple(keys)
+    finished = (
+        completed_partition_days(materialised, layer=layer, kind=kind, zoom=zoom) if include_data else frozenset()
+    )
     newest: date | None = None
-    for key in keys:
+    for key in materialised:
         parsed = try_parse_partition_path(key)
         if parsed is not None:
-            if include_data and parsed.layer == layer and parsed.kind == kind and parsed.zoom == zoom:
+            if (
+                include_data
+                and parsed.day in finished
+                and parsed.layer == layer
+                and parsed.kind == kind
+                and parsed.zoom == zoom
+            ):
                 newest = parsed.day if newest is None else max(newest, parsed.day)
             continue
         marker = try_parse_absence_marker_path(key)
@@ -158,7 +178,7 @@ def _newest_matching_day(  # noqa: PLR0913 - the six name one tier of one stream
 
 
 def newest_data_day(*, layer: str, kind: PartitionKind, zoom: ZoomTier, keys: Iterable[str]) -> date | None:
-    """Return the newest day of one stream's tier that holds a real part file, from keys alone.
+    """Return the newest day of one stream's tier holding a COMPLETED part file, from keys alone.
 
     A static lane has no window to diff, so `partition_day_statuses` -- which needs one -- cannot
     answer its coverage question. What it needs instead is the newest VERSION already published,
@@ -174,7 +194,7 @@ def newest_marker_day(*, layer: str, kind: PartitionKind, zoom: ZoomTier, keys: 
 
 
 def newest_covered_day(*, layer: str, kind: PartitionKind, zoom: ZoomTier, keys: Iterable[str]) -> date | None:
-    """Return the newest day of one stream's tier holding EITHER a part file or an absence marker.
+    """Return the newest day of one stream's tier holding EITHER a finished release or an absence marker.
 
     This merged answer may NOT decide whether a static lane is current -- `resolve_static_lane` takes
     the two days apart, because for a version stamp a marker and a part file make opposite claims.

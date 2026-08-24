@@ -13,8 +13,10 @@ import pytest
 
 from agri_data_service.config import ObjectStoreCredentials
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path
 from agri_data_service.pipeline.parquet.objectstore import ABSENCE_CONTENT_TYPE, PARQUET_CONTENT_TYPE, ObjectStore
+from agri_data_service.pipeline.validation.evacuation_zones import validate_evacuation_zones_snapshot
 from agri_data_service.planes.evacuation_zones import (
     EvacuationZonesServingError,
     bucket_object_root,
@@ -74,6 +76,20 @@ def _write_local_snapshot(  # noqa: PLR0913 - one parameter per partition coordi
         table.schema.get_field_index("snapshot_day"), "snapshot_day", pa.array([day] * zone_count, pa.date32())
     )
     receipt = store.write_partition(table, layer=EVACUATION_ZONES_STREAM, kind="observed", zoom=zoom, day=day)
+    # The marker LAST, as the driver writes it: a snapshot without one is an unfinished upload and
+    # must not become the newest answerable day.
+    store.write_completion_marker(
+        PartitionCompletion(
+            part_count=1,
+            row_count=receipt.row_count,
+            completed_at=datetime(2026, 8, 22, tzinfo=UTC),
+            run_id="test",
+        ),
+        layer=EVACUATION_ZONES_STREAM,
+        kind="observed",
+        zoom=zoom,
+        day=day,
+    )
     target = tmp_path / receipt.relative_path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(backend.objects[receipt.key])
@@ -312,3 +328,71 @@ def test_a_request_between_two_rungs_is_answered_by_the_rung_below_it(tmp_path: 
 
     assert answer.answered_by_zoom_tier == DETAIL_TIER
     assert answer.zone_count == 1
+
+
+def test_an_incomplete_snapshot_is_not_the_newest_answerable_day(tmp_path: Path) -> None:
+    """A day holding part files without a completion marker was killed mid-upload; its parts are a
+    prefix of the day, not the day, and must never be served or counted as published.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    # Write a complete snapshot on Aug 1st
+    _write_local_snapshot(tmp_path, store, backend, day=AUGUST_FIRST, zone_count=TWO_ZONES)
+
+    # Manually create an incomplete snapshot on Aug 6th: part file but no completion marker
+    incomplete_part_path = partition_path(EVACUATION_ZONES_STREAM, "observed", BASE_TIER, AUGUST_SIXTH)
+    table = pa.Table.from_pylist([zone_row(0)])
+    table = table.set_column(
+        table.schema.get_field_index("snapshot_day"), "snapshot_day", pa.array([AUGUST_SIXTH], pa.date32())
+    )
+    # Store the part but deliberately skip the completion marker.
+    incomplete_key = store.key_for(incomplete_part_path)
+    backend.put(incomplete_key, table.to_batches()[0].serialize().to_pybytes(), content_type=PARQUET_CONTENT_TYPE)
+
+    # The newest answerable day should be Aug 1st (complete), not Aug 6th (incomplete)
+    answer = resolve_evacuation_zones_as_of(
+        store,
+        root=tmp_path.as_posix(),
+        requested_zoom=BASE_TIER_REQUEST,
+        as_of=AUGUST_TENTH,
+        state="Oregon",
+        history_floor=HISTORY_FLOOR,
+    )
+
+    assert answer.status == "observed"
+    assert answer.answered_by_snapshot_day == AUGUST_FIRST  # not AUGUST_SIXTH
+    assert answer.zone_count == TWO_ZONES
+
+
+@pytest.mark.asyncio
+async def test_validator_fails_an_incomplete_snapshot_rather_than_passing_it(tmp_path: Path) -> None:
+    """The validator must report a failure for an incomplete snapshot (part files but no completion
+    marker), not let it pass as a clean day with written=None.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+
+    # Manually create an incomplete snapshot: part file but no completion marker
+    incomplete_part_path = partition_path(EVACUATION_ZONES_STREAM, "observed", BASE_TIER, AUGUST_SIXTH)
+    table = pa.Table.from_pylist([zone_row(0)])
+    table = table.set_column(
+        table.schema.get_field_index("snapshot_day"), "snapshot_day", pa.array([AUGUST_SIXTH], pa.date32())
+    )
+    incomplete_key = store.key_for(incomplete_part_path)
+    backend.put(incomplete_key, table.to_batches()[0].serialize().to_pybytes(), content_type=PARQUET_CONTENT_TYPE)
+
+    # The validator should report this as a failure, not pass it silently
+    report = await validate_evacuation_zones_snapshot(
+        store,
+        root=tmp_path.as_posix(),
+        snapshot_day=AUGUST_SIXTH,
+        today=AUGUST_SIXTH,
+        bbox=None,  # skip live comparison
+        storage_options=None,
+        fetch_live=None,
+    )
+
+    assert not report.ok
+    assert report.partition_status == "incomplete"
+    assert len(report.failure_reasons) == 1
+    assert "part files but no completion marker" in report.failure_reasons[0]

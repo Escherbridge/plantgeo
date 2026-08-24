@@ -23,6 +23,7 @@ from agri_data_service.foundation.parquet.paths import (
     ABSENCE_FILE_NAME,
     AbsenceMarkerPath,
     absence_marker_path,
+    completion_marker_path,
     day_prefix,
     missing_partition_days,
     partition_day_statuses,
@@ -106,7 +107,11 @@ def test_statuses_classify_data_absent_conflict_and_missing_chronologically() ->
     first = JULY_FOURTH
     keys = [
         partition_path("sensors", "observed", BASE_TIER, first),
+        # `data` requires the completion marker; the part file alone would be `incomplete`.
+        completion_marker_path("sensors", "observed", BASE_TIER, first),
         absence_marker_path("sensors", "observed", BASE_TIER, first + timedelta(days=1)),
+        # Day 3 is the `conflict` case, which outranks completion: a release and a governed absence
+        # on one day is an admin anomaly whether or not the release finished.
         partition_path("sensors", "observed", BASE_TIER, first + timedelta(days=2)),
         absence_marker_path("sensors", "observed", BASE_TIER, first + timedelta(days=2)),
     ]

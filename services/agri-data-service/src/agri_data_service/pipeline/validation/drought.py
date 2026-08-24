@@ -18,7 +18,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
-from agri_data_service.foundation.parquet.paths import partition_day_statuses, try_parse_partition_path
+from agri_data_service.foundation.parquet.paths import (
+    completed_partition_days,
+    partition_day_statuses,
+    try_parse_partition_path,
+)
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.usdm import fetch_drought_release
 from agri_data_service.ingest.usdm_history import usdm_release_weeks
@@ -47,7 +51,9 @@ NOT_CHECKED_CONFLICT: Final = (
     "which only a manual admin action produces"
 )
 
-DroughtWeekStatus = Literal["written", "recorded_absence", "conflict", "source_gap", "unrecorded_absence"]
+DroughtWeekStatus = Literal[
+    "written", "recorded_absence", "conflict", "warehouse_incomplete", "source_gap", "unrecorded_absence"
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +88,11 @@ class DroughtReconciliationReport:
     def conflicts(self) -> tuple[DroughtWeekReconciliation, ...]:
         """Weeks carrying both a part file and an absence marker; only a manual admin action makes one."""
         return tuple(week for week in self.weeks if week.status == "conflict")
+
+    @property
+    def incomplete_writes(self) -> tuple[DroughtWeekReconciliation, ...]:
+        """Weeks where the warehouse started writing but never finished: parts exist but no completion marker."""
+        return tuple(week for week in self.weeks if week.status == "warehouse_incomplete")
 
 
 class UsdmSourceCheck(Protocol):
@@ -148,6 +159,13 @@ async def _reconcile_week(
         return DroughtWeekReconciliation(valid_date, "recorded_absence", NOT_CHECKED_ALREADY_RECORDED)
     if local_status == "conflict":
         return DroughtWeekReconciliation(valid_date, "conflict", NOT_CHECKED_CONFLICT)
+    if local_status == "incomplete":
+        return DroughtWeekReconciliation(
+            valid_date,
+            "warehouse_incomplete",
+            f"this warehouse started writing {valid_date.isoformat()} but never finished: "
+            "parts exist with no completion marker",
+        )
     published = await source.was_published(valid_date)
     if published:
         return DroughtWeekReconciliation(
@@ -168,9 +186,15 @@ def written_release_span(store: ObjectStore) -> tuple[date, date] | None:
     Computed from the object store's own listing -- never from `geo.drought_areas` or any other
     local intermediate table -- so a reconciliation window is never anchored to the unverified
     ~2022-08 floor `docs/lanes/drought.md` section 7 explicitly flags as inferred, not measured.
+
+    A half-written release (parts exist but no completion marker) is excluded: it failed to
+    complete, so widening the reconciliation span to include it would send the reconciler at a
+    week the warehouse never finished. Only completed exports anchor the span.
     """
     keys = store.list_partition_keys(DROUGHT_STREAM, DROUGHT_OBSERVED_KIND, WRITTEN_ZOOM_TIER)
     written_days = {parsed.day for parsed in (try_parse_partition_path(key) for key in keys) if parsed is not None}
-    if not written_days:
+    completed = completed_partition_days(keys, layer=DROUGHT_STREAM, kind=DROUGHT_OBSERVED_KIND, zoom=WRITTEN_ZOOM_TIER)
+    finished_days = written_days & completed
+    if not finished_days:
         return None
-    return min(written_days), max(written_days)
+    return min(finished_days), max(finished_days)

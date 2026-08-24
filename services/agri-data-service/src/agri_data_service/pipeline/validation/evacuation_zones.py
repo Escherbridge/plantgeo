@@ -228,7 +228,8 @@ async def fetch_live_zones_from_oregon(bbox: str) -> tuple[list[dict[str, object
         return await fetch_evacuation_zones(client, bbox)
 
 
-async def validate_evacuation_zones_snapshot(  # noqa: PLR0913
+async def validate_evacuation_zones_snapshot(  # noqa: PLR0913, PLR0912 - one branch per
+    # PartitionDayStatus and one argument per reconciliation input; each branch is a distinct verdict
     store: ObjectStore,
     *,
     root: str,
@@ -241,10 +242,11 @@ async def validate_evacuation_zones_snapshot(  # noqa: PLR0913
     """Reconcile one day's written evacuation-zones snapshot against Oregon OEM's live feed.
 
     Zero written rows on a governed-absence day is a normal quiet season, not a failure
-    (`layer-lanes.md` section 4). A `missing` or `conflict` partition status IS a failure: the
-    first is an ungoverned gap, the second an admin-only anomaly this validator refuses to resolve
-    on its own. `fetch_live` defaults to `None` (no live comparison attempted); wire it to
-    `fetch_live_zones_from_oregon` for the real reconciliation.
+    (`layer-lanes.md` section 4). A `missing`, `incomplete`, or `conflict` partition status IS a
+    failure: the first is an ungoverned gap, the second a release killed mid-upload, the third an
+    admin-only anomaly this validator refuses to resolve on its own. `fetch_live` defaults to `None`
+    (no live comparison attempted); wire it to `fetch_live_zones_from_oregon` for the real
+    reconciliation.
     """
     status = _snapshot_day_status(store, snapshot_day)
     failures: list[str] = []
@@ -257,6 +259,12 @@ async def validate_evacuation_zones_snapshot(  # noqa: PLR0913
         failures.append(
             f"evacuation-zones snapshot {snapshot_day} has neither a data partition nor a "
             "governed-absence marker (partition status: missing)"
+        )
+    elif status == "incomplete":
+        failures.append(
+            f"evacuation-zones snapshot {snapshot_day} has part files but no completion marker; "
+            "the export was killed mid-upload and the parts are a prefix of the day, not the day "
+            "(partition status: incomplete)"
         )
     elif status == "conflict":
         failures.append(

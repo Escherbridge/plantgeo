@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Final
 
 import polars as pl
 
-from agri_data_service.foundation.parquet.paths import try_parse_partition_path
+from agri_data_service.foundation.parquet.paths import completed_partition_days, try_parse_partition_path
 from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
 from agri_data_service.warehouse.schemas.fire_perimeters import (
     FIRE_PERIMETERS_GRAIN,
@@ -91,8 +91,17 @@ def _observed_day_part_keys(store: ObjectStore, zoom: ZoomTier, day: date) -> tu
     `try_parse_partition_path` returns `None` for one of those, which is what filters it out here
     -- an absence marker is not a source of rows, and its presence or absence changes nothing about
     what this function answers.
+
+    A day whose parts exist without a completion marker is an upload killed part-way through and
+    answers as an empty tuple -- its parts are a prefix of the day, not the day. The caller already
+    treats an empty tuple as zero rows, so no new branch is needed.
     """
-    candidates = store.list_partition_keys(FIRE_PERIMETERS_STREAM, _OBSERVED_KIND, zoom, year=day.year, month=day.month)
+    candidates = list(
+        store.list_partition_keys(FIRE_PERIMETERS_STREAM, _OBSERVED_KIND, zoom, year=day.year, month=day.month)
+    )
+    completed = completed_partition_days(candidates, layer=FIRE_PERIMETERS_STREAM, kind=_OBSERVED_KIND, zoom=zoom)
+    if day not in completed:
+        return ()
     return tuple(
         sorted(key for key in candidates if (parsed := try_parse_partition_path(key)) is not None and parsed.day == day)
     )

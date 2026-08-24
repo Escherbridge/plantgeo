@@ -35,6 +35,26 @@ ladder asks four times and knows it asked. The prune is scoped the same way and 
 -- removing a day's surplus parts at z13 must not reach the z09 parts of that same day, which are a
 different resolution of it rather than an older export of it.
 
+A DAY IS FINISHED ONLY WHEN IT SAYS SO, AND THE COMPLETION CLAIM IS RETRACTED BY THE FIRST PART
+WRITE, NOT BY THE ATTEMPT (owner, RUNBOOK 0.34.1). Writing `part-0` is the moment a day's previous
+export stops being what the day holds, so that is where `write_partition` retracts the marker --
+after the empty-row and governed-absence refusals, immediately before the upload.
+
+The earlier design retracted it in the driver before the adapter ran, and that was wrong in one
+direction that matters: EVERY failed attempt -- a statement timeout, a transient database error, a
+source that now returns zero rows -- stripped the completion claim off a day whose parts were an
+intact, previously-marked release. Nothing on disk had got worse, yet the day went from `data` to
+`incomplete`, and once serving consults completion that is a good day disappearing from the API
+because an unrelated export attempt failed. Retracting at the first write cannot do that: a day
+nobody overwrote keeps its claim.
+
+What the ordering still guarantees is the thing the marker exists for. Parts are never uploaded
+under a marker left by an EARLIER export, because the marker is gone before the first of them
+lands, so a run killed between two uploads leaves parts with no completion claim rather than a
+mixture wearing one. A failed retraction fails the write -- there is no version of "the retraction
+did not work, upload anyway" that is safe -- while a failed MARK merely leaves a complete day
+looking unfinished, which costs one re-export and loses nothing.
+
 CROSS-TIER AGREEMENT OF ONE DAY IS NOT THIS MODULE'S INVARIANT. `write_absence` still refuses to mark
 a day that already holds data, but only at the tier being marked: the four tiers of one day live
 under four disjoint prefixes, so policing them together would cost four listings per marker and still
@@ -59,10 +79,12 @@ from agri_data_service.config import ObjectStoreCredentials, Settings, settings
 from agri_data_service.foundation.canonical import sha256_digest
 from agri_data_service.foundation.parquet.paths import (
     absence_marker_path,
+    completion_marker_path,
     day_prefix,
     month_prefix,
     partition_path,
     try_parse_absence_marker_path,
+    try_parse_completion_marker_path,
     try_parse_partition_path,
     year_prefix,
     zoom_prefix,
@@ -74,11 +96,13 @@ if TYPE_CHECKING:
     from datetime import date
 
     from agri_data_service.foundation.parquet.absence import GovernedAbsence
+    from agri_data_service.foundation.parquet.completion import PartitionCompletion
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 PARQUET_CONTENT_TYPE: Final = "application/vnd.apache.parquet"
 ABSENCE_CONTENT_TYPE: Final = "application/json"
+COMPLETION_CONTENT_TYPE: Final = "application/json"
 MAX_LISTED_KEYS: Final = 500_000
 _ABSENT_OBJECT_CODES: Final = frozenset({"404", "NoSuchKey", "NotFound"})
 
@@ -113,7 +137,7 @@ class ListedObject:
 
 @dataclass(frozen=True, slots=True)
 class ListedPartition:
-    """One part file or absence marker of the frozen layout, with the instant it was exported."""
+    """One part file, absence marker or completion marker of the layout, with the instant it was written."""
 
     relative_path: str
     last_modified: datetime | None
@@ -167,6 +191,21 @@ class AbsenceWriteReceipt:
     kind: PartitionKind
     zoom: ZoomTier
     day: date
+    byte_count: int
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class CompletionWriteReceipt:
+    """Provenance for one written completion marker: the day it finishes, and what it claims landed."""
+
+    key: str
+    relative_path: str
+    kind: PartitionKind
+    zoom: ZoomTier
+    day: date
+    part_count: int
+    row_count: int
     byte_count: int
     sha256: str
 
@@ -302,6 +341,12 @@ class ObjectStore:
         payload = _serialize_parquet(conformed, stream.compression)
         relative_path = partition_path(layer, kind, zoom, day, part_index)
         key = self.key_for(relative_path)
+        if part_index == 0:
+            # THE RETRACTION POINT. Every lane writes its parts contiguously from 0, so `part-0` is
+            # the first byte of a new export and the moment the previous one stops describing this
+            # day. Raising here abandons the day with its old export and old claim both intact,
+            # which is the safe direction; the module docstring says why this may not move earlier.
+            self.clear_completion_marker(layer, kind, zoom, day)
         self._backend.put(key, payload, content_type=PARQUET_CONTENT_TYPE)
         return ParquetWriteReceipt(
             key=key,
@@ -332,6 +377,10 @@ class ObjectStore:
                     f"{layer!r} {kind} z{zoom} {day} already holds data ({self.relative_key(existing.key)}); "
                     "correcting a completed record is a manual admin action"
                 )
+        # A day cannot be both deliberately empty and a finished export. The refusal above already
+        # rules out parts, so any completion marker still here is residue from a day whose parts were
+        # removed -- retract it rather than leave two markers making opposite claims about one day.
+        self.clear_completion_marker(layer, kind, zoom, day)
         payload = absence.to_json_bytes()
         relative_path = absence_marker_path(layer, kind, zoom, day)
         key = self.key_for(relative_path)
@@ -346,6 +395,51 @@ class ObjectStore:
             sha256=sha256_digest(payload),
         )
 
+    def write_completion_marker(
+        self,
+        completion: PartitionCompletion,
+        *,
+        layer: str,
+        kind: PartitionKind,
+        zoom: ZoomTier,
+        day: date,
+    ) -> CompletionWriteReceipt:
+        """Assert that one stream-day at one tier FINISHED exporting. Must be the export's LAST object.
+
+        Nothing is re-listed to check the claim: the caller has the write receipts of every part it
+        just uploaded, and a listing taken here would only re-ask the store a question the export
+        already answered -- while adding a second failure mode to the one operation that must stay
+        cheap enough to run after every single lane-day.
+        """
+        payload = completion.to_json_bytes()
+        relative_path = completion_marker_path(layer, kind, zoom, day)
+        key = self.key_for(relative_path)
+        self._backend.put(key, payload, content_type=COMPLETION_CONTENT_TYPE)
+        return CompletionWriteReceipt(
+            key=key,
+            relative_path=relative_path,
+            kind=kind,
+            zoom=zoom,
+            day=day,
+            part_count=completion.part_count,
+            row_count=completion.row_count,
+            byte_count=len(payload),
+            sha256=sha256_digest(payload),
+        )
+
+    def clear_completion_marker(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> None:
+        """Retract one stream-day-tier's completion claim. Called by the first part write, and may raise.
+
+        Deleting a key that is not there is a success in S3 and so it is here, which is what lets the
+        write path call it unconditionally rather than behind an existence check that would cost a
+        HEAD on every export to save a delete on almost none of them.
+
+        IT RAISES ON FAILURE, DELIBERATELY. The caller must abandon the write: uploading a part while
+        an older export's marker still stands is the exact state the marker exists to prevent, and a
+        caller that swallowed this error would reintroduce it while believing it had been closed.
+        """
+        self._backend.delete(self.key_for(completion_marker_path(layer, kind, zoom, day)))
+
     def list_partition_objects(
         self,
         layer: str,
@@ -355,7 +449,7 @@ class ObjectStore:
         year: int | None = None,
         month: int | None = None,
     ) -> tuple[ListedPartition, ...]:
-        """Return ONE TIER's part files and absence markers WITH their export instants, narrowed by year and month.
+        """Return ONE TIER's part files, absence markers and completion markers WITH their instants, by year/month.
 
         `zoom` is required, and there is no mode that returns the whole ladder. See the module
         docstring: a tier-less listing blends four resolutions of the same day into one population
@@ -365,7 +459,14 @@ class ObjectStore:
         found: list[ListedPartition] = []
         for listed in self._backend.list_objects(self.key_for(scope)):
             relative_path = self.relative_key(listed.key)
-            if try_parse_partition_path(relative_path) is None and try_parse_absence_marker_path(relative_path) is None:
+            # All THREE kinds pass, and the completion marker is the reason this is not two checks:
+            # the census reads coverage out of exactly this listing, so a marker filtered out here
+            # would leave every finished day looking half-written and be re-exported forever.
+            if (
+                try_parse_partition_path(relative_path) is None
+                and try_parse_absence_marker_path(relative_path) is None
+                and try_parse_completion_marker_path(relative_path) is None
+            ):
                 continue
             found.append(ListedPartition(relative_path=relative_path, last_modified=listed.last_modified))
             if len(found) > MAX_LISTED_KEYS:
@@ -381,7 +482,13 @@ class ObjectStore:
         year: int | None = None,
         month: int | None = None,
     ) -> tuple[str, ...]:
-        """Return every part file and absence marker of ONE TIER as a relative path, narrowed by year and month."""
+        """Return every part file, absence marker and completion marker of ONE TIER, narrowed by year and month.
+
+        All three kinds, deliberately: the census decides coverage from exactly this list, so a
+        completion marker filtered out here would leave every finished day reading as half-written.
+        A caller that wants only the readable rows filters with `try_parse_partition_path` itself --
+        several in `planes/` do -- and must then apply the completion rule alongside it.
+        """
         return tuple(
             listed.relative_path for listed in self.list_partition_objects(layer, kind, zoom, year=year, month=month)
         )
@@ -424,7 +531,8 @@ class ObjectStore:
         for entry in listed:
             relative_path = self.relative_key(entry.key)
             # Every coordinate is re-checked from the PARSED path, never inferred from the prefix: an
-            # absence marker parses as `None` here, and another lane, kind, TIER or day cannot match.
+            # absence marker and a completion marker both parse as `None` here -- neither is ever
+            # surplus -- and another lane, kind, TIER or day cannot match.
             parsed = try_parse_partition_path(relative_path)
             if (
                 parsed is None

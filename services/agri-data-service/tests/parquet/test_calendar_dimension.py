@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import io
 import math
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import pytest
@@ -29,6 +29,7 @@ from agri_data_service.foundation.parquet.calendar import (
     days_in_year,
     required_calendar_version_day,
 )
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.calendar import build_calendar_table, export_calendar_version
@@ -207,7 +208,10 @@ def test_writing_a_version_lands_under_the_calendar_prefix_and_reads_back_as_one
         first_day=TODAY,
         last_day=TODAY,
         keys=list(backend.objects),
-    ) == {TODAY: "data"}
+    ) == {TODAY: "incomplete"}
+    # `incomplete`, not `data`: a lane export writes parts, and only the gap-fill driver marks a
+    # day complete. Asserting `data` here would quietly require the writer to make a claim it is
+    # deliberately not allowed to make.
 
 
 @pytest.mark.asyncio
@@ -222,6 +226,22 @@ async def test_the_registered_adapter_writes_the_version_and_the_next_tick_finds
     assert first.day == TODAY
     result = await registration.adapter(None, store, day=first.day, run_id="test")  # type: ignore[arg-type]
     assert result.row_count > 0
+    # THE DRIVER MARKS, NOT THE LANE. Calling the adapter directly skips `_finalize_written_day`, so
+    # the version is on disk as an unfinished upload -- and `newest_covered_day` correctly refuses to
+    # count it. Standing in for the driver here is what makes this "the next tick" rather than
+    # "the next tick, if the previous one happened to survive".
+    store.write_completion_marker(
+        PartitionCompletion(
+            part_count=result.part_count,
+            row_count=result.row_count,
+            completed_at=datetime(2026, 8, 22, tzinfo=UTC),
+            run_id="test",
+        ),
+        layer=CALENDAR_STREAM,
+        kind="observed",
+        zoom=LANE_BASE_ZOOM_TIER,
+        day=first.day,
+    )
 
     second = await registration.watermark(None, store, today=TODAY)  # type: ignore[arg-type]
     assert second.day == TODAY, "the held version now satisfies the coverage requirement"
