@@ -3923,6 +3923,33 @@ The cheaper alternative nobody has costed: retract just those completion markers
 so the census calls the days `incomplete` and the drain re-exports them. `retract_partition_tier`
 (added this session) already does exactly this for one rung.
 
+#### 0.38.7 RUNNING THE DRAIN: scope it with `--layer`, or it looks dead for eight minutes
+
+**The drain resolves EVERY static lane's source watermark before it walks a single day.**
+`run_drain` calls `resolve_lane_watermarks` first, because the census cannot classify a reference
+set without knowing what version its source is on. There are four static lanes, each watermark
+query is bounded at the ordinary 120 s, and `soil-survey`'s is slow -- so an unscoped drain can
+spend ~8 minutes in setup having written nothing at all.
+
+That is not a hang, and it cost real time to work out twice. A sample run given a 420 s time budget
+spent its ENTIRE budget in that phase and produced an empty log, which reads exactly like a dead
+job.
+
+**All four lanes with a backlog are non-static, so scope the run and the phase disappears:**
+
+```
+uv run agri-cli parquet-drain   --layer fire-detections --layer burn-severity --layer signal --layer vegetation   --days-per-lane-turn 50 --progress
+```
+
+Measured with that scoping: `fire-detections` drains at roughly **3-4 seconds per day** including
+all three derived rungs -- 35 days in about two minutes -- which puts its 9,202 days in the range of
+hours, not the days a cold `signal` batch had suggested. `burn-severity` is faster still because
+most of its days are governed absences.
+
+A `contended` line in the progress stream is HEALTHY: it is the hourly cron and the drain meeting on
+one lane-day, the advisory lock refusing the second writer, and the drain putting the day back for a
+later turn. RUNBOOK 0.33.3 B plans for exactly this overlap.
+
 #### 0.38.5 Assumptions, highest reversal cost first
 
 - **`min_area_tier_squares` unset on every geometry lane** · to reverse: setting it to 1.0 EMPTIES
