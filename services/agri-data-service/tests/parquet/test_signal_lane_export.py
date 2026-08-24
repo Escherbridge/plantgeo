@@ -44,6 +44,9 @@ def signal_row(cell_id: str, signal_name: str = "precipitation") -> dict[str, ob
         "newest_observed_at": datetime(2026, 8, 6, 12, tzinfo=UTC),
         "coverage_fraction": 1.0,
         "allowed_client_exposure": False,
+        # The spatial cell's centroid, which `signal_plane_day_export.sql` now projects.
+        "cell_longitude": -116.2,
+        "cell_latitude": 43.6,
     }
 
 

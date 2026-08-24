@@ -75,7 +75,8 @@ WITH winning_observation AS (
         (:observed_day)::date AS observed_day,
         (feature.properties ->> 'observedAt')::timestamptz AS observed_at,
         feature.properties -> 'readings' AS readings,
-        feature.data_available_at
+        feature.data_available_at,
+        feature.geom
     FROM geo.features AS feature
     JOIN geo.layers AS layer ON layer.id = feature.layer_id
     WHERE layer.name = 'sensors'
@@ -104,7 +105,13 @@ SELECT
     measurement.value ->> 'unitCode' AS unit_code,
     measurement.value ->> 'qualityControl' AS quality_control,
     winning_observation.feature_id::text AS feature_id,
-    winning_observation.data_available_at
+    winning_observation.data_available_at,
+    -- Station coordinates from the feature's geometry. These are the station's location
+    -- (maintained by geo.sync_feature_geom_from_properties), NOT the representative point of
+    -- any cell. A pushed row may lack geometry, so these are NULLABLE; ST_X(NULL) returns NULL
+    -- as wanted, never a fabricated 0,0 (the Gulf of Guinea, the classic version of this bug).
+    ST_X(winning_observation.geom) AS station_longitude,
+    ST_Y(winning_observation.geom) AS station_latitude
 FROM winning_observation
 CROSS JOIN LATERAL jsonb_each(COALESCE(winning_observation.readings, '{}'::jsonb)) AS measurement(key, value)
 WHERE measurement.key <> 'textDescription'

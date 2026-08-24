@@ -85,6 +85,7 @@ from agri_data_service.foundation.parquet.paths import (
     try_parse_partition_path,
 )
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.pipeline.parquet.derivation import DerivationResult, derive_and_write_day_tiers
 from agri_data_service.pipeline.parquet.objectstore import (
     EmptyPartitionError,
     GovernedAbsenceConflictError,
@@ -113,6 +114,9 @@ if TYPE_CHECKING:
     # functions. Yields whether the lock was granted, and releases on exit; the real one is
     # `postgres_lane_day_lock` and the always-granted test seam is `unlocked_lane_day`.
     LaneDayLock = Callable[[AsyncSession, str], AbstractAsyncContextManager[bool]]
+    # The coarse-rung writer, injectable exactly as the lane-day lock above is. `no_derived_tiers`
+    # is the no-op a driver test substitutes when the zoom ladder is not what it is exercising.
+    TierDeriver = Callable[..., DerivationResult]
 
 # This driver fills settled OBSERVED days only. `kind=forecast` partitions are produced by each
 # lane's own `method/monte_carlo/<slug>.py`, from an issue date rather than from a gap census, and
@@ -789,6 +793,7 @@ async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per
     day: date,
     run_id: str,
     now: Callable[[], datetime],
+    derive_tiers: TierDeriver = derive_and_write_day_tiers,
 ) -> tuple[LaneDayOutcome, int, int, int, str | None]:
     """Export one lane-day, returning `(outcome, parts, rows, bytes, detail)` and never raising.
 
@@ -858,6 +863,7 @@ async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per
         written_bytes=result.byte_count,
         run_id=run_id,
         now=now,
+        derive_tiers=derive_tiers,
     )
 
 
@@ -871,6 +877,7 @@ def _finalize_written_day(  # noqa: PLR0913 - one coordinate of the day being cl
     written_bytes: int,
     run_id: str,
     now: Callable[[], datetime],
+    derive_tiers: TierDeriver = derive_and_write_day_tiers,
 ) -> tuple[LaneDayOutcome, int, int, int, str | None]:
     """Close a written lane-day: prune what this export no longer wrote, then assert that it finished.
 
@@ -912,6 +919,32 @@ def _finalize_written_day(  # noqa: PLR0913 - one coordinate of the day being cl
             "that mixture would be false. The next tick re-exports and re-prunes this day."
         )
         return "written", parts, rows, written_bytes, "; ".join(notes)
+    # THE COARSE RUNGS, BEFORE THE BASE MARKER. Only the base tier is censused
+    # (`build_gap_census` walks `GAP_FILL_ZOOM_TIER` alone), so the base marker is the one signal
+    # that can bring this day back for another attempt. Marking it first and then failing to derive
+    # would strand the day base-complete and permanently empty above z13 -- on a green tick, which
+    # is the same shape of silent failure `contended` already has. Deriving first makes the failure
+    # self-healing instead: the day stays unmarked and the next tick redoes all four rungs.
+    try:
+        derived = derive_tiers(
+            store, layer=lane.slug, kind=GAP_FILL_PARTITION_KIND, day=day, run_id=run_id, now=now
+        )
+    except Exception as error:  # the base rows are published but the ladder above them is not
+        notes.append(
+            f"{day.isoformat()}: the base rung is written but its coarse rungs are not, so the day stays "
+            f"unfinished and will be re-exported rather than be published as visible only above z13: "
+            f"{type(error).__name__}: {error}"
+        )
+        return "raised", parts, rows, written_bytes, "; ".join(notes)
+    notes.extend(derived.notes)
+    if derived.tiers:
+        rungs = ", ".join(
+            f"z{report.tier} {report.row_count} rows in {report.part_count} part(s)" for report in derived.tiers
+        )
+        notes.append(f"{day.isoformat()}: derived {rungs}")
+    # The marker's counts describe the BASE rung alone. The derived rungs carry their own markers
+    # with their own counts, written as each landed; folding them together here would make this
+    # marker claim a population no single prefix holds.
     try:
         store.write_completion_marker(
             PartitionCompletion(part_count=parts, row_count=rows, completed_at=now(), run_id=run_id),
@@ -989,6 +1022,7 @@ async def _fill_static_day(  # noqa: PLR0913 - one caller-supplied coordinate pe
     run_id: str,
     now: Callable[[], datetime],
     today: date,
+    derive_tiers: TierDeriver = derive_and_write_day_tiers,
 ) -> tuple[LaneDayOutcome, int, int, int, str | None]:
     """Export one STATIC lane-day, prune what it no longer wrote, and prove the source held still.
 
@@ -1016,7 +1050,7 @@ async def _fill_static_day(  # noqa: PLR0913 - one caller-supplied coordinate pe
     for attempt in range(1, MAX_STATIC_EXPORT_ATTEMPTS + 1):
         before, before_error = await _read_watermark(session, store, lane, today=today)
         outcome, parts, rows, written_bytes, detail = await _export_one_day(
-            session, store, lane, day=day, run_id=run_id, now=now
+            session, store, lane, day=day, run_id=run_id, now=now, derive_tiers=derive_tiers
         )
         # `parts <= 0` is not re-checked: `_finalize_written_day` already returns `raised` in that
         # case, so `written` implies at least one part landed.
@@ -1100,6 +1134,26 @@ async def postgres_lane_day_lock(session: AsyncSession, key: str) -> AsyncIterat
                 await session.execute(select(func.pg_advisory_unlock(func.hashtextextended(key, 0))))
 
 
+def no_derived_tiers(  # noqa: PLR0913 - the signature IS the seam; it must match what it replaces
+    store: ObjectStore,  # noqa: ARG001
+    *,
+    layer: str,  # noqa: ARG001
+    kind: PartitionKind,  # noqa: ARG001
+    day: date,  # noqa: ARG001
+    run_id: str,  # noqa: ARG001
+    now: Callable[[], datetime],  # noqa: ARG001
+) -> DerivationResult:
+    """A tier derivation that writes nothing: the seam a test injects when the ladder is not the subject.
+
+    It exists for the same reason `unlocked_lane_day` does, one contract down. Deriving the coarse
+    rungs READS THE BASE RUNG BACK from the store, so with the real deriver every stub lane in a
+    driver test would have to write a schema-conforming part file before its day could close --
+    turning every test about budgets, watermarks and per-lane isolation into a test about Parquet
+    schemas. Tests that ARE about the ladder inject the real one, or call it directly.
+    """
+    return DerivationResult(tiers=(), notes=())
+
+
 @asynccontextmanager
 async def unlocked_lane_day(session: AsyncSession, key: str) -> AsyncIterator[bool]:  # noqa: ARG001
     """A lane-day lock that never contends: the seam a test injects when serialisation is not the subject.
@@ -1111,7 +1165,7 @@ async def unlocked_lane_day(session: AsyncSession, key: str) -> AsyncIterator[bo
     yield True
 
 
-async def _fill_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
+async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
     session: AsyncSession,
     store: ObjectStore,
     lane: LaneRegistration,
@@ -1121,8 +1175,14 @@ async def _fill_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per a
     now: Callable[[], datetime],
     today: date,
     lane_day_lock: LaneDayLock,
+    derive_tiers: TierDeriver = derive_and_write_day_tiers,
 ) -> tuple[LaneDayOutcome, int, int, int, str | None]:
     """Export one lane-day under its advisory lock. Static lanes also bracket their window.
+
+    PUBLIC because the bulk drain (`pipeline/parquet/drain.py`) calls exactly this. The drain and
+    the hourly cron must not drift on what one lane-day MEANS -- the lock, the prune, the coarse
+    rungs and the marker are one indivisible unit, and a drain that reimplemented them would be
+    the second definition of a contract that already took three review passes to settle.
 
     THE LOCK SPANS THE WHOLE DAY, export and prune and mark together, because the prune DELETES.
     Two unsynchronised runs on one lane-day can otherwise interleave so that the slower one's prune
@@ -1144,8 +1204,12 @@ async def _fill_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per a
                 "written twice; it stays missing and the next tick will take it",
             )
         if lane.watermark is None:
-            return await _export_one_day(session, store, lane, day=day, run_id=run_id, now=now)
-        return await _fill_static_day(session, store, lane, day=day, run_id=run_id, now=now, today=today)
+            return await _export_one_day(
+                session, store, lane, day=day, run_id=run_id, now=now, derive_tiers=derive_tiers
+            )
+        return await _fill_static_day(
+            session, store, lane, day=day, run_id=run_id, now=now, today=today, derive_tiers=derive_tiers
+        )
 
 
 async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable knob of a single tick
@@ -1160,6 +1224,7 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = _utc_now,
     lane_day_lock: LaneDayLock = postgres_lane_day_lock,
+    derive_tiers: TierDeriver = derive_and_write_day_tiers,
 ) -> GapFillSummary:
     """Fill every lane's newest missing day, then its next-newest, until the wall-clock budget is spent.
 
@@ -1189,7 +1254,7 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
             progressed = True
             day = entry.pending.pop(0)
             started = monotonic()
-            outcome, parts, rows, written_bytes, detail = await _fill_one_day(
+            outcome, parts, rows, written_bytes, detail = await fill_one_lane_day(
                 session,
                 store,
                 by_slug[entry.census.slug],
@@ -1198,6 +1263,7 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
                 now=now,
                 today=today,
                 lane_day_lock=lane_day_lock,
+                derive_tiers=derive_tiers,
             )
             entry.seconds += monotonic() - started
             entry.parts += parts

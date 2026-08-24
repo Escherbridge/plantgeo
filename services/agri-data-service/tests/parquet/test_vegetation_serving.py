@@ -91,6 +91,8 @@ def _vegetation_table(day: date, cell_ids: Sequence[str]) -> pa.Table:
             "data_available_at": pa.array([datetime(2026, 8, 6, 12, tzinfo=UTC)] * count, pa.timestamp("us", tz="UTC")),
             "release_count": pa.array([1] * count, pa.int64()),
             "allowed_client_exposure": pa.array([True] * count, pa.bool_()),
+            "cell_longitude": pa.array([-116.0 - i * 0.01 for i in range(count)], pa.float64()),
+            "cell_latitude": pa.array([43.0 + i * 0.01 for i in range(count)], pa.float64()),
         }
     )
 

@@ -4,7 +4,7 @@
 --          `layer=signal/kind=observed/year=/month=/day=/part-N.parquet`.
 -- Loaded by: agri_data_service.pipeline.lanes.signal
 -- Params: observed_day (date -- the one UTC calendar day being exported),
---         cell_ids (bigint[] -- the cell batch; NEVER empty, see the batching note below)
+--         cell_ids (uuid[] -- the cell batch; NEVER empty, see the batching note below)
 --
 -- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap" in
 -- sql/AGENTS.md -- SQLAlchemy's text() scans comments too, and a colon-prefixed word here would
@@ -55,8 +55,13 @@ WITH governed AS (
         observation.coverage_fraction,
         observation.id AS observation_id,
         release.retrieved_at AS release_retrieved_at,
-        source.allowed_client_exposure
+        source.allowed_client_exposure,
+        cell.centroid
     FROM agri.signal_observation AS observation
+    -- Joins spatial_cell to reach the cell's centroid for coordinate projection. INNER is safe:
+    -- observation.cell_id is a foreign key to spatial_cell(id), so a missing cell is a broken
+    -- invariant rather than a legitimate row.
+    INNER JOIN agri.spatial_cell AS cell ON cell.id = observation.cell_id
     JOIN agri.source_release AS release ON release.id = observation.source_release_id
     JOIN agri.data_source AS source ON source.id = release.data_source_id
     JOIN (
@@ -108,6 +113,18 @@ SELECT
     (array_agg(coverage_fraction ORDER BY release_retrieved_at DESC, observation_id DESC))[1]
         AS coverage_fraction,
     (array_agg(allowed_client_exposure ORDER BY release_retrieved_at DESC, observation_id DESC))[1]
-        AS allowed_client_exposure
+        AS allowed_client_exposure,
+    -- Cell coordinates from the spatial cell's centroid. These are the representative point of
+    -- the CELL, never the location of any individual observation -- a reader must not treat them
+    -- as where a measurement was taken.
+    -- They ride the same newest-release array_agg the other carried columns use, rather than
+    -- joining the GROUP BY. Both are correct (centroid is functionally dependent on cell_id), but
+    -- grouping on a PostGIS geometry compares it structurally, which is far more expensive than
+    -- comparing the uuid the cell is already grouped by -- and it would silently split a cell whose
+    -- centroid were ever rewritten with identical coordinates in a different binary encoding.
+    ST_X((array_agg(centroid ORDER BY release_retrieved_at DESC, observation_id DESC))[1])
+        AS cell_longitude,
+    ST_Y((array_agg(centroid ORDER BY release_retrieved_at DESC, observation_id DESC))[1])
+        AS cell_latitude
 FROM governed
 GROUP BY support_key, signal_name, normalized_unit, cell_id, observed_day

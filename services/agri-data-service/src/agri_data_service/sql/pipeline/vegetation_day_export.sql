@@ -124,7 +124,8 @@ WITH governed AS (
         observation.data_available_at,
         observation.id AS observation_id,
         release.retrieved_at AS release_retrieved_at,
-        source.allowed_client_exposure
+        source.allowed_client_exposure,
+        cell.centroid
     FROM agri.forecast_series AS series
     INNER JOIN agri.spatial_cell AS cell ON cell.id = series.spatial_cell_id
     INNER JOIN agri.forecast_observation AS observation ON observation.series_id = series.id
@@ -152,6 +153,18 @@ SELECT
         AS data_available_at,
     COUNT(*)::bigint AS release_count,
     (array_agg(allowed_client_exposure ORDER BY release_retrieved_at DESC, observation_id DESC))[1]
-        AS allowed_client_exposure
+        AS allowed_client_exposure,
+    -- Cell coordinates from the spatial cell's centroid. These are the representative point of
+    -- the CELL, never the location of any individual observation -- a reader must not treat them
+    -- as where a measurement was taken.
+    -- They ride the same newest-release array_agg the other carried columns use, rather than
+    -- joining the GROUP BY. Both are correct (centroid is functionally dependent on cell_id), but
+    -- grouping on a PostGIS geometry compares it structurally, which is far more expensive than
+    -- comparing the uuid the cell is already grouped by -- and it would silently split a cell whose
+    -- centroid were ever rewritten with identical coordinates in a different binary encoding.
+    ST_X((array_agg(centroid ORDER BY release_retrieved_at DESC, observation_id DESC))[1])
+        AS cell_longitude,
+    ST_Y((array_agg(centroid ORDER BY release_retrieved_at DESC, observation_id DESC))[1])
+        AS cell_latitude
 FROM governed
 GROUP BY cell_id, grid_name, metric_name, metric_unit, observed_day

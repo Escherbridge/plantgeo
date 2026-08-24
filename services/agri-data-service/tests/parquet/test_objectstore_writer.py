@@ -118,6 +118,14 @@ class RecordingBackend:
         self.content_types[key] = content_type
         self.last_modified[key] = self.stamps_puts_at
 
+    def get(self, key: str) -> bytes | None:
+        """Return one object's bytes, or `None` when nothing was put there.
+
+        `None` rather than a raise, matching `BotoObjectStoreBackend.get`: an absent key is a
+        concurrent prune, which the tier derivation is required to survive.
+        """
+        return self.objects.get(key)
+
     def delete(self, key: str) -> None:
         """Remove one object, or refuse it when the test pinned this key as unremovable."""
         if key in self.refuses_delete_of:
@@ -160,6 +168,8 @@ def signal_rows(*, cell_ids: tuple[str, ...] = ("c3", "c1", "c2")) -> pa.Table:
             ),
             "coverage_fraction": pa.array([1.0] * count, pa.float64()),
             "allowed_client_exposure": pa.array([False] * count, pa.bool_()),
+            "cell_longitude": pa.array([-116.0 - index * 0.01 for index in range(count)], pa.float64()),
+            "cell_latitude": pa.array([43.0 + index * 0.01 for index in range(count)], pa.float64()),
         }
     )
 

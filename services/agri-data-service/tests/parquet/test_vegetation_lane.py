@@ -46,6 +46,9 @@ def vegetation_row(cell_id: str) -> dict[str, object]:
         "data_available_at": datetime(2026, 8, 6, 12, tzinfo=UTC),
         "release_count": 1,
         "allowed_client_exposure": True,
+        # The spatial cell's centroid, which `vegetation_day_export.sql` now projects.
+        "cell_longitude": -116.2,
+        "cell_latitude": 43.6,
     }
 
 

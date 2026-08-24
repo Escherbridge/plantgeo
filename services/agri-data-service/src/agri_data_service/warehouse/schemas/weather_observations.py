@@ -22,6 +22,12 @@ from typing import Final
 import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema, register_stream_schema
+from agri_data_service.warehouse.parquet.tiers import (
+    ColumnAggregation,
+    GridAggregation,
+    TierDerivation,
+    register_tier_derivation,
+)
 
 # The layer slug verbatim from `geo.layers.name` -- `WEATHER_LAYER.default` in
 # `ingest/open_meteo.py:64`. Also this stream's `layer=<slug>/` object prefix.
@@ -82,17 +88,60 @@ WEATHER_OBSERVATIONS_SCHEMA: Final = register_stream_schema(
                 pa.field("longitude", pa.float64(), nullable=False),
                 pa.field("observed_at", pa.timestamp("us", tz="UTC"), nullable=False),
                 pa.field("observed_day", pa.date32(), nullable=False),
-                pa.field("external_id", pa.string(), nullable=False),
+                # NULLABLE because the coarse rungs null it:
+                # a coarse cell merges many stations, so no single upstream id describes it
+                # (see this module's TierDerivation). The base z13 rung always carries it.
+                pa.field("external_id", pa.string(), nullable=True),
                 pa.field("temperature_c", pa.float64(), nullable=False),
                 pa.field("relative_humidity_pct", pa.float64(), nullable=False),
                 pa.field("wind_speed_ms", pa.float64(), nullable=False),
-                pa.field("wind_direction_deg", pa.float64(), nullable=False),
+                # NULLABLE because the coarse rungs null it:
+                # wind direction is circular and has no arithmetic mean, so the coarse rungs null it rather than
+                # fabricate a bearing
+                # (see this module's TierDerivation). The base z13 rung always carries it.
+                pa.field("wind_direction_deg", pa.float64(), nullable=True),
                 pa.field("precipitation_mm", pa.float64(), nullable=False),
                 pa.field("source", pa.string(), nullable=False),
-                pa.field("feature_id", pa.string(), nullable=False),
+                # NULLABLE because the coarse rungs null it:
+                # a coarse cell merges many stations, so no single geo.features row backs it
+                # (see this module's TierDerivation). The base z13 rung always carries it.
+                pa.field("feature_id", pa.string(), nullable=True),
                 pa.field("ingested_at", pa.timestamp("us", tz="UTC"), nullable=False),
             ]
         ),
         sort_columns=WEATHER_OBSERVATIONS_GRAIN,
+    )
+)
+
+WEATHER_OBSERVATIONS_TIER_DERIVATION: Final = register_tier_derivation(
+    TierDerivation(
+        stream=WEATHER_OBSERVATIONS_STREAM,
+        strategy=GridAggregation(
+            longitude_column="longitude",
+            latitude_column="latitude",
+            # `observed_at` is NOT a key column, and that distinction is the whole coarsening.
+            # Keying on an instant would keep two stations 0.005 degrees apart but reporting a few
+            # seconds apart as two rows, so a z0 tier would hold very nearly as many rows as z13 and
+            # the rung would cost bytes without buying resolution. The DAY is the time grain here;
+            # the instant becomes provenance.
+            key_columns=("observed_day",),
+            aggregations=(
+                ColumnAggregation("observed_at", "max"),  # newest instant among the merged readings
+                ColumnAggregation("external_id", "null"),  # one base row's identity; a merged cell has none
+                ColumnAggregation("temperature_c", "mean"),  # intensive: does not add across cells
+                ColumnAggregation("relative_humidity_pct", "mean"),  # intensive: does not add across cells
+                ColumnAggregation("wind_speed_ms", "mean"),  # intensive: does not add across cells
+                # WIND DIRECTION IS CIRCULAR AND HAS NO ARITHMETIC MEAN. Averaging 350 and 10
+                # degrees gives 180 -- due south for two nearly-north winds. An honest coarse
+                # bearing needs a VECTOR mean (atan2 of the mean sine and cosine, weighted by
+                # speed), which the closed aggregate vocabulary cannot express per column. Nulled
+                # rather than fabricated: no direction is recoverable, a wrong one is not.
+                ColumnAggregation("wind_direction_deg", "null"),
+                ColumnAggregation("precipitation_mm", "sum"),  # additive depth over the merged area
+                ColumnAggregation("source", "first"),  # constant across the lane
+                ColumnAggregation("feature_id", "null"),  # one base row's identity; a merged cell has none
+                ColumnAggregation("ingested_at", "max"),  # newest persistence instant among merged rows
+            ),
+        ),
     )
 )

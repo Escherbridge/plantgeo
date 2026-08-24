@@ -12,6 +12,12 @@ from typing import Final
 import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema, register_stream_schema
+from agri_data_service.warehouse.parquet.tiers import (
+    ColumnAggregation,
+    GridAggregation,
+    TierDerivation,
+    register_tier_derivation,
+)
 
 WATER_GAUGES_STREAM: Final = "water-gauges"
 
@@ -98,5 +104,31 @@ WATER_GAUGES_SCHEMA: Final = register_stream_schema(
             ]
         ),
         sort_columns=WATER_GAUGES_GRAIN,
+    )
+)
+
+# Both latitude and longitude are NULLABLE (water_gauges.py:56-57); derive_tier drops null-coordinate
+# rows from derived tiers automatically (_derive_grid_tier drops them with .drop_nulls(coordinates)),
+# so coarse rungs carry only the subset of gauges that published a location. The base rung keeps them
+# all, matching this schema's deliberate "kept rather than filtered" decision (water_gauges.py:80-85).
+WATER_GAUGES_TIER_DERIVATION: Final = register_tier_derivation(
+    TierDerivation(
+        stream=WATER_GAUGES_STREAM,
+        strategy=GridAggregation(
+            longitude_column="longitude",
+            latitude_column="latitude",
+            key_columns=("site_number", "observed_at", "observed_day"),
+            aggregations=(
+                ColumnAggregation("site_name", "first"),  # constant for one gauge site across all readings
+                ColumnAggregation("flow_cfs", "mean"),  # intensive measurement; does not add across gauges
+                ColumnAggregation("percentile", "mean"),  # intensive measurement; does not add across gauges
+                ColumnAggregation("condition", "first"),  # constant for one reading instant
+                ColumnAggregation("trend", "first"),  # constant for one reading instant
+                ColumnAggregation("source", "first"),  # constant across the lane; always "USGS NWIS"
+                ColumnAggregation("geometry_linked", "all"),  # gate; coarse cell is linked only if every row in it was
+                ColumnAggregation("data_available_at", "max"),  # most recent ML leakage boundary among merged cells
+                ColumnAggregation("ingested_at", "max"),  # most recent warehouse persistence instant among merged cells
+            ),
+        ),
     )
 )

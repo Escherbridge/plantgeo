@@ -409,6 +409,11 @@ def _derive_geometry_tier(
     """
     geometry = strategy.geometry_column
     _require_columns(frame, [geometry], role="geometry", stream=stream)
+    if frame.height == 0:
+        # An empty day has an empty ladder, and saying so here beats letting DuckDB return a
+        # result with no batches -- `pl.from_arrow` then loses the schema and raises "Must pass
+        # schema, or at least one RecordBatch", which names neither the lane nor the tier.
+        return frame
     tolerance = tier_resolution_degrees(tier)
     session = connection if connection is not None else duckdb.connect(database=":memory:")
     try:
@@ -436,10 +441,21 @@ def _derive_geometry_tier(
             # the most bytes for the least ink.
             minimum_area = strategy.min_area_tier_squares * tolerance * tolerance
             wrapped += f" AND ST_Area({geometry}) >= {minimum_area}"
-        derived = session.execute(wrapped).arrow()
+        result = session.execute(wrapped)
+        # `to_arrow_table` is the modern spelling and `fetch_arrow_table` the deprecated one; the
+        # dependency pin allows duckdb >= 1.1, where only the latter exists. Preferring the new
+        # name keeps the test run free of a deprecation warning without narrowing the pin.
+        to_arrow = getattr(result, "to_arrow_table", None) or result.fetch_arrow_table
+        derived = to_arrow()
     finally:
         if connection is None:
             session.close()
+    if derived.num_rows == 0:
+        # Every feature was generalised away or dropped below the area floor. That is a legitimate
+        # outcome, not a failure -- but a zero-batch arrow result loses its schema on the way into
+        # Polars, so hand back a correctly-typed empty frame instead. The caller
+        # (`pipeline/parquet/derivation.py`) already treats an empty rung as a note, not an error.
+        return frame.clear()
     return pl.from_arrow(derived).select(frame.columns)  # type: ignore[union-attr]
 
 
@@ -524,6 +540,55 @@ def derive_tier(
     return _derive_geometry_tier(table, strategy, tier=validated, stream=stream, connection=connection)
 
 
+def validate_derivation_against_schema(stream: str) -> tuple[str, ...]:
+    """Return every way `stream`'s derivation and its own Parquet schema contradict each other.
+
+    THE TWO ARE COUPLED AND NOTHING ELSE ENFORCES IT. A derivation is declared beside a schema in
+    the same module, but neither validates the other at import time: `register_tier_derivation`
+    cannot see the arrow fields, and the schema knows nothing about aggregates. The mismatch that
+    results is invisible until a real derived table is cast back to the storage contract -- which
+    happens for the first time inside the drain, thousands of lane-days in.
+
+    Every failure this returns was a real one found by hand on 2026-08-23: four columns carried the
+    `null` aggregate while their arrow field was `nullable=False`, so the coarse rung would have
+    been refused at write time. Call this from a test over every registered lane and the class of
+    defect cannot come back.
+    """
+    from agri_data_service.warehouse.parquet.schema import observed_stream_schema  # noqa: PLC0415 - cycle
+
+    schema = observed_stream_schema(stream)
+    strategy = tier_derivation(stream).strategy
+    columns = {field.name: field for field in schema.arrow_schema}
+    problems: list[str] = []
+    aggregations: tuple[ColumnAggregation, ...] = getattr(strategy, "aggregations", ())
+    for aggregation in aggregations:
+        field = columns.get(aggregation.column)
+        if field is None:
+            problems.append(
+                f"{stream}: the derivation aggregates {aggregation.column!r}, which is not a column of its schema"
+            )
+        elif aggregation.how == "null" and not field.nullable:
+            problems.append(
+                f"{stream}: {aggregation.column!r} takes the 'null' aggregate but its arrow field is nullable=False, "
+                f"so every derived rung would be refused when it is cast back to the storage contract"
+            )
+    if isinstance(strategy, GridAggregation):
+        for role, name in (("longitude", strategy.longitude_column), ("latitude", strategy.latitude_column)):
+            if name not in columns:
+                problems.append(f"{stream}: the derivation names {role} column {name!r}, which its schema lacks")
+        named = {strategy.longitude_column, strategy.latitude_column, *strategy.key_columns}
+        named.update(aggregation.column for aggregation in aggregations)
+        problems.extend(
+            f"{stream}: column {missing!r} is neither grain nor aggregated, so `derive_tier` will refuse it"
+            for missing in sorted(set(columns) - named)
+        )
+    if isinstance(strategy, GeometrySimplification) and strategy.geometry_column not in columns:
+        problems.append(
+            f"{stream}: the derivation names geometry column {strategy.geometry_column!r}, which its schema lacks"
+        )
+    return tuple(problems)
+
+
 __all__ = [
     "BASE_ZOOM_TIER",
     "DERIVED_ZOOM_TIERS",
@@ -546,4 +611,5 @@ __all__ = [
     "registered_tier_derivations",
     "tier_derivation",
     "tier_resolution_degrees",
+    "validate_derivation_against_schema",
 ]

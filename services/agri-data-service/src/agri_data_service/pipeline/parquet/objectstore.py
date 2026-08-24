@@ -154,11 +154,15 @@ class ObjectStoreBackend(Protocol):
 
     def size_of(self, key: str) -> int | None: ...
 
+    def get(self, key: str) -> bytes | None: ...
+
 
 class _S3Api(Protocol):
-    """The four boto3 S3 calls this module makes, typed at the boundary rather than as `Any`."""
+    """The five boto3 S3 calls this module makes, typed at the boundary rather than as `Any`."""
 
     def put_object(self, **kwargs: object) -> object: ...
+
+    def get_object(self, **kwargs: object) -> Mapping[str, object]: ...
 
     def delete_object(self, **kwargs: object) -> object: ...
 
@@ -273,6 +277,25 @@ class BotoObjectStoreBackend:
             if not isinstance(next_token, str) or not next_token:
                 return
             token = next_token
+
+    def get(self, key: str) -> bytes | None:
+        """Return the object's bytes, or `None` when it does not exist.
+
+        ABSENT IS `None`, NOT AN EXCEPTION, matching `size_of` directly above -- a part file that
+        vanished between a listing and this read is a concurrent prune, which is a normal race in a
+        store two writers share, not a fault worth ending a lane over.
+        """
+        try:
+            response = self.client.get_object(Bucket=self.bucket, Key=key)
+        except ClientError as exc:
+            if _client_error_code(exc) in _ABSENT_OBJECT_CODES:
+                return None
+            raise
+        body = response.get("Body")
+        if body is None:
+            return None
+        payload = body.read()  # type: ignore[attr-defined]
+        return payload if isinstance(payload, bytes) else bytes(payload)
 
     def size_of(self, key: str) -> int | None:
         """Return the object's byte count, or `None` when it does not exist."""
@@ -492,6 +515,50 @@ class ObjectStore:
         return tuple(
             listed.relative_path for listed in self.list_partition_objects(layer, kind, zoom, year=year, month=month)
         )
+
+    def read_partition(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> pa.Table:
+        """Return ONE lane-day-tier's part files concatenated into a single table, in part order.
+
+        THE WRITE PATH READS ONLY HERE, AND ONLY FOR DERIVATION. Every other reader in this repo
+        scans the bucket through Polars with `polars_storage_options`, which is the right shape for
+        serving: predicate pushdown, lazy, no bytes through this process. This method exists because
+        the tier derivation runs INSIDE the writer, where there is a `store` and no credentials
+        object -- and because it must see exactly the parts that were just written, not whatever a
+        separately-configured scan resolves.
+
+        Parts are read in INDEX ORDER, not listing order. S3 lists lexically, so `part-10` sorts
+        before `part-2`, and a table assembled in that order would still hold every row but would no
+        longer be in the grain order `conform_to_stream_schema` sorted it into -- which the
+        derivation's own `sort` would then have to redo, and which any reader comparing two tiers
+        byte-for-byte would see as a spurious difference.
+
+        A part that vanishes between the listing and the read is SKIPPED rather than raising: the
+        only thing that removes a part file is a concurrent prune, and RUNBOOK 0.33.3 B has the bulk
+        drain running alongside the hourly cron by design. The lane-day advisory lock is what makes
+        that race rare; this is what makes it survivable.
+        """
+        parsed = []
+        for relative_path in self.list_partition_keys(layer, kind, zoom, year=day.year, month=day.month):
+            partition = try_parse_partition_path(relative_path)
+            if partition is not None and partition.day == day:
+                parsed.append((partition.part_index, relative_path))
+        if not parsed:
+            raise ParquetWriteError(
+                f"no part files to read for {layer!r} {kind} z{zoom} {day.isoformat()}; a tier cannot be derived "
+                f"from a day that holds nothing"
+            )
+        tables = []
+        for _, relative_path in sorted(parsed):
+            payload = self._backend.get(self.key_for(relative_path))
+            if payload is None:
+                continue
+            tables.append(pq.read_table(io.BytesIO(payload)))
+        if not tables:
+            raise ParquetWriteError(
+                f"every part file of {layer!r} {kind} z{zoom} {day.isoformat()} disappeared between the listing and "
+                f"the read; a concurrent prune emptied the day mid-derivation"
+            )
+        return pa.concat_tables(tables)
 
     def prune_surplus_parts(
         self,

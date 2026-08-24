@@ -46,6 +46,9 @@ def sensor_row(station_id: str, measurement_name: str = "temperature") -> dict[s
         "quality_control": "V",
         "feature_id": f"feature-{station_id}",
         "data_available_at": None,
+        # The station's own point off geo.features.geom, which the export now projects.
+        "station_longitude": -116.2,
+        "station_latitude": 43.6,
     }
 
 

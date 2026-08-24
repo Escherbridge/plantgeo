@@ -103,6 +103,12 @@ from typing import Final
 import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema, register_stream_schema
+from agri_data_service.warehouse.parquet.tiers import (
+    ColumnAggregation,
+    GridAggregation,
+    TierDerivation,
+    register_tier_derivation,
+)
 
 # The layer slug verbatim from `geo.layers.name` -- `FIRMS_LAYER.default` (`ingest/firms.py:64`).
 # Also this stream's `layer=<slug>/` object prefix.
@@ -137,5 +143,23 @@ FIRE_DETECTIONS_SCHEMA: Final = register_stream_schema(
             ]
         ),
         sort_columns=FIRE_DETECTIONS_GRAIN,
+    )
+)
+
+FIRE_DETECTIONS_TIER_DERIVATION: Final = register_tier_derivation(
+    TierDerivation(
+        stream=FIRE_DETECTIONS_STREAM,
+        strategy=GridAggregation(
+            longitude_column="cell_longitude",
+            latitude_column="cell_latitude",
+            key_columns=("observed_day",),
+            aggregations=(
+                ColumnAggregation("detection_count", "sum"),  # additive count of hotspots per cell-day
+                ColumnAggregation("frp_sum", "sum"),  # additive fire-radiative power total across detections
+                ColumnAggregation("frp_observation_count", "sum"),  # additive count of FRP-carrying detections
+                ColumnAggregation("high_confidence_detection_count", "sum"),  # additive count
+                ColumnAggregation("newest_observed_at", "max"),  # most recent observation instant among merged cells
+            ),
+        ),
     )
 )

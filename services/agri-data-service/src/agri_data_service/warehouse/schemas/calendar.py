@@ -17,6 +17,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.foundation.parquet.calendar import CALENDAR_GRAIN, CALENDAR_STREAM
 from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema, register_stream_schema
+from agri_data_service.warehouse.parquet.tiers import TierDerivation, TierPassthrough, register_tier_derivation
 
 # One row = one civil day. `calendar_day` is the whole grain and the whole key: every other column
 # is derived from it, so two rows sharing a day would be two answers to the same question.
@@ -57,5 +58,18 @@ CALENDAR_SCHEMA: Final = register_stream_schema(
             ]
         ),
         sort_columns=CALENDAR_GRAIN,
+    )
+)
+
+# TierPassthrough rather than base-only: this lane has no spatial extent (no coordinates, no geometry),
+# so every rung is byte-identical. Publishing all four rungs is required because every plane resolves
+# requests through serving_zoom_tier(requested_zoom), which returns z0 for a whole-world request
+# REGARDLESS of lane. A lane that published only z13 would answer such a request from a prefix that
+# does not exist -- an empty result indistinguishable from a genuinely empty day. The contract
+# (RUNBOOK 0.33.4) warns that "a zoom=13 prefix does not imply geometry", and calendar is the proof.
+CALENDAR_TIER_DERIVATION: Final = register_tier_derivation(
+    TierDerivation(
+        stream=CALENDAR_STREAM,
+        strategy=TierPassthrough(),
     )
 )

@@ -40,6 +40,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     build_gap_census,
     gap_census_report,
     lane_window,
+    no_derived_tiers,
     resolve_lane_watermarks,
     run_gap_fill,
 )
@@ -59,9 +60,12 @@ from agri_data_service.pipeline.parquet.objectstore import (
 from tests.parquet.test_objectstore_writer import BASE_TIER, WHOLE_WORLD_TIER, RecordingBackend
 
 if TYPE_CHECKING:
+    # A TYPE_CHECKING-only alias in `gap_fill`, exactly like `LaneDayLock` beside it, so it
+    # must be imported the same way here rather than at runtime.
     from collections.abc import Collection, Iterator, Sequence
 
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.pipeline.parquet.gap_fill import TierDeriver
 
 TODAY = date(2026, 8, 22)
 RUN_ID = "parquet-gap-fill:test"
@@ -312,8 +316,17 @@ async def drive(  # noqa: PLR0913 - one knob per driver parameter a test needs t
     time_budget_seconds: float = UNLIMITED_BUDGET_SECONDS,
     max_days_per_lane: int | None = None,
     monotonic: FakeClock | None = None,
+    derive_tiers: TierDeriver = no_derived_tiers,
 ) -> GapFillSummary:
-    """Run one tick against the frozen clock, day and run id every test in this module shares."""
+    """Run one tick against the frozen clock, day and run id every test in this module shares.
+
+    THE COARSE RUNGS ARE STUBBED OUT BY DEFAULT, the same way this module never fakes a real
+    advisory lock. Deriving them reads the base rung BACK from the store, so with the real deriver
+    every stub lane here would first have to write a schema-conforming Parquet part before its day
+    could close -- and each of these tests would become a test about Parquet schemas rather than
+    about budgets, watermarks and per-lane isolation. `tests/parquet/test_tier_derivation.py` owns
+    the ladder; a test here that wants it passes the real one.
+    """
     return await run_gap_fill(
         session if session is not None else RecordingSession(),  # type: ignore[arg-type]
         store,
@@ -324,6 +337,7 @@ async def drive(  # noqa: PLR0913 - one knob per driver parameter a test needs t
         max_days_per_lane=max_days_per_lane,
         monotonic=monotonic if monotonic is not None else FakeClock(step=0.0),
         now=lambda: FROZEN_NOW,
+        derive_tiers=derive_tiers,
     )
 
 

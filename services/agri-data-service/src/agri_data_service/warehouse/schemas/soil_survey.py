@@ -13,6 +13,11 @@ from typing import Final
 import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema, register_stream_schema
+from agri_data_service.warehouse.parquet.tiers import (
+    GeometrySimplification,
+    TierDerivation,
+    register_tier_derivation,
+)
 
 SOIL_SURVEY_STREAM: Final = "soil-survey"
 
@@ -88,5 +93,26 @@ SOIL_SURVEY_SCHEMA: Final = register_stream_schema(
             ]
         ),
         sort_columns=SOIL_SURVEY_GRAIN,
+    )
+)
+
+# Tier derivation: SIMPLIFY ONLY, no hierarchy (no dissolve, no aggregations). With dissolve=None,
+# every row is carried through unchanged and only the geometry is generalised via topology-
+# preserving simplification, so no per-column aggregates are needed and no nullability changes.
+# THE AREA FLOOR IS DELIBERATELY UNSET, and the measurement is why. `min_area_tier_squares=1.0`
+# was the first choice and it EMPTIES this lane at z0: one z0 grid square is 5.0 x 5.0 = 25 square
+# degrees, while the whole PNW universe this warehouse holds is roughly 10 x 10 degrees, so every
+# feature in it is far below one square and all of them drop. The z0 tier answers requests z0-z4
+# (`zoom_tier_span`), so that is a blank map at continent zoom, not a cheaper one.
+# Simplification alone already collapses these polygons to a handful of vertices, which is where
+# the byte saving actually comes from. The knob stays available for a future lane whose features
+# are genuinely global in extent; for this data, dropping is the wrong half of the trade.
+SOIL_SURVEY_DERIVATION: Final = register_tier_derivation(
+    TierDerivation(
+        stream=SOIL_SURVEY_STREAM,
+        strategy=GeometrySimplification(
+            geometry_column="geometry_wkb",
+            min_area_tier_squares=None,
+        ),
     )
 )

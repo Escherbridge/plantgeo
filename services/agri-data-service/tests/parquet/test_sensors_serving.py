@@ -61,6 +61,11 @@ class LocalFileBackend:
         path.write_bytes(payload)
         self.last_modified[key] = FIRST_EXPORT_INSTANT + timedelta(seconds=len(self.last_modified))
 
+    def get(self, key: str) -> bytes | None:
+        """Return one object's bytes, or `None` when the file is not there."""
+        path = self.root / key
+        return path.read_bytes() if path.is_file() else None
+
     def delete(self, key: str) -> None:
         path = self.root / key
         if path.exists():
@@ -100,6 +105,10 @@ def sensor_table(*, day: date, station_id: str, measurements: tuple[str, ...] = 
             "quality_control": pa.array(["V"] * count, pa.string()),
             "feature_id": pa.array([f"feature-{station_id}-{day.isoformat()}"] * count, pa.string()),
             "data_available_at": pa.array([None] * count, pa.timestamp("us", tz="UTC")),
+            # NULLABLE at the source: a station pushed through the older HTTP route may carry
+            # no geometry at all, and the derived rungs drop such a row rather than place it.
+            "station_longitude": pa.array([-116.2] * count, pa.float64()),
+            "station_latitude": pa.array([43.6] * count, pa.float64()),
         }
     ).cast(SENSORS_SCHEMA.arrow_schema)
 

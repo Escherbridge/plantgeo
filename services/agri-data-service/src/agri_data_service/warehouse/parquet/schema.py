@@ -17,6 +17,12 @@ from agri_data_service.foundation.parquet.paths import (
     validate_layer_slug,
     validate_partition_kind,
 )
+from agri_data_service.warehouse.parquet.tiers import (
+    ColumnAggregation,
+    GridAggregation,
+    TierDerivation,
+    register_tier_derivation,
+)
 
 ParquetCompression = Literal["zstd", "snappy"]
 
@@ -176,15 +182,45 @@ SIGNAL_PLANE_SCHEMA: Final = register_stream_schema(
                 pa.field("support_key", pa.string(), nullable=False),
                 pa.field("signal_name", pa.string(), nullable=False),
                 pa.field("normalized_unit", pa.string(), nullable=False),
-                pa.field("cell_id", pa.string(), nullable=False),
+                # NULLABLE because the coarse rungs null it: a coarse cell spans many source
+                # cells and can honestly name none of them. The base z13 rung always carries it.
+                pa.field("cell_id", pa.string(), nullable=True),
                 pa.field("observed_day", pa.date32(), nullable=False),
                 pa.field("normalized_value", pa.float64(), nullable=False),
                 pa.field("observation_count", pa.int64(), nullable=False),
                 pa.field("newest_observed_at", pa.timestamp("us", tz="UTC"), nullable=False),
                 pa.field("coverage_fraction", pa.float64(), nullable=True),
                 pa.field("allowed_client_exposure", pa.bool_(), nullable=True),
+                # Cell position from `agri.spatial_cell.centroid`, the representative point of the
+                # grid this cell belongs to. Populated on 1,965 of 1,965 production rows (enrichment
+                # reference, measured 2026-08-23). Holds the cell ORIGIN's centroid, not any single
+                # observation's location.
+                pa.field("cell_longitude", pa.float64(), nullable=False),
+                pa.field("cell_latitude", pa.float64(), nullable=False),
             ]
         ),
         sort_columns=SIGNAL_PLANE_GRAIN,
+    )
+)
+
+SIGNAL_PLANE_TIER_DERIVATION: Final = register_tier_derivation(
+    TierDerivation(
+        stream=SIGNAL_PLANE_STREAM,
+        strategy=GridAggregation(
+            longitude_column="cell_longitude",
+            latitude_column="cell_latitude",
+            # Coarse grain: one row per support/signal/unit/day per coarsened grid cell. cell_id is
+            # unique to one base cell (replaced by the coordinates as the spatial key) so no merged
+            # row can honestly name one.
+            key_columns=("support_key", "signal_name", "normalized_unit", "observed_day"),
+            aggregations=(
+                ColumnAggregation("cell_id", "null"),  # unique to one base cell, no honest merge
+                ColumnAggregation("normalized_value", "mean"),  # intensive measurement: signal average
+                ColumnAggregation("observation_count", "sum"),  # additive: total observations in merged cells
+                ColumnAggregation("newest_observed_at", "max"),  # newest reading among merged cells
+                ColumnAggregation("coverage_fraction", "mean"),  # intensive: average coverage across cells
+                ColumnAggregation("allowed_client_exposure", "all"),  # gate: coarse cell exposed only if all were
+            ),
+        ),
     )
 )

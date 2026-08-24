@@ -95,6 +95,10 @@ def _signal_table(
             "newest_observed_at": [datetime(day.year, day.month, day.day, 12, tzinfo=UTC)] * count,
             "coverage_fraction": [1.0] * count,
             "allowed_client_exposure": [False] * count,
+            # The spatial cell's representative point, which the coarse rungs re-floor onto a
+            # grid. Spread per cell so a derived tier has more than one square to merge into.
+            "cell_longitude": [-116.0 - index * 0.01 for index in range(count)],
+            "cell_latitude": [43.0 + index * 0.01 for index in range(count)],
         }
     ).cast(SIGNAL_PLANE_SCHEMA.arrow_schema)
 

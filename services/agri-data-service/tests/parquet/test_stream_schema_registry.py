@@ -1,4 +1,4 @@
-"""The Parquet schema registry, its per-kind lookup, and the ten-column signal plane it ships registered."""
+"""The Parquet schema registry, its per-kind lookup, and the twelve-column signal plane it ships registered."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from agri_data_service.warehouse.parquet.schema import (
     stream_schema_module,
 )
 
-SIGNAL_PLANE_COLUMN_COUNT = 10
+SIGNAL_PLANE_COLUMN_COUNT = 12
 FORECAST_PROVENANCE_COLUMN_COUNT = 6
 
 # The exact six of `conductor/code_styleguides/layer-lanes.md` section 3, with the types every one
@@ -42,18 +42,32 @@ EXPECTED_SIGNAL_PLANE_FIELDS = (
     ("support_key", pa.string(), False),
     ("signal_name", pa.string(), False),
     ("normalized_unit", pa.string(), False),
-    ("cell_id", pa.string(), False),
+    # NULLABLE since 2026-08-23, and only at the derived rungs: a coarse cell spans many source
+    # cells and can honestly name none of them, so its tier derivation nulls this column. The base
+    # z13 rung always carries it. See `warehouse/parquet/tiers.py`.
+    ("cell_id", pa.string(), True),
     ("observed_day", pa.date32(), False),
     ("normalized_value", pa.float64(), False),
     ("observation_count", pa.int64(), False),
     ("newest_observed_at", pa.timestamp("us", tz="UTC"), False),
     ("coverage_fraction", pa.float64(), True),
     ("allowed_client_exposure", pa.bool_(), True),
+    # The spatial cell's centroid, appended 2026-08-23 so the lane has a position to re-floor onto
+    # a coarser grid. Without it `signal` could not publish z9/z5/z0 at all -- `cell_id` is opaque
+    # and resolves only through `agri.spatial_cell`, which a Parquet reader does not have.
+    # APPENDED, never inserted: every existing reader's column order is untouched.
+    ("cell_longitude", pa.float64(), False),
+    ("cell_latitude", pa.float64(), False),
 )
 
 
-def test_signal_plane_schema_is_the_measured_ten_columns_in_order() -> None:
-    """RUNBOOK section 0.22.4 froze these ten columns, their order, and their types."""
+def test_signal_plane_schema_is_the_measured_columns_in_order() -> None:
+    """RUNBOOK section 0.22.4 froze the first ten; the zoom axis appended two more in 2026-08-23.
+
+    The ten are still exactly the ten, in their original order and types -- the coordinates are
+    APPENDED, because inserting them would have moved every later column for every reader. The one
+    change inside the original ten is `cell_id` becoming nullable, which the coarse rungs require.
+    """
     actual = tuple((field.name, field.type, field.nullable) for field in SIGNAL_PLANE_SCHEMA.arrow_schema)
 
     assert actual == EXPECTED_SIGNAL_PLANE_FIELDS
