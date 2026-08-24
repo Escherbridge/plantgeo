@@ -4,7 +4,7 @@
   "status": "active",
   "created_on": "2026-08-23",
   "depends_on": [],
-  "runbook_section": "0.34",
+  "runbook_section": "0.35",
   "note": "Chartered retroactively 2026-08-23: waves 1-3 already shipped (RUNBOOK 0.21-0.29) with no track, so the largest workstream in the repo was tracked only in prose. This records wave 4. The owner call behind it all is RUNBOOK 0.28/plantgeo-parquet-duckdb-pivot: Postgres keeps ONLY community features, every plane becomes day-partitioned Parquet on Railway storage read by DuckDB+Polars, Martin serves PMTiles. Map breakage during the transition is accepted.",
   "shipped_before_this_track": [
     "Twelve lanes with validation, serving and forecasters (abf777f)",
@@ -16,11 +16,11 @@
   ],
   "wave_4_scope": [
     "DONE ceeb2c9/3b7ecfb/fe32aef/68da7af/83b322f: sub-day fix, orphan-part blocker, zoom axis, soil-survey streaming, docs",
-    "d0. Completion marker on EVERY multi-part lane + audit for missing lanes (soil-field known)",
-    "d1. FUSED bulk drain + tier derivation, one pass; then stop the cron",
-    "d3. interface/http serving API -- coverage REPRODUCES getSliderCapabilities' contract",
+    "DONE d0 (2026-08-23, uncommitted at write time): completion marker on every multi-part lane, reader sweep, lane-day advisory lock, missing-lane audit. Gate 3,948/3. RUNBOOK 0.35.",
+    "d1. FUSED bulk drain + tier derivation, one pass; then stop the cron  <-- NEXT",
+    "d3. interface/http serving API -- coverage REPRODUCES getSliderCapabilities' contract. BLOCKED BY RUNBOOK 0.35.9: five planes take `root: str` and cannot consult completion; their signatures must take an ObjectStore before any of them is wired.",
     "d4. Next.js repoint of the six ready tRPC procedures",
-    "d5. soil-field lane",
+    "d5. soil-field lane -- AND climate-field, a SECOND missing lane found by the d0 audit (RUNBOOK 0.35.7)",
     "E. Forward path per lane: upstream API -> Parquet, deprecate that lane's Postgres source",
     "F. Open-Meteo ensemble/flood/CAMS + fire-risk feature plane",
     "G. Static lookups leave the lane registry (soil-survey, watersheds)"
@@ -28,8 +28,8 @@
   "partitions": {
     "computed_at": "2026-08-23T23:10:00Z",
     "computed_at_commit": "83b322f",
-    "confidence": "planned",
-    "note": "HYPOTHESIS -- re-verify owns lists with a real grep if HEAD moved past 83b322f. d0 and d1 both touch pipeline/parquet/{objectstore,gap_fill}.py and MUST NOT run concurrently -- run d0 first, it changes the object-kind contract d1 writes through. d3/d4/d5 fan out after d1.",
+    "confidence": "stale",
+    "note": "d0 is DONE (RUNBOOK 0.35). Its `owns` list understated the blast radius: the object-kind change reached planes/ and pipeline/validation/ too, which the prebaked partition did not anticipate. Re-verify every `owns` list with a real grep before reusing -- computed_at_commit is now stale. d3/d5 fan out after d1.",
     "slices": [
       {
         "id": "d0",
@@ -43,7 +43,9 @@
           "services/agri-data-service/tests/parquet/test_gap_fill.py"
         ],
         "model": "opus",
-        "depends_on": []
+        "depends_on": [],
+        "status": "done",
+        "note": "Landed 2026-08-23. Actually touched 33 files, not the 6 predicted: the third object kind changed every reader, not just the census. See RUNBOOK 0.35.1-0.35.11."
       },
       {
         "id": "d1",

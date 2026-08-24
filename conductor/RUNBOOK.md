@@ -3841,6 +3841,366 @@ cadence, horizon, historical depth, or known-gaps list. The lane was built from 
 gap stated rather than an invented contract. **Write that half of the contract before the lane is
 scheduled**, or its history horizon and gap detection have nothing to check against.
 
+### 0.36 HANDOFF — session 7 close (2026-08-23), d0 done, d1 is next
+
+§0.35 holds the detail and the reasoning. This section is only what a fresh session needs to start
+work: what is true, what is believed, and step 1.
+
+#### 0.36.1 Goal
+
+Cut PlantGeo's map layers from Postgres to a day-partitioned, zoom-partitioned Parquet warehouse read
+by DuckDB+Polars. Postgres keeps only community features and becomes a one-time cut-off, not a
+source. Map breakage during the transition is accepted. Track:
+`conductor/tracks/parquet_duckdb_pivot_20260823/`.
+
+**d0 was this session's slice and it is DONE.** d1 is next.
+
+#### 0.36.2 State
+
+| commit | what | verified |
+|---|---|---|
+| `3ab85a6` | the completion-marker contract end to end: third object kind, census rule, write protocol, lane-day advisory lock, reader sweep, tests | gate green; reviewed 3× |
+| `a044ac1` | `scripts/purge_parquet_layout.py` | dry-run exercised against the real bucket; `--confirm` NEVER run |
+| this commit | RUNBOOK §0.35/§0.36, track metadata | docs |
+
+**Gate at handoff: 3,948 passed / 3 skipped** with the real-DB env set (baseline at `f811eb6` was
+3,936/3), `ruff` clean across `src/ tests/ scripts/`, `mypy` at its two pre-existing
+`matview_refresh.py:657` errors. **Pushed: NO.** Branch `main`, deliberately not pushed — Railway
+push-deploys from `main`, and deploying is a separate decision (§0.36.8).
+
+**Review ledger — this is the unusual part of this session, and it is why the work is trustworthy:**
+
+| pass | scope | verdict | what it changed |
+|---|---|---|---|
+| adversarial #1 (contract/logic) | core mechanism, pre-mission | CHANGES-REQUIRED | found the failed-prune stable-lie, the zero-row lane wedge, the unconditional-clear cost |
+| adversarial #2 (concurrency/idempotency) | core mechanism, pre-mission | CHANGES-REQUIRED | found the concurrent-writer truncation, the marker-agrees-with-corruption case, forced the lock |
+| verifier (post-sweep) | the finished sweep | CHANGES-REQUIRED | found the `sensors.py` serving leak with an EXECUTED reproduction, and falsified a claim this runbook made |
+| mutation tests (host) | the mechanism itself | PASS | deleting the completion rule fails 7 tests across 6 files; deleting the `soil_survey` gate fails its own test |
+
+**Believed-correct but NOT verified end to end:** nothing has ever written a `_complete.json` in
+production. The whole mechanism is proven by tests and one dry-run listing, never by a real cron
+tick. The first deploy is where that claim gets tested.
+
+#### 0.36.3 Key context a fresh read of the code will not give you
+
+- **The map is empty above z13 and that is BY DESIGN** (§0.33.2 hazard 1). Nothing derives the coarse
+  rungs yet — that is d1. It will read as a regression to anyone who does not know.
+- **The planes have ZERO callers.** `interface/` is an empty stub. So the §0.35.9 serving gap is real
+  but not yet live, and "no caller" is never evidence a plane is dead.
+- **Three review passes, three CHANGES-REQUIRED.** The protocol that shipped is not the one first
+  written; §0.35.1–0.35.3 record what changed and why. Do not "simplify" any of it back without
+  reading those — each one closed a defect that looked fine.
+- **The mission's agents cannot run tests** (`EDIT_TOOLS` has no Bash). Failures went 23 → 56 the
+  moment it finished, every one a fixture gap. Budget a host-side fixture pass after any mission that
+  touches tests. `.agentgraph/runs/INDEX.md` records this.
+- **The prebaked partitions in `metadata.json` are now marked `stale`.** d0's real blast radius was
+  33 files against 6 predicted, because a third object kind reaches every reader, not just the
+  census. Re-grep before trusting any `owns` list.
+
+#### 0.36.4 Decisions taken this session
+
+- **Advisory lock now, in d0, and SESSION-scoped** — `execution/provenance.py::advisory_lock` is
+  transaction-scoped and this driver rolls back before the prune that deletes, so that scope would
+  have guarded the read and left the destructive half open (§0.35.4).
+- **Purge the new-layout objects, do not backfill markers** — a backfill would stamp completion on
+  days nothing verified (§0.35.5).
+- **Retract at the first part write, not before the attempt** — clearing up front demoted intact
+  releases on every unrelated failure (§0.35.1).
+- **A failed prune withholds the mark** rather than failing the day (§0.35.2).
+- **`missing_partition_days` split back apart** from the driver's union (§0.35.6).
+- **The five `root: str` planes are d3's problem, not d0's** — fixing them is a signature change, and
+  d3 is where those readers get their first callers anyway (§0.35.9).
+- **Committed, not pushed** — owner call at handoff.
+
+#### 0.36.5 Assumptions, highest reversal cost first
+
+- **The `local_source_loader_engine` pool stays at `pool_size=1`** (`db/engine.py:121`) · default
+  taken: relied upon, and now documented as a precondition in `postgres_lane_day_lock`'s docstring ·
+  to reverse: raising it silently breaks the lock — the unlock lands on a different backend, the
+  lane-day stays locked for that connection's life, and every later tick reports `contended` on a
+  GREEN tick, because `contended` is deliberately not a failure. **This is the most expensive
+  assumption in the session.**
+- **The completion marker is trusted by EXISTENCE, never decoded** · default taken: key-match only,
+  matching `GovernedAbsence`'s existing test-only decoder · to reverse: a GET per day at census time,
+  or delete `from_json_bytes` and `COMPLETION_SCHEMA_VERSION` and say the key is the assertion. Until
+  then a zero-byte `_complete.json` promotes a half-written day and a future v2 marker is silently
+  accepted (§0.35.10).
+- **The cron keeps running until the drain exists** · default taken: left armed · to reverse: trivial,
+  but stopping it first freezes the warehouse with nothing replacing it.
+- **886 zoom-layout objects will be purged, not migrated** · default taken: measured and left in place
+  · to reverse: cheap now, impossible after `--confirm`.
+
+#### 0.36.6 Relevant files
+
+- `foundation/parquet/completion.py` — the payload, and the "why a third kind" argument.
+- `foundation/parquet/paths.py` — `partition_day_statuses` is the census rule; the status vocabulary
+  (`UNFILLED_`/`COVERED_PARTITION_STATUSES`) is above it, with the trap that `COVERED_` is wrong for a
+  resolver.
+- `pipeline/parquet/gap_fill.py` — the driver. `postgres_lane_day_lock` carries the pool precondition;
+  `_finalize_written_day` is prune-then-mark; `_export_one_day` holds the `blocked` wedge fix.
+- `pipeline/parquet/objectstore.py` — `write_partition` retracts at `part_index == 0`. That one line
+  is the whole safety property.
+- `planes/sensors.py` — the only plane whose serving path consults its own census. The other five are
+  §0.35.9.
+- `scripts/purge_parquet_layout.py` — run after the deploy, never before.
+- `.agentgraph/runs/d0-completion-sweep/` — mission, log, story, transcripts. `resume.py` re-runs only
+  the four agents that did not finish.
+
+#### 0.36.7 Environment
+
+- Branch `main`, HEAD `a044ac1` + this docs commit. **Not pushed.** No worktrees, no stashes.
+- **Real-DB gate — set BOTH or ~110 tests silently skip and the sweep lies:**
+  `AGRI_TEST_DATABASE_URL=postgresql://plantgeo_owner:sweeplocal@127.0.0.1:5442/agri_sweep` and
+  `PGBIN="C:\Program Files\PostgreSQL\16\bin"`. Without them: 3,840/110. With: 3,948/3.
+- Object store reachable from this machine — the purge dry run listed the real bucket. Credentials
+  come from the service's own settings; never inline them.
+- Prod DSN lives in the Railway variable `LOCAL_SOURCE_LOADER_DATABASE_URL` on `plantgeo-ingest-cron`.
+  Prod times out on unbounded scans — use `EXISTS`/`LIMIT`.
+- Cron armed `0 * * * *`, config-as-code in `infra/cron-ingest/railway.json`. Still on pre-marker code.
+- **Never run PlantGeo locally** (§ memory `plantgeo-never-run-locally`).
+
+#### 0.36.8 Continuation plan — d1, in order
+
+1. **Decide the deploy question before anything else.** `3ab85a6` is committed and unpushed. The
+   marker mechanism has never run in production. Pushing deploys it, after which §0.36.9 step 2
+   becomes meaningful; not pushing leaves the cron writing marker-less objects for as long as it runs.
+   This is a one-line decision that gates step 2 and nothing else — d1 can be built either way.
+2. **Only after a deploy: run the purge.** `uv run python scripts/purge_parquet_layout.py` to see the
+   count, then `--confirm`. Before the deploy it is pointless (§0.35.5).
+3. **Build `warehouse/parquet/tiers.py`** — the pure derivation, z13 → z9/z5/z0, in Polars/DuckDB from
+   the base Parquet, never from the Postgres matviews (§0.32.2 decision 2). Keep it a pure transform
+   and test it independently; the fusion belongs in the driver, not the transform.
+4. **Build `pipeline/parquet/drain.py`** — the bulk Postgres → Parquet pass, fused with step 3 so each
+   drained day writes its base tier and immediately derives the coarse rungs from what is already in
+   memory (§0.34.2). It writes the NEW layout directly. 13,037 lane-days remain, **69% of it
+   `fire-detections` alone**, whose 2000-11-02 floor is real.
+   **It must take the lane-day lock** (`postgres_lane_day_lock`) — §0.33.3 B has it running
+   concurrently with the cron by design, which is exactly the interleaving §0.35.4 closes.
+5. **Run the drain, then stop the cron.** Order matters and is unchanged: build → run → THEN stop.
+   Stopping first freezes the warehouse with nothing replacing it.
+6. **One sweep at the end**, with the real-DB env from §0.36.7 set.
+
+#### 0.36.9 Open questions
+
+- **Does the marker get decoded, or is the key the whole assertion?** Trigger: d3, when serving first
+  reads a marker — or sooner if anyone wants `part_count` to skip orphans. §0.35.10.
+- **Do `soil-field` and `climate-field` land as d5, or earlier?** They block 12 slider surfaces between
+  them and are independent of d1/d3. Trigger: whenever map coverage outranks map resolution. §0.35.7.
+- **Does `burn_severity` answering a conflict day as a governed absence stand?** Four readers disagree
+  about conflict today. Trigger: d3, when one answer has to be picked. §0.35.10.
+
+### 0.35 SESSION 7 (2026-08-23) — d0's mechanism survived review twice, and a second missing lane
+
+The completion marker of §0.34.1 is built. It was reviewed adversarially by two independent passes
+before anything was allowed to build on it, and BOTH returned changes-required. What shipped is not
+what was first written, and the differences are the point of this section.
+
+#### 0.35.1 THE PROTOCOL CHANGED: retract at the first part write, never before the attempt
+
+The first draft cleared the completion marker in the driver, before the adapter ran. That is wrong
+in a direction nobody had considered: **every failed attempt stripped the completion claim off a day
+whose parts were an intact, previously-marked release.** A statement timeout, a transient database
+error, a source that now returns zero rows — each one silently demoted a good day from `data` to
+`incomplete`, while nothing on disk had got worse. Once serving consults completion (d3), that is a
+healthy day vanishing from the API because an unrelated export attempt failed.
+
+**`write_partition` now retracts the marker as it uploads `part-0`**, after the empty-row and
+governed-absence refusals. A day nobody overwrote keeps its claim. The safety property is unchanged:
+parts are still never uploaded under an earlier export's marker.
+
+Order now: `part-0 retracts` → parts → prune → mark.
+
+#### 0.35.2 A FAILED PRUNE WITHHOLDS THE MARK
+
+§0.34 inherited "a failed prune must never fail the export" from `3b7ecfb`. Correct then, incomplete
+now: marking a day whose surplus parts survived publishes a completion claim over a two-generation
+mixture. Worse, it was a **regression from self-healing to stable** — before the marker, an unpruned
+orphan dragged `oldest_export_instant` back and pinned the lane `stale`, forcing a re-export; after
+it, a series day read `data` and was never re-censused.
+
+The rows are still never lost and the day still counts as `written`. It simply is not marked, so it
+stays `incomplete` and the next tick repairs it.
+
+#### 0.35.3 TWO NEW DAY OUTCOMES, because "failed" was hiding two different operator actions
+
+- **`blocked`** — the day needs an ADMIN and the lane KEEPS DRAINING. This is the zero-rows-over-
+  existing-parts case: `write_absence` refuses a day that still holds data, so the day can be
+  neither written nor governed. Reported as `raised` it stopped the lane on its NEWEST day and
+  starved every older gap behind it, **every tick, forever** — a wedge that becomes reachable
+  precisely because incomplete days are now re-exported, and one that §0.32.1's forward path
+  (deprecating each lane's Postgres source) manufactures deliberately. `weather-observations` holds
+  21 days in Postgres against a longer Parquet history and is the named example.
+- **`contended`** — another run holds the lane-day's lock. NOT a failure, not in
+  `FAILING_LANE_OUTCOMES`, counted in neither `written` nor `absent`.
+
+#### 0.35.4 OWNER DECISION: take the lane-day lock now, in d0
+
+Both reviews rated the concurrent-writer hazard critical. Two drivers on one lane-day can interleave
+so the slower one's prune deletes parts the faster one just wrote, and then stamps a completion
+marker whose `part_count` matches the truncated remainder **exactly** — the bucket and its receipt
+agreeing on a population that lost rows, which no later census or audit can detect. `parquet-gap-fill`
+took no lease. The prune moving from 3 static lanes to all 13 widened it.
+
+Not hypothetical: §0.33.3 B has the bulk drain running CONCURRENTLY with this driver by design
+("build drain → run drain → THEN stop the cron").
+
+**It is a SESSION-scoped advisory lock, and that is load-bearing.** `execution/provenance.py::advisory_lock`
+takes `pg_advisory_xact_lock`, which the very next `session.rollback()` releases — and this driver
+rolls back immediately after every export, BEFORE the prune that deletes and the mark that publishes.
+A transaction lock would have guarded the read and left the destructive half open. Do not "simplify"
+it to the shared helper.
+
+It is injected (`lane_day_lock=`), like `monotonic` and `now` already are, so testing the driver does
+not oblige every fake session to answer `pg_try_advisory_lock`. `unlocked_lane_day` is the test seam.
+
+#### 0.35.5 OWNER DECISION: purge the new-layout objects, do not backfill markers
+
+Every day already in the zoom layout has no marker and classifies `incomplete` on deploy. A backfill
+verb was rejected: it would stamp completion on days nothing verified, which is the one claim this
+marker exists to make trustworthy. §0.32.4 already decided the existing objects are DISCARDED, not
+migrated, so backfilling markers onto objects slated for deletion is wasted work.
+
+**Purge everything written under the zoom layout, let the drain rewrite it.** The wedge fix (§0.35.3)
+is mandatory regardless — it is not a deploy-time concern but a permanent property of any lane whose
+Postgres window is shorter than its Parquet history.
+
+**MEASURED 2026-08-23, and the order matters.** `scripts/purge_parquet_layout.py` (dry run is the
+default; `--confirm` is the only way past it) reports the bucket holds:
+
+| kind | count |
+|---|---|
+| part files (zoom layout) | 654 |
+| governed-absence markers (zoom layout) | 232 |
+| completion markers | **0** |
+| pre-zoom legacy, unparsable | 2,274 |
+
+886 objects would be purged. The 2,274 legacy objects need `--include-unparsable` and are equally
+condemned by §0.32.4, but deleting a key the code cannot name is a blunter act so the script asks
+separately. Zero completion markers confirms nothing has written one yet.
+
+**PURGE AFTER THE DEPLOY, NEVER BEFORE.** The cron is still running the pre-marker code, so a purge
+today is undone within the hour by the same lanes writing more marker-less objects. The sequence is:
+deploy → purge → drain. Purging first buys nothing and destroys 886 objects that would have been
+rewritten anyway.
+
+#### 0.35.6 `missing_partition_days` was split back apart
+
+It had been widened to mean missing ∪ incomplete. That turned two validators' operator-facing
+findings into false statements — `vegetation.py` emitting "has no partition or absence marker" for a
+day that demonstrably has partitions. `missing_partition_days` means strictly `missing` again; the
+driver's union is `unfilled_partition_days`. Reports for humans keep the two apart.
+
+Alongside it, the status vocabulary is now named rather than spelled as negations:
+`PARTITION_DAY_STATUSES`, `COVERED_PARTITION_STATUSES` (`data`+`absent`, deliberately excluding
+`conflict`), `UNFILLED_PARTITION_STATUSES`. **A reader written as `status != "missing"` silently
+accepts whatever member is added next** — which is exactly what `incomplete` did to four readers the
+day it landed.
+
+#### 0.35.7 `climate-field` IS A SECOND MISSING LANE — §0.32.5 named only one
+
+The §0.34.1 audit ("check if new ones need to be added") found `soil-field` is not alone.
+**`climate-field` blocks 9 slider surfaces to `soil-field`'s 3.** Verified: `drizzle/0020_climate_field.sql`
+defines `geo.climate_field_observation` over `agri.signal_observation`; `getPublishedClimateField`
+is live in `environmental-read-model.ts`; neither slug appears in `lane_registry.py`.
+
+It is **not** zoom-tiered — there is no `CLIMATE_FIELD_TIERS` to match `soil-field`'s
+`SOIL_FIELD_TIERS`, so it needs geometry but not the full ladder, making it the SIMPLER of the two.
+§0.32.5 missed it because that research was hunting zoom-tiered weather aggregation specifically.
+
+Structural note for whoever builds them: the `signal` lane already exports the correct rows for both
+— it just carries `cell_id` with no cell geometry. These are "the signal export needs a
+geometry-carrying sibling", not "build from nothing", and the Postgres views at `drizzle/0016`,
+`0019` and `0020` already encode exactly which governed rows qualify.
+
+Everything else that looked incomplete is already decided: `interventions` stays in Postgres
+(§0.26.1), GloFAS/CAMS/ensemble are persist-blocked (§0.32.7), fire-risk is chartered only.
+
+#### 0.35.8 The reader sweep LANDED — what the gate says, and how it got there
+
+**Gate with the real-DB env set: 3,947 passed / 3 skipped** (the documented `agri_db_cross_major`
+skips), ruff clean across `src/ tests/ scripts/`, mypy at the two pre-existing `matview_refresh.py`
+errors. Baseline at `f811eb6` was 3,936/3, so the sweep is net +11 tests.
+
+Seven readers now apply the completion rule through `completed_partition_days`
+(`planes/{burn_severity,drought,fire_perimeters,soil_survey,watersheds}.py`,
+`pipeline/validation/{drought,soil_survey}.py`). **Zero modules hand-roll the marker parse and zero
+spell the rule as a negation** — checked by grep, not asserted. Mutation-tested: deleting the
+completion requirement from `partition_day_statuses` fails 7 tests across 6 files, and deleting the
+per-plane gate in `soil_survey.py` fails its own dedicated test.
+
+**A CLAIM THIS SECTION ORIGINALLY MADE WAS FALSE, and the correction is §0.35.9.** It said "the rest
+route through `partition_day_statuses`, which applies it internally". Six planes do not.
+
+It was run as an AgentGraph mission (`.agentgraph/runs/d0-completion-sweep/`, 10 agents, ~$5.80).
+Three lessons worth keeping:
+
+1. **Mission workers have no Bash and cannot run pytest.** They write correct-by-construction, and
+   for fixtures that is not good enough: failures went 23 → 56 immediately after the run, every one
+   a fixture writing parts with no completion marker so the reader correctly refused the day. The
+   production code was right; the setup was not. Finishing by hand took it 56 → 0. Budget a
+   host-side fixture pass after any mission that touches tests.
+2. **Two agent-written "incomplete day" tests hand-built keys as `zoom=z13`** rather than the
+   layout's `zoom=13`, so their marker deletions targeted nothing and the tests asserted the
+   opposite of their names while passing. Never let a test build a layout key by f-string;
+   `completion_marker_path` exists.
+3. **`COVERED_PARTITION_STATUSES` is a trap for resolvers.** The brief told agents to use it as the
+   reader allowlist, and in `planes/evacuation_zones.py` that made the explicit `conflicted` refusal
+   at `:244` UNREACHABLE — a conflict day silently resolved to an older one instead. A resolver
+   excludes `UNFILLED_PARTITION_STATUSES` and nothing else. The constant's own docstring now says so.
+
+#### 0.35.9 THE SWEEP DID NOT REACH SERVING — six planes still read unfinished days
+
+Found by an independent verifier AFTER the gate was green, with an executed reproduction. The census
+half of the contract is done; the READ half is not, and a green suite hid that because no test
+covered it.
+
+**`planes/sensors.py` — FIXED, with a mutation-verified regression test.** It computed a full
+coverage census, used it only as an existence gate (`if not coverage.data_days`), then globbed the
+whole tier and filtered by the requested date RANGE. A window spanning a complete Aug 1 and a
+killed-upload Aug 2 returned rows for BOTH while `coverage` simultaneously reported Aug 2 as
+`incomplete` — a reader handed a prefix of a killed upload alongside a census saying that day is not
+published. Now filtered by `coverage.data_days`.
+
+**`planes/{signal,vegetation,water_gauges,weather_observations,fire_detections}.py` — NOT FIXED, and
+not a one-liner.** They glob `**/*.parquet` for a caller-supplied day or window and consult no
+listing at all. They cannot: **their signatures take `root: str`, not an `ObjectStore`**, so they
+have nothing to list with. Fixing them means changing those signatures — which is d3's work, since
+d3 is where these readers get their first callers and their shapes are finalised anyway. **Do not
+wire any of these five into the serving API until this is closed**; until then each one will serve
+the prefix of any killed upload inside the window it is asked for.
+
+Not urgent today only because `interface/` is still an empty stub and the planes have zero callers
+(§0.33.3 C). It becomes a live data-integrity bug the moment d3 lands.
+
+#### 0.35.10 Smaller things the verifier found, not yet done
+
+- **The marker is trusted by EXISTENCE and never decoded.** `completed_partition_days` regex-matches
+  the key only; `PartitionCompletion.from_json_bytes` and `COMPLETION_SCHEMA_VERSION` have no
+  callers, so a zero-byte `_complete.json` promotes a half-written day and a future v2 marker is
+  silently accepted by every v1 reader. Decoding costs a GET per day, which is why it was not just
+  done — decide deliberately: decode in the census, or delete the decoder and say the key IS the
+  assertion. (`GovernedAbsence.from_json_bytes` has the same shape and is likewise test-only, so
+  this is a convention question, not a one-off.)
+- **`contended` and the advisory lock are never exercised.** No test injects a lock yielding
+  `False`, so the outcome is unreached and unproven; `unlocked_lane_day` has zero callers. Since
+  `contended` is deliberately NOT a failure, a lane-day stuck contended is a silent permanent gap on
+  a green tick — the outcome that most needs a test.
+- **`COVERED_PARTITION_STATUSES` and `PARTITION_DAY_STATUSES` have no consumers** and are not in
+  `foundation/parquet/__init__.__all__`. The first documents a conflict policy that four readers
+  violate: `burn_severity` answers a conflict day as a governed absence, while `drought`,
+  `watersheds`, `soil_survey` and `fire_perimeters` serve it as data. Either give the constant
+  callers or move the policy to `AGENTS.md` where an unenforced rule reads as guidance.
+- **`pipeline/validation/signal.py::find_incomplete_export_partitions` is dead** — zero callers,
+  zero tests. Delete it or test it.
+- Two soil-survey tests guard their fixture with `if marker in objects: del` rather than `assert`,
+  the same footgun as §0.35.8 lesson 2.
+
+#### 0.35.11 Still open
+
+- The purge of §0.35.5 has not been run, and must not be until AFTER the deploy.
+- `soil-field` and `climate-field` lanes are not built (§0.35.7).
+- d1 (the fused drain + tier derivation) is untouched; the map is still empty above z13.
+
 ### 0.34 OWNER DECISIONS 2026-08-23 (session 6 close) — completeness, and one pass not two
 
 Two decisions taken at handoff. They change §0.33.3's ordering, so read this before acting on it.
