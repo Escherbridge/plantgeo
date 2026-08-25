@@ -24,9 +24,15 @@ lives in §0.42.14–§0.42.25; this says only where things stand. Marker: `.omc
 
 ### Goal
 
-Drive `conductor/tracks/` to code completeness along three concurrent lanes behind a frozen wire
-contract, then cut each layer over to Parquet-first serving — hard, per layer, no fallback. Owner
-decisions §0.42.5, gate answers §0.42.14.
+**DATA COMPLETENESS** — every layer that can render real data does so at every zoom rung, reading
+Parquet. Code completeness across the three lanes is the means, not the end. Owner decisions
+§0.42.5, gate answers §0.42.14.
+
+**Measured 2026-08-25: the warehouse has not moved in 24.6 hours** (§0.42.31). 95,048 objects,
+supervisor not running, and the ladder gap readable straight off the completion marks —
+z13 11,510 vs 10,473 at each coarse rung = **1,037 lane-days**. Every hour of engineering this wave
+moved zero bytes of warehouse data. That is not a failure of the work; it is that **all three
+things which would close a gap need an operator to authorize them**, and none has been.
 
 ### Done — 15 commits, tree clean, **NOTHING PUSHED**
 
@@ -61,20 +67,25 @@ decisions §0.42.5, gate answers §0.42.14.
 
 - Nothing running. All eight agents complete.
 
-### Next — in dependency order
+### Next — in dependency order. THE FIRST THREE ARE THE ONLY ONES THAT MOVE DATA.
 
-1. **Deploy** to arm `s0`'s schedule. `sensors` upstream keeps ~6 days; days after **2026-08-31**
-   are unrecoverable. **The production stamp (§0.42.21) must precede it** or `/ready` refuses.
-2. `s2a` — extract the Parquet core, **using §0.42.27's corrected classification, not §0.42.23's**,
-   into top-level `parquet_ops/`, and **move admission control into the core in the same change**
+1. **Run the ladder repair** — `parquet-drain --selection ladder`, reachable since `549346f`.
+   Closes the 1,037. ~1-2 h, resumable, no source queries, writes ~3 objects/day. Dry-run first
+   (`--dry-run --selection ladder`) and confirm it still reports 1,037.
+2. **Deploy** to arm `s0`'s restored `cronSchedule`, so a forward writer exists at all.
+   `sensors` upstream keeps ~6 days - days after **2026-08-31** are unrecoverable. The stamp
+   (§0.42.21) should precede it; owner has said a broken live deployment is acceptable, so the
+   ordering is a preference now, not a gate.
+3. **The legacy sweep**, report-only first: `parquet-retire-legacy-layout --layer <slug>`. Numbers
+   can only have moved in the safe direction since `549346f`.
+4. `s2a` - extract the Parquet core using **§0.42.27's corrected classification, not §0.42.23's**,
+   into top-level `parquet_ops/`, moving admission control into the core in the SAME change
    (§0.42.28). Then the CLI split + `agri-service` rename.
-3. Two live unowned defects: `execution/historical_parquet.py:151` missing
-   `max_temp_directory_size`, and `planes/drought.py:247` opening a wholly unguarded session.
-4. `s7` — reshaped by §0.42.30: 4 re-authored, 1 deleted, 1 probe rewritten, **5 left alone**.
-5. Re-review the three fix passes, or accept them explicitly as unreviewed.
-6. The two destructive approvals: the 1,040-day ladder repair, the 2,211-object sweep.
-7. Measure the serving container's real memory limit — §0.42.26 found the ceiling has **zero
-   headroom**, so if it is 2 GB the OOM killer pre-empts the whole refusal taxonomy.
+5. Two live unowned defects: `execution/historical_parquet.py:151` missing
+   `max_temp_directory_size`; `planes/drought.py:247` opening a wholly unguarded session.
+6. `s7` - reshaped by §0.42.30: 4 re-authored, 1 deleted, 1 probe rewritten, **5 left alone**.
+7. Re-review the three fix passes, or accept them explicitly as unreviewed.
+8. Measure the serving container's real memory limit - the ceiling has **zero headroom**.
 
 ### Retros — what the diff cannot show
 
@@ -6749,6 +6760,51 @@ same pass. One line, belongs to `s7`.
 **Two green ticks rest on container privilege, not code:** `plantgeo_owner` on `:5442` is superuser
 (masking the `CREATEROLE` the non-owner test needs) and that image ships `timescaledb 2.27.0`
 (masking the archive-replay ERROR path). CI on a least-privilege server behaves differently.
+
+#### 0.42.31 DATA COMPLETENESS IS AT A STANDSTILL, AND THE LADDER GAP IS VISIBLE IN THE MARKS
+
+Owner observed no change in the bucket. Confirmed by `scripts/warehouse_status.py` (read-only,
+2026-08-25):
+
+```
+supervisor      : NOT RUNNING
+log last moved  : 1476.3 min ago          (24.6 hours)
+bucket objects  : 95,048
+completion marks: 42,929  by zoom {'00': 10473, '05': 10473, '09': 10473, '13': 11510}
+governed absent : 4,527
+days            : 1685 written, 1247 absent, 1 raised, 0 contended
+```
+
+**The ladder gap is arithmetic you can read off the marks: 11,510 − 10,473 = 1,037.** Every lane-day
+that holds a base rung but no coarse rung. That is `d1`'s census (§0.42.18) reproduced by a tool
+that knows nothing about `d1`, and it is the third independent derivation of the same number.
+
+**Nothing is writing, and that is by construction rather than by fault:**
+
+| writer | state | why |
+|---|---|---|
+| `plantgeo-parquet-drain` | Failed, **no `repo:`** | source-disconnected on purpose (§0.42.14 item 3) |
+| `plantgeo-ingest-cron` | Failed | `s0` restored `cronSchedule` in config; **config only takes effect on a deploy** |
+| `plantgeo-cron-mtbs` | Crashed | pre-existing |
+
+**The 18 objects that DID appear are agent test-writes, not progress.** `d1`'s small-sample
+end-to-end wrote `watersheds 2026-08-07` and `weather-observations 2026-08-03` through the real
+advisory lock (95,030 → 95,048). Do not read that delta as a lane advancing.
+
+**So every hour of engineering today moved zero bytes of warehouse data**, and that is the honest
+summary: the wave built the machinery — the ladder census, the reachable CLI verb, the guards, the
+serving routes, the freeze — and **not one of the three things that would actually close a gap has
+been authorized to run.** Data completeness is blocked on operator decisions, not on code:
+
+1. **The 1,040-day ladder repair** — built, dry-run verified, reachable from the CLI since `549346f`
+   (`parquet-drain --selection ladder`). ~1–2 hours, resumable, no source queries. **Never run.**
+2. **A deploy** to arm `s0`'s restored schedule, so a forward writer exists at all. `sensors`
+   upstream keeps ~6 days; days after **2026-08-31** are unrecoverable.
+3. **The legacy sweep** (2,211 superseded objects, 645.7 MB) — report-only unless `--delete`, and
+   safer since `549346f` reclassified on *servable* rather than *mentioned*.
+
+**`1 raised` and `1 non-zero verb exit` are also unexplained** and predate this session. Whoever
+resumes should read them before assuming the backlog is only the 1,037.
 
 ---
 
