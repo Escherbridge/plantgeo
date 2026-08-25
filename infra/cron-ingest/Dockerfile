@@ -2,18 +2,24 @@
 # It runs every ingestion source to completion and exits non-zero if any source failed,
 # so a failed FIRMS fetch is a failed cron run rather than a line in a server log.
 #
-# THE SCHEDULE IS CURRENTLY REMOVED, ON PURPOSE (2026-08-24, owner call). `cronSchedule` is gone
-# from railway.json while the Parquet backlog drains, because the two jobs collide: measured against
-# production, a `signal` lane-day costs ~8 s with the database to itself and ~25 MINUTES while a cron
-# tick runs beside it -- both processes sitting on IO/DataFileRead, competing for the same disk. The
-# same verbs now run continuously and SEQUENTIALLY from
-# services/agri-data-service/continuous-warehouse-loop.sh, which is what removes the collision.
+# THE SCHEDULE WAS RESTORED 2026-08-25 (P0 bridge, lane A `s0` of the Parquet repoint). It had been
+# removed in fe9b241 (2026-08-24) because a scheduled `signal` lane-day cost ~8 s with the database
+# to itself and ~25 MINUTES while `plantgeo-parquet-drain`'s backlog walk ran beside it -- both
+# processes sitting on IO/DataFileRead, competing for the same disk. Removing the schedule turned
+# this service into an ordinary one-shot: it started on every deploy, ran once, and exited, so
+# nothing wrote on a clock. The `sensors` lane's upstream (NWS) keeps only ~6 days of history and
+# Postgres is its only archive -- days become permanently unrecoverable once that window rolls past.
 #
-# TO SWITCH BACK, once the backlog is drained: restore `"cronSchedule": "0 * * * *"` to
-# infra/cron-ingest/railway.json and stop the loop script. Nothing else here changed, and nothing
-# needs undoing. Note the schedule reads hourly but has never behaved that way -- `ingest-all` alone
-# is ~86 minutes, so each tick overruns the hour and Railway skips the next trigger; the observed
-# cadence was every two hours (markers landed at 05, 07, 09, 11 and 13 UTC on 2026-08-24).
+# Restoring the schedule is safe now because `plantgeo-parquet-drain` is source-disconnected
+# (`railway service source disconnect`, 2026-08-25) rather than deleted -- see
+# infra/parquet-drain/AGENTS.md. It holds no schedule of its own and cannot redeploy or run until a
+# human reconnects it for pivot slice `d1`, so the collision this schedule removal was avoiding
+# cannot recur while it stays disconnected. Reconnecting the drain without also giving it a bounded,
+# non-overlapping run (see that AGENTS.md) would resurrect the exact collision documented in fe9b241.
+#
+# Note the schedule reads hourly but has never behaved that way -- `ingest-all` alone is ~86 minutes,
+# so each tick overruns the hour and Railway skips the next trigger; the observed cadence was every
+# two hours (markers landed at 05, 07, 09, 11 and 13 UTC on 2026-08-24).
 #
 # ONE SERVICE, ONE PULSE (2026-08-14). This image used to back a fan-out of one Railway cron
 # service per verb; eleven of those were deleted and folded into the single hourly ENTRYPOINT
