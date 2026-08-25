@@ -12,18 +12,20 @@ from datetime import date
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+import duckdb
 import pytest
 from sanic import Sanic
 
 from agri_data_service import app as app_module
 from agri_data_service.interface.http import parquet_routes
 from agri_data_service.interface.http.coverage import CensusLane
+from agri_data_service.interface.http.duckdb_session import SERVING_MAX_CONCURRENT_READS
 from agri_data_service.interface.http.faults import HTTP_CONFLICT, HTTP_SERVICE_UNAVAILABLE
 from tests.contract.wire_contract import WIRE_BASE_PATH, WIRE_ROUTES, WireCoverage, WireWindow
 from tests.interface.fakes import FakeListing, FakeRowReader, instant
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from sanic.response import HTTPResponse
 
@@ -304,6 +306,89 @@ async def test_a_day_mid_export_is_503_rather_than_a_claimed_gap(
     assert response.status == HTTP_SERVICE_UNAVAILABLE
     assert isinstance(error, dict)
     assert error["code"] == "partition_day_incomplete"
+
+
+#: `upstream-fault.ts` maps 429 and every `>= 500` onto the transient code the map's `retry: 1`
+#: honours. A refusal the client would retry against a process already at its ceiling is the fault
+#: amplifying itself, so every fault this plane raises has to sit outside that set.
+TRANSIENT_TO_THE_CLIENT = (429, 500, 502, 503, 504)
+
+
+@pytest.mark.asyncio
+async def test_an_over_budget_read_is_a_coded_refusal_the_client_will_not_retry(
+    warehouse: tuple[FakeListing, FakeRowReader],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard tripping is the guard WORKING; escaping as a generic 500 is what made it an outage."""
+    listing, _ = warehouse
+    listing.write_day("signal", "observed", 13, date(2026, 8, 6))
+    monkeypatch.setattr(parquet_routes, "resolve_day", _raising(duckdb.OutOfMemoryException("out of memory")))
+
+    response = await parquet_routes.read_day(request_with(layer="signal", zoom="13", day="2026-08-06"))
+    error = payload_of(response)["error"]
+
+    assert isinstance(duckdb.OutOfMemoryException("x"), duckdb.Error), "the mapping is on the base class"
+    assert response.status not in TRANSIENT_TO_THE_CLIENT
+    assert isinstance(error, dict)
+    assert error["code"] == "read_over_budget"
+    assert "state" not in payload_of(response)
+
+
+@pytest.mark.asyncio
+async def test_an_unforeseen_fault_is_a_coded_refusal_rather_than_a_generic_500(
+    warehouse: tuple[FakeListing, FakeRowReader],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A botocore fault, a listing budget, an unrenderable cell: all of them used to reach Sanic bare."""
+    listing, _ = warehouse
+    listing.write_day("signal", "observed", 13, date(2026, 8, 6))
+    monkeypatch.setattr(parquet_routes, "resolve_day", _raising(ValueError("row attributed to a key nobody asked for")))
+
+    response = await parquet_routes.read_day(request_with(layer="signal", zoom="13", day="2026-08-06"))
+    error = payload_of(response)["error"]
+
+    assert response.status not in TRANSIENT_TO_THE_CLIENT
+    assert isinstance(error, dict)
+    assert error["code"] == "serving_fault"
+    assert "row attributed" not in str(error["message"]), "a fault's own message is logged, never served"
+
+
+@pytest.mark.asyncio
+async def test_a_read_that_cannot_get_a_slot_is_refused_rather_than_queued(
+    warehouse: tuple[FakeListing, FakeRowReader],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pool is the memory ceiling; queueing behind it would wait out the client's own budget."""
+    listing, _ = warehouse
+    listing.write_day("signal", "observed", 13, date(2026, 8, 6))
+    monkeypatch.setattr(parquet_routes, "SLOT_WAIT_SECONDS", 0.01)
+    slot = parquet_routes._read_slot()
+    for _ in range(SERVING_MAX_CONCURRENT_READS):
+        await slot.acquire()
+    try:
+        response = await parquet_routes.read_day(request_with(layer="signal", zoom="13", day="2026-08-06"))
+    finally:
+        for _ in range(SERVING_MAX_CONCURRENT_READS):
+            slot.release()
+    error = payload_of(response)["error"]
+
+    assert response.status not in TRANSIENT_TO_THE_CLIENT
+    assert isinstance(error, dict)
+    assert error["code"] == "serving_at_capacity"
+
+
+def test_every_warehouse_read_runs_on_the_bounded_pool_and_not_the_default_executor() -> None:
+    """`asyncio.to_thread` allows `min(32, cpu + 4)` threads, so the ceiling was 16-32 sessions."""
+    assert parquet_routes._read_pool._max_workers == SERVING_MAX_CONCURRENT_READS
+
+
+def _raising(fault: BaseException) -> Callable[..., object]:
+    """A stand-in resolver that raises, so `_answer`'s mapping is what the test observes."""
+
+    def resolve(*_args: object, **_kwargs: object) -> object:
+        raise fault
+
+    return resolve
 
 
 @pytest.mark.asyncio

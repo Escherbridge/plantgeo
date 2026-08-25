@@ -7,18 +7,22 @@ transport or serving fault and never a statement about content. See `AGENTS.md` 
 from __future__ import annotations
 
 import asyncio
+import weakref
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
+import duckdb
 import structlog
 from sanic import Blueprint, Request, json
 from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates handler annotations at runtime.
 
 from agri_data_service.config import settings
+from agri_data_service.interface.http import faults
 from agri_data_service.interface.http.coverage import CoverageCache, registered_census_lanes
-from agri_data_service.interface.http.duckdb_session import open_serving_session
-from agri_data_service.interface.http.faults import HTTP_BAD_REQUEST, HTTP_SERVICE_UNAVAILABLE, ServingRefusalError
+from agri_data_service.interface.http.duckdb_session import SERVING_MAX_CONCURRENT_READS, open_serving_session
+from agri_data_service.interface.http.faults import HTTP_BAD_REQUEST, ServingRefusalError
 from agri_data_service.interface.http.request_params import (
     RequestError,
     parse_calendar_day,
@@ -61,7 +65,36 @@ HTTP_OK: Final = 200
 ROW_READ_TIMEOUT_SECONDS: Final = 14.0
 COVERAGE_TIMEOUT_SECONDS: Final = 19.0
 
+#: How long a read waits for a serving slot before it is refused. Short on purpose: a queue that
+#: waits out the client's own budget converts contention into timeouts, and the map's `retry: 1`
+#: then puts a second copy of the same read behind the first.
+SLOT_WAIT_SECONDS: Final = 2.0
+
 _coverage_cache = CoverageCache()
+
+#: ONE bounded pool for every warehouse read. `asyncio.to_thread` dispatches to the default executor,
+#: which allows `min(32, cpu + 4)` threads, and `open_row_reader` opens a session per request -- so
+#: nothing bounded how many memory-capped DuckDB sessions could be alive at once, and the process
+#: ceiling was 16-32 x SERVING_MEMORY_LIMIT rather than the one-query ceiling the guard implies.
+#: The pool is the hard bound: at most this many `work()` calls, so at most this many sessions.
+_read_pool: Final = ThreadPoolExecutor(max_workers=SERVING_MAX_CONCURRENT_READS, thread_name_prefix="parquet-read")
+
+#: Admission control in front of the pool, one semaphore per event loop. Its job is not the ceiling
+#: (the pool is) but the CLEAN FAULT: a read that cannot get a slot is refused in `SLOT_WAIT_SECONDS`
+#: rather than queued behind work whose own timeout has not run out yet.
+_read_slots: Final[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _read_slot() -> asyncio.Semaphore:
+    """Return the running loop's admission semaphore, built on first use."""
+    loop = asyncio.get_running_loop()
+    slot = _read_slots.get(loop)
+    if slot is None:
+        slot = asyncio.Semaphore(SERVING_MAX_CONCURRENT_READS)
+        _read_slots[loop] = slot
+    return slot
 
 
 class _ListingHolder:
@@ -79,10 +112,6 @@ class _ListingHolder:
                 prefix=settings.object_store_prefix,
             )
         return self._held
-
-    def clear(self) -> None:
-        """Drop the held listing; a test that re-points the object store needs this."""
-        self._held = None
 
 
 _listings = _ListingHolder()
@@ -178,27 +207,50 @@ def _read_scope(request: Request) -> ReadScope:
 
 
 async def _answer(work: Callable[[], dict[str, object]], timeout_seconds: float, *, route: str) -> HTTPResponse:
-    """Run one bounded warehouse read off the event loop and map every fault onto an honest status."""
+    """Run one bounded warehouse read on the bounded pool and map EVERY fault onto an honest status.
+
+    Nothing may leave here as a generic 500: `upstream-fault.ts` classifies `status >= 500` as
+    transient, so the map would retry the identical read against a process already at its ceiling.
+    """
+    slot = _read_slot()
+    try:
+        async with asyncio.timeout(SLOT_WAIT_SECONDS):
+            await slot.acquire()
+    except TimeoutError:
+        return _refusal(faults.serving_at_capacity(route=route, concurrent_reads=SERVING_MAX_CONCURRENT_READS), route)
     try:
         async with asyncio.timeout(timeout_seconds):
-            payload = await asyncio.to_thread(work)
-    except ServingRefusalError as exc:
-        logger.warning("parquet_read_refused", route=route, code=exc.code, status=exc.status)
-        return json(exc.to_wire(), status=exc.status)
+            payload = await asyncio.get_running_loop().run_in_executor(_read_pool, work)
     except RequestError as exc:
         return _refused(exc)
-    except TimeoutError:
-        logger.warning("parquet_read_timed_out", route=route, timeout_seconds=timeout_seconds)
-        return json(
-            ServingRefusalError(
-                "read_timed_out",
-                f"the {route} read did not finish inside {timeout_seconds:.0f}s; this is a serving fault and "
-                "says nothing about what the warehouse holds",
-                status=HTTP_SERVICE_UNAVAILABLE,
-            ).to_wire(),
-            status=HTTP_SERVICE_UNAVAILABLE,
-        )
+    except Exception as exc:
+        return _refusal(_as_refusal(exc, route=route, timeout_seconds=timeout_seconds), route)
+    finally:
+        slot.release()
     return json(payload, status=HTTP_OK)
+
+
+def _as_refusal(exc: Exception, *, route: str, timeout_seconds: float) -> ServingRefusalError:
+    """Map every fault a warehouse read can raise onto a refusal the client's `retry: 1` cannot amplify."""
+    if isinstance(exc, ServingRefusalError):
+        return exc
+    if isinstance(exc, TimeoutError):
+        return faults.read_timed_out(route=route, timeout_seconds=timeout_seconds)
+    if isinstance(exc, duckdb.Error):
+        # `OutOfMemoryException` is the guard doing its job -- the read did not fit the ceiling. It is
+        # not a 500 and not retryable: the same read costs the same, against a process already loaded.
+        logger.warning("parquet_read_over_budget", route=route, fault=type(exc).__name__)
+        return faults.read_over_budget(route=route)
+    # Everything unforeseen -- a botocore fault, a listing budget, a row this plane cannot render.
+    # Logged with a traceback and answered as a refusal, because an unclassified 500 is retried.
+    logger.exception("parquet_read_failed", route=route, fault=type(exc).__name__)
+    return faults.serving_fault(route=route, fault=type(exc).__name__)
+
+
+def _refusal(exc: ServingRefusalError, route: str) -> HTTPResponse:
+    """Render one serving refusal. Never one of the four states: this is about SERVING, not content."""
+    logger.warning("parquet_read_refused", route=route, code=exc.code, status=exc.status)
+    return json(exc.to_wire(), status=exc.status)
 
 
 def _refused(exc: RequestError) -> HTTPResponse:

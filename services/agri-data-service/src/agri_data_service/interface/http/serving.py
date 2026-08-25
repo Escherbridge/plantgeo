@@ -241,7 +241,9 @@ def _window_rows(
         for day in published_days
         for key in part_keys_for_day(keys, layer=scope.layer, kind=scope.kind, tier=scope.tier, day=day)
     )
-    result = reader.read_rows(RowRead(scope=scope, keys=part_keys, row_budget=WINDOW_ROW_BUDGET))
+    result = reader.read_rows(
+        RowRead(scope=scope, keys=part_keys, row_budget=WINDOW_ROW_BUDGET, per_day_truncation=True)
+    )
     for key, row in result.rows:
         rows_by_day[day_of_part_key(key)].append(row)
     if result.unpositioned_rows > 0:

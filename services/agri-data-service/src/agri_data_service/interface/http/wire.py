@@ -72,7 +72,13 @@ def render_scalar(value: object) -> object:
         return render_day(value)
     if isinstance(value, (bytes, bytearray, memoryview)):
         return bytes(value).hex()
-    return str(value)
+    # FAIL CLOSED. `str(value)` would serve a Decimal, a list, a struct or a UUID as text under a
+    # schema that announced a number or an object -- a contract change nobody declared. No registered
+    # schema carries one today; `union_by_name` over a drifted object is how that stops being true.
+    raise ValueError(
+        f"a {type(value).__name__} cell has no agreed rendering on this plane; stringifying it would put a value "
+        "on the wire under a type the contract never announced"
+    )
 
 
 def render_row(row: ServedRow) -> dict[str, object]:

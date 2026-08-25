@@ -10,7 +10,7 @@
       "gap_ranges": [
         {
           "from": "2026-08-17",
-          "to": "2026-08-24"
+          "to": "2026-08-25"
         }
       ],
       "governed_absence_ranges": [
@@ -26,7 +26,12 @@
       "kind": "observed",
       "earliest_day": "2000-11-02",
       "latest_day": "2026-08-24",
-      "gap_ranges": [],
+      "gap_ranges": [
+        {
+          "from": "2026-08-25",
+          "to": "2026-08-25"
+        }
+      ],
       "governed_absence_ranges": []
     },
     {
@@ -35,7 +40,12 @@
       "kind": "observed",
       "earliest_day": "2022-08-06",
       "latest_day": "2026-08-24",
-      "gap_ranges": [],
+      "gap_ranges": [
+        {
+          "from": "2026-08-25",
+          "to": "2026-08-25"
+        }
+      ],
       "governed_absence_ranges": []
     },
     {

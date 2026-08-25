@@ -7,7 +7,7 @@ which the TypeScript client reads through its own zod schemas. See `tests/interf
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,7 +18,7 @@ from agri_data_service.interface.http import serving
 from agri_data_service.interface.http.faults import HTTP_CONFLICT, HTTP_SERVICE_UNAVAILABLE, ServingRefusalError
 from agri_data_service.interface.http.request_params import ReadScope
 from agri_data_service.interface.http.serving import resolve_day, resolve_release, resolve_window
-from agri_data_service.interface.http.wire import render_window
+from agri_data_service.interface.http.wire import render_row, render_window
 from tests.contract.wire_contract import WireEnvelope, WireWindow
 from tests.interface.fakes import FakeListing, FakeRowReader, instant
 
@@ -285,3 +285,42 @@ def test_a_window_budget_truncates_at_the_late_end_and_never_reports_a_late_day_
     # so with an empty row list rather than by reporting itself unwritten.
     assert [len(entry["rows"]) for entry in wire] == [3, 1, 0]
     assert [entry["truncated"] for entry in wire] == [False, True, True]
+
+
+def test_a_cell_this_plane_cannot_render_fails_closed_rather_than_being_stringified() -> None:
+    """`str(value)` would serve a Decimal, a list or a struct as text under a type nobody announced.
+
+    Latent while every registered schema is scalar; `union_by_name` over a drifted object is how a
+    type nobody registered arrives in a row, and a silent contract change is worse than a refusal.
+    """
+    with pytest.raises(ValueError, match="no agreed rendering"):
+        render_row({"cell_id": "4127", "readings": [1, 2, 3]})
+
+
+def test_every_scalar_the_registered_schemas_do_carry_still_renders() -> None:
+    """The control for failing closed: the shapes the twelve lanes actually hold must all pass."""
+    rendered = render_row(
+        {
+            "cell_id": "4127",
+            "count": 12,
+            "flagged": True,
+            "value": 0.412,
+            "missing": None,
+            "not_a_number": float("nan"),
+            "observed_at": datetime(2026, 8, 6, 12, 0, tzinfo=UTC),
+            "day": date(2026, 8, 6),
+            "digest": b"\x01\xff",
+        }
+    )
+
+    assert rendered == {
+        "cell_id": "4127",
+        "count": 12,
+        "flagged": True,
+        "value": 0.412,
+        "missing": None,
+        "not_a_number": None,
+        "observed_at": "2026-08-06T12:00:00Z",
+        "day": "2026-08-06",
+        "digest": "01ff",
+    }
