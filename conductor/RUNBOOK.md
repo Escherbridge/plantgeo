@@ -6322,6 +6322,101 @@ to end. Fixing it means minting ~11,000 absence objects from a repair driver.
 **Per-lane adversarial reviews are running** on `s1`, `d3`/`b1` and `d1` — gate answer 4 (§0.42.14),
 which supersedes §0.42.6's single pass at the join. No lane counts as done without a recorded verdict.
 
+#### 0.42.20 ALL THREE REVIEWS RETURNED CHANGES-REQUIRED — the per-lane gate paid for itself
+
+Gate answer 4 (§0.42.14) put a refute-prompted review at each lane's completion rather than one pass
+at the join. **Every one of the three came back CHANGES-REQUIRED**, and two of the findings would have
+shipped silently into a cutover with no fallback. Recorded so the cadence is not quietly dropped.
+
+**Lane B — a false content claim, live today.** `warehouse_reader.py:212` probes bbox applicability
+with `read_parquet(…, union_by_name=true)`. `union_by_name` makes the column set the UNION across
+objects, so the refusal fires only when NO object carries the position columns. In the real
+mid-re-export state the probe passes, `WHERE cell_longitude BETWEEN ? AND ?` goes NULL for rows in
+objects lacking the column, and those rows are DROPPED — the day answers
+`state: "published", rows: [], truncated: false`. A positive claim that the warehouse holds nothing in
+that viewport, for days that hold rows. `_unpositioned_rows` cannot catch it, because `signal` and
+`vegetation` declare those columns `nullable=False`, so it returns 0.
+
+**Lane A `d1` — the commit's entire capability was unreachable.** `cli.py` never passes `selection`,
+declares no `--selection`, and its `--dry-run` calls the BASE census. Seven new public functions had
+zero callers outside `drain.py`. An operator would have run `parquet-drain --dry-run`, seen no ladder
+work, run the drain, and left ~1,037 days permanently empty below z13 — on a green tick and exit 0.
+**The defect the commit existed to fix survived the commit.**
+
+**Lane A `s1` — the baseline forbade its own successor, twice.**
+`tests/test_alembic_baseline_contract.py:60-73` asserts `versions/` holds EXACTLY the baseline, so an
+ordinary follow-on revision fails the suite — while `revision_graph` still reports one head, which is
+what the stated "ambiguity" rationale was actually about and which `test_alembic_head_pin_contract`
+already guards. Slices `s5`/`s6` schedule new revisions into that very directory. Separately, the
+baseline REPLAYS `db/agri/**` at apply time while `regenerate.py` rebuilds that tree from
+`alembic upgrade head`, so a future `op.create_table("foo")` → regenerate → fresh build creates it
+twice (`ERROR: relation "species" already exists`, demonstrated). That takes the whole `agri_db` test
+gate with it, silently, the day after migration 27.
+
+**Two more worth carrying forward:**
+
+- **`s1`'s privilege tightening is not free.** Two of the three functions losing `PUBLIC EXECUTE` are
+  invoked from CHECK constraints (`forecast_derived_signal_value.sql:29`,
+  `forecast_candidate_evaluation.sql:35`), and a CHECK is evaluated with the WRITER's privileges.
+  Proved twice on a disposable PG18: a non-owner role with schema USAGE now gets
+  `permission denied for function` on INSERT. Harmless while `plantgeo_owner` is the sole writer;
+  a regression for any greenfield build that provisions one.
+- **`d1`'s guard re-pins the DuckDB INSTANCE, not the connection.** `memory_limit`, `threads` and
+  `max_temp_directory_size` are global options; handing in one connection re-pinned a sibling that was
+  never handed in, permanently. Pointed at the serving instance it would cap the API at 1600 MB.
+
+**The parity gate is now self-confirming.** `db/AGENTS.md:25-26` still claims parity "proves the tree
+is exactly what the migrations produce" — false, since the migration head IS the rebuild.
+`dump(replay(T)) == T` holds for any round-trippable T, so **a corrupted tree passes** as soon as
+regeneration is re-run, which is exactly what the workflow instructs.
+
+**Owner decision taken:** the contract gains a **fifth state, `day_unresolvable`**
+(`reason: conflict | incomplete`), so a window answers 200 with its resolvable days instead of
+refusing as a whole. Chosen because the honest reason never reached the user anyway —
+`bounded-upstream.ts:157` throws on any non-2xx and DISCARDS the body, so `partition_day_incomplete`
+was unreachable from the client; a 409 surfaced as a generic crash and a 503 as
+"temporarily unavailable" plus a retry. One mid-export day at the live edge took a whole month of
+window with it. This unfreezes §0.42.16 deliberately, for one coordinated change across the `WIRE`
+block, `wire_contract.py`, the fixtures and the client.
+
+#### 0.42.21 THE PRODUCTION STAMP — the procedure, written where it belongs
+
+`s1`'s review found the stamp existed only in an agent's report: a repo-wide grep for `20260825_0000`
+returned the revision, its pins, tests and docstrings, and **nothing operational**. The commit message
+calling it "prepared and documented" was not true of the repository. It is now.
+
+**Ordering is not optional.** `routes/health/contracts.py:22` moved the pin and
+`sql/routes/health_migration.sql:53` demands EXACT equality, while `railway.json:9` makes `/ready` the
+healthcheck. **Stamp BEFORE deploying this build**, or `/ready` reports `migration=false` and Railway
+holds the old deployment. It fails closed, which is the good news.
+
+1. **Confirm the target and its revision, read-only.** `uv run python scripts/readiness.py --json` —
+   expect `head 20260817_0025`, `expected 20260825_0000`, `matches false`.
+2. **Prove production's schema still matches what the baseline builds, applying nothing.** Production
+   is PG18, so this is the cross-major path (`test_cross_major_tree_matches_migrations`). A runnable
+   pre-stamp diff is being added under `scripts/` — the track's own risk register already required
+   this gate (`spec.md:418`) and it did not exist.
+3. **Check the extension by hand before trusting the skip.** `SELECT extname FROM pg_extension` must
+   NOT list `timescaledb`. The procedure skips `20260825_0026`, whose only effect was dropping it, on
+   the grounds that production already dropped it manually on 2026-08-25. **Nothing verifies that
+   before stamping and nothing ever will afterwards** — a database where the hand-drop did not happen
+   silently records "timescaledb is gone" forever.
+4. **Stamp.** `alembic current` must print `20260817_0025` and the announced target host (`env.py`'s
+   `announce_target` logs host/port/database, no credentials). Then `alembic stamp 20260825_0000`,
+   then `alembic current` again. `DATABASE_URL_SYNC` is what alembic reads — **overriding
+   `DATABASE_URL` does nothing and migrates production.**
+5. **Then deploy**, then check `/ready`.
+
+**Rollback:** `alembic stamp 20260817_0025` and redeploy the prior build. The stamp rewrites one row
+in `public.alembic_version` and touches no schema object, so it is fully reversible.
+
+**A consequence nobody had noticed:** the stamp breaks the governed promotion path.
+`execution/promotion.py:750` and `routes/historical_promotion.py:379-382` compare revisions for
+EQUALITY — the second against a field NAMED `minimum_target_revision`. A bundle exported before the
+stamp records `20260817_0025`; afterwards every restore and chunk append is refused, on a
+byte-identical schema. **Re-export any in-flight bundle, or fix the comparison to be the minimum its
+name already promises.**
+
 ---
 
 
