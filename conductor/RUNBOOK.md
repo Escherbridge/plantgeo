@@ -6265,6 +6265,63 @@ edit; the orchestrator commits per lane at the join.
 sample-verifies, then reports the command) and the production alembic stamp (`s1` prepares and verifies
 against a disposable database, then stops). Both are one-way operator decisions.
 
+#### 0.42.18 WAVE 1 COMPLETE — and §0.40.2 IS REFUTED ON BOTH ITS HEADLINE CLAIMS
+
+All five wave-1 slices landed. **Read this before planning any Parquet work: §0.40.2's two
+load-bearing facts are dead**, measured against the production bucket (95,030 keys) by `d1` and
+corroborated independently by lane B, which found the same rungs while smoke-testing its census.
+
+| §0.40.2 said | measured 2026-08-25 |
+|---|---|
+| no coarse rung exists for ANY lane | **six lanes have them** — `fire-detections` ladder-complete on 8,135/8,357 days, `signal` on 1,338/1,560, z0/z5/z9 back to 2022-04-30 |
+| the `signal` base carries 10 columns, no `cell_longitude`/`cell_latitude`, so ~1,560 days must be re-exported | **the base carries all twelve**, checked on the OLDEST part (2022-04-30, 14,948 rows). **No re-export is owed.** |
+
+Why it went stale: `continuous-warehouse-loop.log` shows the fused path writing `derived z9 … z5 … z0`
+per day until it stopped at 2026-08-24 11:59. The listing behind §0.40.2 was taken before that work
+landed. **Any plan still budgeting "1,560 signal days × 0.7 s" as the longest pole is spending on work
+already done** — §0.42.9 step 3 said exactly that and was wrong.
+
+**The real gap is worse than the one it replaced.** `build_gap_census` walks `GAP_FILL_ZOOM_TIER` and
+nothing else, so a day written BEFORE the fusion shipped reads as base-complete, is therefore invisible
+to the census, and is therefore permanently empty at every zoom below 13 — **on a green tick, forever**.
+Nothing in the codebase could see those days, let alone select them. **1,040 lane-days across eleven
+lanes.** Built and dry-run verified in `239a079`; **the repair has NOT been run** (~1–2 hours, resumable).
+
+**A defect nobody was looking for.** `tiers.py` opened DuckDB with NO guards at all — no memory limit,
+no thread cap, and spilling at DuckDB's default of **90% of available disk**, verified by probe. That is
+the same query class that consumed the host on 2026-08-24, sitting in the derivation path the whole
+time. `soil-survey` is a `GeometrySimplification` lane at ~1.5M delineations whose `_dissolve_query`
+builds `ST_Union_Agg` over a whole day. Now guarded, including on a caller-supplied connection.
+
+#### 0.42.19 THREE MORE CORRECTIONS, and two decisions waiting on the owner
+
+**Corrections to this runbook, each found by an agent that measured rather than trusted:**
+
+1. **§0.40.3's "DuckDB against this bucket needs `URL_STYLE 'vhost'` (path style 404s)" is wrong.**
+   Lane B measured both styles working against `t3.storageapi.dev` for explicit-key reads. `vhost` is
+   still the default it ships; the 404 claim should stop being repeated as a constraint.
+2. **`retract_partition_tier` does NOT remove `absent.json`.** It clears the completion marker and
+   deletes only keys matching `try_parse_partition_path`; absence markers parse to `None` there. So
+   **no public `ObjectStore` method can retract a governed absence today**, and `signal`'s absent base
+   days cannot be re-exported by anything until one is added.
+3. **The coverage golden had a hole, and the bucket found it.** `coverage.json` left 2026-08-07
+   accounted for by neither the absence range nor the gap range. Lane B's census of the real bucket
+   disagreed with the fixture and the bucket was right. Fixed in `369a810`.
+
+**Also found and deliberately NOT fixed, because it is a governance decision:** governed absences are
+written at the **base tier only** — 3,740 base-absent days. A reader at z9 on such a day cannot
+distinguish "deliberately empty" from "never written", which is the exact confusion the marker exists
+to end. Fixing it means minting ~11,000 absence objects from a repair driver.
+
+**Two destructive operations are built, dry-run verified, and awaiting owner approval:**
+- **The 1,040-day ladder repair** — writes ~3 objects per day, no source queries, ~1–2 hours, resumable.
+- **The legacy-layout sweep** — 2,211 superseded objects, 645.7 MB. `d1` also **refused** to delete 63
+  orphaned pre-zoom objects whose day is not published in the zoom layout at all, since they are the
+  only copy in the bucket. `include_orphaned=True` exists and is off by default.
+
+**Per-lane adversarial reviews are running** on `s1`, `d3`/`b1` and `d1` — gate answer 4 (§0.42.14),
+which supersedes §0.42.6's single pass at the join. No lane counts as done without a recorded verdict.
+
 ---
 
 
