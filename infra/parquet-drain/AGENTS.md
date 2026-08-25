@@ -51,7 +51,39 @@ cron keeps the warehouse current on its own. Delete the service; there is nothin
 
 2. **"The written `signal` base carries no `cell_longitude`/`cell_latitude`, so all ~1,560 signal days must be re-exported"** — Also refuted. The RUNBOOK's own 2026-08-25 retro entry states: "Assumption falsified: §0.40.2's 'no coarse rung exists for any lane' and 'the signal base lacks positions'. Both dead. The ~1,560-day re-export I briefed as the longest pole **was already done** — a background loop kept working after the listing behind §0.40.2 was taken."
 
-**Signal does NOT require wholesale re-export.** A 2026-08-25 census of that lane reported: `base_days: 1560`, `ladder_complete_days: 1338`, `incomplete_ladder_days: 222`. Of its 1,560 base days, 1,338 already carry a complete ladder. The remaining 222 are repaired by DERIVATION from the published base (via `parquet-drain --selection ladder`), which opens no Postgres query — not by re-export.
+**Signal does NOT require WHOLESALE re-export -- but the 222 days that remain DO, and this correction
+supersedes the paragraph above.** A 2026-08-25 census reported `base_days: 1560`,
+`ladder_complete_days: 1338`, `incomplete_ladder_days: 222`. The 1,338 already carry a complete
+ladder, so 0.40.2's "all ~1,560 must be re-exported" is genuinely wrong.
+
+**The rest of 0.40.2 is NOT wrong, and calling it "dead" went too far.** Running
+`parquet-drain --selection ladder` against production the same day, the derivation FAILED on every
+signal day it tried, with the same fault on `vegetation` and `sensors`:
+
+```
+TierDerivationError: signal: the tier derivation names coordinate column(s)
+['cell_longitude', 'cell_latitude'] that the base table does not carry; it has
+['allowed_client_exposure', 'cell_id', 'coverage_fraction', 'newest_observed_at',
+ 'normalized_unit', 'normalized_value', 'observation_count', 'observed_day',
+ 'signal_name', 'support_key']
+```
+
+So "the signal base lacks positions" is TRUE -- of precisely the days still outstanding. The
+re-export that carried positions covered 1,338 days and stopped; the 222 it never reached are the
+ones the census still selects. Both statements were half right, which is why the bucket listing
+alone could not settle it: **a lane-day can be base-complete and still be underivable, and only
+running the derivation tells you which.**
+
+Measured split of the 1,037 incomplete-ladder days, 2026-08-25:
+
+| repairable by derivation | 585 | fire-detections 222, drought 208, water-gauges 91, fire-perimeters 44, weather-observations 18, calendar 1, evacuation-zones 1 |
+|---|---|---|
+| **blocked, needs retract + re-export** | **452** | **signal 222, vegetation 205, sensors 25** |
+
+The 452 are NOT ladder work. `--selection ladder` cannot fix them and stops each lane after three
+consecutive failures rather than burning the backlog discovering that. They need the base retracted
+and re-exported from Postgres (`--selection missing`), which is a source-connected job and collides
+with the ingest cron -- see the reconnection warning below.
 
 **The lesson this retro drew, stated plainly so it is not re-learned a third time: list the bucket before planning Parquet work.** The §0.40.2 listing was already stale when it was written, because a background loop kept working after it was taken.
 
