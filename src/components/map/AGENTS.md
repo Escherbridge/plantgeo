@@ -650,6 +650,39 @@ capability catalogue is the OUTER relation of a LEFT JOIN, so a stream the obser
 catalogue omits is dropped silently -- tiles paint, no slider mounts, and it looks like missing data.
 Assert the catalogue's bound parameters against a hand-spelled list, never against the shared constant.
 
+## §non-lane-surfaces
+
+**Added 2026-08-25, lane C `u4` of the Parquet cutover.** Four toggles are not Parquet lanes and
+cannot be made into them by that programme: `interventions` (a community feature that stays in
+Postgres by design), `strategy-recommendations` (needs an ML label plane that has no labels),
+`soil` (a raster with no first-party release) and `demand-heatmap` (derived at request time, with
+nothing stored per day). `src/lib/map/layer-publication-standing.ts` gives the first three a
+stated reason; `soil` already carried a `permanentlyUnavailableReason`, which is the fourth.
+
+**A standing is not a `permanentlyUnavailableReason`, and the difference is the whole design.**
+That field is a *governance gate*: it disables the switch, reads false in `useLayerVisibility`
+whatever `activeLayers` says, and drops the row out of `DockSections`' "n of m active" count.
+`layer-registry.test.ts` pins `withheld === ['soil']`, deliberately — the other three have live
+renderers that would paint the instant their upstream produced a row, so withholding them would
+be a lie in the opposite direction from the blank map. A standing says only *this is empty and
+here is why*, and leaves the switch alone.
+
+**A standing REPLACES the derived availability caption, it does not stack with it.**
+`unavailableReason` comes from `layerAvailabilityAt`, which reads an absent-or-all-null capability
+as `not_yet_observed` and captions it "has no observations this far back" — a claim about
+HISTORY. For `interventions` that is simply false: the recommendations exist and are approved, and
+the publish step that would put them on a tile is invoked by nothing. Two captions with one of
+them wrong is worse than the silence it replaced, so `LayerRow` shows the standing instead.
+
+**No standing may state a count or a date.** "Two recommendations exist, both approved" was true
+when it was measured and is wrong the next time one lands, with nothing anywhere to reopen it —
+the same stale-claim class as a hard-coded row count in a legend.
+`layer-publication-standing.test.ts` fails on any digit in either sentence.
+
+The standings are stated whether the layer is switched on or off, unlike `unavailableReason`,
+which is gated on `isActive`. That gate is right for a caption about the selected DAY; a reader
+who has to flip the switch to learn the layer draws nothing has already seen the empty map.
+
 ## §synced-days-track
 
 **Added 2026-08-16.** Each `LayerTimeSlider` now draws a SECOND row above its coverage track:

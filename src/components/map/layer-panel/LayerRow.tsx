@@ -12,6 +12,7 @@ import {
   LEGENDLESS_TOGGLE_REASONS,
   type LegendContext,
 } from "@/lib/map/layer-legends";
+import { layerPublicationStandingCaption } from "@/lib/map/layer-publication-standing";
 import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
 import { MARTIN_SOURCE_BY_LAYER_TOGGLE } from "@/lib/map/layers";
 import { useMap } from "@/lib/map/map-context";
@@ -371,6 +372,11 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
 
   const withheldReason = entry.permanentlyUnavailableReason;
   const isWithheld = withheldReason !== null;
+  // Stated whether the layer is on or off, unlike `unavailableReason` below: a reader who has to
+  // switch a layer on to learn it draws nothing has already seen the empty map this caption
+  // exists to replace. It does NOT disable the switch -- see the record's own doc for why a
+  // standing is not a `permanentlyUnavailableReason`.
+  const publicationStanding = layerPublicationStandingCaption(layerId);
   const isActive = !isWithheld && isToggledOn;
   const legendlessReason = LEGENDLESS_TOGGLE_REASONS[layerId] ?? null;
   const spec = layerLegendSpec(layerId, legendContext);
@@ -382,10 +388,17 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
   // in words, inside the control that moved the day -- and stating it twice one line apart is
   // the same defect the dock already recorded once, when `TimeSlider` kept an `<h2>Map date</h2>`
   // directly under a section header saying "Map date".
+  //
+  // A standing REPLACES `unavailableReason` rather than stacking with it. That reason is derived
+  // from a slider capability, and for a layer no lane backs the capability is either absent or
+  // all-null -- which `layerAvailabilityAt` reads as `not_yet_observed` and captions "has no
+  // observations this far back", a claim about HISTORY for a layer whose blocker is a publish
+  // step that never runs. Two captions, one of them false, is worse than the blank map.
   const captionId = useId();
   const captions = [
     isWithheld ? withheldReason : null,
-    isActive ? unavailableReason : null,
+    publicationStanding,
+    isActive && publicationStanding === null ? unavailableReason : null,
   ].filter((caption): caption is string => caption !== null);
 
   return (

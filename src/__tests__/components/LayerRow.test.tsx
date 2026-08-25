@@ -3,6 +3,7 @@ import { act, fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import { LayerRow } from "@/components/map/layer-panel/LayerRow";
 import { DEFAULT_LEGEND_CONTEXT } from "@/lib/map/layer-legends";
+import { LAYER_PUBLICATION_STANDINGS } from "@/lib/map/layer-publication-standing";
 import {
   LAYER_REGISTRY,
   LAYER_TOGGLE_IDS,
@@ -512,5 +513,134 @@ describe("layer sync reset control", () => {
     );
 
     expect(screen.getByTestId("layer-time-slider-range-water").className).toContain("is-pending");
+  });
+});
+
+/**
+ * The four surfaces no Parquet lane backs, and the caption that replaces their blank map.
+ *
+ * `interventions`, `strategy-recommendations` and `demand-heatmap` all switch on, mount a live
+ * renderer and paint nothing, because their blocker sits upstream of the map entirely -- a
+ * publish step nothing invokes, an untrained model, an anonymity floor. None of them is
+ * WITHHELD, so `permanentlyUnavailableReason` (which disables the switch and drops the row out
+ * of the dock's group count) is the wrong instrument; `soil` is the one that genuinely is.
+ */
+describe("LayerRow publication standings", () => {
+  /** A day before every axis below, so the derived availability caption is live for both rows. */
+  const DAY_BEFORE_EVERY_AXIS = "2019-01-01";
+
+  const CAPABILITIES_WITH_BOTH_AXES: SliderCapabilities = {
+    ...CAPABILITIES,
+    layers: [
+      ...CAPABILITIES.layers,
+      {
+        layerName: "fire-detections",
+        temporalKind: "daily_series",
+        forecastHorizonDays: 0,
+        forecastVariants: [],
+        earliestObservedDate: "2019-02-01",
+        latestObservedDate: SERVER_CURRENT_DATE,
+        coverageGaps: [],
+        thinRanges: [],
+        describedFromDay: null,
+      },
+      {
+        layerName: "interventions",
+        temporalKind: "daily_series",
+        forecastHorizonDays: 0,
+        forecastVariants: [],
+        earliestObservedDate: "2019-02-01",
+        latestObservedDate: SERVER_CURRENT_DATE,
+        coverageGaps: [],
+        thinRanges: [],
+        describedFromDay: null,
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    useMapStore.setState({ activeLayers: [...LAYER_TOGGLE_IDS] });
+    useLayerStore.setState({ layerOpacity: {} });
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: CAPABILITIES,
+      capabilitiesUnavailable: false,
+    });
+  });
+
+  it.each(["interventions", "strategy-recommendations", "demand-heatmap"] as const)(
+    "states why %s is empty while it is switched on",
+    (layerId) => {
+      renderRow(layerId);
+
+      const standing = LAYER_PUBLICATION_STANDINGS[layerId];
+      if (standing === undefined) throw new Error(`expected a standing for ${layerId}`);
+      const row = screen.getByTestId(`layer-row-${layerId}`);
+      expect(row.textContent).toContain(standing.reason);
+      expect(row.textContent).toContain(standing.unblockedBy);
+    }
+  );
+
+  it("states it before the layer is ever switched on, not only after the empty map", () => {
+    // The whole point: a reader who must flip the switch to learn the layer draws nothing has
+    // already seen the blank this caption replaces. `unavailableReason` is gated on `isActive`
+    // precisely because it is about the DAY; a standing is about the layer.
+    useMapStore.setState({ activeLayers: [] });
+    renderRow("interventions");
+
+    const standing = LAYER_PUBLICATION_STANDINGS.interventions;
+    if (standing === undefined) throw new Error("expected an interventions standing");
+    expect(screen.getByTestId("layer-row-interventions").textContent).toContain(standing.reason);
+  });
+
+  it("keeps the switch live, because these layers are empty and not withheld", () => {
+    renderRow("interventions");
+
+    const toggle = screen.getByLabelText("Show Interventions on map");
+    expect(toggle.hasAttribute("disabled")).toBe(false);
+    expect(toggle.getAttribute("aria-disabled")).toBeNull();
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("replaces the history claim, which is about a day and not about the real blocker", () => {
+    // Both rows resolve to a day before their axis, so `layerAvailabilityAt` answers
+    // `not_yet_observed` for each and `describeAvailability` captions it "has no observations
+    // this far back". That is true of `fire` and false of `interventions`, whose rows exist and
+    // are approved -- they were simply never published. The positive control is what makes this
+    // non-vacuous: the mechanism is demonstrably live on the row beside it.
+    useTimeSliderStore.setState({
+      capabilities: CAPABILITIES_WITH_BOTH_AXES,
+      layerDates: { fire: DAY_BEFORE_EVERY_AXIS, interventions: DAY_BEFORE_EVERY_AXIS },
+    });
+    renderEveryRow();
+
+    expect(screen.getByTestId("layer-row-fire").textContent).toContain(
+      "fire-detections has no observations this far back."
+    );
+    const interventionsRow = screen.getByTestId("layer-row-interventions");
+    expect(interventionsRow.textContent).not.toContain("has no observations this far back");
+    const standing = LAYER_PUBLICATION_STANDINGS.interventions;
+    if (standing === undefined) throw new Error("expected an interventions standing");
+    expect(interventionsRow.textContent).toContain(standing.reason);
+  });
+
+  it("leaves the withheld raster captioned by the registry, with no second sentence", () => {
+    renderRow("soil");
+
+    const row = screen.getByTestId("layer-row-soil");
+    expect(row.textContent).toContain(LAYER_REGISTRY.soil.permanentlyUnavailableReason!);
+    expect(LAYER_PUBLICATION_STANDINGS.soil).toBeUndefined();
+  });
+
+  it("captions no lane-backed row, so a working layer carries no excuse", () => {
+    renderEveryRow();
+
+    for (const layerId of LAYER_TOGGLE_IDS) {
+      const standing = LAYER_PUBLICATION_STANDINGS[layerId];
+      if (standing === undefined) continue;
+      // Only the declared non-lane surfaces may carry one; the rest of the dock stays silent.
+      expect(["interventions", "strategy-recommendations", "demand-heatmap"]).toContain(layerId);
+    }
   });
 });
