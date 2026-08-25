@@ -4,7 +4,7 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Last updated:** 2026-08-24. **THE PARQUET BACKLOG IS DRAINED (12,365 -> 0 lane-days) - READ §0.39 FIRST; it supersedes §0.38 and records why the DB shrink is now gated on an unbuilt read API, and why nothing is ingesting.** **ARCHITECTURE PIVOT — READ §0.23 FIRST: Postgres becomes a community-features database; every data plane moves to day-partitioned Parquet read by DuckDB+Polars, with Martin serving PMTiles. §0.16–§0.22 optimise a Postgres this project is leaving.** **§0.25 is the CURRENT HEAD OF THE PROGRAMME — wave 1 shipped green, the by-domain layering question is answered, and it retires `agri_sdk_layering` phases 4–8.** **§0.24 is the concurrent stream plan that executes it — 21 streams in 5 waves, each with a disjoint file boundary, governed by the new `conductor/code_styleguides/layer-lanes.md`.** **THE PARQUET PATH HAS STARTED — §0.22 carries the signal-plane grain decision and the traps for the export job.** **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
+**Last updated:** 2026-08-25. **READ §0.40 FIRST — it corrects §0.39: the runners were NOT stopped (every push redeploys them; taken down 02:05 UTC), "backlog 0" was z13 only with no coarse rung anywhere, the pivot verified on cold-path and resource grounds, and the four repoint decisions are recorded there.** **THE PARQUET BACKLOG IS DRAINED (12,365 -> 0 lane-days) - READ §0.39 NEXT; it supersedes §0.38 and records why the DB shrink is now gated on an unbuilt read API, and why nothing is ingesting.** **ARCHITECTURE PIVOT — READ §0.23 FIRST: Postgres becomes a community-features database; every data plane moves to day-partitioned Parquet read by DuckDB+Polars, with Martin serving PMTiles. §0.16–§0.22 optimise a Postgres this project is leaving.** **§0.25 is the CURRENT HEAD OF THE PROGRAMME — wave 1 shipped green, the by-domain layering question is answered, and it retires `agri_sdk_layering` phases 4–8.** **§0.24 is the concurrent stream plan that executes it — 21 streams in 5 waves, each with a disjoint file boundary, governed by the new `conductor/code_styleguides/layer-lanes.md`.** **THE PARQUET PATH HAS STARTED — §0.22 carries the signal-plane grain decision and the traps for the export job.** **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
 
 **What changed 2026-08-21 — four new sections, and they supersede earlier ones where they disagree.** **§0.16** is the data-quality and QA assessment: the census per layer and per observation plane, freshness and rot, the job ledger and matview refresh state, the storage/index/bloat profile, the partitionwise probe, and what the QA gate does and does not prove — every number labelled with how it was obtained, CONFIRMED separated from UNVERIFIED, and **two headline claims REFUTED outright (§0.16.9)**. **§0.17** is why the map is broken *right now*, ranked by rendering unblocked per unit of work; **read it first if you are here to fix the outage.** **§0.18** is the target architecture — entity/observation split with sealed months on R2 — with the losing designs' grafts folded in and **17 recorded rejections so they stop being re-litigated (§0.18.8)**. **§0.19** is the merged programme plan with a gate class, precondition and reversal cost per item.
 
@@ -5635,6 +5635,94 @@ migration state and a fresh `alembic upgrade head` would recreate it. Do it as a
    or gap-fill pass will spin on it and re-export it forever.
 5. **Close `fire-perimeters` 2025-08-02 … 2025-09-30** and **unblock `soil-survey`'s key cap**.
 6. **Then** revisit the index drops with an architectural justification, not a counter.
+
+---
+
+### 0.40 VERIFICATION — session 10 (2026-08-25). The pivot verifies; §0.39's runner claims did not survive an hour.
+
+**Supersedes §0.39 "State" bullets 2 and 5 and §0.39.10 step 1.** Everything below was measured against
+production, the bucket, and Railway this session; nothing is inferred from a counter.
+
+#### 0.40.1 CORRECTION — the drain was NOT stopped and ingestion DID run
+
+Commit `72845d3` (the readiness fix, 01:44 UTC) auto-deployed `plantgeo-parquet-drain`,
+`plantgeo-ingest-cron` and `plantgeo-cron-soilgrids` at 01:45. `440d9b5` did it again at 02:04. Railway
+deploys every repo-sourced service on every push; with no `cronSchedule` and `restartPolicyType: NEVER`,
+**a push is one ingest pass**, and the drain restarts each time and spins on the §0.39.2 bug — its log is
+the same line every 20 s: `burn-severity 2024-08-22 raised: the base rung is written but its coarse rungs
+are not`. Those batch jobs (FIRMS archive walk; `jobs_pulse_tick_failed`, `matview-refresh` 106 standing
+dead letters; quality gates) are what refilled the DB container from 0.11 GB to 7–11 GB within minutes of
+the Timescale restart and pushed `pg_stat_database.temp_bytes` from 22 to 26 GB.
+
+**Both were taken down with `railway down` at 02:05 UTC (owner: stop both).** They come back on the next
+push until `cronSchedule` is restored deliberately (track P0).
+
+#### 0.40.2 CORRECTION — "backlog 0" was z13 only, and the base signal rung is on an old schema
+
+| lane | z13 parts | z9 / z5 / z0 |
+|---|---|---|
+| `signal` | 1,560 (2022-04-30 … 2026-08-06) | 0 / 0 / 0 |
+| `fire-detections` | 8,357 | 0 |
+| `vegetation` | 1,195 | 0 |
+| `burn-severity` | 8 (4 complete) | 0 |
+
+No coarse rung exists for any lane; `_complete.json` is per tier and the census read z13. The written
+signal files carry 10 columns and **no `cell_longitude`/`cell_latitude`** — `warehouse/parquet/schema.py`
+declares both non-nullable and `GridAggregation` keys on them — so the base must be re-exported (~1,560 ×
+0.7 s on Railway) before a coarse rung can be derived or a viewport read can filter. `signal` 2026-08-08..16
+are `absent.json` written because Postgres had no rows yet; `write_partition` refuses a day carrying an
+absence marker, so they stay absent until retracted.
+
+#### 0.40.3 The performance question, measured like-for-like
+
+Postgres (prod, `EXPLAIN (ANALYZE, BUFFERS)`, PNW bbox, the map's own soil-field reads):
+
+| query | cold | warm |
+|---|---|---|
+| `soilFieldNewestDay` (LATERAL over 1,105 cells) | **25.0 s** — 17,336 pages off the volume ≈ 5 MB/s | 110 ms |
+| `soilFieldCells` | 49 ms | 41 ms |
+| `geo.soil_field()` lattice | 1.24 s | 55 ms |
+| watersheds watermark `max()` over `geo.features` | 12.7 s | 263 ms |
+
+DuckDB over the signal lane (one z13 day = 26 KB; 37 days = 2.85 MB): compute-only 1 ms / 5 ms (30-day
+newest-day scan) / 19 ms (535k rows); from the laptop at ~200 ms RTT 230–930 ms and 1.3–3.7 s; in-region
+RTT is ~5× lower (§0.39.1) → ~50–100 ms per served day. **Warm is a wash; cold is two orders of
+magnitude, and a 38 GB volume has no cold-proof path.** Postgres' own shared memory is 289 MB, `work_mem`
+16 MB; the container's GBs are page cache + temp from batch jobs. The memory win comes from taking batch
+off Postgres — which is the repoint — not from what serves reads. `pg_stat_statements` is available but
+not preloaded, so there is no per-query ledger to read. DuckDB against this bucket needs `URL_STYLE
+'vhost'` (path style 404s) and explicit keys (S3 globbing does not list here).
+
+#### 0.40.4 TimescaleDB drift
+
+Gone from `pg_extension` (manual drop, restart 01:37 UTC) and `shared_preload_libraries` still says
+`timescaledb,pg_textsearch` (Railway-managed image — not changeable from here).
+
+**Prod is one revision behind the tree.** `440d9b5` added
+`alembic/versions/20260825_0026_drop_timescaledb_extensions.py` and moved both pins to it
+(`tests/conftest.py:34`, `routes/health/contracts.py:17`), while production's `alembic_version` still
+reads `20260817_0025` (measured 02:00 UTC). Nothing gates a deploy on the agri pin today, so this is
+drift rather than an outage — but a `/api/ready`-style agri readiness check would now disagree with prod.
+
+**A fresh build is deadlocked.** `20260719_0001_agri_foundation.py:34` requires `timescaledb` to be
+*installed* before it will create the `agri` schema, while `tests/test_migration_runtime_contract.py:34`
+asserts `infra/local-warehouse/enable-extensions.sql` no longer creates it — so `alembic upgrade head`
+from zero needs an operator to hand-install timescaledb purely so `0026` can drop it again. That is the
+strongest independent argument for the owner's call: **reset the alembic history to a greenfield
+baseline** (agri schema only — drizzle owns `geo` and `tracking`), forward migration only as fallback.
+
+#### 0.40.5 Decisions (2026-08-25, owner)
+
+1. **Repoint shape: bridge, then cut per lane.** Restore the schedule as a transition writer; direct
+   writers lane by lane, rolling-window lanes first (`sensors`: NWS keeps ~6 days, days after ~08-31
+   without ingest are unrecoverable); retire each Postgres path only after parity.
+2. **Both runners stopped** (§0.40.1).
+3. **Zoom ladder: fix the derivation and materialise all four rungs** (pivot track slice d1 owns it).
+4. **Alembic reset to current state** (§0.40.4).
+
+Track: `conductor/tracks/postgres_shrink_ingest_repoint_20260825/`. Memories:
+`plantgeo-repoint-decisions-2026-08-25`, `plantgeo-parquet-coarse-rungs-unbuilt`,
+`plantgeo-postgres-memory-is-batch-not-serving`, `plantgeo-push-redeploys-drain-and-ingest`.
 
 ---
 

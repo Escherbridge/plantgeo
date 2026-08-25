@@ -1,0 +1,144 @@
+{
+  "id": "postgres_shrink_ingest_repoint_20260825",
+  "description": "Postgres shrink via ingest repoint to Parquet — bridge, then cut per lane",
+  "type": "feature",
+  "created_at": "2026-08-25T02:30:00Z",
+  "status": "pending",
+  "supersedes": {
+    "parquet_duckdb_pivot_20260823": "item E of RUNBOOK 0.33.3 (forward path per lane, upstream -> Parquet) moves here; items A (slice d1), C (d3), D (d4) stay there and are this track's external dependencies"
+  },
+  "external_dependencies": [
+    { "track": "parquet_duckdb_pivot_20260823", "slice": "d1", "for": "coarse-rung derivation fix, signal z13 re-export with positions, retraction of the 2026-08-08..16 signal absences; blocks s5 exporter deletion" },
+    { "track": "parquet_duckdb_pivot_20260823", "slice": "d3", "for": "interface/http serving API; blocks s6" },
+    { "track": "parquet_duckdb_pivot_20260823", "slice": "d4", "for": "tRPC repoint; blocks s6" }
+  ],
+  "partitions": {
+    "computed_at": "2026-08-25T02:30:00Z",
+    "computed_at_commit": "440d9b5",
+    "confidence": "planned",
+    "note": "Prebaked from the planning analysis at 440d9b5; no separate recon pass. Excludes every path owned by parquet_duckdb_pivot_20260823 slices d0-d5. lane_registry.py, cli.py, alembic/versions/ and the cron Dockerfile are shared registries with one named owner each: later slices append and must be sequenced, never run concurrently on those files. Re-verify `owns` with a real grep once HEAD moves.",
+    "slices": [
+      {
+        "id": "s0",
+        "task": "P0 bridge: restore cronSchedule so a writer runs on a clock again; correct the Dockerfile header (it still claims the schedule was removed on purpose and that continuous-warehouse-loop.sh replaces it); verify the drain stays down.",
+        "owns": ["infra/cron-ingest/railway.json", "infra/cron-ingest/Dockerfile"],
+        "model": "sonnet",
+        "depends_on": []
+      },
+      {
+        "id": "s1",
+        "task": "P1 alembic greenfield baseline: one revision reflecting production as-is (no timescaledb, tracking.positions plain), archive the historical revisions, re-point every migration-contract test, move the readiness pin, stamp production. Fallback to a forward migration if the agri-schema pg_dump diff is non-empty.",
+        "owns": [
+          "services/agri-data-service/alembic/versions/",
+          "services/agri-data-service/alembic/env.py",
+          { "path": "services/agri-data-service/alembic/archive/", "status": "future" },
+          "services/agri-data-service/tests/conftest.py",
+          "services/agri-data-service/tests/test_alembic_head_pin_contract.py",
+          "services/agri-data-service/tests/test_migration_runtime_contract.py",
+          "services/agri-data-service/tests/test_geospatial_evidence_migration_contract.py",
+          "services/agri-data-service/tests/test_gate_hardening_migration_contract.py",
+          "services/agri-data-service/tests/test_forecast_iteration_migration_contract.py",
+          "services/agri-data-service/tests/test_strategy_selection_migration_contract.py",
+          "services/agri-data-service/tests/test_forecasting_migration_contract.py",
+          "services/agri-data-service/tests/test_signal_evaluation_migration_contract.py",
+          "services/agri-data-service/tests/test_security_definer_lockdown_migration_contract.py",
+          { "path": "services/agri-data-service/tests/test_alembic_baseline_contract.py", "status": "future" },
+          { "path": "services/agri-data-service/tests/test_alembic_baseline_parity.py", "status": "future" },
+          "services/agri-data-service/src/agri_data_service/routes/health/contracts.py",
+          "services/agri-data-service/scripts/readiness.py",
+          "services/agri-data-service/db/tools/"
+        ],
+        "model": "opus",
+        "depends_on": []
+      },
+      {
+        "id": "s2",
+        "task": "P2 direct-writer foundation: the protocol, the parity harness, the parquet-ingest CLI verb and the lane->writer registry, plus wave 1 lanes sensors and weather-observations (the two rolling windows).",
+        "owns": [
+          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/", "status": "future" },
+          { "path": "services/agri-data-service/tests/direct/", "status": "future" },
+          "services/agri-data-service/src/agri_data_service/cli.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py"
+        ],
+        "model": "opus",
+        "depends_on": ["s0"]
+      },
+      {
+        "id": "s3",
+        "task": "P3 wave 2 direct writers: drought, water-gauges, fire-perimeters, burn-severity, watersheds, evacuation-zones, and the soil-survey decision; replace the three Postgres-backed static-lookup watermark resolvers with an upstream vintage or record that a lane keeps its Postgres watermark.",
+        "owns": [
+          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/drought.py", "status": "future" },
+          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/water_gauges.py", "status": "future" },
+          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_perimeters.py", "status": "future" },
+          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity.py", "status": "future" },
+          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/watersheds.py", "status": "future" },
+          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/evacuation_zones.py", "status": "future" },
+          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/soil_survey.py", "status": "future" },
+          { "path": "services/agri-data-service/tests/direct/test_direct_drought.py", "status": "future" },
+          { "path": "services/agri-data-service/tests/direct/test_direct_water_gauges.py", "status": "future" },
+          { "path": "services/agri-data-service/tests/direct/test_direct_fire_perimeters.py", "status": "future" },
+          { "path": "services/agri-data-service/tests/direct/test_direct_burn_severity.py", "status": "future" },
+          { "path": "services/agri-data-service/tests/direct/test_direct_static_lookups.py", "status": "future" },
+          { "path": "services/agri-data-service/tests/direct/test_direct_soil_survey.py", "status": "future" }
+        ],
+        "model": "sonnet",
+        "depends_on": ["s2"]
+      },
+      {
+        "id": "s4",
+        "task": "P4 wave 3 direct writers for the governance-heavy lanes: signal (governed contract table + release dedup + centroid), vegetation (eight lineage refs), fire-detections (cell-day aggregate + FIRMS cap surfaced).",
+        "owns": [
+          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/signal.py", "status": "future" },
+          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/signal_contract.py", "status": "future" },
+          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/vegetation.py", "status": "future" },
+          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_detections.py", "status": "future" },
+          { "path": "services/agri-data-service/tests/direct/test_direct_signal.py", "status": "future" },
+          { "path": "services/agri-data-service/tests/direct/test_direct_signal_dedup.py", "status": "future" },
+          { "path": "services/agri-data-service/tests/direct/test_signal_contract_matches_sql.py", "status": "future" },
+          { "path": "services/agri-data-service/tests/direct/test_direct_vegetation.py", "status": "future" },
+          { "path": "services/agri-data-service/tests/direct/test_direct_fire_detections.py", "status": "future" }
+        ],
+        "model": "opus",
+        "depends_on": ["s2"]
+      },
+      {
+        "id": "s5",
+        "task": "P5 per-lane Postgres retirement: delete each verified lane's ingest producer and runner registration, switch the cron entrypoint to parquet-ingest for verified lanes, drop the lane tables as migrations on the s1 baseline. Exporter deletion waits on pivot d1.",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/ingest/",
+          "services/agri-data-service/src/agri_data_service/pipeline/lanes/",
+          "services/agri-data-service/src/agri_data_service/sql/pipeline/"
+        ],
+        "model": "sonnet",
+        "depends_on": ["s1", "s2", "s3", "s4"]
+      },
+      {
+        "id": "s6",
+        "task": "P6 final shrink: drop the signal unique CONSTRAINT (10.78 GB), the remaining signal indexes, then agri.signal_observation; then the geo.features/geo.geometry data-plane rows for retired lanes via a drizzle migration. Gated on pivot d3 and d4.",
+        "owns": [
+          { "path": "conductor/tracks/postgres_shrink_ingest_repoint_20260825/evidence/", "status": "future" }
+        ],
+        "model": "opus",
+        "depends_on": ["s1", "s5"]
+      }
+    ],
+    "shared_writes": [
+      { "path": "infra/cron-ingest/Dockerfile", "owner": "s0", "reason": "s5 rewrites the ENTRYPOINT verb list as lanes retire; sequence after s0" },
+      { "path": "services/agri-data-service/alembic/versions/", "owner": "s1", "reason": "s5 and s6 add drop revisions on top of the baseline; both land strictly after s1" },
+      { "path": "services/agri-data-service/src/agri_data_service/cli.py", "owner": "s2", "reason": "3,900-line shared verb registry; s3/s4/s5 add no verbs, they register lanes in pipeline/direct/registry.py" },
+      { "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py", "owner": "s2", "reason": "shared lane registry; s3/s4 append lane-state entries, s5 removes retired adapters; strictly sequential" },
+      { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/registry.py", "owner": "s2", "reason": "s3 and s4 append their lanes" },
+      { "path": "drizzle/", "owner": "s6", "reason": "geo and tracking are drizzle-owned; the row deletion is a drizzle migration with its own contract bump" }
+    ],
+    "tripwires": [
+      "s0: never restart plantgeo-parquet-drain or continuous-warehouse-loop.sh; every push auto-deploys the cron and runs one pass immediately; restartPolicyType NEVER stays as the concurrency guard",
+      "s1: the baseline is agri-ONLY (drizzle owns geo and tracking, src/lib/server/db/schema.ts:22-23); never edit src/lib/server/db/migration-contract.ts (/api/ready pins the DRIZZLE migration); production moves with `alembic stamp`, never `upgrade`; gate the stamp on an empty `pg_dump --schema-only --schema=agri` diff; tests/test_migration_runtime_contract.py:30-34 asserts the literal 'timescaledb'::text in 20260719_0001 -- rewrite it in the same change; the two alembic pins move in the SAME commit as the revision",
+      "s2: direct writers import nothing from agri_data_service.db; days are opaque YYYY-MM-DD strings (PUBLISHER_NAMED_DAY_RULE); source-served-nothing -> write_absence, unreachable -> raise, never a zero-row partition; write_partition refuses a day with absent.json (signal 2026-08-08..16 are pivot d1's to retract); never edit objectstore.py/gap_fill.py (d0) or drain.py (d1)",
+      "s3: soil-survey has NO Python producer (rows are warmed by src/lib/server/services/usda-soil.ts) -- decide and record, never silently skip; a static_lookup day is a source VERSION STAMP; burn-severity cadence stays 1; fire-perimeters 2025-08-02..09-30 is a real gap, not an absence",
+      "s4: the governed contract is (signal_name, normalized_unit, lane), NULL required_source_key means no lane gate; never re-add min/max/avg (equal to normalized_value on 100% of 701,257 rows, 3.81x larger); cell position is the centroid resolved AFTER the aggregate; observation_count is republish count; pipeline/lanes/signal.py stays untouched until s5; parity sampling must know which layout each sampled z13 day was written in",
+      "s5: never delete pipeline/lanes/<slug>.py while pivot d1's drain.py imports the adapters; pipeline/lanes/soil_field.py is d5's; one lane per commit, deletion separate from parity proof; no hand-run DROP against production; interventions stays in Postgres (RUNBOOK 0.26.1)",
+      "s6: cannot start until pivot d3 and d4 have shipped; justification is architectural (grep-backed absence of readers + Parquet coverage proof), never an idx_scan counter; uq_signal_observation_release_cell_signal_time is a UNIQUE CONSTRAINT (DROP CONSTRAINT); ix_signal_observation_cell_time_signal (4,163,429 scans) goes LAST; one relation per revision; community features stay in Postgres"
+    ],
+    "integration_slice": "s5"
+  }
+}
