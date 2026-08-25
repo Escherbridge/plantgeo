@@ -63,6 +63,13 @@ Both selections run through the SAME walk -- round-robin, oldest-first, the cons
 floor, the contended cap and the time budget -- because those are properties of walking a backlog,
 not of what a day owes.
 
+EVERY ENTRY POINT HERE IS REACHABLE FROM ONE VERB, and that is a correctness property rather than a
+convenience. `cli.py`'s `parquet-drain --selection ladder` runs the ladder walk and
+`--selection ladder --dry-run` prints `ladder_census_report`; `parquet-retire-legacy-layout` runs
+the sweep below. A repair that only a Python REPL can start is a repair an operator reads about in
+a commit message, does not run, and believes has happened: `--dry-run` would echo the BASE census,
+show no ladder work, and the ~1,037 days would stay empty below z13 on exit code 0.
+
 THE PRE-ZOOM LAYOUT IS RETIRED HERE TOO. `retire_legacy_layout_objects` removes the objects written
 before the zoom axis existed, which sit one path segment shallower and are therefore invisible to
 every reader, every census and every prune in this service: `try_parse_partition_path` returns
@@ -75,11 +82,13 @@ from __future__ import annotations
 
 import re
 import time
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Final, Literal
 
 from agri_data_service.foundation.parquet.paths import (
+    COVERED_PARTITION_STATUSES,
     PARTITION_KINDS,
     completed_partition_days,
     layer_prefix,
@@ -103,11 +112,13 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     postgres_lane_day_lock,
     resolve_lane_watermarks,
 )
-from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, DERIVED_ZOOM_TIERS
+from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, DERIVED_ZOOM_TIERS, derivation_session
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
+    from contextlib import AbstractContextManager
 
+    from duckdb import DuckDBPyConnection
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
@@ -196,6 +207,28 @@ class DrainDayFailure:
     day: date
     outcome: str
     detail: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _DayResult:
+    """What one lane-day came to, whichever selection ran it.
+
+    A NAMED SHAPE RATHER THAN `fill_one_lane_day`'s FIVE-TUPLE because the ladder selection has a
+    sixth fact the export selection cannot have: WHICH rungs derived to nothing. A day is not the
+    unit of emptiness -- see `DerivationResult.emptied` -- so the walk cannot infer it from the
+    day's part count, and a tuple that means different things at different lengths is worse than
+    one dataclass with a documented default.
+    """
+
+    outcome: LaneDayOutcome
+    parts: int
+    rows: int
+    written_bytes: int
+    detail: str | None
+    # Ladder selection only. The export selection leaves this empty even when a rung of the day it
+    # exported emptied: that path's ladder is `gap_fill`'s to report, and its census never re-selects
+    # a base-complete day, so nothing here would loop on it.
+    emptied_tiers: tuple[ZoomTier, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,6 +394,34 @@ def _days_named_by(keys: Iterable[str], *, layer: str) -> set[date]:
     return days
 
 
+def _servable_days(keys: Sequence[str], *, layer: str, kind: PartitionKind) -> set[date]:
+    """Days whose BASE rung a reader may actually answer from: `data` or `absent`, nothing else.
+
+    NOT `_days_named_by`, AND THE DIFFERENCE DECIDES A DELETE. "Mentioned by some key" is a much
+    weaker claim than "published": a day holding a completion marker whose parts were deleted out
+    from under it is `missing`, and a day holding parts with no marker is `incomplete` -- both are
+    named by a key, NEITHER is in `COVERED_PARTITION_STATUSES`, and no reader in this service serves
+    either. Calling such a day "already published in the zoom layout" is how the legacy sweep would
+    delete the only surviving copy of it while reporting the deletion as superseded.
+
+    That is not a hypothetical under concurrency: `write_partition` clears the completion marker as
+    it uploads `part-0`, so any day the hourly cron is mid-re-export reads `incomplete` for the
+    length of that export -- inside the window of a sweep that listed once at its start.
+    """
+    named = _days_named_by(keys, layer=layer)
+    if not named:
+        return set()
+    statuses = partition_day_statuses(
+        layer=layer,
+        kind=kind,
+        zoom=BASE_ZOOM_TIER,
+        first_day=min(named),
+        last_day=max(named),
+        keys=keys,
+    )
+    return {day for day, status in statuses.items() if status in COVERED_PARTITION_STATUSES}
+
+
 def build_lane_ladder_census(
     lane: LaneRegistration,
     store: ObjectStore,
@@ -387,7 +448,18 @@ def build_lane_ladder_census(
     puts its parts before its marker, and `_retract_tier` clears the marker before deleting the
     parts. Spelling a stricter rule here would be a SECOND definition of "finished", and the one
     that eventually drifted would decide a day was done when the shared primitive said it was not.
+
+    AN EMPTY `tiers` IS REFUSED RATHER THAN VACUOUSLY COMPLETE. The rung loop below intersects, so
+    with no rungs to intersect over every published day reads as ladder-complete and the census
+    reports a green ladder for a warehouse that has none. Today `DERIVED_ZOOM_TIERS` is never empty;
+    it becomes empty the day `ZOOM_TIERS` is reduced to one entry, and that change must fail loudly
+    rather than silently report every lane finished.
     """
+    if not tiers:
+        raise ValueError(
+            f"a ladder census over no rungs would report every published day of {lane.slug!r} complete; ask for "
+            f"{tuple(DERIVED_ZOOM_TIERS)} or a subset of it"
+        )
     kind = GAP_FILL_PARTITION_KIND
     try:
         base_keys = store.list_partition_keys(lane.slug, kind, BASE_ZOOM_TIER)
@@ -437,12 +509,17 @@ def build_lane_ladder_census(
         complete &= marked
         partial |= base_data & marked
     incomplete = sorted(base_data - complete)
+    # BOTH SETS ARE TRUNCATED TOGETHER, or the report contradicts itself: `partial_ladder_days` is a
+    # SUBSET of `incomplete_days`, and truncating only the superset published `incomplete=1,
+    # partial=3` -- a subset larger than the set containing it. `partial` is reported against the
+    # days this census actually selected, so the two always describe the same walk.
+    selected = incomplete if max_days_per_lane is None else incomplete[:max_days_per_lane]
     return LaneLadderCensus(
         slug=lane.slug,
         base_day_count=len(base_data),
         ladder_complete_day_count=len(complete),
-        incomplete_days=tuple(incomplete if max_days_per_lane is None else incomplete[:max_days_per_lane]),
-        partial_ladder_days=tuple(sorted(partial - complete)),
+        incomplete_days=tuple(selected),
+        partial_ladder_days=tuple(day for day in selected if day in partial),
         base_absent_days=sum(1 for status in statuses.values() if status == "absent"),
         base_conflict_days=sum(1 for status in statuses.values() if status == "conflict"),
         truncated=max_days_per_lane is not None and len(incomplete) > max_days_per_lane,
@@ -547,6 +624,11 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
     `on_day` is called after every finished day so a CLI can stream progress across a run measured
     in hours. It is deliberately a callback rather than a logger: this module has no opinion about
     where a human is watching from, and a drain that printed would be untestable.
+
+    ONE DUCKDB SESSION SERVES THE WHOLE LADDER WALK. A geometry lane opens a session and pays
+    `LOAD spatial` PER RUNG otherwise -- three per day, ~3,000 across the measured 1,037-day repair
+    -- and `derivation_session` exists to be reused exactly this way. The export selection opens
+    none here: its rungs are derived inside `gap_fill`, which owns that path's session.
     """
     deadline = None if time_budget_seconds is None else monotonic() + time_budget_seconds
     started = monotonic()
@@ -555,43 +637,47 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
         # a question about exporting a base rung; a ladder repair exports nothing and would be
         # opening database connections for an answer it never consults.
         progress = plan_ladder_drain(build_ladder_census(lanes, store, max_days_per_lane=max_days_per_lane))
+        derivation_scope: AbstractContextManager[DuckDBPyConnection | None] = derivation_session()
     else:
         watermarks = await resolve_lane_watermarks(session, store, lanes=lanes, today=today)
         census = build_gap_census(lanes, store, today=today, max_days_per_lane=max_days_per_lane, watermarks=watermarks)
         progress = plan_drain(census)
+        derivation_scope = nullcontext()
     by_slug = {lane.slug: lane for lane in lanes}
 
-    while any(not lane.done for lane in progress):
-        if deadline is not None and monotonic() >= deadline:
-            break
-        advanced = False
-        for lane in progress:
-            if lane.done:
-                continue
-            for _ in range(days_per_lane_turn):
+    with derivation_scope as connection:
+        while any(not lane.done for lane in progress):
+            if deadline is not None and monotonic() >= deadline:
+                break
+            advanced = False
+            for lane in progress:
                 if lane.done:
-                    break
-                if deadline is not None and monotonic() >= deadline:
-                    break
-                advanced = True
-                await _drain_one_day(
-                    session,
-                    store,
-                    by_slug[lane.slug],
-                    lane,
-                    today=today,
-                    run_id=run_id,
-                    now=now,
-                    lane_day_lock=lane_day_lock,
-                    monotonic=monotonic,
-                    max_consecutive_failures=max_consecutive_failures,
-                    statement_timeout_seconds=statement_timeout_seconds,
-                    selection=selection,
-                    derive_tiers=derive_tiers,
-                    on_day=on_day,
-                )
-        if not advanced:
-            break
+                    continue
+                for _ in range(days_per_lane_turn):
+                    if lane.done:
+                        break
+                    if deadline is not None and monotonic() >= deadline:
+                        break
+                    advanced = True
+                    await _drain_one_day(
+                        session,
+                        store,
+                        by_slug[lane.slug],
+                        lane,
+                        today=today,
+                        run_id=run_id,
+                        now=now,
+                        lane_day_lock=lane_day_lock,
+                        monotonic=monotonic,
+                        max_consecutive_failures=max_consecutive_failures,
+                        statement_timeout_seconds=statement_timeout_seconds,
+                        selection=selection,
+                        derive_tiers=derive_tiers,
+                        connection=connection,
+                        on_day=on_day,
+                    )
+            if not advanced:
+                break
     return DrainSummary(run_id=run_id, lanes=progress, seconds=monotonic() - started)
 
 
@@ -605,7 +691,8 @@ async def _derive_one_day(  # noqa: PLR0913 - one coordinate of the day being de
     now: Callable[[], datetime],
     lane_day_lock: LaneDayLock,
     derive_tiers: TierDeriver,
-) -> tuple[LaneDayOutcome, int, int, int, str | None]:
+    connection: DuckDBPyConnection | None = None,
+) -> _DayResult:
     """Write one already-published day's coarse rungs from its base rung, under the lane-day lock.
 
     THE SAME LOCK KEY AS THE EXPORT PATH, IMPORTED RATHER THAN RESPELT. `fill_one_lane_day` holds
@@ -623,39 +710,79 @@ async def _derive_one_day(  # noqa: PLR0913 - one coordinate of the day being de
     A FAILED DERIVATION CHANGES NOTHING, which is what makes the repair safe to re-run. The base
     rung and its marker are never touched here, so a day that raises is simply still ladder-
     incomplete and the next census selects it again.
+
+    THE LOCK ITSELF IS INSIDE THE GUARD, not only the derivation, and that is the difference between
+    a recorded failure and a lost run. `pg_try_advisory_lock` is a real statement against a real
+    session: a connection reset, a statement timeout or a session already in a failed transaction
+    raises THERE, before the derivation is reached, and an unguarded `async with` would carry that
+    out of the whole walk -- every lane's tally, not just this day's, and the module docstring
+    promises the opposite.
+
+    THE SESSION IS ROLLED BACK ON EVERY PATH, exactly as `_export_one_day` does one contract over.
+    SQLAlchemy 2.0's `autobegin` means the lock statement OPENS a transaction that this path would
+    otherwise never end: over a multi-hour repair that is one backend idle-in-transaction from the
+    first day to the last, which `idle_in_transaction_session_timeout` eventually terminates
+    mid-run. The advisory lock is session-scoped, so the rollback does not release it.
     """
-    async with lane_day_lock(session, _lane_day_lock_key(registration, day)) as granted:
-        if not granted:
-            return (
-                "contended",
-                0,
-                0,
-                0,
-                f"{day.isoformat()}: another run holds this lane-day, so its coarse rungs were left alone rather "
-                "than derived beside a base rung being rewritten; a later turn will take it",
-            )
-        try:
+    try:
+        async with lane_day_lock(session, _lane_day_lock_key(registration, day)) as granted:
+            if not granted:
+                return _DayResult(
+                    "contended",
+                    0,
+                    0,
+                    0,
+                    f"{day.isoformat()}: another run holds this lane-day, so its coarse rungs were left alone rather "
+                    "than derived beside a base rung being rewritten; a later turn will take it",
+                )
             derived = derive_tiers(
-                store, layer=registration.slug, kind=GAP_FILL_PARTITION_KIND, day=day, run_id=run_id, now=now
+                store,
+                layer=registration.slug,
+                kind=GAP_FILL_PARTITION_KIND,
+                day=day,
+                run_id=run_id,
+                now=now,
+                connection=connection,
             )
-        except Exception as error:
-            return (
-                "raised",
-                0,
-                0,
-                0,
-                f"{day.isoformat()}: the coarse rungs could not be derived from the published base rung, so this "
-                f"day stays visible only at z{BASE_ZOOM_TIER}. A base rung that no longer matches its lane's schema "
-                f"reads exactly like this and needs retracting and re-exporting, not re-deriving: "
-                f"{type(error).__name__}: {error}",
-            )
+    except Exception as error:
+        return _DayResult(
+            "raised",
+            0,
+            0,
+            0,
+            f"{day.isoformat()}: the coarse rungs could not be derived from the published base rung, so this "
+            f"day stays visible only at z{BASE_ZOOM_TIER}. A base rung that no longer matches its lane's schema "
+            f"reads exactly like this and needs retracting and re-exporting, not re-deriving: "
+            f"{type(error).__name__}: {error}",
+        )
+    finally:
+        await _end_lane_day_transaction(session)
     notes = list(derived.notes)
     if derived.tiers:
         rungs = ", ".join(
             f"z{report.tier} {report.row_count} rows in {report.part_count} part(s)" for report in derived.tiers
         )
         notes.append(f"{day.isoformat()}: derived {rungs}")
-    return "written", derived.part_count, derived.row_count, derived.byte_count, "; ".join(notes) or None
+    return _DayResult(
+        "written",
+        derived.part_count,
+        derived.row_count,
+        derived.byte_count,
+        "; ".join(notes) or None,
+        emptied_tiers=tuple(derived.emptied),
+    )
+
+
+async def _end_lane_day_transaction(session: AsyncSession) -> None:
+    """Close whatever transaction this lane-day opened, and never fail a walk over the attempt.
+
+    Swallowed for the same reason `postgres_lane_day_lock` swallows a failed release: a rollback
+    that cannot be issued means the connection is already gone, and the days after this one will
+    say so through the consecutive-failure floor. Turning it into an exception here would take the
+    whole walk down, which is the failure this guard exists to prevent.
+    """
+    with suppress(Exception):
+        await session.rollback()
 
 
 async def _run_one_day(  # noqa: PLR0913 - one coordinate of the day being run per arg
@@ -671,7 +798,8 @@ async def _run_one_day(  # noqa: PLR0913 - one coordinate of the day being run p
     statement_timeout_seconds: int,
     selection: DrainSelection,
     derive_tiers: TierDeriver,
-) -> tuple[LaneDayOutcome, int, int, int, str | None]:
+    connection: DuckDBPyConnection | None,
+) -> _DayResult:
     """Run one day through the path its selection names: a Postgres export, or a derivation alone.
 
     THE ONLY PLACE THE TWO SELECTIONS DIVERGE. Everything around it -- the round-robin, the
@@ -688,8 +816,9 @@ async def _run_one_day(  # noqa: PLR0913 - one coordinate of the day being run p
             now=now,
             lane_day_lock=lane_day_lock,
             derive_tiers=derive_tiers,
+            connection=connection,
         )
-    return await fill_one_lane_day(
+    outcome, parts, rows, written_bytes, detail = await fill_one_lane_day(
         session,
         store,
         registration,
@@ -700,6 +829,7 @@ async def _run_one_day(  # noqa: PLR0913 - one coordinate of the day being run p
         lane_day_lock=lane_day_lock,
         statement_timeout_seconds=statement_timeout_seconds,
     )
+    return _DayResult(outcome, parts, rows, written_bytes, detail)
 
 
 async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being drained per arg
@@ -717,31 +847,61 @@ async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being dra
     statement_timeout_seconds: int,
     selection: DrainSelection,
     derive_tiers: TierDeriver,
+    connection: DuckDBPyConnection | None,
     on_day: Callable[[str, date, str, str | None], None] | None,
 ) -> None:
-    """Fill one day through the cron's own per-day path, then fold the outcome into the lane tally."""
+    """Fill one day through the cron's own per-day path, then fold the outcome into the lane tally.
+
+    NOTHING RAISES OUT OF HERE. The module docstring's promise -- "a failure here is RECORDED and
+    the walk continues" -- is only true if the walk holds a guard, and one day's escape costs every
+    lane its whole tally, not merely its own. Each selection's own path already converts what it can
+    (`_export_one_day` catches its lane adapter, `_derive_one_day` catches its lock and its
+    derivation); this is the floor under both, for the statements each issues before its own try.
+    """
     day = lane.pending.pop(0)
     began = monotonic()
-    outcome, parts, rows, written_bytes, detail = await _run_one_day(
-        session,
-        store,
-        registration,
-        day=day,
-        today=today,
-        run_id=run_id,
-        now=now,
-        lane_day_lock=lane_day_lock,
-        statement_timeout_seconds=statement_timeout_seconds,
-        selection=selection,
-        derive_tiers=derive_tiers,
-    )
-    if selection == "ladder" and outcome == "written" and parts == 0:
+    try:
+        result = await _run_one_day(
+            session,
+            store,
+            registration,
+            day=day,
+            today=today,
+            run_id=run_id,
+            now=now,
+            lane_day_lock=lane_day_lock,
+            statement_timeout_seconds=statement_timeout_seconds,
+            selection=selection,
+            derive_tiers=derive_tiers,
+            connection=connection,
+        )
+    except Exception as error:
+        await _end_lane_day_transaction(session)
+        result = _DayResult(
+            "raised",
+            0,
+            0,
+            0,
+            f"{day.isoformat()}: the {selection} path raised out of its own handling, so nothing about this day is "
+            f"known to have been written; it stays selectable and the next run takes it: "
+            f"{type(error).__name__}: {error}",
+        )
+    outcome, parts, detail = result.outcome, result.parts, result.detail
+    # A LADDER DAY IS RE-SELECTED FOREVER IF *ANY* RUNG EMPTIED, not only if the whole day did: an
+    # emptied rung is retracted and carries no completion marker, and the census intersects markers
+    # across every rung. `parts == 0` is kept beside it for a deriver that reports no rungs at all.
+    if selection == "ladder" and outcome == "written" and (result.emptied_tiers or parts == 0):
         lane.emptied.append(day)
     lane.seconds += monotonic() - began
     lane.parts += parts
-    lane.rows += rows
-    lane.written_bytes += written_bytes
-    if outcome == "written":
+    lane.rows += result.rows
+    lane.written_bytes += result.written_bytes
+    # `days_written` COUNTS DAYS THAT WROTE, hence the part test beside the outcome. A ladder day
+    # whose every rung was honestly empty comes back `written` with nothing behind it, and counting
+    # it would report progress the bucket does not hold; it lands in `emptied` above instead, and in
+    # no other tally. The export selection cannot reach that state -- `_finalize_written_day` returns
+    # `raised` for a day that wrote no parts.
+    if outcome == "written" and parts > 0:
         lane.written += 1
     elif outcome == "absent":
         lane.absent += 1
@@ -808,10 +968,13 @@ class LegacyLayoutRetirement:
     """One layer's pre-zoom residue: what was found, what was superseded, and what was removed."""
 
     layer: str
-    # Legacy objects whose day the zoom layout ALREADY holds at the base rung. Removing one of these
-    # can lose nothing: a newer copy of that day is published where readers actually look.
+    # Legacy objects whose day the zoom layout holds at the base rung in a SERVABLE state -- `data`
+    # or `absent`, per `COVERED_PARTITION_STATUSES`. Removing one of these can lose nothing: a newer
+    # copy of that day is published where readers actually look. A day that is merely MENTIONED
+    # there -- an `incomplete` half-export, or a completion marker whose parts are gone -- is not
+    # superseded by it and is classified `orphaned` instead. See `_servable_days`.
     superseded: tuple[LegacyLayoutObject, ...]
-    # Legacy objects for a day the zoom layout does not hold at all. Removing one DOES drop the only
+    # Legacy objects for a day the zoom layout cannot serve. Removing one DOES drop the only usable
     # copy in this bucket -- recoverable, because the ordinary `missing` drain would re-export the
     # day from Postgres, but not free. Never removed unless a caller asks for it by name.
     orphaned: tuple[LegacyLayoutObject, ...]
@@ -894,9 +1057,15 @@ def retire_legacy_layout_objects(
     to do by forgetting an argument.
 
     ORPHANS ARE REPORTED AND KEPT unless `include_orphaned` says otherwise: a legacy day the zoom
-    layout does not hold is the only copy in this bucket, and while it is recoverable from Postgres
-    by the ordinary drain, a sweep whose stated job is removing superseded bytes should not quietly
-    decide to re-export somebody's day as a side effect.
+    layout cannot serve is the only usable copy in this bucket, and while it is recoverable from
+    Postgres by the ordinary drain, a sweep whose stated job is removing superseded bytes should not
+    quietly decide to re-export somebody's day as a side effect.
+
+    SUPERSEDED MEANS SERVABLE, NOT MENTIONED -- `_servable_days`, not `_days_named_by`. The listing
+    is taken ONCE at the start of a layer, and the hourly cron clears a day's completion marker as
+    it uploads `part-0`, so a day being re-exported during this sweep reads `incomplete` in that
+    snapshot. Under the weaker rule it would be classified superseded and its legacy copy deleted
+    while the only zoom-layout copy was half-written.
     """
     return tuple(
         _retire_one_layer(store, backend, layer=layer, dry_run=dry_run, include_orphaned=include_orphaned)
@@ -919,8 +1088,8 @@ def _retire_one_layer(
         # population entirely: measuring a legacy forecast object against the observed days would
         # call it orphaned whenever the observed lane happened not to hold that calendar day.
         published = {
-            partition_kind: _days_named_by(
-                store.list_partition_keys(layer, partition_kind, BASE_ZOOM_TIER), layer=layer
+            partition_kind: _servable_days(
+                store.list_partition_keys(layer, partition_kind, BASE_ZOOM_TIER), layer=layer, kind=partition_kind
             )
             for partition_kind in PARTITION_KINDS
         }

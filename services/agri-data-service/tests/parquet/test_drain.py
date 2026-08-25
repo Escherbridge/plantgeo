@@ -22,6 +22,7 @@ import datetime as dt
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Final
 
+import duckdb
 import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
@@ -43,6 +44,7 @@ from agri_data_service.pipeline.parquet.drain import (
 )
 from agri_data_service.pipeline.parquet.gap_fill import (
     _lane_day_lock_key,
+    postgres_lane_day_lock,
     unlocked_lane_day,
 )
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
@@ -67,6 +69,10 @@ RUN_ID: Final = "test-drain"
 FROZEN_NOW: Final = dt.datetime(2026, 8, 1, 12, tzinfo=dt.UTC)
 # The four file kinds the retired layout could hold for one day: two parts and the two markers.
 LEGACY_FILE_KINDS: Final = ("part-0.parquet", "part-1.parquet", "absent.json", "_complete.json")
+# Two published days, so a walk that lost a lane's tally on the first is visibly short on the second.
+TWO_LANE_DAYS: Final = 2
+# Three published days, which is also `len(DERIVED_ZOOM_TIERS)` -- the two are unrelated and both are 3.
+THREE_LANE_DAYS: Final = 3
 
 
 def _now() -> dt.datetime:
@@ -74,13 +80,41 @@ def _now() -> dt.datetime:
 
 
 class _RefusingSession:
-    """A session that fails any statement: proof a ladder drain never queries Postgres."""
+    """A session that fails any statement: proof a ladder drain never queries Postgres.
+
+    `rollback` RECORDS rather than refuses, and the earlier spelling of this fake ("a ladder drain
+    has no transaction to roll back") was true of the fake and false of a real `AsyncSession`.
+    SQLAlchemy 2.0 autobegins on the advisory-lock statement, so a walk that never rolled back would
+    hold ONE transaction open from the first lane-day to the last -- hours, against a production
+    backend, under `idle_in_transaction_session_timeout`. The count is asserted below.
+    """
+
+    def __init__(self) -> None:
+        self.rollbacks = 0
 
     async def execute(self, *_args: object, **_kwargs: object) -> object:
         raise AssertionError("a ladder drain must derive from the bucket, never from the database")
 
     async def rollback(self) -> None:
-        raise AssertionError("a ladder drain has no transaction to roll back")
+        self.rollbacks += 1
+
+
+class _LockRaisingSession:
+    """A session whose every statement raises, as one left in a failed transaction does.
+
+    `PendingRollbackError` is the measured shape: a session that succeeded once and then behaves as
+    rolled-back raises on the NEXT statement, which for the ladder path is `pg_try_advisory_lock`
+    itself -- before any derivation, outside anything the derivation's own handler covers.
+    """
+
+    def __init__(self) -> None:
+        self.rollbacks = 0
+
+    async def execute(self, *_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("PendingRollbackError: this Session's transaction has been rolled back")
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
 
 
 def _session() -> AsyncSession:
@@ -231,6 +265,38 @@ def test_the_ladder_report_names_lanes_rather_than_only_summing_them() -> None:
     assert report["incomplete_ladder_days"] == 1
     assert report["lanes_with_incomplete_ladders"] == [STREAM]
     assert report["lanes_with_partial_ladders"] == [STREAM]
+
+
+def test_a_census_over_no_rungs_is_refused_rather_than_reporting_every_day_complete() -> None:
+    """`tiers=()` is VACUOUSLY complete: the intersection loop never runs, so `complete == base_data`.
+
+    Reachable the day `ZOOM_TIERS` is reduced to one entry, which would make `DERIVED_ZOOM_TIERS`
+    empty and every lane read as ladder-complete over a warehouse with no ladder at all.
+    """
+    store, _ = _store()
+    _publish_base_day(store, DAY)
+
+    with pytest.raises(ValueError, match="over no rungs"):
+        build_lane_ladder_census(LANE_REGISTRY[STREAM], store, tiers=())
+
+
+def test_a_truncated_census_truncates_the_partial_days_with_the_incomplete_ones() -> None:
+    """A subset may never be reported larger than the set containing it: measured `incomplete=1, partial=3`."""
+    store, _ = _store()
+    for day in (OLDEST_DAY, OLDER_DAY, DAY):
+        _publish_base_day(store, day)
+    for day in (OLDER_DAY, DAY):  # partial ladders, and NOT the day a cap of one selects
+        _mark_rung(store, 9, day)
+
+    census = build_lane_ladder_census(LANE_REGISTRY[STREAM], store, max_days_per_lane=1)
+
+    assert census.incomplete_days == (OLDEST_DAY,)
+    assert set(census.partial_ladder_days) <= set(census.incomplete_days), (
+        "partial ladders are a SUBSET of the days this census selected"
+    )
+    report = ladder_census_report([census])
+    assert report["incomplete_ladder_days"] == 1
+    assert census.truncated is True
 
 
 def test_the_ladder_walk_goes_oldest_day_first() -> None:
@@ -397,6 +463,37 @@ async def test_a_day_whose_every_rung_empties_is_reported_rather_than_silently_l
 
     assert summary.lanes[0].emptied == [DAY]
     assert summary.to_report()["emptied_ladders"] == 1
+    assert summary.days_written == 0, "a day that wrote no part must not be counted as written"
+
+
+@pytest.mark.asyncio
+async def test_a_day_with_one_emptied_rung_is_reported_even_though_it_wrote() -> None:
+    """A DAY IS NOT THE UNIT OF EMPTINESS. One retracted rung carries no marker, so the ladder census
+    re-selects this day forever -- and it is invisible to a check that only asks whether the DAY wrote."""
+    store, _ = _store()
+    _publish_base_day(store, DAY)
+
+    def one_rung_of_three(*_args: object, **_kwargs: object) -> DerivationResult:
+        return DerivationResult(
+            tiers=(DerivedTierReport(tier=9, part_count=1, row_count=2, byte_count=64),),
+            notes=("z5 and z0 dropped every base row",),
+            emptied=(5, 0),
+        )
+
+    summary = await run_drain(
+        _session(),
+        store,
+        lanes=[LANE_REGISTRY[STREAM]],
+        today=DAY,
+        run_id=RUN_ID,
+        selection="ladder",
+        now=_now,
+        lane_day_lock=unlocked_lane_day,
+        derive_tiers=one_rung_of_three,
+    )
+
+    assert summary.lanes[0].emptied == [DAY], "a partly-emptied ladder is re-selected forever and must be named"
+    assert summary.days_written == 1, "it did write z9, so it is also a written day"
 
 
 @pytest.mark.asyncio
@@ -426,6 +523,101 @@ async def test_a_ladder_summary_counts_the_rungs_it_wrote() -> None:
 
     lane = summary.lanes[0]
     assert (lane.parts, lane.rows, lane.written_bytes) == (3, 6, 192)
+
+
+# --- Fault isolation and session discipline ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_session_that_raises_on_the_lock_is_recorded_rather_than_ending_the_walk() -> None:
+    """DO NOT DELETE. The unguarded `async with` carried this out of `run_drain` and lost EVERY lane's tally.
+
+    `pg_try_advisory_lock` is a real statement. A session left in a failed transaction raises THERE,
+    before any derivation, so the derivation's own handler never sees it -- and the module docstring
+    promises that "one unparseable day in 2003 must not cost fire-detections the other ~9,000".
+    """
+    store, _ = _store()
+    _publish_base_day(store, DAY)
+    _publish_base_day(store, OLDER_DAY)
+    session = _LockRaisingSession()
+
+    summary = await run_drain(
+        session,  # type: ignore[arg-type]
+        store,
+        lanes=[LANE_REGISTRY[STREAM]],
+        today=DAY,
+        run_id=RUN_ID,
+        selection="ladder",
+        now=_now,
+        lane_day_lock=postgres_lane_day_lock,
+    )
+
+    assert [failure.outcome for failure in summary.failures] == ["raised", "raised"], (
+        "a summary must come back, with BOTH days accounted for"
+    )
+    assert summary.days_written == 0
+    assert session.rollbacks >= TWO_LANE_DAYS, "a failed lane-day must still end its own transaction"
+
+
+@pytest.mark.asyncio
+async def test_every_ladder_lane_day_ends_its_own_transaction() -> None:
+    """SQLAlchemy 2.0 autobegins on the lock statement, and a multi-hour walk that never ends it holds
+    ONE transaction open from the first day to the last -- which `idle_in_transaction_session_timeout` kills."""
+    store, _ = _store()
+    _publish_base_day(store, DAY)
+    _publish_base_day(store, OLDER_DAY)
+    session = _RefusingSession()
+
+    await run_drain(
+        session,  # type: ignore[arg-type]
+        store,
+        lanes=[LANE_REGISTRY[STREAM]],
+        today=DAY,
+        run_id=RUN_ID,
+        selection="ladder",
+        now=_now,
+        lane_day_lock=unlocked_lane_day,
+    )
+
+    assert session.rollbacks == TWO_LANE_DAYS, "one rollback per lane-day, on the success path too"
+
+
+@pytest.mark.asyncio
+async def test_one_guarded_duckdb_session_serves_the_whole_ladder_walk() -> None:
+    """`derivation_session` advertises reuse; before this it was reachable from no driver at all, so every
+    geometry rung of every day opened a fresh DuckDB and re-ran `LOAD spatial` -- ~3x per geometry day."""
+    store, _ = _store()
+    for day in (DAY, OLDER_DAY, OLDEST_DAY):
+        _publish_base_day(store, day)
+    handed: list[object] = []
+    spill_settings: list[str] = []
+
+    def record_connection(*_args: object, connection: object = None, **_kwargs: object) -> DerivationResult:
+        handed.append(connection)
+        # Read INSIDE the walk: `run_drain` closes the session it opened on the way out.
+        assert isinstance(connection, duckdb.DuckDBPyConnection)
+        row = connection.execute("SELECT current_setting('max_temp_directory_size')").fetchone()
+        assert row is not None
+        spill_settings.append(str(row[0]))
+        return DerivationResult(tiers=(DerivedTierReport(tier=9, part_count=1, row_count=1, byte_count=32),), notes=())
+
+    await run_drain(
+        _session(),
+        store,
+        lanes=[LANE_REGISTRY[STREAM]],
+        today=DAY,
+        run_id=RUN_ID,
+        selection="ladder",
+        now=_now,
+        lane_day_lock=unlocked_lane_day,
+        derive_tiers=record_connection,
+    )
+
+    assert len(handed) == THREE_LANE_DAYS
+    assert len({id(held) for held in handed}) == 1, "the walk must hand its deriver ONE session, reused"
+    assert spill_settings == ["0 bytes"] * THREE_LANE_DAYS, (
+        "the walk's shared session must carry the derivation guards; spilling is the load-bearing one"
+    )
 
 
 # --- Retiring the pre-zoom layout ----------------------------------------------------------------
@@ -487,6 +679,62 @@ def test_an_orphaned_pre_zoom_object_is_kept_unless_it_is_asked_for_by_name() ->
     taken = _swept(store, backend, dry_run=False, include_orphaned=True)
     assert len(taken.removed) == 1
     assert orphan not in backend.objects
+
+
+def test_a_zoom_day_that_is_marker_only_does_not_supersede_its_legacy_copy() -> None:
+    """DO NOT DELETE. A completion marker whose parts were deleted underneath it is `missing`.
+
+    No reader serves it -- `COVERED_PARTITION_STATUSES` is `data`/`absent` -- so "a newer copy is
+    published where readers actually look" is FALSE for it, and deleting the legacy copy on that
+    basis destroys the only readable copy of the day.
+    """
+    store, backend = _store()
+    store.write_completion_marker(
+        PartitionCompletion(part_count=1, row_count=4, completed_at=FROZEN_NOW, run_id=RUN_ID),
+        layer=STREAM,
+        kind="observed",
+        zoom=BASE_ZOOM_TIER,
+        day=DAY,
+    )
+    key = _put_legacy(store, backend, STREAM, DAY, "part-0.parquet")
+
+    swept = _swept(store, backend, dry_run=False)
+
+    assert swept.superseded == (), "a marker with no parts under it supersedes nothing"
+    assert [found.day for found in swept.orphaned] == [DAY]
+    assert swept.removed == ()
+    assert key in backend.objects, "the sweep deleted the only readable copy of this day"
+
+
+def test_a_zoom_day_that_is_half_written_does_not_supersede_its_legacy_copy() -> None:
+    """DO NOT DELETE. `write_partition` clears the completion marker as it uploads `part-0`, so ANY day
+    the hourly cron is mid-re-export reads `incomplete` inside this sweep's window -- and `published` is
+    computed once, at the start of the layer."""
+    store, backend = _store()
+    store.write_partition(_base_table(DAY), layer=STREAM, kind="observed", zoom=BASE_ZOOM_TIER, day=DAY)
+    key = _put_legacy(store, backend, STREAM, DAY, "part-0.parquet")
+
+    swept = _swept(store, backend, dry_run=False)
+
+    assert swept.superseded == (), "a half-written export supersedes nothing"
+    assert [found.day for found in swept.orphaned] == [DAY]
+    assert key in backend.objects
+
+
+def test_a_governed_absence_in_the_zoom_layout_does_supersede_its_legacy_copy() -> None:
+    """`absent` IS servable -- a reader answers it as a governed empty day -- so the legacy bytes are surplus."""
+    store, backend = _store()
+    backend.put(
+        store.key_for(absence_marker_path(STREAM, "observed", BASE_ZOOM_TIER, DAY)),
+        b'{"reason": "upstream published nothing"}',
+        content_type="application/json",
+    )
+    key = _put_legacy(store, backend, STREAM, DAY, "part-0.parquet")
+
+    swept = _swept(store, backend, dry_run=False)
+
+    assert [found.day for found in swept.superseded] == [DAY]
+    assert key not in backend.objects
 
 
 def test_a_current_zoom_layout_object_is_never_removed() -> None:

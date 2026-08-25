@@ -1118,7 +1118,16 @@ async def _fill_static_day(  # noqa: PLR0913 - one caller-supplied coordinate pe
 
 
 def _lane_day_lock_key(lane: LaneRegistration, day: date) -> str:
-    """The advisory-lock identity of one lane-day-tier: the unit two writers must never share."""
+    """The advisory-lock identity of ONE LANE-DAY'S WHOLE LADDER: the unit two writers must never share.
+
+    THE `z13` IN THE STRING IS A HISTORICAL SPELLING, NOT A SCOPE. This key was minted when a lane-day
+    was one tier; it now excludes writers of every rung of that day, because `fill_one_lane_day` and
+    `drain._derive_one_day` both hold it across the base rung AND z9/z5/z0. A repair that wanted to
+    rebuild one rung alone must still take THIS key -- minting `...:z9:...` beside it would exclude
+    nothing, and the two writers would prune and mark the same rung concurrently. The literal stays
+    because it is a lock identity: changing the string is a flag day on which running processes stop
+    excluding each other.
+    """
     return f"parquet-gap-fill:{lane.slug}:{GAP_FILL_PARTITION_KIND}:z{GAP_FILL_ZOOM_TIER}:{day.isoformat()}"
 
 

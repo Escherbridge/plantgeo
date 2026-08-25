@@ -53,6 +53,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from datetime import date, datetime
 
+    from duckdb import DuckDBPyConnection
+
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
@@ -84,6 +86,13 @@ class DerivationResult:
 
     tiers: tuple[DerivedTierReport, ...]
     notes: tuple[str, ...]
+    # Rungs that derived to NO ROWS, so they were retracted and carry no completion marker.
+    #
+    # NAMED PER RUNG BECAUSE A DAY IS NOT THE UNIT. A day whose z9 holds rows and whose z0 empties
+    # wrote parts, so a driver measuring emptiness by the day's total part count sees `written` and
+    # moves on -- while every future ladder census re-selects that day forever, because one rung of
+    # it will never be marked. `pipeline/parquet/drain.py` reports it from here instead.
+    emptied: tuple[ZoomTier, ...] = ()
 
     @property
     def part_count(self) -> int:
@@ -111,6 +120,7 @@ def derive_and_write_day_tiers(  # noqa: PLR0913 - one coordinate of the day bei
     now: Callable[[], datetime],
     base_table: pl.DataFrame | None = None,
     tiers: Sequence[ZoomTier] = DERIVED_ZOOM_TIERS,
+    connection: DuckDBPyConnection | None = None,
 ) -> DerivationResult:
     """Derive, write, prune and mark every coarse rung of one lane-day. Raises if any rung fails.
 
@@ -131,15 +141,31 @@ def derive_and_write_day_tiers(  # noqa: PLR0913 - one coordinate of the day bei
     than swaps, so the failure is loud -- but a lane that trips it needs this function taught to
     fold rung-by-rung over batches, which is only correct for aggregates that are associative
     (`sum`/`min`/`max`/`all`/`any`) and NOT for `mean`.
+
+    `connection` IS THE REUSE `derivation_session` ADVERTISES, wired here rather than left as a
+    capability of the pure transform alone. A geometry lane opens a DuckDB session PER RUNG, and
+    `LOAD spatial` on each: three per geometry day, which across a thousand-day repair is three
+    thousand session opens for one session's worth of work. Passing one session through costs the
+    caller a `with` and buys exactly that. `warehouse/parquet/tiers.py::derive_tier` states what it
+    does to a connection it is handed -- it pins this module's guards for the call and restores them.
+
+    AN EMPTY `tiers` IS REFUSED. A day derived against no rungs is trivially "all rungs written",
+    which would let a caller mark a base day complete over a ladder that was never built.
     """
+    if not tiers:
+        raise TierWriteError(
+            f"{layer} {day.isoformat()}: a derivation was asked for NO rungs, which would report a complete ladder "
+            f"over one that was never built. Ask for {tuple(DERIVED_ZOOM_TIERS)} or a subset of it"
+        )
     source = base_table if base_table is not None else pl.from_arrow(store.read_partition(layer, kind, 13, day))
     if not isinstance(source, pl.DataFrame):  # pragma: no cover - a chunked read would be a store change
         source = pl.DataFrame(source)
     reports: list[DerivedTierReport] = []
     notes: list[str] = []
+    emptied: list[ZoomTier] = []
     for tier in tiers:
         try:
-            derived = derive_tier(source, stream=layer, tier=tier)
+            derived = derive_tier(source, stream=layer, tier=tier, connection=connection)
         except Exception as error:
             raise TierWriteError(
                 f"{layer} z{tier} {day.isoformat()}: the derivation itself failed, so this day has no honest coarse "
@@ -160,9 +186,10 @@ def derive_and_write_day_tiers(  # noqa: PLR0913 - one coordinate of the day bei
                 f"{layer} z{tier} {day.isoformat()}: every base row was dropped at this rung, so it holds no parts"
             )
             _retract_tier(store, layer=layer, kind=kind, tier=tier, day=day)
+            emptied.append(tier)
             continue
         reports.append(_write_tier(store, derived, layer=layer, kind=kind, tier=tier, day=day, run_id=run_id, now=now))
-    return DerivationResult(tiers=tuple(reports), notes=tuple(notes))
+    return DerivationResult(tiers=tuple(reports), notes=tuple(notes), emptied=tuple(emptied))
 
 
 def _retract_tier(store: ObjectStore, *, layer: str, kind: PartitionKind, tier: ZoomTier, day: date) -> None:

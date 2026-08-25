@@ -54,7 +54,7 @@ one lane in this case the object is a single day-row.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -426,18 +426,57 @@ def _derive_grid_tier(frame: pl.DataFrame, strategy: GridAggregation, *, tier: Z
     return aggregated.select(frame.columns).sort(grain)
 
 
+# The three guards, in the order they are pinned and restored. Named once so the snapshot, the pin
+# and the restore cannot disagree about which settings this module touches.
+_GUARDED_SETTINGS: Final = ("memory_limit", "threads", "max_temp_directory_size")
+
+
 def _pin_resource_guards(session: DuckDBPyConnection) -> None:
     """Cap one session's memory and threads and DISABLE spilling, so an over-budget query raises fast.
 
     APPLIED TO A CALLER-SUPPLIED CONNECTION TOO, overriding whatever it was configured with. That is
     deliberate and is the safe direction: the caller that hands in an unguarded connection is
-    precisely the caller that would consume the host, and a caller who genuinely wanted a larger
-    budget can re-pin after the derivation returns. There is no reading of this module's contract
+    precisely the caller that would consume the host. There is no reading of this module's contract
     under which a derivation may spill to local disk.
+
+    ALL THREE ARE INSTANCE-WIDE, NOT CONNECTION-LOCAL, and that is why `_geometry_session` restores
+    them. `memory_limit`, `threads` and `max_temp_directory_size` are global DuckDB options: pinning
+    them through one cursor re-pins every SIBLING cursor of the same instance, including ones this
+    module was never handed and whose owner has no return point at which to undo it. Measured
+    2026-08-25. See `warehouse/parquet/AGENTS.md`.
     """
     session.execute(f"SET memory_limit = '{DERIVATION_MEMORY_LIMIT}'")
     session.execute(f"SET threads = {DERIVATION_THREAD_COUNT}")
     session.execute(f"SET max_temp_directory_size = '{DERIVATION_TEMP_DIRECTORY_SIZE}'")
+
+
+def _resource_guard_snapshot(session: DuckDBPyConnection) -> dict[str, str]:
+    """Read the three guarded settings back as the instance currently renders them."""
+    snapshot: dict[str, str] = {}
+    for name in _GUARDED_SETTINGS:
+        row = session.execute("SELECT current_setting(?)", [name]).fetchone()
+        if row is not None:
+            snapshot[name] = str(row[0])
+    return snapshot
+
+
+def _restore_resource_guards(session: DuckDBPyConnection, snapshot: Mapping[str, str]) -> None:
+    """Put the three instance-wide settings back to what `_resource_guard_snapshot` saw.
+
+    THE RENDERED VALUE IS WHAT IS RESTORED, not the caller's original literal: DuckDB reports
+    `memory_limit` back rounded ('900MB' reads as '858.3 MiB'), so a restore can move the ceiling by
+    a fraction of a mebibyte. That is the honest limit of restoring through the only readback DuckDB
+    offers, and it is nowhere near the ~16x difference this restore exists to undo.
+
+    Best effort per setting, on purpose: a failed restore must not turn a SUCCESSFUL derivation into
+    a raised one, and the value it failed to put back is this module's own conservative cap.
+    """
+    for name, value in snapshot.items():
+        with suppress(duckdb.Error):
+            if name == "threads":
+                session.execute(f"SET threads = {int(value)}")
+            else:
+                session.execute(f"SET {name} = '{value}'")
 
 
 def _load_spatial(session: DuckDBPyConnection) -> None:
@@ -455,7 +494,10 @@ def derivation_session() -> Iterator[DuckDBPyConnection]:
 
     `:memory:` and no database file, so a derivation can never leave one behind or reopen a stale
     one. Public because a driver deriving many lane-days may reuse ONE session rather than paying
-    `LOAD spatial` per rung per day -- pass it to `derive_tier(connection=...)`.
+    `LOAD spatial` per rung per day. THE REUSE IS WIRED, not merely advertised: hand this session to
+    `derivation.derive_and_write_day_tiers(connection=...)`, which forwards it to every rung's
+    `derive_tier(connection=...)`, and `pipeline/parquet/drain.py` opens exactly one of these for a
+    whole `selection="ladder"` walk.
     """
     session = duckdb.connect(database=":memory:")
     try:
@@ -468,14 +510,42 @@ def derivation_session() -> Iterator[DuckDBPyConnection]:
 
 @contextmanager
 def _geometry_session(connection: DuckDBPyConnection | None) -> Iterator[DuckDBPyConnection]:
-    """Yield a guarded session, closing only one this function opened -- never the caller's."""
+    """Yield a guarded session, closing only one this function opened -- never the caller's.
+
+    A CALLER-SUPPLIED CONNECTION IS RE-PINNED AND THEN PUT BACK. The pin is instance-wide (see
+    `_pin_resource_guards`), so leaving it in place would cap every sibling cursor of that instance
+    -- the serving session at `interface/http/duckdb_session.py` among them -- at this module's batch
+    budget for the life of the process, with no return point at which its owner could notice. The
+    guards hold for exactly the derivation, which is the whole window in which a spill could happen.
+    """
     if connection is None:
         with derivation_session() as opened:
             yield opened
         return
+    restore = _resource_guard_snapshot(connection)
     _pin_resource_guards(connection)
     _load_spatial(connection)
-    yield connection
+    try:
+        yield connection
+    finally:
+        _restore_resource_guards(connection, restore)
+
+
+@contextmanager
+def _registered_base_tier(session: DuckDBPyConnection, frame: pl.DataFrame) -> Iterator[None]:
+    """Register the base table as `base_tier` for one derivation, and UNREGISTER it on the way out.
+
+    A registration outlives the statement that used it, so on a caller-supplied connection the base
+    day stays reachable -- and its arrow buffers stay alive -- after this function returns. For a
+    `soil-survey` day that is gigabytes pinned past use, on the one connection a driver was told to
+    reuse across a thousand days.
+    """
+    session.register("base_tier", frame.to_arrow())
+    try:
+        yield
+    finally:
+        with suppress(duckdb.Error):
+            session.unregister("base_tier")
 
 
 def _derive_geometry_tier(
@@ -508,8 +578,7 @@ def _derive_geometry_tier(
         # schema, or at least one RecordBatch", which names neither the lane nor the tier.
         return frame
     tolerance = tier_resolution_degrees(tier)
-    with _geometry_session(connection) as session:
-        session.register("base_tier", frame.to_arrow())
+    with _geometry_session(connection) as session, _registered_base_tier(session, frame):
         if strategy.dissolve is None:
             _require_total_coverage(frame, keyed=frame.columns, aggregated=(), stream=stream)
             carried = ", ".join(column for column in frame.columns if column != geometry)
@@ -613,6 +682,15 @@ def derive_tier(
     The base rung is refused rather than returned unchanged: a caller asking to "derive z13" has
     confused the rung its exporter already wrote with the rungs this module makes, and silently
     handing back the input would let that confusion write the base tier twice.
+
+    `connection` IS MUTATED FOR THE LENGTH OF THE CALL, and only a geometry lane opens one at all.
+    `memory_limit`, `threads` and `max_temp_directory_size` are pinned to this module's batch guards
+    -- overriding whatever the caller set, because an unguarded derivation is what consumed the host
+    on 2026-08-24 -- and then RESTORED to the values that were in effect on entry. All three are
+    INSTANCE-wide in DuckDB, so during the derivation every sibling cursor of that instance runs
+    under the same caps; a caller sharing one instance between a derivation and a latency-sensitive
+    reader should hand this an instance of its own. A `base_tier` view is registered and unregistered
+    around the query, so nothing of the day survives the return.
     """
     validated = validate_zoom_tier(tier)
     if validated == BASE_ZOOM_TIER:

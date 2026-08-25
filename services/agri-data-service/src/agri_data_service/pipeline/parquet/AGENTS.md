@@ -261,3 +261,62 @@ under `restartPolicyType: NEVER`. A tick that wrote 50 days and has 500 still un
 `pl.scan_parquet`/DuckDB `httpfs`. It is credentials in a dictionary — never log the result.
 Reading is otherwise S18/S20's concern; this module writes and lists, and deliberately offers no
 `get_bytes`.
+
+## The bulk drain has TWO selections, and choosing the wrong one reports a green lie
+`drain.py` walks a backlog; `--selection` says WHAT a lane-day owes.
+
+- **`missing`** (default) — days with no base rung at all, exported from Postgres. Its census is
+  `build_gap_census`, which walks `GAP_FILL_ZOOM_TIER` **and nothing else** and says so in its own
+  docstring.
+- **`ladder`** — days whose base rung is already published and correct but which are missing one or
+  more coarse rungs. Derived FROM THE BUCKET; it opens no source query at all, which is what makes a
+  thousand-day repair affordable (`signal` measured 151 s for ONE cold Postgres day).
+
+**The two censuses answer different questions and neither may borrow the other's answer.** A day
+written before the zoom fusion shipped is base-complete, therefore invisible to the missing census,
+therefore empty at every zoom under 13 **forever, on a green tick**. Measured 2026-08-25: ~1,040
+lane-days across eleven lanes. So `parquet-drain --dry-run` reports the census OF THE SELECTION
+ASKED FOR — a ladder repair audited through the base census reads as "nothing to do".
+
+**Every entry point is reachable from a verb, and that is a correctness property.** The ladder walk
+is `parquet-drain --selection ladder`; the pre-zoom sweep is `parquet-retire-legacy-layout`. A
+repair only a REPL can start is one an operator reads about in a commit message, does not run, and
+believes has happened.
+
+**One DuckDB session serves a whole ladder walk.** `run_drain` opens a single `derivation_session()`
+and threads it through `derive_and_write_day_tiers(connection=...)`; otherwise a geometry lane opens
+a session and pays `LOAD spatial` per rung — three per day, ~3,000 across the measured repair. See
+`warehouse/parquet/AGENTS.md` for what that session does to a connection it is handed.
+
+**A ladder day is re-selected forever if ANY rung emptied.** An emptied rung is retracted and carries
+no completion marker, and the census intersects markers across every rung — so a day whose z9 wrote
+and whose z0 emptied looks `written` by part count and is selected again by every future census.
+`DerivationResult.emptied` names the rungs, and the summary's `emptied_ladders` reports the days.
+This is the one place the bucket-as-checkpoint rule does not self-terminate; only lanes with
+nullable coordinates (`water-gauges`, `sensors`) can reach it.
+
+**Nothing raises out of one lane-day.** `_drain_one_day` guards `_run_one_day`, and `_derive_one_day`
+guards the advisory lock itself — `pg_try_advisory_lock` is a real statement, and a session left in
+a failed transaction raises THERE, before any derivation. Unguarded, one such day took the whole walk
+down and lost every lane's tally. Each lane-day also rolls back: SQLAlchemy 2.0 autobegins on the
+lock statement, so a walk that never rolled back would hold ONE transaction open for hours, which
+`idle_in_transaction_session_timeout` eventually terminates mid-run. The advisory lock is
+session-scoped, so the rollback does not release it.
+
+## Retiring the pre-zoom layout: superseded means SERVABLE, not mentioned
+The keys written before the zoom axis existed sit one path segment shallower, so all three live
+parsers reject them: `list_partition_objects` filters them out, `prune_surplus_parts` skips them, and
+no census counts them. Nothing reads them and nothing would ever collect them (2,274 keys, 645.7 MB,
+2026-08-25). `retire_legacy_layout_objects` is the only code that can see them, and it takes the
+`ObjectStoreBackend` as a SEPARATE argument because the store itself cannot list them.
+
+A legacy object is **superseded** only when the zoom layout holds its day in a state a reader may
+answer from — `COVERED_PARTITION_STATUSES`, i.e. `data` or `absent`. "Some key mentions that day" is
+a strictly weaker claim: a completion marker whose parts were deleted underneath it is `missing`, and
+parts with no marker are `incomplete`, and **no reader serves either**. Classifying those as
+superseded deletes the only readable copy of the day while reporting the deletion as safe.
+
+This stops being theoretical the moment the hourly cron runs beside the sweep: `write_partition`
+clears the completion marker as it uploads `part-0`, so any day mid-re-export reads `incomplete`
+inside the sweep's window — and the sweep lists once, at the start of the layer. Everything else is
+`orphaned`, reported, and kept unless asked for by name.

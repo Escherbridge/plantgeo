@@ -33,6 +33,9 @@ from agri_data_service.warehouse.parquet.tiers import (
     DERIVATION_TEMP_DIRECTORY_SIZE,
     DERIVATION_THREAD_COUNT,
     TierDerivationError,
+    # Private, and imported on purpose: the guards hold for exactly the length of this context and
+    # are restored after it, so asserting them from OUTSIDE the window can only test the restore.
+    _geometry_session,
     derivation_session,
     derive_tier,
 )
@@ -48,6 +51,9 @@ GRID_STREAM: Final = "fire-detections"
 # The window `DERIVATION_MEMORY_LIMIT` must land inside once DuckDB has rounded its own readback.
 MINIMUM_EXPECTED_CEILING_BYTES: Final = 1_000_000_000
 MAXIMUM_EXPECTED_CEILING_BYTES: Final = 2_000_000_000
+# A caller's own thread count, deliberately different from DERIVATION_THREAD_COUNT so a restore that
+# silently left this module's cap in place is visible.
+CALLER_THREAD_COUNT: Final = 2
 
 _BYTE_SCALE: Final = {"bytes": 1, "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3, "TiB": 1024**4}
 
@@ -170,13 +176,21 @@ def test_the_session_is_closed_when_this_module_opened_it() -> None:
 def test_a_caller_supplied_connection_is_re_pinned_rather_than_trusted(
     unguarded: duckdb.DuckDBPyConnection,
 ) -> None:
-    """The caller who hands in an unguarded connection is exactly the caller who would eat the host."""
+    """The caller who hands in an unguarded connection is exactly the caller who would eat the host.
+
+    Asserted INSIDE the window, because the guards are now restored on the way out (see
+    `test_the_guards_are_put_back_on_a_caller_supplied_connection`). The window is the whole of the
+    derivation, which is the whole of the interval in which a spill could happen.
+    """
     assert _setting(unguarded, "max_temp_directory_size") != "0 bytes", "fixture is not actually unguarded"
 
-    derive_tier(_watershed_frame(), stream=GEOMETRY_STREAM, tier=5, connection=unguarded)
+    with _geometry_session(unguarded) as session:
+        assert session is unguarded, "a supplied connection must be used, not replaced"
+        assert _bytes_of(_setting(session, "max_temp_directory_size")) == 0.0
+        assert int(_setting(session, "threads")) == DERIVATION_THREAD_COUNT
+        ceiling = _bytes_of(_setting(session, "memory_limit"))
 
-    assert _bytes_of(_setting(unguarded, "max_temp_directory_size")) == 0.0
-    assert int(_setting(unguarded, "threads")) == DERIVATION_THREAD_COUNT
+    assert MINIMUM_EXPECTED_CEILING_BYTES < ceiling < MAXIMUM_EXPECTED_CEILING_BYTES
 
 
 def test_a_caller_supplied_connection_is_left_open_for_its_owner(
@@ -186,6 +200,61 @@ def test_a_caller_supplied_connection_is_left_open_for_its_owner(
     derive_tier(_watershed_frame(), stream=GEOMETRY_STREAM, tier=5, connection=unguarded)
 
     assert unguarded.execute("SELECT 1").fetchone() == (1,)
+
+
+def test_the_guards_are_put_back_on_a_caller_supplied_connection(
+    unguarded: duckdb.DuckDBPyConnection,
+) -> None:
+    """DO NOT DELETE. All three guards are INSTANCE-wide, not connection-local.
+
+    Measured 2026-08-25: pinning them through one cursor re-pins every SIBLING cursor of the same
+    instance, including ones this module was never handed. Left in place, a single derivation would
+    cap a co-resident SERVING session at 1600 MB / 3 threads / no-spill for the process lifetime,
+    and that session's owner has no return point at which to notice or undo it.
+    """
+    unguarded.execute("SET memory_limit = '900MB'")
+    unguarded.execute(f"SET threads = {CALLER_THREAD_COUNT}")
+    before = {name: _setting(unguarded, name) for name in ("memory_limit", "threads", "max_temp_directory_size")}
+    assert before["max_temp_directory_size"] != "0 bytes", "fixture is not actually unguarded"
+
+    derive_tier(_watershed_frame(), stream=GEOMETRY_STREAM, tier=5, connection=unguarded)
+
+    assert int(_setting(unguarded, "threads")) == CALLER_THREAD_COUNT, "the caller's thread count was left overridden"
+    assert _setting(unguarded, "max_temp_directory_size") == before["max_temp_directory_size"], (
+        "the caller's spill budget was left disabled"
+    )
+    # DuckDB renders `memory_limit` back rounded ('900MB' reads as '858.3 MiB'), so the restore is of
+    # the rendered value and may move the ceiling by a fraction of a MiB -- never by the ~16x this
+    # restore exists to undo.
+    assert abs(_bytes_of(_setting(unguarded, "memory_limit")) - _bytes_of(before["memory_limit"])) < 1024**2
+
+
+def test_a_sibling_cursor_of_the_caller_gets_its_settings_back_too(
+    unguarded: duckdb.DuckDBPyConnection,
+) -> None:
+    """THE ACTUAL BLAST RADIUS. The sibling's owner never passed a connection and has no return point."""
+    sibling = unguarded.cursor()
+    try:
+        unguarded.execute(f"SET threads = {CALLER_THREAD_COUNT}")
+        assert int(_setting(sibling, "threads")) == CALLER_THREAD_COUNT
+
+        derive_tier(_watershed_frame(), stream=GEOMETRY_STREAM, tier=5, connection=unguarded)
+
+        assert int(_setting(sibling, "threads")) == CALLER_THREAD_COUNT, (
+            "a derivation re-pinned a connection it was never handed"
+        )
+    finally:
+        sibling.close()
+
+
+def test_the_base_table_is_unregistered_when_the_derivation_returns(
+    unguarded: duckdb.DuckDBPyConnection,
+) -> None:
+    """A registration outlives its statement: for a soil-survey day that is gigabytes pinned past use."""
+    derive_tier(_watershed_frame(), stream=GEOMETRY_STREAM, tier=5, connection=unguarded)
+
+    with pytest.raises(duckdb.Error):
+        unguarded.execute("SELECT count(*) FROM base_tier").fetchone()
 
 
 def test_a_dissolve_still_rolls_up_under_the_guards() -> None:

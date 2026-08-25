@@ -304,9 +304,15 @@ from agri_data_service.jobs import (
 from agri_data_service.models.strategy import Strategy
 from agri_data_service.pipeline.parquet.drain import (
     DEFAULT_DAYS_PER_LANE_TURN,
+    DEFAULT_DRAIN_SELECTION,
     DEFAULT_MAX_CONSECUTIVE_FAILURES,
     DRAIN_STATEMENT_TIMEOUT_SECONDS,
+    DrainSelection,
     DrainSummary,
+    build_ladder_census,
+    ladder_census_report,
+    legacy_layout_report,
+    retire_legacy_layout_objects,
     run_drain,
 )
 from agri_data_service.pipeline.parquet.gap_fill import (
@@ -324,7 +330,12 @@ from agri_data_service.pipeline.parquet.lane_registry import (
     registered_lane_slugs,
     resolve_lanes,
 )
-from agri_data_service.pipeline.parquet.objectstore import ObjectStore, ParquetWriteError
+from agri_data_service.pipeline.parquet.objectstore import (
+    BotoObjectStoreBackend,
+    ObjectStore,
+    ObjectStoreBackend,
+    ParquetWriteError,
+)
 from agri_data_service.seed.strategies import STRATEGY_SEEDS
 from alembic import command
 
@@ -3931,6 +3942,7 @@ async def _parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable 
     max_days_per_lane: int | None,
     time_budget_seconds: float | None,
     statement_timeout_seconds: int,
+    selection: DrainSelection,
     stream_progress: bool,
 ) -> DrainSummary:
     """Open one loader session for the whole drain and walk every requested lane's history through it."""
@@ -3954,8 +3966,21 @@ async def _parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable 
             max_days_per_lane=max_days_per_lane,
             time_budget_seconds=time_budget_seconds,
             statement_timeout_seconds=statement_timeout_seconds,
+            selection=selection,
             on_day=announce if stream_progress else None,
         )
+
+
+def _parquet_store_and_backend() -> tuple[ObjectStore, ObjectStoreBackend]:
+    """Build the layout-aware store AND the unfiltered backend under it, from one set of credentials.
+
+    The legacy sweep needs both and cannot take the second from the first: `ObjectStore` FILTERS OUT
+    every key its three parsers reject, so the pre-zoom layout is invisible through it -- not
+    listable, let alone deletable. See `drain.retire_legacy_layout_objects`.
+    """
+    credentials = settings.require_object_store()
+    backend = BotoObjectStoreBackend.from_credentials(credentials)
+    return ObjectStore(backend, prefix=settings.object_store_prefix), backend
 
 
 @cli.command("parquet-drain")
@@ -4014,9 +4039,22 @@ async def _parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable 
     "`--progress` and piping the summary are not in conflict.",
 )
 @click.option(
+    "--selection",
+    type=click.Choice(["missing", "ladder"]),
+    default=DEFAULT_DRAIN_SELECTION,
+    show_default=True,
+    help="WHAT a lane-day owes this run. `missing` exports days with no base rung from Postgres. "
+    "`ladder` derives the coarse rungs of days whose base rung is ALREADY published and touches no "
+    "database at all -- the days written before the zoom fusion shipped, which are base-complete, "
+    "therefore invisible to the missing census, therefore empty at every zoom under 13 forever. "
+    "Measured 2026-08-25: ~1,040 such lane-days across eleven lanes.",
+)
+@click.option(
     "--dry-run",
     is_flag=True,
-    help="Report the census -- what the drain WOULD walk, per lane -- without writing a single object.",
+    help="Report the census -- what the drain WOULD walk, per lane -- without writing a single object. "
+    "Reports the census OF THE CHOSEN --selection: the two answer different questions and neither may "
+    "borrow the other's answer.",
 )
 @click.pass_context
 def parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of a single drain
@@ -4027,6 +4065,7 @@ def parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of
     days_per_lane_turn: int,
     max_consecutive_failures: int,
     statement_timeout_seconds: int,
+    selection: str,
     progress: bool,
     dry_run: bool,
 ) -> None:
@@ -4047,15 +4086,27 @@ def parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of
     and a day carrying its completion marker is no longer missing. That is the same rule the cron
     uses, so the two can never disagree about what is done.
 
+    TWO SELECTIONS, ONE WALK. `--selection missing` (the default) is the export drain above.
+    `--selection ladder` repairs days the fusion arrived too late for: their base rung is published
+    and correct, and only the rungs above it are absent, so that walk derives from the bucket and
+    opens no source query at all. `--dry-run` reports the census of whichever selection was asked
+    for -- a ladder repair audited through the missing census reads as "nothing to do", which is
+    exactly how ~1,037 lane-days would stay permanently empty below z13 on exit code 0.
+
     EXIT CODE 0 means the walk finished with nothing left. EXIT CODE 1 means at least one lane-day
     failed or at least one lane stopped early; the summary names them.
     """
     lanes = _gap_fill_lanes(layer_slugs)
     today = datetime.now(UTC).date()
     run_id = f"parquet-drain:{uuid.uuid4()}"
+    chosen: DrainSelection = "ladder" if selection == "ladder" else "missing"
     try:
         if dry_run:
             store = ObjectStore.from_settings()
+            if chosen == "ladder":
+                ladder = build_ladder_census(lanes, store, max_days_per_lane=max_days_per_lane)
+                click.echo(json.dumps(ladder_census_report(ladder), sort_keys=True))
+                return
             census = build_gap_census(lanes, store, today=today, max_days_per_lane=max_days_per_lane)
             click.echo(json.dumps(gap_census_report(census), sort_keys=True))
             return
@@ -4069,6 +4120,7 @@ def parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of
                 max_days_per_lane=max_days_per_lane,
                 time_budget_seconds=time_budget_seconds,
                 statement_timeout_seconds=statement_timeout_seconds,
+                selection=chosen,
                 stream_progress=progress,
             )
         )
@@ -4076,6 +4128,75 @@ def parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of
         raise click.ClickException(_gap_fill_failure_reason(exc)) from exc
     click.echo(json.dumps(summary.to_report(), sort_keys=True))
     if summary.failures or any(lane.stopped_reason for lane in summary.lanes):
+        context.exit(_GAP_FILL_FAILED_EXIT_CODE)
+
+
+@cli.command("parquet-retire-legacy-layout")
+@click.option(
+    "--layer",
+    "layer_slugs",
+    multiple=True,
+    help="Restrict the sweep to one or more registered stream slugs; repeatable. "
+    f"Default: every registered lane -- {', '.join(registered_lane_slugs())}.",
+)
+@click.option(
+    "--delete",
+    is_flag=True,
+    help="ACTUALLY DELETE the superseded objects. Without it this verb only reports: removing bytes from "
+    "the record of truth must not be something a caller does by forgetting an argument.",
+)
+@click.option(
+    "--include-orphaned",
+    is_flag=True,
+    help="Also delete legacy objects whose day the zoom layout cannot SERVE. Each of those is the only "
+    "usable copy in this bucket -- recoverable by re-exporting the day from Postgres, but not free -- "
+    "so they are reported and kept unless asked for by name.",
+)
+@click.pass_context
+def parquet_retire_legacy_layout(
+    context: click.Context,
+    layer_slugs: tuple[str, ...],
+    delete: bool,
+    include_orphaned: bool,
+) -> None:
+    """Report -- and with `--delete`, remove -- the objects written before the zoom axis existed.
+
+    NOTHING IN THIS SERVICE CAN SEE THESE KEYS. The retired layout sits one path segment shallower
+    than today's (`kind=`/`year=` with no `zoom=NN` between), so `try_parse_partition_path` returns
+    None for every one of them: `list_partition_objects` filters them out, `prune_surplus_parts`
+    skips them, and no census counts them. They are neither served nor collected, and nothing else
+    would ever remove them. Measured 2026-08-25: 2,274 keys, 645.7 MB, across twelve layers.
+
+    A CURRENT KEY IS NEVER TOUCHED. Every key is offered to the three live parsers FIRST and their
+    verdict is final; only a key all three reject is then matched against the retired pattern. The
+    load-bearing property is not "does it look legacy" but "is it certainly not current".
+
+    SUPERSEDED MEANS THE ZOOM LAYOUT CAN SERVE THAT DAY -- `data` or `absent` at the base rung -- not
+    merely that some key mentions it. A day being re-exported by the hourly cron right now reads
+    `incomplete`, because `write_partition` clears the completion marker as it uploads `part-0`, and
+    deleting its legacy copy on that basis would drop the only readable copy of the day.
+
+    DRY BY DEFAULT, and the report is the thing to review before `--delete` is ever passed.
+
+    EXIT CODE 0 means the sweep ran. EXIT CODE 1 means at least one layer's listing failed or at
+    least one delete was refused; the report names them.
+    """
+    lanes = _gap_fill_lanes(layer_slugs)
+    try:
+        store, backend = _parquet_store_and_backend()
+        report = legacy_layout_report(
+            retire_legacy_layout_objects(
+                store,
+                backend,
+                layers=[lane.slug for lane in lanes],
+                dry_run=not delete,
+                include_orphaned=include_orphaned,
+            )
+        )
+    except (LaneRegistryError, ParquetWriteError, ValueError) as exc:
+        raise click.ClickException(_gap_fill_failure_reason(exc)) from exc
+    click.echo(json.dumps(report, sort_keys=True))
+    if report["failures"] or report["layers_with_errors"]:
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 

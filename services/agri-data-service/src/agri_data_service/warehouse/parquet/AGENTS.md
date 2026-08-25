@@ -56,3 +56,38 @@ one column is **93.9%** of the compressed file.
 `zstd`, measured at 695,338 B against snappy's 874,945 B on the same month. Float32 for
 `normalized_value` would roughly halve the file and remains an open **data-fidelity** decision
 (§0.22.6) — it is not taken here.
+
+## The DuckDB guards in `tiers.py`, and the one thing they are NOT
+Only the geometry lanes open DuckDB at all — a `GridAggregation` lane coarsens in Polars and a
+`TierPassthrough` lane does nothing. Every session this module opens carries `DERIVATION_MEMORY_LIMIT`
+(1600MB), `DERIVATION_THREAD_COUNT` (3), `max_temp_directory_size = '0GiB'` and `:memory:`.
+
+**Disabling the spill is the load-bearing one.** DuckDB's default is *90% of available disk space*:
+with spilling enabled an over-budget `ST_Union_Agg` quietly writes tens of gigabytes to local disk
+and takes the host down slowly, and an unguarded query of exactly that shape **consumed the host on
+2026-08-24**. With it disabled the same query raises in about a second and the drain records a
+failed day an operator can see. A tier that was never written is recoverable; a host is not.
+
+**A caller-supplied `connection` is re-pinned AND restored.** The override is deliberate — the caller
+who hands in an unguarded connection is precisely the caller who would eat the host — but all three
+settings are **instance-wide in DuckDB, not connection-local**. Measured 2026-08-25: pinning them
+through one cursor re-pins every SIBLING cursor of the same instance, including ones this module was
+never handed. Left in place, one derivation would cap a co-resident serving session
+(`interface/http/duckdb_session.py`) at the batch budget for the process lifetime, and that session's
+owner has no return point at which to notice. So `_geometry_session` snapshots the three via
+`current_setting`, pins, and restores in a `finally` — on the caller-supplied branch only; a session
+this module opened is closed instead. The restore is of the RENDERED value ('900MB' reads back as
+'858.3 MiB'), so it can move a ceiling by a fraction of a MiB — never by the ~16x it exists to undo.
+
+The guards hold for exactly the derivation. That window is the whole of the interval in which a spill
+could happen, so nothing is weakened; what changes is that the mutation ends where the derivation does.
+
+**`base_tier` is unregistered on the way out.** A registration outlives the statement that used it, so
+on a reused connection the base day — and its arrow buffers — stayed reachable after the return. For a
+`soil-survey` day that is gigabytes pinned past use, on the one connection a driver was told to reuse
+across a thousand days.
+
+**The reuse is wired, not merely advertised.** `derivation_session()` → `derive_and_write_day_tiers(
+connection=...)` → `derive_tier(connection=...)`; `pipeline/parquet/drain.py` opens exactly one for a
+whole `--selection ladder` walk. Before that chain existed, the docstring offered a capability whose
+only driver had no parameter for it, and every geometry rung of every day re-ran `LOAD spatial`.
