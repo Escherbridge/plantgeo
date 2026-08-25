@@ -7,6 +7,10 @@ socket or a clock -- RUNBOOK section 0.34.2 fuses the derivation into the drain'
 puts the fusion IN THE DRIVER for exactly this reason: "a derivation bug now fails the drain too",
 so the derivation has to be testable on its own, against a literal table, with no fixture behind it.
 
+The one process resource it does take is a DuckDB session for the geometry lanes, and every such
+session carries `DERIVATION_MEMORY_LIMIT`, `DERIVATION_THREAD_COUNT` and a DISABLED spill directory.
+See those constants for why an unguarded one is not a style question.
+
 WHY THE COARSE RUNGS ARE DERIVED FROM THE BASE PARQUET AND NEVER FROM POSTGRES
 (RUNBOOK section 0.32.2 decision 2). `geo.mv_soil_survey_grid`, `geo.watershed_rollup` and the
 soil-field lattice are the PostGIS era's own per-layer tiers. Reading them would make the warehouse
@@ -50,6 +54,7 @@ one lane in this case the object is a single day-row.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -60,7 +65,7 @@ from agri_data_service.foundation.parquet.paths import validate_layer_slug
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS, ZoomTier, validate_zoom_tier
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
     from duckdb import DuckDBPyConnection
 
@@ -68,9 +73,7 @@ if TYPE_CHECKING:
 BASE_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 
 # Every rung below the base, in the order a drain should derive them (finest first).
-DERIVED_ZOOM_TIERS: Final[tuple[ZoomTier, ...]] = tuple(
-    tier for tier in reversed(ZOOM_TIERS) if tier != BASE_ZOOM_TIER
-)
+DERIVED_ZOOM_TIERS: Final[tuple[ZoomTier, ...]] = tuple(tier for tier in reversed(ZOOM_TIERS) if tier != BASE_ZOOM_TIER)
 
 # THE RESOLUTION LADDER, in degrees, and the arithmetic behind each number.
 #
@@ -94,6 +97,23 @@ TIER_RESOLUTION_DEGREES: Final[Mapping[ZoomTier, float]] = {9: 0.01, 5: 0.2, 0: 
 # section 0.32.2 decision 4), which fits; this ceiling exists so a future lane that does NOT fit
 # says so instead of exhausting the machine.
 MAX_DERIVATION_ROWS: Final = 5_000_000
+
+# THE RESOURCE GUARDS EVERY DUCKDB SESSION THIS MODULE OPENS MUST CARRY.
+#
+# An unbounded local DuckDB query CONSUMED THE HOST on 2026-08-24, and the shape of query that did
+# it is exactly the one below: `ST_Union_Agg` over a geometry lane's whole day. `soil-survey` alone
+# is ~1.5M delineations (RUNBOOK section 0.32.2 decision 4), and `MAX_DERIVATION_ROWS` admits it --
+# the row ceiling bounds how many rows enter, never how much memory unioning them takes.
+#
+# The numbers match the proven pattern in `analysis/warehouse_session.py`, which is the one DuckDB
+# session in this repo that has never eaten the machine. `max_temp_directory_size = '0GiB'` DISABLES
+# SPILLING, and that is the load-bearing one: with spilling enabled an over-budget query quietly
+# writes tens of gigabytes to local disk and takes the host down slowly, while with it disabled the
+# same query raises in about a second and the day is reported as a failure the operator can see.
+# A tier that was never written is recoverable; a host that was consumed is not.
+DERIVATION_MEMORY_LIMIT: Final = "1600MB"
+DERIVATION_THREAD_COUNT: Final = 3
+DERIVATION_TEMP_DIRECTORY_SIZE: Final = "0GiB"
 
 # The aggregate a column carries when many base rows collapse into one coarse row. Deliberately a
 # closed vocabulary rather than a caller-supplied callable: a lane's coarse rung is a published
@@ -375,9 +395,7 @@ def _aggregate_expression(spec: ColumnAggregation, *, stream: str) -> pl.Expr:
     return build(pl.col(spec.column)).alias(spec.column)
 
 
-def _derive_grid_tier(
-    frame: pl.DataFrame, strategy: GridAggregation, *, tier: ZoomTier, stream: str
-) -> pl.DataFrame:
+def _derive_grid_tier(frame: pl.DataFrame, strategy: GridAggregation, *, tier: ZoomTier, stream: str) -> pl.DataFrame:
     """Re-floor a coordinate lane onto `tier`'s grid and re-aggregate onto the coarser cells."""
     resolution = tier_resolution_degrees(tier)
     coordinates = (strategy.longitude_column, strategy.latitude_column)
@@ -406,6 +424,58 @@ def _derive_grid_tier(
     # whose columns are correct but reordered is refused by `conform_to_stream_schema` -- a failure
     # that reads as a schema regression rather than as the column shuffle it actually is.
     return aggregated.select(frame.columns).sort(grain)
+
+
+def _pin_resource_guards(session: DuckDBPyConnection) -> None:
+    """Cap one session's memory and threads and DISABLE spilling, so an over-budget query raises fast.
+
+    APPLIED TO A CALLER-SUPPLIED CONNECTION TOO, overriding whatever it was configured with. That is
+    deliberate and is the safe direction: the caller that hands in an unguarded connection is
+    precisely the caller that would consume the host, and a caller who genuinely wanted a larger
+    budget can re-pin after the derivation returns. There is no reading of this module's contract
+    under which a derivation may spill to local disk.
+    """
+    session.execute(f"SET memory_limit = '{DERIVATION_MEMORY_LIMIT}'")
+    session.execute(f"SET threads = {DERIVATION_THREAD_COUNT}")
+    session.execute(f"SET max_temp_directory_size = '{DERIVATION_TEMP_DIRECTORY_SIZE}'")
+
+
+def _load_spatial(session: DuckDBPyConnection) -> None:
+    """Load DuckDB's spatial extension, installing it once on a machine that has never had it."""
+    try:
+        session.execute("LOAD spatial")
+    except duckdb.Error:
+        session.execute("INSTALL spatial")
+        session.execute("LOAD spatial")
+
+
+@contextmanager
+def derivation_session() -> Iterator[DuckDBPyConnection]:
+    """Open an in-memory, memory-capped, spill-disabled DuckDB session with `spatial` loaded.
+
+    `:memory:` and no database file, so a derivation can never leave one behind or reopen a stale
+    one. Public because a driver deriving many lane-days may reuse ONE session rather than paying
+    `LOAD spatial` per rung per day -- pass it to `derive_tier(connection=...)`.
+    """
+    session = duckdb.connect(database=":memory:")
+    try:
+        _pin_resource_guards(session)
+        _load_spatial(session)
+        yield session
+    finally:
+        session.close()
+
+
+@contextmanager
+def _geometry_session(connection: DuckDBPyConnection | None) -> Iterator[DuckDBPyConnection]:
+    """Yield a guarded session, closing only one this function opened -- never the caller's."""
+    if connection is None:
+        with derivation_session() as opened:
+            yield opened
+        return
+    _pin_resource_guards(connection)
+    _load_spatial(connection)
+    yield connection
 
 
 def _derive_geometry_tier(
@@ -438,13 +508,7 @@ def _derive_geometry_tier(
         # schema, or at least one RecordBatch", which names neither the lane nor the tier.
         return frame
     tolerance = tier_resolution_degrees(tier)
-    session = connection if connection is not None else duckdb.connect(database=":memory:")
-    try:
-        try:
-            session.execute("LOAD spatial")
-        except duckdb.Error:
-            session.execute("INSTALL spatial")
-            session.execute("LOAD spatial")
+    with _geometry_session(connection) as session:
         session.register("base_tier", frame.to_arrow())
         if strategy.dissolve is None:
             _require_total_coverage(frame, keyed=frame.columns, aggregated=(), stream=stream)
@@ -464,15 +528,23 @@ def _derive_geometry_tier(
             # the most bytes for the least ink.
             minimum_area = strategy.min_area_tier_squares * tolerance * tolerance
             wrapped += f" AND ST_Area({geometry}) >= {minimum_area}"
-        result = session.execute(wrapped)
-        # `to_arrow_table` is the modern spelling and `fetch_arrow_table` the deprecated one; the
-        # dependency pin allows duckdb >= 1.1, where only the latter exists. Preferring the new
-        # name keeps the test run free of a deprecation warning without narrowing the pin.
-        to_arrow = getattr(result, "to_arrow_table", None) or result.fetch_arrow_table
-        derived = to_arrow()
-    finally:
-        if connection is None:
-            session.close()
+        try:
+            result = session.execute(wrapped)
+            # `to_arrow_table` is the modern spelling and `fetch_arrow_table` the deprecated one;
+            # the dependency pin allows duckdb >= 1.1, where only the latter exists. Preferring the
+            # new name keeps the test run free of a deprecation warning without narrowing the pin.
+            to_arrow = getattr(result, "to_arrow_table", None) or result.fetch_arrow_table
+            derived = to_arrow()
+        except duckdb.Error as error:
+            # NAMED, NOT RE-RAISED RAW. Under the guards above, a lane-day too large to union raises
+            # a bare DuckDB out-of-memory that says nothing about which lane, which rung or how many
+            # rows -- and the drain would record that as the whole explanation for a failed day.
+            raise TierDerivationError(
+                f"{stream} z{tier}: DuckDB refused the geometry derivation over {frame.height:,} base rows under a "
+                f"{DERIVATION_MEMORY_LIMIT} cap with spilling disabled, so the rung was not written rather than the "
+                f"host being consumed deriving it. Fold this lane-day rung-by-rung over batches, or raise "
+                f"DERIVATION_MEMORY_LIMIT deliberately: {type(error).__name__}: {error}"
+            ) from error
     if derived.num_rows == 0:
         # Every feature was generalised away or dropped below the area floor. That is a legitimate
         # outcome, not a failure -- but a zero-batch arrow result loses its schema on the way into
@@ -518,9 +590,7 @@ def _dissolve_query(
     # simplifying it once is both cheaper and more faithful than simplifying every child first.
     projections.append(f"{_simplify_sql(f'ST_Union_Agg(ST_GeomFromWKB({geometry}))', tolerance)} AS {geometry}")
     columns = ", ".join(projections)
-    return (
-        f"SELECT {columns} FROM base_tier GROUP BY substr({dissolve.code_column}, 1, {code_length})"
-    )
+    return f"SELECT {columns} FROM base_tier GROUP BY substr({dissolve.code_column}, 1, {code_length})"
 
 
 def _dissolve_aggregate_sql(spec: ColumnAggregation, *, stream: str) -> str:
@@ -630,6 +700,9 @@ def validate_derivation_against_schema(stream: str) -> tuple[str, ...]:
 
 __all__ = [
     "BASE_ZOOM_TIER",
+    "DERIVATION_MEMORY_LIMIT",
+    "DERIVATION_TEMP_DIRECTORY_SIZE",
+    "DERIVATION_THREAD_COUNT",
     "DERIVED_ZOOM_TIERS",
     "MAX_DERIVATION_ROWS",
     "TIER_RESOLUTION_DEGREES",
@@ -645,6 +718,7 @@ __all__ = [
     "TierStrategy",
     "ZoomTier",
     "base_non_null_columns",
+    "derivation_session",
     "derive_tier",
     "floor_to_resolution",
     "register_tier_derivation",

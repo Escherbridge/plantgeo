@@ -40,32 +40,86 @@ that would otherwise corrupt a day (the slower run's prune deleting parts the fa
 wrote, then stamping a marker whose `part_count` matches the truncated remainder exactly) is closed
 by the lane-day advisory lock inside `fill_one_lane_day`. `contended` is the expected, healthy
 outcome when the two meet on one day, not an error: the other run is writing it.
+
+TWO SELECTIONS, ONE WALK
+------------------------
+`selection="missing"` is the drain above: days with no base rung at all, exported from Postgres.
+
+`selection="ladder"` repairs the days the FUSION ARRIVED TOO LATE FOR. Every day written before the
+coarse rungs shipped is base-complete and therefore invisible to `build_gap_census`, which walks
+`GAP_FILL_ZOOM_TIER` and nothing else -- so nothing would ever bring it back, and it stays empty at
+every zoom under 13 forever on a green tick. `build_ladder_census` is the second question that
+census deliberately refuses to answer: which base-complete days are NOT complete at every rung.
+Measured against production on 2026-08-25, that is ~1,040 lane-days across eleven lanes.
+
+IT DERIVES FROM THE PUBLISHED BASE AND NEVER RE-QUERIES POSTGRES, because the base rung of those
+days is already correct -- the rungs above it are simply absent. Re-exporting them would cost hours
+of database time to rewrite bytes that are already right, and `signal` alone measured 151 s for one
+cold day. If a base rung is genuinely stale (columns the current schema declares that the file does
+not carry), `derive_tier` refuses and the day is reported `raised` rather than papered over: that
+lane needs its base retracted and drained, which is `selection="missing"` after an admin retraction.
+
+Both selections run through the SAME walk -- round-robin, oldest-first, the consecutive-failure
+floor, the contended cap and the time budget -- because those are properties of walking a backlog,
+not of what a day owes.
+
+THE PRE-ZOOM LAYOUT IS RETIRED HERE TOO. `retire_legacy_layout_objects` removes the objects written
+before the zoom axis existed, which sit one path segment shallower and are therefore invisible to
+every reader, every census and every prune in this service: `try_parse_partition_path` returns
+`None` for them, so `prune_surplus_parts` skips them and `list_partition_objects` filters them out.
+Measured 2026-08-25: 2,274 keys, 645.7 MB, across twelve layers. Nothing reads them and nothing
+would ever collect them.
 """
 
 from __future__ import annotations
 
+import re
 import time
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Final
+from dataclasses import dataclass, field, replace
+from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING, Final, Literal
 
+from agri_data_service.foundation.parquet.paths import (
+    PARTITION_KINDS,
+    completed_partition_days,
+    layer_prefix,
+    partition_day_statuses,
+    try_parse_absence_marker_path,
+    try_parse_completion_marker_path,
+    try_parse_partition_path,
+    validate_layer_slug,
+    validate_partition_kind,
+)
+from agri_data_service.pipeline.parquet.derivation import derive_and_write_day_tiers
 from agri_data_service.pipeline.parquet.gap_fill import (
     FAILING_LANE_OUTCOMES,
+    GAP_FILL_PARTITION_KIND,
+    # Private to `gap_fill`, and imported rather than respelt on purpose: it is the ONE definition
+    # of a lane-day's advisory-lock identity, and `_derive_one_day` must take exactly the lock
+    # `fill_one_lane_day` takes or the two writers do not exclude each other at all.
+    _lane_day_lock_key,
     build_gap_census,
     fill_one_lane_day,
     postgres_lane_day_lock,
     resolve_lane_watermarks,
 )
+from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, DERIVED_ZOOM_TIERS
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
-    from datetime import date
+    from collections.abc import Callable, Iterable, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from agri_data_service.pipeline.parquet.gap_fill import LaneDayLock, LaneGapCensus
+    from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.pipeline.parquet.gap_fill import (
+        LaneDayLock,
+        LaneDayOutcome,
+        LaneGapCensus,
+        TierDeriver,
+    )
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
-    from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+    from agri_data_service.pipeline.parquet.objectstore import ObjectStore, ObjectStoreBackend
 
 # Consecutive failures that stop one lane. Three, not one: a transient statement timeout against a
 # production database under load is normal and self-heals on the next day, while three in a row is
@@ -103,6 +157,31 @@ MAX_CONTENDED_RETRIES_PER_DAY: Final = 5
 # lane; these are two jobs with two budgets.
 DRAIN_STATEMENT_TIMEOUT_SECONDS: Final = 600
 
+# What a lane-day OWES this run. See the module docstring's "Two selections, one walk".
+DrainSelection = Literal["missing", "ladder"]
+DEFAULT_DRAIN_SELECTION: Final[DrainSelection] = "missing"
+
+# The pre-zoom key layout, transcribed from `foundation/parquet/paths.py` as it stood at commit
+# 68da7af^ -- the last commit before the zoom axis was inserted. It differs from today's layout by
+# exactly one path segment: `/zoom=NN` between `kind=` and `year=`, and nothing else.
+#
+# TRANSCRIBED HERE RATHER THAN LEFT IN `paths.py` because it is a RETIRED layout. Keeping a pattern
+# for it beside the live ones would oblige every future reader of that module to work out which of
+# the two it must not use, and the only code that ever needs it again is the sweep that deletes it.
+LEGACY_LAYOUT_PATTERN: Final = re.compile(
+    r"^layer=(?P<layer>[a-z0-9]+(?:-[a-z0-9]+)*)"
+    r"/kind=(?P<kind>observed|forecast)"
+    r"/year=(?P<year>\d{4})"
+    r"/month=(?P<month>\d{2})"
+    r"/day=(?P<day>\d{2})"
+    r"/(?P<file>part-\d+\.parquet|absent\.json|_complete\.json)$"
+)
+
+# How many keys one layer's legacy sweep will look at before it reports `truncated` and stops.
+# Generous against the 2,274 measured across the whole bucket on 2026-08-25, and finite so that a
+# mis-scoped prefix cannot page through a bucket forever.
+MAX_LEGACY_KEYS_PER_LAYER: Final = 100_000
+
 
 def _utc_now() -> datetime:
     """The completion marker's `completed_at`; injectable so a test pins a deterministic payload."""
@@ -117,6 +196,54 @@ class DrainDayFailure:
     day: date
     outcome: str
     detail: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class LaneLadderCensus:
+    """One lane's ZOOM-LADDER coverage: which published days are not complete at every rung.
+
+    A DIFFERENT QUESTION FROM `LaneGapCensus`, AND IT MUST STAY ONE. That census answers "which days
+    have no base rung", over `GAP_FILL_ZOOM_TIER` alone, and says so in its own docstring: "Auditing
+    a derived tier is a different question with a different mechanism, and it must not borrow this
+    answer." This is that mechanism. Blending the two would let a lane read as fully drained while
+    every zoom under 13 was empty -- which is exactly the state eleven lanes were in on 2026-08-25.
+    """
+
+    slug: str
+    # Days whose BASE rung holds parts and asserts it finished. The population the ladder is over.
+    base_day_count: int
+    ladder_complete_day_count: int
+    # Base-complete days missing at least one coarse rung: the work a `ladder` drain walks.
+    incomplete_days: tuple[date, ...]
+    # Of those, the ones already carrying SOME coarse rung -- a fusion interrupted part-way, rather
+    # than a day written before the fusion existed. Reported apart because they are different
+    # incidents: one is expected backlog, the other is a run dying mid-ladder and worth chasing.
+    partial_ladder_days: tuple[date, ...]
+    # Days the base rung governs as ABSENT. They can never carry a coarse rung, and this driver
+    # cannot give them one: `write_absence` is a governed statement per tier and minting three more
+    # of them per day from a repair sweep is an admin decision, not a drain's. Counted so the gap is
+    # visible rather than silently folded into "not complete".
+    base_absent_days: int
+    # Days holding both parts and a governed absence: an admin-only anomaly, never touched here.
+    base_conflict_days: int
+    truncated: bool = False
+    error: str | None = None
+
+    def to_report(self) -> dict[str, object]:
+        """Render the row `--dry-run` echoes for a ladder repair: what WOULD be derived, per lane."""
+        return {
+            "lane": self.slug,
+            "base_days": self.base_day_count,
+            "ladder_complete_days": self.ladder_complete_day_count,
+            "incomplete_ladder_days": len(self.incomplete_days),
+            "partial_ladder_days": len(self.partial_ladder_days),
+            "base_absent_days": self.base_absent_days,
+            "base_conflict_days": self.base_conflict_days,
+            "oldest_incomplete_day": None if not self.incomplete_days else self.incomplete_days[0].isoformat(),
+            "newest_incomplete_day": None if not self.incomplete_days else self.incomplete_days[-1].isoformat(),
+            "truncated": self.truncated,
+            "error": self.error,
+        }
 
 
 @dataclass(slots=True)
@@ -140,6 +267,14 @@ class DrainLaneProgress:
     seconds: float = 0.0
     stopped_reason: str | None = None
     failures: list[DrainDayFailure] = field(default_factory=list)
+    # Ladder selection only: days whose every coarse rung derived to NO ROWS, so the day now carries
+    # no derived completion marker and the next ladder census will select it again.
+    #
+    # THIS IS THE ONE PLACE THE BUCKET-AS-CHECKPOINT RULE DOES NOT SELF-TERMINATE, so it is reported
+    # rather than left to be rediscovered. Only a lane with nullable coordinates can reach it --
+    # `water-gauges` and `sensors`, whose rows may have no location at all -- and for such a day the
+    # rungs are honestly empty, which is indistinguishable from never-derived through a listing.
+    emptied: list[date] = field(default_factory=list)
 
     @property
     def done(self) -> bool:
@@ -179,6 +314,9 @@ class DrainSummary:
             "days_remaining": self.days_remaining,
             "failures": len(self.failures),
             "abandoned_contended": sum(len(lane.abandoned) for lane in self.lanes),
+            # Days a `ladder` selection will keep re-selecting because every rung of them is
+            # honestly empty. Surfaced at the top level so it cannot be mistaken for backlog.
+            "emptied_ladders": sum(len(lane.emptied) for lane in self.lanes),
             "lanes": [
                 {
                     "lane": lane.slug,
@@ -190,6 +328,7 @@ class DrainSummary:
                     "failed": lane.failed,
                     "remaining": len(lane.pending),
                     "abandoned_contended": len(lane.abandoned),
+                    "emptied_ladders": len(lane.emptied),
                     "rows": lane.rows,
                     "parts": lane.parts,
                     "megabytes": round(lane.written_bytes / 1_048_576, 1),
@@ -203,6 +342,154 @@ class DrainSummary:
                 for f in self.failures[:20]
             ],
         }
+
+
+def _days_named_by(keys: Iterable[str], *, layer: str) -> set[date]:
+    """Return every day `keys` mentions for `layer` at any tier, through the three canonical parsers.
+
+    Parsed rather than string-sliced so a key from another layer, another kind or the retired
+    pre-zoom layout cannot contribute a day -- the last of which would otherwise silently widen the
+    window a ladder census walks by years.
+    """
+    days: set[date] = set()
+    for key in keys:
+        for parse in (try_parse_partition_path, try_parse_absence_marker_path, try_parse_completion_marker_path):
+            parsed = parse(key)
+            if parsed is not None and parsed.layer == layer:
+                days.add(parsed.day)
+                break
+    return days
+
+
+def build_lane_ladder_census(
+    lane: LaneRegistration,
+    store: ObjectStore,
+    *,
+    tiers: Sequence[ZoomTier] = DERIVED_ZOOM_TIERS,
+    max_days_per_lane: int | None = None,
+) -> LaneLadderCensus:
+    """Classify one lane's published days by whether EVERY coarse rung asserts it finished.
+
+    THE WINDOW COMES FROM THE LISTING, NOT FROM `lane_window`, and that is what lets one function
+    serve all three lane natures. A `static_lookup` lane has no calendar window at all -- its
+    partition day is a version stamp -- so asking `lane_window` for one raises. The days a lane has
+    actually published are a fact about the bucket, and the bucket is what a repair sweep is over.
+
+    A rung counts as finished only when it carries its own completion marker, for the same reason
+    `completed_partition_days` is the shared primitive one contract down: parts without a marker are
+    a derivation that stopped part-way, and re-deriving one is exactly the work never deriving it
+    was. Only the BASE rung's day statuses are consulted for the population, because a day with no
+    base rows has nothing a coarse rung could be derived FROM.
+
+    THE BASE POPULATION IS STRICTER THAN THE RUNG TEST -- parts AND a marker for the base, a marker
+    alone for a rung -- and that asymmetry is deliberate rather than an oversight. A rung marked
+    while holding no parts is unreachable through the two operations that write one: `_write_tier`
+    puts its parts before its marker, and `_retract_tier` clears the marker before deleting the
+    parts. Spelling a stricter rule here would be a SECOND definition of "finished", and the one
+    that eventually drifted would decide a day was done when the shared primitive said it was not.
+    """
+    kind = GAP_FILL_PARTITION_KIND
+    try:
+        base_keys = store.list_partition_keys(lane.slug, kind, BASE_ZOOM_TIER)
+        published = _days_named_by(base_keys, layer=lane.slug)
+        if not published:
+            return LaneLadderCensus(
+                slug=lane.slug,
+                base_day_count=0,
+                ladder_complete_day_count=0,
+                incomplete_days=(),
+                partial_ladder_days=(),
+                base_absent_days=0,
+                base_conflict_days=0,
+            )
+        statuses = partition_day_statuses(
+            layer=lane.slug,
+            kind=kind,
+            zoom=BASE_ZOOM_TIER,
+            first_day=min(published),
+            last_day=max(published),
+            keys=base_keys,
+        )
+        # `completed_partition_days` rather than a local rule: it is the one primitive every reader
+        # of this warehouse shares for "did this day's export assert that it finished", and a
+        # second spelling of it here is how one of the two eventually gets it wrong.
+        marked_by_tier = {
+            tier: completed_partition_days(
+                store.list_partition_keys(lane.slug, kind, tier), layer=lane.slug, kind=kind, zoom=tier
+            )
+            for tier in tiers
+        }
+    except Exception as error:  # per-lane isolation: an unreadable listing must never read as "no gaps"
+        return LaneLadderCensus(
+            slug=lane.slug,
+            base_day_count=0,
+            ladder_complete_day_count=0,
+            incomplete_days=(),
+            partial_ladder_days=(),
+            base_absent_days=0,
+            base_conflict_days=0,
+            error=f"listing {lane.slug!r} for a ladder census failed: {type(error).__name__}: {error}",
+        )
+    base_data = {day for day, status in statuses.items() if status == "data"}
+    complete = set(base_data)
+    partial: set[date] = set()
+    for marked in marked_by_tier.values():
+        complete &= marked
+        partial |= base_data & marked
+    incomplete = sorted(base_data - complete)
+    return LaneLadderCensus(
+        slug=lane.slug,
+        base_day_count=len(base_data),
+        ladder_complete_day_count=len(complete),
+        incomplete_days=tuple(incomplete if max_days_per_lane is None else incomplete[:max_days_per_lane]),
+        partial_ladder_days=tuple(sorted(partial - complete)),
+        base_absent_days=sum(1 for status in statuses.values() if status == "absent"),
+        base_conflict_days=sum(1 for status in statuses.values() if status == "conflict"),
+        truncated=max_days_per_lane is not None and len(incomplete) > max_days_per_lane,
+    )
+
+
+def build_ladder_census(
+    lanes: Sequence[LaneRegistration],
+    store: ObjectStore,
+    *,
+    tiers: Sequence[ZoomTier] = DERIVED_ZOOM_TIERS,
+    max_days_per_lane: int | None = None,
+) -> tuple[LaneLadderCensus, ...]:
+    """Take a ladder census of every requested lane, isolating one lane's listing failure from the rest."""
+    return tuple(
+        build_lane_ladder_census(lane, store, tiers=tiers, max_days_per_lane=max_days_per_lane) for lane in lanes
+    )
+
+
+def ladder_census_report(census: Sequence[LaneLadderCensus]) -> dict[str, object]:
+    """Render a ladder `--dry-run`: which lanes owe coarse rungs, and how many days each owes."""
+    return {
+        "lanes": [entry.to_report() for entry in census],
+        "lane_count": len(census),
+        "incomplete_ladder_days": sum(len(entry.incomplete_days) for entry in census),
+        "lanes_with_incomplete_ladders": [entry.slug for entry in census if entry.incomplete_days],
+        # Named, not just summed: a day carrying SOME rungs is a run that died mid-ladder, which
+        # reads as ordinary backlog in a total and is a different incident.
+        "lanes_with_partial_ladders": [entry.slug for entry in census if entry.partial_ladder_days],
+        # Days no coarse rung can ever cover through this driver. A reader at z9 on such a day finds
+        # nothing and cannot tell "deliberately empty" from "never written" -- see `LaneLadderCensus`.
+        "base_absent_days": sum(entry.base_absent_days for entry in census),
+        "lanes_with_errors": [entry.slug for entry in census if entry.error is not None],
+    }
+
+
+def plan_ladder_drain(census: Sequence[LaneLadderCensus]) -> tuple[DrainLaneProgress, ...]:
+    """Turn a ladder census into the walk, oldest day first, exactly as `plan_drain` does."""
+    return tuple(
+        DrainLaneProgress(
+            slug=entry.slug,
+            considered=len(entry.incomplete_days),
+            pending=sorted(entry.incomplete_days),
+            stopped_reason=entry.error,
+        )
+        for entry in census
+    )
 
 
 def plan_drain(census: Sequence[LaneGapCensus]) -> tuple[DrainLaneProgress, ...]:
@@ -238,12 +525,19 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
     max_days_per_lane: int | None = None,
     time_budget_seconds: float | None = None,
     statement_timeout_seconds: int = DRAIN_STATEMENT_TIMEOUT_SECONDS,
+    selection: DrainSelection = DEFAULT_DRAIN_SELECTION,
     on_day: Callable[[str, date, str, str | None], None] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = _utc_now,
     lane_day_lock: LaneDayLock = postgres_lane_day_lock,
+    derive_tiers: TierDeriver = derive_and_write_day_tiers,
 ) -> DrainSummary:
-    """Walk every lane's missing history and write it, round-robin, until nothing is left.
+    """Walk every lane's outstanding history and write it, round-robin, until nothing is left.
+
+    `selection` decides WHAT a day owes, never how the walk behaves -- see "Two selections, one
+    walk" in the module docstring. `missing` exports days with no base rung from Postgres; `ladder`
+    derives the coarse rungs of days whose base rung is already published, and touches no lane
+    adapter and no source table at all.
 
     `time_budget_seconds` is OPTIONAL here and unset by default, which is the whole point of the
     drain: the cron's 600-second ceiling is what made this job necessary. When it is set it bounds
@@ -256,9 +550,15 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
     """
     deadline = None if time_budget_seconds is None else monotonic() + time_budget_seconds
     started = monotonic()
-    watermarks = await resolve_lane_watermarks(session, store, lanes=lanes, today=today)
-    census = build_gap_census(lanes, store, today=today, max_days_per_lane=max_days_per_lane, watermarks=watermarks)
-    progress = plan_drain(census)
+    if selection == "ladder":
+        # NO WATERMARK READ. A watermark answers "which version does this static lane owe", which is
+        # a question about exporting a base rung; a ladder repair exports nothing and would be
+        # opening database connections for an answer it never consults.
+        progress = plan_ladder_drain(build_ladder_census(lanes, store, max_days_per_lane=max_days_per_lane))
+    else:
+        watermarks = await resolve_lane_watermarks(session, store, lanes=lanes, today=today)
+        census = build_gap_census(lanes, store, today=today, max_days_per_lane=max_days_per_lane, watermarks=watermarks)
+        progress = plan_drain(census)
     by_slug = {lane.slug: lane for lane in lanes}
 
     while any(not lane.done for lane in progress):
@@ -286,11 +586,120 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
                     monotonic=monotonic,
                     max_consecutive_failures=max_consecutive_failures,
                     statement_timeout_seconds=statement_timeout_seconds,
+                    selection=selection,
+                    derive_tiers=derive_tiers,
                     on_day=on_day,
                 )
         if not advanced:
             break
     return DrainSummary(run_id=run_id, lanes=progress, seconds=monotonic() - started)
+
+
+async def _derive_one_day(  # noqa: PLR0913 - one coordinate of the day being derived per arg
+    session: AsyncSession,
+    store: ObjectStore,
+    registration: LaneRegistration,
+    *,
+    day: date,
+    run_id: str,
+    now: Callable[[], datetime],
+    lane_day_lock: LaneDayLock,
+    derive_tiers: TierDeriver,
+) -> tuple[LaneDayOutcome, int, int, int, str | None]:
+    """Write one already-published day's coarse rungs from its base rung, under the lane-day lock.
+
+    THE SAME LOCK KEY AS THE EXPORT PATH, IMPORTED RATHER THAN RESPELT. `fill_one_lane_day` holds
+    `_lane_day_lock_key(lane, day)` across export, prune, rungs and marker precisely so no second
+    writer can interleave with it -- and this IS a second writer of three of those four objects. A
+    repair sweep that took a different key, or no key, would race the hourly cron on exactly the
+    days it is repairing: the cron's derivation and this one would both prune and both mark, and
+    the loser's `part_count` would describe a rung the winner had already replaced.
+
+    NO STATEMENT TIMEOUT AND NO EXPORT. The only statement this path issues is the advisory lock
+    itself; the base rows come from the object store. That is the whole reason this selection is
+    cheap enough to run over a thousand days: `signal` measured 151 s for ONE cold day of its
+    Postgres export, and none of those seconds buy anything when the base rung is already correct.
+
+    A FAILED DERIVATION CHANGES NOTHING, which is what makes the repair safe to re-run. The base
+    rung and its marker are never touched here, so a day that raises is simply still ladder-
+    incomplete and the next census selects it again.
+    """
+    async with lane_day_lock(session, _lane_day_lock_key(registration, day)) as granted:
+        if not granted:
+            return (
+                "contended",
+                0,
+                0,
+                0,
+                f"{day.isoformat()}: another run holds this lane-day, so its coarse rungs were left alone rather "
+                "than derived beside a base rung being rewritten; a later turn will take it",
+            )
+        try:
+            derived = derive_tiers(
+                store, layer=registration.slug, kind=GAP_FILL_PARTITION_KIND, day=day, run_id=run_id, now=now
+            )
+        except Exception as error:
+            return (
+                "raised",
+                0,
+                0,
+                0,
+                f"{day.isoformat()}: the coarse rungs could not be derived from the published base rung, so this "
+                f"day stays visible only at z{BASE_ZOOM_TIER}. A base rung that no longer matches its lane's schema "
+                f"reads exactly like this and needs retracting and re-exporting, not re-deriving: "
+                f"{type(error).__name__}: {error}",
+            )
+    notes = list(derived.notes)
+    if derived.tiers:
+        rungs = ", ".join(
+            f"z{report.tier} {report.row_count} rows in {report.part_count} part(s)" for report in derived.tiers
+        )
+        notes.append(f"{day.isoformat()}: derived {rungs}")
+    return "written", derived.part_count, derived.row_count, derived.byte_count, "; ".join(notes) or None
+
+
+async def _run_one_day(  # noqa: PLR0913 - one coordinate of the day being run per arg
+    session: AsyncSession,
+    store: ObjectStore,
+    registration: LaneRegistration,
+    *,
+    day: date,
+    today: date,
+    run_id: str,
+    now: Callable[[], datetime],
+    lane_day_lock: LaneDayLock,
+    statement_timeout_seconds: int,
+    selection: DrainSelection,
+    derive_tiers: TierDeriver,
+) -> tuple[LaneDayOutcome, int, int, int, str | None]:
+    """Run one day through the path its selection names: a Postgres export, or a derivation alone.
+
+    THE ONLY PLACE THE TWO SELECTIONS DIVERGE. Everything around it -- the round-robin, the
+    oldest-first order, the consecutive-failure floor, the contended cap and the budget -- is a
+    property of walking a backlog and must not learn which kind of backlog it is walking.
+    """
+    if selection == "ladder":
+        return await _derive_one_day(
+            session,
+            store,
+            registration,
+            day=day,
+            run_id=run_id,
+            now=now,
+            lane_day_lock=lane_day_lock,
+            derive_tiers=derive_tiers,
+        )
+    return await fill_one_lane_day(
+        session,
+        store,
+        registration,
+        day=day,
+        run_id=run_id,
+        now=now,
+        today=today,
+        lane_day_lock=lane_day_lock,
+        statement_timeout_seconds=statement_timeout_seconds,
+    )
 
 
 async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being drained per arg
@@ -306,22 +715,28 @@ async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being dra
     monotonic: Callable[[], float],
     max_consecutive_failures: int,
     statement_timeout_seconds: int,
+    selection: DrainSelection,
+    derive_tiers: TierDeriver,
     on_day: Callable[[str, date, str, str | None], None] | None,
 ) -> None:
     """Fill one day through the cron's own per-day path, then fold the outcome into the lane tally."""
     day = lane.pending.pop(0)
     began = monotonic()
-    outcome, parts, rows, written_bytes, detail = await fill_one_lane_day(
+    outcome, parts, rows, written_bytes, detail = await _run_one_day(
         session,
         store,
         registration,
         day=day,
+        today=today,
         run_id=run_id,
         now=now,
-        today=today,
         lane_day_lock=lane_day_lock,
         statement_timeout_seconds=statement_timeout_seconds,
+        selection=selection,
+        derive_tiers=derive_tiers,
     )
+    if selection == "ladder" and outcome == "written" and parts == 0:
+        lane.emptied.append(day)
     lane.seconds += monotonic() - began
     lane.parts += parts
     lane.rows += rows
@@ -372,13 +787,224 @@ async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being dra
         on_day(lane.slug, day, outcome, detail)
 
 
+# --- Retiring the pre-zoom layout ----------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyLayoutObject:
+    """One object written before the zoom axis existed: where it is, and which day it belonged to."""
+
+    key: str
+    relative_path: str
+    layer: str
+    kind: PartitionKind
+    day: date
+    file_name: str
+    byte_count: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyLayoutRetirement:
+    """One layer's pre-zoom residue: what was found, what was superseded, and what was removed."""
+
+    layer: str
+    # Legacy objects whose day the zoom layout ALREADY holds at the base rung. Removing one of these
+    # can lose nothing: a newer copy of that day is published where readers actually look.
+    superseded: tuple[LegacyLayoutObject, ...]
+    # Legacy objects for a day the zoom layout does not hold at all. Removing one DOES drop the only
+    # copy in this bucket -- recoverable, because the ordinary `missing` drain would re-export the
+    # day from Postgres, but not free. Never removed unless a caller asks for it by name.
+    orphaned: tuple[LegacyLayoutObject, ...]
+    removed: tuple[str, ...]
+    failures: tuple[str, ...]
+    truncated: bool = False
+    error: str | None = None
+
+    @property
+    def byte_count(self) -> int:
+        """Bytes held by every legacy object found, superseded and orphaned together."""
+        return sum(found.byte_count or 0 for found in (*self.superseded, *self.orphaned))
+
+    def to_report(self) -> dict[str, object]:
+        """Render the row a legacy sweep echoes, with a bounded sample of the orphans it refused."""
+        return {
+            "layer": self.layer,
+            "superseded": len(self.superseded),
+            "orphaned": len(self.orphaned),
+            "removed": len(self.removed),
+            "failures": len(self.failures),
+            "megabytes": round(self.byte_count / 1_048_576, 1),
+            "orphan_sample": [found.relative_path for found in self.orphaned[:10]],
+            "truncated": self.truncated,
+            "error": self.error,
+        }
+
+
+def _legacy_layout_object(store: ObjectStore, key: str) -> LegacyLayoutObject | None:
+    """Return the legacy object `key` names, or `None` when it is anything else at all.
+
+    THE THREE LIVE PARSERS ARE CONSULTED FIRST AND THEIR VERDICT IS FINAL. This function's output
+    feeds a delete, so the load-bearing property is not "does it look legacy" but "is it certainly
+    not current": a key that any live parser accepts is a member of the zoom layout and is refused
+    here even if the legacy pattern would also have matched it. Only then is the retired pattern
+    applied, which is what keeps this from ever deleting a published rung.
+    """
+    relative_path = store.relative_key(key)
+    if (
+        try_parse_partition_path(relative_path) is not None
+        or try_parse_absence_marker_path(relative_path) is not None
+        or try_parse_completion_marker_path(relative_path) is not None
+    ):
+        return None
+    matched = LEGACY_LAYOUT_PATTERN.match(relative_path.replace("\\", "/"))
+    if matched is None:
+        return None
+    try:
+        day = date(int(matched["year"]), int(matched["month"]), int(matched["day"]))
+    except ValueError:  # 2025-02-30 in a key is not a day this sweep may claim to understand
+        return None
+    return LegacyLayoutObject(
+        key=key,
+        relative_path=relative_path,
+        layer=matched["layer"],
+        kind=validate_partition_kind(matched["kind"]),
+        day=day,
+        file_name=matched["file"],
+    )
+
+
+def retire_legacy_layout_objects(
+    store: ObjectStore,
+    backend: ObjectStoreBackend,
+    *,
+    layers: Sequence[str],
+    dry_run: bool = True,
+    include_orphaned: bool = False,
+) -> tuple[LegacyLayoutRetirement, ...]:
+    """Find, and optionally delete, the objects written before the zoom axis existed.
+
+    `backend` IS A SEPARATE ARGUMENT AND CANNOT BE TAKEN FROM `store`, which is the whole reason
+    this signature looks the way it does. `ObjectStore.list_partition_objects` FILTERS OUT every key
+    its three parsers reject, so the legacy layout is invisible through it -- the objects cannot even
+    be LISTED, let alone deleted, through the public store. `ObjectStoreBackend` is a public Protocol
+    and the caller already holds the instance it built its store from; passing it here keeps the one
+    unfiltered listing in this repo visible in a signature instead of hidden behind an attribute.
+
+    DRY RUN BY DEFAULT. Deleting from the record of truth is not something a caller should be able
+    to do by forgetting an argument.
+
+    ORPHANS ARE REPORTED AND KEPT unless `include_orphaned` says otherwise: a legacy day the zoom
+    layout does not hold is the only copy in this bucket, and while it is recoverable from Postgres
+    by the ordinary drain, a sweep whose stated job is removing superseded bytes should not quietly
+    decide to re-export somebody's day as a side effect.
+    """
+    return tuple(
+        _retire_one_layer(store, backend, layer=layer, dry_run=dry_run, include_orphaned=include_orphaned)
+        for layer in layers
+    )
+
+
+def _retire_one_layer(
+    store: ObjectStore,
+    backend: ObjectStoreBackend,
+    *,
+    layer: str,
+    dry_run: bool,
+    include_orphaned: bool,
+) -> LegacyLayoutRetirement:
+    """Sweep one layer's prefix, isolating its failure from every other layer's."""
+    validate_layer_slug(layer)
+    try:
+        # PER KIND, because the retired layout carried both and `kind=forecast` days are a different
+        # population entirely: measuring a legacy forecast object against the observed days would
+        # call it orphaned whenever the observed lane happened not to hold that calendar day.
+        published = {
+            partition_kind: _days_named_by(
+                store.list_partition_keys(layer, partition_kind, BASE_ZOOM_TIER), layer=layer
+            )
+            for partition_kind in PARTITION_KINDS
+        }
+        found: list[LegacyLayoutObject] = []
+        truncated = False
+        for listed in backend.list_objects(store.key_for(layer_prefix(layer))):
+            if len(found) >= MAX_LEGACY_KEYS_PER_LAYER:
+                truncated = True
+                break
+            legacy = _legacy_layout_object(store, listed.key)
+            if legacy is None or legacy.layer != layer:
+                continue
+            # Sized only once it is CERTAINLY legacy. A `size_of` per listed key would put a HEAD
+            # against every object in the layer -- tens of thousands of them for `fire-detections`
+            # -- to price a few hundred.
+            found.append(replace(legacy, byte_count=backend.size_of(legacy.key)))
+    except Exception as error:  # per-layer isolation: one unreadable prefix must not end the sweep
+        return LegacyLayoutRetirement(
+            layer=layer,
+            superseded=(),
+            orphaned=(),
+            removed=(),
+            failures=(),
+            error=f"sweeping {layer!r} for pre-zoom objects failed: {type(error).__name__}: {error}",
+        )
+    superseded = tuple(legacy for legacy in found if legacy.day in published[legacy.kind])
+    orphaned = tuple(legacy for legacy in found if legacy.day not in published[legacy.kind])
+    if dry_run:
+        return LegacyLayoutRetirement(
+            layer=layer, superseded=superseded, orphaned=orphaned, removed=(), failures=(), truncated=truncated
+        )
+    removed: list[str] = []
+    failures: list[str] = []
+    for legacy in (*superseded, *(orphaned if include_orphaned else ())):
+        try:
+            backend.delete(legacy.key)
+        except Exception as error:
+            failures.append(f"{legacy.relative_path}: {type(error).__name__}: {error}")
+        else:
+            removed.append(legacy.relative_path)
+    return LegacyLayoutRetirement(
+        layer=layer,
+        superseded=superseded,
+        orphaned=orphaned,
+        removed=tuple(removed),
+        failures=tuple(failures),
+        truncated=truncated,
+    )
+
+
+def legacy_layout_report(retirements: Sequence[LegacyLayoutRetirement]) -> dict[str, object]:
+    """Render the whole sweep: totals, per-layer rows, and the layers whose orphans were kept."""
+    return {
+        "layers": [entry.to_report() for entry in retirements],
+        "superseded": sum(len(entry.superseded) for entry in retirements),
+        "orphaned": sum(len(entry.orphaned) for entry in retirements),
+        "removed": sum(len(entry.removed) for entry in retirements),
+        "failures": sum(len(entry.failures) for entry in retirements),
+        "megabytes": round(sum(entry.byte_count for entry in retirements) / 1_048_576, 1),
+        "layers_with_orphans": [entry.layer for entry in retirements if entry.orphaned],
+        "layers_with_errors": [entry.layer for entry in retirements if entry.error is not None],
+    }
+
+
 __all__ = [
     "DEFAULT_DAYS_PER_LANE_TURN",
+    "DEFAULT_DRAIN_SELECTION",
     "DEFAULT_MAX_CONSECUTIVE_FAILURES",
     "DRAIN_STATEMENT_TIMEOUT_SECONDS",
+    "LEGACY_LAYOUT_PATTERN",
+    "MAX_LEGACY_KEYS_PER_LAYER",
     "DrainDayFailure",
     "DrainLaneProgress",
+    "DrainSelection",
     "DrainSummary",
+    "LaneLadderCensus",
+    "LegacyLayoutObject",
+    "LegacyLayoutRetirement",
+    "build_ladder_census",
+    "build_lane_ladder_census",
+    "ladder_census_report",
+    "legacy_layout_report",
     "plan_drain",
+    "plan_ladder_drain",
+    "retire_legacy_layout_objects",
     "run_drain",
 ]
