@@ -1,0 +1,60 @@
+{
+  "slug": "regional_fire_risk_surface_20260824",
+  "title": "Cross-state fire-risk prioritisation surface",
+  "status": "chartered",
+  "created_on": "2026-08-24",
+  "depends_on": [
+    "parquet_duckdb_pivot_20260823"
+  ],
+  "runbook_section": "0.41",
+  "note": "Serves the rangeland fire-risk index as a day-partitioned Parquet lane, one day per read, per RUNBOOK 0.41.7. Measured AUC 0.725 in-sample on 2026 (0.697 for VPD alone -- do NOT sell the composite as a large gain). STRATIFIED: scores greenness quartiles 1-2 only; skill decays to 0.586 in closed forest and applying it there is a misuse. Feature window must close before the outcome window opens (RUNBOOK 0.41.2). Validation of the skill estimate is a separate track and is blocked on the historical backfill.",
+  "partitions": {
+    "computed_at": "2026-08-24T00:00:00Z",
+    "computed_at_commit": "91a5a1e",
+    "confidence": "planned",
+    "slices": [
+      {
+        "id": "s1",
+        "task": "Promote the analysis index into a lane exporter with a declared LaneNature",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/fire_risk.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/fire_risk.py", "status": "future"}
+        ],
+        "model": "sonnet",
+        "depends_on": []
+      },
+      {
+        "id": "s2",
+        "task": "Harden the feature build; keep the leakage guard as an assertion, not a comment",
+        "owns": [
+          "services/agri-data-service/analysis/fire_risk_index.py",
+          "services/agri-data-service/analysis/warehouse_session.py"
+        ],
+        "model": "sonnet",
+        "depends_on": []
+      },
+      {
+        "id": "s3",
+        "task": "Serving read for a single day plus the MCP historical-day-list path",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/interface/http/fire_risk.py", "status": "future"}
+        ],
+        "model": "sonnet",
+        "depends_on": ["s1"]
+      }
+    ],
+    "shared_writes": [
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+        "owner": "s1",
+        "reason": "the one module allowed to know every lane; any new lane registers here and s1 serialises the edit"
+      }
+    ],
+    "tripwires": [
+      "FEATURE_WINDOW must close strictly before OUTCOME_WINDOW_OPENS -- widening it reintroduces fire-scar leakage and invalidates every reported AUC",
+      "layer=signal/ still holds 386 pre-zoom-ladder keys at shallower depth; a zoom=* glob double-counts them, so every read pins a tier",
+      "the index is fitted on greenness quartiles 1-2 only and must refuse, not extrapolate, outside them"
+    ],
+    "integration_slice": "s3"
+  }
+}

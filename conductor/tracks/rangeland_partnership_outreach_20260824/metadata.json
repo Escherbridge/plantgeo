@@ -1,0 +1,23 @@
+{
+  "slug": "rangeland_partnership_outreach_20260824",
+  "title": "Rangeland partnership and feedstock-policy outreach",
+  "status": "chartered",
+  "created_on": "2026-08-24",
+  "depends_on": [],
+  "runbook_section": "0.41",
+  "type": "non-software",
+  "note": "NON-SOFTWARE track: programme, partnership and policy work, kept here so it is not lost. Ships no code and owns no source files -- partitions are deliberately empty rather than invented. Key constraint: OWEB funds Tribes, watershed councils, SWCDs, non-profits, schools, higher-ed and political subdivisions -- NOT individuals or companies applying alone, so an eligible partner is mandatory, not optional. Summer 2026 OWEB solicitation CLOSED 2026-08-03; awards Jan 2027. Only the Harney SWCD contact details were read off a primary source; every other organisation is recorded as an official page, with NO invented staff names, phones or emails.",
+  "partitions": {
+    "computed_at": "2026-08-24T00:00:00Z",
+    "computed_at_commit": "91a5a1e",
+    "confidence": "none",
+    "slices": [],
+    "shared_writes": [],
+    "tripwires": [
+      "never invent a contact name, phone number or email for any agency -- only Harney SWCD was verified against a primary source",
+      "silvopasture and conventional agroforestry are a POOR FIT for sagebrush steppe; the region funds juniper REMOVAL. Proposing tree establishment reads as working against the stated conservation objective",
+      "manure/nutrient loading likely favours cheatgrass (N enrichment drives invasion); biochar is the opposite lever via N immobilisation. Do not pitch them as one package"
+    ],
+    "integration_slice": null
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "slug": "fire_feature_plane_validation_20260824",
+  "title": "Validate the fire feature plane across multiple fire seasons",
+  "status": "blocked",
+  "created_on": "2026-08-24",
+  "depends_on": [
+    "parquet_duckdb_pivot_20260823",
+    "regional_fire_risk_surface_20260824"
+  ],
+  "runbook_section": "0.41.9",
+  "blocked_on": "parquet_duckdb_pivot_20260823 item B -- the bulk Postgres drain, where fire-detections is 69% of the 13,037 lane-days. NOT new work; do not charter a backfill track.",
+  "note": "AUC 0.725 was fit AND scored on 2026 alone -- in-sample and optimistic. fire-detections in the warehouse holds 2000-2003 and 2026 only: a 23-year hole (2003-2025). An empty year means NOT YET BACKFILLED, never no fire. This track converts an association into a skill estimate a district could fund against; until it clears, every number in RUNBOOK 0.41.2 carries the in-sample caveat.",
+  "partitions": {
+    "computed_at": "2026-08-24T00:00:00Z",
+    "computed_at_commit": "91a5a1e",
+    "confidence": "planned",
+    "slices": [
+      {
+        "id": "s1",
+        "task": "Out-of-season validation harness -- fit on year set A, score on held-out year B",
+        "owns": [
+          {"path": "services/agri-data-service/analysis/fire_risk_validation.py", "status": "future"}
+        ],
+        "model": "sonnet",
+        "depends_on": []
+      },
+      {
+        "id": "s2",
+        "task": "Calibration -- turn the raw index into a probability with a reliability curve",
+        "owns": [
+          {"path": "services/agri-data-service/analysis/fire_risk_calibration.py", "status": "future"}
+        ],
+        "model": "sonnet",
+        "depends_on": ["s1"]
+      }
+    ],
+    "shared_writes": [
+      {
+        "path": "services/agri-data-service/analysis/fire_risk_index.py",
+        "owner": "s1",
+        "reason": "the feature builder is parameterised by year here; s1 owns that edit so s2 never races it"
+      }
+    ],
+    "tripwires": [
+      "detection coverage is NOT uniform across years -- 2000 has 35 days, 2003 has 1; an unweighted multi-year fit silently weights 2002 over 2000 by ~8x",
+      "the upstream feed caps records per request and drops the excess silently, biting hardest on the largest fire days",
+      "ignition is not in the model; a year with an unusual lightning outbreak will look like model failure and is not"
+    ],
+    "integration_slice": "s2"
+  }
+}

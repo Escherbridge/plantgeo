@@ -4,7 +4,7 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Last updated:** 2026-08-25. **READ §0.40 FIRST — it corrects §0.39: the runners were NOT stopped (every push redeploys them; taken down 02:05 UTC), "backlog 0" was z13 only with no coarse rung anywhere, the pivot verified on cold-path and resource grounds, and the four repoint decisions are recorded there.** **THE PARQUET BACKLOG IS DRAINED (12,365 -> 0 lane-days) - READ §0.39 NEXT; it supersedes §0.38 and records why the DB shrink is now gated on an unbuilt read API, and why nothing is ingesting.** **ARCHITECTURE PIVOT — READ §0.23 FIRST: Postgres becomes a community-features database; every data plane moves to day-partitioned Parquet read by DuckDB+Polars, with Martin serving PMTiles. §0.16–§0.22 optimise a Postgres this project is leaving.** **§0.25 is the CURRENT HEAD OF THE PROGRAMME — wave 1 shipped green, the by-domain layering question is answered, and it retires `agri_sdk_layering` phases 4–8.** **§0.24 is the concurrent stream plan that executes it — 21 streams in 5 waves, each with a disjoint file boundary, governed by the new `conductor/code_styleguides/layer-lanes.md`.** **THE PARQUET PATH HAS STARTED — §0.22 carries the signal-plane grain decision and the traps for the export job.** **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
+**Last updated:** 2026-08-25. **§0.41 IS THE FIRST ANALYTICAL USE OF THE DRAINED WAREHOUSE (2026-08-24) — it makes NO infrastructure claims and supersedes nothing, but read §0.41.6 before running any local DuckDB: a cross-join against CONUS-wide USDM polygons CONSUMED THE HOST, and spilling is now disabled by guard, not by tuning. §0.41.4 records THREE claims refuted by their own evidence, and §0.41.9 names the one blocker — the 23-year `fire-detections` hole, which is already chartered as pivot item B, not new work.** **READ §0.42 FIRST — the orchestration packet: three concurrent lanes (data/ingestion, API, UI) behind a contract freeze, a per-layer hard cutover to Parquet, the four layers that are NOT Parquet lanes at all, and the correction that §0.41.9's blocker (the `fire-detections` hole) CLEARED at 19:42 UTC on 2026-08-24 — that track is runnable, not blocked.** **READ §0.40 FIRST — it corrects §0.39: the runners were NOT stopped (every push redeploys them; taken down 02:05 UTC), "backlog 0" was z13 only with no coarse rung anywhere, the pivot verified on cold-path and resource grounds, and the four repoint decisions are recorded there.** **THE PARQUET BACKLOG IS DRAINED (12,365 -> 0 lane-days) - READ §0.39 NEXT; it supersedes §0.38 and records why the DB shrink is now gated on an unbuilt read API, and why nothing is ingesting.** **ARCHITECTURE PIVOT — READ §0.23 FIRST: Postgres becomes a community-features database; every data plane moves to day-partitioned Parquet read by DuckDB+Polars, with Martin serving PMTiles. §0.16–§0.22 optimise a Postgres this project is leaving.** **§0.25 is the CURRENT HEAD OF THE PROGRAMME — wave 1 shipped green, the by-domain layering question is answered, and it retires `agri_sdk_layering` phases 4–8.** **§0.24 is the concurrent stream plan that executes it — 21 streams in 5 waves, each with a disjoint file boundary, governed by the new `conductor/code_styleguides/layer-lanes.md`.** **THE PARQUET PATH HAS STARTED — §0.22 carries the signal-plane grain decision and the traps for the export job.** **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
 
 **What changed 2026-08-21 — four new sections, and they supersede earlier ones where they disagree.** **§0.16** is the data-quality and QA assessment: the census per layer and per observation plane, freshness and rot, the job ledger and matview refresh state, the storage/index/bloat profile, the partitionwise probe, and what the QA gate does and does not prove — every number labelled with how it was obtained, CONFIRMED separated from UNVERIFIED, and **two headline claims REFUTED outright (§0.16.9)**. **§0.17** is why the map is broken *right now*, ranked by rendering unblocked per unit of work; **read it first if you are here to fix the outage.** **§0.18** is the target architecture — entity/observation split with sealed months on R2 — with the losing designs' grafts folded in and **17 recorded rejections so they stop being re-litigated (§0.18.8)**. **§0.19** is the merged programme plan with a gate class, precondition and reversal cost per item.
 
@@ -5725,6 +5725,428 @@ Track: `conductor/tracks/postgres_shrink_ingest_repoint_20260825/`. Memories:
 `plantgeo-postgres-memory-is-batch-not-serving`, `plantgeo-push-redeploys-drain-and-ingest`.
 
 ---
+
+### 0.41 SESSION 11 (2026-08-24) — the warehouse answered a science question, and the answer is narrower than it looks
+
+**This section adds no infrastructure claims and supersedes nothing.** It records the first
+analytical use of the drained Parquet warehouse, four new tracks, and one new module. Read it
+for the measured results and — more importantly — for **the three claims that were briefly
+believed here and then refuted by their own evidence** (§0.41.4).
+
+**Provenance for every number below:** DuckDB over the object store, read-only, 2026-08-24.
+Nothing was written to Postgres. Feature window 2026-04-01 → 2026-06-30; outcome window opens
+2026-07-01; USDM release 2026-08-18. Code is now `services/agri-data-service/analysis/`.
+
+#### 0.41.1 The warehouse is analytically usable, and it validated itself
+
+Starting question was a user asking for terrain similar to `43.643120, -118.062598`. That point
+resolves to cell `sentinel2-ndvi-0p25deg:43.6250:-118.1250`.
+
+**CONFIRMED — the pivot's output is queryable end to end with no Postgres in the path.** Signal,
+vegetation, drought, fire-detections and fire-perimeters were all read directly from the bucket
+and joined on `cell_id`. The one Postgres read in the whole session was the cell dimension
+(`agri.spatial_cell`, 1,568 cells on the sentinel2 grid + 397 nasa-power).
+
+**CONFIRMED — the ingest is accurate.** The `fire-perimeters` lane reports Coleman Creek at
+**308,864 acres**; InciWeb reports **308,863**. One acre apart on an independently-sourced
+figure. That is the strongest external validation of the pipeline recorded so far.
+
+**A grain fact worth knowing:** era5-land signals are stored against **sentinel2-ndvi-0.25°
+cells**, not an era5 grid. `support_key` names the upstream resolution; `cell_id` names the
+analysis grid. Vegetation and soil moisture therefore co-register with no regridding — which is
+what made this analysis cheap. 1,470 of 1,568 cells carry both; 98 lack soil and drop out of any
+inner join.
+
+**A trap in the object layout:** `layer=signal/` still holds **386 pre-zoom-ladder keys** at a
+shallower depth (`kind=observed/year=…`, no `zoom=` segment). A `zoom=*` glob double-counts them.
+Every reader must pin a tier explicitly; `analysis/warehouse_session.py` does.
+
+#### 0.41.2 Fire occurrence is predictable; the skill is real and modest
+
+Leakage-free: features close 30 Jun, Coleman Creek ignited 25 Jul. 1,470 cells, 492 burned
+(33.5 %). Scored on the rangeland strata only (greenness quartiles 1–2; 736 cells, 268 burned).
+
+| signal | AUC | direction |
+|---|---|---|
+| composite index | **0.725** | — |
+| vapour pressure deficit | 0.697 | higher burns |
+| soil temperature (0–7 cm) | 0.677 | higher burns |
+| surface soil moisture | 0.605 | **lower** burns |
+| spring NDVI | 0.588 | higher burns |
+
+Decile lift: **14.9 % burned in the lowest decile → 67.1 % in the highest**, monotonic above
+decile 3.
+
+**The composite beats VPD alone by ~0.03.** Do not sell the composite as a material improvement
+over a single-variable screen; VPD is doing the work.
+
+**The index is stratified for a reason and does not transfer.** VPD/soil-temperature separate the
+dry interior from the wet coast, so an unstratified AUC partly measures "the interior burns".
+Within greenness quartiles the VPD AUC runs 0.693 / 0.746 / 0.667 / **0.586** — it decays to
+near-nothing in closed forest. **Applying this index to forest is a misuse.**
+
+Within the sparsest quartile only, NDVI flips to a strong positive predictor (**0.674**): more
+spring fine fuel, more fire. Stratum-specific; the sign does not generalise.
+
+#### 0.41.3 The shade hypothesis: mechanism real, net effect opposite
+
+Tested because the owner proposed that canopy/shade should suppress fire in treeless grassland.
+
+Raw correlations support it — cover vs soil temperature **−0.339**, vs VPD **−0.264**, vs surface
+moisture **+0.534**. **Holding VPD quartile constant, most of it is climate confound:** soil
+temperature moves only ~0.5 °C across cover terciles (Q3: 17.4 / 17.5 / 16.9). Surface moisture
+genuinely does roughly double (Q3: 0.086 → 0.177).
+
+**But burn rate rises with cover inside every dryness quartile** — Q3 goes 8.1 % → 63.9 % → 63.9 %
+from sparsest to greenest. **Fuel load dominates microclimate, decisively.** The largest jump is
+sparsest→middle, which is the fuel-**continuity** threshold: sparse cover cannot carry fire
+between plants, moderate cover can.
+
+**Scope limit, stated so it is not over-read:** NDVI at 28 km cannot separate tree canopy from
+grass. This refutes "greener is safer" at landscape scale. It does **not** test tree shade, and
+does not by itself refute silvopasture.
+
+#### 0.41.4 THREE CLAIMS REFUTED BY THEIR OWN EVIDENCE
+
+Recorded because each is plausible, each was briefly believed in this session, and each is wrong.
+
+1. **"Fire intensity is predictable from the same signals."** REFUTED. Raw `frp_sum` suggested a
+   ~47× inversion. `frp_sum` sums over detections and so confounds intensity with duration and
+   extent; **per detection** the range is 12.8–29.8 MW and the correlation with the index is
+   **+0.131**. No intensity signal exists here.
+2. **"Large fires concentrate in low-risk cells."** REFUTED. Mean detections per burned cell by
+   risk band were 1256 / 957 / 398, but medians are **16 / 84 / 13**. A handful of megafire cells,
+   not a gradient.
+3. **"The fire layer supports a multi-year trend."** REFUTED. `fire-detections` in the warehouse
+   holds **2000 (35 d), 2001 (233 d), 2002 (270 d), 2003 (1 d), 2026 (224 d)** — a **23-year hole,
+   2003–2025**. 2026 figures are sound; any cross-year trend is not. An empty year means *not yet
+   backfilled*, never *no fire*.
+
+**Consequence for the carbon question: no carbon-targeting signal was found.** The index predicts
+where fire occurs, not how much carbon a fire releases. Those are separate problems and nothing
+measured here says they share a map.
+
+#### 0.41.5 The carbon lane is identified but unbuilt
+
+`geo.published_raster` catalogues **ISRIC SoilGrids** COGs + PMTiles over the full extent
+(−127.04→−110.17, 42.00→49.00), including the two that matter:
+
+| product | unit | scale_divisor | range | object key |
+|---|---|---|---|---|
+| `soc_0-5cm_mean` | g/kg | 10 | 5.7 – 462.1 | `raster/soil/soilgrids-v2.0/soc_0-5cm_mean_4326.tif` |
+| `ocd_0-5cm_mean` | kg/m³ | 10 | 10.3 – 111.2 | `raster/soil/soilgrids-v2.0/ocd_0-5cm_mean_4326.tif` |
+
+**Blocked on a reader, now unblocked by decision.** No raster library was installed; owner
+approved adding `rasterio`, and it is pinned in `pyproject.toml` (`rasterio>=1.3,<2`) so a
+future `uv sync` cannot silently drop it — **installed with `uv pip install`, deliberately not
+`uv sync`**, per the known pytest-removal behaviour.
+
+`geo.soil_survey` carries **no** carbon field (SSURGO map units — drainage class, land capability,
+soil series). SoilGrids is the only carbon source in the estate.
+
+External grounding for scale (literature, not measured here): cheatgrass conversion costs
+**6–9 Mg C/ha belowground**, roughly double the aboveground loss, with the loss appearing
+**below 20 cm and more than five years after fire**. At 7.5 Mg C/ha over Coleman Creek's 124,990
+ha that is ~**0.94 Mt C ≈ 3.4 Mt CO₂e** *if the ground converts* — which is decided in the
+post-fire window, not at the fire.
+
+#### 0.41.6 THE MEMORY INCIDENT — why `max_temp_directory_size='0GiB'` is not tuning
+
+**A local DuckDB query consumed the host and disrupted unrelated processes.** Cause: a cross-join
+of 1,568 cells against 1,045 CONUS-wide USDM multipolygons (up to ~140k vertices, ~2.2 MB WKB
+each), which materialises a geometry reference per output row — 1.6 M rows carrying large
+geometries. It spilled to local disk until the machine was unusable.
+
+Owner directive: **do not use the local volume.** `analysis/warehouse_session.py` now sets
+`memory_limit=1600MB`, `threads=3`, `max_temp_directory_size='0GiB'`, and opens `:memory:` with
+no database file. The same query now raises `OutOfMemoryError` in ~1 s and the host is unaffected.
+
+Two disciplines make the spatial work cheap enough never to approach the ceiling:
+
+1. **Clip before probing.** `ST_Intersection` against the analysis envelope cuts the largest USDM
+   polygon **140,352 → 6,300 vertices (22×)** with *no* precision loss inside the probed region.
+2. **One polygon per query.** After clipping, a full 5-band release costs ~**0.1 s per band** —
+   down from OOM.
+
+`ST_Simplify` was evaluated and **rejected as the primary lever**: 0.002° tolerance gave only 4×,
+and unlike clipping it can move a boundary and flip a cell.
+
+**Also measured: USDM severity bands are EXCLUSIVE, not nested.** Zero cells matched more than one
+category on the 2026-08-18 release. The nested reading is the common assumption and would assign
+the wrong level everywhere.
+
+#### 0.41.7 Ingestion constraint restated (owner, 2026-08-24)
+
+**All new data ingestion targets day-partitioned Parquet/GeoParquet**, aimed at serverless query
+on cold compute. The serving pattern is **one day per layer**; only the MCP asks for historical
+day lists. New lanes must declare a nature per `foundation/parquet/lane_contract.py` — SOC is a
+`static_lookup` keyed to a source watermark, **not** a daily series, because it does not vary by
+day and must not be written 365 times a year.
+
+#### 0.41.8 What was created
+
+**Module** — `services/agri-data-service/analysis/` (sibling of `scripts/`, outside
+`src/agri_data_service/`, so `tests/test_layer_import_contract.py` does not bind it):
+
+| file | role |
+|---|---|
+| `AGENTS.md` | the memory incident, the leakage trap, results, the three refutations |
+| `warehouse_session.py` | bounded read-only DuckDB session; tier pinning; spill disabled |
+| `fire_risk_index.py` | leakage-free feature plane, stratified index, rank-based AUC |
+
+**Tracks** — four chartered 2026-08-24:
+
+| slug | status | note |
+|---|---|---|
+| `regional_fire_risk_surface_20260824` | chartered | the cross-state prioritisation surface as a day-partitioned lane |
+| `rangeland_carbon_lane_20260824` | chartered | SoilGrids SOC/OCD as a `static_lookup` lane |
+| `fire_feature_plane_validation_20260824` | blocked | needs the historical backfill; that is pivot item B |
+| `rangeland_partnership_outreach_20260824` | chartered | non-software; programme and feedstock-policy lane |
+
+`fire_risk_zone_forecast_20260823` was **updated, not duplicated** — this session is empirical
+evidence for its §2 feature plane, which it asserted was "BUILDABLE NOW" and which is now built
+and scored.
+
+#### 0.41.9 The one blocker, and it is already chartered
+
+**Validation needs a second fire season.** AUC 0.725 was fit and scored on 2026 alone; it is
+in-sample and optimistic. The 23-year `fire-detections` hole is the blocker — and it is **not new
+work**: it is `parquet_duckdb_pivot_20260823` **item B**, the bulk Postgres drain, where
+`fire-detections` is **69 % of the 13,037 lane-days**. Finishing that drain is what converts these
+associations into something a district could fund against.
+
+Deliverable for the owner: <https://claude.ai/code/artifact/853658d5-8424-411a-9e81-1de7cd7758ea>
+---
+
+### 0.42 ORCHESTRATION PACKET — session 10 close (2026-08-25). Three lanes, three monitors, one cutover.
+
+**Reverses §0.21.8's "stop running workflows" for this phase, by owner request 2026-08-25.** That
+directive was written when workflows were producing unverified sprawl; the two tracks now carry
+collision-proofed file partitions, which is the precondition it was missing. Small steps still apply
+*inside* a slice.
+
+#### Goal
+
+Drive the planned work in `conductor/tracks/` to code completeness along three lanes running
+concurrently — **data completeness & ingestion**, **the API layer**, **the UI display surface** — each
+with a monitor agent orchestrating its own lane. Then one adversarial pass, then a hard cutover to
+Parquet-first serving. Done looks like: every layer that can render real data does so at every zoom
+rung, the map reads Parquet, and no layer keeps a Postgres read path it no longer needs.
+
+#### 0.42.1 The lane map — monitors DRIVE existing slices, they do not re-partition
+
+Owner decision: the monitors dispatch the slices the two tracks already prove disjoint, and append new
+slices only for work no track covers. Re-cutting the boundaries would discard a proof that cost real
+analysis. **Every `owns` list is `confidence: planned` and must be re-verified with a grep before
+launch** — HEAD has moved since both were baked.
+
+| lane | monitor owns | existing slices | new slices needed |
+|---|---|---|---|
+| **A · data & ingestion** | lanes produce complete, correct Parquet | shrink `s0` `s1` `s2` `s3` `s4` `s5`; pivot `d0` `d1` | — |
+| **B · API layer** | the four routes serve what the client expects | pivot `d3` | `b1` coverage endpoint reproducing `getSliderCapabilities` |
+| **C · UI display surface** | every layer renders real data at every zoom | pivot `d4` `d5` | `u1` capability rows · `u2` zoom resolution · `u3` per-layer cutover · `u4` the four non-Parquet surfaces |
+
+**§0.41's four chartered tracks are downstream consumers of lane A, not extra lanes.**
+`regional_fire_risk_surface_20260824` and `rangeland_carbon_lane_20260824` each need a lane that
+lane A produces; `fire_feature_plane_validation_20260824` is addressed in §0.42.12;
+`rangeland_partnership_outreach_20260824` is non-software. None of them are dispatched by a monitor
+in this programme — they become runnable once lane A completes.
+
+`s6` (the final shrink) sits **after** the adversarial pass and belongs to no lane — it is the last
+step of the whole programme, not of a lane.
+
+**Cross-lane write collisions to hold:** `pipeline/parquet/lane_registry.py` and `cli.py` are lane A's
+(owner `s2`); `src/lib/server/services/environmental-read-model.ts` (4,432 lines) is lane C's and is
+touched by `d4`, `u1` and `u3` — **serialise those three, never run them concurrently**;
+`alembic/versions/` is `s1`'s and `s5`/`s6` append after it.
+
+#### 0.42.2 Step zero is a contract freeze, and it is what makes concurrency safe
+
+Lanes B and C would otherwise both be guessing. The wire contract already exists in one place —
+`src/lib/server/services/parquet-plane-client.ts` (`WIRE`: `basePath /api/v1/parquet`, routes `day`
+`window` `release` `coverage`, params `layer` `kind` `zoom` `bbox` `day` `first_day` `last_day`
+`as_of`) plus the four envelope states in `parquet-envelope.ts`. Freezing it means: a golden fixture
+per route, asserted by a Python contract test on the serving side and the existing TS test on the
+client side, so lane B builds the routes and lane C builds the readers **against the same artefact**
+without waiting for each other. Until that fixture exists, concurrency is a rework generator.
+
+**Lane B inherits a hard constraint from §0.41.6.** An unbounded local DuckDB query consumed the host
+on 2026-08-24 — a cross-join materialising ~140k-vertex USDM geometries per output row, spilling to
+disk until the machine was unusable. The serving API runs DuckDB on request paths, so every session it
+opens must carry the same bounds `analysis/warehouse_session.py` already proves:
+`memory_limit`, a `threads` cap, `max_temp_directory_size='0GiB'` (spill DISABLED, so an over-budget
+query raises in ~1 s instead of eating the host) and `:memory:` with no database file. **Clip before
+probing** is the companion discipline — `ST_Intersection` against the request envelope cut the largest
+USDM polygon 140,352 → 6,300 vertices with no precision loss inside the probed region, and
+`ST_Simplify` was evaluated and rejected as the primary lever because it can move a boundary and flip
+a cell. A serving route that spills is an outage, not a slow query.
+
+#### 0.42.3 Layer census — what "all 19 render real data" actually costs
+
+Measured against production 2026-08-25 (`geo.features` published rows per layer, plus the planes):
+
+| layer toggle | render | backing | rows | standing |
+|---|---|---|---|---|
+| `fire` | component | fire-detections | 3,039,749 | Parquet + tRPC ready |
+| `water` | component | water-gauges | 1,443,978 | Parquet + tRPC ready |
+| `drought` | component | `geo.drought_areas` (→2026-08-18) | 1,045 | Parquet + tRPC ready |
+| `weather` | component | weather-observations | 35,772 | Parquet + tRPC ready |
+| `vegetation` | component | vegetation | 185,302 | Parquet + tRPC ready |
+| `soil-moisture` / `soil-temperature` / `soil-vpd` | component | signal plane | 46 M | Parquet, needs re-export |
+| `soil-survey` | component | soil-survey | **238,986** | source NOT empty; cap removed in `68da7af`; the lane's 0-written is an export failure, not a data gap |
+| `sensors` | style | sensors | 206,947 | Martin tiles, Postgres |
+| `watersheds` | style | watersheds | 9,396 | Martin tiles, Postgres |
+| `evacuation-zones` | style | evacuation-zones | 679 | Martin tiles, Postgres |
+| `burn-severity` | style | burn-severity | 541 | Martin tiles; walk has not reached 2020-2024 |
+| `fire-perimeters` | style | fire-perimeters | 207 | Martin tiles; 60-day hole 2025-08-02…09-30 |
+| `interventions` | style | 2 features, **0 published** | — | **not a Parquet lane** — community, stays in Postgres (§0.26.1); blocked on a publish step that is never invoked, not on data |
+| `strategy-recommendations` | component | `geo.v_strategy_recommendation_cells` | — | **not a Parquet lane** — needs the ML label plane, which is label-blocked |
+| `soil` | component | — | — | `permanentlyUnavailableReason` set deliberately (raster) |
+| `demand-heatmap` | component | computed | — | derived surface, no warehouse row |
+
+**The honest reading of "all 19 at every zoom":** twelve layers are reachable by code work in these
+lanes. Four are not Parquet lanes at all and cannot be made so by this programme —
+`interventions` (community/Postgres by design), `strategy-recommendations` (ML-label-blocked),
+`soil` (raster, deliberately unavailable), `demand-heatmap` (derived). Lane C's `u4` gives those four
+an honest published state rather than a silent blank; it does not invent producers for them.
+
+#### 0.42.4 The cutover, and the tension the two answers create
+
+Owner chose **all 19 layers** *and* **Parquet-only, hard cutover, no fallback**. Taken literally and
+simultaneously those conflict: a big-bang hard cutover over lanes with known holes (no coarse rung
+anywhere, `fire-perimeters` 60 days, `soil-survey` 0 written) is a visible outage on the day it runs.
+
+**Resolution, and the assumption to challenge first:** the cutover is **per layer, hard, staged**. A
+layer cuts the day its Parquet lane proves complete, and its Postgres read path is deleted in that
+same change. No layer ever carries two read paths — which is what "no fallback" protects — and no
+layer is cut before its data exists, which is what "all 19" needs. The programme's cutover is
+complete when the last eligible layer has cut, not on a single date. To reverse: one dated big-bang
+release, which re-introduces the outage this avoids.
+
+#### 0.42.5 Decisions (2026-08-25, owner, from the gate)
+
+1. **Monitors drive existing slices** (§0.42.1) — chosen over re-partitioning because the two tracks'
+   boundaries are already proven disjoint and re-cutting discards that proof.
+2. **Three lanes run in parallel behind a contract freeze** (§0.42.2) — chosen over sequencing for the
+   ~3× wall-clock, with the freeze as the rework guard.
+3. **Completeness bar is every layer that can render real data, at every zoom** — chosen over the
+   narrower "six Parquet-backed layers"; the four non-lanes get honest state (§0.42.3).
+4. **Cutover is Parquet-only with no fallback path** — staged per layer (§0.42.4).
+5. **Workflows are re-authorised for this phase**, reversing §0.21.8, because the partitions now exist.
+
+#### 0.42.6 Assumptions — highest reversal cost first
+
+- **The cutover is per-layer rather than one release** · default taken: staged, each layer cutting when
+  its lane completes · to reverse: a dated big-bang release and an accepted outage window.
+- **`interventions`, `strategy-recommendations`, `soil`, `demand-heatmap` are out of the Parquet
+  cutover** · default taken: honest published state, no producer invented · to reverse: three new
+  producers and, for strategy, unblocking the ML label plane — a track of its own.
+- **Monitors run as long-lived orchestrators, one per lane, dispatching slices** · default taken: three
+  concurrent monitors · to reverse: collapse to serial dispatch, losing the parallelism but no work.
+- **Lane A's `s1` (alembic baseline) belongs to the data lane** · default taken: lane A owns it, since
+  it gates `s5`/`s6` migrations · to reverse: hand it to whoever runs the shrink; no code changes.
+- **The adversarial pass runs once, after all three lanes report complete, before `s6`** · default
+  taken: one pass at the join · to reverse: per-lane adversarial passes, which costs three reviews
+  instead of one but catches lane-local defects earlier.
+- **Token spend is unbounded across the three monitors** · default taken: no cap set · to reverse: a
+  per-lane budget, which the monitors would need told up front.
+
+#### 0.42.7 Relevant files
+
+- `src/lib/server/services/parquet-plane-client.ts` — the `WIRE` block is the contract to freeze;
+  516 lines, nothing imports it yet but `parquet-envelope.ts` and its own test.
+- `src/lib/server/services/environmental-read-model.ts` — 4,432 lines, the contested file: `d4`, `u1`
+  and `u3` all write it. Serialise. Carries `PUBLISHER_NAMED_DAY_RULE` and the soil/climate field reads.
+- `src/lib/map/layer-registry.ts:177` — `LAYER_REGISTRY`, the census in §0.42.3 in code form;
+  `warehouseLayerName` is what publishes a slider capability row.
+- `services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py` — all twelve
+  adapters, all reading Postgres; lane A's shared registry, owner `s2`.
+- `services/agri-data-service/src/agri_data_service/sql/pipeline/signal_plane_day_export.sql` — the
+  governance contract, release dedup and cell join a direct writer must reproduce verbatim.
+- `services/agri-data-service/src/agri_data_service/foundation/parquet/zoom.py` — `ZOOM_TIERS (0,5,9,13)`
+  and `serving_zoom_tier`; lane C must resolve through this, never re-derive a rung.
+- `conductor/tracks/parquet_duckdb_pivot_20260823/metadata.json` and
+  `conductor/tracks/postgres_shrink_ingest_repoint_20260825/metadata.json` — the two partition sets the
+  monitors dispatch.
+
+#### 0.42.8 Environment
+
+Branch `main`, level with origin at `91a5a1e`. Untracked and deliberately so:
+`services/agri-data-service/continuous-warehouse-loop.sh`, `scripts/warehouse_status.py`.
+**`plantgeo-parquet-drain` and `plantgeo-ingest-cron` are DOWN** (`railway down`, 2026-08-25 02:05 UTC)
+— and they come back on the next push (§0.40.1), so a monitor that pushes restarts them. Prod DSN in
+`services/agri-data-service/.env` (`DATABASE_URL_SYNC`); object store creds under `OBJECT_STORE_*` in
+the same file. DuckDB against this bucket needs `URL_STYLE 'vhost'` and explicit keys, never a glob.
+Never run PlantGeo locally; never restart the warehouse loop.
+
+#### 0.42.9 Continuation plan
+
+1. **Freeze the wire contract** (§0.42.2). Write golden fixtures for the four routes plus the four
+   envelope states, a Python contract test asserting the serving side matches, and extend the existing
+   TS test to read the same fixture. This is the only step that must finish before anything runs in
+   parallel. Files: `services/agri-data-service/tests/contract/`,
+   `src/__tests__/services/parquet-plane-client.test.ts`.
+2. **Re-verify both partition sets against HEAD** — grep every `owns` list; `confidence: planned` is a
+   hypothesis stamped at a commit that has moved. Upgrade to `verified` or fix the boundary.
+3. **Launch the three monitors** (§0.42.1), lane A first by a few minutes so `d1`'s re-export starts
+   early — it is the longest pole (1,560 signal days × ~0.7 s, plus every other lane's coarse rungs).
+4. **Lane A's first slice is `s0`** — restore `cronSchedule`. Time-critical: the `sensors` lane's
+   upstream keeps ~6 days and Postgres is its only archive, so days after **2026-08-31** are
+   unrecoverable.
+5. **Hold the drain down until `s0` is verified.** The cron and the drain collide on the same database
+   (a signal lane-day: ~8 s alone, ~25 min beside a cron tick). One writer at a time.
+6. **Per-layer cutover as each lane completes** (`u3`), deleting that layer's Postgres read path in the
+   same change.
+7. **One adversarial pass at the join** — separate context, prompted to refute rather than confirm,
+   over the whole cutover surface. `/code-review high` on the serving API and the repointed readers.
+   Record the verdict; a lane with no verdict is unreviewed, not done.
+8. **Then `s6`** — the final shrink, justified architecturally (a grep proving no reader, plus a
+   coverage proof), never by an `idx_scan` counter.
+
+#### 0.42.10 Open questions
+
+- **Does `burn-severity`'s MTBS walk need to reach 2020-2024 before that layer may cut over?** Live once
+  lane A reports the coarse rungs done — until then the layer has 541 rows and 8 z13 parts, and it is
+  not clear whether the gap is the walk or the source.
+- **Does `soil-survey`'s export failure survive the cap removal?** Live at lane A's first `soil-survey`
+  run: 238,986 rows exist and `68da7af` deleted `MAX_SOIL_SURVEY_POLYGON_KEYS`, so the 0-written state
+  should now be reproducible-or-fixed rather than blocked.
+
+#### 0.42.11 CORRECTION to §0.41.9 — that blocker cleared the same day it was written
+
+§0.41.9 marks `fire_feature_plane_validation_20260824` **blocked** on the 23-year `fire-detections`
+hole, calling it pivot item B and 69 % of 13,037 lane-days. **That drain finished at 19:42 UTC on
+2026-08-24**, most likely after §0.41 was written: `fire-detections` reports zero missing across 9,425
+expected days (§0.39.2) and the bucket holds **8,357 z13 parts** (§0.40.2), reaching the lane's
+`history_floor` of 2000-11-02.
+
+So the second fire season that validation needs **already exists in Parquet**, and AUC 0.725 can be
+scored out-of-sample now. Re-status that track from `blocked` to runnable. The one caveat: no coarse
+rung exists yet, so a validation run must read z13 explicitly and must not assume a `serving_zoom_tier`
+resolution will find anything above it.
+
+#### 0.42.12 What §0.41 corroborates
+
+§0.41.7's restated owner constraint — *"all new data ingestion targets day-partitioned
+Parquet/GeoParquet, aimed at serverless query on cold compute; the serving pattern is one day per
+layer"* — is the same direction this packet executes, arrived at independently. It also settles a
+question lane A would otherwise raise per lane: a fact that does not vary by day is a `static_lookup`
+keyed to a source watermark and **must not be written 365 times a year**.
+
+#### 0.42.13 Invocations
+
+- `/slice` on lane C's uncovered work (`u1`–`u4`) — **trigger:** four new slices with no proven
+  boundaries yet, and three of them contend for `environmental-read-model.ts`. Plan before launching.
+- `/conductor-okf:implement postgres_shrink_ingest_repoint_20260825` — **trigger:** lane A's slices are
+  already specced with tasks and acceptance criteria; step 4 above is its P0.
+- `/code-review high` on the serving API and the repointed readers — **trigger:** the four routes are
+  the contract the whole map reads through, and `parquet-plane-client.ts` already encodes the named-day
+  trap they must honour.
+- `oh-my-claudecode:critic` for the adversarial pass at step 7 — **trigger:** a hard cutover with no
+  fallback is a one-way door; the pass must be prompted to refute, in a context that did not write it.
+
+---
+
 
 ## 1. Goal
 

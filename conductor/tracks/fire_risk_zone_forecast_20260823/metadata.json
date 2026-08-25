@@ -7,5 +7,10 @@
     "ml_mojo_conversion_20260823"
   ],
   "runbook_section": "0.28",
-  "note": "Feature/label/evaluation planes are NOT blocked and are the long pole. Model training is blocked on the Mojo runtime call. Predicts a per-cell scalar risk score, never a polygon -- contouring is a rendering step (RUNBOOK 0.28.5). Seasonality must influence output; fires are heavily seasonal."
+  "note": "Feature/label/evaluation planes are NOT blocked and are the long pole. Model training is blocked on the Mojo runtime call. Predicts a per-cell scalar risk score, never a polygon -- contouring is a rendering step (RUNBOOK 0.28.5). Seasonality must influence output; fires are heavily seasonal. UPDATE 2026-08-24 (RUNBOOK 0.41): the feature plane this track called BUILDABLE NOW is now BUILT AND SCORED -- leakage-free pre-fire covariates, composite AUC 0.725 in-sample on 2026 (VPD alone 0.697), decile lift 14.9%->67.1%. Code: services/agri-data-service/analysis/. Three constraints inherited: (1) skill is STRATIFIED, decaying to 0.586 in closed forest, so the model must refuse out-of-stratum cells; (2) NO intensity signal exists (corr +0.131 per-detection) -- predict occurrence, not severity; (3) validation is blocked on the 23-year fire-detections hole, tracked as fire_feature_plane_validation_20260824.",
+  "related": [
+    "regional_fire_risk_surface_20260824",
+    "fire_feature_plane_validation_20260824",
+    "rangeland_carbon_lane_20260824"
+  ]
 }

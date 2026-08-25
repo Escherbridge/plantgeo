@@ -1,0 +1,50 @@
+{
+  "slug": "rangeland_carbon_lane_20260824",
+  "title": "Rangeland soil-carbon lane (SoilGrids SOC / OCD)",
+  "status": "chartered",
+  "created_on": "2026-08-24",
+  "depends_on": [
+    "parquet_duckdb_pivot_20260823"
+  ],
+  "runbook_section": "0.41.5",
+  "note": "SOC does not vary by day, so this is a static_lookup lane keyed to a SOURCE WATERMARK per foundation/parquet/lane_contract.py -- writing it 365 times a year is the failure mode to avoid (RUNBOOK 0.41.7). Rasters are already published and catalogued in geo.published_raster; geo.soil_survey carries NO carbon field, SoilGrids is the only carbon source in the estate. Unblocked 2026-08-24 by owner approval of rasterio, pinned in pyproject and installed with `uv pip install`, deliberately NOT `uv sync`. NOTE: RUNBOOK 0.41.4 found NO carbon-targeting signal in the fire index -- this lane must not be justified as fire targeting.",
+  "partitions": {
+    "computed_at": "2026-08-24T00:00:00Z",
+    "computed_at_commit": "91a5a1e",
+    "confidence": "planned",
+    "slices": [
+      {
+        "id": "s1",
+        "task": "Sample SoilGrids COGs at cell centroids and emit a static_lookup lane",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/soil_carbon.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/soil_carbon.py", "status": "future"}
+        ],
+        "model": "sonnet",
+        "depends_on": []
+      },
+      {
+        "id": "s2",
+        "task": "Raster sampling helper -- windowed reads against the COG, never a full-array load",
+        "owns": [
+          {"path": "services/agri-data-service/analysis/raster_sampling.py", "status": "future"}
+        ],
+        "model": "sonnet",
+        "depends_on": []
+      }
+    ],
+    "shared_writes": [
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+        "owner": "s1",
+        "reason": "single module that knows every lane; s1 serialises the registration"
+      }
+    ],
+    "tripwires": [
+      "SOC is static -- a daily_series nature here writes the same values 365x/year and inflates the store for nothing",
+      "published_raster.scale_divisor is 10 for BOTH soc and ocd; raw band values must be divided or every figure is 10x wrong",
+      "COGs must be read windowed; a full-array load of a 16 MB compressed raster is exactly the class of local blow-up RUNBOOK 0.41.6 records"
+    ],
+    "integration_slice": "s1"
+  }
+}
