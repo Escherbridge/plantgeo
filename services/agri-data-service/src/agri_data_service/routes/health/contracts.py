@@ -7,7 +7,13 @@ edit here changes what /ready refuses to serve on. See ``routes/AGENTS.md`` for 
 SQL lives in ``sql/routes/health_*.sql``, and for what revision ``20260808_0019`` removed from
 this file: the whole forecast-role and calling-login privilege matrix, which governed roles that
 had no members and no DSN.
+
+``REQUIRED_EXTENSIONS`` is re-exported, not redefined: the canonical tuple is
+``agri_data_service.db.extensions``, which the greenfield baseline's preflight and
+``db/tools/verify_stamp_target.py`` also read. There were three hand-kept copies before 2026-08-25.
 """
+
+from agri_data_service.db.extensions import REQUIRED_EXTENSIONS
 
 # Bumped past BOTH 20260816_0024 and 20260817_0025 at once: neither revision bumped it, and
 # health_migration.sql demands exact equality, so /ready reported migration=false against a
@@ -20,4 +26,5 @@ had no members and no DSN.
 # so a deploy carrying this build against a database still reading `20260817_0025` reports
 # migration=false and /ready refuses to come up. Stamp first, deploy second.
 EXPECTED_ALEMBIC_REVISION = "20260825_0000"
-REQUIRED_EXTENSIONS = ("postgis", "vector", "pgcrypto")
+
+__all__ = ["EXPECTED_ALEMBIC_REVISION", "REQUIRED_EXTENSIONS"]

@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from agri_data_service.db.extensions import REQUIRED_EXTENSIONS
+from agri_data_service.db.revisions import UnknownAlembicRevisionError, revision_is_at_least
 from agri_data_service.execution.contracts import (
     SHA256_PATTERN,
     canonical_json_bytes,
@@ -32,7 +34,8 @@ if TYPE_CHECKING:
 
 PROMOTION_ARCHIVE_SCHEMA_VERSION: Literal[1] = 1
 PROMOTION_NAMESPACE = uuid.UUID("c61eb4a1-f009-5d72-9e74-6f17a5614d3d")
-REQUIRED_EXTENSION_NAMES = frozenset({"postgis", "vector", "pgcrypto"})
+# Derived, not restated: the fourth hand-kept copy of this list, found during the 2026-08-25 review.
+REQUIRED_EXTENSION_NAMES = frozenset(REQUIRED_EXTENSIONS)
 MAX_INSTALLED_EXTENSION_VERSION_LENGTH = 255
 SHA256_HEX_LENGTH = 64
 ARCHIVE_FILE_NAMES = {
@@ -747,8 +750,16 @@ def validate_target_preflight(archive: PromotionArchive, target: PromotionTarget
     normalized = _normalize_archive(archive)
     if target.postgres_major < normalized.source.postgres_major:
         raise PromotionError("target PostgreSQL major must not be older than the source archive")
-    if target.alembic_revision != normalized.source.alembic_revision:
-        raise PromotionError("target Alembic revision must match the source archive before restore")
+    # A floor, not an equality: the 2026-08-25 greenfield collapse restamps a byte-identical schema
+    # from `20260817_0025` to `20260825_0000`, and an equality here refused every bundle exported
+    # before that stamp. `revision_is_at_least` orders the archived chain and the baseline together
+    # and raises on any id this build has never heard of, so an unknown revision still fails closed.
+    try:
+        target_is_current_enough = revision_is_at_least(target.alembic_revision, normalized.source.alembic_revision)
+    except UnknownAlembicRevisionError as exc:
+        raise PromotionError(f"target Alembic revision cannot be ordered against the source archive: {exc}") from exc
+    if not target_is_current_enough:
+        raise PromotionError("target Alembic revision must be at least the source archive's before restore")
     if set(target.extension_versions) != REQUIRED_EXTENSION_NAMES:
         raise PromotionError("target must expose all required installed extensions")
 

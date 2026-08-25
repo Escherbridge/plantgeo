@@ -22,10 +22,13 @@ What this tree adds:
 
 1. **Legibility & review** — the complete programmable-object surface and all
    69 tables are readable and diffable as real `.sql`, not Python heredocs.
-2. **A parity guarantee** — an automated test proves the tree is exactly what
-   the migrations produce (see *Parity guarantee*).
+2. **A round-trip guarantee** — an automated test proves a fresh build from the
+   migration head re-emits this tree byte for byte. Since the 2026-08-25
+   collapse the head *is* this tree, so that is a round trip and not an
+   independent derivation (see *Parity guarantee*).
 3. **Forward-load** — the mechanism for the *next* change, so files and applied
-   schema can never drift again (see *Forward-load workflow*).
+   schema can never drift again (see *Forward-load workflow*), under the
+   idempotence rule in *Layering a revision on the greenfield baseline*.
 
 ## Layout
 
@@ -90,17 +93,96 @@ reference not-yet-created objects, matching pg_dump.
   `tests/conftest.py`) — `pg_dump`s that database, re-splits it, and asserts
   **byte-identical** to the committed tree.
 
-Proven separately at build time: applying `manifest.sql` to an empty database
-rebuilds an object inventory identical to the migration-built database; the
-parity test derives the current per-object counts instead of pinning a stale
-inventory in this guide.
+### What parity proves since 2026-08-25, and what it no longer proves
 
-> Note: rebuilding from the tree and re-dumping shows cosmetic differences in a
-> few `CHECK` expressions (`= ANY((ARRAY[...])::text[])` vs
-> `= ANY(ARRAY[(...)::text])`). PostgreSQL re-normalises casted-`ANY`-array
-> expressions on reparse; the schemas are semantically identical. The tree is
-> generated from the migration output, so the parity test (which compares
-> against the migration dump, not a rebuild) is exact.
+**It is a round trip, not a second derivation.** The migration head is the
+greenfield baseline `20260825_0000`, and that revision builds the schema by
+executing `manifest.sql` — this very tree. So the assertion is
+`dump(replay(T)) == T`, which holds for *any* round-trippable `T`. Demonstrated
+during review: delete a `CHECK` from a tree file, re-run `regenerate.py`, and
+parity is green. **A corrupted tree now passes.** Before the collapse the head
+was 26 hand-written revisions, so the same comparison really did check the tree
+against an independent source; that property is gone and no amount of
+re-running the test brings it back.
+
+**What it still catches**, and these are worth the run:
+
+- DDL the server does not re-emit verbatim after a parse — exactly how the
+  `= ANY ((ARRAY[...])::text[])` → `= ANY (ARRAY[(...)::text])` renormalisation
+  was found. The tree is a **fixed point**: applying it and re-dumping must
+  reproduce it byte for byte, so a diff on an unchanged tree is the fixed point
+  breaking, not noise.
+- A hand-edit to a tree file that is never regenerated, a manifest that
+  references a missing or duplicated object, and any drift between the committed
+  tree and what a fresh build actually produces.
+- Cross-major dump-dialect drift, via `test_cross_major_tree_matches_migrations`.
+
+**What it no longer catches**: the tree having drifted from the *intent* of the
+26 archived revisions, because they are no longer on the migration path and
+nothing on that path re-derives the schema from them.
+
+**The replacement for the lost leg** is `tests/test_alembic_archive_replay_parity.py`
+— marked `agri_db_migration_rehearsal`, opt-in via
+`AGRI_ARCHIVE_REPLAY_ADMIN_DSN`, needs a server that can install `timescaledb`
+(`20260719_0001`'s preflight demands it). It replays `alembic/archive/` into one
+disposable database, builds another from the baseline, and compares them.
+Catalogue inventories — relations, columns, routine bodies by `md5(prosrc)`,
+index definitions, triggers, FKs, PK/UNIQUE — must match **exactly**. `CHECK`
+definitions are scored by the reviewed reparse rule (identical string literals
+in the same order, same *set* of identifiers), which is deliberately weaker than
+byte equality and says so in its own docstring. Run it after any change that
+claims the tree still means what the chain meant.
+
+`tests/test_alembic_baseline_parity.py` covers the two things a text dump cannot
+see at all: whether every object the manifest declares was **built**, and the
+**privilege layer** `--no-privileges` discards.
+
+## Layering a revision on the greenfield baseline
+
+**Read this before writing the next migration.** It is the one rule the collapse
+imposes, and getting it wrong breaks the disposable-database recipe below rather
+than the migration that introduces it.
+
+The baseline executes the **current** `db/agri/**` tree. `regenerate.py` rebuilds
+that tree by running `alembic upgrade head`. Play those two facts forward:
+
+1. `20260826_0027` does `op.create_table("foo")`. `alembic upgrade head` works —
+   the tree has no `foo` yet.
+2. You regenerate. The tree now contains `agri/tables/foo.sql`.
+3. The **next** build from empty runs the baseline (which creates `foo` from the
+   tree) and then `0027` (which creates `foo` again) → `ERROR: relation "foo"
+   already exists`.
+
+So: **every revision layered on the baseline must be idempotent against a tree
+that already contains its own changes.**
+
+| change | the shape that survives regeneration |
+|---|---|
+| new table | `CREATE TABLE IF NOT EXISTS` (or `op.create_table(..., if_not_exists=True)` where the Alembic version supports it) |
+| new column | `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` |
+| new index | `CREATE INDEX IF NOT EXISTS` (`CONCURRENTLY` still allowed) |
+| new constraint | a `NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = ...)` probe — PostgreSQL has **no** `ADD CONSTRAINT IF NOT EXISTS` |
+| function / procedure / view | `load_object_sql(..., or_replace=True)`, or `DROP ... IF EXISTS` then `load_object_sql(...)` |
+| new sequence / schema | `CREATE ... IF NOT EXISTS` |
+| a drop | already idempotent with `IF EXISTS`; keep naming the object explicitly, never `CASCADE` |
+
+Programmable objects were never at risk — drop-then-create and `or_replace` are
+idempotent by construction. What breaks is new **tables, columns, indexes and
+constraints**.
+
+Two gates enforce it, and they are deliberately different in strength
+(`tests/test_alembic_baseline_forward_rehearsal.py`):
+
+- `test_no_revision_layered_on_the_baseline_uses_non_idempotent_ddl` — no
+  database, always runs, a lint over the shapes that are certainly not
+  re-appliable. It cannot prove idempotence, only catch the obvious loss of it.
+- The rehearsal — builds a database from empty with `AGRI_MIGRATION_REHEARSAL_ADMIN_DSN`
+  and is authoritative. It carries its own negative control: one case injects a
+  revision that re-applies a tree file the baseline already loaded and asserts
+  the build **fails**, another injects the guarded form and asserts it succeeds.
+
+**Order of operations stays the same**: write the revision against `db/agri/**`,
+apply it, regenerate, commit both. Only the *shape* of the DDL changes.
 
 ## Provisioning the disposable database
 
@@ -131,9 +213,14 @@ rather than a throwaway.
 
 Why each step, and what its absence looks like:
 
-- **The extension gate is manual on purpose.** `20260716_0001` raises `55000`
-  listing the missing extensions and states *"this migration never creates
-  extensions"*. `infra/local-warehouse/enable-extensions.sql` is that operator
+- **The extension gate is manual on purpose.** The greenfield baseline
+  `20260825_0000` raises `55000` listing the missing extensions and states
+  *"this migration never creates extensions"* — the same fail-closed shape the
+  archived `20260719_0001` had, minus `timescaledb`. (This guide previously cited
+  `20260716_0001`, an id that never existed in either directory.) The required
+  list has exactly one definition, `agri_data_service.db.extensions.REQUIRED_EXTENSIONS`,
+  which the preflight, `/ready` and `db/tools/verify_stamp_target.py` all read.
+  `infra/local-warehouse/enable-extensions.sql` is that operator
   step, and the image's Dockerfile deliberately deletes the upstream
   `docker-entrypoint-initdb.d` scripts that would otherwise install TimescaleDB
   behind your back. Run it against **each** database; extensions are per-database.
@@ -240,7 +327,8 @@ version banner.
 
 ## Governance: checksums are records, not enforcement
 
-Head revision is `20260803_0018`. It retires the database-level enforcement
+The head is `20260825_0000`; the revision this section is *about* is
+`20260803_0018`, now in `alembic/archive/`. It retires the database-level enforcement
 layer built on top of the checksums — 48 triggers, 34 routines, 10
 status-to-checksum evidence CHECKs and 3 owner roles — plus the whole hindcast
 plane (`forecast_hindcast_run`, `forecast_hindcast_value`,
@@ -442,8 +530,12 @@ def upgrade() -> None:
 
 Then run `regenerate.py` so the rest of the tree (and any dependent object
 pg_dump reorders) reflects the new head, and the parity test stays green. For
-new tables/constraints, author the migration normally, then regenerate — the
-tree follows the migration, never the reverse.
+new tables, columns, indexes and constraints, author the migration **in the
+idempotent shape** required by *Layering a revision on the greenfield baseline*
+above, then regenerate — the tree follows the migration, never the reverse.
+"Author it normally, then regenerate" was this guide's wording until 2026-08-25
+and it is the exact instruction that produces a build which double-applies its
+own DDL.
 
 ## `forecast_signal_lineage_audit.ancestor_count` counts paths, not ancestors
 

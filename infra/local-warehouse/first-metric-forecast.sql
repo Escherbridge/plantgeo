@@ -1,3 +1,14 @@
+-- HISTORICAL RECORD, NOT A RUNNABLE SCRIPT. It drives the hindcast plane
+-- (agri.forecast_hindcast_run / _value, agri.finalize_forecast_hindcast_run,
+-- agri.forecast_hindcast_receipt_checksum) and agri.finalize_forecast_receipt, all of which
+-- 20260803_0018 dropped. It is kept because it is the only end-to-end statement of how the first
+-- metric forecast was produced.
+--
+-- It used to gate itself on `alembic_version IN ('20260722_0008','20260723_0009','20260723_0010')`,
+-- which went stale the moment 20260725_0011 landed and became permanently unsatisfiable after the
+-- 2026-08-25 greenfield collapse restamped the schema to 20260825_0000. A revision string was
+-- never the right question anyway: what the script needs is a set of OBJECTS. The preflight below
+-- asks for those instead, so it fails with an accurate reason rather than a stale pin.
 \set ON_ERROR_STOP on
 
 BEGIN;
@@ -14,6 +25,7 @@ DECLARE
     target_cell_id constant uuid := '1d5f67c7-9c4f-4755-bc68-3895b0d55ce9';
     issue_time timestamptz;
     run_stamp text;
+    missing_objects text;
     holdout_cutoff constant timestamptz := '2026-04-23 00:00:00+00';
     horizon_steps constant integer := 7;
     min_training_points constant integer := 1095;
@@ -75,10 +87,30 @@ DECLARE
 BEGIN
     issue_time := statement_timestamp();
     run_stamp := to_char(issue_time AT TIME ZONE 'UTC', 'YYYYMMDD"T"HH24MISS"Z"');
-    IF (SELECT version_num FROM alembic_version)
-       NOT IN ('20260722_0008', '20260723_0009', '20260723_0010') THEN
-        RAISE EXCEPTION
-            'first metric forecast requires Alembic 20260722_0008, 20260723_0009, or 20260723_0010';
+    SELECT string_agg(required.object_name, ', ' ORDER BY required.object_name)
+    INTO missing_objects
+    FROM (
+        VALUES
+            ('agri.forecast_hindcast_run'::text, 'relation'::text),
+            ('agri.forecast_hindcast_value', 'relation'),
+            ('agri.finalize_forecast_hindcast_run(uuid, character varying)', 'routine'),
+            ('agri.finalize_forecast_receipt(uuid, character varying)', 'routine')
+    ) AS required(object_name, object_kind)
+    WHERE CASE required.object_kind
+              WHEN 'relation' THEN to_regclass(required.object_name) IS NULL
+              ELSE to_regprocedure(required.object_name) IS NULL
+          END;
+
+    IF missing_objects IS NOT NULL THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = format(
+                'first metric forecast cannot run: this database has no %s.',
+                missing_objects
+            ),
+            HINT = 'The hindcast plane was retired by 20260803_0018 (now alembic/archive/). This '
+                'script is kept as the record of how the first metric forecast was produced; it '
+                'runs only against a database restored to the pre-0018 schema.';
     END IF;
 
     SELECT * INTO STRICT target_release_set

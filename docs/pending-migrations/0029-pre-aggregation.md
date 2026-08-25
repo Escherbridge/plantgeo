@@ -30,7 +30,7 @@ fails the Railway healthcheck for `plantgeo-main` and takes down all 24 surfaces
 | `drizzle/0029_pre_aggregation_layer.sql` | nine matviews `WITH NO DATA`, their unique + secondary indexes, `geo.v_observation_day_census`, `geo.refresh_preaggregate(text)`, and two precondition assertions | `psql -f`, out of band |
 | `scripts/apply-pre-aggregation.mjs --phase=a` | the two `CREATE INDEX CONCURRENTLY` builds + `ANALYZE geo.features` | by hand, **before** 0029 |
 | `scripts/apply-pre-aggregation.mjs --phase=b` | the first populate of all nine, cheapest first | by hand, **after** 0029 |
-| `alembic/versions/20260816_0024_matview_refresh_state.py` | `agri.matview_refresh_state`, three job-plane indexes, concurrent forecast refresh | `alembic upgrade head` |
+| `alembic/archive/20260816_0024_matview_refresh_state.py` (applied; moved out of `versions/` by the 2026-08-25 greenfield collapse, and included in what `20260825_0000` builds) | `agri.matview_refresh_state`, three job-plane indexes, concurrent forecast refresh | `alembic upgrade head` |
 | `docs/pending-migrations/0030-drop-unused-indexes.sql` | ~5.4 GB of never-read index | **owner only**, never automatically |
 
 ## Ordered apply sequence

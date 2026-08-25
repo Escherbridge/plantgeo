@@ -20,12 +20,13 @@ collapse exists to stop a fresh build from reaching.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import psycopg2.errors
+import psycopg2.extensions
+import pytest
 
 from agri_data_service.routes.health.contracts import EXPECTED_ALEMBIC_REVISION, REQUIRED_EXTENSIONS
-
-if TYPE_CHECKING:
-    import psycopg2.extensions
+from tests.test_alembic_baseline_contract import baseline_module
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[1]
 _DB_ROOT = _SERVICE_ROOT / "db"
@@ -167,6 +168,100 @@ def test_timescaledb_is_absent_and_the_required_extensions_are_present(
         )
     }
     assert not leftover_schemas, f"TimescaleDB catalogue schemas present: {sorted(leftover_schemas)}"
+
+
+def _check_invoked_agri_routines(connection: psycopg2.extensions.connection) -> list[str]:
+    """Every `agri` routine some `agri` CHECK constraint calls, as a GRANT-ready identity signature."""
+    return [
+        signature
+        for (signature,) in _fetch(
+            connection,
+            "SELECT DISTINCT format('%I.%I(%s)', 'agri', routine.proname, "
+            "pg_get_function_identity_arguments(routine.oid)) "
+            "FROM pg_constraint constraint_row "
+            "JOIN pg_depend dependency ON dependency.objid = constraint_row.oid "
+            "AND dependency.classid = 'pg_constraint'::regclass "
+            "JOIN pg_proc routine ON routine.oid = dependency.refobjid "
+            "AND dependency.refclassid = 'pg_proc'::regclass "
+            "WHERE constraint_row.contype = 'c' AND constraint_row.connamespace = 'agri'::regnamespace "
+            "AND routine.pronamespace = 'agri'::regnamespace ORDER BY 1",
+        )
+    ]
+
+
+def _insert_one_candidate_evaluation(connection: psycopg2.extensions.connection, evaluation_key: str) -> None:
+    """One valid row whose `receipt_checksum` CHECK re-derives the digest by calling an `agri` function."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT agri.forecast_candidate_evaluation_receipt_checksum("
+            "%s, 'series', 'family', 'v1', '{}'::jsonb, 1::bigint, repeat('a', 64), 1, 0, 0, 'baseline')",
+            (evaluation_key,),
+        )
+        ((receipt_checksum,),) = cursor.fetchall()
+        cursor.execute("SET LOCAL ROLE agri_check_constraint_probe")
+        cursor.execute(
+            "INSERT INTO agri.forecast_candidate_evaluation ("
+            "evaluation_key, series_key, candidate_family, candidate_version, hyperparameters, "
+            "simulation_seed, export_manifest_checksum, horizon_steps, development_origin_count, "
+            "final_holdout_origin_count, metrics, decision, decision_reason, receipt_checksum) "
+            "VALUES (%s, 'series', 'family', 'v1', '{}'::jsonb, 1, repeat('a', 64), 1, 0, 0, "
+            "'{}'::jsonb, 'baseline', 'probe', %s)",
+            (evaluation_key, receipt_checksum),
+        )
+        cursor.execute("RESET ROLE")
+
+
+def test_a_non_owner_writer_can_satisfy_every_check_constraint_that_calls_a_function(
+    agri_db_connection: psycopg2.extensions.connection,
+) -> None:
+    """A CHECK is evaluated with the WRITER's privileges, so the blanket REVOKE locks writers out.
+
+    Rolled back, so the probe role and the row never outlive the test. The role is created here
+    rather than assumed because the five operator roles are provisioned outside Alembic and a
+    disposable test database has none of them -- what is under test is the baseline's grant BLOCK,
+    replayed verbatim, not whether this particular database happened to have a role at apply time.
+    """
+    baseline = baseline_module()
+
+    with agri_db_connection.cursor() as cursor:
+        cursor.execute("CREATE ROLE agri_check_constraint_probe NOLOGIN")
+        cursor.execute("GRANT USAGE ON SCHEMA agri TO agri_check_constraint_probe")
+        cursor.execute("GRANT INSERT ON agri.forecast_candidate_evaluation TO agri_check_constraint_probe")
+
+    # Without the grant block the same INSERT is refused -- this is the regression, not a hypothetical.
+    with pytest.raises(psycopg2.errors.InsufficientPrivilege) as refusal:
+        _insert_one_candidate_evaluation(agri_db_connection, "check-probe-before-grant")
+    assert "permission denied for function" in str(refusal.value)
+    agri_db_connection.rollback()
+
+    with agri_db_connection.cursor() as cursor:
+        cursor.execute("CREATE ROLE agri_check_constraint_probe NOLOGIN")
+        cursor.execute("GRANT USAGE ON SCHEMA agri TO agri_check_constraint_probe")
+        cursor.execute("GRANT INSERT ON agri.forecast_candidate_evaluation TO agri_check_constraint_probe")
+        # The baseline grants to operator-provisioned roles only if they exist; alias the probe in.
+        cursor.execute(
+            baseline._CHECK_CONSTRAINT_EXECUTE_GRANTS_SQL.replace(
+                "'plantgeo_local_developer'", "'agri_check_constraint_probe'"
+            )
+        )
+
+    _insert_one_candidate_evaluation(agri_db_connection, "check-probe-after-grant")
+
+    granted = {
+        signature
+        for (signature,) in _fetch(
+            agri_db_connection,
+            "SELECT format('%I.%I(%s)', 'agri', proname, pg_get_function_identity_arguments(oid)) "
+            "FROM pg_proc WHERE pronamespace = 'agri'::regnamespace "
+            "AND has_function_privilege('agri_check_constraint_probe', oid, 'EXECUTE')",
+        )
+    }
+    check_invoked = _check_invoked_agri_routines(agri_db_connection)
+    assert check_invoked, "no agri CHECK constraint calls an agri function; this test has lost its subject"
+    assert not set(check_invoked) - granted, (
+        f"CHECK-invoked routine(s) a non-owner writer still cannot execute: {sorted(set(check_invoked) - granted)}"
+    )
+    agri_db_connection.rollback()
 
 
 def test_public_holds_no_privilege_anywhere_in_the_agri_schema(

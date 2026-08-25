@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import receiver_writer_session
+from agri_data_service.db.revisions import UnknownAlembicRevisionError, revision_is_at_least
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.execution.historical_promotion import (
     ERA5_LAND_SOURCE_KEY,
@@ -376,9 +377,20 @@ def _manifest(bundle: HistoricalPromotionBundle) -> HistoricalPromotionManifest:
         _abort("stored_historical_manifest_invalid", 409)
 
 
-async def _require_target_revision(session: AsyncSession, expected: str) -> None:
+async def _require_target_revision(session: AsyncSession, minimum: str) -> None:
+    """Refuse a target the bundle's schema floor is not met by; the field is a floor, not an equality.
+
+    It was compared for equality until 2026-08-25, which the greenfield collapse turned into an
+    outage: the stamp moves a byte-identical schema from `20260817_0025` to `20260825_0000`, so
+    every bundle exported before it would 409 forever. Ordering lives in `db/revisions.py`; a
+    revision id this build cannot place is refused, never waved through.
+    """
     observed = await session.scalar(text("SELECT version_num FROM public.alembic_version"))
-    if observed != expected:
+    try:
+        satisfied = observed is not None and revision_is_at_least(str(observed), minimum)
+    except UnknownAlembicRevisionError:
+        satisfied = False
+    if not satisfied:
         _abort("target_revision_mismatch", 409)
 
 

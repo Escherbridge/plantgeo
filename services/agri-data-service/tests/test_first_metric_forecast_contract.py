@@ -12,8 +12,20 @@ def _fixture() -> str:
 def test_corrected_fixture_requires_current_schema_and_new_governed_identities() -> None:
     fixture = _fixture()
 
-    assert ("first metric forecast requires Alembic 20260722_0008, 20260723_0009, or 20260723_0010") in fixture
-    assert "'20260722_0008', '20260723_0009', '20260723_0010'" in fixture
+    # The fixture used to gate itself on `alembic_version IN (...three ids...)`. That pin went stale
+    # the moment 20260725_0011 landed and became permanently unsatisfiable when the 2026-08-25
+    # greenfield collapse restamped the schema to 20260825_0000. It now preflights the OBJECTS it
+    # calls -- the hindcast plane 20260803_0018 retired -- so it fails with an accurate reason on any
+    # database instead of a wrong one on every database.
+    # Narrow on purpose: the header comment above the fixture explains the retired pin and therefore
+    # says the word. What must be gone is the READ, not the word.
+    assert "FROM alembic_version" not in fixture, "a hard-coded revision pin is back in the fixture"
+    assert "version_num" not in fixture
+    assert "first metric forecast cannot run: this database has no %s." in fixture
+    assert "to_regclass(required.object_name) IS NULL" in fixture
+    assert "to_regprocedure(required.object_name) IS NULL" in fixture
+    assert "('agri.forecast_hindcast_run'::text, 'relation'::text)" in fixture
+    assert "The hindcast plane was retired by 20260803_0018" in fixture
     assert "issue_time := statement_timestamp()" in fixture
     assert "nasa-power-ws2m-denver-point-v2" in fixture
     assert "nasa-power-ws2m-denver-7d-baseline-v2" in fixture

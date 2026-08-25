@@ -25,9 +25,15 @@ build from revision zero required an operator to install `timescaledb` purely so
 drop it again, and `tests/test_migration_runtime_contract.py` simultaneously asserted the gate no
 longer creates it. A fresh build could not be produced from the tree as it stood.
 
-The baseline resolves that by never asking for `timescaledb` at all. A greenfield build now
-converges on production's extension set (`btree_gist`, `hypopg`, `pg_buffercache`, `pgcrypto`,
-`plpgsql`, `postgis`, `vector`) without the extension ever being installed. `tracking.positions`
+The baseline resolves that by never asking for `timescaledb` at all. A greenfield build converges
+on **four** extensions — `pgcrypto`, `plpgsql`, `postgis`, `vector` — because the preflight
+*requires* three (`agri_data_service.db.extensions.REQUIRED_EXTENSIONS`) and *creates* none, and
+`plpgsql` is there by default. That is the measured extension set of both the baseline-built and
+the archive-replayed database (`tests/test_alembic_archive_replay_parity.py` asserts they are
+equal). It is **not** production's set: production additionally carries `btree_gist`, `hypopg` and
+`pg_buffercache`, installed by an operator and by nothing in this directory — an earlier draft of
+this file listed those seven as what a greenfield build converges on, which was wrong.
+`tracking.positions`
 — the only hypertable the cluster ever had, Drizzle-owned and always empty — is unaffected;
 nothing in the `agri` schema was ever a hypertable.
 
@@ -44,10 +50,14 @@ Three reasons, in order of how often they bite:
    `tests/test_gate_hardening_migration_contract.py`,
    `tests/test_geospatial_evidence_migration_contract.py`,
    `tests/test_signal_evaluation_migration_contract.py`,
-   `tests/test_security_definer_lockdown_migration_contract.py` and
-   `tests/test_migration_runtime_contract.py` read files here and assert on their contents. Those
-   are contracts on *history* — they check that a revision that has been applied everywhere said
-   what it was reviewed as saying — so they keep working unchanged against the archive.
+   `tests/test_security_definer_lockdown_migration_contract.py`,
+   `tests/test_migration_runtime_contract.py` and `tests/test_local_publication_contract.py` read
+   files here and assert on their contents. (The list said "nine" and named eight until 2026-08-25;
+   the missing one was `test_local_publication_contract.py`, which is a contract on history in the
+   strongest sense — `release_set_identity_freeze` and `release_set_membership_draft_only` were
+   dropped by `20260803_0018` and do not exist at head, so it *cannot* be re-pointed at the live
+   schema.) These check that a revision applied everywhere said what it was reviewed as saying, so
+   they keep working unchanged against the archive.
 3. **A database somewhere may still be mid-chain.** Stamping is the operator's tool for a database
    already at `20260817_0025` or `20260825_0026`; a database at an *earlier* revision has to be
    walked forward, and walking it forward needs these files back on a version path.
@@ -56,9 +66,14 @@ Three reasons, in order of how often they bite:
 
 - **Never edit a file in this directory.** They are checksummed applied history. A behaviour change
   goes in a new revision under `alembic/versions/`, authored against `db/agri/**`.
-- **Never move a file back into `alembic/versions/` casually.** Doing so re-introduces a second
-  Alembic head and `alembic upgrade head` stops being well-defined;
-  `tests/test_alembic_baseline_contract.py` fails loudly if it happens.
+- **Never move a file back into `alembic/versions/`.** Doing so puts an archived id back on the
+  migration path — `20260719_0001` re-introduces the `timescaledb` deadlock, anything else re-runs
+  DDL a baseline-built database already has, and a second root makes `alembic upgrade head`
+  undefined. `tests/test_alembic_baseline_contract.py::test_no_archived_revision_id_or_file_reappears_on_the_migration_path`
+  fails loudly if it happens. Note what is *not* forbidden: adding a **new** revision under
+  `alembic/versions/` is the normal way forward and nothing here objects to it — see
+  `../../db/AGENTS.md` § *Layering a revision on the greenfield baseline* for the one rule it must
+  obey.
 - **To replay the chain on a disposable database** (the only supported reason to point Alembic at
   this directory), write a throwaway `alembic.ini` with
   `version_locations = <service root>/alembic/archive` and `version_path_separator = space`, and

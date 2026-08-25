@@ -69,8 +69,37 @@ No roles are created. Every role Alembic ever created -- ``plantgeo_intervention
 ``agri`` object is owned by whoever applies the migration, which is exactly what replaying the
 tree produces. This matches the 2026-08-03 owner ruling (*no custom DB roles*).
 
+WHAT A CHECK CONSTRAINT COSTS A NON-OWNER WRITER, AND WHY THE GRANT BLOCK IS NOT OPTIONAL. Four
+``agri`` routines are invoked from ``CHECK`` constraints: ``forecast_quantiles_valid``
+(``forecast_receipt``, ``forecast_quality_policy``), ``expert_label_envelope_valid``,
+``forecast_derived_signal_value_checksum`` and
+``forecast_candidate_evaluation_receipt_checksum``. A CHECK is evaluated with the **writer's**
+privileges, not the table owner's, so after the schema-wide ``REVOKE EXECUTE ON ALL ROUTINES`` a
+non-owner role holding ``USAGE`` + ``INSERT`` gets ``ERROR: permission denied for function ...`` on
+a perfectly valid row. Measured on a baseline-built database 2026-08-25. The archived chain has the
+same hole for two of the four (``20260722_0008``'s ``ALL FUNCTIONS`` revoke caught
+``forecast_quantiles_valid``; ``20260814_0022:394`` hand-revoked
+``expert_label_envelope_valid`` in the revision that added it); the other two survived only
+because no revision ever revoked them.
+``_CHECK_CONSTRAINT_EXECUTE_GRANTS_SQL`` below closes it for all of them by reading
+``pg_constraint``/``pg_depend`` rather than a hand-list, so a CHECK added by a future revision is
+covered on the next fresh build without anyone remembering this paragraph.
+
 FORWARD-ONLY. There is no ``downgrade()``. Rolling back a baseline means dropping the schema,
 which is a restore-from-backup decision, not a migration.
+
+THE RULE EVERY REVISION LAYERED ON THIS ONE MUST OBEY. This revision executes the CURRENT
+``db/agri/**`` tree, and ``db/tools/regenerate.py`` rebuilds that tree *from the migration head*.
+So the moment a follow-on revision creates an object and the tree is regenerated, the tree contains
+that object too -- and the NEXT build from empty runs this baseline (which creates it from the
+tree) and then the follow-on revision (which creates it again). Every revision that comes after
+this one must therefore be **idempotent against a tree that already contains its own changes**:
+``CREATE TABLE IF NOT EXISTS``, ``ADD COLUMN IF NOT EXISTS``, ``CREATE INDEX IF NOT EXISTS``, a
+``NOT EXISTS`` probe around ``ADD CONSTRAINT``, and ``load_object_sql(..., or_replace=True)`` or
+drop-then-create for programmable objects. ``db/AGENTS.md`` (*Layering a revision on the greenfield
+baseline*) is the full statement of the rule;
+``tests/test_alembic_baseline_forward_rehearsal.py`` lints it without a database and proves it on
+one.
 """
 
 import re
@@ -78,6 +107,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 
+from agri_data_service.db.extensions import REQUIRED_EXTENSIONS
 from agri_data_service.db.sql_objects import SCHEMA_ROOT, load_object_sql
 from alembic import op
 
@@ -92,14 +122,12 @@ MANIFEST_PATH = SCHEMA_ROOT.parent / "manifest.sql"
 # Matches a psql `\i agri/<kind>/<name>.sql` include line in db/manifest.sql.
 _MANIFEST_INCLUDE = re.compile(r"^\\i\s+(agri/\S+\.sql)\s*$", re.MULTILINE)
 
-# The extensions this schema actually depends on: PostGIS for every `public.geometry` column and
-# its default gist opclass, pgvector for `agri.knowledge_chunks.embedding`, pgcrypto for the
-# `public.digest()` checksum CHECKs. Deliberately NOT timescaledb -- see the module docstring --
-# and deliberately not btree_gist, which nothing in the tree uses (every gist index is on a
-# geometry column). Mirrors routes/health/contracts.py REQUIRED_EXTENSIONS.
-REQUIRED_EXTENSIONS: tuple[str, ...] = ("postgis", "vector", "pgcrypto")
+# Rendered from agri_data_service.db.extensions.REQUIRED_EXTENSIONS -- the one definition /ready,
+# this preflight and db/tools/verify_stamp_target.py all read. Order is the tuple's, and the query
+# sorts the missing names anyway, so the rendered SQL is deterministic.
+_REQUIRED_EXTENSION_VALUES_SQL = ",\n".join(f"            ('{name}'::text)" for name in REQUIRED_EXTENSIONS)
 
-_REQUIRED_EXTENSION_PREFLIGHT_SQL = """
+_REQUIRED_EXTENSION_PREFLIGHT_SQL = f"""
 DO $baseline_extension_preflight$
 DECLARE
     missing_extensions text;
@@ -108,9 +136,7 @@ BEGIN
     INTO missing_extensions
     FROM (
         VALUES
-            ('postgis'::text),
-            ('vector'::text),
-            ('pgcrypto'::text)
+{_REQUIRED_EXTENSION_VALUES_SQL}
     ) AS required(extname)
     LEFT JOIN pg_extension installed ON installed.extname = required.extname
     WHERE installed.extname IS NULL;
@@ -131,7 +157,10 @@ $baseline_extension_preflight$;
 
 # pg_dump's own preamble, replicated so the tree loads under the settings it was captured with.
 # check_function_bodies is the load-bearing one: manifest order creates some routines before the
-# relations their bodies read, exactly as a pg_restore would.
+# relations their bodies read, exactly as a pg_restore would. These four are the same four
+# db/tools/split_schema.py writes into db/manifest.sql's preamble, and
+# test_alembic_baseline_contract.py::test_the_capture_settings_are_the_manifests_own_preamble
+# parses that generated file and compares -- so the two copies cannot drift silently.
 _CAPTURE_SETTINGS_SQL = (
     "SET check_function_bodies = false",
     "SET default_tablespace = ''",
@@ -180,6 +209,49 @@ END
 $baseline_operator_role_grants$;
 """
 
+# A CHECK constraint is evaluated with the WRITER's privileges, so the schema-wide
+# REVOKE EXECUTE above locks a non-owner writer out of any table whose CHECK calls an agri routine.
+# Discovered from pg_constraint/pg_depend rather than hand-listed: a CHECK added by a later
+# revision is covered the next time this runs, and a routine that stops being CHECK-invoked stops
+# being granted. Same conditional operator-role list, same reason the IF EXISTS is load-bearing.
+_CHECK_CONSTRAINT_EXECUTE_GRANTS_SQL = """
+DO $baseline_check_constraint_execute_grants$
+DECLARE
+    role_name text;
+    routine_signature text;
+BEGIN
+    FOREACH role_name IN ARRAY ARRAY[
+        'plantgeo_local_developer',
+        'plantgeo_loader',
+        'plantgeo_forecast_mv_refresher',
+        'plantgeo_forecast_refresh_operator',
+        'plantgeo_local_viewer'
+    ]
+    LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
+            FOR routine_signature IN
+                SELECT DISTINCT
+                    format('%I.%I(%s)', 'agri', routine.proname, pg_get_function_identity_arguments(routine.oid))
+                FROM pg_constraint constraint_row
+                JOIN pg_depend dependency
+                    ON dependency.objid = constraint_row.oid
+                    AND dependency.classid = 'pg_constraint'::regclass
+                JOIN pg_proc routine
+                    ON routine.oid = dependency.refobjid
+                    AND dependency.refclassid = 'pg_proc'::regclass
+                WHERE constraint_row.contype = 'c'
+                  AND constraint_row.connamespace = 'agri'::regnamespace
+                  AND routine.pronamespace = 'agri'::regnamespace
+                ORDER BY 1
+            LOOP
+                EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', routine_signature, role_name);
+            END LOOP;
+        END IF;
+    END LOOP;
+END
+$baseline_check_constraint_execute_grants$;
+"""
+
 
 def manifest_object_paths() -> list[str]:
     """Every declarative object file the manifest includes, in manifest (dependency) order."""
@@ -218,6 +290,9 @@ def upgrade() -> None:
     for statement in _REVOKE_FROM_PUBLIC_SQL:
         op.execute(statement)
     op.execute(_OPERATOR_ROLE_GRANTS_SQL)
+    # After the blanket revoke, never before it: this hands back exactly the EXECUTE a writer needs
+    # to satisfy a CHECK constraint, and nothing else.
+    op.execute(_CHECK_CONSTRAINT_EXECUTE_GRANTS_SQL)
 
 
 def downgrade() -> None:

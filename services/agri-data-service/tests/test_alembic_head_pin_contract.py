@@ -40,19 +40,37 @@ _REVISION = re.compile(r'^revision(?:\s*:[^=]+)?\s*=\s*["\']([^"\']+)["\']', re.
 _DOWN_REVISION = re.compile(r'^down_revision(?:\s*:[^=]+)?\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
 
 
-def revision_graph(directory: Path = _VERSIONS) -> tuple[set[str], set[str]]:
-    """Every declared revision id in ``directory``, and every id named as some revision's parent."""
-    revisions: set[str] = set()
-    parents: set[str] = set()
+def revision_parents(directory: Path = _VERSIONS) -> dict[str, str | None]:
+    """Every declared revision id in ``directory`` mapped to its ``down_revision`` (``None`` = a root)."""
+    parents: dict[str, str | None] = {}
     for path in sorted(directory.glob("*.py")):
         source = path.read_text(encoding="utf-8")
         match = _REVISION.search(source)
         assert match is not None, f"{path.name} declares no module-level `revision`"
-        revisions.add(match.group(1))
         down = _DOWN_REVISION.search(source)
-        if down is not None:
-            parents.add(down.group(1))
-    return revisions, parents
+        parents[match.group(1)] = down.group(1) if down is not None else None
+    return parents
+
+
+def revision_chain(directory: Path = _VERSIONS) -> list[str]:
+    """The revisions of ``directory`` walked root-to-head. Requires a single linear chain."""
+    parents = revision_parents(directory)
+    roots = [revision for revision, parent in parents.items() if parent is None]
+    assert len(roots) == 1, f"expected exactly one root in {directory.name}, found {sorted(roots)}"
+    children = {parent: revision for revision, parent in parents.items() if parent is not None}
+    chain = [roots[0]]
+    while chain[-1] in children:
+        chain.append(children[chain[-1]])
+    assert len(chain) == len(parents), (
+        f"{directory.name} is not one linear chain: walked {len(chain)} of {len(parents)} revisions"
+    )
+    return chain
+
+
+def revision_graph(directory: Path = _VERSIONS) -> tuple[set[str], set[str]]:
+    """Every declared revision id in ``directory``, and every id named as some revision's parent."""
+    parents = revision_parents(directory)
+    return set(parents), {parent for parent in parents.values() if parent is not None}
 
 
 def test_the_migration_tree_has_exactly_one_head() -> None:

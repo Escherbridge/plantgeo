@@ -4,9 +4,11 @@ This module computes its answers. It replaces a deleted stub that returned a har
 ``is_acyclic = True``; every predicate below is derived from the edges it is given, and the tests
 feed it graphs that genuinely violate each rule.
 
-The same three rules are enforced declaratively in the database by
-`alembic/versions/20260814_0021_forecast_signal_lineage.py`. This module is the auditor: given rows
-read back out of any database, it re-derives whether the constraints did their job.
+The same three rules are enforced declaratively in the database. They were written by
+`alembic/archive/20260814_0021_forecast_signal_lineage.py` -- applied history since the 2026-08-25
+greenfield collapse, so the live definitions now come from `db/agri/**` via
+`alembic/versions/20260825_0000_agri_greenfield_baseline.py`. This module is the auditor: given
+rows read back out of any database, it re-derives whether the constraints did their job.
 """
 
 from __future__ import annotations
