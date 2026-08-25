@@ -45,13 +45,17 @@ cron keeps the warehouse current on its own. Delete the service; there is nothin
 
 ### That condition is NOT met, and the service is DISABLED rather than deleted (2026-08-25)
 
-**"Backlog zero" was measured at z13 only.** RUNBOOK 0.40.2: no coarse rung (z9/z5/z0) exists for
-any lane, and the written `signal` base carries 10 columns with **no `cell_longitude`/`cell_latitude`**,
-so all ~1,560 signal days must be **re-exported** before a coarse rung can be derived at all. That
-re-export is pivot slice `d1`, and it is the longest pole in the whole programme. This service is
-exactly what makes it tractable -- the measurements above show a drained day is dominated by
-round-trip latency, not data, which is why it runs next to the bucket instead of from a laptop.
-**Deleting it would destroy the in-region runner `d1` needs.**
+**"Backlog zero" was measured at z13 only.** Both of RUNBOOK 0.40.2's key claims have since been refuted by measurement:
+
+1. **"No coarse rung (z9/z5/z0) exists for any lane"** — Contradicted by a live census run on 2026-08-25 (`agri-cli parquet-drain --dry-run --selection ladder`), which reported bucket-wide completion marks: `{'00': 10473, '05': 10473, '09': 10473, '13': 11510}` — three coarse rungs, each with 10,473 marks.
+
+2. **"The written `signal` base carries no `cell_longitude`/`cell_latitude`, so all ~1,560 signal days must be re-exported"** — Also refuted. The RUNBOOK's own 2026-08-25 retro entry states: "Assumption falsified: §0.40.2's 'no coarse rung exists for any lane' and 'the signal base lacks positions'. Both dead. The ~1,560-day re-export I briefed as the longest pole **was already done** — a background loop kept working after the listing behind §0.40.2 was taken."
+
+**Signal does NOT require wholesale re-export.** A 2026-08-25 census of that lane reported: `base_days: 1560`, `ladder_complete_days: 1338`, `incomplete_ladder_days: 222`. Of its 1,560 base days, 1,338 already carry a complete ladder. The remaining 222 are repaired by DERIVATION from the published base (via `parquet-drain --selection ladder`), which opens no Postgres query — not by re-export.
+
+**The lesson this retro drew, stated plainly so it is not re-learned a third time: list the bucket before planning Parquet work.** The §0.40.2 listing was already stale when it was written, because a background loop kept working after it was taken.
+
+This service is disabled because it is the in-region runner, and the measurements above show a drained day is dominated by round-trip latency, not data, which is why it runs next to the bucket instead of from a laptop. **Deleting it would remove the only candidate for doing bulk work where it matters — next to the bucket.**
 
 **What was done instead:** `railway service source disconnect --service plantgeo-parquet-drain`.
 The repo source is gone, so the service no longer redeploys on every push (RUNBOOK 0.40.1) -- the
@@ -68,6 +72,9 @@ railway service source connect --repo Escherbridge/plantgeo --branch main --serv
 **Change the start command when you do.** The `while true ... sleep 15` loop in `railway.json` was
 right for a bulk backlog and is wrong now: with the backlog at z13-zero it spins forever on one
 line -- `burn-severity 2024-08-22 raised: the base rung is written but its coarse rungs are not` --
-doing no work while competing with Postgres. `d1` owns `drain.py` and rewrites it as a fused
-drain + tier derivation; give it a bounded run, and honour "one writer at a time" against the
-ingest cron.
+doing no work while competing with Postgres. The `infra/cron-ingest/railway.json` has its `cronSchedule`
+restored as of 2026-08-25 and will be armed on the next deploy. Without a bounded, non-overlapping run,
+reconnecting this drain resurrects the fe9b241 collision: a `signal` lane-day measured ~8 s alone versus
+~25 MINUTES beside a cron tick, because both processes sit on IO/DataFileRead, competing for the same disk -- it is disk contention, not lock contention, and looking for a lock will not find it. `d1` owns
+`drain.py` and rewrites it as a fused drain + tier derivation with explicit bounded-run semantics; defer
+reconnection until that work is done, and honour "one writer at a time" against the ingest cron.

@@ -1,0 +1,15 @@
+{
+  "slug": "soil_survey_lane_shape_20260825",
+  "title": "Design the partition grain for a static Parquet lane",
+  "status": "pending",
+  "created_on": "2026-08-25",
+  "depends_on": [
+    "parquet_duckdb_pivot_20260823"
+  ],
+  "runbook_section": "0.31.1",
+  "note": "soil-survey is the only Parquet lane with zero base_days in the warehouse. The RUNBOOK explanation at §0.29.1 is wrong on both state and reason. Real cause: the export hits a 200,000-key cap and soil-survey has 200,001 keys, so the export RAISES rather than returning truncated — meaning the lane never drains on its own. The owner's framing, 2026-08-25: 'soil survey is static but large so it may need a different shape.' This track exists to answer whether day-partitioning is the right shape for a static dataset, not to apply a quick fix. Deferred deliberately from the 2026-08-25 data-completeness session by owner decision so it is not lost.",
+  "partitions": {
+    "confidence": "none",
+    "unpartitioned": "The track is design-focused (open questions about lane grain and serving contract) rather than implementation-focused; no file boundaries can be predetermined. Re-verify against HEAD once the design questions are settled."
+  }
+}
