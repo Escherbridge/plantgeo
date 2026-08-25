@@ -6493,6 +6493,67 @@ lift the core out of `interface/http/` first, leaving the HTTP surface importing
 tests green; then build `interface/cli/` on the same core; then the agent/MCP repoint as its own
 slice, since it also needs the four dead statements re-authored rather than translated.
 
+#### 0.42.24 SANIC IS THE API, AND IT STAYS PRIVATE (owner, 2026-08-25)
+
+Owner: *"for the api surface I would like to leverage sanic and have that serve to the client."*
+Sanic was already the choice — lane B built `interface/http/parquet_routes.py` as a Sanic blueprint
+mounted on `app.py`'s `combined_local` and `published_reader` profiles, and `sanic>=24.6` is a core
+dependency. What needed deciding was **who calls it**.
+
+**Decision: the Next server stays in front; Sanic is never exposed to the browser.** The chain
+remains browser → tRPC → `parquet-plane-client.ts` → Sanic. Sanic owns all Parquet logic and is the
+API in the architectural sense (§0.42.23); it is simply not a public origin.
+
+Chosen over browser-direct for three reasons, in order of weight:
+
+1. **`plantgeo-martin` is the precedent and its lockdown is still open** — a public data surface on
+   this project measured a 27 MB / 40 s tile fetch, and retrofitting the limits has outlived several
+   sessions. A second public read surface would inherit that whole problem before it had one user.
+2. **The frozen wire client cannot run in a browser as written.** It resolves its base URL through
+   `providerUrl(PARQUET_SERVICE_URL_ENV, …)` and reads env vars; browser-direct means authoring a
+   second client, which is a second place the frozen contract can drift.
+3. **Auth and org context already work where they are.** Moving them onto Sanic is real work that
+   buys the user nothing they can see — the removed hop is server-to-server.
+
+Cost accepted: one hop the user never perceives. **To reverse:** a browser-safe client module, CORS
+pinned to the app origin, rate limits, and a read-only public profile designed in BEFORE any
+cutover — not retrofitted. Do not reverse this casually; the split-by-sensitivity variant (public
+planes direct, community via Next) was considered and rejected as two client paths to keep in sync.
+
+#### 0.42.25 THE ORM MODELS — a subset dies with the planes, and the alembic coupling is a liability
+
+Owner asked whether `models/` is still necessary after the pivot. Measured: **13 files, 66 tables,
+but 18 modules import models against 48 using the raw-SQL loader.** The ORM is already the minority
+path in this service.
+
+**The heaviest consumers die by design.** Seven `execution/historical_writer/*` modules import
+exactly `SignalObservation`, `SignalCoverageAudit` and `CellSourceCrosswalk` — which is what `s5`
+retires ("delete each verified lane's ingest producer") and `s6` drops (`agri.signal_observation`).
+So the largest block of model usage is already scheduled for deletion, not because the models are
+wrong but because their tables go away.
+
+**What survives has nothing to do with the pivot:** `jobs.py` (the `agri.job_*` ledger every load
+runs on), `strategy.py` / `profiles.py` / `species.py` / `knowledge.py` / `location.py` (community
+and reference data §0.23.4 deliberately keeps in Postgres), `provenance.py` (governance), and
+`geospatial.py` (`spatial_cell`, still the grid the signal export and the agent tools key on).
+
+**The real finding is three sources of truth for one schema:** `models/` (`Base.metadata`),
+`db/agri/**` (the declarative tree), and the alembic baseline that replays the tree.
+`alembic/env.py:21` sets `target_metadata = Base.metadata`, so `alembic revision --autogenerate`
+would diff the MODELS against the database — but migrations here are hand-authored and
+`test_declarative_schema_parity` compares **tree to migrations, never models to either**. Nothing
+keeps the models honest. A model can drift from the real schema silently, and the only thing that
+would notice is an autogenerate nobody runs.
+
+**Verdict: do not delete `models/` wholesale.** Two actions instead:
+- **Sever the alembic coupling.** With the tree as the source of truth, `--autogenerate` is a trap:
+  it emits a migration diffing models against a schema they do not define. Either set
+  `target_metadata = None` or add the parity gate that would make the coupling honest — but do not
+  leave it as it is, silently authoritative-looking and ungated.
+- **Let `s5`/`s6` delete the plane-bound models as their tables drop** — `historical.py`,
+  `historical_promotion.py` and the plane-bound parts of `forecasting.py`. They are not a separate
+  cleanup; they are part of the retirement that already has an owner.
+
 ---
 
 
