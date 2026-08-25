@@ -618,7 +618,7 @@ describe("the frozen wire contract", () => {
       nature: "daily_series",
       earliestDay: "2022-04-30",
       latestDay: "2026-08-06",
-      governedAbsenceRanges: [{ from: "2026-08-08", to: "2026-08-16" }],
+      governedAbsenceRanges: [{ from: "2026-08-07", to: "2026-08-16" }],
     });
   });
 });
