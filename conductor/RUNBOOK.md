@@ -4,7 +4,7 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Last updated:** 2026-08-22. **ARCHITECTURE PIVOT — READ §0.23 FIRST: Postgres becomes a community-features database; every data plane moves to day-partitioned Parquet read by DuckDB+Polars, with Martin serving PMTiles. §0.16–§0.22 optimise a Postgres this project is leaving.** **§0.25 is the CURRENT HEAD OF THE PROGRAMME — wave 1 shipped green, the by-domain layering question is answered, and it retires `agri_sdk_layering` phases 4–8.** **§0.24 is the concurrent stream plan that executes it — 21 streams in 5 waves, each with a disjoint file boundary, governed by the new `conductor/code_styleguides/layer-lanes.md`.** **THE PARQUET PATH HAS STARTED — §0.22 carries the signal-plane grain decision and the traps for the export job.** **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
+**Last updated:** 2026-08-24. **THE PARQUET BACKLOG IS DRAINED (12,365 -> 0 lane-days) - READ §0.39 FIRST; it supersedes §0.38 and records why the DB shrink is now gated on an unbuilt read API, and why nothing is ingesting.** **ARCHITECTURE PIVOT — READ §0.23 FIRST: Postgres becomes a community-features database; every data plane moves to day-partitioned Parquet read by DuckDB+Polars, with Martin serving PMTiles. §0.16–§0.22 optimise a Postgres this project is leaving.** **§0.25 is the CURRENT HEAD OF THE PROGRAMME — wave 1 shipped green, the by-domain layering question is answered, and it retires `agri_sdk_layering` phases 4–8.** **§0.24 is the concurrent stream plan that executes it — 21 streams in 5 waves, each with a disjoint file boundary, governed by the new `conductor/code_styleguides/layer-lanes.md`.** **THE PARQUET PATH HAS STARTED — §0.22 carries the signal-plane grain decision and the traps for the export job.** **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
 
 **What changed 2026-08-21 — four new sections, and they supersede earlier ones where they disagree.** **§0.16** is the data-quality and QA assessment: the census per layer and per observation plane, freshness and rot, the job ledger and matview refresh state, the storage/index/bloat profile, the partitionwise probe, and what the QA gate does and does not prove — every number labelled with how it was obtained, CONFIRMED separated from UNVERIFIED, and **two headline claims REFUTED outright (§0.16.9)**. **§0.17** is why the map is broken *right now*, ranked by rendering unblocked per unit of work; **read it first if you are here to fix the outage.** **§0.18** is the target architecture — entity/observation split with sealed months on R2 — with the losing designs' grafts folded in and **17 recorded rejections so they stop being re-litigated (§0.18.8)**. **§0.19** is the merged programme plan with a gate class, precondition and reversal cost per item.
 
@@ -5433,6 +5433,208 @@ for a layout that was not shipped.
 - **`allowed_client_exposure` is `False` on every governed signal-plane row** while the map paints that data.
   The `vegetation` lane contract established its own source is `true`, so this is scoped to the signal plane —
   still unresolved there.
+
+---
+
+### 0.39 HANDOFF — session 9 close (2026-08-24). THE BACKLOG IS DRAINED. The next lever is gated.
+
+**Supersedes §0.38's "the drain is what remains".** It ran, on Railway, and finished.
+
+#### Goal
+
+Drain the historical Parquet backlog, then shrink Postgres. The drain is **done**; the shrink is
+**blocked on work that does not exist yet** (§0.39.6).
+
+#### State — verified unless marked
+
+- **Backlog: 12,365 → 0 lane-days.** All four drained lanes (`fire-detections`, `burn-severity`,
+  `signal`, `vegetation`) report `remaining: 0`. VERIFIED from the drain's own JSON census.
+- **The drain moved to Railway** as `plantgeo-parquet-drain`
+  (`9ec08964-754d-4408-aff1-073a2618d28f`), config-as-code `infra/parquet-drain/railway.json`,
+  commit `fe9b241`. **It is now STOPPED** (`railway down`, no active deployment).
+- **Bucket: 95,017 objects, 2.11 GiB (2.26 GB decimal), 42,916 completion markers, 0 non-current
+  versions.** VERIFIED by full listing.
+- **Postgres is unchanged at 38 GB.** Nothing was dropped — the drain projects, it never deletes.
+- **Nothing is ingesting.** See §0.39.5. This is the most time-sensitive item in this section.
+
+#### 0.39.1 The measurement that justified the move
+
+`parquet-drain` was never data-bound; it was round-trip-bound. Measured against production:
+
+| | local (laptop → Railway) | Railway (in-region) |
+|---|---|---|
+| s per lane-day | 3.48 / 3.73 / 3.73 / 3.58 → **3.63 avg** | **0.62–0.74** |
+| s per written day | 6.08 | 1.20 |
+| lane-days / min | 16.8 | 81.3 |
+
+A written day costs **~2.85 s fixed + ~0.27 ms/row** — 489× the data buys only 4.25 s. That fixed
+cost is ~16 serialized object-store calls per day: a HEAD (`absence_exists`), the part PUT and the
+marker PUT per zoom rung, plus a marker DELETE on part 0, issued one at a time by
+`BotoObjectStoreBackend.put`. Three quarters of the drain's life was the wire.
+
+**The whole remaining backlog drained in 1 h 44 min** (17:58 → 19:42 UTC) against a local projection
+of ~19 h wall clock — **~11×**. The like-for-like per-day figure is ~5×; the rest is duty cycle
+(the local loop gave the drain only ~52% of the machine, the forward path taking the rest).
+
+#### 0.39.2 Coverage — 7 of 12 lanes provably whole, 3 genuinely incomplete
+
+Rebuilt each lane's expected window from its own registry declaration (`history_floor` →
+`today − publication_lag`, stepped by `cadence_days`) and compared against z13 markers + absences.
+
+**Complete, zero missing:** `drought` (211), `fire-detections` (9,425), `sensors` (26),
+`signal` (1,569), `vegetation` (1,474), `water-gauges` (91), `weather-observations` (22).
+
+| lane | missing | cause |
+|---|---|---|
+| `burn-severity` | **1** — `2024-08-22` | Base rung written, coarse rungs never derived ⇒ never markable ⇒ re-taken on every census. **This is what made the service spin for 6 hours.** A real derivation bug, not a data gap. |
+| `fire-perimeters` | **60** — 2025-08-02 … 2025-09-30 | Contiguous two-month hole in a `daily_series` lane. |
+| `soil-survey` | **364, zero written** | The known 200,001-vs-200,000 key cap. The export raises *after* writing parts, leaving 478 orphan parquet files and no marker. Never self-heals. |
+
+**UNVERIFIED — do not treat as gaps:** `evacuation-zones` (497) and `watersheds` (17) are
+`static_lookup` lanes keyed to a source watermark, not a daily calendar, so a day-by-day expectation
+model overcounts them by construction. Each has exactly 1 marker, which is what a healthy static
+lane looks like. Confirming needs the watermark resolver, which was not run.
+
+#### 0.39.3 Where the 38 GB actually is
+
+| relation | total | heap | index | rows |
+|---|---|---|---|---|
+| `agri.signal_observation` | **25.86 GB** | 10.71 | **15.14** | 46,068,872 |
+| `geo.features` | 7.90 GB | 3.80 | 2.56 | 5,025,009 |
+| `geo.geometry` | 2.93 GB | 1.16 | 1.34 | 3,277,801 |
+
+Three relations are **96.6%** of the database. **No bloat** (nothing over 100k dead tuples) and
+**WAL is only 512 MB** — the volume is honestly full, not garbage. The same table is **0.280 GiB in
+Parquet: 92× smaller**, 38× against heap alone.
+
+#### 0.39.4 CORRECTION — `idx_scan = 0` was used as evidence and it is not
+
+This section's first draft recommended dropping
+`uq_signal_observation_release_cell_signal_time` (10.78 GB) on the grounds that it had **0 scans,
+ever**. That is wrong, and this runbook's own header (line 13) already gates it: `stats_reset` is
+NULL, which does not mean "since forever".
+
+Confirmed 2026-08-25: **`pg_postmaster_start_time()` = 2026-08-24 14:40:46 UTC** — the instance
+restarted 10 h 40 m before the reading, and that is the same restart that crashed
+`plantgeo-ingest-cron`. `signal_observation` also shows **`n_tup_ins = 0`** in that window, so a
+*unique-constraint* index had no writes to enforce against and would not register regardless.
+
+The index inventory, for whoever revisits it:
+
+| index | size | scans (unbounded-below window) | note |
+|---|---|---|---|
+| `uq_..._release_cell_signal_time` | 10.78 G | 0 | UNIQUE **constraint** — needs `ALTER TABLE … DROP CONSTRAINT`, not `DROP INDEX` |
+| `ix_..._cell_time_signal` | 2.85 G | 4,163,429 | **hot — serving production** |
+| `pk_signal_observation` | 0.97 G | 0 | PRIMARY KEY |
+| `ix_..._release_time` | 0.55 G | 606 | |
+
+**Owner decision 2026-08-24: HOLD all index drops until the Parquet API cutover.** If they are
+dropped later, the justification must be architectural ("this table is no longer read or written"),
+never the counter.
+
+#### 0.39.5 Nothing is ingesting, and this was a side effect
+
+Commit `fe9b241` shipped the already-staged removal of `"cronSchedule"` from
+`infra/cron-ingest/railway.json`. That did **not** pause the cron — it converted it from a cron
+service into an ordinary one, so it started immediately on the push, ran one full forward path
+(`ingest-all` → `jobs-pulse` → `parquet-gap-fill`), and then, with `restartPolicyType: NEVER`,
+exited and stayed exited.
+
+Combined with the local loop being stopped, **no forward path runs anywhere.** Last ingest completed
+~2026-08-24 19:30 UTC.
+
+**Owner directive 2026-08-24:** do *not* simply restore the schedule. Ingestion is to be **repointed
+to write the Parquet lanes directly**; ingestion into Postgres stops and that code is removed.
+
+> **THE TRAP IN THAT DIRECTIVE.** Every lane adapter in
+> `pipeline/parquet/lane_registry.py` (`_fill_signal`, `_fill_burn_severity`, …) reads **from
+> Postgres**. Parquet is currently a *derivative* of Postgres, not an independent store. Removing
+> the Postgres ingest path severs the thing that produces Parquet. Repointing is a rewrite of the
+> ingest layer, not a configuration change, and until it exists there is no ingestion at all.
+
+#### 0.39.6 The shrink is gated, and the gate is unbuilt
+
+Owner picked "finish the DB shrink" as the next milestone. **Recorded tension:** the shrink's two
+real levers are the 15.14 GB of indexes and the 25.86 GB table, and both are gated on serving no
+longer reading Postgres. What remains executable *today* is only the TimescaleDB drop, which is
+small.
+
+**The Parquet read API does not exist.**
+
+- `src/lib/server/services/parquet-plane-client.ts` — 516 lines, well-built (wire format quarantined
+  in one `WIRE` section, days passed through as opaque `YYYY-MM-DD` strings with a test that fails
+  if a date conversion appears, faults thrown through the `bounded-upstream` taxonomy). **Nothing
+  imports it** except its own test and `parquet-envelope.ts`.
+- `services/agri-data-service/` has **no HTTP surface at all** — zero files referencing FastAPI,
+  APIRouter or uvicorn. It is a CLI.
+- No `duckdb`/parquet dependency in `package.json` (correct for this design — Python serves the
+  reads — but confirms nothing reads Parquet app-side either).
+
+#### 0.39.7 TimescaleDB — safe to drop, not dropped
+
+`timescaledb` 2.29.0 and `timescaledb_toolkit` 1.24.0 are installed. **One hypertable,
+`tracking.positions`, and it is EMPTY** — 0 rows, 0 chunks, 40 kB. `DROP EXTENSION … CASCADE` costs
+no data. Its definition was captured for faithful recreation as a plain table:
+
+```sql
+CREATE TABLE tracking.positions (
+    "time"   timestamptz NOT NULL,
+    asset_id uuid        NOT NULL REFERENCES tracking.assets(id) ON DELETE CASCADE,
+    heading double precision, speed double precision, altitude double precision,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    geom     geometry
+);
+CREATE INDEX idx_positions_asset ON tracking.positions USING btree (asset_id, "time" DESC);
+CREATE INDEX idx_positions_geom  ON tracking.positions USING gist (geom);
+CREATE INDEX positions_time_idx  ON tracking.positions USING btree ("time" DESC);
+CREATE UNIQUE INDEX positions_asset_time_unique ON tracking.positions USING btree (asset_id, "time");
+```
+
+**Caveat:** `alembic/versions/20260719_0001_agri_foundation.py` and
+`20260816_0024_matview_refresh_state.py` both reference timescaledb, so a manual drop drifts from
+migration state and a fresh `alembic upgrade head` would recreate it. Do it as a migration.
+
+**Execution was blocked** by the harness permission classifier. The prepared script is at
+`<scratchpad>/drop.py` and needs a Bash permission rule or a re-run with approval.
+
+#### 0.39.8 Decisions (2026-08-24, owner unless noted)
+
+1. **The drain runs on Railway, not locally.** Measured ~5× per lane-day, ~11× wall clock.
+2. **The local loop is retired.** `scripts/warehouse_status.py` reporting
+   `SUPERVISOR IS NOT RUNNING` is now **correct**. Do **not** restart the loop — it would put a
+   second writer on the same database and re-create the contention the move removed.
+3. **Index drops HELD** until the Parquet API cutover (§0.39.4).
+4. **Ingestion repoints to Parquet lanes only**; Postgres ingestion stops and its code is dropped
+   (§0.39.5).
+5. **Next milestone: finish the DB shrink** — read alongside the tension in §0.39.6.
+6. `plantgeo-parquet-drain` was created with `create_service` + `update_service`
+   (`root_directory: /`, `railway_config_file: infra/parquet-drain/railway.json`). **The auto-deploy
+   fires before `update_service` lands**, so the first build always builds the *root* Dockerfile and
+   dies on `NEXT_PUBLIC_PMTILES_URL must be a reviewed production URL`. Fix is
+   `railway redeploy --from-source`; a plain redeploy reuses the old snapshot and fails identically.
+
+#### 0.39.9 Assumptions not tested
+
+- `evacuation-zones` and `watersheds` are complete · default taken: treated as complete ·
+  to reverse: one watermark-resolver run.
+- The TimescaleDB drop is still wanted · default taken: left installed, prepared but unexecuted ·
+  to reverse: run the script (needs permission).
+- `continuous-warehouse-loop.sh` and `scripts/warehouse_status.py` stay **untracked** · default
+  taken: not committed · to reverse: one `git add`. The status script is the only monitoring tool
+  for the warehouse and exists on this machine only.
+
+#### 0.39.10 Continuation plan
+
+1. **Decide the ingest repoint shape** (§0.39.5) before writing code — whether lane adapters read
+   Postgres for a transition period or ingestion writes Parquet directly from source. Everything
+   else depends on this and it is not yet decided.
+2. **Build the Parquet read API** in `services/agri-data-service/` against the four routes
+   `parquet-plane-client.ts`'s `WIRE` section already specifies. This is the gate on the shrink.
+3. **Drop TimescaleDB as an alembic migration** (§0.39.7) — the only shrink step executable now.
+4. **Fix `burn-severity 2024-08-22`** — the coarse-rung derivation failure. Until fixed, any drain
+   or gap-fill pass will spin on it and re-export it forever.
+5. **Close `fire-perimeters` 2025-08-02 … 2025-09-30** and **unblock `soil-survey`'s key cap**.
+6. **Then** revisit the index drops with an architectural justification, not a counter.
 
 ---
 

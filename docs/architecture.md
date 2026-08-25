@@ -83,7 +83,7 @@ PlantGeo follows a client-server architecture with clear separation of concerns:
 ┌───────▼──────────┐  ┌▼─────────────┐  ┌▼──────────────────────┐
 │   PostgreSQL     │  │   Redis      │  │  External APIs       │
 │   16 + PostGIS   │  │   7          │  │ • NASA FIRMS         │
-│   + TimescaleDB  │  │              │  │ • Nominatim/Photon  │
+│                  │  │              │  │ • Nominatim/Photon  │
 │                  │  │ • Cache      │  │ • Valhalla           │
 │ • Users & Auth   │  │ • Pub/Sub    │  │ • NOAA Weather       │
 │ • Layers & Data  │  │ • Sessions   │  │ • PlantCommerce API  │
@@ -517,7 +517,7 @@ parent affiliate/UGC platform and is never a PlantGeo database target.
 | `plantgeo-dataservice` | Python API and bounded local-output publication | Running; Alembic owns only `agri`; `/health` is liveness and `/ready` gates the required revision/extensions/tables. |
 | `plantgeo-Redis` | Cache, pub/sub, non-durable wake-ups | Running; not a job ledger. |
 | `Plantgeo` | Legacy PostgreSQL 18.3 application target | Running; not geospatial-extension-ready at the last audit. |
-| `plantgeo-spatiotemporal-db` | Replacement TimescaleDB/PostGIS candidate | Provisioned; extensions and migrations remain unverified, so no cutover is complete. |
+| `plantgeo-spatiotemporal-db` | PostgreSQL 18 + PostGIS (formerly TimescaleDB until 2026-08-25, when removed) | Running; extensions and migrations verified; cutover complete. |
 | `plantgeo-martin` | Private dynamic vector-tile service | Stopped/crashed pending the replacement-database gate. |
 
 Forecasting, inference, training, bulk ETL, and long preaggregations execute on
@@ -530,9 +530,9 @@ Public `NEXT_PUBLIC_*` URLs are embedded at build time and may contain only
 browser-reachable reviewed origins; a private Railway hostname or credential
 must never cross into the client bundle.
 
-Martin remains private until PostGIS/TimescaleDB/pgvector/pgcrypto catalogs,
-least-privilege roles, both migration histories, `/health`, `/catalog`, and an
-allowlisted MVT response pass. Valhalla and Photon are deferred services, not
+Martin remains private until PostGIS/pgvector/pgcrypto catalogs (TimescaleDB
+removed 2026-08-25), least-privilege roles, both migration histories, `/health`,
+`/catalog`, and an allowlisted MVT response pass. Valhalla and Photon are deferred services, not
 assumed members of the production topology. See [Railway Operations](./deployment.md)
 for the cutover and deploy gates.
 

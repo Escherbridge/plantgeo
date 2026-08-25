@@ -603,7 +603,7 @@ Phase 4 — Live Map Layers:
 - Flash animation on new/updated features (brief highlight then fade)
 
 Phase 5 — Data Ingest:
-- Create src/app/api/ingest/sensors/route.ts — POST endpoint: validate sensor readings (Zod), store to PostGIS + TimescaleDB, publish to Redis
+- Create src/app/api/ingest/sensors/route.ts — POST endpoint: validate sensor readings (Zod), store to PostGIS, publish to Redis
 - Create src/app/api/ingest/fires/route.ts — POST endpoint: validate fire perimeter GeoJSON, store, publish
 - Create src/lib/server/services/ingest.ts — shared ingest logic: validate, deduplicate (by ID + timestamp), store, publish
 
@@ -820,7 +820,7 @@ Implement Fleet & Asset Tracking (Track 14) — real-time vehicle tracking, rout
 Read conductor/tracks/14-fleet-tracking/spec.md and conductor/tracks/14-fleet-tracking/plan.md.
 
 EXISTING CODE:
-- src/lib/server/db/schema.ts — has tracking.positions table (TimescaleDB hypertable)
+- src/lib/server/db/schema.ts — has tracking.positions table
 - src/hooks/useWebSocket.ts — WebSocket hook from Track 06
 - src/hooks/useSSE.ts — SSE hook
 - src/lib/server/services/realtime.ts — Redis pub/sub
@@ -831,7 +831,7 @@ IMPLEMENT ALL 6 PHASES:
 
 Phase 1 — Position Ingestion:
 - Enhance tracking schema in schema.ts: add assets table (id, name, type, status, metadata), geofences table (id, name, geometry as GeoJSON, alertOnEnter, alertOnExit)
-- Create src/lib/server/services/tracking.ts — store positions to TimescaleDB, create continuous aggregates for last-known positions, query route history as PostGIS linestring
+- Create src/lib/server/services/tracking.ts — store positions to PostgreSQL, query for last-known positions and route history as PostGIS linestring
 - WebSocket ingest: validate position payload (Zod), store, publish to Redis tracking channel
 
 Phase 2 — Live Visualization:
@@ -1584,7 +1584,7 @@ RULES:
 **Plugin:** `/ultrapilot`
 
 ```
-Implement the Environmental Analytics Dashboard (Track 30) — regional risk summaries, TimescaleDB trend charts, priority subregion metrics, strategy demand heatmap, PDF/CSV export.
+Implement the Environmental Analytics Dashboard (Track 30) — regional risk summaries, trend analysis, priority subregion metrics, strategy demand heatmap, PDF/CSV export.
 
 Read conductor/tracks/30-environmental-analytics/spec.md and conductor/tracks/30-environmental-analytics/plan.md.
 
@@ -1595,7 +1595,7 @@ EXISTING CODE:
 - src/components/charts/ — add TrendChart.tsx, RiskSummaryWidget.tsx, PriorityTable.tsx
 
 IMPLEMENT ALL PHASES per the plan:
-- Phase 1: TimescaleDB continuous aggregates for fire, water, NDVI metrics
+- Phase 1: Analytics queries for fire, water, NDVI metrics (regular PostgreSQL, not TimescaleDB which was removed on 2026-08-25)
 - Phase 2: Analytics DB queries (regional risk summary, trend data, priority subregions, demand density)
 - Phase 3: Extend analytics tRPC router with new procedures + Redis caching (TTL 5 min)
 - Phase 4: Recharts chart components (install recharts if needed)

@@ -89,8 +89,8 @@ application nor the scheduler may enable extensions.
    only. There is no role-creation step: the 2026-08-08 teardown
    (`20260808_0019`) deleted every role bootstrap script under
    `infra/local-warehouse/`.
-4. Verify that `postgis`, `timescaledb`, `vector`, and `pgcrypto` are installed
-   and that the `agri` tables exist.
+4. Verify that `postgis`, `vector`, and `pgcrypto` are installed and that the
+   `agri` tables exist. (Note: TimescaleDB was removed on 2026-08-25.)
 
 The DSN is no longer validated at all — no host, port, database name, scheme, or
 login check, and no distinctness rule between the two variables. Confirm the

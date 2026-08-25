@@ -32,10 +32,14 @@ instead of three, and one of them -- `geo.mv_signal_cell_daily` -- rebuilding a 
 2. **A watermark gate.** Refreshing every view on every tick would make the periodic full rebuild of
    `geo.mv_signal_cell_daily` -- REFRESH, concurrent or not, always rebuilds a plain matview's ENTIRE
    contents; there is no incremental refresh for a relation that is not a continuous aggregate, and
-   this database has no hypertable this rollup could be built on (see the design note this lane was
-   built from: `timescaledb_information.hypertables` holds exactly one row, `tracking.positions`, 0
-   chunks, and it is not this table) -- the single most expensive thing this box ever runs, on a
-   schedule rather than only when something actually changed. Each spec below carries an O(1)/O(small
+   this database has never had a hypertable this rollup could be built on. Historical: the design
+   note this gate was built from measured, while TimescaleDB was still installed, that
+   `timescaledb_information.hypertables` held exactly one row (`tracking.positions`, 0 chunks) and it
+   was not this table; TimescaleDB itself was dropped from production entirely on 2026-08-25, so the
+   question this measurement answered is now moot rather than merely settled -- the extension, and
+   with it any continuous-aggregate mechanism, no longer exists in this database at all -- the
+   single most expensive thing this box ever runs, on a schedule rather than only when something
+   actually changed. Each spec below carries an O(1)/O(small
    table) watermark query; a view whose watermark has not moved, and whose last refresh is not yet
    stale past its own ceiling, is skipped with no REFRESH statement issued at all. In the steady state
    R2 measured (the signal plane 9-13 days stale, the box idle >90% of wall-clock), this makes the

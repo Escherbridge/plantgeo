@@ -12,11 +12,11 @@ must name the intended PlantGeo service explicitly.
 | `plantgeo-dataservice` | Python data service built from `services/agri-data-service`. |
 | `plantgeo-Redis` | PlantGeo cache, pub/sub, and non-durable wake-up transport. |
 | `Plantgeo` | Existing PlantGeo PostgreSQL 18.3 database. It was not extension-ready in the July 2026 audit. |
-| `plantgeo-spatiotemporal-db` | Provisioned replacement candidate using `timescale/timescaledb-ha:pg18`. Availability is not proof that required extensions or migrations are installed; do not cut over until the verification gate below passes. |
+| `plantgeo-spatiotemporal-db` | **The production database since the cutover.** PostgreSQL 18.4 + PostGIS 3.6, reached on the `switchback.proxy.rlwy.net:37967` TCP proxy. Was provisioned from `timescale/timescaledb-ha:pg18`; TimescaleDB and timescaledb_toolkit were **dropped 2026-08-25** after holding one always-empty hypertable (`tracking.positions`, 0 rows, 0 chunks) and no continuous aggregate. Installed extensions, measured that day: btree_gist, hypopg, pg_buffercache, pgcrypto, plpgsql, postgis, vector. |
 | `plantgeo-martin` | Provisioned private service. Its bootstrap image crashed against the legacy database because PostGIS was absent; its sealed reference now targets the replacement for the next reviewed deployment. Keep it private until extension and migration verification succeeds. |
 | `Aevani-Postgress` | Aevani parent/affiliate/UGC data. Never reference, query, migrate, reset, or grant it to a PlantGeo service. |
 
-The existing `Plantgeo` database reported PostgreSQL 18.3, database `railway`,
+**Historical, July 2026 audit — the `Plantgeo` service no longer exists in this project; the row above supersedes it.** The existing `Plantgeo` database reported PostgreSQL 18.3, database `railway`,
 role `postgres`, only the `public` schema, and none of `postgis`, `timescaledb`,
 `vector`, `pgcrypto`, or `uuid-ossp`. That is an observation, not permission to
 install extensions or run migrations against it.
@@ -138,7 +138,7 @@ time, and operator/change record. The target service name must be exactly
 ### 1. Prove PostgreSQL 18 extension parity
 
 - Record `server_version`, `server_version_num`, image digest, and both
-  available and installed versions of `postgis`, `timescaledb`, `vector`, and
+  available and installed versions of `postgis`, `vector`, and
   `pgcrypto`. A package being present in an image is not an installed extension.
 - Compare the PG18 versions and behavior with the pinned PostgreSQL 16 image
   used by the operator-run governance rehearsal in `services/agri-data-service`
@@ -161,7 +161,7 @@ SELECT current_setting('server_version') AS server_version,
 SELECT available.name, available.default_version, installed.extversion
 FROM pg_available_extensions AS available
 LEFT JOIN pg_extension AS installed ON installed.extname = available.name
-WHERE available.name IN ('postgis', 'timescaledb', 'vector', 'pgcrypto')
+WHERE available.name IN ('postgis', 'vector', 'pgcrypto')
 ORDER BY available.name;
 ```
 

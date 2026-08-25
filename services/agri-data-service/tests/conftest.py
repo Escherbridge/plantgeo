@@ -31,7 +31,7 @@ AGRI_TEST_DATABASE_URL_ENV = "AGRI_TEST_DATABASE_URL"
 # Bump this with EVERY new revision, in the same change as the revision. It was missed for
 # 20260816_0024, which silently broke the whole disposable-database gate: every `agri_db`-marked
 # test refused any database actually at head and the sweep ran without them. See db/AGENTS.md.
-EXPECTED_ALEMBIC_HEAD = "20260817_0025"
+EXPECTED_ALEMBIC_HEAD = "20260825_0026"
 PROTECTED_DATABASE_NAME = "plantgeo"
 AGRI_DB_MARKER = "agri_db"
 AGRI_DB_REHEARSAL_MARKER = "agri_db_migration_rehearsal"

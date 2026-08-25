@@ -47,10 +47,10 @@
 --
 -- How this query works, section by section:
 --
---   WITH required_extensions(extname) AS (VALUES ('postgis'), ('timescaledb'), ...)
+--   WITH required_extensions(extname) AS (VALUES ('postgis'), ('vector'), ('pgcrypto'))
 --     A CTE ("common table expression") is a named subquery defined up front and then
 --     referenced below like a table. VALUES writes a literal table straight into the
---     query text. Together they invent a small table -- here a four-row, one-column
+--     query text. Together they invent a small table -- here a three-row, one-column
 --     table called required_extensions -- that exists only for this statement. The
 --     contract lives in a Python tuple, gets rendered into that row-literal at import
 --     time, and the query then compares what the database actually has against what

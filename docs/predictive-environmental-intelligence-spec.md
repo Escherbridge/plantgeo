@@ -139,7 +139,7 @@ historical release set, and promotes a reviewed typed publication:
 | Planned table or view | Purpose |
 | --- | --- |
 | `spatial_cell`, `cell_source_crosswalk` | Stable analysis cells (`cell_id`, geometry, resolution, parent cell) and source-to-cell allocation/coverage. Begin with a 5–10 km grid; retain original source geometry separately. |
-| `signal_observation` | Long-format observed/reanalysis signal: cell, native geometry, time, signal name, original/normalized value and units, depth/support, quality, availability time and source release. Partition or hypertable by `observed_at`. |
+| `signal_observation` | Long-format observed/reanalysis signal: cell, native geometry, time, signal name, original/normalized value and units, depth/support, quality, availability time and source release. Partition by `observed_at` using PostgreSQL native partitions (formerly could use TimescaleDB hypertables until 2026-08-25). |
 | `soil_profile_snapshot` | Point/AOI soil-test or modeled depth-band properties, method, units, lab/source and uncertainty. |
 | `feature_definition`, `feature_snapshot` | Immutable feature recipe and a reproducible time/cell/model training snapshot. |
 | `forecast_run`, `forecast_distribution` | Seed, horizon, input release set, baseline version, day/cell mean/median/p10/p90 and coverage. |
@@ -157,7 +157,7 @@ the default partition, and drops only date-named partitions older than 30 days.
 Run it at least daily and alert on failure or a nonzero default-row count. This
 database maintenance operation does not run forecasts or training on Railway.
 
-Use PostGIS geometry for cells/AOIs and a composite index on `(cell_id, observed_at, signal_name)`. TimescaleDB hypertables can be used when the selected Railway database image provides the extension; otherwise use monthly PostgreSQL partitions behind the same contract view. Do not make model correctness depend on a Timescale-only query.
+Use PostGIS geometry for cells/AOIs and a composite index on `(cell_id, observed_at, signal_name)`. Use PostgreSQL native range partitions (monthly, by `observed_at`) behind the same contract view. TimescaleDB was removed on 2026-08-25, so do not reference hypertable-only features.
 
 ### Canonical time-series contract view
 

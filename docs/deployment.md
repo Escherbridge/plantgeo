@@ -20,7 +20,7 @@ define the security boundary:
 | `plantgeo-dataservice` | Bounded Python API and publication receiver | Running; Alembic owns only the `agri` schema. |
 | `plantgeo-Redis` | Cache, pub/sub, and non-durable wake-up transport | Running; never use it as the durable job ledger. |
 | `Plantgeo` | Legacy PlantGeo PostgreSQL 18.3 database | Running, but the last audit found no required geospatial/time-series extensions. |
-| `plantgeo-spatiotemporal-db` | Replacement database candidate using the TimescaleDB HA PostgreSQL 18 image | Running; extensions, roles, and migrations are not yet verified. It is not the production target yet. |
+| `plantgeo-spatiotemporal-db` | Replacement database (PostgreSQL 18 + PostGIS) | Running; TimescaleDB was removed on 2026-08-25 after holding only an empty hypertable with no continuous aggregates. Current extensions, measured 2026-08-25: btree_gist, hypopg, pg_buffercache, pgcrypto, plpgsql, postgis (3.6), vector. |
 | `plantgeo-martin` | Private vector-tile service | Provisioned but stopped/crashed. Its initial target lacked PostGIS; the sealed database reference now points to the replacement candidate for a reviewed redeploy. |
 | `Aevani-Postgress` | Parent affiliate/UGC/monetization data | Out of scope. Never query, migrate, reset, grant, or reference it from PlantGeo. |
 
@@ -226,9 +226,9 @@ Do not cut over until every item below has evidence:
 1. Confirm the target service is exactly `plantgeo-spatiotemporal-db` and the
    source is exactly `Plantgeo`.
 2. Take a restorable backup of `Plantgeo` and perform a restore drill.
-3. Use read-only catalog queries to verify PostgreSQL, PostGIS, TimescaleDB,
-   pgvector, and pgcrypto on the target. An image label is not proof that an
-   extension is installed in the database.
+3. Use read-only catalog queries to verify PostgreSQL, PostGIS, pgvector, and
+   pgcrypto on the target. An image label is not proof that an extension is
+   installed in the database. (Note: TimescaleDB was removed on 2026-08-25.)
 4. Create least-privilege application, data-service publication, and Martin
    roles. Do not use the database owner at runtime.
 5. Run Drizzle and Alembic against a disposable database with the same image and

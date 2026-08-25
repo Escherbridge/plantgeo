@@ -29,7 +29,7 @@ const mastheadIndex = [
   { term: "Tiles", description: "PMTiles v3 archives, Martin tile server" },
   { term: "Routing", description: "Valhalla, multi-modal" },
   { term: "Search", description: "Photon, indexed from Nominatim" },
-  { term: "Store", description: "PostgreSQL, PostGIS, TimescaleDB" },
+  { term: "Store", description: "PostgreSQL, PostGIS" },
 ];
 
 const parityIndex = [
@@ -141,9 +141,9 @@ const stackIndex = [
     note: "Search",
   },
   {
-    term: "PostgreSQL, PostGIS, TimescaleDB",
+    term: "PostgreSQL, PostGIS",
     description:
-      "Spatial truth and time-series history in one database, so where and when are answered by the same query.",
+      "Spatial truth in one database, where queries are answered directly through PostGIS.",
     note: "Data",
   },
   {

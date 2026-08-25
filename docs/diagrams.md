@@ -398,11 +398,11 @@ sequenceDiagram
     participant Device as GPS Device
     participant WS as /api/ws
     participant Redis as Redis Pub/Sub
-    participant TS as TimescaleDB
+    participant DB as PostgreSQL
     participant UI as Fleet Panel
 
     Device->>WS: position { assetId, lat, lon, speed }
-    WS->>TS: INSERT tracking.positions
+    WS->>DB: INSERT tracking.positions
     WS->>Redis: PUBLISH tracking:{assetId}
 
     Redis-->>UI: Position update (via SSE)
@@ -672,7 +672,7 @@ graph TB
             Next[Next.js 15<br/>Standalone Node.js]
         end
         subgraph DB["Database"]
-            PG[(PostgreSQL 16<br/>+ PostGIS 3.4<br/>+ TimescaleDB)]
+            PG[(PostgreSQL 16<br/>+ PostGIS 3.4)]
         end
         subgraph Cache["Cache"]
             Redis[(Redis 7<br/>Cache + Pub/Sub<br/>+ BullMQ)]

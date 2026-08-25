@@ -11,11 +11,12 @@ Built for the ERA5-Land soil-moisture field; nothing in it is soil-specific.
 
 **Why it is here and not in PostGIS.** `ST_Contour` needs the `postgis_raster` extension.
 Verified against production 2026-08-05: `pg_available_extensions` lists `postgis_raster`
-3.6.4 with `installed_version` NULL, and `pg_extension` holds only postgis, timescaledb,
-timescaledb_toolkit, vector, pgcrypto and plpgsql. Installing a raster extension to contour
-tens of grid nodes is not proportionate, so the contouring runs here — over a grid the
-database has *already* aggregated and smoothed, so this is not client-side aggregation
-sneaking back in. See `src/lib/server/AGENTS.md` §soil-moisture for the full split.
+3.6.4 with `installed_version` NULL, and `pg_extension` held postgis, timescaledb (removed
+2026-08-25), timescaledb_toolkit (removed 2026-08-25), vector, pgcrypto and plpgsql.
+Installing a raster extension to contour tens of grid nodes is not proportionate, so the
+contouring runs here — over a grid the database has *already* aggregated and smoothed, so
+this is not client-side aggregation sneaking back in. See `src/lib/server/AGENTS.md`
+§soil-moisture for the full split.
 
 **Why it is not in the browser.** It could be. It is not, because the whole point of
 `geo.soil_field` is that the grid never crosses the wire.

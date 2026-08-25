@@ -89,8 +89,9 @@ including backup and restore, is in
    launcher — it starts the retained container and refuses to silently create a
    blank one.
 2. **Enable extensions** by running `infra/local-warehouse/enable-extensions.sql`
-   as the owner. Verify `postgis`, `timescaledb`, `vector`, and `pgcrypto` are
-   installed. Alembic fails before creating any `agri` object if they are not.
+   as the owner. Verify `postgis`, `vector`, and `pgcrypto` are installed.
+   Alembic fails before creating any `agri` object if they are not. (Note:
+   TimescaleDB was removed on 2026-08-25.)
 3. **Apply the `agri` migrations:**
 
    ```powershell

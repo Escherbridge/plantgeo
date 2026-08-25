@@ -77,14 +77,14 @@ export async function persistVerifiedPosition(
 /**
  * How far back a "last known position" may be and still be a position.
  *
- * `tracking.positions` is the only hypertable in the database (0 chunks, 0 rows, 40 kB as
- * measured 2026-08-15), so today this bound costs nothing and buys nothing. It exists because
- * the shape it replaces -- `DISTINCT ON (asset_id) ... ORDER BY asset_id, time DESC` with no
- * time predicate and no LIMIT -- sorts the ENTIRE positions table, and a live-tracking table is
- * the one relation in this schema whose row count is set by wall-clock time rather than by how
- * much ground the ingest lanes cover. On a 3 GB box that sort is the failure this whole
- * pre-aggregation pass exists to prevent, and it would arrive on the day the first fleet
- * connects rather than on a day anyone was measuring.
+ * `tracking.positions` was formerly a TimescaleDB hypertable (removed 2026-08-25 because it
+ * held 0 chunks, 0 rows, 40 kB and no continuous aggregates). It is now an ordinary PostgreSQL
+ * table. The time-window bound exists because the shape it replaces -- `DISTINCT ON (asset_id)
+ * ... ORDER BY asset_id, time DESC` with no time predicate and no LIMIT -- sorts the ENTIRE
+ * positions table. A live-tracking table is the one relation in this schema whose row count is
+ * set by wall-clock time rather than by how much ground the ingest lanes cover. On a 3 GB box
+ * that sort is the failure this whole pre-aggregation pass exists to prevent, and it would
+ * arrive on the day the first fleet connects rather than on a day anyone was measuring.
  *
  * 24 hours: an asset that has not reported in a day is not "where it is", it is a stale
  * record, and the map draws a stale pin as a current one.

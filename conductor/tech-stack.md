@@ -43,7 +43,6 @@ type: technical-context
 |-----------|---------|---------|
 | PostgreSQL | 16 | Primary database |
 | PostGIS | 3.4 | Spatial queries and indexes |
-| TimescaleDB | 2.x | Time-series hypertables |
 | Martin | 1.4+ | Vector tile server (Rust) |
 | Valhalla | latest | Multi-modal routing engine |
 | Photon | 1.0+ | Geocoding / autocomplete |

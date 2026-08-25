@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 PROMOTION_ARCHIVE_SCHEMA_VERSION: Literal[1] = 1
 PROMOTION_NAMESPACE = uuid.UUID("c61eb4a1-f009-5d72-9e74-6f17a5614d3d")
-REQUIRED_EXTENSION_NAMES = frozenset({"postgis", "timescaledb", "vector", "pgcrypto"})
+REQUIRED_EXTENSION_NAMES = frozenset({"postgis", "vector", "pgcrypto"})
 MAX_INSTALLED_EXTENSION_VERSION_LENGTH = 255
 SHA256_HEX_LENGTH = 64
 ARCHIVE_FILE_NAMES = {

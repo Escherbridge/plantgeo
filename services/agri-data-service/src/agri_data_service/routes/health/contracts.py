@@ -14,5 +14,5 @@ had no members and no DSN.
 # correctly-migrated production database. Only the agri_db-gated
 # test_expected_alembic_revision_matches_migrated_head_database compares this to a live head, and
 # that gate had been running dark. Every new revision bumps this line.
-EXPECTED_ALEMBIC_REVISION = "20260817_0025"
+EXPECTED_ALEMBIC_REVISION = "20260825_0026"
 REQUIRED_EXTENSIONS = ("postgis", "vector", "pgcrypto")

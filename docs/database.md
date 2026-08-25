@@ -15,7 +15,7 @@ Complete documentation of the PostgreSQL + PostGIS database schema used in Plant
 ## Overview
 
 - **Database**: PostgreSQL 16
-- **Extensions**: PostGIS 3.4, TimescaleDB
+- **Extensions**: PostGIS 3.4 (formerly with TimescaleDB until 2026-08-25)
 - **ORM**: Drizzle ORM (TypeScript)
 - **Schemas**: `public`, `geo`, `tracking`
 
@@ -63,7 +63,7 @@ GEO SCHEMA (geospatial data)
 
 TRACKING SCHEMA (asset tracking)
 ├── assets
-├── positions (TimescaleDB hypertable)
+├── positions
 ├── geofences
 └── alerts
 ```
@@ -443,7 +443,7 @@ SELECT * FROM tracking.assets WHERE status = 'online';
 
 #### positions
 
-Asset position history (TimescaleDB hypertable).
+Asset position history (formerly a TimescaleDB hypertable until 2026-08-25, when the extension was removed).
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
@@ -456,12 +456,11 @@ Asset position history (TimescaleDB hypertable).
 | `geom` | geometry(POINT, 4326) | | Location (PostGIS) |
 
 **Key Features:**
-- TimescaleDB hypertable: automatic time-based partitioning
 - Immutable append-only log
-- Automatic compression of older data
+- Time-ordered for tracking history
 
 **Indexes:**
-- Time index (automatic from hypertable)
+- Index on `time` for temporal queries
 - GIST index on `geom`
 - Index on `assetId` for per-asset queries
 
@@ -649,9 +648,10 @@ CREATE INDEX "teams_slug_idx" ON "teams"("slug");
    ST_Distance(geom::geography, point::geography) -- Result in meters
    ```
 
-3. **Partition large tables** (TimescaleDB for time-series)
+3. **Use range partitions for very large tables** (PostgreSQL native partitioning)
    ```sql
-   SELECT create_hypertable('tracking.positions', 'time');
+   CREATE TABLE tracking.positions_2026_q3 PARTITION OF tracking.positions
+     FOR VALUES FROM ('2026-07-01') TO ('2026-10-01');
    ```
 
 4. **Analyze query plans**

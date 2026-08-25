@@ -7,15 +7,16 @@ source. Do not load or export `pgt`, `postgres`, `ardanova_*`, or another
 application's database. The native `plantgeo` database created on the local
 PostgreSQL 16 server is correctly isolated by name, but the server currently
 exposes only `pgcrypto`; it cannot host the required PlantGeo warehouse because
-PostGIS, TimescaleDB, and pgvector are unavailable.
+PostGIS and pgvector are unavailable. (TimescaleDB was removed on 2026-08-25.)
 
 `infra/local-warehouse/compose.yaml` creates the intended local source:
 
-- a small PostgreSQL 16 Timescale HA derivative, matching the repository's
-  supported source major; it retains PostGIS, TimescaleDB, pgvector, and
-  pgcrypto packages while removing upstream automatic extension/tuning init
-  scripts; semantic promotion preflight requires the target PostgreSQL major to
-  be equal to or newer than the source;
+- a small PostgreSQL 16 image (formerly Timescale HA with TimescaleDB until
+  2026-08-25, when the extension was removed), matching the repository's
+  supported source major; it retains PostGIS, pgvector, and pgcrypto packages
+  while removing upstream automatic extension/tuning init scripts; semantic
+  promotion preflight requires the target PostgreSQL major to be equal to or
+  newer than the source;
 - loopback-only `127.0.0.1:5442` listener and the `plantgeo_warehouse_pgdata`
   volume;
 - a distinct `plantgeo` database and `plantgeo_owner` bootstrap identity;
@@ -23,8 +24,8 @@ PostGIS, TimescaleDB, and pgvector are unavailable.
   dependency.
 
 The container must boot and the operator must explicitly verify/enable
-PostGIS, TimescaleDB, pgvector, and pgcrypto before approved migrations and
-local source ingestion begin.
+PostGIS, pgvector, and pgcrypto before approved migrations and local source
+ingestion begin. (Note: TimescaleDB was removed on 2026-08-25.)
 
 ## Local load sequence
 
@@ -84,7 +85,7 @@ round-trip drill before any production handoff.
 The current Railway PostgreSQL 18 candidate fails because its mounted volume is
 root-owned while the image runs PostgreSQL as UID 1000. The smallest remediation
 is `RAILWAY_RUN_UID=0`, allowing the upstream entrypoint to prepare `PGDATA`
-and then drop privileges. The upstream image already packages TimescaleDB,
-PostGIS, and pgvector. Verify `pgcrypto` after boot; only make a pinned derived
-image with the corresponding PostgreSQL contrib package if catalog evidence
-shows it is absent.
+and then drop privileges. The upstream image packages PostGIS and pgvector
+(TimescaleDB was removed on 2026-08-25). Verify `pgcrypto` after boot; only make
+a pinned derived image with the corresponding PostgreSQL contrib package if
+catalog evidence shows it is absent.

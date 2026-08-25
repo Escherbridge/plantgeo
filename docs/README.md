@@ -45,8 +45,9 @@ usage reservation before any model call is enabled.
 
 The following remain gated:
 
-- the replacement Railway database must be verified for PostGIS, TimescaleDB,
-  pgvector, pgcrypto, roles, and migrations before cutover;
+- the replacement Railway database verification for PostGIS, pgvector, pgcrypto,
+  roles, and migrations is complete; TimescaleDB was removed on 2026-08-25 after
+  holding only an empty hypertable with no continuous aggregates;
 - Martin remains private/stopped until that database gate passes;
 - no danger, intervention-effect, amendment, or waypoint model has been trained
   or promoted;
@@ -202,7 +203,7 @@ started, so the table below is still accurate, not aspirational.
 | --- | --- |
 | Web | Next.js 16 App Router, React 19, TypeScript |
 | Map | MapLibre GL JS 5, deck.gl 9, Three.js |
-| Operational data | PostgreSQL; target PostGIS/TimescaleDB capabilities remain cutover-gated |
+| Operational data | PostgreSQL 18.4 + PostGIS 3.6 on `plantgeo-spatiotemporal-db` (formerly with TimescaleDB until 2026-08-25, which held only an empty hypertable and no continuous aggregates) |
 | Application schema | Drizzle ORM |
 | Environmental/ML schema | SQLAlchemy + Alembic (`agri` only) |
 | Tile serving | Martin 1.10.1 with allowlisted MVT functions; not yet production-active |

@@ -31,7 +31,7 @@ commitment.
 - Martin v1.4 (Rust tile server)
 - PMTiles v3 + Cloudflare R2
 - Valhalla (routing) + Photon (geocoding)
-- PostgreSQL 16 + PostGIS + TimescaleDB
+- PostgreSQL 16 + PostGIS
 - Drizzle ORM + tRPC v11
 - Zustand + Jotai
 - Redis 7 (cache + pub/sub)
@@ -49,7 +49,7 @@ efficacy claim.
 Historical capacity assumptions (not a current procurement or deployment plan):
 - Next.js app: 2 GB RAM
 - Martin: 2 GB RAM
-- PostGIS + TimescaleDB: 8 GB RAM, 250 GB volume
+- PostGIS: 8 GB RAM, 250 GB volume (until 2026-08-25 TimescaleDB held one empty hypertable; dropped as non-functional)
 - Valhalla: 8 GB RAM, 50 GB volume
 - Redis: 1 GB RAM
 - Photon: 4 GB RAM, 50 GB volume

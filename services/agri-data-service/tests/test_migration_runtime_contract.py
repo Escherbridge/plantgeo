@@ -21,9 +21,17 @@ def test_alembic_uses_sync_dsn_and_requires_operator_installed_extensions() -> N
     assert "pg_extension" in foundation
     assert "Agri foundation preflight failed" in foundation
     assert "This migration never creates extensions" in foundation
+    # These two assertions read two files whose truths diverged on 2026-08-25, so they no longer
+    # share a loop. `foundation` is the APPLIED migration 20260719_0001 -- immutable history, so its
+    # preflight still names timescaledb and always will. `extension_gate` is a live dev-environment
+    # file, and timescaledb was dropped from production that day (it held one always-empty
+    # hypertable and no continuous aggregate), so the gate must stop creating it. Migration
+    # 20260825_0026 is what reconciles the two on a fresh build.
     for extension in ("postgis", "timescaledb", "vector", "pgcrypto"):
         assert f"'{extension}'::text" in foundation
+    for extension in ("postgis", "vector", "pgcrypto"):
         assert f"CREATE EXTENSION IF NOT EXISTS {extension};" in extension_gate
+    assert "CREATE EXTENSION IF NOT EXISTS timescaledb;" not in extension_gate
 
 
 def test_historical_observation_migration_remains_release_pinned_and_forward_only() -> None:

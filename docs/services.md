@@ -512,9 +512,9 @@ Asset position tracking and historical data.
 - Altitude (optional)
 - Metadata (custom fields)
 
-**Storage:** TimescaleDB hypertable (tracking.positions)
-- Automatic time-based partitioning
-- Compression for old data
+**Storage:** PostgreSQL table (tracking.positions; formerly a TimescaleDB hypertable until 2026-08-25, when the extension was removed)
+- Time-ordered append-only log
+- Manual partitioning via PostgreSQL range partitions if needed
 
 **Retention:** Configurable (default 90 days, then compressed)
 

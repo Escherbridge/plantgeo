@@ -1,8 +1,11 @@
 # Dedicated local PlantGeo warehouse
 
 This is separate from the native PostgreSQL service at `127.0.0.1:5432` and
-from every other application database. It uses the PostgreSQL 16 Timescale HA
-image family already supported by this repository, a dedicated named volume,
+from every other application database. It uses the plain `postgis/postgis:16-3.4`
+image family (TimescaleDB was dropped repo-wide 2026-08-25: production's only
+hypertable, `tracking.positions`, was always empty with zero chunks and no
+continuous aggregate ever existed, so the extension earned nothing and this
+warehouse now matches production's extension set), a dedicated named volume,
 and loopback-only port `5442`. Its semantic lineage bundles record the source
 PostgreSQL major and require an equal-or-newer target during promotion
 preflight, including the planned PostgreSQL 18 Railway target.
@@ -30,8 +33,8 @@ For an intentional first-time setup only, create the ignored `.env` as above
 and add `-CreateIfMissing`. The launcher prints a session-read-only owner DSN and points to
 the reviewed warehouse inspection queries.
 
-The derived image retains the upstream extension packages but removes its
-automatic TimescaleDB/toolkit creation and host-sized tuning scripts. It does
+The derived image retains the upstream PostGIS package but removes its
+automatic `template_postgis`/extension-creation init script. It does
 not install or enable any PostgreSQL extension.
 
 ## Persistence, checkpoints, and recovery
@@ -81,17 +84,18 @@ placeholder with the local password without placing it in source control):
 
 ```powershell
 $env:PGPASSWORD = '<local password>'
-& 'C:\Program Files\PostgreSQL\16\bin\psql.exe' -h 127.0.0.1 -p 5442 -U plantgeo_owner -d plantgeo -Atc "SELECT name, default_version, installed_version FROM pg_available_extensions WHERE name IN ('postgis','timescaledb','vector','pgcrypto') ORDER BY name;"
+& 'C:\Program Files\PostgreSQL\16\bin\psql.exe' -h 127.0.0.1 -p 5442 -U plantgeo_owner -d plantgeo -Atc "SELECT name, default_version, installed_version FROM pg_available_extensions WHERE name IN ('postgis','vector','pgcrypto') ORDER BY name;"
 ```
 
 Then the operator, not an automated startup script, runs the reviewed manual
-gate. It is safe to re-run and stops at the first error:
+gate (PostGIS, pgvector, pgcrypto — TimescaleDB is gone repo-wide, see above).
+It is safe to re-run and stops at the first error:
 
 ```powershell
 & 'C:\Program Files\PostgreSQL\16\bin\psql.exe' -h 127.0.0.1 -p 5442 -U plantgeo_owner -d plantgeo -f infra/local-warehouse/enable-extensions.sql
 ```
 
-The Alembic foundation verifies all four are already installed and fails before
+The Alembic foundation verifies all three are already installed and fails before
 it creates any `agri` object. Only after that approved gate should reviewed
 Drizzle/Alembic migrations create schemas and `agri-cli source-ingest` load local source releases. The future
 promotion archive comes from this database; it never comes from `pgt`,

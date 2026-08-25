@@ -12,7 +12,7 @@ PlantGeo is an enterprise-grade open-source 3D mapping platform built to provide
 - **Tile Format**: PMTiles v3 on Cloudflare R2, MVT for dynamic
 - **Routing**: Valhalla (multi-modal, isochrones, turn-by-turn)
 - **Geocoding**: Photon (autocomplete) backed by Nominatim
-- **Database**: PostgreSQL 16 + PostGIS 3.4 + TimescaleDB
+- **Database**: PostgreSQL 16 + PostGIS 3.4
 - **ORM**: Drizzle ORM
 - **API**: tRPC v11
 - **State**: Zustand (global) + Jotai (per-layer atoms)

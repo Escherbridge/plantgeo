@@ -4,18 +4,20 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        BASE_IMAGE: timescale/timescaledb-ha@sha256:9965a1682187e30d36a24e303b77f1b265ff7458b383eb3304dd1d8d65edb3fc
+        BASE_IMAGE: postgis/postgis@sha256:44126d872ac91993766c341e369c539e8196614321765d36a6f1bab0419a5fa5
     image: localhost/plantgeo-spatiotemporal:pg16
     user: "0:0"
     environment:
       POSTGRES_DB: plantgeo
       POSTGRES_USER: plantgeo_owner
       POSTGRES_PASSWORD: ${PLANTGEO_LOCAL_DB_PASSWORD:?Set PLANTGEO_LOCAL_DB_PASSWORD in your shell or .env}
-      PGDATA: /home/postgres/pgdata/data
+      # postgis/postgis defaults here too (uid 999); the old timescale/timescaledb-ha
+      # image used /home/postgres/pgdata/data instead. Kept explicit for clarity.
+      PGDATA: /var/lib/postgresql/data
     ports:
       - "127.0.0.1:5442:5432"
     volumes:
-      - plantgeo_warehouse_pgdata:/home/postgres/pgdata/data
+      - plantgeo_warehouse_pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U plantgeo_owner -d plantgeo"]
       interval: 10s

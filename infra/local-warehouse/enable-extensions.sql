@@ -4,11 +4,10 @@
 \set ON_ERROR_STOP on
 
 CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE EXTENSION IF NOT EXISTS timescaledb;
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 SELECT extname, extversion
 FROM pg_extension
-WHERE extname IN ('postgis', 'timescaledb', 'vector', 'pgcrypto')
+WHERE extname IN ('postgis', 'vector', 'pgcrypto')
 ORDER BY extname;

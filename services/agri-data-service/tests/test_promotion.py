@@ -46,7 +46,6 @@ def _source_metadata() -> PromotionSourceMetadata:
         alembic_revision="20260719_0001",
         extension_versions={
             "postgis": "3.4.0",
-            "timescaledb": "2.16.0",
             "vector": "0.7.4",
             "pgcrypto": "1.3",
         },
@@ -62,7 +61,6 @@ def _preflight() -> PromotionTargetPreflight:
         alembic_revision="20260719_0001",
         extension_versions={
             "postgis": "3.5.0",
-            "timescaledb": "2.18.0",
             "vector": "0.8.0",
             "pgcrypto": "1.3",
         },
