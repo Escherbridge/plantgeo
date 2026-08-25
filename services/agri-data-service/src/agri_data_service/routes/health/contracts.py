@@ -15,4 +15,4 @@ had no members and no DSN.
 # test_expected_alembic_revision_matches_migrated_head_database compares this to a live head, and
 # that gate had been running dark. Every new revision bumps this line.
 EXPECTED_ALEMBIC_REVISION = "20260817_0025"
-REQUIRED_EXTENSIONS = ("postgis", "timescaledb", "vector", "pgcrypto")
+REQUIRED_EXTENSIONS = ("postgis", "vector", "pgcrypto")

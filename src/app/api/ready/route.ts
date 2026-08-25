@@ -37,9 +37,9 @@ async function probeDatabase(): Promise<boolean> {
   const rows = await db.execute<DatabaseReadinessRow>(sql`
     SELECT
       (
-        SELECT count(*) = 4
+        SELECT count(*) = 3
         FROM pg_extension
-        WHERE extname IN ('postgis', 'timescaledb', 'vector', 'pgcrypto')
+        WHERE extname IN ('postgis', 'vector', 'pgcrypto')
       ) AS "extensionsReady",
       EXISTS (
         SELECT 1

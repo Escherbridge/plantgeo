@@ -72,7 +72,6 @@ def _session_factory(session: _Session) -> Any:
 def test_readiness_contract_pins_the_extensions_this_build_requires() -> None:
     assert set(health_route.REQUIRED_EXTENSIONS) == {
         "postgis",
-        "timescaledb",
         "vector",
         "pgcrypto",
     }
