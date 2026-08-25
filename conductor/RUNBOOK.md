@@ -52,22 +52,29 @@ decisions §0.42.5, gate answers §0.42.14.
 - `s0` · `[x] (unreviewed)` — config only, but it changes a production schedule
 - `u4` · `[x] (unreviewed)` — no reviewer ran
 - **Three fix passes carry no verdict. Per the gate, they are in flight however finished they look.**
+- **Phase (whole wave) · monitor-architect, separate lane, ran every suite · PASS-with-deferred** ·
+  7 gates green (4,218 py / 1,384 ts / mypy / ruff / tsc / eslint / next build), **1 real defect: HEAD
+  did not build** (three unstaged modules, fixed) · 9 findings ranked, 3 of them live defects ·
+  product: aligned · §0.42.26–§0.42.30
 
 ### In flight
 
-- **Monitor-architect** (opus, background) — the first tree-wide sweep anyone has run; every lane
-  only ever verified its own scope. Also judging §0.42.23's core/surface split. Verdict pending.
+- Nothing running. All eight agents complete.
 
 ### Next — in dependency order
 
 1. **Deploy** to arm `s0`'s schedule. `sensors` upstream keeps ~6 days; days after **2026-08-31**
    are unrecoverable. **The production stamp (§0.42.21) must precede it** or `/ready` refuses.
-2. Re-review the three fix passes, or accept them explicitly as unreviewed.
-3. `s2a` — lift the Parquet core out of `interface/http/`, then the CLI split + `agri-service`
-   rename (§0.42.23, hard-cutover hazards in the `s2` note — the **source-disconnected drain's
-   start command** is the landmine).
-4. `s7` — repoint the agent/MCP plane; 4 of its statements have read a dropped relation since 08-18.
-5. The two destructive approvals: the 1,040-day ladder repair, the 2,211-object sweep.
+2. `s2a` — extract the Parquet core, **using §0.42.27's corrected classification, not §0.42.23's**,
+   into top-level `parquet_ops/`, and **move admission control into the core in the same change**
+   (§0.42.28). Then the CLI split + `agri-service` rename.
+3. Two live unowned defects: `execution/historical_parquet.py:151` missing
+   `max_temp_directory_size`, and `planes/drought.py:247` opening a wholly unguarded session.
+4. `s7` — reshaped by §0.42.30: 4 re-authored, 1 deleted, 1 probe rewritten, **5 left alone**.
+5. Re-review the three fix passes, or accept them explicitly as unreviewed.
+6. The two destructive approvals: the 1,040-day ladder repair, the 2,211-object sweep.
+7. Measure the serving container's real memory limit — §0.42.26 found the ceiling has **zero
+   headroom**, so if it is 2 GB the OOM killer pre-empts the whole refusal taxonomy.
 
 ### Retros — what the diff cannot show
 
@@ -6627,6 +6634,121 @@ would notice is an autogenerate nobody runs.
 - **Let `s5`/`s6` delete the plane-bound models as their tables drop** — `historical.py`,
   `historical_promotion.py` and the plane-bound parts of `forecasting.py`. They are not a separate
   cleanup; they are part of the retirement that already has an owner.
+
+#### 0.42.26 MONITOR-ARCHITECT VERDICT — every gate green, and HEAD did not build
+
+First tree-wide sweep of the phase, run by a lane that wrote none of the code. **4,218 Python tests,
+1,384 TypeScript tests, mypy (262 files), the deferred session-wide ruff, `tsc`, `eslint` and
+`next build` — all green, zero failures, and every suite verified as actually RUN rather than
+collected-and-skipped.** The three Python skips are each pinned by reason.
+
+**And the tree was red on the one thing no gate can see.** Three modules — `db/extensions.py`,
+`db/revisions.py`, `db/schema_diff.py` — were written by `s1`'s fix pass and **never staged**, while
+eight committed files imported them, including the baseline migration, the `/ready` pin, and
+`db/tools/verify_stamp_target.py`. So `alembic upgrade head` could not import its own extension
+list, `/ready` could not import at all, and since `railway.json:9` makes `/ready` the healthcheck, a
+deploy from a clean checkout would never have gone healthy. **0.42.21's stamp procedure could not
+run, because its gate was one of the broken importers — the same "documented but not in the
+repository" failure 0.42.21 exists to correct, reproduced one commit later.** Orchestrator staging
+error, fixed. Invisible by construction: pytest, mypy and ruff all read the WORKING TREE, where the
+files existed. A general check now confirms every `agri_data_service` import across all 500 tracked
+`.py` files resolves to a module HEAD contains.
+
+#### 0.42.27 THE 0.42.23 SPLIT IS MISCLASSIFIED — as written, the extraction inverts its own rule
+
+**Do not execute 0.42.23's file lists verbatim.** The shape is right — only `parquet_routes.py`
+imports a web framework, so seven of eight modules are already framework-free — but **each of the
+four files called "core" imports a file called "surface", at runtime**: `warehouse_reader.py:18`,
+`serving.py:20,22`, `coverage.py:19,21`, `duckdb_session.py:18`. Move the four and leave the four,
+and the core has **six runtime imports into an HTTP package**. The CLI would import `coverage`,
+which imports `interface.http.wire`, and the containerization is fictional.
+
+**Corrected classification.** `wire.py` is core — it imports nothing from the project and is the
+serialization contract all three adapters render. `request_params.py` is core — no `Request` object,
+every function is `str | None` to a domain type, and a CLI parsing `--bbox` needs byte-identical
+validation or it skips the antimeridian check at `:58`. `faults.py` is core in substance; its only
+real HTTP leak is three constants at `:11-13` and `status:` on `ServingRefusalError`. **The true
+split is ~1,703 core / 261 surface, not 1,164 / 827 — `parquet_routes.py` alone is the adapter.**
+One genuine untangle, ~15 lines: `serving.py:191,199` construct refusals carrying
+`HTTP_SERVICE_UNAVAILABLE`, so a warehouse rule states an HTTP status. Core raises
+`(code, message)`; the adapter owns one code-to-status table.
+
+**Home: `parquet_ops/` (top-level), NOT `warehouse/parquet/serving/`.** Decisive and measurable:
+`warehouse/` imports `pipeline/` nowhere today, while `pipeline/` imports `warehouse/` densely. The
+serving core needs `pipeline.parquet.lane_registry` at runtime (`coverage.py:22`), so putting it
+under `warehouse/` mints **the first-ever warehouse-to-pipeline edge**, inverting the only clean
+layering the Parquet tree has. `parquet_ops/` sits beside both and may import either. Recorded; do
+not re-litigate.
+
+#### 0.42.28 THE LARGEST RISK — the memory guard is split across the core/surface line
+
+`duckdb_session.py:34-38` states it: a bare `duckdb.connect()` builds a NEW instance, so
+`memory_limit` binds to one connection, not the process — "the per-request session is therefore only
+half a guard: the other half is admission control." **The core owns the half that cannot bound the
+process; the surface owns the half that can** (`parquet_routes.py:80` pool, `:85-95` semaphore).
+
+So 0.42.23's rule "no surface opens its own DuckDB session" is necessary and **not sufficient**: a
+CLI can obey it perfectly, call `open_serving_session` in a loop over twenty lanes, and consume
+24 GB — every session guarded, the process ceiling never consulted, because the only thing that
+consults it lives in a Sanic blueprint the CLI does not import. `s2a` builds exactly that CLI next.
+
+**Cheapest retirement: make acquiring a session BE acquiring a slot.** Move the pool and semaphore
+into the core beside `open_serving_session` and expose it only through a context manager that
+cannot return a connection without taking a slot. `parquet_routes.py` loses ~15 lines and keeps its
+`serving_at_capacity` refusal by catching a typed core exception; CLI and MCP inherit the ceiling
+free. **Do it DURING the extraction, not after** — moving the core first and the guard second leaves
+a window where two adapters exist and one ceiling does not.
+
+#### 0.42.29 FOUR GUARD SPELLINGS, TWO UNGUARDED SESSIONS, AND ZOOM IS CLEAN
+
+| # | site | memory | threads | `max_temp_directory_size` |
+|---|---|---|---|---|
+| 1 | `analysis/warehouse_session.py` | 1600MB | 3 | `0GiB` |
+| 2 | `warehouse/parquet/tiers.py` | 1600MB | 3 | `0GiB` — **identical values, different constant names** |
+| 3 | `interface/http/duckdb_session.py` | 1200MB | 2 | `0GiB` — a legitimate second profile, expressed as a copied block |
+| 4 | `execution/historical_parquet.py:151` | 1GB | 1 | **ABSENT — spills at DuckDB's 90%-of-disk default** |
+
+**Spelling 4 is a live defect of the 0.42.18 class**, on a `COPY (SELECT ... ORDER BY ...) TO ...
+PARTITION_BY` — a full sort over every NASA cell-parameter-day, the highest-spill shape DuckDB has.
+`tiers.py:107` calls that setting "the load-bearing one"; this call site omits it.
+
+**`planes/drought.py:247` opens an in-memory DuckDB connection with NO guard at all** and then runs
+`ST_Contains` over a day of USDM polygons — the ~140k-vertex geometries that consumed the host on
+2026-08-24. Mitigating: `most_severe_class_at_point` has **no production caller** today. It is a
+loaded landmine for whichever slice wires the drought lane up. The same file contradicts
+`duckdb_session.py:130-140` by installing `spatial` on demand mid-call.
+
+**Zoom is genuinely clean.** `foundation/parquet/zoom.py:27` is the single definition, every consumer
+resolves through it, and no site re-derives a rung. That mistake is retired — say so rather than
+re-checking it.
+
+#### 0.42.30 THE 0.42.22 CENSUS OVERSTATED `s7` — five statements must be LEFT ALONE
+
+"9 of 12 read a matview or view over a moving plane" flattens three different situations, and a
+slice briefed from that sentence would rewrite five statements harmfully.
+
+- **Group A — DEAD, re-author as core calls (4):** the four reading `geo.mv_signal_cell_daily`.
+  Carry the LEFT-JOIN-not-INNER and explicit-zero reasoning into the tool docstring and refusal
+  text; the core's five-state contract plus `GovernedAbsence` already says it better.
+- **Group B — ALIVE and Postgres-by-design, LEAVE (5):** `drought_history_at_point`,
+  `fire_history_near_point`, `observation_coverage_on_day`, `observation_temporal_neighbors`,
+  `feature_value_near_point`. **`geo` does not exist in Alembic at all** — it is Drizzle-managed, and
+  all four relations are read by the live app (`environmental-read-model.ts:1059,1515,3480,3558`).
+  **Repointing them would fork the read model and make the agent answer from a different source than
+  the map.**
+- **Group C — decide per relation (2 + the probe):** `agri.mv_forecast_ml_daily_serving` and
+  `agri.signal_coverage_audit` both EXIST. `signal_coverage_on_day` should CEASE TO EXIST — the
+  core's census answers it from the authoritative source. `forecast_summary_for_cell` moves when the
+  ML plane moves. `materialized_plane_populated` becomes a warehouse readiness probe.
+
+**Shape: 4 re-authored, 1 deleted, 1 probe rewritten, 5 untouched, 1 deferred.**
+
+**Still live at HEAD:** `agent/tools.py:502-503` states the false cause 0.42.22 asked to fix in the
+same pass. One line, belongs to `s7`.
+
+**Two green ticks rest on container privilege, not code:** `plantgeo_owner` on `:5442` is superuser
+(masking the `CREATEROLE` the non-owner test needs) and that image ships `timescaledb 2.27.0`
+(masking the archive-replay ERROR path). CI on a least-privilege server behaves differently.
 
 ---
 
