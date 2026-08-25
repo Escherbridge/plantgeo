@@ -24,11 +24,11 @@ CREATE TABLE agri.job_run (
     last_error_summary text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_job_run_job_run_state CHECK (((status)::text = ANY ((ARRAY['queued'::character varying, 'running'::character varying, 'succeeded'::character varying, 'partial'::character varying, 'failed'::character varying, 'dead_letter'::character varying, 'cancelled'::character varying])::text[]))),
+    CONSTRAINT ck_job_run_job_run_state CHECK (((status)::text = ANY (ARRAY[('queued'::character varying)::text, ('running'::character varying)::text, ('succeeded'::character varying)::text, ('partial'::character varying)::text, ('failed'::character varying)::text, ('dead_letter'::character varying)::text, ('cancelled'::character varying)::text]))),
     CONSTRAINT ck_job_run_nonnegative_failed_work_items CHECK ((failed_work_items >= 0)),
     CONSTRAINT ck_job_run_nonnegative_succeeded_work_items CHECK ((succeeded_work_items >= 0)),
     CONSTRAINT ck_job_run_nonnegative_total_work_items CHECK ((total_work_items >= 0)),
-    CONSTRAINT ck_job_run_terminal_run_has_completion_time CHECK ((((status)::text <> ALL ((ARRAY['succeeded'::character varying, 'partial'::character varying, 'failed'::character varying, 'dead_letter'::character varying, 'cancelled'::character varying])::text[])) OR (completed_at IS NOT NULL))),
+    CONSTRAINT ck_job_run_terminal_run_has_completion_time CHECK ((((status)::text <> ALL (ARRAY[('succeeded'::character varying)::text, ('partial'::character varying)::text, ('failed'::character varying)::text, ('dead_letter'::character varying)::text, ('cancelled'::character varying)::text])) OR (completed_at IS NOT NULL))),
     CONSTRAINT ck_job_run_work_item_counts_within_total CHECK (((succeeded_work_items + failed_work_items) <= total_work_items))
 );
 

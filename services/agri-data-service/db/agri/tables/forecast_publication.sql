@@ -16,7 +16,7 @@ CREATE TABLE agri.forecast_publication (
     published_at timestamp with time zone,
     retired_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_forecast_publication_state CHECK (((state)::text = ANY ((ARRAY['draft'::character varying, 'published'::character varying, 'retired'::character varying])::text[])))
+    CONSTRAINT ck_forecast_publication_state CHECK (((state)::text = ANY (ARRAY[('draft'::character varying)::text, ('published'::character varying)::text, ('retired'::character varying)::text])))
 );
 
 -- CONSTRAINT: forecast_publication forecast_publication_job_output_id_key

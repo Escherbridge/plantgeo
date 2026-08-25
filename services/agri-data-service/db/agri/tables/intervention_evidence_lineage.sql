@@ -16,8 +16,8 @@ CREATE TABLE agri.intervention_evidence_lineage (
     input_order integer NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_intervention_evidence_lineage_feature_or_record_locator CHECK ((((source_feature_id IS NOT NULL) AND (source_record_table IS NULL) AND (source_record_key IS NULL) AND (source_record_checksum IS NULL)) OR ((source_feature_id IS NULL) AND (source_record_table IS NOT NULL) AND (source_record_key IS NOT NULL) AND (source_record_checksum IS NOT NULL)))),
-    CONSTRAINT ck_intervention_evidence_lineage_known_lineage_role CHECK (((lineage_role)::text = ANY ((ARRAY['direct_observation'::character varying, 'derivation_input'::character varying, 'coverage_basis'::character varying, 'gap_basis'::character varying])::text[]))),
-    CONSTRAINT ck_intervention_evidence_lineage_known_source_record_table CHECK (((source_record_table IS NULL) OR ((source_record_table)::text = ANY ((ARRAY['signal_observation'::character varying, 'drought_polygon_snapshot'::character varying, 'signal_coverage_audit'::character varying, 'source_coverage_audit'::character varying])::text[])))),
+    CONSTRAINT ck_intervention_evidence_lineage_known_lineage_role CHECK (((lineage_role)::text = ANY (ARRAY[('direct_observation'::character varying)::text, ('derivation_input'::character varying)::text, ('coverage_basis'::character varying)::text, ('gap_basis'::character varying)::text]))),
+    CONSTRAINT ck_intervention_evidence_lineage_known_source_record_table CHECK (((source_record_table IS NULL) OR ((source_record_table)::text = ANY (ARRAY[('signal_observation'::character varying)::text, ('drought_polygon_snapshot'::character varying)::text, ('signal_coverage_audit'::character varying)::text, ('source_coverage_audit'::character varying)::text])))),
     CONSTRAINT ck_intervention_evidence_lineage_nonnegative_input_order CHECK ((input_order >= 0)),
     CONSTRAINT ck_intervention_evidence_lineage_source_record_checksum_sha256 CHECK (((source_record_checksum IS NULL) OR ((source_record_checksum)::text ~ '^[0-9a-f]{64}$'::text)))
 );

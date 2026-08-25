@@ -22,11 +22,11 @@ CREATE TABLE agri.strategy_outcome_definition (
     reviewed_at timestamp with time zone,
     reviewed_by character varying(255),
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_strategy_outcome_definition_benefit_direction CHECK (((benefit_direction)::text = ANY ((ARRAY['increase'::character varying, 'decrease'::character varying])::text[]))),
+    CONSTRAINT ck_strategy_outcome_definition_benefit_direction CHECK (((benefit_direction)::text = ANY (ARRAY[('increase'::character varying)::text, ('decrease'::character varying)::text]))),
     CONSTRAINT ck_strategy_outcome_definition_checksum_sha256 CHECK (((definition_checksum IS NULL) OR ((definition_checksum)::text ~ '^[0-9a-f]{64}$'::text))),
     CONSTRAINT ck_strategy_outcome_definition_eligibility_policy_object CHECK ((jsonb_typeof(eligibility_policy) = 'object'::text)),
     CONSTRAINT ck_strategy_outcome_definition_positive_windows CHECK (((baseline_window > '00:00:00'::interval) AND (outcome_window > '00:00:00'::interval))),
-    CONSTRAINT ck_strategy_outcome_definition_review_state CHECK (((review_state)::text = ANY ((ARRAY['draft'::character varying, 'approved'::character varying, 'rejected'::character varying])::text[]))),
+    CONSTRAINT ck_strategy_outcome_definition_review_state CHECK (((review_state)::text = ANY (ARRAY[('draft'::character varying)::text, ('approved'::character varying)::text, ('rejected'::character varying)::text]))),
     CONSTRAINT ck_strategy_outcome_definition_smallest_meaningful_effect CHECK (((smallest_meaningful_effect >= (0)::double precision) AND ((smallest_meaningful_effect)::text <> ALL (ARRAY['NaN'::text, 'Infinity'::text, '-Infinity'::text]))))
 );
 

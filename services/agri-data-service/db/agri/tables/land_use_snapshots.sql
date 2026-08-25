@@ -12,7 +12,7 @@ CREATE TABLE agri.land_use_snapshots (
     classification character varying(100),
     crop_history_json jsonb,
     fetched_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_land_use_snapshots_land_use_source CHECK (((source)::text = ANY ((ARRAY['cdl'::character varying, 'nlcd'::character varying])::text[])))
+    CONSTRAINT ck_land_use_snapshots_land_use_source CHECK (((source)::text = ANY (ARRAY[('cdl'::character varying)::text, ('nlcd'::character varying)::text])))
 );
 
 -- CONSTRAINT: land_use_snapshots pk_land_use_snapshots

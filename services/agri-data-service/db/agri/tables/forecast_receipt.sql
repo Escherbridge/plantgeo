@@ -24,7 +24,7 @@ CREATE TABLE agri.forecast_receipt (
     CONSTRAINT ck_forecast_receipt_finalized_evidence CHECK ((((status)::text <> 'finalized'::text) OR ((receipt_checksum IS NOT NULL) AND ((receipt_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND (finalized_at IS NOT NULL)))),
     CONSTRAINT ck_forecast_receipt_ordered_window CHECK ((valid_to > valid_from)),
     CONSTRAINT ck_forecast_receipt_quantiles CHECK ((agri.forecast_quantiles_valid(quantile_levels) AND ((0.5)::double precision = ANY (quantile_levels)))),
-    CONSTRAINT ck_forecast_receipt_status CHECK (((status)::text = ANY ((ARRAY['staging'::character varying, 'finalized'::character varying])::text[])))
+    CONSTRAINT ck_forecast_receipt_status CHECK (((status)::text = ANY (ARRAY[('staging'::character varying)::text, ('finalized'::character varying)::text])))
 );
 
 -- CONSTRAINT: forecast_receipt forecast_receipt_pkey

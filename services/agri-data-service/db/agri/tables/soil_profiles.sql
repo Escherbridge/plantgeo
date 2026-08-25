@@ -21,7 +21,7 @@ CREATE TABLE agri.soil_profiles (
     clay_pct double precision,
     available_water_capacity double precision,
     fetched_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_soil_profiles_soil_source CHECK (((source)::text = ANY ((ARRAY['ssurgo'::character varying, 'soilgrids'::character varying])::text[])))
+    CONSTRAINT ck_soil_profiles_soil_source CHECK (((source)::text = ANY (ARRAY[('ssurgo'::character varying)::text, ('soilgrids'::character varying)::text])))
 );
 
 -- CONSTRAINT: soil_profiles pk_soil_profiles

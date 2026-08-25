@@ -204,7 +204,11 @@ def test_transaction_abort_carries_a_non_reflective_error_contract() -> None:
 
 
 def test_foundation_migration_freezes_validated_release_membership() -> None:
-    migration = (Path(__file__).parents[1] / "alembic" / "versions" / "20260719_0001_agri_foundation.py").read_text(
+    # ARCHIVE, not versions: the chain collapsed to one greenfield baseline (20260825_0000) and the
+    # 26 historical revisions moved to alembic/archive/. This assertion is a contract on HISTORY --
+    # `release_set_identity_freeze` and `release_set_membership_draft_only` were DROPPED by
+    # 20260803_0018 and do not exist at head, so it cannot be re-pointed at the live schema.
+    migration = (Path(__file__).parents[1] / "alembic" / "archive" / "20260719_0001_agri_foundation.py").read_text(
         encoding="utf-8"
     )
     assert "release_set_identity_freeze" in migration

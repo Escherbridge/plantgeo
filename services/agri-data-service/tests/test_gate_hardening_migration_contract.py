@@ -13,7 +13,7 @@ and the receipt table's one-way audit flag -- are still checked here.
 from pathlib import Path
 
 SERVICE_ROOT = Path(__file__).parents[1]
-MIGRATION = SERVICE_ROOT / "alembic" / "versions" / "20260801_0014_hindcast_knowledge_pin_and_gate_hardening.py"
+MIGRATION = SERVICE_ROOT / "alembic" / "archive" / "20260801_0014_hindcast_knowledge_pin_and_gate_hardening.py"
 FUNCTION_ROOT = SERVICE_ROOT / "db" / "agri" / "functions"
 TABLE_ROOT = SERVICE_ROOT / "db" / "agri" / "tables"
 

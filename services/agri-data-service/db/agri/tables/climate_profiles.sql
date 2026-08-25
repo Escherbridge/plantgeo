@@ -19,7 +19,7 @@ CREATE TABLE agri.climate_profiles (
     monthly_precip_json jsonb,
     monthly_temp_json jsonb,
     fetched_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_climate_profiles_climate_source CHECK (((source)::text = ANY ((ARRAY['prism'::character varying, 'noaa'::character varying, 'nasa_power'::character varying])::text[])))
+    CONSTRAINT ck_climate_profiles_climate_source CHECK (((source)::text = ANY (ARRAY[('prism'::character varying)::text, ('noaa'::character varying)::text, ('nasa_power'::character varying)::text])))
 );
 
 -- CONSTRAINT: climate_profiles pk_climate_profiles

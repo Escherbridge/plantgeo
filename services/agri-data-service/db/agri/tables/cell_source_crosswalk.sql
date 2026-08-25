@@ -16,7 +16,7 @@ CREATE TABLE agri.cell_source_crosswalk (
     metadata_json jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     spatial_support_kind character varying(32) NOT NULL,
-    CONSTRAINT ck_cell_source_crosswalk_ck_cell_source_crosswalk_known_4ebd CHECK (((spatial_support_kind)::text = ANY ((ARRAY['native_grid_cell'::character varying, 'native_polygon'::character varying, 'point_sample'::character varying, 'area_aggregate'::character varying, 'unknown'::character varying])::text[]))),
+    CONSTRAINT ck_cell_source_crosswalk_ck_cell_source_crosswalk_known_4ebd CHECK (((spatial_support_kind)::text = ANY (ARRAY[('native_grid_cell'::character varying)::text, ('native_polygon'::character varying)::text, ('point_sample'::character varying)::text, ('area_aggregate'::character varying)::text, ('unknown'::character varying)::text]))),
     CONSTRAINT ck_cell_source_crosswalk_positive_native_resolution CHECK (((native_resolution_m IS NULL) OR (native_resolution_m > 0))),
     CONSTRAINT ck_cell_source_crosswalk_valid_coverage CHECK (((coverage_fraction > (0)::double precision) AND (coverage_fraction <= (1)::double precision)))
 );

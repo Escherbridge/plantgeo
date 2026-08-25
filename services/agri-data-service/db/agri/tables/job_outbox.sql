@@ -27,7 +27,7 @@ CREATE TABLE agri.job_outbox (
     CONSTRAINT ck_job_outbox_nonnegative_outbox_attempt_count CHECK ((attempt_count >= 0)),
     CONSTRAINT ck_job_outbox_nonnegative_outbox_fencing_token CHECK ((fencing_token >= 0)),
     CONSTRAINT ck_job_outbox_outbox_attempt_count_within_limit CHECK ((attempt_count <= max_attempts)),
-    CONSTRAINT ck_job_outbox_outbox_state CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'publishing'::character varying, 'retry_wait'::character varying, 'delivered'::character varying, 'dead_letter'::character varying])::text[]))),
+    CONSTRAINT ck_job_outbox_outbox_state CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('publishing'::character varying)::text, ('retry_wait'::character varying)::text, ('delivered'::character varying)::text, ('dead_letter'::character varying)::text]))),
     CONSTRAINT ck_job_outbox_positive_outbox_max_attempts CHECK ((max_attempts > 0)),
     CONSTRAINT ck_job_outbox_publishing_outbox_has_fenced_lease CHECK ((((status)::text <> 'publishing'::text) OR ((lease_owner IS NOT NULL) AND (lease_expires_at IS NOT NULL) AND (fencing_token > 0))))
 );

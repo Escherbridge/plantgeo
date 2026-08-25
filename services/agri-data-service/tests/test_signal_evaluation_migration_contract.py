@@ -2,12 +2,12 @@
 
 from pathlib import Path
 
-_VERSIONS_DIR = Path(__file__).parents[1] / "alembic" / "versions"
+_ARCHIVE_DIR = Path(__file__).parents[1] / "alembic" / "archive"
 _REVOKED_FUNCTION_COUNT = 2
 
 
 def _migration() -> str:
-    matches = sorted(_VERSIONS_DIR.glob("20260725_0011_*.py"))
+    matches = sorted(_ARCHIVE_DIR.glob("20260725_0011_*.py"))
     assert len(matches) == 1, f"expected exactly one 20260725_0011 migration file, found {matches}"
     return matches[0].read_text(encoding="utf-8")
 

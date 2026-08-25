@@ -26,7 +26,7 @@ CREATE TABLE agri.source_release (
     transform_version character varying(100) DEFAULT 'source-native'::character varying NOT NULL,
     CONSTRAINT ck_source_release_nonnegative_payload_bytes CHECK (((payload_bytes IS NULL) OR (payload_bytes >= 0))),
     CONSTRAINT ck_source_release_ordered_observation_window CHECK (((observed_to IS NULL) OR (observed_from IS NULL) OR (observed_to >= observed_from))),
-    CONSTRAINT ck_source_release_release_validation_state CHECK (((validation_state)::text = ANY ((ARRAY['pending'::character varying, 'valid'::character varying, 'invalid'::character varying, 'quarantined'::character varying, 'retracted'::character varying])::text[]))),
+    CONSTRAINT ck_source_release_release_validation_state CHECK (((validation_state)::text = ANY (ARRAY[('pending'::character varying)::text, ('valid'::character varying)::text, ('invalid'::character varying)::text, ('quarantined'::character varying)::text, ('retracted'::character varying)::text]))),
     CONSTRAINT ck_source_release_valid_release_has_validation_time CHECK ((((validation_state)::text <> 'valid'::text) OR (validated_at IS NOT NULL)))
 );
 

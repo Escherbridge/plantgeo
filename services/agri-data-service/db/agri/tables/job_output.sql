@@ -23,8 +23,8 @@ CREATE TABLE agri.job_output (
     validated_at timestamp with time zone,
     CONSTRAINT ck_job_output_nonnegative_output_rows CHECK (((row_count IS NULL) OR (row_count >= 0))),
     CONSTRAINT ck_job_output_nonnegative_output_size CHECK (((size_bytes IS NULL) OR (size_bytes >= 0))),
-    CONSTRAINT ck_job_output_output_state CHECK (((state)::text = ANY ((ARRAY['staged'::character varying, 'validated'::character varying, 'rejected'::character varying, 'published'::character varying, 'superseded'::character varying])::text[]))),
-    CONSTRAINT ck_job_output_validated_output_has_timestamp CHECK ((((state)::text <> ALL ((ARRAY['validated'::character varying, 'published'::character varying])::text[])) OR (validated_at IS NOT NULL))),
+    CONSTRAINT ck_job_output_output_state CHECK (((state)::text = ANY (ARRAY[('staged'::character varying)::text, ('validated'::character varying)::text, ('rejected'::character varying)::text, ('published'::character varying)::text, ('superseded'::character varying)::text]))),
+    CONSTRAINT ck_job_output_validated_output_has_timestamp CHECK ((((state)::text <> ALL (ARRAY[('validated'::character varying)::text, ('published'::character varying)::text])) OR (validated_at IS NOT NULL))),
     CONSTRAINT ck_job_output_work_output_has_attempt_fence CHECK ((((job_work_item_id IS NULL) AND (job_attempt_id IS NULL) AND (fencing_token IS NULL)) OR ((job_work_item_id IS NOT NULL) AND (job_attempt_id IS NOT NULL) AND (fencing_token IS NOT NULL) AND (fencing_token > 0))))
 );
 

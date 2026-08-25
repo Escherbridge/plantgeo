@@ -16,8 +16,8 @@ CREATE TABLE agri.release_set (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_release_set_published_set_has_timestamp CHECK ((((state)::text <> 'published'::text) OR (published_at IS NOT NULL))),
     CONSTRAINT ck_release_set_release_set_manifest_checksum_sha256 CHECK (((manifest_checksum)::text ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT ck_release_set_release_set_state CHECK (((state)::text = ANY ((ARRAY['draft'::character varying, 'validated'::character varying, 'published'::character varying, 'retired'::character varying])::text[]))),
-    CONSTRAINT ck_release_set_validated_set_has_timestamp CHECK ((((state)::text <> ALL ((ARRAY['validated'::character varying, 'published'::character varying])::text[])) OR (validated_at IS NOT NULL)))
+    CONSTRAINT ck_release_set_release_set_state CHECK (((state)::text = ANY (ARRAY[('draft'::character varying)::text, ('validated'::character varying)::text, ('published'::character varying)::text, ('retired'::character varying)::text]))),
+    CONSTRAINT ck_release_set_validated_set_has_timestamp CHECK ((((state)::text <> ALL (ARRAY[('validated'::character varying)::text, ('published'::character varying)::text])) OR (validated_at IS NOT NULL)))
 );
 
 -- CONSTRAINT: release_set pk_release_set

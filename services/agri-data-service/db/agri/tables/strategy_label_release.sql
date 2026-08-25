@@ -30,7 +30,7 @@ CREATE TABLE agri.strategy_label_release (
     CONSTRAINT ck_strategy_label_release_counts CHECK (((row_count >= 0) AND (treated_count >= 0) AND (control_count >= 0) AND (row_count = (treated_count + control_count)) AND (strategy_count >= 0) AND (spatial_block_count >= 0))),
     CONSTRAINT ck_strategy_label_release_input_checksums CHECK ((((strategy_taxonomy_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((feature_schema_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((extraction_plan_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((extraction_code_checksum)::text ~ '^[0-9a-f]{64}$'::text))),
     CONSTRAINT ck_strategy_label_release_json_contracts CHECK (((jsonb_typeof(strategy_taxonomy_snapshot) = 'array'::text) AND (jsonb_array_length(strategy_taxonomy_snapshot) > 0) AND (jsonb_typeof(feature_schema) = 'array'::text) AND (jsonb_array_length(feature_schema) > 0) AND (jsonb_typeof(validation_summary) = 'object'::text))),
-    CONSTRAINT ck_strategy_label_release_status CHECK (((status)::text = ANY ((ARRAY['staging'::character varying, 'validated'::character varying, 'rejected'::character varying])::text[])))
+    CONSTRAINT ck_strategy_label_release_status CHECK (((status)::text = ANY (ARRAY[('staging'::character varying)::text, ('validated'::character varying)::text, ('rejected'::character varying)::text])))
 );
 
 -- CONSTRAINT: strategy_label_release pk_strategy_label_release

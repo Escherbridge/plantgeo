@@ -8,7 +8,7 @@ from pathlib import Path
 def test_resolution_aware_evidence_migration_is_additive_pinned_and_forward_only() -> None:
     service_root = Path(__file__).resolve().parents[1]
     migration = (
-        service_root / "alembic" / "versions" / "20260723_0009_resolution_aware_intervention_evidence.py"
+        service_root / "alembic" / "archive" / "20260723_0009_resolution_aware_intervention_evidence.py"
     ).read_text(encoding="utf-8")
 
     assert 'revision = "20260723_0009"' in migration
@@ -29,7 +29,7 @@ def test_resolution_aware_evidence_migration_is_additive_pinned_and_forward_only
 def test_migration_enforces_wgs84_resolution_and_non_life_safety_contracts() -> None:
     service_root = Path(__file__).resolve().parents[1]
     migration = (
-        service_root / "alembic" / "versions" / "20260723_0009_resolution_aware_intervention_evidence.py"
+        service_root / "alembic" / "archive" / "20260723_0009_resolution_aware_intervention_evidence.py"
     ).read_text(encoding="utf-8")
 
     assert migration.count('Geometry("GEOMETRY", srid=4326') == 3
@@ -55,7 +55,7 @@ def test_migration_enforces_wgs84_resolution_and_non_life_safety_contracts() -> 
 def test_migration_keeps_evidence_categories_and_lineage_relational() -> None:
     service_root = Path(__file__).resolve().parents[1]
     migration = (
-        service_root / "alembic" / "versions" / "20260723_0009_resolution_aware_intervention_evidence.py"
+        service_root / "alembic" / "archive" / "20260723_0009_resolution_aware_intervention_evidence.py"
     ).read_text(encoding="utf-8")
 
     for evidence_kind in ("observed_fact", "model_derived_feature", "known_gap"):

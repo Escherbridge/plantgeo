@@ -10,6 +10,19 @@ Example (local warehouse)::
     uv run python db/tools/regenerate.py \\
         --admin-dsn postgresql://plantgeo_owner:***@127.0.0.1:5442/plantgeo
 
+WHAT THIS PROVES SINCE THE 2026-08-25 COLLAPSE, AND WHAT IT NO LONGER PROVES. The migration head is
+now the greenfield baseline ``20260825_0000``, and that revision builds the schema by replaying
+``manifest.sql`` -- this very tree. So regeneration is a **round trip** (tree -> database -> tree),
+not an independent second derivation of the schema from 26 hand-written revisions. It still catches
+real breakage: any DDL in the tree that PostgreSQL does not re-emit verbatim after a parse shows up
+as a diff, which is exactly how the ``= ANY((ARRAY[...])::text[])`` renormalisation was found. What
+it can no longer catch is the tree having drifted from the *intent* of the archived chain, because
+the chain is no longer on the migration path. If you need that, replay
+``alembic/archive/`` against a disposable database (see ``alembic/archive/AGENTS.md``) and diff.
+
+The tree is a fixed point: applying it and re-dumping must reproduce it byte for byte. If a run of
+this tool produces a diff on an unchanged tree, that is the fixed point breaking, not noise.
+
 See ``db/AGENTS.md`` for the full workflow and the parity guarantee.
 """
 

@@ -1,4 +1,10 @@
-"""Migration wiring is isolated from the runtime identity."""
+"""Migration wiring is isolated from the runtime identity.
+
+Every migration path here points at ``alembic/archive/``, not ``alembic/versions/``: these are
+contracts on *applied history*, and the 26-revision chain moved to the archive when
+``20260825_0000`` collapsed it. The live revision's own contracts are in
+``tests/test_alembic_baseline_contract.py``. See ``alembic/archive/AGENTS.md``.
+"""
 
 from pathlib import Path
 
@@ -7,9 +13,7 @@ def test_alembic_uses_sync_dsn_and_requires_operator_installed_extensions() -> N
     service_root = Path(__file__).resolve().parents[1]
     repository_root = service_root.parents[1]
     environment = (service_root / "alembic" / "env.py").read_text(encoding="utf-8")
-    foundation = (service_root / "alembic" / "versions" / "20260719_0001_agri_foundation.py").read_text(
-        encoding="utf-8"
-    )
+    foundation = (service_root / "alembic" / "archive" / "20260719_0001_agri_foundation.py").read_text(encoding="utf-8")
     extension_gate = (repository_root / "infra" / "local-warehouse" / "enable-extensions.sql").read_text(
         encoding="utf-8"
     )
@@ -22,11 +26,14 @@ def test_alembic_uses_sync_dsn_and_requires_operator_installed_extensions() -> N
     assert "Agri foundation preflight failed" in foundation
     assert "This migration never creates extensions" in foundation
     # These two assertions read two files whose truths diverged on 2026-08-25, so they no longer
-    # share a loop. `foundation` is the APPLIED migration 20260719_0001 -- immutable history, so its
-    # preflight still names timescaledb and always will. `extension_gate` is a live dev-environment
-    # file, and timescaledb was dropped from production that day (it held one always-empty
-    # hypertable and no continuous aggregate), so the gate must stop creating it. Migration
-    # 20260825_0026 is what reconciles the two on a fresh build.
+    # share a loop. `foundation` is the ARCHIVED migration 20260719_0001 -- immutable history that
+    # is no longer on any migration path, so its preflight still names timescaledb and always will.
+    # `extension_gate` is a live dev-environment file, and timescaledb was dropped from production
+    # that day (it held one always-empty hypertable and no continuous aggregate), so the gate must
+    # stop creating it. Revision 20260825_0026 tried to reconcile the two inside the chain and
+    # could not -- 0001 still demanded the extension before 0026 could drop it. The greenfield
+    # baseline 20260825_0000 is what actually reconciles them, by never asking for it at all;
+    # tests/test_alembic_baseline_contract.py holds that assertion.
     for extension in ("postgis", "timescaledb", "vector", "pgcrypto"):
         assert f"'{extension}'::text" in foundation
     for extension in ("postgis", "vector", "pgcrypto"):
@@ -36,7 +43,7 @@ def test_alembic_uses_sync_dsn_and_requires_operator_installed_extensions() -> N
 
 def test_historical_observation_migration_remains_release_pinned_and_forward_only() -> None:
     service_root = Path(__file__).resolve().parents[1]
-    historical = (service_root / "alembic" / "versions" / "20260720_0002_historical_observation_plane.py").read_text(
+    historical = (service_root / "alembic" / "archive" / "20260720_0002_historical_observation_plane.py").read_text(
         encoding="utf-8"
     )
 
@@ -64,7 +71,7 @@ def test_historical_observation_migration_remains_release_pinned_and_forward_onl
 
 def test_historical_promotion_migration_binds_resumable_receipts_to_the_target_release_set() -> None:
     service_root = Path(__file__).resolve().parents[1]
-    promotion = (service_root / "alembic" / "versions" / "20260720_0003_historical_promotion_receiver.py").read_text(
+    promotion = (service_root / "alembic" / "archive" / "20260720_0003_historical_promotion_receiver.py").read_text(
         encoding="utf-8"
     )
 
@@ -83,7 +90,7 @@ def test_historical_promotion_migration_binds_resumable_receipts_to_the_target_r
 
 def test_spatial_support_migration_exposes_resolution_and_acre_compatibility() -> None:
     service_root = Path(__file__).resolve().parents[1]
-    support = (service_root / "alembic" / "versions" / "20260720_0004_spatial_support_contract.py").read_text(
+    support = (service_root / "alembic" / "archive" / "20260720_0004_spatial_support_contract.py").read_text(
         encoding="utf-8"
     )
 

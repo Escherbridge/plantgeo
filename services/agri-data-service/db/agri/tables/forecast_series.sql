@@ -29,13 +29,13 @@ CREATE TABLE agri.forecast_series (
     allow_ml_daily_aggregate boolean DEFAULT false NOT NULL,
     metadata_json jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_forecast_series_aggregate_method CHECK (((((representation_kind)::text = 'raw_native'::text) AND (aggregation_method IS NULL)) OR (((representation_kind)::text = ANY ((ARRAY['resampled'::character varying, 'aggregate'::character varying])::text[])) AND (aggregation_method IS NOT NULL)))),
-    CONSTRAINT ck_forecast_series_input_adapter CHECK (((input_adapter)::text = ANY ((ARRAY['signal_observation'::character varying, 'forecast_observation'::character varying])::text[]))),
+    CONSTRAINT ck_forecast_series_aggregate_method CHECK (((((representation_kind)::text = 'raw_native'::text) AND (aggregation_method IS NULL)) OR (((representation_kind)::text = ANY (ARRAY[('resampled'::character varying)::text, ('aggregate'::character varying)::text])) AND (aggregation_method IS NOT NULL)))),
+    CONSTRAINT ck_forecast_series_input_adapter CHECK (((input_adapter)::text = ANY (ARRAY[('signal_observation'::character varying)::text, ('forecast_observation'::character varying)::text]))),
     CONSTRAINT ck_forecast_series_positive_resolutions CHECK ((((source_spatial_resolution_m IS NULL) OR (source_spatial_resolution_m > 0)) AND ((output_spatial_resolution_m IS NULL) OR (output_spatial_resolution_m > 0)))),
     CONSTRAINT ck_forecast_series_positive_temporal_support CHECK (((source_temporal_support > '00:00:00'::interval) AND (output_temporal_support > '00:00:00'::interval))),
-    CONSTRAINT ck_forecast_series_representation_kind CHECK (((representation_kind)::text = ANY ((ARRAY['raw_native'::character varying, 'resampled'::character varying, 'aggregate'::character varying])::text[]))),
+    CONSTRAINT ck_forecast_series_representation_kind CHECK (((representation_kind)::text = ANY (ARRAY[('raw_native'::character varying)::text, ('resampled'::character varying)::text, ('aggregate'::character varying)::text]))),
     CONSTRAINT ck_forecast_series_signal_adapter_identity CHECK ((((input_adapter)::text <> 'signal_observation'::text) OR ((signal_name IS NOT NULL) AND (source_parameter IS NOT NULL) AND (support_key IS NOT NULL) AND (spatial_cell_id IS NOT NULL)))),
-    CONSTRAINT ck_forecast_series_spatial_support_kind CHECK (((spatial_support_kind)::text = ANY ((ARRAY['native_grid_cell'::character varying, 'native_polygon'::character varying, 'point_sample'::character varying, 'area_aggregate'::character varying, 'unknown'::character varying])::text[])))
+    CONSTRAINT ck_forecast_series_spatial_support_kind CHECK (((spatial_support_kind)::text = ANY (ARRAY[('native_grid_cell'::character varying)::text, ('native_polygon'::character varying)::text, ('point_sample'::character varying)::text, ('area_aggregate'::character varying)::text, ('unknown'::character varying)::text])))
 );
 
 -- CONSTRAINT: forecast_series forecast_series_pkey

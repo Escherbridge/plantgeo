@@ -15,7 +15,7 @@ CREATE TABLE agri.source_coverage_audit (
     status character varying(32) NOT NULL,
     details jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_source_coverage_known_status CHECK (((status)::text = ANY ((ARRAY['complete'::character varying, 'partial'::character varying, 'no_data'::character varying, 'failed'::character varying])::text[]))),
+    CONSTRAINT ck_source_coverage_known_status CHECK (((status)::text = ANY (ARRAY[('complete'::character varying)::text, ('partial'::character varying)::text, ('no_data'::character varying)::text, ('failed'::character varying)::text]))),
     CONSTRAINT ck_source_coverage_nonnegative_counts CHECK (((expected_feature_count >= 0) AND (received_feature_count >= 0))),
     CONSTRAINT ck_source_coverage_ordered_window CHECK ((window_end >= window_start)),
     CONSTRAINT ck_source_coverage_received_within_expected CHECK ((received_feature_count <= expected_feature_count)),

@@ -12,7 +12,7 @@ is the post-0018 live inventory; read that one for what the database looks like 
 from pathlib import Path
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[1]
-_VERSIONS_DIR = _SERVICE_ROOT / "alembic" / "versions"
+_ARCHIVE_DIR = _SERVICE_ROOT / "alembic" / "archive"
 
 _INPUT_RECORDER_OWNER = "plantgeo_forecast_input_recorder_owner"
 _MV_REFRESH_OWNER = "plantgeo_forecast_mv_refresh_owner"
@@ -38,7 +38,7 @@ _EXPECTED_LOCKED_FUNCTION_COUNT = 11
 
 
 def _migration() -> str:
-    matches = sorted(_VERSIONS_DIR.glob("*_0015_*.py"))
+    matches = sorted(_ARCHIVE_DIR.glob("*_0015_*.py"))
     assert len(matches) == 1, f"expected exactly one 0015 migration file, found {matches}"
     return matches[0].read_text(encoding="utf-8")
 

@@ -35,16 +35,16 @@ CREATE TABLE agri.forecast_iteration (
     status character varying(24) DEFAULT 'staging'::character varying NOT NULL,
     recorded_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_forecast_iteration_availability CHECK (((availability_mode)::text = ANY ((ARRAY['as_of_pinned_release'::character varying, 'retrospective_pinned_release'::character varying])::text[]))),
+    CONSTRAINT ck_forecast_iteration_availability CHECK (((availability_mode)::text = ANY (ARRAY[('as_of_pinned_release'::character varying)::text, ('retrospective_pinned_release'::character varying)::text]))),
     CONSTRAINT ck_forecast_iteration_bounds CHECK ((((lower_bound IS NULL) OR ((lower_bound)::text <> ALL (ARRAY['NaN'::text, 'Infinity'::text, '-Infinity'::text]))) AND ((upper_bound IS NULL) OR ((upper_bound)::text <> ALL (ARRAY['NaN'::text, 'Infinity'::text, '-Infinity'::text]))) AND ((lower_bound IS NULL) OR (upper_bound IS NULL) OR (lower_bound <= upper_bound)))),
     CONSTRAINT ck_forecast_iteration_checksums CHECK ((((input_release_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((contract_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((history_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((parameter_checksum)::text ~ '^[0-9a-f]{64}$'::text))),
     CONSTRAINT ck_forecast_iteration_counts CHECK (((training_day_count >= 3) AND (increment_count >= 2))),
-    CONSTRAINT ck_forecast_iteration_gap_policy CHECK (((gap_policy)::text = ANY ((ARRAY['strict'::character varying, 'locf'::character varying])::text[]))),
-    CONSTRAINT ck_forecast_iteration_horizon CHECK ((((horizon_days >= 1) AND (horizon_days <= 366)) AND (expected_value_count = horizon_days) AND (grain = '1 day'::interval))),
+    CONSTRAINT ck_forecast_iteration_gap_policy CHECK (((gap_policy)::text = ANY (ARRAY[('strict'::character varying)::text, ('locf'::character varying)::text]))),
+    CONSTRAINT ck_forecast_iteration_horizon CHECK (((horizon_days >= 1) AND (horizon_days <= 366) AND (expected_value_count = horizon_days) AND (grain = '1 day'::interval))),
     CONSTRAINT ck_forecast_iteration_ordered_history CHECK (((history_start <= cutoff_time) AND (cutoff_time <= as_of_time))),
     CONSTRAINT ck_forecast_iteration_simulations CHECK (((simulation_count >= 100) AND (simulation_count <= 10000))),
     CONSTRAINT ck_forecast_iteration_snapshots CHECK (((jsonb_typeof(input_license_snapshots) = 'array'::text) AND (jsonb_array_length(input_license_snapshots) > 0) AND (jsonb_typeof(contract_snapshot) = 'object'::text))),
-    CONSTRAINT ck_forecast_iteration_status CHECK (((status)::text = ANY ((ARRAY['staging'::character varying, 'finalized'::character varying])::text[])))
+    CONSTRAINT ck_forecast_iteration_status CHECK (((status)::text = ANY (ARRAY[('staging'::character varying)::text, ('finalized'::character varying)::text])))
 );
 
 -- CONSTRAINT: forecast_iteration forecast_iteration_iteration_key_key

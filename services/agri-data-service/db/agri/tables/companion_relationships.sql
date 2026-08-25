@@ -21,8 +21,8 @@ CREATE TABLE agri.companion_relationships (
     reviewed_by character varying(255),
     CONSTRAINT ck_companion_relationships_approved_companion_has_evidence CHECK ((((review_state)::text <> 'approved'::text) OR ((reviewed_at IS NOT NULL) AND (evidence_citation IS NOT NULL)))),
     CONSTRAINT ck_companion_relationships_companion_pair_not_self CHECK ((species_a_id <> species_b_id)),
-    CONSTRAINT ck_companion_relationships_companion_relationship_type CHECK (((relationship_type)::text = ANY ((ARRAY['companion'::character varying, 'antagonist'::character varying, 'neutral'::character varying])::text[]))),
-    CONSTRAINT ck_companion_relationships_companion_review_state CHECK (((review_state)::text = ANY ((ARRAY['draft'::character varying, 'reviewed'::character varying, 'approved'::character varying, 'rejected'::character varying])::text[])))
+    CONSTRAINT ck_companion_relationships_companion_relationship_type CHECK (((relationship_type)::text = ANY (ARRAY[('companion'::character varying)::text, ('antagonist'::character varying)::text, ('neutral'::character varying)::text]))),
+    CONSTRAINT ck_companion_relationships_companion_review_state CHECK (((review_state)::text = ANY (ARRAY[('draft'::character varying)::text, ('reviewed'::character varying)::text, ('approved'::character varying)::text, ('rejected'::character varying)::text])))
 );
 
 -- CONSTRAINT: companion_relationships pk_companion_relationships

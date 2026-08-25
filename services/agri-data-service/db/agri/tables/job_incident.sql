@@ -25,8 +25,8 @@ CREATE TABLE agri.job_incident (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_job_incident_acknowledged_incident_has_timestamp CHECK ((((status)::text <> 'acknowledged'::text) OR (acknowledged_at IS NOT NULL))),
-    CONSTRAINT ck_job_incident_incident_severity CHECK (((severity)::text = ANY ((ARRAY['debug'::character varying, 'info'::character varying, 'warning'::character varying, 'error'::character varying, 'critical'::character varying])::text[]))),
-    CONSTRAINT ck_job_incident_incident_state CHECK (((status)::text = ANY ((ARRAY['open'::character varying, 'acknowledged'::character varying, 'resolved'::character varying])::text[]))),
+    CONSTRAINT ck_job_incident_incident_severity CHECK (((severity)::text = ANY (ARRAY[('debug'::character varying)::text, ('info'::character varying)::text, ('warning'::character varying)::text, ('error'::character varying)::text, ('critical'::character varying)::text]))),
+    CONSTRAINT ck_job_incident_incident_state CHECK (((status)::text = ANY (ARRAY[('open'::character varying)::text, ('acknowledged'::character varying)::text, ('resolved'::character varying)::text]))),
     CONSTRAINT ck_job_incident_ordered_incident_seen_window CHECK ((last_seen_at >= first_seen_at)),
     CONSTRAINT ck_job_incident_positive_incident_occurrence_count CHECK ((occurrence_count > 0)),
     CONSTRAINT ck_job_incident_resolved_incident_has_timestamp CHECK ((((status)::text <> 'resolved'::text) OR (resolved_at IS NOT NULL)))

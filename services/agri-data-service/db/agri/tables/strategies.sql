@@ -35,11 +35,11 @@ CREATE TABLE agri.strategies (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_strategies_approved_strategy_has_evidence CHECK ((((review_state)::text <> 'approved'::text) OR ((reviewed_at IS NOT NULL) AND (reviewed_by IS NOT NULL) AND (evidence_citation IS NOT NULL) AND (evidence_source_url IS NOT NULL) AND (jurisdiction IS NOT NULL) AND (limitations IS NOT NULL)))),
-    CONSTRAINT ck_strategies_labor_intensity CHECK (((labor_intensity)::text = ANY ((ARRAY['low'::character varying, 'medium'::character varying, 'high'::character varying])::text[]))),
-    CONSTRAINT ck_strategies_strategy_biodiversity_impact_level CHECK (((biodiversity_impact)::text = ANY ((ARRAY['low'::character varying, 'medium'::character varying, 'high'::character varying, 'very_high'::character varying])::text[]))),
-    CONSTRAINT ck_strategies_strategy_carbon_impact_level CHECK (((carbon_seq_potential)::text = ANY ((ARRAY['low'::character varying, 'medium'::character varying, 'high'::character varying, 'very_high'::character varying])::text[]))),
-    CONSTRAINT ck_strategies_strategy_review_state CHECK (((review_state)::text = ANY ((ARRAY['draft'::character varying, 'reviewed'::character varying, 'approved'::character varying, 'rejected'::character varying])::text[]))),
-    CONSTRAINT ck_strategies_water_requirement CHECK (((water_requirement)::text = ANY ((ARRAY['low'::character varying, 'medium'::character varying, 'high'::character varying])::text[])))
+    CONSTRAINT ck_strategies_labor_intensity CHECK (((labor_intensity)::text = ANY (ARRAY[('low'::character varying)::text, ('medium'::character varying)::text, ('high'::character varying)::text]))),
+    CONSTRAINT ck_strategies_strategy_biodiversity_impact_level CHECK (((biodiversity_impact)::text = ANY (ARRAY[('low'::character varying)::text, ('medium'::character varying)::text, ('high'::character varying)::text, ('very_high'::character varying)::text]))),
+    CONSTRAINT ck_strategies_strategy_carbon_impact_level CHECK (((carbon_seq_potential)::text = ANY (ARRAY[('low'::character varying)::text, ('medium'::character varying)::text, ('high'::character varying)::text, ('very_high'::character varying)::text]))),
+    CONSTRAINT ck_strategies_strategy_review_state CHECK (((review_state)::text = ANY (ARRAY[('draft'::character varying)::text, ('reviewed'::character varying)::text, ('approved'::character varying)::text, ('rejected'::character varying)::text]))),
+    CONSTRAINT ck_strategies_water_requirement CHECK (((water_requirement)::text = ANY (ARRAY[('low'::character varying)::text, ('medium'::character varying)::text, ('high'::character varying)::text])))
 );
 
 -- CONSTRAINT: strategies pk_strategies

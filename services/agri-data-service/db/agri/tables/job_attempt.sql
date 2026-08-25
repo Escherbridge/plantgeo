@@ -17,7 +17,7 @@ CREATE TABLE agri.job_attempt (
     failure_class character varying(255),
     error_summary text,
     metrics jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT ck_job_attempt_attempt_state CHECK (((status)::text = ANY ((ARRAY['running'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'lost'::character varying, 'deferred'::character varying, 'cancelled'::character varying])::text[]))),
+    CONSTRAINT ck_job_attempt_attempt_state CHECK (((status)::text = ANY (ARRAY[('running'::character varying)::text, ('succeeded'::character varying)::text, ('failed'::character varying)::text, ('lost'::character varying)::text, ('deferred'::character varying)::text, ('cancelled'::character varying)::text]))),
     CONSTRAINT ck_job_attempt_positive_attempt_fencing_token CHECK ((fencing_token > 0)),
     CONSTRAINT ck_job_attempt_positive_attempt_number CHECK ((attempt_number > 0)),
     CONSTRAINT ck_job_attempt_terminal_attempt_has_finish_time CHECK ((((status)::text = 'running'::text) OR (finished_at IS NOT NULL)))

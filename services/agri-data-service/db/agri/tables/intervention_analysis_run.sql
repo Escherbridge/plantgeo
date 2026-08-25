@@ -21,7 +21,7 @@ CREATE TABLE agri.intervention_analysis_run (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_intervention_analysis_run_analysis_code_checksum_sha256 CHECK (((analysis_code_checksum)::text ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT ck_intervention_analysis_run_analysis_plan_checksum_sha256 CHECK (((analysis_plan_checksum)::text ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT ck_intervention_analysis_run_known_validation_state CHECK (((validation_state)::text = ANY ((ARRAY['validated'::character varying, 'rejected'::character varying])::text[]))),
+    CONSTRAINT ck_intervention_analysis_run_known_validation_state CHECK (((validation_state)::text = ANY (ARRAY[('validated'::character varying)::text, ('rejected'::character varying)::text]))),
     CONSTRAINT ck_intervention_analysis_run_nonnegative_row_count CHECK ((row_count >= 0)),
     CONSTRAINT ck_intervention_analysis_run_not_life_safety_prediction CHECK ((is_life_safety_prediction = false)),
     CONSTRAINT ck_intervention_analysis_run_ordered_validation_time CHECK (((validated_at IS NULL) OR (finalized_at >= validated_at))),

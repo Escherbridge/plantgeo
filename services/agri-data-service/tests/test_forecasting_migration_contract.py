@@ -4,9 +4,9 @@ from pathlib import Path
 
 
 def _migration() -> str:
-    return (
-        Path(__file__).parents[1] / "alembic" / "versions" / "20260722_0005_sql_forecasting_framework.py"
-    ).read_text(encoding="utf-8")
+    return (Path(__file__).parents[1] / "alembic" / "archive" / "20260722_0005_sql_forecasting_framework.py").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_forecasting_revision_is_forward_only_and_additive() -> None:

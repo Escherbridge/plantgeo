@@ -28,7 +28,7 @@ CREATE TABLE agri.job_work_item (
     completed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_job_work_item_active_item_has_fenced_lease CHECK ((((status)::text <> ALL ((ARRAY['leased'::character varying, 'running'::character varying])::text[])) OR ((lease_owner IS NOT NULL) AND (lease_expires_at IS NOT NULL) AND (fencing_token > 0)))),
+    CONSTRAINT ck_job_work_item_active_item_has_fenced_lease CHECK ((((status)::text <> ALL (ARRAY[('leased'::character varying)::text, ('running'::character varying)::text])) OR ((lease_owner IS NOT NULL) AND (lease_expires_at IS NOT NULL) AND (fencing_token > 0)))),
     CONSTRAINT ck_job_work_item_attempt_count_within_limit CHECK ((attempt_count <= max_attempts)),
     CONSTRAINT ck_job_work_item_complete_lease_pair CHECK ((((lease_owner IS NULL) AND (lease_expires_at IS NULL)) OR ((lease_owner IS NOT NULL) AND (lease_expires_at IS NOT NULL)))),
     CONSTRAINT ck_job_work_item_nonnegative_attempt_count CHECK ((attempt_count >= 0)),
@@ -36,9 +36,9 @@ CREATE TABLE agri.job_work_item (
     CONSTRAINT ck_job_work_item_nonnegative_fencing_token CHECK ((fencing_token >= 0)),
     CONSTRAINT ck_job_work_item_positive_work_item_max_attempts CHECK ((max_attempts > 0)),
     CONSTRAINT ck_job_work_item_progress_fraction_range CHECK (((progress_fraction >= (0)::double precision) AND (progress_fraction <= (1)::double precision))),
-    CONSTRAINT ck_job_work_item_resumable_item_has_next_attempt CHECK ((((status)::text <> ALL ((ARRAY['retry_wait'::character varying, 'deferred'::character varying])::text[])) OR (next_attempt_at IS NOT NULL))),
-    CONSTRAINT ck_job_work_item_terminal_item_has_completion_time CHECK ((((status)::text <> ALL ((ARRAY['succeeded'::character varying, 'dead_letter'::character varying, 'cancelled'::character varying])::text[])) OR (completed_at IS NOT NULL))),
-    CONSTRAINT ck_job_work_item_work_item_state CHECK (((status)::text = ANY ((ARRAY['queued'::character varying, 'leased'::character varying, 'running'::character varying, 'retry_wait'::character varying, 'deferred'::character varying, 'succeeded'::character varying, 'dead_letter'::character varying, 'cancelled'::character varying])::text[])))
+    CONSTRAINT ck_job_work_item_resumable_item_has_next_attempt CHECK ((((status)::text <> ALL (ARRAY[('retry_wait'::character varying)::text, ('deferred'::character varying)::text])) OR (next_attempt_at IS NOT NULL))),
+    CONSTRAINT ck_job_work_item_terminal_item_has_completion_time CHECK ((((status)::text <> ALL (ARRAY[('succeeded'::character varying)::text, ('dead_letter'::character varying)::text, ('cancelled'::character varying)::text])) OR (completed_at IS NOT NULL))),
+    CONSTRAINT ck_job_work_item_work_item_state CHECK (((status)::text = ANY (ARRAY[('queued'::character varying)::text, ('leased'::character varying)::text, ('running'::character varying)::text, ('retry_wait'::character varying)::text, ('deferred'::character varying)::text, ('succeeded'::character varying)::text, ('dead_letter'::character varying)::text, ('cancelled'::character varying)::text])))
 );
 
 -- CONSTRAINT: job_work_item pk_job_work_item

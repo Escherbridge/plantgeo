@@ -10,7 +10,7 @@ carries itself as a module-level raw string. Both halves are checked here.
 from pathlib import Path
 
 SERVICE_ROOT = Path(__file__).parents[1]
-MIGRATION = SERVICE_ROOT / "alembic" / "versions" / "20260725_0013_strategy_selection_contract.py"
+MIGRATION = SERVICE_ROOT / "alembic" / "archive" / "20260725_0013_strategy_selection_contract.py"
 FUNCTION_ROOT = SERVICE_ROOT / "db" / "agri" / "functions"
 TRIGGER_ROOT = SERVICE_ROOT / "db" / "agri" / "triggers"
 # An embedded body must appear exactly twice: its definition and its one execution.

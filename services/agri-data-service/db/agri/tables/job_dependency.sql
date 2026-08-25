@@ -11,7 +11,7 @@ CREATE TABLE agri.job_dependency (
     required_status character varying(32) DEFAULT 'succeeded'::character varying NOT NULL,
     satisfied_at timestamp with time zone,
     CONSTRAINT ck_job_dependency_dependency_not_self CHECK ((job_run_id <> depends_on_run_id)),
-    CONSTRAINT ck_job_dependency_dependency_required_status CHECK (((required_status)::text = ANY ((ARRAY['succeeded'::character varying, 'partial'::character varying])::text[])))
+    CONSTRAINT ck_job_dependency_dependency_required_status CHECK (((required_status)::text = ANY (ARRAY[('succeeded'::character varying)::text, ('partial'::character varying)::text])))
 );
 
 -- CONSTRAINT: job_dependency pk_job_dependency

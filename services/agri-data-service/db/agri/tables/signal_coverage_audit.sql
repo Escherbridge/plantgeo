@@ -18,7 +18,7 @@ CREATE TABLE agri.signal_coverage_audit (
     details jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     source_parameter character varying(150) NOT NULL,
-    CONSTRAINT ck_signal_coverage_known_status CHECK (((status)::text = ANY ((ARRAY['complete'::character varying, 'partial'::character varying, 'no_data'::character varying, 'failed'::character varying])::text[]))),
+    CONSTRAINT ck_signal_coverage_known_status CHECK (((status)::text = ANY (ARRAY[('complete'::character varying)::text, ('partial'::character varying)::text, ('no_data'::character varying)::text, ('failed'::character varying)::text]))),
     CONSTRAINT ck_signal_coverage_nonnegative_counts CHECK (((expected_observation_count >= 0) AND (received_observation_count >= 0))),
     CONSTRAINT ck_signal_coverage_ordered_window CHECK ((window_end >= window_start)),
     CONSTRAINT ck_signal_coverage_received_within_expected CHECK ((received_observation_count <= expected_observation_count)),

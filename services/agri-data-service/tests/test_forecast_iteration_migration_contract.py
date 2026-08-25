@@ -5,7 +5,7 @@ from pathlib import Path
 
 def _migration() -> str:
     return (
-        Path(__file__).parents[1] / "alembic" / "versions" / "20260723_0010_forecast_iteration_pipeline.py"
+        Path(__file__).parents[1] / "alembic" / "archive" / "20260723_0010_forecast_iteration_pipeline.py"
     ).read_text(encoding="utf-8")
 
 

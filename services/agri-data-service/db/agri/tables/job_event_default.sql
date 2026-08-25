@@ -18,7 +18,7 @@ CREATE TABLE agri.job_event_default (
     duration_ms bigint,
     progress jsonb DEFAULT '{}'::jsonb NOT NULL,
     detail jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT ck_job_event_event_severity CHECK (((severity)::text = ANY ((ARRAY['debug'::character varying, 'info'::character varying, 'warning'::character varying, 'error'::character varying, 'critical'::character varying])::text[]))),
+    CONSTRAINT ck_job_event_event_severity CHECK (((severity)::text = ANY (ARRAY[('debug'::character varying)::text, ('info'::character varying)::text, ('warning'::character varying)::text, ('error'::character varying)::text, ('critical'::character varying)::text]))),
     CONSTRAINT ck_job_event_nonnegative_event_duration CHECK (((duration_ms IS NULL) OR (duration_ms >= 0)))
 );
 

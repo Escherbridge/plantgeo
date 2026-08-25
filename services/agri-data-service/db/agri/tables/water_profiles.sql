@@ -15,7 +15,7 @@ CREATE TABLE agri.water_profiles (
     groundwater_depth_m double precision,
     water_table_seasonal_json jsonb,
     fetched_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_water_profiles_water_source CHECK (((source)::text = ANY ((ARRAY['usgs_nwis'::character varying, 'noaa_atlas14'::character varying])::text[])))
+    CONSTRAINT ck_water_profiles_water_source CHECK (((source)::text = ANY (ARRAY[('usgs_nwis'::character varying)::text, ('noaa_atlas14'::character varying)::text])))
 );
 
 -- CONSTRAINT: water_profiles pk_water_profiles

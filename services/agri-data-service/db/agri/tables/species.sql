@@ -27,7 +27,7 @@ CREATE TABLE agri.species (
     guild_roles character varying[],
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_species_pollinator_value CHECK (((pollinator_value)::text = ANY ((ARRAY['none'::character varying, 'low'::character varying, 'medium'::character varying, 'high'::character varying])::text[])))
+    CONSTRAINT ck_species_pollinator_value CHECK (((pollinator_value)::text = ANY (ARRAY[('none'::character varying)::text, ('low'::character varying)::text, ('medium'::character varying)::text, ('high'::character varying)::text])))
 );
 
 -- CONSTRAINT: species pk_species

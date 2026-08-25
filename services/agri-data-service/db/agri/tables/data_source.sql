@@ -27,7 +27,7 @@ CREATE TABLE agri.data_source (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_data_source_approved_source_has_review CHECK ((((review_state)::text <> 'approved'::text) OR (reviewed_at IS NOT NULL))),
     CONSTRAINT ck_data_source_positive_retention_days CHECK (((retention_days IS NULL) OR (retention_days > 0))),
-    CONSTRAINT ck_data_source_source_review_state CHECK (((review_state)::text = ANY ((ARRAY['draft'::character varying, 'reviewed'::character varying, 'approved'::character varying, 'rejected'::character varying, 'retired'::character varying])::text[])))
+    CONSTRAINT ck_data_source_source_review_state CHECK (((review_state)::text = ANY (ARRAY[('draft'::character varying)::text, ('reviewed'::character varying)::text, ('approved'::character varying)::text, ('rejected'::character varying)::text, ('retired'::character varying)::text])))
 );
 
 -- CONSTRAINT: data_source pk_data_source

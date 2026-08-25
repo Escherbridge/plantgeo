@@ -24,7 +24,7 @@ CREATE TABLE agri.forecast_feature_snapshot (
     CONSTRAINT ck_forecast_feature_snapshot_checksums CHECK ((((input_release_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((feature_code_checksum)::text ~ '^[0-9a-f]{64}$'::text) AND ((feature_checksum)::text ~ '^[0-9a-f]{64}$'::text))),
     CONSTRAINT ck_forecast_feature_snapshot_ordered_window CHECK ((training_window_end >= training_window_start)),
     CONSTRAINT ck_forecast_feature_snapshot_positive_rows CHECK ((row_count > 0)),
-    CONSTRAINT ck_forecast_feature_snapshot_status CHECK (((status)::text = ANY ((ARRAY['draft'::character varying, 'validated'::character varying, 'rejected'::character varying])::text[]))),
+    CONSTRAINT ck_forecast_feature_snapshot_status CHECK (((status)::text = ANY (ARRAY[('draft'::character varying)::text, ('validated'::character varying)::text, ('rejected'::character varying)::text]))),
     CONSTRAINT ck_forecast_feature_snapshot_validated_at CHECK ((((status)::text <> 'validated'::text) OR (validated_at IS NOT NULL)))
 );
 

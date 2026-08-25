@@ -15,7 +15,7 @@ CREATE TABLE agri.historical_promotion_bundle (
     received_by character varying(255) NOT NULL,
     finalized_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_historical_promotion_bundle_historical_promotion_known_state CHECK (((state)::text = ANY ((ARRAY['receiving'::character varying, 'finalized'::character varying])::text[]))),
+    CONSTRAINT ck_historical_promotion_bundle_historical_promotion_known_state CHECK (((state)::text = ANY (ARRAY[('receiving'::character varying)::text, ('finalized'::character varying)::text]))),
     CONSTRAINT ck_historical_promotion_bundle_historical_promotion_man_9177 CHECK (((manifest_checksum)::text ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT ck_historical_promotion_bundle_historical_promotion_pos_85d2 CHECK ((expected_chunk_count > 0)),
     CONSTRAINT ck_historical_promotion_bundle_historical_promotion_pos_8a9c CHECK ((expected_record_count > 0))

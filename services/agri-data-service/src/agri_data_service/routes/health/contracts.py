@@ -14,5 +14,10 @@ had no members and no DSN.
 # correctly-migrated production database. Only the agri_db-gated
 # test_expected_alembic_revision_matches_migrated_head_database compares this to a live head, and
 # that gate had been running dark. Every new revision bumps this line.
-EXPECTED_ALEMBIC_REVISION = "20260825_0026"
+#
+# 2026-08-25: now the greenfield baseline, after the 26-revision chain collapsed into it. THIS PIN
+# MOVING IS WHAT MAKES THE PRODUCTION STAMP MANDATORY: health_migration.sql demands exact equality,
+# so a deploy carrying this build against a database still reading `20260817_0025` reports
+# migration=false and /ready refuses to come up. Stamp first, deploy second.
+EXPECTED_ALEMBIC_REVISION = "20260825_0000"
 REQUIRED_EXTENSIONS = ("postgis", "vector", "pgcrypto")

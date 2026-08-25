@@ -13,6 +13,11 @@ was most needed.
 
 Deriving the head here rather than restating it makes the class of failure impossible: a new revision
 that forgets to bump the constant fails this test instead of silently disabling its own coverage.
+
+SCOPE, since 2026-08-25. `alembic/versions/` holds exactly one revision -- the greenfield baseline
+`20260825_0000` -- and the 26 historical revisions live in `alembic/archive/`, which Alembic never
+scans. Every derivation below reads `alembic/versions/` only, so an archived revision can never be
+mistaken for a live one; `tests/test_alembic_baseline_contract.py` guards the archive's own shape.
 """
 
 from __future__ import annotations
@@ -35,11 +40,11 @@ _REVISION = re.compile(r'^revision(?:\s*:[^=]+)?\s*=\s*["\']([^"\']+)["\']', re.
 _DOWN_REVISION = re.compile(r'^down_revision(?:\s*:[^=]+)?\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
 
 
-def _revision_graph() -> tuple[set[str], set[str]]:
-    """Every declared revision id, and every id named as some revision's parent."""
+def revision_graph(directory: Path = _VERSIONS) -> tuple[set[str], set[str]]:
+    """Every declared revision id in ``directory``, and every id named as some revision's parent."""
     revisions: set[str] = set()
     parents: set[str] = set()
-    for path in sorted(_VERSIONS.glob("*.py")):
+    for path in sorted(directory.glob("*.py")):
         source = path.read_text(encoding="utf-8")
         match = _REVISION.search(source)
         assert match is not None, f"{path.name} declares no module-level `revision`"
@@ -52,14 +57,14 @@ def _revision_graph() -> tuple[set[str], set[str]]:
 
 def test_the_migration_tree_has_exactly_one_head() -> None:
     """A second head would make `alembic upgrade head` ambiguous and this pin meaningless."""
-    revisions, parents = _revision_graph()
+    revisions, parents = revision_graph()
     heads = revisions - parents
     assert len(heads) == 1, f"expected exactly one alembic head, found {sorted(heads)}"
 
 
 def test_expected_alembic_head_matches_the_versions_directory() -> None:
     """The constant the real-database gate keys on must BE the head, not a stale copy of a past one."""
-    revisions, parents = _revision_graph()
+    revisions, parents = revision_graph()
     (head,) = revisions - parents
     assert head == EXPECTED_ALEMBIC_HEAD, (
         f"tests/conftest.py EXPECTED_ALEMBIC_HEAD is {EXPECTED_ALEMBIC_HEAD!r} but the head of "
@@ -77,7 +82,7 @@ def test_readiness_revision_pin_matches_the_versions_directory() -> None:
     20260817_0025 because the only test comparing it to a real head needs `AGRI_TEST_DATABASE_URL`,
     which the sweep that shipped them did not set. This one needs no database, so it cannot run dark.
     """
-    revisions, parents = _revision_graph()
+    revisions, parents = revision_graph()
     (head,) = revisions - parents
     assert head == EXPECTED_ALEMBIC_REVISION, (
         f"routes/health/contracts.py EXPECTED_ALEMBIC_REVISION is {EXPECTED_ALEMBIC_REVISION!r} but "
@@ -88,5 +93,5 @@ def test_readiness_revision_pin_matches_the_versions_directory() -> None:
 
 def test_every_named_parent_revision_actually_exists() -> None:
     """A `down_revision` pointing at nothing makes the chain unwalkable and the head undefined."""
-    revisions, parents = _revision_graph()
+    revisions, parents = revision_graph()
     assert not (parents - revisions), f"down_revision names unknown revision(s): {sorted(parents - revisions)}"
