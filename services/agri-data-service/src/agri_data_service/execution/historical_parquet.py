@@ -29,6 +29,9 @@ HISTORICAL_NASA_PARQUET_SCHEMA_VERSION: Literal[1] = 1
 HISTORICAL_NASA_PARQUET_MANIFEST_FILE = "manifest.json"
 HISTORICAL_NASA_PARQUET_MEMORY_LIMIT = "1GB"
 HISTORICAL_NASA_PARQUET_THREAD_COUNT = 1
+# Bounded, not disabled -- see execution/AGENTS.md, "historical_parquet.py", for why this is the
+# one DuckDB site in the repo that intends to spill.
+HISTORICAL_NASA_PARQUET_TEMP_DIRECTORY_SIZE = "8GiB"
 
 
 class HistoricalNasaParquetManifest(ContractModel):
@@ -152,6 +155,9 @@ def materialize_historical_nasa_parquet(  # noqa: PLR0912, PLR0915
         connection.execute(f"SET threads = {HISTORICAL_NASA_PARQUET_THREAD_COUNT}")
         connection.execute("SET preserve_insertion_order = false")
         connection.execute("SET temp_directory = " + _sql_literal(spill.as_posix()))
+        connection.execute(
+            "SET max_temp_directory_size = " + _sql_literal(HISTORICAL_NASA_PARQUET_TEMP_DIRECTORY_SIZE)
+        )
         source_glob = (staging / "*.parquet").as_posix()
         connection.execute("CREATE VIEW nasa_cells AS SELECT * FROM read_parquet(" + _sql_literal(source_glob) + ")")
         count_row = connection.execute("SELECT count(*) FROM nasa_cells").fetchone()
