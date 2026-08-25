@@ -6232,6 +6232,39 @@ Python side is the strict one.** A server that adds a field fails in Python and 
 Sweep at the freeze: 16 passed (`pytest tests/contract`), 41 passed (vitest, client + envelope),
 ruff clean.
 
+#### 0.42.17 WAVE 1 LAUNCHED (2026-08-25) — five agents, and why it is five rather than three
+
+Owner said launch all outstanding work. "All outstanding" resolved to **all currently UNBLOCKED**
+work: `s2` needs `s0`, `s3`/`s4` need `s2`, `s5` needs `s1`–`s4`, `d5` needs `d1`, `d4` needs `d3`,
+and `s6` is last by construction. Launching those now would only have agents waiting on files that do
+not exist. Five slices are unblocked, and they were launched together:
+
+| agent | lane | slice | model | owns |
+|---|---|---|---|---|
+| A/s0 | A | `s0` restore `cronSchedule` + fix the false Dockerfile header | sonnet | `infra/cron-ingest/*` |
+| A/d1 | A | `d1` fused drain + tier derivation **rewrite** | opus | `tiers.py`, `drain.py`, their 2 tests |
+| A/s1 | A | `s1` alembic greenfield baseline | opus | `alembic/*`, 12 contract tests, readiness pin |
+| B | B | `d3` serving API + `b1` coverage endpoint | opus | `interface/http/`, `app.py`, `tests/interface/` |
+| C | C | `u1`–`u4` boundary plan, then implement `u4` | opus | frontend tree only |
+
+**Lanes B and C are NOT blocked on lane A's data, and that is what the freeze bought.** `d3` builds
+its routes against the golden fixtures; `u4` needs no Parquet lane at all. Without 0.42.16 both would
+be waiting on `d1`'s re-export.
+
+**No agent runs a git write.** Five agents committing to one branch contend on `index.lock`, and
+worktree isolation would have stranded the Python lanes without `.env` (the production DSN). They
+edit; the orchestrator commits per lane at the join.
+
+**Two couplings the briefs name explicitly**, because they look like defects from inside an agent:
+- `s1` owns `tests/conftest.py`, which `d1` depends on while running `tests/parquet/`. A test failure
+  that reads as an alembic head-pin mismatch is `s1` in flight — report, do not "fix".
+- `s0`'s config change takes effect only on a DEPLOY, and no agent may push. The `sensors` deadline of
+  **2026-08-31** therefore needs an operator push, which is now the programme's nearest hard date.
+
+**Two things deliberately withheld from agents:** the full ~1,560-day signal re-export (`d1` builds and
+sample-verifies, then reports the command) and the production alembic stamp (`s1` prepares and verifies
+against a disposable database, then stops). Both are one-way operator decisions.
+
 ---
 
 
