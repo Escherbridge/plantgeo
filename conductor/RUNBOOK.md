@@ -6189,6 +6189,49 @@ entries in 0.42.6's assumptions block**.
    before its cuts are considered done; the broad pass at the join stays. A lane with no recorded
    verdict is unreviewed, not done.
 
+#### 0.42.15 PARTITION RE-VERIFICATION at `80ac72a` — one cross-lane collision, two drifts
+
+0.42.9 step 2 run: every `owns` path in both sets grepped against HEAD, plus a **prefix** check for
+directory-owner-versus-file-inside-it, which a string-equality check cannot see. Both sets are now
+`confidence: verified`.
+
+**One real cross-lane collision, and it would have put two lanes in one directory.** Pivot `d5`
+creates `pipeline/lanes/soil_field.py` — **inside the directory `shrink:s5` owns and deletes
+producers from**. 0.42.1 assigned `d5` to lane **C** (UI display surface) and `s5` to lane **A**, so
+they would have run concurrently against the same directory. `d5` is also a Python data-lane file,
+not a UI surface, so the lane assignment was wrong on its face. **`d5` moves to lane A and must land
+before `s5`.** Lane C is now `d4` plus `u1`–`u4`; this costs lane C nothing, since `d5` never
+belonged to it.
+
+**Two drifts in `d1`.** `warehouse/parquet/tiers.py` and `pipeline/parquet/drain.py` were marked
+`future` but both **exist** at HEAD (built in `3e5027f` / `ae63b02`). `d1` is therefore a **rewrite**,
+not a create — a distinction that changes how it must be briefed: the cell join is already out of the
+hot path and the drain already has its own 600 s clock, and an agent told "create these" would throw
+that away.
+
+**Twenty-two same-lane overlaps that are ordering, not contention.** `s2` owns `pipeline/direct/` and
+`tests/direct/` as directories while `s3`/`s4` own individual files inside them — but `s3` and `s4`
+both `depends_on: [s2]` and all three are lane A, so `s2` creates the directory and the others fill
+it in sequence. Left as is; recorded so the next reader does not re-raise it as a defect.
+
+**Nothing else overlaps across the two sets.**
+
+#### 0.42.16 The contract freeze is DONE — `80ac72a`
+
+0.42.9 step 1 is complete, so the gate on parallel work is lifted. Nine golden fixtures in
+`services/agri-data-service/tests/contract/fixtures/`, a pydantic declaration with `extra="forbid"`,
+16 Python contract tests and a new describe block in
+`src/__tests__/services/parquet-plane-client.test.ts` reading **the same fixture files** through the
+real zod schemas. The load-bearing test **parses the `WIRE` block out of the TypeScript source** and
+compares it to the Python table, so renaming a route on either side fails the build — that is what
+makes it a freeze rather than two hopeful copies.
+
+One asymmetry recorded rather than silently accepted: **zod strips unknown keys by default, so the
+Python side is the strict one.** A server that adds a field fails in Python and passes in TypeScript.
+
+Sweep at the freeze: 16 passed (`pytest tests/contract`), 41 passed (vitest, client + envelope),
+ruff clean.
+
 ---
 
 

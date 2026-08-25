@@ -8,20 +8,35 @@
     "parquet_duckdb_pivot_20260823": "item E of RUNBOOK 0.33.3 (forward path per lane, upstream -> Parquet) moves here; items A (slice d1), C (d3), D (d4) stay there and are this track's external dependencies"
   },
   "external_dependencies": [
-    { "track": "parquet_duckdb_pivot_20260823", "slice": "d1", "for": "coarse-rung derivation fix, signal z13 re-export with positions, retraction of the 2026-08-08..16 signal absences; blocks s5 exporter deletion" },
-    { "track": "parquet_duckdb_pivot_20260823", "slice": "d3", "for": "interface/http serving API; blocks s6" },
-    { "track": "parquet_duckdb_pivot_20260823", "slice": "d4", "for": "tRPC repoint; blocks s6" }
+    {
+      "track": "parquet_duckdb_pivot_20260823",
+      "slice": "d1",
+      "for": "coarse-rung derivation fix, signal z13 re-export with positions, retraction of the 2026-08-08..16 signal absences; blocks s5 exporter deletion"
+    },
+    {
+      "track": "parquet_duckdb_pivot_20260823",
+      "slice": "d3",
+      "for": "interface/http serving API; blocks s6"
+    },
+    {
+      "track": "parquet_duckdb_pivot_20260823",
+      "slice": "d4",
+      "for": "tRPC repoint; blocks s6"
+    }
   ],
   "partitions": {
     "computed_at": "2026-08-25T02:30:00Z",
-    "computed_at_commit": "440d9b5",
-    "confidence": "planned",
-    "note": "Prebaked from the planning analysis at 440d9b5; no separate recon pass. Excludes every path owned by parquet_duckdb_pivot_20260823 slices d0-d5. lane_registry.py, cli.py, alembic/versions/ and the cron Dockerfile are shared registries with one named owner each: later slices append and must be sequenced, never run concurrently on those files. Re-verify `owns` with a real grep once HEAD moves.",
+    "computed_at_commit": "80ac72a",
+    "confidence": "verified",
+    "note": "Prebaked from the planning analysis at 440d9b5; no separate recon pass. Excludes every path owned by parquet_duckdb_pivot_20260823 slices d0-d5. lane_registry.py, cli.py, alembic/versions/ and the cron Dockerfile are shared registries with one named owner each: later slices append and must be sequenced, never run concurrently on those files. Re-verify `owns` with a real grep once HEAD moves. RE-VERIFIED at 80ac72a (RUNBOOK 0.42.15): every `owns` path grepped against HEAD -- no drift, every `future` path genuinely absent and every existing one present. s2/s3/s4 overlap on pipeline/direct/ and tests/direct/ (directory owner vs files inside it) but are SEQUENCED by depends_on and all sit in lane A, so that is ordering, not contention. The one real collision is external: pivot d5 creates pipeline/lanes/soil_field.py inside s5's directory -- d5 moves to lane A and lands first.",
     "slices": [
       {
         "id": "s0",
         "task": "P0 bridge: restore cronSchedule so a writer runs on a clock again; correct the Dockerfile header (it still claims the schedule was removed on purpose and that continuous-warehouse-loop.sh replaces it); verify the drain stays down.",
-        "owns": ["infra/cron-ingest/railway.json", "infra/cron-ingest/Dockerfile"],
+        "owns": [
+          "infra/cron-ingest/railway.json",
+          "infra/cron-ingest/Dockerfile"
+        ],
         "model": "sonnet",
         "depends_on": []
       },
@@ -31,7 +46,10 @@
         "owns": [
           "services/agri-data-service/alembic/versions/",
           "services/agri-data-service/alembic/env.py",
-          { "path": "services/agri-data-service/alembic/archive/", "status": "future" },
+          {
+            "path": "services/agri-data-service/alembic/archive/",
+            "status": "future"
+          },
           "services/agri-data-service/tests/conftest.py",
           "services/agri-data-service/tests/test_alembic_head_pin_contract.py",
           "services/agri-data-service/tests/test_migration_runtime_contract.py",
@@ -42,8 +60,14 @@
           "services/agri-data-service/tests/test_forecasting_migration_contract.py",
           "services/agri-data-service/tests/test_signal_evaluation_migration_contract.py",
           "services/agri-data-service/tests/test_security_definer_lockdown_migration_contract.py",
-          { "path": "services/agri-data-service/tests/test_alembic_baseline_contract.py", "status": "future" },
-          { "path": "services/agri-data-service/tests/test_alembic_baseline_parity.py", "status": "future" },
+          {
+            "path": "services/agri-data-service/tests/test_alembic_baseline_contract.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/test_alembic_baseline_parity.py",
+            "status": "future"
+          },
           "services/agri-data-service/src/agri_data_service/routes/health/contracts.py",
           "services/agri-data-service/scripts/readiness.py",
           "services/agri-data-service/db/tools/"
@@ -55,51 +79,129 @@
         "id": "s2",
         "task": "P2 direct-writer foundation: the protocol, the parity harness, the parquet-ingest CLI verb and the lane->writer registry, plus wave 1 lanes sensors and weather-observations (the two rolling windows).",
         "owns": [
-          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/", "status": "future" },
-          { "path": "services/agri-data-service/tests/direct/", "status": "future" },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/",
+            "status": "future"
+          },
           "services/agri-data-service/src/agri_data_service/cli.py",
           "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py"
         ],
         "model": "opus",
-        "depends_on": ["s0"]
+        "depends_on": [
+          "s0"
+        ]
       },
       {
         "id": "s3",
         "task": "P3 wave 2 direct writers: drought, water-gauges, fire-perimeters, burn-severity, watersheds, evacuation-zones, and the soil-survey decision; replace the three Postgres-backed static-lookup watermark resolvers with an upstream vintage or record that a lane keeps its Postgres watermark.",
         "owns": [
-          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/drought.py", "status": "future" },
-          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/water_gauges.py", "status": "future" },
-          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_perimeters.py", "status": "future" },
-          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity.py", "status": "future" },
-          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/watersheds.py", "status": "future" },
-          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/evacuation_zones.py", "status": "future" },
-          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/soil_survey.py", "status": "future" },
-          { "path": "services/agri-data-service/tests/direct/test_direct_drought.py", "status": "future" },
-          { "path": "services/agri-data-service/tests/direct/test_direct_water_gauges.py", "status": "future" },
-          { "path": "services/agri-data-service/tests/direct/test_direct_fire_perimeters.py", "status": "future" },
-          { "path": "services/agri-data-service/tests/direct/test_direct_burn_severity.py", "status": "future" },
-          { "path": "services/agri-data-service/tests/direct/test_direct_static_lookups.py", "status": "future" },
-          { "path": "services/agri-data-service/tests/direct/test_direct_soil_survey.py", "status": "future" }
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/drought.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/water_gauges.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_perimeters.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/watersheds.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/evacuation_zones.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/soil_survey.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_direct_drought.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_direct_water_gauges.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_direct_fire_perimeters.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_direct_burn_severity.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_direct_static_lookups.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_direct_soil_survey.py",
+            "status": "future"
+          }
         ],
         "model": "sonnet",
-        "depends_on": ["s2"]
+        "depends_on": [
+          "s2"
+        ]
       },
       {
         "id": "s4",
         "task": "P4 wave 3 direct writers for the governance-heavy lanes: signal (governed contract table + release dedup + centroid), vegetation (eight lineage refs), fire-detections (cell-day aggregate + FIRMS cap surfaced).",
         "owns": [
-          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/signal.py", "status": "future" },
-          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/signal_contract.py", "status": "future" },
-          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/vegetation.py", "status": "future" },
-          { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_detections.py", "status": "future" },
-          { "path": "services/agri-data-service/tests/direct/test_direct_signal.py", "status": "future" },
-          { "path": "services/agri-data-service/tests/direct/test_direct_signal_dedup.py", "status": "future" },
-          { "path": "services/agri-data-service/tests/direct/test_signal_contract_matches_sql.py", "status": "future" },
-          { "path": "services/agri-data-service/tests/direct/test_direct_vegetation.py", "status": "future" },
-          { "path": "services/agri-data-service/tests/direct/test_direct_fire_detections.py", "status": "future" }
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/signal.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/signal_contract.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/vegetation.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_detections.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_direct_signal.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_direct_signal_dedup.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_signal_contract_matches_sql.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_direct_vegetation.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_direct_fire_detections.py",
+            "status": "future"
+          }
         ],
         "model": "opus",
-        "depends_on": ["s2"]
+        "depends_on": [
+          "s2"
+        ]
       },
       {
         "id": "s5",
@@ -110,25 +212,61 @@
           "services/agri-data-service/src/agri_data_service/sql/pipeline/"
         ],
         "model": "sonnet",
-        "depends_on": ["s1", "s2", "s3", "s4"]
+        "depends_on": [
+          "s1",
+          "s2",
+          "s3",
+          "s4"
+        ],
+        "note": "Does NOT own pipeline/lanes/soil_field.py -- pivot d5 creates it and must land first (RUNBOOK 0.42.15). Retire a lane's producer only after that lane's parity passes; soil-field has no Postgres producer to retire."
       },
       {
         "id": "s6",
         "task": "P6 final shrink: drop the signal unique CONSTRAINT (10.78 GB), the remaining signal indexes, then agri.signal_observation; then the geo.features/geo.geometry data-plane rows for retired lanes via a drizzle migration. Gated on pivot d3 and d4.",
         "owns": [
-          { "path": "conductor/tracks/postgres_shrink_ingest_repoint_20260825/evidence/", "status": "future" }
+          {
+            "path": "conductor/tracks/postgres_shrink_ingest_repoint_20260825/evidence/",
+            "status": "future"
+          }
         ],
         "model": "opus",
-        "depends_on": ["s1", "s5"]
+        "depends_on": [
+          "s1",
+          "s5"
+        ]
       }
     ],
     "shared_writes": [
-      { "path": "infra/cron-ingest/Dockerfile", "owner": "s0", "reason": "s5 rewrites the ENTRYPOINT verb list as lanes retire; sequence after s0" },
-      { "path": "services/agri-data-service/alembic/versions/", "owner": "s1", "reason": "s5 and s6 add drop revisions on top of the baseline; both land strictly after s1" },
-      { "path": "services/agri-data-service/src/agri_data_service/cli.py", "owner": "s2", "reason": "3,900-line shared verb registry; s3/s4/s5 add no verbs, they register lanes in pipeline/direct/registry.py" },
-      { "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py", "owner": "s2", "reason": "shared lane registry; s3/s4 append lane-state entries, s5 removes retired adapters; strictly sequential" },
-      { "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/registry.py", "owner": "s2", "reason": "s3 and s4 append their lanes" },
-      { "path": "drizzle/", "owner": "s6", "reason": "geo and tracking are drizzle-owned; the row deletion is a drizzle migration with its own contract bump" }
+      {
+        "path": "infra/cron-ingest/Dockerfile",
+        "owner": "s0",
+        "reason": "s5 rewrites the ENTRYPOINT verb list as lanes retire; sequence after s0"
+      },
+      {
+        "path": "services/agri-data-service/alembic/versions/",
+        "owner": "s1",
+        "reason": "s5 and s6 add drop revisions on top of the baseline; both land strictly after s1"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/cli.py",
+        "owner": "s2",
+        "reason": "3,900-line shared verb registry; s3/s4/s5 add no verbs, they register lanes in pipeline/direct/registry.py"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+        "owner": "s2",
+        "reason": "shared lane registry; s3/s4 append lane-state entries, s5 removes retired adapters; strictly sequential"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/registry.py",
+        "owner": "s2",
+        "reason": "s3 and s4 append their lanes"
+      },
+      {
+        "path": "drizzle/",
+        "owner": "s6",
+        "reason": "geo and tracking are drizzle-owned; the row deletion is a drizzle migration with its own contract bump"
+      }
     ],
     "tripwires": [
       "s0: never restart plantgeo-parquet-drain or continuous-warehouse-loop.sh; every push auto-deploys the cron and runs one pass immediately; restartPolicyType NEVER stays as the concurrency guard",

@@ -1,6 +1,6 @@
 {
   "slug": "parquet_duckdb_pivot_20260823",
-  "title": "Parquet/DuckDB pivot \u2014 the twelve-lane warehouse and its serving path",
+  "title": "Parquet/DuckDB pivot — the twelve-lane warehouse and its serving path",
   "status": "active",
   "created_on": "2026-08-23",
   "depends_on": [],
@@ -26,10 +26,10 @@
     "G. Static lookups leave the lane registry (soil-survey, watersheds)"
   ],
   "partitions": {
-    "computed_at": "2026-08-23T23:10:00Z",
-    "computed_at_commit": "83b322f",
-    "confidence": "stale",
-    "note": "d0 is DONE (RUNBOOK 0.35). Its `owns` list understated the blast radius: the object-kind change reached planes/ and pipeline/validation/ too, which the prebaked partition did not anticipate. Re-verify every `owns` list with a real grep before reusing -- computed_at_commit is now stale. d3/d5 fan out after d1.",
+    "computed_at": "2026-08-25T05:30:00Z",
+    "computed_at_commit": "80ac72a",
+    "confidence": "verified",
+    "note": "RE-VERIFIED at 80ac72a (RUNBOOK 0.42.15) by grepping every `owns` path against HEAD. d0 is DONE (RUNBOOK 0.35); its `owns` list understated the blast radius -- the object-kind change reached planes/ and pipeline/validation/ too. TWO DRIFTS FIXED: d1's tiers.py and drain.py were marked `future` but both EXIST (built in 3e5027f/ae63b02), so d1 is a REWRITE, not a create. ONE CROSS-LANE COLLISION FOUND: d5 creates pipeline/lanes/soil_field.py INSIDE the directory shrink:s5 owns and deletes from -- d5 is therefore reassigned from lane C to lane A and must land BEFORE s5. No other overlap across the two sets.",
     "slices": [
       {
         "id": "d0",
@@ -51,14 +51,8 @@
         "id": "d1",
         "task": "FUSED drain + tier derivation: bulk Postgres -> Parquet in ONE pass, each day writing base z13 and immediately deriving z9/z5/z0 from memory. Writes the new zoom layout; delete the old-layout objects. Keep the derivation transform pure and separately tested; the fusion lives in the driver. Order: build, run, THEN stop the cron.",
         "owns": [
-          {
-            "path": "services/agri-data-service/src/agri_data_service/warehouse/parquet/tiers.py",
-            "status": "future"
-          },
-          {
-            "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/drain.py",
-            "status": "future"
-          },
+          "services/agri-data-service/src/agri_data_service/warehouse/parquet/tiers.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/drain.py",
           {
             "path": "services/agri-data-service/tests/parquet/test_tiers.py",
             "status": "future"
@@ -69,7 +63,8 @@
           }
         ],
         "model": "opus",
-        "depends_on": []
+        "depends_on": [],
+        "note": "REWRITE, not a create: tiers.py and drain.py both exist at HEAD. Preserve what already works -- the cell join is already out of the hot path (ae63b02) and the drain has its own 600 s clock. The fusion lives in the driver; keep the derivation transform pure and separately tested."
       },
       {
         "id": "d3",
@@ -118,7 +113,9 @@
         "model": "opus",
         "depends_on": [
           "d1"
-        ]
+        ],
+        "lane": "A",
+        "note": "LANE A, not lane C (RUNBOOK 0.42.15). This is a Python data-lane file, not a UI surface, and it creates pipeline/lanes/soil_field.py inside the directory shrink:s5 owns and deletes producers from. Must land BEFORE s5. Assigning it to lane C would have put two lanes in one directory concurrently."
       }
     ]
   },
