@@ -16,6 +16,80 @@ type: runbook
 
 ---
 
+## LIVE — session 12, 2026-08-25. ROLLING ARMED. READ THIS BEFORE §0.
+
+**This entry is edited in place, not appended to.** It is the legible head of a 8,578-line file:
+`Done` and `Reviewed` append, `In flight` and `Next` are rewritten so they are never stale. Detail
+lives in §0.42.14–§0.42.25; this says only where things stand. Marker: `.omc/state/rolling.json`.
+
+### Goal
+
+Drive `conductor/tracks/` to code completeness along three concurrent lanes behind a frozen wire
+contract, then cut each layer over to Parquet-first serving — hard, per layer, no fallback. Owner
+decisions §0.42.5, gate answers §0.42.14.
+
+### Done — 15 commits, tree clean, **NOTHING PUSHED**
+
+| commit | what |
+|---|---|
+| `876c011` | two sessions' uncommitted work landed together with provenance |
+| `80ac72a` | **the wire freeze** — 9 goldens, asserted from both languages, cross-language `WIRE` parse |
+| `19cef02` | both partition sets re-verified; `d5` moved lane C → A (it wrote inside `s5`'s directory) |
+| `4e0961a` | `s0` — ingest `cronSchedule` restored; the Dockerfile header was lying |
+| `8bd856b` `88ff1de` | `u4` — four non-lane surfaces state their real blocker instead of a false history claim |
+| `290a6f2` → `4224842` | `s1` — 26 alembic revisions → one baseline, then six review fixes |
+| `273828b` → `4a53deb` | `d3`/`b1` — the four Sanic routes, then eight review fixes |
+| `239a079` → `549346f` | `d1` — ladder census + guards, then five review fixes |
+| `369a810` | corrected the coverage golden (found by lane B measuring the real bucket) |
+| `da1cef9` | mypy green across 259 files, red since `440d9b5` |
+| `1eb7995` `539c23e` `1fe2f72` | s2 rescoped for the CLI split; `s7` added; Sanic + models decisions |
+
+### Reviewed — the ledger, and it is not clean
+
+- `s1` · quality-reviewer, refute-prompted · **CHANGES-REQUIRED** (6 findings) · fixed at `4224842` · **the fix is UNREVIEWED**
+- `d3`/`b1` · quality-reviewer, refute-prompted · **CHANGES-REQUIRED** (8 findings) · fixed at `4a53deb` · **the fix is UNREVIEWED**
+- `d1` · quality-reviewer, refute-prompted · **CHANGES-REQUIRED** (5 findings + 5 minors) · fixed at `549346f` · **the fix is UNREVIEWED**
+- `s0` · `[x] (unreviewed)` — config only, but it changes a production schedule
+- `u4` · `[x] (unreviewed)` — no reviewer ran
+- **Three fix passes carry no verdict. Per the gate, they are in flight however finished they look.**
+
+### In flight
+
+- **Monitor-architect** (opus, background) — the first tree-wide sweep anyone has run; every lane
+  only ever verified its own scope. Also judging §0.42.23's core/surface split. Verdict pending.
+
+### Next — in dependency order
+
+1. **Deploy** to arm `s0`'s schedule. `sensors` upstream keeps ~6 days; days after **2026-08-31**
+   are unrecoverable. **The production stamp (§0.42.21) must precede it** or `/ready` refuses.
+2. Re-review the three fix passes, or accept them explicitly as unreviewed.
+3. `s2a` — lift the Parquet core out of `interface/http/`, then the CLI split + `agri-service`
+   rename (§0.42.23, hard-cutover hazards in the `s2` note — the **source-disconnected drain's
+   start command** is the landmine).
+4. `s7` — repoint the agent/MCP plane; 4 of its statements have read a dropped relation since 08-18.
+5. The two destructive approvals: the 1,040-day ladder repair, the 2,211-object sweep.
+
+### Retros — what the diff cannot show
+
+- **Assumption falsified:** §0.40.2's "no coarse rung exists for any lane" and "the signal base
+  lacks positions". Both dead. The ~1,560-day re-export I briefed as the longest pole **was already
+  done** — a background loop kept working after the listing behind §0.40.2 was taken. *Before
+  planning Parquet work, list the bucket.*
+- **Dead end:** `s1`'s first stamp gate used a byte-exact `pg_dump` diff. Run against the real
+  chain-built database it **failed on all 74 reparse lines** — a gate that could never have cleared
+  production. Replaced with one shared canonical scoring rule.
+- **Surprise:** `union_by_name=true` in a `LIMIT 0` probe makes the column set the UNION across
+  objects, so a mid-re-export bbox read answered `published, rows: [], truncated: false` for days
+  that hold rows. The four-state design's own worst failure, hiding inside a correctness check.
+- **Surprise:** `DUCKDB_EXTENSION_DIRECTORY` as an env var is silently ignored by DuckDB 1.5.4 — it
+  must arrive as `SET extension_directory`. Every request would have failed on a cold container
+  while every local test passed on a warm cache.
+- **Process:** a per-agent lint run in a shared tree reports *other agents'* half-written files.
+  Owner deferred all ruff to one end sweep, then moved verification out of the authoring lane
+  entirely. See `plantgeo-authoring-and-verification-are-separate-agents`.
+
+---
+
 ## 0. HANDOFF — 2026-08-18. START HERE.
 
 **Supersedes the 3 GB memory-cap premise that every section below this one assumes.**
