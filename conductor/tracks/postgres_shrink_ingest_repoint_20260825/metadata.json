@@ -97,13 +97,19 @@
             "path": "services/agri-data-service/tests/direct/",
             "status": "future"
           },
-          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py"
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+          {
+            "path": "services/agri-data-service/src/agri_data_service/warehouse/parquet/serving/",
+            "status": "future"
+          },
+          "services/agri-data-service/src/agri_data_service/interface/http/",
+          "services/agri-data-service/tests/interface/"
         ],
         "model": "opus",
         "depends_on": [
           "s0"
         ],
-        "note": "HARD CUTOVER HAZARDS, all four must move in the SAME change as the rename. (1) infra/cron-ingest/Dockerfile:108 ENTRYPOINT names three verbs (ingest-all, jobs-pulse, parquet-gap-fill). (2) infra/cron-mtbs/railway.json:10 startCommand. (3) infra/parquet-drain/railway.json:9 -- AND THAT SERVICE IS SOURCE-DISCONNECTED, so it will NOT redeploy: its start command must be corrected now or it breaks silently the day someone reconnects it for d1's ladder repair. (4) a dashboard-set startCommand can override the file (see memory plantgeo-cron-service-dockerfile-path) -- verify in the Railway dashboard, not just in the repo. Also: the deploy carrying s0's restored cronSchedule must carry the renamed binary and the new ENTRYPOINT together; they ship in one image, so that part is atomic. ML NAMING RESOLVED: method/ml/ stays the module home (phases 0-3 already shipped it); `agri-service ml` is a VERB GROUP, not a module path, so the conflict agri_sdk_layering left open does not bind here. interface/cli/ mirrors interface/http/, which lane B created at 273828b."
+        "note": "HARD CUTOVER HAZARDS, all four must move in the SAME change as the rename. (1) infra/cron-ingest/Dockerfile:108 ENTRYPOINT names three verbs (ingest-all, jobs-pulse, parquet-gap-fill). (2) infra/cron-mtbs/railway.json:10 startCommand. (3) infra/parquet-drain/railway.json:9 -- AND THAT SERVICE IS SOURCE-DISCONNECTED, so it will NOT redeploy: its start command must be corrected now or it breaks silently the day someone reconnects it for d1's ladder repair. (4) a dashboard-set startCommand can override the file (see memory plantgeo-cron-service-dockerfile-path) -- verify in the Railway dashboard, not just in the repo. Also: the deploy carrying s0's restored cronSchedule must carry the renamed binary and the new ENTRYPOINT together; they ship in one image, so that part is atomic. ML NAMING RESOLVED: method/ml/ stays the module home (phases 0-3 already shipped it); `agri-service ml` is a VERB GROUP, not a module path, so the conflict agri_sdk_layering left open does not bind here. interface/cli/ mirrors interface/http/, which lane B created at 273828b. ARCHITECTURE AMENDMENT (owner 2026-08-25): Parquet ops business logic is ONE self-contained core reused by three thin surfaces -- API (interface/http/), MCP/agent (agent/tools.py), and CLI (interface/cli/). s2a therefore LIFTS THE CORE OUT of interface/http/ FIRST -- warehouse_reader.py, serving.py, coverage.py and duckdb_session.py (~1,164 of its ~1,991 lines) are core, not HTTP; parquet_routes.py, wire.py, request_params.py and faults.py stay as the surface and import it. Proposed home warehouse/parquet/serving/. The split is already clean along file lines. Only THEN build interface/cli/ on the same core, so the CLI never grows a second copy. RUNBOOK 0.42.23."
       },
       {
         "id": "s3",
@@ -244,6 +250,19 @@
           "s1",
           "s5"
         ]
+      },
+      {
+        "id": "s7",
+        "task": "Repoint the agent/MCP tool plane off Postgres SQL onto the shared Parquet core. NINE of the twelve statements in sql/agent/ read a matview or view over a moving plane, and FOUR read geo.mv_signal_cell_daily, which was DROPPED 2026-08-18 -- those tools have been returning a typed pre_aggregated_plane_unbuilt refusal for a week. Re-author them against the core rather than translating the SQL, and FIX THE REFUSAL WORDING: it claims the relation 'exists in the schema but has never been refreshed', which is now false and sends the next reader chasing a refresh that cannot happen. Carry the rationale, not the SQL -- nearest_signal_cells.sql's LEFT-JOIN-not-INNER argument and its explicit-zero coalesce are the asset; the query is dead.",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/sql/agent/",
+          "services/agri-data-service/src/agri_data_service/agent/tools.py"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "s2"
+        ],
+        "note": "Uncovered by either partition set before 2026-08-25 -- nothing owned sql/agent/ or agent/tools.py. Depends on s2 because it consumes the core s2a extracts. RUNBOOK 0.42.22."
       }
     ],
     "shared_writes": [

@@ -6417,6 +6417,82 @@ stamp records `20260817_0025`; afterwards every restore and chunk append is refu
 byte-identical schema. **Re-export any in-flight bundle, or fix the comparison to be the minimum its
 name already promises.**
 
+#### 0.42.22 THE AGENT SQL PLANE IS ALREADY BROKEN — 4 tools read a relation dropped a week ago
+
+Raised by the owner 2026-08-25 looking at `sql/agent/nearest_signal_cells.sql`: *"on the sql side a
+lot of that likely needs to be repointed to duckdb or polars helper functions."* Correct, and the
+state is worse than "needs repointing".
+
+Census of `src/agri_data_service/sql/agent/` — **9 of 12 statements read a matview or view over a
+data plane that is moving to Parquet:**
+
+| statement | reads |
+|---|---|
+| `nearest_signal_cells` · `signals_near_point` · `signal_value_on_day` · `signal_neighbors_in_time` | **`geo.mv_signal_cell_daily`** |
+| `drought_history_at_point` | `geo.mv_drought_release_index` |
+| `fire_history_near_point` | `geo.mv_feature_observation_day` |
+| `forecast_summary_for_cell` | `agri.mv_forecast_ml_daily_serving` |
+| `observation_coverage_on_day` · `observation_temporal_neighbors` | `geo.v_observation_day_census` |
+| `signal_coverage_on_day` | `agri.signal_coverage_audit` |
+| `feature_value_near_point` | `geo.features` / `geo.layers` (direct) |
+| `materialized_plane_populated` | the probe itself |
+
+**`geo.mv_signal_cell_daily` was DROPPED on 2026-08-18.** So those four tools have not been
+answering for a week — `agent/tools.py:494` `_plane_refusal` catches it and returns a typed
+`pre_aggregated_plane_unbuilt`. The refusal is honest about the OUTCOME and **wrong about the
+CAUSE**: its note says the relation *"exists in the schema but has never been refreshed"*, which
+was true when written and is now false. Fix the wording in the same pass, or the next reader
+debugs a refresh that cannot happen.
+
+`nearest_signal_cells.sql` is the clearest example of the cost. It carries ~60 lines of excellent
+clause-by-clause rationale — the LEFT-JOIN-not-INNER argument, the `coalesce` to an explicit zero,
+the governed-plane caveat — all of it explaining a query against a relation that no longer exists.
+**That reasoning is the asset worth carrying to DuckDB; the SQL is not.**
+
+Nothing in either partition set owns `sql/agent/` or `agent/tools.py`. This is uncovered work, which
+is exactly what §0.42.1 reserves new slices for.
+
+#### 0.42.23 ARCHITECTURE — one Parquet core, three thin surfaces (owner, 2026-08-25)
+
+Owner: *"this is something the api and mcp will consume — let's keep the parquet ops business logic
+separate and containerized for reuse across mcp and api surfaces separately alongside the cli."*
+
+**The rule:** Parquet operations are ONE self-contained core with no surface dependencies. Three
+adapters consume it and own nothing but their own protocol:
+
+| surface | adapter | today |
+|---|---|---|
+| **API** | `interface/http/` | built at `273828b`, fixed at `4a53deb` — but the core is INSIDE it |
+| **MCP / agent** | `agent/tools.py` + `sql/agent/` | still 12 raw Postgres statements, 4 of them dead |
+| **CLI** | `interface/cli/` | does not exist; `s2a` creates it |
+
+**This is a correction to lane B's just-landed work, not a future concern.** Of the ~1,991 lines in
+`interface/http/`, roughly **1,164 are core, not HTTP**:
+
+- core → `warehouse_reader.py` (407), `serving.py` (309), `coverage.py` (267), `duckdb_session.py` (181)
+- surface → `parquet_routes.py` (261), `wire.py` (247), `request_params.py` (180), `faults.py` (139)
+
+The split is already clean along file lines, which is the good news — nothing needs untangling
+within a file. The core moves; the four surface files stay and import it.
+
+**Proposed home: `warehouse/parquet/serving/`**, since `warehouse/parquet/` already owns the read
+side (`schema.py`, `tiers.py`) and `interface/` already means "a protocol surface". A slice may
+argue for a top-level `parquet_ops/` instead — record the choice, do not re-litigate it twice.
+Reversal cost is one package rename plus imports.
+
+**What each surface must NOT do**, because all three have already done it once:
+- No surface opens its own DuckDB session. `duckdb_session.py`'s guard
+  (`memory_limit`, `threads`, `max_temp_directory_size='0GiB'`, `:memory:`) belongs to the core, and
+  `tiers.py` proved what an unguarded one costs.
+- No surface re-derives a zoom rung. Resolve through `foundation/parquet/zoom.py`.
+- No surface spells a wire name outside its own protocol module — that is what the freeze protects.
+
+**Sequencing.** `s2a` (the CLI split) now carries the extraction, because it is the slice that has
+to import the core anyway and doing it twice is how the two copies drift. Order within `s2a`:
+lift the core out of `interface/http/` first, leaving the HTTP surface importing it and its 104
+tests green; then build `interface/cli/` on the same core; then the agent/MCP repoint as its own
+slice, since it also needs the four dead statements re-authored rather than translated.
+
 ---
 
 
