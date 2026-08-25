@@ -1,0 +1,13 @@
+{
+  "state": "published",
+  "requested_day": "2026-08-24",
+  "served_day": "2026-08-18",
+  "rows": [
+    {
+      "area_id": 3311,
+      "dm_category": "D2",
+      "geometry_key": "usdm-2026-08-18-3311"
+    }
+  ],
+  "truncated": false
+}

@@ -1,0 +1,11 @@
+{
+  "state": "governed_absence",
+  "requested_day": "2026-08-24",
+  "served_day": "2026-08-18",
+  "absence": {
+    "reason": "the release covering this day recorded no areas in the requested extent",
+    "upstream_response": "USDM release 2026-08-18 returned 0 features for the PNW extent",
+    "recorded_at": "2026-08-18T18:41:03Z",
+    "run_id": "ingest-drought:4c0b8e91-77d2-4f18-9a3e-1b6d5c8072ae"
+  }
+}

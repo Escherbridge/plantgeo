@@ -1,0 +1,14 @@
+{
+  "state": "published",
+  "requested_day": "2026-08-06",
+  "served_day": "2026-08-06",
+  "rows": [
+    {
+      "cell_id": 4127,
+      "cell_longitude": -116.2023,
+      "cell_latitude": 43.615,
+      "normalized_value": 0.412
+    }
+  ],
+  "truncated": true
+}

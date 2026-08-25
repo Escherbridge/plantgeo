@@ -1,0 +1,11 @@
+{
+  "state": "governed_absence",
+  "requested_day": "2026-08-09",
+  "served_day": "2026-08-09",
+  "absence": {
+    "reason": "upstream published no scenes for this day",
+    "upstream_response": "HTTP 200, features: []",
+    "recorded_at": "2026-08-10T04:12:57Z",
+    "run_id": "ingest-vegetation:9f3c1e40-2b77-4a51-9d0e-6c8b21ad5f13"
+  }
+}

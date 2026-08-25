@@ -42,3 +42,32 @@ already in hand always finishes.
 
 When the backlog reaches zero this service has no work left -- `parquet-gap-fill` on the ingest
 cron keeps the warehouse current on its own. Delete the service; there is nothing to undo.
+
+### That condition is NOT met, and the service is DISABLED rather than deleted (2026-08-25)
+
+**"Backlog zero" was measured at z13 only.** RUNBOOK 0.40.2: no coarse rung (z9/z5/z0) exists for
+any lane, and the written `signal` base carries 10 columns with **no `cell_longitude`/`cell_latitude`**,
+so all ~1,560 signal days must be **re-exported** before a coarse rung can be derived at all. That
+re-export is pivot slice `d1`, and it is the longest pole in the whole programme. This service is
+exactly what makes it tractable -- the measurements above show a drained day is dominated by
+round-trip latency, not data, which is why it runs next to the bucket instead of from a laptop.
+**Deleting it would destroy the in-region runner `d1` needs.**
+
+**What was done instead:** `railway service source disconnect --service plantgeo-parquet-drain`.
+The repo source is gone, so the service no longer redeploys on every push (RUNBOOK 0.40.1) -- the
+collision in RUNBOOK 0.42.9 step 5 is now prevented by construction rather than by a rule someone
+has to remember. Variables and service config survive. `plantgeo-ingest-cron` was deliberately left
+connected: restoring its `cronSchedule` is lane A's `s0`, and its upstream keeps only ~6 days.
+
+**To bring it back for `d1`:**
+
+```
+railway service source connect --repo Escherbridge/plantgeo --branch main --service plantgeo-parquet-drain
+```
+
+**Change the start command when you do.** The `while true ... sleep 15` loop in `railway.json` was
+right for a bulk backlog and is wrong now: with the backlog at z13-zero it spins forever on one
+line -- `burn-severity 2024-08-22 raised: the base rung is written but its coarse rungs are not` --
+doing no work while competing with Postgres. `d1` owns `drain.py` and rewrites it as a fused
+drain + tier derivation; give it a bounded run, and honour "one writer at a time" against the
+ingest cron.

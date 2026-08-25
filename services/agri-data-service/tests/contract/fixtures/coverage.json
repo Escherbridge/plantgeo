@@ -1,0 +1,60 @@
+{
+  "generated_at": "2026-08-25T04:00:00Z",
+  "lanes": [
+    {
+      "layer": "signal",
+      "nature": "daily_series",
+      "kind": "observed",
+      "earliest_day": "2022-04-30",
+      "latest_day": "2026-08-06",
+      "gap_ranges": [
+        {
+          "from": "2026-08-17",
+          "to": "2026-08-24"
+        }
+      ],
+      "governed_absence_ranges": [
+        {
+          "from": "2026-08-08",
+          "to": "2026-08-16"
+        }
+      ]
+    },
+    {
+      "layer": "fire-detections",
+      "nature": "daily_series",
+      "kind": "observed",
+      "earliest_day": "2000-11-02",
+      "latest_day": "2026-08-24",
+      "gap_ranges": [],
+      "governed_absence_ranges": []
+    },
+    {
+      "layer": "vegetation",
+      "nature": "daily_series",
+      "kind": "observed",
+      "earliest_day": "2022-08-06",
+      "latest_day": "2026-08-24",
+      "gap_ranges": [],
+      "governed_absence_ranges": []
+    },
+    {
+      "layer": "drought",
+      "nature": "release_series",
+      "kind": "observed",
+      "earliest_day": "2024-01-02",
+      "latest_day": "2026-08-18",
+      "gap_ranges": [],
+      "governed_absence_ranges": []
+    },
+    {
+      "layer": "soil-survey",
+      "nature": "static_lookup",
+      "kind": "observed",
+      "earliest_day": null,
+      "latest_day": null,
+      "gap_ranges": [],
+      "governed_absence_ranges": []
+    }
+  ]
+}

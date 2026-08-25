@@ -486,3 +486,139 @@ describe("day strings stay opaque", () => {
     expect(envelope.requestedDay).toBe("2026-02-30");
   });
 });
+
+/**
+ * The frozen wire contract, read from the SAME golden fixtures the serving side asserts against in
+ * `services/agri-data-service/tests/contract/`. Hand-written payloads above prove this client's
+ * behaviour; these prove both sides still mean the same thing by the same bytes. If a fixture and
+ * this client disagree, one of the two lanes has drifted and the other has not noticed yet.
+ */
+describe("the frozen wire contract", () => {
+  const FIXTURES = "services/agri-data-service/tests/contract/fixtures";
+
+  function fixture(name: string): unknown {
+    return JSON.parse(readFileSync(`${FIXTURES}/${name}.json`, "utf8"));
+  }
+
+  async function decodeDay(name: string) {
+    mockedFetch.mockResolvedValue(fixture(name));
+    return getParquetLayerDay({ layer: "vegetation", day: "2026-08-06", zoomTier: 9 });
+  }
+
+  it("maps a published day into the union's published arm", async () => {
+    expect(await decodeDay("day_published")).toEqual({
+      state: "published",
+      requestedDay: "2026-08-06",
+      servedDay: "2026-08-06",
+      rows: [
+        { cell_id: 4127, cell_longitude: -116.2023, cell_latitude: 43.615, normalized_value: 0.412 },
+        { cell_id: 4128, cell_longitude: -116.1891, cell_latitude: 43.615, normalized_value: 0.389 },
+      ],
+      truncated: false,
+    });
+  });
+
+  it("carries the row-budget bit through, so a subset is never read as a whole day", async () => {
+    expect(await decodeDay("day_published_truncated")).toMatchObject({ truncated: true });
+  });
+
+  it("renames every absence field into this codebase's spelling", async () => {
+    expect(await decodeDay("day_governed_absence")).toEqual({
+      state: "governed_absence",
+      requestedDay: "2026-08-09",
+      servedDay: "2026-08-09",
+      evidence: {
+        reason: "upstream published no scenes for this day",
+        upstreamResponse: "HTTP 200, features: []",
+        recordedAt: "2026-08-10T04:12:57Z",
+        runId: "ingest-vegetation:9f3c1e40-2b77-4a51-9d0e-6c8b21ad5f13",
+      },
+    });
+  });
+
+  it("keeps day_not_written and lane_never_written distinct", async () => {
+    // They license different sentences: a gap in a record that exists, versus no record at all.
+    expect(await decodeDay("day_not_written")).toEqual({
+      state: "day_not_written",
+      requestedDay: "2026-08-11",
+    });
+    expect(await decodeDay("day_lane_never_written")).toEqual({
+      state: "lane_never_written",
+      requestedDay: "2026-08-06",
+    });
+  });
+
+  it("reports a carried-forward release at its own day, never as fresher than it is", async () => {
+    mockedFetch.mockResolvedValue(fixture("release_carry_forward"));
+
+    const envelope = await getParquetLatestRelease({
+      layer: "drought-areas",
+      asOfDay: "2026-08-24",
+      zoomTier: 9,
+    });
+
+    expect(envelope).toMatchObject({
+      state: "published",
+      requestedDay: "2026-08-24",
+      servedDay: "2026-08-18",
+    });
+  });
+
+  it("states an absent release at the marker's own day too", async () => {
+    mockedFetch.mockResolvedValue(fixture("release_governed_absence"));
+
+    const envelope = await getParquetLatestRelease({
+      layer: "drought-areas",
+      asOfDay: "2026-08-24",
+      zoomTier: 9,
+    });
+
+    expect(envelope).toMatchObject({ state: "governed_absence", servedDay: "2026-08-18" });
+  });
+
+  it("accepts the window fixture as a complete closed range", async () => {
+    mockedFetch.mockResolvedValue(fixture("window"));
+
+    const days = await getParquetLayerDayWindow({
+      layer: "signal",
+      firstDay: "2026-08-06",
+      lastDay: "2026-08-09",
+      zoomTier: 9,
+    });
+
+    // Four days, ascending, with the gap STATED rather than omitted -- WIRE assumption 6.
+    expect(days.map((day) => day.requestedDay)).toEqual([
+      "2026-08-06",
+      "2026-08-07",
+      "2026-08-08",
+      "2026-08-09",
+    ]);
+    expect(days.map((day) => day.state)).toEqual([
+      "published",
+      "day_not_written",
+      "governed_absence",
+      "day_not_written",
+    ]);
+  });
+
+  it("maps the coverage census, keeping a never-written lane's bounds null", async () => {
+    mockedFetch.mockResolvedValue(fixture("coverage"));
+
+    const coverage = await getParquetWarehouseCoverage();
+    const lanes = Object.fromEntries(coverage.lanes.map((lane) => [lane.layer, lane]));
+
+    expect(coverage.generatedAt).toBe("2026-08-25T04:00:00Z");
+    // soil-survey has 238,986 source rows and 0 written; the census must say so, not guess a day.
+    expect(lanes["soil-survey"]).toMatchObject({
+      nature: "static_lookup",
+      earliestDay: null,
+      latestDay: null,
+    });
+    expect(lanes["signal"]).toMatchObject({
+      nature: "daily_series",
+      earliestDay: "2022-04-30",
+      latestDay: "2026-08-06",
+      governedAbsenceRanges: [{ from: "2026-08-08", to: "2026-08-16" }],
+    });
+  });
+});

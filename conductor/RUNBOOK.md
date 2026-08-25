@@ -6145,6 +6145,50 @@ keyed to a source watermark and **must not be written 365 times a year**.
 - `oh-my-claudecode:critic` for the adversarial pass at step 7 — **trigger:** a hard cutover with no
   fallback is a one-way door; the pass must be prompted to refute, in a context that did not write it.
 
+
+#### 0.42.14 GATE ANSWERS (2026-08-25, owner) — four decisions taken before launch
+
+Asked at the start of the execution session, ranked by blast radius. These **supersede the matching
+entries in 0.42.6's assumptions block**.
+
+1. **The dirty tree is committed, both sessions together** — `876c011`. `RUNBOOK.md` and `tracks.md`
+   each carried 0.41 *and* 0.42 in one file, so a partial commit was hunk surgery, not a file split.
+   Provenance is in the commit message. Held back deliberately per 0.42.8:
+   `continuous-warehouse-loop.sh` and `scripts/warehouse_status.py` are operator scratch.
+   **NOT PUSHED** — a push redeploys the runners (0.40.1).
+
+2. **Token spend across the three monitors stays UNBOUNDED** — 0.42.6's recorded default, confirmed
+   rather than capped. Monitors are told there is no per-lane budget. To reverse mid-flight is to
+   re-brief every monitor, which is why it was asked before launch.
+
+3. **`plantgeo-parquet-drain` is DISABLED, not deleted, and not left to a rule.** The owner's
+   instruction was to remove the code if unused and disable if that is the way; investigation settled
+   which:
+   - **The drain code is USED.** Pivot slice `d1` **owns** `pipeline/parquet/drain.py` and rewrites it
+     ("FUSED drain + tier derivation ... Order: build, run, THEN stop the cron"). Removing it would
+     delete the file the longest-pole slice is about to author.
+   - **`infra/parquet-drain/AGENTS.md` pre-authorises deletion "when the backlog reaches zero" — and
+     that condition is NOT met.** 0.40.2 measured backlog-zero at **z13 only**: no coarse rung exists
+     for any lane, and the `signal` base lacks `cell_longitude`/`cell_latitude`, so ~1,560 days need
+     re-export first. The service is what makes that tractable (a drained day is round-trip-bound, not
+     data-bound — see that file's measurements), so deleting it destroys the in-region runner `d1` needs.
+   - **Action taken:** `railway service source disconnect --service plantgeo-parquet-drain`. Verified —
+     the service no longer carries a `repo:` line in `railway service list`. Pushes can no longer revive
+     it, so 0.42.9 step 5's "hold the drain down" is now enforced by construction instead of by whoever
+     remembers it. Variables and config survive; reconnect is one command, recorded in that AGENTS.md
+     along with the warning that the `while true ... sleep 15` start command is wrong now (it spins on
+     `burn-severity 2024-08-22` doing no work while competing with Postgres).
+   - **`plantgeo-ingest-cron` was deliberately LEFT CONNECTED** — restoring its `cronSchedule` is lane
+     A's `s0`, and `sensors`' upstream keeps only ~6 days.
+
+4. **Adversarial review is per-lane (3) PLUS the join** — not the single join pass 0.42.6 assumed.
+   The reason the assumption was wrong: decision 4 deletes a layer's Postgres read path **in the same
+   change that cuts it**, with no fallback, and 0.42.4 stages those cuts across the whole programme. A
+   single pass at the join therefore arrives *after* every irreversible cut has already shipped. Each
+   lane now gets a refute-prompted review in a context that did not write it, at lane completion,
+   before its cuts are considered done; the broad pass at the join stays. A lane with no recorded
+   verdict is unreviewed, not done.
+
 ---
 
 
