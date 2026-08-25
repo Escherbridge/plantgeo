@@ -96,7 +96,14 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.jobs.dispatch import register_dispatchable_lane
-from agri_data_service.jobs.lease import apply_statement_timeout, canonical_json, fetch_row, fetch_rows, required_column
+from agri_data_service.jobs.lease import (
+    apply_statement_timeout,
+    canonical_json,
+    fetch_row,
+    fetch_rows,
+    optional_column,
+    required_column,
+)
 from agri_data_service.jobs.registry import (
     JobDefinitionSpec,
     JobHandlerOutcome,
@@ -654,11 +661,16 @@ async def _has_refreshable_unique_index(session: AsyncSession, qualified_name: s
 async def _row_count_estimate(session: AsyncSession, qualified_name: str) -> int | None:
     """The view's approximate row count, read from the catalog rather than scanned."""
     row = await fetch_row(session, _ROW_COUNT_ESTIMATE_SQL, {"qualified_name": qualified_name})
-    if row is None or row.get("row_count_estimate") is None:
+    if row is None:
+        return None
+    # `reltuples::bigint` in the query, read back through the ledger's own typed accessor: a driver
+    # handing back something other than an int is a surprise worth refusing, not worth coercing.
+    estimate = optional_column(row, "row_count_estimate", int)
+    if estimate is None:
         return None
     # reltuples is a planner estimate and can read slightly negative immediately after a DDL change
     # on a relation ANALYZE has not yet touched; clamped rather than surfaced as a confusing negative.
-    return max(0, int(row["row_count_estimate"]))
+    return max(0, estimate)
 
 
 def _refresh_statement(qualified_name: str, *, concurrently: bool) -> TextClause:
