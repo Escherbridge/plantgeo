@@ -12,11 +12,24 @@ import {
  * day-partitioned warehouse (owner's 2026-08-22 pivot -- Postgres keeps community features, every
  * data plane becomes Parquet on object storage read by DuckDB/Polars).
  *
- * THE WIRE FORMAT IS NOT FROZEN. Everything this client assumes about it -- route segments, query
- * parameter names, response field names and shapes -- lives in the single `WIRE` section below and
- * nowhere else, so agreeing the contract with the service is one edit in one place rather than a
- * hunt through four functions. Nothing outside that section spells a wire name; the public types
+ * THE WIRE FORMAT IS FROZEN as of `80ac72a`. Everything this client assumes about it -- route
+ * segments, query parameter names, response field names and shapes -- lives in the single `WIRE`
+ * section below and nowhere else. Nothing outside that section spells a wire name; the public types
  * above and below it are this codebase's own vocabulary and are meant to outlive the format.
+ *
+ * The freeze is enforced from BOTH sides, so drift fails a build rather than a viewport. The
+ * serving side declares the same contract in `services/agri-data-service/tests/contract/`, and one
+ * test there PARSES THE `WIRE` BLOCK OUT OF THIS FILE and compares it to a pydantic table -- rename
+ * a route here and the Python suite fails. Nine golden fixtures in that directory are read by both
+ * suites, this one included (see the `the frozen wire contract` block in the sibling test file), so
+ * both languages agree by consuming identical bytes rather than by two hopeful copies.
+ *
+ * Changing the contract means editing this block, `wire_contract.py` and the fixtures in ONE change,
+ * and expecting both suites to fail until all three agree. That is the point: a lane needing a new
+ * field asks for the change rather than adding it and discovering the mismatch at the join. Read
+ * `services/agri-data-service/tests/contract/AGENTS.md` first -- it records what is deliberately NOT
+ * frozen (row contents, row counts, lane order) and the asymmetry that the Python side is the strict
+ * one, since zod strips unknown keys by default.
  *
  * DAYS ARE OPAQUE. Every day crossing this module is a `YYYY-MM-DD` string that is shape-checked
  * and passed through -- never parsed into a `Date`, never formatted from one, never converted
