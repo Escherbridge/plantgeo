@@ -43,3 +43,21 @@ joins to `calendar_day`. Collapsing those roles into one key is exactly what
 The signal plane's ten-column schema is frozen owner-decided truth and lives in
 `warehouse/parquet/schema.py` (`SIGNAL_PLANE_SCHEMA`). If S3 adds `signal.py` here it must
 re-export that object, never restate the columns — one canonical definition per concept.
+
+## Dedicated precipitation snapshot lane
+
+`climate_field_precipitation.py` keeps the signal-compatible serving columns and adds base-tier
+source lineage needed to retire PostgreSQL as historical storage. Its physical stream is
+`layer=climate-field-precipitation`; it is deliberately distinct from the legacy shared
+`layer=signal` stream.
+
+At z13, every provenance list is aligned in winner-precedence order and includes a bounded locator
+back to the pinned canonical source part. `selected_source_*` columns must equal element zero of
+their corresponding list. `source_parameter` is not part of the logical serving grain; the builder
+proves every governed candidate is `PRECTOTCORR`, and coarse tiers carry that constant with `first`.
+
+At z09/z05/z00, row-level provenance fields are nullable and explicitly nulled because many z13
+facts contribute to a coarse cell. Additive counts are summed, normalized precipitation is averaged
+without duplicate weighting, recency takes the maximum, coverage is averaged, and client exposure
+requires all contributing cells. The writer's checkpoint supplies the coarse-to-z13 checksum
+lineage that the row itself cannot honestly contain.
