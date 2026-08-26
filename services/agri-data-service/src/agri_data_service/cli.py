@@ -325,10 +325,12 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     run_gap_fill,
 )
 from agri_data_service.pipeline.parquet.lane_registry import (
-    LANE_REGISTRATIONS,
+    POSTGRES_EXPORT_REGISTRATIONS,
     LaneRegistryError,
+    postgres_export_lane_slugs,
     registered_lane_slugs,
     resolve_lanes,
+    resolve_postgres_export_lanes,
 )
 from agri_data_service.pipeline.parquet.objectstore import (
     BotoObjectStoreBackend,
@@ -3744,10 +3746,20 @@ def _load_run_plan(path: Path) -> tuple[list[str], list[str], list[ExpectedOutpu
     )
 
 
-def _gap_fill_lanes(layer_slugs: tuple[str, ...]) -> tuple[LaneRegistration, ...]:
-    """Resolve `--layer` against the STATIC registry before any listing or query, naming what is known."""
+def _postgres_export_lanes(layer_slugs: tuple[str, ...]) -> tuple[LaneRegistration, ...]:
+    """Resolve only active Postgres exporters before any listing or source query."""
     if not layer_slugs:
-        return LANE_REGISTRATIONS
+        return POSTGRES_EXPORT_REGISTRATIONS
+    try:
+        return resolve_postgres_export_lanes(layer_slugs)
+    except LaneRegistryError as exc:
+        raise click.BadParameter(str(exc), param_hint="--layer") from exc
+
+
+def _registered_lanes(layer_slugs: tuple[str, ...]) -> tuple[LaneRegistration, ...]:
+    """Resolve every registered lane for object-store-only maintenance."""
+    if not layer_slugs:
+        return resolve_lanes(registered_lane_slugs())
     try:
         return resolve_lanes(layer_slugs)
     except LaneRegistryError as exc:
@@ -3827,7 +3839,7 @@ async def _parquet_gap_fill(
     "layer_slugs",
     multiple=True,
     help="Restrict this tick to one or more registered stream slugs (e.g. signal, water-gauges); "
-    f"repeatable. Default: every registered lane -- {', '.join(registered_lane_slugs())}.",
+    f"repeatable. Default: active Postgres exporters -- {', '.join(postgres_export_lane_slugs())}.",
 )
 @click.option(
     "--time-budget-seconds",
@@ -3901,7 +3913,7 @@ def parquet_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable knob
     governed-absence marker was refused. Per-lane isolation means one such lane never stops another
     lane's turn; it only changes THIS TICK'S exit code, once every other lane has had its rounds.
     """
-    lanes = _gap_fill_lanes(layer_slugs)
+    lanes = _postgres_export_lanes(layer_slugs)
     today = datetime.now(UTC).date()
     run_id = f"parquet-gap-fill:{uuid.uuid4()}"
     try:
@@ -3989,7 +4001,7 @@ def _parquet_store_and_backend() -> tuple[ObjectStore, ObjectStoreBackend]:
     "layer_slugs",
     multiple=True,
     help="Restrict the drain to one or more registered stream slugs; repeatable. "
-    f"Default: every registered lane -- {', '.join(registered_lane_slugs())}.",
+    f"Default: active Postgres exporters -- {', '.join(postgres_export_lane_slugs())}.",
 )
 @click.option(
     "--time-budget-seconds",
@@ -4096,7 +4108,7 @@ def parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of
     EXIT CODE 0 means the walk finished with nothing left. EXIT CODE 1 means at least one lane-day
     failed or at least one lane stopped early; the summary names them.
     """
-    lanes = _gap_fill_lanes(layer_slugs)
+    lanes = _postgres_export_lanes(layer_slugs)
     today = datetime.now(UTC).date()
     run_id = f"parquet-drain:{uuid.uuid4()}"
     chosen: DrainSelection = "ladder" if selection == "ladder" else "missing"
@@ -4181,7 +4193,7 @@ def parquet_retire_legacy_layout(
     EXIT CODE 0 means the sweep ran. EXIT CODE 1 means at least one layer's listing failed or at
     least one delete was refused; the report names them.
     """
-    lanes = _gap_fill_lanes(layer_slugs)
+    lanes = _registered_lanes(layer_slugs)
     try:
         store, backend = _parquet_store_and_backend()
         report = legacy_layout_report(

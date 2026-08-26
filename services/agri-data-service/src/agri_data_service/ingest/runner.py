@@ -1,4 +1,4 @@
-"""The `ingest-all` orchestrator: eight sources then the geometry repair, isolated per job, exit code out."""
+"""The `ingest-all` orchestrator: seven sources then the geometry repair, isolated per job, exit code out."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from agri_data_service.ingest.backfill import GEOMETRY_REPAIR_SOURCE, run_geometry_repair
 from agri_data_service.ingest.evacuation_zones import EVACUATION_ZONES_SOURCE, run_evacuation_zones_ingestion_job
 from agri_data_service.ingest.firms import FIRMS_SOURCE, run_fire_ingestion_job
-from agri_data_service.ingest.ndvi import NDVI_SOURCE, run_vegetation_ingestion_job
 from agri_data_service.ingest.open_meteo import OPEN_METEO_SOURCE, run_weather_ingestion_job
 from agri_data_service.ingest.results import IngestionJobResult, run_isolated_job
 from agri_data_service.ingest.sensors import NWS_SENSOR_SOURCE, run_sensor_ingestion_job
@@ -29,7 +28,7 @@ async def run_all_ingestion_jobs(
     publisher: RealtimePublisher | None = None,
     bbox: str | None = None,
 ) -> list[IngestionJobResult]:
-    """Run the eight sources in turn, then repair orphaned geometry links, isolating each failure.
+    """Run the seven sources in turn, then repair orphaned geometry links, isolating each failure.
 
     The repair runs LAST and on every tick, not by hand. `geo.features.geometry_id` is what the
     slider's observation window and `getMetricAtDate` both join on, so an unlinked row is invisible
@@ -46,7 +45,6 @@ async def run_all_ingestion_jobs(
         (OPEN_METEO_SOURCE, lambda: run_weather_ingestion_job(write_features, bbox=bbox)),
         (WFIGS_SOURCE, lambda: run_fire_perimeters_ingestion_job(write_features, bbox=bbox)),
         (USDM_SOURCE, lambda: run_drought_ingestion_job(PostgresDroughtStore(session))),
-        (NDVI_SOURCE, lambda: run_vegetation_ingestion_job(write_features, bbox=bbox)),
         (NWS_SENSOR_SOURCE, lambda: run_sensor_ingestion_job(write_features, bbox=bbox)),
         (EVACUATION_ZONES_SOURCE, lambda: run_evacuation_zones_ingestion_job(write_features, bbox=bbox)),
         (GEOMETRY_REPAIR_SOURCE, lambda: run_geometry_repair(session)),
