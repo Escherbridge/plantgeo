@@ -11,7 +11,7 @@ import tempfile
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Self, cast
 
@@ -326,9 +326,11 @@ from agri_data_service.pipeline.parquet.gap_fill import (
 )
 from agri_data_service.pipeline.parquet.lane_registry import (
     LANE_REGISTRATIONS,
+    LANE_REGISTRY,
     LaneRegistryError,
     registered_lane_slugs,
     resolve_lanes,
+    spatial_cell_ids,
 )
 from agri_data_service.pipeline.parquet.objectstore import (
     BotoObjectStoreBackend,
@@ -336,7 +338,35 @@ from agri_data_service.pipeline.parquet.objectstore import (
     ObjectStoreBackend,
     ParquetWriteError,
 )
+from agri_data_service.pipeline.parquet.vegetation_absence import (
+    ABSENCE_WRITE_ATTEMPTS,
+    VegetationAbsenceLadderReport,
+    VegetationAbsenceRetractionReport,
+    propagate_vegetation_absence_ladders,
+    retract_unsettled_vegetation_absences,
+)
+from agri_data_service.pipeline.parquet.vegetation_rewrite import (
+    VEGETATION_REWRITE_MAX_ATTEMPTS,
+    VEGETATION_REWRITE_MAX_DAYS,
+    VEGETATION_REWRITE_MAX_RETRY_SECONDS,
+    VegetationRewriteDayResult,
+    VegetationRewriteManifest,
+    VegetationRewriteSummary,
+    load_vegetation_rewrite_manifest,
+    rewrite_vegetation_manifest,
+)
+from agri_data_service.pipeline.validation.vegetation_exact import (
+    DEFAULT_PROGRESS_EVERY_DAYS as VEGETATION_RECONCILE_PROGRESS_DAYS,
+)
+from agri_data_service.pipeline.validation.vegetation_exact import (
+    DEFAULT_READ_ATTEMPTS as VEGETATION_RECONCILE_READ_ATTEMPTS,
+)
+from agri_data_service.pipeline.validation.vegetation_exact import (
+    ExactVegetationReport,
+    reconcile_exact_vegetation,
+)
 from agri_data_service.seed.strategies import STRATEGY_SEEDS
+from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 from alembic import command
 
 logger = structlog.get_logger()
@@ -3971,6 +4001,152 @@ async def _parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable 
         )
 
 
+async def _parquet_rewrite_vegetation(  # noqa: PLR0913 - explicit operator controls
+    manifest: VegetationRewriteManifest,
+    *,
+    run_id: str,
+    dry_run: bool,
+    max_attempts: int,
+    retry_base_seconds: float,
+    stream_progress: bool,
+) -> VegetationRewriteSummary:
+    """Open one pinned loader session and hold each existing lane-day lock around its rewrite."""
+    loader_database_url = settings.require_local_source_loader_database_url()
+    store = ObjectStore.from_settings()
+
+    def announce(result: VegetationRewriteDayResult) -> None:
+        click.echo(
+            json.dumps({"event": "vegetation_rewrite_day", **result.to_report()}, sort_keys=True),
+            err=True,
+        )
+
+    async with local_source_loader_session(loader_database_url) as session:
+        return await rewrite_vegetation_manifest(
+            session,
+            store,
+            manifest=manifest,
+            run_id=run_id,
+            dry_run=dry_run,
+            max_attempts=max_attempts,
+            retry_base_seconds=retry_base_seconds,
+            on_day=announce if stream_progress else None,
+        )
+
+
+async def _parquet_vegetation_absence_ladders(  # noqa: PLR0913 - explicit operator controls
+    *,
+    first_day: date,
+    last_day: date,
+    max_days: int | None,
+    dry_run: bool,
+    attempts: int,
+    stream_progress: bool,
+) -> VegetationAbsenceLadderReport:
+    """Open one loader session for a bounded absence-ladder pass."""
+    store = ObjectStore.from_settings()
+
+    def announce(payload: dict[str, object]) -> None:
+        click.echo(json.dumps({"event": "vegetation_absence_ladder", **payload}, sort_keys=True), err=True)
+
+    async with local_source_loader_session(settings.require_local_source_loader_database_url()) as session:
+        cell_ids = await spatial_cell_ids(session)
+        return await propagate_vegetation_absence_ladders(
+            session,
+            store,
+            cell_ids=cell_ids,
+            first_day=first_day,
+            last_day=last_day,
+            max_days=max_days,
+            dry_run=dry_run,
+            attempts=attempts,
+            progress=announce if stream_progress else None,
+        )
+
+
+async def _parquet_retract_vegetation_absences(
+    *,
+    days: tuple[date, ...],
+    coverage_last_day: date,
+    dry_run: bool,
+    attempts: int,
+    stream_progress: bool,
+) -> VegetationAbsenceRetractionReport:
+    """Open one loader session for an exact unsettled-absence retraction."""
+    store = ObjectStore.from_settings()
+
+    def announce(payload: dict[str, object]) -> None:
+        click.echo(json.dumps({"event": "vegetation_absence_retraction", **payload}, sort_keys=True), err=True)
+
+    async with local_source_loader_session(settings.require_local_source_loader_database_url()) as session:
+        cell_ids = await spatial_cell_ids(session)
+        return await retract_unsettled_vegetation_absences(
+            session,
+            store,
+            cell_ids=cell_ids,
+            days=days,
+            coverage_last_day=coverage_last_day,
+            dry_run=dry_run,
+            attempts=attempts,
+            progress=announce if stream_progress else None,
+        )
+
+
+def _vegetation_settled_cutoff(*, today: date | None = None) -> date:
+    """Return the newest day whose vegetation publication lag has elapsed."""
+    lane = LANE_REGISTRY[VEGETATION_PLANE_STREAM]
+    return (today or datetime.now(UTC).date()) - timedelta(days=lane.publication_lag_days)
+
+
+def _require_settled_vegetation_window(first_day: date, last_day: date) -> None:
+    """Refuse absence writes outside the governed publication-lag window."""
+    if last_day < first_day:
+        raise ValueError("last day precedes first day")
+    cutoff = _vegetation_settled_cutoff()
+    if last_day > cutoff:
+        raise ValueError(
+            f"last-day {last_day.isoformat()} is not settled; vegetation's current lag cutoff is {cutoff.isoformat()}"
+        )
+
+
+def _require_exact_vegetation_coverage(last_day: date, coverage_last_day: date) -> None:
+    """Require exact reconciliation to prove every settled day in its window."""
+    expected = min(last_day, _vegetation_settled_cutoff())
+    if coverage_last_day != expected:
+        raise ValueError(
+            f"coverage-last-day must be {expected.isoformat()} for this window and vegetation's publication lag"
+        )
+
+
+async def _parquet_reconcile_vegetation_exact(  # noqa: PLR0913 - explicit audit bounds
+    *,
+    first_day: date,
+    last_day: date,
+    coverage_last_day: date,
+    read_attempts: int,
+    progress_every_days: int,
+    stream_progress: bool,
+) -> ExactVegetationReport:
+    """Open one loader session for full value-level vegetation reconciliation."""
+    store = ObjectStore.from_settings()
+
+    def announce(payload: dict[str, object]) -> None:
+        click.echo(json.dumps({"event": "vegetation_exact_reconciliation", **payload}, sort_keys=True), err=True)
+
+    async with local_source_loader_session(settings.require_local_source_loader_database_url()) as session:
+        cell_ids = await spatial_cell_ids(session)
+        return await reconcile_exact_vegetation(
+            session,
+            store,
+            cell_ids=cell_ids,
+            first_day=first_day,
+            last_day=last_day,
+            coverage_last_day=coverage_last_day,
+            read_attempts=read_attempts,
+            progress_every_days=progress_every_days,
+            progress=announce if stream_progress else None,
+        )
+
+
 def _parquet_store_and_backend() -> tuple[ObjectStore, ObjectStoreBackend]:
     """Build the layout-aware store AND the unfiltered backend under it, from one set of credentials.
 
@@ -4128,6 +4304,253 @@ def parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of
         raise click.ClickException(_gap_fill_failure_reason(exc)) from exc
     click.echo(json.dumps(summary.to_report(), sort_keys=True))
     if summary.failures or any(lane.stopped_reason for lane in summary.lanes):
+        context.exit(_GAP_FILL_FAILED_EXIT_CODE)
+
+
+@cli.command("parquet-rewrite-vegetation")
+@click.option(
+    "--manifest",
+    "manifest_path",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False, readable=True),
+    required=True,
+    help="Pinned JSON manifest containing only schema_version, layer=vegetation, kind=observed, and a sorted "
+    "unique days array.",
+)
+@click.option(
+    "--expected-day-count",
+    type=click.IntRange(min=1, max=VEGETATION_REWRITE_MAX_DAYS),
+    required=True,
+    help="Independent exact count of manifest days. A mismatch refuses the operation before any lock or listing.",
+)
+@click.option(
+    "--manifest-sha256",
+    required=True,
+    help="Independent lowercase SHA-256 of the manifest's raw bytes. The file is read once and must match exactly.",
+)
+@click.option(
+    "--apply",
+    is_flag=True,
+    help="Retract the approved partitions. Without this flag the command locks and preflights every day but deletes "
+    "nothing.",
+)
+@click.option(
+    "--max-attempts",
+    type=click.IntRange(min=1, max=VEGETATION_REWRITE_MAX_ATTEMPTS),
+    default=3,
+    show_default=True,
+    help="Bounded attempts for each object-store preflight or tier retraction.",
+)
+@click.option(
+    "--retry-base-seconds",
+    type=click.FloatRange(min=0.0, max=VEGETATION_REWRITE_MAX_RETRY_SECONDS),
+    default=1.0,
+    show_default=True,
+    help="Base exponential retry delay, capped at 30 seconds. Zero keeps the retry count but omits sleeping.",
+)
+@click.option(
+    "--progress/--no-progress",
+    default=True,
+    show_default=True,
+    help="Write one structured JSON result per manifest day to STDERR; the final JSON summary stays on STDOUT.",
+)
+@click.pass_context
+def parquet_rewrite_vegetation(  # noqa: PLR0913 - the six flags are the destructive operation's guard set
+    context: click.Context,
+    manifest_path: Path,
+    expected_day_count: int,
+    manifest_sha256: str,
+    apply: bool,
+    max_attempts: int,
+    retry_base_seconds: float,
+    progress: bool,
+) -> None:
+    """Retract only pinned legacy vegetation days so the missing drain can rewrite them.
+
+    The command is restricted to vegetation/observed and the complete z13/z9/z5/z0 ladder. It
+    accepts a completed z13 partition only when its schema is the exact legacy shape missing both
+    cell coordinate fields. A cleanly missing z13 day is accepted as a resumable checkpoint; a
+    current-schema, absent, conflicted, incomplete, or marker-only day is refused.
+
+    Dry-run is the default. `--apply` is the only path that removes objects. Rerun the same pinned
+    manifest after interruption: tiers already removed are no-ops, and remaining tiers are retired
+    under the same advisory lock the exporter and ladder repair use.
+    """
+    try:
+        manifest = load_vegetation_rewrite_manifest(
+            manifest_path,
+            expected_day_count=expected_day_count,
+            expected_sha256=manifest_sha256,
+        )
+        summary = asyncio.run(
+            _parquet_rewrite_vegetation(
+                manifest,
+                run_id=f"parquet-rewrite-vegetation:{uuid.uuid4()}",
+                dry_run=not apply,
+                max_attempts=max_attempts,
+                retry_base_seconds=retry_base_seconds,
+                stream_progress=progress,
+            )
+        )
+    except SQLAlchemyError as exc:
+        raise click.ClickException("vegetation rewrite could not reach the loader database") from exc
+    except (OSError, ParquetWriteError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(summary.to_report(), sort_keys=True))
+    if summary.failed:
+        context.exit(_GAP_FILL_FAILED_EXIT_CODE)
+
+
+@cli.command("parquet-vegetation-absence-ladders")
+@click.option("--first-day", required=True, help="First settled UTC day to inspect, inclusive.")
+@click.option("--last-day", required=True, help="Last settled UTC day to inspect, inclusive.")
+@click.option("--max-days", type=click.IntRange(min=1), default=None, help="Bound this pass to the oldest N days.")
+@click.option(
+    "--attempts",
+    type=click.IntRange(min=1, max=10),
+    default=ABSENCE_WRITE_ATTEMPTS,
+    show_default=True,
+    help="Bounded attempts for each object-store read or marker write.",
+)
+@click.option(
+    "--apply",
+    is_flag=True,
+    help="Write missing z9/z5/z0 absence markers. Without this flag the command is a locked dry-run.",
+)
+@click.option("--progress/--no-progress", default=True, show_default=True)
+@click.pass_context
+def parquet_vegetation_absence_ladders(  # noqa: PLR0913 - Click exposes one argument per option
+    context: click.Context,
+    first_day: str,
+    last_day: str,
+    max_days: int | None,
+    attempts: int,
+    apply: bool,
+    progress: bool,
+) -> None:
+    """Complete every settled z13 vegetation absence across z9, z5, and z0."""
+    try:
+        parsed_first_day = _forecast_cli_day(first_day, "first-day")
+        parsed_last_day = _forecast_cli_day(last_day, "last-day")
+        _require_settled_vegetation_window(parsed_first_day, parsed_last_day)
+        summary = asyncio.run(
+            _parquet_vegetation_absence_ladders(
+                first_day=parsed_first_day,
+                last_day=parsed_last_day,
+                max_days=max_days,
+                dry_run=not apply,
+                attempts=attempts,
+                stream_progress=progress,
+            )
+        )
+    except SQLAlchemyError as exc:
+        raise click.ClickException("vegetation absence propagation could not reach the loader database") from exc
+    except (OSError, ParquetWriteError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(summary.to_summary(), sort_keys=True))
+    if not summary.is_clean:
+        context.exit(_GAP_FILL_FAILED_EXIT_CODE)
+
+
+@cli.command("parquet-retract-vegetation-absences")
+@click.option("--day", "days", multiple=True, required=True, help="Exact unsettled UTC day to retract; repeatable.")
+@click.option("--coverage-last-day", required=True, help="Current settled vegetation coverage cutoff.")
+@click.option(
+    "--attempts",
+    type=click.IntRange(min=1, max=10),
+    default=ABSENCE_WRITE_ATTEMPTS,
+    show_default=True,
+)
+@click.option("--apply", is_flag=True, help="Remove verified absence markers. Default is a locked dry-run.")
+@click.option("--progress/--no-progress", default=True, show_default=True)
+@click.pass_context
+def parquet_retract_vegetation_absences(  # noqa: PLR0913 - Click exposes one argument per option
+    context: click.Context,
+    days: tuple[str, ...],
+    coverage_last_day: str,
+    attempts: int,
+    apply: bool,
+    progress: bool,
+) -> None:
+    """Retract exact source-empty absence ladders beyond the settled cutoff."""
+    try:
+        parsed_days = tuple(_forecast_cli_day(day, "day") for day in days)
+        parsed_coverage_last_day = _forecast_cli_day(coverage_last_day, "coverage-last-day")
+        expected_cutoff = _vegetation_settled_cutoff()
+        if parsed_coverage_last_day != expected_cutoff:
+            raise ValueError(
+                f"coverage-last-day must be {expected_cutoff.isoformat()} for the current vegetation publication lag"
+            )
+        summary = asyncio.run(
+            _parquet_retract_vegetation_absences(
+                days=parsed_days,
+                coverage_last_day=parsed_coverage_last_day,
+                dry_run=not apply,
+                attempts=attempts,
+                stream_progress=progress,
+            )
+        )
+    except SQLAlchemyError as exc:
+        raise click.ClickException("vegetation absence retraction could not reach the loader database") from exc
+    except (OSError, ParquetWriteError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(summary.to_summary(), sort_keys=True))
+    if not summary.is_clean:
+        context.exit(_GAP_FILL_FAILED_EXIT_CODE)
+
+
+@cli.command("parquet-reconcile-vegetation-exact")
+@click.option("--first-day", required=True, help="First governed UTC source day, inclusive.")
+@click.option("--last-day", required=True, help="Last promoted governed UTC source day, inclusive.")
+@click.option(
+    "--coverage-last-day",
+    required=True,
+    help="Last settled day on which a source-empty day must carry governed absence evidence.",
+)
+@click.option(
+    "--read-attempts",
+    type=click.IntRange(min=1, max=10),
+    default=VEGETATION_RECONCILE_READ_ATTEMPTS,
+    show_default=True,
+)
+@click.option(
+    "--progress-every-days",
+    type=click.IntRange(min=1),
+    default=VEGETATION_RECONCILE_PROGRESS_DAYS,
+    show_default=True,
+)
+@click.option("--progress/--no-progress", default=True, show_default=True)
+@click.pass_context
+def parquet_reconcile_vegetation_exact(  # noqa: PLR0913 - Click exposes one argument per option
+    context: click.Context,
+    first_day: str,
+    last_day: str,
+    coverage_last_day: str,
+    read_attempts: int,
+    progress_every_days: int,
+    progress: bool,
+) -> None:
+    """Require exact 12-column z13 parity and exact derived rows on z9, z5, and z0."""
+    try:
+        parsed_first_day = _forecast_cli_day(first_day, "first-day")
+        parsed_last_day = _forecast_cli_day(last_day, "last-day")
+        parsed_coverage_last_day = _forecast_cli_day(coverage_last_day, "coverage-last-day")
+        _require_exact_vegetation_coverage(parsed_last_day, parsed_coverage_last_day)
+        report = asyncio.run(
+            _parquet_reconcile_vegetation_exact(
+                first_day=parsed_first_day,
+                last_day=parsed_last_day,
+                coverage_last_day=parsed_coverage_last_day,
+                read_attempts=read_attempts,
+                progress_every_days=progress_every_days,
+                stream_progress=progress,
+            )
+        )
+    except SQLAlchemyError as exc:
+        raise click.ClickException("exact vegetation reconciliation could not reach the loader database") from exc
+    except (OSError, ParquetWriteError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(report.to_summary(), sort_keys=True))
+    if not report.is_clean:
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 

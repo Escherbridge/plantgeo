@@ -258,6 +258,11 @@ async def _spatial_cell_ids(session: AsyncSession) -> tuple[UUID, ...]:
     return tuple(_coerce_uuid(row["cell_id"], column="agri.spatial_cell.id") for row in result.mappings())
 
 
+async def spatial_cell_ids(session: AsyncSession) -> tuple[UUID, ...]:
+    """Expose the bounded analysis-cell population to lane-specific admin commands."""
+    return await _spatial_cell_ids(session)
+
+
 async def _layer_id(session: AsyncSession, layer_name: str) -> str:
     """Resolve one `geo.layers` slug to its id, failing closed when the layer does not exist."""
     result = await session.execute(_LAYER_ID_SQL, {"layer_name": layer_name})

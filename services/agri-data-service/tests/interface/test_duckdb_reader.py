@@ -116,9 +116,9 @@ def test_the_serving_session_pins_utc_rather_than_inheriting_the_hosts_zone(sess
 def test_the_process_memory_ceiling_bounds_concurrency_times_the_per_read_limit() -> None:
     """`duckdb.connect()` makes a NEW instance, so the limit is per connection and the pool is the ceiling."""
     assert SERVING_MAX_CONCURRENT_READS >= 1
-    assert (
-        SERVING_MAX_CONCURRENT_READS * _bytes_of(SERVING_MEMORY_LIMIT) <= SERVING_PROCESS_MEMORY_CEILING_BYTES
-    ), "raising either the slot count or the per-read limit without the other overcommits the container"
+    assert SERVING_MAX_CONCURRENT_READS * _bytes_of(SERVING_MEMORY_LIMIT) <= SERVING_PROCESS_MEMORY_CEILING_BYTES, (
+        "raising either the slot count or the per-read limit without the other overcommits the container"
+    )
 
 
 def test_the_serving_session_opens_no_local_database_file(session: ServingSession) -> None:
@@ -161,17 +161,14 @@ def test_a_viewport_narrows_a_point_lane_to_the_rows_inside_it(session: ServingS
     assert [row["cell_id"] for _, row in result.rows] == ["inside"]
 
 
-def test_a_geometry_lane_is_served_as_geojson_clipped_to_the_viewport(
-    session: ServingSession, tmp_path: Path
-) -> None:
+def test_a_geometry_lane_is_served_as_geojson_clipped_to_the_viewport(session: ServingSession, tmp_path: Path) -> None:
     """Clip before probing: the lever that took the largest USDM polygon from 124,676 to 6,151 vertices."""
     reader = DuckDbRowReader(session=local_session(session, tmp_path))
     key = write_parquet(
         session,
         tmp_path,
         partition_path("drought", "observed", 13, date(2026, 8, 18)),
-        "SELECT 3311 AS area_id, 'D2' AS dm_category, "
-        "ST_AsWKB(ST_MakeEnvelope(-130.0, 30.0, -100.0, 50.0)) AS geom",
+        "SELECT 3311 AS area_id, 'D2' AS dm_category, ST_AsWKB(ST_MakeEnvelope(-130.0, 30.0, -100.0, 50.0)) AS geom",
     )
     scope = ReadScope(layer="drought", kind="observed", tier=13, bbox=PNW)
 
@@ -350,9 +347,7 @@ def test_the_unpositioned_probe_is_skipped_once_truncation_is_already_forced(
     scope = ReadScope(layer="water-gauges", kind="observed", tier=13, bbox=PNW)
 
     exhausted = reader.read_rows(RowRead(scope=scope, keys=(key,), row_budget=TINY_ROW_BUDGET))
-    per_day = reader.read_rows(
-        RowRead(scope=scope, keys=(key,), row_budget=TINY_ROW_BUDGET, per_day_truncation=True)
-    )
+    per_day = reader.read_rows(RowRead(scope=scope, keys=(key,), row_budget=TINY_ROW_BUDGET, per_day_truncation=True))
     unexhausted = reader.read_rows(RowRead(scope=scope, keys=(key,), row_budget=100))
 
     assert exhausted.budget_exhausted is True

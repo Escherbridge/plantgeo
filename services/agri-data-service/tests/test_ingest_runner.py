@@ -193,6 +193,7 @@ _TEST_BBOX = "-125,42,-111,49"
 _SENTINEL_SESSION = object()
 _SENTINEL_PUBLISHER = object()
 _SENTINEL_WRITE_FEATURES = object()
+_SENTINEL_FORWARD_VEGETATION = object()
 
 
 class _FakeDroughtStore:
@@ -209,11 +210,15 @@ def job_call_log(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[object]]:
     `log["bind"]` records the (session, publisher) pair bind_feature_writer was given; `log["order"]`
     records each job's name and the argument it was called with, in call order.
     """
-    log: dict[str, list[object]] = {"bind": [], "order": []}
+    log: dict[str, list[object]] = {"bind": [], "forward_bind": [], "order": []}
 
     def fake_bind_feature_writer(session: object, publisher: object | None = None) -> object:
         log["bind"].append((session, publisher))
         return _SENTINEL_WRITE_FEATURES
+
+    def fake_bind_vegetation_forward_writer(session: object) -> object:
+        log["forward_bind"].append(session)
+        return _SENTINEL_FORWARD_VEGETATION
 
     async def fake_firms(write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
         assert write_features is _SENTINEL_WRITE_FEATURES
@@ -242,8 +247,14 @@ def job_call_log(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[object]]:
         log["order"].append(("usdm", store.session))
         return _result(runner.USDM_SOURCE, "ingested")
 
-    async def fake_ndvi(write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
+    async def fake_ndvi(
+        write_features: object,
+        *,
+        bbox: str | None = None,
+        on_persisted: object | None = None,
+    ) -> IngestionJobResult:
         assert write_features is _SENTINEL_WRITE_FEATURES
+        assert on_persisted is _SENTINEL_FORWARD_VEGETATION
         log["order"].append(("ndvi", bbox))
         return _result(runner.NDVI_SOURCE, "ingested")
 
@@ -264,6 +275,7 @@ def job_call_log(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[object]]:
         return _result(runner.GEOMETRY_REPAIR_SOURCE, "ingested")
 
     monkeypatch.setattr(runner, "bind_feature_writer", fake_bind_feature_writer)
+    monkeypatch.setattr(runner, "bind_vegetation_forward_writer", fake_bind_vegetation_forward_writer)
     monkeypatch.setattr(runner, "PostgresDroughtStore", _FakeDroughtStore)
     monkeypatch.setattr(runner, "run_fire_ingestion_job", fake_firms)
     monkeypatch.setattr(runner, "run_water_ingestion_job", fake_usgs)
@@ -292,6 +304,7 @@ async def test_runner_builds_exactly_one_feature_writer_shared_by_the_bbox_scope
     # bind_feature_writer is called exactly once per run, not once per job: the same writer closure
     # backs every bbox-scoped job, matching ingest.ts's single shared write path.
     assert job_call_log["bind"] == [(_SENTINEL_SESSION, _SENTINEL_PUBLISHER)]
+    assert job_call_log["forward_bind"] == [_SENTINEL_SESSION]
 
 
 async def test_runner_threads_the_bbox_into_every_bbox_scoped_job(

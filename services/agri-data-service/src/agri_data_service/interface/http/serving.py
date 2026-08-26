@@ -299,9 +299,7 @@ def _keys_for_months(
     cursor = date(first_day.year, first_day.month, 1)
     while cursor <= last_day:
         months.append((cursor.year, cursor.month))
-        cursor = (
-            date(cursor.year + 1, 1, 1) if cursor.month == DECEMBER else date(cursor.year, cursor.month + 1, 1)
-        )
+        cursor = date(cursor.year + 1, 1, 1) if cursor.month == DECEMBER else date(cursor.year, cursor.month + 1, 1)
     return tuple(
         key
         for year, month in months

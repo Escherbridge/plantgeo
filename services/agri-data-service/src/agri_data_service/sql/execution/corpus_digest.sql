@@ -23,8 +23,8 @@
 --   WITH corpus AS (...)
 --     A CTE ("common table expression") -- a named subquery written up front and referenced below
 --     like a table. This one turns raw feature rows into the canonical fact table being fingerprinted:
---     one row per cell per observed day, holding that day's mean NDVI and how many source rows went
---     into it.
+--     one row per cell per observed day, holding every value and evidence field written into the
+--     governed observation.
 --
 --   feature.properties->>'cellKey'
 --     The features table keeps its per-feature attributes in one JSON column; the arrow-with-two-
@@ -92,7 +92,14 @@ WITH corpus AS (
         feature.properties->>'cellKey' AS entity_key,
         substring(feature.properties->>'observedAt', 1, 10)::date AS observed_day,
         avg((feature.properties->>'ndvi')::double precision) AS metric_value,
-        count(*) AS source_row_count
+        count(*) AS source_row_count,
+        max(feature.created_at) AS data_available_at,
+        sum((feature.properties->>'sampleCount')::integer)::integer AS pixel_sample_count,
+        max((feature.properties->>'cloudCover')::double precision) AS max_cloud_cover,
+        array_agg(
+            DISTINCT feature.properties->>'sceneId'
+            ORDER BY feature.properties->>'sceneId'
+        ) AS scene_ids
     FROM geo.features AS feature
     WHERE feature.layer_id = (SELECT id FROM geo.layers WHERE name = :layer_name)
       AND substring(feature.properties->>'observedAt', 1, 10)::date <= :cutoff_day
@@ -102,7 +109,17 @@ SELECT
     encode(
         digest(
             string_agg(
-                concat_ws('|', corpus.entity_key, corpus.observed_day::text, corpus.metric_value::text),
+                concat_ws(
+                    '|',
+                    corpus.entity_key,
+                    corpus.observed_day::text,
+                    corpus.metric_value::text,
+                    corpus.source_row_count::text,
+                    corpus.data_available_at::text,
+                    corpus.pixel_sample_count::text,
+                    corpus.max_cloud_cover::text,
+                    array_to_string(corpus.scene_ids, ',')
+                ),
                 '|'
                 ORDER BY corpus.entity_key, corpus.observed_day
             ),

@@ -18,9 +18,11 @@ import pytest
 
 from agri_data_service.cli import _registration_payload
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.execution import vegetation_ndvi_plane as plane_module
 from agri_data_service.execution.vegetation_ndvi_plane import (
     EMPTY_RELEASE_REASON,
     EMPTY_SELECTION_REASON,
+    CorpusChangedDuringRegistrationError,
     EmptyGovernedReleaseError,
     GovernedPlane,
     RegistrationSummary,
@@ -29,6 +31,7 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
     all_requested_cells_materialised,
     empty_materialisation_reason,
     measure_release_materialisation,
+    register_governed_forward_plane,
     release_holds_claimed_corpus,
 )
 
@@ -286,3 +289,57 @@ def test_registration_payload_reports_a_pass_that_covered_less_than_it_asked_for
     )
     assert payload["all_requested_cells_materialised"] is False
     assert payload["requested_cells_materialised"] == _PARTIAL_SERIES_COUNT
+
+
+@pytest.mark.asyncio
+async def test_forward_registration_redigests_and_refuses_a_concurrent_raw_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = plane_module._CorpusDigest(
+        payload_checksum="a" * 64,
+        cell_count=1,
+        cell_day_count=1,
+        row_count=1,
+        first_observed_day=_CUTOFF_DAY,
+        last_observed_day=_CUTOFF_DAY,
+    )
+    after = plane_module._CorpusDigest(
+        payload_checksum="b" * 64,
+        cell_count=1,
+        cell_day_count=1,
+        row_count=2,
+        first_observed_day=_CUTOFF_DAY,
+        last_observed_day=_CUTOFF_DAY,
+    )
+    digests = iter((before, after))
+
+    async def pin(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def digest(*_args: object, **_kwargs: object) -> plane_module._CorpusDigest:
+        return next(digests)
+
+    async def register_id(*_args: object, **_kwargs: object) -> uuid.UUID:
+        return _RELEASE_ID
+
+    async def register_set(*_args: object, **_kwargs: object) -> tuple[uuid.UUID, str]:
+        return uuid.uuid4(), "c" * 64
+
+    async def register_count(*_args: object, **_kwargs: object) -> int:
+        return 1
+
+    monkeypatch.setattr(plane_module, "pin_determinism", pin)
+    monkeypatch.setattr(plane_module, "_corpus_digest", digest)
+    monkeypatch.setattr(plane_module, "_register_data_source", register_id)
+    monkeypatch.setattr(plane_module, "_register_source_release", register_id)
+    monkeypatch.setattr(plane_module, "_register_release_set", register_set)
+    monkeypatch.setattr(plane_module, "_register_spatial_cells", register_count)
+    monkeypatch.setattr(plane_module, "_register_series", register_count)
+    monkeypatch.setattr(plane_module, "_load_observations", register_count)
+
+    with pytest.raises(CorpusChangedDuringRegistrationError, match="changed while"):
+        await register_governed_forward_plane(
+            cast("Any", object()),
+            cutoff_day=_CUTOFF_DAY,
+            cell_days=(("43.1250:-116.1250", _CUTOFF_DAY),),
+        )

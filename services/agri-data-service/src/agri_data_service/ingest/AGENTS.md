@@ -288,6 +288,17 @@ Three porting hazards here are pinned by test rather than by comment. `date.from
 
 What it is now: `ndvi.py` resolves the bounded bbox, builds the source via `vegetation.build_vegetation_source()`, and runs it through the same `select_writes` path every other source uses. The source declares `shape="grid_cell"` — one upstream record is a sample landing on a shared raster cell, not one record per place — so `source.grid_cell_of` holds it to that shape and `geometry.feature_geometry_request` keys the dimension by the cell rather than by the sample. `build_ndvi_write` stores the scene instant under `observedAt`, which is what makes the layer datable to the slider (`environmental-read-model.ts` coalesces `observedAt`/`updatedAt`/`polygonDateTime` and nothing else). It declares `HistoryCapability(supported=True, earliest=SENTINEL2_L2A_EARLIEST_OBSERVATION)`, so `agri-cli ingest-backfill --source sentinel2-ndvi --since … --until …` can walk it. A scene search that finds nothing clear still returns `skipped`, not `failed`: cloud is a fact about the sky, not a broken job.
 
+The optional `on_persisted` callback is the forward governed/Parquet seam. It runs only after the
+feature writer returns successfully and receives the exact accepted writes, including on an
+idempotent raw write whose changed-row count is zero. Skips, all-rejected selections and writer
+failures never invoke it. `runner.py` and the dedicated `_run_ndvi` command bind the production
+forward writer; tests can pass a callback without constructing PostgreSQL or object storage.
+Forward counters are flattened into the existing integer-only `details` map with a `parquet_`
+prefix. If publication raises after raw persistence, NDVI returns a failed result that preserves
+the real `records_seen` and committed `records_written`; the cron goes red without falsely claiming
+the durable raw work vanished. A bounded forward run that leaves pending or contended days raises,
+so a direct CLI rerun resamples the same source scope and resumes from physical completion markers.
+
 One gap is deliberate and still open: `METRIC_SOURCES` in `environmental-read-model.ts` has no `vegetation` entry, so once this producer fills the layer the capability payload will advertise observed days the metric map cannot answer for. Add the NDVI metric there in the same change that enables the producer on the cron, or the slider claims a day it cannot serve.
 
 ## results.py, runner.py and commands.py

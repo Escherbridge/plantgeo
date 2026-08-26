@@ -108,9 +108,7 @@ async def test_a_written_day_answers_200_with_its_rows(warehouse: tuple[FakeList
     part = listing.write_day("signal", "observed", 13, date(2026, 8, 6))
     reader.rows_by_key[part] = ({"cell_id": "4127", "normalized_value": 0.412},)
 
-    response = await parquet_routes.read_day(
-        request_with(layer="signal", kind="observed", zoom="13", day="2026-08-06")
-    )
+    response = await parquet_routes.read_day(request_with(layer="signal", kind="observed", zoom="13", day="2026-08-06"))
 
     assert response.status == HTTP_OK
     assert payload_of(response)["state"] == "published"
@@ -195,9 +193,7 @@ async def test_the_release_route_reports_the_release_s_own_day(
     part = listing.write_day("drought", "observed", 13, date(2026, 8, 18))
     reader.rows_by_key[part] = ({"area_id": 3311, "dm_category": "D2"},)
 
-    response = await parquet_routes.read_release(
-        request_with(layer="drought", zoom="13", as_of="2026-08-24")
-    )
+    response = await parquet_routes.read_release(request_with(layer="drought", zoom="13", as_of="2026-08-24"))
     payload = payload_of(response)
 
     assert payload["served_day"] == "2026-08-18"
@@ -250,8 +246,7 @@ async def test_a_malformed_request_is_400_and_never_one_of_the_four_states(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("warehouse")
-async def test_a_backwards_window_is_refused_before_it_reaches_the_warehouse(
-) -> None:
+async def test_a_backwards_window_is_refused_before_it_reaches_the_warehouse() -> None:
     response = await parquet_routes.read_window(
         request_with(layer="signal", zoom="13", first_day="2026-08-09", last_day="2026-08-01")
     )
@@ -261,8 +256,7 @@ async def test_a_backwards_window_is_refused_before_it_reaches_the_warehouse(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("warehouse")
-async def test_a_window_longer_than_the_budget_is_refused_rather_than_silently_narrowed(
-) -> None:
+async def test_a_window_longer_than_the_budget_is_refused_rather_than_silently_narrowed() -> None:
     response = await parquet_routes.read_window(
         request_with(layer="signal", zoom="13", first_day="2026-01-01", last_day="2026-08-01")
     )

@@ -77,9 +77,7 @@ def test_an_unknown_revision_fails_closed_rather_than_sorting() -> None:
 
 def test_neither_promotion_gate_compares_revisions_for_equality_any_more() -> None:
     """The two call sites the stamp would have broken, asserted by source so a regression is loud."""
-    promotion = (_SERVICE_ROOT / "src" / "agri_data_service" / "execution" / "promotion.py").read_text(
-        encoding="utf-8"
-    )
+    promotion = (_SERVICE_ROOT / "src" / "agri_data_service" / "execution" / "promotion.py").read_text(encoding="utf-8")
     receiver = (_SERVICE_ROOT / "src" / "agri_data_service" / "routes" / "historical_promotion.py").read_text(
         encoding="utf-8"
     )

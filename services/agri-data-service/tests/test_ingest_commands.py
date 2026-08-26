@@ -87,9 +87,15 @@ def test_bbox_scoped_verb_passes_the_bbox_option_through_to_its_job(
     source = getattr(commands_module, source_attribute)
     captured: dict[str, object] = {}
 
-    async def fake_job(write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
+    async def fake_job(
+        write_features: object,
+        *,
+        bbox: str | None = None,
+        on_persisted: object | None = None,
+    ) -> IngestionJobResult:
         captured["bbox"] = bbox
         captured["write_features"] = write_features
+        captured["on_persisted"] = on_persisted
         return _ingested(source)
 
     monkeypatch.setattr(commands_module, job_attribute, fake_job)
@@ -98,6 +104,7 @@ def test_bbox_scoped_verb_passes_the_bbox_option_through_to_its_job(
     assert invocation.exit_code == 0, invocation.output
     assert captured["bbox"] == "-125,42,-111,49"
     assert captured["write_features"] is not None
+    assert (captured["on_persisted"] is not None) is (verb == "ingest-ndvi")
     assert json.loads(invocation.output.strip()) == {
         "source": source,
         "status": "ingested",
@@ -116,7 +123,12 @@ def test_bbox_scoped_verb_omits_bbox_when_the_option_is_not_given(
     source = getattr(commands_module, source_attribute)
     captured: dict[str, object] = {}
 
-    async def fake_job(_write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
+    async def fake_job(
+        _write_features: object,
+        *,
+        bbox: str | None = None,
+        on_persisted: object | None = None,  # noqa: ARG001
+    ) -> IngestionJobResult:
         captured["bbox"] = bbox
         return _ingested(source)
 
@@ -137,7 +149,12 @@ def test_bbox_scoped_verb_exits_non_zero_when_its_job_reports_failed(
     source = getattr(commands_module, source_attribute)
 
     # Both parameters keep the real job's names so the keyword call in commands.py still binds.
-    async def fake_job(_write_features: object, *, bbox: str | None = None) -> IngestionJobResult:  # noqa: ARG001
+    async def fake_job(
+        _write_features: object,
+        *,
+        bbox: str | None = None,  # noqa: ARG001
+        on_persisted: object | None = None,  # noqa: ARG001
+    ) -> IngestionJobResult:
         return _failed(source, "upstream request failed with status 500")
 
     monkeypatch.setattr(commands_module, job_attribute, fake_job)

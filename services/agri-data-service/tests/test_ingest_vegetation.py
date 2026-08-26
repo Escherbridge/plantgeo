@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 
+from agri_data_service.ingest import ndvi as ndvi_module
 from agri_data_service.ingest.identity import MissingNativeKeyError
 from agri_data_service.ingest.ndvi import NO_CLEAR_SCENE_REASON, run_vegetation_ingestion_job
 from agri_data_service.ingest.policy import parse_bbox
@@ -22,6 +23,7 @@ from agri_data_service.ingest.vegetation import (
     SENTINEL2_L2A_REFLECTANCE_OFFSET,
     SENTINEL2_NDVI_PRODUCER,
     VEGETATION_CHANNEL,
+    GridSampleOutcome,
     SceneMetadataError,
     build_ndvi_identity,
     build_ndvi_write,
@@ -251,6 +253,94 @@ async def test_a_window_with_no_cloud_free_scene_is_an_honest_skip_with_no_rows_
     assert result.reason == NO_CLEAR_SCENE_REASON
     assert result.records_written == 0
     assert writer.writes == []
+
+
+async def test_forward_publication_runs_after_successful_persistence_even_on_an_idempotent_raw_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_collect(_client: httpx.AsyncClient, _window: object) -> GridSampleOutcome:
+        return GridSampleOutcome(records=[_grid_record()], cells_requested=1, truncated=False)
+
+    events: list[str] = []
+
+    async def idempotent_writer(writes: Sequence[FeatureWrite]) -> int:
+        assert len(writes) == 1
+        events.append("persisted")
+        return 0
+
+    async def forward(writes: Sequence[FeatureWrite]) -> dict[str, int]:
+        assert len(writes) == 1
+        events.append("forwarded")
+        return {"affected_days": 1, "written_days": 1}
+
+    monkeypatch.setattr(ndvi_module, "collect_ndvi_grid_records", fake_collect)
+    async with httpx.AsyncClient() as client:
+        result = await run_vegetation_ingestion_job(
+            idempotent_writer,
+            bbox="-120,44,-119,45",
+            client=client,
+            on_persisted=forward,
+        )
+
+    assert events == ["persisted", "forwarded"]
+    assert result.records_written == 0
+    assert result.details is not None
+    assert result.details["parquet_affected_days"] == 1
+    assert result.details["parquet_written_days"] == 1
+
+
+async def test_forward_publication_never_runs_when_raw_persistence_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_collect(_client: httpx.AsyncClient, _window: object) -> GridSampleOutcome:
+        return GridSampleOutcome(records=[_grid_record()], cells_requested=1, truncated=False)
+
+    callback_called = False
+
+    async def failing_writer(_writes: Sequence[FeatureWrite]) -> int:
+        raise RuntimeError("raw persistence failed")
+
+    async def forward(_writes: Sequence[FeatureWrite]) -> dict[str, int]:
+        nonlocal callback_called
+        callback_called = True
+        return {}
+
+    monkeypatch.setattr(ndvi_module, "collect_ndvi_grid_records", fake_collect)
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(RuntimeError, match="raw persistence failed"):
+            await run_vegetation_ingestion_job(
+                failing_writer,
+                bbox="-120,44,-119,45",
+                client=client,
+                on_persisted=forward,
+            )
+
+    assert callback_called is False
+
+
+async def test_forward_failure_preserves_the_raw_persistence_counts_in_the_failed_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_collect(_client: httpx.AsyncClient, _window: object) -> GridSampleOutcome:
+        return GridSampleOutcome(records=[_grid_record()], cells_requested=1, truncated=False)
+
+    async def forward(_writes: Sequence[FeatureWrite]) -> dict[str, int]:
+        raise RuntimeError("object store unavailable")
+
+    monkeypatch.setattr(ndvi_module, "collect_ndvi_grid_records", fake_collect)
+    async with httpx.AsyncClient() as client:
+        result = await run_vegetation_ingestion_job(
+            RecordingWriter(),
+            bbox="-120,44,-119,45",
+            client=client,
+            on_persisted=forward,
+        )
+
+    assert result.status == "failed"
+    assert result.records_seen == 1
+    assert result.records_written == 1
+    assert result.reason == ("raw vegetation persisted; governed Parquet publication failed: object store unavailable")
+    assert result.details == {"cells": 1, "rejected": 0}
 
 
 def test_the_composed_source_declares_a_grid_cell_shape_with_no_extra_freshness_rejection() -> None:

@@ -220,9 +220,7 @@ def _throwaway_version_path(tmp_path: Path, probe_body: str) -> Path:
 def test_the_committed_migration_path_builds_from_empty_against_the_current_tree() -> None:
     """The build `db/AGENTS.md` tells an operator to make, and the one a regeneration breaks first."""
     admin_dsn = _require_admin_dsn()
-    result = _build_from_empty(
-        admin_dsn, f"{REHEARSAL_DATABASE_PREFIX}_committed", _SERVICE_ROOT / "alembic.ini"
-    )
+    result = _build_from_empty(admin_dsn, f"{REHEARSAL_DATABASE_PREFIX}_committed", _SERVICE_ROOT / "alembic.ini")
 
     assert result.returncode == 0, (
         "`alembic upgrade head` no longer builds an empty database from the committed tree.\n"

@@ -139,7 +139,10 @@ WITH daily AS (
         max(feature.created_at) AS data_available_at,
         sum((feature.properties->>'sampleCount')::integer)::integer AS pixel_sample_count,
         max((feature.properties->>'cloudCover')::double precision) AS max_cloud_cover,
-        array_agg(DISTINCT feature.properties->>'sceneId') AS scene_ids
+        array_agg(
+            DISTINCT feature.properties->>'sceneId'
+            ORDER BY feature.properties->>'sceneId'
+        ) AS scene_ids
     FROM geo.features AS feature
     WHERE feature.layer_id = (SELECT id FROM geo.layers WHERE name = :layer_name)
       AND feature.properties->>'cellKey' = ANY(CAST(:cell_keys AS text[]))
@@ -170,6 +173,9 @@ SELECT
                 daily.observed_day::text,
                 daily.metric_value::text,
                 daily.source_row_count::text,
+                daily.data_available_at::text,
+                daily.pixel_sample_count::text,
+                daily.max_cloud_cover::text,
                 array_to_string(daily.scene_ids, ',')
             ),
             'sha256'

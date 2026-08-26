@@ -722,15 +722,29 @@ The gate itself was never affected (0 + 0 = 0, and no duplicate can manufacture 
 was a reporting defect on the field this section calls the luck-free signal. The sampled path was
 always safe because `select_candidate_cell_keys.sql` groups.
 
-Still open and deliberately unfixed: `corpus_digest.sql` fingerprints every vegetation cell
-while `load_observations.sql` writes only `cell_keys`, so `payload_checksum` cannot distinguish
-a bounded selection from a full one, and `insert_source_release.sql`'s `ON CONFLICT
-(data_source_id, source_version, payload_checksum, transform_version)` therefore lets a partial
-pass attach itself to an existing full release; `release_set_logical_key` (cutoff-only) collides
-for the same reason. Narrowing the digest to the selected cells would fix both, but it redefines
-a governed release identity and would strand the already-`validated` release set, so it belongs
-in its own reviewed change. The guard above adds no new write path to that collision — it only
-refuses to report such a pass as successful.
+The corpus digest remains release-wide while registration is cell-bounded, but a cutoff-only
+release-set key may never silently absorb a changed digest. `_register_release_set` compares the
+offered manifest with the stored immutable manifest before adding membership and raises
+`ReleaseSetManifestConflictError` on mismatch. The full-history CLI keeps that cutoff-only identity
+unchanged. Forward ingestion instead appends the full payload checksum to its logical key, so a
+same-publisher-day amendment becomes a distinct immutable release set while the earlier validated
+set remains untouched; repeating the same corpus rejoins the same forward set idempotently.
+
+Source-release identity fingerprints the complete governed cell-day payload: mean, source-row
+count, availability, pixel count, maximum cloud cover, and canonically ordered scene ids. Hashing
+only the mean would reuse stale evidence for a same-valued amendment. Registration reads that
+release-wide digest again after materialising its selected rows and refuses/retries when the two
+snapshots differ; no observation read from a later READ COMMITTED snapshot may carry the earlier
+snapshot's release checksum.
+
+Forward ingestion uses `register_governed_forward_plane`, not the full-history registration used
+by the operator CLI. It keeps the same source-release identity and governance primitives but passes
+the exact sorted cell-day pairs touched by the persisted writes into `load_observations_for_days.sql`.
+The statement receives aligned cell/day arrays and zips them with `unnest`, so `(cell A, day 1)` and
+`(cell B, day 2)` cannot expand into the four-row cross-product of two independent filters. Exact
+pairs are deduplicated and batched at 200. This prevents one hourly release from duplicating every
+historical cell-day and changing `release_count` across the entire corpus; only touched days need
+their full-cell Parquet exports rewritten.
 
 Two reinterpretations are deliberate and load-bearing. `forecast_iteration.increment_count`
 and `forecast_iteration_value.increment_count` carry the **seasonal innovation pool size**

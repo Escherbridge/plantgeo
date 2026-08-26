@@ -15,6 +15,7 @@ from agri_data_service.ingest.usdm import USDM_SOURCE, PostgresDroughtStore, run
 from agri_data_service.ingest.usgs_nwis import USGS_STREAMFLOW_SOURCE, run_water_ingestion_job
 from agri_data_service.ingest.wfigs import WFIGS_SOURCE, run_fire_perimeters_ingestion_job
 from agri_data_service.ingest.writer import bind_feature_writer
+from agri_data_service.pipeline.parquet.vegetation_forward import bind_vegetation_forward_writer
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -40,13 +41,21 @@ async def run_all_ingestion_jobs(
     It is the last job because it should claim anything this run's own sources failed to link.
     """
     write_features = bind_feature_writer(session, publisher)
+    forward_vegetation = bind_vegetation_forward_writer(session)
     jobs: list[tuple[str, Callable[[], Awaitable[IngestionJobResult]]]] = [
         (FIRMS_SOURCE, lambda: run_fire_ingestion_job(write_features, bbox=bbox)),
         (USGS_STREAMFLOW_SOURCE, lambda: run_water_ingestion_job(write_features, bbox=bbox)),
         (OPEN_METEO_SOURCE, lambda: run_weather_ingestion_job(write_features, bbox=bbox)),
         (WFIGS_SOURCE, lambda: run_fire_perimeters_ingestion_job(write_features, bbox=bbox)),
         (USDM_SOURCE, lambda: run_drought_ingestion_job(PostgresDroughtStore(session))),
-        (NDVI_SOURCE, lambda: run_vegetation_ingestion_job(write_features, bbox=bbox)),
+        (
+            NDVI_SOURCE,
+            lambda: run_vegetation_ingestion_job(
+                write_features,
+                bbox=bbox,
+                on_persisted=forward_vegetation,
+            ),
+        ),
         (NWS_SENSOR_SOURCE, lambda: run_sensor_ingestion_job(write_features, bbox=bbox)),
         (EVACUATION_ZONES_SOURCE, lambda: run_evacuation_zones_ingestion_job(write_features, bbox=bbox)),
         (GEOMETRY_REPAIR_SOURCE, lambda: run_geometry_repair(session)),

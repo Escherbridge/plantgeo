@@ -87,6 +87,7 @@ from agri_data_service.jobs import (
     shutdown_signal,
 )
 from agri_data_service.jobs.lease import apply_statement_timeout, fetch_rows, optional_column, required_column
+from agri_data_service.pipeline.parquet.vegetation_forward import bind_vegetation_forward_writer
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -218,15 +219,23 @@ async def _run_drought(valid_date: str | None, replace: bool) -> IngestionJobRes
 @click.pass_context
 def ingest_ndvi(context: click.Context, bbox: str | None) -> None:
     """Ingest Sentinel-2 L2A NDVI sampled onto the bounded warehouse grid."""
-    results = [
-        asyncio.run(
-            _run_with_feature_writer(
-                NDVI_SOURCE,
-                lambda write_features: run_vegetation_ingestion_job(write_features, bbox=bbox),
-            )
-        )
-    ]
+    results = [asyncio.run(_run_ndvi(bbox))]
     finish(context, results)
+
+
+async def _run_ndvi(bbox: str | None) -> IngestionJobResult:
+    """Keep raw persistence and governed Parquet publication on the same isolated job boundary."""
+    async with ingest_session() as session, RealtimePublisher() as publisher:
+        write_features = bind_feature_writer(session, publisher)
+        forward_vegetation = bind_vegetation_forward_writer(session)
+        return await run_isolated_job(
+            NDVI_SOURCE,
+            lambda: run_vegetation_ingestion_job(
+                write_features,
+                bbox=bbox,
+                on_persisted=forward_vegetation,
+            ),
+        )
 
 
 @click.command("ingest-sensors")

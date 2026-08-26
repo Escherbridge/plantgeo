@@ -77,6 +77,8 @@ from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 
 from agri_data_service.config import ObjectStoreCredentials, Settings, settings
 from agri_data_service.foundation.canonical import sha256_digest
+from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import (
     absence_marker_path,
     completion_marker_path,
@@ -96,8 +98,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
     from datetime import date
 
-    from agri_data_service.foundation.parquet.absence import GovernedAbsence
-    from agri_data_service.foundation.parquet.completion import PartitionCompletion
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
 
@@ -465,6 +465,10 @@ class ObjectStore:
         """
         self._backend.delete(self.key_for(completion_marker_path(layer, kind, zoom, day)))
 
+    def clear_absence_marker(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> None:
+        """Retract one governed-absence claim; callers must hold the whole lane-day lock."""
+        self._backend.delete(self.key_for(absence_marker_path(layer, kind, zoom, day)))
+
     def list_partition_objects(
         self,
         layer: str,
@@ -562,9 +566,7 @@ class ObjectStore:
             )
         return pa.concat_tables(tables)
 
-    def retract_partition_tier(
-        self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date
-    ) -> SurplusPruneResult:
+    def retract_partition_tier(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> SurplusPruneResult:
         """Empty ONE rung of one day: clear its completion claim, then delete every part it holds.
 
         DELIBERATELY NOT `prune_surplus_parts(written_part_count=0)`, which refuses that argument on
@@ -664,6 +666,18 @@ class ObjectStore:
     def absence_exists(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> bool:
         """Report whether one stream-day carries a governed-absence marker AT THIS TIER, without downloading it."""
         return self._backend.size_of(self.key_for(absence_marker_path(layer, kind, zoom, day))) is not None
+
+    def read_absence(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> GovernedAbsence | None:
+        """Return one tier's governed-absence evidence, or ``None`` when no marker exists."""
+        payload = self._backend.get(self.key_for(absence_marker_path(layer, kind, zoom, day)))
+        return None if payload is None else GovernedAbsence.from_json_bytes(payload)
+
+    def read_completion_marker(
+        self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date
+    ) -> PartitionCompletion | None:
+        """Return one tier's completion receipt, or ``None`` when no marker exists."""
+        payload = self._backend.get(self.key_for(completion_marker_path(layer, kind, zoom, day)))
+        return None if payload is None else PartitionCompletion.from_json_bytes(payload)
 
     def day_key_prefix(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> str:
         """Return the absolute bucket prefix holding every part file for one stream-day at one tier."""

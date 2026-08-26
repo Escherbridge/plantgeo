@@ -208,9 +208,9 @@ def test_the_extension_list_has_exactly_one_definition() -> None:
     assert readiness_contracts.REQUIRED_EXTENSIONS is REQUIRED_EXTENSIONS
     assert baseline_module().REQUIRED_EXTENSIONS is REQUIRED_EXTENSIONS
     assert frozenset(REQUIRED_EXTENSIONS) == REQUIRED_EXTENSION_NAMES
-    contracts_source = (
-        _SERVICE_ROOT / "src" / "agri_data_service" / "routes" / "health" / "contracts.py"
-    ).read_text(encoding="utf-8")
+    contracts_source = (_SERVICE_ROOT / "src" / "agri_data_service" / "routes" / "health" / "contracts.py").read_text(
+        encoding="utf-8"
+    )
     assert "REQUIRED_EXTENSIONS = (" not in contracts_source, (
         "routes/health/contracts.py re-declares REQUIRED_EXTENSIONS; it must re-export "
         "agri_data_service.db.extensions so the migration, /ready and the verifier cannot diverge"

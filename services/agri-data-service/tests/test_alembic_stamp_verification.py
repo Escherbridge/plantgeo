@@ -78,9 +78,7 @@ def test_the_verifier_never_writes_to_its_target() -> None:
         and "{database}" not in literal
         and "{arguments.reference_db_name}" not in literal
     ]
-    assert not unscoped, (
-        f"CREATE/DROP DATABASE not scoped to the disposable reference database: {unscoped}"
-    )
+    assert not unscoped, f"CREATE/DROP DATABASE not scoped to the disposable reference database: {unscoped}"
 
     mutations = [
         literal

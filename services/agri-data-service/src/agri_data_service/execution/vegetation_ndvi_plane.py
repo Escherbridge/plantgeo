@@ -75,6 +75,7 @@ _INSERT_RELEASE_SET_ITEM = text(load_query_sql("execution/insert_release_set_ite
 _INSERT_SPATIAL_CELLS = text(load_query_sql("execution/insert_spatial_cells.sql"))
 _INSERT_FORECAST_SERIES = text(load_query_sql("execution/insert_forecast_series.sql"))
 _LOAD_OBSERVATIONS = text(load_query_sql("execution/load_observations.sql"))
+_LOAD_OBSERVATIONS_FOR_DAYS = text(load_query_sql("execution/load_observations_for_days.sql"))
 _RELEASE_MATERIALISATION = text(load_query_sql("execution/release_materialisation.sql"))
 _SELECTION_MATERIALISATION = text(load_query_sql("execution/selection_materialisation.sql"))
 _LOAD_GOVERNED_PLANE = text(load_query_sql("execution/load_governed_plane.sql"))
@@ -230,6 +231,31 @@ class EmptyGovernedReleaseError(ValueError):
         self.release_observation_count = release_observation_count
 
 
+class ReleaseSetManifestConflictError(ValueError):
+    """Raised when one publisher-day key already names a different immutable corpus."""
+
+    def __init__(self, *, logical_key: str, stored_manifest: str, offered_manifest: str) -> None:
+        super().__init__(
+            f"governed NDVI release set {logical_key} already carries immutable manifest "
+            f"{stored_manifest}, not newly offered {offered_manifest}"
+        )
+        self.logical_key = logical_key
+        self.stored_manifest = stored_manifest
+        self.offered_manifest = offered_manifest
+
+
+class CorpusChangedDuringRegistrationError(RuntimeError):
+    """Raised when raw vegetation changes between its release digest and materialisation read."""
+
+    def __init__(self, *, before_checksum: str, after_checksum: str) -> None:
+        super().__init__(
+            "raw vegetation changed while its governed release was being registered: "
+            f"{before_checksum} became {after_checksum}"
+        )
+        self.before_checksum = before_checksum
+        self.after_checksum = after_checksum
+
+
 def empty_materialisation_reason(
     *,
     selection: SelectionMaterialisation,
@@ -281,6 +307,11 @@ def prefixed_cell_key(entity_key: str) -> str:
 def release_set_logical_key(cutoff_day: date) -> str:
     """Return the release-set logical key for one publisher-day cutoff."""
     return f"{DATA_SOURCE_KEY}-{GRID_NAME}-through-{cutoff_day.isoformat()}"
+
+
+def forward_release_set_logical_key(cutoff_day: date, payload_checksum: str) -> str:
+    """Version one forward release set by both publisher cutoff and immutable corpus digest."""
+    return f"{release_set_logical_key(cutoff_day)}-payload-{payload_checksum}"
 
 
 def _batched(values: tuple[str, ...], size: int) -> tuple[tuple[str, ...], ...]:
@@ -423,15 +454,16 @@ async def _register_source_release(
     return uuid.UUID(str(result.scalar_one()))
 
 
-async def _register_release_set(
+async def _register_release_set(  # noqa: PLR0913 - immutable release-set identity requires all six inputs.
     session: AsyncSession,
     *,
     source_release_id: uuid.UUID,
     payload_checksum: str,
     cutoff_day: date,
     recorded_at: datetime,
+    logical_key: str | None = None,
 ) -> tuple[uuid.UUID, str]:
-    logical_key = release_set_logical_key(cutoff_day)
+    logical_key = logical_key or release_set_logical_key(cutoff_day)
     manifest_result = await session.execute(
         _RELEASE_SET_MANIFEST_CHECKSUM,
         {
@@ -440,12 +472,13 @@ async def _register_release_set(
             "payload_checksum": payload_checksum,
         },
     )
+    offered_manifest = str(manifest_result.scalar_one())
     await session.execute(
         _INSERT_RELEASE_SET,
         {
             "logical_key": logical_key,
             "as_of_time": recorded_at,
-            "manifest_checksum": str(manifest_result.scalar_one()),
+            "manifest_checksum": offered_manifest,
             "description": (
                 "Governed Sentinel-2 NDVI cell-day observation release for the Pacific Northwest "
                 "0.25-degree lattice, pinned by publisher-named day."
@@ -460,6 +493,13 @@ async def _register_release_set(
     )
     release_set_row = release_set_result.mappings().one()
     release_set_id = uuid.UUID(str(release_set_row["id"]))
+    stored_manifest = str(release_set_row["manifest_checksum"])
+    if stored_manifest != offered_manifest:
+        raise ReleaseSetManifestConflictError(
+            logical_key=logical_key,
+            stored_manifest=stored_manifest,
+            offered_manifest=offered_manifest,
+        )
     await session.execute(
         _INSERT_RELEASE_SET_ITEM,
         {"release_set_id": release_set_id, "source_release_id": source_release_id, "added_at": recorded_at},
@@ -470,7 +510,7 @@ async def _register_release_set(
             text("UPDATE agri.release_set SET state = 'validated', validated_at = :validated_at WHERE id = :id"),
             {"id": release_set_id, "validated_at": recorded_at},
         )
-    return release_set_id, str(release_set_row["manifest_checksum"])
+    return release_set_id, stored_manifest
 
 
 async def _register_spatial_cells(session: AsyncSession, *, cell_keys: tuple[str, ...]) -> int:
@@ -519,8 +559,28 @@ async def _load_observations(
     source_release_id: uuid.UUID,
     cell_keys: tuple[str, ...],
     cutoff_day: date,
+    cell_days: tuple[tuple[str, date], ...] | None = None,
 ) -> int:
     inserted = 0
+    if cell_days is not None:
+        for start in range(0, len(cell_days), CELL_BATCH_SIZE):
+            pair_batch = cell_days[start : start + CELL_BATCH_SIZE]
+            result = await session.execute(
+                _LOAD_OBSERVATIONS_FOR_DAYS,
+                {
+                    "layer_name": SOURCE_LAYER_NAME,
+                    "cell_keys": [cell_key for cell_key, _day in pair_batch],
+                    "observed_days": [observed_day for _cell_key, observed_day in pair_batch],
+                    "cutoff_day": cutoff_day,
+                    "source_release_id": source_release_id,
+                    "day_bucket_rule": DAY_BUCKET_RULE,
+                    "grid_name": GRID_NAME,
+                    "metric_name": METRIC_NAME,
+                    "transform_version": TRANSFORM_VERSION,
+                },
+            )
+            inserted += len(result.all())
+        return inserted
     for batch in _batched(cell_keys, CELL_BATCH_SIZE):
         result = await session.execute(
             _LOAD_OBSERVATIONS,
@@ -585,13 +645,14 @@ async def measure_selection_materialisation(
     return SelectionMaterialisation(observation_count=observation_count, series_count=series_count)
 
 
-async def register_governed_plane(
+async def _register_governed_plane(
     session: AsyncSession,
     *,
     cutoff_day: date,
     cell_keys: tuple[str, ...],
+    cell_days: tuple[tuple[str, date], ...] | None,
+    payload_versioned_release_set: bool,
 ) -> RegistrationSummary:
-    """Register the governed Sentinel-2 NDVI observation plane for a bounded cell selection."""
     if not cell_keys:
         raise ValueError("registration requires at least one vegetation cell key")
     # Deduped at the one choke point every caller passes through: --cell-key is `multiple=True`
@@ -615,6 +676,11 @@ async def register_governed_plane(
         payload_checksum=corpus.payload_checksum,
         cutoff_day=cutoff_day,
         recorded_at=recorded_at,
+        logical_key=(
+            forward_release_set_logical_key(cutoff_day, corpus.payload_checksum)
+            if payload_versioned_release_set
+            else None
+        ),
     )
     spatial_cell_count = await _register_spatial_cells(session, cell_keys=cell_keys)
     series_count = await _register_series(session, data_source_id=data_source_id, cell_keys=cell_keys)
@@ -623,7 +689,14 @@ async def register_governed_plane(
         source_release_id=source_release_id,
         cell_keys=cell_keys,
         cutoff_day=cutoff_day,
+        cell_days=cell_days,
     )
+    confirmed_corpus = await _corpus_digest(session, cutoff_day=cutoff_day)
+    if confirmed_corpus != corpus:
+        raise CorpusChangedDuringRegistrationError(
+            before_checksum=corpus.payload_checksum,
+            after_checksum=confirmed_corpus.payload_checksum,
+        )
     # Measured, not assumed, and measured twice for two different questions: the release-wide count
     # is reporting, the selection-scoped count is the gate. Neither is _load_observations' return,
     # which is 0 for a healthy repeat. See execution/AGENTS.md §Vegetation NDVI.
@@ -660,6 +733,44 @@ async def register_governed_plane(
         observation_count=observation_count,
         materialisation=materialisation,
         selection=selection,
+    )
+
+
+async def register_governed_plane(
+    session: AsyncSession,
+    *,
+    cutoff_day: date,
+    cell_keys: tuple[str, ...],
+) -> RegistrationSummary:
+    """Register full selected-cell history through one publisher-day cutoff."""
+    return await _register_governed_plane(
+        session,
+        cutoff_day=cutoff_day,
+        cell_keys=cell_keys,
+        cell_days=None,
+        payload_versioned_release_set=False,
+    )
+
+
+async def register_governed_forward_plane(
+    session: AsyncSession,
+    *,
+    cutoff_day: date,
+    cell_days: tuple[tuple[str, date], ...],
+) -> RegistrationSummary:
+    """Register only the touched selected-cell days from one successful forward ingestion."""
+    selected_cell_days = tuple(sorted(set(cell_days)))
+    if not selected_cell_days:
+        raise ValueError("forward registration requires at least one touched cell-day")
+    if any(day > cutoff_day for _cell_key, day in selected_cell_days):
+        raise ValueError("forward registration cannot include an observation day beyond its cutoff")
+    cell_keys = tuple(dict.fromkeys(cell_key for cell_key, _day in selected_cell_days))
+    return await _register_governed_plane(
+        session,
+        cutoff_day=cutoff_day,
+        cell_keys=cell_keys,
+        cell_days=selected_cell_days,
+        payload_versioned_release_set=True,
     )
 
 

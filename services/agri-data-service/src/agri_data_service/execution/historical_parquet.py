@@ -155,9 +155,7 @@ def materialize_historical_nasa_parquet(  # noqa: PLR0912, PLR0915
         connection.execute(f"SET threads = {HISTORICAL_NASA_PARQUET_THREAD_COUNT}")
         connection.execute("SET preserve_insertion_order = false")
         connection.execute("SET temp_directory = " + _sql_literal(spill.as_posix()))
-        connection.execute(
-            "SET max_temp_directory_size = " + _sql_literal(HISTORICAL_NASA_PARQUET_TEMP_DIRECTORY_SIZE)
-        )
+        connection.execute("SET max_temp_directory_size = " + _sql_literal(HISTORICAL_NASA_PARQUET_TEMP_DIRECTORY_SIZE))
         source_glob = (staging / "*.parquet").as_posix()
         connection.execute("CREATE VIEW nasa_cells AS SELECT * FROM read_parquet(" + _sql_literal(source_glob) + ")")
         count_row = connection.execute("SELECT count(*) FROM nasa_cells").fetchone()

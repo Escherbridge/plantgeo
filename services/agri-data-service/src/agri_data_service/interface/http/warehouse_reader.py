@@ -288,9 +288,7 @@ def _scan_statement(
     if isinstance(support, GeometrySupport) and bbox is not None:
         return _clipped_scan(support, bbox, uris=uris, limit=limit)
     predicate, predicate_parameters = _predicate(support, bbox)
-    statement = (
-        f"SELECT {_projection(support)} FROM {PARQUET_SOURCE} {predicate} ORDER BY filename LIMIT ?"
-    )
+    statement = f"SELECT {_projection(support)} FROM {PARQUET_SOURCE} {predicate} ORDER BY filename LIMIT ?"
     return (statement, [uris, *predicate_parameters, limit])
 
 
@@ -326,8 +324,7 @@ def _clipped_scan(
     geometry = f'ST_GeomFromWKB("{column}")'
     envelope = "ST_MakeEnvelope(?, ?, ?, ?)"
     clipped = (
-        f"ST_CollectionExtract(ST_Intersection({geometry}, {envelope}), "
-        f"CAST(ST_Dimension({geometry}) + 1 AS INTEGER))"
+        f"ST_CollectionExtract(ST_Intersection({geometry}, {envelope}), CAST(ST_Dimension({geometry}) + 1 AS INTEGER))"
     )
     scan = (
         f'SELECT * EXCLUDE (filename, "{column}"), {clipped} AS {CLIPPED_GEOMETRY_COLUMN}, '

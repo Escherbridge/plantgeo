@@ -320,3 +320,98 @@ This stops being theoretical the moment the hourly cron runs beside the sweep: `
 clears the completion marker as it uploads `part-0`, so any day mid-re-export reads `incomplete`
 inside the sweep's window — and the sweep lists once, at the start of the layer. Everything else is
 `orphaned`, reported, and kept unless asked for by name.
+
+## `vegetation_rewrite.py` — the current-layout exception is pinned and schema-specific
+
+The 2026-08-25 vegetation repair is not the pre-zoom retirement above. Its stale objects already
+live in the current `zoom=NN` layout, but their z13 Parquet schema predates the required
+`cell_longitude`/`cell_latitude` fields. Deriving z9/z5/z0 from those bases fails; the governed
+PostgreSQL exporter can now add the coordinates, so those exact days must become `missing` and pass
+through the ordinary export drain again.
+
+`parquet-rewrite-vegetation` is deliberately narrower than a general admin delete:
+
+- the manifest is strict JSON for `vegetation` / `observed`, sorted unique days only, and its raw
+  bytes must match both an independently supplied count and SHA-256;
+- no flag can select another layer, kind, date range, or tier subset;
+- dry-run is the default, and even dry-run acquires `_lane_day_lock_key` before listing or reading;
+- a completed z13 day is eligible only when its Arrow schema is exactly the previous coordinate-less
+  schema, including the old non-null `cell_id` and `observation_checksum` fields. Current-schema
+  data, an absence, a conflict, an incomplete upload, and marker-only residue are refusals rather
+  than broadening rules;
+- an exactly empty z13 prefix is the resumable checkpoint. It is accepted because an interrupted
+  earlier run may already have removed the base while z9/z5/z0 remain; all-empty is idempotent
+  success;
+- apply order is z13, z9, z5, z0. Each rung goes through `ObjectStore.retract_partition_tier`, so
+  the completion marker is cleared before parts are deleted. Each object operation has a bounded
+  exponential retry budget, every day emits structured progress, and the session transaction
+  opened by the advisory lock is rolled back at the day boundary.
+
+An incomplete z13 prefix is never treated as a resume checkpoint. It could be a crashed exporter,
+an externally interrupted delete, or an unknown mixture; only exact missing is unambiguous enough
+for this destructive command. Such a day requires inspection rather than a wider retry predicate.
+
+## Vegetation completion: absence ladders and exact reconciliation
+
+Vegetation data days and source-empty days both occupy the zoom ladder. Data is derived from z13,
+while an absence has no rows to derive; `vegetation_absence.py` therefore copies the exact governed
+evidence object from z13 to z9/z5/z0. It first proves the governed source has no row on the day,
+takes the same whole-ladder advisory lock as the writer, then repeats both the source-day query and
+the four-rung status census while holding that lock. Every already-present coarse marker on an
+actionable, partially complete ladder is decoded so it cannot preserve different evidence. The
+exact reconciliation below audits fully complete ladders without making them recurring propagation
+work. A closing source census catches late promotions that raced the locked object work. The default
+is a locked dry-run, retries are bounded, and written markers are the per-rung resume checkpoint.
+
+`pipeline/validation/vegetation_exact.py` is the final source-of-truth gate. Day-marker census is
+necessary but insufficient: release duplication can change `release_count`, and an old file can be
+schema-valid while carrying stale values. The exact gate reads the governed export projection in
+the established 200-cell batches, compares all 12 z13 fields in canonical grain order, re-derives
+z9/z5/z0 with the production transform, and checks each marker's part and row counts against the
+physical objects. It also checks settled source-empty days across all tiers. The source's promoted
+last day and the lane's settled coverage last day are separate inputs so publication lag never
+hides promoted leading-edge rows or asserts premature absences. Source-empty days after that settled
+boundary must remain missing at every tier: data, absence, conflicts, or incomplete objects there are
+all extra state. Settled absence is proven by decoding all four markers and comparing their complete
+payloads, not merely by seeing marker keys. A second pass over every governed source day fingerprints
+the full 12-column projection again, catching mutable licensing, coordinate, or release-selection
+inputs that a cell/day/count census alone cannot see.
+
+`parquet-retract-vegetation-absences` is the narrow inverse for premature leading-edge absence
+claims. The operator names each day explicitly and must supply the current settled cutoff; every day
+must be after that cutoff. The command proves the governed source remains empty, accepts only
+`missing`/`absent` rung states, requires identical evidence across every present marker, takes the
+whole-ladder lock, and removes z13/z9/z5/z0 with bounded retries and per-rung verification. Dry-run
+is the default, and a partially completed apply resumes from the surviving markers.
+
+## `vegetation_forward.py` — persisted NDVI to the full governed ladder
+
+The NDVI ingest callback promotes only the exact deduplicated cell-day pairs accepted by that run.
+Registration commits before object publication, then the affected-day query reads those pairs back
+from the new source release; a caller-provided day is never enough evidence to author Parquet.
+Each day goes through `fill_one_lane_day`, so z13 and z9/z5/z0 share the ordinary whole-ladder
+session advisory lock, pruning order and completion-marker rules.
+
+Forward work is bounded twice: registration batches both cells and days, while publication caps
+non-checkpointed days and checks its 600-second budget before starting each additional day. All four tier markers must carry at least the monotonic
+governed observation-count revision before a day is skipped. That revision is read after the
+registration commit, so concurrent releases cannot give a later day rewrite an older checkpoint
+than a release already visible to its full-day export. Contention and failures retry with a bounded
+exponential delay; subsequent callbacks resume from the markers. The affected-day query
+can only return a governed data day, so the forward path never invents calendar absences beyond the
+governed source.
+
+A marker payload alone is not a forward checkpoint. While holding the lane-day lock, every rung
+must classify as physical `data`, its part indexes must be exactly `0..part_count-1`, and its marker
+revision must be current. Marker-only, truncated, surplus and absence-conflict rungs are rewritten
+or fail loudly; none can strand a touched day behind a false resume signal.
+
+Two kinds of preparation read remain release-wide rather than pretending to be batch-bounded: the
+corpus digest defines source-release identity and is repeated after materialisation, while the
+governed observation count orders concurrent completion-marker revisions. All run under the
+120-second PostgreSQL statement timeout and the whole preparation has three bounded attempts. The
+600-second budget applies to object publication after those reads; summaries and runbooks must not
+describe it as an end-to-end wall-clock cap.
+The corpus is digested again after materialisation and the transaction refuses if it moved between
+the two reads, so a READ COMMITTED registration cannot label observations from one raw revision
+with another revision's source-release checksum.

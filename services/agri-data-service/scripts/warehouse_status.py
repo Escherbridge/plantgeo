@@ -37,7 +37,9 @@ LOOP_SCRIPT_NAME = "continuous-warehouse-loop.sh"
 # this is not evidence of a stall. Measured 2026-08-24: ~8 s/day uncontended, ~25 min contended.
 QUIET_MINUTES_BEFORE_SUSPICION = 30
 
-DAY_LINE = re.compile(r"^(fire-detections|burn-severity|signal|vegetation|drought|water-gauges|sensors)\s+\d{4}-\d{2}-\d{2}\s+(\w+)")
+DAY_LINE = re.compile(
+    r"^(fire-detections|burn-severity|signal|vegetation|drought|water-gauges|sensors)\s+\d{4}-\d{2}-\d{2}\s+(\w+)"
+)
 
 
 def read_environment() -> dict[str, str]:
@@ -58,7 +60,10 @@ def supervisor_is_alive() -> bool:
     try:
         listing = subprocess.run(
             ["wmic", "process", "get", "CommandLine"],
-            capture_output=True, text=True, timeout=45, check=False,
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return False
@@ -131,7 +136,7 @@ def census_bucket(values: dict[str, str]) -> dict[str, object]:
     }
 
 
-def main() -> int:
+def main() -> int:  # noqa: PLR0912 - one read-only report intentionally owns every verdict branch
     """Print the report and return a shell-meaningful code: 0 healthy, 1 needs attention."""
     quiet_only = "--quiet" in sys.argv
     alive = supervisor_is_alive()

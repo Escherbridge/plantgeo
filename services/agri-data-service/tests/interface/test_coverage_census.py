@@ -308,9 +308,7 @@ def test_the_census_refuses_when_its_aggregate_listing_budget_is_exhausted(monke
     monkeypatch.setattr(coverage_module, "MAX_CENSUS_LISTED_KEYS", 2)
 
     with pytest.raises(ServingRefusalError) as raised:
-        build_coverage(
-            listing, lanes=(SIGNAL_LANE,), generated_at=datetime(2026, 8, 25, 4, 0, tzinfo=UTC)
-        )
+        build_coverage(listing, lanes=(SIGNAL_LANE,), generated_at=datetime(2026, 8, 25, 4, 0, tzinfo=UTC))
 
     assert raised.value.code == "census_budget_exhausted"
 

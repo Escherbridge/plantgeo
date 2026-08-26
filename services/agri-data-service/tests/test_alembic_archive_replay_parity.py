@@ -80,9 +80,7 @@ _INVENTORY_QUERIES = {
         "SELECT proname, pg_get_function_identity_arguments(oid), prokind, provolatile, prosecdef, "
         "proconfig::text, md5(prosrc) FROM pg_proc WHERE pronamespace = 'agri'::regnamespace ORDER BY 1, 2"
     ),
-    "indexes": (
-        "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'agri' ORDER BY 1"
-    ),
+    "indexes": ("SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'agri' ORDER BY 1"),
     "triggers": (
         "SELECT cls.relname, trg.tgname, pg_get_triggerdef(trg.oid) FROM pg_trigger trg "
         "JOIN pg_class cls ON cls.oid = trg.tgrelid WHERE cls.relnamespace = 'agri'::regnamespace "
@@ -180,9 +178,7 @@ def test_every_check_constraint_matches_or_is_a_documented_reparse(
     """The one leg that admits a difference, and the exact rule under which it admits it."""
     chain_dsn, baseline_dsn = replayed_databases
     chain = {(name, table): definition for name, table, definition in _fetch(chain_dsn, _CHECK_CONSTRAINTS_QUERY)}
-    baseline = {
-        (name, table): definition for name, table, definition in _fetch(baseline_dsn, _CHECK_CONSTRAINTS_QUERY)
-    }
+    baseline = {(name, table): definition for name, table, definition in _fetch(baseline_dsn, _CHECK_CONSTRAINTS_QUERY)}
 
     assert set(chain) == set(baseline), (
         f"CHECK constraints only in the replayed chain: {sorted(set(chain) - set(baseline))}; "
@@ -237,12 +233,10 @@ def test_the_baseline_closes_the_public_execute_gap_the_chain_left_open(
 def test_the_scoring_rule_rejects_a_difference_it_was_not_written_to_admit() -> None:
     """No database. A negative control for `db/schema_diff.reparse_equivalent`, so the rule cannot rot."""
     chain_form = (
-        "CHECK (((status)::text = ANY ((ARRAY['draft'::character varying, "
-        "'final'::character varying])::text[])))"
+        "CHECK (((status)::text = ANY ((ARRAY['draft'::character varying, 'final'::character varying])::text[])))"
     )
     baseline_form = (
-        "CHECK (((status)::text = ANY (ARRAY[('draft'::character varying)::text, "
-        "('final'::character varying)::text])))"
+        "CHECK (((status)::text = ANY (ARRAY[('draft'::character varying)::text, ('final'::character varying)::text])))"
     )
     assert reparse_equivalent(chain_form, baseline_form)
 

@@ -251,9 +251,7 @@ def test_simplification_removes_vertices_and_preserves_the_column_order(
     spatial: duckdb.DuckDBPyConnection,
 ) -> None:
     stream = "test-simplify-lane"
-    register_tier_derivation(
-        TierDerivation(stream=stream, strategy=GeometrySimplification(geometry_column="geom"))
-    )
+    register_tier_derivation(TierDerivation(stream=stream, strategy=GeometrySimplification(geometry_column="geom")))
     dense = "POLYGON((" + ",".join(f"{-117 + i / 40} 43" for i in range(40)) + ",-117 44,-117 43))"
     wkb = spatial.execute("SELECT ST_AsWKB(ST_GeomFromText(?))", [dense]).fetchone()[0]  # type: ignore[index]
     frame = pl.DataFrame({"huc12": ["x"], "areasqkm": [1.0], "feature_id": ["f"], "geom": [wkb]})
@@ -269,12 +267,11 @@ def test_an_empty_day_derives_to_an_empty_frame_and_keeps_its_schema(
 ) -> None:
     """A zero-batch arrow result loses its schema; the derivation must not hand that on."""
     stream = "test-empty-lane"
-    register_tier_derivation(
-        TierDerivation(stream=stream, strategy=GeometrySimplification(geometry_column="geom"))
+    register_tier_derivation(TierDerivation(stream=stream, strategy=GeometrySimplification(geometry_column="geom")))
+    frame = pl.DataFrame(
+        {"huc12": [], "areasqkm": [], "feature_id": [], "geom": []},
+        schema={"huc12": pl.String, "areasqkm": pl.Float64, "feature_id": pl.String, "geom": pl.Binary},
     )
-    frame = pl.DataFrame({"huc12": [], "areasqkm": [], "feature_id": [], "geom": []}, schema={
-        "huc12": pl.String, "areasqkm": pl.Float64, "feature_id": pl.String, "geom": pl.Binary
-    })
     derived = derive_tier(frame, stream=stream, tier=0, connection=spatial)
     assert derived.height == 0
     assert derived.columns == frame.columns

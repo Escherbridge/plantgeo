@@ -20,9 +20,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
-from sqlalchemy import text
-
-from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
@@ -30,38 +27,17 @@ from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STRE
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import date
-    from uuid import UUID
-
-    from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.foundation.parquet.zoom import ZoomTier
-
-_SOURCE_RECONCILIATION_SQL: Final = text(load_query_sql("pipeline/vegetation_source_reconciliation.sql"))
+    from agri_data_service.pipeline.vegetation_source import SourceCellDay
 
 # The rung the lane's own export lands on: the most detailed one, the one nothing generalised.
 # Derived from the ladder so adding a rung above cannot leave this validator checking a stale tier.
 WRITTEN_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 
-# Mirrors `pipeline/lanes/vegetation.py`'s own `CELL_BATCH_SIZE`: the same array-parameter and
-# result-set bound, not a freshly invented number.
-CELL_BATCH_SIZE: Final = 200
-
 MISSING_FROM_PARQUET: Final = "missing_from_parquet"
 INCOMPLETE_PARTITION: Final = "incomplete_partition"
 DUPLICATE_SOURCE_RELEASES: Final = "duplicate_source_releases"
-
-
-class VegetationValidationError(ValueError):
-    """Raised when a reconciliation request itself is malformed, not when it finds a disagreement."""
-
-
-@dataclass(frozen=True, slots=True)
-class SourceCellDay:
-    """One (cell, day) the SOURCE governed plane holds, with how many release rows produced it."""
-
-    cell_id: str
-    observed_day: date
-    source_release_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,38 +62,6 @@ class VegetationReconciliationReport:
     def is_clean(self) -> bool:
         """Return whether the source and the written Parquet plane agree with no findings."""
         return not self.findings
-
-
-async def fetch_source_cell_days(
-    session: AsyncSession,
-    *,
-    cell_ids: Sequence[UUID],
-    first_day: date,
-    last_day: date,
-) -> tuple[SourceCellDay, ...]:
-    """Return every (cell, day) `agri.forecast_observation` holds for this lane in the window.
-
-    Reads in `CELL_BATCH_SIZE` batches, the same array-parameter bound the exporter itself uses,
-    rather than one unbounded array parameter.
-    """
-    if last_day < first_day:
-        raise VegetationValidationError(f"window {first_day}..{last_day} runs backwards")
-    rows: list[SourceCellDay] = []
-    for start in range(0, len(cell_ids), CELL_BATCH_SIZE):
-        batch = [str(cell_id) for cell_id in cell_ids[start : start + CELL_BATCH_SIZE]]
-        result = await session.execute(
-            _SOURCE_RECONCILIATION_SQL,
-            {"cell_ids": batch, "first_day": first_day, "last_day": last_day},
-        )
-        rows.extend(
-            SourceCellDay(
-                cell_id=str(row["cell_id"]),
-                observed_day=row["observed_day"],
-                source_release_count=int(row["source_release_count"]),
-            )
-            for row in result.mappings()
-        )
-    return tuple(rows)
 
 
 def reconcile_against_source(

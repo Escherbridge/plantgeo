@@ -34,9 +34,13 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
     EMPTY_SELECTION_REASON,
     SOURCE_LAYER_NAME,
     EmptyGovernedReleaseError,
+    ReleaseSetManifestConflictError,
     all_requested_cells_materialised,
+    forward_release_set_logical_key,
     measure_release_materialisation,
+    register_governed_forward_plane,
     register_governed_plane,
+    release_set_logical_key,
 )
 
 if TYPE_CHECKING:
@@ -48,6 +52,7 @@ SEEDED_CELL_KEYS = ("43.1250:-116.1250", "43.3750:-116.3750")
 # Deliberately absent from geo.features: the typo / re-keyed-upstream case the guard exists for.
 UNRESOLVABLE_CELL_KEYS = ("99.8750:-179.8750",)
 EXPECTED_CELL_DAYS = len(SEEDED_CELL_KEYS) * len(OBSERVED_DAYS)
+EXPECTED_RELEASE_COUNT_AFTER_AMENDMENT = 2
 
 # One statement per entry: asyncpg prepares every statement it is given and refuses a script.
 _CREATE_GEO_FIXTURE = (
@@ -106,6 +111,19 @@ INNER JOIN agri.data_source AS source ON source.id = release.data_source_id
 WHERE source.key = :data_source_key
 """
 
+_COUNT_RELEASE_SET_ITEMS = """
+SELECT count(*)
+FROM agri.release_set_item AS item
+INNER JOIN agri.release_set AS release_set ON release_set.id = item.release_set_id
+WHERE release_set.logical_key = :logical_key
+"""
+
+_RELEASE_SET_SNAPSHOT = """
+SELECT manifest_checksum, state, validated_at
+FROM agri.release_set
+WHERE logical_key = :logical_key
+"""
+
 
 async def _seed_vegetation_features(session: AsyncSession) -> None:
     """Create the minimal geo stand-in and fill it with one feature per seeded cell per day."""
@@ -136,6 +154,12 @@ async def _release_count(session: AsyncSession) -> int:
     return int(result.scalar_one())
 
 
+async def _release_set_snapshot(session: AsyncSession, logical_key: str) -> tuple[object, object, object]:
+    result = await session.execute(text(_RELEASE_SET_SNAPSHOT), {"logical_key": logical_key})
+    row = result.one()
+    return row[0], row[1], row[2]
+
+
 @pytest.mark.asyncio
 async def test_registration_guard_refuses_an_unlanded_pass_and_unwinds_its_own_release(
     agri_db_async_dsn: str,
@@ -150,6 +174,36 @@ async def test_registration_guard_refuses_an_unlanded_pass_and_unwinds_its_own_r
                 await _assert_empty_release_is_refused_and_rolled_back(session)
                 plane_release_id = await _assert_seeded_cells_land(session)
                 await _assert_unresolvable_cells_are_refused_against_a_full_release(session, plane_release_id)
+                await _assert_changed_corpus_uses_a_distinct_forward_release_set(session)
+            finally:
+                await transaction.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_forward_registration_materialises_only_explicit_touched_days(
+    agri_db_async_dsn: str,
+) -> None:
+    engine = create_async_engine(agri_db_async_dsn)
+    try:
+        async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+            transaction = await session.begin()
+            try:
+                await _seed_vegetation_features(session)
+                touched_pairs = (
+                    (SEEDED_CELL_KEYS[0], OBSERVED_DAYS[0]),
+                    (SEEDED_CELL_KEYS[1], OBSERVED_DAYS[-1]),
+                )
+                summary = await register_governed_forward_plane(
+                    session,
+                    cutoff_day=CUTOFF_DAY,
+                    cell_days=touched_pairs,
+                )
+                assert summary.observation_count == len(touched_pairs)
+                assert summary.materialisation.observation_count == len(touched_pairs)
+                assert summary.materialisation.first_observed_day == OBSERVED_DAYS[0]
+                assert summary.materialisation.last_observed_day == OBSERVED_DAYS[-1]
             finally:
                 await transaction.rollback()
     finally:
@@ -214,3 +268,95 @@ async def _assert_unresolvable_cells_are_refused_against_a_full_release(
     await nested.rollback()
     # The corpus is unchanged, so this pass rejoined the existing release rather than making one.
     assert await _release_count(session) == 1
+
+
+async def _assert_changed_corpus_uses_a_distinct_forward_release_set(session: AsyncSession) -> None:
+    """The full set stays frozen while forward registration versions the same-cutoff amendment."""
+    latitude, longitude = (float(part) for part in SEEDED_CELL_KEYS[0].split(":"))
+    await session.execute(
+        text(_INSERT_FIXTURE_FEATURE),
+        {
+            "layer_name": SOURCE_LAYER_NAME,
+            "cell_key": SEEDED_CELL_KEYS[0],
+            "observed_at": f"{CUTOFF_DAY.isoformat()}T20:11:00Z",
+            # The seeded value for this cell-day is also 0.42. The amendment leaves the daily mean
+            # unchanged, so only a digest that fingerprints governed evidence notices the change.
+            "ndvi": 0.42,
+            "scene_id": "S2A_TEST_CHANGED_SAME_CUTOFF",
+            "min_lat": latitude,
+            "min_lon": longitude,
+            "created_at": datetime(2026, 8, 9, 6, 0, tzinfo=UTC),
+        },
+    )
+    logical_key = release_set_logical_key(CUTOFF_DAY)
+    before_items = int(
+        (
+            await session.execute(
+                text(_COUNT_RELEASE_SET_ITEMS),
+                {"logical_key": logical_key},
+            )
+        ).scalar_one()
+    )
+    assert before_items == 1
+    before_set = await _release_set_snapshot(session, logical_key)
+    assert before_set[1] == "validated"
+
+    nested = await session.begin_nested()
+    with pytest.raises(ReleaseSetManifestConflictError, match="immutable manifest"):
+        await register_governed_plane(session, cutoff_day=CUTOFF_DAY, cell_keys=SEEDED_CELL_KEYS)
+    await nested.rollback()
+
+    assert await _release_count(session) == 1
+    after_items = int(
+        (
+            await session.execute(
+                text(_COUNT_RELEASE_SET_ITEMS),
+                {"logical_key": logical_key},
+            )
+        ).scalar_one()
+    )
+    assert after_items == before_items
+    assert await _release_set_snapshot(session, logical_key) == before_set
+
+    summary = await register_governed_forward_plane(
+        session,
+        cutoff_day=CUTOFF_DAY,
+        cell_days=tuple((cell_key, CUTOFF_DAY) for cell_key in SEEDED_CELL_KEYS),
+    )
+    forward_logical_key = forward_release_set_logical_key(CUTOFF_DAY, summary.plane.payload_checksum)
+    assert forward_logical_key != logical_key
+    assert summary.observation_count == len(SEEDED_CELL_KEYS)
+    assert await _release_count(session) == EXPECTED_RELEASE_COUNT_AFTER_AMENDMENT
+    assert (
+        int(
+            (
+                await session.execute(
+                    text(_COUNT_RELEASE_SET_ITEMS),
+                    {"logical_key": logical_key},
+                )
+            ).scalar_one()
+        )
+        == before_items
+    )
+    assert (
+        int(
+            (
+                await session.execute(
+                    text(_COUNT_RELEASE_SET_ITEMS),
+                    {"logical_key": forward_logical_key},
+                )
+            ).scalar_one()
+        )
+        == 1
+    )
+    assert await _release_set_snapshot(session, logical_key) == before_set
+
+    repeated = await register_governed_forward_plane(
+        session,
+        cutoff_day=CUTOFF_DAY,
+        cell_days=tuple((cell_key, CUTOFF_DAY) for cell_key in SEEDED_CELL_KEYS),
+    )
+    assert repeated.plane.release_set_id == summary.plane.release_set_id
+    assert repeated.plane.source_release_id == summary.plane.source_release_id
+    assert repeated.observation_count == 0
+    assert await _release_set_snapshot(session, logical_key) == before_set

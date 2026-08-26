@@ -159,6 +159,7 @@ def statement_timeout(seconds: int) -> TextClause:
     """
     return text(f"SET LOCAL statement_timeout = '{int(seconds)}s'")
 
+
 # How many times one static lane-day export may be attempted in a tick before the export-window race
 # is reported rather than retried. Two: one export, and one re-export if the source moved under it.
 MAX_STATIC_EXPORT_ATTEMPTS: Final = 2
@@ -767,9 +768,7 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-async def _pin_statement_timeout(
-    session: AsyncSession, seconds: int = DEFAULT_STATEMENT_TIMEOUT_SECONDS
-) -> None:
+async def _pin_statement_timeout(session: AsyncSession, seconds: int = DEFAULT_STATEMENT_TIMEOUT_SECONDS) -> None:
     """Pin the transaction-local statement timeout; `SET LOCAL` dies with each rollback, so re-pin per day."""
     await session.execute(statement_timeout(seconds))
 
@@ -948,9 +947,7 @@ def _finalize_written_day(  # noqa: PLR0913 - one coordinate of the day being cl
     # is the same shape of silent failure `contended` already has. Deriving first makes the failure
     # self-healing instead: the day stays unmarked and the next tick redoes all four rungs.
     try:
-        derived = derive_tiers(
-            store, layer=lane.slug, kind=GAP_FILL_PARTITION_KIND, day=day, run_id=run_id, now=now
-        )
+        derived = derive_tiers(store, layer=lane.slug, kind=GAP_FILL_PARTITION_KIND, day=day, run_id=run_id, now=now)
     except Exception as error:  # the base rows are published but the ladder above them is not
         notes.append(
             f"{day.isoformat()}: the base rung is written but its coarse rungs are not, so the day stays "

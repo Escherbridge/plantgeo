@@ -11,7 +11,7 @@ from agri_data_service.ingest.policy import (
     resolve_bounded_bbox,
     resolve_max_source_records,
 )
-from agri_data_service.ingest.results import IngestionJobResult, skipped_result
+from agri_data_service.ingest.results import IngestionJobResult, failure_reason, skipped_result
 from agri_data_service.ingest.source import FetchRequest, select_writes
 from agri_data_service.ingest.vegetation import (
     COG_BOUNDS,
@@ -23,9 +23,13 @@ from agri_data_service.ingest.vegetation import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
+
     import httpx
 
-    from agri_data_service.ingest.writer import FeatureWriter
+    from agri_data_service.ingest.writer import FeatureWrite, FeatureWriter
+
+    VegetationPersistedCallback = Callable[[Sequence[FeatureWrite]], Awaitable[Mapping[str, int]]]
 
 # Kept under its historical name so the runner and the `ingest-ndvi` verb keep importing one token.
 NDVI_SOURCE: Final = VEGETATION_SOURCE
@@ -38,6 +42,7 @@ async def _run_vegetation_job(
     area: str,
     client: httpx.AsyncClient,
     now: datetime | None,
+    on_persisted: VegetationPersistedCallback | None,
 ) -> IngestionJobResult:
     """Sample the grid from the clearest recent scenes and write the cells those scenes actually filled."""
     end = now if now is not None else datetime.now(UTC)
@@ -55,13 +60,29 @@ async def _run_vegetation_job(
         return skipped_result(VEGETATION_SOURCE, NO_CLEAR_SCENE_REASON)
 
     selection = select_writes(build_vegetation_source(), outcome.records, request)
+    records_written = await write_features(selection.writes)
+    details: dict[str, int] = {"cells": outcome.cells_requested, "rejected": selection.rejected}
+    if on_persisted is not None and selection.writes:
+        try:
+            forward_details = await on_persisted(selection.writes)
+        except Exception as error:
+            return IngestionJobResult(
+                source=VEGETATION_SOURCE,
+                status="failed",
+                records_seen=len(outcome.records),
+                records_written=records_written,
+                truncated=outcome.truncated or selection.truncated,
+                reason=f"raw vegetation persisted; governed Parquet publication failed: {failure_reason(error)}",
+                details=details,
+            )
+        details.update({f"parquet_{key}": value for key, value in forward_details.items()})
     return IngestionJobResult(
         source=VEGETATION_SOURCE,
         status="ingested",
         records_seen=len(outcome.records),
-        records_written=await write_features(selection.writes),
+        records_written=records_written,
         truncated=outcome.truncated or selection.truncated,
-        details={"cells": outcome.cells_requested, "rejected": selection.rejected},
+        details=details,
     )
 
 
@@ -71,6 +92,7 @@ async def run_vegetation_ingestion_job(
     bbox: str | None = None,
     client: httpx.AsyncClient | None = None,
     now: datetime | None = None,
+    on_persisted: VegetationPersistedCallback | None = None,
 ) -> IngestionJobResult:
     """Sample Sentinel-2 L2A NDVI onto the fixed warehouse grid and write only the cells a scene really filled.
 
@@ -100,6 +122,6 @@ async def run_vegetation_ingestion_job(
     if area is None:
         return skipped_result(VEGETATION_SOURCE, UNCONFIGURED_BBOX_REASON)
     if client is not None:
-        return await _run_vegetation_job(write_features, area, client, now)
+        return await _run_vegetation_job(write_features, area, client, now, on_persisted)
     async with upstream_client(COG_BOUNDS) as owned_client:
-        return await _run_vegetation_job(write_features, area, owned_client, now)
+        return await _run_vegetation_job(write_features, area, owned_client, now, on_persisted)

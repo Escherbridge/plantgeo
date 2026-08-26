@@ -37,15 +37,17 @@ from agri_data_service.method.monte_carlo.vegetation_ndvi_forecast import (
 )
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.pipeline.validation.vegetation import (
-    CELL_BATCH_SIZE,
     DUPLICATE_SOURCE_RELEASES,
     INCOMPLETE_PARTITION,
     MISSING_FROM_PARQUET,
     WRITTEN_ZOOM_TIER,
+    reconcile_against_source,
+)
+from agri_data_service.pipeline.vegetation_source import (
+    CELL_BATCH_SIZE,
     SourceCellDay,
     VegetationValidationError,
     fetch_source_cell_days,
-    reconcile_against_source,
 )
 from agri_data_service.planes.vegetation import (
     VegetationServingError,
