@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     VegetationLaneDayLock = Callable[[AsyncSession, str], AbstractAsyncContextManager[bool]]
 
 _AFFECTED_DAYS_SQL: Final = text(load_query_sql("pipeline/vegetation_forward_affected_days.sql"))
+_CHANGED_SCOPE_SQL: Final = text(load_query_sql("pipeline/vegetation_forward_changed_scope.sql"))
 _SOURCE_REVISION_SQL: Final = text(load_query_sql("pipeline/vegetation_forward_revision.sql"))
 
 VEGETATION_FORWARD_CHECKPOINT_PREFIX: Final = "vegetation-forward-v1:"
@@ -167,6 +168,41 @@ def vegetation_forward_scope(writes: Sequence[FeatureWrite]) -> VegetationForwar
         cutoff_day=max(observed_days),
         observed_days=tuple(sorted(set(observed_days))),
         cell_days=tuple(sorted(set(zip(cell_keys, observed_days, strict=True)))),
+    )
+
+
+async def changed_vegetation_forward_scope(
+    session: AsyncSession,
+    *,
+    since: datetime,
+    through_day: date,
+) -> VegetationForwardScope:
+    """Load the exact raw vegetation cell-days changed in one operator-pinned window."""
+    if since.utcoffset() is None:
+        raise ValueError("since must include a UTC offset")
+    result = await session.execute(
+        _CHANGED_SCOPE_SQL,
+        {"since": since.astimezone(UTC), "through_day": through_day},
+    )
+    cell_days = tuple(
+        sorted(
+            {
+                (str(row["cell_key"]), row["observed_day"])
+                for row in result.mappings()
+                if isinstance(row["observed_day"], date)
+            }
+        )
+    )
+    if not cell_days:
+        raise VegetationForwardError(
+            f"no valid raw vegetation cell-day changed since {since.astimezone(UTC).isoformat()} "
+            f"through {through_day.isoformat()}"
+        )
+    return VegetationForwardScope(
+        cell_keys=tuple(dict.fromkeys(cell_key for cell_key, _day in cell_days)),
+        cutoff_day=through_day,
+        observed_days=tuple(sorted({day for _cell_key, day in cell_days})),
+        cell_days=cell_days,
     )
 
 
@@ -415,10 +451,10 @@ async def _write_day_with_retry(  # noqa: PLR0913 - retry policy and injected se
     ) from last_error
 
 
-async def forward_persisted_vegetation(  # noqa: PLR0913 - explicit bounds and seams are the orchestration contract.
+async def forward_vegetation_scope(  # noqa: PLR0913 - explicit bounds and seams are the orchestration contract.
     session: AsyncSession,
     store: ObjectStore,
-    writes: Sequence[FeatureWrite],
+    scope: VegetationForwardScope,
     *,
     max_days_per_run: int = VEGETATION_FORWARD_MAX_DAYS_PER_RUN,
     time_budget_seconds: float = VEGETATION_FORWARD_TIME_BUDGET_SECONDS,
@@ -428,7 +464,7 @@ async def forward_persisted_vegetation(  # noqa: PLR0913 - explicit bounds and s
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> VegetationForwardSummary:
-    """Promote one persisted NDVI selection, then publish a bounded resumable slice of its affected days."""
+    """Promote one exact NDVI scope, then publish a bounded resumable slice of its affected days."""
     if max_days_per_run <= 0:
         raise ValueError("max_days_per_run must be positive")
     if time_budget_seconds <= 0:
@@ -437,7 +473,6 @@ async def forward_persisted_vegetation(  # noqa: PLR0913 - explicit bounds and s
         raise ValueError(f"max_attempts must be between 1 and {VEGETATION_FORWARD_MAX_ATTEMPTS}")
     if not 0 <= retry_base_seconds <= VEGETATION_FORWARD_MAX_RETRY_SECONDS:
         raise ValueError(f"retry_base_seconds must be between 0 and {VEGETATION_FORWARD_MAX_RETRY_SECONDS:g}")
-    scope = vegetation_forward_scope(writes)
     registration, source_revision, affected_days = await _prepare_forward(
         session,
         scope=scope,
@@ -482,6 +517,58 @@ async def forward_persisted_vegetation(  # noqa: PLR0913 - explicit bounds and s
     )
 
 
+async def forward_persisted_vegetation(  # noqa: PLR0913 - explicit bounds and seams are the orchestration contract.
+    session: AsyncSession,
+    store: ObjectStore,
+    writes: Sequence[FeatureWrite],
+    *,
+    max_days_per_run: int = VEGETATION_FORWARD_MAX_DAYS_PER_RUN,
+    time_budget_seconds: float = VEGETATION_FORWARD_TIME_BUDGET_SECONDS,
+    max_attempts: int = VEGETATION_FORWARD_MAX_ATTEMPTS,
+    retry_base_seconds: float = VEGETATION_FORWARD_RETRY_BASE_SECONDS,
+    lane_day_lock: VegetationLaneDayLock = postgres_lane_day_lock,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> VegetationForwardSummary:
+    """Promote the writes accepted by ingestion and publish their exact governed day scope."""
+    return await forward_vegetation_scope(
+        session,
+        store,
+        vegetation_forward_scope(writes),
+        max_days_per_run=max_days_per_run,
+        time_budget_seconds=time_budget_seconds,
+        max_attempts=max_attempts,
+        retry_base_seconds=retry_base_seconds,
+        lane_day_lock=lane_day_lock,
+        sleep=sleep,
+        monotonic=monotonic,
+    )
+
+
+async def forward_changed_vegetation(  # noqa: PLR0913 - CLI bounds are explicit operator controls.
+    session: AsyncSession,
+    store: ObjectStore,
+    *,
+    since: datetime,
+    through_day: date,
+    max_days_per_run: int = VEGETATION_FORWARD_MAX_DAYS_PER_RUN,
+    time_budget_seconds: float = VEGETATION_FORWARD_TIME_BUDGET_SECONDS,
+    max_attempts: int = VEGETATION_FORWARD_MAX_ATTEMPTS,
+    retry_base_seconds: float = VEGETATION_FORWARD_RETRY_BASE_SECONDS,
+) -> VegetationForwardSummary:
+    """Promote and publish raw vegetation changes without repeating upstream sampling."""
+    scope = await changed_vegetation_forward_scope(session, since=since, through_day=through_day)
+    return await forward_vegetation_scope(
+        session,
+        store,
+        scope,
+        max_days_per_run=max_days_per_run,
+        time_budget_seconds=time_budget_seconds,
+        max_attempts=max_attempts,
+        retry_base_seconds=retry_base_seconds,
+    )
+
+
 def bind_vegetation_forward_writer(
     session: AsyncSession,
     *,
@@ -517,6 +604,9 @@ __all__ = [
     "VegetationForwardScope",
     "VegetationForwardSummary",
     "bind_vegetation_forward_writer",
+    "changed_vegetation_forward_scope",
+    "forward_changed_vegetation",
     "forward_persisted_vegetation",
+    "forward_vegetation_scope",
     "vegetation_forward_scope",
 ]

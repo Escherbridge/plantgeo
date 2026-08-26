@@ -2,18 +2,75 @@
 
 from __future__ import annotations
 
-from datetime import date
-from typing import TYPE_CHECKING
+from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING, cast
 
 from click.testing import CliRunner
 
 from agri_data_service import cli as cli_module
 from agri_data_service.pipeline.parquet.vegetation_absence import VegetationAbsenceLadderReport
+from agri_data_service.pipeline.parquet.vegetation_forward import (
+    VegetationForwardDayResult,
+    VegetationForwardScope,
+    VegetationForwardSummary,
+)
 
 if TYPE_CHECKING:
     import pytest
 
+    from agri_data_service.execution.vegetation_ndvi_plane import RegistrationSummary
+
 DAY = date(2026, 8, 19)
+FORWARD_MAX_DAYS = 64
+
+
+def test_forward_command_uses_the_pinned_change_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+    scope = VegetationForwardScope(
+        cell_keys=("45.1250:-122.6250",),
+        cutoff_day=date(2026, 8, 25),
+        observed_days=(date(2026, 8, 25),),
+        cell_days=(("45.1250:-122.6250", date(2026, 8, 25)),),
+    )
+
+    async def complete(**kwargs: object) -> VegetationForwardSummary:
+        seen.update(kwargs)
+        return VegetationForwardSummary(
+            scope=scope,
+            registration=cast("RegistrationSummary", object()),
+            source_revision=185_231,
+            affected_day_count=1,
+            examined_day_count=1,
+            stop_reason="complete",
+            days=(
+                VegetationForwardDayResult(
+                    day=date(2026, 8, 25),
+                    outcome="written",
+                    attempt_count=1,
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(cli_module, "_parquet_forward_changed_vegetation", complete)
+    result = CliRunner().invoke(
+        cli_module.cli,
+        [
+            "parquet-forward-vegetation",
+            "--since",
+            "2026-08-26T00:00:00Z",
+            "--through-day",
+            "2026-08-25",
+            "--max-days",
+            str(FORWARD_MAX_DAYS),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen["since"] == datetime(2026, 8, 26, tzinfo=UTC)
+    assert seen["through_day"] == date(2026, 8, 25)
+    assert seen["max_days"] == FORWARD_MAX_DAYS
+    assert '"forward_complete": 1' in result.output
+    assert '"selected_cell_days": 1' in result.output
 
 
 def test_absence_command_refuses_unsettled_last_day(monkeypatch: pytest.MonkeyPatch) -> None:

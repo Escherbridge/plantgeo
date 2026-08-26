@@ -25,6 +25,7 @@ from agri_data_service.pipeline.parquet.vegetation_forward import (
     VegetationForwardScope,
     VegetationForwardSummary,
     bind_vegetation_forward_writer,
+    changed_vegetation_forward_scope,
     forward_persisted_vegetation,
     vegetation_forward_scope,
 )
@@ -243,6 +244,51 @@ async def test_affected_day_lookup_bounds_cell_batches_and_restricts_to_touched_
         1,
     ]
     assert all(parameters["source_release_id"] == UUID(int=1) for parameters in session.parameters)
+
+
+async def test_changed_scope_is_exact_deduplicated_and_operator_bounded() -> None:
+    class _ChangedScopeSession:
+        def __init__(self) -> None:
+            self.parameters: Mapping[str, object] | None = None
+
+        async def execute(self, _statement: object, parameters: Mapping[str, object]) -> _Rows:
+            self.parameters = parameters
+            return _Rows(
+                [
+                    {"cell_key": "45.1250:-122.6250", "observed_day": date(2026, 8, 24)},
+                    {"cell_key": "45.1250:-122.6250", "observed_day": date(2026, 8, 24)},
+                    {"cell_key": "45.3750:-122.3750", "observed_day": date(2026, 8, 25)},
+                ]
+            )
+
+    session = _ChangedScopeSession()
+    since = datetime(2026, 8, 26, tzinfo=UTC)
+    scope = await changed_vegetation_forward_scope(
+        cast("AsyncSession", session),
+        since=since,
+        through_day=date(2026, 8, 25),
+    )
+
+    assert session.parameters == {"since": since, "through_day": date(2026, 8, 25)}
+    assert scope.cell_keys == ("45.1250:-122.6250", "45.3750:-122.3750")
+    assert scope.observed_days == (date(2026, 8, 24), date(2026, 8, 25))
+    assert scope.cell_days == (
+        ("45.1250:-122.6250", date(2026, 8, 24)),
+        ("45.3750:-122.3750", date(2026, 8, 25)),
+    )
+
+
+async def test_changed_scope_refuses_an_empty_window() -> None:
+    class _EmptyChangedScopeSession:
+        async def execute(self, _statement: object, _parameters: Mapping[str, object]) -> _Rows:
+            return _Rows([])
+
+    with pytest.raises(VegetationForwardError, match="no valid raw vegetation cell-day changed"):
+        await changed_vegetation_forward_scope(
+            cast("AsyncSession", _EmptyChangedScopeSession()),
+            since=datetime(2026, 8, 26, tzinfo=UTC),
+            through_day=date(2026, 8, 25),
+        )
 
 
 async def test_forward_run_skips_current_ladders_and_bounds_noncheckpointed_days(

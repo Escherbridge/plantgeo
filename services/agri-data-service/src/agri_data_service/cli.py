@@ -345,6 +345,16 @@ from agri_data_service.pipeline.parquet.vegetation_absence import (
     propagate_vegetation_absence_ladders,
     retract_unsettled_vegetation_absences,
 )
+from agri_data_service.pipeline.parquet.vegetation_forward import (
+    VEGETATION_FORWARD_MAX_ATTEMPTS,
+    VEGETATION_FORWARD_MAX_DAYS_PER_RUN,
+    VEGETATION_FORWARD_MAX_RETRY_SECONDS,
+    VEGETATION_FORWARD_RETRY_BASE_SECONDS,
+    VEGETATION_FORWARD_TIME_BUDGET_SECONDS,
+    VegetationForwardError,
+    VegetationForwardSummary,
+    forward_changed_vegetation,
+)
 from agri_data_service.pipeline.parquet.vegetation_rewrite import (
     VEGETATION_REWRITE_MAX_ATTEMPTS,
     VEGETATION_REWRITE_MAX_DAYS,
@@ -4033,6 +4043,30 @@ async def _parquet_rewrite_vegetation(  # noqa: PLR0913 - explicit operator cont
         )
 
 
+async def _parquet_forward_changed_vegetation(  # noqa: PLR0913 - explicit operator controls
+    *,
+    since: datetime,
+    through_day: date,
+    max_days: int,
+    time_budget_seconds: float,
+    max_attempts: int,
+    retry_base_seconds: float,
+) -> VegetationForwardSummary:
+    """Promote a pinned raw-change window and directly author its governed Parquet days."""
+    store = ObjectStore.from_settings()
+    async with local_source_loader_session(settings.require_local_source_loader_database_url()) as session:
+        return await forward_changed_vegetation(
+            session,
+            store,
+            since=since,
+            through_day=through_day,
+            max_days_per_run=max_days,
+            time_budget_seconds=time_budget_seconds,
+            max_attempts=max_attempts,
+            retry_base_seconds=retry_base_seconds,
+        )
+
+
 async def _parquet_vegetation_absence_ladders(  # noqa: PLR0913 - explicit operator controls
     *,
     first_day: date,
@@ -4304,6 +4338,73 @@ def parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of
         raise click.ClickException(_gap_fill_failure_reason(exc)) from exc
     click.echo(json.dumps(summary.to_report(), sort_keys=True))
     if summary.failures or any(lane.stopped_reason for lane in summary.lanes):
+        context.exit(_GAP_FILL_FAILED_EXIT_CODE)
+
+
+@cli.command("parquet-forward-vegetation")
+@click.option("--since", required=True, help="Timezone-aware lower bound for raw row creation or update time.")
+@click.option("--through-day", required=True, help="Latest publisher-named UTC day eligible for promotion.")
+@click.option(
+    "--max-days",
+    type=click.IntRange(min=1),
+    default=VEGETATION_FORWARD_MAX_DAYS_PER_RUN,
+    show_default=True,
+    help="Maximum non-checkpointed affected days to author in this pass.",
+)
+@click.option(
+    "--time-budget-seconds",
+    type=click.FloatRange(min=1.0, max=3600.0),
+    default=VEGETATION_FORWARD_TIME_BUDGET_SECONDS,
+    show_default=True,
+)
+@click.option(
+    "--attempts",
+    type=click.IntRange(min=1, max=VEGETATION_FORWARD_MAX_ATTEMPTS),
+    default=VEGETATION_FORWARD_MAX_ATTEMPTS,
+    show_default=True,
+)
+@click.option(
+    "--retry-base-seconds",
+    type=click.FloatRange(min=0.0, max=VEGETATION_FORWARD_MAX_RETRY_SECONDS),
+    default=VEGETATION_FORWARD_RETRY_BASE_SECONDS,
+    show_default=True,
+)
+@click.pass_context
+def parquet_forward_vegetation(  # noqa: PLR0913 - Click exposes one argument per operator bound.
+    context: click.Context,
+    since: str,
+    through_day: str,
+    max_days: int,
+    time_budget_seconds: float,
+    attempts: int,
+    retry_base_seconds: float,
+) -> None:
+    """Promote changed raw vegetation and publish it without fetching Sentinel scenes again."""
+    try:
+        parsed_since = _forecast_cli_timestamp(since, "since")
+        parsed_through_day = _forecast_cli_day(through_day, "through-day")
+        summary = asyncio.run(
+            _parquet_forward_changed_vegetation(
+                since=parsed_since,
+                through_day=parsed_through_day,
+                max_days=max_days,
+                time_budget_seconds=time_budget_seconds,
+                max_attempts=attempts,
+                retry_base_seconds=retry_base_seconds,
+            )
+        )
+    except SQLAlchemyError as exc:
+        raise click.ClickException("vegetation forward publication could not reach the loader database") from exc
+    except (OSError, ParquetWriteError, ValueError, VegetationForwardError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    report = {
+        **summary.to_details(),
+        "cutoff_day": summary.scope.cutoff_day.isoformat(),
+        "selected_cell_days": len(summary.scope.cell_days),
+        "stop_reason": summary.stop_reason,
+    }
+    click.echo(json.dumps(report, sort_keys=True))
+    if summary.stop_reason != "complete" or summary.contended_day_count:
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 
