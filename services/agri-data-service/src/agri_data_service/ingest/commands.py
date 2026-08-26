@@ -47,6 +47,7 @@ from agri_data_service.ingest.firms import FIRMS_SOURCE, firms_archive_source, r
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.lanes import LaneSpecificationError, UnknownBackfillLaneError, resolve_lane
 from agri_data_service.ingest.mtbs import MTBS_SOURCE, run_mtbs_ingestion_job
+from agri_data_service.ingest.ndvi import NDVI_SOURCE, run_vegetation_ingestion_job
 from agri_data_service.ingest.open_meteo import OPEN_METEO_SOURCE, run_weather_ingestion_job
 from agri_data_service.ingest.realtime import RealtimePublisher
 from agri_data_service.ingest.reconcile import ReconciliationError, plan_lane_gaps, reconcile_lane
@@ -72,7 +73,7 @@ from agri_data_service.ingest.validation import (
     ValidationRowError,
     build_validation_report,
 )
-from agri_data_service.ingest.vegetation import COG_BOUNDS
+from agri_data_service.ingest.vegetation import COG_BOUNDS, build_vegetation_source
 from agri_data_service.ingest.watersheds import WATERSHEDS_SOURCE, run_watersheds_ingestion_job
 from agri_data_service.ingest.wfigs import WFIGS_SOURCE, run_fire_perimeters_ingestion_job
 from agri_data_service.ingest.writer import MissingIngestionLayerError, bind_feature_writer
@@ -212,6 +213,22 @@ async def _run_drought(valid_date: str | None, replace: bool) -> IngestionJobRes
         )
 
 
+@click.command("ingest-ndvi")
+@click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
+@click.pass_context
+def ingest_ndvi(context: click.Context, bbox: str | None) -> None:
+    """Ingest Sentinel-2 L2A NDVI sampled onto the bounded warehouse grid."""
+    results = [
+        asyncio.run(
+            _run_with_feature_writer(
+                NDVI_SOURCE,
+                lambda write_features: run_vegetation_ingestion_job(write_features, bbox=bbox),
+            )
+        )
+    ]
+    finish(context, results)
+
+
 @click.command("ingest-sensors")
 @click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
 @click.pass_context
@@ -320,6 +337,7 @@ def _build_backfillable_sources() -> Mapping[str, IngestionSource]:
     """
     sources = (
         nws_sensor_source(),
+        build_vegetation_source(),
         firms_archive_source(),
         usgs_streamflow_archive_source(),
     )
@@ -1281,6 +1299,7 @@ INGEST_COMMANDS: tuple[click.Command, ...] = (
     ingest_weather,
     ingest_fire_perimeters,
     ingest_drought,
+    ingest_ndvi,
     ingest_sensors,
     ingest_evacuation_zones,
     ingest_watersheds,

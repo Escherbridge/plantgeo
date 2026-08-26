@@ -152,8 +152,6 @@ class LaneRegistration:
     forecast_module: str | None = None
     # A `static_lookup` lane's clock. Mandatory for that nature and forbidden for the others.
     watermark: LaneWatermarkResolver | None = None
-    # False after a lane cutover: retained for schema/serving, rejected by generic Postgres export.
-    postgres_export_enabled: bool = True
 
     def __post_init__(self) -> None:
         validate_layer_slug(self.slug)
@@ -829,7 +827,6 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         history_floor=date(2022, 8, 5),
         publication_lag_days=7,
         nature="daily_series",
-        postgres_export_enabled=False,
         # The one forecaster whose module stem is NOT its slug. It predates `layer-lanes.md` (§3
         # says bring it into conformance rather than writing a second one beside it), so the
         # registration records the real filename instead of the convention it breaks.
@@ -927,19 +924,10 @@ LANE_REGISTRY: Final[Mapping[str, LaneRegistration]] = MappingProxyType(
     {registration.slug: registration for registration in LANE_REGISTRATIONS}
 )
 
-POSTGRES_EXPORT_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = tuple(
-    registration for registration in LANE_REGISTRATIONS if registration.postgres_export_enabled
-)
-
 
 def registered_lane_slugs() -> tuple[str, ...]:
     """Return every registered stream slug, in the order the driver visits them."""
     return tuple(registration.slug for registration in LANE_REGISTRATIONS)
-
-
-def postgres_export_lane_slugs() -> tuple[str, ...]:
-    """Return only lanes whose Postgres-backed exporter remains active."""
-    return tuple(registration.slug for registration in POSTGRES_EXPORT_REGISTRATIONS)
 
 
 def resolve_lanes(slugs: Iterable[str]) -> tuple[LaneRegistration, ...]:
@@ -951,14 +939,3 @@ def resolve_lanes(slugs: Iterable[str]) -> tuple[LaneRegistration, ...]:
             f"unknown lane(s) {', '.join(unknown)}; registered lanes are {', '.join(registered_lane_slugs())}"
         )
     return tuple(entry for entry in LANE_REGISTRATIONS if entry.slug in requested)
-
-
-def resolve_postgres_export_lanes(slugs: Iterable[str]) -> tuple[LaneRegistration, ...]:
-    """Resolve active Postgres exporters and refuse lanes retained only for schema/serving registration."""
-    resolved = resolve_lanes(slugs)
-    retired = tuple(entry.slug for entry in resolved if not entry.postgres_export_enabled)
-    if retired:
-        raise LaneRegistryError(
-            f"Postgres export is retired for lane(s) {', '.join(retired)}; their Parquet data is authoritative"
-        )
-    return resolved
