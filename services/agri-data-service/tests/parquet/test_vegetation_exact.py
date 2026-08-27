@@ -9,6 +9,7 @@ from uuid import UUID
 import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
+from agri_data_service.db.vegetation_publication import VegetationPublicationTarget
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import absence_marker_path
@@ -71,6 +72,10 @@ async def _no_source_rows(*_args: Any, **_kwargs: Any) -> tuple[SourceCellDay, .
     return ()
 
 
+async def _stable_fingerprints(*_args: Any, **_kwargs: Any) -> tuple[VegetationPublicationTarget, ...]:
+    return (VegetationPublicationTarget(day=DAY, source_fingerprint="a" * 64),)
+
+
 class _Session:
     class _LockResult:
         def scalar(self) -> bool:
@@ -95,6 +100,10 @@ async def test_exact_reconciliation_is_clean_only_when_every_tier_and_marker_mat
 
     monkeypatch.setattr("agri_data_service.pipeline.validation.vegetation_exact.fetch_source_cell_days", _source_rows)
     monkeypatch.setattr("agri_data_service.pipeline.validation.vegetation_exact.read_vegetation_day", read_source)
+    monkeypatch.setattr(
+        "agri_data_service.pipeline.validation.vegetation_exact.vegetation_day_fingerprints",
+        _stable_fingerprints,
+    )
 
     report = await reconcile_exact_vegetation(
         _Session(),  # type: ignore[arg-type]
@@ -122,6 +131,10 @@ async def test_exact_reconciliation_names_value_level_mismatch(monkeypatch: pyte
 
     monkeypatch.setattr("agri_data_service.pipeline.validation.vegetation_exact.fetch_source_cell_days", _source_rows)
     monkeypatch.setattr("agri_data_service.pipeline.validation.vegetation_exact.read_vegetation_day", read_source)
+    monkeypatch.setattr(
+        "agri_data_service.pipeline.validation.vegetation_exact.vegetation_day_fingerprints",
+        _stable_fingerprints,
+    )
 
     report = await reconcile_exact_vegetation(
         _Session(),  # type: ignore[arg-type]
@@ -171,6 +184,10 @@ async def test_exact_reconciliation_compares_each_of_the_12_columns(
 
     monkeypatch.setattr("agri_data_service.pipeline.validation.vegetation_exact.fetch_source_cell_days", _source_rows)
     monkeypatch.setattr("agri_data_service.pipeline.validation.vegetation_exact.read_vegetation_day", read_source)
+    monkeypatch.setattr(
+        "agri_data_service.pipeline.validation.vegetation_exact.vegetation_day_fingerprints",
+        _stable_fingerprints,
+    )
 
     report = await reconcile_exact_vegetation(
         _Session(),  # type: ignore[arg-type]
@@ -195,6 +212,10 @@ async def test_exact_reconciliation_rejects_extra_data_in_unsettled_tail(monkeyp
     monkeypatch.setattr(
         "agri_data_service.pipeline.validation.vegetation_exact.fetch_source_cell_days",
         _no_source_rows,
+    )
+    monkeypatch.setattr(
+        "agri_data_service.pipeline.validation.vegetation_exact.vegetation_day_fingerprints",
+        _stable_fingerprints,
     )
 
     report = await reconcile_exact_vegetation(
@@ -245,6 +266,10 @@ async def test_exact_reconciliation_decodes_and_matches_absence_evidence(monkeyp
         "agri_data_service.pipeline.validation.vegetation_exact.fetch_source_cell_days",
         _no_source_rows,
     )
+    monkeypatch.setattr(
+        "agri_data_service.pipeline.validation.vegetation_exact.vegetation_day_fingerprints",
+        _stable_fingerprints,
+    )
 
     report = await reconcile_exact_vegetation(
         _Session(),  # type: ignore[arg-type]
@@ -280,6 +305,10 @@ async def test_exact_reconciliation_rejects_malformed_absence_evidence(monkeypat
         "agri_data_service.pipeline.validation.vegetation_exact.fetch_source_cell_days",
         _no_source_rows,
     )
+    monkeypatch.setattr(
+        "agri_data_service.pipeline.validation.vegetation_exact.vegetation_day_fingerprints",
+        _stable_fingerprints,
+    )
 
     report = await reconcile_exact_vegetation(
         _Session(),  # type: ignore[arg-type]
@@ -300,17 +329,24 @@ async def test_exact_reconciliation_rejects_malformed_absence_evidence(monkeypat
 @pytest.mark.asyncio
 async def test_exact_reconciliation_detects_full_source_value_change(monkeypatch: pytest.MonkeyPatch) -> None:
     expected = _table()
-    changed = _table(metric_value=0.9)
     store = _complete_store(expected)
-    reads = 0
+    fingerprint_reads = 0
 
-    async def changing_source(*_args: Any, **_kwargs: Any) -> pa.Table:
-        nonlocal reads
-        reads += 1
-        return expected if reads == 1 else changed
+    async def changing_fingerprints(*_args: Any, **_kwargs: Any) -> tuple[VegetationPublicationTarget, ...]:
+        nonlocal fingerprint_reads
+        fingerprint_reads += 1
+        fingerprint = "a" * 64 if fingerprint_reads == 1 else "b" * 64
+        return (VegetationPublicationTarget(day=DAY, source_fingerprint=fingerprint),)
+
+    async def read_source(*_args: Any, **_kwargs: Any) -> pa.Table:
+        return expected
 
     monkeypatch.setattr("agri_data_service.pipeline.validation.vegetation_exact.fetch_source_cell_days", _source_rows)
-    monkeypatch.setattr("agri_data_service.pipeline.validation.vegetation_exact.read_vegetation_day", changing_source)
+    monkeypatch.setattr("agri_data_service.pipeline.validation.vegetation_exact.read_vegetation_day", read_source)
+    monkeypatch.setattr(
+        "agri_data_service.pipeline.validation.vegetation_exact.vegetation_day_fingerprints",
+        changing_fingerprints,
+    )
 
     report = await reconcile_exact_vegetation(
         _Session(),  # type: ignore[arg-type]
