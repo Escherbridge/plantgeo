@@ -27,5 +27,13 @@ detects changes to mutable dimensions and release ordering as well as appended o
 reports any earlier objects as an excluded Historical Forecast prefix so those rows cannot silently
 expand the lane contract. For each governed day it hashes canonical Arrow rows from PostgreSQL and
 z13, derives z9/z5/z0 from the PostgreSQL base with the pure tier function, and validates each
-completion or absence marker. The JSON contains relative scope/count/hash evidence only, never a
-database URL, bucket name, endpoint, access key, or secret.
+completion or absence marker. The opening source snapshot supplies exact z13 and derived-tier
+expectations; after the object walk a new repeatable-read transaction reprojects every governed day.
+Aggregate row and Arrow digests, plus per-day change findings, prevent a moving PostgreSQL source from
+producing a clean gate. A source-empty day requires governed-absence evidence at z13 and intentionally
+empty coarse rungs: the existing ladder driver explicitly does not mint three new governed statements
+from one base marker. Physically stricter nullability remains read-compatible with the registered
+schema, but relaxed required fields, type drift, or field-order drift fail. The audit re-lists every
+zoom prefix and re-reads canonical rows and marker bodies, so both same-key overwrites and key-set
+changes fail. The JSON contains relative scope/count/hash evidence and redacted exception classes only,
+never a database URL, bucket name, endpoint, access key, secret, or provider error text.
