@@ -15,4 +15,7 @@ destructive rewrite manifest by implication.
 `audit_weather_observations_exact.py` is the credential-free current-weather completion proof. Run
 it from this service directory; it starts PostgreSQL in read-only mode, excludes every object day
 before the weather registry floor, and compares the governed settled window through all four zoom
-tiers. A non-clean report exits nonzero and never repairs, marks, prunes, or writes anything.
+tiers. Its object-plane walk is bracketed by independent repeatable-read source snapshots, whole-key
+inventories, and canonical object/marker rereads; the report cannot be clean if either plane moves during
+reconciliation. `--output` persists the credential-free full JSON report locally. A non-clean report
+exits nonzero and never repairs, marks, prunes, or writes anything.

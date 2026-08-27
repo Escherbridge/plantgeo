@@ -11,6 +11,7 @@ import asyncio
 import json
 import sys
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 from sqlalchemy import text
 
@@ -26,7 +27,7 @@ from agri_data_service.warehouse.schemas.weather_observations import WEATHER_OBS
 
 
 async def audit(last_day: date) -> dict[str, object]:
-    """Open one read-only PostgreSQL transaction and independently read the object plane."""
+    """Bracket the independent object-plane walk with two read-only PostgreSQL snapshots."""
     store = ObjectStore.from_settings()
     database_url = settings.require_local_source_loader_database_url()
     async with local_source_loader_session(database_url) as session:
@@ -52,9 +53,18 @@ def main() -> None:
         default=settled_cutoff(datetime.now(UTC).date()),
         help="inclusive governed cutoff (default: UTC today minus the registry publication lag)",
     )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="optional local path for the credential-free full JSON evidence",
+    )
     args = parser.parse_args()
     summary = asyncio.run(audit(args.last_day))
-    print(json.dumps(summary, sort_keys=True, separators=(",", ":")))
+    payload = json.dumps(summary, sort_keys=True, separators=(",", ":"))
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(f"{payload}\n", encoding="utf-8")
+    print(payload)
     if not summary["clean"]:
         sys.exit(1)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING, Final, Protocol, cast
 
 import polars as pl
 import pyarrow as pa  # type: ignore[import-untyped]
+from sqlalchemy import text
 
 from agri_data_service.foundation.parquet.paths import (
     PartitionDayStatus,
@@ -70,6 +72,12 @@ class ExactWeatherReport:
     days: tuple[Mapping[str, object], ...]
     source_row_count: int
     source_sha256: str
+    closing_source_row_count: int
+    closing_source_sha256: str
+    object_inventory_sha256: Mapping[ZoomTier, str]
+    closing_object_inventory_sha256: Mapping[ZoomTier, str]
+    object_evidence_sha256: Mapping[ZoomTier, str]
+    closing_object_evidence_sha256: Mapping[ZoomTier, str]
     tier_row_counts: Mapping[ZoomTier, int]
     tier_sha256: Mapping[ZoomTier, str]
     expected_tier_sha256: Mapping[ZoomTier, str]
@@ -77,8 +85,25 @@ class ExactWeatherReport:
 
     @property
     def is_clean(self) -> bool:
-        return not self.findings and all(
+        return self.source_is_stable and self.object_plane_is_stable and not self.findings and all(
             self.tier_sha256.get(zoom) == self.expected_tier_sha256.get(zoom) for zoom in ZOOM_TIERS
+        )
+
+    @property
+    def source_is_stable(self) -> bool:
+        """Whether independent opening and closing PostgreSQL snapshots are identical."""
+        return (
+            self.source_row_count == self.closing_source_row_count
+            and self.source_sha256 == self.closing_source_sha256
+        )
+
+    @property
+    def object_plane_is_stable(self) -> bool:
+        """Whether opening/closing keys, canonical rows, and marker bodies are identical."""
+        return all(
+            self.object_inventory_sha256.get(zoom) == self.closing_object_inventory_sha256.get(zoom)
+            and self.object_evidence_sha256.get(zoom) == self.closing_object_evidence_sha256.get(zoom)
+            for zoom in ZOOM_TIERS
         )
 
     def to_summary(self) -> dict[str, object]:
@@ -96,6 +121,31 @@ class ExactWeatherReport:
             "day_count": len(self.days),
             "source_row_count": self.source_row_count,
             "source_sha256": self.source_sha256,
+            "source_stability": {
+                "stable": self.source_is_stable,
+                "opening_row_count": self.source_row_count,
+                "opening_sha256": self.source_sha256,
+                "closing_row_count": self.closing_source_row_count,
+                "closing_sha256": self.closing_source_sha256,
+            },
+            "object_stability": {
+                "stable": self.object_plane_is_stable,
+                "tiers": {
+                    str(zoom): {
+                        "opening_key_sha256": self.object_inventory_sha256.get(zoom),
+                        "closing_key_sha256": self.closing_object_inventory_sha256.get(zoom),
+                        "opening_evidence_sha256": self.object_evidence_sha256.get(zoom),
+                        "closing_evidence_sha256": self.closing_object_evidence_sha256.get(zoom),
+                        "stable": (
+                            self.object_inventory_sha256.get(zoom)
+                            == self.closing_object_inventory_sha256.get(zoom)
+                            and self.object_evidence_sha256.get(zoom)
+                            == self.closing_object_evidence_sha256.get(zoom)
+                        ),
+                    }
+                    for zoom in ZOOM_TIERS
+                },
+            },
             "tiers": {
                 str(zoom): {
                     "actual_row_count": self.tier_row_counts.get(zoom, 0),
@@ -143,6 +193,51 @@ def _key_day(key: str) -> date | None:
 def _day_set_sha256(days: Iterable[date]) -> str:
     payload = "\n".join(day.isoformat() for day in sorted(set(days))).encode("ascii")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _key_set_sha256(keys: Iterable[str]) -> str:
+    payload = "\n".join(sorted(set(keys))).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _safe_error_detail(error: Exception) -> str:
+    """Classify a backend failure without persisting provider text or credentials."""
+    return f"{type(error).__name__}: backend detail redacted"
+
+
+def _object_evidence(summary: Mapping[str, object]) -> dict[str, object]:
+    """Select the physical/object claims whose canonical digest must stay stable."""
+    return {
+        "status": summary["status"],
+        "listed_part_count": summary["listed_part_count"],
+        "actual_row_count": summary["actual_row_count"],
+        "actual_sha256": summary["actual_sha256"],
+        "completion": summary["completion"],
+        "absence_canonical_sha256": summary["absence_canonical_sha256"],
+    }
+
+
+def _fold_object_evidence(digest: _Digest, day: date, summary: Mapping[str, object]) -> None:
+    digest.update(day.isoformat().encode("ascii"))
+    digest.update(b"\0")
+    digest.update(json.dumps(_object_evidence(summary), sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
+def _expected_tiers(source: pa.Table) -> dict[ZoomTier, pa.Table]:
+    expected: dict[ZoomTier, pa.Table] = {BASE_ZOOM: source}
+    if source.num_rows:
+        frame = cast("pl.DataFrame", pl.from_arrow(source))
+        expected.update(
+            {
+                zoom: _canonical(derive_tier(frame, stream=WEATHER_OBSERVATIONS_STREAM, tier=zoom).to_arrow())
+                for zoom in ZOOM_TIERS
+                if zoom != BASE_ZOOM
+            }
+        )
+    else:
+        empty = _canonical(WEATHER_OBSERVATIONS_SCHEMA.arrow_schema.empty_table())
+        expected.update({zoom: empty for zoom in ZOOM_TIERS if zoom != BASE_ZOOM})
+    return expected
 
 
 def _excluded_window_summary(
@@ -203,7 +298,18 @@ def _different_columns(expected: pa.Table, actual: pa.Table) -> tuple[str, ...]:
     return tuple(name for name in expected.column_names if not expected.column(name).equals(actual.column(name)))
 
 
-def _inspect_tier(  # noqa: PLR0913 - one exact stream-day-tier comparison owns these coordinates
+def _schema_is_read_compatible(actual: pa.Schema, expected: pa.Schema) -> bool:
+    """Accept the registered types/order and any physically stricter field nullability."""
+    if actual.names != expected.names:
+        return False
+    return all(
+        actual_field.type.equals(expected_field.type)
+        and not (actual_field.nullable and not expected_field.nullable)
+        for actual_field, expected_field in zip(actual, expected, strict=True)
+    )
+
+
+def _inspect_tier(  # noqa: PLR0912, PLR0913, PLR0915 - one exact stream-day-tier comparison owns these coordinates
     store: ObjectStore,
     *,
     day: date,
@@ -216,10 +322,12 @@ def _inspect_tier(  # noqa: PLR0913 - one exact stream-day-tier comparison owns 
     findings: list[ExactWeatherFinding] = []
     part_count = _listed_part_count(listed_keys, day)
     completion_listed = any(
-        (parsed := try_parse_completion_marker_path(key)) is not None and parsed.day == day for key in listed_keys
+        (completion_path := try_parse_completion_marker_path(key)) is not None and completion_path.day == day
+        for key in listed_keys
     )
     absence_listed = any(
-        (parsed := try_parse_absence_marker_path(key)) is not None and parsed.day == day for key in listed_keys
+        (absence_path := try_parse_absence_marker_path(key)) is not None and absence_path.day == day
+        for key in listed_keys
     )
     completion_summary: dict[str, object] | None = None
     absence_sha256: str | None = None
@@ -229,7 +337,7 @@ def _inspect_tier(  # noqa: PLR0913 - one exact stream-day-tier comparison owns 
     except Exception as error:
         completion_error = True
         completion = None
-        findings.append(ExactWeatherFinding(day, zoom, "completion_marker", f"{type(error).__name__}: {error}"))
+        findings.append(ExactWeatherFinding(day, zoom, "completion_marker", _safe_error_detail(error)))
     if completion_listed and completion is None and not completion_error:
         findings.append(ExactWeatherFinding(day, zoom, "completion_marker", "listed marker disappeared before read"))
     if not completion_listed and completion is not None:
@@ -259,7 +367,7 @@ def _inspect_tier(  # noqa: PLR0913 - one exact stream-day-tier comparison owns 
     except Exception as error:
         absence_error = True
         absence = None
-        findings.append(ExactWeatherFinding(day, zoom, "absence_marker", f"{type(error).__name__}: {error}"))
+        findings.append(ExactWeatherFinding(day, zoom, "absence_marker", _safe_error_detail(error)))
     if absence_listed and absence is None and not absence_error:
         findings.append(ExactWeatherFinding(day, zoom, "absence_marker", "listed marker disappeared before read"))
     if not absence_listed and absence is not None:
@@ -273,7 +381,7 @@ def _inspect_tier(  # noqa: PLR0913 - one exact stream-day-tier comparison owns 
     if part_count:
         try:
             raw = store.read_partition(WEATHER_OBSERVATIONS_STREAM, WEATHER_KIND, zoom, day)
-            if not raw.schema.equals(WEATHER_OBSERVATIONS_SCHEMA.arrow_schema, check_metadata=False):
+            if not _schema_is_read_compatible(raw.schema, WEATHER_OBSERVATIONS_SCHEMA.arrow_schema):
                 findings.append(
                     ExactWeatherFinding(
                         day,
@@ -284,8 +392,8 @@ def _inspect_tier(  # noqa: PLR0913 - one exact stream-day-tier comparison owns 
                 )
             actual = _canonical(raw)
         except Exception as error:
-            findings.append(ExactWeatherFinding(day, zoom, "partition_read", f"{type(error).__name__}: {error}"))
-    elif status == "absent":
+            findings.append(ExactWeatherFinding(day, zoom, "partition_read", _safe_error_detail(error)))
+    elif status == "absent" or (status == "missing" and expected.num_rows == 0):
         actual = _canonical(WEATHER_OBSERVATIONS_SCHEMA.arrow_schema.empty_table())
 
     if completion is not None and actual is not None and completion.row_count != actual.num_rows:
@@ -325,7 +433,7 @@ def _inspect_tier(  # noqa: PLR0913 - one exact stream-day-tier comparison owns 
     return summary, actual, tuple(findings), absence_sha256
 
 
-async def audit_exact_weather_observations(  # noqa: PLR0912, PLR0913, PLR0915
+async def audit_exact_weather_observations(  # noqa: PLR0915
     session: AsyncSession,
     store: ObjectStore,
     *,
@@ -367,32 +475,28 @@ async def audit_exact_weather_observations(  # noqa: PLR0912, PLR0913, PLR0915
     source_digest = hashlib.sha256()
     expected_digests = {zoom: hashlib.sha256() for zoom in ZOOM_TIERS}
     actual_digests = {zoom: hashlib.sha256() for zoom in ZOOM_TIERS}
+    opening_object_digests = {zoom: hashlib.sha256() for zoom in ZOOM_TIERS}
     tier_rows = Counter[ZoomTier]()
     source_rows = 0
+    source_day_digests: dict[date, str] = {}
     findings: list[ExactWeatherFinding] = []
     day_summaries: list[Mapping[str, object]] = []
     span = (governed_last_day - first_day).days + 1
     for day in (first_day + timedelta(days=offset) for offset in range(span)):
         source = _canonical(await read_weather_observations_day(session, day=day, layer_id=layer_id))
         source_rows += source.num_rows
+        source_day_digests[day] = _table_sha256(source)
         _fold_table(source_digest, day, source)
-        expected_status: PartitionDayStatus = "data" if source.num_rows else "absent"
-        expected_by_zoom: dict[ZoomTier, pa.Table] = {BASE_ZOOM: source}
-        if source.num_rows:
-            frame = cast("pl.DataFrame", pl.from_arrow(source))
-            for zoom in ZOOM_TIERS:
-                if zoom != BASE_ZOOM:
-                    expected_by_zoom[zoom] = _canonical(
-                        derive_tier(frame, stream=WEATHER_OBSERVATIONS_STREAM, tier=zoom).to_arrow()
-                    )
-        else:
-            empty = _canonical(WEATHER_OBSERVATIONS_SCHEMA.arrow_schema.empty_table())
-            expected_by_zoom.update({zoom: empty for zoom in ZOOM_TIERS if zoom != BASE_ZOOM})
+        expected_statuses: dict[ZoomTier, PartitionDayStatus] = {
+            zoom: "data" if source.num_rows else ("absent" if zoom == BASE_ZOOM else "missing")
+            for zoom in ZOOM_TIERS
+        }
+        expected_by_zoom = _expected_tiers(source)
 
         tier_summaries: dict[str, object] = {}
-        absence_digests: dict[ZoomTier, str] = {}
         for zoom in ZOOM_TIERS:
             status = statuses[zoom][day]
+            expected_status = expected_statuses[zoom]
             if status != expected_status:
                 findings.append(
                     ExactWeatherFinding(
@@ -404,7 +508,7 @@ async def audit_exact_weather_observations(  # noqa: PLR0912, PLR0913, PLR0915
                 )
             expected = expected_by_zoom[zoom]
             _fold_table(expected_digests[zoom], day, expected)
-            summary, actual, tier_findings, absence_sha = _inspect_tier(
+            summary, actual, tier_findings, _ = _inspect_tier(
                 store,
                 day=day,
                 zoom=zoom,
@@ -414,24 +518,104 @@ async def audit_exact_weather_observations(  # noqa: PLR0912, PLR0913, PLR0915
             )
             findings.extend(tier_findings)
             tier_summaries[str(zoom)] = summary
-            if absence_sha is not None:
-                absence_digests[zoom] = absence_sha
+            _fold_object_evidence(opening_object_digests[zoom], day, summary)
             if actual is not None:
                 tier_rows[zoom] += actual.num_rows
                 _fold_table(actual_digests[zoom], day, actual)
-        if expected_status == "absent" and len(set(absence_digests.values())) > 1:
-            findings.append(
-                ExactWeatherFinding(day, BASE_ZOOM, "absence_evidence", "absence evidence differs across zoom tiers")
-            )
         day_summaries.append(
             {
                 "day": day.isoformat(),
                 "postgres_row_count": source.num_rows,
                 "postgres_sha256": _table_sha256(source),
-                "expected_status": expected_status,
+                "expected_status": "data" if source.num_rows else "governed_absence_at_base",
+                "expected_tier_statuses": {str(zoom): expected_statuses[zoom] for zoom in ZOOM_TIERS},
                 "tiers": tier_summaries,
             }
         )
+
+    # End the opening snapshot before re-reading the source. Re-reading in the same REPEATABLE READ
+    # transaction would only prove that PostgreSQL snapshots are repeatable, not that the governed
+    # source stayed unchanged while the independent object-store walk ran.
+    await session.rollback()
+    await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+    closing_source_digest = hashlib.sha256()
+    closing_source_rows = 0
+    closing_source_by_day: dict[date, pa.Table] = {}
+    for day in (first_day + timedelta(days=offset) for offset in range(span)):
+        closing_source = _canonical(await read_weather_observations_day(session, day=day, layer_id=layer_id))
+        closing_source_rows += closing_source.num_rows
+        closing_source_by_day[day] = closing_source
+        _fold_table(closing_source_digest, day, closing_source)
+        if source_day_digests[day] != _table_sha256(closing_source):
+            findings.append(
+                ExactWeatherFinding(
+                    day,
+                    BASE_ZOOM,
+                    "source_changed_during_reconciliation",
+                    "one or more exported source rows or fields changed between the opening and closing snapshots",
+                )
+            )
+
+    closing_keys_by_zoom = {
+        zoom: store.list_partition_keys(WEATHER_OBSERVATIONS_STREAM, WEATHER_KIND, zoom) for zoom in ZOOM_TIERS
+    }
+    closing_statuses = {
+        zoom: partition_day_statuses(
+            layer=WEATHER_OBSERVATIONS_STREAM,
+            kind=WEATHER_KIND,
+            zoom=zoom,
+            first_day=first_day,
+            last_day=governed_last_day,
+            keys=closing_keys_by_zoom[zoom],
+        )
+        for zoom in ZOOM_TIERS
+    }
+    for zoom in ZOOM_TIERS:
+        changed_keys = set(keys_by_zoom[zoom]).symmetric_difference(closing_keys_by_zoom[zoom])
+        changed_days = sorted(cast("set[date]", {_key_day(key) for key in changed_keys} - {None}))
+        findings.extend(
+            ExactWeatherFinding(
+                day,
+                zoom,
+                "object_inventory_changed_during_reconciliation",
+                "one or more partition or marker keys changed between the opening and closing inventories",
+            )
+            for day in changed_days
+        )
+        if changed_keys and not changed_days:
+            findings.append(
+                ExactWeatherFinding(
+                    first_day,
+                    zoom,
+                    "object_inventory_changed_during_reconciliation",
+                    "one or more unparseable object keys changed between the opening and closing inventories",
+                )
+            )
+
+    closing_object_digests = {zoom: hashlib.sha256() for zoom in ZOOM_TIERS}
+    for day in (first_day + timedelta(days=offset) for offset in range(span)):
+        closing_expected = _expected_tiers(closing_source_by_day[day])
+        for zoom in ZOOM_TIERS:
+            closing_summary, _, closing_findings, _ = _inspect_tier(
+                store,
+                day=day,
+                zoom=zoom,
+                status=closing_statuses[zoom][day],
+                listed_keys=closing_keys_by_zoom[zoom],
+                expected=closing_expected[zoom],
+            )
+            findings.extend(closing_findings)
+            _fold_object_evidence(closing_object_digests[zoom], day, closing_summary)
+    findings.extend(
+        ExactWeatherFinding(
+            first_day,
+            zoom,
+            "object_content_changed_during_reconciliation",
+            "canonical partition rows or marker bodies changed between the opening and closing reads",
+        )
+        for zoom in ZOOM_TIERS
+        if opening_object_digests[zoom].digest() != closing_object_digests[zoom].digest()
+    )
 
     return ExactWeatherReport(
         governed_first_day=first_day,
@@ -441,6 +625,16 @@ async def audit_exact_weather_observations(  # noqa: PLR0912, PLR0913, PLR0915
         days=tuple(day_summaries),
         source_row_count=source_rows,
         source_sha256=source_digest.hexdigest(),
+        closing_source_row_count=closing_source_rows,
+        closing_source_sha256=closing_source_digest.hexdigest(),
+        object_inventory_sha256={zoom: _key_set_sha256(keys) for zoom, keys in keys_by_zoom.items()},
+        closing_object_inventory_sha256={
+            zoom: _key_set_sha256(keys) for zoom, keys in closing_keys_by_zoom.items()
+        },
+        object_evidence_sha256={zoom: digest.hexdigest() for zoom, digest in opening_object_digests.items()},
+        closing_object_evidence_sha256={
+            zoom: digest.hexdigest() for zoom, digest in closing_object_digests.items()
+        },
         tier_row_counts=dict(tier_rows),
         tier_sha256={zoom: digest.hexdigest() for zoom, digest in actual_digests.items()},
         expected_tier_sha256={zoom: digest.hexdigest() for zoom, digest in expected_digests.items()},
