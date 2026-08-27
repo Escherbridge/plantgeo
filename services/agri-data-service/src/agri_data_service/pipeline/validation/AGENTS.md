@@ -20,3 +20,12 @@ day must remain missing there, while a source-backed day must hold data. For set
 downloads every absence marker so malformed or divergent evidence cannot pass on key presence.
 After the Parquet walk it re-runs the exact 12-column source projection for every governed day; this
 detects changes to mutable dimensions and release ordering as well as appended observation keys.
+
+## Exact current-weather parity
+
+`weather_observations_exact.py` compares only the registry-governed current-conditions window. It
+reports any earlier objects as an excluded Historical Forecast prefix so those rows cannot silently
+expand the lane contract. For each governed day it hashes canonical Arrow rows from PostgreSQL and
+z13, derives z9/z5/z0 from the PostgreSQL base with the pure tier function, and validates each
+completion or absence marker. The JSON contains relative scope/count/hash evidence only, never a
+database URL, bucket name, endpoint, access key, or secret.
