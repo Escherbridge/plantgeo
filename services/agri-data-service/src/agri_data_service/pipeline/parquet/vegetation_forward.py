@@ -6,7 +6,7 @@ import asyncio
 import time
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal
 
 from sqlalchemy import text
@@ -14,6 +14,19 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.db.vegetation_publication import (
+    VEGETATION_FINGERPRINT_HEX_LENGTH,
+    VEGETATION_PUBLICATION_LOOKBACK_DAYS,
+    VegetationPublicationTarget,
+    acknowledge_vegetation_publication,
+    enqueue_vegetation_publication,
+    pending_vegetation_publication,
+    record_vegetation_publication_attempt,
+    try_postgres_vegetation_publication_barrier,
+    unlocked_vegetation_publication_barrier,
+    vegetation_day_fingerprints,
+    vegetation_publication_is_fully_enrolled,
+)
 from agri_data_service.execution.vegetation_ndvi_plane import (
     CELL_BATCH_SIZE,
     GRID_NAME,
@@ -30,7 +43,6 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     _lane_day_lock_key,
     fill_one_lane_day,
     postgres_lane_day_lock,
-    statement_timeout,
     unlocked_lane_day,
 )
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
@@ -53,7 +65,8 @@ _AFFECTED_DAYS_SQL: Final = text(load_query_sql("pipeline/vegetation_forward_aff
 _CHANGED_SCOPE_SQL: Final = text(load_query_sql("pipeline/vegetation_forward_changed_scope.sql"))
 _SOURCE_REVISION_SQL: Final = text(load_query_sql("pipeline/vegetation_forward_revision.sql"))
 
-VEGETATION_FORWARD_CHECKPOINT_PREFIX: Final = "vegetation-forward-v1:"
+VEGETATION_FORWARD_CHECKPOINT_PREFIX: Final = "vegetation-forward-v2:"
+VEGETATION_FORWARD_LEGACY_CHECKPOINT_PREFIX: Final = "vegetation-forward-v1:"
 VEGETATION_FORWARD_MAX_DAYS_PER_RUN: Final = 25
 VEGETATION_FORWARD_TIME_BUDGET_SECONDS: Final = 600.0
 VEGETATION_FORWARD_MAX_ATTEMPTS: Final = 3
@@ -137,6 +150,48 @@ class VegetationForwardSummary:
             "pending_days": self.affected_day_count - self.written_day_count - self.checkpointed_day_count,
             "requested_cells": len(self.scope.cell_keys),
             "source_revision": self.source_revision,
+            "written_days": self.written_day_count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class VegetationPublicationDrainSummary:
+    """One unconditional defensive enqueue and global fair queue drain."""
+
+    through_day: date
+    defensive_day_count: int
+    pending_day_count: int
+    remaining_day_count: int
+    source_revision: int
+    stop_reason: ForwardStopReason
+    days: tuple[VegetationForwardDayResult, ...]
+
+    @property
+    def written_day_count(self) -> int:
+        return sum(result.outcome == "written" for result in self.days)
+
+    @property
+    def checkpointed_day_count(self) -> int:
+        return sum(result.outcome == "checkpointed" for result in self.days)
+
+    @property
+    def contended_day_count(self) -> int:
+        return sum(result.outcome == "contended" for result in self.days)
+
+    @property
+    def is_complete(self) -> bool:
+        return self.stop_reason == "complete" and not self.remaining_day_count and not self.contended_day_count
+
+    def to_details(self) -> dict[str, int | str]:
+        return {
+            "checkpointed_days": self.checkpointed_day_count,
+            "contended_days": self.contended_day_count,
+            "defensive_days": self.defensive_day_count,
+            "forward_complete": int(self.is_complete),
+            "pending_days": self.pending_day_count,
+            "remaining_days": self.remaining_day_count,
+            "source_revision": self.source_revision,
+            "stop_reason": self.stop_reason,
             "written_days": self.written_day_count,
         }
 
@@ -257,21 +312,39 @@ async def _source_revision(session: AsyncSession) -> int:
     return revision
 
 
-def _checkpoint_run_id(source_revision: int) -> str:
-    return f"{VEGETATION_FORWARD_CHECKPOINT_PREFIX}{source_revision}"
+def _checkpoint_run_id(source_fingerprint: str) -> str:
+    return f"{VEGETATION_FORWARD_CHECKPOINT_PREFIX}{source_fingerprint}"
 
 
-def _checkpoint_revision(run_id: str) -> int | None:
+def _checkpoint_fingerprint(run_id: str) -> str | None:
     if not run_id.startswith(VEGETATION_FORWARD_CHECKPOINT_PREFIX):
         return None
+    fingerprint = run_id.removeprefix(VEGETATION_FORWARD_CHECKPOINT_PREFIX)
+    return (
+        fingerprint
+        if len(fingerprint) == VEGETATION_FINGERPRINT_HEX_LENGTH
+        and all(char in "0123456789abcdef" for char in fingerprint)
+        else None
+    )
+
+
+def _legacy_checkpoint_revision(run_id: str) -> int | None:
+    if not run_id.startswith(VEGETATION_FORWARD_LEGACY_CHECKPOINT_PREFIX):
+        return None
     try:
-        revision = int(run_id.removeprefix(VEGETATION_FORWARD_CHECKPOINT_PREFIX))
+        revision = int(run_id.removeprefix(VEGETATION_FORWARD_LEGACY_CHECKPOINT_PREFIX))
     except ValueError:
         return None
     return revision if revision > 0 else None
 
 
-def _ladder_checkpoint_is_current(store: ObjectStore, *, day: date, source_revision: int) -> bool:
+def _ladder_checkpoint_is_current(
+    store: ObjectStore,
+    *,
+    day: date,
+    source_fingerprint: str,
+    legacy_source_revision: int | None = None,
+) -> bool:
     for tier in VEGETATION_FORWARD_ZOOM_TIERS:
         keys = store.list_partition_keys(
             VEGETATION_PLANE_STREAM,
@@ -298,8 +371,12 @@ def _ladder_checkpoint_is_current(store: ObjectStore, *, day: date, source_revis
         )
         if marker is None:
             return False
-        marker_revision = _checkpoint_revision(marker.run_id)
-        if marker_revision is None or marker_revision < source_revision:
+        marker_fingerprint = _checkpoint_fingerprint(marker.run_id)
+        legacy_revision = _legacy_checkpoint_revision(marker.run_id)
+        current = marker_fingerprint == source_fingerprint
+        if legacy_source_revision is not None:
+            current = current or (legacy_revision is not None and legacy_revision >= legacy_source_revision)
+        if not current:
             return False
         part_indexes = {
             parsed.part_index
@@ -326,7 +403,7 @@ async def _prepare_forward(
     max_attempts: int,
     retry_base_seconds: float,
     sleep: Callable[[float], Awaitable[None]],
-) -> tuple[RegistrationSummary, int, tuple[date, ...]]:
+) -> tuple[RegistrationSummary, int, tuple[VegetationPublicationTarget, ...]]:
     for attempt in range(1, max_attempts + 1):
         try:
             registration = await register_governed_forward_plane(
@@ -339,11 +416,24 @@ async def _prepare_forward(
                 scope=scope,
                 source_release_id=registration.plane.source_release_id,
             )
-            await session.commit()
-            await session.execute(statement_timeout(VEGETATION_FORWARD_STATEMENT_TIMEOUT_SECONDS))
+            fingerprints = {
+                target.day: target
+                for target in await vegetation_day_fingerprints(
+                    session,
+                    first_day=min(affected_days),
+                    last_day=max(affected_days),
+                )
+            }
+            missing_fingerprints = sorted(set(affected_days) - fingerprints.keys())
+            if missing_fingerprints:
+                raise VegetationForwardError(
+                    "promoted vegetation days have no exact governed fingerprint: "
+                    + ", ".join(day.isoformat() for day in missing_fingerprints)
+                )
+            affected_targets = tuple(fingerprints[day] for day in sorted(affected_days))
             source_revision = await _source_revision(session)
-            await session.rollback()
-            return registration, source_revision, affected_days
+            await session.commit()
+            return registration, source_revision, affected_targets
         except _TRANSIENT_DATABASE_ERRORS:
             await session.rollback()
             if attempt == max_attempts:
@@ -360,7 +450,7 @@ async def _write_day_once(
     store: ObjectStore,
     *,
     day: date,
-    source_revision: int,
+    source_fingerprint: str,
     lane_day_lock: VegetationLaneDayLock,
 ) -> VegetationForwardDayResult:
     lane = LANE_REGISTRY[VEGETATION_PLANE_STREAM]
@@ -373,23 +463,24 @@ async def _write_day_once(
                     attempt_count=1,
                     detail="another writer holds this vegetation lane-day",
                 )
-            if _ladder_checkpoint_is_current(store, day=day, source_revision=source_revision):
+            if _ladder_checkpoint_is_current(store, day=day, source_fingerprint=source_fingerprint):
                 return VegetationForwardDayResult(day=day, outcome="checkpointed", attempt_count=1)
             outcome, _parts, rows, written_bytes, detail = await fill_one_lane_day(
                 session,
                 store,
                 lane,
                 day=day,
-                run_id=_checkpoint_run_id(source_revision),
+                run_id=_checkpoint_run_id(source_fingerprint),
                 now=lambda: datetime.now(UTC),
                 today=datetime.now(UTC).date(),
                 lane_day_lock=unlocked_lane_day,
+                vegetation_publication_barrier=unlocked_vegetation_publication_barrier,
                 statement_timeout_seconds=VEGETATION_FORWARD_STATEMENT_TIMEOUT_SECONDS,
             )
             if outcome != "written" or not _ladder_checkpoint_is_current(
                 store,
                 day=day,
-                source_revision=source_revision,
+                source_fingerprint=source_fingerprint,
             ):
                 raise VegetationForwardError(
                     detail or f"vegetation {day.isoformat()} did not finish all four governed tiers"
@@ -412,7 +503,7 @@ async def _write_day_with_retry(  # noqa: PLR0913 - retry policy and injected se
     store: ObjectStore,
     *,
     day: date,
-    source_revision: int,
+    source_fingerprint: str,
     max_attempts: int,
     retry_base_seconds: float,
     lane_day_lock: VegetationLaneDayLock,
@@ -425,7 +516,7 @@ async def _write_day_with_retry(  # noqa: PLR0913 - retry policy and injected se
                 session,
                 store,
                 day=day,
-                source_revision=source_revision,
+                source_fingerprint=source_fingerprint,
                 lane_day_lock=lane_day_lock,
             )
         except Exception as error:
@@ -451,6 +542,190 @@ async def _write_day_with_retry(  # noqa: PLR0913 - retry policy and injected se
     ) from last_error
 
 
+async def _defensive_enqueue(
+    session: AsyncSession,
+    store: ObjectStore,
+    *,
+    through_day: date,
+) -> tuple[int, int]:
+    """Revalidate the rolling source window and author durable work for every stale physical ladder."""
+    first_day = through_day - timedelta(days=VEGETATION_PUBLICATION_LOOKBACK_DAYS)
+    targets = await vegetation_day_fingerprints(session, first_day=first_day, last_day=through_day)
+    if not targets:
+        await session.rollback()
+        return 0, 0
+    await enqueue_vegetation_publication(session, targets)
+    legacy_source_revision = await _source_revision(session)
+    for target in targets:
+        if _ladder_checkpoint_is_current(
+            store,
+            day=target.day,
+            source_fingerprint=target.source_fingerprint,
+            legacy_source_revision=legacy_source_revision,
+        ):
+            await acknowledge_vegetation_publication(session, target)
+        else:
+            await enqueue_vegetation_publication(session, (target,), force=True)
+    if await vegetation_publication_is_fully_enrolled(session):
+        await enqueue_vegetation_publication(
+            session,
+            await vegetation_day_fingerprints(session, last_day=through_day),
+        )
+    await session.commit()
+    return len(targets), legacy_source_revision
+
+
+async def _drain_pending_vegetation(  # noqa: PLR0913 - bounded drain policy and injected seams form one operation.
+    session: AsyncSession,
+    store: ObjectStore,
+    *,
+    through_day: date,
+    defensive_day_count: int,
+    source_revision: int,
+    max_days_per_run: int,
+    time_budget_seconds: float,
+    max_attempts: int,
+    retry_base_seconds: float,
+    lane_day_lock: VegetationLaneDayLock,
+    sleep: Callable[[float], Awaitable[None]],
+    monotonic: Callable[[], float],
+) -> VegetationPublicationDrainSummary:
+    pending = await pending_vegetation_publication(session, limit=2_147_483_647)
+    await session.rollback()
+    started_at = monotonic()
+    results: list[VegetationForwardDayResult] = []
+    stop_reason: ForwardStopReason = "complete"
+    for target in pending:
+        if monotonic() - started_at >= time_budget_seconds:
+            stop_reason = "time_budget"
+            break
+        if len(results) >= max_days_per_run:
+            stop_reason = "day_limit"
+            break
+        try:
+            result = await _write_day_with_retry(
+                session,
+                store,
+                day=target.day,
+                source_fingerprint=target.source_fingerprint,
+                max_attempts=max_attempts,
+                retry_base_seconds=retry_base_seconds,
+                lane_day_lock=lane_day_lock,
+                sleep=sleep,
+            )
+        except Exception as error:
+            await record_vegetation_publication_attempt(
+                session,
+                target,
+                error=f"{type(error).__name__}: {error}",
+            )
+            await session.commit()
+            raise
+        await record_vegetation_publication_attempt(
+            session,
+            target,
+            error="another writer holds this vegetation lane-day" if result.outcome == "contended" else None,
+        )
+        if result.outcome != "contended":
+            if not _ladder_checkpoint_is_current(
+                store,
+                day=target.day,
+                source_fingerprint=target.source_fingerprint,
+            ):
+                await session.rollback()
+                raise VegetationForwardError(
+                    f"vegetation {target.day.isoformat()} lost its verified marker before queue acknowledgement"
+                )
+            if not await acknowledge_vegetation_publication(session, target):
+                await session.rollback()
+                raise VegetationForwardError(
+                    f"vegetation {target.day.isoformat()} advanced while fingerprint {target.source_fingerprint} "
+                    "was being acknowledged"
+                )
+        await session.commit()
+        results.append(result)
+    remaining = await pending_vegetation_publication(session, limit=2_147_483_647)
+    await session.rollback()
+    if remaining and stop_reason == "complete":
+        stop_reason = "day_limit"
+    return VegetationPublicationDrainSummary(
+        through_day=through_day,
+        defensive_day_count=defensive_day_count,
+        pending_day_count=len(pending),
+        remaining_day_count=len(remaining),
+        source_revision=source_revision,
+        stop_reason=stop_reason,
+        days=tuple(results),
+    )
+
+
+async def catch_up_vegetation_publication(  # noqa: PLR0913 - explicit cron bounds are the contract.
+    session: AsyncSession,
+    store: ObjectStore,
+    *,
+    through_day: date,
+    max_days_per_run: int = VEGETATION_FORWARD_MAX_DAYS_PER_RUN,
+    time_budget_seconds: float = VEGETATION_FORWARD_TIME_BUDGET_SECONDS,
+    max_attempts: int = VEGETATION_FORWARD_MAX_ATTEMPTS,
+    retry_base_seconds: float = VEGETATION_FORWARD_RETRY_BASE_SECONDS,
+    lane_day_lock: VegetationLaneDayLock = postgres_lane_day_lock,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> VegetationPublicationDrainSummary:
+    """Unconditionally revalidate 45 days, then fairly drain every durable pending day."""
+    if max_days_per_run <= 0:
+        raise ValueError("max_days_per_run must be positive")
+    if time_budget_seconds <= 0:
+        raise ValueError("time_budget_seconds must be positive")
+    if not 1 <= max_attempts <= VEGETATION_FORWARD_MAX_ATTEMPTS:
+        raise ValueError(f"max_attempts must be between 1 and {VEGETATION_FORWARD_MAX_ATTEMPTS}")
+    if not 0 <= retry_base_seconds <= VEGETATION_FORWARD_MAX_RETRY_SECONDS:
+        raise ValueError(f"retry_base_seconds must be between 0 and {VEGETATION_FORWARD_MAX_RETRY_SECONDS:g}")
+    async with try_postgres_vegetation_publication_barrier(session) as granted:
+        if granted is False:
+            await session.rollback()
+            raise VegetationForwardIncompleteError(
+                "vegetation catch-up deferred because an exact audit or another publisher holds the source barrier"
+            )
+        changed_since = datetime.combine(
+            through_day - timedelta(days=VEGETATION_PUBLICATION_LOOKBACK_DAYS),
+            datetime.min.time(),
+            tzinfo=UTC,
+        )
+        try:
+            catch_up_scope = await changed_vegetation_forward_scope(
+                session,
+                since=changed_since,
+                through_day=through_day,
+            )
+        except VegetationForwardError as error:
+            if "no valid raw vegetation cell-day changed" not in str(error):
+                raise
+        else:
+            await _prepare_forward(
+                session,
+                scope=catch_up_scope,
+                max_attempts=max_attempts,
+                retry_base_seconds=retry_base_seconds,
+                sleep=sleep,
+            )
+        defensive_days, source_revision = await _defensive_enqueue(session, store, through_day=through_day)
+        return await _drain_pending_vegetation(
+            session,
+            store,
+            through_day=through_day,
+            defensive_day_count=defensive_days,
+            source_revision=source_revision,
+            max_days_per_run=max_days_per_run,
+            time_budget_seconds=time_budget_seconds,
+            max_attempts=max_attempts,
+            retry_base_seconds=retry_base_seconds,
+            lane_day_lock=lane_day_lock,
+            sleep=sleep,
+            monotonic=monotonic,
+        )
+
+
 async def forward_vegetation_scope(  # noqa: PLR0913 - explicit bounds and seams are the orchestration contract.
     session: AsyncSession,
     store: ObjectStore,
@@ -473,47 +748,42 @@ async def forward_vegetation_scope(  # noqa: PLR0913 - explicit bounds and seams
         raise ValueError(f"max_attempts must be between 1 and {VEGETATION_FORWARD_MAX_ATTEMPTS}")
     if not 0 <= retry_base_seconds <= VEGETATION_FORWARD_MAX_RETRY_SECONDS:
         raise ValueError(f"retry_base_seconds must be between 0 and {VEGETATION_FORWARD_MAX_RETRY_SECONDS:g}")
-    registration, source_revision, affected_days = await _prepare_forward(
-        session,
-        scope=scope,
-        max_attempts=max_attempts,
-        retry_base_seconds=retry_base_seconds,
-        sleep=sleep,
-    )
-    started_at = monotonic()
-    results: list[VegetationForwardDayResult] = []
-    examined = 0
-    noncheckpointed = 0
-    stop_reason: ForwardStopReason = "complete"
-    for day in affected_days:
-        if monotonic() - started_at >= time_budget_seconds:
-            stop_reason = "time_budget"
-            break
-        if noncheckpointed >= max_days_per_run:
-            stop_reason = "day_limit"
-            break
-        examined += 1
-        result = await _write_day_with_retry(
+    async with try_postgres_vegetation_publication_barrier(session) as granted:
+        if granted is False:
+            await session.rollback()
+            raise VegetationForwardIncompleteError(
+                "raw vegetation persisted; governed publication deferred behind the exact-audit barrier"
+            )
+        registration, registration_revision, _affected_targets = await _prepare_forward(
+            session,
+            scope=scope,
+            max_attempts=max_attempts,
+            retry_base_seconds=retry_base_seconds,
+            sleep=sleep,
+        )
+        defensive_days, source_revision = await _defensive_enqueue(session, store, through_day=scope.cutoff_day)
+        drain = await _drain_pending_vegetation(
             session,
             store,
-            day=day,
-            source_revision=source_revision,
+            through_day=scope.cutoff_day,
+            defensive_day_count=defensive_days,
+            source_revision=max(registration_revision, source_revision),
+            max_days_per_run=max_days_per_run,
+            time_budget_seconds=time_budget_seconds,
             max_attempts=max_attempts,
             retry_base_seconds=retry_base_seconds,
             lane_day_lock=lane_day_lock,
             sleep=sleep,
+            monotonic=monotonic,
         )
-        results.append(result)
-        if result.outcome != "checkpointed":
-            noncheckpointed += 1
     return VegetationForwardSummary(
         scope=scope,
         registration=registration,
-        source_revision=source_revision,
-        affected_day_count=len(affected_days),
-        examined_day_count=examined,
-        stop_reason=stop_reason,
-        days=tuple(results),
+        source_revision=drain.source_revision,
+        affected_day_count=drain.pending_day_count,
+        examined_day_count=len(drain.days),
+        stop_reason=drain.stop_reason,
+        days=drain.days,
     )
 
 
@@ -595,6 +865,7 @@ def bind_vegetation_forward_writer(
 
 __all__ = [
     "VEGETATION_FORWARD_CHECKPOINT_PREFIX",
+    "VEGETATION_FORWARD_LEGACY_CHECKPOINT_PREFIX",
     "VEGETATION_FORWARD_MAX_ATTEMPTS",
     "VEGETATION_FORWARD_MAX_DAYS_PER_RUN",
     "VEGETATION_FORWARD_TIME_BUDGET_SECONDS",
@@ -603,7 +874,9 @@ __all__ = [
     "VegetationForwardIncompleteError",
     "VegetationForwardScope",
     "VegetationForwardSummary",
+    "VegetationPublicationDrainSummary",
     "bind_vegetation_forward_writer",
+    "catch_up_vegetation_publication",
     "changed_vegetation_forward_scope",
     "forward_changed_vegetation",
     "forward_persisted_vegetation",

@@ -329,6 +329,7 @@ async def test_forward_registration_redigests_and_refuses_a_concurrent_raw_revis
         return 1
 
     monkeypatch.setattr(plane_module, "pin_determinism", pin)
+    monkeypatch.setattr(plane_module, "advisory_lock", pin)
     monkeypatch.setattr(plane_module, "_corpus_digest", digest)
     monkeypatch.setattr(plane_module, "_register_data_source", register_id)
     monkeypatch.setattr(plane_module, "_register_source_release", register_id)

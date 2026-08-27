@@ -143,6 +143,12 @@ see at all: whether every object the manifest declares was **built**, and the
 imposes, and getting it wrong breaks the disposable-database recipe below rather
 than the migration that introduces it.
 
+Revision `20260827_0027` is the first layered revision. It adds
+`agri.vegetation_publication_day`, a durable per-UTC-day target/ack ledger for the vegetation
+Parquet plane. The migration uses guarded table/index DDL because the baseline reads the current
+tree. Existing governed days are enrolled lazily: the hourly defensive physical-marker pass covers
+the rolling window, while the exact repair enrolls source-backed mismatches across the full history.
+
 The baseline executes the **current** `db/agri/**` tree. `regenerate.py` rebuilds
 that tree by running `alembic upgrade head`. Play those two facts forward:
 

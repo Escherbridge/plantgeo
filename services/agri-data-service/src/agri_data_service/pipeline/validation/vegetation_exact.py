@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING, Final, Protocol, cast
 import polars as pl
 import pyarrow as pa  # type: ignore[import-untyped]
 
+from agri_data_service.db.vegetation_publication import (
+    postgres_vegetation_publication_barrier,
+    unlocked_vegetation_publication_barrier,
+)
 from agri_data_service.foundation.parquet.paths import partition_day_statuses, try_parse_partition_path
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS, ZoomTier
 from agri_data_service.pipeline.lanes.vegetation import read_vegetation_day
@@ -311,7 +315,7 @@ def _compare_tier(  # noqa: PLR0913
     return actual, tuple(findings)
 
 
-async def reconcile_exact_vegetation(  # noqa: PLR0912, PLR0913, PLR0915
+async def _reconcile_exact_vegetation_unlocked(  # noqa: PLR0912, PLR0913, PLR0915
     session: AsyncSession,
     store: ObjectStore,
     *,
@@ -490,6 +494,37 @@ async def reconcile_exact_vegetation(  # noqa: PLR0912, PLR0913, PLR0915
         compared_day_count=compared,
         findings=tuple(findings),
     )
+
+
+async def reconcile_exact_vegetation(  # noqa: PLR0913
+    session: AsyncSession,
+    store: ObjectStore,
+    *,
+    cell_ids: Sequence[UUID],
+    first_day: date,
+    last_day: date,
+    coverage_last_day: date,
+    read_attempts: int = DEFAULT_READ_ATTEMPTS,
+    progress_every_days: int = DEFAULT_PROGRESS_EVERY_DAYS,
+    progress: Callable[[dict[str, object]], None] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+    barrier_held: bool = False,
+) -> ExactVegetationReport:
+    """Run the exact audit under the vegetation-wide source/publication stability barrier."""
+    barrier = unlocked_vegetation_publication_barrier if barrier_held else postgres_vegetation_publication_barrier
+    async with barrier(session):
+        return await _reconcile_exact_vegetation_unlocked(
+            session,
+            store,
+            cell_ids=cell_ids,
+            first_day=first_day,
+            last_day=last_day,
+            coverage_last_day=coverage_last_day,
+            read_attempts=read_attempts,
+            progress_every_days=progress_every_days,
+            progress=progress,
+            sleeper=sleeper,
+        )
 
 
 def coverage_day_count(first_day: date, last_day: date) -> int:

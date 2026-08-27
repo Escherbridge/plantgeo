@@ -13,3 +13,8 @@ Upstream acquisition, external API fetching, raw tile/data backfill routines (`i
 operators, and validators. Validation modules may re-export that contract for compatibility, but
 sibling validation modules import the lower pipeline module so pytest's layer contract remains
 acyclic.
+
+`db/vegetation_publication.py` owns the vegetation-wide advisory barrier and durable per-day queue
+operations. The 45-day ingestion lookback spans up to 46 inclusive UTC dates; publication rechecks
+that boundary every tick and drains durable pending work independently of whether ingestion emitted
+a callback in that tick.

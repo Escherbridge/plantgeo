@@ -13,6 +13,7 @@ from agri_data_service.pipeline.parquet.vegetation_forward import (
     VegetationForwardDayResult,
     VegetationForwardScope,
     VegetationForwardSummary,
+    VegetationPublicationDrainSummary,
 )
 
 if TYPE_CHECKING:
@@ -71,6 +72,36 @@ def test_forward_command_uses_the_pinned_change_window(monkeypatch: pytest.Monke
     assert seen["max_days"] == FORWARD_MAX_DAYS
     assert '"forward_complete": 1' in result.output
     assert '"selected_cell_days": 1' in result.output
+
+
+def test_catch_up_command_needs_no_since_window_and_fails_closed_on_remaining_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    async def incomplete(**kwargs: object) -> VegetationPublicationDrainSummary:
+        seen.update(kwargs)
+        return VegetationPublicationDrainSummary(
+            through_day=cast("date", kwargs["through_day"]),
+            defensive_day_count=46,
+            pending_day_count=45,
+            remaining_day_count=20,
+            source_revision=185_244,
+            stop_reason="day_limit",
+            days=(),
+        )
+
+    monkeypatch.setattr(cli_module, "_parquet_catch_up_vegetation", incomplete)
+    result = CliRunner().invoke(
+        cli_module.cli,
+        ["parquet-catch-up-vegetation", "--through-day", "2026-08-27", "--max-days", "25"],
+    )
+
+    assert result.exit_code == 1
+    assert seen["through_day"] == date(2026, 8, 27)
+    assert "since" not in seen
+    assert '"defensive_days": 46' in result.output
+    assert '"remaining_days": 20' in result.output
 
 
 def test_absence_command_refuses_unsettled_last_day(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -35,7 +35,7 @@ AGRI_TEST_DATABASE_URL_ENV = "AGRI_TEST_DATABASE_URL"
 # history moved unedited to `alembic/archive/`), so this is now the only legal `alembic_version`
 # value. A database still reading `20260817_0025` or `20260825_0026` is at the same SCHEMA but has
 # not been stamped -- see alembic/archive/AGENTS.md.
-EXPECTED_ALEMBIC_HEAD = "20260825_0000"
+EXPECTED_ALEMBIC_HEAD = "20260827_0027"
 PROTECTED_DATABASE_NAME = "plantgeo"
 AGRI_DB_MARKER = "agri_db"
 AGRI_DB_REHEARSAL_MARKER = "agri_db_migration_rehearsal"

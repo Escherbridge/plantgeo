@@ -72,6 +72,13 @@ async def _no_source_rows(*_args: Any, **_kwargs: Any) -> tuple[SourceCellDay, .
 
 
 class _Session:
+    class _LockResult:
+        def scalar(self) -> bool:
+            return True
+
+    async def execute(self, _statement: object) -> _LockResult:
+        return self._LockResult()
+
     async def rollback(self) -> None:
         return None
 

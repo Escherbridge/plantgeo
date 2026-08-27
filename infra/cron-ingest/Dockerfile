@@ -84,14 +84,14 @@ USER plantgeo
 # code is the run's verdict. restartPolicyType NEVER plus the hourly schedule is now the
 # concurrency guard that the deleted in-memory `ingestionInFlight` flag used to be.
 #
-# All THREE verbs run unconditionally and the exit code is their AND -- deliberately not `&&`.
+# All FOUR verbs run unconditionally and the exit code is their AND -- deliberately not `&&`.
 # `&&` would skip the later verbs whenever any single ingestion source failed, which is exactly
 # backwards: the durable archive lanes and the dispatchable lanes have nothing to do with
 # whether FIRMS answered, and starving them for an hour over an unrelated upstream outage
 # is how a backfill silently stops advancing. So each verb gets its turn, each verdict is
 # captured, and the run is green only if all were.
 #
-# `parquet-gap-fill` (added 2026-08-22) is the Parquet warehouse's ONLY writer, and it is both the
+# `parquet-gap-fill` (added 2026-08-22) is the generic Parquet writer, and it is both the
 # incremental load and the historical backfill -- not two jobs. Each lane declares a history floor
 # and a publication lag; the window is [floor, today - lag]; gap detection over that window returns
 # missing days NEWEST-FIRST, so a newly published day is simply the newest gap. The driver walks
@@ -105,4 +105,4 @@ USER plantgeo
 #
 # It needs the six OBJECT_STORE_* variables, already set on this service (RUNBOOK section 0.26.2).
 # A tick with object storage unconfigured fails closed, naming every variable still missing.
-ENTRYPOINT ["/bin/sh", "-c", "agri-cli ingest-all; ingest_status=$?; agri-cli jobs-pulse --time-budget-seconds 600; pulse_status=$?; agri-cli parquet-gap-fill --time-budget-seconds 900; parquet_status=$?; [ $ingest_status -eq 0 ] && [ $pulse_status -eq 0 ] && [ $parquet_status -eq 0 ]"]
+ENTRYPOINT ["/bin/sh", "-c", "agri-cli ingest-all; ingest_status=$?; agri-cli parquet-catch-up-vegetation; vegetation_status=$?; agri-cli jobs-pulse --time-budget-seconds 600; pulse_status=$?; agri-cli parquet-gap-fill --time-budget-seconds 900; parquet_status=$?; [ $ingest_status -eq 0 ] && [ $vegetation_status -eq 0 ] && [ $pulse_status -eq 0 ] && [ $parquet_status -eq 0 ]"]

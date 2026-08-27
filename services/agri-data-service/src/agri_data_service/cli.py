@@ -38,6 +38,7 @@ from agri_data_service.db.maintenance import (
     maintain_job_event_partitions,
 )
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.db.vegetation_publication import postgres_vegetation_publication_barrier
 from agri_data_service.execution.contracts import ExpectedOutput
 
 # Importing the covariate wind lane is also what REGISTERS its durable handler: `@job_handler`
@@ -353,7 +354,15 @@ from agri_data_service.pipeline.parquet.vegetation_forward import (
     VEGETATION_FORWARD_TIME_BUDGET_SECONDS,
     VegetationForwardError,
     VegetationForwardSummary,
+    VegetationPublicationDrainSummary,
+    catch_up_vegetation_publication,
     forward_changed_vegetation,
+)
+from agri_data_service.pipeline.parquet.vegetation_repair import (
+    VEGETATION_REPAIR_MAX_DAYS,
+    VEGETATION_REPAIR_TIME_BUDGET_SECONDS,
+    VegetationRepairAuditReport,
+    repair_and_reconcile_exact_vegetation,
 )
 from agri_data_service.pipeline.parquet.vegetation_rewrite import (
     VEGETATION_REWRITE_MAX_ATTEMPTS,
@@ -4030,7 +4039,10 @@ async def _parquet_rewrite_vegetation(  # noqa: PLR0913 - explicit operator cont
             err=True,
         )
 
-    async with local_source_loader_session(loader_database_url) as session:
+    async with (
+        local_source_loader_session(loader_database_url) as session,
+        postgres_vegetation_publication_barrier(session),
+    ):
         return await rewrite_vegetation_manifest(
             session,
             store,
@@ -4067,6 +4079,28 @@ async def _parquet_forward_changed_vegetation(  # noqa: PLR0913 - explicit opera
         )
 
 
+async def _parquet_catch_up_vegetation(
+    *,
+    through_day: date,
+    max_days: int,
+    time_budget_seconds: float,
+    max_attempts: int,
+    retry_base_seconds: float,
+) -> VegetationPublicationDrainSummary:
+    """Open one loader session for the unconditional defensive enqueue and fair drain."""
+    store = ObjectStore.from_settings()
+    async with local_source_loader_session(settings.require_local_source_loader_database_url()) as session:
+        return await catch_up_vegetation_publication(
+            session,
+            store,
+            through_day=through_day,
+            max_days_per_run=max_days,
+            time_budget_seconds=time_budget_seconds,
+            max_attempts=max_attempts,
+            retry_base_seconds=retry_base_seconds,
+        )
+
+
 async def _parquet_vegetation_absence_ladders(  # noqa: PLR0913 - explicit operator controls
     *,
     first_day: date,
@@ -4084,17 +4118,19 @@ async def _parquet_vegetation_absence_ladders(  # noqa: PLR0913 - explicit opera
 
     async with local_source_loader_session(settings.require_local_source_loader_database_url()) as session:
         cell_ids = await spatial_cell_ids(session)
-        return await propagate_vegetation_absence_ladders(
-            session,
-            store,
-            cell_ids=cell_ids,
-            first_day=first_day,
-            last_day=last_day,
-            max_days=max_days,
-            dry_run=dry_run,
-            attempts=attempts,
-            progress=announce if stream_progress else None,
-        )
+        await session.rollback()
+        async with postgres_vegetation_publication_barrier(session):
+            return await propagate_vegetation_absence_ladders(
+                session,
+                store,
+                cell_ids=cell_ids,
+                first_day=first_day,
+                last_day=last_day,
+                max_days=max_days,
+                dry_run=dry_run,
+                attempts=attempts,
+                progress=announce if stream_progress else None,
+            )
 
 
 async def _parquet_retract_vegetation_absences(
@@ -4113,16 +4149,18 @@ async def _parquet_retract_vegetation_absences(
 
     async with local_source_loader_session(settings.require_local_source_loader_database_url()) as session:
         cell_ids = await spatial_cell_ids(session)
-        return await retract_unsettled_vegetation_absences(
-            session,
-            store,
-            cell_ids=cell_ids,
-            days=days,
-            coverage_last_day=coverage_last_day,
-            dry_run=dry_run,
-            attempts=attempts,
-            progress=announce if stream_progress else None,
-        )
+        await session.rollback()
+        async with postgres_vegetation_publication_barrier(session):
+            return await retract_unsettled_vegetation_absences(
+                session,
+                store,
+                cell_ids=cell_ids,
+                days=days,
+                coverage_last_day=coverage_last_day,
+                dry_run=dry_run,
+                attempts=attempts,
+                progress=announce if stream_progress else None,
+            )
 
 
 def _vegetation_settled_cutoff(*, today: date | None = None) -> date:
@@ -4166,8 +4204,12 @@ async def _parquet_reconcile_vegetation_exact(  # noqa: PLR0913 - explicit audit
     def announce(payload: dict[str, object]) -> None:
         click.echo(json.dumps({"event": "vegetation_exact_reconciliation", **payload}, sort_keys=True), err=True)
 
-    async with local_source_loader_session(settings.require_local_source_loader_database_url()) as session:
+    async with (
+        local_source_loader_session(settings.require_local_source_loader_database_url()) as session,
+        postgres_vegetation_publication_barrier(session),
+    ):
         cell_ids = await spatial_cell_ids(session)
+        await session.rollback()
         return await reconcile_exact_vegetation(
             session,
             store,
@@ -4178,6 +4220,46 @@ async def _parquet_reconcile_vegetation_exact(  # noqa: PLR0913 - explicit audit
             read_attempts=read_attempts,
             progress_every_days=progress_every_days,
             progress=announce if stream_progress else None,
+            barrier_held=True,
+        )
+
+
+async def _parquet_repair_audit_vegetation(  # noqa: PLR0913 - explicit repair and audit bounds
+    *,
+    first_day: date,
+    last_day: date,
+    coverage_last_day: date,
+    max_days: int,
+    time_budget_seconds: float,
+    read_attempts: int,
+    progress_every_days: int,
+    stream_progress: bool,
+) -> VegetationRepairAuditReport:
+    """Open one loader session for the barrier-held repair and independent exact reread."""
+    store = ObjectStore.from_settings()
+
+    def announce(payload: dict[str, object]) -> None:
+        click.echo(json.dumps({"event": "vegetation_repair_audit", **payload}, sort_keys=True), err=True)
+
+    async with (
+        local_source_loader_session(settings.require_local_source_loader_database_url()) as session,
+        postgres_vegetation_publication_barrier(session),
+    ):
+        cell_ids = await spatial_cell_ids(session)
+        await session.rollback()
+        return await repair_and_reconcile_exact_vegetation(
+            session,
+            store,
+            cell_ids=cell_ids,
+            first_day=first_day,
+            last_day=last_day,
+            coverage_last_day=coverage_last_day,
+            max_days=max_days,
+            time_budget_seconds=time_budget_seconds,
+            read_attempts=read_attempts,
+            progress_every_days=progress_every_days,
+            progress=announce if stream_progress else None,
+            barrier_held=True,
         )
 
 
@@ -4405,6 +4487,62 @@ def parquet_forward_vegetation(  # noqa: PLR0913 - Click exposes one argument pe
     }
     click.echo(json.dumps(report, sort_keys=True))
     if summary.stop_reason != "complete" or summary.contended_day_count:
+        context.exit(_GAP_FILL_FAILED_EXIT_CODE)
+
+
+@cli.command("parquet-catch-up-vegetation")
+@click.option("--through-day", help="Latest governed UTC day to include; defaults to today.")
+@click.option(
+    "--max-days",
+    type=click.IntRange(min=1),
+    default=VEGETATION_FORWARD_MAX_DAYS_PER_RUN,
+    show_default=True,
+)
+@click.option(
+    "--time-budget-seconds",
+    type=click.FloatRange(min=1.0, max=3600.0),
+    default=VEGETATION_FORWARD_TIME_BUDGET_SECONDS,
+    show_default=True,
+)
+@click.option(
+    "--attempts",
+    type=click.IntRange(min=1, max=VEGETATION_FORWARD_MAX_ATTEMPTS),
+    default=VEGETATION_FORWARD_MAX_ATTEMPTS,
+    show_default=True,
+)
+@click.option(
+    "--retry-base-seconds",
+    type=click.FloatRange(min=0.0, max=VEGETATION_FORWARD_MAX_RETRY_SECONDS),
+    default=VEGETATION_FORWARD_RETRY_BASE_SECONDS,
+    show_default=True,
+)
+@click.pass_context
+def parquet_catch_up_vegetation(  # noqa: PLR0913
+    context: click.Context,
+    through_day: str | None,
+    max_days: int,
+    time_budget_seconds: float,
+    attempts: int,
+    retry_base_seconds: float,
+) -> None:
+    """Revalidate the 45-day lookback (up to 46 UTC dates) and drain all durable pending days."""
+    try:
+        parsed_through_day = _forecast_cli_day(through_day, "through-day") if through_day else datetime.now(UTC).date()
+        summary = asyncio.run(
+            _parquet_catch_up_vegetation(
+                through_day=parsed_through_day,
+                max_days=max_days,
+                time_budget_seconds=time_budget_seconds,
+                max_attempts=attempts,
+                retry_base_seconds=retry_base_seconds,
+            )
+        )
+    except SQLAlchemyError as exc:
+        raise click.ClickException("vegetation catch-up could not reach the loader database") from exc
+    except (OSError, ParquetWriteError, ValueError, VegetationForwardError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(summary.to_details(), sort_keys=True))
+    if not summary.is_complete:
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 
@@ -4649,6 +4787,75 @@ def parquet_reconcile_vegetation_exact(  # noqa: PLR0913 - Click exposes one arg
     except SQLAlchemyError as exc:
         raise click.ClickException("exact vegetation reconciliation could not reach the loader database") from exc
     except (OSError, ParquetWriteError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(report.to_summary(), sort_keys=True))
+    if not report.is_clean:
+        context.exit(_GAP_FILL_FAILED_EXIT_CODE)
+
+
+@cli.command("parquet-repair-audit-vegetation")
+@click.option("--first-day", required=True, help="First governed UTC source day, inclusive.")
+@click.option("--last-day", required=True, help="Last promoted governed UTC source day, inclusive.")
+@click.option("--coverage-last-day", required=True, help="Current settled vegetation coverage cutoff.")
+@click.option(
+    "--max-days",
+    type=click.IntRange(min=1, max=VEGETATION_REPAIR_MAX_DAYS),
+    default=VEGETATION_REPAIR_MAX_DAYS,
+    show_default=True,
+)
+@click.option(
+    "--time-budget-seconds",
+    type=click.FloatRange(min=1.0, max=VEGETATION_REPAIR_TIME_BUDGET_SECONDS),
+    default=VEGETATION_REPAIR_TIME_BUDGET_SECONDS,
+    show_default=True,
+    help="Queue-drain wall-clock budget; the finite opening and closing exact audits run separately.",
+)
+@click.option(
+    "--read-attempts",
+    type=click.IntRange(min=1, max=10),
+    default=VEGETATION_RECONCILE_READ_ATTEMPTS,
+    show_default=True,
+)
+@click.option(
+    "--progress-every-days",
+    type=click.IntRange(min=1),
+    default=VEGETATION_RECONCILE_PROGRESS_DAYS,
+    show_default=True,
+)
+@click.option("--progress/--no-progress", default=True, show_default=True)
+@click.pass_context
+def parquet_repair_audit_vegetation(  # noqa: PLR0913
+    context: click.Context,
+    first_day: str,
+    last_day: str,
+    coverage_last_day: str,
+    max_days: int,
+    time_budget_seconds: float,
+    read_attempts: int,
+    progress_every_days: int,
+    progress: bool,
+) -> None:
+    """Repair exact source-backed mismatches and independently re-audit under one source barrier."""
+    try:
+        parsed_first_day = _forecast_cli_day(first_day, "first-day")
+        parsed_last_day = _forecast_cli_day(last_day, "last-day")
+        parsed_coverage_last_day = _forecast_cli_day(coverage_last_day, "coverage-last-day")
+        _require_exact_vegetation_coverage(parsed_last_day, parsed_coverage_last_day)
+        report = asyncio.run(
+            _parquet_repair_audit_vegetation(
+                first_day=parsed_first_day,
+                last_day=parsed_last_day,
+                coverage_last_day=parsed_coverage_last_day,
+                max_days=max_days,
+                time_budget_seconds=time_budget_seconds,
+                read_attempts=read_attempts,
+                progress_every_days=progress_every_days,
+                stream_progress=progress,
+            )
+        )
+    except SQLAlchemyError as exc:
+        raise click.ClickException("vegetation repair/audit could not reach the loader database") from exc
+    except (OSError, ParquetWriteError, ValueError, VegetationForwardError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(json.dumps(report.to_summary(), sort_keys=True))
     if not report.is_clean:

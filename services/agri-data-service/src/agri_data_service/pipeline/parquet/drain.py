@@ -87,6 +87,10 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Final, Literal
 
+from agri_data_service.db.vegetation_publication import (
+    try_postgres_vegetation_publication_barrier,
+    unlocked_vegetation_publication_barrier,
+)
 from agri_data_service.foundation.parquet.paths import (
     COVERED_PARTITION_STATUSES,
     PARTITION_KINDS,
@@ -113,6 +117,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     resolve_lane_watermarks,
 )
 from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, DERIVED_ZOOM_TIERS, derivation_session
+from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -724,26 +729,40 @@ async def _derive_one_day(  # noqa: PLR0913 - one coordinate of the day being de
     first day to the last, which `idle_in_transaction_session_timeout` eventually terminates
     mid-run. The advisory lock is session-scoped, so the rollback does not release it.
     """
+    barrier = (
+        try_postgres_vegetation_publication_barrier
+        if registration.slug == VEGETATION_PLANE_STREAM
+        else unlocked_vegetation_publication_barrier
+    )
     try:
-        async with lane_day_lock(session, _lane_day_lock_key(registration, day)) as granted:
-            if not granted:
+        async with barrier(session) as publication_granted:
+            if publication_granted is False:
                 return _DayResult(
                     "contended",
                     0,
                     0,
                     0,
-                    f"{day.isoformat()}: another run holds this lane-day, so its coarse rungs were left alone rather "
-                    "than derived beside a base rung being rewritten; a later turn will take it",
+                    f"{day.isoformat()}: exact vegetation audit holds the publication barrier; derivation deferred",
                 )
-            derived = derive_tiers(
-                store,
-                layer=registration.slug,
-                kind=GAP_FILL_PARTITION_KIND,
-                day=day,
-                run_id=run_id,
-                now=now,
-                connection=connection,
-            )
+            async with lane_day_lock(session, _lane_day_lock_key(registration, day)) as granted:
+                if not granted:
+                    return _DayResult(
+                        "contended",
+                        0,
+                        0,
+                        0,
+                        f"{day.isoformat()}: another run holds this lane-day, so its coarse rungs were left alone "
+                        "rather than derived beside a base rung being rewritten; a later turn will take it",
+                    )
+                derived = derive_tiers(
+                    store,
+                    layer=registration.slug,
+                    kind=GAP_FILL_PARTITION_KIND,
+                    day=day,
+                    run_id=run_id,
+                    now=now,
+                    connection=connection,
+                )
     except Exception as error:
         return _DayResult(
             "raised",

@@ -154,6 +154,7 @@ SELECT pg_catalog.set_config('search_path', '', false);
 \i agri/tables/strategy_selection_candidate.sql
 \i agri/tables/strategy_selection_receipt.sql
 \i agri/tables/topography_profiles.sql
+\i agri/tables/vegetation_publication_day.sql
 \i agri/views/v_forecast_iteration_outcome.sql
 \i agri/views/v_forecast_timeseries_contract.sql
 \i agri/tables/water_profiles.sql

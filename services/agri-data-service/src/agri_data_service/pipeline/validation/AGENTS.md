@@ -20,3 +20,7 @@ day must remain missing there, while a source-backed day must hold data. For set
 downloads every absence marker so malformed or divergent evidence cannot pass on key presence.
 After the Parquet walk it re-runs the exact 12-column source projection for every governed day; this
 detects changes to mutable dimensions and release ordering as well as appended observation keys.
+The public exact entry point holds the vegetation-wide session advisory barrier across the opening
+census, all per-day reads and object comparisons, and the closing reread. Governed promotion uses the
+same key transactionally, so continuous raw ingestion may proceed while governed registration waits;
+the audit has a fixed source rather than an endless moving target.
