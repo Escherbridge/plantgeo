@@ -18,8 +18,13 @@ required to carry absence evidence only through the settled boundary.
 The exact gate treats every object after the settled boundary as an assertion too: a source-empty
 day must remain missing there, while a source-backed day must hold data. For settled empty days it
 downloads every absence marker so malformed or divergent evidence cannot pass on key presence.
-After the Parquet walk it re-runs the exact 12-column source projection for every governed day; this
-detects changes to mutable dimensions and release ordering as well as appended observation keys.
+The gate takes opening and closing per-day SHA-256 snapshots of the exact 12-column source projection;
+this detects changes to mutable dimensions and release ordering as well as appended observation keys
+without a second per-day database walk after the object-plane audit.
+The public exact entry point holds the vegetation-wide session advisory barrier across the opening
+census, all per-day reads and object comparisons, and the closing snapshot. Governed promotion uses the
+same key transactionally, so continuous raw ingestion may proceed while governed registration waits;
+the audit has a fixed source rather than an endless moving target.
 
 ## Exact current-weather parity
 

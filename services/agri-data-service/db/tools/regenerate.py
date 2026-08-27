@@ -10,9 +10,10 @@ Example (local warehouse)::
     uv run python db/tools/regenerate.py \\
         --admin-dsn postgresql://plantgeo_owner:***@127.0.0.1:5442/plantgeo
 
-WHAT THIS PROVES SINCE THE 2026-08-25 COLLAPSE, AND WHAT IT NO LONGER PROVES. The migration head is
-now the greenfield baseline ``20260825_0000``, and that revision builds the schema by replaying
-``manifest.sql`` -- this very tree. So regeneration is a **round trip** (tree -> database -> tree),
+WHAT THIS PROVES SINCE THE 2026-08-25 COLLAPSE, AND WHAT IT NO LONGER PROVES. The migration chain is
+rooted at greenfield baseline ``20260825_0000``; that revision builds the base schema by replaying
+``manifest.sql`` -- this very tree -- and live follow-on revisions apply forward deltas. So
+regeneration is a **round trip** (tree -> database -> tree),
 not an independent second derivation of the schema from 26 hand-written revisions. It still catches
 real breakage: any DDL in the tree that PostgreSQL does not re-emit verbatim after a parse shows up
 as a diff, which is exactly how the ``= ANY((ARRAY[...])::text[])`` renormalisation was found. What

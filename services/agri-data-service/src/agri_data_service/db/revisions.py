@@ -53,6 +53,7 @@ REVISION_ORDER: tuple[str, ...] = (
     "20260817_0025",
     "20260825_0026",
     BASELINE_REVISION,
+    "20260827_0027",
 )
 
 _RANK_BY_REVISION: dict[str, int] = {revision: rank for rank, revision in enumerate(REVISION_ORDER)}

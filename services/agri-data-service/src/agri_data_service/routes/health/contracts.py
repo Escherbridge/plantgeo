@@ -25,6 +25,6 @@ from agri_data_service.db.extensions import REQUIRED_EXTENSIONS
 # MOVING IS WHAT MAKES THE PRODUCTION STAMP MANDATORY: health_migration.sql demands exact equality,
 # so a deploy carrying this build against a database still reading `20260817_0025` reports
 # migration=false and /ready refuses to come up. Stamp first, deploy second.
-EXPECTED_ALEMBIC_REVISION = "20260825_0000"
+EXPECTED_ALEMBIC_REVISION = "20260827_0027"
 
 __all__ = ["EXPECTED_ALEMBIC_REVISION", "REQUIRED_EXTENSIONS"]

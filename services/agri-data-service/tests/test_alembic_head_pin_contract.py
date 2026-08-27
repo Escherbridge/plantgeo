@@ -14,10 +14,10 @@ was most needed.
 Deriving the head here rather than restating it makes the class of failure impossible: a new revision
 that forgets to bump the constant fails this test instead of silently disabling its own coverage.
 
-SCOPE, since 2026-08-25. `alembic/versions/` holds exactly one revision -- the greenfield baseline
-`20260825_0000` -- and the 26 historical revisions live in `alembic/archive/`, which Alembic never
-scans. Every derivation below reads `alembic/versions/` only, so an archived revision can never be
-mistaken for a live one; `tests/test_alembic_baseline_contract.py` guards the archive's own shape.
+SCOPE, since 2026-08-25. `alembic/versions/` holds a live chain rooted at greenfield baseline
+`20260825_0000`; the 26 superseded historical revisions live in `alembic/archive/`, which Alembic
+never scans. Every derivation below reads `alembic/versions/` only, so an archived revision can never
+be mistaken for a live one; `tests/test_alembic_baseline_contract.py` guards the archive's own shape.
 """
 
 from __future__ import annotations

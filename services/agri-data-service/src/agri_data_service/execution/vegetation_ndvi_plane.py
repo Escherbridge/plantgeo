@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import text
 
+from agri_data_service.db.advisory_keys import VEGETATION_PUBLICATION_BARRIER_KEY
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.db.vegetation_publication import (
+    enqueue_vegetation_publication,
+    vegetation_day_fingerprints,
+)
+from agri_data_service.execution.provenance import advisory_lock
 from agri_data_service.execution.vegetation_ndvi_forecast import (
     GAP_POLICY,
     METHOD_NAME,
@@ -655,6 +661,9 @@ async def _register_governed_plane(
 ) -> RegistrationSummary:
     if not cell_keys:
         raise ValueError("registration requires at least one vegetation cell key")
+    # The transaction lock conflicts with the session barrier held by publication and exact audit.
+    # It remains held through the caller-owned commit, covering every governed source mutation.
+    await advisory_lock(session, VEGETATION_PUBLICATION_BARRIER_KEY)
     # Deduped at the one choke point every caller passes through: --cell-key is `multiple=True`
     # with no dedup of its own. dict.fromkeys, never set(), because the order decides the batches.
     # See execution/AGENTS.md §Vegetation NDVI for what a duplicate would otherwise misreport.
@@ -714,6 +723,14 @@ async def _register_governed_plane(
             requested_cell_count=len(cell_keys),
             release_observation_count=materialisation.observation_count,
         )
+    publication_first_day = min(day for _cell_key, day in cell_days) if cell_days else corpus.first_observed_day
+    publication_last_day = max(day for _cell_key, day in cell_days) if cell_days else corpus.last_observed_day
+    publication_targets = await vegetation_day_fingerprints(
+        session,
+        first_day=publication_first_day,
+        last_day=publication_last_day,
+    )
+    await enqueue_vegetation_publication(session, publication_targets)
     return RegistrationSummary(
         plane=GovernedPlane(
             data_source_id=data_source_id,

@@ -11,8 +11,9 @@ The 26 revisions `20260719_0001` … `20260825_0026` that built the `agri` schem
 They are **not** revisions any more — Alembic only scans `alembic/versions/`, and this directory is
 a sibling of it, not a child, so nothing here is ever discovered, imported, or executed.
 
-`alembic/versions/` now holds exactly one revision: `20260825_0000_agri_greenfield_baseline.py`,
-with `down_revision = None`.
+`alembic/versions/` now holds a live chain rooted at
+`20260825_0000_agri_greenfield_baseline.py`, whose `down_revision = None`; new forward revisions
+extend that root without restoring any archived revision to Alembic's scan path.
 
 ## Why the chain was collapsed rather than extended
 

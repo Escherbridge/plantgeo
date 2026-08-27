@@ -70,6 +70,10 @@ from typing import TYPE_CHECKING, Final, Literal
 
 from sqlalchemy import func, select, text
 
+from agri_data_service.db.vegetation_publication import (
+    try_postgres_vegetation_publication_barrier,
+    unlocked_vegetation_publication_barrier,
+)
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.lane_contract import (
@@ -92,6 +96,7 @@ from agri_data_service.pipeline.parquet.objectstore import (
     SurplusPruneResult,
     oldest_export_instant,
 )
+from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping, Sequence
@@ -115,6 +120,7 @@ if TYPE_CHECKING:
     # functions. Yields whether the lock was granted, and releases on exit; the real one is
     # `postgres_lane_day_lock` and the always-granted test seam is `unlocked_lane_day`.
     LaneDayLock = Callable[[AsyncSession, str], AbstractAsyncContextManager[bool]]
+    VegetationPublicationBarrier = Callable[[AsyncSession], AbstractAsyncContextManager[bool | None]]
     # The coarse-rung writer, injectable exactly as the lane-day lock above is. `no_derived_tiers`
     # is the no-op a driver test substitutes when the zoom ladder is not what it is exercising.
     TierDeriver = Callable[..., DerivationResult]
@@ -1216,6 +1222,7 @@ async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate p
     now: Callable[[], datetime],
     today: date,
     lane_day_lock: LaneDayLock,
+    vegetation_publication_barrier: VegetationPublicationBarrier = try_postgres_vegetation_publication_barrier,
     derive_tiers: TierDeriver = derive_and_write_day_tiers,
     statement_timeout_seconds: int = DEFAULT_STATEMENT_TIMEOUT_SECONDS,
 ) -> tuple[LaneDayOutcome, int, int, int, str | None]:
@@ -1235,38 +1242,53 @@ async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate p
     drain running CONCURRENTLY with this driver by design ("build drain -> run drain -> THEN stop
     the cron"), so the overlap is planned rather than hypothetical.
     """
-    async with lane_day_lock(session, _lane_day_lock_key(lane, day)) as granted:
-        if not granted:
+    barrier = (
+        vegetation_publication_barrier
+        if lane.slug == VEGETATION_PLANE_STREAM
+        else unlocked_vegetation_publication_barrier
+    )
+    async with barrier(session) as publication_granted:
+        if publication_granted is False:
+            await session.rollback()
             return (
                 "contended",
                 0,
                 0,
                 0,
-                f"{day.isoformat()}: another run holds this lane-day, so it was skipped rather than "
-                "written twice; it stays missing and the next tick will take it",
+                f"{day.isoformat()}: exact vegetation audit holds the publication barrier; this day was deferred",
             )
-        if lane.watermark is None:
-            return await _export_one_day(
+        async with lane_day_lock(session, _lane_day_lock_key(lane, day)) as granted:
+            if not granted:
+                return (
+                    "contended",
+                    0,
+                    0,
+                    0,
+                    f"{day.isoformat()}: another run holds this lane-day, so it was skipped rather than "
+                    "written twice; it stays missing and the next tick will take it",
+                )
+            if lane.watermark is None:
+                return await _export_one_day(
+                    session,
+                    store,
+                    lane,
+                    day=day,
+                    run_id=run_id,
+                    now=now,
+                    derive_tiers=derive_tiers,
+                    statement_timeout_seconds=statement_timeout_seconds,
+                )
+            return await _fill_static_day(
                 session,
                 store,
                 lane,
                 day=day,
                 run_id=run_id,
                 now=now,
+                today=today,
                 derive_tiers=derive_tiers,
                 statement_timeout_seconds=statement_timeout_seconds,
             )
-        return await _fill_static_day(
-            session,
-            store,
-            lane,
-            day=day,
-            run_id=run_id,
-            now=now,
-            today=today,
-            derive_tiers=derive_tiers,
-            statement_timeout_seconds=statement_timeout_seconds,
-        )
 
 
 async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable knob of a single tick

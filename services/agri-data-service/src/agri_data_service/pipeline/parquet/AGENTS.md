@@ -411,12 +411,30 @@ must classify as physical `data`, its part indexes must be exactly `0..part_coun
 revision must be current. Marker-only, truncated, surplus and absence-conflict rungs are rewritten
 or fail loudly; none can strand a touched day behind a false resume signal.
 
-Two kinds of preparation read remain release-wide rather than pretending to be batch-bounded: the
-corpus digest defines source-release identity and is repeated after materialisation, while the
-governed observation count orders concurrent completion-marker revisions. All run under the
-120-second PostgreSQL statement timeout and the whole preparation has three bounded attempts. The
-600-second budget applies to object publication after those reads; summaries and runbooks must not
-describe it as an end-to-end wall-clock cap.
+`agri.vegetation_publication_day` is the durable handoff between governed promotion and object
+publication. The shared registration choke point fingerprints all 12 exact exported fields for
+every affected day and enqueues those fingerprints in the same transaction that inserts governed
+observations. The hourly catch-up revalidates the ingestion timestamp lookback (`through_day - 45
+days` through `through_day`, up to 46 UTC dates). Once an exact clean audit has enrolled the full
+history, it also recomputes exact fingerprints globally so a later centroid, exposure, lineage or
+series-metadata change cannot hide outside that window. It then drains every pending row globally.
+Pending selection is least-recently-attempted first and then
+oldest day, so a 25-day cap cannot repeatedly choose the newest 25 and strand the oldest days.
+
+Completion run ids use `vegetation-forward-v2:<per-day source fingerprint>`. Existing v1 markers remain usable
+only when their global observation-count revision reaches the current global count; the defensive
+pass therefore preserves current legacy ladders while force-enqueuing the stale five-day tail that
+motivated this contract. A row is compare-and-acknowledged only after all four physical rungs and
+their markers verify, and only while the queued fingerprint still equals the verified fingerprint.
+
+The stable key in `db/advisory_keys.py` is shared by governed registration (transaction lock), every
+vegetation publication path (session lock), and exact audit (session lock). The loader engine's
+single-connection pool is a precondition just as it is for lane-day locks: the barrier must survive
+the commits and rollbacks used by a long audit. Lock order is vegetation barrier, then lane-day.
+
+`parquet-repair-audit-vegetation` holds that barrier across an opening exact audit, force-enqueue of
+source-backed finding days, repair through this same writer, and a fresh closing audit. No raw row is
+deleted and ingestion remains enabled; registration merely waits while the stable audit is running.
 The corpus is digested again after materialisation and the transaction refuses if it moved between
 the two reads, so a READ COMMITTED registration cannot label observations from one raw revision
 with another revision's source-release checksum.

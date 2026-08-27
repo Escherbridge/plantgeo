@@ -2,8 +2,10 @@
 
 Every migration path here points at ``alembic/archive/``, not ``alembic/versions/``: these are
 contracts on *applied history*, and the 26-revision chain moved to the archive when
-``20260825_0000`` collapsed it. The live revision's own contracts are in
-``tests/test_alembic_baseline_contract.py``. See ``alembic/archive/AGENTS.md``.
+``20260825_0000`` collapsed it. The live chain has per-revision contracts: the root baseline is
+covered by ``tests/test_alembic_baseline_contract.py`` and each forward revision carries its own
+migration contract (currently ``tests/test_vegetation_publication_migration_contract.py``). See
+``alembic/archive/AGENTS.md``.
 """
 
 from pathlib import Path

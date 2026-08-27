@@ -31,11 +31,10 @@ AGRI_TEST_DATABASE_URL_ENV = "AGRI_TEST_DATABASE_URL"
 # Bump this with EVERY new revision, in the same change as the revision. It was missed for
 # 20260816_0024, which silently broke the whole disposable-database gate: every `agri_db`-marked
 # test refused any database actually at head and the sweep ran without them. See db/AGENTS.md.
-# 2026-08-25: the 26-revision chain collapsed into the greenfield baseline `20260825_0000` (the
-# history moved unedited to `alembic/archive/`), so this is now the only legal `alembic_version`
-# value. A database still reading `20260817_0025` or `20260825_0026` is at the same SCHEMA but has
-# not been stamped -- see alembic/archive/AGENTS.md.
-EXPECTED_ALEMBIC_HEAD = "20260825_0000"
+# 2026-08-25: the 26-revision chain collapsed into greenfield root `20260825_0000` and its history
+# moved unedited to `alembic/archive/`. Live follow-on revisions extend that root, so the only legal
+# `alembic_version` value is the current head below; any earlier value must be upgraded before tests.
+EXPECTED_ALEMBIC_HEAD = "20260827_0027"
 PROTECTED_DATABASE_NAME = "plantgeo"
 AGRI_DB_MARKER = "agri_db"
 AGRI_DB_REHEARSAL_MARKER = "agri_db_migration_rehearsal"

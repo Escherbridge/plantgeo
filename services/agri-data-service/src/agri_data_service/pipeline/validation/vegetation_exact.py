@@ -13,6 +13,11 @@ from typing import TYPE_CHECKING, Final, Protocol, cast
 import polars as pl
 import pyarrow as pa  # type: ignore[import-untyped]
 
+from agri_data_service.db.vegetation_publication import (
+    postgres_vegetation_publication_barrier,
+    unlocked_vegetation_publication_barrier,
+    vegetation_day_fingerprints,
+)
 from agri_data_service.foundation.parquet.paths import partition_day_statuses, try_parse_partition_path
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS, ZoomTier
 from agri_data_service.pipeline.lanes.vegetation import read_vegetation_day
@@ -311,7 +316,7 @@ def _compare_tier(  # noqa: PLR0913
     return actual, tuple(findings)
 
 
-async def reconcile_exact_vegetation(  # noqa: PLR0912, PLR0913, PLR0915
+async def _reconcile_exact_vegetation_unlocked(  # noqa: PLR0912, PLR0913, PLR0915
     session: AsyncSession,
     store: ObjectStore,
     *,
@@ -332,6 +337,11 @@ async def reconcile_exact_vegetation(  # noqa: PLR0912, PLR0913, PLR0915
     if progress_every_days < 1:
         raise ValueError("progress interval must be at least one day")
 
+    opening_fingerprints = {
+        target.day: target.source_fingerprint
+        for target in await vegetation_day_fingerprints(session, first_day=first_day, last_day=last_day)
+    }
+    await session.rollback()
     source_cells = await fetch_source_cell_days(
         session,
         cell_ids=cell_ids,
@@ -397,11 +407,9 @@ async def reconcile_exact_vegetation(  # noqa: PLR0912, PLR0913, PLR0915
     source_rows = 0
     parquet_rows = 0
     compared = 0
-    source_day_digests: dict[date, str] = {}
     for index, day in enumerate(source_days, start=1):
         expected_base = _canonical(await read_vegetation_day(session, day=day, cell_ids=cell_ids))
         await session.rollback()
-        source_day_digests[day] = _table_digest(expected_base)
         source_rows += expected_base.num_rows
         _fold_digest(source_hash, day, expected_base)
         actual_base, day_findings = _compare_tier(
@@ -450,7 +458,6 @@ async def reconcile_exact_vegetation(  # noqa: PLR0912, PLR0913, PLR0915
         last_day=last_day,
     )
     await session.rollback()
-    source_days_after = frozenset(row.observed_day for row in source_cells_after)
     if source_cells_after != source_cells:
         before = {(row.cell_id, row.observed_day, row.source_release_count) for row in source_cells}
         after = {(row.cell_id, row.observed_day, row.source_release_count) for row in source_cells_after}
@@ -464,18 +471,21 @@ async def reconcile_exact_vegetation(  # noqa: PLR0912, PLR0913, PLR0915
             )
             for day in changed_days
         )
-    for day in sorted(source_day_set | source_days_after):
-        closing_table = _canonical(await read_vegetation_day(session, day=day, cell_ids=cell_ids))
-        await session.rollback()
-        if source_day_digests.get(day) != _table_digest(closing_table):
-            findings.append(
-                ExactVegetationFinding(
-                    day,
-                    BASE_ZOOM,
-                    "source_values_changed_during_reconciliation",
-                    "one or more of the 12 exported source fields changed between the opening and closing reads",
-                )
-            )
+    closing_fingerprints = {
+        target.day: target.source_fingerprint
+        for target in await vegetation_day_fingerprints(session, first_day=first_day, last_day=last_day)
+    }
+    await session.rollback()
+    findings.extend(
+        ExactVegetationFinding(
+            day,
+            BASE_ZOOM,
+            "source_values_changed_during_reconciliation",
+            "one or more of the 12 exported source fields changed between the opening and closing reads",
+        )
+        for day in sorted(opening_fingerprints.keys() | closing_fingerprints.keys())
+        if opening_fingerprints.get(day) != closing_fingerprints.get(day)
+    )
 
     return ExactVegetationReport(
         first_day=first_day,
@@ -490,6 +500,37 @@ async def reconcile_exact_vegetation(  # noqa: PLR0912, PLR0913, PLR0915
         compared_day_count=compared,
         findings=tuple(findings),
     )
+
+
+async def reconcile_exact_vegetation(  # noqa: PLR0913
+    session: AsyncSession,
+    store: ObjectStore,
+    *,
+    cell_ids: Sequence[UUID],
+    first_day: date,
+    last_day: date,
+    coverage_last_day: date,
+    read_attempts: int = DEFAULT_READ_ATTEMPTS,
+    progress_every_days: int = DEFAULT_PROGRESS_EVERY_DAYS,
+    progress: Callable[[dict[str, object]], None] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+    barrier_held: bool = False,
+) -> ExactVegetationReport:
+    """Run the exact audit under the vegetation-wide source/publication stability barrier."""
+    barrier = unlocked_vegetation_publication_barrier if barrier_held else postgres_vegetation_publication_barrier
+    async with barrier(session):
+        return await _reconcile_exact_vegetation_unlocked(
+            session,
+            store,
+            cell_ids=cell_ids,
+            first_day=first_day,
+            last_day=last_day,
+            coverage_last_day=coverage_last_day,
+            read_attempts=read_attempts,
+            progress_every_days=progress_every_days,
+            progress=progress,
+            sleeper=sleeper,
+        )
 
 
 def coverage_day_count(first_day: date, last_day: date) -> int:

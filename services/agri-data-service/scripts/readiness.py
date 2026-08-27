@@ -38,9 +38,9 @@ SCHTASK_CSV_MINIMUM_COLUMNS = 3
 # `cell_id`, release_set carries `state` (not status), and covariate_feature_schema
 # is a FUNCTION, not a table (see the fallback signatures below). The `migration`
 # section below compares the target's alembic_version to
-# routes/health/contracts.py EXPECTED_ALEMBIC_REVISION, which is the greenfield
-# baseline 20260825_0000 since the chain collapsed; a production database reading
-# 20260817_0025 reports matches=false until an operator stamps it.
+# routes/health/contracts.py EXPECTED_ALEMBIC_REVISION, currently the live head
+# 20260827_0027 over greenfield root 20260825_0000; any earlier value reports
+# matches=false until the database is upgraded to the live head.
 WAREHOUSE_CHECKS: list[tuple[str, str]] = [
     (
         "signal_streams",

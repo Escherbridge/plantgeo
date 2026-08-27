@@ -95,9 +95,9 @@ reference not-yet-created objects, matching pg_dump.
 
 ### What parity proves since 2026-08-25, and what it no longer proves
 
-**It is a round trip, not a second derivation.** The migration head is the
-greenfield baseline `20260825_0000`, and that revision builds the schema by
-executing `manifest.sql` — this very tree. So the assertion is
+**It is a round trip, not a second derivation.** The migration chain is rooted at
+greenfield baseline `20260825_0000`; that revision builds the base schema by
+executing `manifest.sql` — this very tree — and live follow-ons apply forward deltas. So the assertion is
 `dump(replay(T)) == T`, which holds for *any* round-trippable `T`. Demonstrated
 during review: delete a `CHECK` from a tree file, re-run `regenerate.py`, and
 parity is green. **A corrupted tree now passes.** Before the collapse the head
@@ -142,6 +142,12 @@ see at all: whether every object the manifest declares was **built**, and the
 **Read this before writing the next migration.** It is the one rule the collapse
 imposes, and getting it wrong breaks the disposable-database recipe below rather
 than the migration that introduces it.
+
+Revision `20260827_0027` is the first layered revision. It adds
+`agri.vegetation_publication_day`, a durable per-UTC-day target/ack ledger for the vegetation
+Parquet plane. The migration uses guarded table/index DDL because the baseline reads the current
+tree. Existing governed days are enrolled lazily: the hourly defensive physical-marker pass covers
+the rolling window, while the exact repair enrolls source-backed mismatches across the full history.
 
 The baseline executes the **current** `db/agri/**` tree. `regenerate.py` rebuilds
 that tree by running `alembic upgrade head`. Play those two facts forward:
@@ -327,7 +333,7 @@ version banner.
 
 ## Governance: checksums are records, not enforcement
 
-The head is `20260825_0000`; the revision this section is *about* is
+The live head is `20260827_0027`; the revision this section is *about* is
 `20260803_0018`, now in `alembic/archive/`. It retires the database-level enforcement
 layer built on top of the checksums — 48 triggers, 34 routines, 10
 status-to-checksum evidence CHECKs and 3 owner roles — plus the whole hindcast

@@ -6,7 +6,16 @@ The foundation revision is intentionally forward-only because downgrading would 
 
 Keep future revisions explicit and deterministic. Do not call current ORM `metadata.create_all()` from a historical revision because replaying that revision would otherwise change as models evolve.
 
-**Since the 2026-08-25 collapse, every new revision must also be idempotent against the declarative tree.** The head `20260825_0000` builds the schema by executing `db/agri/**`, and `db/tools/regenerate.py` rebuilds that tree from the migration head — so once you regenerate, the tree contains your revision's own objects and the *next* build from empty applies them twice. New tables, columns, indexes and constraints therefore need `IF NOT EXISTS` (or a `pg_constraint` `NOT EXISTS` probe, since PostgreSQL has no `ADD CONSTRAINT IF NOT EXISTS`); programmable objects are already safe via `or_replace=True` or drop-then-create. The rule, the table of shapes, and the two tests that enforce it are in `../db/AGENTS.md` § *Layering a revision on the greenfield baseline*. `alembic/archive/AGENTS.md` covers the archive itself.
+**Since the 2026-08-25 collapse, every new revision must also be idempotent against the declarative tree.** The baseline `20260825_0000` builds the schema by executing `db/agri/**`, and `db/tools/regenerate.py` rebuilds that tree from the migration head — so once you regenerate, the tree contains your revision's own objects and the *next* build from empty applies them twice. New tables, columns, indexes and constraints therefore need `IF NOT EXISTS` (or a `pg_constraint` `NOT EXISTS` probe, since PostgreSQL has no `ADD CONSTRAINT IF NOT EXISTS`); programmable objects are already safe via `or_replace=True` or drop-then-create. The rule, the table of shapes, and the two tests that enforce it are in `../db/AGENTS.md` § *Layering a revision on the greenfield baseline*. `alembic/archive/AGENTS.md` covers the archive itself.
+
+`20260827_0027` layers the durable vegetation publication-day ledger on that baseline. Its guarded
+DDL must remain replayable after the declarative tree includes the table. The rolling catch-up and
+exact repair enroll existing days without deleting or rewriting any PostgreSQL observation.
+
+The applied `20260825_0000` source remains frozen as authored. Its docstring sentence calling the
+baseline the only file in `alembic/versions/` records the 2026-08-25 collapse state, not the current
+topology. The live chain is now `20260825_0000 -> 20260827_0027`; runtime and test head pins must name
+the latter while the baseline text stays unchanged.
 
 **Stamping an existing database to the baseline is gated by `db/tools/verify_stamp_target.py`.** It is read-only on its target and checks four things before anyone runs `alembic stamp`: the connected database is the one named on the command line, `timescaledb` is already absent (stamping skips `20260825_0026`, whose only job was dropping it, and nothing afterwards can ever notice), the target sits at `20260817_0025` or `20260825_0026`, and its `agri` schema is byte-identical to a freshly baseline-built one. Privilege differences are reported, not gated — `alembic stamp` executes no SQL, so it fixes none of them.
 
