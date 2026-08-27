@@ -9,7 +9,7 @@ every lane's leading edge current *while* years of history remain unfilled -- th
 the two collapse into one lane spending months walking 2000 before it ever writes yesterday.
 
 LANES ARE VISITED ROUND-ROBIN, one day each per round. Straight sequential order would let
-`fire-detections` -- roughly 9,400 missing days from its 2000-11-02 floor -- consume an entire cron
+`fire-detections` -- roughly 9,400 missing days from its 2000-11-01 floor -- consume an entire cron
 tick before `signal` wrote a single partition. Round-robin bounds that unfairness to one day per lane
 per tick: every lane's newest missing day is attempted in round 1, and only then does any lane touch
 its history. Within a round lanes are visited in a fixed registry order, so a budget exhausted
@@ -223,6 +223,7 @@ class LaneGapCensus:
     truncated: bool
     forecastable: bool = False
     cadence_days: int = 1
+    writer_ceiling: date | None = None
     # Static lanes only. `static_state` is `None` for a lane with a real time axis, which is what
     # keeps "this lane has no watermark" distinguishable from "its watermark was not read".
     static_state: StaticLaneState | None = None
@@ -252,6 +253,7 @@ class LaneGapCensus:
             "cadence_days": self.cadence_days,
             "history_floor": self.history_floor.isoformat(),
             "publication_lag_days": self.publication_lag_days,
+            "writer_ceiling": None if self.writer_ceiling is None else self.writer_ceiling.isoformat(),
             "window_first_day": None if self.first_day is None else self.first_day.isoformat(),
             "window_last_day": None if self.last_day is None else self.last_day.isoformat(),
             "window_days": self.window_days,
@@ -353,9 +355,9 @@ class GapFillSummary:
 def lane_window(lane: LaneRegistration, *, today: date) -> tuple[date, date] | None:
     """Return the settled `[first, last]` day range a SERIES lane may fill, or `None` when it has none.
 
-    `last` is `today - publication_lag_days`: a day the upstream has not published yet is not a gap,
-    and asking for it would write a partition thinner than the day really is. `first` is the
-    declared history floor.
+    `last` is `today - publication_lag_days`, clamped to `writer_ceiling` when a dedicated writer
+    owns newer days. A day the upstream has not published yet is not a gap, and a day beyond the
+    generic writer's ownership is not its work. `first` is the declared history floor.
 
     A `static_lookup` lane is REFUSED rather than answered. It has no window: its partition day is a
     version stamp keyed to a source watermark, not a position on the calendar, and handing back some
@@ -368,6 +370,8 @@ def lane_window(lane: LaneRegistration, *, today: date) -> tuple[date, date] | N
             "`resolve_static_lane` against its source watermark, not from the calendar"
         )
     last_day = today - timedelta(days=lane.publication_lag_days)
+    if lane.writer_ceiling is not None:
+        last_day = min(last_day, lane.writer_ceiling)
     if last_day < lane.history_floor:
         return None
     return lane.history_floor, last_day
@@ -381,6 +385,7 @@ def _census_shell(lane: LaneRegistration, zoom: ZoomTier, **overrides: object) -
         "zoom": zoom,
         "forecastable": lane.forecastable,
         "cadence_days": lane.cadence_days,
+        "writer_ceiling": lane.writer_ceiling,
         "history_floor": lane.history_floor,
         "publication_lag_days": lane.publication_lag_days,
         "floor_basis": lane.floor_basis,

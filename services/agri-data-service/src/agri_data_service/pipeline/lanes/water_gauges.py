@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore, ParquetWriteReceipt
 
 _DAY_EXPORT_SQL: Final = text(load_query_sql("pipeline/water_gauges_day_export.sql"))
+SOURCE_DAY_COUNTS_SQL: Final = text(load_query_sql("pipeline/water_gauges_day_census.sql"))
 
 # `geo.features` carries `ix_features_layer_observation_day` on
 # (layer_id, geo.feature_observation_day(properties)) -- exactly this query's (layer, day) filter --

@@ -8,7 +8,7 @@ actually ships, and that no floor is uncited.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +17,7 @@ import pytest
 from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path, validate_layer_slug
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes import soil_survey as soil_survey_lane
+from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.lanes.soil_survey import POLYGON_KEY_BATCH_SIZE
 from agri_data_service.pipeline.parquet.gap_fill import GapFillContractError, lane_window
 from agri_data_service.pipeline.parquet.lane_registry import (
@@ -302,6 +303,38 @@ def test_a_lane_whose_floor_has_not_settled_yet_has_no_window() -> None:
     )
 
     assert lane_window(unsettled, today=date(2026, 8, 22)) is None
+
+
+def test_fire_generic_writer_stops_exactly_before_the_direct_cutover() -> None:
+    fire = LANE_REGISTRY["fire-detections"]
+
+    assert date(2026, 8, 25) == FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
+    assert fire.writer_ceiling == FIRE_DETECTIONS_DIRECT_WRITER_START_DAY - timedelta(days=1)
+    assert lane_window(fire, today=date(2026, 9, 1)) == (fire.history_floor, date(2026, 8, 24))
+
+
+def test_writer_ceiling_requires_a_time_axis_and_cannot_precede_the_floor() -> None:
+    with pytest.raises(LaneRegistryError, match="before its history floor"):
+        LaneRegistration(
+            slug="signal",
+            adapter=LANE_REGISTRY["signal"].adapter,
+            history_floor=date(2026, 8, 20),
+            publication_lag_days=0,
+            nature="daily_series",
+            floor_basis="test fixture",
+            writer_ceiling=date(2026, 8, 19),
+        )
+    with pytest.raises(LaneRegistryError, match="has no calendar window"):
+        LaneRegistration(
+            slug="watersheds",
+            adapter=LANE_REGISTRY["watersheds"].adapter,
+            history_floor=date(2026, 8, 7),
+            publication_lag_days=0,
+            nature="static_lookup",
+            floor_basis="test fixture",
+            watermark=LANE_REGISTRY["watersheds"].watermark,
+            writer_ceiling=date(2026, 8, 7),
+        )
 
 
 def test_a_registration_must_cite_its_floor_and_declare_a_non_negative_lag() -> None:

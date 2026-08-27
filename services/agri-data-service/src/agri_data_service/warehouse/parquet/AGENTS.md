@@ -57,6 +57,13 @@ one column is **93.9%** of the compressed file.
 `normalized_value` would roughly halve the file and remains an open **data-fidelity** decision
 (§0.22.6) — it is not taken here.
 
+## Snapshot lineage digest aggregation
+
+`sha256-lines` is a closed aggregation used only by the completed soil-temperature snapshot
+contract. Both engines sort the contributing string values, append one newline to each, and hash
+those exact bytes with SHA-256. This mirrors the immutable builder's coarse-tier lineage and must
+not be replaced with `first`, which would silently discard all but one child digest.
+
 ## The DuckDB guards in `tiers.py`, and the one thing they are NOT
 Only the geometry lanes open DuckDB at all — a `GridAggregation` lane coarsens in Polars and a
 `TierPassthrough` lane does nothing. Every session this module opens carries `DERIVATION_MEMORY_LIMIT`

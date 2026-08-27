@@ -97,14 +97,36 @@ rolling lookback, so a given detection is typically re-seen across 2+ hourly
 runs before it ages out — re-ingestion of an already-written detection is a
 correct `records_written == 0`, not a failure (see §5).
 
+**Direct Parquet forward path:** `pipeline/direct/fire_detections.py` separately
+fetches exact settled UTC days from every product whose live FIRMS availability window covers the
+day, applies the archive path's SP-over-NRT identity precedence, and writes the deduplicated
+0.005-degree cell-day aggregate directly to the dedicated
+`layer=fire-detections/kind=observed/zoom={13,09,05,00}` namespace. Its Railway
+definition is `services/agri-data-service/railway.fire-detections-forward.json`
+and is deployed as the hourly `plantgeo-fire-detections-forward` Railway service. Each tick refreshes
+the bounded settled window at or after `FIRE_FORWARD_START_DAY=2026-08-25`, including
+already-complete direct-owned days,
+so late NRT revisions are not hidden by an earlier marker. The run is bounded to a five-day lookback and a finite number
+of days, fails closed above 50,000 source records per day, takes the shared
+session-scoped lane-day advisory lock, polls transient contention, and retries
+source/R2 failures. PostgreSQL remains the lock coordinator and the existing
+FIRMS PostgreSQL ingestion entry points remain enabled; this direct publisher
+does not insert the fetched rows into PostgreSQL. An operator may use
+`--force-day YYYY-MM-DD` for one already-settled day inside the same bounded NRT
+window when an immediate one-day source-to-R2 proof is required.
+
+An initially empty direct-owned day may later acquire detections. Under the same lane-day advisory
+lock, a complete non-empty response retracts that day’s z13 governed-absence marker immediately
+before publishing data, so the forward window self-heals absence-to-data revisions. The reverse
+data-to-absence transition remains an explicit manual decision and never removes published data.
+
 **Archival/backfill cadence:** the durable `firms-archive` lane walks 1-day
 chunks inside 5-day windows (`README.md:491`, matching `MAX_FIRMS_DAY_RANGE = 5`,
 `firms.py:104`). Standard-processing (SP) products carry a **measured
 months-long lag** between acquisition and publication — `ingest/AGENTS.md:207`:
 *"the SP series' `observedAt` is acquisition time and carries a months-long lag
-behind the day the product actually published."* This is why the forward path
-draws only on NRT products and SP is exclusively a historical-walk source
-(`FIRMS_VIIRS_SOURCES` vs the wider `FIRMS_HISTORY_SOURCES`, `firms.py:83-93`).
+behind the day the product actually published."* The direct settled-day writer therefore consults
+the live availability table before each fetch; it never assumes either NRT or SP coverage.
 
 **Day-range ceiling is a measured, previously-wrong constant.** `MAX_FIRMS_DAY_RANGE`
 was 10 until measured live on 2026-08-05: day ranges 1-5 answered HTTP 200, and
@@ -129,16 +151,10 @@ read from the live availability table on 2026-08-05, and the oldest floor any
 `firms.py:110-113`). This constant only decides whether a walk is refused
 outright; per-day coverage is still decided live per chunk.
 
-**Earliest actually held:** production's sampled `properties->>'observedAt'`
-minimum for fire-detections is **2000-11-02**, against a maximum of
-**2026-08-20** (`conductor/RUNBOOK.md:887`) — one day after the archive's
-configured floor, which is strong evidence the historical walk has reached (or
-nearly reached) bedrock for the ingest bbox. This measurement predates the run
-by two days and is sampled, not an exhaustive `MIN()`; **whether every chunk
-between the floor and today has actually landed (no dead-lettered windows left
-open) is UNVERIFIED here** — confirm via the `firms-archive` lane's job ledger
-(`agri.job_checkpoint` / `jobs-status`, per `README.md` §7) rather than assuming
-completeness from the min/max span alone.
+**Earliest actually held:** the exact production reconciliation on 2026-08-26 found four eligible
+`MODIS_SP` detections on **2000-11-01**, so the held minimum and declared lane floor now agree.
+The settled PostgreSQL-to-Parquet proof covers every month through 2026-08-24; use its manifest and
+the `firms-archive` job ledger together rather than inferring completeness from a sampled min/max.
 
 Row-count context, all point-in-time measurements from `conductor/RUNBOOK.md`
 and not necessarily reconciled to the same instant: 3,022,196 (§0.16.3, full

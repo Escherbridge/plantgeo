@@ -1,8 +1,8 @@
 # `warehouse/schemas` — one Parquet schema module per layer slug
 
 ## Responsibility
-The per-lane half of the schema registry. Each of the eleven lanes (`layer-lanes.md` §1) owns
-exactly one module here, named for its slug with hyphens replaced by underscores:
+The per-lane half of the schema registry. Each physical lane owns exactly one autoload module here,
+named for its slug with hyphens replaced by underscores:
 `fire-detections` to `fire_detections.py`. Stream **S0** created this package; it registers
 nothing in it.
 
@@ -40,6 +40,24 @@ joins to `calendar_day`. Collapsing those roles into one key is exactly what
 `docs/holonic-kimball-modeling.md` forbids.
 
 ## `signal` is already registered elsewhere
-The signal plane's ten-column schema is frozen owner-decided truth and lives in
+The signal plane's twelve-column schema is frozen owner-decided truth and lives in
 `warehouse/parquet/schema.py` (`SIGNAL_PLANE_SCHEMA`). If S3 adds `signal.py` here it must
 re-export that object, never restate the columns — one canonical definition per concept.
+
+## Snapshot-derived signal products
+
+`snapshot_signal_product.py` is the only family helper. VPD, three air-temperature products, and
+wind speed clone the frozen twelve-column signal schema and tier derivation with only the physical
+stream name changed. Their separate modules preserve separate `layer=<slug>/` prefixes.
+
+Relative humidity, shortwave radiation, precipitation, and the three ERA5-Land soil-moisture
+depths share the exact 33-field snapshot-lineage contract emitted by their completed builders:
+twelve serving fields plus twenty-one source-lineage fields. Earlier task prose called this a
+32-column shape, but the four source modules and completed artifacts all contain 33; integration
+must not drop a lineage field to fit the stale count. Coarse rungs keep snapshot identity and null
+row-level locators that cannot honestly name one contributor.
+
+The four soil-temperature depths share the completed bundle's separate 21-field lane contract.
+Their coarse cells sum physical-candidate counts, null selected-row identity, and compute
+`lineage_sha256` from sorted child digests with one newline per value. The helper registers these
+storage and zoom contracts only; it does not rerun or rewrite the immutable snapshot builders.

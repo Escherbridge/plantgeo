@@ -466,7 +466,7 @@ class ObjectStore:
         self._backend.delete(self.key_for(completion_marker_path(layer, kind, zoom, day)))
 
     def clear_absence_marker(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> None:
-        """Retract one governed-absence claim; callers must hold the whole lane-day lock."""
+        """Explicitly authorize absence-to-data correction; see AGENTS.md."""
         self._backend.delete(self.key_for(absence_marker_path(layer, kind, zoom, day)))
 
     def list_partition_objects(

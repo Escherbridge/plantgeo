@@ -1,7 +1,12 @@
+---
+type: layer-session
+slug: fire-detections
+---
+
 # Session brief -- `fire-detections` end to end
 
 **Paste this whole file as the first message of a fresh session.** It is self-contained by design:
-every number in it was measured against the production bucket on 2026-08-25, and nothing assumes you
+every number in it was measured against the production bucket on 2026-08-26, and nothing assumes you
 read any other brief.
 
 ---
@@ -28,7 +33,7 @@ of these, it is a CROSS-LANE change: write up the proposal and surface it rather
 | property | value |
 |---|---|
 | nature | `daily_series` |
-| history floor | `2000-11-02` |
+| history floor | `2000-11-01` |
 | cadence | 1 day(s) |
 | publication lag | 2 day(s) |
 | forecastable | YES |
@@ -38,22 +43,22 @@ of these, it is a CROSS-LANE change: write up the proposal and surface it rather
 **Why the floor is what it is -- read this before you "extend the history".** Every lane in this
 project has had a plausible-looking deeper floor proposed and rejected for a measured reason:
 
-> Production's sampled minimum observedAt is 2000-11-02, one day after the archive walk's own floor. Lag 2 from FIRMS_DAY_RANGE rolling NRT lookback (default 2, clamped 1-5). This is the DEEPEST window of any lane -- ~9,400 days -- and is exactly what the newest-first ordering exists to keep tolerable.
+> Exact production reconciliation found four eligible MODIS_SP detections on 2000-11-01, matching the archive floor. Lag 2 comes from the FIRMS_DAY_RANGE rolling NRT lookback (default 2, clamped 1-5). This is the deepest lane at 9,428 settled calendar days through 2026-08-24.
 
 Changing this floor invents phantom gap-days that the gap census will faithfully try to fill
 forever. If you believe the floor is wrong, MEASURE the source, and state the measurement.
 
 ---
 
-## Measured state, 2026-08-25
+## Measured state, 2026-08-26
 
 | measure | count |
 |---|---|
-| base rung days (z13, has data) | **8357** |
+| base rung days (z13, has data) | **8359** |
 | governed-absence days (z13) | **1069** |
-| days with a COMPLETE ladder | **8357** |
+| days with a COMPLETE ladder | **8359** |
 | days with an INCOMPLETE ladder | **0** |
-| days MISSING a base rung | **1** |
+| days MISSING a base rung | **0** |
 | unfinished days (parts, no marker) | **0** |
 
 Reproduce it yourself before acting -- HEAD and the bucket both move:
@@ -88,9 +93,10 @@ the coarse rungs and the marker are one indivisible unit. Newly written days get
 
 ## The work, in dependency order
 
-### 1. The 1 missing base day
+### 1. Missing base days: closed
 
-Days with no base rung at all. Close them with:
+The MODIS floor day and the newest settled day were loaded; the exact reconciliation now expects no
+missing base day. If a future run finds one, close it with:
 
 ```bash
 uv run agri-cli parquet-drain --dry-run --selection missing --layer fire-detections   # confirm the count first
@@ -102,7 +108,8 @@ This is SOURCE-CONNECTED. It queries Postgres, so the collision rule applies.
 ### 2. 1069 governed-absence days -- DO NOT "FIX" THESE
 
 These are days upstream legitimately cannot serve, correctly recorded at z13. They are **not**
-missing data and they need **no** export. Production's sampled minimum observedAt is 2000-11-02, one day after the archive walk's own floor.
+missing data and they need **no** export. The four-row 2000-11-01 MODIS floor is data, not one of
+these absences.
 
 There IS a real gap here, but a different one: the absence is recorded at z13 ONLY, so at coarse
 zoom these days read as unknown rather than as governed-absent. Propagating an absence to the
@@ -184,14 +191,82 @@ binds. This lane is done when:
       is retracted and re-selected forever by design. Reading it as zero-or-failure is a false
       alarm.
 - [ ] `--dry-run --selection missing` reports `missing_days: 0` for `fire-detections`.
-- [ ] A forward refresh exists and is armed, so the lane stays current without a human.
+- [x] A forward refresh exists and is armed, so the lane stays current without a human.
 - [ ] Gap detection turns a hole into a work item automatically, at the declared cadence.
 - [ ] Days upstream cannot serve are governed absences, not silence.
 - [ ] A serving reader exists AND the stream is registered in the slider capability catalogue.
       Registration is separately forgettable from the reader -- check both.
 - [ ] Agent tools answer at the UI-selected time, plus temporal and spatial neighbours, each
       carrying its distance.
-- [ ] An adversarial review verdict is recorded for the work you did.
+- [x] An adversarial review verdict is recorded for the work you did.
+
+### 2026-08-26 fire-only execution evidence
+
+The first exact production repair pass covered `2000-11-01..2026-08-24`: 9,428 calendar days,
+8,359 PostgreSQL data days, 1,069 governed z13 absences, and 3,039,749 detections. It finished with
+zero remaining issues and repaired five days through the ordinary lane-day lock/finalizer:
+
+| day | z13 | z9 | z5 | z0 | bytes |
+|---|---:|---:|---:|---:|---:|
+| `2001-04-21` | 5 | 5 | 5 | 2 | 2,918 |
+| `2021-08-01` | 1,165 | 581 | 59 | 5 | 12,976 |
+| `2024-08-28` | 1,373 | 642 | 74 | 6 | 15,096 |
+| `2026-08-13` | 951 | 518 | 72 | 6 | 12,388 |
+| `2026-08-24` | 1,136 | 572 | 96 | 6 | 14,190 |
+
+All receipts report `outcome=written`, one base part, zero contention polls, and zero raised
+attempts. The schema-1 pass retained receipts rather than pre-repair issue payloads, so these are
+proven repaired/final row counts, not claimed before-state counts.
+
+The direct writer's forced source-to-R2 proof used run
+`fire-detections-forward:1d1ac0cd-33ac-4088-af35-f80a8e7591bf` for `2026-08-24`. FIRMS returned
+3,321 rows across `VIIRS_SNPP_NRT=1,126`, `VIIRS_NOAA20_NRT=1,078`, and
+`VIIRS_NOAA21_NRT=1,117`; identity collapse retained 3,320 detections and published
+z13/z9/z5/z0 as 1,120/568/96/6. The exact reconciliation then restored that PostgreSQL-owned day
+to 1,136/572/96/6. Direct ownership is therefore pinned to `2026-08-25` onward.
+
+Railway service `plantgeo-fire-detections-forward`
+(`f4ad61fe-e71a-4776-b9d5-0b153c9ee5b7`) is armed at `15 * * * *` with the dedicated config path
+and direct-writer command. Deployment `5e3ebe9f-5a26-449b-85d1-344c32a44c2a` reached `SUCCESS`.
+Immediate run `fire-detections-forward:3b08cb42-e239-47ac-a648-da9ee25c68c0` completed with zero
+writes because the settled cutoff was still `2026-08-24`, proving the ownership boundary prevents
+the new writer from changing reconciled history.
+
+The final guarded schema-2 certificate was generated from reconciliation script SHA-256
+`65BC55D4669E824B532938EEB5DC1157990E35596748EA8D4C99A3C15A567BA4`. Its clean-slate pass made
+zero repairs and ended `parity=true`, `issue_count=0`; the following replay re-read all 310 months
+and recorded `source_stable_months=310`, `changed_month_count=0`. The exact PostgreSQL snapshot is
+1,491,968 z13 cell rows, 3,039,749 detections/FRP observations, 367,544 high-confidence detections,
+and FRP total `0x1.351691dcccccdp+26`, with semantic tree
+`286f63f323587d3fde163b2e28f364595311fe934acaaf7649377ba0ce71d23c`.
+
+| tier | data days | cell rows | semantic tree | status outside data days |
+|---:|---:|---:|---|---|
+| z13 | 8,359 | 1,491,968 | `286f63f323587d3fde163b2e28f364595311fe934acaaf7649377ba0ce71d23c` | 1,069 governed absent |
+| z9 | 8,359 | 860,690 | `c8cc077dde2e7ec8cf75f22a1d7566240d9564c14d2392cc855143262e88b1fc` | 1,069 missing absence markers |
+| z5 | 8,359 | 208,722 | `e21a986617f98a4d8e8366cc161f01fd6dadfa95d7f0357d7b87cc547f4cc34c` | 1,069 missing absence markers |
+| z0 | 8,359 | 34,981 | `6beb1e7e60cdcac9c1ce6a9aac32d001b4db9d6449df4125a5ac6914a70646c2` | 1,069 missing absence markers |
+
+Every tier carries the same 3,039,749 detections, FRP total, confidence total, and
+`2000-11-01..2026-08-24` data bounds. Coarse-tier absence propagation remains the explicitly
+governed admin gap described above; it does not leave any data day incomplete.
+
+The PostgreSQL driver was observed once returning an impossible aggregate (`high_confidence=-1`
+for a one-detection cell on `2018-05-03`). The final verifier now checks raw mappings and Arrow
+materialization before semantic comparison, records bounded local evidence, rolls back, and retries.
+That read was rejected, its retry audited exact, and no repair was authorized. A prior diagnostic
+pass had rewritten two semantically correct days after the same transient integer corruption; those
+are not counted as real drift or real repairs. The final clean-slate certificate and stability replay
+both have empty repair lists.
+
+At `2026-08-26T15:57:38Z`, the preserved PostgreSQL archive job
+`agri.ingest.archive_walk.firms-archive` reported 1,445 succeeded, 435 queued, 2 deferred, and zero
+dead-lettered windows, with its latest success at `2026-08-26T15:15:19Z`. The original hourly ingest
+service and PostgreSQL data remain intact; no PostgreSQL deletion or detach operation was performed.
+
+Independent adversarial review verdict: **APPROVE -- no remaining data blocker.** The review
+confirmed the guarded fresh audit, 310/310 stability replay, exact four-tier data-day parity,
+source-read invariant proof, forward-writer evidence, and preservation of PostgreSQL ingestion.
 
 ---
 

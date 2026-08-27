@@ -54,6 +54,7 @@ one lane in this case the object is a single day-row.
 
 from __future__ import annotations
 
+import hashlib
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal
@@ -127,6 +128,7 @@ Aggregation = Literal[
     "all",  # boolean gates: a coarse cell is exposable only if EVERY row in it was
     "any",
     "null",  # a column no coarse row can honestly carry; the schema must permit null
+    "sha256-lines",  # stable digest of sorted string values, each terminated by a newline
 ]
 
 
@@ -346,6 +348,15 @@ def _require_total_coverage(
 # `Aggregation` without teaching BOTH engines fails loudly at the lookup rather than quietly in one
 # of the two paths -- a grid lane and a geometry lane would otherwise disagree about what the same
 # declared aggregate means.
+def _sha256_lines(values: pl.Series) -> str:
+    """Match the immutable snapshot builders' sorted, newline-delimited lineage digest."""
+    digest = hashlib.sha256()
+    for value in sorted(str(value) for value in values.drop_nulls().to_list()):
+        digest.update(value.encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 _POLARS_AGGREGATES: Final[Mapping[str, Callable[[pl.Expr], pl.Expr]]] = {
     # AN ALL-NULL GROUP SUMS TO NULL, NOT TO ZERO, and the guard is not decoration. Polars folds
     # `sum()` over an all-null group to 0 while SQL -- and therefore the DuckDB table below --
@@ -367,6 +378,11 @@ _POLARS_AGGREGATES: Final[Mapping[str, Callable[[pl.Expr], pl.Expr]]] = {
     "all": lambda column: column.all(ignore_nulls=False),
     "any": lambda column: column.any(ignore_nulls=False),
     "first": lambda column: column.first(),
+    "sha256-lines": lambda column: column.map_batches(
+        _sha256_lines,
+        return_dtype=pl.String,
+        returns_scalar=True,
+    ),
     # A TYPED null, produced by a never-taken branch off the column itself. `pl.lit(None)` would
     # land as Null dtype and the write would then be refused by `conform_to_stream_schema` for the
     # wrong reason -- a type error, not the honest "this coarse row has no such value" declared.
@@ -381,6 +397,7 @@ _DUCKDB_AGGREGATES: Final[Mapping[str, str]] = {
     "all": "bool_and({column})",
     "any": "bool_or({column})",
     "first": "any_value({column})",
+    "sha256-lines": "sha256(string_agg({column} || chr(10), '' ORDER BY {column}))",
     # A FILTER admitting no rows yields a null OF THE COLUMN'S OWN TYPE, for the same reason the
     # Polars table above routes its null through the column rather than through a bare literal.
     "null": "first({column}) FILTER (WHERE FALSE)",

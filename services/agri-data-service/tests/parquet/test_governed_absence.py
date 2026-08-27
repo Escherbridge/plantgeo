@@ -255,6 +255,27 @@ def test_write_partition_refuses_a_day_marked_absent() -> None:
         store.write_partition(
             signal_rows(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH
         )
+    assert store.absence_exists(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH) is True
+    assert store.partition_exists(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH) is False
+
+
+def test_explicit_retraction_authorizes_absence_to_data_correction() -> None:
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    store.write_absence(sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=JULY_FOURTH)
+
+    store.clear_absence_marker(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH)
+    receipt = store.write_partition(
+        signal_rows(),
+        layer=SIGNAL_PLANE_STREAM,
+        kind="observed",
+        zoom=BASE_TIER,
+        day=JULY_FOURTH,
+    )
+
+    assert store.absence_exists(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH) is False
+    assert store.partition_exists(SIGNAL_PLANE_STREAM, "observed", BASE_TIER, JULY_FOURTH) is True
+    assert receipt.row_count == signal_rows().num_rows
 
 
 def test_the_listing_feeds_markers_to_gap_detection() -> None:

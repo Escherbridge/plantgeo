@@ -74,9 +74,10 @@ no `zoom` argument at all, because a validator has no viewport and the writer wr
 - **Data and absence refuse to coexist, in both directions — at one tier.** `write_partition`
   refuses a day carrying an absence marker; `write_absence` refuses a day already holding a part
   file (including an incomplete day). Both checks are scoped to the tier being written, per the zoom
-  section above. Retracting either side is a manual admin action (§0.21.5) — there is deliberately
-  no API here that does it. Reading a marker's evidence back is S17's concern; the backend seam has
-  no `get` yet on purpose.
+  section above. Ordinary writers never retract either side implicitly. The explicit public
+  `clear_absence_marker` operation is reserved for a lock-held admin/reconciliation decision that
+  immediately replaces a disproven absence with data; exposing that narrow operation keeps those
+  callers out of the private backend seam while preserving the default refusal.
 - **Completion markers (`_complete.json`) are the third object kind (§0.34.1).** A day holding parts
   WITHOUT this marker is a release whose upload was killed part-way through; its parts are real but
   they are a prefix of the day, not the complete day. The marker is written LAST, after the prune,
@@ -213,6 +214,10 @@ place. Its watermark comes from the clock and its own listing: a version covers 
 and must reach `today + 400`, so it regenerates roughly annually instead of daily.
 
 ## `gap_fill.py` — the driver a Railway cron runs
+A time-axis lane may declare `writer_ceiling`; `lane_window` clamps to it so generic gap-fill and
+the missing-data drain cannot cross into a dedicated writer's ownership. Ladder derivation is
+still allowed there because it reads the published base rung and never invokes the old writer.
+
 - **Newest-first is the design, not a preference.** A newly published day *is* the newest missing day,
   so one ordering serves the incremental tick and the backfill with no second job to keep in sync.
 - **Round-robin across lanes, one day per lane per round.** Sequential order would let

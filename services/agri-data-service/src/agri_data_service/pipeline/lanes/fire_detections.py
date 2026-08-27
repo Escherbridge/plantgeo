@@ -6,7 +6,7 @@ See `warehouse/schemas/fire_detections.py` for the grain decision and column pro
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa  # type: ignore[import-untyped]
@@ -18,13 +18,12 @@ from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_SCHEMA, FIRE_DETECTIONS_STREAM
 
 if TYPE_CHECKING:
-    from datetime import date
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.pipeline.parquet.objectstore import AbsenceWriteReceipt, ObjectStore, ParquetWriteReceipt
 
 _DAY_EXPORT_SQL: Final = text(load_query_sql("pipeline/fire_detections_day_export.sql"))
+FIRE_DETECTIONS_DIRECT_WRITER_START_DAY: Final = date(2026, 8, 25)
 
 
 class FireDetectionsExportError(RuntimeError):

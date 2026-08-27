@@ -1,0 +1,13 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "python -m agri_data_service.pipeline.direct.fire_detections",
+    "cronSchedule": "15 * * * *",
+    "restartPolicyType": "NEVER"
+  }
+}
+

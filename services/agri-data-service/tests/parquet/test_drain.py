@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime as dt
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import TYPE_CHECKING, Final
 
 import duckdb
@@ -44,6 +45,7 @@ from agri_data_service.pipeline.parquet.drain import (
 )
 from agri_data_service.pipeline.parquet.gap_fill import (
     _lane_day_lock_key,
+    build_gap_census,
     postgres_lane_day_lock,
     unlocked_lane_day,
 )
@@ -199,6 +201,20 @@ def test_a_base_complete_day_missing_a_rung_is_selected() -> None:
 
     assert census.incomplete_days == (DAY,)
     assert census.ladder_complete_day_count == 0
+
+
+def test_direct_owned_days_are_excluded_from_missing_but_remain_ladder_eligible() -> None:
+    direct_day = dt.date(2026, 8, 25)
+    store, _ = _store()
+    _publish_base_day(store, direct_day)
+    fire = replace(LANE_REGISTRY[STREAM], history_floor=dt.date(2026, 8, 24))
+
+    missing = build_gap_census((fire,), store, today=dt.date(2026, 8, 30))[0]
+    ladder = build_lane_ladder_census(fire, store)
+
+    assert missing.last_day == dt.date(2026, 8, 24)
+    assert direct_day not in missing.missing_days
+    assert ladder.incomplete_days == (direct_day,)
 
 
 def test_a_day_carrying_some_rungs_is_reported_as_a_partial_ladder() -> None:

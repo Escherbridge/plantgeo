@@ -16,7 +16,7 @@ floors are declared and which are fallbacks.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Protocol
 from uuid import UUID
@@ -44,7 +44,10 @@ from agri_data_service.pipeline.lanes.burn_severity import export_burn_severity_
 from agri_data_service.pipeline.lanes.calendar import export_calendar_version
 from agri_data_service.pipeline.lanes.drought import export_drought_release
 from agri_data_service.pipeline.lanes.evacuation_zones import export_evacuation_zones_day
-from agri_data_service.pipeline.lanes.fire_detections import export_fire_detections_day
+from agri_data_service.pipeline.lanes.fire_detections import (
+    FIRE_DETECTIONS_DIRECT_WRITER_START_DAY,
+    export_fire_detections_day,
+)
 from agri_data_service.pipeline.lanes.fire_perimeters import export_fire_perimeters_day
 from agri_data_service.pipeline.lanes.sensors import export_sensors_day
 from agri_data_service.pipeline.lanes.signal import export_signal_day
@@ -152,6 +155,8 @@ class LaneRegistration:
     forecast_module: str | None = None
     # A `static_lookup` lane's clock. Mandatory for that nature and forbidden for the others.
     watermark: LaneWatermarkResolver | None = None
+    # Last day the generic PostgreSQL writer owns; newer days belong to a dedicated writer.
+    writer_ceiling: date | None = None
 
     def __post_init__(self) -> None:
         validate_layer_slug(self.slug)
@@ -192,6 +197,16 @@ class LaneRegistration:
                 f"lane {self.slug!r} is a static_lookup and declares a {self.publication_lag_days}-day "
                 "publication lag; a version stamp is not settled by waiting, and subtracting a lag from one "
                 "would date the snapshot before the change it records"
+            )
+        if self.writer_ceiling is not None and self.nature == "static_lookup":
+            raise LaneRegistryError(
+                f"lane {self.slug!r} is a static_lookup and declares writer ceiling {self.writer_ceiling}; "
+                "a version-stamped lane has no calendar window to divide between writers"
+            )
+        if self.writer_ceiling is not None and self.writer_ceiling < self.history_floor:
+            raise LaneRegistryError(
+                f"lane {self.slug!r} declares writer ceiling {self.writer_ceiling} before its history floor "
+                f"{self.history_floor}"
             )
 
     @property
@@ -751,14 +766,15 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     LaneRegistration(
         slug=FIRE_DETECTIONS_STREAM,
         adapter=_fill_fire_detections,
-        history_floor=date(2000, 11, 2),
+        history_floor=date(2000, 11, 1),
         publication_lag_days=2,
         nature="daily_series",
         forecast_module="fire_detections",
+        writer_ceiling=FIRE_DETECTIONS_DIRECT_WRITER_START_DAY - timedelta(days=1),
         floor_basis=(
             "NATURE daily_series, forecastable (method/monte_carlo/fire_detections.py, horizon 30d). "
-            "docs/lanes/fire-detections.md section 3: production's sampled minimum observedAt is 2000-11-02, "
-            "one day after the archive walk's own 2000-11-01 floor. Lag 2 from section 2's FIRMS_DAY_RANGE "
+            "The MODIS_SP floor is 2000-11-01 and production now holds four eligible detections on that "
+            "day. Lag 2 from docs/lanes/fire-detections.md section 2's FIRMS_DAY_RANGE "
             "rolling NRT lookback (default 2, clamped 1-5). This is the deepest window of any lane -- roughly "
             "9,400 days -- and is exactly what the newest-first ordering exists to keep tolerable."
         ),
@@ -900,7 +916,7 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
 #
 # The floor is DERIVED, not declared: the union of every database-backed lane's own floor, so the
 # dimension covers every day any lane can key to it. Deriving it is what stops the calendar and the
-# deepest lane (`fire-detections`, 2000-11-02) drifting apart when a floor is next corrected.
+# deepest lane (`fire-detections`, 2000-11-01) drifting apart when a floor is next corrected.
 
 CALENDAR_HISTORY_FLOOR: Final[date] = min(registration.history_floor for registration in _DATABASE_BACKED_REGISTRATIONS)
 
