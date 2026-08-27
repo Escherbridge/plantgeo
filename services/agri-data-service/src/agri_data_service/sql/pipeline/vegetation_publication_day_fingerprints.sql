@@ -2,7 +2,11 @@
 -- Purpose: fingerprint the exact 12-field governed vegetation export projection per UTC day.
 -- Loaded by: agri_data_service.db.vegetation_publication
 -- Params: first_day (date nullable), last_day (date nullable)
-WITH governed AS (
+WITH bounds AS (
+    SELECT
+        CAST(:first_day AS date) AS first_day,
+        CAST(:last_day AS date) AS last_day
+), governed AS (
     SELECT
         cell.id AS cell_id,
         cell.grid_name,
@@ -20,12 +24,13 @@ WITH governed AS (
     INNER JOIN agri.forecast_observation AS observation ON observation.series_id = series.id
     INNER JOIN agri.source_release AS release ON release.id = observation.source_release_id
     INNER JOIN agri.data_source AS source ON source.id = release.data_source_id
+    CROSS JOIN bounds
     WHERE series.metric_name = 'ndvi'
       AND series.source_transform_version = 'sentinel2-ndvi-daily-cell-mean-v1'
       AND source.key = 'sentinel2-ndvi-l2a'
       AND observation.quality_flag = 'accepted'
-      AND (:first_day IS NULL OR observation.observed_at >= (:first_day)::date::timestamp AT TIME ZONE 'UTC')
-      AND (:last_day IS NULL OR observation.observed_at < ((:last_day)::date + 1)::timestamp AT TIME ZONE 'UTC')
+      AND (bounds.first_day IS NULL OR observation.observed_at >= bounds.first_day::timestamp AT TIME ZONE 'UTC')
+      AND (bounds.last_day IS NULL OR observation.observed_at < (bounds.last_day + 1)::timestamp AT TIME ZONE 'UTC')
 ), aggregated AS (
     SELECT
         cell_id,

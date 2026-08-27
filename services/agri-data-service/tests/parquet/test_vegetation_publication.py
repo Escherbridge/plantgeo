@@ -115,6 +115,10 @@ def test_day_fingerprint_covers_every_mutable_exact_export_input() -> None:
     ):
         assert field in fingerprint
     assert "digest(" in fingerprint
+    assert "CAST(:first_day AS date)" in fingerprint
+    assert "CAST(:last_day AS date)" in fingerprint
+    assert ":first_day IS NULL" not in fingerprint
+    assert ":last_day IS NULL" not in fingerprint
 
 
 def test_registration_and_generic_vegetation_writer_share_the_global_barrier() -> None:
