@@ -5,15 +5,18 @@
 from __future__ import annotations
 
 import io
-from collections.abc import Iterator, Sequence
 from copy import deepcopy
-from datetime import UTC, date, datetime
-from typing import Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import pytest
 
 from scripts import canonical_signal_snapshot as snapshot
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
+    from datetime import date
 
 
 class MemoryStore:
@@ -256,7 +259,7 @@ def test_corrupt_part_fails_closed_before_manifest_or_complete() -> None:
     with pytest.raises(snapshot.SnapshotError, match="checksum"):
         exporter.export("corrupt-test", progress=lambda _message: None)
 
-    assert not any(key.endswith("/manifest.json") or key.endswith("/_COMPLETE") for key in store.objects)
+    assert not any(key.endswith(("/manifest.json", "/_COMPLETE")) for key in store.objects)
 
 
 @pytest.mark.parametrize("prefix", ["layer=signal", "raw-canonical/layer=signal", "../raw-canonical/signal"])

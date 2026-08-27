@@ -25,7 +25,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, TypeVar
+from typing import TYPE_CHECKING, Any, Final
 
 import polars as pl
 import pyarrow as pa  # type: ignore[import-untyped]
@@ -65,8 +65,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.foundation.parquet.paths import PartitionDayStatus
-    from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
 
 
 CHECKPOINT_SCHEMA_VERSION: Final = 2
@@ -137,7 +137,6 @@ _SOURCE_MONTH_SQL: Final = text(
 )
 
 _LAYER_ID_SQL: Final = text("SELECT id::text FROM geo.layers WHERE name = :name")
-_T = TypeVar("_T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,13 +371,13 @@ def _days(first_day: date, last_day: date) -> Iterable[date]:
         yield first_day + timedelta(days=offset)
 
 
-def _retry(
+def _retry[T](
     operation: str,
-    call: Callable[[], _T],
+    call: Callable[[], T],
     *,
     attempts: int,
     base_delay_seconds: float,
-) -> _T:
+) -> T:
     """Retry an idempotent R2 read/list with capped exponential backoff."""
     for attempt in range(1, attempts + 1):
         try:
@@ -487,15 +486,16 @@ def _load_tier_snapshot(
         attempts=attempts,
         base_delay_seconds=base_delay_seconds,
     )
-    part_tables: list[pa.Table] = []
-    for key in sorted(
-        part_keys,
-        key=lambda value: (
-            try_parse_partition_path(value).day,  # type: ignore[union-attr]
-            try_parse_partition_path(value).part_index,  # type: ignore[union-attr]
-        ),
-    ):
-        part_tables.append(pq.read_table(io.BytesIO(payloads[key])))
+    part_tables = [
+        pq.read_table(io.BytesIO(payloads[key]))
+        for key in sorted(
+            part_keys,
+            key=lambda value: (
+                try_parse_partition_path(value).day,  # type: ignore[union-attr]
+                try_parse_partition_path(value).part_index,  # type: ignore[union-attr]
+            ),
+        )
+    ]
     raw_table = pa.concat_tables(part_tables) if part_tables else _empty_fire_table()
     table = conform_to_stream_schema(raw_table, FIRE_DETECTIONS_SCHEMA)
     statuses = partition_day_statuses(
@@ -568,8 +568,7 @@ async def _source_month_table(
                 flush=True,
             )
             await asyncio.sleep(delay)
-    else:
-        raise AssertionError("PostgreSQL retry loop exhausted without returning or raising")
+    raise AssertionError("PostgreSQL retry loop exhausted without returning or raising")
 
 
 def _derive_month(base: pa.Table) -> dict[ZoomTier, pa.Table]:
@@ -1034,24 +1033,20 @@ def _sum_month_metric(months: Mapping[str, object], path: Sequence[str]) -> int:
     return total
 
 
+def _checkpoint_value(raw: object, path: Sequence[str]) -> object:
+    value: Any = raw
+    for key in path:
+        value = value[key]
+    return value
+
+
 def _sum_month_frp(months: Mapping[str, object], path: Sequence[str]) -> str:
-    values: list[float] = []
-    for raw in months.values():
-        value: Any = raw
-        for key in path:
-            value = value[key]
-        values.append(float.fromhex(str(value)))
+    values = [float.fromhex(str(_checkpoint_value(raw, path))) for raw in months.values()]
     return math.fsum(values).hex()
 
 
 def _extreme_month_value(months: Mapping[str, object], path: Sequence[str], *, latest: bool) -> object | None:
-    values: list[object] = []
-    for raw in months.values():
-        value: Any = raw
-        for key in path:
-            value = value[key]
-        if value is not None:
-            values.append(value)
+    values = [value for raw in months.values() if (value := _checkpoint_value(raw, path)) is not None]
     return (max(values) if latest else min(values)) if values else None
 
 

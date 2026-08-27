@@ -59,6 +59,10 @@ one column is **93.9%** of the compressed file.
 
 ## Snapshot lineage digest aggregation
 
+`snapshot_signal_product.py` holds the shared registration factories for immutable snapshot-derived
+signal products. Keeping those factories below `warehouse/schemas` preserves one lane module per
+slug and the no-sibling-import boundary while retaining one exact schema definition per product family.
+
 `sha256-lines` is a closed aggregation used only by the completed soil-temperature snapshot
 contract. Both engines sort the contributing string values, append one newline to each, and hash
 those exact bytes with SHA-256. This mirrors the immutable builder's coarse-tier lineage and must

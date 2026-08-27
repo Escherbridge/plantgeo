@@ -303,7 +303,7 @@ def provenance_source_digest(rows: Iterable[Mapping[str, Any]]) -> str:
         for row in rows
     )
     for key, ordinal, part_sha256, row_sha256 in entries:
-        digest.update(f"{key}\0{ordinal}\0{part_sha256}\0{row_sha256}\n".encode("utf-8"))
+        digest.update(f"{key}\0{ordinal}\0{part_sha256}\0{row_sha256}\n".encode())
     return digest.hexdigest()
 
 
@@ -433,7 +433,8 @@ class SnapshotStore:
             existing = self.get(key, max_bytes=len(payload) + 1)
             if existing != payload:
                 raise BreakdownError(
-                    f"immutable object conflict for {key!r}: existing={_sha256(existing or b'')} attempted={_sha256(payload)}"
+                    f"immutable object conflict for {key!r}: "
+                    f"existing={_sha256(existing or b'')} attempted={_sha256(payload)}"
                 ) from exc
 
     def list_keys(self, prefix: str) -> Iterator[str]:
@@ -442,7 +443,7 @@ class SnapshotStore:
             request: dict[str, object] = {"Bucket": self.bucket, "Prefix": prefix}
             if token is not None:
                 request["ContinuationToken"] = token
-            response = self.retry.run(lambda: self.client.list_objects_v2(**request))
+            response = self.retry.run(lambda request=request: self.client.list_objects_v2(**request))
             contents = response.get("Contents")
             if isinstance(contents, list):
                 for item in contents:
@@ -1778,7 +1779,8 @@ def finalize_lane(
         all_days.extend(str(value) for value in checkpoint["data_days"])
     if set(consumed_raw) != set(expected_raw):
         raise BreakdownError(
-            f"{product.lane} raw part reconciliation failed; missing={sorted(set(expected_raw) - set(consumed_raw))[:5]} "
+            f"{product.lane} raw part reconciliation failed; "
+            f"missing={sorted(set(expected_raw) - set(consumed_raw))[:5]} "
             f"unexpected={sorted(set(consumed_raw) - set(expected_raw))[:5]}"
         )
     for key, expected in expected_raw.items():
@@ -1875,7 +1877,8 @@ def finalize_lane(
     if actual_before != expected_output_keys:
         raise BreakdownError(
             f"{product.lane} output inventory mismatch before publication; "
-            f"missing={sorted(expected_output_keys - actual_before)[:5]} unexpected={sorted(actual_before - expected_output_keys)[:5]}"
+            f"missing={sorted(expected_output_keys - actual_before)[:5]} "
+            f"unexpected={sorted(actual_before - expected_output_keys)[:5]}"
         )
     if set(object_receipts) != expected_output_keys:
         raise BreakdownError(f"{product.lane} cryptographic receipt inventory does not cover every premanifest object")
@@ -2314,7 +2317,10 @@ def main() -> int:
         snapshot_id=DEFAULT_SNAPSHOT_ID,
         expected_manifest_sha256=DEFAULT_INPUT_MANIFEST_SHA256,
     )
-    progress: Callable[[str], None] = lambda message: print(message, file=sys.stderr)
+
+    def progress(message: str) -> None:
+        print(message, file=sys.stderr)
+
     report = (
         inventory_products(store, contract)
         if arguments.command == "inventory"

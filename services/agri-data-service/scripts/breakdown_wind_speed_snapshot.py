@@ -12,9 +12,10 @@ import json
 import math
 import time
 from collections import defaultdict
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, Final, Iterable, Mapping, Protocol, Sequence, TypeVar
+from typing import Any, Final, Protocol, TypeVar
 
 import boto3  # type: ignore[import-untyped]
 import polars as pl
@@ -158,7 +159,7 @@ class RetryPolicy:
         for attempt in range(self.attempts):
             try:
                 return operation()
-            except BaseException as error:  # noqa: BLE001 - retry classification is explicit
+            except BaseException as error:
                 if not retryable(error) or attempt + 1 >= self.attempts:
                     raise
                 time.sleep(self.base_delay_seconds * (2**attempt))
@@ -239,10 +240,12 @@ class ImmutableStore:
             request: dict[str, object] = {"Bucket": self.bucket, "Prefix": prefix}
             if token is not None:
                 request["ContinuationToken"] = token
-            response = self.retry.run(lambda: self.client.list_objects_v2(**request))
-            for item in response.get("Contents", []):
-                if isinstance(item, Mapping) and isinstance(item.get("Key"), str):
-                    keys.append(str(item["Key"]))
+            response = self.retry.run(lambda request=request: self.client.list_objects_v2(**request))
+            keys.extend(
+                str(item["Key"])
+                for item in response.get("Contents", [])
+                if isinstance(item, Mapping) and isinstance(item.get("Key"), str)
+            )
             next_token = response.get("NextContinuationToken")
             if not isinstance(next_token, str) or not next_token:
                 return keys
@@ -1276,7 +1279,7 @@ def main() -> None:
         units_by_month[str(checkpoint["observation_month"])].append(checkpoint)
     day_checkpoints: list[dict[str, Any]] = []
     day_index = 0
-    for month, checkpoints in sorted(units_by_month.items()):
+    for _month, checkpoints in sorted(units_by_month.items()):
         month_frame = load_month_stage(store, checkpoints)
         month_days = sorted(month_frame["observed_day"].unique().to_list())
         for day in month_days:

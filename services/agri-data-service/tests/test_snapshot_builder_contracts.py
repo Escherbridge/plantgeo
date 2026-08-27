@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 
-
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 SNAPSHOT_ID = "prod-20260826-full-signal-v1"
 MANIFEST_SHA256 = "465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f"

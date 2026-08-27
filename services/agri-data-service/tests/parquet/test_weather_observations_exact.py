@@ -233,10 +233,14 @@ async def test_source_change_between_opening_and_closing_snapshots_fails_the_gat
     async def changing_source(*_args: object, **_kwargs: object) -> pa.Table:
         nonlocal calls
         calls += 1
-        return _table() if calls == 1 else _table().set_column(
-            _table().column_names.index("temperature_c"),
-            "temperature_c",
-            pa.array([22.0], type=pa.float64()),
+        return (
+            _table()
+            if calls == 1
+            else _table().set_column(
+                _table().column_names.index("temperature_c"),
+                "temperature_c",
+                pa.array([22.0], type=pa.float64()),
+            )
         )
 
     monkeypatch.setattr(

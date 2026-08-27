@@ -8,11 +8,12 @@ import io
 import json
 import sys
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Final, Mapping, Sequence
+from typing import Any, Final
 
 import boto3  # type: ignore[import-untyped]
 import polars as pl
@@ -646,8 +647,7 @@ def _load_source_month(
     receipts: list[ObjectReceipt] = []
     seen_ids: set[int] = set()
     for summary in ledger_summaries:
-        batch_index = int(summary["cell_batch_index"])
-        ledger_key, _, ledger = _verified_ledger(store, summary)
+        _, _, ledger = _verified_ledger(store, summary)
         part = _source_part_for_ledger(ledger, year=year, month=month_number)
         key = str(part["key"])
         payload = _required_object(store, key)
@@ -928,8 +928,7 @@ def _write_month(
             ): observed_day
             for observed_day, table in source.base_by_day.items()
         }
-        for future in as_completed(pending):
-            day_results.append(future.result())
+        day_results.extend(future.result() for future in as_completed(pending))
     day_results.sort(key=lambda item: str(item["day"]))
     base_rows = sum(int(day["base_rows"]) for day in day_results)
     lineage_rows = sum(int(day["physical_input_rows"]) for day in day_results)

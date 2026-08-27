@@ -2,7 +2,7 @@
 
 from typing import Final
 
-from agri_data_service.warehouse.schemas.snapshot_signal_product import register_signal_plane_product
+from agri_data_service.warehouse.parquet.snapshot_signal_product import register_signal_plane_product
 
 STREAM: Final = "climate-field-air-temperature-min"
 SCHEMA, TIER_DERIVATION = register_signal_plane_product(STREAM)

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Final
 import polars as pl
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
+from sqlalchemy import text
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
@@ -222,7 +223,7 @@ def inventory_tier(
     return inventory
 
 
-def read_tier_day(  # noqa: PLR0912, PLR0913 - report every physical object state
+def read_tier_day(  # noqa: PLR0913 - report every physical object state
     backend: BotoObjectStoreBackend,
     store: ObjectStore,
     inventory: TierInventory,
@@ -334,17 +335,23 @@ def validate_table(table: pa.Table, *, day: date, zoom: ZoomTier, source: bool =
         errors.append("physical rows are not in registered schema/sort order")
 
     if zoom == BASE_ZOOM_TIER:
-        for column in ("site_number", "site_name"):
-            if canonical.column(column).null_count:
-                errors.append(f"base rung has null {column}")
+        errors.extend(
+            f"base rung has null {column}"
+            for column in ("site_number", "site_name")
+            if canonical.column(column).null_count
+        )
         grain_columns: Sequence[str] = WATER_GAUGES_GRAIN
     else:
-        for column in ("latitude", "longitude"):
-            if canonical.column(column).null_count:
-                errors.append(f"coarse rung has null {column}")
-        for column in ("site_number", "site_name", "condition", "trend"):
-            if canonical.column(column).null_count != canonical.num_rows:
-                errors.append(f"coarse rung carries non-null {column}")
+        errors.extend(
+            f"coarse rung has null {column}"
+            for column in ("latitude", "longitude")
+            if canonical.column(column).null_count
+        )
+        errors.extend(
+            f"coarse rung carries non-null {column}"
+            for column in ("site_number", "site_name", "condition", "trend")
+            if canonical.column(column).null_count != canonical.num_rows
+        )
         grain_columns = ("longitude", "latitude", "observed_day")
     grain = list(zip(*(canonical.column(column).to_pylist() for column in grain_columns), strict=True))
     # PostgreSQL is the lossless source of truth for z13. Four measured source days contain
@@ -451,7 +458,7 @@ def progress_payload(  # noqa: PLR0913 - one durable checkpoint captures every t
     }
 
 
-async def run(  # noqa: PLR0912, PLR0915 - one snapshot must own the full reconciliation
+async def run(  # noqa: PLR0915 - one snapshot must own the full reconciliation
     args: argparse.Namespace,
 ) -> tuple[bool, dict[str, object]]:
     """Execute the full bounded reconciliation and return its cutover verdict."""

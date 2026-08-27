@@ -8,9 +8,10 @@ import io
 import json
 import sys
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Final, Mapping
+from typing import Any, Final
 
 import boto3  # type: ignore[import-untyped]
 import polars as pl
@@ -85,6 +86,7 @@ def _stat_bound(part: Mapping[str, Any], column: str, bound: str) -> object | No
 
 
 def _soil_candidate(population: tuple[str, str, str], signals: set[object], parameters: set[object]) -> bool:
+    del signals, parameters
     source, product, support = population
     return (
         source == "open-meteo-era5-land-archive"
@@ -249,7 +251,6 @@ def main() -> int:
             return table.to_pylist()
 
         data_sources = dimension_rows("data_source")
-        data_source_by_id = {str(row["id"]): row for row in data_sources}
         source_releases = dimension_rows("source_release")
         releases_by_source_id = Counter(str(row["data_source_id"]) for row in source_releases)
 

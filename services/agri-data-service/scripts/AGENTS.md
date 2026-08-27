@@ -48,6 +48,17 @@ and bundle inventories plus the manifest/completion SHA chain.
 
 # Canonical snapshots and immutable lane breakdowns
 
+## Lint boundary for exact offline workflows
+
+The named snapshot, breakdown, reconciliation, and cutover scripts have narrow per-file Ruff
+exceptions in `../ruff.toml` for complexity, argument-count, and contract-literal rules. The
+soil-moisture builder additionally permits its explicit module-state mutation because one process
+selects exactly one depth profile before doing any work. These are finite, run-once audit workflows
+whose explicit branches mirror receipt states and whose numeric literals bind immutable source/tier
+contracts. Correctness rules, undefined names, closure binding, typing, formatting, and unused data
+remain enforced; do not broaden the exceptions to a directory wildcard or reuse them for runtime
+ingestion code.
+
 ## Canonical signal snapshot
 
 `canonical_signal_snapshot.py` is a one-time, resumable migration/export tool, not a serving-lane

@@ -85,16 +85,18 @@ class ExactWeatherReport:
 
     @property
     def is_clean(self) -> bool:
-        return self.source_is_stable and self.object_plane_is_stable and not self.findings and all(
-            self.tier_sha256.get(zoom) == self.expected_tier_sha256.get(zoom) for zoom in ZOOM_TIERS
+        return (
+            self.source_is_stable
+            and self.object_plane_is_stable
+            and not self.findings
+            and all(self.tier_sha256.get(zoom) == self.expected_tier_sha256.get(zoom) for zoom in ZOOM_TIERS)
         )
 
     @property
     def source_is_stable(self) -> bool:
         """Whether independent opening and closing PostgreSQL snapshots are identical."""
         return (
-            self.source_row_count == self.closing_source_row_count
-            and self.source_sha256 == self.closing_source_sha256
+            self.source_row_count == self.closing_source_row_count and self.source_sha256 == self.closing_source_sha256
         )
 
     @property
@@ -137,10 +139,8 @@ class ExactWeatherReport:
                         "opening_evidence_sha256": self.object_evidence_sha256.get(zoom),
                         "closing_evidence_sha256": self.closing_object_evidence_sha256.get(zoom),
                         "stable": (
-                            self.object_inventory_sha256.get(zoom)
-                            == self.closing_object_inventory_sha256.get(zoom)
-                            and self.object_evidence_sha256.get(zoom)
-                            == self.closing_object_evidence_sha256.get(zoom)
+                            self.object_inventory_sha256.get(zoom) == self.closing_object_inventory_sha256.get(zoom)
+                            and self.object_evidence_sha256.get(zoom) == self.closing_object_evidence_sha256.get(zoom)
                         ),
                     }
                     for zoom in ZOOM_TIERS
@@ -251,9 +251,7 @@ def _excluded_window_summary(
     all_days: set[date] = set()
     for zoom in ZOOM_TIERS:
         scoped_keys = tuple(
-            key
-            for key in keys_by_zoom[zoom]
-            if (key_day := _key_day(key)) is not None and include(key_day)
+            key for key in keys_by_zoom[zoom] if (key_day := _key_day(key)) is not None and include(key_day)
         )
         days = {_key_day(key) for key in scoped_keys}
         selected = sorted(day for day in days if day is not None and include(day))
@@ -303,8 +301,7 @@ def _schema_is_read_compatible(actual: pa.Schema, expected: pa.Schema) -> bool:
     if actual.names != expected.names:
         return False
     return all(
-        actual_field.type.equals(expected_field.type)
-        and not (actual_field.nullable and not expected_field.nullable)
+        actual_field.type.equals(expected_field.type) and not (actual_field.nullable and not expected_field.nullable)
         for actual_field, expected_field in zip(actual, expected, strict=True)
     )
 
@@ -371,9 +368,7 @@ def _inspect_tier(  # noqa: PLR0912, PLR0913, PLR0915 - one exact stream-day-tie
     if absence_listed and absence is None and not absence_error:
         findings.append(ExactWeatherFinding(day, zoom, "absence_marker", "listed marker disappeared before read"))
     if not absence_listed and absence is not None:
-        findings.append(
-            ExactWeatherFinding(day, zoom, "absence_marker", "marker appeared after the inventory listing")
-        )
+        findings.append(ExactWeatherFinding(day, zoom, "absence_marker", "marker appeared after the inventory listing"))
     if absence is not None:
         absence_sha256 = hashlib.sha256(absence.to_json_bytes()).hexdigest()
 
@@ -488,8 +483,7 @@ async def audit_exact_weather_observations(  # noqa: PLR0915
         source_day_digests[day] = _table_sha256(source)
         _fold_table(source_digest, day, source)
         expected_statuses: dict[ZoomTier, PartitionDayStatus] = {
-            zoom: "data" if source.num_rows else ("absent" if zoom == BASE_ZOOM else "missing")
-            for zoom in ZOOM_TIERS
+            zoom: "data" if source.num_rows else ("absent" if zoom == BASE_ZOOM else "missing") for zoom in ZOOM_TIERS
         }
         expected_by_zoom = _expected_tiers(source)
 
@@ -628,13 +622,9 @@ async def audit_exact_weather_observations(  # noqa: PLR0915
         closing_source_row_count=closing_source_rows,
         closing_source_sha256=closing_source_digest.hexdigest(),
         object_inventory_sha256={zoom: _key_set_sha256(keys) for zoom, keys in keys_by_zoom.items()},
-        closing_object_inventory_sha256={
-            zoom: _key_set_sha256(keys) for zoom, keys in closing_keys_by_zoom.items()
-        },
+        closing_object_inventory_sha256={zoom: _key_set_sha256(keys) for zoom, keys in closing_keys_by_zoom.items()},
         object_evidence_sha256={zoom: digest.hexdigest() for zoom, digest in opening_object_digests.items()},
-        closing_object_evidence_sha256={
-            zoom: digest.hexdigest() for zoom, digest in closing_object_digests.items()
-        },
+        closing_object_evidence_sha256={zoom: digest.hexdigest() for zoom, digest in closing_object_digests.items()},
         tier_row_counts=dict(tier_rows),
         tier_sha256={zoom: digest.hexdigest() for zoom, digest in actual_digests.items()},
         expected_tier_sha256={zoom: digest.hexdigest() for zoom, digest in expected_digests.items()},

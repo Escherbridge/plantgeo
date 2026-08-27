@@ -2,7 +2,7 @@
 
 from typing import Final
 
-from agri_data_service.warehouse.schemas.snapshot_signal_product import register_snapshot_lineage_product
+from agri_data_service.warehouse.parquet.snapshot_signal_product import register_snapshot_lineage_product
 
 CLIMATE_FIELD_SHORTWAVE_RADIATION_STREAM: Final = "climate-field-shortwave-radiation"
 CLIMATE_FIELD_SHORTWAVE_RADIATION_SCHEMA, CLIMATE_FIELD_SHORTWAVE_RADIATION_TIER_DERIVATION = (

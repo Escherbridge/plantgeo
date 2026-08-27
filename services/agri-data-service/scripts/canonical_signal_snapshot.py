@@ -23,9 +23,10 @@ import sys
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time as datetime_time
+from datetime import UTC, date, datetime
+from datetime import time as datetime_time
 from pathlib import Path
-from typing import Any, Final, Protocol, TypeVar
+from typing import Any, Final, Protocol
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
@@ -76,7 +77,6 @@ _RETRYABLE_CODES: Final = frozenset(
         "ThrottlingException",
     }
 )
-_T = TypeVar("_T")
 
 
 def _utc_timestamp_type() -> pa.TimestampType:
@@ -384,12 +384,12 @@ class RetryPolicy:
     attempts: int = 8
     base_delay_seconds: float = 0.5
 
-    def run(self, operation: Callable[[], _T]) -> _T:
+    def run[T](self, operation: Callable[[], T]) -> T:
         last_error: BaseException | None = None
         for attempt in range(self.attempts):
             try:
                 return operation()
-            except BaseException as exc:  # noqa: BLE001 - the classifier decides whether it is transient
+            except BaseException as exc:
                 if not _retryable(exc) or attempt + 1 >= self.attempts:
                     raise
                 last_error = exc
@@ -473,7 +473,7 @@ class BotoSnapshotStore:
             request: dict[str, object] = {"Bucket": self.bucket, "Prefix": prefix}
             if token is not None:
                 request["ContinuationToken"] = token
-            response = self.retry.run(lambda: self.client.list_objects_v2(**request))
+            response = self.retry.run(lambda request=request: self.client.list_objects_v2(**request))
             contents = response.get("Contents")
             if isinstance(contents, list):
                 for item in contents:
@@ -485,7 +485,7 @@ class BotoSnapshotStore:
             token = next_token
 
 
-def _batched(values: Sequence[_T], size: int) -> Iterator[Sequence[_T]]:
+def _batched[T](values: Sequence[T], size: int) -> Iterator[Sequence[T]]:
     for offset in range(0, len(values), size):
         yield values[offset : offset + size]
 

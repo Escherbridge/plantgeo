@@ -116,7 +116,7 @@ def _json_object(payload: bytes, *, key: str) -> dict[str, object]:
 
 
 def _get_required(store: ObjectStore, relative_key: str) -> bytes:
-    payload = store._backend.get(store.key_for(relative_key))  # noqa: SLF001 - raw snapshot paths are not lanes.
+    payload = store._backend.get(store.key_for(relative_key))
     if payload is None:
         raise SnapshotContractError(f"required snapshot object is absent: {relative_key}")
     return payload
@@ -461,15 +461,15 @@ def _put_immutable(
     if not relative_key.startswith(root):
         raise SnapshotContractError(f"output key {relative_key!r} escapes the dedicated product root {root!r}")
     absolute_key = store.key_for(relative_key)
-    existing_size = store._backend.size_of(absolute_key)  # noqa: SLF001 - immutable snapshot layout.
+    existing_size = store._backend.size_of(absolute_key)
     if existing_size is not None:
-        existing = store._backend.get(absolute_key)  # noqa: SLF001 - immutable snapshot layout.
+        existing = store._backend.get(absolute_key)
         if existing != payload:
             raise SnapshotContractError(
                 f"immutable output {relative_key} already exists with different bytes; refusing overwrite"
             )
     else:
-        store._backend.put(absolute_key, payload, content_type=content_type)  # noqa: SLF001 - no-delete writer.
+        store._backend.put(absolute_key, payload, content_type=content_type)
     return {
         "key": relative_key,
         "bytes": len(payload),
@@ -702,7 +702,7 @@ def _checkpoint_if_complete(
     expected_lineage: list[dict[str, object]],
 ) -> tuple[dict[str, object], bytes] | None:
     key = _checkpoint_key(product, month)
-    payload = store._backend.get(store.key_for(key))  # noqa: SLF001 - bounded checkpoint read.
+    payload = store._backend.get(store.key_for(key))
     if payload is None:
         return None
     checkpoint = _json_object(payload, key=key)
@@ -1047,7 +1047,7 @@ def _build_product(
     verification_mode: str,
 ) -> dict[str, object]:
     complete_key = f"{_product_root(product)}_COMPLETE"
-    if store._backend.size_of(store.key_for(complete_key)) is not None:  # noqa: SLF001 - immutable resume check.
+    if store._backend.size_of(store.key_for(complete_key)) is not None:
         return _verify_product(
             store,
             product=product,

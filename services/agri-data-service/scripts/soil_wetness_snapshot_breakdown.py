@@ -60,7 +60,19 @@ JSON_CONTENT_TYPE: Final = "application/json"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _PRECONDITION_CODES: Final = frozenset({"412", "PreconditionFailed", "ConditionalRequestConflict"})
 _RETRYABLE_CODES: Final = frozenset(
-    {"408", "429", "500", "502", "503", "504", "InternalError", "RequestTimeout", "SlowDown", "ServiceUnavailable", "Throttling"}
+    {
+        "408",
+        "429",
+        "500",
+        "502",
+        "503",
+        "504",
+        "InternalError",
+        "RequestTimeout",
+        "SlowDown",
+        "ServiceUnavailable",
+        "Throttling",
+    }
 )
 
 
@@ -356,9 +368,7 @@ class SnapshotStore:
                 body = response.get("Body")
                 if body is not None and hasattr(body, "close"):
                     body.close()  # type: ignore[attr-defined]
-                raise BreakdownError(
-                    f"object {key!r} has declared size {content_length!r}; expected {expected_bytes}"
-                )
+                raise BreakdownError(f"object {key!r} has declared size {content_length!r}; expected {expected_bytes}")
             body = response.get("Body")
             if body is None:
                 return None
@@ -404,7 +414,8 @@ class SnapshotStore:
             existing = self.get(key, max_bytes=len(payload) + 1)
             if existing != payload:
                 raise BreakdownError(
-                    f"immutable object conflict for {key!r}: existing={_sha256(existing or b'')} attempted={_sha256(payload)}"
+                    f"immutable object conflict for {key!r}: "
+                    f"existing={_sha256(existing or b'')} attempted={_sha256(payload)}"
                 ) from exc
 
     def list_keys(self, prefix: str) -> Iterator[str]:
@@ -413,7 +424,7 @@ class SnapshotStore:
             request: dict[str, object] = {"Bucket": self.bucket, "Prefix": prefix}
             if token is not None:
                 request["ContinuationToken"] = token
-            response = self.retry.run(lambda: self.client.list_objects_v2(**request))
+            response = self.retry.run(lambda request=request: self.client.list_objects_v2(**request))
             contents = response.get("Contents")
             if isinstance(contents, list):
                 for item in contents:
@@ -791,7 +802,9 @@ def classify_month(
     selected_count = len(winners)
     eligible_count = sum(len(value) for value in candidates.values())
     rejected_count = sum(rejection_counts.values())
-    if len(rows) != eligible_count + rejected_count or eligible_count != selected_count + (eligible_count - selected_count):
+    if len(rows) != eligible_count + rejected_count or eligible_count != selected_count + (
+        eligible_count - selected_count
+    ):
         raise AssertionError("soil month classification did not close")
     stats = {
         "input_physical_rows": len(rows),
@@ -835,13 +848,14 @@ def checkpoint_verification_marker(
     if not isinstance(objects, list) or any(not isinstance(receipt, Mapping) for receipt in objects):
         raise BreakdownError("breakdown checkpoint has an invalid output receipt inventory")
     month = str(checkpoint["observation_month"])
-    checkpoint_key = month_checkpoint_key(lane_root_from_marker(key), month) if phase == "base" else tier_checkpoint_key(
-        lane_root_from_marker(key), month
+    checkpoint_key = (
+        month_checkpoint_key(lane_root_from_marker(key), month)
+        if phase == "base"
+        else tier_checkpoint_key(lane_root_from_marker(key), month)
     )
     checkpoint_payload = _json_bytes(checkpoint)
     receipt_lines = [
-        f"{receipt['key']}:{receipt['row_count']}:{receipt['byte_count']}:{receipt['sha256']}"
-        for receipt in objects
+        f"{receipt['key']}:{receipt['row_count']}:{receipt['byte_count']}:{receipt['sha256']}" for receipt in objects
     ]
     return {
         "contract_version": CONTRACT_VERSION,
@@ -894,13 +908,19 @@ def verify_checkpoint_once(
     if existing is not None:
         if existing != expected_payload:
             raise BreakdownError(f"verification marker {key!r} conflicts with its checkpoint receipts")
-        return marker_receipt(key, expected_payload, int(checkpoint_verification_marker(
-            checkpoint,
-            key=key,
-            phase=phase,
-            product=product,
-            contract=contract,
-        )["output_row_count"]))
+        return marker_receipt(
+            key,
+            expected_payload,
+            int(
+                checkpoint_verification_marker(
+                    checkpoint,
+                    key=key,
+                    phase=phase,
+                    product=product,
+                    contract=contract,
+                )["output_row_count"]
+            ),
+        )
     validate_checkpoint_objects(store, checkpoint, verify_workers=verify_workers)
     store.put_immutable(key, expected_payload, content_type=JSON_CONTENT_TYPE)
     marker = checkpoint_verification_marker(
@@ -994,7 +1014,8 @@ def build_base_month(
     provenance, base_by_day, stats = classify_month(raw_rows, product, contract)
     if stats["rejected_rows"]:
         raise BreakdownError(
-            f"{product.lane} {month} has {stats['rejected_rows']} off-contract physical rows: {stats['rejection_counts']}"
+            f"{product.lane} {month} has {stats['rejected_rows']} off-contract physical rows: "
+            f"{stats['rejection_counts']}"
         )
     output_objects: list[dict[str, Any]] = []
     if provenance:
@@ -1066,7 +1087,9 @@ def derive_tier_rows(base_rows: Sequence[Mapping[str, Any]], tier: int) -> list[
     for key, rows in groups.items():
         support_key, signal_name, normalized_unit, observed_day, longitude, latitude = key
         coverages = [float(row["coverage_fraction"]) for row in rows if row["coverage_fraction"] is not None]
-        exposure_values = [bool(row["allowed_client_exposure"]) for row in rows if row["allowed_client_exposure"] is not None]
+        exposure_values = [
+            bool(row["allowed_client_exposure"]) for row in rows if row["allowed_client_exposure"] is not None
+        ]
         result.append(
             {
                 "support_key": support_key,
@@ -1299,7 +1322,14 @@ def finalize_lane(
             if key in consumed_raw:
                 raise BreakdownError(f"lane consumed canonical part twice: {key!r}")
             consumed_raw[key] = metadata
-        for name in ("input_physical_rows", "eligible_rows", "selected_rows", "superseded_rows", "rejected_rows", "duplicate_group_count"):
+        for name in (
+            "input_physical_rows",
+            "eligible_rows",
+            "selected_rows",
+            "superseded_rows",
+            "rejected_rows",
+            "duplicate_group_count",
+        ):
             aggregate[name] += int(checkpoint[name])
         for multiplicity, count in checkpoint["multiplicity_histogram"].items():
             multiplicity_histogram[int(multiplicity)] += int(count)
@@ -1312,7 +1342,8 @@ def finalize_lane(
         )
     if set(consumed_raw) != set(expected_raw):
         raise BreakdownError(
-            f"{product.lane} raw part reconciliation failed; missing={sorted(set(expected_raw) - set(consumed_raw))[:5]} "
+            f"{product.lane} raw part reconciliation failed; "
+            f"missing={sorted(set(expected_raw) - set(consumed_raw))[:5]} "
             f"unexpected={sorted(set(consumed_raw) - set(expected_raw))[:5]}"
         )
     for key, expected in expected_raw.items():
@@ -1384,7 +1415,8 @@ def finalize_lane(
     if actual_before != expected_output_keys:
         raise BreakdownError(
             f"{product.lane} output inventory mismatch before publication; "
-            f"missing={sorted(expected_output_keys - actual_before)[:5]} unexpected={sorted(actual_before - expected_output_keys)[:5]}"
+            f"missing={sorted(expected_output_keys - actual_before)[:5]} "
+            f"unexpected={sorted(actual_before - expected_output_keys)[:5]}"
         )
     manifest = {
         "contract_version": CONTRACT_VERSION,
@@ -1453,7 +1485,12 @@ def finalize_lane(
     actual_final = set(store.list_keys(f"{root}/"))
     if actual_final != expected_final:
         raise BreakdownError(f"{product.lane} final object inventory changed during publication")
-    return {**manifest, "manifest_key": manifest_key, "manifest_sha256": _sha256(manifest_payload), "_complete_key": completion_key}
+    return {
+        **manifest,
+        "manifest_key": manifest_key,
+        "manifest_sha256": _sha256(manifest_payload),
+        "_complete_key": completion_key,
+    }
 
 
 def inventory_products(store: SnapshotStore, contract: InputContract) -> dict[str, Any]:
@@ -1591,7 +1628,12 @@ def finalize_bundle(
     actual = set(store.list_keys(f"{root}/"))
     if actual != {manifest_key, completion_key}:
         raise BreakdownError("soil bundle prefix contains an unexpected object")
-    return {**manifest, "manifest_key": manifest_key, "manifest_sha256": _sha256(manifest_payload), "_complete_key": completion_key}
+    return {
+        **manifest,
+        "manifest_key": manifest_key,
+        "manifest_sha256": _sha256(manifest_payload),
+        "_complete_key": completion_key,
+    }
 
 
 def run_build(
@@ -1714,7 +1756,10 @@ def main() -> int:
         snapshot_id=arguments.snapshot_id,
         expected_manifest_sha256=arguments.input_manifest_sha256,
     )
-    progress: Callable[[str], None] = (lambda message: print(message, file=sys.stderr))
+
+    def progress(message: str) -> None:
+        print(message, file=sys.stderr)
+
     report = (
         inventory_products(store, contract)
         if arguments.command == "inventory"

@@ -6,13 +6,15 @@ import argparse
 import json
 import sys
 from collections import Counter
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import soil_wetness_snapshot_breakdown as source
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping, Sequence
+    from datetime import date
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +27,7 @@ class ReadOnlyStore:
     def get_exact(self, key: str, *, expected_bytes: int) -> bytes | None:
         return self.backend.get_exact(key, expected_bytes=expected_bytes)
 
-    def list_keys(self, prefix: str):  # type: ignore[no-untyped-def]
+    def list_keys(self, prefix: str) -> Iterator[str]:
         return self.backend.list_keys(prefix)
 
 
@@ -117,8 +119,7 @@ def audit_lane(
     provenance_rows = 0
     provenance_bytes = 0
     tier_totals = {
-        str(tier): {"row_count": 0, "part_count": 0, "byte_count": 0, "marker_count": 0}
-        for tier in source.ZOOM_TIERS
+        str(tier): {"row_count": 0, "part_count": 0, "byte_count": 0, "marker_count": 0} for tier in source.ZOOM_TIERS
     }
     verification_receipts: list[dict[str, Any]] = []
 
@@ -136,7 +137,11 @@ def audit_lane(
                 or checkpoint.get("input_manifest_sha256") != contract.manifest_sha256
             ):
                 raise source.BreakdownError(f"audit checkpoint identity mismatch: {product.lane} {month} {phase}")
-            source.validate_checkpoint_objects(store, checkpoint, verify_workers=verify_workers)  # type: ignore[arg-type]
+            source.validate_checkpoint_objects(
+                store,
+                checkpoint,
+                verify_workers=verify_workers,  # type: ignore[arg-type]
+            )
             marker_key = source.verification_marker_key(root, phase, month)
             expected_marker = source._json_bytes(
                 source.checkpoint_verification_marker(
@@ -176,7 +181,10 @@ def audit_lane(
         if set(checkpoint_parts) != set(expected_parts):
             raise source.BreakdownError(f"audit input-part set mismatch: {product.lane} {month}")
         for key, expected in expected_parts.items():
-            if any(checkpoint_parts[key][field] != expected[field] for field in ("row_count", "byte_count", "sha256", "row_digest")):
+            if any(
+                checkpoint_parts[key][field] != expected[field]
+                for field in ("row_count", "byte_count", "sha256", "row_digest")
+            ):
                 raise source.BreakdownError(f"audit raw receipt mismatch: {key!r}")
 
         provenance, base_by_day, stats = source.classify_month(raw_rows, product, contract)
@@ -194,7 +202,14 @@ def audit_lane(
         ):
             if base.get(name) != stats[name]:
                 raise source.BreakdownError(f"audit classification mismatch: {product.lane} {month} {name}")
-        for name in ("input_physical_rows", "eligible_rows", "selected_rows", "superseded_rows", "rejected_rows", "duplicate_group_count"):
+        for name in (
+            "input_physical_rows",
+            "eligible_rows",
+            "selected_rows",
+            "superseded_rows",
+            "rejected_rows",
+            "duplicate_group_count",
+        ):
             aggregate[name] += int(stats[name])
         for multiplicity, count in stats["multiplicity_histogram"].items():
             multiplicities[int(multiplicity)] += int(count)
@@ -263,7 +278,10 @@ def audit_lane(
                 tier_totals[str(tier)]["marker_count"] += 1
         if set(tier_outputs) != expected_tier_output_keys:
             raise source.BreakdownError(f"audit tier output set mismatch: {product.lane} {month}")
-        print(f"lane={product.lane} audit={index}/{len(source.product_months(contract))} month={month}", file=sys.stderr)
+        print(
+            f"lane={product.lane} audit={index}/{len(source.product_months(contract))} month={month}",
+            file=sys.stderr,
+        )
 
     marker_digest = source.lineage_digest(
         f"{receipt['key']}:{receipt['byte_count']}:{receipt['sha256']}" for receipt in verification_receipts

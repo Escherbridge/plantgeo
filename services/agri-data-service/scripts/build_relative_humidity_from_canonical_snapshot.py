@@ -8,11 +8,12 @@ import io
 import json
 import sys
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Final, Mapping, Sequence
+from typing import Any, Final
 
 import boto3  # type: ignore[import-untyped]
 import polars as pl
@@ -601,8 +602,7 @@ def _load_source_month(
     receipts: list[ObjectReceipt] = []
     seen_ids: set[int] = set()
     for summary in ledger_summaries:
-        batch_index = int(summary["cell_batch_index"])
-        ledger_key, _, ledger = _verified_ledger(store, summary)
+        _, _, ledger = _verified_ledger(store, summary)
         part = _source_part_for_ledger(ledger, year=year, month=month_number)
         key = str(part["key"])
         payload = _required_object(store, key)
@@ -1037,8 +1037,7 @@ def _write_month(
             ): observed_day
             for observed_day, table in source.base_by_day.items()
         }
-        for future in as_completed(pending):
-            day_results.append(future.result())
+        day_results.extend(future.result() for future in as_completed(pending))
     day_results.sort(key=lambda item: str(item["day"]))
     base_rows = sum(int(day["base_rows"]) for day in day_results)
     lineage_rows = sum(int(day["physical_input_rows"]) for day in day_results)
@@ -1402,7 +1401,8 @@ def _finalize(
         missing = sorted(listed_source_keys - source_part_keys)
         unexpected = sorted(source_part_keys - listed_source_keys)
         raise BreakdownError(
-            f"source relative-humidity inventory reconciliation failed: missing={missing[:5]}, unexpected={unexpected[:5]}"
+            "source relative-humidity inventory reconciliation failed: "
+            f"missing={missing[:5]}, unexpected={unexpected[:5]}"
         )
     expected = {
         "physical_rows": (physical_rows, EXPECTED_PHYSICAL_ROWS),
@@ -1661,7 +1661,8 @@ def main() -> int:
             not key.endswith(".parquet") for key, _ in source_inventory
         ):
             raise BreakdownError(
-                f"source relative-humidity prefix has {len(source_inventory)} objects, expected {EXPECTED_SOURCE_PARTS} Parquet parts"
+                f"source relative-humidity prefix has {len(source_inventory)} objects, "
+                f"expected {EXPECTED_SOURCE_PARTS} Parquet parts"
             )
         nasa_source, releases = _load_dimensions(store, source_manifest)
         completed_at = datetime.fromisoformat(str(source_completion["completed_at"]))
