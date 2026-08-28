@@ -1140,12 +1140,24 @@ vegetation row is public only when `allowed_client_exposure` is literally `true`
 row rejects the whole envelope as a contract fault instead of being filtered into a plausible
 partial map.
 
-`services/parquet-slider-capabilities.ts` is deliberately fail-closed. The frozen coverage
-response is tier-agnostic, and signal coverage has no product axis, so it cannot demonstrate a
-lane/day/rung combination or a particular signal product. Migrated PostgreSQL rows are removed
-from the public census and no Parquet replacement is advertised until those proof axes land.
-The generic signal reader likewise returns a typed contract refusal because post-limit
-filtering could silently omit the requested product.
+`services/parquet-slider-capabilities.ts` is deliberately fail-closed. Coverage reports each
+reader-schema-backed physical product at z13/z9/z5/z0, including its exact completed-day ranges;
+a composite climate variant or soil depth publishes only over the intersection every required
+product/rung can read. The adapter also pins each physical lane's expected daily, release, or
+static nature because that value controls live-edge gap semantics. Migrated PostgreSQL rows are
+always removed before Parquet replacements are appended, so a missing lane, rung, product, common
+day, nature match, or coverage response withholds the row instead of silently retrying PostgreSQL.
+Dew point and the three NASA wetness products stay catalogue-owned but withheld until canonical
+live schemas and objects exist. The generic signal reader likewise returns a typed contract
+refusal because post-limit filtering could silently omit the requested product.
+
+The census UTC `evaluated_through_day` must equal the PostgreSQL capability clock's
+`serverCurrentDate`; a cache straddling midnight withholds every owned row rather than inventing a
+gap it did not evaluate. Exact storage proof is also not enough by itself: only drought, fire
+detections, vegetation, water gauges, and weather observations currently have end-to-end Parquet
+serving readers. Every other direct or derived catalogue row remains owned and has its PostgreSQL
+capability filtered, but is withheld as `reader_not_parquet` even when its four-rung evidence is
+perfect. That gate prevents a Parquet-derived axis from driving a PostgreSQL-rendered population.
 
 The shared `parquet_ops`/CLI extraction is reconciled at `9553fc8`, on top of the readiness repair
 at `fced1e8`. Production activation at `069ef90` binds the server-only

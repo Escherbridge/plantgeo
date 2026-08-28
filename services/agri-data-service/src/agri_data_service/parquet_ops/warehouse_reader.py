@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Protocol
 
 from agri_data_service.foundation.parquet.paths import (
+    stream_prefix,
     try_parse_absence_marker_path,
     try_parse_completion_marker_path,
     try_parse_partition_path,
@@ -93,9 +94,11 @@ def spatial_support(layer: str, kind: PartitionKind) -> SpatialSupport:
 
 
 class WarehouseListing(Protocol):
-    """What exists: one tier's object keys, and the bytes of one marker."""
+    """What exists: one tier or stream's object keys, and the bytes of one marker."""
 
     def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]: ...
+
+    def iter_stream_keys(self, layer: str, kind: PartitionKind) -> Iterator[str]: ...
 
     def list_keys(
         self,
@@ -140,6 +143,10 @@ class ObjectStoreListing:
             _listing_scope(layer, kind, tier, year=None, month=None),
             max_keys=MAX_LISTED_KEYS_PER_REQUEST,
         )
+
+    def iter_stream_keys(self, layer: str, kind: PartitionKind) -> Iterator[str]:
+        """Yield one stream's layout objects so coverage pays one object-store listing per lane."""
+        yield from self._iter_layout_keys(stream_prefix(layer, kind), max_keys=MAX_LISTED_KEYS_PER_REQUEST)
 
     def _iter_layout_keys(self, scope: str, *, max_keys: int | None) -> Iterator[str]:
         """Yield validated relative keys under one object-store prefix."""

@@ -1,4 +1,4 @@
-"""The whole-warehouse census: tier-agnostic, closed against the live edge, honest about `null`.
+"""The whole-warehouse census: exact per rung, closed at the live edge, honest about `null`.
 
 The golden `coverage.json` is reproduced by the BUILDER, from a warehouse seeded with exactly the
 facts it states -- a renderer fed the golden's own values back cannot fail on anything the builder
@@ -19,10 +19,11 @@ import pytest
 
 from agri_data_service.foundation.parquet.lane_contract import LANE_NATURES
 from agri_data_service.foundation.parquet.paths import validate_layer_slug
-from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS, validate_zoom_tier
 from agri_data_service.parquet_ops import coverage as coverage_module
 from agri_data_service.parquet_ops.coverage import (
     CENSUS_LIST_WORKERS,
+    DEDICATED_SLIDER_PRODUCT_LAYERS,
     CensusLane,
     CoverageCache,
     build_coverage,
@@ -34,6 +35,7 @@ from agri_data_service.parquet_ops.warehouse_reader import ObjectStoreListing
 from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ListedObject
+from agri_data_service.warehouse.parquet.schema import get_stream_schema
 from tests.contract.wire_contract import WireCoverage
 from tests.parquet_ops.fakes import FakeListing, instant
 
@@ -51,22 +53,24 @@ DROUGHT_LANE = CensusLane(
     layer="drought", nature="release_series", kind="observed", cadence_days=7, publication_lag_days=4
 )
 
-#: One whole-tier listing per rung of the published ladder, per lane, per census.
-LISTINGS_PER_CENSUS = 4
-LISTINGS_AFTER_A_REBUILD = 8
+#: One whole-stream listing per physical lane, per census.
+LISTINGS_PER_CENSUS = 1
+LISTINGS_AFTER_A_REBUILD = 2
 
-#: The tier the seeded fixtures write at. The census is tier-agnostic, so one rung proves it.
+#: The tier used by focused single-rung tests.
 SEEDED_TIER: ZoomTier = 13
-
-#: USDM releases the golden's drought span holds at a seven-day cadence, and the count that produced
-#: 138 gap ranges under the rule this suite replaced.
-DROUGHT_RELEASES_IN_THE_GOLDEN = 138
 
 #: Concurrent cold page loads the single-flight test fires at one empty cache.
 CONCURRENT_COLD_LOADS = 4
 
 #: The fixed R2 listing ceiling the cold-path regression protects.
 EXPECTED_CENSUS_LIST_WORKERS: Final = 3
+
+#: Direct and dedicated physical lanes included in one production census.
+EXPECTED_REGISTERED_CENSUS_LANES: Final = 26
+
+#: Every registered physical lane must report all four serving rungs.
+EXPECTED_CENSUS_RUNG_ROWS: Final = EXPECTED_REGISTERED_CENSUS_LANES * len(ZOOM_TIERS)
 
 
 def golden() -> dict[str, object]:
@@ -82,14 +86,20 @@ def test_the_census_renderer_reproduces_the_frozen_payload_byte_for_byte() -> No
             layer=str(lane["layer"]),
             nature=lane["nature"],
             kind=lane["kind"],
+            zoom=validate_zoom_tier(int(lane["zoom"])),
             earliest_day=None if lane["earliest_day"] is None else date.fromisoformat(str(lane["earliest_day"])),
             latest_day=None if lane["latest_day"] is None else date.fromisoformat(str(lane["latest_day"])),
+            published_ranges=tuple(_range(entry) for entry in lane["published_ranges"]),
             gap_ranges=tuple(_range(entry) for entry in lane["gap_ranges"]),
             governed_absence_ranges=tuple(_range(entry) for entry in lane["governed_absence_ranges"]),
         )
         for lane in payload["lanes"]
     )
-    census = WarehouseCoverage(generated_at=instant(str(payload["generated_at"])), lanes=lanes)
+    census = WarehouseCoverage(
+        generated_at=instant(str(payload["generated_at"])),
+        evaluated_through_day=date.fromisoformat(str(payload["evaluated_through_day"])),
+        lanes=lanes,
+    )
 
     assert census.to_wire() == payload
 
@@ -104,19 +114,21 @@ def test_the_census_builder_reproduces_the_frozen_payload_from_a_warehouse_seede
     """
     payload = golden()
     listing = FakeListing()
-    lanes = tuple(_census_lane(entry) for entry in payload["lanes"])
+    lanes_by_layer = {str(entry["layer"]): _census_lane(entry) for entry in payload["lanes"]}
+    lanes = tuple(lanes_by_layer.values())
     written = {
-        lane.layer: _seed_lane(listing, lane=lane, entry=entry)
-        for lane, entry in zip(lanes, payload["lanes"], strict=True)
+        (str(entry["layer"]), int(entry["zoom"])): _seed_lane(
+            listing,
+            lane=lanes_by_layer[str(entry["layer"])],
+            entry=entry,
+        )
+        for entry in payload["lanes"]
     }
 
     census = build_coverage(listing, lanes=lanes, generated_at=instant(str(payload["generated_at"])))
 
     assert census.to_wire() == payload
-    assert written["drought"] == DROUGHT_RELEASES_IN_THE_GOLDEN, (
-        "the drought span holds 138 weekly releases -- the count that reported 138 gap ranges before a "
-        "Wednesday stopped counting as a missed publication"
-    )
+    assert all(written[("signal", tier)] > 0 for tier in ZOOM_TIERS)
 
 
 def test_a_release_series_reports_a_gap_only_where_a_release_was_owed() -> None:
@@ -125,7 +137,7 @@ def test_a_release_series_reports_a_gap_only_where_a_release_was_owed() -> None:
     for day in (date(2026, 7, 7), date(2026, 7, 14), date(2026, 7, 28)):
         listing.write_day("drought", "observed", SEEDED_TIER, day)
 
-    censused = build_lane_coverage(listing, lane=DROUGHT_LANE, today=date(2026, 8, 1))
+    censused = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 8, 1))
 
     assert censused.gap_ranges == (DayRange(first_day=date(2026, 7, 21), last_day=date(2026, 7, 21)),), (
         "the missed release, and none of the eighteen days between publications"
@@ -137,8 +149,8 @@ def test_a_release_series_is_not_late_at_the_live_edge_until_its_publication_lag
     listing = FakeListing()
     listing.write_day("drought", "observed", SEEDED_TIER, date(2026, 8, 18))
 
-    on_time = build_lane_coverage(listing, lane=DROUGHT_LANE, today=date(2026, 8, 25))
-    overdue = build_lane_coverage(listing, lane=DROUGHT_LANE, today=date(2026, 8, 30))
+    on_time = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 8, 25))
+    overdue = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 8, 30))
 
     assert on_time.gap_ranges == ()
     assert overdue.gap_ranges == (DayRange(first_day=date(2026, 8, 25), last_day=date(2026, 8, 25)),)
@@ -150,32 +162,34 @@ def test_a_daily_series_closes_its_gaps_against_today_and_not_against_its_public
     listing.write_day("signal", "observed", SEEDED_TIER, date(2026, 8, 1))
     lagged = CensusLane(layer="signal", nature="daily_series", kind="observed", publication_lag_days=9)
 
-    censused = build_lane_coverage(listing, lane=lagged, today=date(2026, 8, 6))
+    censused = build_lane_coverage(listing, lane=lagged, tier=SEEDED_TIER, today=date(2026, 8, 6))
 
     assert censused.gap_ranges == (DayRange(first_day=date(2026, 8, 2), last_day=date(2026, 8, 6)),)
 
 
 def test_a_lane_that_has_never_been_written_reports_null_bounds_rather_than_a_guessed_day() -> None:
     """`soil-survey` has 238,986 source rows and 0 written objects; the census must say so."""
-    lane = build_lane_coverage(FakeListing(), lane=SOIL_LANE, today=date(2026, 8, 25))
+    lane = build_lane_coverage(FakeListing(), lane=SOIL_LANE, tier=SEEDED_TIER, today=date(2026, 8, 25))
 
     assert lane.earliest_day is None
     assert lane.latest_day is None
+    assert lane.published_ranges == ()
     assert lane.gap_ranges == ()
     assert lane.governed_absence_ranges == ()
 
 
-def test_a_day_counts_as_covered_when_any_published_tier_holds_it() -> None:
-    """Tier-agnostic by contract: per-tier coverage would multiply the census to answer nothing."""
+def test_each_published_tier_reports_only_the_history_that_exact_rung_can_read() -> None:
     listing = FakeListing()
     listing.write_day("signal", "observed", 13, date(2026, 8, 1))
     listing.write_day("signal", "observed", 9, date(2026, 8, 2))
 
-    lane = build_lane_coverage(listing, lane=SIGNAL_LANE, today=date(2026, 8, 2))
+    z13 = build_lane_coverage(listing, lane=SIGNAL_LANE, tier=13, today=date(2026, 8, 2))
+    z9 = build_lane_coverage(listing, lane=SIGNAL_LANE, tier=9, today=date(2026, 8, 2))
 
-    assert lane.earliest_day == date(2026, 8, 1)
-    assert lane.latest_day == date(2026, 8, 2)
-    assert lane.gap_ranges == ()
+    assert (z13.zoom, z13.earliest_day, z13.latest_day) == (13, date(2026, 8, 1), date(2026, 8, 1))
+    assert z13.published_ranges == (DayRange(first_day=date(2026, 8, 1), last_day=date(2026, 8, 1)),)
+    assert z13.gap_ranges == (DayRange(first_day=date(2026, 8, 2), last_day=date(2026, 8, 2)),)
+    assert (z9.zoom, z9.earliest_day, z9.latest_day) == (9, date(2026, 8, 2), date(2026, 8, 2))
 
 
 def test_gaps_and_governed_absences_are_disjoint_runs_closed_against_today() -> None:
@@ -194,7 +208,7 @@ def test_gaps_and_governed_absences_are_disjoint_runs_closed_against_today() -> 
             run_id="run",
         )
 
-    lane = build_lane_coverage(listing, lane=SIGNAL_LANE, today=date(2026, 8, 6))
+    lane = build_lane_coverage(listing, lane=SIGNAL_LANE, tier=13, today=date(2026, 8, 6))
 
     assert lane.latest_day == date(2026, 8, 1)
     assert lane.governed_absence_ranges == (DayRange(first_day=date(2026, 8, 2), last_day=date(2026, 8, 3)),)
@@ -206,9 +220,32 @@ def test_a_half_written_day_is_a_gap_in_the_census_because_nothing_of_it_is_serv
     listing.write_day("signal", "observed", 13, date(2026, 8, 1))
     listing.write_day("signal", "observed", 13, date(2026, 8, 2), complete=False)
 
-    lane = build_lane_coverage(listing, lane=SIGNAL_LANE, today=date(2026, 8, 2))
+    lane = build_lane_coverage(listing, lane=SIGNAL_LANE, tier=13, today=date(2026, 8, 2))
 
     assert lane.latest_day == date(2026, 8, 1)
+    assert lane.published_ranges == (DayRange(first_day=date(2026, 8, 1), last_day=date(2026, 8, 1)),)
+    assert lane.gap_ranges == (DayRange(first_day=date(2026, 8, 2), last_day=date(2026, 8, 2)),)
+
+
+def test_a_conflicting_day_does_not_prove_that_rung_readable() -> None:
+    listing = FakeListing()
+    listing.write_day("signal", "observed", 13, date(2026, 8, 1))
+    listing.write_day("signal", "observed", 13, date(2026, 8, 2))
+    listing.write_absence(
+        "signal",
+        "observed",
+        13,
+        date(2026, 8, 2),
+        reason="conflicting publication",
+        upstream_response="HTTP 200, features: []",
+        recorded_at=instant("2026-08-03T00:00:00Z"),
+        run_id="run",
+    )
+
+    lane = build_lane_coverage(listing, lane=SIGNAL_LANE, tier=13, today=date(2026, 8, 2))
+
+    assert lane.latest_day == date(2026, 8, 1)
+    assert lane.published_ranges == (DayRange(first_day=date(2026, 8, 1), last_day=date(2026, 8, 1)),)
     assert lane.gap_ranges == (DayRange(first_day=date(2026, 8, 2), last_day=date(2026, 8, 2)),)
 
 
@@ -222,7 +259,7 @@ def test_a_static_lookup_reports_its_version_stamp_and_never_a_gap_since_it() ->
     listing.write_day("watersheds", "observed", 13, date(2026, 8, 7))
     lane = CensusLane(layer="watersheds", nature="static_lookup", kind="observed")
 
-    censused = build_lane_coverage(listing, lane=lane, today=date(2026, 8, 25))
+    censused = build_lane_coverage(listing, lane=lane, tier=13, today=date(2026, 8, 25))
 
     assert censused.earliest_day == date(2026, 8, 7)
     assert censused.latest_day == date(2026, 8, 7)
@@ -243,11 +280,14 @@ def test_a_built_census_satisfies_the_frozen_contract_model() -> None:
     parsed = WireCoverage.model_validate(census.to_wire())
 
     assert parsed.generated_at == "2026-08-25T04:00:00Z"
-    assert [lane.layer for lane in parsed.lanes] == ["signal", "soil-survey"]
-    assert parsed.lanes[1].earliest_day is None
+    assert parsed.evaluated_through_day == "2026-08-25"
+    assert [(lane.layer, lane.zoom) for lane in parsed.lanes] == [
+        (layer, tier) for layer in ("signal", "soil-survey") for tier in ZOOM_TIERS
+    ]
+    assert all(lane.earliest_day is None for lane in parsed.lanes if lane.layer == "soil-survey")
 
 
-def test_the_census_covers_every_registered_lane_and_names_a_real_nature_for_each() -> None:
+def test_the_census_covers_all_direct_lanes_and_every_schema_backed_slider_product() -> None:
     lanes = registered_census_lanes()
 
     assert len(lanes) >= 1
@@ -256,6 +296,19 @@ def test_the_census_covers_every_registered_lane_and_names_a_real_nature_for_eac
         assert validate_layer_slug(lane.layer) == lane.layer
         assert lane.nature in LANE_NATURES
         assert lane.kind == "observed"
+
+    product_lanes = {lane.layer: lane for lane in lanes if lane.layer in DEDICATED_SLIDER_PRODUCT_LAYERS}
+    assert set(product_lanes) == set(DEDICATED_SLIDER_PRODUCT_LAYERS)
+    assert all(lane.nature == "daily_series" for lane in product_lanes.values())
+    assert {lane.layer for lane in lanes if lane.layer in LANE_REGISTRY} == set(LANE_REGISTRY) - {
+        "calendar",
+        "signal",
+    }
+    for layer in DEDICATED_SLIDER_PRODUCT_LAYERS:
+        assert get_stream_schema(layer, "observed").name == layer
+    assert len(lanes) == EXPECTED_REGISTERED_CENSUS_LANES, (
+        "11 direct lanes plus 15 reader-registered dedicated products"
+    )
 
 
 def test_the_census_is_memoized_so_a_burst_of_page_loads_pays_one_listing_walk() -> None:
@@ -268,12 +321,12 @@ def test_the_census_is_memoized_so_a_burst_of_page_loads_pays_one_listing_walk()
     walks_while_fresh = listing.calls
     cache.get(listing, lanes=(SIGNAL_LANE,), now=datetime(2026, 8, 25, 4, 20, tzinfo=UTC))
 
-    assert walks_while_fresh == LISTINGS_PER_CENSUS, "one whole-tier listing per published rung, once"
+    assert walks_while_fresh == LISTINGS_PER_CENSUS, "one whole-stream listing, once"
     assert listing.calls == LISTINGS_AFTER_A_REBUILD, "an expired census is rebuilt rather than served stale"
 
 
-def test_a_cold_census_lists_each_registered_lane_tier_once() -> None:
-    """The production cold path must make exactly the frozen 13-by-4 prefix walk."""
+def test_a_cold_census_lists_each_registered_and_product_lane_tier_once() -> None:
+    """The production cold path makes one exact prefix walk per physical lane and rung."""
     backend = _CountingObjectStoreBackend()
     lanes = registered_census_lanes()
 
@@ -283,24 +336,24 @@ def test_a_cold_census_lists_each_registered_lane_tier_once() -> None:
         now=datetime(2026, 8, 25, 4, 0, tzinfo=UTC),
     )
 
-    assert sorted(backend.prefixes) == sorted(
-        f"warehouse/layer={lane.layer}/kind={lane.kind}/zoom={tier:02d}/" for lane in lanes for tier in ZOOM_TIERS
-    )
+    assert len(backend.prefixes) == EXPECTED_REGISTERED_CENSUS_LANES
+    assert sorted(backend.prefixes) == sorted(f"warehouse/layer={lane.layer}/kind={lane.kind}/" for lane in lanes)
 
 
 def test_a_cold_census_bounds_parallel_r2_listings_without_a_clock() -> None:
     """Three first-wave listings rendezvous; a serial or unbounded implementation fails structurally."""
     listing = _RendezvousListing()
 
-    build_coverage(
+    census = build_coverage(
         listing,
         lanes=registered_census_lanes(),
         generated_at=datetime(2026, 8, 25, 4, 0, tzinfo=UTC),
     )
 
     assert CENSUS_LIST_WORKERS == EXPECTED_CENSUS_LIST_WORKERS
-    assert listing.calls == len(registered_census_lanes()) * len(ZOOM_TIERS)
+    assert listing.calls == len(registered_census_lanes())
     assert listing.max_active == CENSUS_LIST_WORKERS
+    assert len(census.lanes) == EXPECTED_CENSUS_RUNG_ROWS
 
 
 def test_a_burst_of_cold_page_loads_pays_one_census_walk_and_not_one_each() -> None:
@@ -321,16 +374,57 @@ def test_a_burst_of_cold_page_loads_pays_one_census_walk_and_not_one_each() -> N
     assert all(census is answered[0] for census in answered)
 
 
-def test_a_failed_refresh_serves_the_previous_census_rather_than_claiming_an_empty_warehouse() -> None:
-    """A census the warehouse earned must not become a whole-map absence claim because a listing failed."""
+def test_expired_concurrent_callers_block_for_one_fresh_rebuild() -> None:
+    listing = _CountingListing(delay_seconds=0.05)
+    cache = CoverageCache(ttl_seconds=1)
+    previous = cache.get(listing, lanes=(SIGNAL_LANE,), now=datetime(2026, 8, 25, 4, 0, tzinfo=UTC))
+    listing.inner.write_day("signal", "observed", 13, date(2026, 8, 25))
+    expired_at = datetime(2026, 8, 25, 4, 5, tzinfo=UTC)
+
+    with ThreadPoolExecutor(max_workers=CONCURRENT_COLD_LOADS) as pool:
+        answered = [
+            future.result()
+            for future in [
+                pool.submit(cache.get, listing, lanes=(SIGNAL_LANE,), now=expired_at)
+                for _ in range(CONCURRENT_COLD_LOADS)
+            ]
+        ]
+
+    assert listing.calls == LISTINGS_AFTER_A_REBUILD
+    assert all(census is answered[0] and census is not previous for census in answered)
+    assert answered[0].generated_at == expired_at
+
+
+def test_a_failed_refresh_propagates_rather_than_serving_expired_readability_evidence() -> None:
     listing = _CountingListing()
     cache = CoverageCache(ttl_seconds=1)
-    first = cache.get(listing, lanes=(SIGNAL_LANE,), now=datetime(2026, 8, 25, 4, 0, tzinfo=UTC))
+    cache.get(listing, lanes=(SIGNAL_LANE,), now=datetime(2026, 8, 25, 4, 0, tzinfo=UTC))
     listing.fault = ConnectionError("the object store did not answer")
 
-    served = cache.get(listing, lanes=(SIGNAL_LANE,), now=datetime(2026, 8, 25, 4, 5, tzinfo=UTC))
+    with pytest.raises(ConnectionError, match="did not answer"):
+        cache.get(listing, lanes=(SIGNAL_LANE,), now=datetime(2026, 8, 25, 4, 5, tzinfo=UTC))
 
-    assert served is first, "the answer carries its own `generated_at`, so its age is stated rather than hidden"
+
+def test_expired_concurrent_callers_share_one_failed_refresh_and_none_receive_stale_evidence() -> None:
+    listing = _CountingListing(delay_seconds=0.05)
+    cache = CoverageCache(ttl_seconds=1)
+    cache.get(listing, lanes=(SIGNAL_LANE,), now=datetime(2026, 8, 25, 4, 0, tzinfo=UTC))
+    listing.fault = ConnectionError("the object store did not answer")
+    expired_at = datetime(2026, 8, 25, 4, 5, tzinfo=UTC)
+
+    with ThreadPoolExecutor(max_workers=CONCURRENT_COLD_LOADS) as pool:
+        futures = [
+            pool.submit(cache.get, listing, lanes=(SIGNAL_LANE,), now=expired_at) for _ in range(CONCURRENT_COLD_LOADS)
+        ]
+
+    failures: list[ConnectionError] = []
+    for future in futures:
+        with pytest.raises(ConnectionError, match="did not answer") as raised:
+            future.result()
+        failures.append(raised.value)
+
+    assert listing.calls == LISTINGS_AFTER_A_REBUILD, "one initial census and one shared failed refresh"
+    assert all(failure is failures[0] for failure in failures)
 
 
 def test_a_first_census_that_fails_raises_rather_than_inventing_an_empty_one() -> None:
@@ -358,8 +452,10 @@ def test_every_registered_lane_carries_its_own_cadence_and_publication_lag_into_
     """The gap rule is the lane's own rhythm, so a census that guessed it would report false gaps."""
     lanes = {lane.layer: lane for lane in registered_census_lanes()}
 
-    for slug, lane in lanes.items():
-        registration = LANE_REGISTRY[slug]
+    for slug, registration in LANE_REGISTRY.items():
+        if slug in {"calendar", "signal"}:
+            continue
+        lane = lanes[slug]
         assert (lane.cadence_days, lane.publication_lag_days) == (
             registration.cadence_days,
             registration.publication_lag_days,
@@ -390,6 +486,7 @@ def _seed_lane(listing: FakeListing, *, lane: CensusLane, entry: object) -> int:
         return 0
     earliest = date.fromisoformat(str(entry["earliest_day"]))
     latest = date.fromisoformat(str(entry["latest_day"]))
+    tier = validate_zoom_tier(int(entry["zoom"]))
     absent = _days_in(entry["governed_absence_ranges"])
     unwritten = _days_in(entry["gap_ranges"]) | absent
     step = timedelta(days=lane.cadence_days)
@@ -397,14 +494,14 @@ def _seed_lane(listing: FakeListing, *, lane: CensusLane, entry: object) -> int:
     day = earliest
     while day <= latest:
         if day not in unwritten:
-            listing.write_day(lane.layer, lane.kind, SEEDED_TIER, day)
+            listing.write_day(lane.layer, lane.kind, tier, day)
             written += 1
         day += step
     for day in sorted(absent):
         listing.write_absence(
             lane.layer,
             lane.kind,
-            SEEDED_TIER,
+            tier,
             day,
             reason="upstream published no scenes for this day",
             upstream_response="HTTP 200, features: []",
@@ -447,6 +544,11 @@ class _CountingListing:
         self._before_list()
         yield from self.inner.iter_tier_keys(layer, kind, tier)
 
+    def iter_stream_keys(self, layer: str, kind: PartitionKind) -> Iterator[str]:
+        """Count one whole-stream walk, optionally holding it open so cold callers overlap."""
+        self._before_list()
+        yield from self.inner.iter_stream_keys(layer, kind)
+
     def list_keys(
         self,
         layer: str,
@@ -466,10 +568,10 @@ class _CountingListing:
             self.calls += 1
             fault = self.fault
             delay_seconds = self.delay_seconds
-        if fault is not None:
-            raise fault
         if delay_seconds:
             time.sleep(delay_seconds)
+        if fault is not None:
+            raise fault
 
     def read_object(self, relative_key: str) -> bytes | None:
         """Delegate to the wrapped fake."""
@@ -514,6 +616,21 @@ class _RendezvousListing(FakeListing):
 
     def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]:
         del layer, kind, tier
+        with self._lock:
+            call = self.calls
+            self.calls += 1
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            if call < CENSUS_LIST_WORKERS:
+                self._first_wave.wait(timeout=2)
+            yield from ()
+        finally:
+            with self._lock:
+                self.active -= 1
+
+    def iter_stream_keys(self, layer: str, kind: PartitionKind) -> Iterator[str]:
+        del layer, kind
         with self._lock:
             call = self.calls
             self.calls += 1

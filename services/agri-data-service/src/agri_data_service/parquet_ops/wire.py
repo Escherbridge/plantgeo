@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.parquet.lane_contract import LaneNature
     from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 #: Route segments and query parameter names, spelled ONCE on the serving side.
 #: `tests/interface/test_wire_agreement.py` compares every name here against
@@ -189,13 +190,15 @@ class DayRange:
 
 @dataclass(frozen=True, slots=True)
 class LaneCoverage:
-    """One lane's census. Tier-agnostic: a day counts as covered when any published tier holds it."""
+    """One physical lane and zoom rung's independently readable census evidence."""
 
     layer: str
     nature: LaneNature
     kind: PartitionKind
+    zoom: ZoomTier
     earliest_day: date | None
     latest_day: date | None
+    published_ranges: tuple[DayRange, ...]
     gap_ranges: tuple[DayRange, ...]
     governed_absence_ranges: tuple[DayRange, ...]
 
@@ -205,8 +208,10 @@ class LaneCoverage:
             "layer": self.layer,
             "nature": self.nature,
             "kind": self.kind,
+            "zoom": self.zoom,
             "earliest_day": None if self.earliest_day is None else render_day(self.earliest_day),
             "latest_day": None if self.latest_day is None else render_day(self.latest_day),
+            "published_ranges": [entry.to_wire() for entry in self.published_ranges],
             "gap_ranges": [entry.to_wire() for entry in self.gap_ranges],
             "governed_absence_ranges": [entry.to_wire() for entry in self.governed_absence_ranges],
         }
@@ -217,12 +222,14 @@ class WarehouseCoverage:
     """The whole-warehouse census the slider's capability rows are built from."""
 
     generated_at: datetime
+    evaluated_through_day: date
     lanes: tuple[LaneCoverage, ...]
 
     def to_wire(self) -> dict[str, object]:
         """Render the census."""
         return {
             "generated_at": render_instant(self.generated_at),
+            "evaluated_through_day": render_day(self.evaluated_through_day),
             "lanes": [lane.to_wire() for lane in self.lanes],
         }
 

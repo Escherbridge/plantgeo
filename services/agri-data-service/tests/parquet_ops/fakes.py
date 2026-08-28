@@ -16,6 +16,7 @@ from agri_data_service.foundation.parquet.paths import (
     completion_marker_path,
     month_prefix,
     partition_path,
+    stream_prefix,
     year_prefix,
     zoom_prefix,
 )
@@ -41,6 +42,11 @@ class FakeListing:
     def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]:
         """Yield every held key under one whole-tier prefix, sorted."""
         prefix = zoom_prefix(layer, kind, tier)
+        yield from sorted(key for key in self.keys if key.startswith(prefix))
+
+    def iter_stream_keys(self, layer: str, kind: PartitionKind) -> Iterator[str]:
+        """Yield every held layout key under one physical stream."""
+        prefix = stream_prefix(layer, kind)
         yield from sorted(key for key in self.keys if key.startswith(prefix))
 
     def list_keys(

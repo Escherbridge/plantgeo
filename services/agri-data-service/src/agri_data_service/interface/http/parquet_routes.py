@@ -77,10 +77,10 @@ _REFUSAL_HTTP_STATUS: Final[dict[str, int]] = {
     "census_budget_exhausted": HTTP_CONFLICT,
 }
 
-#: Under the client's own 15 s row budget and 20 s coverage budget, so the server's error wins the
+#: Under the client's own 15 s row budget and 30 s coverage budget, so the server's error wins the
 #: race and the caller learns which read failed rather than only that something timed out.
 ROW_READ_TIMEOUT_SECONDS: Final = 14.0
-COVERAGE_TIMEOUT_SECONDS: Final = 19.0
+COVERAGE_TIMEOUT_SECONDS: Final = 29.0
 
 _coverage_cache = CoverageCache()
 
@@ -166,7 +166,7 @@ async def read_release(request: Request) -> HTTPResponse:
 
 @parquet_bp.get(f"/{ROUTE_COVERAGE}")
 async def read_coverage(_request: Request) -> HTTPResponse:
-    """The whole warehouse's census: one entry per lane, no viewport and no tier."""
+    """The slider census: one entry per physical lane and rung, with no viewport."""
 
     def work() -> dict[str, object]:
         census = _coverage_cache.get(open_listing(), lanes=registered_census_lanes(), now=datetime.now(UTC))

@@ -76,14 +76,14 @@ const PARQUET_SERVICE_DEVELOPMENT_URL = "http://localhost:8000";
  */
 const MAX_ROW_RESPONSE_BYTES = 16 * 1024 * 1024;
 
-/** Coverage carries no geometry -- one census row per lane -- so it needs a fraction of the room. */
+/** Coverage carries no geometry -- one compact census row per lane/rung -- so 4 MiB is ample. */
 const MAX_COVERAGE_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 /** A DuckDB scan over one day's partitions, with headroom for a cold object-store read. */
 const ROW_READ_TIMEOUT_MS = 15_000;
 
 /** Coverage walks the whole warehouse's object listing; the memoization below is what hides its cost. */
-const COVERAGE_TIMEOUT_MS = 20_000;
+const COVERAGE_TIMEOUT_MS = 30_000;
 
 /**
  * How long one coverage answer is reused, in seconds.
@@ -173,20 +173,24 @@ export interface ParquetLatestReleaseRequest extends ParquetReadBase {
   asOfDay: string;
 }
 
-/** What one lane has and has not written, over its whole published span. */
+/** What one physical lane/rung has and has not written, over its whole published span. */
 export interface ParquetLaneCoverage {
   /** Layer slug as the partition path spells it. */
   layer: string;
   nature: ParquetLaneNature;
   kind: ParquetPartitionKind;
+  /** Exact frozen-layout rung this evidence describes; evidence from another rung cannot substitute. */
+  zoomTier: ZoomTier;
   /** Oldest day this lane holds, `YYYY-MM-DD`; null when it has written nothing at all. */
   earliestDay: string | null;
   /** Newest day this lane holds, `YYYY-MM-DD`; null when it has written nothing at all. */
   latestDay: string | null;
+  /** Exact runs with complete, non-conflicting Parquet parts on this physical rung. */
+  publishedRanges: DayRange[];
   /**
-   * Runs of days inside the lane's own span covered by neither a part file nor an absence marker.
-   * Ranges rather than days for the reason `SliderLayerCapability.coverageGaps` is: a four-year
-   * lane's day list is noise, and a run is what a reader can act on.
+   * Owed publication days through the census's `evaluatedThroughDay` covered by neither a complete
+   * part nor a governed absence. Release cadence and publication lag are applied upstream; callers
+   * must not fill every calendar day after a release as though it were owed.
    */
   gapRanges: DayRange[];
   /**
@@ -196,13 +200,15 @@ export interface ParquetLaneCoverage {
   governedAbsenceRanges: DayRange[];
 }
 
-/** The whole warehouse's census: one entry per lane, no viewport and no tier. */
+/** The whole warehouse's census: one entry per physical lane/rung, with no viewport. */
 export interface ParquetWarehouseCoverage {
   /**
    * When the service computed this census, as an opaque ISO-8601 instant. Load-bearing because the
    * answer is memoized for minutes: a caller captioning it as "now" would overstate its freshness.
    */
   generatedAt: string;
+  /** UTC day through which cadence, absence, and gap obligations were evaluated. */
+  evaluatedThroughDay: string;
   lanes: ParquetLaneCoverage[];
 }
 
@@ -226,8 +232,8 @@ export interface ParquetWarehouseCoverage {
  *  6. The window read answers EVERY day in the closed range, in ascending order -- a gap day is
  *     stated as `day_not_written`, never omitted. `decodeWindow` enforces exactly that, because a
  *     short array would read as "the missing days are fine".
- *  7. Coverage is per lane and tier-agnostic: a day counts as covered when any published tier holds
- *     it. Per-tier coverage would multiply the census by four to answer a question no caller asks.
+ *  7. Coverage is per physical lane AND per tier. A part on z13 never proves z9/z5/z0 readable,
+ *     and a generic signal part never proves one derived product or depth exists.
  * ------------------------------------------------------------------------- */
 
 const WIRE = {
@@ -285,17 +291,21 @@ const wireEnvelopeSchema = z.discriminatedUnion("state", [
 
 const wireWindowSchema = z.object({ days: z.array(wireEnvelopeSchema) });
 
-const wireDayRangeSchema = z.object({ from: z.string(), to: z.string() });
+const wireCalendarDaySchema = z.string().regex(CALENDAR_DAY_PATTERN);
+const wireDayRangeSchema = z.object({ from: wireCalendarDaySchema, to: wireCalendarDaySchema });
 
 const wireCoverageSchema = z.object({
   generated_at: z.string(),
+  evaluated_through_day: wireCalendarDaySchema,
   lanes: z.array(
     z.object({
       layer: z.string(),
       nature: z.enum(PARQUET_LANE_NATURES),
       kind: z.enum(PARQUET_PARTITION_KINDS),
-      earliest_day: z.string().nullable(),
-      latest_day: z.string().nullable(),
+      zoom: z.union([z.literal(0), z.literal(5), z.literal(9), z.literal(13)]),
+      earliest_day: wireCalendarDaySchema.nullable(),
+      latest_day: wireCalendarDaySchema.nullable(),
+      published_ranges: z.array(wireDayRangeSchema),
       gap_ranges: z.array(wireDayRangeSchema),
       governed_absence_ranges: z.array(wireDayRangeSchema),
     })
@@ -400,12 +410,15 @@ function decodeCoverage(payload: unknown): ParquetWarehouseCoverage {
   }
   return {
     generatedAt: parsed.data.generated_at,
+    evaluatedThroughDay: parsed.data.evaluated_through_day,
     lanes: parsed.data.lanes.map((lane) => ({
       layer: lane.layer,
       nature: lane.nature,
       kind: lane.kind,
+      zoomTier: lane.zoom,
       earliestDay: lane.earliest_day,
       latestDay: lane.latest_day,
+      publishedRanges: lane.published_ranges,
       gapRanges: lane.gap_ranges,
       governedAbsenceRanges: lane.governed_absence_ranges,
     })),
@@ -513,9 +526,9 @@ export async function getParquetLatestRelease(
 /**
  * The whole warehouse's coverage census.
  *
- * No bbox and no zoom, deliberately and permanently: this one answer is shared by every viewport,
- * and the Next.js data cache below is what makes it cheap. Adding either axis would fragment the
- * cache into an entry per viewport, which is the entire cost this shape avoids.
+ * No bbox or requested zoom: this one answer includes every rung and is shared by every viewport.
+ * Filtering the request on either axis would fragment the cache and let one rung stand in for the
+ * others at the capability gate.
  */
 export async function getParquetWarehouseCoverage(): Promise<ParquetWarehouseCoverage> {
   const url = endpoint(WIRE.routes.coverage);
