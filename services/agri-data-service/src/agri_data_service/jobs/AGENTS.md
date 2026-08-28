@@ -361,6 +361,19 @@ holds. On the second, the shard is **released** on the same fenced `defer_work_i
 uses (`_release_in_hand`), so it is immediately claimable, costs no retry budget, and the slice ends with
 `stop_reason: shutdown_requested` and a `released` count in its summary.
 
+`JobInvocation.shutdown_requested` exposes that same flag to a handler which owns a genuinely long
+external operation. The unified executor's subprocess handler polls it alongside process exit, timeout,
+and lease heartbeat, then terminates (and boundedly kills) the child before yielding its checkpoint. Most
+handlers should still return one small unit at a time and let the drive loop observe shutdown between
+calls; the callback exists so a two-hour child process does not make that boundary unreachable.
+
+`jobs-pulse` is itself such a child under the unified executor. It installs one `shutdown_signal()` at
+its process boundary and threads the resulting flag through `dispatch_lane`, both matview triggers, and
+`run_archive_definition_slice`; the archive helper reuses an existing flag instead of replacing signal
+handlers inside the nested call. Thus the parent's SIGTERM reaches the inner fenced shard and gives
+`run_job_slice` a chance to release at its next transaction-safe boundary before the bounded kill
+fallback; it does not cancel a handler already inside one database or HTTP operation.
+
 What this buys: before it, a SIGTERM had no Python-level handler at all, so the container simply ended
 and left its shard `status = 'running'` behind a lease of up to `lease_seconds` — 2400s on the archive
 lanes against a 30-minute cron. The next tick could neither claim it (`lease_expires_at <= now()` is
@@ -368,10 +381,11 @@ false) nor reap it (`lease_expires_at < now()` is false); it worked a different 
 looking healthy, and only the tick *after* that recovered the shard. Up to an hour of a lane's frontier,
 lost per redeploy or per container eviction, with nothing recording that it happened.
 
-What it does **not** buy: the flag is read between units of work, not inside one. A SIGTERM that lands
-mid-chunk is still followed by SIGKILL before that chunk returns, and that case still relies on the
-reaper. Signals are *not* wired to `task.cancel()` — cancelling a handler mid-write is a worse trade
-than waiting for it to return.
+What it does **not** buy by default: ordinary handlers still read the flag between units of work, not
+inside one. A SIGTERM that lands mid-chunk is followed by SIGKILL unless that handler deliberately polls
+`shutdown_requested`, and that case still relies on the reaper. Signals are *not* wired to
+`task.cancel()` — cancelling a handler mid-write is a worse trade than waiting for a transaction-safe
+boundary or an external-process handler terminating its own child.
 
 `asyncio.CancelledError` is handled for the same reason and lands in the same place. It derives from
 `BaseException`, so `_invoke_handler`'s `except Exception` never saw it and an externally-cancelled slice

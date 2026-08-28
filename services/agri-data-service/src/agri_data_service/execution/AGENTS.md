@@ -1682,3 +1682,87 @@ both lanes fully settled and nothing to plan, before `validate-streams`. Against
 `--time-budget-seconds 600` that is roughly half the tick spent on maintenance in the steady state, so
 the budget check before each step — and `validate-streams`' last position — are what keep a slow lane
 from starving the next tick rather than a nicety.
+
+## `job_executor_service.py` -- the durable scheduler and cutover boundary
+
+`agri-service ops jobs-executor` is the steady-state owner that replaces Railway's cron fan-out. It is a
+continuous service, not a cron: code declares every migration input's cadence, publication lag source,
+work class, legacy Railway owner, and exact argv. The process leader is elected with a PostgreSQL
+session advisory lock. One `AsyncConnection` is checked out outside the tick and the tick's
+`AsyncSession` is bound to it, so commits and rollbacks cannot switch the physical backend that owns the
+lock. Unlock must return `true`; false or an exception invalidates the connection and fails the tick, but
+never masks a primary tick exception. Scheduled command runs reuse `agri.job_definition`, `job_run`,
+`job_work_item`, fenced leases, retry/backoff, checkpoints, and `job_event`; no scheduler table or second
+persistence system exists. A SQLAlchemy failure or an invalidated pinned connection is fatal to the whole
+tick: after the backend holding leadership disappears, the executor cannot isolate that lane and continue
+another due command under a replacement connection.
+
+The default is shadow. With `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` unset, the process emits the full lane
+inventory and each executable lane's current cadence bucket, command, and cutover blockers, but creates
+no definition, run, work item, or layer data. This is a schedule prediction only: shadow mode does not
+read source watermarks and does not claim source parity. A lane may write only when both activation
+variables agree:
+
+- `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` contains its lane id.
+- `PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS` contains every declared
+  `<lane>=<legacy-service>:disabled-and-no-run-in-flight` token exactly.
+
+Acknowledgements are explicit operator assertions, not machine-enforced evidence of Railway parity,
+service retirement, or absence of an in-flight run. Missing, extra, duplicate, unknown, and stale tokens
+fail closed. A lane may require several acknowledgements. The generic water Parquet lane requires both
+`plantgeo-ingest-cron` and `plantgeo-water-gauges-forward`; the direct water migration input remains
+non-executable, and both paths also declare a mutual conflict. Fire keeps a separate direct-forward lane,
+while its generic historical lane carries the registry's writer ceiling so their date windows cannot
+overlap.
+
+The roles actually chained by `plantgeo-ingest-cron` form one atomic cutover group: every executable
+replacement for its per-source PostgreSQL ingestion, maintenance, durable job, and per-stream Parquet
+publication must activate together. The previously unscheduled watershed source is visible and safely
+activatable outside that legacy-owner group. SoilGrids and the one-shot soil-moisture load stay visible
+but non-executable; activation refuses them instead of inventing a substitute runtime.
+
+Active registration is insert-only: `ON CONFLICT (name, version) DO NOTHING`, followed by a read of the
+exact row. An existing `enabled=false` row is reported paused and is never upserted. This avoids
+`ensure_job_definition`, whose reconciliation of `enabled` would otherwise silently undo an operator
+pause on every restart (or in a race between the initial read and an operator's pause). Shadow ticks do
+not register definitions at all.
+
+Each cadence bucket is a `logical_run_key`; opening it and its single command shard is idempotent. An open
+older run resumes before a newer bucket opens, so one lane cannot overlap itself. The command is resolved
+again from the code registry inside the handler, never from a stored shell string, and it runs without a
+shell. A pre-command `ready` checkpoint makes the outer shard resumable across a crash before launch; a
+heartbeat then holds the fenced lease. Non-zero exit and timeout use the ledger's bounded exponential
+retry and dead-letter paths, and a standing failed run blocks new cadence buckets for that lane until an
+operator clears its dead-lettered item. `jobs-pulse` is never invoked as an unfiltered macro: matview
+refresh, strategy-MV refresh, both archive workers, reconciliation, gap planning, and validation are
+distinct scheduler definitions, so a known matview dead letter cannot consume another lane's retries.
+PostgreSQL `ingest-all` is likewise split into one source or geometry command per definition. The former
+vegetation catch-up remains an independent incremental `vegetation-catch-up` command, which drains and
+acknowledges the fingerprinted pending queue under its publication barrier. It sits beside raw
+`postgres-vegetation`/`ingest-ndvi`; generic `parquet-vegetation` remains responsible for history and
+does not pretend to satisfy the pending-queue contract. Drought forward ingestion polls daily at 12Z:
+the registry's four-day publication lag means a Tuesday-only poll can run before a release settles and
+then defer that release for a full week, while a daily idempotent poll bounds detection to one day.
+
+Every registered Parquet stream has its own `parquet-gap-fill --layer <slug>
+--max-days-per-lane 1` command. Publication lag, publication cadence, and any writer ceiling come from
+`lane_registry.py`; the hourly executor cadence offers bounded backlog turns and does not redefine the
+source publication clock. Command side effects remain idempotent because the underlying ingestion and
+Parquet writers retain their own source keys and advisory locks; the outer checkpoint does not fabricate
+exactly-once execution across an operating-system process kill.
+
+Fairness is across ownership classes: each bounded scheduler tick alternates an oldest-served
+incremental lane with an oldest-served backlog lane. The commands retain the data-ordering rule they
+already own (`parquet-gap-fill` is newest-first and round-robin; archive work-item priorities are
+newest-first), so current publications advance while historical debt continues to receive turns.
+`PLANTGEO_JOB_EXECUTOR_MAX_LANES_PER_TICK` refuses values below two so both classes can receive a turn.
+The service keeps one loader pool for its lifetime and pins one connection per tick, emits tick-start and
+leader events immediately, and emits an error-severity terminal event whenever a continuous tick contains
+a failed lane. While a command runs, its handler observes process exit, service shutdown, timeout, and
+fence heartbeat concurrently; shutdown or fence loss terminates the child, with a bounded kill fallback,
+instead of waiting out the command lease. A `jobs-pulse` child installs one process-level shutdown signal
+and passes it through dispatch, matview triggers, archive slices, and `run_job_slice`; outer command
+timeouts exceed each inner definition's maximum slice budget by a cleanup margin, so normal inner work is
+not killed merely because its parent used the old 900-second default. The inner signal remains
+cooperative: a handler already inside one unit releases only when it returns to a transaction-safe
+boundary, after which the parent's bounded kill is still the final fallback.

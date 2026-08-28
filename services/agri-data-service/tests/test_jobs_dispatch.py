@@ -37,7 +37,7 @@ from agri_data_service.jobs.strategy_mv_refresh import (
     STRATEGY_MV_REFRESH_DEFINITION_NAME,
     STRATEGY_MV_REFRESH_HANDLER_TOKEN,
 )
-from agri_data_service.jobs.worker import JobRunError, JobSliceSummary
+from agri_data_service.jobs.worker import JobRunError, JobSliceSummary, ShutdownSignal
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
@@ -173,6 +173,41 @@ async def test_dispatch_runs_a_registered_lanes_own_trigger_and_returns_its_real
     assert outcome.summary.job_run_id == _RUN_ID
     assert trigger.calls == [(session, "test")]
     assert outcome.to_payload()["result"] == _summary().to_summary()
+
+
+async def test_dispatch_threads_an_existing_shutdown_signal_into_the_lane_trigger() -> None:
+    stop = ShutdownSignal()
+    observed: list[object] = []
+
+    async def _trigger(
+        session: object,
+        *,
+        requested_by: str,
+        stop: ShutdownSignal | None = None,
+    ) -> JobSliceSummary:
+        observed.extend((session, requested_by, stop))
+        return _summary()
+
+    registry = LaneDispatchRegistry()
+    register_dispatchable_lane(
+        lane_id=_FAKE_LANE,
+        handler_token=_FAKE_TOKEN,
+        trigger=_trigger,
+        description="shutdown-aware test lane",
+        registry=registry,
+    )
+    session = _Session(row=_PauseRow(definition_count=1, any_version_enabled=True))
+
+    await dispatch_lane(
+        session,  # type: ignore[arg-type]
+        _FAKE_LANE,
+        requested_by="test",
+        registry=registry,
+        handlers=_handlers(_FAKE_TOKEN),
+        stop=stop,
+    )
+
+    assert observed == [session, "test", stop]
 
 
 async def test_dispatch_is_general_and_carries_no_per_lane_branch() -> None:

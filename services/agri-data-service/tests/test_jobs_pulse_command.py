@@ -35,6 +35,7 @@ from agri_data_service.execution.jobs_pulse_command import (
     PulseSummary,
     _parse_lane_filter,
     _plan_maintenance_steps,
+    _run_jobs_pulse_process,
     jobs_pulse,
     known_lane_tokens,
     run_jobs_pulse,
@@ -46,7 +47,7 @@ from agri_data_service.jobs.dispatch import (
     LanePauseState,
     register_dispatchable_lane,
 )
-from agri_data_service.jobs.worker import JobSliceSummary
+from agri_data_service.jobs.worker import JobSliceSummary, ShutdownSignal
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
@@ -333,6 +334,77 @@ async def test_a_paused_durable_definition_is_skipped_and_no_slice_runs(monkeypa
     assert len(summary.lanes) == 1
     assert summary.lanes[0].outcome == "paused"
     assert summary.failed is False
+
+
+async def test_process_shutdown_signal_reaches_dispatchable_and_archive_slices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop = ShutdownSignal()
+    _patch_plan(
+        monkeypatch,
+        _plan(dispatchable=[_dispatchable("matview-refresh")], durable=[_durable("firms-archive")]),
+    )
+    observed: list[object] = []
+
+    async def _fake_dispatch(
+        session: object,
+        lane_id: str,
+        *,
+        requested_by: str,
+        **kwargs: object,
+    ) -> DispatchOutcome:
+        observed.append(kwargs["stop"])
+        return DispatchOutcome(lane_id=lane_id, state="dispatched", summary=_slice_summary(lane_id))
+
+    async def _fake_slice(
+        *,
+        definition_name: str,
+        worker_id: str,
+        budget_seconds: float | None,
+        stop: object,
+    ) -> JobSliceSummary:
+        observed.append(stop)
+        return _slice_summary(definition_name)
+
+    monkeypatch.setattr(jobs_pulse_command, "dispatch_lane", _fake_dispatch)
+    monkeypatch.setattr(jobs_pulse_command, "run_archive_definition_slice", _fake_slice)
+
+    await run_jobs_pulse(
+        lane_filter=None,
+        time_budget_seconds=600,
+        worker_id="w",
+        include_maintenance=False,
+        stop=stop,
+    )
+
+    assert observed == [stop, stop]
+
+
+async def test_jobs_pulse_process_installs_exactly_one_shared_shutdown_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop = ShutdownSignal()
+    captured: dict[str, object] = {}
+
+    @asynccontextmanager
+    async def _signal() -> AsyncIterator[object]:
+        yield stop
+
+    async def _pulse(**kwargs: object) -> PulseSummary:
+        captured.update(kwargs)
+        return PulseSummary(lanes=())
+
+    monkeypatch.setattr(jobs_pulse_command, "shutdown_signal", _signal)
+    monkeypatch.setattr(jobs_pulse_command, "run_jobs_pulse", _pulse)
+
+    await _run_jobs_pulse_process(
+        lane_filter=frozenset({"matview-refresh"}),
+        time_budget_seconds=600,
+        worker_id="w",
+        include_maintenance=False,
+    )
+
+    assert captured["stop"] is stop
 
 
 # --- run_jobs_pulse: per-lane failure isolation ----------------------------------------------------
