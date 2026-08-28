@@ -16,7 +16,7 @@ because this lane has no multi-shard plan to fan out: one work item refreshes al
 
 GUARDRAIL: this lane touches ONLY the three `geo.mv_strategy_recommendations_*` views named in
 `STRATEGY_RECOMMENDATION_VIEWS`. It must never be widened to cover `agri.mv_forecast_ml_daily_serving`
--- that matview has its own reviewed refresher (`cli.py`'s `forecast-refresh-ml-daily`, over
+-- that matview has its own reviewed refresher (`agri-service forecast refresh-ml-daily`, over
 `FORECAST_MV_REFRESH_DATABASE_URL`) and this lane is not a replacement for it.
 
 OBSERVABILITY PARITY, added alongside `jobs/matview_refresh.py`: every outcome this lane produces is

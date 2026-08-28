@@ -1,23 +1,22 @@
-"""The memory-bounded DuckDB session every serving read runs inside. Spilling is DISABLED.
-
-Layer L4. Ported from `analysis/warehouse_session.py`, which proved these settings against this
-bucket; that module reads `.env` directly and lives outside `src/`, so it cannot be imported here.
-The guard block below is the whole reason this module exists -- see `AGENTS.md` in this directory,
-"Why the memory ceiling is not advisory".
-"""
+"""Memory-bounded DuckDB sessions and process-wide admission for Parquet reads."""
 
 from __future__ import annotations
 
+import asyncio
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 import duckdb
 
-from agri_data_service.interface.http import faults
+from agri_data_service.parquet_ops import faults
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from agri_data_service.config import ObjectStoreCredentials
 
 # A serving process answers several requests at once, so a request's ceiling is a FRACTION of the
@@ -36,6 +35,9 @@ SPILLING_DISABLED: Final = "0GiB"
 # other half is admission control, and this is the number it admits. Process ceiling =
 # SERVING_MAX_CONCURRENT_READS x SERVING_MEMORY_LIMIT, asserted against the declared ceiling below.
 SERVING_MAX_CONCURRENT_READS: Final = 3
+
+# Short enough that contention is reported before the caller's own read budget expires.
+SERVING_SLOT_WAIT_SECONDS: Final = 2.0
 
 # What this container is assumed to be able to give DuckDB, in bytes. **NOT MEASURED against the
 # Railway service's cgroup** -- the only cap the RUNBOOK records is the DATABASE container's 2 GB,
@@ -65,6 +67,13 @@ SERVING_EXTENSION_DIRECTORY: Final = "/opt/duckdb-extensions"
 # defaulted to `America/Denver`, and a session zone is one edit away from moving a timestamp's date.
 SERVING_TIME_ZONE: Final = "UTC"
 
+_read_pool: Final = ThreadPoolExecutor(
+    max_workers=SERVING_MAX_CONCURRENT_READS,
+    thread_name_prefix="parquet-read",
+)
+_read_slot: Final = threading.BoundedSemaphore(SERVING_MAX_CONCURRENT_READS)
+_SLOT_POLL_SECONDS: Final = 0.01
+
 
 @dataclass(frozen=True, slots=True)
 class ServingSession:
@@ -82,7 +91,7 @@ class ServingSession:
         self.connection.close()
 
 
-def open_serving_session(
+def _open_serving_session(
     credentials: ObjectStoreCredentials,
     *,
     prefix: str = "",
@@ -99,6 +108,70 @@ def open_serving_session(
     root = f"s3://{credentials.bucket}"
     inner = prefix.strip("/")
     return ServingSession(connection=connection, bucket_uri=f"{root}/{inner}" if inner else root)
+
+
+async def run_bounded_read[T](
+    work: Callable[[], T],
+    *,
+    operation: str,
+    slot_wait_seconds: float = SERVING_SLOT_WAIT_SECONDS,
+) -> T:
+    """Run synchronous read work while holding one process-wide admission slot."""
+    if not await _acquire_read_slot(slot_wait_seconds):
+        raise faults.serving_at_capacity(
+            operation=operation,
+            concurrent_reads=SERVING_MAX_CONCURRENT_READS,
+        )
+
+    try:
+        future = _read_pool.submit(work)
+    except BaseException:
+        _read_slot.release()
+        raise
+
+    def release_slot(_future: object) -> None:
+        _read_slot.release()
+
+    # Release on the concurrent future, not the asyncio wrapper: cancellation marks the wrapper
+    # done while its DuckDB worker may still own the connection and its memory.
+    future.add_done_callback(release_slot)
+    return await asyncio.wrap_future(future)
+
+
+async def run_serving_read[T](
+    credentials: ObjectStoreCredentials,
+    work: Callable[[ServingSession], T],
+    *,
+    prefix: str = "",
+    operation: str,
+    slot_wait_seconds: float = SERVING_SLOT_WAIT_SECONDS,
+) -> T:
+    """Run one operation in a guarded session acquired only after admission."""
+
+    def with_session() -> T:
+        session = _open_serving_session(credentials, prefix=prefix)
+        try:
+            return work(session)
+        finally:
+            session.close()
+
+    return await run_bounded_read(
+        with_session,
+        operation=operation,
+        slot_wait_seconds=slot_wait_seconds,
+    )
+
+
+async def _acquire_read_slot(wait_seconds: float) -> bool:
+    """Acquire the process-wide gate without blocking the caller's event loop."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + wait_seconds
+    while not _read_slot.acquire(blocking=False):
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(_SLOT_POLL_SECONDS, remaining))
+    return True
 
 
 def open_guarded_connection(

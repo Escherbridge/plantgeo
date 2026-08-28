@@ -11,7 +11,6 @@ import pytest
 import shapefile
 from click.testing import CliRunner
 
-from agri_data_service.cli import cli
 from agri_data_service.config import settings
 from agri_data_service.execution.historical_usdm import (
     USDM_SHAPEFILE_SCHEMA_VERSION,
@@ -27,6 +26,7 @@ from agri_data_service.execution.historical_usdm import (
 )
 from agri_data_service.execution.source_ingestion import SourceDefinition
 from agri_data_service.execution.weather_observations.nasa_power import HistoricalBackfillWindow
+from agri_data_service.interface.cli import cli
 
 EXPECTED_ISSUE_DATE_COUNT = 208
 EXPECTED_POLYGON_COUNT = 2
@@ -294,7 +294,7 @@ def test_usdm_cli_fails_closed_without_any_database_dsn(tmp_path: Path, monkeypa
     monkeypatch.setattr(settings, "local_source_loader_database_url", None)
     monkeypatch.setattr(settings, "database_url", None)
 
-    result = CliRunner().invoke(cli, ["historical-usdm-backfill", "--plan", str(plan_path)])
+    result = CliRunner().invoke(cli, ["data", "historical-usdm-backfill", "--plan", str(plan_path)])
 
     assert result.exit_code != 0
     assert "LOCAL_SOURCE_LOADER_DATABASE_URL" in result.output

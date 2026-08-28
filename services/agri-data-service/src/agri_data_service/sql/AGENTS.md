@@ -40,7 +40,7 @@ layout.
 
 The tree sits under `src/agri_data_service`, so hatchling's
 `packages = ["src/agri_data_service"]` ships it into the wheel and the installed
-`agri-cli` console script can read it. `tests/test_sql_queries_loader.py` asserts
+`agri-service` console script can read it. `tests/test_sql_queries_loader.py` asserts
 that, building a wheel and looking for `sql/db/_loader_smoke.sql` inside it. The
 `.gitkeep` in each package directory keeps the empty ones tracked; delete it once
 the directory holds a real query.

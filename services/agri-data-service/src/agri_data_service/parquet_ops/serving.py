@@ -1,8 +1,4 @@
-"""The four-state resolver: which state one day is in, and the rows behind it.
-
-Layer L4. Everything here is synchronous and bounded; the routes run it off the event loop.
-See `AGENTS.md` in this directory for why a conflict and an unfinished export are not states.
-"""
+"""The four-state resolver: which state one day is in, and the rows behind it."""
 
 from __future__ import annotations
 
@@ -17,9 +13,9 @@ from agri_data_service.foundation.parquet.paths import (
     try_parse_absence_marker_path,
     try_parse_partition_path,
 )
-from agri_data_service.interface.http import faults
-from agri_data_service.interface.http.warehouse_reader import RowRead, day_of_part_key, part_keys_for_day
-from agri_data_service.interface.http.wire import (
+from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops.warehouse_reader import RowRead, day_of_part_key, part_keys_for_day
+from agri_data_service.parquet_ops.wire import (
     AbsenceEvidence,
     DayEnvelope,
     DayNotWritten,
@@ -32,8 +28,8 @@ from agri_data_service.interface.http.wire import (
 if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
-    from agri_data_service.interface.http.request_params import ReadScope
-    from agri_data_service.interface.http.warehouse_reader import PartitionRowReader, WarehouseListing
+    from agri_data_service.parquet_ops.request_params import ReadScope
+    from agri_data_service.parquet_ops.warehouse_reader import PartitionRowReader, WarehouseListing
 
 #: Rows one day read may return before it reports itself truncated.
 DAY_ROW_BUDGET: Final = 40_000
@@ -184,19 +180,14 @@ def read_absence_evidence(listing: WarehouseListing, *, scope: ReadScope, day: d
     key = absence_marker_path(scope.layer, scope.kind, scope.tier, day)
     payload = listing.read_object(key)
     if payload is None:
-        raise faults.ServingRefusalError(
-            "absence_marker_unreadable",
-            f"{scope.layer} {day.isoformat()} was listed as a governed absence and its marker is no longer "
-            "readable; an absence with no evidence is indistinguishable from a silent failure",
-            status=faults.HTTP_SERVICE_UNAVAILABLE,
-        )
+        raise faults.absence_marker_unreadable(layer=scope.layer, day=day.isoformat())
     try:
         absence = GovernedAbsence.from_json_bytes(payload)
     except GovernedAbsenceError as exc:
-        raise faults.ServingRefusalError(
-            "absence_marker_undecodable",
-            f"{scope.layer} {day.isoformat()} carries a governed-absence marker this plane cannot decode: {exc}",
-            status=faults.HTTP_SERVICE_UNAVAILABLE,
+        raise faults.absence_marker_undecodable(
+            layer=scope.layer,
+            day=day.isoformat(),
+            detail=str(exc),
         ) from exc
     return AbsenceEvidence(
         reason=absence.reason,

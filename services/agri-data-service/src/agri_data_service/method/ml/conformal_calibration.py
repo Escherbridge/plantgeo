@@ -103,7 +103,7 @@ class EmptyConformalFoldError(ValueError):
     """Raised when a calibration or held-out fold is empty after availability gating.
 
     A `ValueError` subclass rather than a bespoke base: `execution/analog_ensemble_cli.py`'s
-    `forecast-recalibrate-ndvi` command already catches `ValueError` generically and reports it as
+    `agri-service forecast recalibrate-ndvi` command already catches `ValueError` generically and reports it as
     a `click.ClickException`, so this refusal reaches the operator without that CLI needing to
     know this module exists. Before this guard, an empty fold silently produced margin/coverage
     0.0 with a signed digest -- indistinguishable from a genuine "0% coverage" measurement -- which

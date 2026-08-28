@@ -25,17 +25,17 @@ ways a first run goes sideways.
 
 ## 1. What this service is
 
-`agri-data-service` is a Python CLI (`agri-cli`) plus a small Sanic HTTP service that pulls
+`agri-data-service` is a Python CLI (`agri-service`) plus a small Sanic HTTP service that pulls
 environmental data — fire detections, streamflow, weather, drought, vegetation, sensors — from
 public upstream APIs and lands it in PostgreSQL so the PlantGeo map can serve it. It is not a
-web app you "start" to ingest data; ingestion happens by running individual `agri-cli` commands
+web app you "start" to ingest data; ingestion happens by running individual `agri-service` commands
 (by hand, from a scheduled task, or from a Railway cron container).
 
 ```
 source APIs (NASA FIRMS, USGS NWIS, Open-Meteo, WFIGS, USDM, Sentinel-2, ...)
         |
         v
-  agri-cli ingest-*  /  jobs-*  (this service)
+  agri-service data ingest-*  /  agri-service ops jobs-*  (this service)
         |
         v
   PostgreSQL: geo.* tables (forward/current data) + agri.* tables (lineage, job ledger)
@@ -88,8 +88,8 @@ Related docs, so this file doesn't duplicate them:
   "Resolved N packages" / "Installed N packages" summary. `--all-extras` also pulls the `dev`
   extra (`ruff`, `mypy`, `pytest`, ...) — it is a project extra, not a dependency group, so
   `uv sync` without `--all-extras` (or with `--no-dev`) will silently skip it.
-- Every command in this document is `uv run agri-cli <verb>` — the console script
-  `agri-cli = "agri_data_service.cli:cli"` (`pyproject.toml:49`) only resolves inside that venv.
+- Every command in this document is `uv run agri-service <group> <verb>` — the console script
+  `agri-service = "agri_data_service.interface.cli:cli"` (`pyproject.toml:49`) only resolves inside that venv.
 
 **PostgreSQL — read this before you run `docker compose up`**
 
@@ -178,17 +178,17 @@ no errors. It is safe to re-run.
 ```bash
 cd services/agri-data-service
 DATABASE_URL_SYNC='postgresql://plantgeo_owner:<password>@127.0.0.1:5442/plantgeo' \
-  uv run agri-cli db-upgrade
+  uv run agri-service ops db-upgrade
 ```
 
 ```powershell
 Set-Location services/agri-data-service
 $env:DATABASE_URL_SYNC = 'postgresql://plantgeo_owner:<password>@127.0.0.1:5442/plantgeo'
-uv run agri-cli db-upgrade
+uv run agri-service ops db-upgrade
 ```
 
 Expected: a stream of `INFO  [alembic.runtime.migration] Running upgrade ... -> ...` lines ending
-without an error and returning to the prompt. `uv run agri-cli db-status` afterwards prints the
+without an error and returning to the prompt. `uv run agri-service ops db-status` afterwards prints the
 current revision (Alembic's normal `command.current(verbose=True)` text block, not JSON).
 
 > [!WARNING]
@@ -235,7 +235,7 @@ command somewhere else.
 
 ```bash
 # Nothing to export — .env's DATABASE_URL is used.
-uv run agri-cli ingest-weather
+uv run agri-service data ingest-weather
 
 # Or aim one command at a different database:
 export LOCAL_SOURCE_LOADER_DATABASE_URL='postgresql+asyncpg://plantgeo_owner:<password>@127.0.0.1:5442/plantgeo_scratch'
@@ -285,12 +285,12 @@ export LOCAL_SOURCE_LOADER_DATABASE_URL='postgresql+asyncpg://plantgeo_owner:<pa
 not a loud failure — it quietly targets that default instead. And Pydantic Settings loads `.env`
 **relative to your current working directory** (`config.py:47`,
 `SettingsConfigDict(env_file=".env", ...)`), so which `.env` gets read depends on where you ran
-`agri-cli` from.
+`agri-service` from.
 
 > [!WARNING]
 > **`services/agri-data-service/.env` exists in this working tree and defines
 > `DATABASE_URL_SYNC`.** If you `export`/`$env:` a scratch `DATABASE_URL` to point somewhere safe
-> and then run `make migrate` (or `uv run agri-cli db-upgrade`) from
+> and then run `make migrate` (or `uv run agri-service ops db-upgrade`) from
 > `services/agri-data-service/`, **you migrate whatever `DATABASE_URL_SYNC` names in that `.env`
 > file — not the database `DATABASE_URL` points at.** There is no cross-check between the two
 > variables anywhere in the code, and no verb prints the resolved target before migrating. If that
@@ -428,10 +428,10 @@ export INGEST_BBOX='-125,42,-111,49'    # Pacific Northwest coverage box, ingest
 export DATABASE_URL='postgresql+asyncpg://plantgeo_owner:<owner-password>@127.0.0.1:5442/plantgeo'
 export DATABASE_URL_SYNC='postgresql://plantgeo_owner:<owner-password>@127.0.0.1:5442/plantgeo'
 
-uv run agri-cli db-status          # proves DATABASE_URL_SYNC points where you think
-uv run agri-cli pipeline-status    # proves a loader DSN resolves at all
-uv run agri-cli ingest-weather     # no credential needed; ~150 points; the fastest real write
-uv run agri-cli validate-streams --format markdown --output /tmp/streams.md
+uv run agri-service ops db-status          # proves DATABASE_URL_SYNC points where you think
+uv run agri-service ops pipeline-status    # proves a loader DSN resolves at all
+uv run agri-service data ingest-weather     # no credential needed; ~150 points; the fastest real write
+uv run agri-service ops validate-streams --format markdown --output /tmp/streams.md
 ```
 
 ```powershell
@@ -440,10 +440,10 @@ $env:INGEST_BBOX = '-125,42,-111,49'
 $env:DATABASE_URL = 'postgresql+asyncpg://plantgeo_owner:<owner-password>@127.0.0.1:5442/plantgeo'
 $env:DATABASE_URL_SYNC = 'postgresql://plantgeo_owner:<owner-password>@127.0.0.1:5442/plantgeo'
 
-uv run agri-cli db-status
-uv run agri-cli pipeline-status
-uv run agri-cli ingest-weather
-uv run agri-cli validate-streams --format markdown --output $env:TEMP\streams.md
+uv run agri-service ops db-status
+uv run agri-service ops pipeline-status
+uv run agri-service data ingest-weather
+uv run agri-service ops validate-streams --format markdown --output $env:TEMP\streams.md
 ```
 
 Expected output, in order:
@@ -461,10 +461,10 @@ Expected output, in order:
 
 > [!WARNING]
 > `pipeline-status` **only validates the loader DSN string** — it never opens a connection
-> (`src/agri_data_service/cli.py:2844-2849`). Its other fields (`"state": "inactive"`,
+> (`src/agri_data_service/interface/cli/commands.py:3571`). Its other fields (`"state": "inactive"`,
 > `"active_jobs": 0`, `"preaggregation_forecasts_training": "blocked pending separate
 > implementation and evaluation"`) are **hardcoded literals**, not live checks
-> (`cli.py:2850-2859`). A clean-looking `pipeline-status` output tells you nothing about whether
+> (`interface/cli/commands.py:3581-3591`). A clean-looking `pipeline-status` output tells you nothing about whether
 > your bbox is set, your credentials are valid, your migrations are current, or the database is
 > even reachable. Don't treat it as a general health check.
 
@@ -500,23 +500,23 @@ window size, and a chunk size:
 > `firms-archive` before `NASA_FIRMS_KEY` is set (§5).
 
 ```bash
-uv run agri-cli jobs-plan-lane      --lane streamflow-archive
-uv run agri-cli jobs-reconcile-lane --lane streamflow-archive          # dry run — read the span
-uv run agri-cli jobs-reconcile-lane --lane streamflow-archive --apply  # settles already-landed windows
-uv run agri-cli jobs-run            --lane streamflow-archive          # one bounded slice
-uv run agri-cli jobs-status
+uv run agri-service ops jobs-plan-lane      --lane streamflow-archive
+uv run agri-service ops jobs-reconcile-lane --lane streamflow-archive          # dry run — read the span
+uv run agri-service ops jobs-reconcile-lane --lane streamflow-archive --apply  # settles already-landed windows
+uv run agri-service ops jobs-run            --lane streamflow-archive          # one bounded slice
+uv run agri-service ops jobs-status
 ```
 
 ```powershell
-uv run agri-cli jobs-plan-lane      --lane streamflow-archive
-uv run agri-cli jobs-reconcile-lane --lane streamflow-archive
-uv run agri-cli jobs-reconcile-lane --lane streamflow-archive --apply
-uv run agri-cli jobs-run            --lane streamflow-archive
-uv run agri-cli jobs-status
+uv run agri-service ops jobs-plan-lane      --lane streamflow-archive
+uv run agri-service ops jobs-reconcile-lane --lane streamflow-archive
+uv run agri-service ops jobs-reconcile-lane --lane streamflow-archive --apply
+uv run agri-service ops jobs-run            --lane streamflow-archive
+uv run agri-service ops jobs-status
 ```
 
 **Or, via the repo's own launcher** (sources `.env`, pins the loader DSN to it, exports
-CDS credentials): `./run-backfill.sh jobs-status`, `./run-backfill.sh jobs-plan-lane --lane
+CDS credentials): `./run-backfill.sh ops jobs-status`, `./run-backfill.sh ops jobs-plan-lane --lane
 streamflow-archive`, etc.
 
 What each verb actually does to the ledger:
@@ -569,7 +569,7 @@ the old bash drivers — lives in
 
 ## 8. Full CLI verb inventory
 
-All commands are `uv run agri-cli <verb>` from `services/agri-data-service`. Every `ingest-*`/
+All commands are `uv run agri-service <group> <verb>` from `services/agri-data-service`. Every `ingest-*`/
 `jobs-*` verb prints **one JSON summary line per job to stdout only**; operational logging goes to
 stderr, so a cron log parser can read stdout as a clean JSON-lines stream.
 
@@ -577,18 +577,18 @@ stderr, so a cron log parser can read stdout as a clean JSON-lines stream.
 
 | Verb | Source | Layer written | Credential |
 |---|---|---|---|
-| `ingest-firms` | NASA FIRMS | `fire-detections` | `NASA_FIRMS_KEY` |
-| `ingest-streamflow` | USGS NWIS | `water-gauges` | none |
-| `ingest-weather` | Open-Meteo | `weather-observations` | none |
-| `ingest-fire-perimeters` | WFIGS/NIFC | `fire-perimeters` | none |
-| `ingest-drought [--valid-date] [--replace]` (no `--bbox`) | USDM | `geo.drought_areas` | none |
-| `ingest-ndvi` | Sentinel-2 | `vegetation` | none |
-| `ingest-sensors` | NWS | `sensors` | none |
-| `ingest-evacuation-zones` | Oregon OEM | `evacuation-zones` | none |
-| `ingest-watersheds` | USGS WBD HUC12 | `watersheds` | none — run once, no scheduled cadence |
-| `ingest-mtbs [--release-year N ...]` | MTBS | `burn-severity` | none — no schedule, deliberately excluded from `ingest-all` |
-| `ingest-geometry-repair [--batch-size 200] [--max-features N]` | — | geometry repair pass | none |
-| `ingest-all` | all of the above except watersheds/MTBS | — | needs `NASA_FIRMS_KEY` for its FIRMS leg |
+| `data ingest-firms` | NASA FIRMS | `fire-detections` | `NASA_FIRMS_KEY` |
+| `data ingest-streamflow` | USGS NWIS | `water-gauges` | none |
+| `data ingest-weather` | Open-Meteo | `weather-observations` | none |
+| `data ingest-fire-perimeters` | WFIGS/NIFC | `fire-perimeters` | none |
+| `data ingest-drought [--valid-date] [--replace]` (no `--bbox`) | USDM | `geo.drought_areas` | none |
+| `data ingest-ndvi` | Sentinel-2 | `vegetation` | none |
+| `data ingest-sensors` | NWS | `sensors` | none |
+| `data ingest-evacuation-zones` | Oregon OEM | `evacuation-zones` | none |
+| `data ingest-watersheds` | USGS WBD HUC12 | `watersheds` | none — run once, no scheduled cadence |
+| `data ingest-mtbs [--release-year N ...]` | MTBS | `burn-severity` | none — no schedule, deliberately excluded from `data ingest-all` |
+| `data ingest-geometry-repair [--batch-size 200] [--max-features N]` | — | geometry repair pass | none |
+| `data ingest-all` | all of the above except watersheds/MTBS | — | needs `NASA_FIRMS_KEY` for its FIRMS leg |
 
 `ingest-all` runs FIRMS → streamflow → weather → WFIGS → USDM → NDVI → sensors →
 evacuation-zones, then geometry-repair **last**, sequentially (not concurrently) so one source's
@@ -598,12 +598,12 @@ failure can never mask another's (`src/agri_data_service/ingest/runner.py:43-53`
 
 | Verb | What it does |
 |---|---|
-| `ingest-backfill --source TOKEN [--since ISO] [--until ISO] [--years 2] [--chunk-days 7] [--bbox]` | Walks one source across a date range with no ledger — a bad `--source` prints the valid token list. Accepted tokens: `nws-sensors`, `sentinel2-ndvi`, `nasa-firms-archive`, `usgs-streamflow-archive`. |
-| `ingest-drought-history [--years 2] [--replace]` | Walks USDM release history without the ledger. |
+| `data ingest-backfill --source TOKEN [--since ISO] [--until ISO] [--years 2] [--chunk-days 7] [--bbox]` | Walks one source across a date range with no ledger — a bad `--source` prints the valid token list. Accepted tokens: `nws-sensors`, `sentinel2-ndvi`, `nasa-firms-archive`, `usgs-streamflow-archive`. |
+| `data ingest-drought-history [--years 2] [--replace]` | Walks USDM release history without the ledger. |
 
 ### C. Durable archive lanes (`jobs-*`) — see §7 for the full workflow
 
-`jobs-plan-lane`, `jobs-run`, `jobs-status`, `jobs-reconcile-lane`, `validate-streams`. Registered
+`ops jobs-plan-lane`, `ops jobs-run`, `ops jobs-status`, `ops jobs-reconcile-lane`, `ops validate-streams`. Registered
 lanes: `firms-archive`, `streamflow-archive` only. **Always pass `--lane`, never `--definition`**
 — a hand-spelled definition name joins to nothing while still exiting `0`
 (`src/agri_data_service/ingest/commands.py:610-622`).
@@ -612,21 +612,21 @@ lanes: `firms-archive`, `streamflow-archive` only. **Always pass `--lane`, never
 
 | Family | Verbs | Persists to the warehouse? |
 |---|---|---|
-| NASA POWER | `historical-nasa-backfill`, `-status`, `-materialize-parquet`, `-finalize` | Yes, via `-finalize` |
-| ERA5-Land (CDS) | `historical-era5-backfill`, `-persist`, `-materialize-parquet`, `-finalize` | Yes |
-| Open-Meteo archive | `historical-open-meteo-status`, `-backfill [--max-chunks] [--concurrency 1-4]`, `-persist` | Yes |
-| USDM | `historical-usdm-backfill`, `-finalize`, `-status` | Yes, via `-finalize` |
-| GloFAS | `historical-glofas-status`, `-backfill [--max-chunks] [--concurrency]` | **No — fetch-only, no persist verb exists** |
-| CAMS | `historical-cams-status`, `-backfill [--max-chunks] [--concurrency]` | **No — fetch-only, no persist verb exists** |
-| Ensemble forecast | `forecast-ensemble-status`, `forecast-ensemble-fetch [--max-chunks] [--concurrency]` | **No — hardcoded `"blocked_forecast_method_check"`** |
+| NASA POWER | `data historical-nasa-backfill`, `-status`, `-materialize-parquet`, `-finalize` | Yes, via `-finalize` |
+| ERA5-Land (CDS) | `data historical-era5-backfill`, `-persist`, `-materialize-parquet`, `-finalize` | Yes |
+| Open-Meteo archive | `data historical-open-meteo-status`, `-backfill [--max-chunks] [--concurrency 1-4]`, `-persist` | Yes |
+| USDM | `data historical-usdm-backfill`, `-finalize`, `-status` | Yes, via `-finalize` |
+| GloFAS | `data historical-glofas-status`, `-backfill [--max-chunks] [--concurrency]` | **No — fetch-only, no persist verb exists** |
+| CAMS | `data historical-cams-status`, `-backfill [--max-chunks] [--concurrency]` | **No — fetch-only, no persist verb exists** |
+| Ensemble forecast | `forecast ensemble-status`, `forecast ensemble-fetch [--max-chunks] [--concurrency]` | **No — hardcoded `"blocked_forecast_method_check"`** |
 
-Plus `historical-promotion-spool --release-set-key --minimum-target-revision` and
-`historical-promotion-upload --spool-directory` for pushing a finalized release to the promotion
+Plus `data historical-promotion-spool --release-set-key --minimum-target-revision` and
+`data historical-promotion-upload --spool-directory` for pushing a finalized release to the promotion
 receiver.
 
 > [!WARNING]
 > **GloFAS, CAMS, and the ensemble lane will run for hours, cost real upstream quota, and produce
-> nothing a query can read.** Confirmed against `cli.py`: ERA5 and Open-Meteo each have a
+> nothing a query can read.** Confirmed against `interface/cli/commands.py`: ERA5 and Open-Meteo each have a
 > `-persist` verb; GloFAS and CAMS do not; the ensemble lane's own release manifest hardcodes
 > `"warehouse_persistence": "blocked_forecast_method_check"`
 > (`src/agri_data_service/execution/ensemble_forecast.py:92,601`). Don't run these three
@@ -636,15 +636,15 @@ receiver.
 
 | Verb | What it does |
 |---|---|
-| `db-status` / `db-upgrade [REVISION=head]` | Alembic status / migrate, reading `DATABASE_URL_SYNC` (§3.2) |
-| `seed` | Seeds strategy rows |
-| `pipeline-status [--checkpoint PATH]` | DSN-string validation only — see the warning in §6 |
-| `source-ingest --plan --payload` / `source-ingest-status CHECKPOINT` | Lower-level plan/payload ingestion primitive that the `historical-*` verbs build on |
-| `job-logs-maintain [--retention-days 30] [--future-days 7]` | Prunes old job log rows |
-| `local init\|status\|checkpoint\|interrupt\|resume\|register-output\|finalize\|publish` | The local-execution-run lifecycle for phase-one ETL/model runs |
-| `forecast-refresh-ml-daily`, `forecast-run-iteration`, `forecast-reconcile-actuals` | Forecasting/ML evaluation loop — evaluation-only, no publication path |
-| `forecast-vegetation-register\|-simulate\|-evaluate` | NDVI forecast evaluation harness |
-| `strategy-label-map-preflight --mapping-manifest` / `strategy-train --label-bundle --output-artifact` | Strategy-selection ML training |
+| `ops db-status` / `ops db-upgrade [REVISION=head]` | Alembic status / migrate, reading `DATABASE_URL_SYNC` (§3.2) |
+| `ops seed` | Seeds strategy rows |
+| `ops pipeline-status [--checkpoint PATH]` | DSN-string validation only — see the warning in §6 |
+| `data source-ingest --plan --payload` / `data source-ingest-status CHECKPOINT` | Lower-level plan/payload ingestion primitive that the `data historical-*` verbs build on |
+| `ops job-logs-maintain [--retention-days 30] [--future-days 7]` | Prunes old job log rows |
+| `ops local init\|status\|checkpoint\|interrupt\|resume\|register-output\|finalize\|publish` | The local-execution-run lifecycle for phase-one ETL/model runs |
+| `forecast refresh-ml-daily`, `forecast run-iteration`, `forecast reconcile-actuals` | Forecasting/ML evaluation loop — evaluation-only, no publication path |
+| `forecast vegetation-register\|vegetation-simulate\|vegetation-evaluate` | NDVI forecast evaluation harness |
+| `ml strategy-label-map-preflight --mapping-manifest` / `ml strategy-train --label-bundle --output-artifact` | Strategy-selection ML training |
 
 ---
 

@@ -65,8 +65,8 @@ Reproduce it yourself before acting -- HEAD and the bucket both move:
 
 ```bash
 cd services/agri-data-service
-uv run agri-cli parquet-drain --dry-run --selection ladder  | python -m json.tool   # ladder state
-uv run agri-cli parquet-drain --dry-run --selection missing | python -m json.tool   # export state
+uv run agri-service data parquet-drain --dry-run --selection ladder  | python -m json.tool   # ladder state
+uv run agri-service data parquet-drain --dry-run --selection missing | python -m json.tool   # export state
 uv run python scripts/warehouse_status.py                                           # bucket health
 ```
 
@@ -99,8 +99,8 @@ The MODIS floor day and the newest settled day were loaded; the exact reconcilia
 missing base day. If a future run finds one, close it with:
 
 ```bash
-uv run agri-cli parquet-drain --dry-run --selection missing --layer fire-detections   # confirm the count first
-uv run agri-cli parquet-drain --selection missing --layer fire-detections --progress
+uv run agri-service data parquet-drain --dry-run --selection missing --layer fire-detections   # confirm the count first
+uv run agri-service data parquet-drain --selection missing --layer fire-detections --progress
 ```
 
 This is SOURCE-CONNECTED. It queries Postgres, so the collision rule applies.

@@ -6,6 +6,6 @@
   },
   "deploy": {
     "restartPolicyType": "ALWAYS",
-    "startCommand": "sh -c 'while true; do agri-cli parquet-drain --layer fire-detections --layer burn-severity --layer signal --layer vegetation --time-budget-seconds 3600 --days-per-lane-turn 50 --progress; sleep 15; done'"
+    "startCommand": "sh -c 'while true; do agri-service data parquet-drain --layer fire-detections --layer burn-severity --layer signal --layer vegetation --time-budget-seconds 3600 --days-per-lane-turn 50 --progress; sleep 15; done'"
   }
 }

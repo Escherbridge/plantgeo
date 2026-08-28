@@ -15,7 +15,6 @@ import httpx
 import pytest
 from click.testing import CliRunner
 
-from agri_data_service.cli import cli
 from agri_data_service.ingest.mtbs import (
     DEFAULT_BURN_SEVERITY_LAYER_NAME,
     MTBS_ANNUAL_RELEASE_DATES,
@@ -32,6 +31,7 @@ from agri_data_service.ingest.mtbs import (
 )
 from agri_data_service.ingest.source import FetchRequest, HistoryUnavailableError, HistoryWindow
 from agri_data_service.ingest.writer import FeatureWrite
+from agri_data_service.interface.cli import cli
 
 PACIFIC_NORTHWEST_BBOX_TEXT = "-125,42,-111,49"
 
@@ -169,7 +169,7 @@ def _build_write(ignition_year: int = 2022) -> FeatureWrite:
 
 def test_the_ingest_mtbs_verb_is_registered_on_the_cli() -> None:
     # The module was complete and imported by nothing; a registered verb is what makes it reachable.
-    help_output = CliRunner().invoke(cli, ["ingest-mtbs", "--help"])
+    help_output = CliRunner().invoke(cli, ["data", "ingest-mtbs", "--help"])
     assert help_output.exit_code == 0
     assert "--release-year" in help_output.output
     assert "--bbox" in help_output.output

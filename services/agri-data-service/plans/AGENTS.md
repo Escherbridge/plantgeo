@@ -5,7 +5,7 @@ type: reference
 # Reviewed historical plan artifacts
 
 Checksum-governed input plans for the local historical replays. Every file here is either a
-plan that some `agri-cli historical-*` command consumes, or the generator that authors one.
+plan that some `agri-service data historical-*` command consumes, or the generator that authors one.
 
 ## Why the generators exist
 

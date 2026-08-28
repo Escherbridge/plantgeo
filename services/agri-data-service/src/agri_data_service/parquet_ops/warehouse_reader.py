@@ -1,8 +1,4 @@
-"""Reading the object store on a request path: what a tier holds, and the rows behind it.
-
-Layer L4. Two ports so the routes can be tested without a network -- a LISTING (which days exist)
-and a ROW READER (what those days hold). See `AGENTS.md` in this directory.
-"""
+"""Object-store listing and DuckDB row-reader ports behind Parquet operations."""
 
 from __future__ import annotations
 
@@ -15,7 +11,7 @@ from agri_data_service.foundation.parquet.paths import (
     try_parse_partition_path,
     zoom_prefix,
 )
-from agri_data_service.interface.http import faults
+from agri_data_service.parquet_ops import faults
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 if TYPE_CHECKING:
@@ -24,9 +20,9 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
-    from agri_data_service.interface.http.duckdb_session import ServingSession
-    from agri_data_service.interface.http.request_params import BoundingBox, ReadScope
-    from agri_data_service.interface.http.wire import ServedRow
+    from agri_data_service.parquet_ops.duckdb_session import ServingSession
+    from agri_data_service.parquet_ops.request_params import BoundingBox, ReadScope
+    from agri_data_service.parquet_ops.wire import ServedRow
     from agri_data_service.pipeline.parquet.objectstore import ObjectStoreBackend
 
 #: One serving listing's key budget. Well under the pipeline's 500,000: a request path that has to

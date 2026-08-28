@@ -1,15 +1,15 @@
 """Standalone Click commands for the Analog Ensemble lane and NDVI split-conformal recalibration.
 
-Deliberately NOT registered into `agri_data_service.cli` by this module: `cli.py` is shared
-infrastructure outside this track's file boundary. Whoever owns that file adds:
+Deliberately not registered by this module: `interface/cli/forecast.py` owns the shared
+forecast-family registry and adds:
 
     from agri_data_service.execution.analog_ensemble_cli import forecast_recalibrate_ndvi, forecast_train_anen
-    cli.add_command(forecast_train_anen)
-    cli.add_command(forecast_recalibrate_ndvi)
+    forecast.add_command(forecast_train_anen, name="train-anen")
+    forecast.add_command(forecast_recalibrate_ndvi, name="recalibrate-ndvi")
 
 Both commands are read-only by default and follow the same session/commit-or-rollback shape as
-`forecast-train-wind` in `agri_data_service.cli` -- see that command's docstring for the shared
-receipt-chain contract `forecast-train-anen` also follows.
+`forecast train-wind` in `agri_data_service.interface.cli` -- see that command's docstring for the shared
+receipt-chain contract `agri-service forecast train-anen` also follows.
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def _cli_day_as_utc_midnight(value: str, option_name: str) -> datetime:
     return datetime(day.year, day.month, day.day, tzinfo=UTC)
 
 
-@click.command("forecast-train-anen")
+@click.command("train-anen")
 @click.option("--cell-id", required=True, help="Spatial cell whose covariate vectors and target series train the fit.")
 @click.option("--series-id", required=True, help="Forecast series the backtest metrics are filed under.")
 @click.option("--history-start", required=True, help="First covariate day to read, as YYYY-MM-DD.")
@@ -196,7 +196,7 @@ async def _forecast_train_anen(request: AnEnTrainingRequest, *, persist: bool) -
     return report.to_summary()
 
 
-@click.command("forecast-recalibrate-ndvi")
+@click.command("recalibrate-ndvi")
 @click.option(
     "--method",
     default="ndvi_seasonal_anomaly_bootstrap_v1",

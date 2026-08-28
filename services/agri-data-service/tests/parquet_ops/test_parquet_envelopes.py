@@ -1,7 +1,7 @@
 """The resolver produces the frozen payloads byte for byte -- all four states, from a real resolution.
 
 Nothing here asserts a shape by hand: every expectation is a golden file from `tests/contract/`,
-which the TypeScript client reads through its own zod schemas. See `tests/interface/AGENTS.md`.
+which the TypeScript client reads through its own zod schemas. See `tests/parquet_ops/AGENTS.md`.
 """
 
 from __future__ import annotations
@@ -14,16 +14,16 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import TypeAdapter
 
-from agri_data_service.interface.http import serving
-from agri_data_service.interface.http.faults import HTTP_CONFLICT, HTTP_SERVICE_UNAVAILABLE, ServingRefusalError
-from agri_data_service.interface.http.request_params import ReadScope
-from agri_data_service.interface.http.serving import resolve_day, resolve_release, resolve_window
-from agri_data_service.interface.http.wire import render_row, render_window
+from agri_data_service.parquet_ops import serving
+from agri_data_service.parquet_ops.faults import ServingRefusalError
+from agri_data_service.parquet_ops.request_params import ReadScope
+from agri_data_service.parquet_ops.serving import resolve_day, resolve_release, resolve_window
+from agri_data_service.parquet_ops.wire import render_row, render_window
 from tests.contract.wire_contract import WireEnvelope, WireWindow
-from tests.interface.fakes import FakeListing, FakeRowReader, instant
+from tests.parquet_ops.fakes import FakeListing, FakeRowReader, instant
 
 if TYPE_CHECKING:
-    from agri_data_service.interface.http.wire import ServedRow
+    from agri_data_service.parquet_ops.wire import ServedRow
 
 FIXTURES = Path(__file__).resolve().parents[1] / "contract" / "fixtures"
 ENVELOPE_ADAPTER = TypeAdapter(WireEnvelope)
@@ -215,7 +215,6 @@ def test_a_day_holding_half_an_export_is_refused_rather_than_called_a_gap() -> N
     with pytest.raises(ServingRefusalError) as raised:
         resolve_day(listing, FakeRowReader(), scope=SIGNAL_SCOPE, day=date(2026, 8, 6))
 
-    assert raised.value.status == HTTP_SERVICE_UNAVAILABLE
     assert raised.value.code == "partition_day_incomplete"
 
 
@@ -236,7 +235,6 @@ def test_a_day_carrying_both_a_release_and_an_absence_is_refused_rather_than_hal
     with pytest.raises(ServingRefusalError) as raised:
         resolve_day(listing, FakeRowReader(), scope=SIGNAL_SCOPE, day=date(2026, 8, 6))
 
-    assert raised.value.status == HTTP_CONFLICT
     assert raised.value.code == "partition_day_conflict"
 
 

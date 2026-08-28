@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from agri_data_service import cli as cli_module
+import agri_data_service.interface.cli.commands as cli_module
 
 _EXPECTED_ROW_COUNT = 11
 

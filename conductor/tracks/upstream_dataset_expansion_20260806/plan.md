@@ -160,7 +160,7 @@ ML-invisibility caveat is recorded, not silently assumed away.
 **Acceptance:** the probe's findings are recorded before any plan or table shape is
 committed to; the cron command runs end to end against the local warehouse and produces
 governed rows tied to a real, newly registered `data_source`; the cron image builds with
-the new command reachable inside it (`agri-cli ingest-flood-discharge --help`), matching
+the new command reachable inside it (`agri-service data ingest-flood-discharge --help`), matching
 the manual check every existing cron service already relies on.
 
 ## Phase 3 — Open-Meteo Air Quality API (CAMS)
@@ -291,7 +291,8 @@ any form exists yet in `historical_writer.py`, `layer-registry.ts`, or
 **(e) Launch preconditions for the cron configs.** The quality review found both staged Railway
 configs non-functional as shipped: `infra/cron-ingest/Dockerfile` copies only `pyproject.toml`,
 `uv.lock` and `src/`, so there is no `/app/plans` in the built image and no plan file for either
-`startCommand` to find even once one exists; the image's `ENTRYPOINT ["agri-cli", "ingest-all"]` is
+`startCommand` to find even once one exists; the image's shell `ENTRYPOINT` runs four grouped
+`agri-service` commands and is
 never cleared by a Railway `startCommand`; and `settings.local_execution_root` defaults to an
 unmounted, ephemeral path, so the checkpoint and raw cache never survive a restart and
 `--max-chunks` would re-fetch the same chunks against provider quota every wake. The

@@ -96,8 +96,8 @@ including backup and restore, is in
 
    ```powershell
    Set-Location services/agri-data-service
-   uv run agri-cli db-upgrade
-   uv run agri-cli db-status
+   uv run agri-service ops db-upgrade
+   uv run agri-service ops db-status
    ```
 
 4. **Set the warehouse DSN** in your operator environment. There is no role to
@@ -114,7 +114,7 @@ including backup and restore, is in
 Confirm the wiring without starting any work:
 
 ```powershell
-uv run agri-cli pipeline-status
+uv run agri-service ops pipeline-status
 ```
 
 It reports `inactive`, `runnable`, or `blocked` and names the reason, which makes
@@ -200,31 +200,31 @@ These are the hourly-shaped verbs that populate the live map layers.
 ```powershell
 Set-Location services/agri-data-service
 
-uv run agri-cli ingest-weather
-uv run agri-cli ingest-drought
-uv run agri-cli ingest-streamflow
-uv run agri-cli ingest-sensors
-uv run agri-cli ingest-ndvi
-uv run agri-cli ingest-fire-perimeters
-uv run agri-cli ingest-evacuation-zones
-uv run agri-cli ingest-firms            # needs NASA_FIRMS_KEY
+uv run agri-service data ingest-weather
+uv run agri-service data ingest-drought
+uv run agri-service data ingest-streamflow
+uv run agri-service data ingest-sensors
+uv run agri-service data ingest-ndvi
+uv run agri-service data ingest-fire-perimeters
+uv run agri-service data ingest-evacuation-zones
+uv run agri-service data ingest-firms            # needs NASA_FIRMS_KEY
 ```
 
-`uv run agri-cli ingest-all` runs every one of those in turn and exits non-zero
+`uv run agri-service data ingest-all` runs every one of those in turn and exits non-zero
 if any failed. It includes FIRMS, so it needs `NASA_FIRMS_KEY`.
 
 `ingest-mtbs` is deliberately excluded from `ingest-all`: MTBS publishes
 quarterly, so it is run per fire-year cohort rather than hourly.
 
 ```powershell
-uv run agri-cli ingest-mtbs
+uv run agri-service data ingest-mtbs
 ```
 
 Two maintenance verbs exist alongside these:
 
 ```powershell
-uv run agri-cli ingest-backfill --source <source-token>
-uv run agri-cli ingest-geometry-repair
+uv run agri-service data ingest-backfill --source <source-token>
+uv run agri-service data ingest-geometry-repair
 ```
 
 `ingest-backfill` covers sources that declare a usable history capability; run it
@@ -238,9 +238,9 @@ authoritative sequence, including finalization and Parquet materialization; the
 short form is:
 
 ```powershell
-uv run agri-cli historical-nasa-backfill --plan plans/nasa-power-pnw-soil-lattice-20220430-20260430.json
-uv run agri-cli historical-usdm-backfill --plan <usdm-plan>
-uv run agri-cli historical-era5-backfill --plan plans/era5-land-pnw-soil-20220430-20260430.json
+uv run agri-service data historical-nasa-backfill --plan plans/nasa-power-pnw-soil-lattice-20220430-20260430.json
+uv run agri-service data historical-usdm-backfill --plan <usdm-plan>
+uv run agri-service data historical-era5-backfill --plan plans/era5-land-pnw-soil-20220430-20260430.json
 ```
 
 Order matters for ERA5. The enforced prerequisite is not the checksum but the
@@ -260,8 +260,8 @@ re-requesting the provider.
 To publish a single reviewed GeoJSON release you have already downloaded:
 
 ```powershell
-uv run agri-cli source-ingest --plan <plan.json> --payload <payload.geojson>
-uv run agri-cli source-ingest-status <checkpoint>
+uv run agri-service data source-ingest --plan <plan.json> --payload <payload.geojson>
+uv run agri-service data source-ingest-status <checkpoint>
 ```
 
 ## What you cannot reproduce from a clone

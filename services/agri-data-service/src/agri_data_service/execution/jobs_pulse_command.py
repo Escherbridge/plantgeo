@@ -1,4 +1,4 @@
-"""`agri-cli jobs-pulse`: one Railway cron tick that keeps the whole in-app job runner alive.
+"""`agri-service ops jobs-pulse`: one Railway cron tick that keeps the whole in-app job runner alive.
 
 Owner directive, 2026-08-14: "we should not need all the individual crons, maybe just one to keep a
 pulse on the job runner." Before this, each durable lane -- `jobs-run --lane firms-archive`,
@@ -138,7 +138,7 @@ FAILED_PULSE_EXIT_CODE: Final = 1
 # cadence starting new work behind it. Overridable per invocation with `--time-budget-seconds`.
 DEFAULT_PULSE_TIME_BUDGET_SECONDS: Final = 600.0
 
-_PULSE_REQUESTED_BY: Final = "agri-cli jobs-pulse"
+_PULSE_REQUESTED_BY: Final = "agri-service ops jobs-pulse"
 _WORKER_ID_PREFIX: Final = "jobs-pulse"
 
 _SELECT_JOB_DEFINITION_REGISTRY: Final = text(load_query_sql("execution/select_job_definition_registry.sql"))

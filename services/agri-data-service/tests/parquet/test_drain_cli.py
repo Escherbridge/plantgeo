@@ -22,9 +22,9 @@ from typing import TYPE_CHECKING, Any, Final
 import click
 from click.testing import CliRunner
 
-from agri_data_service.cli import cli
 from agri_data_service.config import Settings
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
+from agri_data_service.interface.cli import cli
 from agri_data_service.pipeline.parquet.drain import DrainLaneProgress, DrainSummary
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.parquet.schema import observed_stream_schema
@@ -95,8 +95,8 @@ def test_a_ladder_dry_run_reports_the_ladder_census_not_the_base_one(monkeypatch
     published = dict(backend.objects)
     _pin_store(monkeypatch, store)
 
-    ladder = CliRunner().invoke(cli, ["parquet-drain", "--layer", STREAM, "--selection", "ladder", "--dry-run"])
-    missing = CliRunner().invoke(cli, ["parquet-drain", "--layer", STREAM, "--dry-run"])
+    ladder = CliRunner().invoke(cli, ["data", "parquet-drain", "--layer", STREAM, "--selection", "ladder", "--dry-run"])
+    missing = CliRunner().invoke(cli, ["data", "parquet-drain", "--layer", STREAM, "--dry-run"])
 
     assert ladder.exit_code == 0, ladder.output
     ladder_report = json.loads(ladder.output)
@@ -128,15 +128,21 @@ def test_the_ladder_selection_reaches_run_drain(monkeypatch: pytest.MonkeyPatch)
         async def __aexit__(self, *_exc: object) -> bool:
             return False
 
-    monkeypatch.setattr("agri_data_service.cli.run_drain", _record)
-    monkeypatch.setattr("agri_data_service.cli.local_source_loader_session", lambda _url: _NoSession())
+    monkeypatch.setattr("agri_data_service.interface.cli.commands.run_drain", _record)
+    monkeypatch.setattr(
+        "agri_data_service.interface.cli.commands.local_source_loader_session",
+        lambda _url: _NoSession(),
+    )
     monkeypatch.setattr(
         Settings,
         "require_local_source_loader_database_url",
         lambda _self: "postgresql+asyncpg://unused/never-opened",
     )
 
-    result = CliRunner().invoke(cli, ["parquet-drain", "--layer", STREAM, "--selection", "ladder", "--no-progress"])
+    result = CliRunner().invoke(
+        cli,
+        ["data", "parquet-drain", "--layer", STREAM, "--selection", "ladder", "--no-progress"],
+    )
 
     assert result.exit_code == 0, result.output
     assert seen["selection"] == "ladder", "the drain ran the selection the operator asked for"
@@ -144,19 +150,22 @@ def test_the_ladder_selection_reaches_run_drain(monkeypatch: pytest.MonkeyPatch)
 
 def test_the_selection_option_offers_both_walks_and_defaults_to_the_export_drain() -> None:
     """A default that changed would silently re-point every existing runbook invocation."""
-    option = next(param for param in cli.commands["parquet-drain"].params if param.name == "selection")
+    option = next(param for param in cli.commands["data"].commands["parquet-drain"].params if param.name == "selection")
 
     assert isinstance(option.type, click.Choice)
     assert set(option.type.choices) == {"missing", "ladder"}
     assert option.default == "missing"
 
-    help_text = CliRunner().invoke(cli, ["parquet-drain", "--help"])
+    help_text = CliRunner().invoke(cli, ["data", "parquet-drain", "--help"])
     assert help_text.exit_code == 0, help_text.output
     assert "--selection" in help_text.output
 
 
 def test_an_unknown_selection_is_refused_before_anything_is_listed() -> None:
-    result = CliRunner().invoke(cli, ["parquet-drain", "--layer", STREAM, "--selection", "everything", "--dry-run"])
+    result = CliRunner().invoke(
+        cli,
+        ["data", "parquet-drain", "--layer", STREAM, "--selection", "everything", "--dry-run"],
+    )
 
     assert result.exit_code != 0
     assert "everything" in result.output
@@ -172,7 +181,7 @@ def _legacy_key(store: ObjectStore, day: date) -> str:
 
 
 def _pin_store_and_backend(monkeypatch: pytest.MonkeyPatch, store: ObjectStore, backend: RecordingBackend) -> None:
-    monkeypatch.setattr("agri_data_service.cli._parquet_store_and_backend", lambda: (store, backend))
+    monkeypatch.setattr("agri_data_service.interface.cli.commands._parquet_store_and_backend", lambda: (store, backend))
 
 
 def test_the_legacy_sweep_is_a_verb_and_deletes_nothing_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -182,7 +191,7 @@ def test_the_legacy_sweep_is_a_verb_and_deletes_nothing_by_default(monkeypatch: 
     backend.put(key, b"pre-zoom bytes", content_type="application/octet-stream")
     _pin_store_and_backend(monkeypatch, store, backend)
 
-    result = CliRunner().invoke(cli, ["parquet-retire-legacy-layout", "--layer", STREAM])
+    result = CliRunner().invoke(cli, ["data", "parquet-retire-legacy-layout", "--layer", STREAM])
 
     assert result.exit_code == 0, result.output
     report = json.loads(result.output)
@@ -197,7 +206,7 @@ def test_the_legacy_sweep_removes_superseded_objects_when_asked(monkeypatch: pyt
     backend.put(key, b"pre-zoom bytes", content_type="application/octet-stream")
     _pin_store_and_backend(monkeypatch, store, backend)
 
-    result = CliRunner().invoke(cli, ["parquet-retire-legacy-layout", "--layer", STREAM, "--delete"])
+    result = CliRunner().invoke(cli, ["data", "parquet-retire-legacy-layout", "--layer", STREAM, "--delete"])
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["removed"] == 1
@@ -211,7 +220,7 @@ def test_the_legacy_sweep_keeps_an_orphan_even_with_delete(monkeypatch: pytest.M
     backend.put(orphan, b"pre-zoom bytes", content_type="application/octet-stream")
     _pin_store_and_backend(monkeypatch, store, backend)
 
-    result = CliRunner().invoke(cli, ["parquet-retire-legacy-layout", "--layer", STREAM, "--delete"])
+    result = CliRunner().invoke(cli, ["data", "parquet-retire-legacy-layout", "--layer", STREAM, "--delete"])
 
     assert result.exit_code == 0, result.output
     report = json.loads(result.output)

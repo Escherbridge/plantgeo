@@ -7,6 +7,6 @@
   "deploy": {
     "cronSchedule": "55 7 * * 2",
     "restartPolicyType": "NEVER",
-    "startCommand": "agri-cli ingest-mtbs"
+    "startCommand": "agri-service data ingest-mtbs"
   }
 }

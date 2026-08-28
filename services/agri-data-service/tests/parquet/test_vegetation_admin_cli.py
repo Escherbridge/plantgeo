@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, cast
 
 from click.testing import CliRunner
 
-from agri_data_service import cli as cli_module
+import agri_data_service.interface.cli.commands as cli_module
+from agri_data_service.interface.cli import cli
 from agri_data_service.pipeline.parquet.vegetation_absence import VegetationAbsenceLadderReport
 from agri_data_service.pipeline.parquet.vegetation_forward import (
     VegetationForwardDayResult,
@@ -54,8 +55,9 @@ def test_forward_command_uses_the_pinned_change_window(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(cli_module, "_parquet_forward_changed_vegetation", complete)
     result = CliRunner().invoke(
-        cli_module.cli,
+        cli,
         [
+            "data",
             "parquet-forward-vegetation",
             "--since",
             "2026-08-26T00:00:00Z",
@@ -93,8 +95,8 @@ def test_catch_up_command_needs_no_since_window_and_fails_closed_on_remaining_wo
 
     monkeypatch.setattr(cli_module, "_parquet_catch_up_vegetation", incomplete)
     result = CliRunner().invoke(
-        cli_module.cli,
-        ["parquet-catch-up-vegetation", "--through-day", "2026-08-27", "--max-days", "25"],
+        cli,
+        ["data", "parquet-catch-up-vegetation", "--through-day", "2026-08-27", "--max-days", "25"],
     )
 
     assert result.exit_code == 1
@@ -108,8 +110,9 @@ def test_absence_command_refuses_unsettled_last_day(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(cli_module, "_vegetation_settled_cutoff", lambda: DAY)
 
     result = CliRunner().invoke(
-        cli_module.cli,
+        cli,
         [
+            "data",
             "parquet-vegetation-absence-ladders",
             "--first-day",
             DAY.isoformat(),
@@ -126,8 +129,9 @@ def test_absence_retraction_requires_the_current_settled_cutoff(monkeypatch: pyt
     monkeypatch.setattr(cli_module, "_vegetation_settled_cutoff", lambda: DAY)
 
     result = CliRunner().invoke(
-        cli_module.cli,
+        cli,
         [
+            "data",
             "parquet-retract-vegetation-absences",
             "--day",
             date(2026, 8, 21).isoformat(),
@@ -144,8 +148,9 @@ def test_exact_command_requires_the_full_settled_cutoff(monkeypatch: pytest.Monk
     monkeypatch.setattr(cli_module, "_vegetation_settled_cutoff", lambda: DAY)
 
     result = CliRunner().invoke(
-        cli_module.cli,
+        cli,
         [
+            "data",
             "parquet-reconcile-vegetation-exact",
             "--first-day",
             date(2026, 8, 1).isoformat(),
@@ -180,8 +185,9 @@ def test_absence_command_exits_nonzero_when_a_bounded_backlog_remains(
 
     monkeypatch.setattr(cli_module, "_parquet_vegetation_absence_ladders", incomplete_pass)
     result = CliRunner().invoke(
-        cli_module.cli,
+        cli,
         [
+            "data",
             "parquet-vegetation-absence-ladders",
             "--first-day",
             DAY.isoformat(),

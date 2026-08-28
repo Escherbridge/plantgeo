@@ -8,7 +8,7 @@ One self-contained brief per Parquet lane. **Paste a whole file as the first mes
 session**; each repeats its shared context deliberately so no brief depends on another being read.
 
 Every number was measured against the production bucket on **2026-08-25** by
-`agri-cli parquet-drain --dry-run` (both selections). The bucket moves — each brief tells its
+`agri-service data parquet-drain --dry-run` (both selections). The bucket moves — each brief tells its
 session to reproduce the census before acting, and to report anything that contradicts the brief.
 
 ## Why one session per lane is safe

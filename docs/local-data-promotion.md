@@ -39,7 +39,7 @@ ingestion begin. (Note: TimescaleDB was removed on 2026-08-25.)
    `127.0.0.1:5442/plantgeo`. There is no loader-role bootstrap step any more:
    the 2026-08-08 role teardown (`20260808_0019`) deleted `create-loader-role.sql`
    and every DSN assertion with it, so confirm the target yourself.
-5. Run `agri-cli source-ingest` for reviewed bounded captures. It produces
+5. Run `agri-service data source-ingest` for reviewed bounded captures. It produces
    governed `agri.data_source`, `source_release`, `artifact`, `release_set`,
    and `release_set_item` records. It does not create models, forecasts, or
    waypoints.

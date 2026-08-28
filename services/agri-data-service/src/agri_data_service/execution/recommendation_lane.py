@@ -887,7 +887,7 @@ async def persist_training_receipt(
             "scheduled_for": started_at,
             "started_at": started_at,
             "completed_at": completed_at,
-            "requested_by": f"agri-cli recommendation-train --model {report.model_kind}",
+            "requested_by": f"agri-service ml recommendation-train --model {report.model_kind}",
         },
         lookup_statement=_LOOKUP_JOB_RUN,
         lookup_parameters={"logical_run_key": logical_run_key},

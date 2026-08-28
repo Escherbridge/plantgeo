@@ -76,7 +76,7 @@ For the MVP, every model- or forecast-producing command stays local until measur
 
 ### Phase-one local execution and ETL contract
 
-`agri-cli local init` derives a UUIDv5 run ID and `logical_run_key` from the job/version, timezone-aware scheduled time, pinned release set, recipe/model version, and sorted target partitions. It creates `.agri-local-runs/<run-id>/manifest.json`; the same immutable inputs reopen the same run. `local checkpoint` writes an append-only, checksum-addressed cursor after each bounded shard, `local interrupt` records a clean stopping point, and `local resume` verifies and returns the latest cursor for a shard. These commands are execution infrastructure only: this phase does not yet implement or simulate any forecasting or training algorithm.
+`agri-service ops local init` derives a UUIDv5 run ID and `logical_run_key` from the job/version, timezone-aware scheduled time, pinned release set, recipe/model version, and sorted target partitions. It creates `.agri-local-runs/<run-id>/manifest.json`; the same immutable inputs reopen the same run. `local checkpoint` writes an append-only, checksum-addressed cursor after each bounded shard, `local interrupt` records a clean stopping point, and `local resume` verifies and returns the latest cursor for a shard. These commands are execution infrastructure only: this phase does not yet implement or simulate any forecasting or training algorithm.
 
 A local output cannot enter the manifest without `local register-output` and a machine-readable validation report whose status and every declared check are `passed`. Once `local publish` begins, checkpoints and outputs are frozen. Publication uses an explicitly configured HTTPS service URL and environment-only bearer token; there is no default credential and the API is disabled when the token is absent. Each request is independently retryable and idempotent, and the durable local cursor resumes at the first unacknowledged artifact after interruption.
 
@@ -151,7 +151,7 @@ historical release set, and promotes a reviewed typed publication:
 | `companion_relationship`, `strategy_guide`, `evidence_source` | Evidence-grade relationships and restorative-agriculture guidance, each tied to a stable citation/version. |
 
 `agri.job_event` is maintained by the local control-plane command `uv run
-agri-cli job-logs-maintain --retention-days 30 --future-days 7`. It creates UTC
+agri-service ops job-logs-maintain --retention-days 30 --future-days 7`. It creates UTC
 daily partitions across the complete hot window, moves recoverable rows out of
 the default partition, and drops only date-named partitions older than 30 days.
 Run it at least daily and alert on failure or a nonzero default-row count. This

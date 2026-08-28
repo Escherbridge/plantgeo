@@ -52,7 +52,7 @@ dev = [
 ]
 
 [project.scripts]
-agri-cli = "agri_data_service.cli:cli"
+agri-service = "agri_data_service.interface.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agri_data_service"]

@@ -245,7 +245,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   },
   // USGS WBD HUC12 boundaries, drawn from geo.watershed_tiles() rather than by proxying
   // environmental.getWatersheds per viewport. 0017_watershed_persistence gave them a geo.layers
-  // row and the tile function, and `agri-cli ingest-watersheds` persists 9,396 PNW basins keyed
+  // row and the tile function, and `agri-service data ingest-watersheds` persists 9,396 PNW basins keyed
   // by HUC12 code, so the name claimed here is the layer this toggle actually draws.
   //
   // The proxy could never draw at an ordinary zoom: it caps a request at 1 square degree

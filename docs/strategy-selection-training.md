@@ -46,7 +46,7 @@ Before importing any newly identified external source, describe its direct
 field mapping in `strategy_label_source_mapping_v1` and run:
 
 ```powershell
-uv run agri-cli strategy-label-map-preflight `
+uv run agri-service ml strategy-label-map-preflight `
   --mapping-manifest examples/strategy-label-source-mapping.incomplete.json
 ```
 

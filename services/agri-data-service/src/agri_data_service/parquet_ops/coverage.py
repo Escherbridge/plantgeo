@@ -1,8 +1,4 @@
-"""The whole-warehouse census: what each lane has and has not written, over its whole published span.
-
-Layer L4. Per lane and TIER-AGNOSTIC -- a day counts as covered when any published tier holds it.
-No bbox and no zoom, deliberately: one answer is shared by every viewport. See `AGENTS.md`.
-"""
+"""The tier-agnostic warehouse census shared by every Parquet operation adapter."""
 
 from __future__ import annotations
 
@@ -16,9 +12,9 @@ import structlog
 
 from agri_data_service.foundation.parquet.lane_contract import nature_has_time_axis, nature_permits_cadence
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
-from agri_data_service.interface.http import faults
-from agri_data_service.interface.http.serving import day_status_sets
-from agri_data_service.interface.http.wire import LaneCoverage, WarehouseCoverage, contiguous_ranges
+from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops.serving import day_status_sets
+from agri_data_service.parquet_ops.wire import LaneCoverage, WarehouseCoverage, contiguous_ranges
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS
 
 if TYPE_CHECKING:
@@ -28,7 +24,7 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.lane_contract import LaneNature
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
-    from agri_data_service.interface.http.warehouse_reader import WarehouseListing
+    from agri_data_service.parquet_ops.warehouse_reader import WarehouseListing
 
 logger = structlog.get_logger()
 

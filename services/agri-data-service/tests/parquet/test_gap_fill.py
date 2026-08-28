@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from click.testing import CliRunner
 
-from agri_data_service.cli import cli
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.lane_contract import LaneNature, SourceWatermark
@@ -31,6 +30,7 @@ from agri_data_service.foundation.parquet.paths import (
     partition_path,
     try_parse_partition_path,
 )
+from agri_data_service.interface.cli import cli
 from agri_data_service.pipeline.parquet.gap_fill import (
     GAP_FILL_ZOOM_TIER,
     GapFillContractError,
@@ -807,7 +807,7 @@ def test_dry_run_reports_the_census_and_writes_nothing(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(ObjectStore, "from_settings", classmethod(_stub_from_settings))
 
-    result = CliRunner().invoke(cli, ["parquet-gap-fill", "--layer", "water-gauges", "--dry-run"])
+    result = CliRunner().invoke(cli, ["data", "parquet-gap-fill", "--layer", "water-gauges", "--dry-run"])
 
     assert result.exit_code == 0, result.output
     report = json.loads(result.output)
@@ -833,9 +833,12 @@ def test_skip_watermarks_keeps_a_static_lane_dry_run_offline(monkeypatch: pytest
         raise AssertionError("--skip-watermarks must not open a database session")
 
     monkeypatch.setattr(ObjectStore, "from_settings", classmethod(_stub_from_settings))
-    monkeypatch.setattr("agri_data_service.cli.local_source_loader_session", _refuse_session)
+    monkeypatch.setattr("agri_data_service.interface.cli.commands.local_source_loader_session", _refuse_session)
 
-    result = CliRunner().invoke(cli, ["parquet-gap-fill", "--layer", "watersheds", "--dry-run", "--skip-watermarks"])
+    result = CliRunner().invoke(
+        cli,
+        ["data", "parquet-gap-fill", "--layer", "watersheds", "--dry-run", "--skip-watermarks"],
+    )
 
     assert result.exit_code == 0, result.output
     report = json.loads(result.output)
@@ -868,10 +871,10 @@ def test_a_default_dry_run_over_a_static_lane_resolves_no_dsn_and_opens_no_sessi
         raise AssertionError("a default --dry-run must not open a database session")
 
     monkeypatch.setattr(ObjectStore, "from_settings", classmethod(_stub_from_settings))
-    monkeypatch.setattr("agri_data_service.cli._read_gap_fill_watermarks", _refuse_watermark_read)
-    monkeypatch.setattr("agri_data_service.cli.local_source_loader_session", _refuse_session)
+    monkeypatch.setattr("agri_data_service.interface.cli.commands._read_gap_fill_watermarks", _refuse_watermark_read)
+    monkeypatch.setattr("agri_data_service.interface.cli.commands.local_source_loader_session", _refuse_session)
 
-    result = CliRunner().invoke(cli, ["parquet-gap-fill", "--layer", "watersheds", "--dry-run"])
+    result = CliRunner().invoke(cli, ["data", "parquet-gap-fill", "--layer", "watersheds", "--dry-run"])
 
     assert result.exit_code == 0, result.output
     report = json.loads(result.output)
@@ -895,9 +898,12 @@ def test_read_watermarks_opts_back_in_and_still_prints_when_the_warehouse_is_unr
         raise ValueError("set LOCAL_SOURCE_LOADER_DATABASE_URL or DATABASE_URL")
 
     monkeypatch.setattr(ObjectStore, "from_settings", classmethod(_stub_from_settings))
-    monkeypatch.setattr("agri_data_service.cli._read_gap_fill_watermarks", _record_then_fail)
+    monkeypatch.setattr("agri_data_service.interface.cli.commands._read_gap_fill_watermarks", _record_then_fail)
 
-    result = CliRunner().invoke(cli, ["parquet-gap-fill", "--layer", "watersheds", "--dry-run", "--read-watermarks"])
+    result = CliRunner().invoke(
+        cli,
+        ["data", "parquet-gap-fill", "--layer", "watersheds", "--dry-run", "--read-watermarks"],
+    )
 
     assert reads == ["attempted"], "--read-watermarks must still reach the watermark read"
     assert result.exit_code == 0, result.output
@@ -907,7 +913,7 @@ def test_read_watermarks_opts_back_in_and_still_prints_when_the_warehouse_is_unr
 
 
 def test_an_unknown_layer_is_refused_before_anything_is_listed() -> None:
-    result = CliRunner().invoke(cli, ["parquet-gap-fill", "--layer", "interventions", "--dry-run"])
+    result = CliRunner().invoke(cli, ["data", "parquet-gap-fill", "--layer", "interventions", "--dry-run"])
 
     assert result.exit_code != 0
     assert "interventions" in result.output

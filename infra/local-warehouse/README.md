@@ -97,7 +97,7 @@ It is safe to re-run and stops at the first error:
 
 The Alembic foundation verifies all three are already installed and fails before
 it creates any `agri` object. Only after that approved gate should reviewed
-Drizzle/Alembic migrations create schemas and `agri-cli source-ingest` load local source releases. The future
+Drizzle/Alembic migrations create schemas and `agri-service data source-ingest` loads local source releases. The future
 promotion archive comes from this database; it never comes from `pgt`,
 `postgres`, or another application database.
 
@@ -117,7 +117,7 @@ right now — and DSNs naming them keep working. No repository code manages,
 provisions, or requires them.
 
 `LOCAL_SOURCE_LOADER_DATABASE_URL` is now an optional override rather than a
-custody gate: when it is unset, `agri-cli` ingest and loader commands use
+custody gate: when it is unset, `agri-service data` ingest and loader commands use
 `DATABASE_URL`, and setting both to the same DSN is accepted. No host, port,
 database name, or login is asserted. The same holds for
 `FORECAST_MV_REFRESH_DATABASE_URL` and `FORECAST_ITERATION_DATABASE_URL`.
@@ -155,8 +155,8 @@ approved destination database.
 
 The explicit ML materialized-view refresh runs on
 `FORECAST_MV_REFRESH_DATABASE_URL`, or on `DATABASE_URL` when that is unset.
-Since `20260808_0019` retired `plantgeo_forecast_mv_refresher`, `agri-cli
-forecast-refresh-ml-daily` no longer probes a role or issues `SET LOCAL ROLE`:
+Since `20260808_0019` retired `plantgeo_forecast_mv_refresher`, `agri-service forecast
+refresh-ml-daily` no longer probes a role or issues `SET LOCAL ROLE`:
 the matview and its `SECURITY DEFINER` refresher belong to the owner credential,
 and a non-concurrent `REFRESH` needs exactly that ownership. The repository
 defines no refresh schedule.
@@ -223,7 +223,7 @@ evidence, not Boise/property or current-weather evidence:
 $forecastAsOf = (Get-Date).ToUniversalTime().ToString('o')
 $iterationKey = 'nasa-power-ws2m-20260331-bootstrap-manual-' + `
   (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmssfff')
-uv run agri-cli forecast-run-iteration `
+uv run agri-service forecast run-iteration `
   --iteration-key $iterationKey `
   --series-id ee98ea66-e9e9-4997-85da-d5e79d443a23 `
   --release-set-id 10f6933b-c048-4dbc-9c33-68e00d2e6d87 `
@@ -248,7 +248,7 @@ After the iteration exists, append actuals:
 
 ```powershell
 $actualAsOf = (Get-Date).ToUniversalTime().ToString('o')
-uv run agri-cli forecast-reconcile-actuals `
+uv run agri-service forecast reconcile-actuals `
   --iteration-id <iteration-id> `
   --actual-release-set-id <validated-release-set-containing-actuals> `
   --as-of-time $actualAsOf

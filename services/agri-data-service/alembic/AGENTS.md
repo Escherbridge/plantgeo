@@ -371,7 +371,7 @@ table, function, view or index is otherwise touched; the ML data plane is intact
 Three consequences worth naming. `refresh_forecast_ml_daily_serving()` stays
 `SECURITY DEFINER` but its definer is now the calling owner credential, so the
 bit is inert; matview ownership — which a non-concurrent `REFRESH` requires — is
-preserved by the reassignment. `agri_data_service.cli` drops its
+preserved by the reassignment. `agri_data_service.interface.cli` drops its
 `SET LOCAL ROLE plantgeo_forecast_mv_refresher` and the catalog eligibility probe
 behind it in the same commit, because the role it assumed no longer exists. And
 the `20260802_0016` `REVOKE EXECUTE … FROM PUBLIC` on the covariate functions is

@@ -1,15 +1,42 @@
 """CLI contracts keep the frozen run plan explicit and file-backed."""
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
-import agri_data_service.cli as cli_module
-from agri_data_service.cli import _load_run_plan, cli
+import agri_data_service.interface.cli.commands as cli_module
+from agri_data_service.interface.cli import cli
+from agri_data_service.interface.cli.commands import _load_run_plan
 
 FORECAST_HORIZON_DAYS = 30
+
+
+def test_console_script_is_a_single_hard_cutover_entrypoint() -> None:
+    service_root = Path(__file__).resolve().parents[1]
+    project = tomllib.loads((service_root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert project["project"]["scripts"] == {
+        "agri-service": "agri_data_service.interface.cli:cli",
+    }
+    assert not (service_root / "src" / "agri_data_service" / "cli.py").exists()
+
+
+def test_deployment_commands_use_the_grouped_surface() -> None:
+    service_root = Path(__file__).resolve().parents[1]
+    repo_root = service_root.parents[1]
+    cron = (repo_root / "infra" / "cron-ingest" / "Dockerfile").read_text(encoding="utf-8")
+    mtbs = (repo_root / "infra" / "cron-mtbs" / "railway.json").read_text(encoding="utf-8")
+    drain = (repo_root / "infra" / "parquet-drain" / "railway.json").read_text(encoding="utf-8")
+
+    assert "agri-service data ingest-all" in cron
+    assert "agri-service data parquet-catch-up-vegetation" in cron
+    assert "agri-service ops jobs-pulse" in cron
+    assert "agri-service data parquet-gap-fill" in cron
+    assert "agri-service data ingest-mtbs" in mtbs
+    assert "agri-service data parquet-drain" in drain
 
 
 def _write_plan(path: Path, **extra: object) -> None:
@@ -27,6 +54,17 @@ def _write_plan(path: Path, **extra: object) -> None:
         **extra,
     }
     path.write_text(json.dumps(plan), encoding="utf-8")
+
+
+def test_cli_hard_cutover_exposes_only_the_four_command_families() -> None:
+    assert set(cli.commands) == {"forecast", "ml", "data", "ops"}
+    assert "forecast-run-iteration" not in cli.commands
+    assert "ingest-all" not in cli.commands
+
+    runner = CliRunner()
+    for leaf in ("day", "window", "release", "coverage"):
+        result = runner.invoke(cli, ["data", "parquet", leaf, "--help"])
+        assert result.exit_code == 0, result.output
 
 
 def test_run_plan_parser_is_strict_and_typed(tmp_path: Path) -> None:
@@ -67,17 +105,17 @@ def test_run_plan_parser_is_strict_and_typed(tmp_path: Path) -> None:
 def test_local_cli_exposes_plan_finalize_and_server_owned_actor() -> None:
     runner = CliRunner()
 
-    init_help = runner.invoke(cli, ["local", "init", "--help"])
+    init_help = runner.invoke(cli, ["ops", "local", "init", "--help"])
     assert init_help.exit_code == 0
     assert "--run-plan" in init_help.output
     assert "--release-set-manifest-checksum" in init_help.output
     assert "--partition" not in init_help.output
 
-    finalize_help = runner.invoke(cli, ["local", "finalize", "--help"])
+    finalize_help = runner.invoke(cli, ["ops", "local", "finalize", "--help"])
     assert finalize_help.exit_code == 0
     assert "--run-validation-report" in finalize_help.output
 
-    publish_help = runner.invoke(cli, ["local", "publish", "--help"])
+    publish_help = runner.invoke(cli, ["ops", "local", "publish", "--help"])
     assert publish_help.exit_code == 0
     assert "--published-by" not in publish_help.output
 
@@ -85,20 +123,20 @@ def test_local_cli_exposes_plan_finalize_and_server_owned_actor() -> None:
 def test_cli_exposes_explicit_unscheduled_forecast_commands() -> None:
     runner = CliRunner()
 
-    help_result = runner.invoke(cli, ["forecast-refresh-ml-daily", "--help"])
+    help_result = runner.invoke(cli, ["forecast", "refresh-ml-daily", "--help"])
 
     assert help_result.exit_code == 0
     assert "refresh" in help_result.output.lower()
     assert "schedule" not in help_result.output.lower()
 
-    iteration_help = runner.invoke(cli, ["forecast-run-iteration", "--help"])
+    iteration_help = runner.invoke(cli, ["forecast", "run-iteration", "--help"])
     assert iteration_help.exit_code == 0
     assert "--horizon-days" in iteration_help.output
     assert "--simulation-count" in iteration_help.output
     assert "evaluation-only" in iteration_help.output
     assert "publish" not in iteration_help.output.lower()
 
-    reconcile_help = runner.invoke(cli, ["forecast-reconcile-actuals", "--help"])
+    reconcile_help = runner.invoke(cli, ["forecast", "reconcile-actuals", "--help"])
     assert reconcile_help.exit_code == 0
     assert "--iteration-id" in reconcile_help.output
     assert "--actual-release-set-id" in reconcile_help.output
@@ -106,7 +144,7 @@ def test_cli_exposes_explicit_unscheduled_forecast_commands() -> None:
 
 
 def test_cli_exposes_local_evaluation_only_strategy_training() -> None:
-    result = CliRunner().invoke(cli, ["strategy-train", "--help"])
+    result = CliRunner().invoke(cli, ["ml", "strategy-train", "--help"])
 
     assert result.exit_code == 0
     assert "--label-bundle" in result.output
@@ -149,6 +187,7 @@ def test_strategy_train_writes_canonical_artifact_and_reports_receipt(
     result = CliRunner().invoke(
         cli,
         [
+            "ml",
             "strategy-train",
             "--label-bundle",
             str(label_bundle),
@@ -178,7 +217,7 @@ def test_forecast_mv_refresh_command_reports_materialized_row_count(
 
     monkeypatch.setattr(cli_module, "_forecast_refresh_ml_daily", refresh)
 
-    result = CliRunner().invoke(cli, ["forecast-refresh-ml-daily"])
+    result = CliRunner().invoke(cli, ["forecast", "refresh-ml-daily"])
 
     assert result.exit_code == 0
     assert json.loads(result.output) == {"row_count": 7, "state": "refreshed"}
@@ -196,7 +235,8 @@ def test_forecast_iteration_command_requires_aware_times_and_reports_receipt(
 
     monkeypatch.setattr(cli_module, "_forecast_run_iteration", run_iteration)
     base_arguments = [
-        "forecast-run-iteration",
+        "forecast",
+        "run-iteration",
         "--iteration-key",
         "fixture-v1",
         "--series-id",
@@ -236,7 +276,8 @@ def test_forecast_actual_reconciliation_command_reports_inserted_rows(
     result = CliRunner().invoke(
         cli,
         [
-            "forecast-reconcile-actuals",
+            "forecast",
+            "reconcile-actuals",
             "--iteration-id",
             "dd1bff85-a93d-4f72-935b-399e1d53b452",
             "--actual-release-set-id",

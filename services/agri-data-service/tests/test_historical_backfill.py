@@ -9,7 +9,6 @@ import httpx
 import pytest
 from click.testing import CliRunner
 
-from agri_data_service.cli import cli
 from agri_data_service.config import settings
 from agri_data_service.execution import historical_parquet
 from agri_data_service.execution.historical_parquet import (
@@ -42,6 +41,7 @@ from agri_data_service.execution.weather_observations.nasa_power import (
     write_historical_nasa_checkpoint,
     write_historical_nasa_release_plan,
 )
+from agri_data_service.interface.cli import cli
 
 EXPECTED_FOUR_YEAR_DAY_COUNT = 1462
 EXPECTED_T2M_VALUES = 2
@@ -582,7 +582,7 @@ def test_historical_nasa_cli_fails_closed_without_any_database_dsn(
     monkeypatch.setattr(settings, "local_source_loader_database_url", None)
     monkeypatch.setattr(settings, "database_url", None)
 
-    result = CliRunner().invoke(cli, ["historical-nasa-backfill", "--plan", str(plan_path)])
+    result = CliRunner().invoke(cli, ["data", "historical-nasa-backfill", "--plan", str(plan_path)])
 
     assert result.exit_code != 0
     assert "LOCAL_SOURCE_LOADER_DATABASE_URL" in result.output

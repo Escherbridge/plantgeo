@@ -28,7 +28,7 @@ while IFS= read -r banked; do
   success=0
   while [ "$attempt" -le 3 ]; do
     log "[$n] window $start..$end attempt $attempt/3"
-    if ./run-backfill.sh ingest-backfill --source nasa-firms-archive --since "$start" --until "$end" --chunk-days 1 --bbox "$BBOX" >> "$LOG" 2>&1; then
+    if ./run-backfill.sh data ingest-backfill --source nasa-firms-archive --since "$start" --until "$end" --chunk-days 1 --bbox "$BBOX" >> "$LOG" 2>&1; then
       success=1
       ok=$((ok+1))
       break

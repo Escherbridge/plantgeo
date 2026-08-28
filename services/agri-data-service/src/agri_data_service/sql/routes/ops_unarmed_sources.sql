@@ -45,8 +45,8 @@
 -- A source row measures the GOVERNED path: releases in agri.source_release and the rows behind
 -- them. It does NOT measure raw ingest. The two can and do diverge, and the divergence is the
 -- interesting part: as of 2026-08-09 Sentinel-2's raw ingest into geo.features is scheduled and
--- healthy, while the step that promotes it into the governed plane (`forecast-vegetation-register`,
--- a manual CLI verb in cli.py with no launcher and no entry in jobs/registry.py) is scheduled by
+-- healthy, while the step that promotes it into the governed plane (`agri-service forecast vegetation-register`,
+-- a manual CLI verb in interface/cli/commands.py with no launcher and no entry in jobs/registry.py) is scheduled by
 -- nothing at all. That sentence is a claim about CODE and may be armed at any time; every number
 -- this statement returns is read live and needs no such caveat. So
 -- the source reads increasingly stale here while its upstream is perfectly current -- which is the

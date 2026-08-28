@@ -1,6 +1,6 @@
 """An in-memory warehouse: object keys and rows, with no bucket and no DuckDB behind them.
 
-Both ports of `interface/http/warehouse_reader.py` implemented over dictionaries, so the four-state
+Both ports of `parquet_ops/warehouse_reader.py` implemented over dictionaries, so the four-state
 resolver can be exercised exactly -- including the states real data cannot produce on demand.
 """
 
@@ -19,15 +19,15 @@ from agri_data_service.foundation.parquet.paths import (
     year_prefix,
     zoom_prefix,
 )
-from agri_data_service.interface.http.warehouse_reader import RowReadResult
+from agri_data_service.parquet_ops.warehouse_reader import RowReadResult
 
 if TYPE_CHECKING:
     from datetime import date
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
-    from agri_data_service.interface.http.warehouse_reader import RowRead
-    from agri_data_service.interface.http.wire import ServedRow
+    from agri_data_service.parquet_ops.warehouse_reader import RowRead
+    from agri_data_service.parquet_ops.wire import ServedRow
 
 
 @dataclass

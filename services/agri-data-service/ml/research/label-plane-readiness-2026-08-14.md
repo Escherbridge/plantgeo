@@ -412,7 +412,7 @@ what the question is.
 
 **Training orchestration is already solved.** Training is a registered durable job definition
 (`agri.recommendation.train`, queue `forecast`, 1800 s lease, 1500 s budget, 3 attempts) invoked through
-`agri-cli jobs-run`, on the same `agri.job_*` ledger every other lane uses. Queue, lease, retry, and receipt
+`agri-service ops jobs-run`, on the same `agri.job_*` ledger every other lane uses. Queue, lease, retry, and receipt
 semantics are not the missing piece. What is missing is a *scheduled host* — and the existing Railway cron pattern
 already solves that at a fraction of the cost of a service.
 

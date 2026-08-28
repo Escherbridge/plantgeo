@@ -246,7 +246,7 @@ class _ScriptedClock:
 
 
 def _group() -> click.Group:
-    group = click.Group("agri-cli")
+    group = click.Group("agri-service")
     group.add_command(jobs_pulse)
     return group
 

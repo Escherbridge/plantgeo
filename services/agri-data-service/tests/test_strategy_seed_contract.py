@@ -6,8 +6,8 @@ from urllib.parse import urlparse
 from sqlalchemy import CheckConstraint, UniqueConstraint
 from sqlalchemy.dialects.postgresql.base import PGDialect
 
-from agri_data_service.cli import _strategy_seed_statement
 from agri_data_service.db.base import Base
+from agri_data_service.interface.cli.commands import _strategy_seed_statement
 from agri_data_service.models.strategy import StrategyReviewState
 from agri_data_service.seed.strategies import (
     STRATEGY_SEEDS,

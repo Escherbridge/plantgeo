@@ -1,6 +1,6 @@
 -- Purpose: attach the governed actual observations to one already-finalized forecast iteration, by
 --          invoking the shipped reconciliation procedure, and report how many were attached.
--- Loaded by: agri_data_service.cli
+-- Loaded by: agri_data_service.interface.cli
 -- Params: iteration_id (uuid) -- the finalized iteration to reconcile; actual_release_set_id (uuid)
 --         -- the governed release set the actuals must come from; as_of_time (timestamptz) -- the
 --         actual-availability boundary, which bounds which observations already existed.

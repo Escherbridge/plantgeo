@@ -1,4 +1,4 @@
-"""AST import contract test enforcing strict downward dependency lattice across all 6 layers.
+"""AST import contract test enforcing the dependency lattice across core and interface layers.
 
 See track spec in conductor/tracks/agri_sdk_layering_20260805/spec.md.
 """
@@ -38,6 +38,9 @@ LAYER_FORBIDDEN_IMPORTS: dict[str, set[str]] = {
         "agri_data_service.interface",
     },
     "planes": {
+        "agri_data_service.interface",
+    },
+    "parquet_ops": {
         "agri_data_service.interface",
     },
     "interface": set(),
@@ -166,7 +169,7 @@ def test_layer_packages_actually_import() -> None:
 
     A syntactically clean but structurally broken module (missing symbol, missing module, a
     typo'd re-export) parses fine and would sail through `test_layer_import_contract` while
-    failing every real caller and `mypy`. Import every file under each of the six layers for real
+    failing every real caller and `mypy`. Import every file under each registered layer for real
     and fail loudly, naming every module that could not be imported.
     """
     pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"

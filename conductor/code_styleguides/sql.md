@@ -94,7 +94,7 @@ there breaks the parity test's assumption that every file is an object definitio
   into the wheel automatically (`[tool.hatch.build.targets.wheel] packages =
   ["src/agri_data_service"]`); `db/agri/**` gets no such treatment because it sits
   above `src/` and is read only from a dev checkout during a migration, never from
-  the installed `agri-cli` console script.
+  the installed `agri-service` console script.
 - **Naming.** One statement per file, named after the Python constant that will hold
   it, lowercased and without its leading underscore — `_INSERT_FEATURES` becomes
   `insert_features.sql`, `_SELECT_EXISTING_EXTERNAL_IDS` becomes

@@ -151,7 +151,7 @@ walk_window() {
   attempt=1
   while [ "$attempt" -le "$WINDOW_ATTEMPTS" ]; do
     log "--- $SOURCE_TOKEN window $window_start..$window_end (attempt $attempt/$WINDOW_ATTEMPTS)"
-    ./run-backfill.sh ingest-backfill \
+    ./run-backfill.sh data ingest-backfill \
       --source "$SOURCE_TOKEN" \
       --since "$window_start" \
       --until "$window_end" \

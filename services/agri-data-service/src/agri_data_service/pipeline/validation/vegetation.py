@@ -126,7 +126,7 @@ def reconcile_against_source(
             kind=DUPLICATE_SOURCE_RELEASES,
             detail=(
                 f"{cell_count} cell(s) on {day.isoformat()} were produced by more than one "
-                "agri.source_release for this lane; overlapping forecast-vegetation-register runs "
+                "agri.source_release for this lane; overlapping agri-service forecast vegetation-register runs "
                 "wrote duplicate cell-day rows that the exporter's newest-release-wins dedup hides "
                 "from the written Parquet -- visible only against the source"
             ),

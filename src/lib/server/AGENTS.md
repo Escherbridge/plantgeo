@@ -454,7 +454,7 @@ matches on the payload's keys regardless of which cell first inserted them.
 Verified on the slice: 2,525 features, 2,525 dimension rows, **0 features with a null
 `geometry_id`**, 0 invalid or empty geometries, 0 non-areal geometries, 0 unreadable rows,
 and every `natural_key` namespaced. The forward path therefore maintains the geometry
-dimension rather than leaving orphans for `agri-cli ingest-geometry-repair` to claim later.
+dimension rather than leaving orphans for `agri-service data ingest-geometry-repair` to claim later.
 
 **The averaged tiers got much cheaper and that is the point.** They used to tile the
 viewport into up to nine SDA calls, a measured 30–40 s. They are now one local query that

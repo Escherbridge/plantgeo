@@ -34,13 +34,13 @@ RUN groupadd --system --gid 10001 plantgeo \
 # are installed HERE, into the directory `duckdb_session.SERVING_EXTENSION_DIRECTORY` names, and the
 # session only ever LOADs. `DUCKDB_EXTENSION_DIRECTORY` as an env var is not honoured by DuckDB
 # 1.5.4 (measured: it still resolved $HOME); the directory has to arrive as a SETTING.
-RUN python -c "from agri_data_service.interface.http.duckdb_session import install_serving_extensions; install_serving_extensions()" \
+RUN python -c "from agri_data_service.parquet_ops.duckdb_session import install_serving_extensions; install_serving_extensions()" \
     && chown -R plantgeo:plantgeo /opt/duckdb-extensions
 
 USER plantgeo
 
 # Fails the BUILD, not the first request, if the pre-install did not land where the session looks.
-RUN python -c "from agri_data_service.interface.http.duckdb_session import open_guarded_connection; open_guarded_connection().close()"
+RUN python -c "from agri_data_service.parquet_ops.duckdb_session import open_guarded_connection; open_guarded_connection().close()"
 
 EXPOSE 8000
 

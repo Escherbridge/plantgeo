@@ -6,7 +6,7 @@ description: >
   DSN contract every command needs, which pipelines are credential-blocked
   versus plan-blocked, backfill chunk economics with measured cost-per-row,
   how to verify row counts without psql, and the failure modes whose real
-  cause is not what the error says. Use when running any `agri-cli ingest-*`
+  cause is not what the error says. Use when running any `agri-service data ingest-*`
   or `historical-*` verb, backfilling a source, wiring a new producer,
   diagnosing an empty map layer, or touching `plantgeo-ingest-cron`.
 ---
@@ -18,10 +18,10 @@ Service root: `services/agri-data-service/`. Run everything from there.
 ## The DSN contract — one credential, one DSN
 
 Since the 2026-08-08 role teardown there is nothing clever here. `DATABASE_URL`
-alone is enough for every `agri-cli` verb:
+alone is enough for every `agri-service` verb:
 
 ```bash
-uv run agri-cli <verb>   # reads DATABASE_URL from services/agri-data-service/.env
+uv run agri-service <group> <verb>   # reads DATABASE_URL from services/agri-data-service/.env
 ```
 
 `LOCAL_SOURCE_LOADER_DATABASE_URL` (and `FORECAST_MV_REFRESH_DATABASE_URL`,
@@ -81,7 +81,7 @@ asyncio.run(main())"
 `ingest-mtbs`, `ingest-drought-history`, `ingest-backfill`, `ingest-geometry-repair`,
 `ingest-all`.
 
-**Historical / warehouse** (`cli.py`): `historical-nasa-*`, `historical-era5-*`,
+**Historical / warehouse** (`interface/cli/commands.py`): `historical-nasa-*`, `historical-era5-*`,
 `historical-usdm-*`, `historical-promotion-*`, `source-ingest`, `forecast-*`,
 `strategy-train`, `db-status`, `db-upgrade`, `pipeline-status`.
 
@@ -95,7 +95,7 @@ Only sources declaring a usable `HistoryCapability` are backfillable. Today that
 exactly **`nws-sensors`** and **`sentinel2-ndvi`** (`_build_backfillable_sources`).
 
 ```bash
-uv run agri-cli ingest-backfill --source sentinel2-ndvi \
+uv run agri-service data ingest-backfill --source sentinel2-ndvi \
   --years 4 --chunk-days 5 --bbox "-125,42,-111,49"
 ```
 

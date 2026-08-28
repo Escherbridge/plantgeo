@@ -16,7 +16,7 @@ from pydantic import SecretStr
 
 from agri_data_service.config import ObjectStoreCredentials
 from agri_data_service.foundation.parquet.paths import partition_path
-from agri_data_service.interface.http.duckdb_session import (
+from agri_data_service.parquet_ops.duckdb_session import (
     SERVING_MAX_CONCURRENT_READS,
     SERVING_MEMORY_LIMIT,
     SERVING_PROCESS_MEMORY_CEILING_BYTES,
@@ -24,12 +24,12 @@ from agri_data_service.interface.http.duckdb_session import (
     SERVING_TIME_ZONE,
     SPILLING_DISABLED,
     ServingSession,
-    open_serving_session,
+    open_guarded_connection,
 )
-from agri_data_service.interface.http.faults import ServingRefusalError
-from agri_data_service.interface.http.request_params import BoundingBox, ReadScope
-from agri_data_service.interface.http.serving import resolve_window
-from agri_data_service.interface.http.warehouse_reader import (
+from agri_data_service.parquet_ops.faults import ServingRefusalError
+from agri_data_service.parquet_ops.request_params import BoundingBox, ReadScope
+from agri_data_service.parquet_ops.serving import resolve_window
+from agri_data_service.parquet_ops.warehouse_reader import (
     DuckDbRowReader,
     GeometrySupport,
     NoSpatialSupport,
@@ -37,7 +37,7 @@ from agri_data_service.interface.http.warehouse_reader import (
     RowRead,
     spatial_support,
 )
-from tests.interface.fakes import FakeListing
+from tests.parquet_ops.fakes import FakeListing
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -68,7 +68,7 @@ POSITIONED_SIGNAL_ROW = (
 @pytest.fixture
 def session() -> Iterator[ServingSession]:
     """A guarded session, closed on teardown; the caller re-points it at a local directory."""
-    opened = open_serving_session(CREDENTIALS)
+    opened = ServingSession(connection=open_guarded_connection(), bucket_uri=f"s3://{CREDENTIALS.bucket}")
     try:
         yield opened
     finally:

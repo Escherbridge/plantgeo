@@ -7,7 +7,6 @@ client's `MetricAtDateAvailability.request_failed` exists precisely so the two c
 from __future__ import annotations
 
 import json as json_module
-from contextlib import contextmanager
 from datetime import date
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -18,19 +17,22 @@ from sanic import Sanic
 
 from agri_data_service import app as app_module
 from agri_data_service.interface.http import parquet_routes
-from agri_data_service.interface.http.coverage import CensusLane
-from agri_data_service.interface.http.duckdb_session import SERVING_MAX_CONCURRENT_READS
-from agri_data_service.interface.http.faults import HTTP_CONFLICT, HTTP_SERVICE_UNAVAILABLE
+from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops.coverage import CensusLane
 from tests.contract.wire_contract import WIRE_BASE_PATH, WIRE_ROUTES, WireCoverage, WireWindow
-from tests.interface.fakes import FakeListing, FakeRowReader, instant
+from tests.parquet_ops.fakes import FakeListing, FakeRowReader, instant
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from sanic.response import HTTPResponse
 
+    from agri_data_service.parquet_ops.faults import ServingRefusalError
+
 HTTP_OK = 200
 HTTP_BAD_REQUEST = 400
+HTTP_CONFLICT = 409
+HTTP_SERVICE_UNAVAILABLE = 503
 
 #: The rung `serving_zoom_tier` resolves a z11 request down to.
 TIER_BELOW_Z11 = 9
@@ -55,11 +57,15 @@ def warehouse(monkeypatch: pytest.MonkeyPatch) -> tuple[FakeListing, FakeRowRead
     reader = FakeRowReader()
     monkeypatch.setattr(parquet_routes, "open_listing", lambda: listing)
 
-    @contextmanager
-    def fake_reader() -> Iterator[FakeRowReader]:
-        yield reader
+    async def fake_run_row_read(
+        work: Callable[[FakeRowReader], dict[str, object]],
+        *,
+        route: str,
+    ) -> dict[str, object]:
+        del route
+        return work(reader)
 
-    monkeypatch.setattr(parquet_routes, "open_row_reader", fake_reader)
+    monkeypatch.setattr(parquet_routes, "_run_row_read", fake_run_row_read)
     parquet_routes._coverage_cache.clear()
     return (listing, reader)
 
@@ -355,15 +361,13 @@ async def test_a_read_that_cannot_get_a_slot_is_refused_rather_than_queued(
     """The pool is the memory ceiling; queueing behind it would wait out the client's own budget."""
     listing, _ = warehouse
     listing.write_day("signal", "observed", 13, date(2026, 8, 6))
-    monkeypatch.setattr(parquet_routes, "SLOT_WAIT_SECONDS", 0.01)
-    slot = parquet_routes._read_slot()
-    for _ in range(SERVING_MAX_CONCURRENT_READS):
-        await slot.acquire()
-    try:
-        response = await parquet_routes.read_day(request_with(layer="signal", zoom="13", day="2026-08-06"))
-    finally:
-        for _ in range(SERVING_MAX_CONCURRENT_READS):
-            slot.release()
+    monkeypatch.setattr(
+        parquet_routes,
+        "_run_row_read",
+        _async_raising(faults.serving_at_capacity(operation="day", concurrent_reads=3)),
+    )
+
+    response = await parquet_routes.read_day(request_with(layer="signal", zoom="13", day="2026-08-06"))
     error = payload_of(response)["error"]
 
     assert response.status not in TRANSIENT_TO_THE_CLIENT
@@ -371,9 +375,25 @@ async def test_a_read_that_cannot_get_a_slot_is_refused_rather_than_queued(
     assert error["code"] == "serving_at_capacity"
 
 
-def test_every_warehouse_read_runs_on_the_bounded_pool_and_not_the_default_executor() -> None:
-    """`asyncio.to_thread` allows `min(32, cpu + 4)` threads, so the ceiling was 16-32 sessions."""
-    assert parquet_routes._read_pool._max_workers == SERVING_MAX_CONCURRENT_READS
+def test_the_http_adapter_owns_every_core_refusal_status() -> None:
+    """A new core refusal cannot inherit a transport status by accident."""
+    expected = {
+        "partition_day_conflict",
+        "partition_day_incomplete",
+        "bbox_unsupported",
+        "bbox_columns_absent",
+        "absence_marker_unreadable",
+        "absence_marker_undecodable",
+        "read_timed_out",
+        "read_over_budget",
+        "serving_at_capacity",
+        "serving_fault",
+        "object_store_session_unavailable",
+        "serving_extension_unavailable",
+        "census_budget_exhausted",
+    }
+
+    assert set(parquet_routes._REFUSAL_HTTP_STATUS) == expected
 
 
 def _raising(fault: BaseException) -> Callable[..., object]:
@@ -383,6 +403,15 @@ def _raising(fault: BaseException) -> Callable[..., object]:
         raise fault
 
     return resolve
+
+
+def _async_raising(fault: ServingRefusalError) -> Callable[..., object]:
+    """An async core-runner stand-in that returns one typed refusal to the adapter."""
+
+    async def run(*_args: object, **_kwargs: object) -> object:
+        raise fault
+
+    return run
 
 
 @pytest.mark.asyncio

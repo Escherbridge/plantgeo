@@ -37,18 +37,18 @@ anything declared in `cli.py`.
 
 | Service | `startCommand` | Declared in |
 |---|---|---|
-| `cron-drought` | `agri-cli ingest-drought` | `ingest/commands.py:153` |
-| `cron-evacuation-zones` | `agri-cli ingest-evacuation-zones` | `ingest/commands.py:205` |
-| `cron-fire-perimeters` | `agri-cli ingest-fire-perimeters` | `ingest/commands.py:137` |
-| `cron-firms` | `agri-cli ingest-firms` | `ingest/commands.py:89` |
-| `cron-geometry-repair` | `agri-cli ingest-geometry-repair` | `ingest/commands.py:354` |
-| `cron-ndvi` | `agri-cli ingest-ndvi` | `ingest/commands.py:173` |
-| `cron-sensors` | `agri-cli ingest-sensors` | `ingest/commands.py:189` |
-| `cron-streamflow` | `agri-cli ingest-streamflow` | `ingest/commands.py:105` |
-| `cron-weather` | `agri-cli ingest-weather` | `ingest/commands.py:121` |
+| `cron-drought` | `agri-service data ingest-drought` | `ingest/commands.py:153` |
+| `cron-evacuation-zones` | `agri-service data ingest-evacuation-zones` | `ingest/commands.py:205` |
+| `cron-fire-perimeters` | `agri-service data ingest-fire-perimeters` | `ingest/commands.py:137` |
+| `cron-firms` | `agri-service data ingest-firms` | `ingest/commands.py:89` |
+| `cron-geometry-repair` | `agri-service data ingest-geometry-repair` | `ingest/commands.py:354` |
+| `cron-ndvi` | `agri-service data ingest-ndvi` | `ingest/commands.py:173` |
+| `cron-sensors` | `agri-service data ingest-sensors` | `ingest/commands.py:189` |
+| `cron-streamflow` | `agri-service data ingest-streamflow` | `ingest/commands.py:105` |
+| `cron-weather` | `agri-service data ingest-weather` | `ingest/commands.py:121` |
 
 A tenth directory, `infra/cron-ingest/`, carries no `startCommand`; it is the
-shared build image, whose `ENTRYPOINT` is `["agri-cli", "ingest-all"]`.
+shared build image, whose current `ENTRYPOINT` is `["agri-service", "data", "ingest-all"]`.
 
 **The layering already exists — in prose, enforced by nothing.**
 [`execution/AGENTS.md`](../../../services/agri-data-service/src/agri_data_service/execution/AGENTS.md)
@@ -119,7 +119,7 @@ The `cli.py:19` citation is still correct. Line-pinned cross-file comments rot;
 this track will invalidate the rest of them and must update the file.
 
 **7. The test suite reaches into `cli.py`'s module namespace.** Nine test modules
-import from `agri_data_service.cli`, two of them private names —
+import from `agri_data_service.interface.cli`, two of them private names —
 `_load_run_plan` and `_strategy_seed_statement`. There are 22 `monkeypatch`
 sites binding attributes *on the `cli` module object*, e.g.
 `monkeypatch.setattr(cli_module, "_forecast_run_iteration", refresh)` in
@@ -246,12 +246,11 @@ Binding for every phase.
 
 1. **The 9 `startCommand` strings in `infra/cron-*/railway.json` and the
    `ENTRYPOINT` in `infra/cron-ingest/Dockerfile` are frozen.** No rename, no
-   regrouping under a `click.Group`, no added required option. `agri-cli
-   ingest-ndvi` must parse identically before and after.
+   regrouping under a `click.Group`, no added required option. `agri-service data ingest-ndvi` must parse identically before and after.
 2. **The full 52-leaf command surface is frozen**, not just the 9. Nothing
-   catalogues who else calls `agri-cli`; absence of evidence is not evidence.
-3. **`agri-cli` stays the single console script** at
-   `agri_data_service.cli:cli` (`pyproject.toml:49`). If `cli.py` becomes a
+   catalogues who else calls `agri-service`; absence of evidence is not evidence.
+3. **`agri-service` stays the single console script** at
+   `agri_data_service.interface.cli:cli` (`pyproject.toml:49`). If `cli.py` becomes a
    package, `agri_data_service/cli/__init__.py` must expose the same `cli` object
    so the entry point string never changes.
 4. **The import graph reachable from any `ingest-*` command must not touch
@@ -289,5 +288,5 @@ A violation of 1-4 is a production outage discovered on the next cron tick.
 2. Should `warehouse/` absorb `models/` and `db/` under one name, or stay two
    directories inside one layer? Absorbing is cleaner and costs the larger
    import churn.
-3. Does anything outside this repository invoke `agri-cli`? Contract item 2
+3. Does anything outside this repository invoke `agri-service`? Contract item 2
    assumes the worst; a confirmed "no" would let a later track retire dead verbs.

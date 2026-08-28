@@ -193,10 +193,10 @@ Tasks:
       report byte-identical or name every differing column and row key.
       Files: `.../pipeline/direct/parity.py` (new),
       `services/agri-data-service/tests/direct/test_parity.py` (new).
-- [ ] Task: Add the driver verb `agri-cli parquet-ingest --lane --day` plus the
-      lane→writer registry it resolves through. `cli.py` is a shared registry —
+- [ ] Task: Add the driver verb `agri-service data parquet-ingest --lane --day` plus the
+      lane→writer registry it resolves through. `interface/cli/data.py` is a shared registry —
       this slice owns it for this track (see the partition hypothesis).
-      Files: `services/agri-data-service/src/agri_data_service/cli.py`,
+      Files: `services/agri-data-service/src/agri_data_service/interface/cli/data.py`,
       `.../pipeline/direct/registry.py` (new),
       `services/agri-data-service/tests/direct/test_direct_registry.py` (new).
 - [ ] Task: `sensors` direct writer against api.weather.gov, reproducing the
@@ -346,7 +346,7 @@ Tasks:
 - [ ] Task: Drop the retired lane's Postgres tables as a migration on the P1
       baseline — one relation per revision, never a hand-run `DROP`.
       Files: `services/agri-data-service/alembic/versions/` (new revisions).
-- [ ] Verification: `agri-cli ingest-all --help` no longer names the retired
+- [ ] Verification: `agri-service data ingest-all --help` no longer names the retired
       lanes; no module under `ingest/` references their layer bindings; each
       retired lane's target table shows flat `n_tup_ins` across two scheduled
       intervals while its Parquet partition day keeps advancing.
@@ -417,7 +417,7 @@ with a real grep once HEAD has moved; only a consumer may upgrade this to
   "computed_at": "2026-08-25T00:00:00Z",
   "computed_at_commit": "440d9b5",
   "confidence": "planned",
-  "note": "Prebaked from the planning analysis, no separate recon pass. Excludes every path owned by parquet_duckdb_pivot_20260823 slices d0-d5. lane_registry.py, cli.py, alembic/versions/ and the cron Dockerfile are SHARED registries with a single named owner each; later slices append and must be sequenced, never run concurrently on those files.",
+  "note": "Prebaked from the planning analysis, no separate recon pass. Excludes every path owned by parquet_duckdb_pivot_20260823 slices d0-d5. lane_registry.py, interface/cli/data.py, alembic/versions/ and the cron Dockerfile are SHARED registries with a single named owner each; later slices append and must be sequenced, never run concurrently on those files.",
   "slices": [
     {
       "id": "s0",
@@ -489,14 +489,14 @@ with a real grep once HEAD has moved; only a consumer may upgrade this to
       "owns": [
         {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/", "status": "future"},
         {"path": "services/agri-data-service/tests/direct/", "status": "future"},
-        "services/agri-data-service/src/agri_data_service/cli.py",
+        "services/agri-data-service/src/agri_data_service/interface/cli/data.py",
         "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py"
       ],
       "model": "opus",
       "depends_on": ["s0"],
       "shared_writes": [
         {
-          "path": "services/agri-data-service/src/agri_data_service/cli.py",
+          "path": "services/agri-data-service/src/agri_data_service/interface/cli/data.py",
           "owner": "s2",
           "note": "3,900-line shared verb registry. s3/s4/s5 add NO new verbs; they register lanes in pipeline/direct/registry.py instead."
         },

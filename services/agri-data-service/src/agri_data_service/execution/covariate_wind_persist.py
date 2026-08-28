@@ -156,7 +156,7 @@ class WindTrainingRequest:
     alpha: float = DEFAULT_RIDGE_ALPHA
     schema_version: str = SCHEMA_VERSION
     quality_policy_key: str | None = None
-    requested_by: str = "agri-cli forecast-train-wind"
+    requested_by: str = "agri-service forecast train-wind"
 
     def __post_init__(self) -> None:
         """Refuse a request whose windows cannot produce a scoreable origin, before any query runs."""

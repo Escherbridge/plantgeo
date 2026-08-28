@@ -1,7 +1,7 @@
 """Measured PlantGeo lane facts, 2026-08-25.
 
 Every number and every basis string below came from
-`agri-cli parquet-drain --dry-run` (both selections) run against the
+`agri-service data parquet-drain --dry-run` (both selections) run against the
 production bucket on 2026-08-25. Nothing is inferred or remembered.
 """
 

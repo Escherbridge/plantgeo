@@ -2,7 +2,7 @@
 
 Every backfill and data-load stream, measured against production, with what is missing and what
 to run next. Machine-readable companion: `docs/reports/data-stream-validation-2026-08-07.md`
-(regenerate with `agri-cli validate-streams`). Operator guide:
+(regenerate with `agri-service ops validate-streams`). Operator guide:
 `docs/runbooks/durable-backfill-lanes.md`.
 
 **Headline: nothing is dead-lettered, and nothing is silently lost any more — but 8,932 days of
@@ -190,7 +190,7 @@ before cutover is simply reconciled in.
    editing a live bash script can corrupt the running process. Their cursor and failure files in
    `.agri-local-runs/locks/` need no migration: `jobs-reconcile-lane` derives coverage from the
    data, which is the whole point.
-5. Verify: `agri-cli jobs-status` should show `succeeded` climbing and `queued` falling.
+5. Verify: `agri-service ops jobs-status` should show `succeeded` climbing and `queued` falling.
 
 ---
 

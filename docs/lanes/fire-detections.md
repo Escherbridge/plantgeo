@@ -89,7 +89,7 @@ recent rows. Confirm with a query comparing the two on a sample of the newest
 rows.
 
 **Ingestion cadence (forward path):** hourly. `infra/cron-ingest/Dockerfile`
-runs `agri-cli ingest-all` to completion on Railway's `cronSchedule`, and the
+runs `agri-service data ingest-all` to completion on Railway's `cronSchedule`, and the
 process exit code is the run's verdict (`ingest/AGENTS.md:303`). `ingest-all`
 runs its jobs sequentially, not concurrently (`ingest/AGENTS.md:63`).
 `FIRMS_DAY_RANGE` (default `2`, clamped `1`-`5`, `firms.py:98,181-191`) is a

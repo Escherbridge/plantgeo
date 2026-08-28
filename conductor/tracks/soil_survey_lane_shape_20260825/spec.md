@@ -23,7 +23,7 @@ track to perform those cutover tasks.
 
 ## 1. What the problem looks like
 
-Measured 2026-08-25 by `agri-cli parquet-drain --dry-run --selection ladder`:
+Measured 2026-08-25 by `agri-service data parquet-drain --dry-run --selection ladder`:
 
 ```json
 {

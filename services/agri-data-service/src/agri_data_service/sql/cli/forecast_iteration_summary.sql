@@ -1,6 +1,6 @@
 -- Purpose: read back one just-materialized forecast iteration's header row together with how many
 --          forecast values were written under it, so the CLI can print a receipt.
--- Loaded by: agri_data_service.cli
+-- Loaded by: agri_data_service.interface.cli
 -- Params: iteration_id (uuid) -- the iteration to summarize, as returned by
 --         materialize_forecast_iteration.sql.
 --

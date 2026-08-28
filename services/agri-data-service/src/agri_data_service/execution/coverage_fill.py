@@ -309,7 +309,7 @@ def fill_description(
     served = ", ".join(probe.served_parameters) or "none"
     probed = ", ".join(cell.cell_key for cell in probe.cells) or "none"
     note = (
-        f"{GAP_FILL_NOTE_SENTINEL} {probe.measured_at.date().isoformat()}: authored by agri-cli "
+        f"{GAP_FILL_NOTE_SENTINEL} {probe.measured_at.date().isoformat()}: authored by agri-service "
         f"coverage-fill from {source.path.name} to close the interior gap "
         f"{target.first_day.isoformat()}..{target.last_day.isoformat()} ({target.day_count} days) in signals "
         f"{', '.join(target.signal_names)}. The provider was asked for exactly that span at cells {probed} "

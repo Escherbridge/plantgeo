@@ -72,7 +72,7 @@ forcing with no independent skill — request `era5` for wind rather than paying
   **Status (2026-08-06, slice D):** lane built — `ingest/open_meteo_ensemble.py` +
   `execution/ensemble_forecast.py` fetch, bound, cache, parse and reduce ensemble members into the
   exact `ForecastReceipt.quantile_levels` / `ForecastValue.quantile_values` shape (CLI:
-  `forecast-ensemble-status` / `forecast-ensemble-fetch`). Output today is a local checksummed
+  `agri-service forecast ensemble-status` / `agri-service forecast ensemble-fetch`). Output today is a local checksummed
   staged-receipt document, not warehouse rows. The quantile columns themselves need no migration,
   but every `ForecastReceipt` requires a `forecast_run_id` whose `ForecastRun.forecast_method` is
   CHECK-constrained to `('sql_linear', 'ml')` in the database, the model, and

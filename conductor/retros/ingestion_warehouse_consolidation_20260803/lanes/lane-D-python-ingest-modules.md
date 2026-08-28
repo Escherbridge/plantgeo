@@ -166,7 +166,7 @@ That last clause is the whole point of the lane; it has no equivalent in the TS.
 ### Step 4 — Swap the cron container
 
 1. Rewrite `infra/cron-ingest/Dockerfile` as a Python image that installs the `agri-data-service`
-   package and runs `agri-cli ingest-all`. The existing curl entrypoint
+   package and runs `agri-service data ingest-all`. The existing curl entrypoint
    (`infra/cron-ingest/Dockerfile:3,6`) goes entirely, along with the `202|409 → exit 0` mapping.
 2. `infra/cron-ingest/railway.json` keeps `cronSchedule: 0 * * * *` and
    `restartPolicyType: NEVER` (`railway.json:4-5`) — that pair, not the deleted in-memory
@@ -346,7 +346,7 @@ non-negotiable.
 **Idempotence** (plan §3 step 2) — against the local postgis at `127.0.0.1:5434`:
 
 ```powershell
-$env:DATABASE_URL="<local dsn>"; uv run agri-cli ingest-all
+$env:DATABASE_URL="<local dsn>"; uv run agri-service data ingest-all
 ```
 For each layer, capture `SELECT count(*) FROM geo.features f JOIN geo.layers l ON l.id=f.layer_id
 WHERE l.name=$1` **inside the same transaction** immediately before the replayed-payload run and
@@ -356,7 +356,7 @@ again after. **Delta exactly 0.** Never compare against a literal — the number
 **Exit-code proof — the reason this lane exists:**
 
 ```powershell
-uv run agri-cli ingest-all   # with one upstream forced to fail
+uv run agri-service data ingest-all   # with one upstream forced to fail
 echo $LASTEXITCODE
 ```
 Expected: **non-zero**. A run in which one job fails and the command exits `0` is a failed lane,
@@ -556,7 +556,7 @@ a migration; omitting the machinery makes that true *by construction* instead of
 while `alembic.ini` is read only inside `_alembic_config()` (`cli.py:266-267`), which only the
 migration verbs call. `ingest-all` never touches it.
 
-**Interim mitigation.** A manual `agri-cli ingest-all` against production at `23:36Z` closed the gap
+**Interim mitigation.** A manual `agri-service data ingest-all` against production at `23:36Z` closed the gap
 and did considerably more than that — it ran the three producers this track had built but never
 executed against production, and self-healed every orphan:
 

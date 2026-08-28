@@ -134,7 +134,7 @@ breaks things silently.
   argument depends on it being read inside `_alembic_config()` and nowhere else
   (spec finding 5). Resolution moves; laziness stays.
 
-**Acceptance:** `agri-cli db-status` still finds `alembic.ini`; the declarative
+**Acceptance:** `agri-service ops db-status` still finds `alembic.ini`; the declarative
 schema parity test still finds `db/agri/**`; the cron smoke script still passes.
 Both files could now be moved anywhere without silent misresolution.
 
@@ -232,7 +232,7 @@ Dissolving `cli.py`. Everything that can go wrong in this track goes wrong here.
    leaves `cli.py`, and two tests import private names. These fail loudly for
    non-behavioural reasons, which trains a reader to dismiss failures in this
    phase. That is the trap.
-4. `pyproject.toml:49` pins `agri_data_service.cli:cli`. If `cli.py` becomes
+4. `pyproject.toml:49` pins `agri_data_service.interface.cli:cli`. If `cli.py` becomes
    `cli/`, the package `__init__` must still expose `cli`.
 
 **What makes it safe:**
@@ -263,7 +263,7 @@ Dissolving `cli.py`. Everything that can go wrong in this track goes wrong here.
 independent of the CLI work and carries none of this risk.
 
 **Acceptance:** golden surface fixture passes byte-identical. Cron smoke green.
-`agri-cli` entry point unchanged in `pyproject.toml`. One full weekly cron cycle
+`agri-service` entry point unchanged in `pyproject.toml`. One full weekly cron cycle
 observed green after 6a before 6b ships.
 
 ## Phase 7 — `planes/`

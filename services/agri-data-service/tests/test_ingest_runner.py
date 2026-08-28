@@ -115,7 +115,7 @@ def test_any_job_failed_is_what_reddens_the_cron_run() -> None:
 
 
 def test_every_ingest_verb_is_registered_on_the_cli_group() -> None:
-    group = click.Group("agri-cli")
+    group = click.Group("agri-service")
     register_ingest_commands(group)
     assert sorted(group.commands) == sorted(EXPECTED_VERBS)
     assert len(INGEST_COMMANDS) == len(EXPECTED_VERBS)
@@ -132,7 +132,7 @@ def test_ingest_all_exits_non_zero_when_any_job_failed(monkeypatch: pytest.Monke
         ]
 
     monkeypatch.setattr(commands_module, "_run_all", failing_run)
-    group = click.Group("agri-cli")
+    group = click.Group("agri-service")
     register_ingest_commands(group)
     invocation = CliRunner().invoke(group, ["ingest-all"])
 
@@ -146,7 +146,7 @@ def test_ingest_all_exits_zero_when_every_job_merely_skipped(monkeypatch: pytest
         return [_result("nasa-firms", "skipped"), _result("ndvi", "skipped")]
 
     monkeypatch.setattr(commands_module, "_run_all", skipping_run)
-    group = click.Group("agri-cli")
+    group = click.Group("agri-service")
     register_ingest_commands(group)
     invocation = CliRunner().invoke(group, ["ingest-all"])
     assert invocation.exit_code == 0

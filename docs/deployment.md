@@ -14,9 +14,9 @@ define the security boundary:
 | Service | PlantGeo responsibility | Current gate |
 | --- | --- | --- |
 | `plantgeo-main` | Next.js application | Running; Railway's GitHub integration deploys it from `main`, and no other service is deployed by a web release. |
-| `plantgeo-ingest-cron` | Hourly `agri-cli ingest-all` (eight forward sources plus geometry repair) then `agri-cli jobs-pulse --time-budget-seconds 600` (every dispatchable lane, every durable archive definition, then the reconcile/gap-plan/validate data-quality pass) — both run unconditionally from one `ENTRYPOINT` | Running; config-as-code in `infra/cron-ingest/`, `deploy.cronSchedule: "0 * * * *"`. Consolidated back onto this one hourly service 2026-08-14 — see "Cron consolidation, 2026-08-14" below — from a fan-out of one Railway cron service per source and per lane. |
-| `plantgeo-cron-mtbs` | `agri-cli ingest-mtbs` weekly, Tuesdays at 07:55 UTC | Running; config-as-code in `infra/cron-mtbs/`, overriding the shared `infra/cron-ingest/Dockerfile` via `deploy.startCommand`. Deliberately excluded from `ingest-all` — see "Cron consolidation, 2026-08-14" below. |
-| `plantgeo-cron-soilgrids` | `node scripts/warm-soilgrids.mjs 120` hourly at `:25` | Running; config-as-code in `infra/cron-soilgrids/`, building from its own `infra/cron-soilgrids/Dockerfile` (Node, not the Python `agri-cli` image). A finite, resumable warm walk, not a recurring ingestion lane — see "Cron consolidation, 2026-08-14" below. |
+| `plantgeo-ingest-cron` | Hourly `agri-service data ingest-all`, vegetation catch-up, `agri-service ops jobs-pulse --time-budget-seconds 600`, and `agri-service data parquet-gap-fill --time-budget-seconds 900` — all four run unconditionally from one `ENTRYPOINT` | Running; config-as-code in `infra/cron-ingest/`, `deploy.cronSchedule: "0 * * * *"`. Consolidated back onto this one hourly service 2026-08-14 — see "Cron consolidation, 2026-08-14" below — from a fan-out of one Railway cron service per source and per lane. |
+| `plantgeo-cron-mtbs` | `agri-service data ingest-mtbs` weekly, Tuesdays at 07:55 UTC | Running; config-as-code in `infra/cron-mtbs/`, overriding the shared `infra/cron-ingest/Dockerfile` via `deploy.startCommand`. Deliberately excluded from `ingest-all` — see "Cron consolidation, 2026-08-14" below. |
+| `plantgeo-cron-soilgrids` | `node scripts/warm-soilgrids.mjs 120` hourly at `:25` | Running; config-as-code in `infra/cron-soilgrids/`, building from its own `infra/cron-soilgrids/Dockerfile` (Node, not the Python `agri-service` image). A finite, resumable warm walk, not a recurring ingestion lane — see "Cron consolidation, 2026-08-14" below. |
 | `plantgeo-dataservice` | Bounded Python API and publication receiver | Running; Alembic owns only the `agri` schema. |
 | `plantgeo-Redis` | Cache, pub/sub, and non-durable wake-up transport | Running; never use it as the durable job ledger. |
 | `Plantgeo` | Legacy PlantGeo PostgreSQL 18.3 database | Running, but the last audit found no required geospatial/time-series extensions. |
@@ -83,7 +83,7 @@ uv sync --locked --all-extras
 }
 '@ | Set-Content -Encoding utf8 .\run-plan.json
 
-$run = uv run agri-cli local init `
+$run = uv run agri-service ops local init `
   --job-name danger-forecast `
   --job-version 1 `
   --scheduled-for 2026-07-20T00:00:00-06:00 `
@@ -97,7 +97,7 @@ $runDirectory = $run.run_directory
 New-Item -ItemType Directory -Force `
   "$runDirectory\artifacts", "$runDirectory\validation" | Out-Null
 
-uv run agri-cli local status $runId
+uv run agri-service ops local status $runId
 ```
 
 The run plan accepts exactly `partitions`, `expected_shards`, and
@@ -109,12 +109,12 @@ Algorithms should checkpoint after bounded shards and reuse the verified cursor
 after interruption:
 
 ```powershell
-uv run agri-cli local checkpoint $runId `
+uv run agri-service ops local checkpoint $runId `
   --shard-key colorado-west `
   --cursor-file .\cursor.json `
   --progress 0.25
 
-uv run agri-cli local resume $runId --shard-key colorado-west
+uv run agri-service ops local resume $runId --shard-key colorado-west
 ```
 
 Every artifact and validation report must be a file beneath the returned run
@@ -150,7 +150,7 @@ artifact checksum, byte size, optional row count, frozen run-plan checksum, and
 release-set checksum, but it does not validate the whole run:
 
 ```powershell
-uv run agri-cli local register-output $runId `
+uv run agri-service ops local register-output $runId `
   --output-key danger-forecast-colorado-west `
   --kind danger_forecast `
   --artifact "$runDirectory\artifacts\danger-forecast-colorado-west.parquet" `
@@ -193,7 +193,7 @@ above:
 Finalization re-hashes all evidence and refuses incomplete coverage:
 
 ```powershell
-uv run agri-cli local finalize $runId `
+uv run agri-service ops local finalize $runId `
   --run-validation-report "$runDirectory\validation\run.json"
 ```
 
@@ -204,7 +204,7 @@ Only then publish the frozen set:
 $env:LOCAL_PUBLISH_API_URL = "https://<data-service-domain>/api/v1/local-execution"
 $env:LOCAL_PUBLISH_TOKEN = "<strong-dedicated-token>"
 
-uv run agri-cli local publish $runId `
+uv run agri-service ops local publish $runId `
   --product danger_forecast_artifacts `
   --scope-key colorado-west
 ```
@@ -488,7 +488,7 @@ stage, which this image does not need to re-run). Its `ENTRYPOINT` runs both hal
 pulse directly against Postgres and Redis on the private network:
 
 ```
-/bin/sh -c "agri-cli ingest-all; ingest_status=$?; agri-cli jobs-pulse --time-budget-seconds 600; pulse_status=$?; [ $ingest_status -eq 0 ] && [ $pulse_status -eq 0 ]"
+/bin/sh -c "agri-service data ingest-all; ingest_status=$?; agri-service ops jobs-pulse --time-budget-seconds 600; pulse_status=$?; [ $ingest_status -eq 0 ] && [ $pulse_status -eq 0 ]"
 ```
 
 `ingest-all` runs the eight forward ingestion sources plus the geometry-repair pass to completion,
@@ -556,9 +556,9 @@ Optional: `FIRMS_DAY_RANGE`, `INGEST_MAX_SOURCE_RECORDS`, `WEATHER_SAMPLE_SPACIN
 the layer-id and sensor-selection overrides in `docs/env-vars.md`. See that file for policy and
 defaults on each.
 
-**Verbs this image can run.** `agri-cli ingest-all` is the hourly one (see "Consolidated 2026-08-14"
+**Verbs this image can run.** `agri-service data ingest-all` is the hourly one (see "Consolidated 2026-08-14"
 above): eight sources followed by the geometry repair pass, each isolated, one JSON summary per job.
-`agri-cli jobs-pulse` runs immediately after it in the same `ENTRYPOINT` — see "Cron consolidation,
+`agri-service ops jobs-pulse` runs immediately after it in the same `ENTRYPOINT` — see "Cron consolidation,
 2026-08-14" below. The other verbs are operator tools on the same image — `ingest-<source>` for a
 single source, `ingest-geometry-repair` to link orphaned `geo.features.geometry_id` rows on demand,
 `ingest-backfill --source … --since … --until …` to walk a date-ranged history for the sources that
@@ -576,7 +576,7 @@ archive services) was itself reversed on 2026-08-14. Owner directive, quoted ver
 crons, maybe just one to keep a pulse on the job runner."* Before this, each durable lane —
 `jobs-run --lane firms-archive`, `jobs-run --lane streamflow-archive`, and the HTTP-triggered
 `strategy-mv-refresh` — needed its own scheduled cron service, on top of the eight per-source
-services and `plantgeo-cron-geometry-repair` above. `agri-cli jobs-pulse` replaces that fan-out
+services and `plantgeo-cron-geometry-repair` above. `agri-service ops jobs-pulse` replaces that fan-out
 with one process that visits every lane once per tick and reports one row per lane; folded into
 `plantgeo-ingest-cron`'s `ENTRYPOINT` alongside `ingest-all` (see "`plantgeo-ingest-cron`"
 above), it is what let all eleven of those other services be deleted. Twenty `infra/cron-*/`
@@ -630,7 +630,7 @@ that has not moved since Thursday costs a request and a no-op write, not a dupli
 
 **Survivors: `plantgeo-cron-mtbs` and `plantgeo-cron-soilgrids`.**
 
-`plantgeo-cron-mtbs` runs `agri-cli ingest-mtbs` weekly, Tuesdays at 07:55 UTC (`55 7 * * 2`),
+`plantgeo-cron-mtbs` runs `agri-service data ingest-mtbs` weekly, Tuesdays at 07:55 UTC (`55 7 * * 2`),
 still overriding the shared `infra/cron-ingest/Dockerfile` via `deploy.startCommand` in its own
 `infra/cron-mtbs/railway.json`. `ingest_mtbs`'s own docstring (`ingest/commands.py`) is why it was
 never folded into `ingest-all`: *"Unlike the other verbs this one is not hourly-shaped: MTBS
@@ -643,7 +643,7 @@ it, so `plantgeo-cron-mtbs` keeps its own weekly schedule and its own exit-code 
 
 `plantgeo-cron-soilgrids` runs `node scripts/warm-soilgrids.mjs 120` hourly at `:25`
 (`25 * * * *`), building from its own `infra/cron-soilgrids/Dockerfile` — a Node image, not the
-Python `agri-cli` image the other two services share. `scripts/warm-soilgrids.mjs`'s own header
+Python `agri-service` image the other two services share. `scripts/warm-soilgrids.mjs`'s own header
 explains why: SoilGrids v2.0 is a static raster, not a time series, so "there is no backfill lane
 for it — each cell is fetched once and stays valid," and the driver exists to finish what a
 hand-invoked, 16-point-per-call API route could not: a bounded, resumable walk over the ~1568-cell
@@ -683,7 +683,7 @@ operationally — none had ever been provisioned — but it did leave `jobs-plan
 directories did: those three verbs are the loop that turns a *detected* gap into a *claimable* work
 item, so while they were manual-only a hole in a layer could sit indefinitely with every cron green.
 
-`agri-cli jobs-pulse` now runs all three as a **third pass**, after the dispatchable and durable
+`agri-service ops jobs-pulse` now runs all three as a **third pass**, after the dispatchable and durable
 namespaces, on the same hourly `plantgeo-ingest-cron` tick. Per lane it runs
 `jobs-reconcile-lane --apply` then `jobs-plan-gaps --apply`; once per unfiltered tick it then runs
 one global `validate-streams`. Four properties are deliberate:
@@ -708,8 +708,8 @@ one global `validate-streams`. Four properties are deliberate:
   `invalid` versus `raised` — so an operator can tell "the gap detector is broken" from "the gap
   detector works and is telling you something".
 
-The pass is skippable with `agri-cli jobs-pulse --skip-maintenance` for an operator draining lane
-work by hand. The scheduled tick must never use it. `agri-cli jobs-pulse --dry-run` lists every
+The pass is skippable with `agri-service ops jobs-pulse --skip-maintenance` for an operator draining lane
+work by hand. The scheduled tick must never use it. `agri-service ops jobs-pulse --dry-run` lists every
 maintenance step it would run alongside the other two namespaces, applying nothing.
 
 ### Deferred services
@@ -795,7 +795,7 @@ project, environment, or service is not the expected exact value.
   locations.
 - Retain 30 days of redacted job events in partitioned PostgreSQL tables. A
   local control-plane task must create upcoming partitions and remove expired
-  ones. Run `uv run agri-cli job-logs-maintain --retention-days 30
+  ones. Run `uv run agri-service ops job-logs-maintain --retention-days 30
   --future-days 7` after migration and at least daily from the operator machine.
   The command takes a nonblocking transaction fence before any table lock,
   reports `maintenance busy` instead of waiting behind another invocation,

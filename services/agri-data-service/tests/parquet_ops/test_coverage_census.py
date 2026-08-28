@@ -2,7 +2,7 @@
 
 The golden `coverage.json` is reproduced by the BUILDER, from a warehouse seeded with exactly the
 facts it states -- a renderer fed the golden's own values back cannot fail on anything the builder
-decides, and did not. See `tests/interface/AGENTS.md`.
+decides, and did not. See `tests/parquet_ops/AGENTS.md`.
 """
 
 from __future__ import annotations
@@ -18,19 +18,19 @@ import pytest
 
 from agri_data_service.foundation.parquet.lane_contract import LANE_NATURES
 from agri_data_service.foundation.parquet.paths import validate_layer_slug
-from agri_data_service.interface.http import coverage as coverage_module
-from agri_data_service.interface.http.coverage import (
+from agri_data_service.parquet_ops import coverage as coverage_module
+from agri_data_service.parquet_ops.coverage import (
     CensusLane,
     CoverageCache,
     build_coverage,
     build_lane_coverage,
     registered_census_lanes,
 )
-from agri_data_service.interface.http.faults import ServingRefusalError
-from agri_data_service.interface.http.wire import DayRange, LaneCoverage, WarehouseCoverage
+from agri_data_service.parquet_ops.faults import ServingRefusalError
+from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from tests.contract.wire_contract import WireCoverage
-from tests.interface.fakes import FakeListing, instant
+from tests.parquet_ops.fakes import FakeListing, instant
 
 if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.paths import PartitionKind

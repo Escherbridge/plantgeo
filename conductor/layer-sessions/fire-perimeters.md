@@ -60,8 +60,8 @@ Reproduce it yourself before acting -- HEAD and the bucket both move:
 
 ```bash
 cd services/agri-data-service
-uv run agri-cli parquet-drain --dry-run --selection ladder  | python -m json.tool   # ladder state
-uv run agri-cli parquet-drain --dry-run --selection missing | python -m json.tool   # export state
+uv run agri-service data parquet-drain --dry-run --selection ladder  | python -m json.tool   # ladder state
+uv run agri-service data parquet-drain --dry-run --selection missing | python -m json.tool   # export state
 uv run python scripts/warehouse_status.py                                           # bucket health
 ```
 
@@ -93,8 +93,8 @@ the coarse rungs and the marker are one indivisible unit. Newly written days get
 Days with no base rung at all. Close them with:
 
 ```bash
-uv run agri-cli parquet-drain --dry-run --selection missing --layer fire-perimeters   # confirm the count first
-uv run agri-cli parquet-drain --selection missing --layer fire-perimeters --progress
+uv run agri-service data parquet-drain --dry-run --selection missing --layer fire-perimeters   # confirm the count first
+uv run agri-service data parquet-drain --selection missing --layer fire-perimeters --progress
 ```
 
 This is SOURCE-CONNECTED. It queries Postgres, so the collision rule applies.

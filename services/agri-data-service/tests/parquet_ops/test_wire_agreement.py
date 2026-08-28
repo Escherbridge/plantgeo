@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from agri_data_service.foundation.parquet.lane_contract import LANE_NATURES as FOUNDATION_LANE_NATURES
 from agri_data_service.foundation.parquet.paths import PARTITION_KINDS as FOUNDATION_PARTITION_KINDS
-from agri_data_service.interface.http import wire
+from agri_data_service.parquet_ops import wire
 from tests.contract.wire_contract import (
     LANE_NATURES,
     PARTITION_KINDS,

@@ -1,4 +1,4 @@
-"""CLI commands for migrations and reviewed seed data."""
+"""Click command adapters for the Agri Data Service."""
 
 from __future__ import annotations
 
@@ -292,7 +292,6 @@ from agri_data_service.execution.weather_observations.nasa_power import (
     write_historical_nasa_checkpoint,
     write_historical_nasa_release_plan,
 )
-from agri_data_service.ingest.commands import register_ingest_commands
 from agri_data_service.jobs import (
     JobDefinitionNotFoundError,
     JobLedgerRowError,
@@ -413,33 +412,7 @@ if TYPE_CHECKING:
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
 
 
-@click.group()
-def cli() -> None:
-    """Agri Data Service CLI."""
-
-
-register_ingest_commands(cli)
-
-from agri_data_service.execution.analog_ensemble_cli import (  # noqa: E402
-    forecast_recalibrate_ndvi,
-    forecast_train_anen,
-)
-from agri_data_service.execution.jobs_pulse_command import jobs_pulse  # noqa: E402
-from agri_data_service.execution.recommendation_commands import (  # noqa: E402
-    register_recommendation_commands,
-)
-from agri_data_service.execution.seasonal_command import (  # noqa: E402
-    register_seasonal_commands,
-)
-
-cli.add_command(forecast_train_anen)
-cli.add_command(forecast_recalibrate_ndvi)
-cli.add_command(jobs_pulse)
-register_recommendation_commands(cli)
-register_seasonal_commands(cli)
-
-
-@cli.command()
+@click.command()
 def seed() -> None:
     """Seed draft regenerative strategies."""
     asyncio.run(_seed())
@@ -454,7 +427,7 @@ async def _seed() -> None:
     click.echo(f"Seeded {len(STRATEGY_SEEDS)} draft strategies for evidence review.")
 
 
-@cli.command("strategy-label-map-preflight")
+@click.command("strategy-label-map-preflight")
 @click.option(
     "--mapping-manifest",
     type=click.Path(path_type=Path, exists=True, dir_okay=False, readable=True),
@@ -472,7 +445,7 @@ def strategy_label_map_preflight(context: click.Context, mapping_manifest: Path)
         context.exit(2)
 
 
-@cli.command("strategy-train")
+@click.command("strategy-train")
 @click.option(
     "--label-bundle",
     type=click.Path(path_type=Path, exists=True, dir_okay=False, readable=True),
@@ -571,20 +544,20 @@ def _alembic_config() -> Config:
     return Config(str(default_path))
 
 
-@cli.command("db-status")
+@click.command("db-status")
 def db_status() -> None:
     """Show the database's current Alembic revision."""
     command.current(_alembic_config(), verbose=True)
 
 
-@cli.command("db-upgrade")
+@click.command("db-upgrade")
 @click.argument("revision", default="head")
 def db_upgrade(revision: str) -> None:
     """Upgrade through Alembic without application-owned DDL."""
     command.upgrade(_alembic_config(), revision)
 
 
-@cli.command("forecast-refresh-ml-daily")
+@click.command("refresh-ml-daily")
 def forecast_refresh_ml_daily() -> None:
     """Explicitly refresh the reviewed ML daily serving materialization."""
     try:
@@ -600,7 +573,7 @@ def forecast_refresh_ml_daily() -> None:
 
 
 def _forecast_mv_refresh_database_url() -> str:
-    """Resolve the async DSN `forecast-refresh-ml-daily` connects with, falling back through what
+    """Resolve the async DSN `agri-service forecast refresh-ml-daily` connects with, falling back through what
     this service already has configured rather than reading the environment a second time.
 
     `FORECAST_MV_REFRESH_DATABASE_URL` -> `DATABASE_URL` is `require_forecast_mv_refresh_database_url`'s
@@ -653,7 +626,7 @@ def _forecast_cli_timestamp(value: str, option_name: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-@cli.command("forecast-run-iteration")
+@click.command("run-iteration")
 @click.option("--iteration-key", required=True, help="Stable idempotency key for this immutable evaluation.")
 @click.option("--series-id", type=click.UUID, required=True)
 @click.option("--release-set-id", type=click.UUID, required=True)
@@ -778,7 +751,7 @@ async def _forecast_run_iteration(  # noqa: PLR0913
     }
 
 
-@cli.command("forecast-reconcile-actuals")
+@click.command("reconcile-actuals")
 @click.option("--iteration-id", type=click.UUID, required=True)
 @click.option(
     "--actual-release-set-id",
@@ -962,7 +935,7 @@ def _holdout_payload(evaluation: HoldoutEvaluation) -> dict[str, Any]:
     }
 
 
-@cli.command("forecast-vegetation-register")
+@click.command("vegetation-register")
 @click.option("--cutoff-day", required=True, help="Publisher-named UTC day that closes the governed NDVI corpus.")
 @click.option("--cell-limit", type=click.IntRange(1, 2000), default=24, show_default=True)
 @click.option("--cell-key", "cell_keys", multiple=True, help="Explicit vegetation cell keys; overrides sampling.")
@@ -1006,7 +979,7 @@ async def _forecast_vegetation_register(
     return payload
 
 
-@cli.command("forecast-vegetation-simulate")
+@click.command("vegetation-simulate")
 @click.option("--cutoff-day", required=True, help="Publisher-named UTC day that ends the training history.")
 @click.option("--release-cutoff-day", help="Governed release-set cutoff day; defaults to --cutoff-day.")
 @click.option("--horizon-days", type=click.IntRange(1, 366), default=30, show_default=True)
@@ -1121,7 +1094,7 @@ async def _forecast_vegetation_simulate(  # noqa: PLR0913
     return payload
 
 
-@cli.command("forecast-vegetation-evaluate")
+@click.command("vegetation-evaluate")
 @click.option("--release-cutoff-day", required=True, help="Governed release-set cutoff day holding the actuals.")
 @click.option(
     "--holdout-cutoff-day",
@@ -1257,7 +1230,7 @@ async def _forecast_vegetation_evaluate(
     return payload
 
 
-@cli.command("forecast-train-wind")
+@click.command("train-wind")
 @click.option("--cell-id", type=click.UUID, required=True, help="Spatial cell whose covariate vectors train the fit.")
 @click.option("--series-id", type=click.UUID, required=True, help="Forecast series the metrics are filed under.")
 @click.option("--history-start", required=True, help="First covariate day to read, as YYYY-MM-DD.")
@@ -1381,7 +1354,7 @@ async def _forecast_train_wind(request: WindTrainingRequest, *, persist: bool) -
     return report.to_summary()
 
 
-@cli.command("forecast-train-wind-plan")
+@click.command("train-wind-plan")
 @click.option(
     "--target",
     "targets",
@@ -1424,7 +1397,7 @@ def forecast_train_wind_plan(  # noqa: PLR0913 - one parameter per click option,
     each shard `ON CONFLICT (job_run_id, shard_key) DO NOTHING`, and the shard keys come from the
     plan's own pinned grid, so replanning the same declared shape adds nothing and re-keys nothing.
 
-    `agri-cli forecast-train-wind-run` is what then works the shards, one bounded slice per tick,
+    `agri-service forecast train-wind-run` is what then works the shards, one bounded slice per tick,
     on the same lease/fence/budget runtime the archive lanes use. Note it is NOT `jobs-run`: that
     verb opens the source-loader DSN, and a forecast receipt must be written through the
     evaluation-writer DSN instead. A `jobs-run` pointed at this definition fails loudly with an
@@ -1478,7 +1451,11 @@ async def _forecast_train_wind_plan(plan: CovariateWindLanePlan) -> dict[str, An
     database_url = settings.require_forecast_iteration_database_url()
     async with forecast_iteration_session(database_url) as session:
         await session.execute(text("SET LOCAL statement_timeout = '120s'"))
-        opened = await plan_covariate_wind_lane(session, plan, requested_by="agri-cli forecast-train-wind-plan")
+        opened = await plan_covariate_wind_lane(
+            session,
+            plan,
+            requested_by="agri-service forecast train-wind-plan",
+        )
         await session.commit()
     return {
         "definition": TRAINING_DEFINITION_NAME,
@@ -1497,7 +1474,7 @@ async def _forecast_train_wind_plan(plan: CovariateWindLanePlan) -> dict[str, An
     }
 
 
-@cli.command("forecast-train-wind-run")
+@click.command("train-wind-run")
 @click.option("--budget-seconds", type=float, default=None, help="Override the definition's own slice budget.")
 @click.option("--worker-id", default=None, help="Label this lease owner; defaults to a per-process id.")
 @click.pass_context
@@ -1522,7 +1499,7 @@ def forecast_train_wind_run(context: click.Context, budget_seconds: float | None
     try:
         summary = asyncio.run(
             _forecast_train_wind_slice(
-                worker_id=(worker_id or "").strip() or f"forecast-train-wind:{uuid.uuid4()}",
+                worker_id=(worker_id or "").strip() or f"agri-service forecast train-wind:{uuid.uuid4()}",
                 budget_seconds=budget_seconds,
             )
         )
@@ -1569,7 +1546,7 @@ async def _forecast_train_wind_slice(*, worker_id: str, budget_seconds: float | 
         )
 
 
-@cli.command("job-logs-maintain")
+@click.command("job-logs-maintain")
 @click.option(
     "--retention-days",
     type=click.IntRange(1, 365),
@@ -1601,7 +1578,7 @@ async def _job_logs_maintain(retention_days: int, future_days: int) -> None:
     click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 
-@cli.group("local")
+@click.group("local")
 def local_execution() -> None:
     """Manage local-only resumable model and forecast runs."""
 
@@ -1818,7 +1795,7 @@ def local_publish(
     click.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
-@cli.command("source-ingest")
+@click.command("source-ingest")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 @click.option("--payload", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def source_ingest(plan: Path, payload: Path) -> None:
@@ -1911,7 +1888,7 @@ async def _source_ingest(plan_path: Path, payload_path: Path) -> None:
     click.echo(json.dumps({**checkpoint.model_dump(mode="json"), "checkpoint": str(path)}, indent=2, default=str))
 
 
-@cli.command("source-ingest-status")
+@click.command("source-ingest-status")
 @click.argument("checkpoint", type=click.Path(path_type=Path, exists=True, dir_okay=False))
 def source_ingest_status(checkpoint: Path) -> None:
     """Read a local source-ingestion checkpoint without touching the warehouse."""
@@ -1922,7 +1899,7 @@ def source_ingest_status(checkpoint: Path) -> None:
     click.echo(value.model_dump_json(indent=2))
 
 
-@cli.command("historical-nasa-backfill")
+@click.command("historical-nasa-backfill")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_nasa_backfill(plan: Path) -> None:
     """Locally fetch, validate, and persist one reviewed NASA POWER backfill."""
@@ -1991,7 +1968,7 @@ async def _historical_nasa_backfill(plan_path: Path) -> None:
     )
 
 
-@cli.command("historical-nasa-status")
+@click.command("historical-nasa-status")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_nasa_status(plan: Path) -> None:
     """Read the durable local NASA historical checkpoint without network or database access."""
@@ -2006,7 +1983,7 @@ def historical_nasa_status(plan: Path) -> None:
     click.echo(checkpoint.model_dump_json(indent=2))
 
 
-@cli.command("historical-nasa-materialize-parquet")
+@click.command("historical-nasa-materialize-parquet")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_nasa_materialize_parquet(plan: Path) -> None:
     """Build one local daily-partitioned Parquet lake from complete cached NASA receipts."""
@@ -2028,7 +2005,7 @@ def historical_nasa_materialize_parquet(plan: Path) -> None:
     )
 
 
-@cli.command("historical-nasa-finalize")
+@click.command("historical-nasa-finalize")
 @click.option("--source-plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 @click.option("--finalization", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 @click.option("--output-plan", type=click.Path(path_type=Path, dir_okay=False), required=True)
@@ -2081,7 +2058,7 @@ async def _historical_nasa_finalize(
     )
 
 
-@cli.command("historical-era5-backfill")
+@click.command("historical-era5-backfill")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_era5_backfill(plan: Path) -> None:
     """Fetch, validate, and cache one reviewed ERA5-Land historical source plan."""
@@ -2147,7 +2124,7 @@ async def _historical_era5_backfill(plan_path: Path) -> None:
     )
 
 
-@cli.command("historical-era5-persist")
+@click.command("historical-era5-persist")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_era5_persist(plan: Path) -> None:
     """Persist one complete cache-backed ERA5-Land source plan into the local warehouse."""
@@ -2260,7 +2237,7 @@ class ChunkedLane[ChunkT: LaneChunk, PlanT: LanePlan[Any], CheckpointT: LaneChec
 
     Every field is filled by a factory called from inside a verb body, never at import, so the
     module-level name each one names is resolved at call time. That is what keeps a test's
-    `monkeypatch.setattr(agri_data_service.cli, ...)` intercepting: an import-time binding would
+    `monkeypatch.setattr(agri_data_service.interface.cli.commands, ...)` intercepting: an import-time binding would
     capture the original function and make the patch a silent no-op.
 
     The four type parameters are not decoration. They are what makes mypy refuse a cams `record_*`
@@ -2451,14 +2428,14 @@ def _open_meteo_lane() -> ChunkedLane[
     )
 
 
-@cli.command("historical-open-meteo-status")
+@click.command("historical-open-meteo-status")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_open_meteo_status(plan: Path) -> None:
     """Report which archive chunks are already cached and what a resume would still fetch."""
     _open_meteo_lane().report_status(plan)
 
 
-@cli.command("historical-open-meteo-backfill")
+@click.command("historical-open-meteo-backfill")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 @click.option("--max-chunks", type=click.IntRange(min=1), default=None, help="Stop after this many new chunks.")
 @click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
@@ -2467,7 +2444,7 @@ def historical_open_meteo_backfill(plan: Path, max_chunks: int | None, concurren
     asyncio.run(_open_meteo_lane().run_backfill(plan, max_chunks, concurrency))
 
 
-@cli.command("historical-open-meteo-persist")
+@click.command("historical-open-meteo-persist")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_open_meteo_persist(plan: Path) -> None:
     """Persist every cached Open-Meteo archive chunk into the warehouse; finalize only when complete."""
@@ -2595,14 +2572,14 @@ def _glofas_lane() -> ChunkedLane[
     )
 
 
-@cli.command("historical-glofas-status")
+@click.command("historical-glofas-status")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_glofas_status(plan: Path) -> None:
     """Report which GloFAS flood chunks are already cached and what a resume would still fetch."""
     _glofas_lane().report_status(plan)
 
 
-@cli.command("historical-glofas-backfill")
+@click.command("historical-glofas-backfill")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 @click.option("--max-chunks", type=click.IntRange(min=1), default=None, help="Stop after this many new chunks.")
 @click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
@@ -2611,7 +2588,7 @@ def historical_glofas_backfill(plan: Path, max_chunks: int | None, concurrency: 
     asyncio.run(_glofas_lane().run_backfill(plan, max_chunks, concurrency))
 
 
-@cli.command("historical-glofas-persist")
+@click.command("historical-glofas-persist")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_glofas_persist(plan: Path) -> None:
     """Persist every cached GloFAS flood chunk into the warehouse; finalize only when complete."""
@@ -2709,14 +2686,14 @@ def _cams_lane() -> ChunkedLane[
     )
 
 
-@cli.command("historical-cams-status")
+@click.command("historical-cams-status")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_cams_status(plan: Path) -> None:
     """Report which CAMS air-quality chunks are already cached and what a resume would still fetch."""
     _cams_lane().report_status(plan)
 
 
-@cli.command("historical-cams-backfill")
+@click.command("historical-cams-backfill")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 @click.option("--max-chunks", type=click.IntRange(min=1), default=None, help="Stop after this many new chunks.")
 @click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
@@ -2725,7 +2702,7 @@ def historical_cams_backfill(plan: Path, max_chunks: int | None, concurrency: in
     asyncio.run(_cams_lane().run_backfill(plan, max_chunks, concurrency))
 
 
-@cli.command("historical-cams-persist")
+@click.command("historical-cams-persist")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_cams_persist(plan: Path) -> None:
     """Persist every cached CAMS air-quality chunk into the warehouse; finalize only when complete."""
@@ -2842,14 +2819,14 @@ def _ensemble_forecast_receipt_totals(checkpoint: EnsembleForecastCheckpoint) ->
     }
 
 
-@cli.command("forecast-ensemble-status")
+@click.command("ensemble-status")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def forecast_ensemble_status(plan: Path) -> None:
     """Report which Open-Meteo Ensemble chunks are already cached and what a resume would still fetch."""
     _ensemble_forecast_lane().report_status(plan)
 
 
-@cli.command("forecast-ensemble-fetch")
+@click.command("ensemble-fetch")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 @click.option("--max-chunks", type=click.IntRange(min=1), default=None, help="Stop after this many new chunks.")
 @click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
@@ -2884,7 +2861,7 @@ def _forecast_ensemble_failure_reason(exc: BaseException) -> str:
     return f"ensemble forecast operation failed ({exc.__class__.__name__})"
 
 
-@cli.command("historical-era5-materialize-parquet")
+@click.command("historical-era5-materialize-parquet")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_era5_materialize_parquet(plan: Path) -> None:
     """Build the local daily-partitioned ERA5 Parquet lake from cached source receipts."""
@@ -2906,7 +2883,7 @@ def historical_era5_materialize_parquet(plan: Path) -> None:
     )
 
 
-@cli.command("historical-era5-finalize")
+@click.command("historical-era5-finalize")
 @click.option("--source-plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 @click.option("--finalization", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 @click.option("--output-plan", type=click.Path(path_type=Path, dir_okay=False), required=True)
@@ -2972,7 +2949,7 @@ async def _historical_era5_finalize(
     )
 
 
-@cli.command("historical-usdm-backfill")
+@click.command("historical-usdm-backfill")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_usdm_backfill(plan: Path) -> None:
     """Locally fetch, validate, persist, and finalize one reviewed USDM four-year backfill."""
@@ -3031,7 +3008,7 @@ async def _historical_usdm_backfill(plan_path: Path) -> None:
     )
 
 
-@cli.command("historical-usdm-finalize")
+@click.command("historical-usdm-finalize")
 @click.option("--source-plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 @click.option("--finalization", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_usdm_finalize(source_plan: Path, finalization: Path) -> None:
@@ -3077,7 +3054,7 @@ async def _historical_usdm_finalize(source_plan_path: Path, finalization_path: P
     )
 
 
-@cli.command("historical-usdm-status")
+@click.command("historical-usdm-status")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_usdm_status(plan: Path) -> None:
     """Read the durable local USDM checkpoint without network or warehouse access."""
@@ -3092,7 +3069,7 @@ def historical_usdm_status(plan: Path) -> None:
     click.echo(checkpoint.model_dump_json(indent=2))
 
 
-@cli.command("historical-plan-continue")
+@click.command("historical-plan-continue")
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 @click.option(
     "--output-directory",
@@ -3195,7 +3172,7 @@ async def _historical_plan_continue(  # noqa: PLR0913 - mirrors its verb's optio
     click.echo(json.dumps(continuation_decision_payload(decision, written=written), indent=2))
 
 
-@cli.command("historical-plan-staleness")
+@click.command("historical-plan-staleness")
 @click.option(
     "--plans-directory",
     type=click.Path(path_type=Path, exists=True, file_okay=False),
@@ -3264,7 +3241,7 @@ def _plan_continuation_failure_reason(exc: Exception) -> str:
     return f"plan continuation input is invalid: {exc}"
 
 
-@cli.command("coverage-status")
+@click.command("coverage-status")
 @click.option(
     "--source-key",
     "source_keys",
@@ -3317,7 +3294,7 @@ async def _coverage_status(source_keys: tuple[str, ...], through: str | None, *,
     click.echo(json.dumps(coverage_status_payload(censuses), indent=2) if as_json else render_census(censuses))
 
 
-@cli.command("coverage-fill")
+@click.command("coverage-fill")
 @click.option(
     "--plan",
     type=click.Path(path_type=Path, exists=True, dir_okay=False),
@@ -3514,7 +3491,7 @@ def _coverage_failure_reason(exc: Exception) -> str:  # noqa: PLR0911 - an order
     return f"coverage verb input is invalid: {exc}"
 
 
-@cli.command("historical-promotion-spool")
+@click.command("historical-promotion-spool")
 @click.option("--release-set-key", required=True)
 @click.option("--minimum-target-revision", default="20260720_0004", show_default=True)
 def historical_promotion_spool(release_set_key: str, minimum_target_revision: str) -> None:
@@ -3548,7 +3525,7 @@ async def _historical_promotion_spool(release_set_key: str, minimum_target_revis
     )
 
 
-@cli.command("historical-promotion-upload")
+@click.command("historical-promotion-upload")
 @click.option("--spool-directory", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True)
 def historical_promotion_upload(spool_directory: Path) -> None:
     """Resume a spooled promotion through the configured private Railway receiver."""
@@ -3585,7 +3562,7 @@ async def _historical_promotion_upload(spool_directory: Path) -> None:
     )
 
 
-@cli.command("pipeline-status")
+@click.command("pipeline-status")
 @click.option(
     "--checkpoint",
     type=click.Path(path_type=Path, exists=True, dir_okay=False),
@@ -3870,7 +3847,7 @@ async def _parquet_gap_fill(
         )
 
 
-@cli.command("parquet-gap-fill")
+@click.command("parquet-gap-fill")
 @click.option(
     "--layer",
     "layer_slugs",
@@ -4275,7 +4252,7 @@ def _parquet_store_and_backend() -> tuple[ObjectStore, ObjectStoreBackend]:
     return ObjectStore(backend, prefix=settings.object_store_prefix), backend
 
 
-@cli.command("parquet-drain")
+@click.command("parquet-drain")
 @click.option(
     "--layer",
     "layer_slugs",
@@ -4423,7 +4400,7 @@ def parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 
-@cli.command("parquet-forward-vegetation")
+@click.command("parquet-forward-vegetation")
 @click.option("--since", required=True, help="Timezone-aware lower bound for raw row creation or update time.")
 @click.option("--through-day", required=True, help="Latest publisher-named UTC day eligible for promotion.")
 @click.option(
@@ -4490,7 +4467,7 @@ def parquet_forward_vegetation(  # noqa: PLR0913 - Click exposes one argument pe
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 
-@cli.command("parquet-catch-up-vegetation")
+@click.command("parquet-catch-up-vegetation")
 @click.option("--through-day", help="Latest governed UTC day to include; defaults to today.")
 @click.option(
     "--max-days",
@@ -4546,7 +4523,7 @@ def parquet_catch_up_vegetation(  # noqa: PLR0913
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 
-@cli.command("parquet-rewrite-vegetation")
+@click.command("parquet-rewrite-vegetation")
 @click.option(
     "--manifest",
     "manifest_path",
@@ -4639,7 +4616,7 @@ def parquet_rewrite_vegetation(  # noqa: PLR0913 - the six flags are the destruc
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 
-@cli.command("parquet-vegetation-absence-ladders")
+@click.command("parquet-vegetation-absence-ladders")
 @click.option("--first-day", required=True, help="First settled UTC day to inspect, inclusive.")
 @click.option("--last-day", required=True, help="Last settled UTC day to inspect, inclusive.")
 @click.option("--max-days", type=click.IntRange(min=1), default=None, help="Bound this pass to the oldest N days.")
@@ -4690,7 +4667,7 @@ def parquet_vegetation_absence_ladders(  # noqa: PLR0913 - Click exposes one arg
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 
-@cli.command("parquet-retract-vegetation-absences")
+@click.command("parquet-retract-vegetation-absences")
 @click.option("--day", "days", multiple=True, required=True, help="Exact unsettled UTC day to retract; repeatable.")
 @click.option("--coverage-last-day", required=True, help="Current settled vegetation coverage cutoff.")
 @click.option(
@@ -4737,7 +4714,7 @@ def parquet_retract_vegetation_absences(  # noqa: PLR0913 - Click exposes one ar
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 
-@cli.command("parquet-reconcile-vegetation-exact")
+@click.command("parquet-reconcile-vegetation-exact")
 @click.option("--first-day", required=True, help="First governed UTC source day, inclusive.")
 @click.option("--last-day", required=True, help="Last promoted governed UTC source day, inclusive.")
 @click.option(
@@ -4793,7 +4770,7 @@ def parquet_reconcile_vegetation_exact(  # noqa: PLR0913 - Click exposes one arg
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 
-@cli.command("parquet-repair-audit-vegetation")
+@click.command("parquet-repair-audit-vegetation")
 @click.option("--first-day", required=True, help="First governed UTC source day, inclusive.")
 @click.option("--last-day", required=True, help="Last promoted governed UTC source day, inclusive.")
 @click.option("--coverage-last-day", required=True, help="Current settled vegetation coverage cutoff.")
@@ -4862,7 +4839,7 @@ def parquet_repair_audit_vegetation(  # noqa: PLR0913
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 
-@cli.command("parquet-retire-legacy-layout")
+@click.command("parquet-retire-legacy-layout")
 @click.option(
     "--layer",
     "layer_slugs",

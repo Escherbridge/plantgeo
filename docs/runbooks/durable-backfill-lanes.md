@@ -118,7 +118,7 @@ no work while still exiting 0. `--lane firms-archive` resolves through the produ
 ### Plan a lane
 
 ```bash
-agri-cli jobs-plan-lane --lane firms-archive
+agri-service ops jobs-plan-lane --lane firms-archive
 ```
 
 **Safe to re-run on every tick of every day.** The run inserts `ON CONFLICT (logical_run_key) DO
@@ -149,8 +149,8 @@ dead-letters after eight attempts.
 ### Reconcile it against what already landed — before the first tick
 
 ```bash
-agri-cli jobs-reconcile-lane --lane firms-archive            # dry run; writes nothing
-agri-cli jobs-reconcile-lane --lane firms-archive --apply    # settle the covered windows
+agri-service ops jobs-reconcile-lane --lane firms-archive            # dry run; writes nothing
+agri-service ops jobs-reconcile-lane --lane firms-archive --apply    # settle the covered windows
 ```
 
 Planning a lane creates a window for *every* window from the floor to today. Several hundred of
@@ -216,8 +216,8 @@ where they lie.
 ### Plan the gaps it is still missing — the other direction
 
 ```bash
-agri-cli jobs-plan-gaps --lane firms-archive            # dry run; writes nothing
-agri-cli jobs-plan-gaps --lane firms-archive --apply    # open and reopen the windows that own them
+agri-service ops jobs-plan-gaps --lane firms-archive            # dry run; writes nothing
+agri-service ops jobs-plan-gaps --lane firms-archive --apply    # open and reopen the windows that own them
 ```
 
 `validate-streams` tells you 2024-03-11 is missing and exits 0. Reconcile can only ever remove
@@ -276,7 +276,7 @@ five-day window would walk day five and re-succeed over the same hole.
 `infra/cron-maintain-firms/railway.json` and `infra/cron-maintain-streamflow/railway.json` chain
 
 ```bash
-agri-cli jobs-plan-gaps --lane <token> --apply && agri-cli jobs-reconcile-lane --lane <token> --apply
+agri-service ops jobs-plan-gaps --lane <token> --apply && agri-service ops jobs-reconcile-lane --lane <token> --apply
 ```
 
 daily at 07:17 and 07:47 UTC, after `cron-validate`'s 06:00 report. **Neither Railway service is
@@ -286,7 +286,7 @@ Until somebody creates them, this loop runs only when a person invokes it.
 ### Watch it
 
 ```bash
-agri-cli jobs-status --lane firms-archive
+agri-service ops jobs-status --lane firms-archive
 ```
 
 ```json
@@ -384,8 +384,8 @@ To requeue **every** dead letter on a lane, swap the `shard_key` predicate for
 ### Run the validation report
 
 ```bash
-agri-cli validate-streams                                    # one JSON line
-agri-cli validate-streams --format markdown --output docs/reports/streams.md
+agri-service ops validate-streams                                    # one JSON line
+agri-service ops validate-streams --format markdown --output docs/reports/streams.md
 ```
 
 Three verdicts, and the distinction between the last two is the operational point:
@@ -419,9 +419,9 @@ package, so no build change was needed.
 
 | Service | `cronSchedule` | `startCommand` |
 | --- | --- | --- |
-| `cron-archive-firms` | `5,35 * * * *` | `agri-cli jobs-run --lane firms-archive` |
-| `cron-archive-streamflow` | `20,50 * * * *` | `agri-cli jobs-run --lane streamflow-archive` |
-| `cron-validate` | `0 6 * * *` | `agri-cli validate-streams` |
+| `cron-archive-firms` | `5,35 * * * *` | `agri-service ops jobs-run --lane firms-archive` |
+| `cron-archive-streamflow` | `20,50 * * * *` | `agri-service ops jobs-run --lane streamflow-archive` |
+| `cron-validate` | `0 6 * * *` | `agri-service ops validate-streams` |
 
 #### Why 30 minutes, and not `*/15`
 
@@ -496,19 +496,19 @@ is a known dead end recorded for the existing `cron-ingest` service.
 
 ```bash
 # 1. Plan both lanes (once, from anywhere with the loader DSN).
-agri-cli jobs-plan-lane --lane firms-archive
-agri-cli jobs-plan-lane --lane streamflow-archive
+agri-service ops jobs-plan-lane --lane firms-archive
+agri-service ops jobs-plan-lane --lane streamflow-archive
 
 # 2. Look at what already landed. READ THIS before step 3.
-agri-cli jobs-reconcile-lane --lane firms-archive
-agri-cli jobs-reconcile-lane --lane streamflow-archive
+agri-service ops jobs-reconcile-lane --lane firms-archive
+agri-service ops jobs-reconcile-lane --lane streamflow-archive
 
 # 3. Settle it, so the first weeks of ticks are not spent re-walking landed windows.
-agri-cli jobs-reconcile-lane --lane firms-archive --apply
-agri-cli jobs-reconcile-lane --lane streamflow-archive --apply
+agri-service ops jobs-reconcile-lane --lane firms-archive --apply
+agri-service ops jobs-reconcile-lane --lane streamflow-archive --apply
 
 # 4. Confirm the ledger reads the way you expect.
-agri-cli jobs-status
+agri-service ops jobs-status
 
 # 5. Only now enable the two cron services.
 ```

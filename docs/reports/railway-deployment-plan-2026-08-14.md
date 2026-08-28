@@ -31,7 +31,7 @@ This deployment plan defines the transition from legacy individual Railway cron 
 | Service Name | Purpose | Configuration & Command |
 | --- | --- | --- |
 | `plantgeo-main` | Next.js 15 App & Admin UI | `npm start` (Runs tRPC `jobsRouter` & `/admin/jobs` dashboard) |
-| `plantgeo-dataservice` | Python Sanic Service & Scheduler | `uv run agri-service` (Runs `InAppScheduler` loop & `/api/v1/jobs/trigger`) |
+| `plantgeo-dataservice` | Python Sanic Service & Scheduler | `uv run sanic agri_data_service.app:create_app --factory` (Runs `InAppScheduler` loop & `/api/v1/jobs/trigger`) |
 | `plantgeo-martin` | Vector Tile Server | `martin` (Serves `geo.strategy_recommendations_tiles` MVT) |
 | `plantgeo-spatiotemporal-db` | TimescaleDB / PostGIS Database | PostgreSQL 16 + PostGIS 3.4 (Holds `agri.job_schedules` & materialized views) |
 

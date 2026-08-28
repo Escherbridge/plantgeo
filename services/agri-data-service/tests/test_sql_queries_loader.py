@@ -4,7 +4,7 @@ The loader tests are cheap and run everywhere. The packaging test is the one
 that matters operationally: ``sql/**/*.sql`` is a non-``.py`` file inside
 ``src/agri_data_service``, and nothing else proves hatchling ships it. If it
 does not, every extracted query raises ``FileNotFoundError`` at import time in
-the installed ``agri-cli``, and only in the installed one -- a dev checkout
+the installed ``agri-service``, and only in the installed one -- a dev checkout
 reads the files straight off disk and looks fine.
 """
 

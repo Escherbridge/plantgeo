@@ -144,7 +144,7 @@ DEFAULT_GAP_FILL_TIME_BUDGET_SECONDS: Final = 600.0
 GAP_CENSUS_REPORT_DAY_SAMPLE: Final = 10
 
 # Transaction-local, matching the 120 s convention every other direct SQL caller in this service uses
-# (jobs/lease.py::LEASE_STATEMENT_TIMEOUT_SECONDS, and cli.py's loader verbs).
+# (jobs/lease.py::LEASE_STATEMENT_TIMEOUT_SECONDS, and interface/cli/commands.py's loader verbs).
 #
 # IT IS A DEFAULT, NOT A CONSTANT, AND THE DRAIN RAISES IT. 120 s is right for the hourly tick,
 # whose whole budget is 600 s: a statement allowed to run longer than a fifth of the tick starves
@@ -1238,7 +1238,7 @@ async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate p
     removes parts the faster one just wrote and then stamps a completion marker whose `part_count`
     matches the truncated remainder exactly -- the bucket and its receipt agreeing on a population
     that lost rows, which no later census or audit can detect. Nothing else in this path is
-    serialised: `cli.py`'s `parquet-gap-fill` verb takes no lease, and RUNBOOK 0.33.3 B has the bulk
+    serialised: `interface/cli/commands.py`'s `parquet-gap-fill` verb takes no lease, and RUNBOOK 0.33.3 B has the bulk
     drain running CONCURRENTLY with this driver by design ("build drain -> run drain -> THEN stop
     the cron"), so the overlap is planned rather than hypothetical.
     """

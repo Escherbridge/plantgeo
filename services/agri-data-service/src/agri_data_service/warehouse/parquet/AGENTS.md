@@ -84,7 +84,7 @@ who hands in an unguarded connection is precisely the caller who would eat the h
 settings are **instance-wide in DuckDB, not connection-local**. Measured 2026-08-25: pinning them
 through one cursor re-pins every SIBLING cursor of the same instance, including ones this module was
 never handed. Left in place, one derivation would cap a co-resident serving session
-(`interface/http/duckdb_session.py`) at the batch budget for the process lifetime, and that session's
+(`parquet_ops/duckdb_session.py`) at the batch budget for the process lifetime, and that session's
 owner has no return point at which to notice. So `_geometry_session` snapshots the three via
 `current_setting`, pins, and restores in a `finally` — on the caller-supplied branch only; a session
 this module opened is closed instead. The restore is of the RENDERED value ('900MB' reads back as

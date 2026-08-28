@@ -53,7 +53,7 @@ Also already decided today, and load-bearing here:
 ```
                          ┌─────────────────────────────────────────┐
   upstream (11 sources)  │  plantgeo-ingest-cron   [Railway cron]   │
-  ─────────────────────▶ │  python -m agri_data_service.cli ...     │
+  ─────────────────────▶ │  agri-service data ...                             │
   FIRMS  NWIS  Open-Meteo│  runs to completion, exits 0 or non-zero │
   WFIGS  USDM  GIBS-NDVI │  0 * * * *   restartPolicyType: NEVER    │
   SoilGrids Terrain      └───────────┬──────────────────┬──────────┘
@@ -658,7 +658,7 @@ The alternative — two tables and a `UNION ALL` view — was rejected because t
 | Variant | Engine | Existing machinery | Band columns |
 |---|---|---|---|
 | **Statistical Monte Carlo** | `agri.forecast_daily_bootstrap(...)` — seeded, `simulation_count` 100-10 000, hash-driven sampling over daily increments (`20260723_0010:800-1096`) | `forecast_iteration` → `forecast_iteration_value` (`db/agri/tables/forecast_iteration_value.sql:7-24`) | `low_value` / `median_value` / `high_value` per `horizon_step`, already `CHECK (low <= median <= high)` |
-| **ML** | trained model → `v_forecast_series_serving` where `forecast_method = 'ml'` | `agri.mv_forecast_ml_daily_serving` (`db/agri/materialized_views/mv_forecast_ml_daily_serving.sql:7-44`), refreshed by CLI `forecast-refresh-ml-daily` (`cli.py:280-295`) | `lower_p10_value` / `median_p50_value` / `upper_p90_value`, already daily |
+| **ML** | trained model → `v_forecast_series_serving` where `forecast_method = 'ml'` | `agri.mv_forecast_ml_daily_serving` (`db/agri/materialized_views/mv_forecast_ml_daily_serving.sql:7-44`), refreshed by `agri-service forecast refresh-ml-daily` (`interface/cli/commands.py:561-617`) | `lower_p10_value` / `median_p50_value` / `upper_p90_value`, already daily |
 
 Both lanes already emit a three-number band, so the projection into `geo.metric_daily` is a column rename, not a new uncertainty representation.
 
@@ -706,8 +706,8 @@ Two prohibitions: **no isolines or contouring on forecast days** (a contour is a
 ### Serving path
 
 ```
-nightly:  forecast-run-serving --horizon-days 30 --purpose serving   (existing forecast-run-iteration)
-          forecast-refresh-ml-daily                                   (existing, cli.py:280)
+nightly:  forecast-run-serving --horizon-days 30 --purpose serving   (existing `agri-service forecast run-iteration`)
+          forecast refresh-ml-daily                       (existing, interface/cli/commands.py:561)
           observations-project-serving  ← NEW: agri/geo observations → geo.metric_daily
           forecast-project-serving      ← NEW: both forecast lanes    → geo.metric_daily
           metric-daily-prune            ← NEW: collapse issues older than 14 d

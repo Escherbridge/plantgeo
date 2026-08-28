@@ -1040,7 +1040,7 @@ async def _apply_gap_plan(  # noqa: PLR0913 - the session, lane and windows plus
                 )
                 for window in to_open
             ),
-            requested_by="agri-cli jobs-plan-gaps",
+            requested_by="agri-service ops jobs-plan-gaps",
             target_partitions={"lane": lane.name, "floor": lane.floor_day},
         )
         job_run_id = opened.job_run_id

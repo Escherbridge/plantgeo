@@ -112,7 +112,7 @@ UNBOUNDED_OBSERVATION_AGE: Final = timedelta(days=100 * 365)
 # only whether a walk is refused outright; per-day coverage is still decided from the live table.
 FIRMS_ARCHIVE_EARLIEST_OBSERVATION: Final = datetime(2000, 11, 1, tzinfo=UTC)
 FIRMS_ARCHIVE_CURRENT_REFUSAL: Final = (
-    "nasa-firms-archive serves past windows only; `agri-cli ingest-firms` owns the current window "
+    "nasa-firms-archive serves past windows only; `agri-service data ingest-firms` owns the current window "
     "because it is the path that reports a partial-constellation outage as a reason rather than a "
     "clean empty run."
 )

@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from agri_data_service.cli import cli
 from agri_data_service.config import settings
 from agri_data_service.execution.source_ingestion import (
     SourceIngestionCheckpoint,
@@ -21,6 +20,7 @@ from agri_data_service.execution.source_ingestion import (
     source_ingestion_plan_checksum,
     write_checkpoint,
 )
+from agri_data_service.interface.cli import cli
 from agri_data_service.models.provenance import ReleaseSetState
 
 
@@ -90,7 +90,7 @@ def test_local_source_release_has_deterministic_identity_and_checkpoint(tmp_path
     write_checkpoint(path, checkpoint)
     assert load_checkpoint(path) == checkpoint
 
-    status = CliRunner().invoke(cli, ["pipeline-status", "--checkpoint", str(path)])
+    status = CliRunner().invoke(cli, ["ops", "pipeline-status", "--checkpoint", str(path)])
     assert status.exit_code == 0
     assert '"state": "runnable"' in status.output
     assert source_ingestion_plan_checksum(plan) in status.output
@@ -303,8 +303,8 @@ def test_source_ingestion_commands_expose_inactive_status_without_starting_work(
     monkeypatch.setattr(settings, "local_source_loader_database_url", None)
     monkeypatch.setattr(settings, "database_url", None)
 
-    assert runner.invoke(cli, ["source-ingest", "--help"]).exit_code == 0
-    status = runner.invoke(cli, ["pipeline-status"])
+    assert runner.invoke(cli, ["data", "source-ingest", "--help"]).exit_code == 0
+    status = runner.invoke(cli, ["ops", "pipeline-status"])
 
     assert status.exit_code == 0
     assert '"state": "inactive"' in status.output
@@ -324,7 +324,10 @@ def test_source_ingest_fails_closed_without_any_database_dsn(
     monkeypatch.setattr(settings, "local_source_loader_database_url", None)
     monkeypatch.setattr(settings, "database_url", None)
 
-    result = CliRunner().invoke(cli, ["source-ingest", "--plan", str(plan_path), "--payload", str(payload_path)])
+    result = CliRunner().invoke(
+        cli,
+        ["data", "source-ingest", "--plan", str(plan_path), "--payload", str(payload_path)],
+    )
 
     assert result.exit_code != 0
     assert "LOCAL_SOURCE_LOADER_DATABASE_URL" in result.output

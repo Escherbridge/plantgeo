@@ -12,14 +12,14 @@ export const meta = {
   ],
 }
 
-// The engine is `agri-cli validate-streams`, not this script. The verb owns the SQL, the
+// The engine is `agri-service ops validate-streams`, not this script. The verb owns the SQL, the
 // continuity rules mirrored from the UI's read model, and the verdicts; this workflow exists to
 // RUN it, then spend one agent per problem stream working out WHY -- which is the part a report
 // cannot do for itself. Keeping the rules in the verb would let a Railway cron run the same check
 // unattended, but as of the 2026-08-14 cron consolidation (docs/deployment.md, "Cron
 // consolidation, 2026-08-14") `infra/cron-validate` was deleted along with the other
 // config-as-code directories that never backed a live service -- `validate-streams` is not
-// scheduled by any cron service today. This workflow and a manual `agri-cli validate-streams`
+// scheduled by any cron service today. This workflow and a manual `agri-service ops validate-streams`
 // invocation are the only ways it runs.
 //
 // See docs/runbooks/durable-backfill-lanes.md for the lane model the lane findings refer to.
@@ -30,7 +30,7 @@ const SERVICE_DIRECTORY = 'services/agri-data-service'
 // LOCAL_SOURCE_LOADER_DATABASE_URL to carry the real DSN while DATABASE_URL holds a different,
 // unroutable value -- Settings refuses them being equal. run-backfill.sh already establishes
 // exactly that contract, so it is invoked rather than re-implemented.
-const RUN = `cd ${SERVICE_DIRECTORY} && ./run-backfill.sh`
+const RUN = `cd ${SERVICE_DIRECTORY} && ./run-backfill.sh ops`
 
 const reportDate = (args && args.reportDate) || 'undated'
 const reportPath = `docs/reports/data-stream-validation-${reportDate}.md`

@@ -534,7 +534,7 @@ def continuation_description(
     probed = ", ".join(cell.cell_key for cell in frontier.cells) or "none"
     note = (
         f"{CONTINUATION_NOTE_SENTINEL} {frontier.measured_at.date().isoformat()}: authored by "
-        f"agri-cli historical-plan-continue from {source.path.name}, whose window "
+        f"agri-service data historical-plan-continue from {source.path.name}, whose window "
         f"{source.window.start_date.isoformat()}..{source.window.end_date.isoformat()} was complete and could not "
         f"advance itself. The window slides rather than extends because HistoricalBackfillWindow fixes the span at "
         f"four calendar years, so this plan re-requests "

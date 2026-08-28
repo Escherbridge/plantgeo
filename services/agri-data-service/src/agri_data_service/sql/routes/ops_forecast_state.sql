@@ -40,7 +40,7 @@
 -- documented (sql/execution/load_observations.sql, execution/AGENTS.md) -- so its 184,409 rows are
 -- invisible to any audit that looks only at the warehouse signal plane. This stage is therefore
 -- fed. What it is NOT is scheduled: as of 2026-08-09 the verb that fills it,
--- `forecast-vegetation-register`, is a manual CLI command with no launcher and no entry in
+-- `agri-service forecast vegetation-register`, is a manual CLI command with no launcher and no entry in
 -- jobs/registry.py, while the raw Sentinel-2 ingest beneath it runs on a real schedule -- that
 -- half is a claim about CODE and can be armed at any time, unlike the counts below it, which are
 -- read live. Measured 2026-08-09 the consequence is visible right

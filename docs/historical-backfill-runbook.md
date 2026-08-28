@@ -117,14 +117,14 @@ database.
    If a complete replay has receipts later than its reviewed `release_set_as_of`,
    retain that original plan and checkpoint. Create a separate checksum-bound
    finalization record with a later as-of time, then run
-   `agri-cli historical-usdm-finalize --source-plan <plan> --finalization <record>`.
+   `agri-service data historical-usdm-finalize --source-plan <plan> --finalization <record>`.
    That command may only rebind a complete checkpoint with the identical source
    scope, weekly dates, and transform; it never re-fetches or silently rewrites
    the original replay.
 4. A long-running NASA replay may complete after its original release-set
    as-of time. In that case, retain the complete source checkpoint and create a
    separate checksum-bound finalization record, then run
-   `agri-cli historical-nasa-finalize --source-plan <plan> --finalization <record> --output-plan <final-plan>`.
+   `agri-service data historical-nasa-finalize --source-plan <plan> --finalization <record> --output-plan <final-plan>`.
    This rebinds only the release-set identity and as-of time; it does not fetch
    data or rewrite the immutable source receipts. The emitted immutable
    `<final-plan>` is required for a matching `historical-nasa-materialize-parquet`
@@ -137,7 +137,7 @@ database.
 6. Run a representative pinned read at the end-date `as_of_time`. A partial,
    no-data, failed, or unexplained missing window fails the backfill.
 7. After a complete NASA checkpoint, create the local Parquet lake with
-   `agri-cli historical-nasa-materialize-parquet --plan <release-plan>`. Use the
+   `agri-service data historical-nasa-materialize-parquet --plan <release-plan>`. Use the
    original source plan only when no finalization was required; otherwise use the
    finalizer's emitted release plan. It
    writes compressed Hive-style daily folders at
@@ -145,19 +145,19 @@ database.
    The manifest binds the materialized rows to the source plan and complete raw
    receipt manifest. It never contacts NASA or the database.
 8. After accepting the CDS terms and configuring `CDSAPI_URL` and `CDSAPI_KEY`,
-   run `agri-cli historical-era5-backfill --plan <plan>`. The command advances a
+   run `agri-service data historical-era5-backfill --plan <plan>`. The command advances a
    durable monthly checkpoint only after each raw ZIP has been fully validated
    and saved under `.agri-local-runs`; a retry reuses that cache before making a
    provider request. Then run
-   `agri-cli historical-era5-materialize-parquet --plan <plan>` to create the
+   `agri-service data historical-era5-materialize-parquet --plan <plan>` to create the
    Zstandard-compressed daily Hive lake at
    `.agri-local-runs/warehouse/era5-land-daily/<plan-sha>/source=era5-land-daily/year=YYYY/month=MM/day=DD/`.
-   Run `agri-cli historical-era5-persist --plan <plan>` to load the same
+   Run `agri-service data historical-era5-persist --plan <plan>` to load the same
    cache-backed monthly releases into the local warehouse; it requires the
    pre-existing NASA sampling lattice and never calls CDS. If the completed
    receipts are later than the original as-of time, create a governed
    finalization sidecar and run
-   `agri-cli historical-era5-finalize --source-plan <plan> --finalization <record> --output-plan <final-plan>`.
+   `agri-service data historical-era5-finalize --source-plan <plan> --finalization <record> --output-plan <final-plan>`.
    The finalizer reuses the original raw-cache checksum rather than duplicating
    ZIPs, persists any missing local source releases, and validates the release
    set. Use `<final-plan>` for the matching Parquet materialization. None of

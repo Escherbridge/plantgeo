@@ -4101,7 +4101,7 @@ job.
 **All four lanes with a backlog are non-static, so scope the run and the phase disappears:**
 
 ```
-uv run agri-cli parquet-drain   --layer fire-detections --layer burn-severity --layer signal --layer vegetation   --days-per-lane-turn 50 --progress
+uv run agri-service data parquet-drain   --layer fire-detections --layer burn-severity --layer signal --layer vegetation   --days-per-lane-turn 50 --progress
 ```
 
 Measured with that scoping: `fire-detections` drains at roughly **3-4 seconds per day** including
@@ -5492,7 +5492,7 @@ the first fan-out because that was scoped to `geo.layers`; **`forecast-observati
 
 #### 0.27.2 THE CRON IS ARMED, AND ONE REAL TICK HAS RUN
 
-`infra/cron-ingest/Dockerfile` runs `agri-cli parquet-gap-fill --time-budget-seconds 900` as a third
+`infra/cron-ingest/Dockerfile` runs `agri-service data parquet-gap-fill --time-budget-seconds 900` as a third
 verb, hourly, all three verbs' exit codes AND-ed (never `&&`, so an unrelated FIRMS outage cannot
 starve the backfill).
 
@@ -6787,7 +6787,7 @@ a window where two adapters exist and one ceiling does not.
 |---|---|---|---|---|
 | 1 | `analysis/warehouse_session.py` | 1600MB | 3 | `0GiB` |
 | 2 | `warehouse/parquet/tiers.py` | 1600MB | 3 | `0GiB` — **identical values, different constant names** |
-| 3 | `interface/http/duckdb_session.py` | 1200MB | 2 | `0GiB` — a legitimate second profile, expressed as a copied block |
+| 3 | `parquet_ops/duckdb_session.py` | 1200MB | 2 | `0GiB` — the shared serving profile |
 | 4 | `execution/historical_parquet.py:151` | 1GB | 1 | **ABSENT — spills at DuckDB's 90%-of-disk default** |
 
 **Spelling 4 is a live defect of the 0.42.18 class**, on a `COPY (SELECT ... ORDER BY ...) TO ...
@@ -7248,7 +7248,7 @@ old config baked in and **will appear to do nothing.** Push to `main`, confirm R
   never copy them into docs, logs, shell lines or commits.
 - Query with `services/agri-data-service/.venv/Scripts/python.exe` — it has **psycopg2, not psycopg v3**, so use
   `conn.cursor()`, never `conn.execute()`. System python has no driver.
-- CLI verbs: `env -u DATABASE_URL LOCAL_SOURCE_LOADER_DATABASE_URL="$DSN" .venv/Scripts/agri-cli.exe <verb>`.
+- CLI verbs: `env -u DATABASE_URL LOCAL_SOURCE_LOADER_DATABASE_URL="$DSN" .venv/Scripts/agri-service.exe <group> <verb>`.
 - Prod is **PostgreSQL 18.4, PostGIS 3.6.4, TimescaleDB 2.29.0**. Railway project **Aevani**
   `6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`, environment `b7cfa813-8a5c-4fcd-80f2-cab736d840a7`. **Railway MCP is
   authenticated as the owner again as of 2026-08-17** — the expiry that blocked the Martin `statement_timeout`
@@ -8898,4 +8898,3 @@ another workstream — same rule §3 applies to hypertable conversion.
 | `lock_timeout` | 0 (no timeout) | Must be set explicitly on the rename per §0.8; the default will let it queue indefinitely. |
 
 Database is **37 GB** on PostgreSQL **18.4** — the `mv_signal_cell_daily` drop held.
-

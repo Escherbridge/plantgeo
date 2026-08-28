@@ -139,7 +139,7 @@ class AnEnTrainingRequest:
     schema_version: str = SCHEMA_VERSION
     target_signal_name: str = TARGET_SIGNAL_NAME
     quality_policy_key: str | None = None
-    requested_by: str = "agri-cli forecast-train-anen"
+    requested_by: str = "agri-service forecast train-anen"
 
     def __post_init__(self) -> None:
         """Refuse a request whose windows cannot produce a scoreable origin, before any query runs."""

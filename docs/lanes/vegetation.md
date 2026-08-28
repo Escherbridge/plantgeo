@@ -83,7 +83,7 @@ would confirm it.
   (`src/agri_data_service/ingest/vegetation.py:77-78`,
   `SENTINEL2_L2A_EARLIEST_OBSERVATION`). This is what the raw-ingest source declares as its
   `HistoryCapability(supported=True, earliest=SENTINEL2_L2A_EARLIEST_OBSERVATION)`
-  (`ingest/vegetation.py:1042`), which is what makes `agri-cli ingest-backfill --source
+  (`ingest/vegetation.py:1042`), which is what makes `agri-service data ingest-backfill --source
   sentinel2-ndvi --since … --until …` walkable that far back.
 - **Earliest actually held in the governed, forecastable plane** (`agri.forecast_observation`):
   **2022-08-05**, through **2026-08-04** — **184,409 rows across 1,568 series**, verified against
@@ -148,15 +148,15 @@ would confirm it.
 ### 5.1 The promotion step is still unarmed — verified against the current tree, not just memory
 
 The step that promotes raw NDVI samples into the governed `agri.forecast_observation` plane the
-forecaster reads is `forecast-vegetation-register`, a manual Click command
-(`services/agri-data-service/src/agri_data_service/cli.py:880-901`, calling
+forecaster reads is `agri-service forecast vegetation-register`, a manual Click command
+(`services/agri-data-service/src/agri_data_service/interface/cli/commands.py:942`, calling
 `_forecast_vegetation_register` → `register_governed_plane`,
 `execution/vegetation_ndvi_plane.py:588-663`). Checked this session:
 
 - `jobs/registry.py` has **zero** matches for `vegetation` or `ndvi` (only `jobs/matview_refresh.py`
-  mentions vegetation, unrelated). No Railway cron references `forecast-vegetation-register` either.
+  mentions vegetation, unrelated). No Railway cron references `agri-service forecast vegetation-register` either.
 - `sql/routes/ops_unarmed_sources.sql:47-54` and `sql/routes/ops_forecast_state.sql:38-44` both
-  describe it, in the present tense, as *"a manual CLI verb in cli.py with no launcher and no entry
+  describe it, in the present tense, as *"a manual CLI verb in interface/cli/commands.py with no launcher and no entry
   in jobs/registry.py"* — dated 2026-08-09, and it is still true today.
 - The governed corpus (2022-08-05 → 2026-08-04, §3) was therefore built by **manual/operator
   invocations of this command**; nothing keeps it current going forward. Raw ingest into
@@ -170,7 +170,7 @@ forecaster reads is `forecast-vegetation-register`, a manual Click command
   was actually discussed.
 - Registration is also **bounded per invocation**: `select_candidate_cell_keys` requires
   `MIN_CANDIDATE_OBSERVED_DAYS = 24` observed days and honours `--cell-limit` (default 24, max 2000)
-  or an explicit `--cell-key` list (`vegetation_ndvi_plane.py:54,294-305`, `cli.py:882-883`). Nothing
+  or an explicit `--cell-key` list (`vegetation_ndvi_plane.py:54,294-305`, `interface/cli/commands.py:938-942`). Nothing
   in the current design registers the full 1,568-cell lattice in one pass by default; the 1,568-series
   corpus reflects accumulated manual runs, not one comprehensive sweep.
 
@@ -181,8 +181,8 @@ and `services/agri-data-service/src/agri_data_service/method/monte_carlo/vegetat
 (370 lines) were diffed directly this session: **functionally identical**, differing only by a
 3-line docstring update and one extra explanatory comment. But the two are **not equally wired in**:
 
-- `cli.py:267,270,327`, `execution/vegetation_ndvi_plane.py:15-32` (the code that actually runs
-  `forecast-vegetation-register`/`forecast-vegetation-simulate`), and
+- `interface/cli/commands.py:232-410`, `execution/vegetation_ndvi_plane.py:15-32` (the code that actually runs
+  `agri-service forecast vegetation-register`/`vegetation-simulate`), and
   `tests/test_vegetation_ndvi_forecast.py:12` all import from **`execution.vegetation_ndvi_forecast`**
   — the pre-lattice copy.
 - `src/agri_data_service/method/monte_carlo/__init__.py:3-9` re-exports from
@@ -192,7 +192,7 @@ and `services/agri-data-service/src/agri_data_service/method/monte_carlo/vegetat
 
 The `method/monte_carlo` copy is a dead, unwired duplicate today, despite `conductor/RUNBOOK.md`
 §0.24.8 stating flatly that it "already exists" as if it were the live module. Bringing this lane
-into conformance means **repointing the live imports** (`cli.py`, `vegetation_ndvi_plane.py`, the
+into conformance means **repointing the live imports** (`interface/cli/commands.py`, `vegetation_ndvi_plane.py`, the
 test) to `method.monte_carlo.vegetation_ndvi_forecast` and **deleting**
 `execution/vegetation_ndvi_forecast.py` — not maintaining both, and not creating a third copy under
 `pipeline/` or `planes/`.

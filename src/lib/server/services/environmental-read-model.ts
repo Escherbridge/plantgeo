@@ -3256,7 +3256,7 @@ type ObservationWindowRow = {
  * That filter is a floor on the axis, not a description of the warehouse, and unlinked rows are
  * the steady state rather than an anomaly: the `/api/ingest/*` push routes write through
  * `services/ingest.ts`, which never sets geometry_id. What bounds the resulting depth loss is
- * `agri-cli ingest-geometry-repair`, which now runs as the last job of every `ingest-all` tick
+ * `agri-service data ingest-geometry-repair`, which now runs as the last job of every `ingest-all` tick
  * (see `ingest/runner.py`); before that it had no CLI verb at all and could only be run by hand
  * with a production DSN, so a skipped manual run silently cost the slider years of depth and
  * read as a rendering bug. getMetricAtDate reports its own per-day exclusion count separately.
@@ -4144,7 +4144,7 @@ export async function getMetricAtDate(
   // non-nullable -- a feature with no versioned place has no place to draw. But that join
   // silently DROPS rows, and orphans are the steady state, not an anomaly: the deployed
   // ingest path is still the TypeScript writer, which never sets geometry_id, so
-  // geo.features accumulates unlinked rows until `agri-cli ingest-geometry-repair` claims
+  // geo.features accumulates unlinked rows until `agri-service data ingest-geometry-repair` claims
   // them (it now runs inside `ingest-all`, see ingest/commands.py). Measured on production
   // 2026-08-04, streamflow-cfs on that day had 4,314 water-gauges rows of which 1,617 were
   // unlinked, and this procedure answered `availability: "published", reason: null` -- a

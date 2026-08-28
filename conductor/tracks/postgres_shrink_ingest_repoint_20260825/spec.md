@@ -223,7 +223,7 @@ Postgres-derived partition for the same lane-day.
 
 **Acceptance criteria**
 
-- `agri-cli parquet-ingest --lane <slug> --day <YYYY-MM-DD>` exists and writes
+- `agri-service data parquet-ingest --lane <slug> --day <YYYY-MM-DD>` exists and writes
   through the same `ObjectStore` contract the gap-fill driver uses (completion
   marker last, absence semantics unchanged).
 - The parity harness reports **byte-identical sorted rows** for a lane-day, or
@@ -297,7 +297,7 @@ runner, and its Postgres-reading exporter once nothing consumes it.
 
 **Acceptance criteria**
 
-- `agri-cli ingest-all` no longer names the retired lane, and `--help` proves it.
+- `agri-service data ingest-all` no longer names the retired lane, and `--help` proves it.
 - No module under `ingest/` references the retired lane's layer binding.
 - The retired lane's rows stop growing: `pg_stat_all_tables.n_tup_ins` for its
   target table is flat across two scheduled intervals.
@@ -418,10 +418,10 @@ deleted.
 
 ## Technical considerations
 
-- **Direct writers are new `agri-cli` verbs.** The agri service is a CLI plus a
+- **Direct writers are new `agri-service` verbs.** The agri service is a CLI plus a
   Sanic app; the cron invokes verbs. Wiring the writers as verbs keeps the
   deployment surface unchanged.
-- **`lane_registry.py` and `cli.py` are shared registries.** One slice owns each;
+- **`lane_registry.py` and `interface/cli/data.py` are shared registries.** One slice owns each;
   later slices append. See the partition hypothesis in `plan.md`.
 - **Absence semantics are load-bearing.** `write_partition` refuses a zero-row
   table so a gap cannot masquerade as a present day, and it refuses a day with an

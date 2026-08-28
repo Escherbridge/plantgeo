@@ -23,7 +23,7 @@ code change -- only a shorter wire.
 newest-first, on a schedule, with `restartPolicyType NEVER` because a cron tick must not overlap
 itself. This service is the opposite job -- oldest-first, continuous, and restarted forever --
 so it gets its own config rather than another branch inside that one. They share the image
-because the image is just `agri-cli`; they share nothing else.
+because the image is just `agri-service`; they share nothing else.
 
 `restartPolicyType ALWAYS` is deliberate and replaces the local supervisor script. The drain
 survives a dropped query (the day is reported `raised` and the walk continues) but nothing
@@ -47,7 +47,7 @@ cron keeps the warehouse current on its own. Delete the service; there is nothin
 
 **"Backlog zero" was measured at z13 only.** Both of RUNBOOK 0.40.2's key claims have since been refuted by measurement:
 
-1. **"No coarse rung (z9/z5/z0) exists for any lane"** — Contradicted by a live census run on 2026-08-25 (`agri-cli parquet-drain --dry-run --selection ladder`), which reported bucket-wide completion marks: `{'00': 10473, '05': 10473, '09': 10473, '13': 11510}` — three coarse rungs, each with 10,473 marks.
+1. **"No coarse rung (z9/z5/z0) exists for any lane"** — Contradicted by a live census run on 2026-08-25 (`agri-service data parquet-drain --dry-run --selection ladder`), which reported bucket-wide completion marks: `{'00': 10473, '05': 10473, '09': 10473, '13': 11510}` — three coarse rungs, each with 10,473 marks.
 
 2. **"The written `signal` base carries no `cell_longitude`/`cell_latitude`, so all ~1,560 signal days must be re-exported"** — Also refuted. The RUNBOOK's own 2026-08-25 retro entry states: "Assumption falsified: §0.40.2's 'no coarse rung exists for any lane' and 'the signal base lacks positions'. Both dead. The ~1,560-day re-export I briefed as the longest pole **was already done** — a background loop kept working after the listing behind §0.40.2 was taken."
 

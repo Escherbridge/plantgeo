@@ -12,7 +12,7 @@ this ships only after sign-off.
 ## The owner decision that gates everything: a training role
 
 **Finding (ML lane, verified):** no existing role can complete the new
-`forecast-train-wind --persist` chain, and **every covariate function is
+`agri-service forecast train-wind --persist` chain, and **every covariate function is
 `REVOKE EXECUTE ... FROM PUBLIC` with no grant to any named role** — nothing can read the
 feature plane today.
 

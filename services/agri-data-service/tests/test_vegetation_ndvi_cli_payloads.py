@@ -7,14 +7,14 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
-from agri_data_service.cli import (
+from agri_data_service.execution.vegetation_ndvi_plane import ErrorMetrics, HoldoutEvaluation
+from agri_data_service.interface.cli.commands import (
     VEGETATION_HORIZON_BUCKETS,
     _error_metrics_payload,
     _holdout_payload,
     _resolved_as_of_time,
     _skill_score,
 )
-from agri_data_service.execution.vegetation_ndvi_plane import ErrorMetrics, HoldoutEvaluation
 
 _CUTOFF_DAY = date(2026, 7, 1)
 

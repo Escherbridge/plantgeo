@@ -531,7 +531,7 @@ def _geometry_session(connection: DuckDBPyConnection | None) -> Iterator[DuckDBP
 
     A CALLER-SUPPLIED CONNECTION IS RE-PINNED AND THEN PUT BACK. The pin is instance-wide (see
     `_pin_resource_guards`), so leaving it in place would cap every sibling cursor of that instance
-    -- the serving session at `interface/http/duckdb_session.py` among them -- at this module's batch
+    -- the serving session at `parquet_ops/duckdb_session.py` among them -- at this module's batch
     budget for the life of the process, with no return point at which its owner could notice. The
     guards hold for exactly the derivation, which is the whole window in which a spill could happen.
     """

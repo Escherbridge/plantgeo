@@ -18,7 +18,6 @@ import xarray as xr
 from click.testing import CliRunner
 from pydantic import SecretStr
 
-from agri_data_service.cli import cli
 from agri_data_service.config import settings
 from agri_data_service.execution.historical_era5 import (
     ERA5_LAND_VARIABLE_ALIASES,
@@ -47,6 +46,7 @@ from agri_data_service.execution.historical_era5_parquet import (
 from agri_data_service.execution.historical_writer import _insert_era5_observations
 from agri_data_service.execution.source_ingestion import SourceDefinition
 from agri_data_service.execution.weather_observations.nasa_power import HistoricalSignalObservation
+from agri_data_service.interface.cli import cli
 
 EXPECTED_PERIOD_COUNT = 49
 EXPECTED_PARAMETER_COUNT = 6
@@ -395,7 +395,7 @@ def test_era5_cli_records_a_resumable_redacted_credential_gate(
     monkeypatch.setattr(settings, "local_execution_root", tmp_path)
     _clear_cds_credentials(monkeypatch)
 
-    result = CliRunner().invoke(cli, ["historical-era5-backfill", "--plan", str(plan_path)])
+    result = CliRunner().invoke(cli, ["data", "historical-era5-backfill", "--plan", str(plan_path)])
 
     assert result.exit_code != 0
     assert "CDSAPI_URL" in result.output
@@ -417,7 +417,7 @@ def test_era5_persist_fails_closed_without_any_database_dsn(
     monkeypatch.setattr(settings, "local_source_loader_database_url", None)
     monkeypatch.setattr(settings, "database_url", None)
 
-    result = CliRunner().invoke(cli, ["historical-era5-persist", "--plan", str(plan_path)])
+    result = CliRunner().invoke(cli, ["data", "historical-era5-persist", "--plan", str(plan_path)])
 
     assert result.exit_code != 0
     assert "LOCAL_SOURCE_LOADER_DATABASE_URL" in result.output
@@ -426,9 +426,9 @@ def test_era5_persist_fails_closed_without_any_database_dsn(
 def test_era5_cli_exposes_separate_cache_persist_and_finalization_boundaries() -> None:
     runner = CliRunner()
 
-    backfill = runner.invoke(cli, ["historical-era5-backfill", "--help"])
-    persist = runner.invoke(cli, ["historical-era5-persist", "--help"])
-    finalization = runner.invoke(cli, ["historical-era5-finalize", "--help"])
+    backfill = runner.invoke(cli, ["data", "historical-era5-backfill", "--help"])
+    persist = runner.invoke(cli, ["data", "historical-era5-persist", "--help"])
+    finalization = runner.invoke(cli, ["data", "historical-era5-finalize", "--help"])
 
     assert backfill.exit_code == 0
     assert persist.exit_code == 0

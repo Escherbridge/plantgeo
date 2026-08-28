@@ -48,7 +48,7 @@
     "computed_at": "2026-08-25T02:30:00Z",
     "computed_at_commit": "80ac72a",
     "confidence": "verified",
-    "note": "Prebaked from the planning analysis at 440d9b5; no separate recon pass. Excludes every path owned by parquet_duckdb_pivot_20260823 slices d0-d5. lane_registry.py, cli.py, alembic/versions/ and the cron Dockerfile are shared registries with one named owner each: later slices append and must be sequenced, never run concurrently on those files. Re-verify `owns` with a real grep once HEAD moves. RE-VERIFIED at 80ac72a (RUNBOOK 0.42.15): every `owns` path grepped against HEAD -- no drift, every `future` path genuinely absent and every existing one present. s2/s3/s4 overlap on pipeline/direct/ and tests/direct/ (directory owner vs files inside it) but are SEQUENCED by depends_on and all sit in lane A, so that is ordering, not contention. The one real collision is external: pivot d5 creates pipeline/lanes/soil_field.py inside s5's directory -- d5 moves to lane A and lands first. s2 EXPANDED 2026-08-25 to absorb the cli.py split (owner request): 4,215 lines, 57 commands, 73 private helpers, 12 raw text() SQL calls on the CLI surface. Precedent already exists -- five modules define click commands outside cli.py and @cli.group('local') is already a group.",
+    "note": "Prebaked from the planning analysis at 440d9b5; no separate recon pass. Excludes every path owned by parquet_duckdb_pivot_20260823 slices d0-d5. lane_registry.py, interface/cli/data.py, alembic/versions/ and the cron Dockerfile are shared registries with one named owner each: later slices append and must be sequenced, never run concurrently on those files. Re-verify `owns` with a real grep once HEAD moves. RE-VERIFIED at 80ac72a (RUNBOOK 0.42.15): every `owns` path grepped against HEAD -- no drift, every `future` path genuinely absent and every existing one present. s2/s3/s4 overlap on pipeline/direct/ and tests/direct/ (directory owner vs files inside it) but are SEQUENCED by depends_on and all sit in lane A, so that is ordering, not contention. The one real collision is external: pivot d5 creates pipeline/lanes/soil_field.py inside s5's directory -- d5 moves to lane A and lands first. s2a replaced the retired flat CLI with the four-group interface/cli package and retained interface/cli/data.py as the s2b registration point.",
     "slices": [
       {
         "id": "s0",
@@ -101,13 +101,11 @@
       },
       {
         "id": "s2",
-        "task": "P2 direct-writer foundation, now FOLDED WITH THE CLI SPLIT (owner decision 2026-08-25). Runs as two sequenced sub-slices under one owner of cli.py, because a 4,215-line split and a new verb cannot be reviewed as one unit: s2a = split cli.py into interface/cli/ groups forecast|ml|data|ops, RENAME the binary agri-cli -> agri-service with a HARD CUTOVER (no aliases), and lift business logic out of the CLI surface per agri_sdk_layering phases 4-8; s2b = the direct-writer protocol, the parity harness, the parquet-ingest verb and the lane->writer registry, plus wave 1 lanes sensors and weather-observations, built INTO the new structure so nothing is written twice.",
+        "task": "P2 direct-writer foundation, folded with the CLI split (owner decision 2026-08-25). Two sequenced sub-slices share interface/cli/data.py: s2a replaces the retired flat CLI with interface/cli/ groups forecast|ml|data|ops and hard-cuts the binary to agri-service with no aliases; s2b adds the direct-writer protocol, parity harness, parquet-ingest verb and lane-to-writer registry plus wave 1 sensors and weather-observations.",
         "owns": [
           {
-            "path": "services/agri-data-service/src/agri_data_service/interface/cli/",
-            "status": "future"
+            "path": "services/agri-data-service/src/agri_data_service/interface/cli/"
           },
-          "services/agri-data-service/src/agri_data_service/cli.py",
           "services/agri-data-service/pyproject.toml",
           "infra/cron-ingest/Dockerfile",
           "infra/cron-mtbs/railway.json",
@@ -122,10 +120,7 @@
             "status": "future"
           },
           "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
-          {
-            "path": "services/agri-data-service/src/agri_data_service/warehouse/parquet/serving/",
-            "status": "future"
-          },
+          "services/agri-data-service/src/agri_data_service/parquet_ops/",
           "services/agri-data-service/src/agri_data_service/interface/http/",
           "services/agri-data-service/tests/interface/"
         ],
@@ -133,7 +128,8 @@
         "depends_on": [
           "s0"
         ],
-        "note": "HARD CUTOVER HAZARDS, all four must move in the SAME change as the rename. (1) infra/cron-ingest/Dockerfile:108 ENTRYPOINT names three verbs (ingest-all, jobs-pulse, parquet-gap-fill). (2) infra/cron-mtbs/railway.json:10 startCommand. (3) infra/parquet-drain/railway.json:9 -- AND THAT SERVICE IS SOURCE-DISCONNECTED, so it will NOT redeploy: its start command must be corrected now or it breaks silently the day someone reconnects it for d1's ladder repair. (4) a dashboard-set startCommand can override the file (see memory plantgeo-cron-service-dockerfile-path) -- verify in the Railway dashboard, not just in the repo. Also: the deploy carrying s0's restored cronSchedule must carry the renamed binary and the new ENTRYPOINT together; they ship in one image, so that part is atomic. ML NAMING RESOLVED: method/ml/ stays the module home (phases 0-3 already shipped it); `agri-service ml` is a VERB GROUP, not a module path, so the conflict agri_sdk_layering left open does not bind here. interface/cli/ mirrors interface/http/, which lane B created at 273828b. ARCHITECTURE AMENDMENT (owner 2026-08-25): Parquet ops business logic is ONE self-contained core reused by three thin surfaces -- API (interface/http/), MCP/agent (agent/tools.py), and CLI (interface/cli/). s2a therefore LIFTS THE CORE OUT of interface/http/ FIRST -- warehouse_reader.py, serving.py, coverage.py and duckdb_session.py (~1,164 of its ~1,991 lines) are core, not HTTP; parquet_routes.py, wire.py, request_params.py and faults.py stay as the surface and import it. Proposed home warehouse/parquet/serving/. The split is already clean along file lines. Only THEN build interface/cli/ on the same core, so the CLI never grows a second copy. RUNBOOK 0.42.23."
+        "status": "s2a_code_complete_s2b_pending",
+        "note": "HARD CUTOVER HAZARDS move atomically with the rename: cron-ingest ENTRYPOINT, cron-mtbs startCommand, source-disconnected parquet-drain startCommand, and any dashboard override. s2a extracted the seven framework-free Parquet modules to the recorded final top-level parquet_ops/ home, including bounded admission and typed refusals; HTTP and CLI are adapters over it. The agent/MCP adapter remains the sequenced s7 consumer. Railway evidence found no startCommand override on the two connected cron services and no current production parquet-drain service object to compare."
       },
       {
         "id": "s3",
@@ -301,9 +297,9 @@
         "reason": "s5 and s6 add drop revisions on top of the baseline; both land strictly after s1"
       },
       {
-        "path": "services/agri-data-service/src/agri_data_service/cli.py",
+        "path": "services/agri-data-service/src/agri_data_service/interface/cli/data.py",
         "owner": "s2",
-        "reason": "3,900-line shared verb registry; s3/s4/s5 add no verbs, they register lanes in pipeline/direct/registry.py"
+        "reason": "shared data-command registry; s2b adds parquet-ingest here while s3/s4/s5 add no verbs"
       },
       {
         "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",

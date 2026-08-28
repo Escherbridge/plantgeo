@@ -80,7 +80,7 @@ is dropped or altered here. ``agri.mv_forecast_ml_daily_serving`` and
 refresher stays ``SECURITY DEFINER``: after the reassignment its definer is the
 migrating owner credential, which is also the caller, so the bit is now inert --
 and a non-concurrent ``REFRESH`` still requires matview ownership, which the
-handover preserves. ``agri_data_service.cli`` drops its
+handover preserves. ``agri_data_service.interface.cli`` drops its
 ``SET LOCAL ROLE plantgeo_forecast_mv_refresher`` in the same commit because
 that role no longer exists.
 

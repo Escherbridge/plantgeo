@@ -2,7 +2,7 @@
 # railway.json, it places up to `maxCells` centroids into `public.soil_grid_cache`, and exits.
 #
 # WHY THIS IS NOT infra/cron-ingest/Dockerfile. Every other cron service runs a Python
-# `agri-cli` verb. This one runs `scripts/warm-soilgrids.mjs`, a Node driver whose whole point
+# `agri-service` verb. This one runs `scripts/warm-soilgrids.mjs`, a Node driver whose whole point
 # is to reuse `src/lib/server/services/soilgrids.ts` in place -- its response validation,
 # d_factor handling and coverage-gap semantics -- rather than reimplement them in Python.
 #

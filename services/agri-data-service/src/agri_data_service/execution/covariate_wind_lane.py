@@ -342,7 +342,7 @@ def training_request_from_payload(payload: Mapping[str, object]) -> WindTraining
         alpha=_optional_float(payload, "alpha", DEFAULT_RIDGE_ALPHA),
         schema_version=_required_text(payload, "schema_version"),
         quality_policy_key=_required_text(payload, "quality_policy_key"),
-        requested_by=f"agri-cli jobs-run {TRAINING_DEFINITION_NAME}",
+        requested_by=f"agri-service ops jobs-run {TRAINING_DEFINITION_NAME}",
     )
 
 

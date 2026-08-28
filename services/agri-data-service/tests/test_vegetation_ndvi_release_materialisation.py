@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from agri_data_service.cli import _registration_payload
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.execution import vegetation_ndvi_plane as plane_module
 from agri_data_service.execution.vegetation_ndvi_plane import (
@@ -34,6 +33,7 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
     register_governed_forward_plane,
     release_holds_claimed_corpus,
 )
+from agri_data_service.interface.cli.commands import _registration_payload
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

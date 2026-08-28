@@ -78,7 +78,7 @@ For the Python data service:
 Set-Location services/agri-data-service
 Copy-Item .env.example .env
 uv sync --locked --all-extras
-uv run agri-cli db-status
+uv run agri-service ops db-status
 uv run sanic agri_data_service.app:create_app --factory --dev --port 8000
 ```
 

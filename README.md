@@ -19,7 +19,7 @@ documentation index.
 | `src/app/` | Next.js App Router pages and route handlers |
 | `src/components/map/` | MapLibre GL JS, deck.gl, and Three.js map surface |
 | `src/lib/server/` | Drizzle schema, tRPC routers, server-side services |
-| `services/agri-data-service/` | Python/Sanic data service, `agri-cli`, Alembic `agri` schema |
+| `services/agri-data-service/` | Python/Sanic data service, `agri-service`, Alembic `agri` schema |
 | `infra/` | Compose files, Martin config, local-warehouse bootstrap SQL |
 | `docs/` | Architecture, runbooks, contracts, environment reference |
 
@@ -71,7 +71,7 @@ Podman, run `docker compose up -d` directly — the npm scripts hardcode `podman
 Set-Location services/agri-data-service
 Copy-Item .env.example .env
 uv sync --locked --all-extras
-uv run agri-cli db-status
+uv run agri-service ops db-status
 ```
 
 `db-status` reports whether the service can reach its database and which Alembic
@@ -92,7 +92,7 @@ backfill depends on, and the honest limits are all in one place:
 
 **[docs/rebuilding-the-dataset.md](./docs/rebuilding-the-dataset.md)**
 
-Read it before running any `agri-cli ingest-*` or `historical-*` verb. Most
+Read it before running any `agri-service data ingest-*` or `agri-service data historical-*` verb. Most
 sources need no credential at all; exactly one hosted account (Copernicus, for
 ERA5-Land) requires a licence accepted in a browser.
 

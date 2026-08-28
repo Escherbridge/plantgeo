@@ -13,13 +13,13 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import pytest
 from click.testing import CliRunner
 
-from agri_data_service.cli import cli
 from agri_data_service.foundation.canonical import sha256_digest
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import (
     absence_marker_path,
     partition_path,
 )
+from agri_data_service.interface.cli import cli
 from agri_data_service.pipeline.parquet.gap_fill import _lane_day_lock_key
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
@@ -392,10 +392,11 @@ def test_cli_is_dry_run_by_default_and_requires_the_external_pin(
             run_id=str(options["run_id"]), manifest=manifest, dry_run=bool(options["dry_run"]), days=()
         )
 
-    monkeypatch.setattr("agri_data_service.cli._parquet_rewrite_vegetation", record)
+    monkeypatch.setattr("agri_data_service.interface.cli.commands._parquet_rewrite_vegetation", record)
     result = CliRunner().invoke(
         cli,
         [
+            "data",
             "parquet-rewrite-vegetation",
             "--manifest",
             str(path),

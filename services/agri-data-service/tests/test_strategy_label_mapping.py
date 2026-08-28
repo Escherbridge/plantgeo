@@ -7,11 +7,11 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from agri_data_service.cli import cli
 from agri_data_service.execution.strategy_label_mapping import (
     load_strategy_label_source_mapping,
     preflight_strategy_label_source_mapping,
 )
+from agri_data_service.interface.cli import cli
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 INCOMPLETE_EXAMPLE = SERVICE_ROOT / "examples" / "strategy-label-source-mapping.incomplete.json"
@@ -168,11 +168,11 @@ def test_preflight_cli_reports_readiness_and_uses_nonzero_for_template(tmp_path:
 
     ready = runner.invoke(
         cli,
-        ["strategy-label-map-preflight", "--mapping-manifest", str(complete_path)],
+        ["ml", "strategy-label-map-preflight", "--mapping-manifest", str(complete_path)],
     )
     incomplete = runner.invoke(
         cli,
-        ["strategy-label-map-preflight", "--mapping-manifest", str(INCOMPLETE_EXAMPLE)],
+        ["ml", "strategy-label-map-preflight", "--mapping-manifest", str(INCOMPLETE_EXAMPLE)],
     )
 
     assert ready.exit_code == 0

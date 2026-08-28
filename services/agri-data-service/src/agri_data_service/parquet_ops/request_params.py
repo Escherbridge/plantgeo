@@ -1,7 +1,4 @@
-"""Ingress validation for `/api/v1/parquet`: every query parameter, checked once, at the boundary.
-
-Layer L4. Pure: no I/O and no clock. See `AGENTS.md` in this directory.
-"""
+"""Shared text-parameter validation for every Parquet operation surface."""
 
 from __future__ import annotations
 

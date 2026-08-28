@@ -1,6 +1,6 @@
 -- Purpose: score one reconciled forecast iteration -- how many values it holds, how many now carry
 --          an actual, and the average error and interval coverage across them.
--- Loaded by: agri_data_service.cli
+-- Loaded by: agri_data_service.interface.cli
 -- Params: iteration_id (uuid) -- the reconciled iteration to score.
 --
 -- Parameter names appear above WITHOUT a leading colon. See "Header/bind-param trap" in

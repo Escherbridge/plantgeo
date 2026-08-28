@@ -374,7 +374,7 @@ def _window_bound(value: str | None, fallback: datetime) -> datetime:
 @click.option("--chunk-days", type=int, default=DEFAULT_HISTORY_CHUNK.days, help="Days per fetched chunk.")
 @click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
 @click.pass_context
-def ingest_backfill(  # noqa: PLR0913 - one parameter per click option, as cli.py's own verbs are
+def ingest_backfill(  # noqa: PLR0913 - one parameter per click option, as interface/cli/commands.py's own verbs are
     context: click.Context,
     source_name: str,
     since: str | None,
@@ -689,7 +689,7 @@ def _resolve_worker_id(worker_id: str | None) -> str:
 def _ledger_failure(exc: Exception, action: str) -> click.ClickException:
     """Degrade a ledger failure to something safe to print, keeping the repo's SQLAlchemy-message rule."""
     # A SQLAlchemyError message carries the whole statement and every bound parameter, which is how a DSN
-    # password reaches a cron log. Same degradation cli.py applies to every other direct-SQL verb.
+    # password reaches a cron log. Same degradation interface/cli/commands.py applies to every other direct-SQL verb.
     reason = f"{action} failed ({exc.__class__.__name__})" if isinstance(exc, SQLAlchemyError) else str(exc)
     return click.ClickException(reason)
 
@@ -727,7 +727,7 @@ async def _plan_archive_lane(lane: BackfillLane, end: datetime | None) -> dict[s
     """Open one session for the definition upsert and the fan-out, and commit them together."""
     async with ingest_session() as session:
         await apply_statement_timeout(session)
-        opened = await plan_archive_lane(session, lane, end=end, requested_by="agri-cli jobs-plan-lane")
+        opened = await plan_archive_lane(session, lane, end=end, requested_by="agri-service ops jobs-plan-lane")
         await session.commit()
     return {
         "lane": lane.name,

@@ -1,6 +1,6 @@
 """CLI verbs for the evaluation-only seasonal forecast/feedback track.
 
-Registered by one line in `cli.py`: ``register_seasonal_commands(cli)``.
+Registered by `interface/cli/forecast.py`: ``register_seasonal_commands(forecast)``.
 """
 
 from __future__ import annotations

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Launch an agri-cli historical backfill against the DSN in .env.
+# Launch an agri-service command against the warehouse DSN in .env.
 #
 # The loader DSN is pinned explicitly so an unrelated value in the operator's shell cannot
 # redirect the load. See services/agri-data-service/README.md §3.1.
 #
-# Usage: ./run-backfill.sh <agri-cli-verb> [args...]
+# Usage: ./run-backfill.sh <group> <command> [args...]
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -23,4 +23,4 @@ export LOCAL_SOURCE_LOADER_DATABASE_URL="$DATABASE_URL"
 
 echo "loader host: $(printf '%s' "$DATABASE_URL" | sed -E 's#.*@([^/]+)/.*#\1#')"
 echo "verb: $*"
-exec uv run agri-cli "$@"
+exec uv run agri-service "$@"

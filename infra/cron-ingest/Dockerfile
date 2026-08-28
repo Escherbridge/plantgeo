@@ -35,7 +35,7 @@
 # Do not add them to this ENTRYPOINT as well; they would run twice per tick.
 #
 # TWO services deliberately survived that consolidation, and neither is a job-runner lane:
-#   - plantgeo-cron-mtbs still overrides this ENTRYPOINT with `agri-cli ingest-mtbs` on a weekly
+#   - plantgeo-cron-mtbs still overrides this ENTRYPOINT with `agri-service data ingest-mtbs` on a weekly
 #     schedule. MTBS is quarterly-published, so hourly is the wrong shape, and `ingest-mtbs`
 #     fails a run outright when a fire year has no established release date -- chaining it here
 #     would turn that rare catalog gap into a permanently red hourly cron and mask real ingest
@@ -64,10 +64,10 @@ RUN uv sync --locked --no-dev --no-install-project
 
 # Source only. The migration machinery (alembic/, db/, alembic.ini) is deliberately NOT
 # copied: this container must never run a migration, and omitting the files makes that true
-# by construction rather than by trusting the ENTRYPOINT string. `agri-cli ingest-all` never
-# reads them -- cli.py:19 imports the alembic *package* (a locked dependency), while
-# alembic.ini is read only inside _alembic_config() (cli.py:266-267), which only the
-# migration verbs call. alembic.ini is also untracked, so copying it broke the build.
+# by construction rather than by trusting the ENTRYPOINT string. `agri-service data ingest-all`
+# never reads them -- migration configuration is loaded only by the `ops db-*` adapters, while
+# the `data ingest-*` import path remains independent of repository migration files.
+# alembic.ini is also untracked, so copying it broke the build.
 #
 # This one line already carries `agri_data_service/jobs/` and `agri_data_service/ingest/`,
 # so the durable-lane services need no build change of their own -- only a startCommand.
@@ -105,4 +105,4 @@ USER plantgeo
 #
 # It needs the six OBJECT_STORE_* variables, already set on this service (RUNBOOK section 0.26.2).
 # A tick with object storage unconfigured fails closed, naming every variable still missing.
-ENTRYPOINT ["/bin/sh", "-c", "agri-cli ingest-all; ingest_status=$?; agri-cli parquet-catch-up-vegetation; vegetation_status=$?; agri-cli jobs-pulse --time-budget-seconds 600; pulse_status=$?; agri-cli parquet-gap-fill --time-budget-seconds 900; parquet_status=$?; [ $ingest_status -eq 0 ] && [ $vegetation_status -eq 0 ] && [ $pulse_status -eq 0 ] && [ $parquet_status -eq 0 ]"]
+ENTRYPOINT ["/bin/sh", "-c", "agri-service data ingest-all; ingest_status=$?; agri-service data parquet-catch-up-vegetation; vegetation_status=$?; agri-service ops jobs-pulse --time-budget-seconds 600; pulse_status=$?; agri-service data parquet-gap-fill --time-budget-seconds 900; parquet_status=$?; [ $ingest_status -eq 0 ] && [ $vegetation_status -eq 0 ] && [ $pulse_status -eq 0 ] && [ $parquet_status -eq 0 ]"]

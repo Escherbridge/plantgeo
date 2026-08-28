@@ -47,7 +47,7 @@ trap 'rm -rf "$LOCK"' EXIT
 log "=== wake: lane=$LANE plan=$PLAN"
 
 log "--- ${LANE} backfill (resumes from checkpoint)"
-./run-backfill.sh "historical-${LANE}-backfill" --plan "$PLAN" >> "$LOG" 2>&1
+./run-backfill.sh data "historical-${LANE}-backfill" --plan "$PLAN" >> "$LOG" 2>&1
 log "backfill exit=$?"
 
 # Exit code alone is NOT a completeness signal. The era5 lane exits non-zero on an
@@ -57,7 +57,7 @@ log "backfill exit=$?"
 # is authoritative and the exit code is only a secondary condition.
 log "--- ${LANE} persist (writes what is cached; finalizes only when complete)"
 persist_out="$RUN_DIR/logs/.persist-$SLUG.out"
-./run-backfill.sh "historical-${LANE}-persist" --plan "$PLAN" > "$persist_out" 2>&1
+./run-backfill.sh data "historical-${LANE}-persist" --plan "$PLAN" > "$persist_out" 2>&1
 persist_status=$?
 cat "$persist_out" >> "$LOG"
 log "persist exit=$persist_status"

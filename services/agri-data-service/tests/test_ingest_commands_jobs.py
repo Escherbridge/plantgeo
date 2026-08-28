@@ -106,7 +106,7 @@ def _patch_ingest_session(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _group() -> click.Group:
-    group = click.Group("agri-cli")
+    group = click.Group("agri-service")
     register_ingest_commands(group)
     return group
 

@@ -123,7 +123,7 @@ is **no environment override, config flag, or alternate field** that
 changes `_LOCAL_SOURCE_LOADER_DATABASE`; it is a Python module constant,
 not a setting.
 
-**This is a hard blocker for running `agri-cli historical-nasa-backfill`
+**This is a hard blocker for running `agri-service data historical-nasa-backfill`
 / `historical-nasa-finalize` / `historical-usdm-backfill` /
 `historical-usdm-finalize` / `source-ingest` against any disposable
 database, including this one.** Verified empirically, not just by
@@ -131,7 +131,7 @@ reading the code:
 
 ```
 $ LOCAL_SOURCE_LOADER_DATABASE_URL="postgresql+asyncpg://plantgeo_loader:x@127.0.0.1:5442/plantgeo_boise_completion_20260725" \
-  uv run agri-cli historical-nasa-backfill --plan .../nasa-power-boise-trekker-rim-20220724-20260724.json
+  uv run agri-service data historical-nasa-backfill --plan .../nasa-power-boise-trekker-rim-20220724-20260724.json
 Error: LOCAL_SOURCE_LOADER_DATABASE_URL must target postgresql+asyncpg://127.0.0.1:5442/plantgeo
 ```
 
@@ -155,7 +155,7 @@ written.** I did not patch `config.py` (that would be exactly the
 forbidden guard bypass). What the codebase itself already sanctions —
 demonstrated by its own existing test,
 `tests/test_geospatial_pilot_postgresql.py` — is a **different entry
-point**, not a different guard value: bypass `agri-cli` entirely for the
+point**, not a different guard value: bypass `agri-service` entirely for the
 write step and call the execution-layer functions directly against a
 raw session opened on the disposable DSN, switching role inside the
 transaction:
@@ -181,11 +181,11 @@ coupling, so `fetch_nasa_power_daily` / `cache_historical_nasa_result` /
 the checkpoint read-modify-write cycle in `historical_backfill.py` /
 `historical_usdm.py` can be driven unmodified by a small orchestration
 script that only swaps the session/transaction boundary that
-`agri-cli`'s `_historical_nasa_backfill` / `_historical_usdm_backfill`
+`agri-service`'s `_historical_nasa_backfill` / `_historical_usdm_backfill`
 normally open via `local_source_loader_session(loader_database_url)`.
 
 **Flagging loudly for S2, as instructed:** if S2's mandate is "run the
-actual `agri-cli historical-nasa-backfill`/`historical-usdm-backfill`
+actual `agri-service data historical-nasa-backfill`/`historical-usdm-backfill`
 commands unmodified," that is blocked outright — there is no DSN or env
 combination that satisfies both the guard and "disposable, not
 `plantgeo`." S2 has exactly two honest options: (a) adopt the
@@ -341,9 +341,8 @@ something `historical_writer.py` creates.
 ## 7. S2 runbook — ordered commands
 
 All commands run from `services/agri-data-service` unless noted. Steps
-1-2 use the direct-session bypass from §3 (not the literal `agri-cli
-historical-nasa-backfill` verb, which is blocked); steps 3 onward use
-`agri-cli` normally since `FORECAST_ITERATION_DATABASE_URL` has no such
+1-2 use the direct-session bypass from §3 (not the literal `agri-service data historical-nasa-backfill` verb, which is blocked); steps 3 onward use
+`agri-service` normally since `FORECAST_ITERATION_DATABASE_URL` has no such
 restriction.
 
 1. **NASA POWER backfill + finalize** (direct-session bypass, mirroring
@@ -393,7 +392,7 @@ restriction.
    exactly at the backfilled window end):
    ```
    FORECAST_ITERATION_DATABASE_URL=postgresql+asyncpg://plantgeo_local_developer:<password>@127.0.0.1:5442/plantgeo_boise_completion_20260725 \
-   uv run agri-cli forecast-run-iteration \
+   uv run agri-service forecast run-iteration \
      --iteration-key boise-trekker-rim-ws2m-retrospective-20260624-30d \
      --series-id <series id from step 3> \
      --release-set-id <nasa release_set id from step 1> \
@@ -413,7 +412,7 @@ restriction.
    *as of whenever S2 runs this*, not the 2026-07-24 used above if S2
    runs later than this authoring date):
    ```
-   uv run agri-cli forecast-run-iteration \
+   uv run agri-service forecast run-iteration \
      --iteration-key boise-trekker-rim-ws2m-current-<run-date> \
      --series-id <series id> \
      --release-set-id <nasa release_set id> \
@@ -431,7 +430,7 @@ restriction.
 7. **Reconcile actuals** against the retrospective iteration once its
    horizon is fully covered by validated observations:
    ```
-   uv run agri-cli forecast-reconcile-actuals \
+   uv run agri-service forecast reconcile-actuals \
      --iteration-id <retrospective iteration id from step 5> \
      --actual-release-set-id <nasa release_set id> \
      --as-of-time <now>

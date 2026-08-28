@@ -21,16 +21,16 @@ format:
 	uv run ruff check --fix src/ tests/
 
 migrate:
-	uv run agri-cli db-upgrade head
+	uv run agri-service ops db-upgrade head
 
 migration-status:
-	uv run agri-cli db-status
+	uv run agri-service ops db-status
 
 seed:
-	uv run agri-cli seed
+	uv run agri-service ops seed
 
 local-status:
-	@uv run agri-cli local --help
+	@uv run agri-service ops local --help
 
 maintain-job-logs:
-	uv run agri-cli job-logs-maintain --retention-days 30 --future-days 7
+	uv run agri-service ops job-logs-maintain --retention-days 30 --future-days 7

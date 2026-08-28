@@ -70,7 +70,7 @@ no equivalent exists for the rest of this project's coverage area (§5).
   `ingest-all` CLI command (`ingest/commands.py:248-259,484-497,1304`) and
   deployed as the entrypoint of the single `plantgeo-ingest-cron` Railway
   service: `infra/cron-ingest/Dockerfile:74` runs
-  `agri-cli ingest-all; agri-cli jobs-pulse ...`, and
+  `agri-service data ingest-all; agri-service ops jobs-pulse ...`, and
   `infra/cron-ingest/railway.json:7` sets `"cronSchedule": "0 * * * *"` —
   **hourly, on the hour**, `restartPolicyType: NEVER`.
 - **A stale citation exists in the validation catalogue and should not be

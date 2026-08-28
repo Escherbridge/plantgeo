@@ -914,7 +914,7 @@ async def ingest_mtbs(
     review: SourceReview | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> list[MtbsReleaseCapture]:
-    """Capture every requested MTBS release. The CLI verb belongs to `cli.py`; this is its callable."""
+    """Capture every requested MTBS release; `ingest/commands.py` owns its CLI adapter."""
     if not ignition_years:
         raise ValueError("ingest_mtbs requires at least one ignition year")
     root = output_root if output_root is not None else settings.local_execution_root
@@ -1205,7 +1205,7 @@ def inline_bbox_value(argv: Sequence[str]) -> list[str]:
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
-    """Describe the capture verb that `cli.py` will wrap as `ingest-mtbs`."""
+    """Describe the capture verb registered by `ingest/commands.py` as `ingest-mtbs`."""
     parser = argparse.ArgumentParser(
         prog="agri-ingest-mtbs",
         description="Capture MTBS burned-area boundaries one annual release at a time.",

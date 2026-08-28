@@ -64,7 +64,7 @@ floor, the contended cap and the time budget -- because those are properties of 
 not of what a day owes.
 
 EVERY ENTRY POINT HERE IS REACHABLE FROM ONE VERB, and that is a correctness property rather than a
-convenience. `cli.py`'s `parquet-drain --selection ladder` runs the ladder walk and
+convenience. `interface/cli/commands.py`'s `parquet-drain --selection ladder` runs the ladder walk and
 `--selection ladder --dry-run` prints `ladder_census_report`; `parquet-retire-legacy-layout` runs
 the sweep below. A repair that only a Python REPL can start is a repair an operator reads about in
 a commit message, does not run, and believes has happened: `--dry-run` would echo the BASE census,

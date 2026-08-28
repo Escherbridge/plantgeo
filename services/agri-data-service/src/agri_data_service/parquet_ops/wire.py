@@ -1,7 +1,4 @@
-"""The frozen `/api/v1/parquet` envelope, in the serving side's own vocabulary plus its renderer.
-
-Layer L4. Pure: no I/O, no clock, no object store. See `AGENTS.md` in this directory.
-"""
+"""The frozen Parquet-operation envelope and protocol-neutral renderer."""
 
 from __future__ import annotations
 
@@ -165,7 +162,7 @@ class LaneNeverWritten:
         return {"state": STATE_LANE_NEVER_WRITTEN, "requested_day": render_day(self.requested_day)}
 
 
-#: The four states, and the only four. Every one leaves as HTTP 200 carrying `state`.
+#: The four states, and the only four. Adapters preserve this vocabulary exactly.
 type DayEnvelope = PublishedDay | GovernedAbsenceDay | DayNotWritten | LaneNeverWritten
 
 

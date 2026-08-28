@@ -16,7 +16,7 @@ Source-ingestion checkpoint v2 binds both the complete reviewed plan and the rel
 
 `historical_parquet.py` converts only a complete local NASA raw-receipt set into an immutable, compressed daily Hive-partitioned Parquet dataset. It stages one bounded source-cell file at a time, caps DuckDB to one thread and 1 GB with a build-local spill directory, and atomically publishes a manifest-bound dataset. An interrupted conversion reuses its single target-bound build directory only after each staged cell's row count, key, and payload checksum are revalidated against the raw receipt; ambiguous or mismatched staging fails closed. Successful publication removes staging. It is intentionally a local cold-history store; it never requests an upstream API, writes PostgreSQL, or promotes a full history to Railway.
 
-**Its spill directory carries a bounded cap, not `warehouse/parquet/tiers.py`'s disabled one, and that difference is deliberate.** Every other DuckDB session in this repo (`tiers.py`'s `DERIVATION_TEMP_DIRECTORY_SIZE`, `analysis/warehouse_session.py`, `interface/http/duckdb_session.py`) sets `max_temp_directory_size = '0GiB'`, which disables spilling so an over-budget query raises in about a second instead of quietly filling the disk. This is the one site that is meant to spill: the `COPY ... ORDER BY observed_date, cell_key, source_parameter` sort at the end of `materialize_historical_nasa_parquet` legitimately exceeds its 1 GB `HISTORICAL_NASA_PARQUET_MEMORY_LIMIT`, and `0GiB` here would make the export raise instead of finishing for any window large enough to need it -- which is most of them. `HISTORICAL_NASA_PARQUET_TEMP_DIRECTORY_SIZE` (`8GiB`) is the compromise: the batch is still allowed to spill into its own `duckdb-spill` build subdirectory, but a ceiling exists so a genuinely runaway sort fails visibly rather than exhausting host disk the way an unbounded default (DuckDB's own default is 90% of available disk) would.
+**Its spill directory carries a bounded cap, not `warehouse/parquet/tiers.py`'s disabled one, and that difference is deliberate.** Every other DuckDB session in this repo (`tiers.py`'s `DERIVATION_TEMP_DIRECTORY_SIZE`, `analysis/warehouse_session.py`, `parquet_ops/duckdb_session.py`) sets `max_temp_directory_size = '0GiB'`, which disables spilling so an over-budget query raises in about a second instead of quietly filling the disk. This is the one site that is meant to spill: the `COPY ... ORDER BY observed_date, cell_key, source_parameter` sort at the end of `materialize_historical_nasa_parquet` legitimately exceeds its 1 GB `HISTORICAL_NASA_PARQUET_MEMORY_LIMIT`, and `0GiB` here would make the export raise instead of finishing for any window large enough to need it -- which is most of them. `HISTORICAL_NASA_PARQUET_TEMP_DIRECTORY_SIZE` (`8GiB`) is the compromise: the batch is still allowed to spill into its own `duckdb-spill` build subdirectory, but a ceiling exists so a genuinely runaway sort fails visibly rather than exhausting host disk the way an unbounded default (DuckDB's own default is 90% of available disk) would.
 
 `historical_era5.py` owns cache-first CDS capture for the governed ERA5-Land plan. It treats each calendar month as one immutable ZIP artifact, validates every planned point/variable/day before advancing the durable checkpoint, and requires local CDS credentials only for a missing cache entry. Its requested one-degree points remain point samples; they never claim the product's native 0.1-degree grid or acre-scale precision.
 
@@ -482,7 +482,7 @@ steps.
 **first production writer of `agri.forecast_training_run` and
 `agri.forecast_backtest_metric`** -- both tables previously had no writer outside
 the test suite, which made the whole ML receipt chain structurally empty. It is
-reached through `agri-cli forecast-train-wind --persist`, and `--persist` is OFF
+reached through `agri-service forecast train-wind --persist`, and `--persist` is OFF
 by default: without it the verb reads, scores and prints one JSON line exactly as
 the module always did, and rolls the session back. `covariate_wind_lane.py` runs
 the same work as a durable lane on the `agri.job_*` ledger.
@@ -571,11 +571,11 @@ point-in-time honest.
 
 `covariate_wind_lane.py` registers `execution.covariate_wind_train` with
 `@job_handler` at import time, the same mechanism `ingest/archive_walk.py` uses,
-and `cli.py` importing the module is what performs the registration. **One work
+and `interface/cli/commands.py` importing the module is what performs the registration. **One work
 item is one (cell, origin batch)** -- `shard_key` is `<cell_id>:<batch newest
 origin>` -- so "which batches are still missing" is a `GROUP BY` over `shard_key`.
-`agri-cli forecast-train-wind-plan` fans the shards out idempotently and
-`agri-cli forecast-train-wind-run` drives one bounded slice.
+`agri-service forecast train-wind-plan` fans the shards out idempotently and
+`agri-service forecast train-wind-run` drives one bounded slice.
 
 It is **not** `jobs-run`, and that is custody rather than taste: `jobs-run` opens
 `ingest_session()`, which is the source-loader DSN, and a governed forecast receipt
@@ -598,7 +598,7 @@ receipt instead of resolving the first.
 
 - **~~No DSN exists for the least-privilege forecast roles.~~ Closed by the 2026-08-08
   teardown, not by a grant.** This bullet used to read that no single role could complete
-  the `forecast-train-wind --persist` chain — the writer held INSERT but no validator
+  the `agri-service forecast train-wind --persist` chain — the writer held INSERT but no validator
   EXECUTE, the publisher the reverse. Revision `20260808_0019` dropped the whole family
   (`plantgeo_forecast_writer`/`_publisher`/`_reader`/`_mv_refresher`/`_mv_refresh_owner`)
   after verifying it had zero members, no DSN, and no `USAGE` on schema `agri`, and the
@@ -673,7 +673,7 @@ the shipped triggers — there is no parallel provenance mechanism.
 **A registration pass must land something through its own cells.** `register_governed_plane`
 finishes by measuring twice and refusing on the narrower of the two, via the pure predicate
 `empty_materialisation_reason`. `EmptyGovernedReleaseError` is raised inside the caller's
-transaction (`cli.py`'s `session.begin()`), so the release and release set roll back with it —
+transaction (`interface/cli/commands.py`'s `session.begin()`), so the release and release set roll back with it —
 there is no path that leaves a registered release behind a refusal.
 
 Which count gates matters, and two of the three obvious choices are wrong.
@@ -685,7 +685,7 @@ subtle one — it cannot fail on the reachable form of the bug. Because
 nothing can pre-exist under a **newly created** release id, so on a fresh release the
 release-wide count is identically `_load_observations`' return and adds no detection power at
 all; and on an **existing** release it is dominated by the earlier pass's rows. Run
-`forecast-vegetation-register` with cell keys that resolve to nothing — a typo, or keys whose
+`agri-service forecast vegetation-register` with cell keys that resolve to nothing — a typo, or keys whose
 upstream features were re-ingested under a changed `cellKey` — and `corpus_digest.sql` (no cell
 filter) reproduces the same `payload_checksum`, `select_source_release.sql` returns the existing
 release, every INNER JOIN in `load_observations.sql` matches nothing, and a release-wide guard
@@ -785,8 +785,7 @@ were written to be portable to SQL without changing any digest.
 
 A fixed-window plan that `durable-backfill.sh` has marked `.done` is frozen forever: every later wake
 exits at the `.done` check, so the lane ages one calendar day per calendar day with nothing pushing
-it. That had already happened twice by hand before this module existed. `agri-cli
-historical-plan-continue` authors the successor plan; `agri-cli historical-plan-staleness` is the half
+it. That had already happened twice by hand before this module existed. `agri-service data historical-plan-continue` authors the successor plan; `agri-service data historical-plan-staleness` is the half
 that makes the freeze visible instead of silent, and is meant to be read, not to gate anything.
 
 **Scheduling is deliberately not automated here.** Registering a Windows scheduled task needs the
@@ -1035,7 +1034,8 @@ service is created, and all of them were open when the configs were written:
 * a `historical-<lane>-persist` verb -- without it a completed fetch has no path to the warehouse;
 * the plan JSONs committed AND copied into the image -- `infra/cron-ingest/Dockerfile` copies only
   `pyproject.toml`, `uv.lock` and `src/`, so `--plan /app/plans/...` hits `click.Path(exists=True)`;
-* `ENTRYPOINT []` in that service -- the image pins `ENTRYPOINT ["agri-cli", "ingest-all"]`, which a
+* `ENTRYPOINT []` in that service -- the image pins a shell entrypoint that runs four grouped
+  `agri-service` commands, which a
   Railway `startCommand` does not clear;
 * a Railway volume for `settings.local_execution_root` (default `.agri-local-runs`, relative to a
   root-owned `/app` under uid 10001) -- otherwise the checkpoint and raw cache are unwritable or
@@ -1151,7 +1151,7 @@ to ML until a new `agri.covariate_feature_schema` version.
 `execution/historical_writer.py` was a 1859-line module holding four near-identical per-source
 persistence pipelines. It is now a package. Nothing about what reaches the warehouse changed; the
 public surface (`persist_*`, `finalize_*`, the five result dataclasses, `ReleaseSetIdentity`) is
-re-exported from `historical_writer/__init__.py`, so `cli.py` and the tests import exactly what they
+re-exported from `historical_writer/__init__.py`, so `interface/cli/commands.py` and the tests import exactly what they
 imported before.
 
 | Module | Holds |
@@ -1266,7 +1266,7 @@ refusal; `geospatial_pilot.py` last, with the `source_role` / `validate_immediat
 `coverage_contract.py` decides what a day's state IS and never touches a database. These three are
 the rest of the loop: measure the warehouse, report it to a person, and turn the oldest hole into
 either one authored plan or one governed absence. They back the `coverage-status` and
-`coverage-fill` verbs in `cli.py`.
+`coverage-fill` verbs in `interface/cli/commands.py`.
 
 ### Three measurements, three reads, one classification
 
@@ -1442,7 +1442,7 @@ work is the safe direction; erring the other way retires a day upstream can stil
 ### One implementation, not two
 
 This wave produced two readers for the same job: `coverage_census.py` (three statements, consumed by
-`cli.py`, `coverage_report.py` and `coverage_fill.py`) and `coverage_reader.py` plus
+`interface/cli/commands.py`, `coverage_report.py` and `coverage_fill.py`) and `coverage_reader.py` plus
 `sql/execution/signal_coverage_days.sql` (one statement, consumed by nothing). The reader fork was
 **deleted** at integration. It had no production consumer, it failed
 `test_sql_tree_conventions.py::test_marker_only_on_line_one` on four bare-word walkthrough lines, and
@@ -1561,7 +1561,7 @@ nothing without `--persist`.
 
 ## `jobs_pulse_command.py` -- one cron tick for the whole job runner
 
-`agri-cli jobs-pulse` is the single hourly tick that replaced a fan-out of eleven Railway cron
+`agri-service ops jobs-pulse` is the single hourly tick that replaced a fan-out of eleven Railway cron
 services on 2026-08-14 (owner directive: *"we should not need all the individual crons, maybe just one
 to keep a pulse on the job runner."*). It visits three namespaces per tick and reports one row per
 lane; `docs/deployment.md` § "Cron consolidation, 2026-08-14" is the deployment-side record.

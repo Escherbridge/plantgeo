@@ -61,7 +61,7 @@ would confirm it.
   `docs/reports/evidence/mtbs-release-announcements-2026-08-10.md` — e.g. fire year 2019 opened
   2021-04-21 and closed 2021-09-27, fire year 2020 spanned 2022-02-15→2022-04-28).
 - **This repo's ingest cron runs weekly**, `55 7 * * 2` (Tuesdays 07:55 UTC),
-  `infra/cron-mtbs/railway.json`, `startCommand: agri-cli ingest-mtbs` — chosen specifically to
+  `infra/cron-mtbs/railway.json`, `startCommand: agri-service data ingest-mtbs` — chosen specifically to
   pick up a new quarterly release within a week while staying far cheaper than the daily lanes
   (`ingest/AGENTS.md:317`). Re-running is cheap and idempotent: the writer's diff rejects an
   unchanged payload, and the geometry adapter confirms an unchanged shape when nothing moved
