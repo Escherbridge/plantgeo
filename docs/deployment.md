@@ -269,7 +269,7 @@ Minimum private references:
 DATABASE_URL=${{Plantgeo.DATABASE_URL}}
 REDIS_URL=${{plantgeo-Redis.REDIS_URL}}
 MARTIN_URL=http://${{plantgeo-martin.RAILWAY_PRIVATE_DOMAIN}}:3000
-AGRI_PARQUET_SERVICE_URL=http://${{plantgeo-dataservice.RAILWAY_PRIVATE_DOMAIN}}:8000
+AGRI_PARQUET_SERVICE_URL=http://${{plantgeo-parquet-api.RAILWAY_PRIVATE_DOMAIN}}:8080
 ```
 
 `DATABASE_URL` remains on `Plantgeo` until the replacement gate passes. Public
@@ -300,13 +300,12 @@ tokens, OAuth secrets, and `MAPILLARY_ACCESS_TOKEN`. Provider credentials must
 never be exposed as `NEXT_PUBLIC_*`.
 
 `AGRI_PARQUET_SERVICE_URL` is a Railway dashboard/reference variable, not a
-hard-coded application URL. It must resolve to the private data-service hostname;
+hard-coded application URL. It must resolve to the private `plantgeo-parquet-api` hostname;
 do not create or substitute a public domain. The Parquet client deliberately has
 no production default: a missing binding is a visible typed configuration fault,
-not permission to read PostgreSQL. Production evidence on 2026-08-28 found the
-private data service ready but this variable absent on `plantgeo-main`; reader
-activation remains blocked until an operator sets the reference after the tRPC
-cutover is merged/deployed and verifies it without printing the resolved value.
+not permission to read PostgreSQL. Production activation on 2026-08-28 verified the
+reference above resolves inside Railway to `http://plantgeo-parquet-api.railway.internal:8080`;
+the private `/ready` call returned HTTP 200 without exposing a public API domain.
 
 ### Data-service receiver and published-reader instances
 

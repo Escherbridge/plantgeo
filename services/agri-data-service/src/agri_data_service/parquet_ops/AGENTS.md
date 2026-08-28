@@ -167,10 +167,17 @@ every published day after it are marked `truncated`. A day whose rows were never
   only thing memoized (`CoverageCache`, 120 s, under the client's own 300 s revalidation). Nothing
   else caches, so no row read can report a day as thinner than the warehouse holds.
 
+The 52 cold tier listings use exactly three workers. This is network-only concurrency: coverage
+opens no DuckDB session, and the separate three-session × 1.2 GB DuckDB ceiling does not move. Each
+tier is consumed as an iterator and charges the one locked 600,000-key census budget before retaining
+a key, so concurrent listings cannot multiply the aggregate memory allowance. Measured against
+production R2 on 2026-08-28, the unchanged 52-prefix walk covered 121,386 keys in 16.27 s at this
+ceiling, versus the route's reproduced 20.9 s serial cold failure.
+
 The census carries three bounds a memo alone does not give it, all in `coverage.py`:
 
 - **Single-flight.** `MAX_LISTED_KEYS_PER_REQUEST` bounds one listing; a memo bounds repeat work
-  *after* the first answer exists. Without a lock, N cold page loads each started a full 52-listing
+  *after* the first answer exists. Without a lock, N cold page loads each start a full 52-listing
   walk. `CoverageCache` holds a `threading.Lock` — not `asyncio`, because `get` runs inside the
   route's pool thread — and a queued caller re-checks the memo before building. This mirrors the
   guard `environmental-read-model.getSliderCapabilities` already has.

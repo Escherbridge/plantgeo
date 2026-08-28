@@ -10,6 +10,7 @@ must name the intended PlantGeo service explicitly.
 | --- | --- |
 | `plantgeo-main` | Next.js application built from the repository root. |
 | `plantgeo-dataservice` | Python data service built from `services/agri-data-service`. |
+| `plantgeo-parquet-api` | Private published-reader Parquet API on Railway-provided port `8080`; no public domain. |
 | `plantgeo-Redis` | PlantGeo cache, pub/sub, and non-durable wake-up transport. |
 | `Plantgeo` | Existing PlantGeo PostgreSQL 18.3 database. It was not extension-ready in the July 2026 audit. |
 | `plantgeo-spatiotemporal-db` | **The production database since the cutover.** PostgreSQL 18.4 + PostGIS 3.6, reached on the `switchback.proxy.rlwy.net:37967` TCP proxy. Was provisioned from `timescale/timescaledb-ha:pg18`; TimescaleDB and timescaledb_toolkit were **dropped 2026-08-25** after holding one always-empty hypertable (`tracking.positions`, 0 rows, 0 chunks) and no continuous aggregate. Installed extensions, measured that day: btree_gist, hypopg, pg_buffercache, pgcrypto, plpgsql, postgis, vector. |
@@ -37,7 +38,7 @@ Required service references:
 ```dotenv
 DATABASE_URL=${{Plantgeo.DATABASE_URL}}
 REDIS_URL=${{plantgeo-Redis.REDIS_URL}}
-AGRI_PARQUET_SERVICE_URL=http://${{plantgeo-dataservice.RAILWAY_PRIVATE_DOMAIN}}:8000
+AGRI_PARQUET_SERVICE_URL=http://${{plantgeo-parquet-api.RAILWAY_PRIVATE_DOMAIN}}:8080
 ```
 
 `DATABASE_URL` remains on `Plantgeo` until a reviewed data migration and
@@ -45,7 +46,7 @@ cutover explicitly replaces it. Public `NEXT_PUBLIC_*` map values are compiled
 into the Next.js bundle during the Docker build; they must be configured before
 a production build. `AGRI_PARQUET_SERVICE_URL` is server-only and must remain a
 private Railway reference. If it is absent or invalid, the Parquet reader fails
-visibly and must not retry PostgreSQL or use a public data-service domain.
+visibly and must not retry PostgreSQL or use a public Parquet API domain.
 
 ### Data-service receiver and published-reader profiles
 

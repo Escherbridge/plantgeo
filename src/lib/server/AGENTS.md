@@ -1148,8 +1148,8 @@ The generic signal reader likewise returns a typed contract refusal because post
 filtering could silently omit the requested product.
 
 The shared `parquet_ops`/CLI extraction is reconciled at `9553fc8`, on top of the readiness repair
-at `fced1e8`. Activation is still gated on direct private-route verification and a server-only
-`AGRI_PARQUET_SERVICE_URL` reference from `plantgeo-main` to the private data-service hostname;
+at `fced1e8`. Production activation at `069ef90` binds the server-only
+`AGRI_PARQUET_SERVICE_URL` to `http://${{plantgeo-parquet-api.RAILWAY_PRIVATE_DOMAIN}}:8080`;
 missing configuration remains a typed fault, never a PostgreSQL fallback. Per-rung and
 signal-product coverage are required before the withheld slider rows or generic signal reader can
 be enabled.

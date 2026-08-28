@@ -57,3 +57,8 @@ schemas. Three levels, weakest last:
 - `test_the_serving_session_caps_memory_threads_and_disables_spilling` — asserts the guard by
   reading `duckdb_settings()` back, so a future edit that "tunes" `max_temp_directory_size` off zero
   fails here rather than on the host.
+- `test_a_cold_census_lists_each_registered_lane_tier_once` — proves the cold walk still covers the
+  frozen thirteen-by-four ladder exactly once; the timeout fix changes scheduling, not scope.
+- `test_a_cold_census_bounds_parallel_r2_listings_without_a_clock` — the first three lane listings
+  rendezvous at a barrier, proving the cold path is concurrent and capped at three without asserting
+  wall-clock timing.

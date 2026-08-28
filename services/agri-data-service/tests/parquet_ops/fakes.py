@@ -22,6 +22,7 @@ from agri_data_service.foundation.parquet.paths import (
 from agri_data_service.parquet_ops.warehouse_reader import RowReadResult
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from datetime import date
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
@@ -36,6 +37,11 @@ class FakeListing:
 
     keys: set[str] = field(default_factory=set)
     objects: dict[str, bytes] = field(default_factory=dict)
+
+    def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]:
+        """Yield every held key under one whole-tier prefix, sorted."""
+        prefix = zoom_prefix(layer, kind, tier)
+        yield from sorted(key for key in self.keys if key.startswith(prefix))
 
     def list_keys(
         self,

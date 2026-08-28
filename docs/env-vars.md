@@ -17,7 +17,7 @@ in the browser bundle and must be treated as public.
 | `DATABASE_URL` | server | PlantGeo PostgreSQL DSN. Production currently references `${{Plantgeo.DATABASE_URL}}`; change only during the reviewed replacement cutover. |
 | `MIGRATION_DATABASE_URL` | server, optional | DDL-capable DSN for the `preDeployCommand` (`scripts/migrate.mjs`). Unset means the step reuses `DATABASE_URL`; set it once the runtime role loses `CREATE` on the database. Never the Martin role. |
 | `REDIS_URL` | server | `${{plantgeo-Redis.REDIS_URL}}` in Railway. Cache/pub-sub only, never the durable job ledger. |
-| `AGRI_PARQUET_SERVICE_URL` | server | Required for production map readers. Point it only at the private `plantgeo-dataservice` Parquet API origin (for example `http://${{plantgeo-dataservice.RAILWAY_PRIVATE_DOMAIN}}:8000`); never use a public domain or a `NEXT_PUBLIC_*` variable. Missing or invalid configuration is a typed visible fault and never falls back to PostgreSQL. |
+| `AGRI_PARQUET_SERVICE_URL` | server | Required for production map readers. Use the verified private reference `http://${{plantgeo-parquet-api.RAILWAY_PRIVATE_DOMAIN}}:8080`; never use a public domain or a `NEXT_PUBLIC_*` variable. Missing or invalid configuration is a typed visible fault and never falls back to PostgreSQL. |
 | `NEXTAUTH_SECRET` | server | Unique high-entropy production secret. Rotating it invalidates sessions. |
 | `NEXTAUTH_URL` | server | Canonical application origin, `http://localhost:3001` in development. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | server | Optional pair; configure both or omit the provider. |
@@ -281,7 +281,7 @@ profiles receive separately sealed least-privilege DSNs:
 DATABASE_URL=${{Plantgeo.DATABASE_URL}}
 REDIS_URL=${{plantgeo-Redis.REDIS_URL}}
 MARTIN_URL=http://${{plantgeo-martin.RAILWAY_PRIVATE_DOMAIN}}:3000
-AGRI_PARQUET_SERVICE_URL=http://${{plantgeo-dataservice.RAILWAY_PRIVATE_DOMAIN}}:8000
+AGRI_PARQUET_SERVICE_URL=http://${{plantgeo-parquet-api.RAILWAY_PRIVATE_DOMAIN}}:8080
 RECEIVER_WRITER_DATABASE_URL=<sealed receiver/writer DSN>
 PUBLISHED_READER_DATABASE_URL=<sealed published-reader DSN>
 ```

@@ -8,18 +8,21 @@ decides, and did not. See `tests/parquet_ops/AGENTS.md`.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import pytest
 
 from agri_data_service.foundation.parquet.lane_contract import LANE_NATURES
 from agri_data_service.foundation.parquet.paths import validate_layer_slug
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops import coverage as coverage_module
 from agri_data_service.parquet_ops.coverage import (
+    CENSUS_LIST_WORKERS,
     CensusLane,
     CoverageCache,
     build_coverage,
@@ -27,12 +30,16 @@ from agri_data_service.parquet_ops.coverage import (
     registered_census_lanes,
 )
 from agri_data_service.parquet_ops.faults import ServingRefusalError
+from agri_data_service.parquet_ops.warehouse_reader import ObjectStoreListing
 from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
+from agri_data_service.pipeline.parquet.objectstore import ListedObject
 from tests.contract.wire_contract import WireCoverage
 from tests.parquet_ops.fakes import FakeListing, instant
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
 
@@ -57,6 +64,9 @@ DROUGHT_RELEASES_IN_THE_GOLDEN = 138
 
 #: Concurrent cold page loads the single-flight test fires at one empty cache.
 CONCURRENT_COLD_LOADS = 4
+
+#: The fixed R2 listing ceiling the cold-path regression protects.
+EXPECTED_CENSUS_LIST_WORKERS: Final = 3
 
 
 def golden() -> dict[str, object]:
@@ -262,8 +272,39 @@ def test_the_census_is_memoized_so_a_burst_of_page_loads_pays_one_listing_walk()
     assert listing.calls == LISTINGS_AFTER_A_REBUILD, "an expired census is rebuilt rather than served stale"
 
 
+def test_a_cold_census_lists_each_registered_lane_tier_once() -> None:
+    """The production cold path must make exactly the frozen 13-by-4 prefix walk."""
+    backend = _CountingObjectStoreBackend()
+    lanes = registered_census_lanes()
+
+    CoverageCache().get(
+        ObjectStoreListing(backend=backend, prefix="warehouse/"),
+        lanes=lanes,
+        now=datetime(2026, 8, 25, 4, 0, tzinfo=UTC),
+    )
+
+    assert sorted(backend.prefixes) == sorted(
+        f"warehouse/layer={lane.layer}/kind={lane.kind}/zoom={tier:02d}/" for lane in lanes for tier in ZOOM_TIERS
+    )
+
+
+def test_a_cold_census_bounds_parallel_r2_listings_without_a_clock() -> None:
+    """Three first-wave listings rendezvous; a serial or unbounded implementation fails structurally."""
+    listing = _RendezvousListing()
+
+    build_coverage(
+        listing,
+        lanes=registered_census_lanes(),
+        generated_at=datetime(2026, 8, 25, 4, 0, tzinfo=UTC),
+    )
+
+    assert CENSUS_LIST_WORKERS == EXPECTED_CENSUS_LIST_WORKERS
+    assert listing.calls == len(registered_census_lanes()) * len(ZOOM_TIERS)
+    assert listing.max_active == CENSUS_LIST_WORKERS
+
+
 def test_a_burst_of_cold_page_loads_pays_one_census_walk_and_not_one_each() -> None:
-    """The memo alone is not single-flight: with no lock, N cold loads each start a full 52-listing walk."""
+    """The memo alone is not single-flight: without the lock, every cold caller starts the full walk."""
     listing = _CountingListing(delay_seconds=0.05)
     cache = CoverageCache(ttl_seconds=600)
     now = datetime(2026, 8, 25, 4, 0, tzinfo=UTC)
@@ -301,7 +342,7 @@ def test_a_first_census_that_fails_raises_rather_than_inventing_an_empty_one() -
 
 
 def test_the_census_refuses_when_its_aggregate_listing_budget_is_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`MAX_LISTED_KEYS_PER_REQUEST` bounds ONE listing; a census makes fifty-two of them."""
+    """The per-listing bound does not replace the aggregate budget across all census lanes."""
     listing = FakeListing()
     for offset in range(3):
         listing.write_day("signal", "observed", SEEDED_TIER, date(2026, 8, 1) + timedelta(days=offset))
@@ -399,6 +440,12 @@ class _CountingListing:
         self.calls = 0
         self.delay_seconds = delay_seconds
         self.fault: Exception | None = None
+        self._lock = threading.Lock()
+
+    def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]:
+        """Count the tier walk, optionally holding it open so cold callers overlap."""
+        self._before_list()
+        yield from self.inner.iter_tier_keys(layer, kind, tier)
 
     def list_keys(
         self,
@@ -410,13 +457,72 @@ class _CountingListing:
         month: int | None = None,
     ) -> tuple[str, ...]:
         """Count the walk, optionally hold it open long enough for a burst to overlap, then answer."""
-        self.calls += 1
-        if self.fault is not None:
-            raise self.fault
-        if self.delay_seconds:
-            time.sleep(self.delay_seconds)
+        self._before_list()
         return self.inner.list_keys(layer, kind, tier, year=year, month=month)
+
+    def _before_list(self) -> None:
+        """Record and optionally delay one listing operation."""
+        with self._lock:
+            self.calls += 1
+            fault = self.fault
+            delay_seconds = self.delay_seconds
+        if fault is not None:
+            raise fault
+        if delay_seconds:
+            time.sleep(delay_seconds)
 
     def read_object(self, relative_key: str) -> bytes | None:
         """Delegate to the wrapped fake."""
         return self.inner.read_object(relative_key)
+
+
+class _CountingObjectStoreBackend:
+    """An empty bucket that records the exact prefixes a cold census requests."""
+
+    def __init__(self, keys: tuple[str, ...] = ()) -> None:
+        self.keys = keys
+        self.prefixes: list[str] = []
+
+    def list_objects(self, prefix: str) -> Iterator[ListedObject]:
+        self.prefixes.append(prefix)
+        return (ListedObject(key=key, last_modified=None) for key in self.keys if key.startswith(prefix))
+
+    def get(self, _key: str) -> bytes | None:
+        raise AssertionError("coverage must not read object bodies")
+
+    def size_of(self, _key: str) -> int | None:
+        return None
+
+    def put(self, _key: str, _payload: bytes, *, content_type: str) -> None:
+        del content_type
+        raise AssertionError("a census is read-only")
+
+    def delete(self, _key: str) -> None:
+        raise AssertionError("a census is read-only")
+
+
+class _RendezvousListing(FakeListing):
+    """An empty listing whose first wave can finish only when all bounded workers are active."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+        self.active = 0
+        self.max_active = 0
+        self._lock = threading.Lock()
+        self._first_wave = threading.Barrier(CENSUS_LIST_WORKERS)
+
+    def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]:
+        del layer, kind, tier
+        with self._lock:
+            call = self.calls
+            self.calls += 1
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            if call < CENSUS_LIST_WORKERS:
+                self._first_wave.wait(timeout=2)
+            yield from ()
+        finally:
+            with self._lock:
+                self.active -= 1

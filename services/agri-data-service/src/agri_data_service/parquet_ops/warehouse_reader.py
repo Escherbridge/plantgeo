@@ -15,7 +15,7 @@ from agri_data_service.parquet_ops import faults
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
     from datetime import date
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
@@ -95,6 +95,8 @@ def spatial_support(layer: str, kind: PartitionKind) -> SpatialSupport:
 class WarehouseListing(Protocol):
     """What exists: one tier's object keys, and the bytes of one marker."""
 
+    def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]: ...
+
     def list_keys(
         self,
         layer: str,
@@ -130,17 +132,28 @@ class ObjectStoreListing:
     ) -> tuple[str, ...]:
         """Return every part file, absence marker and completion marker of ONE tier, optionally narrowed."""
         scope = _listing_scope(layer, kind, tier, year, month)
-        found: list[str] = []
+        return tuple(sorted(self._iter_layout_keys(scope, max_keys=MAX_LISTED_KEYS_PER_REQUEST)))
+
+    def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]:
+        """Yield one tier's layout objects so a census can charge its aggregate budget while listing."""
+        yield from self._iter_layout_keys(
+            _listing_scope(layer, kind, tier, year=None, month=None),
+            max_keys=MAX_LISTED_KEYS_PER_REQUEST,
+        )
+
+    def _iter_layout_keys(self, scope: str, *, max_keys: int | None) -> Iterator[str]:
+        """Yield validated relative keys under one object-store prefix."""
+        found = 0
         for listed in self.backend.list_objects(self.key_for(scope)):
             if not listed.key.startswith(self.prefix):
                 continue
             relative_key = listed.key[len(self.prefix) :]
             if not _is_layout_object(relative_key):
                 continue
-            found.append(relative_key)
-            if len(found) > MAX_LISTED_KEYS_PER_REQUEST:
-                raise ValueError(f"listing {scope!r} exceeded the {MAX_LISTED_KEYS_PER_REQUEST}-key serving budget")
-        return tuple(sorted(found))
+            found += 1
+            if max_keys is not None and found > max_keys:
+                raise ValueError(f"listing {scope!r} exceeded the {max_keys}-key serving budget")
+            yield relative_key
 
     def read_object(self, relative_key: str) -> bytes | None:
         """Return one object's bytes, or `None` when it is not there."""

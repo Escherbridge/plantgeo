@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
@@ -18,7 +19,7 @@ from agri_data_service.parquet_ops.wire import LaneCoverage, WarehouseCoverage, 
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
     from datetime import date
 
     from agri_data_service.foundation.parquet.lane_contract import LaneNature
@@ -38,6 +39,9 @@ CENSUS_CACHE_SECONDS: Final = 120
 #: times the census the registry's own day counts imply (fire-detections' ~9,400 days dominate it),
 #: which leaves room to grow and still refuses a walk that has plainly lost.
 MAX_CENSUS_LISTED_KEYS: Final = 600_000
+
+#: Coverage owns no DuckDB connection; this separately bounds its R2 network fan-out on a cold read.
+CENSUS_LIST_WORKERS: Final = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +80,17 @@ def registered_census_lanes() -> tuple[CensusLane, ...]:
 def build_lane_coverage(listing: WarehouseListing, *, lane: CensusLane, today: date) -> LaneCoverage:
     """Census one lane across every published tier, closing its ranges against the live edge."""
     data_days, absent_days = _written_days(listing, lane=lane)
+    return _lane_coverage(lane=lane, today=today, data_days=data_days, absent_days=absent_days)
+
+
+def _lane_coverage(
+    *,
+    lane: CensusLane,
+    today: date,
+    data_days: set[date],
+    absent_days: set[date],
+) -> LaneCoverage:
+    """Close one lane's already-listed facts against its declared nature and live edge."""
     if not data_days:
         # Never written: `null` bounds, and no ranges. A slider must not mount an axis over a lane
         # whose span is a guess -- `soil-survey` has 238,986 source rows and 0 written objects.
@@ -108,10 +123,37 @@ def build_coverage(
 ) -> WarehouseCoverage:
     """Census every lane, stamped with the instant it was computed rather than with 'now'."""
     today = generated_at.astimezone(UTC).date()
-    budgeted = _BudgetedListing(inner=listing, remaining=MAX_CENSUS_LISTED_KEYS)
+    budgeted = _BudgetedListing(inner=listing, budget=_CensusKeyBudget(MAX_CENSUS_LISTED_KEYS))
+    if not lanes:
+        return WarehouseCoverage(generated_at=generated_at, lanes=())
+    jobs = tuple((index, lane, tier) for index, lane in enumerate(lanes) for tier in ZOOM_TIERS)
+    with ThreadPoolExecutor(
+        max_workers=min(CENSUS_LIST_WORKERS, len(jobs)),
+        thread_name_prefix="parquet-coverage-list",
+    ) as pool:
+        futures = tuple(pool.submit(_tier_days, budgeted, lane=lane, tier=tier) for _index, lane, tier in jobs)
+        done, pending = wait(futures, return_when=FIRST_EXCEPTION)
+        failed = next((future for future in done if future.exception() is not None), None)
+        if failed is not None:
+            for future in pending:
+                future.cancel()
+            failed.result()
+        tier_facts = tuple(future.result() for future in futures)
+    accumulated: list[tuple[set[date], set[date]]] = [(set(), set()) for _lane in lanes]
+    for (index, _lane, _tier), (data_days, absent_days) in zip(jobs, tier_facts, strict=True):
+        accumulated[index][0].update(data_days)
+        accumulated[index][1].update(absent_days)
     return WarehouseCoverage(
         generated_at=generated_at,
-        lanes=tuple(build_lane_coverage(budgeted, lane=lane, today=today) for lane in lanes),
+        lanes=tuple(
+            _lane_coverage(
+                lane=lane,
+                today=today,
+                data_days=accumulated[index][0],
+                absent_days=accumulated[index][1],
+            )
+            for index, lane in enumerate(lanes)
+        ),
     )
 
 
@@ -182,7 +224,13 @@ class _BudgetedListing:
     """A `WarehouseListing` spending ONE key budget across every listing of a single census."""
 
     inner: WarehouseListing
-    remaining: int
+    budget: _CensusKeyBudget
+
+    def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]:
+        """Yield one tier, charging each key before the concurrent census retains it."""
+        for key in self.inner.iter_tier_keys(layer, kind, tier):
+            self.budget.spend(1)
+            yield key
 
     def list_keys(
         self,
@@ -194,10 +242,10 @@ class _BudgetedListing:
         month: int | None = None,
     ) -> tuple[str, ...]:
         """List one tier, charging what it returned against the census's aggregate budget."""
+        if year is None and month is None:
+            return tuple(self.iter_tier_keys(layer, kind, tier))
         keys = self.inner.list_keys(layer, kind, tier, year=year, month=month)
-        self.remaining -= len(keys)
-        if self.remaining < 0:
-            raise faults.census_budget_exhausted(listed_keys=MAX_CENSUS_LISTED_KEYS)
+        self.budget.spend(len(keys))
         return keys
 
     def read_object(self, relative_key: str) -> bytes | None:
@@ -205,18 +253,44 @@ class _BudgetedListing:
         return self.inner.read_object(relative_key)
 
 
+class _CensusKeyBudget:
+    """One thread-safe aggregate key allowance shared by all concurrent lane listings."""
+
+    def __init__(self, remaining: int) -> None:
+        self._remaining = remaining
+        self._lock = threading.Lock()
+
+    def spend(self, count: int) -> None:
+        """Charge retained keys and refuse before the aggregate can grow past its ceiling."""
+        with self._lock:
+            self._remaining -= count
+            if self._remaining < 0:
+                raise faults.census_budget_exhausted(listed_keys=MAX_CENSUS_LISTED_KEYS)
+
+
 def _written_days(listing: WarehouseListing, *, lane: CensusLane) -> tuple[set[date], set[date]]:
     """Union every published tier into the days that hold a release and the days deliberately empty."""
     data_days: set[date] = set()
     absent_days: set[date] = set()
     for tier in ZOOM_TIERS:
-        keys = listing.list_keys(lane.layer, lane.kind, tier)
-        statuses = day_status_sets(keys, layer=lane.layer, kind=lane.kind, tier=tier)
-        # A conflict day HOLDS a release, so the census counts it as written; serving it is what
-        # refuses out loud. Reporting it as a gap would claim the lane never wrote that day.
-        data_days |= statuses.data | statuses.conflict
-        absent_days |= statuses.absent
+        tier_data, tier_absences = _tier_days(listing, lane=lane, tier=tier)
+        data_days.update(tier_data)
+        absent_days.update(tier_absences)
     return (data_days, absent_days)
+
+
+def _tier_days(
+    listing: WarehouseListing,
+    *,
+    lane: CensusLane,
+    tier: ZoomTier,
+) -> tuple[frozenset[date], frozenset[date]]:
+    """List and classify one tier without retaining its object keys after the result is known."""
+    keys = listing.list_keys(lane.layer, lane.kind, tier)
+    statuses = day_status_sets(keys, layer=lane.layer, kind=lane.kind, tier=tier)
+    # A conflict day HOLDS a release, so the census counts it as written; serving it is what refuses
+    # out loud. Reporting it as a gap would claim the lane never wrote that day.
+    return (statuses.data | statuses.conflict, statuses.absent)
 
 
 def _owed_but_unwritten(accounted: set[date], *, lane: CensusLane, today: date) -> tuple[date, ...]:
