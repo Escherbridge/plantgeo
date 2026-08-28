@@ -8,6 +8,12 @@ Production HTTP database pools are profile-bound. `receiver_writer_session` acce
 
 What survives is *pooling* separation, which is about connection budget rather than privilege. `local_source_loader_session` (used by `source-ingest`, every `ingest-*`/`jobs-*` verb through `ingest_session`) and `forecast_mv_refresh_session` each open a dedicated one-connection pool and dispose it, so a long ingest or a non-concurrent `REFRESH` never consumes the API pool.
 
+`local_source_loader_pool` exposes that same dedicated pool when connection identity is part of the
+correctness contract. The unified executor checks out one `AsyncConnection` for a complete leader-elected
+tick and binds its `AsyncSession` to that connection. PostgreSQL session advisory locks belong to a
+physical backend, not to an ORM session or transaction; pool size one does not itself pin a checkout, and
+transaction boundaries may otherwise return it before the matching unlock.
+
 The forecast MV refresh also lost its role ceremony in `20260808_0019`. It used to verify that the login was NOINHERIT, non-elevated, owner of nothing in `agri`, holder of no direct `agri` grant, and a member of exactly one role — the NOLOGIN `plantgeo_forecast_mv_refresher` — via `sql/cli/forecast_mv_refresh_eligibility.sql`, then `SET LOCAL ROLE` into that capability before invoking the refresh function. That role was retired with the rest of the family, and the matview plus its `SECURITY DEFINER` refresher now belong to the owner credential, so the refresh is an ordinary owner statement: the eligibility probe and the `SET LOCAL ROLE` are deleted. The command still reports the resulting row count and disposes the one-connection pool, and no scheduler calls it.
 
 `forecast_iteration_session` is a separate one-connection path for the evaluation

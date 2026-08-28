@@ -107,6 +107,22 @@ async def dispose_combined_local_engine() -> None:
 
 
 @asynccontextmanager
+async def local_source_loader_pool(database_url: str) -> AsyncIterator[AsyncEngine]:
+    """Yield the dedicated one-connection loader pool for callers that must pin a connection."""
+    loader_engine = create_async_engine(
+        database_url,
+        pool_size=1,
+        max_overflow=0,
+        pool_pre_ping=True,
+        echo=False,
+    )
+    try:
+        yield loader_engine
+    finally:
+        await loader_engine.dispose()
+
+
+@asynccontextmanager
 async def local_source_loader_engine(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     """Yield one session factory for a whole loader command, so a per-cell loop pays one handshake, not thousands.
 
@@ -116,17 +132,8 @@ async def local_source_loader_engine(database_url: str) -> AsyncIterator[async_s
     loop and open a session per unit of work from it -- the per-unit transaction boundary is unchanged, but
     the TCP+TLS+auth handshake and asyncpg's prepared-statement cache are paid for once instead of per unit.
     """
-    loader_engine = create_async_engine(
-        database_url,
-        pool_size=1,
-        max_overflow=0,
-        pool_pre_ping=True,
-        echo=False,
-    )
-    try:
+    async with local_source_loader_pool(database_url) as loader_engine:
         yield async_sessionmaker(loader_engine, class_=AsyncSession, expire_on_commit=False)
-    finally:
-        await loader_engine.dispose()
 
 
 @asynccontextmanager

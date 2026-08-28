@@ -37,7 +37,7 @@ from agri_data_service.jobs.worker import slice_summary_is_failing
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from agri_data_service.jobs.worker import JobSliceSummary
+    from agri_data_service.jobs.worker import JobSliceSummary, ShutdownSignal
 
 logger = structlog.get_logger(__name__)
 
@@ -55,7 +55,13 @@ class LaneHandlerMissingError(LookupError):
 class LaneTrigger(Protocol):
     """A lane's own entry point: bind its context, register it, open its run, drive one slice."""
 
-    async def __call__(self, session: AsyncSession, *, requested_by: str) -> JobSliceSummary:
+    async def __call__(
+        self,
+        session: AsyncSession,
+        *,
+        requested_by: str,
+        stop: ShutdownSignal | None = None,
+    ) -> JobSliceSummary:
         """Run exactly one bounded slice of this lane and report what the ledger recorded."""
         ...
 
@@ -165,13 +171,14 @@ async def read_lane_pause_state(session: AsyncSession, lane_id: str) -> LanePaus
     return LanePauseState(registered=registered, paused=registered and not enabled_somewhere)
 
 
-async def dispatch_lane(
+async def dispatch_lane(  # noqa: PLR0913 - registry, handlers, and stop are explicit injection seams
     session: AsyncSession,
     lane_id: str,
     *,
     requested_by: str,
     registry: LaneDispatchRegistry | None = None,
     handlers: JobHandlerRegistry = JOB_HANDLERS,
+    stop: ShutdownSignal | None = None,
 ) -> DispatchOutcome:
     """Run one slice of `lane_id` through the ledger, unless an operator has paused it.
 
@@ -188,7 +195,11 @@ async def dispatch_lane(
     if pause_state.paused:
         logger.info("lane_dispatch_skipped_paused", lane_id=lane_id, requested_by=requested_by)
         return DispatchOutcome(lane_id=lane_id, state="paused", summary=None)
-    summary = await lane.trigger(session, requested_by=requested_by)
+    summary = (
+        await lane.trigger(session, requested_by=requested_by)
+        if stop is None
+        else await lane.trigger(session, requested_by=requested_by, stop=stop)
+    )
     # Severity follows the outcome, not the log level every dispatch used to share: a fully
     # dead-lettered lane's next tick claims nothing and reports `stop_reason=no_claimable_work
     # succeeded=0`, which is numerically identical to a finished lane -- exactly what let production

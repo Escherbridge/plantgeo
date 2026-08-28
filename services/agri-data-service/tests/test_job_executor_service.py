@@ -1,0 +1,658 @@
+"""Cutover gates, lane isolation, cadence, and shadow safety for the unified executor."""
+
+# ruff: noqa: PLR2004
+
+from __future__ import annotations
+
+import asyncio
+import json
+import uuid
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from types import MappingProxyType, SimpleNamespace
+from typing import TYPE_CHECKING
+
+import pytest
+
+from agri_data_service.execution import job_executor_service
+from agri_data_service.execution.job_executor_service import (
+    ACTIVE_LANES_VARIABLE,
+    HANDOFF_ACKNOWLEDGEMENTS_VARIABLE,
+    LANE_SPECS,
+    ActivationConfig,
+    DueLane,
+    ExecutorConfigurationError,
+    fair_due_order,
+    parse_activation,
+    run_executor_tick,
+    run_scheduled_command,
+    scheduled_bucket,
+)
+from agri_data_service.jobs import JobDefinitionRecord, JobInvocation, RetryPolicy
+from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS, LANE_REGISTRY
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from typing import Any
+
+_DEFINITION_ID = uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+_INGEST_OWNER = "plantgeo-ingest-cron"
+_DIRECT_FIRE_OWNER = "plantgeo-fire-detections-forward"
+_DIRECT_WATER_OWNER = "plantgeo-water-gauges-forward"
+
+
+def _acknowledgements(*lane_ids: str) -> str:
+    return ",".join(
+        f"{lane_id}={acknowledgement}"
+        for lane_id in lane_ids
+        for acknowledgement in LANE_SPECS[lane_id].required_handoff_acknowledgements
+    )
+
+
+def _activation_environment(*lane_ids: str) -> dict[str, str]:
+    return {
+        ACTIVE_LANES_VARIABLE: ",".join(lane_ids),
+        HANDOFF_ACKNOWLEDGEMENTS_VARIABLE: _acknowledgements(*lane_ids),
+    }
+
+
+def _owned_executable_lanes(owner: str) -> tuple[str, ...]:
+    return tuple(lane_id for lane_id, spec in LANE_SPECS.items() if spec.executable and owner in spec.legacy_owners)
+
+
+def _definition(name: str) -> JobDefinitionRecord:
+    return JobDefinitionRecord(
+        id=_DEFINITION_ID,
+        name=name,
+        version="1",
+        handler="plantgeo.executor.command.v1",
+        queue_name="default",
+        concurrency_key=None,
+        max_attempts=5,
+        lease_seconds=1020,
+        time_budget_seconds=930,
+        retry_policy=RetryPolicy(),
+        parameters=MappingProxyType({}),
+    )
+
+
+def _due(lane_id: str, last: datetime | None) -> DueLane:
+    spec = LANE_SPECS[lane_id]
+    return DueLane(
+        spec=spec,
+        definition=_definition(spec.definition_name),
+        scheduled_for=datetime(2026, 8, 28, 18, tzinfo=UTC),
+        existing_run_id=None,
+        last_scheduled_for=last,
+    )
+
+
+def test_registry_splits_ingest_parquet_and_jobs_pulse_failure_domains() -> None:
+    assert "postgres-forward" not in LANE_SPECS
+    assert "durable-jobs-pulse" not in LANE_SPECS
+    assert "parquet-gap-fill" not in LANE_SPECS
+
+    assert LANE_SPECS["postgres-vegetation"].command == ("agri-service", "data", "ingest-ndvi")
+    assert LANE_SPECS["vegetation-catch-up"].command == (
+        "agri-service",
+        "data",
+        "parquet-catch-up-vegetation",
+    )
+    assert LANE_SPECS["vegetation-catch-up"].legacy_owners == (_INGEST_OWNER,)
+    assert LANE_SPECS["parquet-vegetation"].command is not None
+    assert "parquet-gap-fill" in LANE_SPECS["parquet-vegetation"].command
+    assert LANE_SPECS["postgres-watersheds"].legacy_owners == ()
+    assert LANE_SPECS["postgres-watersheds"].executable
+
+
+def test_every_parquet_stream_has_one_bounded_registered_command() -> None:
+    registrations = {registration.slug: registration for registration in LANE_REGISTRATIONS}
+    parquet_specs = {
+        lane_id.removeprefix("parquet-"): spec for lane_id, spec in LANE_SPECS.items() if lane_id.startswith("parquet-")
+    }
+    assert set(parquet_specs) == set(registrations)
+
+    for slug, registration in registrations.items():
+        spec = parquet_specs[slug]
+        assert spec.command is not None
+        assert spec.command[:3] == ("agri-service", "data", "parquet-gap-fill")
+        assert spec.command[3:5] == ("--layer", slug)
+        assert spec.command[5:7] == ("--max-days-per-lane", "1")
+        assert spec.publication_lag_days == registration.publication_lag_days
+        assert spec.publication_cadence_days == registration.cadence_days
+        expected_ceiling = None if registration.writer_ceiling is None else registration.writer_ceiling.isoformat()
+        assert spec.writer_ceiling == expected_ceiling
+
+
+def test_jobs_pulse_lanes_and_maintenance_are_independent_failure_domains() -> None:
+    durable_lanes = ("matview-refresh", "strategy-mv-refresh", "firms-archive", "streamflow-archive")
+    for durable_lane in durable_lanes:
+        spec = LANE_SPECS[f"jobs-{durable_lane}"]
+        assert spec.command is not None
+        assert spec.command[:3] == ("agri-service", "ops", "jobs-pulse")
+        assert spec.command[3:5] == ("--lane", durable_lane)
+        assert "--skip-maintenance" in spec.command
+        assert spec.definition_name.endswith(f"jobs-{durable_lane}")
+
+    assert LANE_SPECS["jobs-matview-refresh"].command_timeout_seconds >= 2400
+    assert LANE_SPECS["jobs-strategy-mv-refresh"].command_timeout_seconds >= 900
+    assert LANE_SPECS["jobs-firms-archive"].command_timeout_seconds >= 1080
+    assert LANE_SPECS["jobs-streamflow-archive"].command_timeout_seconds >= 1080
+
+    maintenance = {
+        "maintenance-firms-archive-reconcile",
+        "maintenance-firms-archive-plan-gaps",
+        "maintenance-streamflow-archive-reconcile",
+        "maintenance-streamflow-archive-plan-gaps",
+        "maintenance-validate-streams",
+    }
+    assert maintenance <= LANE_SPECS.keys()
+    assert len({LANE_SPECS[lane_id].definition_name for lane_id in maintenance}) == len(maintenance)
+
+
+def test_non_python_and_snapshot_inputs_stay_visible_but_non_executable() -> None:
+    assert LANE_SPECS["soilgrids-cache-warm"].migration_disposition == "source-specific"
+    assert LANE_SPECS["soilgrids-cache-warm"].command is None
+    assert LANE_SPECS["soil-moisture-parquet-backfill"].migration_disposition == "snapshot-only"
+    assert LANE_SPECS["soil-moisture-parquet-backfill"].command is None
+
+
+def test_drought_poll_runs_daily_after_each_publication_lag_day() -> None:
+    drought = LANE_SPECS["postgres-drought"]
+    assert drought.publication_lag_days == 4
+    assert drought.cadence_seconds == 86400
+    assert drought.phase_offset_seconds == 43200
+    assert drought.schedule == "0 12 * * *"
+
+
+def test_empty_activation_is_shadow() -> None:
+    activation = parse_activation({})
+    assert activation.active_lanes == frozenset()
+    assert activation.handoff_acknowledgements == {}
+
+
+@pytest.mark.parametrize(
+    ("environment", "message"),
+    [
+        ({ACTIVE_LANES_VARIABLE: "not-a-lane"}, "unknown active lane"),
+        ({ACTIVE_LANES_VARIABLE: "fire-detections-direct-forward"}, "missing="),
+        (_activation_environment("soilgrids-cache-warm"), "has no executor command"),
+        (
+            {
+                **_activation_environment("fire-detections-direct-forward"),
+                HANDOFF_ACKNOWLEDGEMENTS_VARIABLE: (
+                    "fire-detections-direct-forward="
+                    f"{_DIRECT_FIRE_OWNER}:disabled-and-no-run-in-flight,"
+                    "fire-detections-direct-forward=unexpected-owner:disabled"
+                ),
+            },
+            "extra=",
+        ),
+        (
+            {
+                HANDOFF_ACKNOWLEDGEMENTS_VARIABLE: (
+                    f"fire-detections-direct-forward={_DIRECT_FIRE_OWNER}:disabled-and-no-run-in-flight"
+                )
+            },
+            "inactive lane",
+        ),
+    ],
+)
+def test_activation_fails_closed_on_unknown_missing_extra_and_stale_acknowledgements(
+    environment: dict[str, str],
+    message: str,
+) -> None:
+    with pytest.raises(ExecutorConfigurationError, match=message):
+        parse_activation(environment)
+
+
+def test_direct_fire_cutover_is_accepted_and_generic_history_keeps_ceiling() -> None:
+    lane_id = "fire-detections-direct-forward"
+    activation = parse_activation(_activation_environment(lane_id))
+    assert activation.active_lanes == frozenset({lane_id})
+    ceiling = LANE_REGISTRY["fire-detections"].writer_ceiling
+    assert ceiling is not None
+    assert LANE_SPECS["parquet-fire-detections"].writer_ceiling == ceiling.isoformat()
+
+
+def test_water_parquet_refuses_cutover_without_both_operator_acknowledgements() -> None:
+    lane_id = "parquet-water-gauges"
+    environment = {
+        ACTIVE_LANES_VARIABLE: lane_id,
+        HANDOFF_ACKNOWLEDGEMENTS_VARIABLE: (f"{lane_id}={_INGEST_OWNER}:disabled-and-no-run-in-flight"),
+    }
+    with pytest.raises(ExecutorConfigurationError, match=_DIRECT_WATER_OWNER):
+        parse_activation(environment)
+
+    spec = LANE_SPECS[lane_id]
+    assert spec.legacy_owners == (_INGEST_OWNER, _DIRECT_WATER_OWNER)
+    assert set(spec.required_handoff_acknowledgements) == {
+        f"{_INGEST_OWNER}:disabled-and-no-run-in-flight",
+        f"{_DIRECT_WATER_OWNER}:disabled-and-no-run-in-flight",
+    }
+
+
+def test_direct_water_is_non_executable_and_conflicts_with_generic_water() -> None:
+    lanes = ("parquet-water-gauges", "water-gauges-direct-forward")
+    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
+        parse_activation(_activation_environment(*lanes))
+    assert LANE_SPECS[lanes[0]].conflicts_with == (lanes[1],)
+    assert LANE_SPECS[lanes[1]].conflicts_with == (lanes[0],)
+    assert LANE_SPECS[lanes[1]].command is None
+    assert LANE_SPECS[lanes[1]].migration_disposition == "source-specific"
+    assert set(LANE_SPECS[lanes[1]].legacy_owners) == {_INGEST_OWNER, _DIRECT_WATER_OWNER}
+
+
+def test_multi_role_ingest_owner_must_cut_over_atomically() -> None:
+    lane_id = "postgres-weather"
+    with pytest.raises(ExecutorConfigurationError, match="must cut over atomically"):
+        parse_activation(_activation_environment(lane_id))
+
+
+def test_complete_ingest_owner_cutover_is_accepted() -> None:
+    lanes = _owned_executable_lanes(_INGEST_OWNER)
+    activation = parse_activation(_activation_environment(*lanes))
+    assert activation.active_lanes == frozenset(lanes)
+    assert "postgres-watersheds" not in activation.active_lanes
+    assert "parquet-water-gauges" in activation.active_lanes
+    assert "vegetation-catch-up" in activation.active_lanes
+
+
+def test_schedule_bucket_honours_lane_phase() -> None:
+    fire = LANE_SPECS["fire-detections-direct-forward"]
+    assert scheduled_bucket(fire, datetime(2026, 8, 28, 18, 14, 59, tzinfo=UTC)) == datetime(
+        2026, 8, 28, 17, 15, tzinfo=UTC
+    )
+    assert scheduled_bucket(fire, datetime(2026, 8, 28, 18, 15, tzinfo=UTC)) == datetime(
+        2026, 8, 28, 18, 15, tzinfo=UTC
+    )
+
+
+def test_fair_order_interleaves_incremental_and_backlog_and_rotates_oldest() -> None:
+    older = datetime(2026, 8, 28, 15, tzinfo=UTC)
+    newer = datetime(2026, 8, 28, 16, tzinfo=UTC)
+    ordered = fair_due_order(
+        (
+            _due("fire-detections-direct-forward", newer),
+            _due("postgres-weather", older),
+            _due("parquet-water-gauges", newer),
+            _due("jobs-firms-archive", older),
+        )
+    )
+    assert [entry.spec.lane_id for entry in ordered] == [
+        "postgres-weather",
+        "jobs-firms-archive",
+        "fire-detections-direct-forward",
+        "parquet-water-gauges",
+    ]
+
+
+class _ShadowSession:
+    def __init__(self) -> None:
+        self.rollbacks = 0
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+async def test_shadow_tick_emits_due_predictions_without_ledger_or_layer_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _ShadowSession()
+
+    async def _noop_timeout(_session: object) -> None:
+        return None
+
+    async def _leader(_session: object) -> bool:
+        return True
+
+    async def _unlock(_session: object) -> None:
+        return None
+
+    async def _unexpected(*_args: object, **_kwargs: object) -> Any:
+        raise AssertionError("a shadow tick attempted a ledger or layer write")
+
+    monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _noop_timeout)
+    monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
+    monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock)
+    monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _unexpected)
+    monkeypatch.setattr(job_executor_service, "open_job_run", _unexpected)
+    monkeypatch.setattr(job_executor_service, "run_job_slice", _unexpected)
+
+    summary = await run_executor_tick(
+        session,  # type: ignore[arg-type]
+        activation=ActivationConfig(frozenset()),
+        now=datetime(2026, 8, 28, 18, tzinfo=UTC),
+        max_lanes_per_tick=2,
+    )
+
+    assert summary.leader
+    executable = [lane for lane in summary.lanes if LANE_SPECS[lane.lane_id].executable]
+    assert executable
+    assert all(lane.state == "shadow" for lane in executable)
+    assert all(lane.scheduled_for is not None for lane in executable)
+    assert all(lane.command for lane in executable)
+    assert all(lane.handoff_blockers for lane in executable)
+    assert all(
+        lane.due_prediction == "would_be_due_if_activated; source watermark parity not evaluated" for lane in executable
+    )
+
+
+async def test_scheduler_refuses_single_lane_ticks_before_touching_the_database() -> None:
+    with pytest.raises(ExecutorConfigurationError, match="at least 2"):
+        await run_executor_tick(
+            object(),  # type: ignore[arg-type]
+            activation=ActivationConfig(frozenset()),
+            now=datetime(2026, 8, 28, 18, tzinfo=UTC),
+            max_lanes_per_tick=1,
+        )
+
+
+async def test_unlock_false_is_a_hard_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _unlock_false(*_args: object, **_kwargs: object) -> Mapping[str, object]:
+        return {"released": False}
+
+    monkeypatch.setattr(job_executor_service, "fetch_row", _unlock_false)
+    with pytest.raises(job_executor_service.ExecutorLeaderUnlockError, match="did not release"):
+        await job_executor_service._release_leader_lock(object())  # type: ignore[arg-type]
+
+
+async def test_unlock_failure_does_not_mask_the_primary_tick_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _PrimaryTickError(RuntimeError):
+        pass
+
+    session = _ShadowSession()
+
+    async def _noop_timeout(_session: object) -> None:
+        return None
+
+    async def _leader(_session: object) -> bool:
+        return True
+
+    async def _primary(*_args: object, **_kwargs: object) -> tuple[list[object], list[object]]:
+        raise _PrimaryTickError("primary")
+
+    async def _unlock_error(_session: object) -> None:
+        raise job_executor_service.ExecutorLeaderUnlockError("unlock")
+
+    async def _invalidate(_session: object) -> None:
+        return None
+
+    monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _noop_timeout)
+    monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
+    monkeypatch.setattr(job_executor_service, "_plan_active_lanes", _primary)
+    monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock_error)
+    monkeypatch.setattr(job_executor_service, "_invalidate_leader_connection", _invalidate)
+
+    with pytest.raises(_PrimaryTickError, match="primary"):
+        await run_executor_tick(
+            session,  # type: ignore[arg-type]
+            activation=ActivationConfig(frozenset()),
+            now=datetime(2026, 8, 28, 18, tzinfo=UTC),
+            max_lanes_per_tick=2,
+        )
+
+
+async def test_unlock_failure_without_primary_error_invalidates_and_fails_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _ShadowSession()
+    invalidated = False
+
+    async def _noop_timeout(_session: object) -> None:
+        return None
+
+    async def _leader(_session: object) -> bool:
+        return True
+
+    async def _unlock_error(_session: object) -> None:
+        raise job_executor_service.ExecutorLeaderUnlockError("unlock")
+
+    async def _invalidate(_session: object) -> None:
+        nonlocal invalidated
+        invalidated = True
+
+    monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _noop_timeout)
+    monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
+    monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock_error)
+    monkeypatch.setattr(job_executor_service, "_invalidate_leader_connection", _invalidate)
+
+    with pytest.raises(job_executor_service.ExecutorLeaderUnlockError, match="unlock"):
+        await run_executor_tick(
+            session,  # type: ignore[arg-type]
+            activation=ActivationConfig(frozenset()),
+            now=datetime(2026, 8, 28, 18, tzinfo=UTC),
+            max_lanes_per_tick=2,
+        )
+    assert invalidated
+
+
+async def test_invalidated_pinned_connection_aborts_before_a_second_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _ShadowSession()
+    session.bind = SimpleNamespace(invalidated=False)  # type: ignore[attr-defined]
+    candidates = [_due("postgres-weather", None), _due("jobs-firms-archive", None)]
+    attempted: list[str] = []
+
+    async def _noop_timeout(_session: object) -> None:
+        return None
+
+    async def _leader(_session: object) -> bool:
+        return True
+
+    async def _plan(*_args: object, **_kwargs: object) -> tuple[list[object], list[DueLane]]:
+        return [], candidates
+
+    async def _execute(_session: object, candidate: DueLane, **_kwargs: object) -> object:
+        attempted.append(candidate.spec.lane_id)
+        session.bind.invalidated = True  # type: ignore[attr-defined]
+        raise RuntimeError("backend disconnected")
+
+    async def _unlock(_session: object) -> None:
+        return None
+
+    monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _noop_timeout)
+    monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
+    monkeypatch.setattr(job_executor_service, "_plan_active_lanes", _plan)
+    monkeypatch.setattr(job_executor_service, "_execute_due_lane", _execute)
+    monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock)
+
+    with pytest.raises(RuntimeError, match="backend disconnected"):
+        await run_executor_tick(
+            session,  # type: ignore[arg-type]
+            activation=ActivationConfig(frozenset()),
+            now=datetime(2026, 8, 28, 18, tzinfo=UTC),
+            max_lanes_per_tick=2,
+        )
+
+    assert attempted == ["postgres-weather"]
+
+
+async def test_service_loop_binds_each_tick_session_to_one_external_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = object()
+
+    class _ConnectionContext:
+        async def __aenter__(self) -> object:
+            return connection
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class _Pool:
+        def connect(self) -> _ConnectionContext:
+            return _ConnectionContext()
+
+    class _PinnedSession:
+        def __init__(self, *, bind: object, expire_on_commit: bool) -> None:
+            assert not expire_on_commit
+            self.bind = bind
+
+        async def __aenter__(self) -> _PinnedSession:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    @asynccontextmanager
+    async def _pool(_database_url: str) -> Any:
+        yield _Pool()
+
+    @asynccontextmanager
+    async def _stop() -> Any:
+        yield SimpleNamespace(requested=False)
+
+    async def _tick(session: object, **_kwargs: object) -> job_executor_service.ExecutorTickSummary:
+        assert isinstance(session, _PinnedSession)
+        assert session.bind is connection
+        return job_executor_service.ExecutorTickSummary(
+            observed_at=datetime(2026, 8, 28, 18, tzinfo=UTC),
+            leader=True,
+            lanes=(),
+        )
+
+    monkeypatch.setattr(
+        job_executor_service,
+        "settings",
+        SimpleNamespace(require_local_source_loader_database_url=lambda: "postgresql+asyncpg://test/db"),
+    )
+    monkeypatch.setattr(job_executor_service, "local_source_loader_pool", _pool)
+    monkeypatch.setattr(job_executor_service, "shutdown_signal", _stop)
+    monkeypatch.setattr(job_executor_service, "AsyncSession", _PinnedSession)
+    monkeypatch.setattr(job_executor_service, "run_executor_tick", _tick)
+    monkeypatch.setattr(job_executor_service.click, "echo", lambda *_args, **_kwargs: None)
+
+    result = await job_executor_service._service_loop(
+        activation=ActivationConfig(frozenset()),
+        poll_seconds=30,
+        max_lanes_per_tick=2,
+        once=True,
+    )
+    assert result == 0
+
+
+async def test_existing_pause_is_not_overwritten(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = _ShadowSession()
+    spec = LANE_SPECS["fire-detections-direct-forward"]
+
+    async def _paused(_session: object, _spec: object) -> tuple[uuid.UUID, bool]:
+        return _DEFINITION_ID, False
+
+    async def _unexpected(*_args: object, **_kwargs: object) -> Any:
+        raise AssertionError("an existing paused definition was upserted")
+
+    monkeypatch.setattr(job_executor_service, "_definition_state", _paused)
+    monkeypatch.setattr(job_executor_service, "fetch_row", _unexpected)
+
+    definition = await job_executor_service._load_or_register_definition(session, spec)  # type: ignore[arg-type]
+    assert definition is None
+    assert session.rollbacks == 1
+
+
+async def test_handler_refuses_when_activation_is_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _heartbeat() -> bool:
+        return True
+
+    async def _unexpected_subprocess(*_args: object, **_kwargs: object) -> Any:
+        raise AssertionError("an inactive lane started a subprocess")
+
+    monkeypatch.setattr(job_executor_service.asyncio, "create_subprocess_exec", _unexpected_subprocess)
+    monkeypatch.delenv(ACTIVE_LANES_VARIABLE, raising=False)
+    monkeypatch.delenv(HANDOFF_ACKNOWLEDGEMENTS_VARIABLE, raising=False)
+    outcome = await run_scheduled_command(
+        JobInvocation(
+            shard_key="2026-08-28T18:15:00+00:00",
+            kind="scheduled-command",
+            payload={
+                "lane_id": "fire-detections-direct-forward",
+                "scheduled_for": "2026-08-28T18:15:00+00:00",
+            },
+            cursor=None,
+            parameters={},
+            attempt_number=1,
+            max_attempts=5,
+            progress_fraction=0,
+            seconds_remaining=900,
+            heartbeat=_heartbeat,
+        )
+    )
+    assert outcome.kind == "failed"
+    assert outcome.failure_class == "ownership_activation_removed"
+
+
+class _FakeProcess:
+    def __init__(self) -> None:
+        self.returncode: int | None = None
+        self.terminated = False
+        self.killed = False
+        self._done = asyncio.Event()
+
+    async def wait(self) -> int:
+        await self._done.wait()
+        assert self.returncode is not None
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = -15
+        self._done.set()
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+        self._done.set()
+
+
+async def test_running_subprocess_terminates_and_yields_on_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _heartbeat() -> bool:
+        return True
+
+    process = _FakeProcess()
+
+    async def _start_process(*_args: object) -> _FakeProcess:
+        return process
+
+    lane_id = "fire-detections-direct-forward"
+    environment = _activation_environment(lane_id)
+    monkeypatch.setenv(ACTIVE_LANES_VARIABLE, environment[ACTIVE_LANES_VARIABLE])
+    monkeypatch.setenv(
+        HANDOFF_ACKNOWLEDGEMENTS_VARIABLE,
+        environment[HANDOFF_ACKNOWLEDGEMENTS_VARIABLE],
+    )
+    monkeypatch.setattr(job_executor_service.asyncio, "create_subprocess_exec", _start_process)
+
+    outcome = await run_scheduled_command(
+        JobInvocation(
+            shard_key="2026-08-28T18:15:00+00:00",
+            kind="scheduled-command",
+            payload={"lane_id": lane_id, "scheduled_for": "2026-08-28T18:15:00+00:00"},
+            cursor={"state": "ready", "scheduled_for": "2026-08-28T18:15:00+00:00"},
+            parameters={},
+            attempt_number=1,
+            max_attempts=5,
+            progress_fraction=0.01,
+            seconds_remaining=900,
+            heartbeat=_heartbeat,
+            shutdown_requested=lambda: True,
+        )
+    )
+
+    assert outcome.kind == "yielded"
+    assert process.terminated
+    assert not process.killed
+
+
+def test_railway_service_is_continuous_and_shadow_by_default() -> None:
+    service_root = Path(__file__).resolve().parents[1]
+    config = json.loads((service_root / "railway.job-executor.json").read_text(encoding="utf-8"))
+    deploy = config["deploy"]
+    assert deploy["startCommand"] == "agri-service ops jobs-executor"
+    assert deploy["restartPolicyType"] == "ON_FAILURE"
+    assert "cronSchedule" not in deploy
+    assert ACTIVE_LANES_VARIABLE not in json.dumps(config)
+    assert HANDOFF_ACKNOWLEDGEMENTS_VARIABLE not in json.dumps(config)

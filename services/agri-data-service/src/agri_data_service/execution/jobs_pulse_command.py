@@ -86,6 +86,7 @@ from agri_data_service.jobs import (
     JobSpecificationError,
     UnknownJobHandlerError,
     failure_summary,
+    shutdown_signal,
 )
 
 # Same mechanism, same reason: `register_dispatchable_lane` runs at the bottom of
@@ -125,7 +126,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.jobs.dispatch import LaneDispatchRegistry, LanePauseState
     from agri_data_service.jobs.registry import JobHandlerRegistry
-    from agri_data_service.jobs.worker import JobSliceSummary
+    from agri_data_service.jobs.worker import JobSliceSummary, ShutdownSignal
 
 # Operational telemetry to stderr, never stdout: this verb's stdout is one JSON-lines summary and
 # nothing else, matching every other `jobs-*`/`ingest-*` verb in `ingest/commands.py`.
@@ -635,6 +636,7 @@ async def _run_dispatchable_lane(
     registry: LaneDispatchRegistry | None,
     handlers: JobHandlerRegistry,
     monotonic: Callable[[], float],
+    stop: ShutdownSignal | None,
 ) -> PulseLaneResult:
     """Dispatch one lane through the exact path `POST /jobs/trigger` uses, isolating its own failure.
 
@@ -653,6 +655,7 @@ async def _run_dispatchable_lane(
                 requested_by=_PULSE_REQUESTED_BY,
                 registry=registry,
                 handlers=handlers,
+                stop=stop,
             )
     except Exception as error:  # per-lane isolation: one lane's fault must not end the pulse
         logger.error("jobs_pulse_dispatchable_lane_raised", lane_id=planned.lane_id, error=type(error).__name__)
@@ -694,6 +697,7 @@ async def _run_durable_definition(
     *,
     worker_id: str,
     monotonic: Callable[[], float],
+    stop: ShutdownSignal | None,
 ) -> PulseLaneResult:
     """Run one bounded slice of one durable archive definition, isolating its own failure.
 
@@ -705,10 +709,20 @@ async def _run_durable_definition(
         return PulseLaneResult(lane=planned.lane_token, kind="durable", outcome="paused", seconds=0.0, records=0)
     started = monotonic()
     try:
-        summary = await run_archive_definition_slice(
-            definition_name=planned.definition_name,
-            worker_id=f"{worker_id}:{planned.lane_token}"[:WORKER_ID_MAX_LENGTH],
-            budget_seconds=None,
+        resolved_worker_id = f"{worker_id}:{planned.lane_token}"[:WORKER_ID_MAX_LENGTH]
+        summary = (
+            await run_archive_definition_slice(
+                definition_name=planned.definition_name,
+                worker_id=resolved_worker_id,
+                budget_seconds=None,
+            )
+            if stop is None
+            else await run_archive_definition_slice(
+                definition_name=planned.definition_name,
+                worker_id=resolved_worker_id,
+                budget_seconds=None,
+                stop=stop,
+            )
         )
     except Exception as error:  # per-lane isolation: one lane's fault must not end the pulse
         logger.error("jobs_pulse_durable_definition_raised", lane=planned.lane_token, error=type(error).__name__)
@@ -837,6 +851,7 @@ async def run_jobs_pulse(  # noqa: PLR0913 - one parameter per operator-tunable 
     handlers: JobHandlerRegistry = JOB_HANDLERS,
     monotonic: Callable[[], float] = time.monotonic,
     include_maintenance: bool = True,
+    stop: ShutdownSignal | None = None,
 ) -> PulseSummary:
     """Dispatch every dispatchable lane, slice every durable definition owed, then maintain data quality.
 
@@ -862,18 +877,37 @@ async def run_jobs_pulse(  # noqa: PLR0913 - one parameter per operator-tunable 
 
     results: list[PulseLaneResult] = []
     for planned_lane in plan.dispatchable:
+        if stop is not None and stop.requested:
+            break
         if monotonic() >= deadline:
             results.append(_budget_exhausted_result(planned_lane.lane_id, "dispatchable"))
             continue
         results.append(
-            await _run_dispatchable_lane(planned_lane, registry=registry, handlers=handlers, monotonic=monotonic)
+            await _run_dispatchable_lane(
+                planned_lane,
+                registry=registry,
+                handlers=handlers,
+                monotonic=monotonic,
+                stop=stop,
+            )
         )
     for planned_definition in plan.durable:
+        if stop is not None and stop.requested:
+            break
         if monotonic() >= deadline:
             results.append(_budget_exhausted_result(planned_definition.lane_token, "durable"))
             continue
-        results.append(await _run_durable_definition(planned_definition, worker_id=worker_id, monotonic=monotonic))
+        results.append(
+            await _run_durable_definition(
+                planned_definition,
+                worker_id=worker_id,
+                monotonic=monotonic,
+                stop=stop,
+            )
+        )
     for planned_step in plan.maintenance:
+        if stop is not None and stop.requested:
+            break
         if monotonic() >= deadline:
             results.append(_budget_exhausted_result(planned_step.step_id, "maintenance"))
             continue
@@ -889,6 +923,24 @@ async def _dry_run_report(lane_filter: frozenset[str] | None, *, include_mainten
         plan = await discover_pulse_plan(session, lane_filter=lane_filter, include_maintenance=include_maintenance)
         await session.rollback()
     return plan.to_report()
+
+
+async def _run_jobs_pulse_process(
+    *,
+    lane_filter: frozenset[str] | None,
+    time_budget_seconds: float,
+    worker_id: str,
+    include_maintenance: bool,
+) -> PulseSummary:
+    """Install one process signal and carry it through every nested durable slice."""
+    async with shutdown_signal() as stop:
+        return await run_jobs_pulse(
+            lane_filter=lane_filter,
+            time_budget_seconds=time_budget_seconds,
+            worker_id=worker_id,
+            include_maintenance=include_maintenance,
+            stop=stop,
+        )
 
 
 _LEDGER_ERRORS: Final[tuple[type[Exception], ...]] = (
@@ -1013,7 +1065,7 @@ def jobs_pulse(
             click.echo(json.dumps(report, sort_keys=True))
             return
         summary = asyncio.run(
-            run_jobs_pulse(
+            _run_jobs_pulse_process(
                 lane_filter=lane_filter,
                 time_budget_seconds=time_budget_seconds,
                 worker_id=_default_worker_id(),

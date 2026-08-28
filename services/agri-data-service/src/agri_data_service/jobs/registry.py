@@ -197,6 +197,10 @@ class JobWorkItemSpec:
 HeartbeatCallable = Callable[[], Awaitable[bool]]
 
 
+def _shutdown_not_requested() -> bool:
+    return False
+
+
 @dataclass(frozen=True, slots=True)
 class JobInvocation:
     """Everything a handler is told about the shard it holds, and nothing about the ledger that holds it."""
@@ -216,6 +220,7 @@ class JobInvocation:
     # call, and the next call carries a fresh figure. See jobs/AGENTS.md "The budget-aware handler contract".
     seconds_remaining: float
     heartbeat: HeartbeatCallable
+    shutdown_requested: Callable[[], bool] = _shutdown_not_requested
 
     @property
     def is_final_attempt(self) -> bool:

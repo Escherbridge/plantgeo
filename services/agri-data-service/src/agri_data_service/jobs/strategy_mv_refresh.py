@@ -70,7 +70,7 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import TextClause
 
     from agri_data_service.jobs.registry import JobInvocation
-    from agri_data_service.jobs.worker import JobSliceSummary
+    from agri_data_service.jobs.worker import JobSliceSummary, ShutdownSignal
 
 logger = structlog.get_logger()
 
@@ -447,6 +447,7 @@ async def trigger_strategy_mv_refresh(
     *,
     requested_by: str,
     now: datetime | None = None,
+    stop: ShutdownSignal | None = None,
 ) -> JobSliceSummary:
     """Upsert the definition, open (or rejoin) this window's run, and drive one bounded slice through it.
 
@@ -492,6 +493,7 @@ async def trigger_strategy_mv_refresh(
             definition_name=STRATEGY_MV_REFRESH_DEFINITION_NAME,
             worker_id=worker_id,
             job_run_id=opened.job_run_id,
+            stop=stop,
         )
 
 

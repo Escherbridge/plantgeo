@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -99,7 +100,7 @@ if TYPE_CHECKING:
     from agri_data_service.ingest.usdm_history import HistoryBackfillPlan
     from agri_data_service.ingest.validation import ValidationReport
     from agri_data_service.ingest.writer import FeatureWriter
-    from agri_data_service.jobs import JobSliceSummary
+    from agri_data_service.jobs import JobSliceSummary, ShutdownSignal
 
 # Operational telemetry is bound to stderr, never stdout; see ingest/AGENTS.md "results.py, runner.py and commands.py".
 logger = structlog.wrap_logger(structlog.PrintLogger(file=sys.stderr))
@@ -807,6 +808,7 @@ async def run_archive_definition_slice(
     definition_name: str,
     worker_id: str,
     budget_seconds: float | None,
+    stop: ShutdownSignal | None = None,
 ) -> JobSliceSummary:
     """Open one session, publisher and write path for the whole tick, then drive one bounded slice through them.
 
@@ -821,13 +823,12 @@ async def run_archive_definition_slice(
     TCP+TLS+auth handshake against the Railway proxy for every window. jobs/AGENTS.md states the same rule,
     and `archive_walk_context` exists precisely so the handler can never open its own.
 
-    `shutdown_signal()` is installed HERE and not inside the runtime, because this is the process boundary:
-    it is the only scope that knows this is a one-shot container rather than a library call, and handlers
-    installed for the length of one slice are restored when the slice ends. Without it a Railway SIGTERM --
-    a redeploy, an eviction, a manual restart -- ends the container mid-shard and strands that window
-    behind a lease no living process owns. See jobs/AGENTS.md "Shutdown and heartbeat semantics".
+    `shutdown_signal()` is installed here for the standalone command. A containing process such as
+    `jobs-pulse` passes its already-installed signal instead, so one SIGTERM reaches every nested slice
+    without replacing handlers inside the same process. See jobs/AGENTS.md "Shutdown and heartbeat semantics".
     """
-    async with ingest_session() as session, RealtimePublisher() as publisher, shutdown_signal() as stop:
+    stop_context = shutdown_signal() if stop is None else nullcontext(stop)
+    async with ingest_session() as session, RealtimePublisher() as publisher, stop_context as active_stop:
         write_features = bind_feature_writer(session, publisher)
         # No shared httpx client is offered, deliberately. Each archive source opens its own for the length
         # of one chunk under its OWN measured bounds -- FIRMS 15s/16MB, NWIS 90s/32MB -- and a client handed
@@ -842,7 +843,7 @@ async def run_archive_definition_slice(
                 definition_name=definition_name,
                 worker_id=worker_id,
                 budget_seconds=budget_seconds,
-                stop=stop,
+                stop=active_stop,
             )
         logger.info("realtime_publish_totals", delivered=publisher.delivered, dropped=publisher.dropped)
     return summary

@@ -819,8 +819,8 @@ async def _drive_work_item(  # noqa: PLR0913 - the handler, its policy, its clai
     metrics: Mapping[str, object] = EMPTY_JSON_OBJECT
     while True:
         if stop.requested:
-            # The boundary between two handler steps is the only place a shard can be handed back
-            # cleanly, so it is where the stop flag is read. Without this the container simply died and
+            # The boundary between two handler steps is the default place a shard can be handed back
+            # cleanly, so the stop flag is always read here. Without this the container simply died and
             # left the shard 'running' behind a lease of up to `lease_seconds` that the next tick cannot
             # claim and the reaper may not touch -- an hour of a lane's frontier lost per redeploy, with
             # nothing anywhere recording that it happened.
@@ -852,6 +852,7 @@ async def _drive_work_item(  # noqa: PLR0913 - the handler, its policy, its clai
             progress_fraction=progress,
             seconds_remaining=max(deadline - monotonic(), 0.0),
             heartbeat=guard.heartbeat,
+            shutdown_requested=lambda: stop.requested,
         )
         step = await _invoke_handler(session, definition, handler, claim, invocation, guard, metrics)
         if step.landing is not None:
