@@ -7,13 +7,16 @@ import { getPublishedRasters } from "@/lib/server/services/raster-catalog";
 import {
   getMetricAtDate,
   getPublishedClimateField,
-  getPublishedDroughtClassification,
   getPublishedGroundwaterWells,
   getPublishedSoilField,
-  getPublishedStreamflowGauges,
-  getPublishedVegetationIndex,
-  getSliderCapabilities,
 } from "@/lib/server/services/environmental-read-model";
+import { getParquetSliderCapabilities } from "@/lib/server/services/parquet-slider-capabilities";
+import {
+  getParquetDrought,
+  getParquetMetricAtDate,
+  getParquetVegetation,
+  getParquetWaterGauges,
+} from "@/lib/server/services/parquet-trpc-readers";
 import {
   AIR_TEMPERATURE_VARIANT_IDS,
   CLIMATE_FIELD_SIGNAL_IDS,
@@ -100,6 +103,12 @@ const bboxSchema = z
 const observationDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD");
+
+/** Viewport zoom is a required serving coordinate, not an optional rendering hint. */
+const mapZoomSchema = z.number().finite().nonnegative();
+
+/** Metrics still owned by community-feature PostgreSQL layers, never by the Parquet plane. */
+const POSTGRES_OWNED_METRICS = new Set(["perimeter-acres", "percent-contained"]);
 
 /**
  * Caps the viewport area for a procedure that proxies a third-party API per request.
@@ -260,13 +269,20 @@ export const environmentalRouter = router({
     }),
 
   /**
-   * USGS gauge readings for the viewport: the live edge, or one named day's newest reading
-   * per gauge. A day the record has nothing for answers with an empty array; the layer's own
-   * slider capability is what captions it.
+   * Water-gauge rows from exactly one private Parquet rung. Coarse rungs intentionally carry
+   * anonymous cell means; the four public states keep an empty answer distinct from a gap.
    */
   getStreamflow: publicProcedure
-    .input(z.object({ bbox: bboxSchema, date: observationDateSchema.optional() }))
-    .query(({ input }) => getPublishedStreamflowGauges(input.bbox, input.date)),
+    .input(
+      z.object({
+        bbox: bboxSchema,
+        date: observationDateSchema.optional(),
+        zoom: mapZoomSchema,
+      })
+    )
+    .query(({ input }) =>
+      getParquetWaterGauges({ bbox: input.bbox, date: input.date, mapZoom: input.zoom })
+    ),
 
   /**
    * The newest published NDVI observation per sampling-grid cell in a viewport.
@@ -284,27 +300,31 @@ export const environmentalRouter = router({
    * `date` slides the 30-day observation window to end at that day rather than at now.
    */
   getVegetationIndex: publicProcedure
-    .input(z.object({ bbox: bboxSchema, date: observationDateSchema.optional() }))
-    .query(({ input }) => getPublishedVegetationIndex(input.bbox, input.date)),
+    .input(
+      z.object({
+        bbox: bboxSchema,
+        date: observationDateSchema.optional(),
+        zoom: mapZoomSchema,
+      })
+    )
+    .query(({ input }) =>
+      getParquetVegetation({ bbox: input.bbox, date: input.date, mapZoom: input.zoom })
+    ),
 
   /**
-   * Serves the stored USDM release covering a day, clipped and generalized in PostGIS.
-   * bbox is optional so the existing no-argument callers keep working; passing
-   * one returns far less geometry and is strongly preferred. `date` is resolved through the
-   * same bounded weekly carry-forward the slider metric uses, so a release week the record
-   * skips renders empty rather than borrowing the week before it.
+   * Serves the newest private-Parquet USDM release at or before the requested day. The
+   * adapter preserves the release's own served day and never relabels it as the request day.
    */
   getDroughtClassification: publicProcedure
     .input(
-      z
-        .object({
-          bbox: bboxSchema.optional(),
-          date: observationDateSchema.optional(),
-        })
-        .optional()
+      z.object({
+        bbox: bboxSchema.optional(),
+        date: observationDateSchema.optional(),
+        zoom: mapZoomSchema,
+      })
     )
     .query(({ input }) =>
-      getPublishedDroughtClassification(input?.bbox, input?.date)
+      getParquetDrought({ bbox: input.bbox, date: input.date, mapZoom: input.zoom })
     ),
 
   /**
@@ -536,12 +556,13 @@ export const environmentalRouter = router({
    * The client must take "today" from here and never from its own clock, or a
    * browser in another timezone silently disagrees about which days are future.
    */
-  getSliderCapabilities: publicProcedure.query(() => getSliderCapabilities()),
+  getSliderCapabilities: publicProcedure.query(() => getParquetSliderCapabilities()),
 
   /**
-   * One layer's metric for one day. Returns an availability/reason pair rather
-   * than a bare empty collection, so "nothing observed that day" is legible as
-   * something other than a failure.
+   * Ownership dispatch for one metric/day read. Fire-perimeter metrics remain on their
+   * community-feature PostgreSQL path; every other key belongs to the Parquet signal seam,
+   * whose frozen route cannot prefilter `signal_name` before its row budget. Selection happens
+   * before either read, so an error from one backend is never retried against the other.
    */
   getMetricAtDate: publicProcedure
     .input(
@@ -554,5 +575,15 @@ export const environmentalRouter = router({
         bbox: bboxSchema.optional(),
       })
     )
-    .query(({ input }) => getMetricAtDate(input)),
+    .query(async ({ input }) => {
+      if (!POSTGRES_OWNED_METRICS.has(input.metric)) return getParquetMetricAtDate();
+      const data = await getMetricAtDate(input);
+      return {
+        state: "ready" as const,
+        requestedDay: input.date,
+        servedDay: input.date,
+        data,
+        truncated: false,
+      };
+    }),
 });

@@ -269,6 +269,7 @@ Minimum private references:
 DATABASE_URL=${{Plantgeo.DATABASE_URL}}
 REDIS_URL=${{plantgeo-Redis.REDIS_URL}}
 MARTIN_URL=http://${{plantgeo-martin.RAILWAY_PRIVATE_DOMAIN}}:3000
+AGRI_PARQUET_SERVICE_URL=http://${{plantgeo-dataservice.RAILWAY_PRIVATE_DOMAIN}}:8000
 ```
 
 `DATABASE_URL` remains on `Plantgeo` until the replacement gate passes. Public
@@ -297,6 +298,15 @@ must render a clear unavailable state rather than inventing data.
 Server-only credentials include database/Redis URLs, ingestion secrets, provider
 tokens, OAuth secrets, and `MAPILLARY_ACCESS_TOKEN`. Provider credentials must
 never be exposed as `NEXT_PUBLIC_*`.
+
+`AGRI_PARQUET_SERVICE_URL` is a Railway dashboard/reference variable, not a
+hard-coded application URL. It must resolve to the private data-service hostname;
+do not create or substitute a public domain. The Parquet client deliberately has
+no production default: a missing binding is a visible typed configuration fault,
+not permission to read PostgreSQL. Production evidence on 2026-08-28 found the
+private data service ready but this variable absent on `plantgeo-main`; reader
+activation remains blocked until an operator sets the reference after the tRPC
+cutover is merged/deployed and verifies it without printing the resolved value.
 
 ### Data-service receiver and published-reader instances
 

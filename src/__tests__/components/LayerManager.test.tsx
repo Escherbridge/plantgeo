@@ -102,13 +102,13 @@ function fireRequestDate(): string | undefined {
  * because a stub cannot be trusted to spell every flag.
  */
 type ViewportQueryResult = {
-  data: GeoJSON.FeatureCollection | undefined;
+  data: unknown;
   isSuccess?: boolean;
   isFetching?: boolean;
   isPlaceholderData?: boolean;
 };
 type StreamflowQueryResult = {
-  data: unknown[];
+  data: unknown;
   isSuccess?: boolean;
   isFetching?: boolean;
   isPlaceholderData?: boolean;
@@ -827,17 +827,30 @@ describe("LayerManager viewport-proxied polygon layers", () => {
     // explicitly turned off, with no toggle claiming them. Watersheds no longer touches
     // WaterLayer at all, which is the structural version of the same guarantee.
     viewportQueries.getStreamflow.mockReturnValue({
-      data: [
-        {
-          siteNo: "13172500",
-          siteName: "Boise River",
-          lon: -116.2,
-          lat: 43.6,
-          flowCfs: 500,
-          percentile: 40,
-          condition: "normal",
-        },
-      ],
+      data: {
+        state: "ready",
+        requestedDay: "2026-07-30",
+        servedDay: "2026-07-30",
+        truncated: false,
+        data: [
+          {
+            siteNumber: "13172500",
+            siteName: "Boise River",
+            longitude: -116.2,
+            latitude: 43.6,
+            flowCfs: 500,
+            percentile: 40,
+            condition: "normal",
+            trend: null,
+            observedAt: "2026-07-30T12:00:00Z",
+            observedDay: "2026-07-30",
+            source: "USGS NWIS",
+            geometryLinked: true,
+            dataAvailableAt: null,
+            ingestedAt: "2026-07-30T12:05:00Z",
+          },
+        ],
+      },
     });
     useMapStore.setState({ activeLayers: ["watersheds"] });
 
@@ -1064,6 +1077,21 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
     ).toBe("2026-08-02");
   });
 
+  it("passes the same finite viewport zoom to every Parquet-backed map read", () => {
+    renderWithLayerDates();
+
+    for (const [name, query] of [
+      ["getDroughtClassification", viewportQueries.getDroughtClassification],
+      ["getStreamflow", viewportQueries.getStreamflow],
+      ["getVegetationIndex", viewportQueries.getVegetationIndex],
+      ["getWeatherForBbox", viewportQueries.getWeatherForBbox],
+    ] as const) {
+      const input = inputOf(query) as { zoom?: number };
+      expect(input.zoom, name).toBeTypeOf("number");
+      expect(Number.isFinite(input.zoom), name).toBe(true);
+    }
+  });
+
   it("omits the date for a layer sitting on the server's today, so that feed keeps one cache entry", () => {
     renderWithLayerDates();
 
@@ -1072,10 +1100,11 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
     // identically, and sending it would mint a second react-query entry for one answer.
     expect(fireRequestDate()).toBeUndefined();
     // This fixture publishes no capability for the `drought-areas` stream, so drought has no
-    // newest day of its own and falls back to the server's today -- also dateless. tRPC keys
-    // `undefined` input differently from an object, so this must stay literally undefined
-    // rather than becoming `{ date: undefined }`.
-    expect(inputOf(viewportQueries.getDroughtClassification)).toBeUndefined();
+    // newest day of its own and falls back to the server's today -- also dateless. The request
+    // still carries bbox + zoom because rung selection is mandatory; only `date` is omitted.
+    expect(
+      (inputOf(viewportQueries.getDroughtClassification) as { date?: string }).date
+    ).toBeUndefined();
     // The three ERA5-Land fields have no stream capability here either, for the same reason.
     expect(
       (inputOf(viewportQueries.getSoilField) as { date?: string }).date
@@ -1105,7 +1134,9 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
     fakeMap.setStyleLoaded(true);
     renderLayerManager(fakeMap);
 
-    expect(inputOf(viewportQueries.getDroughtClassification)).toEqual({ date: "2026-07-28" });
+    expect(inputOf(viewportQueries.getDroughtClassification)).toEqual(
+      expect.objectContaining({ date: "2026-07-28" })
+    );
     expect(soilFieldInputOf("moisture").date).toBe("2026-07-27");
     expect(soilFieldInputOf("temperature").date).toBe("2026-07-26");
     expect(soilFieldInputOf("vpd").date).toBe("2026-07-25");
@@ -1134,7 +1165,9 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
     fakeMap.setStyleLoaded(true);
     renderLayerManager(fakeMap);
 
-    expect(inputOf(viewportQueries.getDroughtClassification)).toEqual({ date: "2024-06-01" });
+    expect(inputOf(viewportQueries.getDroughtClassification)).toEqual(
+      expect.objectContaining({ date: "2024-06-01" })
+    );
     expect(soilFieldInputOf("moisture").date).toBe("2023-02-15");
   });
 
@@ -1142,9 +1175,9 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
     renderWithLayerDates({ fire: "2026-07-30", drought: "2026-07-29" });
 
     expect(fireRequestDate()).toBe("2026-07-30");
-    expect(inputOf(viewportQueries.getDroughtClassification)).toEqual({
-      date: "2026-07-29",
-    });
+    expect(inputOf(viewportQueries.getDroughtClassification)).toEqual(
+      expect.objectContaining({ date: "2026-07-29" })
+    );
   });
 
   it("stays dateless before capabilities name a today, rather than guessing from the browser clock", () => {
@@ -1154,7 +1187,9 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
     renderLayerManager(fakeMap);
 
     expect(fireRequestDate()).toBeUndefined();
-    expect(inputOf(viewportQueries.getDroughtClassification)).toBeUndefined();
+    expect(
+      (inputOf(viewportQueries.getDroughtClassification) as { date?: string }).date
+    ).toBeUndefined();
     for (const [name, query] of DATED_BBOX_QUERIES) {
       const input = inputOf(query) as { bbox?: string; date?: string };
       expect(input.bbox, name).toBeTypeOf("string");
@@ -1626,6 +1661,108 @@ describe("LayerManager holds the previous day while the next one loads", () => {
       requestedDate: "2026-07-28",
       isLoading: false,
     });
+  });
+
+  it("does not retain an upstream-unavailable Parquet answer as a landed frame", async () => {
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: streamBackedCapabilities,
+    });
+    useMapStore.setState({ activeLayers: ["drought"] });
+    viewportQueries.getDroughtClassification.mockReturnValue({
+      ...landed({
+        state: "upstream_unavailable",
+        fault: { kind: "http", message: "upstream 503", status: 503 },
+      }),
+    });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const rendered = renderLayerManager(fakeMap);
+
+    // A failed request has no painted frame, so the registry names the requested day as its
+    // neutral value. The load-bearing proof is the next retained answer: the failed day must
+    // not have entered the hook's last-landed ref and be relabelled as what is on screen.
+    viewportQueries.getDroughtClassification.mockReturnValue({
+      ...retaining(polygonCollection()),
+    });
+    act(() => {
+      useTimeSliderStore.getState().setLayerDate("drought", "2026-06-01");
+    });
+    await settleScrub();
+    act(() => {
+      rerenderLayerManager(rendered, fakeMap);
+    });
+
+    expect(useDrawnLayerDayStore.getState().drawnDays.drought).toEqual({
+      drawnDate: "2026-06-01",
+      requestedDate: "2026-06-01",
+      isLoading: true,
+    });
+  });
+
+  it("surfaces Parquet faults for the measured vegetation and weather layers", () => {
+    useMapStore.setState({ activeLayers: ["vegetation", "weather"] });
+    viewportQueries.getVegetationIndex.mockReturnValue(
+      landed({
+        state: "upstream_unavailable",
+        fault: { kind: "timeout", message: "request timed out" },
+      })
+    );
+    viewportQueries.getWeatherForBbox.mockReturnValue(
+      landed({
+        state: "upstream_unavailable",
+        fault: { kind: "http", message: "upstream 503", status: 503 },
+      })
+    );
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const rendered = renderLayerManager(fakeMap);
+
+    expect(
+      rendered.getByTestId("parquet-layer-unavailable-vegetation").textContent
+    ).toContain("Measured vegetation observations are temporarily unavailable");
+    expect(rendered.getByTestId("parquet-layer-unavailable-weather").textContent).toContain(
+      "Weather observations are temporarily unavailable"
+    );
+    expect((lastRenderOf("VegetationLayer")?.geojson as GeoJSON.FeatureCollection).features).toEqual(
+      []
+    );
+    expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
+  });
+
+  it("keeps absence and not-generated Parquet states empty without fault notices", () => {
+    useMapStore.setState({ activeLayers: ["vegetation", "weather"] });
+    viewportQueries.getVegetationIndex.mockReturnValue(
+      landed({
+        state: "absent",
+        requestedDay: "2026-07-28",
+        servedDay: "2026-07-28",
+        evidence: {
+          reason: "no clear scene",
+          upstreamResponse: "empty",
+          recordedAt: "2026-07-29T00:00:00Z",
+          runId: "run-vegetation",
+        },
+      })
+    );
+    viewportQueries.getWeatherForBbox.mockReturnValue(
+      landed({
+        state: "not_generated",
+        requestedDay: "2026-07-28",
+        reason: "day_not_written",
+      })
+    );
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const rendered = renderLayerManager(fakeMap);
+
+    expect(rendered.queryByTestId("parquet-layer-unavailable-vegetation")).toBeNull();
+    expect(rendered.queryByTestId("parquet-layer-unavailable-weather")).toBeNull();
+    expect((lastRenderOf("VegetationLayer")?.geojson as GeoJSON.FeatureCollection).features).toEqual(
+      []
+    );
+    expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
   });
 
   /**

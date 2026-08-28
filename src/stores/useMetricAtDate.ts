@@ -85,8 +85,30 @@ function emptyCollection(
  * A day with no data must come back empty with a reason. See scripts/check-fabricated-
  * observations.mjs, which fails the build if a client module can synthesise one again.
  */
-export const fetchMetricAtDate: MetricAtDateFetcher = (input) =>
-  getVanillaTrpcClient().environmental.getMetricAtDate.query(input);
+export const fetchMetricAtDate: MetricAtDateFetcher = async (input) => {
+  const result = await getVanillaTrpcClient().environmental.getMetricAtDate.query(input);
+  switch (result.state) {
+    case "absent":
+      return emptyCollection(
+        "not_published",
+        `Governed absence for ${result.servedDay}: ${result.evidence.reason}`
+      );
+    case "not_generated":
+      return emptyCollection(
+        "not_published",
+        result.reason === "day_not_written"
+          ? `No Parquet partition or governed absence was written for ${result.requestedDay}.`
+          : "This Parquet lane has never been generated."
+      );
+    case "upstream_unavailable":
+      return emptyCollection(
+        "request_failed",
+        `Private Parquet reader unavailable (${result.fault.kind}); no PostgreSQL fallback was used.`
+      );
+    case "ready":
+      return result.data;
+  }
+};
 
 export interface UseMetricAtDateOptions {
   /**

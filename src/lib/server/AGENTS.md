@@ -782,9 +782,9 @@ the one their own timestamp names under UTC bucketing: `2026-08-03T23:50:00.000-
 to 2026-08-04. The map renders correctly and lies about the day, and a user cross-checking
 waterdata.usgs.gov sees the mismatch.
 
-**A now-relative freshness window must not survive into a named day.** Every live reader gates
-on `Date.now()` — 6 h for streamflow, 3 h for weather, 30 d for vegetation — and left in place
-those windows report *every* historical day as unobserved. Re-anchoring the same duration to
+**A now-relative freshness window must not survive into a named day.** The live streamflow and
+weather readers gate on `Date.now()` — 6 h and 3 h respectively — and left in place those
+windows report *every* historical day as unobserved. Re-anchoring the same duration to
 the end of the requested day is just as wrong: six hours before midnight drops every gauge
 whose last reading that day was before 18:00. So the window is re-expressed, per reader:
 
@@ -794,11 +794,6 @@ whose last reading that day was before 18:00. So the window is re-expressed, per
   a busy national streamflow day is ~10,900 readings, and paging those by `created_at` would
   have answered with a subset of the country. `created_at` can never date an observation on
   either path — it is a "last touched" column the refresh path rewrites.
-- **vegetation** — the 30-day per-cell window slides to *end* at the requested day, i.e.
-  `(date − VEGETATION_MAX_OBSERVATION_AGE_DAYS, date]`. A reading after the requested day is
-  dropped too, so a past day can never borrow a later cloud-free scene. The
-  `stale` / `not_published` probe is bounded to the same day, so a viewport the grid had not
-  yet sampled reads `not_published` rather than being captioned merely stale.
 - **drought** — weekly, so `resolveDroughtRelease` owns it and both
   `getPublishedDroughtClassification` and `getDroughtMetricAtDate` share it: the newest release
   valid on or before the day, bounded. When a later release is stored, the preceding release's
@@ -1001,7 +996,6 @@ small dictionaries get materialized.
 | `readStreamObservationWindows` | aggregate over ~17M accepted `agri.signal_observation` rows, no usable index | same census, `surface_kind IN ('signal','polygon')` (~19,000 rows) |
 | `getMetricAtDate`'s `summary` (no bbox) | `COUNT(*)` over the whole uncapped `candidate` CTE | one `metric_counts` jsonb lookup on `geo.mv_feature_observation_day` |
 | `resolveDroughtRelease` | three FILTERed aggregates over an unfiltered `geo.drought_areas` | two index probes on `geo.mv_drought_release_index` |
-| vegetation empty-case probe | unbounded `MAX(properties->>'observedAt')` over the bboxed vegetation history | `EXISTS`-gated `max(newest_observed_at)` off the census |
 | `getFeatureCountByLayer` / `getSystemStats` / `layerStats` | `COUNT(*) GROUP BY layer_id` over 4.97M rows, on a publicProcedure | `geo.mv_layer_feature_stats` (11 rows) |
 | `getRecentActivity(N)` | `created_at >= now() - N hours` with no index that leads on `created_at` | `SUM(feature_count)` over an indexed range of `geo.mv_layer_hourly_activity` |
 
@@ -1030,8 +1024,8 @@ sort, not an analytical query in any sense that matters here.
 - **`readPublishedFirePerimeters` uses `geom && ST_MakeEnvelope(...)`** in place of four
   `ST_XMax`/`ST_XMin`/`ST_YMax`/`ST_YMin` comparisons. Identical predicate; the old form was
   a function OF the indexed column, so `idx_features_geom` could not serve it at all.
-- **`readStreamflowGaugesOnDay`, `readWeatherOnDay`, `getPublishedVegetationIndex` and
-  `getMetricAtDate` each carry a redundant-by-data restriction written as
+- **`readStreamflowGaugesOnDay`, `readWeatherOnDay`, and `getMetricAtDate` each carry a
+  redundant-by-data restriction written as
   `geo.feature_observation_day(f.properties)`** — the exact expression
   `ix_features_layer_observation_day (layer_id, geo.feature_observation_day(properties))
   WHERE status = 'published'` is built on. The layer's own day predicate stays the
@@ -1112,18 +1106,6 @@ on this list is asserted to be byte-identical to the query it replaced.
    day sits at yesterday after UTC midnight while `resolveDroughtRelease` serves drought for
    today, and the slider reports a coverage gap for a day the layer is painting. The residual
    window is now one refresh interval, not one backstop interval.
-4. **The vegetation empty-case caption is lane-wide, not viewport-wide** — see below.
-
-### One honest loss of precision, stated rather than hidden
-
-The vegetation empty-case probe's RECENCY half is now lane-wide where it used to be
-viewport-wide, because the census carries no geometry. For a covered viewport whose own
-cells are all under cloud, the "newest observation" caption can name an instant fresher than
-those cells carry — at most a ~19-day overstatement on 65 of 1,568 cells as measured
-2026-08-05. It moves a sentence, never a drawn value, and only on a viewport that already
-draws nothing. The COVERAGE half — the answer that turns `not_published` into `stale` — is
-still exactly the viewport's own, via an `EXISTS ... LIMIT 1` on the GiST index.
-
 ### Deploy ordering, which is not optional
 
 These readers name relations that do not exist until `drizzle/0029_pre_aggregation_layer.sql`
@@ -1138,3 +1120,36 @@ Every matview is refreshed by the `matview-refresh` pulse lane against a waterma
 `agri.matview_refresh_state`. A reader that needs to know how stale an answer is reads
 `refreshed_at` there — a rollup over a stalled ingest lane faithfully materialises the stall,
 and staleness must not be mistaken for absence.
+
+## Parquet tRPC cutover
+
+`services/parquet-trpc-readers.ts` is the public boundary over the frozen private Parquet HTTP
+contract. It maps `published`, `governed_absence`, `day_not_written`, and
+`lane_never_written` to `ready`, `absent`, `not_generated`, and the retained unwritten reason;
+recognized bounded transport, payload, and contract failures become a typed
+`upstream_unavailable` result. Request-validation, zoom-resolution, and programmer errors still
+throw. No reader in this adapter may import a PostgreSQL read model or retry there after a
+Parquet failure.
+
+Every viewport procedure supplies the selected publisher day and the live map zoom. The latter
+passes through the one `resolveZoomTier` ladder (`z13`, `z9`, `z5`, `z0`). Drought uses the
+release route and preserves both requested and served release days; the serving projection has
+already converted its warehouse WKB to clipped GeoJSON text. Vegetation keeps its trailing
+30-day selection, and fire keeps an exact one-day read whenever the caller names a day. A
+vegetation row is public only when `allowed_client_exposure` is literally `true`; one false-gated
+row rejects the whole envelope as a contract fault instead of being filtered into a plausible
+partial map.
+
+`services/parquet-slider-capabilities.ts` is deliberately fail-closed. The frozen coverage
+response is tier-agnostic, and signal coverage has no product axis, so it cannot demonstrate a
+lane/day/rung combination or a particular signal product. Migrated PostgreSQL rows are removed
+from the public census and no Parquet replacement is advertised until those proof axes land.
+The generic signal reader likewise returns a typed contract refusal because post-limit
+filtering could silently omit the requested product.
+
+The shared `parquet_ops`/CLI extraction is reconciled at `9553fc8`, on top of the readiness repair
+at `fced1e8`. Activation is still gated on direct private-route verification and a server-only
+`AGRI_PARQUET_SERVICE_URL` reference from `plantgeo-main` to the private data-service hostname;
+missing configuration remains a typed fault, never a PostgreSQL fallback. Per-rung and
+signal-product coverage are required before the withheld slider rows or generic signal reader can
+be enabled.

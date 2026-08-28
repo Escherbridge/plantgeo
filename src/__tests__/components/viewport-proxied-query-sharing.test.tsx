@@ -152,10 +152,12 @@ const EMPTY_PROXIED_COLLECTION = {
   revision: null,
 };
 
-/** Procedures whose callers iterate the result as an array; everything else is a collection. */
-const ARRAY_PROCEDURES = new Set([
+/** Procedures that still expose the legacy array/collection shapes in this test. */
+const ARRAY_PROCEDURES = new Set(["environmental.getGroundwater"]);
+
+const PARQUET_ARRAY_PROCEDURES = new Set([
   "environmental.getStreamflow",
-  "environmental.getGroundwater",
+  "environmental.getDroughtClassification",
   "wildfire.getWeatherForBbox",
 ]);
 
@@ -166,9 +168,20 @@ function recordingLink(): TRPCLink<AppRouter> {
       observable((observer) => {
         recordedOperations.push({ path: op.path, input: op.input });
         const timer = setTimeout(() => {
+          const data = PARQUET_ARRAY_PROCEDURES.has(op.path)
+            ? {
+                state: "ready",
+                requestedDay: "2026-08-28",
+                servedDay: "2026-08-28",
+                data: [],
+                truncated: false,
+              }
+            : ARRAY_PROCEDURES.has(op.path)
+              ? []
+              : EMPTY_PROXIED_COLLECTION;
           observer.next({
             result: {
-              data: ARRAY_PROCEDURES.has(op.path) ? [] : EMPTY_PROXIED_COLLECTION,
+              data,
             },
           });
           observer.complete();
@@ -314,6 +327,26 @@ describe("viewport-proxied feeds are fetched once for the map and its dock secti
     // error -- which the panel then had to render as though the provider were down. The
     // observer stays (the dock is still asking the question), the doomed round trip does not.
     expect(operationsFor("environmental.getWatersheds")).toHaveLength(0);
+  });
+
+  it("shares one zoom-routed Parquet streamflow query between the map and Water details", async () => {
+    useMapStore.setState({ activeLayers: ["water"] });
+    openDockAt("water");
+
+    const queryClient = await renderMapAndDock();
+    await settle(queryClient);
+
+    const entries = cacheEntriesFor(queryClient, "getStreamflow");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].observers).toHaveLength(2);
+    expect(operationsFor("environmental.getStreamflow")).toHaveLength(1);
+    const input = operationsFor("environmental.getStreamflow")[0].input as {
+      bbox?: string;
+      zoom?: number;
+    };
+    expect(input.bbox).toBeTypeOf("string");
+    expect(input.zoom).toBeTypeOf("number");
+    expect(Number.isFinite(input.zoom)).toBe(true);
   });
 
   // Warehouse-backed rather than proxied, and keyed on five inputs rather than two (bbox,

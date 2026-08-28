@@ -37,12 +37,15 @@ Required service references:
 ```dotenv
 DATABASE_URL=${{Plantgeo.DATABASE_URL}}
 REDIS_URL=${{plantgeo-Redis.REDIS_URL}}
+AGRI_PARQUET_SERVICE_URL=http://${{plantgeo-dataservice.RAILWAY_PRIVATE_DOMAIN}}:8000
 ```
 
 `DATABASE_URL` remains on `Plantgeo` until a reviewed data migration and
 cutover explicitly replaces it. Public `NEXT_PUBLIC_*` map values are compiled
 into the Next.js bundle during the Docker build; they must be configured before
-a production build.
+a production build. `AGRI_PARQUET_SERVICE_URL` is server-only and must remain a
+private Railway reference. If it is absent or invalid, the Parquet reader fails
+visibly and must not retry PostgreSQL or use a public data-service domain.
 
 ### Data-service receiver and published-reader profiles
 

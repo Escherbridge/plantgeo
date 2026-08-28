@@ -82,9 +82,10 @@ function FireDetailsBody() {
 
 function WaterDetailsBody() {
   // The same derivation LayerManager uses, so this region and the map key one react-query
-  // entry per proxied feed rather than two that merely look alike.
-  const { bbox } = useViewportBounds();
-  return <WaterDetails bbox={bbox ?? undefined} />;
+  // entry per proxied feed rather than two that merely look alike. Zoom is equally part of
+  // the key now because it selects exactly one private Parquet serving rung.
+  const { bbox, zoom } = useViewportBounds();
+  return <WaterDetails bbox={bbox ?? undefined} zoom={zoom} />;
 }
 
 function VegetationDetailsBody() {

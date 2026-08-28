@@ -35,14 +35,28 @@ import {
   drawnDayFlagsFromQuery,
   usePublishedDrawnLayerDays,
   type LiveLayerDayReport,
+  type QueryReadState,
 } from "@/stores/useMetricAtDate";
-import { isRenderableWeatherObservation } from "@/lib/environmental/weather";
 import type { WeatherPoint } from "@/components/map/layers/WeatherLayer";
+import {
+  presentParquetDrought,
+  presentParquetVegetation,
+  presentParquetWater,
+  presentParquetWeather,
+} from "@/lib/environmental/parquet-presentation";
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
+
+function parquetDrawnDayFlags(query: QueryReadState) {
+  const flags = drawnDayFlagsFromQuery(query);
+  const data = query.data as { state?: string } | undefined;
+  return data?.state === "upstream_unavailable"
+    ? { ...flags, hasLandedForRequestedDate: false }
+    : flags;
+}
 
 /**
  * The style-baked tile toggles this component holds a day for.
@@ -240,24 +254,32 @@ export default function LayerManager() {
   // see src/components/map/AGENTS.md "A layer must not blank between days". Never one without
   // the other.
   //
-  // tRPC keys `undefined` input differently from an object, so the dateless case must stay
-  // literally undefined here rather than becoming `{ date: undefined }`.
   const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(
-    droughtDay.requestDate === undefined ? undefined : { date: droughtDay.requestDate },
-    { enabled: layerVisibility.drought, placeholderData: keepPreviousData }
+    { bbox: bbox ?? undefined, date: droughtDay.requestDate, zoom },
+    {
+      enabled: layerVisibility.drought && bbox !== null,
+      placeholderData: keepPreviousData,
+    }
   );
-  const droughtGeoJSON = droughtQuery.data ?? EMPTY_FEATURE_COLLECTION;
+  const droughtGeoJSON = useMemo(
+    () => presentParquetDrought(droughtQuery.data),
+    [droughtQuery.data]
+  );
   const waterEnabled = layerVisibility.water;
   // Both feeds take `water`'s day, because both are drawn by the one `water` toggle and so by
   // the one row that carries a slider for them. Gauges and wells sharing a day is a property of
   // there being a single control over them, not an assumption about the two upstreams.
   const streamflowQuery = trpc.environmental.getStreamflow.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90", date: waterDay.requestDate },
+    { bbox: bbox ?? "-180,-90,180,90", date: waterDay.requestDate, zoom },
     {
       enabled: waterEnabled && bbox !== null,
       staleTime: 15 * 60 * 1000,
       placeholderData: keepPreviousData,
     }
+  );
+  const waterPresentation = useMemo(
+    () => presentParquetWater(streamflowQuery.data),
+    [streamflowQuery.data]
   );
   const groundwaterQuery = trpc.environmental.getGroundwater.useQuery(
     { bbox: bbox ?? "-180,-90,180,90", date: waterDay.requestDate },
@@ -277,15 +299,17 @@ export default function LayerManager() {
   // the groundwater/watershed cadence rather than the 15-minute observation feeds. A named
   // day slides that per-cell window to end there instead of at now.
   const vegetationQuery = trpc.environmental.getVegetationIndex.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90", date: vegetationDay.requestDate },
+    { bbox: bbox ?? "-180,-90,180,90", date: vegetationDay.requestDate, zoom },
     {
       enabled: vegetationEnabled && bbox !== null,
       staleTime: 60 * 60 * 1000,
       placeholderData: keepPreviousData,
     }
   );
-  const vegetationGeoJSON: GeoJSON.FeatureCollection =
-    vegetationQuery.data ?? EMPTY_FEATURE_COLLECTION;
+  const vegetationGeoJSON = useMemo(
+    () => presentParquetVegetation(vegetationQuery.data),
+    [vegetationQuery.data]
+  );
 
   // SSURGO map units are proxied live from USDA per viewport rather than published to the
   // warehouse, so they carry no slider day: the endpoint answers for a bbox alone. It is a
@@ -359,41 +383,34 @@ export default function LayerManager() {
   // nearest one -- so the wind layer reflects the full spread of
   // warehouse-backed samples instead of a single point.
   const weatherQuery = trpc.wildfire.getWeatherForBbox.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90", date: weatherDay.requestDate },
+    { bbox: bbox ?? "-180,-90,180,90", date: weatherDay.requestDate, zoom },
     {
       enabled: weatherEnabled && bbox !== null,
       staleTime: 15 * 60 * 1000,
       placeholderData: keepPreviousData,
     }
   );
-  // Every rendered field must still be measured -- nothing is back-filled with a zero the
-  // upstream never reported -- but completeness is now judged PER DRAWN LAYER rather than
-  // across the whole observation. The toggle paints two things: wind arrows, which need
-  // windSpeed and windDirection, and temperature dots, which need temperature. Humidity is
-  // drawn by neither and only captions the tooltip, so requiring it here (as this filter did
-  // until 2026-08-08) dropped stations that had everything the map actually draws. The nulls
-  // themselves never reach a painted expression: WeatherLayer carries a `hasWind`/
-  // `hasTemperature` flag per feature and each layer filters on its own.
-  //
-  // `isRenderableWeatherObservation` (src/lib/environmental/weather.ts) is the single source
-  // of this rule: `getPublishedWeatherForBbox` applies the exact same relaxed check
-  // server-side, so this is a client-side re-check of an already-complete feed, not a second
-  // opinion that could drift from the server's.
-  // Memoized because this component re-renders on every viewport tick.
+  // Strict Parquet rows carry every required weather measurement; presentation only renames
+  // fields for the existing browser-safe layer vocabulary.
   const weatherData = useMemo<WeatherPoint[]>(
-    () =>
-      (weatherQuery.data ?? [])
-        .filter(isRenderableWeatherObservation)
-        .map((observation) => ({
-          coordinates: [observation.lon, observation.lat],
-          windSpeed: observation.windSpeed,
-          windDirection: observation.windDirection,
-          temperature: observation.temperature,
-          humidity: observation.humidity,
-          observedAt: observation.observedAt,
-        })),
+    () => presentParquetWeather(weatherQuery.data),
     [weatherQuery.data]
   );
+  const parquetLayerFaults = [
+    vegetationEnabled && vegetationQuery.data?.state === "upstream_unavailable"
+      ? {
+          layerId: "vegetation",
+          message:
+            "Measured vegetation observations are temporarily unavailable from the data service.",
+        }
+      : null,
+    weatherEnabled && weatherQuery.data?.state === "upstream_unavailable"
+      ? {
+          layerId: "weather",
+          message: "Weather observations are temporarily unavailable from the data service.",
+        }
+      : null,
+  ].filter((fault): fault is NonNullable<typeof fault> => fault !== null);
 
   // What each live layer is actually DRAWING, for the surfaces that caption the map. The other
   // half of `keepPreviousData` above; see src/components/map/AGENTS.md "A layer must not blank
@@ -419,7 +436,7 @@ export default function LayerManager() {
       layerId: "drought",
       isDrawn: layerVisibility.drought,
       requestedDate: droughtDay.settledDate,
-      ...drawnDayFlagsFromQuery(droughtQuery),
+      ...parquetDrawnDayFlags(droughtQuery),
     },
     {
       // One row over two upstreams: the day is drawn only once BOTH have answered for it.
@@ -428,7 +445,7 @@ export default function LayerManager() {
       requestedDate: waterDay.settledDate,
       isFetching: streamflowQuery.isFetching === true || groundwaterQuery.isFetching === true,
       hasLandedForRequestedDate:
-        drawnDayFlagsFromQuery(streamflowQuery).hasLandedForRequestedDate &&
+        parquetDrawnDayFlags(streamflowQuery).hasLandedForRequestedDate &&
         drawnDayFlagsFromQuery(groundwaterQuery).hasLandedForRequestedDate,
       isShowingPreviousDay:
         streamflowQuery.isPlaceholderData === true || groundwaterQuery.isPlaceholderData === true,
@@ -437,7 +454,7 @@ export default function LayerManager() {
       layerId: "vegetation",
       isDrawn: vegetationEnabled,
       requestedDate: vegetationDay.settledDate,
-      ...drawnDayFlagsFromQuery(vegetationQuery),
+      ...parquetDrawnDayFlags(vegetationQuery),
     },
     {
       // SSURGO is proxied per viewport and its key holds no date, so it has no day of its own to
@@ -470,7 +487,7 @@ export default function LayerManager() {
       layerId: "weather",
       isDrawn: weatherEnabled,
       requestedDate: weatherDay.settledDate,
-      ...drawnDayFlagsFromQuery(weatherQuery),
+      ...parquetDrawnDayFlags(weatherQuery),
     },
   ];
   usePublishedDrawnLayerDays("layer-manager", liveLayerDayReports);
@@ -741,7 +758,8 @@ export default function LayerManager() {
       />
       <WaterLayer
         map={map}
-        gauges={streamflowQuery.data ?? []}
+        gauges={waterPresentation.gauges}
+        aggregateCells={waterPresentation.cells}
         wells={groundwaterQuery.data ?? []}
         visible={waterEnabled}
         opacityScale={layerOpacity.water}
@@ -816,6 +834,23 @@ export default function LayerManager() {
         visible={weatherEnabled}
         opacityScale={layerOpacity.weather}
       />
+      {parquetLayerFaults.length > 0 && (
+        <div
+          className="pointer-events-none absolute left-1/2 top-12 z-20 flex -translate-x-1/2 flex-col gap-1.5"
+          aria-live="assertive"
+        >
+          {parquetLayerFaults.map((fault) => (
+            <p
+              key={fault.layerId}
+              role="alert"
+              className="rounded-md border border-red-500/40 bg-[hsl(var(--card))]/95 px-3 py-1.5 text-xs font-medium text-red-600 shadow-sm backdrop-blur dark:text-red-400"
+              data-testid={`parquet-layer-unavailable-${fault.layerId}`}
+            >
+              {fault.message}
+            </p>
+          ))}
+        </div>
+      )}
       {/* Not a data layer and so not in the registry: it marks where the user clicked,
           and DockDetails' capture hook (SoilDetailsBody, DockDetails.tsx:100-101) is the
           only thing that ever sets it. */}

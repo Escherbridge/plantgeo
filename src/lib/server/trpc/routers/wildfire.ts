@@ -3,11 +3,11 @@ import { TRPCError } from "@trpc/server";
 import { router, publicProcedure, type Context } from "@/lib/server/trpc/init";
 import { features, layers } from "@/lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
+import { getPublishedWeatherForPoint } from "@/lib/server/services/environmental-read-model";
 import {
-  getPublishedFireDetections,
-  getPublishedWeatherForBbox,
-  getPublishedWeatherForPoint,
-} from "@/lib/server/services/environmental-read-model";
+  getParquetFireDetections,
+  getParquetWeatherObservations,
+} from "@/lib/server/services/parquet-trpc-readers";
 
 /** Matches the "west,south,east,north" bbox format environmental.getStreamflow validates. */
 const COORDINATE_PATTERN = /^-?(?:\d+(?:\.\d*)?|\.\d+)$/;
@@ -41,6 +41,9 @@ const bboxSchema = z
 const observationDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD");
+
+/** Viewport zoom selects exactly one private Parquet serving rung. */
+const mapZoomSchema = z.number().finite().nonnegative();
 
 function unpublishedRisk(): never {
   throw new TRPCError({
@@ -76,14 +79,20 @@ export const wildfireRouter = router({
   getFireDetections: publicProcedure
     .input(
       z.object({
-        bbox: z.string().optional(),
+        bbox: bboxSchema.optional(),
         dayRange: z.number().int().min(1).max(10).default(1),
         date: observationDateSchema.optional(),
+        zoom: mapZoomSchema,
       })
     )
-    .query(async ({ input }) => {
-      return getPublishedFireDetections(input.bbox, input.dayRange, input.date);
-    }),
+    .query(({ input }) =>
+      getParquetFireDetections({
+        bbox: input.bbox,
+        dayRange: input.dayRange,
+        date: input.date,
+        mapZoom: input.zoom,
+      })
+    ),
 
   /**
    * Calculate fire risk score for a point given terrain + weather parameters.
@@ -187,6 +196,18 @@ export const wildfireRouter = router({
    * freshness window unchanged.
    */
   getWeatherForBbox: publicProcedure
-    .input(z.object({ bbox: bboxSchema, date: observationDateSchema.optional() }))
-    .query(({ input }) => getPublishedWeatherForBbox(input.bbox, input.date)),
+    .input(
+      z.object({
+        bbox: bboxSchema,
+        date: observationDateSchema.optional(),
+        zoom: mapZoomSchema,
+      })
+    )
+    .query(({ input }) =>
+      getParquetWeatherObservations({
+        bbox: input.bbox,
+        date: input.date,
+        mapZoom: input.zoom,
+      })
+    ),
 });

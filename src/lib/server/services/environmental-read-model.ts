@@ -92,36 +92,6 @@ const NATIONAL_DROUGHT_TOLERANCE_DEGREES = 0.05;
 const MIN_DROUGHT_TOLERANCE_DEGREES = 0.0005;
 
 /**
- * How old a vegetation cell's newest observation may be and still be served.
- *
- * Sentinel-2 revisits every five days but a cell only yields an NDVI sample on a scene
- * clear enough to read, so per-cell freshness is set by cloud, not by revisit. Measured
- * against production 2026-08-05 over all 1,568 cells on record: 1,503 were last observed
- * within 9 days and the remaining 65 between 15 and 28 days. 30 days therefore keeps every
- * cell the warehouse currently holds while still refusing a genuinely abandoned one, and a
- * 14-day window -- the value the drought reader uses -- would blank 65 real cells that have
- * simply been under cloud.
- *
- * It is also the read's main lever on cost: the stored series is four years deep
- * (2022-08-05 onward, 184,409 rows over those same 1,568 cells), so cutting the scan to a
- * 30-day window is what stops every viewport read from walking the whole history.
- */
-const VEGETATION_MAX_OBSERVATION_AGE_DAYS = 30;
-const VEGETATION_MAX_AGE_MS = VEGETATION_MAX_OBSERVATION_AGE_DAYS * 86_400_000;
-
-/**
- * Upper bound on grid cells returned for one viewport.
- *
- * Stated rather than left implicit, because the bbox is NOT what bounds this read. The
- * sampling grid is fixed at 0.25 degrees, so after the latest-per-cell collapse below even
- * a whole-world bbox answers with the grid itself -- 1,568 cells today, against the 184,409
- * rows that back them. What the bbox buys is a smaller scan, not a smaller answer, and the
- * only thing standing between a future national grid and an unservable payload is this cap.
- * A truncated answer says so in `truncated` rather than silently serving a subset.
- */
-const VEGETATION_MAX_CELLS = 4_000;
-
-/**
  * USGS NWIS writes this in place of a reading it does not have -- an ice-affected gauge, a
  * failed sensor, a provisional value pulled back. It arrives as a JSON number and is stored
  * verbatim, so 259 of the 16,743 stored water-gauges rows currently carry it.
@@ -209,16 +179,6 @@ function publisherNamedDay(value: unknown): string | null {
 /** True when a stored observation's publisher-named day is exactly `date`. */
 function isObservedOnNamedDay(rawObservationTime: unknown, date: string): boolean {
   return publisherNamedDay(rawObservationTime) === date;
-}
-
-/** True when a stored observation's publisher-named day falls in (`after`, `through`]. */
-function isObservedWithinNamedDays(
-  rawObservationTime: unknown,
-  after: string,
-  through: string
-): boolean {
-  const day = publisherNamedDay(rawObservationTime);
-  return day !== null && day > after && day <= through;
 }
 
 /**
@@ -357,7 +317,7 @@ type FireDetectionRow = { properties: unknown };
  * is exact.
  *
  * DELIBERATELY NOT GIVEN the `geo.feature_observation_day(properties)` restriction that the
- * water-gauges, weather and vegetation readers carry for `ix_features_layer_observation_day`.
+ * water-gauges and weather readers carry for `ix_features_layer_observation_day`.
  * That function's COALESCE is `observedAt, updatedAt, polygonDateTime` and knows nothing about
  * `acqDate`, so for a detection dated only by FIRMS's own field it returns NULL -- adding it
  * here would silently drop exactly the rows this COALESCE exists to keep. This read stays a
@@ -597,8 +557,7 @@ export async function getPublishedStreamflowGauges(
     const siteNo = typeof value.siteNo === "string" ? value.siteNo : "";
     const point = parsePoint(value.geometry);
     const updatedAt = parseZonedObservationTime(value.updatedAt);
-    // Re-checked here rather than trusted from SQL, the same way the vegetation reader
-    // re-checks its own cutoff: the day predicate is bound before the round trip.
+    // Re-check after the round trip because the day predicate is bound before it.
     const isWithinWindow =
       day.kind === "historical"
         ? isObservedOnNamedDay(value.updatedAt, day.date)
@@ -1278,321 +1237,6 @@ export async function getDroughtCategoryAtPoint(
   };
 }
 
-/** Canonical `geo.layers.name` for the NDVI grid; mirrors the producer's own env override. */
-const VEGETATION_LAYER_ID = process.env.VEGETATION_LAYER_ID ?? "vegetation";
-
-/**
- * One sampling-grid cell's newest NDVI reading, with the provenance that dates it.
- * A type alias rather than an interface, for the same reason MetricAtDateProperties is one:
- * only an alias picks up the implicit index signature GeoJSON's `properties` slot needs.
- */
-export type PublishedVegetationCellProperties = {
-  /** geo.geometry identity of the cell; stable across observations of the same place. */
-  geometryId: string;
-  /** The producer's own grid key, e.g. "43.1250:-113.6250". */
-  cellKey: string;
-  ndvi: number;
-  observedAt: string;
-  sceneId: string | null;
-  cloudCover: number | null;
-  /** Usable pixels behind this cell's NDVI; a thin cell is legible as thin. */
-  sampleCount: number | null;
-  gridName: string | null;
-  resolutionMetres: number | null;
-  source: string | null;
-  /** The stored natural key (cellKey:observedAt), so one reading is traceable upstream. */
-  provenanceKey: string;
-};
-
-export interface PublishedVegetationCollection
-  extends GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon> {
-  availability: "published" | "unavailable";
-  /** Newest observation in the returned set; null when nothing was returned. */
-  observedAt: string | null;
-  /**
-   * `stale` means cells exist here but none was observed inside the window ending at the
-   * requested day; `not_forecastable` means the day itself is in the future.
-   */
-  reason: "not_published" | "stale" | "not_forecastable" | null;
-  /** More cells intersect the viewport than the cap allows; this set is a subset. */
-  truncated: boolean;
-  cellCount: number;
-  /** Both bounds published, so the client never has to infer either one. */
-  maxCellCount: number;
-  maxObservationAgeDays: number;
-}
-
-/** Object type, not an interface: db.execute requires an implicit index signature. */
-type VegetationCellRow = {
-  geometry_id: string | null;
-  geometry: string | null;
-  ndvi: string | null;
-  observed_at: string | null;
-  cell_key: string | null;
-  scene_id: string | null;
-  cloud_cover: string | null;
-  sample_count: string | null;
-  grid_name: string | null;
-  resolution_metres: string | null;
-  source: string | null;
-  provenance_key: string | null;
-};
-
-/** A viewport that holds no vegetation cell at all, or none observed recently enough. */
-function emptyVegetationCollection(
-  reason: NonNullable<PublishedVegetationCollection["reason"]>,
-  observedAt: string | null
-): PublishedVegetationCollection {
-  return {
-    type: "FeatureCollection",
-    features: [],
-    availability: "unavailable",
-    observedAt,
-    reason,
-    truncated: false,
-    cellCount: 0,
-    maxCellCount: VEGETATION_MAX_CELLS,
-    maxObservationAgeDays: VEGETATION_MAX_OBSERVATION_AGE_DAYS,
-  };
-}
-
-/**
- * Reads the newest published NDVI observation per sampling-grid cell in a viewport.
- *
- * The whole difficulty is that `vegetation` is a four-year daily series stacked on a small
- * fixed grid, not a snapshot: 184,409 published rows over 1,568 distinct cells, ~118
- * observations of the same place each. Returning the rows raw would draw the same cell a
- * hundred times over, so the read collapses to one row per `geo.geometry` identity -- the
- * newest -- exactly as `getPublishedStreamflowGauges` keeps one row per gauge and
- * `getMetricAtDate` keeps one per geometry. Measured, that collapse is the entire payload
- * story: a PNW viewport goes from 124,959 rows to 1,036 cells.
- *
- * Three bounds, all explicit rather than left to the viewport's good behaviour:
- *   - the bbox filters the scan (`&&` against the GiST index on geo.features.geom);
- *   - VEGETATION_MAX_OBSERVATION_AGE_DAYS bounds how far back a cell may have been seen,
- *     applied in SQL so the cap below counts only cells that will actually be drawn;
- *   - VEGETATION_MAX_CELLS caps the answer, probed one row over so `truncated` is never
- *     claimed against a result that merely filled the page exactly.
- *
- * Nothing is interpolated, carried forward or averaged: a cell under cloud for a month is
- * omitted, not painted with a value from before the cloud.
- *
- * @param date optional YYYY-MM-DD. Omitted (or the server's today) applies the 30-day window
- *   ending NOW, unchanged. A past day slides the same window to end at that day -- "the newest
- *   reading per cell within VEGETATION_MAX_OBSERVATION_AGE_DAYS ending at the selected date" --
- *   which is what stops a request for last spring returning an empty grid under a now-relative
- *   cutoff. A future day returns empty: Sentinel-2 has not flown it.
- */
-export async function getPublishedVegetationIndex(
-  bbox: string,
-  date?: string
-): Promise<PublishedVegetationCollection> {
-  const [west, south, east, north] = parseBbox(bbox);
-  const day = resolveRequestedObservationDay(date);
-  if (day.kind === "unobserved") {
-    return emptyVegetationCollection("not_forecastable", null);
-  }
-  const layerId = await resolveCachedLayerId(VEGETATION_LAYER_ID);
-  if (layerId === null) {
-    // Same terminal state a zero-row join against a non-existent layer name would have
-    // produced below, reached without paying for either round trip.
-    return emptyVegetationCollection("not_published", null);
-  }
-  const freshSince = new Date(Date.now() - VEGETATION_MAX_AGE_MS).toISOString();
-  // The observation window as publisher-named days, for a named day only: (after, through].
-  const windowThroughDay = day.kind === "historical" ? day.date : null;
-  const windowAfterDay =
-    windowThroughDay === null
-      ? null
-      : addUtcDays(windowThroughDay, -VEGETATION_MAX_OBSERVATION_AGE_DAYS);
-  const observedDay = namedDaySql(sql`f.properties->>'observedAt'`);
-  // The live branch keeps the timestamptz cutoff it has always used -- every stored value
-  // carries an explicit `Z`, so for this layer the named day and the UTC day agree; the named
-  // day is what a bounded historical window is expressed in, because that is the form a
-  // requested date arrives as.
-  //
-  // Both branches carry a second, redundant-by-data restriction written in
-  // `geo.feature_observation_day(properties)` -- the exact expression
-  // `ix_features_layer_observation_day (layer_id, geo.feature_observation_day(properties))
-  // WHERE status = 'published'` is built on. Vegetation is the deepest per-day slice in
-  // geo.features (four years, 184,409 rows), so restricting the scan to the window BEFORE the
-  // DISTINCT ON is what stops a low-zoom read from sorting the layer's whole history.
-  // Implied rather than assumed: `observedAt` is first in the named-day COALESCE, so a row the
-  // authoritative predicate keeps is a row the function dates identically, and a row missing
-  // `observedAt` is excluded by the authoritative predicate's own NULL.
-  const observationWindowSql =
-    windowThroughDay === null || windowAfterDay === null
-      ? sql`(f.properties->>'observedAt')::timestamptz >= ${freshSince}::timestamptz
-            AND geo.feature_observation_day(f.properties)
-                >= (${freshSince}::timestamptz AT TIME ZONE 'UTC')::date`
-      : sql`${observedDay} > ${windowAfterDay}::date AND ${observedDay} <= ${windowThroughDay}::date
-            AND geo.feature_observation_day(f.properties) > ${windowAfterDay}::date
-            AND geo.feature_observation_day(f.properties) <= ${windowThroughDay}::date`;
-  const tolerance = droughtSimplifyTolerance(east - west);
-
-  // Every stored cell is a 5-vertex axis-aligned square (verified: ST_NPoints = 5 on all
-  // 184,409 rows, in geo.features.geom and in the geo.geometry dimension alike), so
-  // simplification has nothing to remove and is skipped by geometry kind rather than paid
-  // for per row -- the same CASE getMetricAtDate uses to leave point layers untouched. The
-  // ELSE branch is what keeps a future finer or irregular cell servable.
-  const geometrySql = sql`CASE
-    WHEN g.geom_kind IN ('point', 'grid_cell') THEN g.geom
-    ELSE ST_SimplifyPreserveTopology(g.geom, ${tolerance})
-  END`;
-
-  // Values come back as text and are parsed by finiteNumber rather than cast in SQL: a
-  // single non-numeric JSONB value would make a `::double precision` in the projection
-  // abort the whole statement, whereas the reader's job is to drop that one cell. The one
-  // exception is `ndvi`, whose jsonb_typeof test in the WHERE clause is load-bearing for a
-  // different reason -- excluding a valueless cell there is what makes LIMIT count only
-  // cells that will be drawn.
-  //
-  // The DISTINCT ON sort casts `observedAt` to timestamptz, which is deterministic here
-  // because every stored value carries an explicit `Z`. NULLs cannot win the sort's default
-  // NULLS FIRST either: the same expression is filtered above, so a cell with no readable
-  // observation time never reaches the ranking.
-  const rows = await db.execute<VegetationCellRow>(sql`
-    WITH candidate AS (
-      SELECT f.geometry_id, f.properties
-      FROM geo.features f
-      WHERE f.layer_id = ${layerId}
-        AND f.status = 'published'
-        AND f.geometry_id IS NOT NULL
-        AND jsonb_typeof(f.properties->'ndvi') = 'number'
-        AND ${observationWindowSql}
-        AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
-    )
-    SELECT DISTINCT ON (c.geometry_id)
-      g.geometry_id::text AS geometry_id,
-      ST_AsGeoJSON(${geometrySql}) AS geometry,
-      c.properties->>'ndvi' AS ndvi,
-      c.properties->>'observedAt' AS observed_at,
-      c.properties->>'cellKey' AS cell_key,
-      c.properties->>'sceneId' AS scene_id,
-      c.properties->>'cloudCover' AS cloud_cover,
-      c.properties->>'sampleCount' AS sample_count,
-      c.properties->>'gridName' AS grid_name,
-      c.properties->>'resolutionMetres' AS resolution_metres,
-      c.properties->>'source' AS source,
-      COALESCE(c.properties->>'id', g.geometry_id::text) AS provenance_key
-    FROM candidate c
-    JOIN geo.geometry g ON g.geometry_id = c.geometry_id
-    ORDER BY c.geometry_id, (c.properties->>'observedAt')::timestamptz DESC
-    LIMIT ${VEGETATION_MAX_CELLS + 1}
-  `);
-
-  if (rows.length === 0) {
-    // Paid for only in the empty case, and only to tell two very different answers apart:
-    // a viewport the grid does not cover at all, versus one it covers where every cell has
-    // been under cloud longer than the window.
-    //
-    // THIS USED TO BE AN UNBOUNDED `MAX(properties->>'observedAt')` OVER THE WHOLE BBOXED
-    // VEGETATION HISTORY, and it fires in exactly the common case -- low zoom, or an old date --
-    // rather than the rare one. It is now two bounded halves in one round trip:
-    //
-    //   - COVERAGE: `EXISTS ... LIMIT 1` against the GiST index. That is the half that answers
-    //     "does the lattice reach this viewport at all", and it stops at the first row.
-    //   - RECENCY: `max(newest_observed_at)` off `geo.mv_feature_observation_day`, an indexed
-    //     range over ~1,460 rows on `uq_mv_feature_observation_day (surface_name, observed_day)`.
-    //
-    // Bounded to the requested day for a named day, as before: a cell first sampled AFTER that
-    // day says nothing about whether the grid covered the viewport then, and reporting it as the
-    // "newest observation" here would caption a never-sampled day as merely stale.
-    //
-    // ONE HONEST DIFFERENCE, stated rather than hidden: the recency half is now LANE-WIDE where
-    // it used to be viewport-wide. The census carries no geometry (deliberately -- see the
-    // rollup's own note on why cell polygons stay out of it), so for a covered viewport whose
-    // own cells are all under cloud, this caption can name an instant fresher than those cells
-    // carry. Measured 2026-08-05 that is at most a ~19-day overstatement on 65 of 1,568 cells;
-    // it moves a sentence, never a drawn value, and only on a viewport that already draws
-    // nothing. The coverage half -- which is the answer that changes `not_published` into
-    // `stale` -- is still exactly the viewport's own.
-    const newest = await db.execute<{ observed_at: string | null }>(sql`
-      SELECT to_char(
-               max(census.newest_observed_at) AT TIME ZONE 'UTC',
-               'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
-             ) AS observed_at
-      FROM geo.mv_feature_observation_day census
-      WHERE census.surface_name = ${VEGETATION_LAYER_ID}
-        ${
-          windowThroughDay === null
-            ? sql``
-            : sql`AND census.observed_day <= ${windowThroughDay}::date`
-        }
-        AND EXISTS (
-          SELECT 1
-          FROM geo.features f
-          WHERE f.layer_id = ${layerId}
-            AND f.status = 'published'
-            AND f.geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
-          LIMIT 1
-        )
-    `);
-    const newestObservedAt = parseZonedObservationTime(newest[0]?.observed_at);
-    return newestObservedAt === null
-      ? emptyVegetationCollection("not_published", null)
-      : emptyVegetationCollection("stale", newestObservedAt);
-  }
-
-  const collected: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>[] = [];
-  let newestObservedAt: string | null = null;
-  for (const row of rows.slice(0, VEGETATION_MAX_CELLS)) {
-    const ndvi = finiteNumber(row.ndvi);
-    const observedAt = parseZonedObservationTime(row.observed_at);
-    // Re-checked after the round trip because the cutoff above was computed before it.
-    const isWithinWindow =
-      windowThroughDay === null || windowAfterDay === null
-        ? observedAt !== null && isFreshObservation(observedAt, VEGETATION_MAX_AGE_MS)
-        : isObservedWithinNamedDays(row.observed_at, windowAfterDay, windowThroughDay);
-    if (
-      !row.geometry ||
-      row.geometry_id === null ||
-      ndvi === null ||
-      observedAt === null ||
-      !isWithinWindow
-    ) {
-      continue;
-    }
-    const properties: PublishedVegetationCellProperties = {
-      geometryId: row.geometry_id,
-      cellKey: row.cell_key ?? row.geometry_id,
-      ndvi,
-      observedAt,
-      sceneId: row.scene_id,
-      cloudCover: finiteNumber(row.cloud_cover),
-      sampleCount: finiteNumber(row.sample_count),
-      gridName: row.grid_name,
-      resolutionMetres: finiteNumber(row.resolution_metres),
-      source: row.source,
-      provenanceKey: row.provenance_key ?? row.geometry_id,
-    };
-    if (newestObservedAt === null || observedAt > newestObservedAt) {
-      newestObservedAt = observedAt;
-    }
-    collected.push({
-      type: "Feature",
-      id: row.geometry_id,
-      geometry: JSON.parse(row.geometry) as GeoJSON.Polygon | GeoJSON.MultiPolygon,
-      properties,
-    });
-  }
-
-  if (collected.length === 0) {
-    return emptyVegetationCollection("not_published", null);
-  }
-  return {
-    type: "FeatureCollection",
-    features: collected,
-    availability: "published",
-    observedAt: newestObservedAt,
-    reason: null,
-    truncated: rows.length > VEGETATION_MAX_CELLS,
-    cellCount: collected.length,
-    maxCellCount: VEGETATION_MAX_CELLS,
-    maxObservationAgeDays: VEGETATION_MAX_OBSERVATION_AGE_DAYS,
-  };
-}
-
 /* ---------------------------------------------------------------------------
  * Soil fields (ERA5-Land): volumetric soil water and soil temperature
  *
@@ -1610,8 +1254,8 @@ export const SOIL_FIELD_MAX_CELLS = 4_000;
 /**
  * How far back the newest reading may be and still be served for a requested day.
  *
- * The same 30 days vegetation uses, and for the same reason: a reanalysis archive lands in
- * batches, so refusing anything but an exact day-match would blank the layer between runs.
+ * Thirty days accommodates a reanalysis archive that lands in batches, so refusing anything
+ * but an exact day-match would blank the layer between runs.
  * A day older than this is reported as `stale` with the day it found, never drawn wearing
  * the requested date.
  */
@@ -1657,9 +1301,8 @@ const SOIL_FIELD_TIER_SETTINGS: Readonly<Record<ZoomGranularity, SoilFieldTierSe
 };
 
 /**
- * One drawn shape's properties. A type alias rather than an interface, for the same reason
- * `PublishedVegetationCellProperties` is one: only an alias picks up the implicit index
- * signature GeoJSON's `properties` slot needs.
+ * One drawn shape's properties. A type alias, rather than an interface, picks up the implicit
+ * index signature GeoJSON's `properties` slot needs.
  *
  * Every feature carries `value` at BOTH tiers -- a cell's measurement, or a band's
  * representative value -- so the map paints both with one fill expression instead of
@@ -2184,7 +1827,7 @@ export const CLIMATE_FIELD_MAX_CELLS = 512;
 /**
  * How far back the newest reading may be and still be served for a requested day.
  *
- * The same 30 days the soil field and vegetation use, and for the same reason: an archive
+ * The same 30 days the soil field uses, and for the same reason: an archive
  * lands in batches, so refusing anything but an exact day-match would blank the layer between
  * runs. A day older than this is reported as `stale` with the day it found, never drawn
  * wearing the requested date.

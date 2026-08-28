@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, Popup, GeoJSONSource } from "maplibre-gl";
 import type { GroundwaterWell, WaterGauge } from "@/lib/environmental/water";
+import type { WaterGaugeCell } from "@/lib/environmental/parquet-presentation";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { formatTimestampWithRelative, toIsoTimestamp } from "@/lib/map/time-format";
@@ -65,9 +66,13 @@ const TREND_ARROW: Record<string, string> = {
 const GAUGE_CIRCLE_OPACITY = 0.9;
 const WELL_CIRCLE_OPACITY = 0.85;
 
+/** Anonymous coarse-rung means are purple so they cannot be mistaken for named gauges. */
+const AGGREGATE_CELL_COLOR = "#7c3aed";
+
 interface WaterLayerProps {
   map: MapLibreMap | null;
   gauges?: WaterGauge[];
+  aggregateCells?: WaterGaugeCell[];
   wells?: GroundwaterWell[];
   onGaugeClick?: (gauge: WaterGauge) => void;
   onWellClick?: (well: GroundwaterWell) => void;
@@ -129,9 +134,31 @@ function buildWellGeoJSON(wells: GroundwaterWell[]): GeoJSON.FeatureCollection {
   };
 }
 
+function buildAggregateCellGeoJSON(cells: WaterGaugeCell[]): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: cells.map((cell, index) => ({
+      type: "Feature" as const,
+      id: `${cell.longitude}:${cell.latitude}:${cell.observedDay}:${index}`,
+      geometry: {
+        type: "Point" as const,
+        coordinates: [cell.longitude, cell.latitude],
+      },
+      properties: {
+        flowCfs: cell.flowCfs,
+        observedAt: cell.observedAt,
+        observedDay: cell.observedDay,
+        source: cell.source,
+        color: cell.flowCfs === null ? GAUGE_READING_COLORS.no_reading : AGGREGATE_CELL_COLOR,
+      },
+    })),
+  };
+}
+
 export function WaterLayer({
   map,
   gauges = [],
+  aggregateCells = [],
   wells = [],
   onGaugeClick,
   onWellClick,
@@ -144,11 +171,11 @@ export function WaterLayer({
   const wellOpacity = WELL_CIRCLE_OPACITY * opacityScale;
 
   // Keep latest data in refs for use inside style.load handlers
-  const dataRef = useRef({ gauges, wells, visible, gaugeOpacity, wellOpacity });
-  dataRef.current = { gauges, wells, visible, gaugeOpacity, wellOpacity };
+  const dataRef = useRef({ gauges, aggregateCells, wells, visible, gaugeOpacity, wellOpacity });
+  dataRef.current = { gauges, aggregateCells, wells, visible, gaugeOpacity, wellOpacity };
 
   const addPointLayers = useCallback((m: MapLibreMap) => {
-    const { gauges, wells, gaugeOpacity, wellOpacity } = dataRef.current;
+    const { gauges, aggregateCells, wells, gaugeOpacity, wellOpacity } = dataRef.current;
     const beforeId = getFirstSymbolLayer(m);
 
     // --- Gauge circles ---
@@ -171,6 +198,31 @@ export function WaterLayer({
           "circle-opacity": gaugeOpacity,
         },
       }, beforeId);
+    }
+
+    // --- Anonymous coarse-rung cells ---
+    const aggregateData = buildAggregateCellGeoJSON(aggregateCells);
+    if (!m.getSource("water-gauge-cells")) {
+      m.addSource("water-gauge-cells", { type: "geojson", data: aggregateData });
+    } else {
+      (m.getSource("water-gauge-cells") as GeoJSONSource).setData(aggregateData);
+    }
+    if (!m.getLayer("water-gauge-cells-circle")) {
+      m.addLayer(
+        {
+          id: "water-gauge-cells-circle",
+          type: "circle",
+          source: "water-gauge-cells",
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 0, 4, 9, 8, 13, 11],
+            "circle-color": ["get", "color"],
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#ffffff",
+            "circle-opacity": gaugeOpacity,
+          },
+        },
+        beforeId
+      );
     }
 
     // --- Well circles ---
@@ -198,6 +250,7 @@ export function WaterLayer({
 
   const removePointLayers = useCallback((m: MapLibreMap) => {
     safeRemoveLayerAndSource(m, ["water-gauges-circle"], "water-gauges");
+    safeRemoveLayerAndSource(m, ["water-gauge-cells-circle"], "water-gauge-cells");
     safeRemoveLayerAndSource(m, ["groundwater-wells-circle"], "groundwater-wells");
   }, []);
 
@@ -250,6 +303,17 @@ export function WaterLayer({
     source.setData(buildGaugeGeoJSON(gauges));
   }, [map, gauges, visible]);
 
+  // Update anonymous coarse cells independently from the named-gauge source.
+  useEffect(() => {
+    if (!map || !visible) return;
+    try { if (!map.getStyle()) return; } catch { return; }
+    const source = map.getSource("water-gauge-cells") as
+      | { setData: (d: GeoJSON.FeatureCollection) => void }
+      | undefined;
+    if (!source) return;
+    source.setData(buildAggregateCellGeoJSON(aggregateCells));
+  }, [map, aggregateCells, visible]);
+
   // Update well data when wells prop changes
   useEffect(() => {
     if (!map || !visible) return;
@@ -269,6 +333,9 @@ export function WaterLayer({
     try { if (!map.getStyle()) return; } catch { return; }
     if (map.getLayer("water-gauges-circle")) {
       map.setPaintProperty("water-gauges-circle", "circle-opacity", gaugeOpacity);
+    }
+    if (map.getLayer("water-gauge-cells-circle")) {
+      map.setPaintProperty("water-gauge-cells-circle", "circle-opacity", gaugeOpacity);
     }
     if (map.getLayer("groundwater-wells-circle")) {
       map.setPaintProperty("groundwater-wells-circle", "circle-opacity", wellOpacity);
@@ -319,6 +386,40 @@ export function WaterLayer({
       map.off("click", "water-gauges-circle", handleGaugeClick);
     };
   }, [map, gauges, onGaugeClick, visible]);
+
+  // Coarse-cell popup: calls the value a mean and deliberately offers no gauge identity.
+  useEffect(() => {
+    if (!map || !visible) return;
+
+    function handleAggregateClick(
+      e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }
+    ) {
+      if (!map || !e.features?.length) return;
+      const props = e.features[0].properties as Record<string, unknown>;
+      import("maplibre-gl").then(({ Popup }) => {
+        if (popupRef.current) popupRef.current.remove();
+        const flow = finiteNumber(props.flowCfs);
+        const measured = formatTimestampWithRelative(toIsoTimestamp(props.observedAt));
+        const html = `
+          <div style="font-size:12px;min-width:180px">
+            <strong style="display:block;margin-bottom:4px">Coarse streamflow cell</strong>
+            <div>Mean discharge: <strong>${flow !== null ? `${escapeHtml(flow.toFixed(1))} cfs` : "not reported"}</strong></div>
+            ${measured ? `<div class="map-popup-meta">Newest reading: ${escapeHtml(measured)}</div>` : ""}
+            <div class="map-popup-meta">Several gauges may contribute; no single gauge identity applies.</div>
+          </div>
+        `;
+        popupRef.current = new Popup({ closeButton: true, maxWidth: "260px" })
+          .setLngLat(e.lngLat)
+          .setHTML(html)
+          .addTo(map);
+      });
+    }
+
+    map.on("click", "water-gauge-cells-circle", handleAggregateClick);
+    return () => {
+      map.off("click", "water-gauge-cells-circle", handleAggregateClick);
+    };
+  }, [map, visible]);
 
   // Well click popup
   useEffect(() => {

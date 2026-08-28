@@ -14,10 +14,17 @@ import {
   useLayerDay,
   useLayerRenderState,
 } from "@/lib/map/layer-toggle-context";
+import {
+  presentParquetDrought,
+  presentParquetWater,
+  type ParquetBrowserReaderResult,
+} from "@/lib/environmental/parquet-presentation";
 
 interface WaterDetailsProps {
   /** The map's viewport, from the one `useViewportBounds()` derivation LayerManager reads. */
   bbox?: string;
+  /** The same viewport zoom LayerManager uses to select the Parquet serving rung. */
+  zoom: number;
 }
 
 // The gauge layer's geo.layers name lives in the layer registry ("water" -> "water-gauges").
@@ -26,30 +33,22 @@ interface WaterDetailsProps {
 /** Rows rendered in the watershed list; the header states the full count beside it. */
 const WATERSHED_LIST_LIMIT = 50;
 
-/**
- * Why the drought layer is empty, in the reader's own vocabulary. Keyed by
- * `PublishedDroughtCollection.reason` in
- * `src/lib/server/services/environmental-read-model.ts`, which is the source of truth for
- * these codes; an unrecognised one falls back rather than rendering a blank warning.
- *
- * A skipped release week is NOT a fault and must not read as one: the ingest lane recorded
- * that USDM published nothing that week, and the map is required to render it empty rather
- * than carry the previous week forward over it.
- */
-const DROUGHT_UNAVAILABLE_COPY: Record<string, string> = {
-  not_published: "No US Drought Monitor release covers the selected date.",
-  release_week_not_published:
-    "The US Drought Monitor published no release for this week, so nothing is drawn — the preceding week is deliberately not carried over it.",
-  stale:
-    "The newest stored US Drought Monitor release is too old to describe the selected date.",
-  not_forecastable: "Drought classification is not forecast beyond today.",
-  invalid_observation_time:
-    "The stored US Drought Monitor release carries no readable date, so it is not drawn.",
-};
-
-/** Fallback when the reader reports a code this panel has no sentence for. */
-const DROUGHT_UNAVAILABLE_FALLBACK =
-  "No US Drought Monitor classification is available for the selected date.";
+/** Makes every non-ready Parquet state visible without collapsing gaps into absences. */
+function parquetStateNotice(
+  result: ParquetBrowserReaderResult<unknown> | undefined,
+  subject: string
+): string | null {
+  if (result === undefined || result.state === "ready") return null;
+  if (result.state === "absent") {
+    return `${subject} has a governed absence for ${result.servedDay}: ${result.evidence.reason}. Nothing is drawn.`;
+  }
+  if (result.state === "not_generated") {
+    return result.reason === "day_not_written"
+      ? `No Parquet partition or governed absence was written for ${subject} on ${result.requestedDay}. This is a record gap, not evidence that no observations occurred.`
+      : `The ${subject} Parquet lane has never been generated. Nothing is drawn.`;
+  }
+  return `The private Parquet reader for ${subject} is unavailable (${result.fault.kind}). No PostgreSQL fallback was used.`;
+}
 
 /**
  * Discharge, at the precision the reading carries. Small flows are the ones a single decimal
@@ -100,7 +99,7 @@ function ColorSwatch({ color, label }: { color: string; label: string }) {
  * costs no query at all. The five `<LayerToggle>` rows went with the sheet -- the section's own
  * layer rows are the switches.
  */
-export function WaterDetails({ bbox }: WaterDetailsProps) {
+export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
   // TWO days, because this section describes two layers and each carries its own slider on its
   // own row since 2026-08-09. They are the same settled days LayerManager sends for the same
   // toggles, so each tab and the map it describes share one cache entry rather than asking the
@@ -110,14 +109,13 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
   const droughtDay = useDebouncedLayerDay("drought");
 
   const streamflowQuery = trpc.environmental.getStreamflow.useQuery(
-    { bbox: bbox ?? "", date: waterDay.requestDate },
+    { bbox: bbox ?? "", date: waterDay.requestDate, zoom },
     { enabled: !!bbox }
   );
 
-  // tRPC keys `undefined` input differently from an object, so the dateless case must stay
-  // literally undefined rather than becoming `{ date: undefined }`.
   const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(
-    droughtDay.requestDate === undefined ? undefined : { date: droughtDay.requestDate }
+    { bbox, date: droughtDay.requestDate, zoom },
+    { enabled: !!bbox }
   );
 
   // The same hook LayerManager calls, so the boundaries this tab lists are the ones the
@@ -138,14 +136,18 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
   const hasAnySelectedDay = gaugeSelectedDate !== null || droughtSelectedDate !== null;
   // The release actually served, which for a weekly product is on or before the drought day.
   const droughtReleaseDate =
-    droughtQuery.data?.observedAt?.slice(0, 10) ?? null;
+    droughtQuery.data?.state === "ready" ? droughtQuery.data.servedDay : null;
 
   // The gauge layer's own availability at that day; the context names it "water-gauges".
-  const gaugeReason = useLayerRenderState("water").unavailableReason;
+  const capabilityGaugeReason = useLayerRenderState("water").unavailableReason;
 
-  const gauges = streamflowQuery.data ?? [];
+  const waterPresentation = presentParquetWater(streamflowQuery.data);
+  const { gauges, cells: gaugeCells, unlocatedRows } = waterPresentation;
+  const gaugeStateNotice = parquetStateNotice(streamflowQuery.data, "streamflow");
+  const gaugeReason =
+    gaugeStateNotice ?? (streamflowQuery.data === undefined ? capabilityGaugeReason : null);
   const watersheds = watershedQuery.data?.features ?? [];
-  const droughtUnavailable = droughtQuery.data?.availability === "unavailable";
+  const droughtStateNotice = parquetStateNotice(droughtQuery.data, "drought classification");
   const watershedsUnavailable =
     watershedQuery.data?.availability === "unavailable";
   // USGS stops at its transfer limit and says so. The count below then describes a
@@ -170,7 +172,7 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
           Math.floor((reportingGauges.length - 1) / 2)
         ].flowCfs;
 
-  const droughtFeatures = droughtQuery.data?.features ?? [];
+  const droughtFeatures = presentParquetDrought(droughtQuery.data).features;
   const dmCounts: Record<number, number> = {};
   for (const f of droughtFeatures) {
     const dm = (f.properties as Record<string, unknown>)?.DM as number | undefined;
@@ -268,7 +270,23 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
 
             {streamflowQuery.isError && (
               <p className="text-xs text-red-500" role="alert">
-                Verified USGS gauge data is temporarily unavailable. No synthetic readings are shown.
+                The private Parquet request failed before returning a typed state. No PostgreSQL or
+                synthetic fallback is shown.
+              </p>
+            )}
+
+            {streamflowQuery.data?.state === "ready" && streamflowQuery.data.truncated && (
+              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                The Parquet row budget was reached. The gauges and coarse cells below are a subset
+                of this viewport.
+              </p>
+            )}
+
+            {unlocatedRows > 0 && (
+              <p className="rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                {unlocatedRows} published streamflow {unlocatedRows === 1 ? "row has" : "rows have"}
+                no coordinates and cannot be placed on the map. The observations were retained,
+                not treated as absent.
               </p>
             )}
 
@@ -321,12 +339,44 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
               </>
             )}
 
-            {!streamflowQuery.isLoading && gauges.length === 0 && bbox && !streamflowQuery.isError && (
-              <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                No recent verified USGS streamflow observations are available
-                in the current view.
-              </p>
+            {!streamflowQuery.isLoading && gaugeCells.length > 0 && (
+              <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                <p className="text-xs font-semibold mb-1 text-[hsl(var(--foreground))]">
+                  Coarse streamflow cells ({gaugeCells.length})
+                </p>
+                <p className="mb-2 text-[10px] text-[hsl(var(--muted-foreground))]">
+                  Each point is a cell-centroid mean across contributing gauges. It is not a
+                  named gauge or a fabricated gauge location.
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  {gaugeCells.slice(0, 50).map((cell, index) => (
+                    <div
+                      key={`${cell.longitude}:${cell.latitude}:${cell.observedDay}:${index}`}
+                      className="flex items-center justify-between gap-2 text-xs"
+                    >
+                      <span className="text-[hsl(var(--foreground))] truncate flex-1 tabular-nums">
+                        {cell.latitude.toFixed(3)}, {cell.longitude.toFixed(3)}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-[hsl(var(--foreground))] font-medium">
+                        {cell.flowCfs === null ? "not reported" : `${formatCfs(cell.flowCfs)} mean cfs`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
+
+            {!streamflowQuery.isLoading &&
+              streamflowQuery.data?.state === "ready" &&
+              gauges.length === 0 &&
+              gaugeCells.length === 0 &&
+              bbox &&
+              !streamflowQuery.isError && (
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                  The published Parquet answer contains no locatable streamflow observations in
+                  the current view.
+                </p>
+              )}
           </TabsContent>
 
           {/* Drought tab */}
@@ -343,7 +393,15 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
 
             {droughtQuery.isError && (
               <p className="text-xs text-red-500" role="alert">
-                Verified drought data is temporarily unavailable. No synthetic classifications are shown.
+                The private Parquet request failed before returning a typed state. No PostgreSQL or
+                synthetic fallback is shown.
+              </p>
+            )}
+
+            {droughtQuery.data?.state === "ready" && droughtQuery.data.truncated && (
+              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
+                The Parquet row budget was reached. The drought areas below are a subset of the
+                release intersecting this viewport.
               </p>
             )}
 
@@ -413,10 +471,9 @@ export function WaterDetails({ bbox }: WaterDetailsProps) {
               </>
             )}
 
-            {!droughtQuery.isLoading && droughtUnavailable && !droughtQuery.isError && (
+            {!droughtQuery.isLoading && droughtStateNotice !== null && !droughtQuery.isError && (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
-                {DROUGHT_UNAVAILABLE_COPY[droughtQuery.data?.reason ?? ""] ??
-                  DROUGHT_UNAVAILABLE_FALLBACK}
+                {droughtStateNotice}
               </p>
             )}
           </TabsContent>

@@ -58,9 +58,9 @@ function ndviEncodingVisibility(
 interface VegetationLayerProps {
   map: MapLibreMap | null;
   /**
-   * Measured NDVI cells read from the warehouse, one per sampling-grid square, each
-   * carrying an `ndvi` number in its properties. Empty -- never null -- when the layer is
-   * switched off or the viewport holds none, so `setData` has something to clear with.
+   * Measured NDVI supports read from the warehouse. The private Parquet plane currently
+   * supplies honest point supports; legacy polygon supports remain renderable without
+   * manufacturing a footprint for either representation.
    */
   geojson?: GeoJSON.FeatureCollection | null;
   mode?: VegetationMode;
@@ -95,6 +95,7 @@ const NBR_LAYER_ID = "nbr-recovery-layer";
 const NDVI_CELL_SOURCE_ID = "vegetation-ndvi-cells";
 const NDVI_CELL_FILL_LAYER_ID = "vegetation-ndvi-cells-fill";
 const NDVI_CELL_OUTLINE_LAYER_ID = "vegetation-ndvi-cells-outline";
+const NDVI_CELL_POINT_LAYER_ID = "vegetation-ndvi-cells-point";
 
 /** Cell-boundary cue, deliberately independent of the reader's opacity. */
 const CELL_OUTLINE_OPACITY = 0.35;
@@ -158,6 +159,7 @@ export function VegetationLayer({
   // The one value every paint below is written from: the authored strength times the reader's
   // multiplier. Computed once here so the attach path and the update effect cannot drift.
   const drawnOpacity = opacity * opacityScale;
+  const pointStrokeOpacity = CELL_OUTLINE_OPACITY * opacityScale;
 
   // Keep latest prop values in refs so the style.load handler always uses current values
   const propsRef = useRef({
@@ -169,6 +171,7 @@ export function VegetationLayer({
     ndviMode,
     showNDWI,
     drawnOpacity,
+    pointStrokeOpacity,
     visible,
   });
   propsRef.current = {
@@ -180,11 +183,22 @@ export function VegetationLayer({
     ndviMode,
     showNDWI,
     drawnOpacity,
+    pointStrokeOpacity,
     visible,
   };
 
   const addAllLayers = useCallback((m: MapLibreMap) => {
-    const { geojson, mode, source, year, month, ndviMode, showNDWI, drawnOpacity } =
+    const {
+      geojson,
+      mode,
+      source,
+      year,
+      month,
+      ndviMode,
+      showNDWI,
+      drawnOpacity,
+      pointStrokeOpacity,
+    } =
       propsRef.current;
     const beforeId = getFirstSymbolLayer(m);
     const { satelliteRaster, measuredCells } = ndviEncodingVisibility(mode, source);
@@ -279,6 +293,7 @@ export function VegetationLayer({
         id: NDVI_CELL_FILL_LAYER_ID,
         type: "fill",
         source: NDVI_CELL_SOURCE_ID,
+        filter: ["==", ["geometry-type"], "Polygon"],
         layout: { visibility: measuredCells },
         paint: {
           "fill-color": NDVI_CELL_FILL_COLOR,
@@ -291,6 +306,7 @@ export function VegetationLayer({
         id: NDVI_CELL_OUTLINE_LAYER_ID,
         type: "line",
         source: NDVI_CELL_SOURCE_ID,
+        filter: ["==", ["geometry-type"], "Polygon"],
         layout: { visibility: measuredCells },
         paint: {
           "line-color": "#1b3a1b",
@@ -301,6 +317,26 @@ export function VegetationLayer({
         },
       }, beforeId);
     }
+    if (!m.getLayer(NDVI_CELL_POINT_LAYER_ID)) {
+      m.addLayer(
+        {
+          id: NDVI_CELL_POINT_LAYER_ID,
+          type: "circle",
+          source: NDVI_CELL_SOURCE_ID,
+          filter: ["==", ["geometry-type"], "Point"],
+          layout: { visibility: measuredCells },
+          paint: {
+            "circle-color": NDVI_CELL_FILL_COLOR,
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 0, 3, 9, 6, 13, 9],
+            "circle-opacity": drawnOpacity,
+            "circle-stroke-width": 1,
+            "circle-stroke-color": "#1b3a1b",
+            "circle-stroke-opacity": pointStrokeOpacity,
+          },
+        },
+        beforeId
+      );
+    }
   }, []);
 
   const removeAllLayers = useCallback((m: MapLibreMap) => {
@@ -309,7 +345,7 @@ export function VegetationLayer({
     safeRemoveLayerAndSource(m, [NBR_LAYER_ID], "nbr-recovery");
     safeRemoveLayerAndSource(
       m,
-      [NDVI_CELL_FILL_LAYER_ID, NDVI_CELL_OUTLINE_LAYER_ID],
+      [NDVI_CELL_FILL_LAYER_ID, NDVI_CELL_OUTLINE_LAYER_ID, NDVI_CELL_POINT_LAYER_ID],
       NDVI_CELL_SOURCE_ID
     );
   }, []);
@@ -404,7 +440,28 @@ export function VegetationLayer({
       map.setLayoutProperty(NDVI_CELL_OUTLINE_LAYER_ID, "visibility", measuredCells);
       map.setPaintProperty(NDVI_CELL_OUTLINE_LAYER_ID, "line-opacity", CELL_OUTLINE_OPACITY);
     }
-  }, [map, geojson, year, month, ndviMode, mode, source, showNDWI, drawnOpacity, visible]);
+    if (map.getLayer(NDVI_CELL_POINT_LAYER_ID)) {
+      map.setLayoutProperty(NDVI_CELL_POINT_LAYER_ID, "visibility", measuredCells);
+      map.setPaintProperty(NDVI_CELL_POINT_LAYER_ID, "circle-opacity", drawnOpacity);
+      map.setPaintProperty(
+        NDVI_CELL_POINT_LAYER_ID,
+        "circle-stroke-opacity",
+        pointStrokeOpacity
+      );
+    }
+  }, [
+    map,
+    geojson,
+    year,
+    month,
+    ndviMode,
+    mode,
+    source,
+    showNDWI,
+    drawnOpacity,
+    pointStrokeOpacity,
+    visible,
+  ]);
 
   return null;
 }
