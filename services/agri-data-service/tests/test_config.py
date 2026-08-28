@@ -107,6 +107,27 @@ def test_production_database_profiles_require_explicit_nonshared_dsns() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("profile", "field_name", "resolver_name"),
+    [
+        ("receiver_writer", "receiver_writer_database_url", "require_receiver_writer_database_url"),
+        ("published_reader", "published_reader_database_url", "require_published_reader_database_url"),
+    ],
+)
+def test_production_database_profiles_reject_the_legacy_railway_database(
+    profile: str,
+    field_name: str,
+    resolver_name: str,
+) -> None:
+    configured = _settings(
+        service_profile=profile,
+        **{field_name: "postgresql://app:password@postgres.railway.internal:5432/railway"},
+    )
+
+    with pytest.raises(ValueError, match="must target the plantgeo database"):
+        getattr(configured, resolver_name)()
+
+
 def test_combined_local_database_url_is_explicit_and_profile_bound() -> None:
     with pytest.raises(ValueError, match="requires DATABASE_URL"):
         _settings().require_combined_local_database_url()

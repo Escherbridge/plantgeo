@@ -12,6 +12,7 @@ _MAX_PUBLISH_OUTPUTS = 1_000
 _MIN_TOKEN_LENGTH = 32
 _MIN_TOKEN_DIVERSITY = 10
 _BUCKET_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$")
+_PRODUCTION_DATABASE_NAME = "plantgeo"
 
 
 class ObjectStoreCredentials(BaseModel):
@@ -93,7 +94,10 @@ class Settings(BaseSettings):
             raise ValueError(f"{field_name} is available only for the {required_profile} service profile")
         if not value:
             raise ValueError(f"{required_profile} service profile requires {field_name}")
-        return self._require_complete_database_url(value, field_name)
+        resolved = self._require_complete_database_url(value, field_name)
+        if urlsplit(resolved).path != f"/{_PRODUCTION_DATABASE_NAME}":
+            raise ValueError(f"{field_name} must target the {_PRODUCTION_DATABASE_NAME} database")
+        return resolved
 
     @staticmethod
     def _require_complete_database_url(value: str, field_name: str) -> str:
