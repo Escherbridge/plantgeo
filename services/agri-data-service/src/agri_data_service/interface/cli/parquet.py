@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from agri_data_service.parquet_ops.warehouse_reader import PartitionRowReader
 
 _ROW_READ_TIMEOUT_SECONDS = 14.0
-_COVERAGE_TIMEOUT_SECONDS = 19.0
+_COVERAGE_TIMEOUT_SECONDS = 29.0
 
 
 @click.group()

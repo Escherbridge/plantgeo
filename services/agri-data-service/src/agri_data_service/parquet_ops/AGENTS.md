@@ -27,8 +27,10 @@ Five behaviours the contract encodes, and where each one lives:
 4. **Days are ISO string prefixes** — `wire.render_day` is `date.isoformat()` and
    `request_params.parse_calendar_day` refuses anything carrying a `T` or a `Z` rather than
    truncating it. Nothing in this directory converts a zone near a `*_day` value.
-5. **Coverage is per lane and tier-agnostic** — `coverage.build_lane_coverage` unions the four
-   published tiers before it decides anything, and a lane with no written data reports `null` bounds.
+5. **Coverage proves each physical rung independently** — `(layer, kind, zoom)` is the row identity;
+   no rung borrows history from another, and a never-written rung reports `null` bounds. The census
+   includes the 11 direct slider lanes plus the 15 schema-backed dedicated climate/soil prefixes.
+   Catalogue products without a serving schema stay unregistered and therefore cannot be proven.
 
 ## Why the memory ceiling is not advisory
 
@@ -163,31 +165,37 @@ every published day after it are marked `truncated`. A day whose rows were never
 - `window` lists the one or two months its range touches.
 - `release` walks back year by year, bounded by `RELEASE_LOOKBACK_YEARS`, and stops at the first year
   holding a resolvable day.
-- `coverage` is the expensive one — thirteen lanes × four tiers of whole-tier listings — and is the
+- `coverage` is the expensive one — one whole-stream listing for every direct and schema-backed
+  product lane, bucketed into four exact rungs locally — and is the
   only thing memoized (`CoverageCache`, 120 s, under the client's own 300 s revalidation). Nothing
   else caches, so no row read can report a day as thinner than the warehouse holds.
 
-The 52 cold tier listings use exactly three workers. This is network-only concurrency: coverage
+Cold stream listings use exactly three workers. This is network-only concurrency: coverage
 opens no DuckDB session, and the separate three-session × 1.2 GB DuckDB ceiling does not move. Each
-tier is consumed as an iterator and charges the one locked 600,000-key census budget before retaining
+stream is consumed as an iterator and charges the one locked 600,000-key census budget before retaining
 a key, so concurrent listings cannot multiply the aggregate memory allowance. Measured against
-production R2 on 2026-08-28, the unchanged 52-prefix walk covered 121,386 keys in 16.27 s at this
-ceiling, versus the route's reproduced 20.9 s serial cold failure.
+production R2 on 2026-08-28, the pre-product 52-prefix walk covered 121,386 keys in 16.27 s at this
+ceiling. The slider census now makes 26 stream-prefix calls (11 direct plus 15 products) and emits
+104 independent rung rows while keeping the same aggregate key refusal and bounded worker fan-out.
 
 The census carries three bounds a memo alone does not give it, all in `coverage.py`:
 
 - **Single-flight.** `MAX_LISTED_KEYS_PER_REQUEST` bounds one listing; a memo bounds repeat work
-  *after* the first answer exists. Without a lock, N cold page loads each start a full 52-listing
+  *after* the first answer exists. Without a lock, N cold page loads each start a full stream-prefix
   walk. `CoverageCache` holds a `threading.Lock` — not `asyncio`, because `get` runs inside the
   route's pool thread — and a queued caller re-checks the memo before building. This mirrors the
   guard `environmental-read-model.getSliderCapabilities` already has.
 - **An aggregate key budget.** `MAX_CENSUS_LISTED_KEYS` is spent across every listing of ONE census
   through `_BudgetedListing`; exhausting it refuses the whole census, because a partial one would
   report the lanes it never reached as absent.
-- **Stale beats nothing.** A refresh that raises serves the previous census rather than turning a
-  census the warehouse earned into a whole-map absence claim; `generated_at` states its age. When a
-  refresh is already in flight and a previous census exists, callers are handed it immediately
-  instead of blocking a pool thread. The FIRST census has nothing to fall back to, so it raises.
+- **Expired evidence proves nothing.** Once the TTL passes, callers block behind the one refresh,
+  then re-check for its fresh result. A failed refresh is propagated to every queued caller; the
+  previous census is retained only so requests whose own `now` is still inside its TTL can reuse it.
+  This keeps a listing outage from silently publishing a capability on stale readability evidence.
+
+Every census also freezes `evaluated_through_day`, the UTC date through which its cadence, lag, and
+absence rules ran. It is distinct from the diagnostic `generated_at` instant so a downstream cache
+that crosses UTC midnight can fail closed instead of treating yesterday's silence as today's proof.
 
 `lane_never_written` is asked of the RESOLVED TIER, not of the lane as a whole. Today the coarse
 rungs (z9/z5/z0) are unbuilt for most lanes, so a z5 request honestly answers `lane_never_written` —

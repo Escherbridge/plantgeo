@@ -106,9 +106,10 @@ def test_no_fixture_carries_a_timezone_bearing_day() -> None:
 
 def test_a_never_written_lane_reports_null_bounds() -> None:
     """`soil-survey` has 238,986 source rows and 0 written; the census must say so, not guess a day."""
-    lanes = {lane["layer"]: lane for lane in load("coverage.json")["lanes"]}
-    assert lanes["soil-survey"]["earliest_day"] is None
-    assert lanes["soil-survey"]["latest_day"] is None
+    lanes = [lane for lane in load("coverage.json")["lanes"] if lane["layer"] == "soil-survey"]
+    assert {lane["zoom"] for lane in lanes} == {0, 5, 9, 13}
+    assert all(lane["earliest_day"] is None for lane in lanes)
+    assert all(lane["latest_day"] is None for lane in lanes)
 
 
 def test_the_typescript_client_still_agrees_with_this_contract() -> None:

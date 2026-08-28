@@ -1,4 +1,4 @@
-"""The tier-agnostic warehouse census shared by every Parquet operation adapter."""
+"""The exact physical-lane and zoom-rung census shared by Parquet adapters."""
 
 from __future__ import annotations
 
@@ -9,13 +9,12 @@ from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from typing import TYPE_CHECKING, Final
 
-import structlog
-
 from agri_data_service.foundation.parquet.lane_contract import nature_has_time_axis, nature_permits_cadence
+from agri_data_service.foundation.parquet.paths import zoom_prefix
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.serving import day_status_sets
-from agri_data_service.parquet_ops.wire import LaneCoverage, WarehouseCoverage, contiguous_ranges
+from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage, contiguous_ranges
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS
 
 if TYPE_CHECKING:
@@ -27,21 +26,42 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.parquet_ops.warehouse_reader import WarehouseListing
 
-logger = structlog.get_logger()
-
 #: How long one census answer is reused. The client caches for 300 s on top of this; the server-side
-#: memo is what stops a burst of cold page loads each paying 52 whole-tier listings.
+#: memo is what stops a burst of cold page loads each paying every whole-stream listing.
 CENSUS_CACHE_SECONDS: Final = 120
 
 #: Every key ONE census may walk, summed across its lanes and tiers.
 #: `warehouse_reader.MAX_LISTED_KEYS_PER_REQUEST` bounds a SINGLE listing at 200,000 and the census
-#: makes thirteen lanes x four tiers of them, so nothing bounded the total. The bound is roughly four
-#: times the census the registry's own day counts imply (fire-detections' ~9,400 days dominate it),
-#: which leaves room to grow and still refuses a walk that has plainly lost.
+#: spans registered and dedicated-product lanes across four tiers, so nothing else bounds the total.
+#: The existing ceiling remains fail-closed: an expanded product census that exceeds it refuses the
+#: whole answer instead of presenting a partial layer matrix as complete.
 MAX_CENSUS_LISTED_KEYS: Final = 600_000
 
 #: Coverage owns no DuckDB connection; this separately bounds its R2 network fan-out on a cold read.
 CENSUS_LIST_WORKERS: Final = 3
+
+# Dedicated slider products are physical warehouse prefixes even though they are not direct-ingest
+# registrations. Missing expected prefixes remain in the census with null bounds, which is evidence
+# to withhold their capability rather than permission to fall back to another store.
+DEDICATED_SLIDER_PRODUCT_LAYERS: Final[tuple[str, ...]] = (
+    "climate-field-air-temperature-max",
+    "climate-field-air-temperature-mean",
+    "climate-field-air-temperature-min",
+    "climate-field-precipitation",
+    "climate-field-relative-humidity",
+    "climate-field-shortwave-radiation",
+    "climate-field-wind-speed",
+    "soil-field-moisture-0-7cm",
+    "soil-field-moisture-28-100cm",
+    "soil-field-moisture-7-28cm",
+    "soil-field-vpd",
+    "soil-temperature-0-to-7cm",
+    "soil-temperature-100-to-255cm",
+    "soil-temperature-28-to-100cm",
+    "soil-temperature-7-to-28cm",
+)
+
+NON_SLIDER_REGISTERED_LAYERS: Final = frozenset({"calendar", "signal"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,14 +78,14 @@ class CensusLane:
 
 
 def registered_census_lanes() -> tuple[CensusLane, ...]:
-    """Return the observed stream of every registered lane, in registry order.
+    """Return direct slider streams plus every schema-backed dedicated slider product.
 
     OBSERVED ONLY, deliberately. The slider's capability rows are keyed by layer name and resolve to
     the FIRST match, so a second row per lane for `kind=forecast` would make which axis a layer draws
     depend on array order. `kind` stays on the wire so a forecast census can be added behind a
     caller that asks for one, rather than being smuggled into the list this one shares.
     """
-    return tuple(
+    registered = tuple(
         CensusLane(
             layer=registration.slug,
             nature=registration.nature,
@@ -74,18 +94,33 @@ def registered_census_lanes() -> tuple[CensusLane, ...]:
             publication_lag_days=registration.publication_lag_days,
         )
         for registration in LANE_REGISTRATIONS
+        if registration.slug not in NON_SLIDER_REGISTERED_LAYERS
     )
+    registered_layers = {lane.layer for lane in registered}
+    derived = tuple(
+        CensusLane(layer=layer, nature="daily_series", kind="observed")
+        for layer in DEDICATED_SLIDER_PRODUCT_LAYERS
+        if layer not in registered_layers
+    )
+    return registered + derived
 
 
-def build_lane_coverage(listing: WarehouseListing, *, lane: CensusLane, today: date) -> LaneCoverage:
-    """Census one lane across every published tier, closing its ranges against the live edge."""
-    data_days, absent_days = _written_days(listing, lane=lane)
-    return _lane_coverage(lane=lane, today=today, data_days=data_days, absent_days=absent_days)
+def build_lane_coverage(
+    listing: WarehouseListing,
+    *,
+    lane: CensusLane,
+    tier: ZoomTier,
+    today: date,
+) -> LaneCoverage:
+    """Census one physical lane rung, closing its ranges against the live edge."""
+    data_days, absent_days = _tier_days(listing, lane=lane, tier=tier)
+    return _lane_coverage(lane=lane, tier=tier, today=today, data_days=set(data_days), absent_days=set(absent_days))
 
 
 def _lane_coverage(
     *,
     lane: CensusLane,
+    tier: ZoomTier,
     today: date,
     data_days: set[date],
     absent_days: set[date],
@@ -94,20 +129,28 @@ def _lane_coverage(
     if not data_days:
         # Never written: `null` bounds, and no ranges. A slider must not mount an axis over a lane
         # whose span is a guess -- `soil-survey` has 238,986 source rows and 0 written objects.
-        return _bounded(lane, earliest_day=None, latest_day=None)
+        return _bounded(lane, tier=tier, earliest_day=None, latest_day=None, published_ranges=())
     earliest_day = min(data_days)
     latest_day = max(data_days)
     if not nature_has_time_axis(lane.nature):
         # A `static_lookup`'s partition day is a VERSION STAMP, not an observation day, so no day
         # between two versions ever carried an obligation to exist. Ranging over them would report
         # every reference lane as one enormous gap and gray out a slider that has no axis to scrub.
-        return _bounded(lane, earliest_day=earliest_day, latest_day=latest_day)
+        return _bounded(
+            lane,
+            tier=tier,
+            earliest_day=earliest_day,
+            latest_day=latest_day,
+            published_ranges=contiguous_ranges(data_days),
+        )
     return LaneCoverage(
         layer=lane.layer,
         nature=lane.nature,
         kind=lane.kind,
+        zoom=tier,
         earliest_day=earliest_day,
         latest_day=latest_day,
+        published_ranges=contiguous_ranges(data_days),
         gap_ranges=contiguous_ranges(_owed_but_unwritten(data_days | absent_days, lane=lane, today=today)),
         governed_absence_ranges=contiguous_ranges(
             day for day in absent_days if day >= earliest_day and day not in data_days
@@ -125,34 +168,33 @@ def build_coverage(
     today = generated_at.astimezone(UTC).date()
     budgeted = _BudgetedListing(inner=listing, budget=_CensusKeyBudget(MAX_CENSUS_LISTED_KEYS))
     if not lanes:
-        return WarehouseCoverage(generated_at=generated_at, lanes=())
-    jobs = tuple((index, lane, tier) for index, lane in enumerate(lanes) for tier in ZOOM_TIERS)
+        return WarehouseCoverage(generated_at=generated_at, evaluated_through_day=today, lanes=())
+    jobs = tuple(enumerate(lanes))
     with ThreadPoolExecutor(
         max_workers=min(CENSUS_LIST_WORKERS, len(jobs)),
         thread_name_prefix="parquet-coverage-list",
     ) as pool:
-        futures = tuple(pool.submit(_tier_days, budgeted, lane=lane, tier=tier) for _index, lane, tier in jobs)
+        futures = tuple(pool.submit(_stream_tier_days, budgeted, lane=lane) for _index, lane in jobs)
         done, pending = wait(futures, return_when=FIRST_EXCEPTION)
         failed = next((future for future in done if future.exception() is not None), None)
         if failed is not None:
             for future in pending:
                 future.cancel()
             failed.result()
-        tier_facts = tuple(future.result() for future in futures)
-    accumulated: list[tuple[set[date], set[date]]] = [(set(), set()) for _lane in lanes]
-    for (index, _lane, _tier), (data_days, absent_days) in zip(jobs, tier_facts, strict=True):
-        accumulated[index][0].update(data_days)
-        accumulated[index][1].update(absent_days)
+        stream_facts = tuple(future.result() for future in futures)
     return WarehouseCoverage(
         generated_at=generated_at,
+        evaluated_through_day=today,
         lanes=tuple(
             _lane_coverage(
                 lane=lane,
+                tier=tier,
                 today=today,
-                data_days=accumulated[index][0],
-                absent_days=accumulated[index][1],
+                data_days=set(data_days),
+                absent_days=set(absent_days),
             )
-            for index, lane in enumerate(lanes)
+            for (_index, lane), facts in zip(jobs, stream_facts, strict=True)
+            for tier, (data_days, absent_days) in zip(ZOOM_TIERS, facts, strict=True)
         ),
     )
 
@@ -163,8 +205,9 @@ class CoverageCache:
     def __init__(self, ttl_seconds: int = CENSUS_CACHE_SECONDS) -> None:
         self._ttl = timedelta(seconds=ttl_seconds)
         self._held: WarehouseCoverage | None = None
+        self._last_failure: Exception | None = None
         # `threading`, not `asyncio`: `get` runs inside the route's worker thread. Without it, every
-        # cold page load in a burst started its own 52-listing walk -- the cost the memo exists to
+        # cold page load in a burst started its own all-stream walk -- the cost the memo exists to
         # avoid, and the guard `environmental-read-model.getSliderCapabilities` already has.
         self._refreshing = threading.Lock()
 
@@ -173,21 +216,30 @@ class CoverageCache:
         fresh = self._fresh(now)
         if fresh is not None:
             return fresh
-        stale = self._held
-        if stale is not None and not self._refreshing.acquire(blocking=False):
-            # A refresh is already in flight and a previous census exists. Serving it beats blocking
-            # a pool thread, and `generated_at` states exactly how old the answer is.
-            return stale
-        if stale is None:
+        waited_for_refresh = not self._refreshing.acquire(blocking=False)
+        if waited_for_refresh:
             self._refreshing.acquire()
         try:
-            return self._refresh(listing, lanes=lanes, now=now)
+            fresh = self._fresh(now)
+            if fresh is not None:
+                return fresh
+            if waited_for_refresh and self._last_failure is not None:
+                raise self._last_failure
+            self._last_failure = None
+            try:
+                built = build_coverage(listing, lanes=lanes, generated_at=now)
+            except Exception as exc:
+                self._last_failure = exc
+                raise
+            self._held = built
+            return built
         finally:
             self._refreshing.release()
 
     def clear(self) -> None:
         """Drop the held census; a test that changes the warehouse under it needs this."""
         self._held = None
+        self._last_failure = None
 
     def _fresh(self, now: datetime) -> WarehouseCoverage | None:
         """Return the held census only while it is inside its TTL."""
@@ -195,28 +247,6 @@ class CoverageCache:
         if held is not None and now - held.generated_at < self._ttl:
             return held
         return None
-
-    def _refresh(self, listing: WarehouseListing, *, lanes: Sequence[CensusLane], now: datetime) -> WarehouseCoverage:
-        """Build and hold a new census, having won the lock; a queued caller re-checks first."""
-        fresh = self._fresh(now)
-        if fresh is not None:
-            return fresh
-        try:
-            built = build_coverage(listing, lanes=lanes, generated_at=now)
-        except Exception as exc:
-            previous = self._held
-            if previous is None:
-                raise
-            # STALE BEATS NOTHING. A failed refresh must not turn a census the warehouse earned into
-            # a whole-map absence claim; the answer carries the instant it was actually computed.
-            logger.warning(
-                "coverage_census_served_stale",
-                fault=type(exc).__name__,
-                generated_at=previous.generated_at.isoformat(),
-            )
-            return previous
-        self._held = built
-        return built
 
 
 @dataclass
@@ -229,6 +259,12 @@ class _BudgetedListing:
     def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]:
         """Yield one tier, charging each key before the concurrent census retains it."""
         for key in self.inner.iter_tier_keys(layer, kind, tier):
+            self.budget.spend(1)
+            yield key
+
+    def iter_stream_keys(self, layer: str, kind: PartitionKind) -> Iterator[str]:
+        """Yield one stream, charging every retained key against the aggregate census budget."""
+        for key in self.inner.iter_stream_keys(layer, kind):
             self.budget.spend(1)
             yield key
 
@@ -268,17 +304,6 @@ class _CensusKeyBudget:
                 raise faults.census_budget_exhausted(listed_keys=MAX_CENSUS_LISTED_KEYS)
 
 
-def _written_days(listing: WarehouseListing, *, lane: CensusLane) -> tuple[set[date], set[date]]:
-    """Union every published tier into the days that hold a release and the days deliberately empty."""
-    data_days: set[date] = set()
-    absent_days: set[date] = set()
-    for tier in ZOOM_TIERS:
-        tier_data, tier_absences = _tier_days(listing, lane=lane, tier=tier)
-        data_days.update(tier_data)
-        absent_days.update(tier_absences)
-    return (data_days, absent_days)
-
-
 def _tier_days(
     listing: WarehouseListing,
     *,
@@ -288,9 +313,32 @@ def _tier_days(
     """List and classify one tier without retaining its object keys after the result is known."""
     keys = listing.list_keys(lane.layer, lane.kind, tier)
     statuses = day_status_sets(keys, layer=lane.layer, kind=lane.kind, tier=tier)
-    # A conflict day HOLDS a release, so the census counts it as written; serving it is what refuses
-    # out loud. Reporting it as a gap would claim the lane never wrote that day.
-    return (statuses.data | statuses.conflict, statuses.absent)
+    # Only a completed, conflict-free partition is readable. Conflict and incomplete days may hold
+    # objects, but serving refuses them, so they cannot prove a slider capability safe to publish.
+    return (statuses.data, statuses.absent)
+
+
+def _stream_tier_days(
+    listing: WarehouseListing,
+    *,
+    lane: CensusLane,
+) -> tuple[tuple[frozenset[date], frozenset[date]], ...]:
+    """List one physical stream once, then classify its four exact rungs locally."""
+    keys = tuple(listing.iter_stream_keys(lane.layer, lane.kind))
+    return tuple(_tier_days_from_keys(keys, lane=lane, tier=tier) for tier in ZOOM_TIERS)
+
+
+def _tier_days_from_keys(
+    keys: tuple[str, ...],
+    *,
+    lane: CensusLane,
+    tier: ZoomTier,
+) -> tuple[frozenset[date], frozenset[date]]:
+    """Classify one rung from a validated stream listing."""
+    prefix = zoom_prefix(lane.layer, lane.kind, tier)
+    tier_keys = tuple(key for key in keys if key.startswith(prefix))
+    statuses = day_status_sets(tier_keys, layer=lane.layer, kind=lane.kind, tier=tier)
+    return (statuses.data, statuses.absent)
 
 
 def _owed_but_unwritten(accounted: set[date], *, lane: CensusLane, today: date) -> tuple[date, ...]:
@@ -324,14 +372,23 @@ def _owed_but_unwritten(accounted: set[date], *, lane: CensusLane, today: date) 
     return tuple(owed)
 
 
-def _bounded(lane: CensusLane, *, earliest_day: date | None, latest_day: date | None) -> LaneCoverage:
+def _bounded(
+    lane: CensusLane,
+    *,
+    tier: ZoomTier,
+    earliest_day: date | None,
+    latest_day: date | None,
+    published_ranges: tuple[DayRange, ...],
+) -> LaneCoverage:
     """One lane's census with bounds and NO ranges: nothing between those bounds was ever owed."""
     return LaneCoverage(
         layer=lane.layer,
         nature=lane.nature,
         kind=lane.kind,
+        zoom=tier,
         earliest_day=earliest_day,
         latest_day=latest_day,
+        published_ranges=published_ranges,
         gap_ranges=(),
         governed_absence_ranges=(),
     )

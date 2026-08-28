@@ -2572,7 +2572,7 @@ const METRIC_AT_DATE_MAX_ROWS = 5_000;
  * a consumer has to consult rather than a flag it can skip. See that field's note in
  * src/types/time-slider.ts.
  */
-const MAX_REPORTED_DAY_RANGES = 800;
+export const MAX_REPORTED_DAY_RANGES = 800;
 
 /** How `earliestObservedDate` was decided, so the UI never has to guess. */
 export type EarliestObservedDateRule =
@@ -2582,6 +2582,8 @@ export type EarliestObservedDateRule =
   | "density_floored"
   /** Every observed day forms one continuous, populated run; nothing was excluded. */
   | "full_history"
+  /** Exact product/rung bounds came from the Parquet warehouse coverage contract. */
+  | "warehouse_coverage"
   /** The layer has no datable, mappable observation at all. */
   | "no_observations";
 

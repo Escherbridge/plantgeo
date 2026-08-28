@@ -25,6 +25,12 @@ golden JSON payloads plus two independent assertions over them.
 | snake_case on the wire, camelCase in TypeScript | the order of lanes in a coverage census |
 | `null` bounds for a lane that has never been written | |
 
+Coverage rows are frozen at physical `(layer, kind, zoom)` granularity. Each expected z0/z5/z9/z13
+rung must carry its own bounds, exact `published_ranges`, and gaps; another rung cannot supply
+evidence for it. The envelope's `evaluated_through_day` is the UTC date through which the census
+applied each lane's cadence, publication lag, and governed absences; a consumer may not treat a
+cached response as current on a later UTC day.
+
 Row contents stay open on purpose: the warehouse has a schema per layer per kind
 (`warehouse/parquet/schema.py`), so one row shape here would be a lie about eleven of the twelve
 streams. `rows` is `list[dict]` and the caller that knows its layer narrows it.

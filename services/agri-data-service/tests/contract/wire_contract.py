@@ -104,13 +104,15 @@ class WireDayRange(_Frozen):
 
 
 class WireCoverageLane(_Frozen):
-    """One lane's census. Tier-agnostic: a day counts as covered when any tier holds it."""
+    """One physical lane and published zoom rung's independently readable census evidence."""
 
     layer: str = Field(min_length=1)
     nature: Literal["daily_series", "release_series", "static_lookup"]
     kind: Literal["observed", "forecast"]
+    zoom: Literal[0, 5, 9, 13]
     earliest_day: CalendarDay | None
     latest_day: CalendarDay | None
+    published_ranges: list[WireDayRange]
     gap_ranges: list[WireDayRange]
     governed_absence_ranges: list[WireDayRange]
 
@@ -119,4 +121,5 @@ class WireCoverage(_Frozen):
     """The whole-warehouse census the slider's capability rows are built from."""
 
     generated_at: str = Field(min_length=1)
+    evaluated_through_day: CalendarDay
     lanes: list[WireCoverageLane]

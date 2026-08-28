@@ -310,13 +310,16 @@ describe("getParquetLatestRelease", () => {
 describe("getParquetWarehouseCoverage", () => {
   const census = {
     generated_at: "2026-08-23T04:00:00+00:00",
+    evaluated_through_day: "2026-08-23",
     lanes: [
       {
         layer: "drought-areas",
         nature: "release_series",
         kind: "observed",
+        zoom: 9,
         earliest_day: "2022-08-04",
         latest_day: "2026-08-14",
+        published_ranges: [{ from: "2022-08-04", to: "2026-08-14" }],
         gap_ranges: [{ from: "2024-01-04", to: "2024-01-11" }],
         governed_absence_ranges: [{ from: "2025-12-25", to: "2025-12-25" }],
       },
@@ -324,8 +327,10 @@ describe("getParquetWarehouseCoverage", () => {
         layer: "interventions",
         nature: "daily_series",
         kind: "observed",
+        zoom: 9,
         earliest_day: null,
         latest_day: null,
+        published_ranges: [],
         gap_ranges: [],
         governed_absence_ranges: [],
       },
@@ -361,12 +366,15 @@ describe("getParquetWarehouseCoverage", () => {
     const coverage = await getParquetWarehouseCoverage();
 
     expect(coverage.generatedAt).toBe("2026-08-23T04:00:00+00:00");
+    expect(coverage.evaluatedThroughDay).toBe("2026-08-23");
     expect(coverage.lanes[0]).toEqual({
       layer: "drought-areas",
       nature: "release_series",
       kind: "observed",
+      zoomTier: 9,
       earliestDay: "2022-08-04",
       latestDay: "2026-08-14",
+      publishedRanges: [{ from: "2022-08-04", to: "2026-08-14" }],
       gapRanges: [{ from: "2024-01-04", to: "2024-01-11" }],
       governedAbsenceRanges: [{ from: "2025-12-25", to: "2025-12-25" }],
     });
@@ -376,7 +384,19 @@ describe("getParquetWarehouseCoverage", () => {
   it("rejects a lane nature outside the three the warehouse defines", async () => {
     mockedFetch.mockResolvedValue({
       generated_at: "2026-08-23T04:00:00+00:00",
+      evaluated_through_day: "2026-08-23",
       lanes: [{ ...census.lanes[0], nature: "weekly_series" }],
+    });
+
+    await expect(getParquetWarehouseCoverage()).rejects.toBeInstanceOf(ParquetPlaneContractError);
+  });
+
+  it("rejects legacy tier-agnostic coverage instead of letting one rung stand in for four", async () => {
+    const { zoom: _zoom, ...tierAgnosticLane } = census.lanes[0];
+    mockedFetch.mockResolvedValue({
+      generated_at: census.generated_at,
+      evaluated_through_day: census.evaluated_through_day,
+      lanes: [tierAgnosticLane],
     });
 
     await expect(getParquetWarehouseCoverage()).rejects.toBeInstanceOf(ParquetPlaneContractError);
@@ -605,19 +625,23 @@ describe("the frozen wire contract", () => {
     mockedFetch.mockResolvedValue(fixture("coverage"));
 
     const coverage = await getParquetWarehouseCoverage();
-    const lanes = Object.fromEntries(coverage.lanes.map((lane) => [lane.layer, lane]));
+    const lane = (layer: string, zoomTier: number) =>
+      coverage.lanes.find((entry) => entry.layer === layer && entry.zoomTier === zoomTier);
 
     expect(coverage.generatedAt).toBe("2026-08-25T04:00:00Z");
+    expect(coverage.evaluatedThroughDay).toBe("2026-08-25");
     // soil-survey has 238,986 source rows and 0 written; the census must say so, not guess a day.
-    expect(lanes["soil-survey"]).toMatchObject({
+    expect(lane("soil-survey", 13)).toMatchObject({
       nature: "static_lookup",
       earliestDay: null,
       latestDay: null,
     });
-    expect(lanes["signal"]).toMatchObject({
+    expect(lane("signal", 13)).toMatchObject({
       nature: "daily_series",
+      zoomTier: 13,
       earliestDay: "2022-04-30",
       latestDay: "2026-08-06",
+      publishedRanges: [{ from: "2022-04-30", to: "2026-08-06" }],
       governedAbsenceRanges: [{ from: "2026-08-07", to: "2026-08-16" }],
     });
   });

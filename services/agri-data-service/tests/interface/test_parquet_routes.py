@@ -223,7 +223,12 @@ async def test_the_coverage_route_answers_the_whole_warehouse_with_no_viewport(
     census = WireCoverage.model_validate(payload_of(response))
 
     assert response.status == HTTP_OK
-    assert census.lanes[0].earliest_day == "2026-08-01"
+    assert census.evaluated_through_day == census.generated_at[:10]
+    by_zoom = {lane.zoom: lane for lane in census.lanes}
+    assert set(by_zoom) == {0, 5, 9, 13}
+    assert by_zoom[13].earliest_day == "2026-08-01"
+    assert [(span.from_, span.to) for span in by_zoom[13].published_ranges] == [("2026-08-01", "2026-08-01")]
+    assert all(by_zoom[tier].earliest_day is None for tier in (0, 5, 9))
 
 
 @pytest.mark.asyncio

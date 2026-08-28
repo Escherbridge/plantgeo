@@ -17,7 +17,7 @@ schemas. Three levels, weakest last:
 1. `test_parquet_envelopes.py` resolves each state through the REAL resolver against a fake
    warehouse built to match a fixture, and asserts `to_wire() == fixture`. Seven of the nine goldens
    are reproduced end to end this way, plus `window.json`.
-2. `coverage.json` is reproduced by the BUILDER
+2. `coverage.json` is reproduced by the BUILDER at each physical zoom rung
    (`test_the_census_builder_reproduces_the_frozen_payload_from_a_warehouse_seeded_to_its_facts`):
    a `FakeListing` is seeded with exactly the facts the golden states — each lane's span, its
    absences, its gaps, written at that lane's registered cadence — and `build_coverage(...).to_wire()`
