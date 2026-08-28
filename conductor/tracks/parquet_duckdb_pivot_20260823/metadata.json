@@ -5,7 +5,7 @@
   "created_on": "2026-08-23",
   "depends_on": [],
   "runbook_section": "0.35",
-  "note": "Chartered retroactively 2026-08-23: waves 1-3 already shipped (RUNBOOK 0.21-0.29) with no track, so the largest workstream in the repo was tracked only in prose. This records wave 4. The owner call behind it all is RUNBOOK 0.28/plantgeo-parquet-duckdb-pivot: Postgres keeps ONLY community features, every plane becomes day-partitioned Parquet on Railway storage read by DuckDB+Polars, Martin serves PMTiles. Map breakage during the transition is accepted.",
+  "note": "Updated 2026-08-27 at integrated main 949e20ee38405781a3e2a8978b2fc769bb7659d6. Historical Parquet construction and reusable artifacts are complete; the track remains active for production API health, d4 tRPC/client repoint, and browser acceptance. PostgreSQL remains intact until the successor repoint track clears each lane.",
   "shipped_before_this_track": [
     "Twelve lanes with validation, serving and forecasters (abf777f)",
     "Lane natures, watermark-driven static lanes, conformed calendar dimension (b794e98)",
@@ -17,10 +17,10 @@
   "wave_4_scope": [
     "DONE ceeb2c9/3b7ecfb/fe32aef/68da7af/83b322f: sub-day fix, orphan-part blocker, zoom axis, soil-survey streaming, docs",
     "DONE d0 (2026-08-23, uncommitted at write time): completion marker on every multi-part lane, reader sweep, lane-day advisory lock, missing-lane audit. Gate 3,948/3. RUNBOOK 0.35.",
-    "d1. FUSED bulk drain + tier derivation, one pass; then stop the cron  <-- NEXT",
-    "d3. interface/http serving API -- coverage REPRODUCES getSliderCapabilities' contract. BLOCKED BY RUNBOOK 0.35.9: five planes take `root: str` and cannot consult completion; their signatures must take an ObjectStore before any of them is wired.",
-    "d4. Next.js repoint of the six ready tRPC procedures",
-    "d5. soil-field lane -- AND climate-field, a SECOND missing lane found by the d0 audit (RUNBOOK 0.35.7)",
+    "DONE/SUPERSEDED d1: the shared drain was replaced by the immutable canonical signal snapshot and snapshot-only product breakdowns; do not rescan PostgreSQL or restart the old drain.",
+    "CODE COMPLETE / PROD BLOCKED d3: four private Sanic routes and the bounded TypeScript client exist and pass the integrated sweep; fix the API /ready timeout and probe production before cutover.",
+    "PENDING d4: repoint eligible Next.js tRPC procedures and slider coverage, then perform browser acceptance with no silent PostgreSQL fallback.",
+    "DONE d5 for governed signal products: dedicated climate and soil product schemas/builders are integrated and their production data is independently reconciled.",
     "E. Forward path per lane: upstream API -> Parquet, deprecate that lane's Postgres source",
     "F. Open-Meteo ensemble/flood/CAMS + fire-risk feature plane",
     "G. Static lookups leave the lane registry (soil-survey, watersheds)"
@@ -64,7 +64,8 @@
         ],
         "model": "opus",
         "depends_on": [],
-        "note": "REWRITE, not a create: tiers.py and drain.py both exist at HEAD. Preserve what already works -- the cell join is already out of the hot path (ae63b02) and the drain has its own 600 s clock. The fusion lives in the driver; keep the derivation transform pure and separately tested."
+        "status": "superseded_done",
+        "note": "Superseded 2026-08-27 by canonical snapshot prod-20260826-full-signal-v1 and snapshot-only downstream breakdowns. Historical source reconciliation is complete; never restart the old shared drain or rescan PostgreSQL for this snapshot."
       },
       {
         "id": "d3",
@@ -83,7 +84,9 @@
         "model": "opus",
         "depends_on": [
           "d1"
-        ]
+        ],
+        "status": "code_complete_prod_blocked",
+        "note": "The private Sanic routes and bounded TypeScript client are built and passed the 949e20e consolidated sweep. Production route verification is blocked on the existing API /ready timeout."
       },
       {
         "id": "d4",
@@ -95,7 +98,9 @@
         "model": "opus",
         "depends_on": [
           "d3"
-        ]
+        ],
+        "status": "pending",
+        "note": "No API/client/browser cutover was performed by the 2026-08-27 integration. Repoint per lane only after d3 is healthy and directly verified."
       },
       {
         "id": "d5",
@@ -115,8 +120,21 @@
           "d1"
         ],
         "lane": "A",
-        "note": "LANE A, not lane C (RUNBOOK 0.42.15). This is a Python data-lane file, not a UI surface, and it creates pipeline/lanes/soil_field.py inside the directory shrink:s5 owns and deletes producers from. Must land BEFORE s5. Assigning it to lane C would have put two lanes in one directory concurrently."
+        "status": "superseded_done",
+        "note": "Superseded-complete 2026-08-27: dedicated governed product lanes replaced the proposed generic pipeline/lanes/soil_field.py output. Integrated schemas/builders cover climate products, VPD, three ERA5 soil-moisture depths, and four soil-temperature depths."
       }
+    ]
+  },
+  "checkpoint_20260827": {
+    "integrated_main": "949e20ee38405781a3e2a8978b2fc769bb7659d6",
+    "canonical_snapshot_manifest_sha256": "465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f",
+    "canonical_snapshot_fact_rows": 46146568,
+    "validation": "data-boundary, TypeScript, frontend lint/tests, Python format, Ruff, Mypy, Pytest, and independent review passed",
+    "remaining_gates": [
+      "Fix and verify the production API /ready healthcheck",
+      "Probe all four private Parquet routes against production R2",
+      "Repoint eligible tRPC readers and slider coverage with no silent PostgreSQL fallback",
+      "Run production browser acceptance across required days and zoom rungs"
     ]
   },
   "open_decisions": [

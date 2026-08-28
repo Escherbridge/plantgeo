@@ -1,21 +1,30 @@
 ---
 type: track-spec
 slug: fire_feature_plane_validation_20260824
-status: blocked
+status: planned
 ---
 
 # Validate the fire feature plane across multiple fire seasons
 
-Chartered 2026-08-24, **blocked on arrival**. See `conductor/RUNBOOK.md` §0.41.9.
+Chartered 2026-08-24 and **runnable as of 2026-08-27**. See `conductor/RUNBOOK.md` §0.41.9.
+
+## 0. Unblocked checkpoint — 2026-08-27
+
+The historical fire archive is exact across 9,428 calendar days: 8,359 data days, 1,069 governed
+absences, and 3,039,749 detections. The old 2003-2025 data-availability blocker is therefore
+cleared. Do not schedule another fire backfill or resume its completed data task.
+
+The modeling work in this track has **not** run. It remains planned: held-out-season validation,
+calibration, coverage weighting, and MODIS/VIIRS normalization still need implementation and review.
 
 ## 1. The problem in one line
 
 `AUC 0.725` was fit **and** scored on the 2026 season. That is in-sample and optimistic, and no
 treatment budget should be committed against it until it survives a season it has never seen.
 
-## 2. Why it is blocked, and why that is good news
+## 2. Historical blocker — cleared
 
-`fire-detections` in the warehouse holds:
+At charter time, `fire-detections` in the warehouse held:
 
 | year | days present |
 |---|---|
@@ -26,13 +35,13 @@ treatment budget should be committed against it until it survives a season it ha
 | **2004–2025** | **none** |
 | 2026 | 224 (to 22 Aug) |
 
-A **23-year hole**. An empty year means *not yet backfilled*, never *no fire*.
+A **23-year hole** existed in that historical census. An empty year meant *not yet backfilled*,
+never *no fire*.
 
-**This is not new work.** It is `parquet_duckdb_pivot_20260823` **item B** — the bulk Postgres
-drain of 13,037 lane-days, of which **69 % is `fire-detections`**. Do not charter a backfill
-track; this one simply waits on that item and starts the hour it lands.
+That blocker was cleared by the completed fire replacement and exact production audit. The table is
+retained only as the reason this modeling track originally waited; it is not current inventory.
 
-## 3. What it does once unblocked
+## 3. Remaining validation work
 
 1. **Out-of-season validation.** Fit on one year set, score on a held-out year. Report the drop
    from in-sample to out-of-sample honestly — that gap is the actual deliverable, more than the

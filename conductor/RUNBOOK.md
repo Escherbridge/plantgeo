@@ -4,7 +4,13 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Last updated:** 2026-08-25. **§0.41 IS THE FIRST ANALYTICAL USE OF THE DRAINED WAREHOUSE (2026-08-24) — it makes NO infrastructure claims and supersedes nothing, but read §0.41.6 before running any local DuckDB: a cross-join against CONUS-wide USDM polygons CONSUMED THE HOST, and spilling is now disabled by guard, not by tuning. §0.41.4 records THREE claims refuted by their own evidence, and §0.41.9 names the one blocker — the 23-year `fire-detections` hole, which is already chartered as pivot item B, not new work.** **READ §0.42 FIRST — the orchestration packet: three concurrent lanes (data/ingestion, API, UI) behind a contract freeze, a per-layer hard cutover to Parquet, the four layers that are NOT Parquet lanes at all, and the correction that §0.41.9's blocker (the `fire-detections` hole) CLEARED at 19:42 UTC on 2026-08-24 — that track is runnable, not blocked.** **READ §0.40 FIRST — it corrects §0.39: the runners were NOT stopped (every push redeploys them; taken down 02:05 UTC), "backlog 0" was z13 only with no coarse rung anywhere, the pivot verified on cold-path and resource grounds, and the four repoint decisions are recorded there.** **THE PARQUET BACKLOG IS DRAINED (12,365 -> 0 lane-days) - READ §0.39 NEXT; it supersedes §0.38 and records why the DB shrink is now gated on an unbuilt read API, and why nothing is ingesting.** **ARCHITECTURE PIVOT — READ §0.23 FIRST: Postgres becomes a community-features database; every data plane moves to day-partitioned Parquet read by DuckDB+Polars, with Martin serving PMTiles. §0.16–§0.22 optimise a Postgres this project is leaving.** **§0.25 is the CURRENT HEAD OF THE PROGRAMME — wave 1 shipped green, the by-domain layering question is answered, and it retires `agri_sdk_layering` phases 4–8.** **§0.24 is the concurrent stream plan that executes it — 21 streams in 5 waves, each with a disjoint file boundary, governed by the new `conductor/code_styleguides/layer-lanes.md`.** **THE PARQUET PATH HAS STARTED — §0.22 carries the signal-plane grain decision and the traps for the export job.** **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
+**Current status (2026-08-27): the targeted pre-API Parquet data and code integration is complete on
+`main` at `949e20ee38405781a3e2a8978b2fc769bb7659d6`. Start with the LIVE section immediately
+below.** The older 2026-08-25 header and session notes are retained as historical evidence; where
+they describe missing Parquet data, an unbuilt serving API, or unintegrated lane artifacts, the
+2026-08-27 LIVE section supersedes them.
+
+**Historical header last updated:** 2026-08-25. **§0.41 IS THE FIRST ANALYTICAL USE OF THE DRAINED WAREHOUSE (2026-08-24) — it makes NO infrastructure claims and supersedes nothing, but read §0.41.6 before running any local DuckDB: a cross-join against CONUS-wide USDM polygons CONSUMED THE HOST, and spilling is now disabled by guard, not by tuning. §0.41.4 records THREE claims refuted by their own evidence, and §0.41.9 names the one blocker — the 23-year `fire-detections` hole, which is already chartered as pivot item B, not new work.** **READ §0.42 FIRST — the orchestration packet: three concurrent lanes (data/ingestion, API, UI) behind a contract freeze, a per-layer hard cutover to Parquet, the four layers that are NOT Parquet lanes at all, and the correction that §0.41.9's blocker (the `fire-detections` hole) CLEARED at 19:42 UTC on 2026-08-24 — that track is runnable, not blocked.** **READ §0.40 FIRST — it corrects §0.39: the runners were NOT stopped (every push redeploys them; taken down 02:05 UTC), "backlog 0" was z13 only with no coarse rung anywhere, the pivot verified on cold-path and resource grounds, and the four repoint decisions are recorded there.** **THE PARQUET BACKLOG IS DRAINED (12,365 -> 0 lane-days) - READ §0.39 NEXT; it supersedes §0.38 and records why the DB shrink is now gated on an unbuilt read API, and why nothing is ingesting.** **ARCHITECTURE PIVOT — READ §0.23 FIRST: Postgres becomes a community-features database; every data plane moves to day-partitioned Parquet read by DuckDB+Polars, with Martin serving PMTiles. §0.16–§0.22 optimise a Postgres this project is leaving.** **§0.25 is the CURRENT HEAD OF THE PROGRAMME — wave 1 shipped green, the by-domain layering question is answered, and it retires `agri_sdk_layering` phases 4–8.** **§0.24 is the concurrent stream plan that executes it — 21 streams in 5 waves, each with a disjoint file boundary, governed by the new `conductor/code_styleguides/layer-lanes.md`.** **THE PARQUET PATH HAS STARTED — §0.22 carries the signal-plane grain decision and the traps for the export job.** **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
 
 **What changed 2026-08-21 — four new sections, and they supersede earlier ones where they disagree.** **§0.16** is the data-quality and QA assessment: the census per layer and per observation plane, freshness and rot, the job ledger and matview refresh state, the storage/index/bloat profile, the partitionwise probe, and what the QA gate does and does not prove — every number labelled with how it was obtained, CONFIRMED separated from UNVERIFIED, and **two headline claims REFUTED outright (§0.16.9)**. **§0.17** is why the map is broken *right now*, ranked by rendering unblocked per unit of work; **read it first if you are here to fix the outage.** **§0.18** is the target architecture — entity/observation split with sealed months on R2 — with the losing designs' grafts folded in and **17 recorded rejections so they stop being re-litigated (§0.18.8)**. **§0.19** is the merged programme plan with a gate class, precondition and reversal cost per item.
 
@@ -16,7 +22,72 @@ type: runbook
 
 ---
 
-## LIVE — session 12, 2026-08-25. ROLLING ARMED. READ THIS BEFORE §0.
+## LIVE — targeted pre-API Parquet integration complete, 2026-08-27. START HERE.
+
+This is the current operational handoff. It supersedes the previous session-12 LIVE entry below,
+which is retained as a historical checkpoint.
+
+### Completion evidence
+
+- `main` and `origin/main` are integrated through
+  `949e20ee38405781a3e2a8978b2fc769bb7659d6`. The integration recovered and normalized the
+  completed canonical snapshot, climate, soil, fire, water, weather, soil-wetness, and vegetation
+  artifacts. No API/client/browser cutover was performed by that integration.
+- The canonical signal snapshot is immutable at
+  `raw-canonical/signal-observation/snapshot=prod-20260826-full-signal-v1/`: 46,146,568 physical
+  facts, 8,364 fact parts, zero rejects, and manifest SHA-256
+  `465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f` bound by `_COMPLETE`.
+- Snapshot-derived lanes are complete for precipitation, wind speed, relative humidity, air
+  temperature (mean/max/min), shortwave radiation, VPD, ERA5-Land soil moisture (three depths),
+  soil temperature (four depths), and NASA soil wetness (surface/root-zone/profile). Each published
+  lane completed exact source reconciliation and wrote manifest/`_COMPLETE` last.
+- Fire detections are exact across 9,428 calendar days: 8,359 data days, 1,069 governed absences,
+  and 3,039,749 detections. Water gauges are exact across 1,521 days and 1,448,754 z13 rows.
+- Weather's independent 2026-08-01..25 audit reported zero findings. Vegetation repaired exactly
+  five stale days, then independently reconciled 1,208 days and 185,245 source/Parquet rows with
+  matching SHA-256 `0f13a768816db63a2640277f361de3681b193b7624365af444ede5267e7c9e64`.
+- NASA soil wetness independently recomputed all 159 lane-months. Bundle reconciliation is
+  1,776,330 physical = 1,742,418 selected + 33,912 superseded + 0 rejected; bundle manifest
+  SHA-256 is `75b9e825816369d7ffcca943f45a66fb411acbeaa0f0af983f50df443e33c78c`.
+- The single consolidated validation sweep on exact commit `949e20e` passed data-boundary,
+  TypeScript typecheck, frontend lint, Python format, Ruff, Mypy, 1,384 frontend tests, and 4,334
+  Python tests. Thirteen frontend tests and 136 Python tests remained environment-gated; the
+  independent integrated-tree review approved the result.
+
+### Production state
+
+- PostgreSQL data and ingestion remain intact. No table/row deletion, writer disablement, or
+  retirement migration was performed. Keep that fallback until each forward writer and reader
+  cutover passes its own gate.
+- The private Sanic Parquet surface and the bounded TypeScript client exist, but the Next.js tRPC
+  procedures have not been repointed and no browser acceptance pass has run.
+- Vegetation's production publication deployment succeeded, and the forward cron configuration is
+  present. Its scheduled runtime cadence still needs observation before retirement. Separately, the
+  API service has a pre-existing `/ready` healthcheck timeout observed across multiple commits. Treat
+  that as the first API-cutover blocker; it is separate from Parquet data correctness.
+
+### Outstanding work, in order
+
+1. Diagnose and clear the API service `/ready` timeout without weakening the readiness contract.
+2. Deploy and directly probe the private `/api/v1/parquet` day, window, release, and coverage routes
+   with production R2 configuration and bounded DuckDB memory/concurrency.
+3. Repoint the eligible Next.js tRPC readers and slider capability census to
+   `parquet-plane-client.ts`, one lane at a time, with no silent PostgreSQL fallback.
+4. Run production browser acceptance at the default camera and z10 for every repointed layer,
+   including day changes, zoom-rung routing, empty/governed-absence states, and stale-cache checks.
+5. Prove the forward source-to-Parquet path for every lane that still relies on a snapshot builder
+   or PostgreSQL bridge. Historical completeness alone does not authorize writer retirement.
+6. Complete shrink-track `s2a`: extract the shared Parquet operations core into top-level
+   `parquet_ops/`, then split `interface/cli/` and perform the coordinated `agri-service` hard rename.
+7. Complete shrink-track `s7`: repoint the agent/MCP data tools off obsolete Postgres views onto the
+   shared Parquet core, following §0.42.30's exact keep/rewrite/delete census.
+8. Run the environment-gated PostGIS/reader tests against disposable DSNs on the exact cutover tree.
+9. Only after steps 1-8: retire PostgreSQL producers/readers per lane, then author reviewed migrations
+   for index/table/data removal and record before/after storage plus rollback evidence.
+
+---
+
+## HISTORICAL — session 12, 2026-08-25. ROLLING ARMED.
 
 **This entry is edited in place, not appended to.** It is the legible head of a 8,578-line file:
 `Done` and `Reviewed` append, `In flight` and `Next` are rewritten so they are never stale. Detail

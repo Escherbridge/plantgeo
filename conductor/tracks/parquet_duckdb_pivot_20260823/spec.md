@@ -14,6 +14,29 @@ The owner call underneath it (RUNBOOK §0.28): Postgres keeps **only** community
 plane becomes day-partitioned Parquet on Railway object storage read by DuckDB + Polars; Martin
 serves PMTiles. Map breakage during the transition is accepted.
 
+## Execution checkpoint — 2026-08-27
+
+The data-construction portion of this track is complete and integrated on `main` at
+`949e20ee38405781a3e2a8978b2fc769bb7659d6`. This is not a declaration that the whole pivot is
+complete: the production serving and client cutover are still open.
+
+| slice | current state |
+|---|---|
+| `d0` | Complete. Immutable parts, completion markers, bounded readers, and exact inventory checks are established. |
+| `d1` | Superseded-complete. The old shared Postgres drain was replaced by the immutable 46,146,568-row canonical signal snapshot and snapshot-only product breakdowns. Do not restart the old drain or rescan PostgreSQL. |
+| `d3` | Code-complete, production-blocked. The four private Sanic Parquet routes and bounded TypeScript client exist and passed the consolidated sweep. The API service's pre-existing `/ready` timeout must be fixed before production route verification. |
+| `d4` | Pending. Eligible tRPC readers and slider capabilities still read their existing paths; no client/browser cutover was performed. |
+| `d5` | Superseded-complete. Dedicated product lanes replaced the proposed generic `soil_field.py`; climate and soil schemas/builders are integrated, including VPD, three ERA5 soil-moisture depths, four soil-temperature depths, and the climate lanes listed in the runbook LIVE section. |
+
+The track remains **active** until `d3` is production-healthy, `d4` is repointed and browser-verified,
+and the no-fallback cutover proves all four response states at every required zoom rung. PostgreSQL
+data and ingestion remain intact until the successor repoint track clears each lane independently.
+
+Canonical source evidence: snapshot prefix
+`raw-canonical/signal-observation/snapshot=prod-20260826-full-signal-v1/`, 46,146,568 facts,
+8,364 fact parts, zero rejects, manifest SHA-256
+`465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f`.
+
 ## Already shipped — do not rebuild
 
 | commit | what |
@@ -27,7 +50,11 @@ serves PMTiles. Map breakage during the transition is accepted.
 **Live in production, measured 2026-08-23:** 1,240 objects (882 part files + 358 governed-absence
 markers) across all twelve lanes. The cron writes; see §0.29.1 for the 86-minute latency trap.
 
-## Wave 4, in priority order
+## Historical Wave 4 charter, in its original priority order
+
+The execution checkpoint above supersedes status language in this section. Keep these details as
+design provenance; do not schedule an item from this historical list without reconciling it against
+the current checkpoint and the successor repoint track.
 
 ### 1. Sub-day version fix — LIFE-SAFETY, do this first
 

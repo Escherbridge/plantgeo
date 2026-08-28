@@ -1,5 +1,5 @@
 ---
-type: Track Spec
+type: track-spec
 title: "Postgres shrink via ingest repoint to Parquet — bridge, then cut per lane"
 description: >-
   Restore a writer to the forward path immediately, then move each of the twelve
@@ -7,24 +7,28 @@ description: >-
   verifying row-level parity before deleting that lane's Postgres write path.
   Collapse the alembic history to a greenfield baseline that matches production
   as it actually is. Shrink Postgres only after serving no longer reads it.
-tags: [feature, postgres_shrink_ingest_repoint_20260825, pending]
+tags: [feature, postgres_shrink_ingest_repoint_20260825, active]
+status: active
 timestamp: 2026-08-25
 resource: ./metadata.json
 ---
 
 # Postgres shrink via ingest repoint to Parquet
 
-## Overview
+## Historical premise at charter
+
+The statements in this section describe the verified 2026-08-25 starting point. The 2026-08-27
+execution checkpoint below supersedes them for current scheduling.
 
 Production Postgres is 38 GB and 96.6% of it is three relations that the Parquet
 warehouse already holds a 92×-smaller copy of. The shrink is not blocked on
 courage; it is blocked on two facts:
 
-1. **Nothing ingests.** Both runners (`plantgeo-parquet-drain`,
+1. **Nothing ingested at charter time.** Both runners (`plantgeo-parquet-drain`,
    `plantgeo-ingest-cron`) are down, and `infra/cron-ingest/railway.json` has no
    `cronSchedule`, so the forward path runs exactly once per `git push` and never
    otherwise.
-2. **Parquet is a derivative of Postgres.** Every one of the twelve lane adapters
+2. **Parquet was a derivative of Postgres.** Every one of the twelve lane adapters
    in `pipeline/parquet/lane_registry.py` reads *from* Postgres. Deleting the
    Postgres ingest path today severs the thing that produces Parquet.
 
@@ -33,6 +37,44 @@ Restore the cron as a transition writer, build direct-from-source Parquet writer
 lane by lane, retire each lane's Postgres path only after row-level parity is
 proven, and take the final shrink only when the serving plane has stopped reading
 Postgres.
+
+## Execution checkpoint — 2026-08-27
+
+The premise that historical data still needs a shared Postgres drain is superseded. Production now
+has an immutable canonical signal snapshot plus independently reconciled product lanes, and all
+reusable artifacts are integrated on `main` at
+`949e20ee38405781a3e2a8978b2fc769bb7659d6`. The track is **active**, not complete, because its
+retirement half has deliberately not started.
+
+| phase | current state |
+|---|---|
+| P0 bridge | Forward cron configuration is present and PostgreSQL ingestion/data remain intact; scheduled cadence still needs production observation. |
+| P1 baseline | Migration contracts through `20260827_0027` are integrated. The live migration head and production parity must be verified through the repaired readiness path; the immutable baseline was not rewritten. |
+| P2-P4 writers | Partial. Fire detections, water gauges, and vegetation have direct/queued Parquet-forward machinery; weather has an exact audit path. Snapshot builders are integrated for the governed climate and soil products, but a historical builder is not proof of a durable forward source writer. |
+| P5 retirement | Not started. No PostgreSQL producer, reader, table, row, or ingestion registration was removed. |
+| P6 shrink | Blocked on production API health, tRPC repoint, browser acceptance, and per-lane forward-writer evidence. |
+
+Updated pivot dependencies: `d1` and governed-product `d5` are cleared by the canonical snapshot
+work; `d3` is code-complete but production-blocked by the API service's pre-existing `/ready`
+timeout; `d4` has not run. The next safe action is API-path verification and repointing, not a drop
+migration.
+
+### Current retirement gates
+
+For each lane, all of the following must be recorded before its PostgreSQL path is removed:
+
+1. private Parquet day/window/release/coverage routes healthy in production;
+2. tRPC reader and capability census repointed with no silent fallback;
+3. browser acceptance across day and zoom changes;
+4. shared `parquet_ops/`, the `interface/cli/` split, and the coordinated `agri-service` rename land;
+5. agent/MCP data tools are repointed off obsolete Postgres views per §0.42.30;
+6. direct upstream-to-Parquet writer advances across scheduled intervals;
+7. exact parity and gap/absence audit stays clean after that advancement;
+8. environment-gated PostGIS/reader tests pass on the exact cutover tree;
+9. reviewed rollback and relation-drop migrations exist.
+
+The known API `/ready` timeout is a serving blocker, not evidence against the completed Parquet
+data. Do not weaken readiness to make the deployment green.
 
 ## Background — verified state (2026-08-25, do not re-derive)
 

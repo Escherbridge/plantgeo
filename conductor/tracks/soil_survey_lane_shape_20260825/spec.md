@@ -1,12 +1,25 @@
 ---
 type: track-spec
 slug: soil_survey_lane_shape_20260825
-status: pending
+status: complete
 ---
 
 # Design the partition grain for a static Parquet lane
 
-Chartered 2026-08-25, **pending / not started**. Deliberately deferred from the 2026-08-25 data-completeness session by owner decision. See `conductor/RUNBOOK.md` §0.31.1 (the correction) and §0.29.1 (the wrong version it corrects).
+Chartered 2026-08-25 to preserve a design decision that had already landed in commit `68da7af`.
+The track is now **complete**. See `conductor/RUNBOOK.md` §0.31.1 (the correction) and §0.29.1
+(the wrong version it corrects).
+
+## 0. Resolution — 2026-08-27 registry reconciliation
+
+Soil survey uses a **version-stamped static release**, not a rolling daily time series. Commit
+`68da7af` removed `MAX_SOIL_SURVEY_POLYGON_KEYS`, streams the large population into bounded parts,
+and publishes the uniform z0/z5/z9/z13 ladder for each release. That resolves the grain, memory,
+zoom, and publication-shape questions below.
+
+This completion is about data layout and publication. Production API health, client repoint, and
+browser acceptance remain owned by `parquet_duckdb_pivot_20260823` d3/d4; do not reopen this design
+track to perform those cutover tasks.
 
 ## 1. What the problem looks like
 
@@ -43,13 +56,15 @@ Soil-survey is not a time series like the other lanes — it is a static, large 
 
 **This track must NOT assume "raise the cap and drain it" is the answer.** That is one candidate among several. The track exists to answer a design question, not to apply a one-line fix.
 
-## 4. Open questions this track must record
+## 4. Historical questions and their resolutions
 
-These are the work to be done. Do not answer them; record them and make them concrete for whoever picks up the track next.
+These questions explain the decision. They are no longer open.
 
 ### 4.1 Is day-partitioning the right shape at all?
 
 Should soil-survey be a **single sealed partition with no day dimension**, like a static lookup table? Or is there a reason to keep the `year=YYYY/month=MM/day=DD/zoom=Z` grain?
+
+**Resolution:** publish a version-stamped static release, with no synthetic daily rewrite.
 
 **Context:** Other lanes (vegetation, drought, etc.) are rolling time series that append new days forever. Soil-survey is a snapshot: SSURGO map units do not change by day in any meaningful way.
 
@@ -57,18 +72,25 @@ Should soil-survey be a **single sealed partition with no day dimension**, like 
 
 If the cap is simply raised or the export is paginated, what does a 200,001-key write cost in memory and time? Does it fit the guards in `warehouse/parquet/tiers.py` (1600MB / 3 threads / spilling disabled)?
 
+**Resolution:** delete the hard cap and stream bounded output parts rather than materializing the
+whole population at once.
+
 ### 4.3 What does the zoom ladder mean for a static lane?
 
 Coarse rungs (z0, z5, z9) are derived from base z13 by aggregation. For a static dataset, do coarse rungs get derived **once**, or **not at all**? If derived once, they are frozen; if not at all, the serving API has no coarse geometry.
+
+**Resolution:** derive z0/z5/z9/z13 once per version-stamped release.
 
 ### 4.4 Which serving reader and slider capability entry does soil-survey need?
 
 What does the serving reader (`interface/http` per RUNBOOK 0.33.3 item C) expect to find in Parquet for a static lane? Does the existing **`_static_lane_census`** bracketing in `gap_fill.py` already model this correctly, or does soil-survey need a different shape?
 
+**Resolution:** retain the static-lane release contract. Production route probing and client
+selection of that release are cutover work, not a new soil-survey grain decision.
+
 **Context:** §0.41.7 and `foundation/parquet/lane_contract.py` define `nature` declarations per lane (e.g., `daily_series`, `static_lookup`). Soil-survey's eventual nature must align with what the serving API and slider expect to consume.
 
 ## 5. Status
 
-**Blocked on owner design decision** (what shape soil-survey should take). Once that decision is made, implementation can follow a straightforward path: raise the cap and drain, or reshard, or restructure to a static partition — the shape determines the work.
-
-**Out of scope for 2026-08-25 data-completeness session** by deliberate owner choice (RUNBOOK §0.29.1 context). Deferred here so it is not lost.
+**Complete.** The version-stamped static-release shape, bounded streaming parts, and all four zoom
+rungs landed in `68da7af`. Remaining API/client/browser work is tracked elsewhere.

@@ -3,7 +3,7 @@
   "description": "Postgres shrink via ingest repoint to Parquet — bridge, then cut per lane",
   "type": "feature",
   "created_at": "2026-08-25T02:30:00Z",
-  "status": "pending",
+  "status": "active",
   "supersedes": {
     "parquet_duckdb_pivot_20260823": "item E of RUNBOOK 0.33.3 (forward path per lane, upstream -> Parquet) moves here; items A (slice d1), C (d3), D (d4) stay there and are this track's external dependencies"
   },
@@ -11,19 +11,39 @@
     {
       "track": "parquet_duckdb_pivot_20260823",
       "slice": "d1",
-      "for": "coarse-rung derivation fix, signal z13 re-export with positions, retraction of the 2026-08-08..16 signal absences; blocks s5 exporter deletion"
+      "status": "resolved_superseded_complete",
+      "for": "Historical construction was superseded by the immutable canonical snapshot and exact snapshot-only product breakdowns. Do not restart the old shared drain."
     },
     {
       "track": "parquet_duckdb_pivot_20260823",
       "slice": "d3",
-      "for": "interface/http serving API; blocks s6"
+      "status": "code_complete_prod_blocked",
+      "for": "Private Parquet routes and bounded client are integrated; production probing is blocked by the API /ready timeout."
     },
     {
       "track": "parquet_duckdb_pivot_20260823",
       "slice": "d4",
-      "for": "tRPC repoint; blocks s6"
+      "status": "pending",
+      "for": "tRPC and slider-capability repoint plus browser acceptance; blocks retirement."
     }
   ],
+  "checkpoint_20260827": {
+    "integrated_main": "949e20ee38405781a3e2a8978b2fc769bb7659d6",
+    "historical_data_state": "complete and independently reconciled for the targeted canonical, climate, soil, fire, water, weather, and vegetation lanes",
+    "postgres_state": "intact; no producer, reader, row, table, or ingestion registration retired",
+    "forward_state": "partial; direct or queued implementations exist for fire detections, water gauges, vegetation, and weather audit, while snapshot-only climate and soil products still need scheduled forward-source ownership evidence",
+    "remaining_gate_order": [
+      "repair and verify API /ready",
+      "probe private Parquet routes in production",
+      "extract top-level parquet_ops, split interface/cli, and perform the coordinated agri-service rename",
+      "repoint agent/MCP data tools off obsolete Postgres views per RUNBOOK 0.42.30",
+      "repoint tRPC readers and capability census per lane",
+      "run browser and environment-gated acceptance",
+      "observe direct forward writers and exact parity",
+      "retire PostgreSQL per lane",
+      "shrink PostgreSQL only after all retirement gates pass"
+    ]
+  },
   "partitions": {
     "computed_at": "2026-08-25T02:30:00Z",
     "computed_at_commit": "80ac72a",
@@ -38,7 +58,9 @@
           "infra/cron-ingest/Dockerfile"
         ],
         "model": "sonnet",
-        "depends_on": []
+        "depends_on": [],
+        "status": "code_landed_runtime_unverified",
+        "note": "Forward cron configuration is present on integrated main. Scheduled cadence and ledger advancement still require production observation before this bridge can authorize retirement."
       },
       {
         "id": "s1",
@@ -73,7 +95,9 @@
           "services/agri-data-service/db/tools/"
         ],
         "model": "opus",
-        "depends_on": []
+        "depends_on": [],
+        "status": "code_landed_runtime_unverified",
+        "note": "Baseline and forward migration contracts through 20260827_0027 are integrated. Do not claim production stamp/parity from code alone; verify /ready and the live migration head during the cutover gate."
       },
       {
         "id": "s2",

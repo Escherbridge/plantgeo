@@ -1,5 +1,5 @@
 ---
-type: Implementation Plan
+type: track-plan
 title: "Postgres shrink via ingest repoint to Parquet — bridge, then cut per lane"
 tags: [postgres_shrink_ingest_repoint_20260825]
 resource: ./spec.md
@@ -26,6 +26,42 @@ P1 ─┴──────────────────────┘  
       external: pivot d1 (ladder) ──────┤
       external: pivot d3 + d4 (serving) ┘
 ```
+
+## Execution checkpoint — 2026-08-27
+
+The unchecked task list below is the original implementation plan, not a claim that none of it has
+run. Use this checkpoint and the track spec before scheduling work:
+
+- **Complete/integrated:** canonical snapshot plus governed climate/soil product breakdowns;
+  historical fire, water, weather, vegetation, and NASA soil-wetness reconciliation; reusable
+  schemas/builders/auditors; private Sanic Parquet routes; bounded TypeScript Parquet client;
+  alembic baseline/forward-revision contracts. Integrated `main` is
+  `949e20ee38405781a3e2a8978b2fc769bb7659d6`.
+- **Partially complete:** direct forward writers. Fire detections, water gauges, and vegetation have
+  direct/queued implementations; weather has exact settled-lane audit coverage. Snapshot-only
+  climate/soil builders still require durable forward-source ownership before retirement.
+- **Not executed:** extraction of the shared top-level `parquet_ops/` core, the `interface/cli/`
+  split and coordinated `agri-service` rename, the `s7` agent/MCP repoint, Next.js tRPC/client
+  cutover, production browser acceptance, PostgreSQL producer or reader deletion, relation/index
+  drops, and final database shrink.
+- **Immediate blocker:** the API service's existing `/ready` deployment timeout. Diagnose the failed
+  readiness check; do not bypass or relax it.
+
+Current dependency order:
+
+```
+API /ready repair
+  -> production probe of all four private Parquet routes
+  -> shared parquet_ops core + CLI split + agent/MCP repoint
+  -> per-lane tRPC + capability repoint
+  -> browser acceptance + environment-gated integration tests
+  -> per-lane forward-writer observation/parity
+  -> P5 retirement batches
+  -> P6 shrink
+```
+
+Do not restart historical snapshot/drain work to satisfy a retirement gate. The immutable snapshot
+and its derived lanes are already complete; the remaining proof is forward operation and serving.
 
 Conventions for every phase: TDD per task (write the failing test, implement,
 refactor); **one test sweep at the end of the phase, not per task**; the phase
