@@ -57,7 +57,6 @@ from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBacken
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from agri_data_service.parquet_ops.duckdb_session import ServingSession
     from agri_data_service.parquet_ops.request_params import ReadScope
     from agri_data_service.parquet_ops.warehouse_reader import PartitionRowReader, WarehouseListing
 
@@ -89,8 +88,8 @@ _REFUSAL_HTTP_STATUS: Final[dict[str, int]] = {
     "snapshot_schema_mismatch": HTTP_SERVICE_UNAVAILABLE,
 }
 
-#: Under the client's own 15 s row budget and 30 s coverage budget, so the server's error wins the
-#: race and the caller learns which read failed rather than only that something timed out.
+#: Row reads finish inside the client's 15 s budget. Coverage retains a 29 s shielded build budget:
+#: the client stops waiting after 8 s, reports explicit incomplete coverage, and retries the cache.
 ROW_READ_TIMEOUT_SECONDS: Final = 14.0
 COVERAGE_TIMEOUT_SECONDS: Final = 29.0
 
@@ -345,14 +344,12 @@ async def _run_coverage_read() -> dict[str, object]:
 
 
 async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
-    """Build one merged census while holding exactly one admitted serving session."""
-    credentials = settings.require_object_store()
+    """Build one merged metadata-only census outside the DuckDB serving pool."""
 
-    def work(session: ServingSession) -> dict[str, object]:
+    def work() -> dict[str, object]:
         direct = _coverage_cache.get(open_listing(), lanes=registered_census_lanes(), now=generated_at)
         snapshot = _snapshot_coverage_cache.get(
             open_snapshot_store(),
-            session,
             now=generated_at,
         )
         for withheld in snapshot.withheld:
@@ -368,12 +365,7 @@ async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
             lanes=direct.lanes + snapshot.lanes,
         ).to_wire()
 
-    return await run_serving_read(
-        credentials,
-        work,
-        prefix=settings.object_store_prefix,
-        operation=ROUTE_COVERAGE,
-    )
+    return await asyncio.to_thread(work)
 
 
 async def _answer(

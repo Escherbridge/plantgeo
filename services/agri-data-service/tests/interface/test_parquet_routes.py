@@ -295,7 +295,7 @@ async def test_cold_coverage_waiters_share_one_builder_before_any_serving_slot(
     await started.wait()
     await asyncio.sleep(0)
 
-    assert build_calls == 1, "only the builder may advance to run_serving_read and acquire a slot"
+    assert build_calls == 1, "only one metadata-only cold census may run"
     callers[0].cancel()
     with pytest.raises(asyncio.CancelledError):
         await callers[0]

@@ -83,8 +83,8 @@ const MAX_COVERAGE_RESPONSE_BYTES = 4 * 1024 * 1024;
 /** A DuckDB scan over one day's partitions, with headroom for a cold object-store read. */
 const ROW_READ_TIMEOUT_MS = 15_000;
 
-/** Coverage walks the whole warehouse's object listing; the memoization below is what hides its cost. */
-const COVERAGE_TIMEOUT_MS = 30_000;
+/** The public slider may degrade while the service continues its shielded cold census build. */
+const COVERAGE_TIMEOUT_MS = 8_000;
 
 /**
  * How long one coverage answer is reused, in seconds.
@@ -96,6 +96,9 @@ const COVERAGE_TIMEOUT_MS = 30_000;
  * coffee break while still collapsing a burst of page loads into a single upstream read.
  */
 const COVERAGE_REVALIDATE_SECONDS = 300;
+
+/** Collapse concurrent cold callers; the successful response still lives in Next's shared cache. */
+let coverageRequest: Promise<ParquetWarehouseCoverage> | null = null;
 
 /** `YYYY-MM-DD`. A shape check only: nothing here turns a day into an instant. */
 const CALENDAR_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -575,12 +578,20 @@ export async function getParquetLatestRelease(
  * others at the capability gate.
  */
 export async function getParquetWarehouseCoverage(): Promise<ParquetWarehouseCoverage> {
-  const url = endpoint(WIRE.routes.coverage);
-  const payload = await readJson(
-    url,
-    MAX_COVERAGE_RESPONSE_BYTES,
-    COVERAGE_TIMEOUT_MS,
-    COVERAGE_REVALIDATE_SECONDS
-  );
-  return decodeCoverage(payload);
+  coverageRequest ??= (async () => {
+    const url = endpoint(WIRE.routes.coverage);
+    const payload = await readJson(
+      url,
+      MAX_COVERAGE_RESPONSE_BYTES,
+      COVERAGE_TIMEOUT_MS,
+      COVERAGE_REVALIDATE_SECONDS
+    );
+    return decodeCoverage(payload);
+  })();
+  const request = coverageRequest;
+  try {
+    return await request;
+  } finally {
+    if (coverageRequest === request) coverageRequest = null;
+  }
 }

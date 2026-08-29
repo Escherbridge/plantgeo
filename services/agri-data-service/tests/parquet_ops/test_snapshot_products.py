@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 
 TEST_COLUMNS = ("observed_day", "cell_longitude", "cell_latitude", "normalized_value")
+NASA_POWER_GRID_CELL_COUNT = 397
 
 
 @pytest.fixture(autouse=True)
@@ -111,6 +112,7 @@ def _closed_store(
     *,
     manifest_fields: dict[str, object] | None = None,
     part_payloads: dict[str, bytes] | None = None,
+    part_rows: dict[str, int] | None = None,
 ) -> FakeStore:
     objects = {key: (part_payloads or {}).get(key, b"PAR1-test-receipt") for key in parts}
     checkpoints: list[dict[str, object]] = []
@@ -121,7 +123,7 @@ def _closed_store(
         month = f"{matched.group('year')}-{matched.group('month')}"
         grouped.setdefault(month, {})[str(int(matched.group("zoom")))] = {
             **_receipt(key, objects[key]),
-            "rows": 1,
+            "rows": (part_rows or {}).get(key, 1),
             "zoom": int(matched.group("zoom")),
         }
     for month, rungs in sorted(grouped.items()):
@@ -485,7 +487,7 @@ def test_daily_parquet_overwrite_refuses_and_coverage_never_gets_serving_parts(
             raise AssertionError("daily closed coverage and an overwritten receipt must not open DuckDB")
 
     monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (product,))
-    census = build_snapshot_coverage(store, LocalSession(NoQuery(), {}))  # type: ignore[arg-type]
+    census = build_snapshot_coverage(store)
     assert len(census.lanes) == len(ZOOM_TIERS)
     assert not any(key.endswith(".parquet") for key in store.reads)
 
@@ -651,6 +653,7 @@ def test_unbound_completion_never_exposes_a_snapshot() -> None:
 
 def test_registered_product_families_pin_their_exact_top_level_schemas() -> None:
     signal = PRODUCT_BY_LAYER["climate-field-air-temperature-mean"]
+    dew = PRODUCT_BY_LAYER["climate-field-dew-point"]
     wetness = PRODUCT_BY_LAYER["soil-wetness-surface"]
     temperature = PRODUCT_BY_LAYER["soil-temperature-0-to-7cm"]
 
@@ -686,6 +689,8 @@ def test_registered_product_families_pin_their_exact_top_level_schemas() -> None
     assert snapshot_product_columns(signal) == frozenset(SIGNAL_PRODUCT_COLUMNS)
     assert snapshot_product_columns(wetness) == frozenset(SOIL_WETNESS_COLUMNS)
     assert snapshot_product_columns(temperature) == frozenset(SOIL_TEMPERATURE_COLUMNS)
+    assert signal.coverage_cell_grid_name == dew.coverage_cell_grid_name == "nasa-power-0.5-degree"
+    assert signal.coverage_cells_per_day == dew.coverage_cells_per_day == NASA_POWER_GRID_CELL_COUNT
 
 
 def test_dew_point_is_registered_only_at_its_pinned_closed_snapshot() -> None:
@@ -698,7 +703,7 @@ def test_dew_point_is_registered_only_at_its_pinned_closed_snapshot() -> None:
     assert product.expected_manifest_sha256 == "c2972ea61ebfb66a86fa1e834625fae163e5d0a0abfd39f8c701edca3e59b71a"
 
 
-def test_declared_coverage_uses_no_parquet_scan_and_air_style_coverage_scans_z13_once(
+def test_declared_and_fixed_lattice_coverage_use_only_bound_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     declared = _product("test-declared-coverage")
@@ -714,40 +719,210 @@ def test_declared_coverage_uses_no_parquet_scan_and_air_style_coverage_scans_z13
         },
     )
 
-    class NoQuery:
-        def execute(self, *_args: object, **_kwargs: object) -> object:
-            raise AssertionError("manifest-complete contiguous coverage must not open Parquet")
-
     monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (declared,))
-    census = build_snapshot_coverage(declared_store, LocalSession(NoQuery(), {}))  # type: ignore[arg-type]
+    census = build_snapshot_coverage(declared_store)
     assert len(census.lanes) == len(ZOOM_TIERS)
     assert not census.withheld
     assert all(row.earliest_day == date(2026, 8, 1) and row.latest_day == date(2026, 8, 3) for row in census.lanes)
     assert not any(key.endswith(".parquet") for key in declared_store.reads)
 
-    air_style = _product("test-air-style")
+    original = _product("test-air-style")
+    air_style = SnapshotProduct(
+        layer=original.layer,
+        layout=original.layout,
+        data_root=original.data_root,
+        metadata_root=original.metadata_root,
+        schema_columns=original.schema_columns,
+        contract_version=original.contract_version,
+        coverage_cell_grid_name="nasa-power-0.5-degree",
+        coverage_cells_per_day=NASA_POWER_GRID_CELL_COUNT,
+    )
     air_parts = [_part(air_style, tier, date(2026, 8, 1), monthly=True) for tier in (0, 5, 9, 13)]
+    row_counts = dict.fromkeys(air_parts, NASA_POWER_GRID_CELL_COUNT * 3)
     air_store = _closed_store(
         air_style,
         air_parts,
-        manifest_fields={"rungs": {str(tier): {"parts": 1} for tier in (0, 5, 9, 13)}},
+        part_rows=row_counts,
+        manifest_fields={
+            "product": {
+                "stream": air_style.layer,
+                "cell_grid_name": "nasa-power-0.5-degree",
+                "observed_grain": [
+                    "support_key",
+                    "signal_name",
+                    "normalized_unit",
+                    "cell_id",
+                    "observation_day",
+                ],
+            },
+            "source_observation_day_min": "2026-08-01",
+            "source_observation_day_max": "2026-08-03",
+            "totals": {
+                "excluded_rows": 0,
+                "release_winner_rows": NASA_POWER_GRID_CELL_COUNT * 3,
+                "rungs": {str(tier): {"parts": 1, "rows": NASA_POWER_GRID_CELL_COUNT * 3} for tier in (0, 5, 9, 13)},
+            },
+        },
     )
 
-    class OneQuery:
-        calls = 0
-
-        def execute(self, *_args: object, **_kwargs: object) -> OneQuery:
-            self.calls += 1
-            return self
-
-        def fetchall(self) -> list[tuple[date]]:
-            return [(date(2026, 8, 1),), (date(2026, 8, 3),)]
-
-    query = OneQuery()
     monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (air_style,))
-    build_snapshot_coverage(air_store, LocalSession(query, {key: key for key in air_parts}))  # type: ignore[arg-type]
-    assert query.calls == 1, "closed tier parity permits exactly one z13 day projection, never four rung scans"
+    census = build_snapshot_coverage(air_store)
+    assert len(census.lanes) == len(ZOOM_TIERS)
+    assert not census.withheld
+    assert all(row.earliest_day == date(2026, 8, 1) and row.latest_day == date(2026, 8, 3) for row in census.lanes)
     assert not any(key.endswith(".parquet") for key in air_store.reads)
+
+
+def test_fixed_lattice_coverage_refuses_rows_without_the_signed_unique_cell_day_grain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = _product("test-fixed-lattice-grain")
+    product = SnapshotProduct(
+        layer=original.layer,
+        layout=original.layout,
+        data_root=original.data_root,
+        metadata_root=original.metadata_root,
+        schema_columns=original.schema_columns,
+        contract_version=original.contract_version,
+        coverage_cell_grid_name="nasa-power-0.5-degree",
+        coverage_cells_per_day=NASA_POWER_GRID_CELL_COUNT,
+    )
+    parts = [_part(product, tier, date(2026, 8, 1), monthly=True) for tier in ZOOM_TIERS]
+    store = _closed_store(
+        product,
+        parts,
+        part_rows=dict.fromkeys(parts, NASA_POWER_GRID_CELL_COUNT * 3),
+        manifest_fields={
+            "product": {
+                "stream": product.layer,
+                "cell_grid_name": "nasa-power-0.5-degree",
+                "observed_grain": ["cell_id"],
+            },
+            "source_observation_day_min": "2026-08-01",
+            "source_observation_day_max": "2026-08-03",
+            "totals": {
+                "excluded_rows": 0,
+                "release_winner_rows": NASA_POWER_GRID_CELL_COUNT * 3,
+                "rungs": {str(tier): {"parts": 1, "rows": NASA_POWER_GRID_CELL_COUNT * 3} for tier in ZOOM_TIERS},
+            },
+        },
+    )
+
+    monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (product,))
+    census = build_snapshot_coverage(store)
+
+    assert not census.lanes
+    assert len(census.withheld) == 1
+    assert census.withheld[0].layer == product.layer
+    assert "unique cell-day contract" in census.withheld[0].message
+    assert not any(key.endswith(".parquet") for key in store.reads)
+
+
+def test_fixed_lattice_coverage_refuses_a_short_month_without_reading_parquet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = _product("test-fixed-lattice-short-month")
+    product = SnapshotProduct(
+        layer=original.layer,
+        layout=original.layout,
+        data_root=original.data_root,
+        metadata_root=original.metadata_root,
+        schema_columns=original.schema_columns,
+        contract_version=original.contract_version,
+        coverage_cell_grid_name="nasa-power-0.5-degree",
+        coverage_cells_per_day=NASA_POWER_GRID_CELL_COUNT,
+    )
+    parts = [_part(product, tier, date(2026, 8, 1), monthly=True) for tier in ZOOM_TIERS]
+    short_rows = NASA_POWER_GRID_CELL_COUNT * 2
+    store = _closed_store(
+        product,
+        parts,
+        part_rows=dict.fromkeys(parts, short_rows),
+        manifest_fields={
+            "product": {
+                "stream": product.layer,
+                "cell_grid_name": "nasa-power-0.5-degree",
+                "observed_grain": [
+                    "support_key",
+                    "signal_name",
+                    "normalized_unit",
+                    "cell_id",
+                    "observation_day",
+                ],
+            },
+            "source_observation_day_min": "2026-08-01",
+            "source_observation_day_max": "2026-08-03",
+            "totals": {
+                "excluded_rows": 0,
+                "release_winner_rows": short_rows,
+                "rungs": {str(tier): {"parts": 1, "rows": short_rows} for tier in ZOOM_TIERS},
+            },
+        },
+    )
+
+    monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (product,))
+    census = build_snapshot_coverage(store)
+
+    assert not census.lanes
+    assert len(census.withheld) == 1
+    assert "rows do not prove every 2026-08 day" in census.withheld[0].message
+    assert not any(key.endswith(".parquet") for key in store.reads)
+
+
+def test_cold_coverage_verifies_products_concurrently_with_a_bounded_fanout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    products = tuple(_product(f"test-cold-product-{index}") for index in range(5))
+    stores = []
+    for product in products:
+        parts = [_part(product, tier, date(2026, 8, 1), monthly=True) for tier in ZOOM_TIERS]
+        stores.append(
+            _closed_store(
+                product,
+                parts,
+                manifest_fields={
+                    "data_day_count": 1,
+                    "observation_day_min": "2026-08-01",
+                    "observation_day_max": "2026-08-01",
+                    "tiers": {str(tier): {"part_count": 1} for tier in ZOOM_TIERS},
+                },
+            )
+        )
+
+    @dataclass
+    class ConcurrentProductStore(FakeStore):
+        release: threading.Event = field(default_factory=threading.Event)
+        lock: threading.Lock = field(default_factory=threading.Lock)
+        active: int = 0
+        max_active: int = 0
+
+        def read_object(self, relative_key: str) -> bytes | None:
+            if not relative_key.endswith("/manifest.json"):
+                return super().read_object(relative_key)
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                if self.active == snapshot_products.SNAPSHOT_COVERAGE_PRODUCT_WORKERS:
+                    self.release.set()
+            try:
+                assert self.release.wait(timeout=5)
+                return super().read_object(relative_key)
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    store = ConcurrentProductStore(objects={key: value for held in stores for key, value in held.objects.items()})
+
+    monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", products)
+    census = build_snapshot_coverage(store)
+
+    assert store.max_active == snapshot_products.SNAPSHOT_COVERAGE_PRODUCT_WORKERS
+    assert len(census.lanes) == len(products) * len(ZOOM_TIERS)
+    assert [census.lanes[index * len(ZOOM_TIERS)].layer for index in range(len(products))] == [
+        product.layer for product in products
+    ]
+    assert not census.withheld
+    assert not any(key.endswith(".parquet") for key in store.reads)
 
 
 def test_one_unclosed_product_is_withheld_without_erasing_healthy_product_coverage(
@@ -767,12 +942,8 @@ def test_one_unclosed_product_is_withheld_without_erasing_healthy_product_covera
         },
     )
 
-    class NoQuery:
-        def execute(self, *_args: object, **_kwargs: object) -> object:
-            raise AssertionError("closed healthy coverage and a missing manifest need no Parquet query")
-
     monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (healthy, broken))
-    census = build_snapshot_coverage(store, LocalSession(NoQuery(), {}))  # type: ignore[arg-type]
+    census = build_snapshot_coverage(store)
 
     assert {lane.layer for lane in census.lanes} == {healthy.layer}
     assert len(census.lanes) == len(ZOOM_TIERS)
@@ -782,7 +953,7 @@ def test_one_unclosed_product_is_withheld_without_erasing_healthy_product_covera
     assert broken.layer in census.withheld[0].message
 
 
-def test_one_unreadable_monthly_product_is_withheld_without_erasing_later_products(
+def test_one_monthly_product_without_metadata_day_proof_is_withheld_without_erasing_later_products(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     broken = _product("test-corrupt-coverage")
@@ -806,21 +977,14 @@ def test_one_unreadable_monthly_product_is_withheld_without_erasing_later_produc
     )
     store = FakeStore({**broken_store.objects, **healthy_store.objects})
 
-    class CorruptMonthlyRead:
-        def execute(self, *_args: object, **_kwargs: object) -> object:
-            raise duckdb.InvalidInputException("invalid Parquet footer")
-
     monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (broken, healthy))
-    census = build_snapshot_coverage(
-        store,
-        LocalSession(CorruptMonthlyRead(), {key: key for key in broken_parts}),  # type: ignore[arg-type]
-    )
+    census = build_snapshot_coverage(store)
 
     assert {lane.layer for lane in census.lanes} == {healthy.layer}
     assert len(census.withheld) == 1
     assert census.withheld[0].layer == broken.layer
-    assert census.withheld[0].code == "snapshot_schema_mismatch"
-    assert "InvalidInputException" in census.withheld[0].message
+    assert census.withheld[0].code == "snapshot_unpublished"
+    assert "exact daily coverage range" in census.withheld[0].message
 
 
 def test_a_malformed_manifest_tier_count_becomes_a_product_local_typed_withholding(
@@ -839,12 +1003,8 @@ def test_a_malformed_manifest_tier_count_becomes_a_product_local_typed_withholdi
         },
     )
 
-    class NoQuery:
-        def execute(self, *_args: object, **_kwargs: object) -> object:
-            raise AssertionError("malformed manifest metadata must fail before opening Parquet")
-
     monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (product,))
-    census = build_snapshot_coverage(store, LocalSession(NoQuery(), {}))  # type: ignore[arg-type]
+    census = build_snapshot_coverage(store)
 
     assert not census.lanes
     assert len(census.withheld) == 1

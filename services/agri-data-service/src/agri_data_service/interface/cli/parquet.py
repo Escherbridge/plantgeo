@@ -152,16 +152,15 @@ def read_coverage() -> None:
         )
         snapshot_store = ObjectStoreSnapshotStore(backend=backend, prefix=settings.object_store_prefix)
         generated_at = datetime.now(UTC)
-        async with asyncio.timeout(_COVERAGE_TIMEOUT_SECONDS):
-            return await run_serving_read(
-                credentials,
-                lambda session: _merged_coverage(
-                    CoverageCache().get(listing, lanes=registered_census_lanes(), now=generated_at),
-                    SnapshotCoverageCache().get(snapshot_store, session, now=generated_at).lanes,
-                ),
-                prefix=settings.object_store_prefix,
-                operation=ROUTE_COVERAGE,
+
+        def census() -> dict[str, object]:
+            return _merged_coverage(
+                CoverageCache().get(listing, lanes=registered_census_lanes(), now=generated_at),
+                SnapshotCoverageCache().get(snapshot_store, now=generated_at).lanes,
             )
+
+        async with asyncio.timeout(_COVERAGE_TIMEOUT_SECONDS):
+            return await asyncio.to_thread(census)
 
     _emit(read(), operation=ROUTE_COVERAGE, timeout_seconds=_COVERAGE_TIMEOUT_SECONDS)
 

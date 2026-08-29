@@ -375,6 +375,26 @@ describe("getParquetWarehouseCoverage", () => {
     expect(revalidateSeconds).toBeLessThanOrEqual(1_800);
   });
 
+  it("uses a short public boot budget and single-flights concurrent cold coverage reads", async () => {
+    let resolveFetch!: (value: unknown) => void;
+    mockedFetch.mockReturnValue(
+      new Promise((resolve) => {
+        resolveFetch = resolve;
+      })
+    );
+
+    const first = getParquetWarehouseCoverage();
+    const second = getParquetWarehouseCoverage();
+
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+    expect(requestedOptions()?.timeoutMs).toBe(8_000);
+    resolveFetch(census);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.any(Object),
+      expect.any(Object),
+    ]);
+  });
+
   it("keeps a never-drained lane's nulls rather than inventing a span for it", async () => {
     mockedFetch.mockResolvedValue(census);
 

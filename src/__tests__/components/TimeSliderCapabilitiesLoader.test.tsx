@@ -148,7 +148,11 @@ describe("TimeSliderCapabilitiesLoader", () => {
     // Two clocks, chosen per payload. A COMPLETE payload polls on the read-model's own memo
     // interval, so the poll is a server-side cache hit that only re-stamps the date.
     const refetchInterval = options.refetchInterval as (query: {
-      state: { data: { streamsUnavailable: boolean } | undefined };
+      state: {
+        data:
+          | { streamsUnavailable: boolean; parquetCoverageUnavailable?: boolean }
+          | undefined;
+      };
     }) => number;
     expect(refetchInterval({ state: { data: { streamsUnavailable: false } } })).toBe(5 * 60_000);
     expect(refetchInterval({ state: { data: undefined } })).toBe(5 * 60_000);
@@ -158,6 +162,11 @@ describe("TimeSliderCapabilitiesLoader", () => {
     // in the server cache seconds later, so waiting the full five minutes to collect it would
     // hold every stream-backed slider in the outage state long after the outage ended.
     expect(refetchInterval({ state: { data: { streamsUnavailable: true } } })).toBe(30_000);
+    expect(
+      refetchInterval({
+        state: { data: { streamsUnavailable: false, parquetCoverageUnavailable: true } },
+      })
+    ).toBe(30_000);
     // The layer list moves only when an ingest run lands a new day, so a focus refetch would
     // spend the whole-warehouse scan for an answer that has not changed.
     expect(options.refetchOnWindowFocus).toBe(false);

@@ -12,8 +12,6 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
-import duckdb
-
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.serving import WINDOW_ROW_BUDGET
@@ -43,6 +41,7 @@ SNAPSHOT_COVERAGE_CACHE_SECONDS: Final = 120
 MAX_SNAPSHOT_READ_PARTS: Final = 32
 MAX_MONTHLY_RECEIPT_OBJECTS: Final = 4_096
 METADATA_VERIFY_WORKERS: Final = 16
+SNAPSHOT_COVERAGE_PRODUCT_WORKERS: Final = 4
 MAX_EVIDENCE_CACHE_ENTRIES: Final = 64
 BASE_ZOOM_TIER: Final = ZOOM_TIERS[-1]
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -77,6 +76,8 @@ class SnapshotProduct:
     schema_layer: str | None = None
     schema_columns: tuple[str, ...] | None = None
     contract_version: str | None = None
+    coverage_cell_grid_name: str | None = None
+    coverage_cells_per_day: int | None = None
 
 
 def _layer_root(layer: str) -> str:
@@ -128,6 +129,8 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         _layer_root("climate-field-air-temperature-mean"),
         schema_columns=SIGNAL_PRODUCT_COLUMNS,
         contract_version="plantgeo.air-temperature.snapshot-product.v1",
+        coverage_cell_grid_name="nasa-power-0.5-degree",
+        coverage_cells_per_day=397,
     ),
     SnapshotProduct(
         "climate-field-air-temperature-max",
@@ -136,6 +139,8 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         _layer_root("climate-field-air-temperature-max"),
         schema_columns=SIGNAL_PRODUCT_COLUMNS,
         contract_version="plantgeo.air-temperature.snapshot-product.v1",
+        coverage_cell_grid_name="nasa-power-0.5-degree",
+        coverage_cells_per_day=397,
     ),
     SnapshotProduct(
         "climate-field-air-temperature-min",
@@ -144,6 +149,8 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         _layer_root("climate-field-air-temperature-min"),
         schema_columns=SIGNAL_PRODUCT_COLUMNS,
         contract_version="plantgeo.air-temperature.snapshot-product.v1",
+        coverage_cell_grid_name="nasa-power-0.5-degree",
+        coverage_cells_per_day=397,
     ),
     SnapshotProduct(
         "climate-field-relative-humidity",
@@ -160,6 +167,8 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         expected_manifest_sha256="c2972ea61ebfb66a86fa1e834625fae163e5d0a0abfd39f8c701edca3e59b71a",
         schema_columns=SIGNAL_PRODUCT_COLUMNS,
         contract_version="plantgeo.dew-point.snapshot-product.v1",
+        coverage_cell_grid_name="nasa-power-0.5-degree",
+        coverage_cells_per_day=397,
     ),
     SnapshotProduct(
         "climate-field-wind-speed",
@@ -313,6 +322,7 @@ class SnapshotObjectReceipt:
     key: str
     byte_count: int
     sha256: str
+    row_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -599,43 +609,56 @@ def _resolve_snapshot_evidence(  # noqa: PLR0913 - exact evidence, request, and 
 
 def build_snapshot_coverage(
     store: SnapshotStore,
-    session: ServingSession,
 ) -> SnapshotCoverageCensus:
-    """Prove each product independently so one bad publication cannot erase healthy sliders."""
+    """Prove each product independently through bounded metadata-only evidence."""
     rows: list[LaneCoverage] = []
     withheld: list[SnapshotCoverageWithholding] = []
-    for product in SNAPSHOT_PRODUCTS:
+    worker_count = min(SNAPSHOT_COVERAGE_PRODUCT_WORKERS, len(SNAPSHOT_PRODUCTS))
+    if worker_count == 0:
+        return SnapshotCoverageCensus(lanes=(), withheld=())
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        evidence_results = executor.map(
+            lambda product: _coverage_evidence_or_withholding(store, product),
+            SNAPSHOT_PRODUCTS,
+        )
+        ordered_results = tuple(evidence_results)
+    for product, loaded in zip(SNAPSHOT_PRODUCTS, ordered_results, strict=True):
+        if isinstance(loaded, SnapshotCoverageWithholding):
+            withheld.append(loaded)
+            continue
         try:
-            rows.extend(_build_product_coverage(store, session, product))
+            rows.extend(_build_product_coverage(loaded))
         except faults.ServingRefusalError as exc:
             withheld.append(SnapshotCoverageWithholding(layer=product.layer, code=exc.code, message=exc.message))
-        except duckdb.Error as exc:
-            refusal = faults.snapshot_schema_mismatch(
-                layer=product.layer,
-                key=product.data_root,
-                detail=f"coverage Parquet evidence is unreadable ({type(exc).__name__})",
-            )
-            withheld.append(
-                SnapshotCoverageWithholding(layer=product.layer, code=refusal.code, message=refusal.message)
-            )
     return SnapshotCoverageCensus(lanes=tuple(rows), withheld=tuple(withheld))
 
 
-def _build_product_coverage(
+def _coverage_evidence_or_withholding(
     store: SnapshotStore,
-    session: ServingSession,
     product: SnapshotProduct,
+) -> SnapshotEvidence | SnapshotCoverageWithholding:
+    try:
+        return load_snapshot_evidence(store, product)
+    except faults.ServingRefusalError as exc:
+        return SnapshotCoverageWithholding(layer=product.layer, code=exc.code, message=exc.message)
+
+
+def _build_product_coverage(
+    evidence: SnapshotEvidence,
 ) -> tuple[LaneCoverage, ...]:
     """Build all four rungs for one product or raise one product-local typed refusal."""
     rows: list[LaneCoverage] = []
-    evidence = load_snapshot_evidence(store, product)
+    product = evidence.product
     declared_days = _declared_contiguous_days(evidence)
     if product.layout == "monthly":
         _require_monthly_tier_parity(evidence)
-        # Only the legacy air manifests omit an exact day count. Their closed checkpoint
-        # population proves every tier derives from the same monthly base, so one z13 day
-        # projection supplies the missing exact day set without scanning the other rungs.
-        shared_days = declared_days or _monthly_days(session, evidence.parts_by_tier[13], product=product)
+        if declared_days is None:
+            raise faults.snapshot_unpublished(
+                layer=product.layer,
+                snapshot_id=product.snapshot_id,
+                detail="monthly manifest evidence does not prove an exact daily coverage range",
+            )
+        shared_days = declared_days
     else:
         shared_days = set()
     for tier in ZOOM_TIERS:
@@ -675,7 +698,6 @@ class SnapshotCoverageCache:
     def get(
         self,
         store: SnapshotStore,
-        session: ServingSession,
         *,
         now: datetime,
     ) -> SnapshotCoverageCensus:
@@ -686,7 +708,7 @@ class SnapshotCoverageCache:
             held = self._fresh(now)
             if held is not None:
                 return held
-            built = build_snapshot_coverage(store, session)
+            built = build_snapshot_coverage(store)
             self._held = (now, built)
             return built
 
@@ -1483,6 +1505,7 @@ def _object_receipt(
     raw_key = value.get("key")
     raw_sha256 = value.get("sha256")
     byte_values = [value[name] for name in ("bytes", "byte_count") if name in value]
+    row_values = [value[name] for name in ("rows", "row_count") if name in value and value[name] is not None]
     if (
         not isinstance(raw_key, str)
         or not isinstance(raw_sha256, str)
@@ -1497,10 +1520,21 @@ def _object_receipt(
             snapshot_id=product.snapshot_id,
             detail=f"{context} receipt has an invalid key, byte count, or SHA-256",
         )
+    if len(row_values) > 1 or (
+        row_values and (not isinstance(row_values[0], int) or isinstance(row_values[0], bool) or row_values[0] < 0)
+    ):
+        raise faults.snapshot_unpublished(
+            layer=product.layer,
+            snapshot_id=product.snapshot_id,
+            detail=f"{context} receipt has an invalid row count",
+        )
+    row_count = row_values[0] if row_values else None
+    assert row_count is None or isinstance(row_count, int)
     return SnapshotObjectReceipt(
         key=store.relative_key(raw_key),
         byte_count=byte_values[0],
         sha256=raw_sha256,
+        row_count=row_count,
     )
 
 
@@ -1585,7 +1619,108 @@ def _verify_bound_parts(
 
 
 def _declared_contiguous_days(evidence: SnapshotEvidence) -> set[date] | None:
-    return _declared_contiguous_days_from_manifest(evidence.manifest, evidence.product)
+    declared = _declared_contiguous_days_from_manifest(evidence.manifest, evidence.product)
+    if declared is not None:
+        return declared
+    if evidence.product.coverage_cells_per_day is not None:
+        return _complete_grid_contiguous_days(evidence)
+    return None
+
+
+def _complete_grid_contiguous_days(evidence: SnapshotEvidence) -> set[date]:
+    """Prove a closed monthly day range from unique cell-day rows and a fixed complete lattice."""
+    product = evidence.product
+    cells_per_day = product.coverage_cells_per_day
+    grid_name = product.coverage_cell_grid_name
+    product_block = evidence.manifest.get("product")
+    expected_grain = ["support_key", "signal_name", "normalized_unit", "cell_id", "observation_day"]
+    if (
+        not isinstance(cells_per_day, int)
+        or isinstance(cells_per_day, bool)
+        or cells_per_day <= 0
+        or not isinstance(grid_name, str)
+        or not isinstance(product_block, Mapping)
+        or product_block.get("cell_grid_name") != grid_name
+        or product_block.get("observed_grain") != expected_grain
+    ):
+        raise faults.snapshot_unpublished(
+            layer=product.layer,
+            snapshot_id=product.snapshot_id,
+            detail="monthly coverage lacks its exact fixed-lattice unique cell-day contract",
+        )
+    raw_first = evidence.manifest.get("source_observation_day_min")
+    raw_last = evidence.manifest.get("source_observation_day_max")
+    try:
+        if not isinstance(raw_first, str) or not isinstance(raw_last, str):
+            raise TypeError
+        first = date.fromisoformat(raw_first)
+        last = date.fromisoformat(raw_last)
+    except (TypeError, ValueError) as exc:
+        raise faults.snapshot_unpublished(
+            layer=product.layer,
+            snapshot_id=product.snapshot_id,
+            detail="monthly fixed-lattice coverage has malformed source day bounds",
+        ) from exc
+    if last < first:
+        raise faults.snapshot_unpublished(
+            layer=product.layer,
+            snapshot_id=product.snapshot_id,
+            detail="monthly fixed-lattice coverage has an inverted source day range",
+        )
+
+    expected_days = {first + timedelta(days=offset) for offset in range((last - first).days + 1)}
+    proven_days: set[date] = set()
+    total_rows = 0
+    seen_months: set[tuple[int, int]] = set()
+    for key in evidence.parts_by_tier[BASE_ZOOM_TIER]:
+        matched = _MONTHLY_PART.search(key)
+        receipt = evidence.part_receipts.get(key)
+        if matched is None or receipt is None or receipt.row_count is None:
+            raise faults.snapshot_unpublished(
+                layer=product.layer,
+                snapshot_id=product.snapshot_id,
+                detail="monthly fixed-lattice coverage lacks a bound z13 row-count receipt",
+            )
+        month = (int(matched.group("year")), int(matched.group("month")))
+        if month in seen_months:
+            raise faults.snapshot_unpublished(
+                layer=product.layer,
+                snapshot_id=product.snapshot_id,
+                detail="monthly fixed-lattice coverage has more than one z13 part for a month",
+            )
+        seen_months.add(month)
+        month_days = {day for day in expected_days if (day.year, day.month) == month}
+        if not month_days or receipt.row_count != len(month_days) * cells_per_day:
+            raise faults.snapshot_unpublished(
+                layer=product.layer,
+                snapshot_id=product.snapshot_id,
+                detail=f"monthly fixed-lattice z13 rows do not prove every {month[0]:04d}-{month[1]:02d} day",
+            )
+        proven_days.update(month_days)
+        total_rows += receipt.row_count
+    if proven_days != expected_days:
+        raise faults.snapshot_unpublished(
+            layer=product.layer,
+            snapshot_id=product.snapshot_id,
+            detail="monthly fixed-lattice z13 parts do not cover the contiguous source day range",
+        )
+
+    totals = evidence.manifest.get("totals")
+    rung_totals = totals.get("rungs") if isinstance(totals, Mapping) else None
+    z13_totals = rung_totals.get(str(BASE_ZOOM_TIER)) if isinstance(rung_totals, Mapping) else None
+    if (
+        not isinstance(totals, Mapping)
+        or not isinstance(z13_totals, Mapping)
+        or z13_totals.get("rows") != total_rows
+        or totals.get("release_winner_rows") != total_rows
+        or totals.get("excluded_rows") != 0
+    ):
+        raise faults.snapshot_unpublished(
+            layer=product.layer,
+            snapshot_id=product.snapshot_id,
+            detail="monthly fixed-lattice coverage totals do not bind the exact z13 winner population",
+        )
+    return proven_days
 
 
 def _declared_contiguous_days_from_manifest(
@@ -1727,29 +1862,6 @@ def _month_has_day(session: ServingSession, keys: Sequence[str], *, day: date) -
         [uris, day],
     ).fetchone()
     return row is not None
-
-
-def _monthly_days(
-    session: ServingSession,
-    keys: Sequence[str],
-    *,
-    product: SnapshotProduct,
-) -> set[date]:
-    if not keys:
-        return set()
-    uris = [session.object_uri(key) for key in keys]
-    rows = session.connection.execute(
-        "SELECT DISTINCT observed_day FROM read_parquet(?, hive_partitioning=false, union_by_name=false) "
-        "ORDER BY observed_day",
-        [uris],
-    ).fetchall()
-    if any(len(row) != 1 or type(row[0]) is not date for row in rows):
-        raise faults.snapshot_schema_mismatch(
-            layer=product.layer,
-            key=product.data_root,
-            detail="monthly observed_day projection contains a non-date value",
-        )
-    return {row[0] for row in rows}
 
 
 def snapshot_product_columns(product: SnapshotProduct) -> frozenset[str]:

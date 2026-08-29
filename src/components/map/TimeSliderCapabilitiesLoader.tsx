@@ -61,17 +61,16 @@ export default function TimeSliderCapabilitiesLoader() {
   // unreachable until reload. The interval bounds that staleness to CAPABILITIES_REFRESH_MS
   // and costs nothing upstream: `readLayerCapabilities` memoizes for the same 5 minutes behind
   // a single-flight guard, so the poll is a server-side cache hit that re-stamps the date.
-  // A SHORT payload is retried on a short clock. `streamsUnavailable` means the server answered
-  // without its stream scan (see readStreamCapabilities' cold-start race), so this payload is
-  // known-incomplete rather than merely old: thirteen layers are missing an axis they really
-  // have. That scan is still running server-side and lands in the cache seconds later, so
-  // waiting the full five minutes to collect it would hold every stream-backed slider in the
-  // outage state long after the outage ended. Once a complete payload arrives this returns to
-  // the five-minute clock, where a poll is a server-side cache hit that re-stamps the date.
+  // A SHORT payload is retried on a short clock. Either legacy stream evidence or the Parquet
+  // coverage census can be temporarily unavailable; both answers are deliberately incomplete
+  // rather than fabricated. Their server-side single-flight work continues toward a cache fill,
+  // so waiting five minutes would keep valid sliders hidden after the evidence recovered.
   const capabilitiesQuery = trpc.environmental.getSliderCapabilities.useQuery(undefined, {
     staleTime: CAPABILITIES_REFRESH_MS,
     refetchInterval: (query) =>
-      query.state.data?.streamsUnavailable ? CAPABILITIES_RETRY_MS : CAPABILITIES_REFRESH_MS,
+      query.state.data?.streamsUnavailable || query.state.data?.parquetCoverageUnavailable
+        ? CAPABILITIES_RETRY_MS
+        : CAPABILITIES_REFRESH_MS,
     refetchOnWindowFocus: false,
   });
 

@@ -4,15 +4,22 @@ import {
   CLIMATE_FIELD_SIGNAL_IDS,
   climateFieldStreamName,
 } from "@/lib/environmental/climate-field";
+import { UpstreamHttpError } from "@/lib/server/http/bounded-upstream";
 
 const mocks = vi.hoisted(() => ({
   getParquetWarehouseCoverage: vi.fn(),
   getGeoFeatureSliderCapabilities: vi.fn(),
 }));
 
-vi.mock("@/lib/server/services/parquet-plane-client", () => ({
-  getParquetWarehouseCoverage: mocks.getParquetWarehouseCoverage,
-}));
+vi.mock("@/lib/server/services/parquet-plane-client", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/lib/server/services/parquet-plane-client")
+  >();
+  return {
+    ...actual,
+    getParquetWarehouseCoverage: mocks.getParquetWarehouseCoverage,
+  };
+});
 
 vi.mock("@/lib/server/services/environmental-read-model", () => ({
   getGeoFeatureSliderCapabilities: mocks.getGeoFeatureSliderCapabilities,
@@ -223,8 +230,13 @@ describe("getParquetSliderCapabilities", () => {
     });
     expect(result.parquetCoverageGeneratedAt).toBe("2026-08-28T12:00:00Z");
     expect(result.parquetCoverageEvaluatedThroughDay).toBe("2026-08-28");
+    expect(result.parquetCoverageUnavailable).toBe(false);
     expect(result.layers.find((layer) => layer.layerName === "burn-severity")).toEqual(
-      baseCapability("burn-severity")
+      {
+        ...baseCapability("burn-severity"),
+        governedAbsenceRanges: [],
+        minimumDailyObservationCount: null,
+      }
     );
     for (const layerName of parquetReaders) {
       expect(result.layers.find((layer) => layer.layerName === layerName)).toMatchObject({
@@ -239,8 +251,19 @@ describe("getParquetSliderCapabilities", () => {
   it("preserves Burn History from its explicit PostgreSQL capability without Parquet synthesis", async () => {
     const burnCapability = {
       ...baseCapability("burn-severity"),
-      earliestObservedDate: "1984-01-01",
-      latestObservedDate: "2024-12-31",
+      earliestObservedDate: "2024-08-22",
+      latestObservedDate: "2024-08-22",
+      coverageGaps: [{ from: "2015-04-02", to: "2024-08-21" }],
+      thinRanges: [{ from: "2015-04-01", to: "2024-08-22" }],
+      describedFromDay: "2015-04-01",
+      earliestObservedDateRule: "gap_clustered" as const,
+      earliestRecordedObservationDate: "2015-04-01",
+      earliestContinuousObservationDate: "2024-08-22",
+      latestRecordedObservationDate: "2024-08-22",
+      observedDayCount: 1,
+      excludedObservedDayCount: 9,
+      gapExcludedObservedDayCount: 9,
+      minimumDailyObservationCount: 1,
     };
     mocks.getGeoFeatureSliderCapabilities.mockResolvedValue({
       serverCurrentDate: "2026-08-28",
@@ -252,7 +275,21 @@ describe("getParquetSliderCapabilities", () => {
 
     const result = await getParquetSliderCapabilities();
 
-    expect(result.layers).toContainEqual(burnCapability);
+    expect(result.layers).toContainEqual({
+      ...burnCapability,
+      earliestObservedDate: "2015-04-01",
+      coverageGaps: [],
+      governedAbsenceRanges: [],
+      thinRanges: [],
+      describedFromDay: null,
+      earliestObservedDateRule: "full_history",
+      earliestContinuousObservationDate: "2015-04-01",
+      observedDayCount: 10,
+      excludedObservedDayCount: 0,
+      gapExcludedObservedDayCount: 0,
+      densityExcludedObservedDayCount: 0,
+      minimumDailyObservationCount: null,
+    });
     expect(
       result.withheldParquetCapabilities.some((entry) => entry.layerName === "burn-severity")
     ).toBe(false);
@@ -588,12 +625,56 @@ describe("getParquetSliderCapabilities", () => {
     ]);
   });
 
-  it("propagates a Parquet census fault before reading PostgreSQL fallback rows", async () => {
+  it("starts the independent PostgreSQL-owned capability read while coverage is cold", async () => {
+    let resolveCoverage!: (coverage: ReturnType<typeof completeCoverage>) => void;
+    mocks.getParquetWarehouseCoverage.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCoverage = (lanes) =>
+          resolve({
+            generatedAt: "2026-08-28T12:00:00Z",
+            evaluatedThroughDay: "2026-08-28",
+            lanes,
+          });
+      })
+    );
+
+    const pending = getParquetSliderCapabilities();
+    expect(mocks.getGeoFeatureSliderCapabilities).toHaveBeenCalledTimes(1);
+    resolveCoverage(completeCoverage());
+    await pending;
+  });
+
+  it("returns a retryable incomplete payload when the coverage plane is unavailable", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.getParquetWarehouseCoverage.mockRejectedValue(new UpstreamHttpError(503));
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(result.layers.map((layer) => layer.layerName)).toEqual([
+      "burn-severity",
+      "interventions",
+    ]);
+    expect(result.parquetCoverageUnavailable).toBe(true);
+    expect(result.parquetCoverageGeneratedAt).toBeNull();
+    expect(result.parquetCoverageEvaluatedThroughDay).toBeNull();
+    expect(result.withheldParquetCapabilities).toHaveLength(
+      PARQUET_CAPABILITY_CONTRACTS.length - 1
+    );
+    expect(
+      result.withheldParquetCapabilities.every(
+        (entry) => entry.reason === "coverage_unavailable"
+      )
+    ).toBe(true);
+    expect(errorSpy).toHaveBeenCalledOnce();
+    errorSpy.mockRestore();
+  });
+
+  it("propagates an unexpected Parquet census programming fault without fallback", async () => {
     const fault = new Error("coverage unavailable");
     mocks.getParquetWarehouseCoverage.mockRejectedValue(fault);
 
     await expect(getParquetSliderCapabilities()).rejects.toBe(fault);
-    expect(mocks.getGeoFeatureSliderCapabilities).not.toHaveBeenCalled();
+    expect(mocks.getGeoFeatureSliderCapabilities).toHaveBeenCalledTimes(1);
   });
 
   it("withholds every Parquet-owned row when coverage predates the server current day", async () => {

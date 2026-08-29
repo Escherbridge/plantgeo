@@ -172,23 +172,32 @@ range and propagate truncation from the first cut published day through every la
   holding a resolvable day.
 - `coverage` is the expensive one — one whole-stream listing for every mutable direct/product lane,
   plus manifest-bound immutable snapshot evidence. Closed daily snapshots derive exact days from
-  bound keys/ranges; closed monthly products use declared contiguous ranges, except legacy air
-  manifests, which pay one z13 day projection after persisted tier-parity checks. It is the
+  bound keys/ranges; closed monthly products use declared contiguous ranges. The older NASA air and
+  dew manifests predate an explicit day-count field, so they instead prove the same range from their
+  signed unique `(support, signal, unit, cell, day)` grain, one bound z13 row count per month, and the
+  fixed 397-cell `nasa-power-0.5-degree` lattice. The 397-cell cardinality is the reviewed historical
+  plan and `agri.spatial_cell` contract recorded in `docs/lanes/weather-observations.md`; the serving
+  proof additionally requires the manifest's exact grid name and rejects any month not equal to
+  `calendar days x 397`. A missing day cannot be hidden by a duplicate because the signed grain is
+  unique. It is the
   only mutable census memoized (`CoverageCache`, 120 s, under the client's own 300 s revalidation).
   Immutable checkpoint evidence is process-cached by backend namespace, product roots, and the exact
   manifest SHA after every caller rebinds `manifest.json` to `_COMPLETE`; selected Parquet payloads
   are still rehashed before each exact day/window read.
 
-Cold mutable stream listings use exactly three workers. Immutable coverage runs in one admitted
-DuckDB session because only legacy air manifests need a bounded day projection. Each mutable
+Cold mutable stream listings use exactly three workers. Immutable product evidence uses four outer
+workers, while each product's manifest-bound checkpoint/marker verification retains its existing
+16-worker ceiling; output is collected in allowlist order and a failure still withholds only that
+product. Coverage performs no DuckDB query and no serving-Parquet GET. Each mutable
 stream is consumed as an iterator and charges the one locked 600,000-key census budget before retaining
 a key, so concurrent listings cannot multiply the aggregate memory allowance. Measured against
 production R2 on 2026-08-28, the pre-product 52-prefix walk covered 121,386 keys in 16.27 s at this
 ceiling. The slider census now makes 26 stream-prefix calls (11 direct plus 15 products) and emits
 104 independent rung rows while keeping the same aggregate key refusal and bounded worker fan-out.
 The HTTP adapter additionally terminates any cold census at 29 seconds, below the client's 30-second
-budget. Tests prove a closed contiguous manifest opens no Parquet and a legacy monthly product runs
-one z13 day projection, never four tier scans; only a deployed probe can establish production latency.
+budget. Tests prove both declared and fixed-lattice monthly coverage open no Parquet, and that cold
+product verification reaches exactly the four-worker ceiling; only a deployed probe can establish
+production latency.
 
 Snapshot coverage isolates publication evidence per product. A missing, unbound, schema-drifted, or
 unreadable product contributes no rung rows, because null-bounded rows would falsely call it
@@ -214,10 +223,10 @@ The census carries three bounds a memo alone does not give it, all in `coverage.
   walk. `CoverageCache` holds a `threading.Lock` — not `asyncio`, because `get` runs inside the
   route's pool thread — and a queued caller re-checks the memo before building. This mirrors the
   guard `environmental-read-model.getSliderCapabilities` already has.
-- **Admission before execution, single-flight before admission.** The HTTP payload cache uses an
-  `asyncio.Lock` before `run_serving_read`; cold waiters own no DuckDB session and no bounded serving
-  slot. The one winner acquires one slot for the merged census, and waiters re-check and reuse its
-  payload after the lock opens.
+- **Metadata census outside query admission.** The HTTP payload cache uses an `asyncio.Lock`; cold
+  waiters own no DuckDB session and no bounded serving slot. The one winner builds the merged census
+  from object metadata in a worker thread, and waiters re-check and reuse its payload after the lock
+  opens. Coverage never enters `run_serving_read`.
 - **An aggregate key budget.** `MAX_CENSUS_LISTED_KEYS` is spent across every listing of ONE census
   through `_BudgetedListing`; exhausting it refuses the whole census, because a partial one would
   report the lanes it never reached as absent.

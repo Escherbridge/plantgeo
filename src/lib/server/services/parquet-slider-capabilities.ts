@@ -6,9 +6,16 @@ import {
 } from "@/lib/server/services/environmental-read-model";
 import {
   getParquetWarehouseCoverage,
+  ParquetPlaneContractError,
   type ParquetLaneCoverage,
   type ParquetLaneNature,
 } from "@/lib/server/services/parquet-plane-client";
+import {
+  UpstreamConfigurationError,
+  UpstreamHttpError,
+  UpstreamPayloadError,
+  UpstreamTimeoutError,
+} from "@/lib/server/http/bounded-upstream";
 import {
   CLIMATE_FIELD_SIGNAL_IDS,
   climateFieldStreamName,
@@ -21,6 +28,7 @@ const REQUIRED_ZOOM_TIERS = [0, 5, 9, 13] as const satisfies readonly ZoomTier[]
 
 /** Why a Parquet-owned slider row is deliberately absent from the public census. */
 export type WithheldParquetCapabilityReason =
+  | "coverage_unavailable"
   | "coverage_not_current"
   | "reader_not_parquet"
   | "lane_not_registered"
@@ -45,8 +53,9 @@ export interface WithheldParquetCapability {
 
 /** The ordinary slider payload plus auditable evidence for fail-closed Parquet omissions. */
 export interface ParquetSliderCapabilities extends ResolvedSliderCapabilities {
-  parquetCoverageGeneratedAt: string;
-  parquetCoverageEvaluatedThroughDay: string;
+  parquetCoverageGeneratedAt: string | null;
+  parquetCoverageEvaluatedThroughDay: string | null;
+  parquetCoverageUnavailable: boolean;
   withheldParquetCapabilities: WithheldParquetCapability[];
 }
 
@@ -150,6 +159,68 @@ const PARQUET_CAPABILITY_NAMES = new Set(
 );
 
 const POSTGRES_CAPABILITY_PASSTHROUGH_NAMES = new Set(["burn-severity"]);
+
+function isCoverageBoundaryFault(error: unknown): boolean {
+  return (
+    error instanceof UpstreamConfigurationError ||
+    error instanceof UpstreamHttpError ||
+    error instanceof UpstreamPayloadError ||
+    error instanceof UpstreamTimeoutError ||
+    error instanceof ParquetPlaneContractError ||
+    (error instanceof TypeError && error.message.includes("fetch failed"))
+  );
+}
+
+/** MTBS is a sparse cumulative event reader, so every day after its first event is selectable. */
+function restoreCumulativeBurnHistory(
+  layer: ResolvedSliderLayerCapability
+): ResolvedSliderLayerCapability {
+  if (layer.layerName !== "burn-severity") return layer;
+  const earliest = layer.earliestRecordedObservationDate ?? layer.earliestObservedDate;
+  if (earliest === null) return layer;
+  return {
+    ...layer,
+    earliestObservedDate: earliest,
+    coverageGaps: [],
+    governedAbsenceRanges: [],
+    thinRanges: [],
+    describedFromDay: null,
+    coverageGapsTruncated: false,
+    coverageGapsDescribedFromDay: null,
+    thinRangesTruncated: false,
+    thinRangesDescribedFromDay: null,
+    earliestObservedDateRule: "full_history",
+    earliestContinuousObservationDate: earliest,
+    observedDayCount: layer.observedDayCount + layer.excludedObservedDayCount,
+    excludedObservedDayCount: 0,
+    gapExcludedObservedDayCount: 0,
+    densityExcludedObservedDayCount: 0,
+    minimumDailyObservationCount: null,
+  };
+}
+
+function retainedPostgresCapabilities(
+  capabilities: ResolvedSliderCapabilities
+): ResolvedSliderLayerCapability[] {
+  return capabilities.layers
+    .filter(
+      (layer) =>
+        !PARQUET_CAPABILITY_NAMES.has(layer.layerName) ||
+        POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(layer.layerName)
+    )
+    .map(restoreCumulativeBurnHistory);
+}
+
+function unavailableCoverageProofs(): WithheldParquetCapability[] {
+  return PARQUET_CAPABILITY_CONTRACTS.filter(
+    (contract) => !POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(contract.layerName)
+  ).map((contract) => ({
+    layerName: contract.layerName,
+    parquetLanes: [...contract.parquetLanes],
+    reason: "coverage_unavailable",
+    missingEvidence: [],
+  }));
+}
 
 interface CapabilityProof {
   capability: ResolvedSliderLayerCapability | null;
@@ -514,9 +585,31 @@ function proveCapability(
  * See `src/lib/server/AGENTS.md` section "Parquet tRPC cutover".
  */
 export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapabilities> {
-  // Coverage comes first: its fault must never fall through to the retired PostgreSQL rows.
-  const coverage = await getParquetWarehouseCoverage();
-  const postgresCapabilities = await getGeoFeatureSliderCapabilities();
+  const [coverageResult, postgresResult] = await Promise.allSettled([
+    getParquetWarehouseCoverage(),
+    getGeoFeatureSliderCapabilities(),
+  ]);
+  if (postgresResult.status === "rejected") throw postgresResult.reason;
+  const postgresCapabilities = postgresResult.value;
+  if (coverageResult.status === "rejected") {
+    if (!isCoverageBoundaryFault(coverageResult.reason)) throw coverageResult.reason;
+    console.error("Parquet slider coverage unavailable; withholding every Parquet-owned row", {
+      error:
+        coverageResult.reason instanceof Error
+          ? coverageResult.reason.message
+          : String(coverageResult.reason),
+    });
+    return {
+      ...postgresCapabilities,
+      layers: retainedPostgresCapabilities(postgresCapabilities),
+      streamsUnavailable: false,
+      parquetCoverageGeneratedAt: null,
+      parquetCoverageEvaluatedThroughDay: null,
+      parquetCoverageUnavailable: true,
+      withheldParquetCapabilities: unavailableCoverageProofs(),
+    };
+  }
+  const coverage = coverageResult.value;
   const evidence = buildEvidenceIndex(coverage.lanes);
   const proofs = PARQUET_CAPABILITY_CONTRACTS.filter(
     (contract) => !POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(contract.layerName)
@@ -529,17 +622,14 @@ export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapab
   return {
     ...postgresCapabilities,
     layers: [
-      ...postgresCapabilities.layers.filter(
-        (layer) =>
-          !PARQUET_CAPABILITY_NAMES.has(layer.layerName) ||
-          POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(layer.layerName)
-      ),
+      ...retainedPostgresCapabilities(postgresCapabilities),
       ...proofs.flatMap((proof) => (proof.capability === null ? [] : [proof.capability])),
     ],
     // Every PostgreSQL stream row is Parquet-owned above; its retired scan cannot remount one.
     streamsUnavailable: false,
     parquetCoverageGeneratedAt: coverage.generatedAt,
     parquetCoverageEvaluatedThroughDay: coverage.evaluatedThroughDay,
+    parquetCoverageUnavailable: false,
     withheldParquetCapabilities: proofs.flatMap((proof) =>
       proof.withheld === null ? [] : [proof.withheld]
     ),
