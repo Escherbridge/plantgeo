@@ -31,13 +31,15 @@ from agri_data_service.parquet_ops.coverage import (
     registered_census_lanes,
 )
 from agri_data_service.parquet_ops.faults import ServingRefusalError
+from agri_data_service.parquet_ops.request_params import ReadScope
+from agri_data_service.parquet_ops.serving import resolve_release
 from agri_data_service.parquet_ops.warehouse_reader import ObjectStoreListing
 from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ListedObject
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 from tests.contract.wire_contract import WireCoverage
-from tests.parquet_ops.fakes import FakeListing, instant
+from tests.parquet_ops.fakes import FakeListing, FakeRowReader, instant
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -67,7 +69,7 @@ CONCURRENT_COLD_LOADS = 4
 EXPECTED_CENSUS_LIST_WORKERS: Final = 3
 
 #: Direct and dedicated physical lanes included in one production census.
-EXPECTED_REGISTERED_CENSUS_LANES: Final = 26
+EXPECTED_REGISTERED_CENSUS_LANES: Final = 16
 
 #: Every registered physical lane must report all four serving rungs.
 EXPECTED_CENSUS_RUNG_ROWS: Final = EXPECTED_REGISTERED_CENSUS_LANES * len(ZOOM_TIERS)
@@ -131,29 +133,109 @@ def test_the_census_builder_reproduces_the_frozen_payload_from_a_warehouse_seede
     assert all(written[("signal", tier)] > 0 for tier in ZOOM_TIERS)
 
 
-def test_a_release_series_reports_a_gap_only_where_a_release_was_owed() -> None:
-    """A Wednesday was never owed a USDM map. A skipped Tuesday was, and is the only thing reported."""
+def test_a_missing_release_reports_its_full_uncovered_carry_interval() -> None:
+    """A skipped Tuesday leaves every day unreadable until the next release, not only Tuesday."""
     listing = FakeListing()
     for day in (date(2026, 7, 7), date(2026, 7, 14), date(2026, 7, 28)):
         listing.write_day("drought", "observed", SEEDED_TIER, day)
 
     censused = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 8, 1))
 
-    assert censused.gap_ranges == (DayRange(first_day=date(2026, 7, 21), last_day=date(2026, 7, 21)),), (
-        "the missed release, and none of the eighteen days between publications"
+    assert censused.published_ranges == (
+        DayRange(first_day=date(2026, 7, 7), last_day=date(2026, 7, 20)),
+        DayRange(first_day=date(2026, 7, 28), last_day=date(2026, 8, 1)),
+    )
+    assert censused.gap_ranges == (DayRange(first_day=date(2026, 7, 21), last_day=date(2026, 7, 27)),), (
+        "the complete interval that bounded release carry cannot serve"
     )
 
 
-def test_a_release_series_is_not_late_at_the_live_edge_until_its_publication_lag_runs_out() -> None:
-    """USDM's Tuesday map is not missing on the Tuesday; four days later it is."""
+def test_a_healthy_release_carries_through_the_current_sunday() -> None:
     listing = FakeListing()
     listing.write_day("drought", "observed", SEEDED_TIER, date(2026, 8, 18))
 
-    on_time = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 8, 25))
-    overdue = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 8, 30))
+    censused = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 8, 23))
 
-    assert on_time.gap_ranges == ()
-    assert overdue.gap_ranges == (DayRange(first_day=date(2026, 8, 25), last_day=date(2026, 8, 25)),)
+    assert censused.earliest_day == date(2026, 8, 18)
+    assert censused.latest_day == date(2026, 8, 23)
+    assert censused.published_ranges == (DayRange(first_day=date(2026, 8, 18), last_day=date(2026, 8, 23)),)
+    assert censused.gap_ranges == ()
+
+
+def test_the_latest_governed_release_absence_uses_live_carry_then_becomes_historical() -> None:
+    listing = FakeListing()
+    listing.write_day("drought", "observed", SEEDED_TIER, date(2026, 8, 11))
+    listing.write_absence(
+        "drought",
+        "observed",
+        SEEDED_TIER,
+        date(2026, 8, 18),
+        reason="upstream published no weekly release",
+        upstream_response="HTTP 200, release absent",
+        recorded_at=instant("2026-08-22T00:00:00Z"),
+        run_id="drought-gap-fill:2026-08-18",
+    )
+
+    live = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 8, 30))
+
+    assert live.published_ranges == (DayRange(first_day=date(2026, 8, 11), last_day=date(2026, 8, 17)),)
+    assert live.governed_absence_ranges == (DayRange(first_day=date(2026, 8, 18), last_day=date(2026, 8, 30)),)
+    assert live.gap_ranges == ()
+
+    listing.write_day("drought", "observed", SEEDED_TIER, date(2026, 9, 8))
+    historical = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 9, 8))
+
+    assert historical.governed_absence_ranges == (DayRange(first_day=date(2026, 8, 18), last_day=date(2026, 8, 24)),)
+    assert historical.gap_ranges == (DayRange(first_day=date(2026, 8, 25), last_day=date(2026, 9, 7)),)
+
+
+def test_the_latest_release_uses_live_carry_then_becomes_historical_when_a_later_release_lands() -> None:
+    listing = FakeListing()
+    listing.write_day("drought", "observed", SEEDED_TIER, date(2026, 8, 18))
+
+    live = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 8, 30))
+
+    assert live.published_ranges == (DayRange(first_day=date(2026, 8, 18), last_day=date(2026, 8, 30)),)
+    assert live.gap_ranges == ()
+
+    listing.write_day("drought", "observed", SEEDED_TIER, date(2026, 9, 8))
+    historical = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 9, 8))
+
+    assert historical.published_ranges == (
+        DayRange(first_day=date(2026, 8, 18), last_day=date(2026, 8, 24)),
+        DayRange(first_day=date(2026, 9, 8), last_day=date(2026, 9, 8)),
+    )
+    assert historical.gap_ranges == (DayRange(first_day=date(2026, 8, 25), last_day=date(2026, 9, 7)),)
+
+
+def test_a_conflicting_release_is_a_gap_for_every_day_the_release_reader_refuses() -> None:
+    listing = FakeListing()
+    listing.write_day("drought", "observed", SEEDED_TIER, date(2026, 8, 18))
+    listing.write_day("drought", "observed", SEEDED_TIER, date(2026, 8, 25))
+    listing.write_absence(
+        "drought",
+        "observed",
+        SEEDED_TIER,
+        date(2026, 8, 25),
+        reason="conflicting publication",
+        upstream_response="part and absence both exist",
+        recorded_at=instant("2026-08-26T00:00:00Z"),
+        run_id="conflict",
+    )
+    scope = ReadScope(layer="drought", kind="observed", tier=SEEDED_TIER, bbox=None)
+
+    with pytest.raises(ServingRefusalError) as raised:
+        resolve_release(listing, FakeRowReader(), scope=scope, as_of=date(2026, 8, 30))
+    conflicted = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 8, 30))
+
+    assert raised.value.code == "partition_day_conflict"
+    assert conflicted.published_ranges == (DayRange(first_day=date(2026, 8, 18), last_day=date(2026, 8, 24)),)
+    assert conflicted.gap_ranges == (DayRange(first_day=date(2026, 8, 25), last_day=date(2026, 8, 30)),)
+
+    listing.write_day("drought", "observed", SEEDED_TIER, date(2026, 9, 8))
+    superseded = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 9, 8))
+
+    assert superseded.gap_ranges == (DayRange(first_day=date(2026, 8, 25), last_day=date(2026, 9, 7)),)
 
 
 def test_a_daily_series_closes_its_gaps_against_today_and_not_against_its_publication_lag() -> None:
@@ -307,7 +389,7 @@ def test_the_census_covers_all_direct_lanes_and_every_schema_backed_slider_produ
     for layer in DEDICATED_SLIDER_PRODUCT_LAYERS:
         assert get_stream_schema(layer, "observed").name == layer
     assert len(lanes) == EXPECTED_REGISTERED_CENSUS_LANES, (
-        "11 direct lanes plus 15 reader-registered dedicated products"
+        "11 direct lanes plus 5 mutable dedicated products; immutable products use snapshot coverage"
     )
 
 

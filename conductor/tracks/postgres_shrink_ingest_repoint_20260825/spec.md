@@ -38,43 +38,56 @@ lane by lane, retire each lane's Postgres path only after row-level parity is
 proven, and take the final shrink only when the serving plane has stopped reading
 Postgres.
 
-## Execution checkpoint — 2026-08-27
+## Execution checkpoint — 2026-08-29
 
 The premise that historical data still needs a shared Postgres drain is superseded. Production now
 has an immutable canonical signal snapshot plus independently reconciled product lanes, and all
 reusable artifacts are integrated on `main` at
 `949e20ee38405781a3e2a8978b2fc769bb7659d6`. The track is **active**, not complete, because its
-retirement half has deliberately not started.
+retirement half has deliberately not started. The newer snapshot-product private-API and
+TypeScript/client cutover is currently **uncommitted** in the shared working tree. Its adversarial
+independent review returned **APPROVE** with no unresolved HIGH/MEDIUM findings. The consolidated
+repository sweep passed data-boundary, typecheck, lint, Python format/Ruff/Mypy, 1,477 frontend
+tests and 4,432 Python tests. Deployment and the production R2 probe have not run yet.
 
 | phase | current state |
 |---|---|
-| P0 bridge | Forward cron configuration is present and PostgreSQL ingestion/data remain intact; scheduled cadence still needs production observation. |
+| P0 bridge | Forward configuration and PostgreSQL ingestion/data remain intact. The stateful job-executor has not been activated as the production owner; its schedules, leases, checkpoints and recovery still need observation. |
 | P1 baseline | Migration contracts through `20260827_0027` are integrated. The live migration head and production parity must be verified through the repaired readiness path; the immutable baseline was not rewritten. |
-| P2-P4 writers | Partial. Fire detections, water gauges, and vegetation have direct/queued Parquet-forward machinery; weather has an exact audit path. Snapshot builders are integrated for the governed climate and soil products, but a historical builder is not proof of a durable forward source writer. |
+| P2-P4 writers | Partial. Historical climate/soil/fire/water/weather/vegetation products are reconciled and the working tree has explicit Parquet reader ownership. A historical builder or reader is not proof of a durable scheduled forward-source owner. |
 | P5 retirement | Not started. No PostgreSQL producer, reader, table, row, or ingestion registration was removed. |
-| P6 shrink | Blocked on production API health, tRPC repoint, browser acceptance, and per-lane forward-writer evidence. |
+| P6 shrink | Blocked on deployment and private-route probes, browser acceptance, job-executor activation, and per-lane forward-writer evidence. |
 
 Updated pivot dependencies: `d1` and governed-product `d5` are cleared by the canonical snapshot
-work; `d3` is code-complete but production-blocked by the API service's pre-existing `/ready`
-timeout; `d4` has not run. The next safe action is API-path verification and repointing, not a drop
-migration.
+work. The current serving cutover binds allowed snapshot products to immutable roots/manifests and
+uses exact `/day` and `/window`; `/release` refuses snapshot products and never carries a prior
+day. Climate and soil products are explicitly Parquet-owned without silent PostgreSQL fallback,
+while Burn History/MTBS remains explicitly owned by its cumulative Martin/PostgreSQL reader. The
+water selectable dense-history floor is `2022-08-05`; older sparse physical observations remain
+auditable. Dew manifest
+`c2972ea61ebfb66a86fa1e834625fae163e5d0a0abfd39f8c701edca3e59b71a` passed its first full audit,
+and its hardened inventory/receipt audit verified the exact 691-object prefix. The next safe action
+is deployment and serving verification, not a drop migration.
 
 ### Current retirement gates
 
 For each lane, all of the following must be recorded before its PostgreSQL path is removed:
 
-1. private Parquet day/window/release/coverage routes healthy in production;
-2. tRPC reader and capability census repointed with no silent fallback;
+1. private Parquet day/window/release/coverage routes healthy against production R2, including
+   exact-day/window semantics and snapshot release refusal;
+2. tRPC reader and capability census reviewed, deployed and proven with explicit ownership and no
+   silent fallback;
 3. browser acceptance across day and zoom changes;
 4. shared `parquet_ops/`, the `interface/cli/` split, and the coordinated `agri-service` rename land;
 5. agent/MCP data tools are repointed off obsolete Postgres views per §0.42.30;
-6. direct upstream-to-Parquet writer advances across scheduled intervals;
+6. the stateful job executor is activated and the direct upstream-to-Parquet writer advances across
+   scheduled intervals with durable leases/checkpoints;
 7. exact parity and gap/absence audit stays clean after that advancement;
 8. environment-gated PostGIS/reader tests pass on the exact cutover tree;
 9. reviewed rollback and relation-drop migrations exist.
 
-The known API `/ready` timeout is a serving blocker, not evidence against the completed Parquet
-data. Do not weaken readiness to make the deployment green.
+No current cutover deployment or production probe has run. Do not infer serving success from local
+tests or historical data audits, and do not weaken readiness to make a deployment green.
 
 ## Background — verified state (2026-08-25, do not re-derive)
 

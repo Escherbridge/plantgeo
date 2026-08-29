@@ -77,7 +77,12 @@ async function renderWithClient(fetchMetricAtDate: MetricAtDateFetcher) {
   await act(async () => {
     hook = renderHook(
       ({ enabled }: { enabled: boolean }) =>
-        useMetricAtDate({ layerId: "water", metric: "streamflow", fetchMetricAtDate, enabled }),
+        useMetricAtDate({
+          layerId: "water",
+          metric: "perimeter-acres",
+          fetchMetricAtDate,
+          enabled,
+        }),
       { wrapper: Wrapper, initialProps: { enabled: true as boolean } }
     );
     await Promise.resolve();

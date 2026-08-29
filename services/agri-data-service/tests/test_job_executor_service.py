@@ -308,12 +308,9 @@ async def test_retry_backoff_lane_cannot_starve_same_class_peer(
     backlog_peer_id = "jobs-streamflow-archive"
     lane_ids = (incremental_id, backoff_id, backlog_peer_id)
     specs = MappingProxyType({lane_id: LANE_SPECS[lane_id] for lane_id in lane_ids})
-    identifiers = {
-        lane_id: uuid.uuid5(uuid.NAMESPACE_URL, f"plantgeo-test:{lane_id}") for lane_id in lane_ids
-    }
+    identifiers = {lane_id: uuid.uuid5(uuid.NAMESPACE_URL, f"plantgeo-test:{lane_id}") for lane_id in lane_ids}
     definitions = {
-        lane_id: _definition(specs[lane_id].definition_name, identifier=identifiers[lane_id])
-        for lane_id in lane_ids
+        lane_id: _definition(specs[lane_id].definition_name, identifier=identifiers[lane_id]) for lane_id in lane_ids
     }
     prior_bucket = datetime(2026, 8, 27, 12, tzinfo=UTC)
     latest = {

@@ -37,6 +37,7 @@ from agri_data_service.parquet_ops.warehouse_reader import (
     RowRead,
     spatial_support,
 )
+from agri_data_service.parquet_ops.wire import render_row
 from tests.parquet_ops.fakes import FakeListing
 
 if TYPE_CHECKING:
@@ -143,6 +144,22 @@ def test_hive_columns_never_reach_a_served_row(session: ServingSession, tmp_path
 
     assert list(result.rows[0][1]) == ["cell_id", "cell_longitude", "cell_latitude", "normalized_value"]
     assert result.rows[0][0] == key, "a row must be attributed to the RELATIVE key its day is parsed from"
+
+
+def test_only_a_registered_list_column_can_render_as_a_wire_array(session: ServingSession, tmp_path: Path) -> None:
+    """Lineage arrays are schema declarations, not permission for arbitrary row cells to become JSON."""
+    reader = DuckDbRowReader(session=local_session(session, tmp_path))
+    key = write_parquet(
+        session,
+        tmp_path,
+        partition_path("climate-field-precipitation", "observed", 13, date(2026, 8, 1)),
+        "SELECT [CAST(41 AS BIGINT), CAST(42 AS BIGINT)] AS input_source_row_ids",
+    )
+    scope = ReadScope(layer="climate-field-precipitation", kind="observed", tier=13, bbox=None)
+
+    result = reader.read_rows(RowRead(scope=scope, keys=(key,), row_budget=10))
+
+    assert render_row(result.rows[0][1])["input_source_row_ids"] == [41, 42]
 
 
 def test_a_viewport_narrows_a_point_lane_to_the_rows_inside_it(session: ServingSession, tmp_path: Path) -> None:

@@ -185,6 +185,16 @@ export interface SliderLayerCapability {
    */
   coverageGaps: DayRange[];
   /**
+   * Ranges where the warehouse deliberately published an absence marker.
+   *
+   * These are not ingest gaps: the upstream source was checked and the empty day is governed
+   * evidence. They remain selectable so a reader can inspect that evidence, but the coverage
+   * track must not paint them as dense observations merely because they are absent from
+   * `coverageGaps`. Optional for compatibility with capability payloads published before the
+   * Parquet plane exposed governed absences.
+   */
+  governedAbsenceRanges?: DayRange[];
+  /**
    * Ranges whose days ARE published but fall under the axis density floor.
    *
    * Disjoint from `coverageGaps` by construction: a thin range is a run of consecutive
@@ -255,10 +265,15 @@ export interface SliderCapabilities {
   streamsUnavailable: boolean;
 }
 
-/** Input for `environmental.getMetricAtDate({ metric, date, variant, bbox })`. */
+/** Metrics whose public day reader is explicitly owned by PostgreSQL fire-perimeter data. */
+export const METRIC_AT_DATE_IDS = ["perimeter-acres", "percent-contained"] as const;
+
+export type MetricAtDateId = (typeof METRIC_AT_DATE_IDS)[number];
+
+/** Input for the deliberately narrow `environmental.getMetricAtDate` procedure. */
 export interface MetricAtDateInput {
-  /** Metric key; the server maps it to a backing layer and payload field. */
-  metric: string;
+  /** An explicit fire-perimeter metric; other live layers use dedicated procedures. */
+  metric: MetricAtDateId;
   /** YYYY-MM-DD */
   date: string;
   variant: MetricVariant;

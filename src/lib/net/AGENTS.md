@@ -159,15 +159,13 @@ carries its own abort listener for its entire lifetime, both phases:
 
 ## Both transports
 
-- **tRPC** (all ~16 layer queries: 9 climate signals, 3 soil-field measures, vegetation,
-  weather, streamflow, groundwater, drought, watersheds, soil survey, plus `getMetricAtDate` and
-  its prefetch): wire `fetch: createBudgetedFetch("trpc")` into the ONE link chain,
+- **tRPC** (all layer-specific reads plus the deliberately narrow fire-perimeter
+  `getMetricAtDate` procedure): wire `fetch: createBudgetedFetch("trpc")` into the ONE link chain,
   `trpcLinks()` in `src/lib/trpc/client.ts`. Both `trpc.createClient` (React hooks, wired in
   `src/lib/providers.tsx:38`) and `getVanillaTrpcClient()` (used by
-  `src/stores/useMetricAtDate.ts`'s `fetchMetricAtDate`, including its neighbour-day prefetch)
-  build their link array from this one function, so this single edit covers every current layer
-  and every future one added to the router -- no per-layer wiring, ever, which is what makes
-  "uniform" structural rather than a convention someone can forget.
+  `src/stores/useMetricAtDate.ts`'s retained fire-perimeter transport) build their link array
+  from this one function. The live map layers use their dedicated procedures rather than that
+  retained hook, but both paths share the same budget structurally.
 - **Raw `fetch`** (`/api/fires`, the offline-sync replay, the tile-prefetch fallback): each of
   these gets its own `createBudgetedFetch("<lane>")` (or a `runBudgeted` wrapper around the
   existing call), a drop-in replacement with the exact same call shape.

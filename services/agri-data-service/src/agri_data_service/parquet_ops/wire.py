@@ -43,6 +43,13 @@ STATE_LANE_NEVER_WRITTEN: Final = "lane_never_written"
 type ServedRow = Mapping[str, object]
 
 
+@dataclass(frozen=True, slots=True)
+class DeclaredListCell:
+    """A sequence cell whose list shape was declared by the lane's registered Arrow schema."""
+
+    values: tuple[object, ...]
+
+
 def render_day(value: date) -> str:
     """Render a calendar day as `YYYY-MM-DD`; never converts a zone, because a day has none."""
     return value.isoformat()
@@ -70,9 +77,11 @@ def render_scalar(value: object) -> object:
         return render_day(value)
     if isinstance(value, (bytes, bytearray, memoryview)):
         return bytes(value).hex()
-    # FAIL CLOSED. `str(value)` would serve a Decimal, a list, a struct or a UUID as text under a
-    # schema that announced a number or an object -- a contract change nobody declared. No registered
-    # schema carries one today; `union_by_name` over a drifted object is how that stops being true.
+    if isinstance(value, DeclaredListCell):
+        return [render_scalar(item) for item in value.values]
+    # FAIL CLOSED. `str(value)` would serve a Decimal, a struct or a UUID as text under a
+    # schema that announced a number or an object -- a contract change nobody declared. Declared
+    # lists are wrapped above; `union_by_name` over a drifted object remains untrusted here.
     raise ValueError(
         f"a {type(value).__name__} cell has no agreed rendering on this plane; stringifying it would put a value "
         "on the wire under a type the contract never announced"

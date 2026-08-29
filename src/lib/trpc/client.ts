@@ -11,10 +11,10 @@ export const api = trpc;
 
 /**
  * The single link chain both clients use, so the two can never drift apart. Routes every
- * tRPC-issued request (all ~16 layer queries plus getMetricAtDate and its prefetch) through the
- * shared client-side request budget -- see src/lib/net/AGENTS.md "Both transports". This one
- * edit is what makes the budget uniform structurally: neither consumer below needs its own
- * wiring, nor does any layer added to the router in the future.
+ * tRPC-issued request through the shared client-side request budget -- see
+ * src/lib/net/AGENTS.md "Both transports". This one edit is what makes the budget uniform
+ * structurally: neither consumer below needs its own wiring, nor does any layer added to the
+ * router in the future.
  */
 export function trpcLinks(): TRPCLink<AppRouter>[] {
   return [

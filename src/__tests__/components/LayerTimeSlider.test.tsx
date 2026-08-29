@@ -136,7 +136,10 @@ function vegetationCapability(
   return { ...CAPABILITIES.layers[0], ...overrides };
 }
 
-function bandsOfKind(layerId: string, kind: "absent" | "thin"): HTMLElement[] {
+function bandsOfKind(
+  layerId: string,
+  kind: "absent" | "governed_absence" | "thin"
+): HTMLElement[] {
   return screen.queryAllByTestId(`layer-time-slider-band-${layerId}-${kind}`);
 }
 
@@ -578,6 +581,27 @@ describe("LayerTimeSlider", () => {
       ).toEqual(["thin"]);
     });
 
+    it("keeps a governed upstream absence distinct from an ingest gap", () => {
+      const governed = vegetationCapability({
+        coverageGaps: [],
+        governedAbsenceRanges: [{ from: "2019-02-10", to: "2019-02-12" }],
+        thinRanges: [],
+      });
+
+      expect(dayCoverageState(VEGETATION_DOMAIN, governed, "2019-02-11")).toBe(
+        "governed_absence"
+      );
+      const bands = drawCoverageBands(VEGETATION_DOMAIN, governed);
+      expect(bands.map((band) => band.kind)).toEqual(["governed_absence"]);
+      expect(describeCoverageBand(bands[0])).toBe(
+        "Governed absence: 2019-02-10 to 2019-02-12"
+      );
+      expect(describeDayCoverage("governed_absence")).toContain("source was checked");
+      expect(describeCoverageTopology(VEGETATION_DOMAIN, governed)).toContain(
+        "1 governed-absence range: 2019-02-10 to 2019-02-12"
+      );
+    });
+
     it("agrees day for day between the painted partition and the single-day lookup", () => {
       const layer = vegetationCapability();
       const segments = buildCoverageSegments(VEGETATION_DOMAIN, layer);
@@ -814,6 +838,9 @@ describe("LayerTimeSlider", () => {
       expect(TRACK_REGION_APPEARANCE.future.backgroundColor).toContain("--muted-foreground");
       expect(TRACK_REGION_APPEARANCE.absent.backgroundImage).not.toBe(
         TRACK_REGION_APPEARANCE.future.backgroundImage
+      );
+      expect(TRACK_REGION_APPEARANCE.governed_absence.backgroundImage).not.toBe(
+        TRACK_REGION_APPEARANCE.absent.backgroundImage
       );
     });
   });

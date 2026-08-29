@@ -1,6 +1,28 @@
 import { z } from "zod";
+import {
+  climateFieldSignalDefinition,
+  climateFieldSignalName,
+  type AirTemperatureVariant,
+  type ClimateFieldSignalId,
+} from "@/lib/environmental/climate-field";
+import {
+  SOIL_FIELD_ATTRIBUTION,
+  SOIL_FIELD_SOURCE_KEY,
+  SOIL_FIELD_SUPPORT_KEY,
+  soilFieldBandFor,
+  soilFieldDepthDefinition,
+  soilFieldMeasureDefinition,
+  type SoilFieldDepth,
+  type SoilFieldMeasure,
+} from "@/lib/environmental/soil-field";
 import { resolveZoomTier } from "@/lib/map/zoom-tiers";
 import { isFreshObservation } from "@/lib/server/services/environmental-time";
+import {
+  SOIL_FIELD_MAX_CELLS,
+  type PublishedSoilFieldCollection,
+  type SoilFieldFeatureProperties,
+  type SoilFieldReadOptions,
+} from "@/lib/server/services/environmental-read-model";
 import {
   UpstreamConfigurationError,
   UpstreamHttpError,
@@ -27,6 +49,40 @@ const WEATHER_LIVE_MAX_AGE_MS = 3 * 60 * 60 * 1_000;
 const DROUGHT_RELEASE_INTERVAL_DAYS = 7;
 const DROUGHT_MAX_CARRY_FORWARD_DAYS = 14;
 export const VEGETATION_TRAILING_DAYS = 30;
+
+const SOIL_FIELD_BASE_CELL_DEGREES = 0.25;
+const SOIL_FIELD_PARQUET_MAX_OBSERVATION_AGE_DAYS = 0;
+const SOIL_FIELD_TIER_RESOLUTION = { 0: 5, 5: 0.2, 9: 0.01, 13: null } as const;
+const SNAPSHOT_SOURCE_MANIFEST_SHA256 =
+  "465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f";
+
+const SOIL_FIELD_LANES = {
+  moisture: {
+    surface: "soil-field-moisture-0-7cm",
+    "root-zone": "soil-field-moisture-7-28cm",
+    deep: "soil-field-moisture-28-100cm",
+  },
+  temperature: {
+    surface: "soil-temperature-0-to-7cm",
+    "root-zone": "soil-temperature-7-to-28cm",
+    deep: "soil-temperature-28-to-100cm",
+    substratum: "soil-temperature-100-to-255cm",
+  },
+  vpd: { surface: "soil-field-vpd" },
+} as const;
+
+const SOIL_TEMPERATURE_SOURCE_PARAMETERS = {
+  surface: "soil_temperature_0_to_7cm_mean",
+  "root-zone": "soil_temperature_7_to_28cm_mean",
+  deep: "soil_temperature_28_to_100cm_mean",
+  substratum: "soil_temperature_100_to_255cm_mean",
+} as const satisfies Readonly<Record<SoilFieldDepth, string>>;
+
+const SOIL_MOISTURE_SOURCE_PARAMETERS = {
+  surface: "soil_moisture_0_to_7cm_mean",
+  "root-zone": "soil_moisture_7_to_28cm_mean",
+  deep: "soil_moisture_28_to_100cm_mean",
+} as const satisfies Readonly<Record<Exclude<SoilFieldDepth, "substratum">, string>>;
 
 export type ParquetReaderFailureKind =
   | "configuration"
@@ -236,6 +292,181 @@ const fireDetectionRowSchema = z
   })
   .strict();
 
+const climateSnapshotLineageRowSchema = z
+  .object({
+    support_key: z.string().min(1),
+    signal_name: z.string().min(1),
+    normalized_unit: z.string().min(1),
+    cell_id: z.string().nullable(),
+    observed_day: daySchema,
+    normalized_value: finiteNumberSchema,
+    observation_count: z.number().int().positive(),
+    newest_observed_at: instantSchema,
+    coverage_fraction: finiteNumberSchema.nullable(),
+    allowed_client_exposure: z.boolean().nullable(),
+    cell_longitude: finiteNumberSchema,
+    cell_latitude: finiteNumberSchema,
+    source_key: z.string().min(1),
+    source_parameter: z.string().min(1),
+    source_snapshot_id: z.string().min(1),
+    source_manifest_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    precedence_contract: z.string().min(1),
+    selected_source_row_id: z.number().int().nullable(),
+    selected_source_row_sha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    selected_source_release_id: z.string().nullable(),
+    selected_source_release_retrieved_at: instantSchema.nullable(),
+    selected_source_release_payload_checksum: z.string().nullable(),
+    selected_source_part_key: z.string().nullable(),
+    selected_source_part_sha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    selected_source_row_ordinal: z.number().int().nonnegative().nullable(),
+    input_source_row_count: z.number().int().positive(),
+    input_source_row_digest: z.string().nullable(),
+    input_source_row_ids: z.array(z.number().int()).nullable(),
+    input_source_row_sha256s: z.array(z.string().regex(/^[a-f0-9]{64}$/)).nullable(),
+    input_source_release_ids: z.array(z.string()).nullable(),
+    input_source_part_keys: z.array(z.string()).nullable(),
+    input_source_part_sha256s: z.array(z.string().regex(/^[a-f0-9]{64}$/)).nullable(),
+    input_source_row_ordinals: z.array(z.number().int().nonnegative()).nullable(),
+  })
+  .strict();
+
+const signalPlaneRowSchema = z
+  .object({
+    support_key: z.string().min(1),
+    signal_name: z.string().min(1),
+    normalized_unit: z.string().min(1),
+    cell_id: z.string().nullable(),
+    observed_day: daySchema,
+    normalized_value: finiteNumberSchema,
+    observation_count: z.number().int().positive(),
+    newest_observed_at: instantSchema,
+    coverage_fraction: finiteNumberSchema.nullable(),
+    allowed_client_exposure: z.boolean().nullable(),
+    cell_longitude: finiteNumberSchema,
+    cell_latitude: finiteNumberSchema,
+  })
+  .strict();
+
+const selectedSnapshotRowShape = {
+  selected_observation_id: z.number().int().nullable(),
+  selected_canonical_row_sha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  selected_source_release_id: z.string().nullable(),
+  selected_release_retrieved_at: instantSchema.nullable(),
+  physical_candidate_count: z.number().int().positive(),
+  lineage_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  input_manifest_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+};
+
+const soilWetnessRowSchema = signalPlaneRowSchema.extend(selectedSnapshotRowShape).strict();
+
+const soilTemperatureRowSchema = signalPlaneRowSchema
+  .extend({
+    data_source_key: z.string().min(1),
+    source_parameter: z.string().min(1),
+    ...selectedSnapshotRowShape,
+  })
+  .strict();
+
+type SoilServingRow = Pick<
+  z.infer<typeof signalPlaneRowSchema>,
+  | "support_key"
+  | "signal_name"
+  | "normalized_unit"
+  | "cell_id"
+  | "observed_day"
+  | "normalized_value"
+  | "coverage_fraction"
+  | "allowed_client_exposure"
+  | "cell_longitude"
+  | "cell_latitude"
+>;
+
+export const PARQUET_CLIMATE_FIELD_SIGNAL_IDS = [
+  "air-temperature",
+  "dew-point",
+  "precipitation",
+  "relative-humidity",
+  "shortwave-radiation",
+  "wind-speed",
+  "soil-wetness-surface",
+  "soil-wetness-root-zone",
+  "soil-wetness-profile",
+] as const satisfies readonly ClimateFieldSignalId[];
+
+export type ParquetClimateFieldSignalId =
+  (typeof PARQUET_CLIMATE_FIELD_SIGNAL_IDS)[number];
+
+const PARQUET_CLIMATE_FIELD_SIGNAL_SET = new Set<ClimateFieldSignalId>(
+  PARQUET_CLIMATE_FIELD_SIGNAL_IDS
+);
+
+const STANDARD_CLIMATE_FIELD_LANES = {
+  "air-temperature": {
+    layer: null,
+    rowContract: "signal-plane",
+    sourceParameter: null,
+  },
+  "dew-point": {
+    layer: "climate-field-dew-point",
+    rowContract: "signal-plane",
+    sourceParameter: null,
+  },
+  precipitation: {
+    layer: "climate-field-precipitation",
+    rowContract: "snapshot-lineage",
+    sourceParameter: "PRECTOTCORR",
+  },
+  "relative-humidity": {
+    layer: "climate-field-relative-humidity",
+    rowContract: "snapshot-lineage",
+    sourceParameter: "RH2M",
+  },
+  "shortwave-radiation": {
+    layer: "climate-field-shortwave-radiation",
+    rowContract: "snapshot-lineage",
+    sourceParameter: "ALLSKY_SFC_SW_DWN",
+  },
+  "wind-speed": {
+    layer: "climate-field-wind-speed",
+    rowContract: "signal-plane",
+    sourceParameter: null,
+  },
+  "soil-wetness-surface": {
+    layer: "soil-wetness-surface",
+    rowContract: "soil-wetness",
+    sourceParameter: null,
+  },
+  "soil-wetness-root-zone": {
+    layer: "soil-wetness-root-zone",
+    rowContract: "soil-wetness",
+    sourceParameter: null,
+  },
+  "soil-wetness-profile": {
+    layer: "soil-wetness-profile",
+    rowContract: "soil-wetness",
+    sourceParameter: null,
+  },
+} as const satisfies Record<
+  ClimateFieldSignalId,
+  {
+    layer: string | null;
+    rowContract: "signal-plane" | "snapshot-lineage" | "soil-wetness";
+    sourceParameter: string | null;
+  }
+>;
+
+export interface ParquetClimateFieldObservation {
+  cellId: string;
+  observedDay: string;
+  value: number;
+  observationCount: number;
+  newestObservedAt: string;
+  coverageFraction: number | null;
+  allowedClientExposure: boolean | null;
+  longitude: number;
+  latitude: number;
+}
+
 export interface ParquetFireDetectionCell {
   longitude: number;
   latitude: number;
@@ -380,7 +611,12 @@ function mapEnvelope<T>(
   }
 }
 
-function upstreamFailure(error: unknown): ParquetReaderResult<never> | null {
+type ParquetUpstreamFailure = Extract<
+  ParquetReaderResult<never>,
+  { state: "upstream_unavailable" }
+>;
+
+export function parquetUpstreamFailure(error: unknown): ParquetUpstreamFailure | null {
   if (error instanceof UpstreamConfigurationError) {
     return { state: "upstream_unavailable", fault: { kind: "configuration", message: error.message } };
   }
@@ -412,7 +648,7 @@ async function boundedResult<T>(work: () => Promise<ParquetReaderResult<T>>): Pr
   try {
     return await work();
   } catch (error) {
-    const failure = upstreamFailure(error);
+    const failure = parquetUpstreamFailure(error);
     if (failure !== null) return failure;
     throw error;
   }
@@ -475,6 +711,375 @@ function newestWeatherRows(rows: readonly ParquetWeatherObservation[]): ParquetW
     (row) => `${row.longitude}:${row.latitude}`,
     (row) => row.observedAt
   );
+}
+
+export function isParquetClimateFieldSignal(
+  signal: ClimateFieldSignalId
+): signal is ParquetClimateFieldSignalId {
+  return PARQUET_CLIMATE_FIELD_SIGNAL_SET.has(signal);
+}
+
+function climateFieldProduct(
+  signal: ParquetClimateFieldSignalId,
+  variant: AirTemperatureVariant
+) {
+  const contract = STANDARD_CLIMATE_FIELD_LANES[signal];
+  const layer =
+    signal === "air-temperature"
+      ? `climate-field-air-temperature-${variant}`
+      : contract.layer;
+  if (layer === null) {
+    throw contractError(`${signal} has no registered Parquet product layer`);
+  }
+  return {
+    ...contract,
+    layer,
+  };
+}
+
+function decodeClimateFieldRows(
+  rows: readonly Record<string, unknown>[],
+  signal: ParquetClimateFieldSignalId,
+  variant: AirTemperatureVariant,
+  servedDay: string
+): ParquetClimateFieldObservation[] {
+  const contract = climateFieldProduct(signal, variant);
+  const { layer } = contract;
+  const expectedSignalName = climateFieldSignalName(signal, variant);
+  const expectedUnit = climateFieldSignalDefinition(signal).unit;
+  const seenCells = new Set<string>();
+  const parsed =
+    contract.rowContract === "snapshot-lineage"
+      ? parseRows(rows, climateSnapshotLineageRowSchema, layer)
+      : contract.rowContract === "soil-wetness"
+        ? parseRows(rows, soilWetnessRowSchema, layer)
+        : parseRows(rows, signalPlaneRowSchema, layer);
+  return parsed.map((row) => {
+    if (
+      row.support_key !== "surface" ||
+      row.signal_name !== expectedSignalName ||
+      row.normalized_unit !== expectedUnit ||
+      row.observed_day !== servedDay ||
+      row.cell_id === null
+    ) {
+      throw contractError(`${layer} returned a row outside its registered z13 climate contract`);
+    }
+    if (
+      contract.rowContract === "snapshot-lineage" &&
+      (contract.sourceParameter === null ||
+        !("source_key" in row) ||
+        row.source_key !== "nasa-power-daily" ||
+        !("source_parameter" in row) ||
+        row.source_parameter !== contract.sourceParameter ||
+        !("source_manifest_sha256" in row) ||
+        row.source_manifest_sha256 !== SNAPSHOT_SOURCE_MANIFEST_SHA256)
+    ) {
+      throw contractError(`${layer} returned a row outside its pinned source contract`);
+    }
+    if (
+      contract.rowContract === "soil-wetness" &&
+      (!("input_manifest_sha256" in row) ||
+        row.input_manifest_sha256 !== SNAPSHOT_SOURCE_MANIFEST_SHA256)
+    ) {
+      throw contractError(`${layer} returned a row outside its pinned source contract`);
+    }
+    if (
+      row.cell_longitude < -180 ||
+      row.cell_longitude > 180 ||
+      row.cell_latitude < -90 ||
+      row.cell_latitude > 90
+    ) {
+      throw contractError(`${layer} returned a cell outside WGS84 bounds`);
+    }
+    if (seenCells.has(row.cell_id)) {
+      throw contractError(`${layer} returned duplicate z13 cell ${row.cell_id} for ${servedDay}`);
+    }
+    seenCells.add(row.cell_id);
+    return {
+      cellId: row.cell_id,
+      observedDay: row.observed_day,
+      value: row.normalized_value,
+      observationCount: row.observation_count,
+      newestObservedAt: row.newest_observed_at,
+      coverageFraction: row.coverage_fraction,
+      allowedClientExposure: row.allowed_client_exposure,
+      longitude: row.cell_longitude,
+      latitude: row.cell_latitude,
+    };
+  });
+}
+
+/** Read one exact published climate day from a promoted, frozen-layout Parquet lane. */
+export async function getParquetClimateField(input: {
+  bbox: string;
+  date?: string;
+  signal: ClimateFieldSignalId;
+  variant: AirTemperatureVariant;
+  nowMs?: number;
+}): Promise<ParquetReaderResult<readonly ParquetClimateFieldObservation[]>> {
+  const day = selectedDay(input.date, input.nowMs);
+  if (!isParquetClimateFieldSignal(input.signal)) {
+    return {
+      state: "upstream_unavailable",
+      fault: {
+        kind: "contract",
+        message: `No frozen-layout Parquet reader is registered for ${input.signal}`,
+      },
+    };
+  }
+  const signal = input.signal;
+  const layer = climateFieldProduct(signal, input.variant).layer;
+  return boundedResult(async () =>
+    mapEnvelope(
+      await getParquetLayerDay({
+        layer,
+        day,
+        zoomTier: 13,
+        bbox: input.bbox,
+      }),
+      (rows) => decodeClimateFieldRows(rows, signal, input.variant, day)
+    )
+  );
+}
+
+function soilFieldLane(measure: SoilFieldMeasure, depth: SoilFieldDepth): string {
+  if (measure === "moisture") {
+    if (depth === "root-zone") return SOIL_FIELD_LANES.moisture["root-zone"];
+    if (depth === "deep") return SOIL_FIELD_LANES.moisture.deep;
+    return SOIL_FIELD_LANES.moisture.surface;
+  }
+  if (measure === "temperature") {
+    return SOIL_FIELD_LANES.temperature[depth];
+  }
+  return SOIL_FIELD_LANES.vpd.surface;
+}
+
+function emptyParquetSoilField(
+  reason: NonNullable<PublishedSoilFieldCollection["reason"]>,
+  measure: SoilFieldMeasure,
+  depth: SoilFieldDepth,
+  requestedDay: string,
+  zoomTier: 0 | 5 | 9 | 13,
+  newestAvailableDay: string | null
+): PublishedSoilFieldCollection {
+  const definition = soilFieldMeasureDefinition(measure);
+  return {
+    type: "FeatureCollection",
+    features: [],
+    availability: "unavailable",
+    reason,
+    granularity: zoomTier === 13 ? "detail" : zoomTier === 9 ? "regional-average" : "coarse-average",
+    measure,
+    depth,
+    unit: definition.unit,
+    attribution: SOIL_FIELD_ATTRIBUTION,
+    observedDay: null,
+    requestedDay,
+    newestAvailableDay,
+    cellCount: 0,
+    truncated: false,
+    maxCellCount: SOIL_FIELD_MAX_CELLS,
+    maxObservationAgeDays: SOIL_FIELD_PARQUET_MAX_OBSERVATION_AGE_DAYS,
+    latticeDegrees: SOIL_FIELD_TIER_RESOLUTION[zoomTier],
+    smoothingSigmaDegrees: null,
+    bands: definition.bands,
+    sourceClientExposureApproved: false,
+  };
+}
+
+function decodeSoilFieldRows(
+  rows: readonly Record<string, unknown>[],
+  measure: SoilFieldMeasure,
+  depth: SoilFieldDepth,
+  signalName: string,
+  unit: string,
+  layer: string,
+  servedDay: string,
+  zoomTier: 0 | 5 | 9 | 13
+): SoilServingRow[] {
+  const parsed =
+    measure === "moisture"
+      ? parseRows(rows, climateSnapshotLineageRowSchema, layer)
+      : measure === "temperature"
+        ? parseRows(rows, soilTemperatureRowSchema, layer)
+        : parseRows(rows, signalPlaneRowSchema, layer);
+  const seenCells = new Set<string>();
+  return parsed.map((row) => {
+    if (
+      row.support_key !== SOIL_FIELD_SUPPORT_KEY ||
+      row.signal_name !== signalName ||
+      row.normalized_unit !== unit ||
+      row.observed_day !== servedDay ||
+      (measure === "moisture" &&
+        (!("source_key" in row) ||
+          row.source_key !== SOIL_FIELD_SOURCE_KEY ||
+          depth === "substratum" ||
+          !("source_parameter" in row) ||
+          row.source_parameter !== SOIL_MOISTURE_SOURCE_PARAMETERS[depth] ||
+          !("source_manifest_sha256" in row) ||
+          row.source_manifest_sha256 !== SNAPSHOT_SOURCE_MANIFEST_SHA256)) ||
+      (measure === "temperature" &&
+        (!("data_source_key" in row) ||
+          row.data_source_key !== SOIL_FIELD_SOURCE_KEY ||
+          !("source_parameter" in row) ||
+          row.source_parameter !== SOIL_TEMPERATURE_SOURCE_PARAMETERS[depth] ||
+          !("input_manifest_sha256" in row) ||
+          row.input_manifest_sha256 !== SNAPSHOT_SOURCE_MANIFEST_SHA256))
+    ) {
+      throw contractError(`${layer} returned a row outside its registered soil-field contract`);
+    }
+    if ((zoomTier === 13) !== (row.cell_id !== null)) {
+      throw contractError(`${layer} returned invalid cell identity nullability at z${zoomTier}`);
+    }
+    if (
+      row.cell_longitude < -180 ||
+      row.cell_longitude > 180 ||
+      row.cell_latitude < -90 ||
+      row.cell_latitude > 90
+    ) {
+      throw contractError(`${layer} returned a cell outside WGS84 bounds`);
+    }
+    const cellKey = row.cell_id ?? `${row.cell_longitude}:${row.cell_latitude}`;
+    if (seenCells.has(cellKey)) {
+      throw contractError(`${layer} returned duplicate cell ${cellKey} for ${servedDay}`);
+    }
+    seenCells.add(cellKey);
+    return row;
+  });
+}
+
+function soilFieldPolygon(
+  row: SoilServingRow,
+  zoomTier: 0 | 5 | 9 | 13
+): GeoJSON.Polygon {
+  const resolution = SOIL_FIELD_TIER_RESOLUTION[zoomTier];
+  const west =
+    resolution === null
+      ? row.cell_longitude - SOIL_FIELD_BASE_CELL_DEGREES / 2
+      : row.cell_longitude;
+  const south =
+    resolution === null ? row.cell_latitude - SOIL_FIELD_BASE_CELL_DEGREES / 2 : row.cell_latitude;
+  const size = resolution ?? SOIL_FIELD_BASE_CELL_DEGREES;
+  const east = west + size;
+  const north = south + size;
+  return {
+    type: "Polygon",
+    coordinates: [
+      [
+        [west, south],
+        [east, south],
+        [east, north],
+        [west, north],
+        [west, south],
+      ],
+    ],
+  };
+}
+
+/** Read one soil-field viewport exclusively from its registered Parquet product lane. */
+export async function getParquetSoilField(
+  bbox: string,
+  options: SoilFieldReadOptions = {}
+): Promise<PublishedSoilFieldCollection> {
+  const measure = options.measure ?? "moisture";
+  const definition = soilFieldMeasureDefinition(measure);
+  const requestedDepth = options.depth ?? definition.defaultDepth;
+  const { depth, signalName } = soilFieldDepthDefinition(measure, requestedDepth);
+  const requestedDay = selectedDay(options.date, undefined);
+  const zoomTier = resolveZoomTier(options.zoom ?? 13);
+  if (requestedDay > currentUtcDay()) {
+    return emptyParquetSoilField(
+      "not_forecastable",
+      measure,
+      depth,
+      requestedDay,
+      zoomTier,
+      null
+    );
+  }
+  const layer = soilFieldLane(measure, depth);
+  const envelope = await getParquetLayerDay({
+    layer,
+    day: requestedDay,
+    zoomTier,
+    bbox,
+  });
+  if (envelope.state !== "published") {
+    return emptyParquetSoilField(
+      "not_published",
+      measure,
+      depth,
+      requestedDay,
+      zoomTier,
+      null
+    );
+  }
+  if (envelope.servedDay !== requestedDay) {
+    throw contractError(`${layer} served ${envelope.servedDay} for exact day ${requestedDay}`);
+  }
+
+  const rows = decodeSoilFieldRows(
+    envelope.rows,
+    measure,
+    depth,
+    signalName,
+    definition.unit,
+    layer,
+    envelope.servedDay,
+    zoomTier
+  );
+  const drawable = rows.slice(0, SOIL_FIELD_MAX_CELLS);
+  const features = drawable.map((row): GeoJSON.Feature<GeoJSON.Polygon> => {
+    const band = soilFieldBandFor(measure, row.normalized_value);
+    const properties: SoilFieldFeatureProperties = {
+      value: row.normalized_value,
+      bandIndex: band.bandIndex,
+      bandLabel: band.label,
+      aggregated: zoomTier !== 13,
+      cellKey: row.cell_id,
+      coverageFraction: row.coverage_fraction,
+    };
+    return {
+      type: "Feature",
+      id: row.cell_id ?? `${layer}:${envelope.servedDay}:${row.cell_longitude}:${row.cell_latitude}`,
+      geometry: soilFieldPolygon(row, zoomTier),
+      properties,
+    };
+  });
+  if (features.length === 0) {
+    return emptyParquetSoilField(
+      "not_published",
+      measure,
+      depth,
+      requestedDay,
+      zoomTier,
+      envelope.servedDay
+    );
+  }
+  return {
+    type: "FeatureCollection",
+    features,
+    availability: "published",
+    reason: null,
+    granularity: zoomTier === 13 ? "detail" : zoomTier === 9 ? "regional-average" : "coarse-average",
+    measure,
+    depth,
+    unit: definition.unit,
+    attribution: SOIL_FIELD_ATTRIBUTION,
+    observedDay: envelope.servedDay,
+    requestedDay,
+    newestAvailableDay: null,
+    cellCount: features.length,
+    truncated: envelope.truncated || rows.length > SOIL_FIELD_MAX_CELLS,
+    maxCellCount: SOIL_FIELD_MAX_CELLS,
+    maxObservationAgeDays: SOIL_FIELD_PARQUET_MAX_OBSERVATION_AGE_DAYS,
+    latticeDegrees: SOIL_FIELD_TIER_RESOLUTION[zoomTier],
+    smoothingSigmaDegrees: null,
+    bands: definition.bands,
+    sourceClientExposureApproved: rows.every(
+      (row) => row.allowed_client_exposure === true
+    ),
+  };
 }
 
 export async function getParquetWaterGauges(
@@ -788,16 +1393,5 @@ export async function getParquetFireDetections(
       data: { firstDay, lastDay, cells: published.flatMap((day) => day.data), days },
       truncated: published.some((day) => day.truncated),
     };
-  });
-}
-
-/** The frozen day route has no pre-budget signal filter, so generic metric reads fail closed. */
-export function getParquetMetricAtDate(): Promise<ParquetReaderResult<never>> {
-  return Promise.resolve({
-    state: "upstream_unavailable",
-    fault: {
-      kind: "contract",
-      message: "The frozen Parquet route cannot filter signal_name before applying its row budget",
-    },
   });
 }

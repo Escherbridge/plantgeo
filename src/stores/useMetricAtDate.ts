@@ -57,7 +57,7 @@ const METRIC_STALE_TIME_MS = 5 * 60_000;
 /** Short enough that days scrubbed past fall out instead of accumulating. */
 const METRIC_GC_TIME_MS = 10 * 60_000;
 
-/** Resolves one metric-at-date collection. Overridable so tests can supply fixtures. */
+/** Resolves one explicitly supported fire-perimeter metric. Overridable for tests. */
 export type MetricAtDateFetcher = (input: MetricAtDateInput) => Promise<MetricAtDateCollection>;
 
 /** Cache identity of a metric-at-date request. */
@@ -74,7 +74,7 @@ function emptyCollection(
 }
 
 /**
- * Default transport: the warehouse, in every environment.
+ * Default transport for the two public PostgreSQL-owned fire-perimeter metrics.
  *
  * There is deliberately NO development stand-in here. The one this replaced returned six
  * plausible points stamped with the REQUESTED date and `availability: "published"` --
@@ -87,27 +87,7 @@ function emptyCollection(
  */
 export const fetchMetricAtDate: MetricAtDateFetcher = async (input) => {
   const result = await getVanillaTrpcClient().environmental.getMetricAtDate.query(input);
-  switch (result.state) {
-    case "absent":
-      return emptyCollection(
-        "not_published",
-        `Governed absence for ${result.servedDay}: ${result.evidence.reason}`
-      );
-    case "not_generated":
-      return emptyCollection(
-        "not_published",
-        result.reason === "day_not_written"
-          ? `No Parquet partition or governed absence was written for ${result.requestedDay}.`
-          : "This Parquet lane has never been generated."
-      );
-    case "upstream_unavailable":
-      return emptyCollection(
-        "request_failed",
-        `Private Parquet reader unavailable (${result.fault.kind}); no PostgreSQL fallback was used.`
-      );
-    case "ready":
-      return result.data;
-  }
+  return result.data;
 };
 
 export interface UseMetricAtDateOptions {
@@ -121,8 +101,8 @@ export interface UseMetricAtDateOptions {
    * nothing downstream could detect the mismatch.
    */
   layerId: LayerToggleId;
-  /** Metric key the server maps to a backing layer and payload field. */
-  metric: string;
+  /** One of the two fire-perimeter metric keys exposed by the public procedure. */
+  metric: MetricAtDateInput["metric"];
   /** "west,south,east,north"; omit for an unbounded query. */
   bbox?: string;
   /** False when the layer toggle is off. Never set from "this date has no data". */

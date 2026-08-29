@@ -7,7 +7,7 @@ transport or serving fault and never a statement about content. See `AGENTS.md` 
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Final
 
 import duckdb
@@ -18,7 +18,7 @@ from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates han
 from agri_data_service.config import settings
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.coverage import CoverageCache, registered_census_lanes
-from agri_data_service.parquet_ops.duckdb_session import run_bounded_read, run_serving_read
+from agri_data_service.parquet_ops.duckdb_session import run_serving_read
 from agri_data_service.parquet_ops.faults import ServingRefusalError
 from agri_data_service.parquet_ops.request_params import (
     RequestError,
@@ -27,6 +27,14 @@ from agri_data_service.parquet_ops.request_params import (
     parse_window,
 )
 from agri_data_service.parquet_ops.serving import resolve_day, resolve_release, resolve_window
+from agri_data_service.parquet_ops.snapshot_products import (
+    PRODUCT_BY_LAYER,
+    ObjectStoreSnapshotStore,
+    SnapshotCoverageCache,
+    load_snapshot_scope_evidence,
+    resolve_snapshot_evidence_day,
+    resolve_snapshot_evidence_window,
+)
 from agri_data_service.parquet_ops.warehouse_reader import DuckDbRowReader, ObjectStoreListing
 from agri_data_service.parquet_ops.wire import (
     PARAM_AS_OF,
@@ -41,6 +49,7 @@ from agri_data_service.parquet_ops.wire import (
     ROUTE_DAY,
     ROUTE_RELEASE,
     ROUTE_WINDOW,
+    WarehouseCoverage,
     render_window,
 )
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend
@@ -48,6 +57,7 @@ from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBacken
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from agri_data_service.parquet_ops.duckdb_session import ServingSession
     from agri_data_service.parquet_ops.request_params import ReadScope
     from agri_data_service.parquet_ops.warehouse_reader import PartitionRowReader, WarehouseListing
 
@@ -75,6 +85,8 @@ _REFUSAL_HTTP_STATUS: Final[dict[str, int]] = {
     "object_store_session_unavailable": HTTP_SERVICE_UNAVAILABLE,
     "serving_extension_unavailable": HTTP_SERVICE_UNAVAILABLE,
     "census_budget_exhausted": HTTP_CONFLICT,
+    "snapshot_unpublished": HTTP_SERVICE_UNAVAILABLE,
+    "snapshot_schema_mismatch": HTTP_SERVICE_UNAVAILABLE,
 }
 
 #: Under the client's own 15 s row budget and 30 s coverage budget, so the server's error wins the
@@ -83,6 +95,58 @@ ROW_READ_TIMEOUT_SECONDS: Final = 14.0
 COVERAGE_TIMEOUT_SECONDS: Final = 29.0
 
 _coverage_cache = CoverageCache()
+_snapshot_coverage_cache = SnapshotCoverageCache()
+
+
+class _CoveragePayloadCache:
+    """One async refresh gate acquired before any caller can take a serving slot."""
+
+    def __init__(self, ttl_seconds: int = 120) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._held: tuple[datetime, dict[str, object]] | None = None
+        self._lock = asyncio.Lock()
+        self._inflight: asyncio.Task[dict[str, object]] | None = None
+
+    async def get(
+        self,
+        *,
+        now: datetime,
+        build: Callable[[], Awaitable[dict[str, object]]],
+    ) -> dict[str, object]:
+        held = self._fresh(now)
+        if held is not None:
+            return held
+        async with self._lock:
+            held = self._fresh(now)
+            if held is not None:
+                return held
+            if self._inflight is None:
+                self._inflight = asyncio.create_task(self._refresh(build))
+            inflight = self._inflight
+        return await asyncio.shield(inflight)
+
+    def clear(self) -> None:
+        self._held = None
+
+    def _fresh(self, now: datetime) -> dict[str, object] | None:
+        held = self._held
+        if held is None or (now - held[0]).total_seconds() >= self._ttl_seconds:
+            return None
+        return held[1]
+
+    async def _refresh(
+        self,
+        build: Callable[[], Awaitable[dict[str, object]]],
+    ) -> dict[str, object]:
+        try:
+            built = await build()
+            self._held = (datetime.now(UTC), built)
+            return built
+        finally:
+            self._inflight = None
+
+
+_coverage_payload_cache = _CoveragePayloadCache()
 
 
 class _ListingHolder:
@@ -110,6 +174,12 @@ def open_listing() -> WarehouseListing:
     return _listings.get()
 
 
+def open_snapshot_store() -> ObjectStoreSnapshotStore:
+    """Reuse the process-held backend while keeping snapshot keys outside the mutable layout parser."""
+    listing = _listings.get()
+    return ObjectStoreSnapshotStore(backend=listing.backend, prefix=listing.prefix)
+
+
 @parquet_bp.get(f"/{ROUTE_DAY}")
 async def read_day(request: Request) -> HTTPResponse:
     """One layer's rows for one day at one tier, or the state that says why there are none."""
@@ -118,6 +188,13 @@ async def read_day(request: Request) -> HTTPResponse:
         day = parse_calendar_day(request.args.get(PARAM_DAY), PARAM_DAY)
     except RequestError as exc:
         return _refused(exc)
+
+    if scope.layer in PRODUCT_BY_LAYER:
+        return await _answer(
+            lambda: _run_snapshot_day(scope=scope, day=day),
+            ROW_READ_TIMEOUT_SECONDS,
+            route=ROUTE_DAY,
+        )
 
     def work(reader: PartitionRowReader) -> dict[str, object]:
         return resolve_day(open_listing(), reader, scope=scope, day=day).to_wire()
@@ -133,6 +210,13 @@ async def read_window(request: Request) -> HTTPResponse:
         first_day, last_day = parse_window(request.args.get(PARAM_FIRST_DAY), request.args.get(PARAM_LAST_DAY))
     except RequestError as exc:
         return _refused(exc)
+
+    if scope.layer in PRODUCT_BY_LAYER:
+        return await _answer(
+            lambda: _run_snapshot_window(scope=scope, first_day=first_day, last_day=last_day),
+            ROW_READ_TIMEOUT_SECONDS,
+            route=ROUTE_WINDOW,
+        )
 
     def work(reader: PartitionRowReader) -> dict[str, object]:
         days = resolve_window(open_listing(), reader, scope=scope, first_day=first_day, last_day=last_day)
@@ -154,6 +238,16 @@ async def read_release(request: Request) -> HTTPResponse:
     except RequestError as exc:
         return _refused(exc)
 
+    if scope.layer in PRODUCT_BY_LAYER:
+        return _refusal(
+            faults.snapshot_unpublished(
+                layer=scope.layer,
+                snapshot_id=PRODUCT_BY_LAYER[scope.layer].snapshot_id,
+                detail="daily-series snapshots do not define release carry; use the exact day route",
+            ),
+            ROUTE_RELEASE,
+        )
+
     def work(reader: PartitionRowReader) -> dict[str, object]:
         return resolve_release(open_listing(), reader, scope=scope, as_of=as_of).to_wire()
 
@@ -168,12 +262,8 @@ async def read_release(request: Request) -> HTTPResponse:
 async def read_coverage(_request: Request) -> HTTPResponse:
     """The slider census: one entry per physical lane and rung, with no viewport."""
 
-    def work() -> dict[str, object]:
-        census = _coverage_cache.get(open_listing(), lanes=registered_census_lanes(), now=datetime.now(UTC))
-        return census.to_wire()
-
     return await _answer(
-        lambda: run_bounded_read(work, operation=ROUTE_COVERAGE),
+        _run_coverage_read,
         COVERAGE_TIMEOUT_SECONDS,
         route=ROUTE_COVERAGE,
     )
@@ -201,6 +291,88 @@ async def _run_row_read(
         lambda session: work(DuckDbRowReader(session=session)),
         prefix=settings.object_store_prefix,
         operation=route,
+    )
+
+
+async def _run_snapshot_day(*, scope: ReadScope, day: date) -> dict[str, object]:
+    """Resolve immutable evidence before admitting the exact-day DuckDB read."""
+    store = open_snapshot_store()
+    evidence = await asyncio.to_thread(load_snapshot_scope_evidence, store, scope)
+    credentials = settings.require_object_store()
+    return await run_serving_read(
+        credentials,
+        lambda session: resolve_snapshot_evidence_day(
+            store,
+            session,
+            evidence=evidence,
+            scope=scope,
+            day=day,
+        ).to_wire(),
+        prefix=settings.object_store_prefix,
+        operation=ROUTE_DAY,
+    )
+
+
+async def _run_snapshot_window(*, scope: ReadScope, first_day: date, last_day: date) -> dict[str, object]:
+    """Resolve immutable evidence before admitting the exact-window DuckDB read."""
+    store = open_snapshot_store()
+    evidence = await asyncio.to_thread(load_snapshot_scope_evidence, store, scope)
+    credentials = settings.require_object_store()
+    return await run_serving_read(
+        credentials,
+        lambda session: render_window(
+            resolve_snapshot_evidence_window(
+                store,
+                session,
+                evidence=evidence,
+                scope=scope,
+                first_day=first_day,
+                last_day=last_day,
+            )
+        ),
+        prefix=settings.object_store_prefix,
+        operation=ROUTE_WINDOW,
+    )
+
+
+async def _run_coverage_read() -> dict[str, object]:
+    """Wait for the one cold census before acquiring any DuckDB serving slot."""
+    generated_at = datetime.now(UTC)
+    return await _coverage_payload_cache.get(
+        now=generated_at,
+        build=lambda: _build_coverage_payload(generated_at),
+    )
+
+
+async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
+    """Build one merged census while holding exactly one admitted serving session."""
+    credentials = settings.require_object_store()
+
+    def work(session: ServingSession) -> dict[str, object]:
+        direct = _coverage_cache.get(open_listing(), lanes=registered_census_lanes(), now=generated_at)
+        snapshot = _snapshot_coverage_cache.get(
+            open_snapshot_store(),
+            session,
+            now=generated_at,
+        )
+        for withheld in snapshot.withheld:
+            logger.warning(
+                "snapshot_coverage_withheld",
+                layer=withheld.layer,
+                code=withheld.code,
+                reason=withheld.message,
+            )
+        return WarehouseCoverage(
+            generated_at=generated_at,
+            evaluated_through_day=direct.evaluated_through_day,
+            lanes=direct.lanes + snapshot.lanes,
+        ).to_wire()
+
+    return await run_serving_read(
+        credentials,
+        work,
+        prefix=settings.object_store_prefix,
+        operation=ROUTE_COVERAGE,
     )
 
 

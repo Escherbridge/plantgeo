@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Protocol
 
+import pyarrow as pa  # type: ignore[import-untyped]
+
 from agri_data_service.foundation.parquet.paths import (
     stream_prefix,
     try_parse_absence_marker_path,
@@ -13,6 +15,7 @@ from agri_data_service.foundation.parquet.paths import (
     zoom_prefix,
 )
 from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops.wire import DeclaredListCell
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 if TYPE_CHECKING:
@@ -214,7 +217,11 @@ class DuckDbRowReader:
         columns = [description[0] for description in cursor.description or ()]
         fetched = cursor.fetchall()
         budget_exhausted = len(fetched) > read.row_budget
-        rows = tuple(_attributed_row(columns, values, key_of_uri) for values in fetched[: read.row_budget])
+        declared_list_columns = _declared_list_columns(read.scope.layer, read.scope.kind)
+        rows = tuple(
+            _attributed_row(columns, values, key_of_uri, declared_list_columns=declared_list_columns)
+            for values in fetched[: read.row_budget]
+        )
         return RowReadResult(
             rows=rows,
             budget_exhausted=budget_exhausted,
@@ -282,6 +289,8 @@ def _attributed_row(
     columns: list[str],
     values: tuple[object, ...],
     key_of_uri: Mapping[str, str],
+    *,
+    declared_list_columns: frozenset[str],
 ) -> tuple[str, ServedRow]:
     """Split one fetched tuple into the RELATIVE key it came from and the lane's own cells."""
     row = dict(zip(columns, values, strict=True))
@@ -289,7 +298,21 @@ def _attributed_row(
     key = key_of_uri.get(source_uri)
     if key is None:
         raise ValueError(f"row attributed to {source_uri!r}, which is not one of the keys this read asked for")
+    for column in declared_list_columns:
+        value = row.get(column)
+        if isinstance(value, (list, tuple)):
+            row[column] = DeclaredListCell(tuple(value))
     return (key, row)
+
+
+def _declared_list_columns(layer: str, kind: PartitionKind) -> frozenset[str]:
+    """Return only top-level list cells explicitly announced by the registered stream schema."""
+    schema = get_stream_schema(layer, kind).arrow_schema
+    return frozenset(
+        field.name
+        for field in schema
+        if pa.types.is_list(field.type) or pa.types.is_large_list(field.type) or pa.types.is_fixed_size_list(field.type)
+    )
 
 
 def _scan_statement(

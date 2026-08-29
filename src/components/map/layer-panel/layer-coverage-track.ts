@@ -22,6 +22,7 @@ import {
   isCalendarDate,
   isDayDescribed,
   isWithinCoverageGap,
+  isWithinGovernedAbsence,
   sliderMaxOffset,
   todayOffset,
   type SliderDomain,
@@ -44,7 +45,12 @@ import type { DayRange, SliderLayerCapability } from "@/types/time-slider";
  *   `describeDayCoverage` therefore said nothing, and the day read as an ordinary published one
  *   to a sighted reader and to a screen reader alike.
  */
-export type CoverageKind = "dense" | "thin" | "absent" | "undescribed";
+export type CoverageKind =
+  | "dense"
+  | "thin"
+  | "absent"
+  | "governed_absence"
+  | "undescribed";
 
 /** The kinds a band is actually drawn for: everything except the dense base. */
 export type DrawnCoverageKind = Exclude<CoverageKind, "dense">;
@@ -173,7 +179,7 @@ function paintRanges(
  * sweep and `dayCoverageState` can never disagree about where the boundary falls -- the
  * per-day loop runs only for a payload that actually reports one.
  *
- * Absent and thin are painted OVER the seed, in that order. A range that the server did
+ * Absent, governed absence and thin are painted OVER the seed, in that order. A range that the server did
  * report below the boundary is a positive claim and outranks "we were not told", and thin
  * outranks absent so a day both lists claim resolves to thin. The two are disjoint per the
  * server contract, so that last case only fires on a self-contradictory payload -- and on
@@ -197,6 +203,12 @@ export function buildCoverageSegments(
     }
   }
   paintRanges(claims, domain.firstDay, layer.coverageGaps, "absent");
+  paintRanges(
+    claims,
+    domain.firstDay,
+    layer.governedAbsenceRanges,
+    "governed_absence"
+  );
   paintRanges(claims, domain.firstDay, layer.thinRanges, "thin");
 
   const segments: CoverageSegment[] = [];
@@ -375,6 +387,7 @@ export function dayCoverageState(
   if (date < domain.firstDay || date > domain.lastDay) return "off_axis";
   if (date > domain.today) return "beyond_record";
   if (fallsWithinAnyRange(layer.thinRanges, date)) return "thin";
+  if (isWithinGovernedAbsence(layer, date)) return "governed_absence";
   // The store's own answer to this question, reused rather than reimplemented: a change to what
   // counts as a gap has to reach this track, and a second copy here is how it would not.
   if (isWithinCoverageGap(layer, date)) return "absent";
@@ -405,6 +418,8 @@ export function describeDayCoverage(state: DayCoverageState): string | null {
       return "Fewer readings than usual on this date";
     case "absent":
       return "No data on this date";
+    case "governed_absence":
+      return "The source was checked and intentionally published no data on this date";
     case "undescribed":
       return "Coverage on this date is unknown; the record's gap list does not reach this far back";
     case "beyond_record":
@@ -474,6 +489,11 @@ export const TRACK_REGION_APPEARANCE: Record<TrackRegion, TrackRegionAppearance>
     backgroundImage:
       "repeating-linear-gradient(135deg, hsl(var(--muted-foreground) / 0.6) 0 3px, transparent 3px 6px)",
   },
+  governed_absence: {
+    backgroundColor: "hsl(var(--muted-foreground) / 0.25)",
+    backgroundImage:
+      "repeating-linear-gradient(45deg, hsl(var(--muted-foreground) / 0.55) 0 1px, transparent 1px 4px), repeating-linear-gradient(135deg, hsl(var(--muted-foreground) / 0.4) 0 1px, transparent 1px 4px)",
+  },
   undescribed: {
     backgroundColor: "hsl(var(--muted-foreground) / 0.15)",
     backgroundImage:
@@ -513,6 +533,7 @@ export const SYNCED_DAY_APPEARANCE_BACKGROUND_SIZE = "5px 5px";
 /** What a band of each drawn kind is called, in the tooltip and in the spoken summary. */
 const DRAWN_COVERAGE_SUBJECT: Record<DrawnCoverageKind, string> = {
   absent: "No data",
+  governed_absence: "Governed absence",
   thin: "Fewer readings than usual",
   undescribed: "Coverage unknown",
 };
@@ -581,6 +602,7 @@ export function describeCoverageTopology(
 
   const undescribed = runsOfKind("undescribed");
   const absent = runsOfKind("absent");
+  const governedAbsence = runsOfKind("governed_absence");
   const thin = runsOfKind("thin");
   const lastCoveredDay = addDays(
     domain.firstDay,
@@ -593,7 +615,7 @@ export function describeCoverageTopology(
     // everything below it is a region the report simply does not reach.
     spoken.push(`Not described before ${addDays(undescribed[undescribed.length - 1].to, 1)}.`);
   }
-  if (absent.length === 0 && thin.length === 0) {
+  if (absent.length === 0 && governedAbsence.length === 0 && thin.length === 0) {
     spoken.push(
       undescribed.length > 0
         ? "No gaps and no sparse days after that."
@@ -604,6 +626,12 @@ export function describeCoverageTopology(
   if (absent.length > 0) {
     const noun = absent.length === 1 ? "gap" : "gaps";
     spoken.push(`${absent.length} ${noun} with no data: ${listRuns(absent)}.`);
+  }
+  if (governedAbsence.length > 0) {
+    const noun = governedAbsence.length === 1 ? "range" : "ranges";
+    spoken.push(
+      `${governedAbsence.length} governed-absence ${noun}: ${listRuns(governedAbsence)}.`
+    );
   }
   if (thin.length > 0) {
     const noun = thin.length === 1 ? "range" : "ranges";

@@ -220,6 +220,15 @@ export function isWithinCoverageGap(layer: SliderLayerCapability, date: string):
   return coverageGaps.some((gap) => date >= gap.from && date <= gap.to);
 }
 
+/** True when `date` has an explicit upstream-checked absence marker. */
+export function isWithinGovernedAbsence(
+  layer: SliderLayerCapability,
+  date: string
+): boolean {
+  const governedAbsenceRanges = layer.governedAbsenceRanges ?? [];
+  return governedAbsenceRanges.some((range) => date >= range.from && date <= range.to);
+}
+
 /**
  * True when this layer's `coverageGaps`/`thinRanges` describe `date`, so their SILENCE about it
  * is evidence rather than an absence of evidence.

@@ -113,6 +113,24 @@ def census_budget_exhausted(*, listed_keys: int) -> ServingRefusalError:
     )
 
 
+def snapshot_unpublished(*, layer: str, snapshot_id: str, detail: str) -> ServingRefusalError:
+    """An allowlisted immutable product is not provably closed by its manifest and marker."""
+    return ServingRefusalError(
+        "snapshot_unpublished",
+        f"{layer} snapshot {snapshot_id} is not a manifest-bound completed publication ({detail}); serving "
+        "objects from an unclosed or differently-bound prefix would expose a partial immutable product",
+    )
+
+
+def snapshot_schema_mismatch(*, layer: str, key: str, detail: str) -> ServingRefusalError:
+    """One immutable product object does not carry the exact allowlisted serving schema."""
+    return ServingRefusalError(
+        "snapshot_schema_mismatch",
+        f"{layer} object {key} does not match its allowlisted serving schema ({detail}); unioning drifted "
+        "objects would silently fabricate nullable columns or drop values",
+    )
+
+
 def absence_marker_unreadable(*, layer: str, day: str) -> ServingRefusalError:
     """A listed governed absence no longer carries readable evidence."""
     return ServingRefusalError(

@@ -31,13 +31,14 @@ import {
  * frozen (row contents, row counts, lane order) and the asymmetry that the Python side is the strict
  * one, since zod strips unknown keys by default.
  *
- * DAYS ARE OPAQUE. Every day crossing this module is a `YYYY-MM-DD` string that is shape-checked
- * and passed through -- never parsed into a `Date`, never formatted from one, never converted
- * between zones. `PUBLISHER_NAMED_DAY_RULE` (environmental-read-model.ts) is why: 37.5% of the
- * stored water-gauge rows carry a `-07:00` offset, and a single instant-based conversion moves
- * 6,279 of 16,743 of them onto the following calendar day. The server owns day semantics; this
- * client owns none. `src/__tests__/services/parquet-plane-client.test.ts` fails if a date
- * conversion ever appears in this module or in `parquet-envelope.ts`.
+ * DAYS NEVER BECOME INSTANTS. Every day crossing this module is a `YYYY-MM-DD` string that is
+ * never parsed into a `Date`, formatted from one, or converted between zones.
+ * `PUBLISHER_NAMED_DAY_RULE` (environmental-read-model.ts) is why: 37.5% of the stored
+ * water-gauge rows carry a `-07:00` offset, and a single instant-based conversion moves 6,279 of
+ * 16,743 of them onto the following calendar day. The one calendar operation is the window
+ * decoder's pure field-wise successor, used only to prove no requested day was omitted.
+ * `src/__tests__/services/parquet-plane-client.test.ts` fails if an instant conversion ever
+ * appears in this module or in `parquet-envelope.ts`.
  *
  * FAULTS ARE THROWN, NEVER ENVELOPED. A timeout, an oversized body, a 5xx, an unreachable host and
  * a payload that breaks the contract all propagate as the `bounded-upstream` taxonomy so
@@ -360,12 +361,54 @@ function decodeEnvelope(payload: unknown): ParquetPlaneEnvelope {
 /**
  * Parses a window answer and checks it describes the whole closed range.
  *
- * The ends are compared as STRINGS and the ordering check is lexicographic. That is exact for
- * fixed-width ISO days -- lexicographic order is chronological order -- and it is the only way to
- * verify the range without date arithmetic, which this module refuses to do. A short, reordered or
+ * Adjacency uses a Gregorian successor over the fixed-width string fields, never a Date or instant.
+ * Endpoints and ordering alone cannot detect an omitted interior day. A short, holed, reordered or
  * duplicated answer is a contract error rather than a silently narrower window, because the days it
  * left out would otherwise read as days nothing is wrong with.
  */
+function nextCalendarDay(day: string): string {
+  let year = Number(day.slice(0, 4));
+  let month = Number(day.slice(5, 7));
+  let dayOfMonth = Number(day.slice(8, 10));
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ][month - 1];
+  if (daysInMonth === undefined || dayOfMonth < 1 || dayOfMonth > daysInMonth) {
+    throw new ParquetPlaneContractError(
+      `Parquet plane window contains a non-calendar day ${day}`
+    );
+  }
+  dayOfMonth += 1;
+  if (dayOfMonth > daysInMonth) {
+    dayOfMonth = 1;
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+  }
+  if (year > 9999) {
+    throw new ParquetPlaneContractError(
+      `Parquet plane window exceeds the YYYY-MM-DD calendar after ${day}`
+    );
+  }
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(
+    dayOfMonth
+  ).padStart(2, "0")}`;
+}
+
 function decodeWindow(
   payload: unknown,
   firstDay: string,
@@ -391,9 +434,10 @@ function decodeWindow(
     );
   }
   for (let index = 1; index < days.length; index += 1) {
-    if (days[index - 1].requestedDay >= days[index].requestedDay) {
+    const expectedDay = nextCalendarDay(days[index - 1].requestedDay);
+    if (days[index].requestedDay !== expectedDay) {
       throw new ParquetPlaneContractError(
-        `Parquet plane repeated or misordered ${days[index].requestedDay} in the window ${firstDay}..${lastDay}`
+        `Parquet plane answered ${days[index].requestedDay} where ${expectedDay} was required in the window ${firstDay}..${lastDay}`
       );
     }
   }

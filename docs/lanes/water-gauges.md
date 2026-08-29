@@ -51,10 +51,13 @@ genuine append-only time series, not a latest-value cache. See §4.
 
 ## 2. Cadence
 
-- **Forward path is now hourly, not every 30 minutes.** `infra/cron-ingest/railway.json` sets
+- **Both production forward paths are hourly.** `infra/cron-ingest/railway.json` sets
   `cronSchedule: "0 * * * *"`, and `ingest-streamflow` runs as one step inside the consolidated
-  `ingest-all` on `plantgeo-ingest-cron` (`docs/deployment.md` "Cron consolidation, 2026-08-14",
-  lines 586, 600-602). The **30-minute figure is stale**: it is the *former*, pre-2026-08-14
+  `ingest-all` on `plantgeo-ingest-cron` to preserve the PostgreSQL source log. The direct Parquet
+  publisher is the separate `plantgeo-water-gauges-forward` service, configured from
+  `railway.water-gauges-forward.json` at `15 * * * *`; it fetches NWIS itself and merges the same
+  publisher-timestamped readings into all four Parquet rungs. The **30-minute figure is stale**: it is
+  the *former*, pre-2026-08-14
   per-source schedule (`docs/deployment.md:590`, "Former `cronSchedule`" column), and it survives
   as a live comment inside `usgs_nwis.py:116-125` ("25s, not the 10s this carried until 2026-08-05
   ... against a 30-minute cadence") and in
@@ -62,10 +65,14 @@ genuine append-only time series, not a latest-value cache. See §4.
   (`cadence_basis="infra/cron-streamflow/railway.json runs */30 * * * *"` — that directory no longer
   exists, per `docs/deployment.md:670-676`). **Treat both of those in-code cadence claims as
   superseded by the hourly `cron-ingest` schedule, not as current fact.**
-- **Archive/backfill is also hourly**, via a different mechanism: `jobs-pulse`'s durable-archive
+- **The PostgreSQL archive/backfill is also hourly**, via a different mechanism: `jobs-pulse`'s durable-archive
   namespace, folded into the same `plantgeo-ingest-cron` tick since the same 2026-08-14
   consolidation (`docs/deployment.md:604-620`). It walks `STREAMFLOW_ARCHIVE_LANE`
   (`ingest/lanes.py:214-226`) in `chunk_days=10` / `window_days=30` steps toward the floor in §3.
+  A read-only production inspection on 2026-08-29 found `streamflow-archive` idle with zero new
+  records, zero missing planned days, and no reopened gaps. That proves the source-to-PostgreSQL walk
+  is settled; it does not by itself activate the separate Parquet gap-fill scheduler. The deployed
+  `plantgeo-job-executor` was healthy but reported `active_lane_count=0`, so it was not a water writer.
 - **Observed lag**: not separately measured for this lane in the repo. USGS daily values are
   conventionally provisional-same-day-to-next-day and get revised; nothing here confirms or
   quantifies that lag for this warehouse's ingest — **UNVERIFIED**, would need a same-day vs.
@@ -78,8 +85,17 @@ genuine append-only time series, not a latest-value cache. See §4.
 
 ## 3. Historical horizon
 
-This is the part the brief asked to verify carefully, and the evidence is genuinely mixed — report it
-as mixed rather than picking the more flattering half.
+This is the part the brief asked to verify carefully. The earlier repo evidence was mixed, but the
+production Parquet lane was remeasured read-only on 2026-08-29 and now resolves the ambiguity.
+
+- **Current usable Parquet history is daily from 2022-08-05 through 2026-08-28.** The production
+  capability census reported 1,524 physical published days across all four rungs: 1,485 consecutive
+  days in that declared interval plus 39 retained legacy straggler days. Exact public-reader probes
+  returned ready data at the start (`2022-08-05`, 790 z9 rows), a middle day (`2024-08-28`, 820 z9
+  rows), and the live edge (`2026-08-28`, 787 z9 rows). The `2022-08-04` probe correctly returned
+  `day_not_written`. At z13, the 2024 probe returned 836 named gauges; z9 rows are intentionally
+  anonymous aggregate cells. The slider therefore begins at `2022-08-05`, while
+  `earliestRecordedObservationDate` continues to disclose the oldest physical straggler.
 
 - **Declared code floor**: `USGS_DAILY_VALUES_EARLIEST = datetime(2022, 8, 5, tzinfo=UTC)`
   (`usgs_nwis.py:87`). The comment is explicit that this is **not** a source-imposed limit: "USGS DV
@@ -95,15 +111,15 @@ as mixed rather than picking the more flattering half.
   (`src/lib/server/services/environmental-read-model.ts:2842-2848`). A bare `min(observed_day)` over
   this layer reports 1990-10-01 and is explicitly called a trap in that same file and in
   `src/types/time-slider.ts:157-161` — do not use it to answer "how far back does this lane go."
-- **The measured DENSE/continuous record, as last captured in this codebase, starts far later than
-  the 2022-08-05 floor**: `environmental-read-model.ts:2863-2872` records that gap-clustering plus a
+- **Superseded measurement:** the DENSE/continuous record previously captured in this codebase
+  started far later than the 2022-08-05 floor: `environmental-read-model.ts:2863-2872` records that gap-clustering plus a
   density floor moved water-gauges' effective start to **2026-05-24** ("clustering moves water-gauges
   from 1990-09-30 to 2026-05-24"), with the days between 2026-05-24 and 2026-08-01 carrying only 1-7
   readings each against 15,844 on the last three days sampled. That comment carries no explicit
-  measurement date, so treat 2026-05-24 as a snapshot that predates this session, not today's true
-  value — **re-run the clustering query before relying on a specific date.**
-- **Why the gap between the 2022-08-05 floor and the ~2026-05-24 dense start is plausible, not a
-  bug**: the archive/backfill lane that would populate 2022-08-05→2026-05 is `STREAMFLOW_ARCHIVE_LANE`,
+  measurement date. The 2026-08-29 four-rung production census and exact reader probes above supersede
+  that snapshot; do not restore the `2026-05-24` slider floor.
+- **Why the old gap between the 2022-08-05 floor and the ~2026-05-24 dense start was plausible, not a
+  reader bug**: the archive/backfill lane that populated 2022-08-05→2026-05 is `STREAMFLOW_ARCHIVE_LANE`,
   and it only became a scheduled, automatic hourly job on 2026-08-14 (§2). Before that date it existed
   in code (`BACKFILL_LANES`, `ingest/lanes.py:228-230`) but had to be triggered manually
   (`jobs-run --lane streamflow-archive`). `conductor/RUNBOOK.md` §0.16.4-0.16.5 (dated 2026-08-16/17)
@@ -113,7 +129,8 @@ as mixed rather than picking the more flattering half.
   automated walk toward it has been running since 2026-08-14, but nothing in the repo confirms it has
   reached 2022-08-05 as of today. Confirm with a fresh gap-clustered earliest-date query
   (`environmental-read-model.ts`'s own logic) or a `job_work_item` completion count for the
-  `streamflow-archive` lane before assuming 4 years of dense history exists.**
+  `streamflow-archive` lane before assuming 4 years of dense history exists.** That verification has
+  now happened through the 2026-08-29 Parquet census and exact route probes above.
 - **Row-count corroboration that this is a real, growing series** (supports §4's identity finding,
   not the horizon question): an older in-repo snapshot recorded "16,743 stored water-gauges rows"
   (`environmental-read-model.ts:127`, undated); `conductor/RUNBOOK.md` §0.18.1 (dated 2026-08-2x)
@@ -230,13 +247,10 @@ but the recommendation comes with a load-bearing caveat the classification table
   the vast majority of readings (reverse-flow excursions aside), materially autocorrelated day to day,
   and seasonally driven by snowmelt/precipitation — exactly the shape a Monte Carlo ensemble forecast
   is suited to, and the brief's own framing is correct on this point.
-- **The caveat §3 exists to surface**: a seasonal Monte Carlo model needs enough dense history to
-  estimate a seasonal cycle, and the best evidence in this repo puts the *dense, continuous* record at
-  as little as ~3 months deep as of its last measurement (2026-05-24 onward), not the ~4 years the
-  declared 2022-08-05 floor implies. **Before building `method/monte_carlo/water-gauges.py`, re-measure
-  the actual dense-record depth** (the gap-clustering query in
-  `environmental-read-model.ts:2839-2932` is the reusable logic for this) rather than assuming the
-  floor date reflects real coverage.
+- **The history-depth caveat has been resolved for the current snapshot**: the 2026-08-29 production
+  census proves 1,485 consecutive four-rung days from 2022-08-05 through 2026-08-28. A forecaster must
+  still bind its training set to the exact product manifest/current coverage response rather than a
+  hard-coded date, but it no longer needs to assume only three months of dense observations.
 - **What that implies for the method, not the horizon**: if the dense record is still short, the
   first version of this lane's forecaster should lean on a model that degrades gracefully with
   limited history — e.g. an autoregressive/persistence model with volatility bands per gauge, widening

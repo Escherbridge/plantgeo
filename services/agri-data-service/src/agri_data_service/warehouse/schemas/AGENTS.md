@@ -47,9 +47,9 @@ re-export that object, never restate the columns — one canonical definition pe
 ## Snapshot-derived signal products
 
 `warehouse/parquet/snapshot_signal_product.py` is the only family helper. It lives below this
-lane-module directory so no lane imports a sibling lane. VPD, three air-temperature products, and
-wind speed clone the frozen twelve-column signal schema and tier derivation with only the physical
-stream name changed. Their separate modules preserve separate `layer=<slug>/` prefixes.
+lane-module directory so no lane imports a sibling lane. VPD, dew point, three air-temperature
+products, and wind speed clone the frozen twelve-column signal schema and tier derivation with only
+the physical stream name changed. Their separate modules preserve separate `layer=<slug>/` prefixes.
 
 Relative humidity, shortwave radiation, precipitation, and the three ERA5-Land soil-moisture
 depths share the exact 33-field snapshot-lineage contract emitted by their completed builders:

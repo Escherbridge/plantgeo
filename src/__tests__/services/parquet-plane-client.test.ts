@@ -250,6 +250,21 @@ describe("getParquetLayerDayWindow", () => {
     ).rejects.toBeInstanceOf(ParquetPlaneContractError);
   });
 
+  it("refuses an answer that omits an interior day while preserving both endpoints", async () => {
+    mockedFetch.mockResolvedValue({
+      days: [wirePublished("2026-08-18"), wirePublished("2026-08-20")],
+    });
+
+    await expect(
+      getParquetLayerDayWindow({
+        layer: "vegetation",
+        firstDay: "2026-08-18",
+        lastDay: "2026-08-20",
+        zoomTier: 9,
+      })
+    ).rejects.toThrow("2026-08-19 was required");
+  });
+
   it("refuses a repeated or misordered day", async () => {
     mockedFetch.mockResolvedValue({
       days: [wirePublished("2026-08-18"), wirePublished("2026-08-18"), wirePublished("2026-08-20")],
@@ -461,8 +476,9 @@ describe("fault taxonomy", () => {
  * `PUBLISHER_NAMED_DAY_RULE` (environmental-read-model.ts) records that 37.5% of the stored
  * water-gauge rows carry a `-07:00` offset, so ONE instant-based conversion moves 6,279 of 16,743
  * of them onto the following calendar day -- a map that renders perfectly and is wrong. Both
- * modules therefore treat a day as ten opaque characters and own no day semantics at all. This
- * check is textual, like the migration/read-model agreement check in
+ * modules therefore never convert a publisher day to an instant. Window adjacency may increment
+ * the numeric calendar fields, but must never involve timezone-sensitive APIs. This check is
+ * textual, like the migration/read-model agreement check in
  * src/__tests__/lib/observation-day-contract.test.ts, because the property it defends is the
  * ABSENCE of a call: no runtime assertion can prove a conversion was never introduced.
  */

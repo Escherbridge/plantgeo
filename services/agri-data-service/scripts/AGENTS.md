@@ -138,6 +138,19 @@ and row counts. The default sparse mode then hashes five evenly spaced months pe
 all four zoom rungs and the boundary/middle physical objects for each sampled month. Full payload
 verification remains an explicit mode for offline audits, not the normal completion path.
 
+## Dew point
+
+`dew_point_snapshot_breakdown.py` is the single-product companion to the Air Temperature snapshot
+builder. It reads only the same manifest-pinned raw canonical snapshot, owns exactly the governed
+`nasa-power-daily / T2MDEW / dew_point_temperature / surface / C` population, and writes only the
+dedicated `layer=climate-field-dew-point/snapshot=prod-20260826-full-signal-v1/` prefix. Every
+physical source part is retained with exact lineage; newest frozen release retrieval and then the
+greatest observation id select downstream winners. Monthly z13/z9/z5/z0 outputs and checkpoints are
+immutable and resumable, and `_COMPLETE` lands only after the reconciled manifest.
+
+The `census` command is the mandatory no-write preflight. Production `build` must not be invoked
+until its exact source-part/row/byte counts and proposed destination have been independently reviewed.
+
 ## Relative humidity
 
 `build_relative_humidity_from_canonical_snapshot.py` is the sole writer for the historical

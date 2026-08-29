@@ -56,6 +56,9 @@ import {
   type ZoomGranularityTiers,
 } from "./zoom-granularity";
 
+/** Internal metric reader input; the public procedure exposes only two fire metrics. */
+type InternalMetricAtDateInput = Omit<MetricAtDateInput, "metric"> & { metric: string };
+
 /**
  * The one publisher-named-day rule, shared by the slider axis and the baked tile layers.
  *
@@ -3615,16 +3618,29 @@ function mergeStreamCapabilities(
  * on, and it must not queue behind the far heavier stream pass on a cold connection pool.
  */
 export async function getSliderCapabilities(): Promise<ResolvedSliderCapabilities> {
+  const base = await getGeoFeatureSliderCapabilities();
+  const streams = await readStreamCapabilities();
+  return {
+    ...base,
+    streamsUnavailable: streams.unavailable,
+    layers: mergeStreamCapabilities(
+      base.layers,
+      streams.layers.map((layer) =>
+        closeCoverageGapsAtLiveEdge(layer, base.serverCurrentDate)
+      )
+    ),
+  };
+}
+
+/** PostgreSQL `geo.features` capability rows without model streams; see `src/lib/server/AGENTS.md`. */
+export async function getGeoFeatureSliderCapabilities(): Promise<ResolvedSliderCapabilities> {
   const today = serverCurrentDate();
   const layers = await readLayerCapabilities();
-  const streams = await readStreamCapabilities();
   return {
     serverCurrentDate: today,
     futureAxisDays: FUTURE_AXIS_DAYS,
-    streamsUnavailable: streams.unavailable,
-    layers: mergeStreamCapabilities(layers, streams.layers).map((layer) =>
-      closeCoverageGapsAtLiveEdge(layer, today)
-    ),
+    streamsUnavailable: false,
+    layers: layers.map((layer) => closeCoverageGapsAtLiveEdge(layer, today)),
   };
 }
 
@@ -3719,7 +3735,7 @@ type MetricRow = {
  * broken" is the whole point of the availability/reason pair.
  */
 export async function getMetricAtDate(
-  input: MetricAtDateInput
+  input: InternalMetricAtDateInput
 ): Promise<MetricAtDateCollection> {
   const { metric, date, variant } = input;
 

@@ -288,8 +288,8 @@ def test_a_window_budget_truncates_at_the_late_end_and_never_reports_a_late_day_
 def test_a_cell_this_plane_cannot_render_fails_closed_rather_than_being_stringified() -> None:
     """`str(value)` would serve a Decimal, a list or a struct as text under a type nobody announced.
 
-    Latent while every registered schema is scalar; `union_by_name` over a drifted object is how a
-    type nobody registered arrives in a row, and a silent contract change is worse than a refusal.
+    Registered list columns are marked by the schema-aware DuckDB reader. A raw list arriving from
+    an untyped or drifted row has no such proof, and a silent contract change is worse than refusal.
     """
     with pytest.raises(ValueError, match="no agreed rendering"):
         render_row({"cell_id": "4127", "readings": [1, 2, 3]})

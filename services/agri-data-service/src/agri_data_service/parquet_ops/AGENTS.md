@@ -28,9 +28,14 @@ Five behaviours the contract encodes, and where each one lives:
    `request_params.parse_calendar_day` refuses anything carrying a `T` or a `Z` rather than
    truncating it. Nothing in this directory converts a zone near a `*_day` value.
 5. **Coverage proves each physical rung independently** — `(layer, kind, zoom)` is the row identity;
-   no rung borrows history from another, and a never-written rung reports `null` bounds. The census
+   a mutable rung is listed independently; an immutable monthly product may reuse its exact z13 day
+   set only after its manifest proves identical checkpoint months and part counts at every rung. A never-written rung reports `null` bounds. The census
    includes the 11 direct slider lanes plus the 15 schema-backed dedicated climate/soil prefixes.
    Catalogue products without a serving schema stay unregistered and therefore cannot be proven.
+
+`snapshot_products.SNAPSHOT_PRODUCTS` is the single immutable-product allowlist. Add a product only
+after its production `manifest.json` and `_COMPLETE` are final. Dew point entered the allowlist only
+after its final output receipt was pinned; no product may be registered with a guessed digest.
 
 ## Why the memory ceiling is not advisory
 
@@ -109,13 +114,10 @@ copy of the same oversized query against a process already at its ceiling. The c
 complete code-to-status table and translates `duckdb.Error`, timeouts, and unexpected failures.
 Other adapters preserve the same code and choose their own transport rendering.
 
-`render_scalar` **fails closed** on any type it has no agreed rendering for. `str(value)` would have
-served a Decimal, a list, a struct or a UUID as text under a type the contract never announced. Every
-registered schema is scalar today — a census of `warehouse/schemas/` and `warehouse/parquet/schema.py`
-2026-08-25 found only `string`, `float64`, `int8/16/32/64`, `bool_`, `date32`, `timestamp` and
-`binary`, all of which render — so this is latent; `union_by_name` over a drifted object is how it
-stops being latent. It bites test fixtures first: a bare `-116.2` in a `COPY … TO` is a DECIMAL to
-DuckDB, which no lane can produce and this now refuses.
+`render_scalar` **fails closed** on any type it has no agreed rendering for. The DuckDB reader wraps
+only columns whose registered Arrow schema declares a list, so snapshot-lineage arrays render
+recursively while a raw list from an untyped or drifted row remains refused. `str(value)` would still
+serve a Decimal, struct or UUID as text under a type the contract never announced, and remains refused.
 
 ## Why a conflict and an unfinished export are not states
 
@@ -144,7 +146,7 @@ could not judge: two lanes (`sensors`, `water-gauges`) have nullable coordinates
 position is excluded from a bbox read. Rather than dropping it silently — and rather than inventing a
 field the contract does not have — the day reports `truncated: true`.
 
-A window is answered by ONE scan with a shared budget, ordered by object key. Keys sort
+A direct-partition window is answered by ONE scan with a shared budget, ordered by object key. Keys sort
 chronologically **at day resolution**: `year=YYYY/month=MM/day=DD` is zero-padded, so a lexicographic
 `ORDER BY filename` visits days in calendar order. The **part index is not padded** — `part-0`,
 `part-2`, `part-10` sort `part-0, part-1, part-10, part-2` — so `part_keys_for_day` (which sorts
@@ -156,6 +158,9 @@ zero-padded" does not, and was wrong when first written.
 Truncation therefore always falls at the LATE end: days before the cut are complete, the cut day and
 every published day after it are marked `truncated`. A day whose rows were never reached is still
 `published` with `rows: []` — "this day has rows and the budget ran out" — never `day_not_written`.
+Immutable monthly snapshot windows retain exact-day filtering, so they may use one bounded query per
+day rather than one union scan, but they spend the same single `WINDOW_ROW_BUDGET` across the closed
+range and propagate truncation from the first cut published day through every later published day.
 
 ## Listings, and what is memoized
 
@@ -165,18 +170,42 @@ every published day after it are marked `truncated`. A day whose rows were never
 - `window` lists the one or two months its range touches.
 - `release` walks back year by year, bounded by `RELEASE_LOOKBACK_YEARS`, and stops at the first year
   holding a resolvable day.
-- `coverage` is the expensive one — one whole-stream listing for every direct and schema-backed
-  product lane, bucketed into four exact rungs locally — and is the
-  only thing memoized (`CoverageCache`, 120 s, under the client's own 300 s revalidation). Nothing
-  else caches, so no row read can report a day as thinner than the warehouse holds.
+- `coverage` is the expensive one — one whole-stream listing for every mutable direct/product lane,
+  plus manifest-bound immutable snapshot evidence. Closed daily snapshots derive exact days from
+  bound keys/ranges; closed monthly products use declared contiguous ranges, except legacy air
+  manifests, which pay one z13 day projection after persisted tier-parity checks. It is the
+  only mutable census memoized (`CoverageCache`, 120 s, under the client's own 300 s revalidation).
+  Immutable checkpoint evidence is process-cached by backend namespace, product roots, and the exact
+  manifest SHA after every caller rebinds `manifest.json` to `_COMPLETE`; selected Parquet payloads
+  are still rehashed before each exact day/window read.
 
-Cold stream listings use exactly three workers. This is network-only concurrency: coverage
-opens no DuckDB session, and the separate three-session × 1.2 GB DuckDB ceiling does not move. Each
+Cold mutable stream listings use exactly three workers. Immutable coverage runs in one admitted
+DuckDB session because only legacy air manifests need a bounded day projection. Each mutable
 stream is consumed as an iterator and charges the one locked 600,000-key census budget before retaining
 a key, so concurrent listings cannot multiply the aggregate memory allowance. Measured against
 production R2 on 2026-08-28, the pre-product 52-prefix walk covered 121,386 keys in 16.27 s at this
 ceiling. The slider census now makes 26 stream-prefix calls (11 direct plus 15 products) and emits
 104 independent rung rows while keeping the same aggregate key refusal and bounded worker fan-out.
+The HTTP adapter additionally terminates any cold census at 29 seconds, below the client's 30-second
+budget. Tests prove a closed contiguous manifest opens no Parquet and a legacy monthly product runs
+one z13 day projection, never four tier scans; only a deployed probe can establish production latency.
+
+Snapshot coverage isolates publication evidence per product. A missing, unbound, schema-drifted, or
+unreadable product contributes no rung rows, because null-bounded rows would falsely call it
+never-written. The internal census retains the exact typed withholding and the HTTP adapter logs it;
+healthy product rungs remain in the frozen wire response. Unexpected programming faults still abort
+the census instead of being disguised as product evidence.
+
+Snapshot serving keys are never reconstructed from path conventions. Product manifests bind exact
+checkpoint or verification-marker JSON receipts; those verified bytes bind exact rung
+key/byte/SHA receipts for monthly and daily layouts.
+Soil-temperature additionally requires the manifest's base and tier checkpoint receipts to cross-bind
+before exposing their four rungs. An exact day/window GET hashes each selected Parquet object before
+DuckDB opens it. Coverage verifies the manifest/checkpoint chain and uses its receipt metadata without
+GETting every serving Parquet object; downloading the full multi-product snapshot on each 120-second
+cold census would violate the 29-second server budget. Cold checkpoint/marker GETs use a bounded
+16-worker pool. HTTP day/window callers resolve that single-flight evidence before DuckDB admission,
+so cache waiters occupy no serving slots; only evidence-bound row queries enter the three-slot pool.
 
 The census carries three bounds a memo alone does not give it, all in `coverage.py`:
 
@@ -185,6 +214,10 @@ The census carries three bounds a memo alone does not give it, all in `coverage.
   walk. `CoverageCache` holds a `threading.Lock` — not `asyncio`, because `get` runs inside the
   route's pool thread — and a queued caller re-checks the memo before building. This mirrors the
   guard `environmental-read-model.getSliderCapabilities` already has.
+- **Admission before execution, single-flight before admission.** The HTTP payload cache uses an
+  `asyncio.Lock` before `run_serving_read`; cold waiters own no DuckDB session and no bounded serving
+  slot. The one winner acquires one slot for the merged census, and waiters re-check and reuse its
+  payload after the lock opens.
 - **An aggregate key budget.** `MAX_CENSUS_LISTED_KEYS` is spent across every listing of ONE census
   through `_BudgetedListing`; exhausting it refuses the whole census, because a partial one would
   report the lanes it never reached as absent.
@@ -241,16 +274,19 @@ local parts: one row came back out of two.
   partition day is a version, not an observation day, so no day between two versions ever carried
   an obligation to exist (`lane_contract.py`). Ranging over them reported `watersheds` as one
   17-day gap when this was first run against the real warehouse.
-- A `release_series` lane reports a gap only where a RELEASE was owed. A gap is a day that carried
-  an obligation and is not there: `drought` publishes weekly, so a Wednesday was never owed a USDM
-  map and reporting one as missing is a false claim about warehouse content — the same reasoning
-  the `static_lookup` rung above already accepts. `coverage._owed_but_unwritten` walks each lane's
-  own `cadence_days` from the days it did write, which for a `daily_series` (cadence 1) is every
-  day and changes nothing. Measured 2026-08-25 before the rule: 138 releases produced 138 gap
-  ranges, which at cutover paints the drought track absent six days in seven while `/release`
-  serves those days by carrying the Tuesday forward.
-- The two natures close their LIVE EDGE differently, deliberately. A `release_series` is not late
-  until `publication_lag_days` after the next cadence step — USDM's Tuesday map is not missing on
-  the Tuesday. A `daily_series` closes against TODAY and ignores its lag: every day up to today was
-  owed an observation, the lag says when the driver gets to it rather than whether it is owed, and
-  this is what the client's own `closeCoverageGapsAtLiveEdge` already assumes.
+- A `release_series` lane reports the bounded days its reader can answer, not only raw publication
+  dates. Historical weekly drought releases and governed absences carry from Tuesday through Monday.
+  The latest stored publication or governed absence uses the reader's 14-day live allowance, capped
+  by the evaluation day; once a later status lands, the older one immediately reverts to six-day
+  historical carry. Every day outside those intervals is a gap. `coverage._owed_but_unwritten`
+  closes that full uncovered interval, while a `daily_series` (cadence 1) continues to owe each
+  observation day directly.
+- A conflicting drought status is retained by the census even though it is neither published nor a
+  governed absence. `/release` refuses that conflict as the newest status until a later clean status
+  supersedes it, so coverage marks the same conflict-through-supersession interval as a gap instead
+  of carrying the older release green.
+- Live-edge closure follows the serving reader. Direct drought uses the bounded 14-day latest-status
+  rule above. Other `release_series` lanes remain cadence obligations settled after
+  `publication_lag_days`. A `daily_series` closes against TODAY and ignores its lag: every day up to
+  today was owed an observation, and the lag says when the driver gets to it rather than whether it
+  is owed. This is what the client's own `closeCoverageGapsAtLiveEdge` already assumes.

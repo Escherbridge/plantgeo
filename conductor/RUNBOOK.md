@@ -4,11 +4,11 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Current status (2026-08-27): the targeted pre-API Parquet data and code integration is complete on
-`main` at `949e20ee38405781a3e2a8978b2fc769bb7659d6`. Start with the LIVE section immediately
-below.** The older 2026-08-25 header and session notes are retained as historical evidence; where
-they describe missing Parquet data, an unbuilt serving API, or unintegrated lane artifacts, the
-2026-08-27 LIVE section supersedes them.
+**Current status (2026-08-29): the snapshot-product API/client cutover is authored, independently
+approved and fully swept in the shared working tree, but remains uncommitted and undeployed. Start with
+the LIVE section immediately below.** The older 2026-08-25 header and session notes are retained as
+historical evidence; where they describe missing Parquet data, an unbuilt serving API, or
+unintegrated lane artifacts, the 2026-08-28 LIVE section supersedes them.
 
 **Historical header last updated:** 2026-08-25. **§0.41 IS THE FIRST ANALYTICAL USE OF THE DRAINED WAREHOUSE (2026-08-24) — it makes NO infrastructure claims and supersedes nothing, but read §0.41.6 before running any local DuckDB: a cross-join against CONUS-wide USDM polygons CONSUMED THE HOST, and spilling is now disabled by guard, not by tuning. §0.41.4 records THREE claims refuted by their own evidence, and §0.41.9 names the one blocker — the 23-year `fire-detections` hole, which is already chartered as pivot item B, not new work.** **READ §0.42 FIRST — the orchestration packet: three concurrent lanes (data/ingestion, API, UI) behind a contract freeze, a per-layer hard cutover to Parquet, the four layers that are NOT Parquet lanes at all, and the correction that §0.41.9's blocker (the `fire-detections` hole) CLEARED at 19:42 UTC on 2026-08-24 — that track is runnable, not blocked.** **READ §0.40 FIRST — it corrects §0.39: the runners were NOT stopped (every push redeploys them; taken down 02:05 UTC), "backlog 0" was z13 only with no coarse rung anywhere, the pivot verified on cold-path and resource grounds, and the four repoint decisions are recorded there.** **THE PARQUET BACKLOG IS DRAINED (12,365 -> 0 lane-days) - READ §0.39 NEXT; it supersedes §0.38 and records why the DB shrink is now gated on an unbuilt read API, and why nothing is ingesting.** **ARCHITECTURE PIVOT — READ §0.23 FIRST: Postgres becomes a community-features database; every data plane moves to day-partitioned Parquet read by DuckDB+Polars, with Martin serving PMTiles. §0.16–§0.22 optimise a Postgres this project is leaving.** **§0.25 is the CURRENT HEAD OF THE PROGRAMME — wave 1 shipped green, the by-domain layering question is answered, and it retires `agri_sdk_layering` phases 4–8.** **§0.24 is the concurrent stream plan that executes it — 21 streams in 5 waves, each with a disjoint file boundary, governed by the new `conductor/code_styleguides/layer-lanes.md`.** **THE PARQUET PATH HAS STARTED — §0.22 carries the signal-plane grain decision and the traps for the export job.** **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
 
@@ -22,12 +22,42 @@ they describe missing Parquet data, an unbuilt serving API, or unintegrated lane
 
 ---
 
-## LIVE — targeted pre-API Parquet integration complete, 2026-08-27. START HERE.
+## LIVE — snapshot-product cutover approved and swept, awaiting deployment, 2026-08-29. START HERE.
 
 This is the current operational handoff. It supersedes the previous session-12 LIVE entry below,
 which is retained as a historical checkpoint.
 
-### Completion evidence
+### Current cutover checkpoint
+
+- The current TypeScript/client and private-API changes are **uncommitted**. A separate adversarial
+  integrated review returned **APPROVE** with no unresolved HIGH/MEDIUM correctness, security or
+  production-readiness findings. The final repository-wide sweep passed: data-boundary, TypeScript
+  typecheck, ESLint with zero errors, Python format, Ruff, Mypy over 303 source files, 1,477 frontend
+  tests and 4,432 Python tests. Thirteen frontend and 136 Python tests were environment-gated. No
+  production deployment or production private-route probe has run for this cutover tree.
+- The private snapshot-product registry binds every allowed product to an immutable root, manifest,
+  schema and physical layout. Exact `/day` and `/window` reads do not carry data across a missing
+  day; `/release` refuses snapshot products rather than pretending a monthly part is a release
+  series. Coverage verifies immutable metadata without reading every Parquet payload; selected
+  day/window parts are checksum-verified before DuckDB reads them. Cold metadata work is
+  single-flight before DuckDB admission, and windows share one row budget.
+- Climate and soil reader ownership is explicit in the working tree. Air temperature mean/max/min,
+  dew point, precipitation, relative humidity, shortwave radiation, wind, NASA wetness, ERA5 soil
+  moisture, soil temperature and VPD are Parquet-owned and have no silent PostgreSQL fallback.
+  Burn History/MTBS remains deliberately owned by its existing Martin/PostgreSQL cumulative reader;
+  its Parquet archive is not used as a fallback capability.
+- The water-gauge slider's selectable dense history begins `2022-08-05`. Older sparse physical
+  observations remain recorded and auditable, but are not advertised as a continuous selectable
+  series.
+- Dew point published manifest SHA-256
+  `c2972ea61ebfb66a86fa1e834625fae163e5d0a0abfd39f8c701edca3e59b71a`. Its first full read-only
+  audit and hardened inventory/receipt audit are terminal CLEAN; the latter verified the exact
+  691-object inventory. This is data evidence only and does not imply deployment.
+- Forward source ownership is not complete. The stateful job-executor service remains inactive for
+  production scheduling; do not disable legacy writers or retire PostgreSQL until its lane
+  schedules, leases, checkpoints, parity and failure recovery are activated and observed.
+
+### Stable data baseline
 
 - `main` and `origin/main` are integrated through
   `949e20ee38405781a3e2a8978b2fc769bb7659d6`. The integration recovered and normalized the
@@ -59,30 +89,29 @@ which is retained as a historical checkpoint.
 - PostgreSQL data and ingestion remain intact. No table/row deletion, writer disablement, or
   retirement migration was performed. Keep that fallback until each forward writer and reader
   cutover passes its own gate.
-- The private Sanic Parquet surface and the bounded TypeScript client exist, but the Next.js tRPC
-  procedures have not been repointed and no browser acceptance pass has run.
+- The private Parquet surface and bounded TypeScript client exist. The shared working tree now
+  contains explicit tRPC/capability ownership and exact-day readers, but those edits are not on a
+  deployed production commit and no browser acceptance pass has run.
 - Vegetation's production publication deployment succeeded, and the forward cron configuration is
   present. Its scheduled runtime cadence still needs observation before retirement. Separately, the
-  API service has a pre-existing `/ready` healthcheck timeout observed across multiple commits. Treat
-  that as the first API-cutover blocker; it is separate from Parquet data correctness.
+  stateful job executor still requires a separately authorized production activation and observed
+  forward cadence.
 
 ### Outstanding work, in order
 
-1. Diagnose and clear the API service `/ready` timeout without weakening the readiness contract.
-2. Deploy and directly probe the private `/api/v1/parquet` day, window, release, and coverage routes
-   with production R2 configuration and bounded DuckDB memory/concurrency.
-3. Repoint the eligible Next.js tRPC readers and slider capability census to
-   `parquet-plane-client.ts`, one lane at a time, with no silent PostgreSQL fallback.
-4. Run production browser acceptance at the default camera and z10 for every repointed layer,
+1. Commit and push the exact independently approved and fully swept cutover tree.
+2. Deploy that cutover and directly probe the private `/api/v1/parquet` day, window,
+   release and coverage routes against production R2. Verify exact-day/window behavior and that
+   snapshot `/release` requests are refused rather than carried.
+3. Run production browser acceptance at the default camera and z10 for every repointed layer,
    including day changes, zoom-rung routing, empty/governed-absence states, and stale-cache checks.
-5. Prove the forward source-to-Parquet path for every lane that still relies on a snapshot builder
-   or PostgreSQL bridge. Historical completeness alone does not authorize writer retirement.
-6. Complete shrink-track `s2a`: extract the shared Parquet operations core into top-level
-   `parquet_ops/`, then split `interface/cli/` and perform the coordinated `agri-service` hard rename.
-7. Complete shrink-track `s7`: repoint the agent/MCP data tools off obsolete Postgres views onto the
-   shared Parquet core, following §0.42.30's exact keep/rewrite/delete census.
-8. Run the environment-gated PostGIS/reader tests against disposable DSNs on the exact cutover tree.
-9. Only after steps 1-8: retire PostgreSQL producers/readers per lane, then author reviewed migrations
+4. Activate the stateful job-executor only under its production authorization, assign every forward
+   lane an explicit owner, and observe scheduled advancement, leases, checkpoints, parity and
+   recovery. Historical completeness alone does not authorize writer retirement.
+5. Complete any remaining agent/MCP repoint off obsolete Postgres views onto the shared Parquet core,
+   following §0.42.30's exact keep/rewrite/delete census.
+6. Run the environment-gated PostGIS/reader tests against disposable DSNs on the exact cutover tree.
+7. Only after steps 1-6: retire PostgreSQL producers/readers per lane, then author reviewed migrations
    for index/table/data removal and record before/after storage plus rollback evidence.
 
 ---

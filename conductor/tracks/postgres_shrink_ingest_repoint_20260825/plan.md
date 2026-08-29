@@ -27,41 +27,49 @@ P1 ─┴──────────────────────┘  
       external: pivot d3 + d4 (serving) ┘
 ```
 
-## Execution checkpoint — 2026-08-27
+## Execution checkpoint — 2026-08-29
 
 The unchecked task list below is the original implementation plan, not a claim that none of it has
 run. Use this checkpoint and the track spec before scheduling work:
 
 - **Complete/integrated:** canonical snapshot plus governed climate/soil product breakdowns;
   historical fire, water, weather, vegetation, and NASA soil-wetness reconciliation; reusable
-  schemas/builders/auditors; private Sanic Parquet routes; bounded TypeScript Parquet client;
-  alembic baseline/forward-revision contracts. Integrated `main` is
-  `949e20ee38405781a3e2a8978b2fc769bb7659d6`.
-- **Partially complete:** direct forward writers. Fire detections, water gauges, and vegetation have
-  direct/queued implementations; weather has exact settled-lane audit coverage. Snapshot-only
-  climate/soil builders still require durable forward-source ownership before retirement.
-- **Not executed:** extraction of the shared top-level `parquet_ops/` core, the `interface/cli/`
-  split and coordinated `agri-service` rename, the `s7` agent/MCP repoint, Next.js tRPC/client
-  cutover, production browser acceptance, PostgreSQL producer or reader deletion, relation/index
-  drops, and final database shrink.
-- **Immediate blocker:** the API service's existing `/ready` deployment timeout. Diagnose the failed
-  readiness check; do not bypass or relax it.
+  schemas/builders/auditors; private Parquet routes; bounded TypeScript client; shared top-level
+  `parquet_ops/`; `interface/cli/`; the coordinated `agri-service` rename; and migration contracts.
+- **Authored, independently approved, fully swept, but uncommitted:** manifest-bound snapshot-product registration plus exact `/day` and
+  `/window` reads; snapshot `/release` refusal; explicit Parquet ownership for climate and soil
+  readers/capabilities with no silent PostgreSQL fallback; explicit Martin/PostgreSQL ownership for
+  Burn History/MTBS; and a water selectable dense-history floor of `2022-08-05` that preserves
+  older sparse records as audit evidence. The adversarial integrated review returned **APPROVE**.
+  Data-boundary, typecheck, lint, Python format/Ruff/Mypy, 1,477 frontend tests and 4,432 Python
+  tests passed; only the documented 13 frontend and 136 Python environment-gated tests skipped.
+- **Partially complete:** historical direct/queued writers and audits exist, but snapshot climate
+  and soil products still require durable forward-source ownership. The stateful job executor is
+  not activated as the production scheduler and has not demonstrated leases, checkpoints, parity
+  or recovery across scheduled intervals.
+- **Audit gate cleared:** dew-point manifest
+  `c2972ea61ebfb66a86fa1e834625fae163e5d0a0abfd39f8c701edca3e59b71a` passed its first full
+  read-only audit and the hardened inventory/receipt audit verified exactly 691 objects.
+- **Not executed for this cutover:** commit/push, deployment, production R2
+  day/window/release/coverage probes, browser acceptance, job-executor activation, PostgreSQL
+  producer or reader deletion, relation/index drops, and final database shrink.
 
 Current dependency order:
 
 ```
-API /ready repair
-  -> production probe of all four private Parquet routes
-  -> shared parquet_ops core + CLI split + agent/MCP repoint
-  -> per-lane tRPC + capability repoint
+commit/push/deploy exact reviewed and swept tree
+  -> production R2 probe of day/window/release/coverage
   -> browser acceptance + environment-gated integration tests
-  -> per-lane forward-writer observation/parity
+  -> stateful job-executor activation + per-lane forward observation/parity
   -> P5 retirement batches
   -> P6 shrink
 ```
 
 Do not restart historical snapshot/drain work to satisfy a retirement gate. The immutable snapshot
 and its derived lanes are already complete; the remaining proof is forward operation and serving.
+Exact `/day` and `/window` mean no cross-day carry, and `/release` must continue to refuse snapshot
+products. MTBS remains on its explicit cumulative PostgreSQL/Martin reader until a separately
+designed cutover changes that ownership.
 
 Conventions for every phase: TDD per task (write the failing test, implement,
 refactor); **one test sweep at the end of the phase, not per task**; the phase

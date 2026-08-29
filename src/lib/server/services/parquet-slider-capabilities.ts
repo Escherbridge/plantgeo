@@ -1,5 +1,5 @@
 import {
-  getSliderCapabilities,
+  getGeoFeatureSliderCapabilities,
   MAX_REPORTED_DAY_RANGES,
   type ResolvedSliderCapabilities,
   type ResolvedSliderLayerCapability,
@@ -56,13 +56,22 @@ interface ParquetCapabilityContract {
   parquetNature: ParquetLaneNature;
   servingReader: "parquet" | "postgresql";
   parquetLanes: readonly string[];
+  /** First day the lane contract promises as a usable series, even when older physical facts exist. */
+  selectableHistoryFloor?: string;
 }
 
 const DIRECT_PARQUET_CAPABILITIES = [
   { layerName: SLIDER_STREAM_LAYER_NAMES.drought, temporalKind: "daily_series", parquetNature: "release_series", servingReader: "parquet", parquetLanes: ["drought"] },
   { layerName: "fire-detections", temporalKind: "event", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["fire-detections"] },
   { layerName: "fire-perimeters", temporalKind: "event", parquetNature: "daily_series", servingReader: "postgresql", parquetLanes: ["fire-perimeters"] },
-  { layerName: "water-gauges", temporalKind: "daily_series", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["water-gauges"] },
+  {
+    layerName: "water-gauges",
+    temporalKind: "daily_series",
+    parquetNature: "daily_series",
+    servingReader: "parquet",
+    parquetLanes: ["water-gauges"],
+    selectableHistoryFloor: "2022-08-05",
+  },
   { layerName: "weather-observations", temporalKind: "daily_series", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["weather-observations"] },
   { layerName: "sensors", temporalKind: "snapshot", parquetNature: "daily_series", servingReader: "postgresql", parquetLanes: ["sensors"] },
   { layerName: "watersheds", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "postgresql", parquetLanes: ["watersheds"] },
@@ -93,7 +102,7 @@ const SIGNAL_PARQUET_CAPABILITIES = [
     layerName: SLIDER_STREAM_LAYER_NAMES.soilMoisture,
     temporalKind: "daily_series",
     parquetNature: "daily_series",
-    servingReader: "postgresql",
+    servingReader: "parquet",
     parquetLanes: [
       "soil-field-moisture-0-7cm",
       "soil-field-moisture-7-28cm",
@@ -104,7 +113,7 @@ const SIGNAL_PARQUET_CAPABILITIES = [
     layerName: SLIDER_STREAM_LAYER_NAMES.soilTemperature,
     temporalKind: "daily_series",
     parquetNature: "daily_series",
-    servingReader: "postgresql",
+    servingReader: "parquet",
     parquetLanes: [
       "soil-temperature-0-to-7cm",
       "soil-temperature-7-to-28cm",
@@ -116,7 +125,7 @@ const SIGNAL_PARQUET_CAPABILITIES = [
     layerName: SLIDER_STREAM_LAYER_NAMES.soilVapourPressureDeficit,
     temporalKind: "daily_series",
     parquetNature: "daily_series",
-    servingReader: "postgresql",
+    servingReader: "parquet",
     parquetLanes: ["soil-field-vpd"],
   },
   ...CLIMATE_FIELD_SIGNAL_IDS.map(
@@ -124,7 +133,7 @@ const SIGNAL_PARQUET_CAPABILITIES = [
       layerName: climateFieldStreamName(signal),
       temporalKind: "daily_series",
       parquetNature: "daily_series",
-      servingReader: "postgresql",
+      servingReader: "parquet",
       parquetLanes: CLIMATE_PARQUET_LANES[signal],
     })
   ),
@@ -139,6 +148,8 @@ export const PARQUET_CAPABILITY_CONTRACTS = [
 const PARQUET_CAPABILITY_NAMES = new Set(
   PARQUET_CAPABILITY_CONTRACTS.map((contract) => contract.layerName)
 );
+
+const POSTGRES_CAPABILITY_PASSTHROUGH_NAMES = new Set(["burn-severity"]);
 
 interface CapabilityProof {
   capability: ResolvedSliderLayerCapability | null;
@@ -197,14 +208,16 @@ function epochDay(day: string): number {
   return milliseconds / 86_400_000;
 }
 
-function mergeRanges(
-  entries: readonly ParquetLaneCoverage[],
-  field: "publishedRanges" | "gapRanges" | "governedAbsenceRanges",
+function calendarDay(epoch: number): string {
+  return new Date(epoch * 86_400_000).toISOString().slice(0, 10);
+}
+
+function mergeDayRanges(
+  ranges: readonly DayRange[],
   firstDay: string,
   lastDay: string
 ): DayRange[] {
-  const clipped = entries
-    .flatMap((entry) => entry[field])
+  const clipped = ranges
     .map((range) => ({
       from: range.from < firstDay ? firstDay : range.from,
       to: range.to > lastDay ? lastDay : range.to,
@@ -221,6 +234,41 @@ function mergeRanges(
     }
   }
   return merged;
+}
+
+function mergeRanges(
+  entries: readonly ParquetLaneCoverage[],
+  field: "publishedRanges" | "gapRanges" | "governedAbsenceRanges",
+  firstDay: string,
+  lastDay: string
+): DayRange[] {
+  return mergeDayRanges(
+    entries.flatMap((entry) => entry[field]),
+    firstDay,
+    lastDay
+  );
+}
+
+/** Exact-day rungs are unavailable after their own immutable last written day. */
+function coverageTailRanges(
+  entries: readonly ParquetLaneCoverage[],
+  evaluatedThroughDay: string
+): DayRange[] {
+  return entries.flatMap((entry) => {
+    if (
+      entry.nature !== "daily_series" ||
+      entry.latestDay === null ||
+      entry.latestDay >= evaluatedThroughDay
+    ) {
+      return [];
+    }
+    return [
+      {
+        from: calendarDay(epochDay(entry.latestDay) + 1),
+        to: evaluatedThroughDay,
+      },
+    ];
+  });
 }
 
 function dayCount(firstDay: string, lastDay: string, excluded: readonly DayRange[]): number {
@@ -246,6 +294,36 @@ function intersectRangeSets(left: readonly DayRange[], right: readonly DayRange[
   return intersections;
 }
 
+/** Remove lower-precedence evidence wherever a stronger range overlaps it. */
+function subtractRangeSets(ranges: readonly DayRange[], excluded: readonly DayRange[]): DayRange[] {
+  const remaining: DayRange[] = [];
+  for (const range of ranges) {
+    let cursor = epochDay(range.from);
+    const last = epochDay(range.to);
+    for (const exclusion of excluded) {
+      const exclusionFirst = epochDay(exclusion.from);
+      const exclusionLast = epochDay(exclusion.to);
+      if (exclusionLast < cursor) continue;
+      if (exclusionFirst > last) break;
+      if (exclusionFirst > cursor) {
+        remaining.push({
+          from: calendarDay(cursor),
+          to: calendarDay(exclusionFirst - 1),
+        });
+      }
+      cursor = Math.max(cursor, exclusionLast + 1);
+      if (cursor > last) break;
+    }
+    if (cursor <= last) {
+      remaining.push({
+        from: calendarDay(cursor),
+        to: range.to,
+      });
+    }
+  }
+  return remaining;
+}
+
 function commonPublishedRanges(
   entries: readonly ParquetLaneCoverage[],
   earliestDay: string,
@@ -260,16 +338,26 @@ function commonPublishedRanges(
 function synthesizeCapability(
   contract: ParquetCapabilityContract,
   entries: readonly ParquetLaneCoverage[],
+  earliestRecordedDay: string,
   earliestDay: string,
   latestDay: string,
   serverCurrentDate: string,
-  publishedRanges: readonly DayRange[]
+  publishedRanges: readonly DayRange[],
+  excludedPublishedDayCount: number
 ): ResolvedSliderLayerCapability {
-  const coverageEnd =
-    contract.temporalKind === "snapshot" || serverCurrentDate < latestDay
-      ? latestDay
-      : serverCurrentDate;
-  const allCoverageGaps = mergeRanges(entries, "gapRanges", earliestDay, coverageEnd);
+  const coverageEnd = serverCurrentDate < latestDay ? latestDay : serverCurrentDate;
+  const allCoverageGaps = mergeDayRanges(
+    [
+      ...entries.flatMap((entry) => entry.gapRanges),
+      ...coverageTailRanges(entries, coverageEnd),
+    ],
+    earliestDay,
+    coverageEnd
+  );
+  const governedAbsenceRanges = subtractRangeSets(
+    mergeRanges(entries, "governedAbsenceRanges", earliestDay, coverageEnd),
+    allCoverageGaps
+  );
   const coverageGapsTruncated = allCoverageGaps.length > MAX_REPORTED_DAY_RANGES;
   const coverageGaps = coverageGapsTruncated
     ? allCoverageGaps.slice(-MAX_REPORTED_DAY_RANGES)
@@ -283,22 +371,24 @@ function synthesizeCapability(
     earliestObservedDate: earliestDay,
     latestObservedDate: latestDay,
     coverageGaps,
+    governedAbsenceRanges,
     thinRanges: [],
     describedFromDay: coverageGapsDescribedFromDay,
     coverageGapsTruncated,
     coverageGapsDescribedFromDay,
     thinRangesTruncated: false,
     thinRangesDescribedFromDay: null,
-    earliestObservedDateRule: "warehouse_coverage",
-    earliestRecordedObservationDate: earliestDay,
+    earliestObservedDateRule:
+      earliestRecordedDay < earliestDay ? "gap_clustered" : "warehouse_coverage",
+    earliestRecordedObservationDate: earliestRecordedDay,
     earliestContinuousObservationDate: publishedRanges.at(-1)?.from ?? null,
     latestRecordedObservationDate: latestDay,
     observedDayCount: publishedRanges.reduce(
       (count, range) => count + dayCount(range.from, range.to, []),
       0
     ),
-    excludedObservedDayCount: 0,
-    gapExcludedObservedDayCount: 0,
+    excludedObservedDayCount: excludedPublishedDayCount,
+    gapExcludedObservedDayCount: excludedPublishedDayCount,
     densityExcludedObservedDayCount: 0,
     minimumDailyObservationCount: null,
   };
@@ -370,9 +460,22 @@ function proveCapability(
 
   const bounds = intersectingBounds(exactEntries);
   if (bounds === null) return missing(contract, "no_common_readable_history", []);
-  const publishedRanges = commonPublishedRanges(
+  const recordedPublishedRanges = commonPublishedRanges(
     exactEntries,
     bounds.earliestDay,
+    bounds.latestDay
+  );
+  const boundedEarliestDay =
+    contract.selectableHistoryFloor !== undefined &&
+    contract.selectableHistoryFloor > bounds.earliestDay
+      ? contract.selectableHistoryFloor
+      : bounds.earliestDay;
+  if (boundedEarliestDay > bounds.latestDay) {
+    return missing(contract, "no_common_readable_history", []);
+  }
+  const publishedRanges = commonPublishedRanges(
+    exactEntries,
+    boundedEarliestDay,
     bounds.latestDay
   );
   if (publishedRanges.length === 0) {
@@ -383,14 +486,24 @@ function proveCapability(
   }
   const earliestDay = publishedRanges[0].from;
   const latestDay = publishedRanges.at(-1)!.to;
+  const recordedPublishedDayCount = recordedPublishedRanges.reduce(
+    (count, range) => count + dayCount(range.from, range.to, []),
+    0
+  );
+  const selectablePublishedDayCount = publishedRanges.reduce(
+    (count, range) => count + dayCount(range.from, range.to, []),
+    0
+  );
   return {
     capability: synthesizeCapability(
       contract,
       exactEntries,
+      bounds.earliestDay,
       earliestDay,
       latestDay,
       serverCurrentDate,
-      publishedRanges
+      publishedRanges,
+      recordedPublishedDayCount - selectablePublishedDayCount
     ),
     withheld: null,
   };
@@ -403,9 +516,11 @@ function proveCapability(
 export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapabilities> {
   // Coverage comes first: its fault must never fall through to the retired PostgreSQL rows.
   const coverage = await getParquetWarehouseCoverage();
-  const postgresCapabilities = await getSliderCapabilities();
+  const postgresCapabilities = await getGeoFeatureSliderCapabilities();
   const evidence = buildEvidenceIndex(coverage.lanes);
-  const proofs = PARQUET_CAPABILITY_CONTRACTS.map((contract) =>
+  const proofs = PARQUET_CAPABILITY_CONTRACTS.filter(
+    (contract) => !POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(contract.layerName)
+  ).map((contract) =>
     coverage.evaluatedThroughDay === postgresCapabilities.serverCurrentDate
       ? proveCapability(contract, coverage.lanes, evidence, postgresCapabilities.serverCurrentDate)
       : missing(contract, "coverage_not_current", [])
@@ -415,7 +530,9 @@ export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapab
     ...postgresCapabilities,
     layers: [
       ...postgresCapabilities.layers.filter(
-        (layer) => !PARQUET_CAPABILITY_NAMES.has(layer.layerName)
+        (layer) =>
+          !PARQUET_CAPABILITY_NAMES.has(layer.layerName) ||
+          POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(layer.layerName)
       ),
       ...proofs.flatMap((proof) => (proof.capability === null ? [] : [proof.capability])),
     ],

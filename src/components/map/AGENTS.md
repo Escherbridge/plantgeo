@@ -436,10 +436,18 @@ has a control (`hasSelectableDay` in `src/stores/time-slider-store.ts` is the on
 a layer's map read and its row must agree with — see "The layer registry and the toggle context"
 above). Stacked under the opacity slider rather than beside it: the dock column is 19rem, and
 splitting it would leave each track under 7rem, too narrow to address a day on a multi-year axis.
-`LayerTimeSlider` draws that row's own coverage track (gaps and thin ranges from that layer's own
-capability), its own "behind its own latest" mark in words, and — for a layer with no axis at all
+`LayerTimeSlider` draws that row's own coverage track (gaps, governed absences and thin ranges
+from that layer's own capability), its own "behind its own latest" mark in words, and — for a layer with no axis at all
 — still prints the bare selected date, because a mixed-time map is only readable while every row
 admits its own day whether or not that day can be moved.
+
+A governed absence is its own coverage state, not a gap and never dense. It means the source was
+checked and deliberately published no observation for that date; an ordinary gap means a day was
+owed but not published. Both dates remain selectable because inspecting the exact refusal is part
+of the time control's job, but the track uses a separate crosshatch and spoken label for the
+governed case. The Parquet census already distinguishes `gap_ranges` from
+`governed_absence_ranges`; dropping the latter at the tRPC boundary used to paint those dates as
+ordinary dense observations and then surprise the user with an empty map after scrubbing.
 
 **Nothing marks the map's overall state any more, because there is no longer one state to mark.**
 The old pill's "Past day" / "Beyond record" claim applied to the single shared date; under

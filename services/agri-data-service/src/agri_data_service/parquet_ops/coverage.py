@@ -14,6 +14,7 @@ from agri_data_service.foundation.parquet.paths import zoom_prefix
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.serving import day_status_sets
+from agri_data_service.parquet_ops.snapshot_products import PRODUCT_BY_LAYER
 from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage, contiguous_ranges
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS
 
@@ -44,24 +45,22 @@ CENSUS_LIST_WORKERS: Final = 3
 # registrations. Missing expected prefixes remain in the census with null bounds, which is evidence
 # to withhold their capability rather than permission to fall back to another store.
 DEDICATED_SLIDER_PRODUCT_LAYERS: Final[tuple[str, ...]] = (
-    "climate-field-air-temperature-max",
-    "climate-field-air-temperature-mean",
-    "climate-field-air-temperature-min",
     "climate-field-precipitation",
-    "climate-field-relative-humidity",
     "climate-field-shortwave-radiation",
-    "climate-field-wind-speed",
     "soil-field-moisture-0-7cm",
     "soil-field-moisture-28-100cm",
     "soil-field-moisture-7-28cm",
-    "soil-field-vpd",
-    "soil-temperature-0-to-7cm",
-    "soil-temperature-100-to-255cm",
-    "soil-temperature-28-to-100cm",
-    "soil-temperature-7-to-28cm",
 )
 
 NON_SLIDER_REGISTERED_LAYERS: Final = frozenset({"calendar", "signal"})
+
+# Drought is the only direct Parquet release reader; PostgreSQL-backed event releases keep their
+# recorded-day coverage until they receive their own bounded carry contract.
+BOUNDED_CARRY_RELEASE_LAYERS: Final = frozenset({"drought"})
+
+# The direct drought reader accepts the latest stored release through age 14. Once another release
+# or governed absence lands, the older entry becomes historical and reverts to cadence-bounded carry.
+LATEST_RELEASE_CARRY_DAYS: Final = 14
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +74,15 @@ class CensusLane:
     cadence_days: int = 1
     #: How long after a publication day that day may still arrive; only a release series uses it.
     publication_lag_days: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _LaneDays:
+    """The three serving-relevant status sets retained from one exact physical rung."""
+
+    data: frozenset[date]
+    absent: frozenset[date]
+    conflict: frozenset[date]
 
 
 def registered_census_lanes() -> tuple[CensusLane, ...]:
@@ -94,7 +102,7 @@ def registered_census_lanes() -> tuple[CensusLane, ...]:
             publication_lag_days=registration.publication_lag_days,
         )
         for registration in LANE_REGISTRATIONS
-        if registration.slug not in NON_SLIDER_REGISTERED_LAYERS
+        if registration.slug not in NON_SLIDER_REGISTERED_LAYERS and registration.slug not in PRODUCT_BY_LAYER
     )
     registered_layers = {lane.layer for lane in registered}
     derived = tuple(
@@ -113,8 +121,7 @@ def build_lane_coverage(
     today: date,
 ) -> LaneCoverage:
     """Census one physical lane rung, closing its ranges against the live edge."""
-    data_days, absent_days = _tier_days(listing, lane=lane, tier=tier)
-    return _lane_coverage(lane=lane, tier=tier, today=today, data_days=set(data_days), absent_days=set(absent_days))
+    return _lane_coverage(lane=lane, tier=tier, today=today, days=_tier_days(listing, lane=lane, tier=tier))
 
 
 def _lane_coverage(
@@ -122,10 +129,12 @@ def _lane_coverage(
     lane: CensusLane,
     tier: ZoomTier,
     today: date,
-    data_days: set[date],
-    absent_days: set[date],
+    days: _LaneDays,
 ) -> LaneCoverage:
     """Close one lane's already-listed facts against its declared nature and live edge."""
+    data_days = set(days.data)
+    absent_days = set(days.absent)
+    conflict_days = set(days.conflict)
     if not data_days:
         # Never written: `null` bounds, and no ranges. A slider must not mount an axis over a lane
         # whose span is a guess -- `soil-survey` has 238,986 source rows and 0 written objects.
@@ -142,6 +151,50 @@ def _lane_coverage(
             earliest_day=earliest_day,
             latest_day=latest_day,
             published_ranges=contiguous_ranges(data_days),
+        )
+    if _uses_bounded_release_carry(lane):
+        accounted_days = data_days | absent_days
+        latest_status_day = max(accounted_days | conflict_days)
+        published_days = _release_carried_days(
+            data_days,
+            lane=lane,
+            today=today,
+            latest_status_day=latest_status_day,
+        )
+        if not published_days:
+            return _bounded(
+                lane,
+                tier=tier,
+                earliest_day=min(data_days),
+                latest_day=max(data_days),
+                published_ranges=(),
+            )
+        governed_absence_days = (
+            _release_carried_days(
+                absent_days,
+                lane=lane,
+                today=today,
+                latest_status_day=latest_status_day,
+            )
+            - published_days
+        )
+        return LaneCoverage(
+            layer=lane.layer,
+            nature=lane.nature,
+            kind=lane.kind,
+            zoom=tier,
+            earliest_day=min(published_days),
+            latest_day=max(published_days),
+            published_ranges=contiguous_ranges(published_days),
+            gap_ranges=contiguous_ranges(
+                _owed_but_unwritten(
+                    data_days | absent_days,
+                    lane=lane,
+                    today=today,
+                    conflict_days=conflict_days,
+                )
+            ),
+            governed_absence_ranges=contiguous_ranges(governed_absence_days),
         )
     return LaneCoverage(
         layer=lane.layer,
@@ -190,11 +243,10 @@ def build_coverage(
                 lane=lane,
                 tier=tier,
                 today=today,
-                data_days=set(data_days),
-                absent_days=set(absent_days),
+                days=days,
             )
             for (_index, lane), facts in zip(jobs, stream_facts, strict=True)
-            for tier, (data_days, absent_days) in zip(ZOOM_TIERS, facts, strict=True)
+            for tier, days in zip(ZOOM_TIERS, facts, strict=True)
         ),
     )
 
@@ -309,20 +361,20 @@ def _tier_days(
     *,
     lane: CensusLane,
     tier: ZoomTier,
-) -> tuple[frozenset[date], frozenset[date]]:
+) -> _LaneDays:
     """List and classify one tier without retaining its object keys after the result is known."""
     keys = listing.list_keys(lane.layer, lane.kind, tier)
     statuses = day_status_sets(keys, layer=lane.layer, kind=lane.kind, tier=tier)
     # Only a completed, conflict-free partition is readable. Conflict and incomplete days may hold
     # objects, but serving refuses them, so they cannot prove a slider capability safe to publish.
-    return (statuses.data, statuses.absent)
+    return _LaneDays(data=statuses.data, absent=statuses.absent, conflict=statuses.conflict)
 
 
 def _stream_tier_days(
     listing: WarehouseListing,
     *,
     lane: CensusLane,
-) -> tuple[tuple[frozenset[date], frozenset[date]], ...]:
+) -> tuple[_LaneDays, ...]:
     """List one physical stream once, then classify its four exact rungs locally."""
     keys = tuple(listing.iter_stream_keys(lane.layer, lane.kind))
     return tuple(_tier_days_from_keys(keys, lane=lane, tier=tier) for tier in ZOOM_TIERS)
@@ -333,25 +385,34 @@ def _tier_days_from_keys(
     *,
     lane: CensusLane,
     tier: ZoomTier,
-) -> tuple[frozenset[date], frozenset[date]]:
+) -> _LaneDays:
     """Classify one rung from a validated stream listing."""
     prefix = zoom_prefix(lane.layer, lane.kind, tier)
     tier_keys = tuple(key for key in keys if key.startswith(prefix))
     statuses = day_status_sets(tier_keys, layer=lane.layer, kind=lane.kind, tier=tier)
-    return (statuses.data, statuses.absent)
+    return _LaneDays(data=statuses.data, absent=statuses.absent, conflict=statuses.conflict)
 
 
-def _owed_but_unwritten(accounted: set[date], *, lane: CensusLane, today: date) -> tuple[date, ...]:
+def _owed_but_unwritten(
+    accounted: set[date],
+    *,
+    lane: CensusLane,
+    today: date,
+    conflict_days: set[date] | None = None,
+) -> tuple[date, ...]:
     """Return the days this lane OWED and did not deliver, walking its own cadence from the days it did.
 
-    A gap is a day that carried an obligation and is not there. For a `daily_series` (`cadence_days`
-    1) that is every day, which is the rule this census has always applied. For a `release_series` it
-    is every cadence step: `drought` publishes weekly, so a Wednesday was never owed a USDM map and
-    reporting one as missing is a false claim about warehouse content -- the same reasoning the
-    `static_lookup` short-circuit above already accepts one rung earlier. Measured 2026-08-25 before
-    this rule: 138 releases produced 138 gap ranges, which would paint the lane absent six days in
-    seven at cutover while `/release` served those days by carrying the Tuesday forward.
+    A daily-series gap is each missing observation day. A release-series gap is each day the bounded
+    release reader cannot answer: a published or governed-absence release carries for at most one
+    cadence interval, while an owed-but-missing release leaves the whole interval uncovered.
     """
+    if _uses_bounded_release_carry(lane):
+        return _release_uncovered_days(
+            accounted,
+            conflict_days=set() if conflict_days is None else conflict_days,
+            lane=lane,
+            today=today,
+        )
     ordered = sorted(accounted)
     step = timedelta(days=lane.cadence_days)
     owed: list[date] = []
@@ -370,6 +431,54 @@ def _owed_but_unwritten(accounted: set[date], *, lane: CensusLane, today: date) 
         owed.append(candidate)
         candidate += step
     return tuple(owed)
+
+
+def _uses_bounded_release_carry(lane: CensusLane) -> bool:
+    return lane.nature == "release_series" and lane.layer in BOUNDED_CARRY_RELEASE_LAYERS
+
+
+def _release_carried_days(
+    releases: set[date],
+    *,
+    lane: CensusLane,
+    today: date,
+    latest_status_day: date,
+) -> set[date]:
+    """Expand historical releases by cadence and the latest stored status by its live allowance."""
+    historical_carry_days = max(lane.cadence_days - 1, 0)
+    return {
+        release_day + timedelta(days=offset)
+        for release_day in releases
+        for offset in range(
+            (LATEST_RELEASE_CARRY_DAYS if release_day == latest_status_day else historical_carry_days) + 1
+        )
+        if release_day + timedelta(days=offset) <= today
+    }
+
+
+def _release_uncovered_days(
+    accounted: set[date],
+    *,
+    conflict_days: set[date],
+    lane: CensusLane,
+    today: date,
+) -> tuple[date, ...]:
+    """Return each day the release reader cannot answer under historical and live carry limits."""
+    status_days = accounted | conflict_days
+    if not status_days:
+        return ()
+    carried = _release_carried_days(
+        accounted,
+        lane=lane,
+        today=today,
+        latest_status_day=max(status_days),
+    )
+    first_status_day = min(status_days)
+    return tuple(
+        first_status_day + timedelta(days=offset)
+        for offset in range((today - first_status_day).days + 1)
+        if first_status_day + timedelta(days=offset) not in carried
+    )
 
 
 def _bounded(

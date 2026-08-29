@@ -67,6 +67,7 @@ import { gte, lte } from "drizzle-orm";
 import {
   clearLayerIdCache,
   clearSliderCapabilitiesCache,
+  getGeoFeatureSliderCapabilities,
   getMetricAtDate,
   getPublishedDroughtClassification,
   getPublishedFireDetections,
@@ -549,6 +550,19 @@ describe("getSliderCapabilities -- the 36-year trap", () => {
     expect(dbExecute).toHaveBeenCalledTimes(2);
     expect(second.layers).toEqual(first.layers);
     expect(third.layers).toEqual(first.layers);
+  });
+
+  it("serves the residual geo.features catalogue without waiting for the model-stream scan", async () => {
+    dbExecute.mockResolvedValue([
+      { ...summarizeObservedDays(REAL_WATER_GAUGE_DAYS), layer_name: "water-gauges" },
+    ]);
+
+    const capabilities = await getGeoFeatureSliderCapabilities();
+
+    expect(capabilities.layers.map((layer) => layer.layerName)).toEqual(["water-gauges"]);
+    expect(capabilities.streamsUnavailable).toBe(false);
+    expect(dbExecute).toHaveBeenCalledTimes(1);
+    expect(renderSqlText(dbExecute.mock.calls[0]?.[0])).toContain("geo.v_observation_day_census");
   });
 });
 

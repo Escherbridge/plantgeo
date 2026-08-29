@@ -10,6 +10,7 @@ import {
   isDayDescribed,
   isFutureDate,
   isWithinCoverageGap,
+  isWithinGovernedAbsence,
   latestObservedDateFor,
   layerAvailabilityAt,
   readPersistedLayerDates,
@@ -367,6 +368,20 @@ describe("isWithinCoverageGap", () => {
     const olderPayload = { ...vegetationLayer, coverageGaps: undefined } as unknown as
       SliderLayerCapability;
     expect(isWithinCoverageGap(olderPayload, "2018-01-10")).toBe(false);
+  });
+});
+
+describe("isWithinGovernedAbsence", () => {
+  it("recognizes only the explicit closed upstream-absence ranges", () => {
+    const governed = {
+      ...vegetationLayer,
+      governedAbsenceRanges: [{ from: "2019-02-10", to: "2019-02-12" }],
+    };
+
+    expect(isWithinGovernedAbsence(governed, "2019-02-10")).toBe(true);
+    expect(isWithinGovernedAbsence(governed, "2019-02-12")).toBe(true);
+    expect(isWithinGovernedAbsence(governed, "2019-02-13")).toBe(false);
+    expect(isWithinGovernedAbsence(vegetationLayer, "2019-02-10")).toBe(false);
   });
 });
 

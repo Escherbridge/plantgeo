@@ -6,21 +6,24 @@ import { getInterventionSuitability } from "@/lib/server/services/carbon-potenti
 import { getPublishedRasters } from "@/lib/server/services/raster-catalog";
 import {
   getMetricAtDate,
-  getPublishedClimateField,
   getPublishedGroundwaterWells,
-  getPublishedSoilField,
 } from "@/lib/server/services/environmental-read-model";
+import { parquetClimateFieldCollection } from "@/lib/server/services/parquet-climate-field";
 import { getParquetSliderCapabilities } from "@/lib/server/services/parquet-slider-capabilities";
 import {
   getParquetDrought,
-  getParquetMetricAtDate,
+  getParquetClimateField,
+  getParquetSoilField,
   getParquetVegetation,
   getParquetWaterGauges,
+  parquetUpstreamFailure,
 } from "@/lib/server/services/parquet-trpc-readers";
 import {
   AIR_TEMPERATURE_VARIANT_IDS,
   CLIMATE_FIELD_SIGNAL_IDS,
   CLIMATE_RENDER_FORMS,
+  DEFAULT_AIR_TEMPERATURE_VARIANT,
+  DEFAULT_CLIMATE_FIELD_SIGNAL,
   type AirTemperatureVariant,
   type ClimateFieldSignalId,
   type ClimateRenderForm,
@@ -37,6 +40,7 @@ import {
   WatershedResponseError,
 } from "@/lib/server/services/hydrosheds";
 import { NLCD_CLASSES } from "@/lib/server/services/nlcd";
+import { METRIC_AT_DATE_IDS } from "@/types/time-slider";
 import {
   getSoilProperties,
   SoilEvidenceUnavailableError,
@@ -106,9 +110,6 @@ const observationDateSchema = z
 
 /** Viewport zoom is a required serving coordinate, not an optional rendering hint. */
 const mapZoomSchema = z.number().finite().nonnegative();
-
-/** Metrics still owned by community-feature PostgreSQL layers, never by the Parquet plane. */
-const POSTGRES_OWNED_METRICS = new Set(["perimeter-acres", "percent-contained"]);
 
 /**
  * Caps the viewport area for a procedure that proxies a third-party API per request.
@@ -500,14 +501,25 @@ export const environmentalRouter = router({
         zoom: z.number().finite().optional(),
       })
     )
-    .query(({ input }) =>
-      getPublishedSoilField(input.bbox, {
-        date: input.date,
-        measure: input.measure as SoilFieldMeasure | undefined,
-        depth: input.depth as SoilFieldDepth | undefined,
-        zoom: input.zoom,
-      })
-    ),
+    .query(async ({ input }) => {
+      try {
+        return await getParquetSoilField(input.bbox, {
+          date: input.date,
+          measure: input.measure as SoilFieldMeasure | undefined,
+          depth: input.depth as SoilFieldDepth | undefined,
+          zoom: input.zoom,
+        });
+      } catch (error) {
+        const failure = parquetUpstreamFailure(error);
+        if (failure !== null) {
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: failure.fault.message,
+          });
+        }
+        throw error;
+      }
+    }),
 
   /**
    * One NASA POWER climate field for the viewport, on the slider's day.
@@ -538,14 +550,33 @@ export const environmentalRouter = router({
         renderForm: z.enum(CLIMATE_RENDER_FORMS as [string, ...string[]]).optional(),
       })
     )
-    .query(({ input }) =>
-      getPublishedClimateField(input.bbox, {
+    .query(async ({ input }) => {
+      const signal =
+        (input.signal as ClimateFieldSignalId | undefined) ?? DEFAULT_CLIMATE_FIELD_SIGNAL;
+      const variant =
+        (input.variant as AirTemperatureVariant | undefined) ??
+        DEFAULT_AIR_TEMPERATURE_VARIANT;
+      const renderForm = input.renderForm as ClimateRenderForm | undefined;
+      const result = await getParquetClimateField({
+        bbox: input.bbox,
         date: input.date,
-        signal: input.signal as ClimateFieldSignalId | undefined,
-        variant: input.variant as AirTemperatureVariant | undefined,
-        renderForm: input.renderForm as ClimateRenderForm | undefined,
-      })
-    ),
+        signal,
+        variant,
+      });
+      if (result.state === "upstream_unavailable") {
+        throw new TRPCError({
+          code: "SERVICE_UNAVAILABLE",
+          message: result.fault.message,
+        });
+      }
+      return parquetClimateFieldCollection(
+        result,
+        signal,
+        variant,
+        input.bbox,
+        renderForm
+      );
+    }),
 
   getInterventionSuitability: publicProcedure
     .input(pointSchema)
@@ -558,16 +589,11 @@ export const environmentalRouter = router({
    */
   getSliderCapabilities: publicProcedure.query(() => getParquetSliderCapabilities()),
 
-  /**
-   * Ownership dispatch for one metric/day read. Fire-perimeter metrics remain on their
-   * community-feature PostgreSQL path; every other key belongs to the Parquet signal seam,
-   * whose frozen route cannot prefilter `signal_name` before its row budget. Selection happens
-   * before either read, so an error from one backend is never retried against the other.
-   */
+  /** Exact-day reads for the two explicitly PostgreSQL-owned fire-perimeter metrics. */
   getMetricAtDate: publicProcedure
     .input(
       z.object({
-        metric: z.string().trim().min(1).max(64),
+        metric: z.enum(METRIC_AT_DATE_IDS),
         // Required here, unlike the viewport reads above: this procedure exists to answer
         // "what did this metric read on this day", so there is no live-edge default.
         date: observationDateSchema,
@@ -576,7 +602,6 @@ export const environmentalRouter = router({
       })
     )
     .query(async ({ input }) => {
-      if (!POSTGRES_OWNED_METRICS.has(input.metric)) return getParquetMetricAtDate();
       const data = await getMetricAtDate(input);
       return {
         state: "ready" as const,

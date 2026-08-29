@@ -6,8 +6,10 @@ client's `MetricAtDateAvailability.request_failed` exists precisely so the two c
 
 from __future__ import annotations
 
+import asyncio
 import json as json_module
-from datetime import date
+import threading
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +21,8 @@ from agri_data_service import app as app_module
 from agri_data_service.interface.http import parquet_routes
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.coverage import CensusLane
+from agri_data_service.parquet_ops.request_params import ReadScope
+from agri_data_service.parquet_ops.wire import DayNotWritten
 from tests.contract.wire_contract import WIRE_BASE_PATH, WIRE_ROUTES, WireCoverage, WireWindow
 from tests.parquet_ops.fakes import FakeListing, FakeRowReader, instant
 
@@ -66,6 +70,15 @@ def warehouse(monkeypatch: pytest.MonkeyPatch) -> tuple[FakeListing, FakeRowRead
         return work(reader)
 
     monkeypatch.setattr(parquet_routes, "_run_row_read", fake_run_row_read)
+
+    async def fake_run_coverage_read() -> dict[str, object]:
+        return parquet_routes._coverage_cache.get(
+            listing,
+            lanes=parquet_routes.registered_census_lanes(),
+            now=datetime.now(UTC),
+        ).to_wire()
+
+    monkeypatch.setattr(parquet_routes, "_run_coverage_read", fake_run_coverage_read)
     parquet_routes._coverage_cache.clear()
     return (listing, reader)
 
@@ -118,6 +131,35 @@ async def test_a_written_day_answers_200_with_its_rows(warehouse: tuple[FakeList
 
     assert response.status == HTTP_OK
     assert payload_of(response)["state"] == "published"
+
+
+@pytest.mark.asyncio
+async def test_an_allowlisted_snapshot_day_uses_exact_day_dispatch(
+    warehouse: tuple[FakeListing, FakeRowReader],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del warehouse
+    seen: list[date] = []
+
+    async def snapshot_day(*, scope: object, day: date) -> dict[str, object]:
+        del scope
+        seen.append(day)
+        return {
+            "state": "published",
+            "requested_day": day.isoformat(),
+            "served_day": day.isoformat(),
+            "rows": [],
+            "truncated": False,
+        }
+
+    monkeypatch.setattr(parquet_routes, "_run_snapshot_day", snapshot_day)
+    response = await parquet_routes.read_day(
+        request_with(layer="climate-field-air-temperature-mean", zoom="13", day="2026-08-02")
+    )
+
+    assert response.status == HTTP_OK
+    assert payload_of(response)["served_day"] == "2026-08-02"
+    assert seen == [date(2026, 8, 2)]
 
 
 @pytest.mark.asyncio
@@ -229,6 +271,156 @@ async def test_the_coverage_route_answers_the_whole_warehouse_with_no_viewport(
     assert by_zoom[13].earliest_day == "2026-08-01"
     assert [(span.from_, span.to) for span in by_zoom[13].published_ranges] == [("2026-08-01", "2026-08-01")]
     assert all(by_zoom[tier].earliest_day is None for tier in (0, 5, 9))
+
+
+@pytest.mark.asyncio
+async def test_cold_coverage_waiters_share_one_builder_before_any_serving_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = parquet_routes._CoveragePayloadCache()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    build_calls = 0
+
+    async def build(_generated_at: datetime) -> dict[str, object]:
+        nonlocal build_calls
+        build_calls += 1
+        started.set()
+        await release.wait()
+        return {"lanes": [], "generated_at": "2026-08-28T00:00:00Z"}
+
+    monkeypatch.setattr(parquet_routes, "_coverage_payload_cache", cache)
+    monkeypatch.setattr(parquet_routes, "_build_coverage_payload", build)
+    callers = [asyncio.create_task(parquet_routes._run_coverage_read()) for _ in range(3)]
+    await started.wait()
+    await asyncio.sleep(0)
+
+    assert build_calls == 1, "only the builder may advance to run_serving_read and acquire a slot"
+    callers[0].cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await callers[0]
+    release.set()
+    answers = await asyncio.gather(*callers[1:])
+
+    assert build_calls == 1
+    assert answers[0] is answers[1]
+
+
+@pytest.mark.asyncio
+async def test_cold_snapshot_day_and_window_evidence_waiters_do_not_take_serving_slots(  # noqa: PLR0915
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    all_loading = threading.Event()
+    release_evidence = threading.Event()
+    load_condition = threading.Condition()
+    expected_evidence = object()
+    store = object()
+    load_calls = 0
+    build_calls = 0
+    evidence_ready = False
+    evidence_building = False
+    session_admissions = 0
+    concurrent_call_count = 3
+    expected_unrelated_admissions = 1
+
+    def slow_load(candidate_store: object, _scope: object) -> object:
+        nonlocal build_calls, evidence_building, evidence_ready, load_calls
+        assert candidate_store is store
+        with load_condition:
+            load_calls += 1
+            if load_calls == concurrent_call_count:
+                all_loading.set()
+            if evidence_ready:
+                return expected_evidence
+            if evidence_building:
+                load_condition.wait_for(lambda: evidence_ready, timeout=5)
+                assert evidence_ready
+                return expected_evidence
+            evidence_building = True
+            build_calls += 1
+        assert release_evidence.wait(timeout=5), "test failed to release cold immutable evidence"
+        with load_condition:
+            evidence_ready = True
+            evidence_building = False
+            load_condition.notify_all()
+        return expected_evidence
+
+    async def admitted_read(
+        _credentials: object,
+        work: Callable[[object], object],
+        **_options: object,
+    ) -> object:
+        nonlocal session_admissions
+        session_admissions += 1
+        return work(object())
+
+    def exact_day(
+        _store: object,
+        _session: object,
+        *,
+        evidence: object,
+        day: date,
+        **_scope: object,
+    ) -> DayNotWritten:
+        assert evidence is expected_evidence
+        return DayNotWritten(requested_day=day)
+
+    def exact_window(
+        _store: object,
+        _session: object,
+        *,
+        evidence: object,
+        first_day: date,
+        **_scope: object,
+    ) -> tuple[DayNotWritten, ...]:
+        assert evidence is expected_evidence
+        return (DayNotWritten(requested_day=first_day),)
+
+    def credentials(_settings: object) -> object:
+        return object()
+
+    monkeypatch.setattr(parquet_routes, "open_snapshot_store", lambda: store)
+    monkeypatch.setattr(parquet_routes, "load_snapshot_scope_evidence", slow_load)
+    monkeypatch.setattr(parquet_routes, "run_serving_read", admitted_read)
+    monkeypatch.setattr(parquet_routes, "resolve_snapshot_evidence_day", exact_day)
+    monkeypatch.setattr(parquet_routes, "resolve_snapshot_evidence_window", exact_window)
+    monkeypatch.setattr(type(parquet_routes.settings), "require_object_store", credentials)
+    scope = ReadScope(
+        layer="climate-field-air-temperature-mean",
+        kind="observed",
+        tier=13,
+        bbox=None,
+    )
+    callers = [
+        asyncio.create_task(parquet_routes._run_snapshot_day(scope=scope, day=date(2026, 8, 1))),
+        asyncio.create_task(parquet_routes._run_snapshot_day(scope=scope, day=date(2026, 8, 2))),
+        asyncio.create_task(
+            parquet_routes._run_snapshot_window(
+                scope=scope,
+                first_day=date(2026, 8, 1),
+                last_day=date(2026, 8, 1),
+            )
+        ),
+    ]
+    try:
+        poll_attempts = 100
+        for _attempt in range(poll_attempts):
+            if all_loading.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert all_loading.is_set()
+        assert build_calls == 1
+        assert session_admissions == 0, "cold snapshot evidence must resolve before DuckDB admission"
+        unrelated = await parquet_routes._run_row_read(lambda _reader: {"available": True}, route="day")
+        assert unrelated == {"available": True}
+        assert session_admissions == expected_unrelated_admissions, (
+            "an unrelated read must retain serving-slot admission"
+        )
+    finally:
+        release_evidence.set()
+
+    await asyncio.gather(*callers)
+    assert session_admissions == concurrent_call_count + expected_unrelated_admissions
 
 
 @pytest.mark.asyncio
@@ -396,6 +588,8 @@ def test_the_http_adapter_owns_every_core_refusal_status() -> None:
         "object_store_session_unavailable",
         "serving_extension_unavailable",
         "census_budget_exhausted",
+        "snapshot_unpublished",
+        "snapshot_schema_mismatch",
     }
 
     assert set(parquet_routes._REFUSAL_HTTP_STATUS) == expected

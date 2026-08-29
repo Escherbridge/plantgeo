@@ -513,6 +513,31 @@ must not take two map layers down with an `INTERNAL_SERVER_ERROR`.
 
 ## §soil-field
 
+> **Serving cutover 2026-08-28.** `environmental.getSoilField` now calls
+> `services/parquet-trpc-readers.ts#getParquetSoilField`; it has no PostgreSQL fallback.
+> ERA5-Land moisture's three depth lanes, VPD, and all four soil-temperature snapshot products
+> use the private Parquet contract. Each row is checked against its signal, unit, support, source
+> (where the schema carries it), served day, zoom identity and WGS84 bounds before drawing.
+> Recognized private-plane timeout, network, HTTP, payload, configuration and contract faults map
+> to `SERVICE_UNAVAILABLE`; validation and programmer errors still propagate, and neither path
+> retries PostgreSQL. The frozen API resolves
+> both daily and monthly physical layouts behind the exact `/day` route, so a missing or governed
+> day returns an
+> explicit unavailable collection and never borrows an earlier release. Stored z13 centroids
+> become native 0.25-degree polygons; coarser rung coordinates
+> are grid origins and use the common z9/z5/z0 rung sizes without server-side smoothing.
+>
+> Soil temperature uses the strict 21-column snapshot schema. The reader validates its
+> `data_source_key`, depth-specific `source_parameter`, and pinned input-manifest digest in
+> addition to the shared serving fields; all four depths are promoted together and never fall
+> back to PostgreSQL.
+>
+> Soil moisture uses the strict 33-column lineage schema. Its three-depth map binds surface,
+> root-zone and deep rows to `soil_moisture_0_to_7cm_mean`,
+> `soil_moisture_7_to_28cm_mean` and `soil_moisture_28_to_100cm_mean` respectively. Every row
+> must also carry the pinned canonical source-manifest digest; a valid shape from another depth
+> or snapshot is a contract fault, not an observation.
+
 `services/environmental-read-model.ts#getPublishedSoilField`,
 `drizzle/0014_soil_moisture_field.sql` + `drizzle/0016_soil_field.sql`,
 `lib/geo/isobands.ts`, `lib/environmental/soil-field.ts`,
@@ -1131,6 +1156,30 @@ recognized bounded transport, payload, and contract failures become a typed
 throw. No reader in this adapter may import a PostgreSQL read model or retry there after a
 Parquet failure.
 
+The private `/window` client verifies every adjacent calendar day, not only the two endpoints and
+sort order. A missing interior envelope is a contract fault even when the first and last days are
+correct; adjacency is computed from ISO fields without converting publisher days to instants.
+
+The slider adapter may retain only the PostgreSQL-backed `geo.features` catalogue rows that have
+not crossed that boundary. It reads them through `getGeoFeatureSliderCapabilities()`, never the
+full `getSliderCapabilities()` path: the latter also waits for model-stream capabilities, and all
+of those streams are Parquet-owned and discarded by the adapter. On a cold worker that redundant
+scan can consume its entire 15-second bounded wait before the client receives any slider, even
+though the resulting stream rows cannot survive the Parquet ownership filter.
+
+Burn History is the one explicit mixed-plane exception. Its live map is the public cumulative
+Martin/PostgreSQL MTBS reader, so the adapter preserves the authoritative `burn-severity`
+`geo.features` capability verbatim and does not ask Parquet evidence to synthesize its slider.
+The cumulative Parquet release archive remains a separate product contract until the map reader
+is deliberately repointed; its existence is not treated as a fallback or as proof of live-reader
+ownership.
+
+`environmental.getMetricAtDate` is not a generic signal endpoint. Its public input enum contains
+only `perimeter-acres` and `percent-contained`, the two fire-perimeter metrics whose explicit
+owner remains the `geo.features` PostgreSQL read model. Every Parquet-backed live layer uses its
+dedicated procedure instead. An unknown metric is rejected at input validation, and a failure of
+the selected PostgreSQL owner propagates without a Parquet retry.
+
 Every viewport procedure supplies the selected publisher day and the live map zoom. The latter
 passes through the one `resolveZoomTier` ladder (`z13`, `z9`, `z5`, `z0`). Drought uses the
 release route and preserves both requested and served release days; the serving projection has
@@ -1143,21 +1192,46 @@ partial map.
 `services/parquet-slider-capabilities.ts` is deliberately fail-closed. Coverage reports each
 reader-schema-backed physical product at z13/z9/z5/z0, including its exact completed-day ranges;
 a composite climate variant or soil depth publishes only over the intersection every required
-product/rung can read. The adapter also pins each physical lane's expected daily, release, or
+product/rung can read. If required lanes or rungs disagree about one day, an ungoverned gap wins
+over governed-absence evidence; the governed ranges have every unioned gap subtracted before they
+reach the client. Every required exact-day `daily_series` lane/rung also contributes an ungoverned
+tail from the day after its own latest written day through the evaluated server day, so immutable
+snapshots never advertise an exact day that their `/day` reader must refuse. A `release_series`
+relies on its cadence-aware reported gaps and `/release` carry contract instead; synthesizing a
+daily tail there would falsely hide valid carried days. The adapter also pins each physical lane's expected daily, release, or
 static nature because that value controls live-edge gap semantics. Migrated PostgreSQL rows are
 always removed before Parquet replacements are appended, so a missing lane, rung, product, common
 day, nature match, or coverage response withholds the row instead of silently retrying PostgreSQL.
-Dew point and the three NASA wetness products stay catalogue-owned but withheld until canonical
-live schemas and objects exist. The generic signal reader likewise returns a typed contract
-refusal because post-limit filtering could silently omit the requested product.
+All nine climate-field signals now have explicit signal-product readers. They request z13 from the
+dedicated product for the exact selected day and decode only the product's registered schema:
+12-field signal-plane rows for air temperature, dew point, and wind; 19-field manifest-bound rows
+for NASA wetness; and the complete 33-field lineage schema for precipitation, relative humidity,
+and shortwave radiation. Every form validates signal, unit, support, day, cell identity and WGS84
+bounds; schemas carrying lineage additionally validate their source or pinned canonical manifest.
+The 12-field products carry no row-level source columns, so their immutable root, manifest and
+schema are bound by the private service's server-side product allowlist instead. A gap returns an
+empty `not_published` collection, while a transport or schema fault becomes
+`SERVICE_UNAVAILABLE`; no catch path reaches `getPublishedClimateField()` or PostgreSQL. The
+default omitted signal is air-temperature mean and resolves to its dedicated Parquet product.
+The product registry is typed as an exhaustive `Record<ClimateFieldSignalId, ...>`, and the
+router and slider catalogue have no PostgreSQL branch, so adding a signal without snapshot-product
+wiring fails either at compile time or closed at the Parquet contract boundary.
+
+The Parquet collection adapter carries a compact, checked transcription of the frozen 397-cell
+Western North America grid from the source plan. It measures `latticeCellCount` with the same
+inclusive center-within-bbox predicate as the private reader's SQL `BETWEEN` filter, independently
+of the observations returned. Polygon footprints may extend beyond the viewport, but cannot add a
+denominator cell that the reader was not allowed to return. `cellCount` remains the returned
+population, so a partial day says “N of M” instead of redefining M to equal N. This is a serving
+contract, not a second data source: no value or availability is derived from the lattice table.
 
 The census UTC `evaluated_through_day` must equal the PostgreSQL capability clock's
 `serverCurrentDate`; a cache straddling midnight withholds every owned row rather than inventing a
-gap it did not evaluate. Exact storage proof is also not enough by itself: only drought, fire
-detections, vegetation, water gauges, and weather observations currently have end-to-end Parquet
-serving readers. Every other direct or derived catalogue row remains owned and has its PostgreSQL
-capability filtered, but is withheld as `reader_not_parquet` even when its four-rung evidence is
-perfect. That gate prevents a Parquet-derived axis from driving a PostgreSQL-rendered population.
+gap it did not evaluate. Exact storage proof is also not enough by itself: only products named by
+an end-to-end Parquet reader can synthesize a slider. Other catalogue rows remain owned and have
+their PostgreSQL capability filtered, but are withheld as `reader_not_parquet` even when four-rung
+evidence is perfect. That gate prevents a Parquet-derived axis from driving a PostgreSQL-rendered
+population.
 
 The shared `parquet_ops`/CLI extraction is reconciled at `9553fc8`, on top of the readiness repair
 at `fced1e8`. Production activation at `069ef90` binds the server-only
