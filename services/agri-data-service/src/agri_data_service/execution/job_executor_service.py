@@ -79,6 +79,7 @@ LaneTickState = Literal[
     "paused",
     "not_due",
     "deferred_fairness",
+    "deferred_shutdown",
     "ran",
     "failed",
 ]
@@ -592,6 +593,7 @@ class LatestRun:
     run_id: uuid.UUID
     scheduled_for: datetime
     status: str
+    work_claimable: bool
 
     @property
     def open(self) -> bool:
@@ -608,7 +610,7 @@ class DueLane:
 
 
 def fair_due_order(candidates: Sequence[DueLane]) -> tuple[DueLane, ...]:
-    """Interleave incremental and backlog owners while rotating oldest-served lanes first."""
+    """Interleave work classes while ordering eligible lanes by their oldest cadence checkpoint."""
     oldest = datetime.min.replace(tzinfo=UTC)
 
     def lane_key(candidate: DueLane) -> tuple[datetime, str]:
@@ -713,6 +715,18 @@ def _pinned_connection_invalidated(session: AsyncSession) -> bool:
     return bool(bind is not None and getattr(bind, "invalidated", False))
 
 
+async def _commit_planning_transaction(session: AsyncSession) -> None:
+    """Start the next planning transaction with its transaction-local timeout restored."""
+    await session.commit()
+    await apply_statement_timeout(session)
+
+
+async def _rollback_planning_transaction(session: AsyncSession) -> None:
+    """Start the next planning transaction with its transaction-local timeout restored."""
+    await session.rollback()
+    await apply_statement_timeout(session)
+
+
 async def _definition_state(session: AsyncSession, spec: LaneExecutionSpec) -> tuple[uuid.UUID, bool] | None:
     row = await fetch_row(
         session,
@@ -750,20 +764,20 @@ async def _load_or_register_definition(
                 "parameters": canonical_json(definition_spec.parameters),
             },
         )
-        await session.commit()
+        await _commit_planning_transaction(session)
         state = await _definition_state(session, spec)
         if state is None:
             raise RuntimeError(f"executor definition {spec.definition_name!r} was neither inserted nor readable")
     _, enabled = state
     if not enabled:
-        await session.rollback()
+        await _rollback_planning_transaction(session)
         return None
     definition = await load_job_definition(
         session,
         spec.definition_name,
         version=EXECUTOR_DEFINITION_VERSION,
     )
-    await session.rollback()
+    await _rollback_planning_transaction(session)
     return definition
 
 
@@ -775,6 +789,7 @@ async def _latest_run(session: AsyncSession, definition_id: uuid.UUID) -> Latest
         run_id=required_column(row, "id", uuid.UUID),
         scheduled_for=required_column(row, "scheduled_for", datetime),
         status=required_column(row, "status", str),
+        work_claimable=required_column(row, "work_claimable", bool),
     )
 
 
@@ -804,7 +819,7 @@ async def _open_scheduled_run(
             ),
         ),
     )
-    await session.commit()
+    await _commit_planning_transaction(session)
     return opened.job_run_id
 
 
@@ -820,6 +835,8 @@ async def _execute_due_lane(
     *,
     stop: ShutdownSignal | None,
 ) -> LaneTickResult:
+    if stop is not None and stop.requested:
+        return _deferred_shutdown_result(candidate)
     run_id = candidate.existing_run_id or await _open_scheduled_run(session, candidate)
     summary = await run_job_slice(
         session,
@@ -847,6 +864,16 @@ async def _execute_due_lane(
             else summary.stop_reason
         ),
         slice_summary=summary.to_summary(),
+    )
+
+
+def _deferred_shutdown_result(candidate: DueLane) -> LaneTickResult:
+    return LaneTickResult(
+        lane_id=candidate.spec.lane_id,
+        state="deferred_shutdown",
+        scheduled_for=candidate.scheduled_for,
+        run_id=candidate.existing_run_id,
+        detail="shutdown requested before this lane was opened",
     )
 
 
@@ -898,7 +925,7 @@ async def _plan_active_lanes(
             )
             continue
         latest = await _latest_run(session, definition.id)
-        await session.rollback()
+        await _rollback_planning_transaction(session)
         bucket = scheduled_bucket(spec, now)
         if latest is not None and latest.status in {"failed", "partial"}:
             results.append(
@@ -913,6 +940,18 @@ async def _plan_active_lanes(
             )
             continue
         if latest is not None and latest.open:
+            if not latest.work_claimable:
+                results.append(
+                    LaneTickResult(
+                        lane_id=spec.lane_id,
+                        state="not_due",
+                        scheduled_for=latest.scheduled_for,
+                        run_id=latest.run_id,
+                        run_status=latest.status,
+                        detail="open run has no currently claimable work; retry, defer, or lease wait remains",
+                    )
+                )
+                continue
             due.append(
                 DueLane(
                     spec=spec,
@@ -977,7 +1016,10 @@ async def run_executor_tick(
         results, due = await _plan_active_lanes(session, activation, now)
         ordered = fair_due_order(due)
         selected = ordered[:max_lanes_per_tick]
-        for candidate in selected:
+        for index, candidate in enumerate(selected):
+            if stop is not None and stop.requested:
+                results.extend(_deferred_shutdown_result(deferred) for deferred in selected[index:])
+                break
             try:
                 results.append(await _execute_due_lane(session, candidate, stop=stop))
             except Exception as error:  # isolate lane-local faults only while the pinned backend is intact
@@ -989,6 +1031,7 @@ async def run_executor_tick(
                         error_type=type(error).__name__,
                     )
                     raise
+                await apply_statement_timeout(session)
                 logger.error(
                     "plantgeo_job_executor_lane_failed",
                     lane_id=candidate.spec.lane_id,
@@ -1024,7 +1067,7 @@ async def run_executor_tick(
     finally:
         unlock_error: BaseException | None = None
         try:
-            await session.rollback()
+            await _rollback_planning_transaction(session)
             await _release_leader_lock(session)
             await session.rollback()
         except BaseException as error:
@@ -1195,6 +1238,17 @@ def executor_inventory(activation: ActivationConfig) -> dict[str, object]:
     }
 
 
+async def _wait_for_shutdown(stop: ShutdownSignal, delay_seconds: float) -> bool:
+    """Wait for either the next service tick or an event-backed shutdown request."""
+    if stop.requested:
+        return True
+    try:
+        await asyncio.wait_for(stop.wait_requested(), timeout=delay_seconds)
+    except TimeoutError:
+        return False
+    return True
+
+
 async def _service_loop(
     *,
     activation: ActivationConfig,
@@ -1236,7 +1290,8 @@ async def _service_loop(
                 failures = 0
                 if once:
                     return 1 if summary.failed else 0
-                await asyncio.sleep(poll_seconds)
+                if await _wait_for_shutdown(stop, poll_seconds):
+                    break
             except Exception as error:
                 failures += 1
                 delay = min(poll_seconds * (2 ** (failures - 1)), MAX_LOOP_BACKOFF_SECONDS)
@@ -1248,7 +1303,8 @@ async def _service_loop(
                 )
                 if once:
                     return 1
-                await asyncio.sleep(delay)
+                if await _wait_for_shutdown(stop, delay):
+                    break
     return 0
 
 

@@ -168,11 +168,12 @@ _WRITE_SLICE_EVENT: Final = text(load_query_sql("jobs/write_slice_event.sql"))
 
 
 class ShutdownSignal:
-    """A stop flag a container-stop signal sets and the slice loop reads between units of work."""
+    """A stop signal that both state checks and interruptible waits can observe."""
 
     def __init__(self) -> None:
         """Start un-signalled; `reason` is both the flag and the text a released shard records."""
         self.reason: str | None = None
+        self._requested = asyncio.Event()
 
     @property
     def requested(self) -> bool:
@@ -183,6 +184,11 @@ class ShutdownSignal:
         """Record the first stop reason; a second signal must not overwrite what the first will report."""
         if self.reason is None:
             self.reason = reason
+            self._requested.set()
+
+    async def wait_requested(self) -> None:
+        """Wait until a process stop has been requested."""
+        await self._requested.wait()
 
 
 def _no_restore() -> None:

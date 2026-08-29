@@ -1697,19 +1697,22 @@ persistence system exists. A SQLAlchemy failure or an invalidated pinned connect
 tick: after the backend holding leadership disappears, the executor cannot isolate that lane and continue
 another due command under a replacement connection.
 
-The default is shadow. With `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` unset, the process emits the full lane
-inventory and each executable lane's current cadence bucket, command, and cutover blockers, but creates
-no definition, run, work item, or layer data. This is a schedule prediction only: shadow mode does not
-read source watermarks and does not claim source parity. A lane may write only when both activation
-variables agree:
+The default is shadow. An empty `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` is the shadow switch: the process
+emits the full lane inventory and each executable lane's current cadence bucket, command, and cutover
+blockers, but creates no definition, run, work item, or layer data. Acknowledgement entries alone never
+activate work. This is a schedule prediction only: shadow mode does not read source watermarks and does
+not claim source parity. A selected lane may write only when:
 
 - `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` contains its lane id.
-- `PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS` contains every declared
-  `<lane>=<legacy-service>:disabled-and-no-run-in-flight` token exactly.
+- if that lane's specification declares handoff acknowledgements,
+  `PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS` contains that exact token set. A selected lane that
+  declares no acknowledgements needs no acknowledgement entry.
 
 Acknowledgements are explicit operator assertions, not machine-enforced evidence of Railway parity,
-service retirement, or absence of an in-flight run. Missing, extra, duplicate, unknown, and stale tokens
-fail closed. A lane may require several acknowledgements. The generic water Parquet lane requires both
+service retirement, or absence of an in-flight run. The parser rejects malformed, missing, extra,
+duplicate, unknown, and inactive-lane tokens, but cannot detect that an externally valid assertion later
+became stale; retaining or removing it is operator change control. A lane may require several
+acknowledgements. The generic water Parquet lane requires both
 `plantgeo-ingest-cron` and `plantgeo-water-gauges-forward`; the direct water migration input remains
 non-executable, and both paths also declare a mutual conflict. Fire keeps a separate direct-forward lane,
 while its generic historical lane carries the registry's writer ceiling so their date windows cannot
@@ -1728,7 +1731,9 @@ pause on every restart (or in a race between the initial read and an operator's 
 not register definitions at all.
 
 Each cadence bucket is a `logical_run_key`; opening it and its single command shard is idempotent. An open
-older run resumes before a newer bucket opens, so one lane cannot overlap itself. The command is resolved
+older run resumes before a newer bucket opens when it has work claimable now; retry/defer waits and live
+leases do not consume that work class's bounded turn. This prevents one backoff lane from starving a peer
+without allowing a newer bucket to overlap its older run. The command is resolved
 again from the code registry inside the handler, never from a stored shell string, and it runs without a
 shell. A pre-command `ready` checkpoint makes the outer shard resumable across a crash before launch; a
 heartbeat then holds the fenced lease. Non-zero exit and timeout use the ledger's bounded exponential
@@ -1751,16 +1756,22 @@ source publication clock. Command side effects remain idempotent because the und
 Parquet writers retain their own source keys and advisory locks; the outer checkpoint does not fabricate
 exactly-once execution across an operating-system process kill.
 
-Fairness is across ownership classes: each bounded scheduler tick alternates an oldest-served
-incremental lane with an oldest-served backlog lane. The commands retain the data-ordering rule they
-already own (`parquet-gap-fill` is newest-first and round-robin; archive work-item priorities are
-newest-first), so current publications advance while historical debt continues to receive turns.
+Fairness is across ownership classes: each bounded scheduler tick alternates the oldest eligible cadence
+checkpoint from incremental work with the oldest eligible cadence checkpoint from backlog work. Open
+runs without a database-claimable item are excluded until their retry, defer, availability, or lease clock
+matures. An expired lease remains eligible even after its final attempt: the slice must run its
+definition-scoped reaper once to dead-letter the exhausted shard and roll the open run terminal. The
+commands retain the data-ordering rule they already own (`parquet-gap-fill` is newest-first and
+round-robin; archive work-item priorities are newest-first), so current publications advance while
+historical debt continues to receive turns.
 `PLANTGEO_JOB_EXECUTOR_MAX_LANES_PER_TICK` refuses values below two so both classes can receive a turn.
 The service keeps one loader pool for its lifetime and pins one connection per tick, emits tick-start and
 leader events immediately, and emits an error-severity terminal event whenever a continuous tick contains
 a failed lane. While a command runs, its handler observes process exit, service shutdown, timeout, and
 fence heartbeat concurrently; shutdown or fence loss terminates the child, with a bounded kill fallback,
-instead of waiting out the command lease. A `jobs-pulse` child installs one process-level shutdown signal
+instead of waiting out the command lease. The same event-backed shutdown signal interrupts normal poll
+and error-backoff waits, and every selected-candidate boundary checks it before opening another run. A
+`jobs-pulse` child installs one process-level shutdown signal
 and passes it through dispatch, matview triggers, archive slices, and `run_job_slice`; outer command
 timeouts exceed each inner definition's maximum slice budget by a cleanup margin, so normal inner work is
 not killed merely because its parent used the old 900-second default. The inner signal remains

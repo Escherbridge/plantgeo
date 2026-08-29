@@ -29,7 +29,7 @@ from agri_data_service.execution.job_executor_service import (
     run_scheduled_command,
     scheduled_bucket,
 )
-from agri_data_service.jobs import JobDefinitionRecord, JobInvocation, RetryPolicy
+from agri_data_service.jobs import JobDefinitionRecord, JobInvocation, RetryPolicy, ShutdownSignal
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS, LANE_REGISTRY
 
 if TYPE_CHECKING:
@@ -61,9 +61,9 @@ def _owned_executable_lanes(owner: str) -> tuple[str, ...]:
     return tuple(lane_id for lane_id, spec in LANE_SPECS.items() if spec.executable and owner in spec.legacy_owners)
 
 
-def _definition(name: str) -> JobDefinitionRecord:
+def _definition(name: str, *, identifier: uuid.UUID = _DEFINITION_ID) -> JobDefinitionRecord:
     return JobDefinitionRecord(
-        id=_DEFINITION_ID,
+        id=identifier,
         name=name,
         version="1",
         handler="plantgeo.executor.command.v1",
@@ -199,12 +199,24 @@ def test_empty_activation_is_shadow() -> None:
         ),
     ],
 )
-def test_activation_fails_closed_on_unknown_missing_extra_and_stale_acknowledgements(
+def test_activation_fails_closed_on_unknown_missing_extra_and_inactive_acknowledgements(
     environment: dict[str, str],
     message: str,
 ) -> None:
     with pytest.raises(ExecutorConfigurationError, match=message):
         parse_activation(environment)
+
+
+def test_selected_lane_without_declared_acknowledgements_needs_only_the_allow_list() -> None:
+    lane_id = "postgres-watersheds"
+    activation = parse_activation(
+        {
+            ACTIVE_LANES_VARIABLE: lane_id,
+            HANDOFF_ACKNOWLEDGEMENTS_VARIABLE: "",
+        }
+    )
+    assert activation.active_lanes == frozenset({lane_id})
+    assert activation.handoff_acknowledgements == {}
 
 
 def test_direct_fire_cutover_is_accepted_and_generic_history_keeps_ceiling() -> None:
@@ -288,6 +300,162 @@ def test_fair_order_interleaves_incremental_and_backlog_and_rotates_oldest() -> 
     ]
 
 
+async def test_retry_backoff_lane_cannot_starve_same_class_peer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    incremental_id = "fire-detections-direct-forward"
+    backoff_id = "jobs-firms-archive"
+    backlog_peer_id = "jobs-streamflow-archive"
+    lane_ids = (incremental_id, backoff_id, backlog_peer_id)
+    specs = MappingProxyType({lane_id: LANE_SPECS[lane_id] for lane_id in lane_ids})
+    identifiers = {
+        lane_id: uuid.uuid5(uuid.NAMESPACE_URL, f"plantgeo-test:{lane_id}") for lane_id in lane_ids
+    }
+    definitions = {
+        lane_id: _definition(specs[lane_id].definition_name, identifier=identifiers[lane_id])
+        for lane_id in lane_ids
+    }
+    prior_bucket = datetime(2026, 8, 27, 12, tzinfo=UTC)
+    latest = {
+        identifiers[incremental_id]: job_executor_service.LatestRun(
+            run_id=uuid.uuid4(),
+            scheduled_for=prior_bucket,
+            status="succeeded",
+            work_claimable=False,
+        ),
+        identifiers[backoff_id]: job_executor_service.LatestRun(
+            run_id=uuid.uuid4(),
+            scheduled_for=datetime(2026, 8, 26, 12, tzinfo=UTC),
+            status="running",
+            work_claimable=False,
+        ),
+        identifiers[backlog_peer_id]: job_executor_service.LatestRun(
+            run_id=uuid.uuid4(),
+            scheduled_for=prior_bucket,
+            status="succeeded",
+            work_claimable=False,
+        ),
+    }
+    attempted: list[str] = []
+    session = _ShadowSession()
+
+    async def _noop_timeout(_session: object) -> None:
+        return None
+
+    async def _leader(_session: object) -> bool:
+        return True
+
+    async def _unlock(_session: object) -> None:
+        return None
+
+    async def _load(_session: object, spec: job_executor_service.LaneExecutionSpec) -> JobDefinitionRecord:
+        return definitions[spec.lane_id]
+
+    async def _latest(_session: object, definition_id: uuid.UUID) -> job_executor_service.LatestRun:
+        return latest[definition_id]
+
+    async def _execute(
+        _session: object,
+        candidate: DueLane,
+        **_kwargs: object,
+    ) -> job_executor_service.LaneTickResult:
+        attempted.append(candidate.spec.lane_id)
+        return job_executor_service.LaneTickResult(lane_id=candidate.spec.lane_id, state="ran")
+
+    monkeypatch.setattr(job_executor_service, "LANE_SPECS", specs)
+    monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _noop_timeout)
+    monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
+    monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock)
+    monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load)
+    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "_execute_due_lane", _execute)
+
+    summary = await run_executor_tick(
+        session,  # type: ignore[arg-type]
+        activation=ActivationConfig(frozenset(lane_ids)),
+        now=datetime(2026, 8, 28, 18, 30, tzinfo=UTC),
+        max_lanes_per_tick=2,
+    )
+
+    assert attempted == [incremental_id, backlog_peer_id]
+    backoff = next(lane for lane in summary.lanes if lane.lane_id == backoff_id)
+    assert backoff.state == "not_due"
+    assert backoff.run_status == "running"
+    assert backoff.detail is not None
+    assert "no currently claimable work" in backoff.detail
+
+
+def test_latest_run_claimability_matches_the_worker_claim_and_reaper_contract() -> None:
+    query = str(job_executor_service._SELECT_LATEST_RUN)
+    assert "item.attempt_count < item.max_attempts" in query
+    assert "item.available_at <= now()" in query
+    assert "item.next_attempt_at IS NULL OR item.next_attempt_at <= now()" in query
+    assert "item.status IN ('leased', 'running')" in query
+    assert "item.lease_expires_at <= now()" in query
+    fresh_arm = query.index("item.status IN ('queued', 'retry_wait', 'deferred')")
+    attempt_guard = query.index("item.attempt_count < item.max_attempts")
+    expired_arm = query.index("item.status IN ('leased', 'running')")
+    assert fresh_arm < attempt_guard < expired_arm
+    assert "attempt_count" not in query[expired_arm:]
+
+
+async def test_exhausted_expired_lease_reaches_the_reaper_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane_id = "jobs-firms-archive"
+    spec = LANE_SPECS[lane_id]
+    definition = _definition(spec.definition_name)
+    run_id = uuid.uuid4()
+    session = _ShadowSession()
+    attempted: list[uuid.UUID | None] = []
+
+    async def _noop_timeout(_session: object) -> None:
+        return None
+
+    async def _leader(_session: object) -> bool:
+        return True
+
+    async def _unlock(_session: object) -> None:
+        return None
+
+    async def _load(_session: object, _spec: object) -> JobDefinitionRecord:
+        return definition
+
+    async def _latest(_session: object, _definition_id: uuid.UUID) -> job_executor_service.LatestRun:
+        return job_executor_service.LatestRun(
+            run_id=run_id,
+            scheduled_for=datetime(2026, 8, 28, 16, tzinfo=UTC),
+            status="running",
+            work_claimable=True,
+        )
+
+    async def _execute(
+        _session: object,
+        candidate: DueLane,
+        **_kwargs: object,
+    ) -> job_executor_service.LaneTickResult:
+        attempted.append(candidate.existing_run_id)
+        return job_executor_service.LaneTickResult(lane_id=lane_id, state="ran")
+
+    monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
+    monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _noop_timeout)
+    monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
+    monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock)
+    monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load)
+    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "_execute_due_lane", _execute)
+
+    summary = await run_executor_tick(
+        session,  # type: ignore[arg-type]
+        activation=ActivationConfig(frozenset({lane_id})),
+        now=datetime(2026, 8, 28, 18, tzinfo=UTC),
+        max_lanes_per_tick=2,
+    )
+
+    assert attempted == [run_id]
+    assert next(lane for lane in summary.lanes if lane.lane_id == lane_id).state == "ran"
+
+
 class _ShadowSession:
     def __init__(self) -> None:
         self.rollbacks = 0
@@ -347,6 +515,112 @@ async def test_scheduler_refuses_single_lane_ticks_before_touching_the_database(
             now=datetime(2026, 8, 28, 18, tzinfo=UTC),
             max_lanes_per_tick=1,
         )
+
+
+async def test_planning_reapplies_statement_timeout_after_every_transaction_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane_id = "postgres-watersheds"
+    spec = LANE_SPECS[lane_id]
+    definition = _definition(spec.definition_name)
+    specs = MappingProxyType({lane_id: spec})
+    current_bucket = scheduled_bucket(spec, datetime(2026, 8, 28, 18, 30, tzinfo=UTC))
+    events: list[str] = []
+
+    class _ArmedSession:
+        def __init__(self) -> None:
+            self.armed = False
+
+        async def commit(self) -> None:
+            assert self.armed
+            events.append("commit")
+            self.armed = False
+
+        async def rollback(self) -> None:
+            events.append("rollback")
+            self.armed = False
+
+    session = _ArmedSession()
+    definition_state_calls = 0
+
+    def _assert_armed(event: str) -> None:
+        assert session.armed, f"{event} ran without transaction-local statement_timeout"
+        events.append(event)
+
+    async def _timeout(_session: object) -> None:
+        session.armed = True
+        events.append("timeout")
+
+    async def _leader(_session: object) -> bool:
+        _assert_armed("leader")
+        return True
+
+    async def _definition_state(
+        _session: object,
+        _spec: object,
+    ) -> tuple[uuid.UUID, bool] | None:
+        nonlocal definition_state_calls
+        _assert_armed("definition_state")
+        definition_state_calls += 1
+        return None if definition_state_calls == 1 else (_DEFINITION_ID, True)
+
+    async def _insert(*_args: object, **_kwargs: object) -> Mapping[str, object]:
+        _assert_armed("insert_definition")
+        return {}
+
+    async def _load_definition(*_args: object, **_kwargs: object) -> JobDefinitionRecord:
+        _assert_armed("load_definition")
+        return definition
+
+    async def _latest(*_args: object, **_kwargs: object) -> job_executor_service.LatestRun:
+        _assert_armed("latest_run")
+        return job_executor_service.LatestRun(
+            run_id=uuid.uuid4(),
+            scheduled_for=current_bucket,
+            status="succeeded",
+            work_claimable=False,
+        )
+
+    async def _unlock(_session: object) -> None:
+        _assert_armed("unlock")
+
+    monkeypatch.setattr(job_executor_service, "LANE_SPECS", specs)
+    monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _timeout)
+    monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
+    monkeypatch.setattr(job_executor_service, "_definition_state", _definition_state)
+    monkeypatch.setattr(job_executor_service, "fetch_row", _insert)
+    monkeypatch.setattr(job_executor_service, "load_job_definition", _load_definition)
+    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock)
+
+    summary = await run_executor_tick(
+        session,  # type: ignore[arg-type]
+        activation=ActivationConfig(frozenset({lane_id})),
+        now=datetime(2026, 8, 28, 18, 30, tzinfo=UTC),
+        max_lanes_per_tick=2,
+    )
+
+    assert summary.leader
+    assert events.count("timeout") == 5
+    assert events == [
+        "timeout",
+        "leader",
+        "definition_state",
+        "insert_definition",
+        "commit",
+        "timeout",
+        "definition_state",
+        "load_definition",
+        "rollback",
+        "timeout",
+        "latest_run",
+        "rollback",
+        "timeout",
+        "rollback",
+        "timeout",
+        "unlock",
+        "rollback",
+    ]
 
 
 async def test_unlock_false_is_a_hard_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -534,9 +808,176 @@ async def test_service_loop_binds_each_tick_session_to_one_external_connection(
     assert result == 0
 
 
+class _ObservedShutdownSignal(ShutdownSignal):
+    def __init__(self) -> None:
+        super().__init__()
+        self.wait_entered = asyncio.Event()
+
+    async def wait_requested(self) -> None:
+        self.wait_entered.set()
+        await super().wait_requested()
+
+
+def _install_service_loop_harness(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    stop: ShutdownSignal,
+    tick: object,
+) -> None:
+    class _ConnectionContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class _Pool:
+        def connect(self) -> _ConnectionContext:
+            return _ConnectionContext()
+
+    class _PinnedSession:
+        def __init__(self, *, bind: object, expire_on_commit: bool) -> None:
+            self.bind = bind
+            assert not expire_on_commit
+
+        async def __aenter__(self) -> _PinnedSession:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    @asynccontextmanager
+    async def _pool(_database_url: str) -> Any:
+        yield _Pool()
+
+    @asynccontextmanager
+    async def _stop() -> Any:
+        yield stop
+
+    monkeypatch.setattr(
+        job_executor_service,
+        "settings",
+        SimpleNamespace(require_local_source_loader_database_url=lambda: "postgresql+asyncpg://test/db"),
+    )
+    monkeypatch.setattr(job_executor_service, "local_source_loader_pool", _pool)
+    monkeypatch.setattr(job_executor_service, "shutdown_signal", _stop)
+    monkeypatch.setattr(job_executor_service, "AsyncSession", _PinnedSession)
+    monkeypatch.setattr(job_executor_service, "run_executor_tick", tick)
+    monkeypatch.setattr(job_executor_service.click, "echo", lambda *_args, **_kwargs: None)
+
+
+async def test_sigterm_wakes_normal_poll_wait_without_second_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop = _ObservedShutdownSignal()
+    attempts = 0
+
+    async def _tick(*_args: object, **_kwargs: object) -> job_executor_service.ExecutorTickSummary:
+        nonlocal attempts
+        attempts += 1
+        return job_executor_service.ExecutorTickSummary(
+            observed_at=datetime(2026, 8, 28, 18, tzinfo=UTC),
+            leader=True,
+            lanes=(),
+        )
+
+    _install_service_loop_harness(monkeypatch, stop=stop, tick=_tick)
+    service = asyncio.create_task(
+        job_executor_service._service_loop(
+            activation=ActivationConfig(frozenset()),
+            poll_seconds=3600,
+            max_lanes_per_tick=2,
+            once=False,
+        )
+    )
+    await asyncio.wait_for(stop.wait_entered.wait(), timeout=1)
+    stop.request("container shutdown requested (SIGTERM)")
+
+    assert await asyncio.wait_for(service, timeout=1) == 0
+    assert attempts == 1
+
+
+async def test_sigterm_wakes_error_backoff_without_retrying_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop = _ObservedShutdownSignal()
+    attempts = 0
+
+    async def _tick(*_args: object, **_kwargs: object) -> job_executor_service.ExecutorTickSummary:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("planned tick failure")
+
+    _install_service_loop_harness(monkeypatch, stop=stop, tick=_tick)
+    service = asyncio.create_task(
+        job_executor_service._service_loop(
+            activation=ActivationConfig(frozenset()),
+            poll_seconds=3600,
+            max_lanes_per_tick=2,
+            once=False,
+        )
+    )
+    await asyncio.wait_for(stop.wait_entered.wait(), timeout=1)
+    stop.request("container shutdown requested (SIGTERM)")
+
+    assert await asyncio.wait_for(service, timeout=1) == 0
+    assert attempts == 1
+
+
+async def test_sigterm_between_candidates_does_not_open_second_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop = ShutdownSignal()
+    session = _ShadowSession()
+    candidates = [_due("fire-detections-direct-forward", None), _due("jobs-firms-archive", None)]
+    attempted: list[str] = []
+
+    async def _noop_timeout(_session: object) -> None:
+        return None
+
+    async def _leader(_session: object) -> bool:
+        return True
+
+    async def _plan(*_args: object, **_kwargs: object) -> tuple[list[object], list[DueLane]]:
+        return [], candidates
+
+    async def _execute(
+        _session: object,
+        candidate: DueLane,
+        **_kwargs: object,
+    ) -> job_executor_service.LaneTickResult:
+        attempted.append(candidate.spec.lane_id)
+        stop.request("container shutdown requested (SIGTERM)")
+        return job_executor_service.LaneTickResult(lane_id=candidate.spec.lane_id, state="ran")
+
+    async def _unlock(_session: object) -> None:
+        return None
+
+    monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _noop_timeout)
+    monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
+    monkeypatch.setattr(job_executor_service, "_plan_active_lanes", _plan)
+    monkeypatch.setattr(job_executor_service, "_execute_due_lane", _execute)
+    monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock)
+
+    summary = await run_executor_tick(
+        session,  # type: ignore[arg-type]
+        activation=ActivationConfig(frozenset()),
+        now=datetime(2026, 8, 28, 18, tzinfo=UTC),
+        max_lanes_per_tick=2,
+        stop=stop,
+    )
+
+    assert attempted == ["fire-detections-direct-forward"]
+    deferred = next(lane for lane in summary.lanes if lane.lane_id == "jobs-firms-archive")
+    assert deferred.state == "deferred_shutdown"
+
+
 async def test_existing_pause_is_not_overwritten(monkeypatch: pytest.MonkeyPatch) -> None:
     session = _ShadowSession()
     spec = LANE_SPECS["fire-detections-direct-forward"]
+
+    async def _noop_timeout(_session: object) -> None:
+        return None
 
     async def _paused(_session: object, _spec: object) -> tuple[uuid.UUID, bool]:
         return _DEFINITION_ID, False
@@ -544,6 +985,7 @@ async def test_existing_pause_is_not_overwritten(monkeypatch: pytest.MonkeyPatch
     async def _unexpected(*_args: object, **_kwargs: object) -> Any:
         raise AssertionError("an existing paused definition was upserted")
 
+    monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _noop_timeout)
     monkeypatch.setattr(job_executor_service, "_definition_state", _paused)
     monkeypatch.setattr(job_executor_service, "fetch_row", _unexpected)
 
