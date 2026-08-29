@@ -114,9 +114,10 @@ copy of the same oversized query against a process already at its ceiling. The c
 complete code-to-status table and translates `duckdb.Error`, timeouts, and unexpected failures.
 Other adapters preserve the same code and choose their own transport rendering.
 
-`render_scalar` **fails closed** on any type it has no agreed rendering for. The DuckDB reader wraps
-only columns whose registered Arrow schema declares a list, so snapshot-lineage arrays render
-recursively while a raw list from an untyped or drifted row remains refused. `str(value)` would still
+`render_scalar` **fails closed** on any type it has no agreed rendering for. Both the mutable DuckDB
+reader and immutable snapshot reader wrap only columns whose registered Arrow schema declares a
+list, so snapshot-lineage arrays render recursively while a raw list from an untyped or drifted row
+remains refused. `str(value)` would still
 serve a Decimal, struct or UUID as text under a type the contract never announced, and remains refused.
 
 ## Why a conflict and an unfinished export are not states

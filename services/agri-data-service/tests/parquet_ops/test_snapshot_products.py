@@ -6,7 +6,7 @@ import hashlib
 import json
 import threading
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Literal
 
 import duckdb
@@ -32,7 +32,8 @@ from agri_data_service.parquet_ops.snapshot_products import (
     resolve_snapshot_window,
     snapshot_product_columns,
 )
-from agri_data_service.parquet_ops.wire import DayNotWritten, PublishedDay
+from agri_data_service.parquet_ops.wire import DayNotWritten, DeclaredListCell, PublishedDay
+from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -92,6 +93,7 @@ def _product(
         layout=layout,
         data_root=root,
         metadata_root=root,
+        schema_layer="signal",
         schema_columns=TEST_COLUMNS,
         contract_version="plantgeo.test.snapshot.v1",
     )
@@ -640,6 +642,119 @@ def test_bbox_is_exact_and_schema_drift_fails_closed(tmp_path: Path, monkeypatch
     assert raised.value.code == "snapshot_schema_mismatch"
 
 
+def _snapshot_lineage_table() -> pa.Table:
+    schema = get_stream_schema("climate-field-relative-humidity", "observed").arrow_schema
+    values: dict[str, pa.Array] = {}
+    for schema_field in schema:
+        if pa.types.is_string(schema_field.type):
+            value: object = "a" * 64 if "sha256" in schema_field.name else f"test-{schema_field.name}"
+        elif pa.types.is_int64(schema_field.type):
+            value = 1
+        elif pa.types.is_float64(schema_field.type):
+            value = 52.0
+        elif pa.types.is_boolean(schema_field.type):
+            value = True
+        elif pa.types.is_date32(schema_field.type):
+            value = date(2026, 8, 1)
+        elif pa.types.is_timestamp(schema_field.type):
+            value = datetime(2026, 8, 1, tzinfo=UTC)
+        elif pa.types.is_list(schema_field.type):
+            item = 1 if pa.types.is_int64(schema_field.type.value_type) else "a" * 64
+            value = [item]
+        else:
+            raise AssertionError(f"test fixture has no value for {schema_field.name}: {schema_field.type}")
+        values[schema_field.name] = pa.array([value], type=schema_field.type)
+    return pa.table(values, schema=schema)
+
+
+def _snapshot_lineage_test_product() -> SnapshotProduct:
+    original = _product("test-lineage-wire")
+    return SnapshotProduct(
+        layer=original.layer,
+        layout=original.layout,
+        data_root=original.data_root,
+        metadata_root=original.metadata_root,
+        schema_layer="climate-field-relative-humidity",
+        contract_version=original.contract_version,
+    )
+
+
+def test_snapshot_reader_renders_the_complete_registered_lineage_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    product = _snapshot_lineage_test_product()
+    parts = [_part(product, tier, date(2026, 8, 1), monthly=True) for tier in ZOOM_TIERS]
+    store = _closed_store(product, parts)
+    local = tmp_path / "lineage.parquet"
+    pq.write_table(_snapshot_lineage_table(), local)
+    session = LocalSession(duckdb.connect(), {key: str(local) for key in parts})
+    monkeypatch.setitem(snapshot_products.PRODUCT_BY_LAYER, product.layer, product)
+    scope = ReadScope(layer=product.layer, kind="observed", tier=13, bbox=None)
+    try:
+        answer = resolve_snapshot_product(store, session, scope=scope, day=date(2026, 8, 1))
+    finally:
+        session.connection.close()
+
+    assert isinstance(answer, PublishedDay)
+    schema = get_stream_schema("climate-field-relative-humidity", "observed").arrow_schema
+    assert tuple(answer.rows[0]) == tuple(schema.names)
+    list_columns = tuple(schema_field.name for schema_field in schema if pa.types.is_list(schema_field.type))
+    assert list_columns == (
+        "input_source_row_ids",
+        "input_source_row_sha256s",
+        "input_source_release_ids",
+        "input_source_part_keys",
+        "input_source_part_sha256s",
+        "input_source_row_ordinals",
+    )
+    assert all(isinstance(answer.rows[0][name], DeclaredListCell) for name in list_columns)
+    rendered = answer.to_wire()["rows"]
+    assert isinstance(rendered, list)
+    assert tuple(rendered[0]) == tuple(schema.names)
+    assert all(isinstance(rendered[0][name], list) for name in list_columns)
+
+
+@pytest.mark.parametrize(
+    "drifted_values",
+    [
+        pa.array([["wrong-element-type"]], type=pa.list_(pa.string())),
+        pa.array(["wrong-container-type"], type=pa.string()),
+    ],
+    ids=("list-element", "list-to-scalar"),
+)
+def test_snapshot_reader_refuses_same_name_lineage_type_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drifted_values: pa.Array,
+) -> None:
+    product = _snapshot_lineage_test_product()
+    parts = [_part(product, tier, date(2026, 8, 1), monthly=True) for tier in ZOOM_TIERS]
+    store = _closed_store(product, parts)
+    table = _snapshot_lineage_table()
+    index = table.schema.get_field_index("input_source_row_ids")
+    table = table.set_column(index, "input_source_row_ids", drifted_values)
+    local = tmp_path / "lineage-drift.parquet"
+    pq.write_table(table, local)
+    session = LocalSession(duckdb.connect(), {key: str(local) for key in parts})
+    monkeypatch.setitem(snapshot_products.PRODUCT_BY_LAYER, product.layer, product)
+    scope = ReadScope(layer=product.layer, kind="observed", tier=13, bbox=None)
+    try:
+        with pytest.raises(ServingRefusalError) as raised:
+            resolve_snapshot_product(store, session, scope=scope, day=date(2026, 8, 1))
+    finally:
+        session.connection.close()
+
+    assert raised.value.code == "snapshot_schema_mismatch"
+    assert "input_source_row_ids" in raised.value.message
+
+
+def test_snapshot_arrow_list_types_bind_to_their_exact_duckdb_shape() -> None:
+    assert snapshot_products._duckdb_type_for_arrow(pa.list_(pa.int64())) == "BIGINT[]"
+    assert snapshot_products._duckdb_type_for_arrow(pa.large_list(pa.string())) == "VARCHAR[]"
+    assert snapshot_products._duckdb_type_for_arrow(pa.list_(pa.int64(), 3)) == "BIGINT[3]"
+
+
 def test_unbound_completion_never_exposes_a_snapshot() -> None:
     product = _product("test-unbound-product")
     store = _closed_store(product, [_part(product, 13, date(2026, 8, 1), monthly=True)])
@@ -653,6 +768,7 @@ def test_unbound_completion_never_exposes_a_snapshot() -> None:
 
 def test_registered_product_families_pin_their_exact_top_level_schemas() -> None:
     signal = PRODUCT_BY_LAYER["climate-field-air-temperature-mean"]
+    humidity = PRODUCT_BY_LAYER["climate-field-relative-humidity"]
     dew = PRODUCT_BY_LAYER["climate-field-dew-point"]
     wetness = PRODUCT_BY_LAYER["soil-wetness-surface"]
     temperature = PRODUCT_BY_LAYER["soil-temperature-0-to-7cm"]
@@ -687,6 +803,9 @@ def test_registered_product_families_pin_their_exact_top_level_schemas() -> None
         *SOIL_WETNESS_COLUMNS,
     ) == SOIL_TEMPERATURE_COLUMNS
     assert snapshot_product_columns(signal) == frozenset(SIGNAL_PRODUCT_COLUMNS)
+    assert snapshot_product_columns(humidity) == frozenset(
+        get_stream_schema(humidity.layer, "observed").arrow_schema.names
+    )
     assert snapshot_product_columns(wetness) == frozenset(SOIL_WETNESS_COLUMNS)
     assert snapshot_product_columns(temperature) == frozenset(SOIL_TEMPERATURE_COLUMNS)
     assert signal.coverage_cell_grid_name == dew.coverage_cell_grid_name == "nasa-power-0.5-degree"

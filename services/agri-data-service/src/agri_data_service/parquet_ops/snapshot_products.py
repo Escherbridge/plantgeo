@@ -12,18 +12,22 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
+import pyarrow as pa  # type: ignore[import-untyped]
+
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.serving import WINDOW_ROW_BUDGET
 from agri_data_service.parquet_ops.wire import (
     DayNotWritten,
     DayRange,
+    DeclaredListCell,
     LaneCoverage,
     LaneNeverWritten,
     PublishedDay,
     contiguous_ranges,
 )
-from agri_data_service.warehouse.parquet.schema import get_stream_schema
+from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_SCHEMA, get_stream_schema
+from agri_data_service.warehouse.parquet.snapshot_signal_product import SOIL_TEMPERATURE_FIELDS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -119,6 +123,12 @@ SOIL_TEMPERATURE_COLUMNS: Final = (
     "source_parameter",
     *SOIL_WETNESS_COLUMNS,
 )
+
+_PINNED_ARROW_SCHEMAS: Final[dict[tuple[str, ...], pa.Schema]] = {
+    SIGNAL_PRODUCT_COLUMNS: SIGNAL_PLANE_SCHEMA.arrow_schema,
+    SOIL_WETNESS_COLUMNS: pa.schema(SOIL_TEMPERATURE_FIELDS[2:]),
+    SOIL_TEMPERATURE_COLUMNS: pa.schema(SOIL_TEMPERATURE_FIELDS),
+}
 
 
 SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
@@ -1866,10 +1876,55 @@ def _month_has_day(session: ServingSession, keys: Sequence[str], *, day: date) -
 
 def snapshot_product_columns(product: SnapshotProduct) -> frozenset[str]:
     """Return the exact allowlisted top-level serving schema for one snapshot product."""
-    if product.schema_columns is not None:
-        return frozenset(product.schema_columns)
+    return frozenset(_snapshot_product_arrow_schema(product).names)
+
+
+def _snapshot_product_arrow_schema(product: SnapshotProduct) -> pa.Schema:
+    """Resolve the complete registered Arrow contract, narrowed only by pinned column names."""
+    if product.schema_columns in _PINNED_ARROW_SCHEMAS:
+        return _PINNED_ARROW_SCHEMAS[product.schema_columns]
     schema_layer = product.schema_layer or product.layer
-    return frozenset(get_stream_schema(schema_layer, "observed").arrow_schema.names)
+    registered = get_stream_schema(schema_layer, "observed").arrow_schema
+    if product.schema_columns is None:
+        return registered
+    fields_by_name = {field.name: field for field in registered}
+    missing = tuple(name for name in product.schema_columns if name not in fields_by_name)
+    if missing:
+        raise ValueError(f"{product.layer} pins columns absent from registered schema {schema_layer}: {missing}")
+    return pa.schema([fields_by_name[name] for name in product.schema_columns])
+
+
+def _snapshot_declared_list_columns(product: SnapshotProduct) -> frozenset[str]:
+    """Return only list cells declared by the registered physical snapshot schema."""
+    schema = _snapshot_product_arrow_schema(product)
+    return frozenset(
+        field.name
+        for field in schema
+        if pa.types.is_list(field.type) or pa.types.is_large_list(field.type) or pa.types.is_fixed_size_list(field.type)
+    )
+
+
+def _duckdb_type_for_arrow(data_type: pa.DataType) -> str:
+    """Translate the snapshot registry's supported Arrow scalars to DuckDB logical types."""
+    if pa.types.is_string(data_type) or pa.types.is_large_string(data_type):
+        resolved = "VARCHAR"
+    elif pa.types.is_int64(data_type):
+        resolved = "BIGINT"
+    elif pa.types.is_float64(data_type):
+        resolved = "DOUBLE"
+    elif pa.types.is_boolean(data_type):
+        resolved = "BOOLEAN"
+    elif pa.types.is_date32(data_type):
+        resolved = "DATE"
+    elif pa.types.is_timestamp(data_type):
+        resolved = "TIMESTAMP WITH TIME ZONE" if data_type.tz is not None else "TIMESTAMP"
+    elif pa.types.is_fixed_size_list(data_type):
+        resolved = f"{_duckdb_type_for_arrow(data_type.value_type)}[{data_type.list_size}]"
+    elif pa.types.is_list(data_type) or pa.types.is_large_list(data_type):
+        resolved = f"{_duckdb_type_for_arrow(data_type.value_type)}[]"
+    else:
+        raise ValueError(f"snapshot serving has no DuckDB type binding for registered Arrow type {data_type}")
+    return resolved
 
 
 def _verify_exact_schemas(
@@ -1877,21 +1932,27 @@ def _verify_exact_schemas(
     evidence: SnapshotEvidence,
     keys: Sequence[str],
 ) -> None:
-    expected = snapshot_product_columns(evidence.product)
+    expected_schema = _snapshot_product_arrow_schema(evidence.product)
+    expected = {field.name: _duckdb_type_for_arrow(field.type) for field in expected_schema}
     for key in keys:
         uri = session.object_uri(key)
         cursor = session.connection.execute(
             "SELECT * FROM read_parquet(?, hive_partitioning=false, union_by_name=false) LIMIT 0",
             [[uri]],
         )
-        actual = frozenset(str(column[0]) for column in cursor.description or ())
-        if actual != expected:
-            missing = sorted(expected - actual)
-            extra = sorted(actual - expected)
+        actual = {str(column[0]): str(column[1]) for column in cursor.description or ()}
+        type_mismatches = sorted(
+            (name, expected[name], actual[name])
+            for name in expected.keys() & actual.keys()
+            if actual[name] != expected[name]
+        )
+        if actual.keys() != expected.keys() or type_mismatches:
+            missing = sorted(expected.keys() - actual.keys())
+            extra = sorted(actual.keys() - expected.keys())
             raise faults.snapshot_schema_mismatch(
                 layer=evidence.product.layer,
                 key=key,
-                detail=f"missing={missing[:5]}, extra={extra[:5]}",
+                detail=f"missing={missing[:5]}, extra={extra[:5]}, type_mismatches={type_mismatches[:5]}",
             )
 
 
@@ -1926,8 +1987,16 @@ def _read_observed_day(
     columns = tuple(description[0] for description in cursor.description or ())
     values = cursor.fetchall()
     truncated = len(values) > row_budget
-    rows = tuple(dict(zip(columns, row, strict=True)) for row in values[:row_budget])
-    return (rows, truncated)
+    declared_list_columns = _snapshot_declared_list_columns(product_for_layer(scope.layer))
+    rows: list[ServedRow] = []
+    for values_row in values[:row_budget]:
+        row = dict(zip(columns, values_row, strict=True))
+        for column in declared_list_columns:
+            value = row.get(column)
+            if isinstance(value, (list, tuple)):
+                row[column] = DeclaredListCell(tuple(value))
+        rows.append(row)
+    return (tuple(rows), truncated)
 
 
 __all__ = [
