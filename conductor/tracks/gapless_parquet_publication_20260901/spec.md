@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: gapless_parquet_publication_20260901
-status: planned
+status: active
 ---
 
 # Gapless Parquet forward publication and scheduler ownership

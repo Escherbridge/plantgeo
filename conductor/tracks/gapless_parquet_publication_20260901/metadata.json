@@ -2,7 +2,7 @@
   "slug": "gapless_parquet_publication_20260901",
   "title": "Gapless Parquet forward publication and scheduler ownership",
   "type": "infrastructure",
-  "status": "planned",
+  "status": "active",
   "created_on": "2026-09-01",
   "depends_on": [],
   "runbook_section": "LIVE / Gapless publication and pull contract",
@@ -48,7 +48,9 @@
           "docs/reports/data-lane-execution-ownership-2026-08-28.md"
         ],
         "depends_on": [],
-        "status": "planned"
+        "status": "in_progress_source_measurement_blocked",
+        "evidence": "conductor/tracks/gapless_parquet_publication_20260901/evidence/product-ownership-census.md",
+        "remaining": "Fresh production R2 ladder census and receipt-derived provider floors/ceilings/lags remain unmeasured; no write is authorized."
       },
       {
         "id": "p0a",
@@ -56,26 +58,71 @@
         "owns": [
           {
             "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/availability_index.py",
-            "status": "future"
+            "status": "code_complete_offline_verified"
           },
           {
             "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/availability_index.py",
-            "status": "future"
+            "status": "code_complete_offline_verified"
           },
-          "services/agri-data-service/src/agri_data_service/interface/cli/data.py",
+          {
+            "path": "services/agri-data-service/src/agri_data_service/db/advisory_keys.py",
+            "status": "code_complete_offline_verified"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/db/engine.py",
+            "status": "code_complete_offline_verified"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/gap_fill.py",
+            "status": "code_complete_offline_verified"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/interface/cli/data.py",
+            "status": "code_complete_offline_verified"
+          },
+          {
+            "path": "services/agri-data-service/scripts/purge_parquet_layout.py",
+            "status": "mutation_retired_offline_verified"
+          },
+          {
+            "path": "services/agri-data-service/scripts/reconcile_fire_detections_parquet.py",
+            "status": "code_complete_offline_verified"
+          },
           {
             "path": "services/agri-data-service/tests/parquet/test_availability_index.py",
-            "status": "future"
+            "status": "code_complete_offline_verified"
           },
           {
             "path": "services/agri-data-service/tests/parquet/test_availability_publication.py",
-            "status": "future"
+            "status": "code_complete_offline_verified"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_lane_day_lock_postgresql.py",
+            "status": "code_complete_offline_verified"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_fire_detections_reconcile.py",
+            "status": "code_complete_offline_verified"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_gap_fill.py",
+            "status": "code_complete_offline_verified"
+          },
+          {
+            "path": "services/agri-data-service/tests/test_config.py",
+            "status": "code_complete_offline_verified"
+          },
+          {
+            "path": "services/agri-data-service/tests/test_purge_parquet_layout.py",
+            "status": "code_complete_offline_verified"
           }
         ],
         "depends_on": [
           "p0"
         ],
-        "status": "planned"
+        "status": "code_complete_offline_verified",
+        "evidence": "conductor/tracks/gapless_parquet_publication_20260901/evidence/p0a-offline-verification.md",
+        "remaining": "Offline implementation and review are complete. No production bootstrap ran. Before the first separately authorized apply, drain or restart every pre-barrier writer process; production R2 bootstrap and the HTTP/tRPC/TypeScript reader cutover remain separately authorized dependent sessions."
       },
       {
         "id": "p1",

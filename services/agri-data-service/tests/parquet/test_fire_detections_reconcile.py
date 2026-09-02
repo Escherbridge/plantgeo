@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 import math
 import sys
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -193,17 +193,9 @@ async def test_every_saved_month_is_fully_reaudited(
         async def rollback(self) -> None:
             return None
 
-    class Factory:
-        def __call__(self) -> AbstractAsyncContextManager[Session]:
-            @asynccontextmanager
-            async def opened() -> AsyncIterator[Session]:
-                yield Session()
-
-            return opened()
-
     @asynccontextmanager
-    async def engine(_database_url: str) -> AsyncIterator[Factory]:
-        yield Factory()
+    async def loader_session(_database_url: str) -> AsyncIterator[Session]:
+        yield Session()
 
     async def audit(
         _session: object, _store: object, *, first_day: object, last_day: object, **_kwargs: object
@@ -246,7 +238,7 @@ async def test_every_saved_month_is_fully_reaudited(
     monkeypatch.setattr(TOOL, "_audit_month", audit)
     monkeypatch.setattr(TOOL, "_final_manifest", manifest)
     monkeypatch.setattr(TOOL, "_atomic_json", atomic)
-    monkeypatch.setattr(TOOL, "local_source_loader_engine", engine)
+    monkeypatch.setattr(TOOL, "local_source_loader_session", loader_session)
     monkeypatch.setattr(
         TOOL,
         "settings",

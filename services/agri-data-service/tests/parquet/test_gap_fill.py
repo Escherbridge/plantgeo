@@ -531,10 +531,14 @@ async def test_the_session_is_rolled_back_after_every_day_and_the_timeout_re_pin
     # while saying nothing about the property this test is actually about.
     pins = [statement for statement in session.statements if "statement_timeout" in statement]
     assert len(pins) == WINDOW_DAYS, "the timeout must be re-pinned once per day; SET LOCAL dies with each rollback"
-    locks = [statement for statement in session.statements if "pg_try_advisory_lock" in statement]
-    unlocks = [statement for statement in session.statements if "pg_advisory_unlock" in statement]
-    assert len(locks) == WINDOW_DAYS, "every lane-day is claimed exactly once"
-    assert len(unlocks) == WINDOW_DAYS, "and released exactly once -- a leaked lock outlives the tick"
+    lane_locks = [statement for statement in session.statements if "pg_try_advisory_lock_shared" in statement]
+    day_locks = [statement for statement in session.statements if "pg_try_advisory_lock(" in statement]
+    lane_unlocks = [statement for statement in session.statements if "pg_advisory_unlock_shared" in statement]
+    day_unlocks = [statement for statement in session.statements if "pg_advisory_unlock(" in statement]
+    assert len(lane_locks) == WINDOW_DAYS, "every writer enters its lane barrier exactly once"
+    assert len(day_locks) == WINDOW_DAYS, "every lane-day is claimed exactly once"
+    assert len(lane_unlocks) == WINDOW_DAYS, "every lane barrier is released"
+    assert len(day_unlocks) == WINDOW_DAYS, "every day lock is released"
 
 
 @pytest.mark.asyncio

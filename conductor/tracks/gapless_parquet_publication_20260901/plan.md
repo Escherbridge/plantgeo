@@ -1,7 +1,7 @@
 ---
 type: track-plan
 slug: gapless_parquet_publication_20260901
-status: planned
+status: active
 resource: ./spec.md
 ---
 
@@ -9,22 +9,28 @@ resource: ./spec.md
 
 ## Wave P0 — inventory and contract freeze
 
-- [ ] Enumerate every time-bearing product, provider, floor, source ceiling, lag, cadence and rung.
-- [ ] Record current, legacy and proposed executor ownership plus no-overlap handoff state.
+- [x] Enumerate the 28 current time-bearing physical product identities and canonical rung set.
+- [ ] Freeze every provider floor, receipt-derived source ceiling, lag and cadence; the offline census
+  records the unresolved measurements explicitly.
+- [x] Record current, legacy and proposed executor ownership plus no-overlap handoff state.
 - [ ] Re-list live coverage and incomplete ladders before authorizing any write.
-- [ ] Freeze terminal-state, governed-absence and source-settlement rules.
-- [ ] Freeze the generational availability schema, pointer contract, conditional-update behavior,
+- [x] Freeze terminal-state, governed-absence and source-settlement rules.
+- [x] Freeze the generational availability schema, pointer contract, conditional-update behavior,
   bootstrap receipt and no-request-time-scan tripwire.
 
 ## Wave P0A — availability core and one-time bootstrap
 
-- [ ] Implement one canonical availability schema, reader and publisher with content-addressed
-  immutable generations and a checksum-bound pointer written last.
-- [ ] Add an idempotent bootstrap command that consumes verified manifests/checkpoints once and
+- [x] Implement one canonical availability schema, reader and publisher with content-addressed
+  immutable generations, typed evidence cross-binding, bounded reads, pre-CAS evidence-identity
+  revalidation, a lane-wide shared/exclusive publication barrier and a checksum-bound pointer written
+  last. The final integrated Python gate and independent review passed.
+- [x] Add an idempotent bootstrap command that consumes verified manifests/checkpoints once and
   writes an immutable receipt binding their keys/SHAs, the exact inventory root and authoritative
-  required-rung set; it is never called by an HTTP or slider request.
-- [ ] Prove pointer-race retry, correction generation, governed absence, all-rung intersection,
-  malformed/checksum refusal and rollback behavior.
+  required-rung set; it is never called by an HTTP or slider request. No production bootstrap ran.
+- [x] Prove typed receipt cross-binding, evidence mutation refusal, bounded object reads,
+  pointer-race retry, correction generation, governed absence, all-rung completeness,
+  malformed/checksum refusal, rollback behavior and writer/publication exclusion. The amended
+  implementation passed the root-coordinated full integrated Python gate and separate review.
 
 ## Wave P1 — parallel source-family writers
 

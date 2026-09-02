@@ -70,6 +70,10 @@ from typing import TYPE_CHECKING, Final, Literal
 
 from sqlalchemy import func, select, text
 
+from agri_data_service.db.advisory_keys import (
+    parquet_lane_publication_barrier_from_day_lock_key,
+    parquet_lane_publication_barrier_key,
+)
 from agri_data_service.db.vegetation_publication import (
     try_postgres_vegetation_publication_barrier,
     unlocked_vegetation_publication_barrier,
@@ -134,6 +138,7 @@ GAP_FILL_PARTITION_KIND: Final[PartitionKind] = "observed"
 # writes. Taken from the ladder's own top rather than written as a literal, so a rung added above z13
 # moves the base with it -- the base is "the tier nothing generalized", not the number 13.
 GAP_FILL_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
+_LANE_ROOT_SEGMENT_COUNT: Final = 2
 
 # Matches `jobs-pulse`'s own tick budget: generous enough that a healthy incremental tick never trips
 # it, short enough that one stuck lane cannot consume an entire hourly cadence.
@@ -1141,7 +1146,7 @@ def _lane_day_lock_key(lane: LaneRegistration, day: date) -> str:
 
 @asynccontextmanager
 async def postgres_lane_day_lock(session: AsyncSession, key: str) -> AsyncIterator[bool]:
-    """Hold one lane-day's SESSION-scoped advisory lock for the block, yielding whether it was taken.
+    """Hold the shared lane barrier then one lane-day's exclusive lock, yielding whether both were taken.
 
     SESSION-scoped, not transaction-scoped, and that is the whole reason this is not
     `execution/provenance.py::advisory_lock`. That helper takes `pg_advisory_xact_lock`, which the
@@ -1167,18 +1172,55 @@ async def postgres_lane_day_lock(session: AsyncSession, key: str) -> AsyncIterat
     on a green tick, because `contended` is deliberately not a failure. Anything changing that pool
     must move this to an explicitly checked-out connection first.
     """
-    held = await session.execute(select(func.pg_try_advisory_lock(func.hashtextextended(key, 0))))
-    granted = bool(held.scalar())
+    lane_barrier_key = parquet_lane_publication_barrier_from_day_lock_key(key)
+    shared_granted = False
+    day_granted = False
     try:
-        yield granted
+        shared_result = await session.execute(
+            select(func.pg_try_advisory_lock_shared(func.hashtextextended(lane_barrier_key, 0)))
+        )
+        shared_granted = bool(shared_result.scalar())
+        if shared_granted:
+            held = await session.execute(select(func.pg_try_advisory_lock(func.hashtextextended(key, 0))))
+            day_granted = bool(held.scalar())
+        yield shared_granted and day_granted
     finally:
-        if granted:
+        if day_granted:
             # No rollback of its own on either side. Every export path already rolls back before
             # returning, and `pg_advisory_unlock` is not transactional, so wrapping this in one
             # would only add a transaction per lane-day for nothing -- and this driver's whole
             # session discipline is "never hold a snapshot you do not need".
             with suppress(Exception):  # the lock dies with the connection; never fail a tick over it
                 await session.execute(select(func.pg_advisory_unlock(func.hashtextextended(key, 0))))
+        if shared_granted:
+            with suppress(Exception):
+                await session.execute(
+                    select(func.pg_advisory_unlock_shared(func.hashtextextended(lane_barrier_key, 0)))
+                )
+
+
+@asynccontextmanager
+async def postgres_lane_publication_barrier(session: AsyncSession, lane_root: str) -> AsyncIterator[bool]:
+    """Try one lane's exclusive publication barrier across verification and pointer CAS."""
+    segments = lane_root.split("/")
+    if (
+        len(segments) != _LANE_ROOT_SEGMENT_COUNT
+        or not segments[0].startswith("layer=")
+        or not segments[1].startswith("kind=")
+    ):
+        raise ValueError("lane_root must be exactly layer=<slug>/kind=<observed|forecast>")
+    barrier_key = parquet_lane_publication_barrier_key(
+        segments[0].removeprefix("layer="),
+        segments[1].removeprefix("kind="),
+    )
+    held = await session.execute(select(func.pg_try_advisory_lock(func.hashtextextended(barrier_key, 0))))
+    granted = bool(held.scalar())
+    try:
+        yield granted
+    finally:
+        if granted:
+            with suppress(Exception):
+                await session.execute(select(func.pg_advisory_unlock(func.hashtextextended(barrier_key, 0))))
 
 
 def no_derived_tiers(  # noqa: PLR0913 - the signature IS the seam; it must match what it replaces

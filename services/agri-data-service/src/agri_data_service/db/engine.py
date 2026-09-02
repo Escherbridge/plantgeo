@@ -138,8 +138,12 @@ async def local_source_loader_engine(database_url: str) -> AsyncIterator[async_s
 
 @asynccontextmanager
 async def local_source_loader_session(database_url: str) -> AsyncIterator[AsyncSession]:
-    """Yield one isolated session for an explicitly approved local source loader DSN."""
-    async with local_source_loader_engine(database_url) as loader_session, loader_session() as session:
+    """Yield one session pinned to one checked-out loader connection for its full context."""
+    async with (
+        local_source_loader_pool(database_url) as loader_engine,
+        loader_engine.connect() as connection,
+        AsyncSession(bind=connection, expire_on_commit=False) as session,
+    ):
         yield session
 
 

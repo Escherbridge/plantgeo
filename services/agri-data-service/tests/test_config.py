@@ -1,6 +1,8 @@
 """Focused configuration contracts for local publication, migrations, and the cron ingest DSN."""
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import pytest
 from pydantic import ValidationError
@@ -309,3 +311,75 @@ def test_ingest_session_refuses_before_building_an_engine_when_no_dsn_exists(
 
     with pytest.raises(ValueError, match="LOCAL_SOURCE_LOADER_DATABASE_URL"):
         asyncio.run(_enter())
+
+
+def test_local_source_loader_session_pins_one_checked_out_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class Connection:
+        async def __aenter__(self) -> "Connection":
+            events.append("connection-enter")
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            events.append("connection-exit")
+
+    connection = Connection()
+
+    class Engine:
+        def connect(self) -> Connection:
+            events.append("connection-context")
+            return connection
+
+    class Session:
+        def __init__(self, bind: object) -> None:
+            self.bind = bind
+
+        async def __aenter__(self) -> "Session":
+            events.append("session-enter")
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            events.append("session-exit")
+
+        async def rollback(self) -> None:
+            events.append("rollback")
+
+    @asynccontextmanager
+    async def pool(database_url: str) -> AsyncIterator[Engine]:
+        assert database_url == "postgresql+asyncpg://loader"
+        events.append("pool-enter")
+        try:
+            yield Engine()
+        finally:
+            events.append("pool-exit")
+
+    def session_factory(*, bind: object, expire_on_commit: bool) -> Session:
+        assert expire_on_commit is False
+        events.append("session-construct")
+        return Session(bind)
+
+    monkeypatch.setattr(engine_module, "local_source_loader_pool", pool)
+    monkeypatch.setattr(engine_module, "AsyncSession", session_factory)
+
+    async def exercise() -> None:
+        async with engine_module.local_source_loader_session("postgresql+asyncpg://loader") as session:
+            assert session.bind is connection
+            await session.rollback()
+            assert session.bind is connection
+
+    asyncio.run(exercise())
+
+    assert events == [
+        "pool-enter",
+        "connection-context",
+        "connection-enter",
+        "session-construct",
+        "session-enter",
+        "rollback",
+        "session-exit",
+        "connection-exit",
+        "pool-exit",
+    ]

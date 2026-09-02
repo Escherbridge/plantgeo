@@ -38,7 +38,12 @@ from typing import TYPE_CHECKING, Final
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from agri_data_service.pipeline.parquet.gap_fill import _lane_day_lock_key, postgres_lane_day_lock
+from agri_data_service.db.advisory_keys import parquet_lane_publication_barrier_from_day_lock_key
+from agri_data_service.pipeline.parquet.gap_fill import (
+    _lane_day_lock_key,
+    postgres_lane_day_lock,
+    postgres_lane_publication_barrier,
+)
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 
 if TYPE_CHECKING:
@@ -93,11 +98,14 @@ async def test_the_lock_survives_a_rollback_inside_the_held_block(
     half unguarded -- exactly backwards -- and this assertion is the only thing that would notice.
     """
     first, second = two_sessions
-    key = _lane_day_lock_key(LANE_REGISTRY[STREAM], DAY)
+    lane = LANE_REGISTRY[STREAM]
+    key = _lane_day_lock_key(lane, DAY)
 
     async with postgres_lane_day_lock(first, key) as granted:
         assert granted is True
         await first.rollback()
+        async with postgres_lane_publication_barrier(second, f"layer={lane.slug}/kind=observed") as exclusive:
+            assert exclusive is False, "the shared lane barrier did not survive its holder's rollback"
         async with postgres_lane_day_lock(second, key) as contended:
             assert contended is False, "the lane-day lock did not survive its holder's rollback"
 
@@ -110,12 +118,90 @@ async def test_a_different_lane_day_is_grantable_while_one_is_held(
 
     async with postgres_lane_day_lock(first, _lane_day_lock_key(LANE_REGISTRY[STREAM], DAY)) as granted:
         assert granted is True
-        for other_key in (
-            _lane_day_lock_key(LANE_REGISTRY[STREAM], OTHER_DAY),
-            _lane_day_lock_key(LANE_REGISTRY[OTHER_STREAM], DAY),
-        ):
-            async with postgres_lane_day_lock(second, other_key) as elsewhere:
-                assert elsewhere is True, f"{other_key} was excluded by an unrelated lane-day"
+        other_key = _lane_day_lock_key(LANE_REGISTRY[STREAM], OTHER_DAY)
+        async with postgres_lane_day_lock(second, other_key) as elsewhere:
+            assert elsewhere is True, f"{other_key} was excluded by another day in its lane"
+
+
+async def test_a_different_lane_is_independent_of_the_held_lane_barrier(
+    two_sessions: tuple[AsyncSession, AsyncSession],
+) -> None:
+    """Shared/exclusive publication barriers are lane-scoped, never warehouse-scoped."""
+    first, second = two_sessions
+
+    async with postgres_lane_day_lock(first, _lane_day_lock_key(LANE_REGISTRY[STREAM], DAY)) as granted:
+        assert granted is True
+        other_key = _lane_day_lock_key(LANE_REGISTRY[OTHER_STREAM], DAY)
+        async with postgres_lane_day_lock(second, other_key) as elsewhere:
+            assert elsewhere is True, f"{other_key} was excluded by an unrelated lane"
+
+
+async def test_a_writer_blocks_availability_for_its_lane_then_release_allows_it(
+    two_sessions: tuple[AsyncSession, AsyncSession],
+) -> None:
+    """Availability must never verify while even one day writer owns the lane shared lock."""
+    first, second = two_sessions
+    lane = LANE_REGISTRY[STREAM]
+    lane_root = f"layer={lane.slug}/kind=observed"
+
+    async with postgres_lane_day_lock(first, _lane_day_lock_key(lane, DAY)) as writer_granted:
+        assert writer_granted is True
+        async with postgres_lane_publication_barrier(second, lane_root) as publication_granted:
+            assert publication_granted is False
+
+    async with postgres_lane_publication_barrier(second, lane_root) as publication_after:
+        assert publication_after is True
+
+
+async def test_availability_blocks_a_writer_for_its_lane_then_release_allows_it(
+    two_sessions: tuple[AsyncSession, AsyncSession],
+) -> None:
+    """A writer cannot enter the former evidence-verification-to-pointer-CAS race window."""
+    first, second = two_sessions
+    lane = LANE_REGISTRY[STREAM]
+    lane_root = f"layer={lane.slug}/kind=observed"
+    day_key = _lane_day_lock_key(lane, DAY)
+
+    async with postgres_lane_publication_barrier(first, lane_root) as publication_granted:
+        assert publication_granted is True
+        async with postgres_lane_day_lock(second, day_key) as writer_granted:
+            assert writer_granted is False
+
+    async with postgres_lane_day_lock(second, day_key) as writer_after:
+        assert writer_after is True
+
+
+async def test_availability_barrier_survives_rollback_inside_its_held_block(
+    two_sessions: tuple[AsyncSession, AsyncSession],
+) -> None:
+    """The exclusive barrier spans long verification even if its session rolls back a snapshot."""
+    first, second = two_sessions
+    lane = LANE_REGISTRY[STREAM]
+    lane_root = f"layer={lane.slug}/kind=observed"
+
+    async with postgres_lane_publication_barrier(first, lane_root) as publication_granted:
+        assert publication_granted is True
+        await first.rollback()
+        async with postgres_lane_day_lock(second, _lane_day_lock_key(lane, DAY)) as writer_granted:
+            assert writer_granted is False
+
+
+def test_lane_barrier_key_derivation_rejects_noncanonical_day_lock_shapes() -> None:
+    """A second historical spelling would create a lock namespace that excludes nothing."""
+    lane = LANE_REGISTRY[STREAM]
+    canonical = _lane_day_lock_key(lane, DAY)
+
+    assert parquet_lane_publication_barrier_from_day_lock_key(canonical) == (
+        f"parquet-lane-publication:{lane.slug}:observed:v1"
+    )
+    for malformed in (
+        canonical.replace(":z13:", ":z09:"),
+        canonical.replace(DAY.isoformat(), "2026-02-30"),
+        canonical + ":suffix",
+        canonical.replace(lane.slug, "UPPER"),
+    ):
+        with pytest.raises(ValueError, match="lane-day lock key"):
+            parquet_lane_publication_barrier_from_day_lock_key(malformed)
 
 
 async def test_one_session_may_retake_its_own_lane_day(

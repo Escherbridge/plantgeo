@@ -37,7 +37,7 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVICE_ROOT / "src"))
 
 from agri_data_service.config import settings  # noqa: E402
-from agri_data_service.db.engine import local_source_loader_engine  # noqa: E402
+from agri_data_service.db.engine import local_source_loader_session  # noqa: E402
 from agri_data_service.foundation.parquet.absence import GovernedAbsence  # noqa: E402
 from agri_data_service.foundation.parquet.completion import PartitionCompletion  # noqa: E402
 from agri_data_service.foundation.parquet.paths import (  # noqa: E402
@@ -1197,7 +1197,7 @@ async def _run_locked(args: argparse.Namespace, *, checkpoint_path: Path) -> int
     saved_months_revalidated = 0
     saved_parity_months_revalidated = 0
 
-    async with local_source_loader_engine(database_url) as session_factory, session_factory() as session:
+    async with local_source_loader_session(database_url) as session:
         layer_result = await session.execute(_LAYER_ID_SQL, {"name": FIRE_DETECTIONS_STREAM})
         layer_id = layer_result.scalar_one_or_none()
         await session.rollback()

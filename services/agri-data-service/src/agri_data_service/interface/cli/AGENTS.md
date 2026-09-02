@@ -18,3 +18,11 @@ Thin Click adapters for the `agri-service` console script. The root exposes exac
 - Do not restore the retired binary name, the retired top-level CLI module, flat leaf aliases, or compatibility forwarding.
 - Every deployment command moves in the same change as a leaf path; a stale Railway dashboard override is a
   deployment mismatch, not permission to retain an alias.
+
+## Availability operator inputs
+
+`data availability-bootstrap` and `data availability-publish` validate an externally SHA-pinned
+local JSON document offline by default. Only explicit `--apply` constructs a bucket client, verifies
+every referenced object digest and attempts conditional publication. The commands do not discover
+history, activate schedulers or grant production authorization; bootstrap inputs must already name
+the exact verified manifest/checkpoint receipts.

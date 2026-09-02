@@ -1,32 +1,21 @@
-"""Delete the Parquet warehouse's objects so the bulk drain can rewrite it from a clean bucket.
+"""Inventory the historical Parquet layout without mutating object storage.
 
 Run from services/agri-data-service:
 
     uv run python scripts/purge_parquet_layout.py                 # DRY RUN: count, never delete
     uv run python scripts/purge_parquet_layout.py --json
     uv run python scripts/purge_parquet_layout.py --layer drought # narrow to one stream
-    uv run python scripts/purge_parquet_layout.py --confirm       # actually delete
 
-DRY RUN IS THE DEFAULT AND `--confirm` IS THE ONLY WAY PAST IT. This deletes production objects and
-nothing here is recoverable; the bucket has no versioning.
+Mutation mode is retired. ``--confirm`` is retained only as a fail-closed compatibility guard and
+exits before object-store construction or listing. ``--include-unparsable`` broadens only the
+read-only inventory.
 
-WHY THIS EXISTS (owner decision, RUNBOOK 0.35.5). Every day already written under the zoom layout
-predates the completion marker, so it has none and classifies `incomplete` on deploy. The rejected
-alternative was a backfill verb that stamps completion onto those days -- but nothing verified them,
-and asserting completion for an unverified day is the one claim this marker exists to make
-trustworthy. RUNBOOK 0.32.4 had already decided these objects are DISCARDED rather than migrated, so
-marking objects that are slated for deletion is work spent to weaken a guarantee.
+WHY THIS REMAINS. The script originally supported a destructive RUNBOOK 0.35.5 cleanup. That
+mutation path is retired; the classifier remains useful for read-only inventory of incomplete,
+current-layout, and legacy objects without making a completion or deletion claim.
 
-WHAT IT DELETES. By default every object under the store prefix that PARSES as the current layout --
-part files, governed-absence markers and completion markers alike. Legacy objects written before the
-`zoom=` axis existed do not parse and are left alone unless `--include-unparsable` is passed; they
-are equally condemned (RUNBOOK 0.32.4) but deleting an unrecognised key is a different and blunter
-act than deleting one this code can name, so it asks separately.
-
-A GOVERNED ABSENCE IS EVIDENCE, AND THIS DESTROYS IT TOO. `absent.json` records that a source was
-asked and had nothing -- a claim the drain must re-derive rather than inherit. That is intended
-here: the drain rewrites every day it walks, and an absence marker surviving beside freshly drained
-parts would be the `conflict` state that only an admin may resolve.
+The inventory classifies current part, completion-marker, governed-absence, and legacy/unparsable
+keys. It does not imply authorization to remove any of them.
 """
 
 from __future__ import annotations
@@ -75,7 +64,7 @@ def main() -> int:
     parser.add_argument(
         "--confirm",
         action="store_true",
-        help="Actually delete. Without it this only counts, which is the default and the safe mode.",
+        help="Retired mutation flag; always fails before object-store access.",
     )
     parser.add_argument(
         "--layer",
@@ -87,18 +76,19 @@ def main() -> int:
     parser.add_argument(
         "--include-unparsable",
         action="store_true",
-        help="Also delete keys that do not parse as the current layout -- the pre-zoom objects of "
-        "RUNBOOK 0.32.4. Off by default: deleting a key this code cannot name is a blunter act.",
+        help="Also include legacy keys that do not parse as the current layout in the read-only inventory.",
     )
     parser.add_argument("--json", action="store_true", help="Emit the report as JSON.")
     args = parser.parse_args()
+    if args.confirm:
+        parser.error("--confirm mutation mode is retired; this command is permanently read-only")
 
     store = ObjectStore.from_settings(settings)
     wanted_layers = set(args.layer) if args.layer else None
 
     by_kind: Counter[str] = Counter()
     by_layer: Counter[str] = Counter()
-    doomed: list[str] = []
+    selected: list[str] = []
     for listed in store._backend.list_objects(store.prefix):
         relative_path = store.relative_key(listed.key)
         kind = classify(relative_path)
@@ -109,43 +99,26 @@ def main() -> int:
         by_layer[layer] += 1
         if kind == KIND_UNPARSABLE and not args.include_unparsable:
             continue
-        doomed.append(listed.key)
-
-    deleted = 0
-    failures: list[str] = []
-    if args.confirm:
-        for key in doomed:
-            try:
-                store._backend.delete(key)
-            except Exception as error:  # one undeletable key must not abandon the rest
-                failures.append(f"{key}: {type(error).__name__}: {error}")
-                continue
-            deleted += 1
+        selected.append(listed.key)
 
     report = {
         "bucket_prefix": store.prefix,
-        "dry_run": not args.confirm,
+        "dry_run": True,
+        "mutation_mode": "retired",
         "seen_by_kind": dict(by_kind),
         "seen_by_layer": dict(sorted(by_layer.items())),
-        "selected_for_deletion": len(doomed),
-        "deleted": deleted,
-        "failures": failures,
+        "selected_for_inventory": len(selected),
+        "deleted": 0,
     }
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
-        mode = "DRY RUN -- nothing was deleted" if not args.confirm else "DELETED"
-        print(f"{mode}. prefix={store.prefix or '<bucket root>'}")
+        print(f"READ-ONLY INVENTORY -- mutation mode retired. prefix={store.prefix or '<bucket root>'}")
         for kind, count in sorted(by_kind.items()):
             print(f"  {kind:>18}: {count}")
-        print(f"  {'selected':>18}: {len(doomed)}")
-        if args.confirm:
-            print(f"  {'deleted':>18}: {deleted}")
-        for failure in failures:
-            print(f"  FAILED {failure}")
-        if not args.confirm and doomed:
-            print("\nRe-run with --confirm to delete. There is no undo and the bucket has no versioning.")
-    return 1 if failures else 0
+        print(f"  {'selected':>18}: {len(selected)}")
+        print(f"  {'deleted':>18}: 0")
+    return 0
 
 
 if __name__ == "__main__":

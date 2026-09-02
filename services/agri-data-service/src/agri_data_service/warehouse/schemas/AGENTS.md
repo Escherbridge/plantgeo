@@ -62,3 +62,12 @@ The four soil-temperature depths share the completed bundle's separate 21-field 
 Their coarse cells sum physical-candidate counts, null selected-row identity, and compute
 `lineage_sha256` from sorted child digests with one newline per value. The helper registers these
 storage and zoom contracts only; it does not rerun or rewrite the immutable snapshot builders.
+
+## `availability_index.py` is publication state, not a lane data schema
+
+The availability index is one canonical standalone Arrow schema shared by every time-bearing lane;
+it is deliberately not a `ParquetStreamSchema` registry entry. Rows are terminal `(day, rung)`
+claims, not renderable observations. `required_rungs` uses the foundation's canonical ordered
+identity `(0, 5, 9, 13)`, and `data_receipts` is an Arrow-native ordered list of key/SHA structs so
+multi-part rungs retain every immutable part receipt without embedding a second JSON language in
+Parquet.

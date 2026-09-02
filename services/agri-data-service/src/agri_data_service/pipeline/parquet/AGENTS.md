@@ -108,11 +108,15 @@ before §0.35).
 **A governed absence retracts any completion marker.** `write_absence` removes `_complete.json` if
 it exists, because an absence claim and a data claim cannot coexist.
 
-**The whole lane-day runs under a session-scoped Postgres advisory lock.** Two drivers on one
+**The whole lane-day runs under two session-scoped Postgres advisory locks.** A writer first takes
+the lane's shared publication barrier and then its existing exclusive lane-day lock. Two drivers on one
 lane-day can interleave so the slower one's prune deletes parts the faster one just wrote, then
 stamps a completion marker whose `part_count` matches the truncated remainder exactly — the bucket
 and its receipt agreeing on a population that lost rows, which no later census or audit can detect.
-The lock is taken before any object is touched and held until the session closes (§0.35.4).
+Both locks are taken before any object is touched and held through terminal publication (§0.35.4).
+Different days in one lane may coexist under the shared barrier. Availability publication takes
+that same lane barrier exclusively, so no writer can mutate a receipt between verification and the
+conditional `_LATEST` update.
 
 ## This path is synchronous, deliberately
 `python.md` calls for async I/O, and this module is sync. It runs from the ingestion CLI and the
@@ -430,7 +434,8 @@ their markers verify, and only while the queued fingerprint still equals the ver
 The stable key in `db/advisory_keys.py` is shared by governed registration (transaction lock), every
 vegetation publication path (session lock), and exact audit (session lock). The loader engine's
 single-connection pool is a precondition just as it is for lane-day locks: the barrier must survive
-the commits and rollbacks used by a long audit. Lock order is vegetation barrier, then lane-day.
+the commits and rollbacks used by a long audit. Lock order is vegetation barrier, shared lane
+publication barrier, then exclusive lane-day.
 
 `parquet-repair-audit-vegetation` holds that barrier across an opening exact audit, force-enqueue of
 source-backed finding days, repair through this same writer, and a fresh closing audit. No raw row is
@@ -438,3 +443,60 @@ deleted and ingestion remains enabled; registration merely waits while the stabl
 The corpus is digested again after materialisation and the transaction refuses if it moved between
 the two reads, so a READ COMMITTED registration cannot label observations from one raw revision
 with another revision's source-release checksum.
+
+## `availability_index.py` — immutable generations, one conditional pointer
+
+Each time-bearing physical lane owns `<lane-root>/availability/_LATEST.json` and content-addressed
+`generation=<parquet-byte-sha>/availability.parquet` objects. A generation contains complete
+same-state `(0, 5, 9, 13)` ladders only. Rows carry exact source, terminal, part and completion
+receipts; governed absences carry no data/completion receipts and require one stable reason across
+the ladder.
+
+The shared `ObjectStoreBackend` has no compare-and-swap operation. Availability therefore owns a
+narrow storage protocol and a Boto adapter whose pointer write uses S3/R2 conditional `PutObject`
+(`IfNoneMatch="*"` for generation zero, `IfMatch=<ETag>` for successors). A failed condition retries
+from the generation that won; GET followed by unconditional PUT is never an approximation for this
+contract. Immutable bootstrap and Parquet objects also use create-only puts: a 412 adopts only
+byte-identical visible state, while a transient 409 gets a small bounded retry budget and never
+silently widens into overwrite behavior.
+
+The bootstrap source-inventory root is derived, not asserted: a domain-separated SHA-256 over the
+canonical key-sorted manifest/checkpoint receipt set. Idempotent bootstrap first verifies the
+existing pointer and generation; it never reopens the historical input inventory after the lane is
+already bound. Successors bind prior key and SHA, bootstrap key and SHA, semantic generation
+receipt, source ceiling and inventory root in both pointer and Parquet metadata. The Parquet byte
+digest remains outside its own metadata to avoid an impossible recursive self-hash.
+
+Publication treats an exact replay already present under a newer ceiling as a no-op. Disjoint
+additions rebase on the conditional winner and retain its rows and maximum row-witnessed ceiling;
+a differing same-grain row must carry a strictly newer publication timestamp. Generation clocks
+advance logically past the winning pointer even when a delayed request supplied an older clock.
+Rollback is deliberately different from append: it re-verifies the retained generation's bootstrap
+and row receipts, then restores that generation's own rows and source ceiling as a new immutable
+head, preserving both audit history and intentional ceiling regression.
+
+Receipt keys are not type tags by convention. Bootstrap inputs, day-source evidence and rung-terminal
+evidence are canonical JSON objects under content-addressed `availability/evidence/` keys; each has
+an exact schema and repeats the lane identity it is allowed to establish. Terminal evidence then
+cross-binds the row to authoritative completion/absence markers and physical part paths. Part files
+are opened only far enough to read Parquet metadata, while the availability generation itself checks
+its declared row bound before table materialization.
+
+Every read carries a purpose-specific byte ceiling. The Boto adapter checks `ContentLength` before
+reading, limits the body to ceiling plus one byte, closes it, and retains ETag plus optional VersionId.
+Publication snapshots those identities for every direct and transitive object it verifies. Pointer
+bytes are prepared first; every snapshot is then reread immediately before the adjacent conditional
+pointer write. A byte, length, ETag or VersionId change aborts rather than refreshing the snapshot.
+The ordinary reader remains exactly two object reads—pointer and generation—and intentionally does
+not traverse receipt evidence.
+
+Availability bootstrap, append/correction and rollback are async public operations. They acquire the
+lane-wide advisory barrier exclusively before the first receipt read and retain it through every
+CAS conflict/rebase attempt. Their synchronous object-store cores are private lock-assuming units,
+called only by those guarded wrappers and deterministic unit tests. `--apply` opens the dedicated
+single-connection source-loader
+session and calls the guarded API; dry-run opens neither PostgreSQL nor R2. The deployment that first
+enables apply must drain old writer processes, because a process predating this barrier cannot join
+the lock protocol. The full lock order is vegetation-wide barrier where applicable, shared lane
+publication barrier, exclusive lane-day lock, then object mutations; availability takes only the
+exclusive lane publication barrier.

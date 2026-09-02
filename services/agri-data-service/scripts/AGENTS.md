@@ -1,5 +1,9 @@
 # Vegetation production proof scripts
 
+`purge_parquet_layout.py` is permanently inventory-only. Its legacy `--confirm` spelling is a
+fail-closed compatibility guard that exits before object-store construction; no script in this
+directory may treat that flag or `--include-unparsable` as deletion authorization.
+
 `vegetation_ingest_status.py` reads the raw `geo.features` vegetation population in a read-only
 transaction. Its changed-cell-day counts collapse raw scene rows to the same `(cellKey,
 publisher-named day)` grain the promotion transform uses, then test presence against the governed
