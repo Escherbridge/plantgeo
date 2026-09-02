@@ -76,8 +76,10 @@ genuine append-only time series, not a latest-value cache. See §4.
   (`ingest/lanes.py:214-226`) in `chunk_days=10` / `window_days=30` steps toward the floor in §3.
   A read-only production inspection on 2026-08-29 found `streamflow-archive` idle with zero new
   records, zero missing planned days, and no reopened gaps. That proves the source-to-PostgreSQL walk
-  is settled; it does not by itself activate the separate Parquet gap-fill scheduler. The deployed
-  `plantgeo-job-executor` was healthy but reported `active_lane_count=0`, so it was not a water writer.
+  was settled at that checkpoint; it did not by itself activate the separate Parquet gap-fill
+  scheduler. The 2026-09-02 handoff supersedes that observation: the executor now has 37 active
+  executable lanes, including `postgres-streamflow`, `jobs-streamflow-archive`,
+  `parquet-water-gauges` and `water-gauges-direct-forward`.
 - **Observed lag**: not separately measured for this lane in the repo. USGS daily values are
   conventionally provisional-same-day-to-next-day and get revised; nothing here confirms or
   quantifies that lag for this warehouse's ingest — **UNVERIFIED**, would need a same-day vs.

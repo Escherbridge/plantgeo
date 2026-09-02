@@ -63,12 +63,17 @@ three independent sources:
    key must never reach a log because FIRMS interpolates it straight into the
    request path.
 
+As of the 2026-09-02 scheduler handoff, that credential is configured on the
+stateful `plantgeo-job-executor`; the cited README wording above is preserved as
+historical source evidence.
+
 The memory note this briefing's "no credential" framing likely traces to
 (`plantgeo-pipeline-credentials`) is about a *different* NASA product — "NASA
 historical lattice" (NASA POWER) is plan-blocked, not key-blocked. The same note
 states plainly: *"`NASA_FIRMS_KEY` is already set on `plantgeo-ingest-cron` and
 is used by the FIRMS acquisition path only."* Do not conflate the two NASA
-sources.
+sources. That statement describes the pre-handoff location; the credential is
+now configured on `plantgeo-job-executor`.
 
 **Licensing/redistribution constraint: UNVERIFIED in this repo.** No file in
 `services/agri-data-service` or `docs/` states FIRMS' redistribution terms. NASA
@@ -88,10 +93,9 @@ satellite acquisition (`acqDate`/`acqTime`) and `geo.features.created_at` for
 recent rows. Confirm with a query comparing the two on a sample of the newest
 rows.
 
-**Ingestion cadence (forward path):** hourly. `infra/cron-ingest/Dockerfile`
-runs `agri-service data ingest-all` to completion on Railway's `cronSchedule`, and the
-process exit code is the run's verdict (`ingest/AGENTS.md:303`). `ingest-all`
-runs its jobs sequentially, not concurrently (`ingest/AGENTS.md:63`).
+**Ingestion cadence (forward path):** hourly. Executor lane `postgres-firms` runs
+`agri-service data ingest-firms` as an independent failure domain; the continuous executor owns
+its schedule, retries and dead-letter state. There is no Railway `cronSchedule`.
 `FIRMS_DAY_RANGE` (default `2`, clamped `1`-`5`, `firms.py:98,181-191`) is a
 rolling lookback, so a given detection is typically re-seen across 2+ hourly
 runs before it ages out — re-ingestion of an already-written detection is a
@@ -101,9 +105,9 @@ correct `records_written == 0`, not a failure (see §5).
 fetches exact settled UTC days from every product whose live FIRMS availability window covers the
 day, applies the archive path's SP-over-NRT identity precedence, and writes the deduplicated
 0.005-degree cell-day aggregate directly to the dedicated
-`layer=fire-detections/kind=observed/zoom={13,09,05,00}` namespace. Its Railway
-definition is `services/agri-data-service/railway.fire-detections-forward.json`
-and is deployed as the hourly `plantgeo-fire-detections-forward` Railway service. Each tick refreshes
+`layer=fire-detections/kind=observed/zoom={13,09,05,00}` namespace. Executor lane
+`fire-detections-direct-forward` runs at minute `:15` each hour. The old
+`plantgeo-fire-detections-forward` service is fenced with no schedule and a no-op command. Each turn refreshes
 the bounded settled window at or after `FIRE_FORWARD_START_DAY=2026-08-25`, including
 already-complete direct-owned days,
 so late NRT revisions are not hidden by an earlier marker. The run is bounded to a five-day lookback and a finite number

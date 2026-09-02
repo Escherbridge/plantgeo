@@ -4,10 +4,11 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Current status (2026-09-01): production is serving the new timeline catalogue, but browser
-acceptance is RED. Fire still renders through the legacy PostgreSQL `/api/fires` path; several
-climate and soil products have contiguous unpublished tails; the stateful executor is healthy but
-has zero active lanes; and coarse continuous fields render with visible holes or block seams. Start
+**Current status (2026-09-02): production is serving the new timeline catalogue, but browser
+acceptance remains RED. Fire still renders through the legacy PostgreSQL `/api/fires` path; several
+climate and soil products have contiguous unpublished tails; the stateful executor is the sole
+scheduler with 37 active executable lanes; and coarse continuous fields render with visible holes
+or block seams. Start
 with the LIVE section immediately below.** The 2026-08-29 cutover checkpoint and all older session
 notes are retained as historical evidence. They do not authorize PostgreSQL retirement or claim a
 successful browser cutover.
@@ -83,6 +84,19 @@ archive, not a working forward publication loop.
 
 ### Scheduler and writer ownership
 
+- **Verified handoff:** `main` is
+  `e4490c3c2f2e23f75cc9d6e297f4be646e0e00a1`; current executor deployment
+  `b1f35a20-6e05-48ff-9801-5235c9753a01` is `SUCCESS` at that exact commit. Railway reports
+  `scheduled=[]` across the production environment. All six legacy service objects have a null
+  schedule, no-op command and `restartPolicyType: NEVER`; they are not writers.
+- **Current runtime blockers are pre-existing failures surfaced by the new owner.**
+  `jobs-matview-refresh` reports 200 standing dead letters and current
+  `matview_refresh_failed` attempts because `geo.mv_feature_observation_day_axis` and
+  `geo.mv_signal_cell_daily` are absent. `postgres-fire-perimeters` entered retry backoff with
+  `UpstreamPayloadError: upstream response exceeded the byte limit`. Repair the missing relation
+  contracts and WFIGS response bound before requeueing; do not erase dead letters or force retries
+  to make the scheduler appear green.
+
 - **Observed preflight at base `88dff29535339c08f97a55bf258417674268cd92`:**
   `plantgeo-ingest-cron` service `3ae3cc37-c398-43fe-b74c-83e4da130423`, deployment
   `d3c6e254-b00b-43c5-93b8-c38040c14ad3`, was `CRASHED`. Its logs contained bounded-source
@@ -91,12 +105,10 @@ archive, not a working forward publication loop.
   deployment as `REMOVED` and a new deployment at the same commit as `SUCCESS` while its invocation
   was still running and already reporting source failures. Neither a crash, a removed deployment nor
   a green service badge proves that scheduler responsibility transferred.
-- `plantgeo-job-executor` service `565ecaad-9946-48f1-8a0b-28fa60494a16` is the sole approved future
-  scheduler. The observed deployment `36e7a5ff-a5b2-466a-abc0-257f5e7db659` was `SUCCESS` but came
-  from branch `codex/unified-data-lane-scheduler` at
-  `b4ec9c77ca1c65f2a1d0dbf24e95acaa1210f1e1`; its logs reported 38 registered lanes and
-  `active_lane_count=0`. It remains shadow/inactive until the exact reviewed `main` deployment and
-  post-deploy handoff gates below pass.
+- `plantgeo-job-executor` service `565ecaad-9946-48f1-8a0b-28fa60494a16` is the sole scheduler.
+  It reports 38 registered responsibilities, of which the one-shot soil-moisture snapshot remains
+  terminal and 37 executable lanes are active. A post-redeploy tick ingested 591 NWS sensor rows,
+  wrote 584 without truncation, and closed healthy at `2026-09-02T18:05:50Z`.
 - The complete production writer inventory is six service objects: `plantgeo-ingest-cron`,
   `plantgeo-cron-mtbs`, `plantgeo-cron-soilgrids`, `plantgeo-fire-detections-forward`,
   `plantgeo-water-gauges-forward`, and the completed one-shot
@@ -104,8 +116,9 @@ archive, not a working forward publication loop.
   each keeps its source cadence and settlement contract in the executor registry. The one-shot has
   a terminal completion receipt rather than a fabricated recurrence.
 - Railway cron scheduling is rejected. The repository cron configs and cron-only images are retired
-  by gapless p5, and the six service objects are removed only in the controlled post-merge operation.
-  They must never be reconnected, recreated, un-crashed, redeployed, armed, or used as rollback.
+  by gapless p5. The six legacy objects are fenced and remain only while credential references and
+  mapped-lane proof are completed. They must never be reconnected, recreated, un-crashed,
+  redeployed, armed, or used as rollback.
 - Rollback pauses the affected executor lane through `agri.job_definition.enabled` or removes it from
   `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES`; it preserves PostgreSQL/R2 data, manifests and checkpoints.
   It never restores a `cronSchedule` or resurrects a Railway service.
@@ -113,25 +126,26 @@ archive, not a working forward publication loop.
   product needs an observed executor owner for forward refresh, gap authoring and coverage status,
   with leases, immutable checkpoints, retries, dead-letter visibility and reconciliation.
 
-#### Owner directive and controlled activation order — 2026-09-02
+#### Completed activation and remaining retirement order — 2026-09-02
 
 This directive supersedes every older statement anywhere in this runbook that says to restore a
 `cronSchedule`, un-crash/redeploy/arm a cron, keep a legacy writer connected, reconnect
 `plantgeo-parquet-drain`, prohibit removal of Railway cron services, or use a cron as rollback.
 Those statements remain below only as dated incident history.
 
-The authorized order is exact:
+Steps 1-4 below are complete; steps 5-6 remain the operating rule:
 
-1. merge the independently reviewed scheduler release to `main` without losing the availability
+1. merged the independently reviewed scheduler release to `main` without losing the availability
    p0a evidence;
-2. wait for the exact `plantgeo-job-executor` deployment of that `main` commit to reach `SUCCESS`;
-3. on an explicit orchestration follow-up, read all six legacy services, their latest deployments
-   and logs, plus executor `agri.job_*` leases; stop if any writer/lease is in flight or any mapped
-   executor lane is absent;
-4. fence the old services without overlap, set only the variable names
+2. verified the exact `plantgeo-job-executor` deployment of that `main` commit at `SUCCESS`;
+3. read all six legacy services, their latest deployments and logs, plus executor state; no writer
+   was in flight at the handoff fence;
+4. fenced the old services without overlap, set
    `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` and
-   `PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS`, and observe every replacement lane complete;
-5. remove only the six legacy writer service objects, recording a removal receipt for each; then
+   `PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS`, and activated 37 executable lanes;
+5. remove a legacy writer object only after its mapped lane has an observed success. Keep
+   `plantgeo-ingest-cron` inert until its hidden CDS credentials and service-reference variables are
+   promoted to stable owners. Record a removal receipt for each object; then
    re-read all production services, deployments, executor definitions/runs/work items/dead letters,
    manifests and checkpoints; and
 6. if a lane fails, disable that executor lane and diagnose it in place. Do not recreate a cron.

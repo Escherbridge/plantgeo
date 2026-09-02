@@ -59,14 +59,22 @@ resource: ./spec.md
 ## Wave P3 — controlled production handoff
 
 - [x] Record the 2026-09-02 owner authorization for executor-only scheduling and cron-object removal.
-- [ ] Merge the reviewed release to `main` and prove the exact executor deployment is `SUCCESS`.
-- [ ] Receive the explicit orchestration follow-up, then prove all legacy owners and executor leases
+- [x] Merge the reviewed release to `main` and prove the exact executor deployment is `SUCCESS`.
+      Release `e4490c3c2f2e23f75cc9d6e297f4be646e0e00a1` is active in deployment
+      `b1f35a20-6e05-48ff-9801-5235c9753a01`.
+- [x] Receive the explicit orchestration follow-up, then prove all legacy owners and executor leases
       inactive before activation.
+- [x] Fence all six legacy service objects with null schedules, no-op commands and `NEVER` restart;
+      verify `scheduled=[]` across the production environment and activate 37 executable lanes.
+- [ ] Repair 200 pre-existing `matview-refresh` dead letters caused by absent
+      `geo.mv_feature_observation_day_axis` and `geo.mv_signal_cell_daily`; repair the WFIGS payload
+      bound that placed `postgres-fire-perimeters` in retry backoff.
 - [ ] Close the bounded observed tails without rewriting valid immutable days.
 - [ ] Publish governed absences only with source receipts.
 - [ ] Observe retry, restart and expired-lease recovery.
-- [ ] Remove all six legacy scheduled/one-shot writer service objects, capture one removal receipt per
-      service, and re-read the complete production service/deployment matrix.
+- [ ] Remove eligible legacy writer objects after mapped-lane proof, capture one removal receipt per
+      service, and re-read the complete production service/deployment matrix. Keep the inert ingest
+      object until its hidden CDS credentials and service-reference variables move to stable owners.
 - [ ] Exercise rollback by disabling an executor lane; never restore a Railway cron schedule/service.
 
 ## Wave P4 — burn-in and handoff

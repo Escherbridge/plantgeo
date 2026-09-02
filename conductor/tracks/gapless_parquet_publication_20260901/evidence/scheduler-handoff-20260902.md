@@ -2,7 +2,7 @@
 type: track-evidence
 track: gapless_parquet_publication_20260901
 slice: p5
-status: implementation_authorized_activation_gated
+status: activated_with_fenced_legacy_objects
 observed_at: 2026-09-02
 ---
 
@@ -10,16 +10,15 @@ observed_at: 2026-09-02
 
 ## Verdict
 
-The owner authorizes `plantgeo-job-executor` as PlantGeo's only future scheduler and durable
-invocation owner. Railway cron scheduling is rejected. This packet authorizes the reviewed
-repository release; it does **not** authorize a feature-branch production handoff.
+`plantgeo-job-executor` is PlantGeo's sole production scheduler and durable invocation owner.
+Railway cron scheduling is rejected. The reviewed release is on `main`, the exact executor release
+is active, and Railway reports no scheduled services in the environment.
 
-At this checkpoint, all six legacy scheduled/one-shot writer service objects remain blocked from
-removal. The release must first merge to `main`; the exact executor deployment for that commit must
-reach `SUCCESS`; the orchestration task must explicitly resume the production operation; and a
-fresh read must prove both the old services and executor leases have no run in flight. A crash,
-missing schedule, source disconnect, successful deployment badge or completed historical archive is
-not transfer evidence.
+All six legacy scheduled/one-shot writer objects remain present but fenced: `cronSchedule: null`, a
+no-op start command, `restartPolicyType: NEVER`, and zero retries. They are not scheduler fallbacks.
+`plantgeo-ingest-cron` must remain inert until its hidden CDS credentials and service-reference
+variables are promoted to stable owners. Each other object remains until its mapped executor lane
+has an observed success and a removal receipt can be recorded.
 
 No PostgreSQL data, R2 data, source adapter, ingestion command, manifest, checkpoint or durable
 ledger is retired. Rollback disables an executor lane and diagnoses it in place. It never restores a
@@ -35,16 +34,19 @@ ledger is retired. Rollback disables an executor lane and diagnoses it in place.
 | preflight ingest deployment | `d3c6e254-b00b-43c5-93b8-c38040c14ad3`, observed `CRASHED` |
 | later ingest read | preflight deployment shown as `REMOVED`; active deployment `80f43cf6-d0c9-449f-9efa-f8353e1d7519` shown `SUCCESS` at the same base while its invocation remained in flight and emitted source failures |
 | executor service | `plantgeo-job-executor`, `565ecaad-9946-48f1-8a0b-28fa60494a16` |
-| observed executor deployment | `36e7a5ff-a5b2-466a-abc0-257f5e7db659`, `SUCCESS`, branch `codex/unified-data-lane-scheduler`, commit `b4ec9c77ca1c65f2a1d0dbf24e95acaa1210f1e1` |
-| observed executor ownership | 38 lanes, `active_lane_count=0`; process healthy and leader-capable but shadow-only |
-| release commit | `${SCHEDULER_RELEASE_COMMIT}`; fill with the reviewed pushed commit, then require exact equality with deployed `main` |
+| preflight executor deployment | `36e7a5ff-a5b2-466a-abc0-257f5e7db659`, `SUCCESS`, branch `codex/unified-data-lane-scheduler`, commit `b4ec9c77ca1c65f2a1d0dbf24e95acaa1210f1e1`; shadow evidence only |
+| release commit | `e4490c3c2f2e23f75cc9d6e297f4be646e0e00a1`, exact `origin/main` |
+| current executor deployment | `b1f35a20-6e05-48ff-9801-5235c9753a01`, `SUCCESS`, exact release commit above |
+| current executor ownership | 38 registered responsibilities: 37 active executable lanes plus the terminal snapshot-only soil-moisture responsibility |
+| Railway schedule census | production environment `scheduled=[]`; zero Railway cron schedules |
 | activation variables | `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES`; `PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS`; `PLANTGEO_JOB_EXECUTOR_POLL_SECONDS`; `PLANTGEO_JOB_EXECUTOR_MAX_LANES_PER_TICK` |
 
-The `environment-status` convenience read returned `You don't have the required role (viewer) on
+During preflight, the `environment-status` convenience read returned `You don't have the required role (viewer) on
 this resource`. Service listing, per-service config, deployment history, status and bounded logs were
 still readable and produced the matrix below. MTBS and SoilGrids are a Railway resolution edge case:
 the service API returned a null schedule while their deployed repository configs and repeated log
-start minutes proved the schedules. Null API output is not permission to declare them unscheduled.
+start minutes proved the then-existing schedules. The post-handoff full environment read is
+authoritative for current state and returns `scheduled=[]`.
 
 ## Authoritative responsibility matrix
 
@@ -73,10 +75,11 @@ bounded `parquet-drain`/`parquet-gap-fill` implementation remains available; reg
 `parquet-<slug>` backlog lanes own ongoing bounded repair. Reconnection of the historical service is
 prohibited.
 
-## Complete production service census
+## Preflight production service census
 
-Only the first six rows are eventual removal candidates. The remaining eight services are outside
-this scheduler cleanup and must not be removed.
+This table preserves the preflight deployments. The first six rows are eventual removal candidates;
+their current fence receipt follows the table. The remaining eight services are outside this
+scheduler cleanup and must not be removed.
 
 | service | service id | active deployment / status at read | classification |
 |---|---|---|---|
@@ -86,7 +89,7 @@ this scheduler cleanup and must not be removed.
 | `plantgeo-fire-detections-forward` | `f4ad61fe-e71a-4776-b9d5-0b153c9ee5b7` | `5e3ebe9f-5a26-449b-85d1-344c32a44c2a` / `SUCCESS` | blocked legacy writer |
 | `plantgeo-water-gauges-forward` | `40cb252b-e21c-4140-8d94-5db77eb2398d` | `e04bb4b9-6b0a-4e4e-9b60-4eb82447f90e` / `SUCCESS` | blocked legacy writer |
 | `plantgeo-soil-moisture-parquet-load` | `4a1413f1-5f96-44ea-853c-6a379c7673c4` | `29c54089-79b1-45a4-8b9e-471369e2ce93` / `SUCCESS`, completed one-shot | blocked until post-merge no-run/artifact check |
-| `plantgeo-job-executor` | `565ecaad-9946-48f1-8a0b-28fa60494a16` | `36e7a5ff-a5b2-466a-abc0-257f5e7db659` / `SUCCESS`, shadow-only feature branch | replacement; never remove |
+| `plantgeo-job-executor` | `565ecaad-9946-48f1-8a0b-28fa60494a16` | `36e7a5ff-a5b2-466a-abc0-257f5e7db659` / `SUCCESS`, shadow-only feature branch | preflight replacement evidence; superseded by current deployment `b1f35a20-6e05-48ff-9801-5235c9753a01` |
 | `plantgeo-parquet-api` | `33aed861-af76-4fdd-a95e-784bdcc95e55` | `91b791ab-9552-4d31-9ff8-61a89c8f637e` / `SUCCESS` | serving; not a scheduler target |
 | `plantgeo-main` | `fa08a3aa-6d1d-43eb-846b-15dbfd887d61` | `f232fb54-d7df-4fe2-a91b-fc90fce315fc` / `SUCCESS` | application; not a scheduler target |
 | `plantgeo-martin` | `fe6ef46e-7b4c-41ef-8b64-5100a344c526` | `dc48f11a-1216-4934-9536-2a41e4f68a5b` / `SUCCESS` | serving; not a scheduler target |
@@ -94,6 +97,21 @@ this scheduler cleanup and must not be removed.
 | `plantgeo-spatiotemporal-db` | `1e166530-9c8a-4d4a-b685-a70c801fc449` | `1f33637e-bb81-410d-9066-770e778832dc` / `SUCCESS` | data-bearing; never remove here |
 | `plantgeo-Redis` | `ae23c58e-b1e3-4c01-9d94-cd365550f363` | `dcc757e0-ead9-4226-8e52-9a89f4d251ee` / `SUCCESS` | cache/transport; not a scheduler target |
 | `Aevani-Postgress` | `3e0ea761-f509-474e-97cf-0086acd9ab7a` | `b3a6ab66-145b-48ca-9dfa-db41e64c1094` / `SUCCESS` | affiliate data, out of scope |
+
+### Current six-service fence receipt
+
+The post-handoff re-read found the same six exact service IDs. Every row below has
+`cronSchedule: null`, start command `sh -c 'echo retired-to-plantgeo-job-executor; exit 0'`,
+`restartPolicyType: NEVER`, and zero restart retries.
+
+| service | service id | remaining disposition |
+|---|---|---|
+| `plantgeo-ingest-cron` | `3ae3cc37-c398-43fe-b74c-83e4da130423` | inert credential/reference holder; do not delete until CDS secrets and service references move |
+| `plantgeo-cron-mtbs` | `a683cc83-2b49-4276-a136-941e1b2cbe24` | remove after observed `mtbs-forward` success |
+| `plantgeo-cron-soilgrids` | `0960aa81-4499-4cb1-9daa-3350eed4d654` | remove after observed `soilgrids-cache-warm` success |
+| `plantgeo-fire-detections-forward` | `f4ad61fe-e71a-4776-b9d5-0b153c9ee5b7` | direct executor publication succeeded; retain until removal receipt is recorded |
+| `plantgeo-water-gauges-forward` | `40cb252b-e21c-4140-8d94-5db77eb2398d` | remove after direct boundary and terminal-day proof |
+| `plantgeo-soil-moisture-parquet-load` | `4a1413f1-5f96-44ea-853c-6a379c7673c4` | terminal one-shot; remove after immutable artifact re-read receipt |
 
 ## Repository scheduler disposition
 
@@ -117,10 +135,7 @@ path `/services/agri-data-service/railway.job-executor.json`, and Dockerfile pat
 `infra/job-executor/Dockerfile`. All three must resolve together before the exact `main` deployment
 can satisfy the `SUCCESS` gate.
 
-## Pre-activation and removal receipt
-
-Do not perform this section until the orchestration task explicitly resumes after merge and exact
-executor deployment success.
+## Post-activation and removal receipt
 
 For each candidate service, record all of the following in one append-only operation receipt:
 
@@ -138,37 +153,38 @@ For each candidate service, record all of the following in one append-only opera
 - complete terminal-day coverage from each fixed direct-writer floor through its current allowed
   source ceiling, so the handoff cannot strand an unrepairable day between ownership windows;
 - service-removal timestamp/result;
-- repository config-removal commit `${SCHEDULER_RELEASE_COMMIT}`;
+- repository config-removal commit `e4490c3c2f2e23f75cc9d6e297f4be646e0e00a1`;
 - rollback instruction naming only the affected executor lane; and
 - post-removal full service/deployment re-read plus the anti-`cronSchedule` guard result.
 
 Environment evidence records variable **names only**. Never paste DSNs, object-store keys, source
 credentials or resolved Railway reference values into this file.
 
-## Required production follow-up state
-
-The orchestration task's follow-up must provide or confirm this state before any mutation:
+## Verified production handoff state
 
 ```text
-origin/main == ${SCHEDULER_RELEASE_COMMIT}
-plantgeo-job-executor.activeDeployment.commitHash == ${SCHEDULER_RELEASE_COMMIT}
+origin/main == e4490c3c2f2e23f75cc9d6e297f4be646e0e00a1
+plantgeo-job-executor.activeDeployment.id == b1f35a20-6e05-48ff-9801-5235c9753a01
+plantgeo-job-executor.activeDeployment.commitHash == e4490c3c2f2e23f75cc9d6e297f4be646e0e00a1
 plantgeo-job-executor.activeDeployment.status == SUCCESS
 plantgeo-job-executor.rootDirectory == /
 plantgeo-job-executor.configFile == /services/agri-data-service/railway.job-executor.json
 plantgeo-job-executor.dockerfilePath == infra/job-executor/Dockerfile
 all six legacy service objects are still present
+all six legacy service objects have cronSchedule == null and no-op start commands
+Railway environment scheduled services == []
 all legacy writer invocations == terminal and not running
-all executor job_work_item leases across every definition version == absent or expired before activation
-all recurring responsibility mappings == executable
+all recurring responsibility mappings == executable and 37 are active
 soil-moisture one-shot == terminal completed, no schedule, no active run
 independent review == APPROVE
 integrated sweep == PASS
 explicit orchestration follow-up == received
 ```
 
-Then perform the controlled handoff as one bounded operation: re-read → fence old owners → verify no
-run in flight → activate the complete registry mapping → observe one successful replacement run per
-responsibility → remove exactly the six legacy service objects → re-read the full 14-service baseline
-minus those six. Stop before removal if any mapping, lease, source ceiling, checkpoint, publication
-receipt or successful run is missing. There is no rollback command that creates or schedules a
-Railway cron; the only rollback state is the affected executor lane disabled with all data retained.
+The handoff through activation is complete. Remaining work is bounded service-object cleanup:
+observe the mapped lane success and domain checkpoint, migrate the ingest object's hidden CDS
+credentials/references, remove one eligible legacy object at a time, and re-read the environment
+after each removal. Stop before removal if any mapping, lease, source ceiling, checkpoint,
+publication receipt or successful run is missing. There is no rollback command that creates or
+schedules a Railway cron; the only rollback state is the affected executor lane disabled with all
+data retained.

@@ -11,20 +11,20 @@ Railway project ID: `6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`
 The Railway dashboard calls the containing project `Aevani`, but service names
 define the security boundary:
 
-**Scheduler owner directive, 2026-09-02:** `plantgeo-job-executor` is the only approved future
-scheduler and durable invocation owner. Railway cron scheduling is rejected. The legacy writer
-rows below describe the production pre-handoff inventory, not a topology to recreate. Their tracked
-scheduler configs are retired by gapless p5; their service objects remain present only until the
-reviewed commit is merged to `main`, the exact executor deployment is `SUCCESS`, and the explicit
-post-deployment no-overlap handoff removes them. Rollback disables an executor lane and never
-restores a cron service or schedule. See the Conductor
+**Scheduler owner directive, verified 2026-09-02:** `plantgeo-job-executor` is the sole production
+scheduler and durable invocation owner. Railway cron scheduling is rejected. Release
+`e4490c3c2f2e23f75cc9d6e297f4be646e0e00a1` is on `main`; executor deployment
+`b1f35a20-6e05-48ff-9801-5235c9753a01` is `SUCCESS` at that exact commit with 37 active executable
+lanes. The six legacy writer service objects have `cronSchedule: null`, a no-op start command and
+`restartPolicyType: NEVER`; they are fences and credential-reference holders, not schedulers.
+Rollback disables an executor lane and never restores a cron service or schedule. See the Conductor
 [`scheduler-handoff-20260902.md`](../conductor/tracks/gapless_parquet_publication_20260901/evidence/scheduler-handoff-20260902.md).
 
 | Service | PlantGeo responsibility | Current gate |
 | --- | --- | --- |
 | `plantgeo-main` | Next.js application | Running; Railway's GitHub integration deploys it from `main`, and no other service is deployed by a web release. |
-| `plantgeo-job-executor` | Sole continuous scheduler for independently registered source, maintenance, gap-repair, MTBS, SoilGrids, fire and water lanes | Dedicated `railway.job-executor.json`; continuous `agri-service ops jobs-executor`, `ON_FAILURE`, no Railway schedule. It remains inactive until the exact post-merge handoff gate passes. |
-| six legacy scheduled/one-shot writers | `plantgeo-ingest-cron`, MTBS, SoilGrids, direct fire, direct water and completed soil-moisture load | Present in the 2026-09-02 production preflight and all blocked from immediate removal. Never recreate them from the historical instructions below; remove them only through the controlled executor handoff. |
+| `plantgeo-job-executor` | Sole continuous scheduler for independently registered source, maintenance, gap-repair, MTBS, SoilGrids, fire and water lanes | Dedicated `railway.job-executor.json`; continuous `agri-service ops jobs-executor`, `ON_FAILURE`, no Railway schedule. Exact `main` release `e4490c3` is active with 37 executable lanes. |
+| six fenced legacy writer objects | `plantgeo-ingest-cron`, MTBS, SoilGrids, direct fire, direct water and completed soil-moisture load | All schedules are null and all start commands are no-ops. Keep `plantgeo-ingest-cron` inert until its hidden CDS credentials and service-reference variables are promoted to stable owners; remove each other object only after its mapped executor lane has an observed successful run. Never redeploy or use these objects as rollback. |
 | `plantgeo-dataservice` | Bounded Python API and publication receiver | Running; Alembic owns only the `agri` schema. |
 | `plantgeo-Redis` | Cache, pub/sub, and non-durable wake-up transport | Running; never use it as the durable job ledger. |
 | `Plantgeo` | Legacy PlantGeo PostgreSQL 18.3 database | Running, but the last audit found no required geospatial/time-series extensions. |
@@ -35,6 +35,15 @@ restores a cron service or schedule. See the Conductor
 Automation and operator scripts must use the exact PlantGeo allowlist above and
 must reject `Aevani-Postgress`. Use Railway reference variables rather than
 copying resolved public proxy credentials between services.
+
+**Current scheduler blockers are pre-existing data/source failures newly surfaced by the
+executor, not handoff failures.** `jobs-matview-refresh` sees 200 standing dead letters and current
+attempts report `matview_refresh_failed` because `geo.mv_feature_observation_day_axis` and
+`geo.mv_signal_cell_daily` are absent. Classify and repair those relations before requeueing the
+affected work items; do not clear the dead-letter census merely to make a tick green.
+`postgres-fire-perimeters` also entered retry backoff on its first executor turn with
+`UpstreamPayloadError: upstream response exceeded the byte limit`; fix or bound the WFIGS payload
+before forcing another run.
 
 ## Phase-one compute boundary
 
@@ -491,20 +500,19 @@ curl https://<martin-domain>/fire_risk_tiles,sensor_tiles,evacuation_zone_tiles,
   whose backing tables (`interventions`, `geo.osm_buildings`) are currently empty. That is a data
   gap, not a Martin problem, and does not need a restart.
 
-### `plantgeo-ingest-cron`
+### Retired `plantgeo-ingest-cron` topology
 
 > **Historical operational detail only.** The 2026-09-02 owner directive supersedes every action in
 > this section that would configure, restore, deploy or retain this Railway cron. The executor
 > registry preserves the commands and source cadences. Do not follow the dashboard/config steps
 > below; rollback disables executor lanes and never rebuilds this service.
 
-- Repository root: **must move to `/`** (currently `/infra/cron-ingest`) — see "Required
-  dashboard change" below. The image cannot build until this lands.
-- Dockerfile: `/infra/cron-ingest/Dockerfile`
-- Config-as-code: `/infra/cron-ingest/railway.json` (`deploy.cronSchedule: "0 * * * *"` — hourly;
-  `restartPolicyType: NEVER`)
+The former service used `/infra/cron-ingest/Dockerfile` and
+`/infra/cron-ingest/railway.json`. Both tracked files are retired. Do not restore their dashboard
+settings or recover them from git history; the equivalent commands are independently registered in
+the executor.
 
-The container installs the `agri-data-service` package (uv, locked sync, `--no-dev` runtime —
+Historically, the container installed the `agri-data-service` package (uv, locked sync, `--no-dev` runtime —
 the same multi-stage pattern as `services/agri-data-service/Dockerfile`, minus its quality-gate
 stage, which this image does not need to re-run). Its `ENTRYPOINT` runs both halves of the hourly
 pulse directly against Postgres and Redis on the private network:
@@ -513,7 +521,7 @@ pulse directly against Postgres and Redis on the private network:
 /bin/sh -c "agri-service data ingest-all; ingest_status=$?; agri-service ops jobs-pulse --time-budget-seconds 600; pulse_status=$?; [ $ingest_status -eq 0 ] && [ $pulse_status -eq 0 ]"
 ```
 
-`ingest-all` runs the eight forward ingestion sources plus the geometry-repair pass to completion,
+Historically, `ingest-all` ran the eight forward ingestion sources plus the geometry-repair pass to completion,
 isolating each source's failure; `jobs-pulse` then visits every dispatchable lane (`jobs/dispatch.py`'s
 `LANE_DISPATCH` registry — the same path `POST /api/v1/jobs/trigger` takes) and every durable archive
 definition this database's ledger has ever written, bounded to a 600-second time budget per tick. The
@@ -526,9 +534,8 @@ failed. There is no HTTP hop through `plantgeo-main`: no `GET /api/cron/ingest` 
 
 **Consolidated 2026-08-14.** This service previously ran on no schedule at all — see "Cron
 consolidation, 2026-08-14" below for the fan-out of one-cron-per-source-and-per-lane it replaces,
-and why. `deploy.cronSchedule` is now `"0 * * * *"`, so this is once again the one service every
-forward source and every durable lane is scheduled through, and `restartPolicyType: NEVER` still
-stops a slow tick from restarting into a second concurrent pass.
+and why. Its final schedule was `"0 * * * *"`. That schedule is now null and its start command is a
+no-op; the executor owns the former responsibilities as independent failure domains.
 
 **Geometry repair is folded back into `ingest-all`.** `ingest-all`'s last step is still
 `ingest-geometry-repair`, which links newly-ingested `geo.features` rows to the Type-2
@@ -536,22 +543,11 @@ stops a slow tick from restarting into a second concurrent pass.
 job because it should claim anything this run's own sources failed to link."). The dedicated
 `plantgeo-cron-geometry-repair` service that once gave this step a scheduled caller — back when
 `ingest-all` itself ran on no schedule — is gone; see "Cron consolidation, 2026-08-14" below.
-Restoring the hourly schedule on this service restores geometry repair's own hourly cadence as a
-side effect, with no separate caller needed.
+The executor lane `postgres-geometry-repair` now supplies geometry repair's hourly cadence.
 
-**Required dashboard change (owner action, blocks the build):** a Python image needs
-`services/agri-data-service/{pyproject.toml,uv.lock,src/}` in its build context, which the
-service's current Railway Root Directory (`/infra/cron-ingest`) cannot see. In the Railway
-dashboard for `plantgeo-ingest-cron`, set:
-
-- Root Directory → `/`
-- Dockerfile path → `infra/cron-ingest/Dockerfile`
-- Config-as-code path → `infra/cron-ingest/railway.json`
-
-This repoints only `plantgeo-ingest-cron`'s build context; it does not touch the repo-root
-`railway.json`, which belongs to `plantgeo-main`. Until the Root Directory change lands, builds of
-this service will fail — its `Dockerfile`'s `COPY services/agri-data-service/...` lines cannot
-resolve from the old root.
+**Do not repair this service's build configuration.** It is deliberately fenced. The executor uses
+repository root `/`, config path `/services/agri-data-service/railway.job-executor.json`, and
+Dockerfile `infra/job-executor/Dockerfile`.
 
 **Required variables.** Every `ingest-*` verb opens `db/engine.ingest_session()`, which calls
 `settings.require_local_source_loader_database_url()` (`config.py`). Since 2026-08-08 that reader
@@ -585,8 +581,8 @@ above): eight sources followed by the geometry repair pass, each isolated, one J
 single source, `ingest-geometry-repair` to link orphaned `geo.features.geometry_id` rows on demand,
 `ingest-backfill --source … --since … --until …` to walk a date-ranged history for the sources that
 publish one (`nws-sensors`, `sentinel2-ndvi`), `ingest-drought-history --years N` to walk the USDM
-archive week by week, and `ingest-mtbs`, which this image also carries but which runs on its own
-schedule from `plantgeo-cron-mtbs` rather than from here (see below). Do not run
+archive week by week, and `ingest-mtbs`, which this image also carried but which now runs as the
+executor's `mtbs-forward` lane rather than from a Railway cron (see below). Do not run
 `ingest-geometry-repair` concurrently with `ingest-all`: both are safe individually and take their
 locks in the same order, but the second one to arrive simply waits.
 
@@ -654,22 +650,20 @@ the geometry adapter confirms an unchanged shape"), and `ingest/reconcile.py` no
 its own re-walks ("the writer rejects an unchanged payload anyway"). An hourly re-check of a release
 that has not moved since Thursday costs a request and a no-op write, not a duplicate.
 
-**Survivors: `plantgeo-cron-mtbs` and `plantgeo-cron-soilgrids`.**
+**Retired survivors: `plantgeo-cron-mtbs` and `plantgeo-cron-soilgrids`.**
 
-`plantgeo-cron-mtbs` runs `agri-service data ingest-mtbs` weekly, Tuesdays at 07:55 UTC (`55 7 * * 2`),
-still overriding the shared `infra/cron-ingest/Dockerfile` via `deploy.startCommand` in its own
-`infra/cron-mtbs/railway.json`. `ingest_mtbs`'s own docstring (`ingest/commands.py`) is why it was
+The executor lane `mtbs-forward` runs `agri-service data ingest-mtbs` weekly, Tuesdays at 07:55 UTC
+(`55 7 * * 2`). `ingest_mtbs`'s own docstring (`ingest/commands.py`) is why it was
 never folded into `ingest-all`: *"Unlike the other verbs this one is not hourly-shaped: MTBS
 publishes quarterly and a fire year accretes over two to four years, so a run re-reads cohorts that
 almost never move... A fire year with no established release publication date fails the run rather
 than borrowing an ignition date, a run clock, or an assumed mapping lag for `observedAt`."* Chaining
 that failure mode into an hourly `ingest-all` tick would turn a routine "this fire year has no
 release yet" catalog gap into a permanently red hourly cron that masks real ingest failures behind
-it, so `plantgeo-cron-mtbs` keeps its own weekly schedule and its own exit-code verdict.
+it, so `mtbs-forward` keeps its own weekly cadence and independent exit-code verdict.
 
-`plantgeo-cron-soilgrids` runs `node scripts/warm-soilgrids.mjs 120` hourly at `:25`
-(`25 * * * *`), building from its own `infra/cron-soilgrids/Dockerfile` — a Node image, not the
-Python `agri-service` image the other two services share. `scripts/warm-soilgrids.mjs`'s own header
+The executor lane `soilgrids-cache-warm` runs `node scripts/warm-soilgrids.mjs 120` hourly at `:25`
+(`25 * * * *`) from the combined executor image. `scripts/warm-soilgrids.mjs`'s own header
 explains why: SoilGrids v2.0 is a static raster, not a time series, so "there is no backfill lane
 for it — each cell is fetched once and stays valid," and the driver exists to finish what a
 hand-invoked, 16-point-per-call API route could not: a bounded, resumable walk over the ~1568-cell
@@ -677,21 +671,10 @@ hand-invoked, 16-point-per-call API route could not: a bounded, resumable walk o
 ingestion lane, which is why it never moved into `ingest-all` or `jobs-pulse` alongside the other
 eleven services.
 
-**Mechanics that still apply to the two services sharing `infra/cron-ingest/Dockerfile`.**
-`plantgeo-ingest-cron` and `plantgeo-cron-mtbs` both point `build.dockerfilePath` at the same
-`infra/cron-ingest/Dockerfile`; `plantgeo-cron-mtbs`'s `railway.json` overrides only
-`deploy.startCommand`, the same override mechanism the eleven now-deleted services used. Both still
-need **Root Directory** → `/` and **Config-as-code path** → their own `infra/cron-<name>/railway.json`
-set together in the dashboard — Railway falls back to the repo-root `railway.json` meant for
-`plantgeo-main` if only one of the two is set, which was historically the single most repeated
-operational error on this project. Railway's own documentation
-(`docs.railway.com/deployments/start-command`, "Dockerfiles & images" section) confirms `startCommand`
-overrides the image's `ENTRYPOINT` in exec form rather than appending to it — a documentation-sourced
-verification, not an execution-sourced one, so if a deployed service ever runs `ingest-all` instead of
-the verb its `railway.json` names, this is the first thing to re-examine. `infra/cron-ingest/Dockerfile`
-still never copies `alembic/`, `db/`, or `alembic.ini` (see its own header comment), so neither
-container can run a migration regardless of `startCommand` — that property holds by what the image
-does not contain, not by trusting any command string.
+**Current mechanics.** The sole scheduler builds `infra/job-executor/Dockerfile` from repository
+root `/` with config `/services/agri-data-service/railway.job-executor.json`. Its image contains the
+Python service and the Node SoilGrids driver. A guard test rejects every tracked Railway JSON that
+reintroduces `cronSchedule` or a retired cron-only path.
 
 **Nine more directories deleted with no live service behind them.** `cron-era5-land-continue`,
 `cron-era5-land-coverage-fill`, `cron-era5-land-coverage-status`, `cron-nasa-power-continue`,
@@ -709,10 +692,11 @@ operationally — none had ever been provisioned — but it did leave `jobs-plan
 directories did: those three verbs are the loop that turns a *detected* gap into a *claimable* work
 item, so while they were manual-only a hole in a layer could sit indefinitely with every cron green.
 
-`agri-service ops jobs-pulse` now runs all three as a **third pass**, after the dispatchable and durable
-namespaces, on the same hourly `plantgeo-ingest-cron` tick. Per lane it runs
-`jobs-reconcile-lane --apply` then `jobs-plan-gaps --apply`; once per unfiltered tick it then runs
-one global `validate-streams`. Four properties are deliberate:
+The executor now runs these as independent lanes: `maintenance-firms-archive-reconcile`,
+`maintenance-firms-archive-plan-gaps`, `maintenance-streamflow-archive-reconcile`,
+`maintenance-streamflow-archive-plan-gaps`, and `maintenance-validate-streams`. The archive workers
+are likewise isolated as `jobs-firms-archive` and `jobs-streamflow-archive`. Four properties are
+deliberate:
 
 - **The lane set is derived, not listed.** Both verbs take a required `--lane`, so restoring them as
   cron services would have meant naming the lanes in a hard-coded shell string — and a hard-coded

@@ -42,14 +42,10 @@ marked **UNVERIFIED** with what would confirm it.
 
 ## 2. Cadence
 
-- **Ingestion schedule**: `infra/cron-ingest/railway.json:7` runs `cronSchedule: "0 * * * *"` —
-  hourly, on the Railway `plantgeo-ingest-cron` service (per project memory
-  `plantgeo-railway-topology`). `ingest-sensors` is one of six jobs `ingest-all` runs sequentially
-  each tick (`ingest/AGENTS.md:63`, "Deliberate deviations" §1). There is no dedicated
-  `infra/cron-sensors/` — unlike `weather-observations` (`cron-weather`, `10 * * * *`),
-  `water-gauges` (`cron-streamflow`, `*/30 * * * *`) or `fire-perimeters` (`cron-fire-perimeters`,
-  `20 * * * *`), all declared with an explicit `cadence_basis` in
-  `ingest/validation/models.py:100-141`.
+- **Ingestion schedule**: executor lane `postgres-sensors` runs
+  `agri-service data ingest-sensors` hourly as an independent failure domain. There is no Railway
+  `cronSchedule`. Historical `cadence_basis` strings in `ingest/validation/models.py:100-141`
+  still name deleted per-source cron paths and are provenance, not scheduler configuration.
 - **Upstream publication rate is per-station and irregular, not fixed.** A station is not
   contractually bound to one reading per hour: the migration-0038 header measured "~13 rows per
   station per day, up to 30 — KMSO, KDLN and KGPI each published 30 separate features for
@@ -58,9 +54,8 @@ marked **UNVERIFIED** with what would confirm it.
   reading lands every hour, and none is enforced anywhere in this code.
 - **This lane's own `StreamDefinition` declares no cadence.** `ingest/validation/models.py:142`:
   `StreamDefinition(stream="sensors", kind="snapshot", store="features", cadence_basis=None)`. Every
-  other feature-backed time-series lane in that table (`fire-detections`, `water-gauges`,
-  `weather-observations`, `vegetation`, `fire-perimeters`, `evacuation-zones`) cites the cron file
-  and schedule that justifies its declared cadence; `sensors` cites nothing.
+  other feature-backed time-series lane in that table cites historical cadence provenance;
+  `sensors` cites nothing.
   `lane_publication_cadence_days` (`ingest/validation/models.py:168-178`) falls back to the daily
   default for an unclaimed lane rather than failing, so gap detection currently treats `sensors` as
   if it published once a day — an assumption nobody measured against the actual per-station rate

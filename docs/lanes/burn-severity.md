@@ -46,7 +46,7 @@ would confirm it.
     `services/agri-data-service/src/agri_data_service/ingest/validation/source_manifests.py:403-415`,
     key `"mtbs-burn-severity"`: `licence_identifier="CC0"`, `adapter_status="planned"`,
     `refresh_cadence="annual, 1984-2024"`. **Do not trust this entry for current state** — the
-    ingest module is fully implemented and cron-scheduled (see §2), so `adapter_status="planned"`
+    ingest module is fully implemented and executor-scheduled (see §2), so `adapter_status="planned"`
     is wrong today (compare `source_manifests.py:9`: only rows carrying `adapter_status
     ="implemented"` are current). `CC0` is also a looser claim than the specific federal-public-domain
     text `mtbs.py` actually governs by. Treat `mtbs.py` as authoritative for this lane, not this
@@ -60,8 +60,8 @@ would confirm it.
   before MTBS calls it complete (`mtbs.py:101-107`; confirmed range in
   `docs/reports/evidence/mtbs-release-announcements-2026-08-10.md` — e.g. fire year 2019 opened
   2021-04-21 and closed 2021-09-27, fire year 2020 spanned 2022-02-15→2022-04-28).
-- **This repo's ingest cron runs weekly**, `55 7 * * 2` (Tuesdays 07:55 UTC),
-  `infra/cron-mtbs/railway.json`, `startCommand: agri-service data ingest-mtbs` — chosen specifically to
+- **The executor lane `mtbs-forward` runs weekly**, `55 7 * * 2` (Tuesdays 07:55 UTC),
+  with command `agri-service data ingest-mtbs` — chosen specifically to
   pick up a new quarterly release within a week while staying far cheaper than the daily lanes
   (`ingest/AGENTS.md:317`). Re-running is cheap and idempotent: the writer's diff rejects an
   unchanged payload, and the geometry adapter confirms an unchanged shape when nothing moved
@@ -72,11 +72,12 @@ would confirm it.
      (`mtbs.py:207-209`, `validate_release_window`, `mtbs.py:374-399`) — a release that claims to
      lead its cohort's last ignition by less than that is treated as an ignition-shaped date and
      rejected, never trusted.
-  2. **This repo's own cron did not exist until 2026-08-10.** Before that, `ingest-mtbs` was a
+  2. **This repo's first scheduled owner did not exist until 2026-08-10.** Before that, `ingest-mtbs` was a
      working CLI verb with nothing ever invoking it — deliberately excluded from `ingest-all`
      because a weekly-shaped feed would be pure waste on an hourly schedule, but the unintended
      consequence was that *nothing* ran it: 478 rows landed once on 2026-08-05 and the layer sat
-     untouched until the cron landed (`ingest/AGENTS.md:317`).
+     untouched until scheduled invocation landed (`ingest/AGENTS.md:317`). Railway's legacy cron is
+     now fenced; `plantgeo-job-executor` is the sole recurring owner.
   3. **Governance lag**: a fire year is not ingestible at all until a human manually confirms and
      dates its completion in `MTBS_ANNUAL_RELEASE_DATES` (`mtbs.py:113-142`) — see §3. Fire year
      2019 sat out "by oversight, not by evidence" until this was done on 2026-08-10

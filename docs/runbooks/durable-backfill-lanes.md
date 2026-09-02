@@ -33,7 +33,7 @@ This runbook covers the replacement. Every one of those properties is inverted:
 | Failure ledger deleted on success | `dead_letter` status, permanent and queryable |
 | `.done` sentinel with no floor recorded | `logical_run_key` carries the floor |
 | Advanced past a failed window | A failed window stays visible and non-terminal |
-| Ran while a laptop was awake | A Railway cron container, `restartPolicyType: NEVER` |
+| Ran while a laptop was awake | The continuous `plantgeo-job-executor`, with durable schedules and an advisory leader lock |
 
 **The one rule everything else serves:** a window may only reach a terminal `succeeded` state
 when its data has actually landed. Any change that lets a window go terminal without that is the
@@ -54,12 +54,12 @@ one lane  ->  one JobRun  ->  one work item per window  ->  one handler call per
   than reopening a finished one.
 - A **work item** is one window, keyed `firms-archive:2000-11-01..2000-11-06`. This is the unit
   that succeeds, fails, retries and dead-letters. It is what a completeness query groups by.
-- A **cron tick** runs one bounded slice: claim a window, walk one chunk, checkpoint, repeat
+- An **executor turn** runs one bounded slice: claim a window, walk one chunk, checkpoint, repeat
   until the time budget runs out, park what is unfinished, exit 0.
 
-**Durability lives in the ledger, never on the filesystem.** A cron container gets a fresh disk
-on every tick and nothing brings it back if it dies, so anything written to disk is already lost.
-A killed container loses only the work since its last checkpoint; the next tick claims the same
+**Durability lives in the ledger, never on the filesystem.** The executor process can restart on a
+fresh disk, so anything written only to disk is already lost.
+A killed command loses only the work since its last checkpoint; the next executor turn claims the same
 shards straight out of the database and resumes each from its own cursor.
 
 Design rationale beyond the operator's view lives in
@@ -74,7 +74,7 @@ other cron verb.
 | --- | --- | --- |
 | `jobs-plan-lane --lane <token> [--floor DATE] [--until DATE]` | Declare the lane and fan its windows out as work items. Idempotent. | `0` unless the plan could not be written |
 | `jobs-plan-gaps --lane <token> [--floor DATE] [--until DATE] [--apply]` | Turn the days the layer is MISSING into claimable windows, reopening one that succeeded over nothing. Dry run by default. | `0` unless the plan could not be written |
-| `jobs-run --lane <token> [--budget-seconds N] [--worker-id S]` | Run one bounded slice. **This is what a cron tick invokes.** | `1` only if a window dead-lettered or the slice raised; otherwise `0` |
+| `jobs-run --lane <token> [--budget-seconds N] [--worker-id S]` | Run one bounded slice. **This is what the executor's isolated archive lanes invoke.** | `1` only if a window dead-lettered or the slice raised; otherwise `0` |
 | `jobs-status [--lane <token>] [--definition <name>]` | Counts by state, the oldest outstanding window, the dead-lettered shard keys. | always `0` |
 | `jobs-reconcile-lane --lane <token> [--apply]` | Settle windows whose days the layer already serves. Dry run by default. | always `0` |
 | `validate-streams [--format json\|markdown] [--output PATH]` | The cross-stream completeness and validity report. | `1` only if a stream is `invalid` |
@@ -88,9 +88,10 @@ whole windows below today and nothing else. It converts a `succeeded` window and
 dead letter is evidence, a cancelled window is your decision, and a leased one belongs to a live
 worker's fence. All three are reported in its JSON line rather than silently skipped.
 
-`infra/cron-maintain-firms/` and `infra/cron-maintain-streamflow/` chain the two verbs daily
-(07:17 and 07:47 UTC). **Those two Railway services are not provisioned yet**; the configs are
-inert until somebody creates them, so today the loop runs only when a person invokes it.
+The executor owns the two directions independently as
+`maintenance-<archive-lane>-reconcile` and `maintenance-<archive-lane>-plan-gaps`. They are active
+without a Railway cron service and inherit retries, leases and dead-letter visibility from the
+executor.
 
 Every verb prints **one JSON line per result on stdout**; operational logging goes to stderr.
 That is the same contract every `ingest-*` verb honours, so a cron log stays parseable.
@@ -279,17 +280,12 @@ shard permanently unclaimable. And its payload gains a `walk_generation`, which 
 reopened window resuming at the final chunk its old checkpoint still points to; without it a
 five-day window would walk day five and re-succeed over the same hole.
 
-### Run both directions on a schedule
+### Run both directions through the executor
 
-`infra/cron-maintain-firms/railway.json` and `infra/cron-maintain-streamflow/railway.json` chain
-
-```bash
-agri-service ops jobs-plan-gaps --lane <token> --apply && agri-service ops jobs-reconcile-lane --lane <token> --apply
-```
-
-daily at 07:17 and 07:47 UTC, after `cron-validate`'s 06:00 report. **Neither Railway service is
-provisioned.** A `railway.json` configures a service that already exists; it does not create one.
-Until somebody creates them, this loop runs only when a person invokes it.
+The active lane set contains separate reconcile and plan-gap responsibilities for both archive
+lanes. Do not chain them in a Railway start command or create a service for them. For an operator
+diagnostic, run the two verbs manually in reconcile-then-plan order; leave recurring invocation to
+`plantgeo-job-executor`.
 
 ### Watch it
 
@@ -339,11 +335,11 @@ Two things to read correctly:
 
 - **`eta` shows an em dash when the rate is zero.** No windows succeeded in the trailing window,
   so the remaining time is not derivable — that is a stalled lane, not an instant one.
-- **The activity column is "last recorded activity", not "last cron run".** It is the newest
+- **The activity column is "last recorded activity", not "last executor turn".** It is the newest
   durable timestamp across the run's work items, attempts and checkpoints. A tick that claims
-  nothing writes *nothing* to the ledger, so a healthy finished lane and a cron service that has
-  not fired in three days look identical here. To tell those apart you still need the Railway
-  deployment log for the cron service.
+  nothing writes *nothing* to the ledger, so a healthy finished lane and an executor lane that has
+  not been due in three days look identical here. To tell those apart, inspect the executor event
+  log and its durable scheduler state.
 
 > **`/ops` is not authenticated yet.** It leaks lane names, shard keys and redacted error
 > summaries to anyone who can reach the service. Gate it (bearer token or Cloudflare Access)
@@ -364,7 +360,7 @@ Read `last_error_class` first — it names what to do:
 | `all_records_rejected` | Records arrived and **every one** was rejected before the write path. | Investigate first — a renamed FIRMS CSV column, or FIRMS answering `Invalid MAP_KEY` as a 200 with a plain-text body. Requeuing without fixing that just burns eight more attempts. |
 | `record_cap_truncation` | The chunk bit `INGEST_MAX_SOURCE_RECORDS`. The reason text names the narrower `--chunk-days` that would have fitted. | Narrow the lane's `chunk_days` in `ingest/lanes.py`, then requeue. |
 | `walk_skipped` | `INGEST_BBOX` unset, or a typed history refusal. | Fix the deployment variable, then requeue. |
-| `missing_credential` | The lane needs `NASA_FIRMS_KEY` and the service does not set it. | Set the variable on the cron service, then requeue. |
+| `missing_credential` | The lane needs `NASA_FIRMS_KEY` and the executor does not set it. | Set the variable on `plantgeo-job-executor`, redeploy that service, then requeue. |
 | `fence_lost` | Recorded but never persisted as a failure — the runtime abandons the shard instead. | Nothing; you should not see this on a dead-lettered row. |
 
 Requeue one window (the ledger has no verb for this yet — it is a deliberate manual step, because
@@ -417,13 +413,28 @@ and the 1% density floor, mirrored from
 report using a bare `MIN(observed_day)` would call water-gauges complete back to 1990 while the
 slider starts it at 2022-08.
 
-## Deployment
+## Deployment: stateful executor only
 
-### The three new Railway services
+The durable archive workers, their gap maintenance and validation run inside
+`plantgeo-job-executor`. Production release `e4490c3c2f2e23f75cc9d6e297f4be646e0e00a1` uses
+`infra/job-executor/Dockerfile` and
+`services/agri-data-service/railway.job-executor.json`; it has no Railway `cronSchedule`. The
+executor registry owns `jobs-firms-archive`, `jobs-streamflow-archive`, four corresponding
+maintenance lanes and `maintenance-validate-streams`. A single advisory leader serializes the
+outer commands while the existing `agri.job_*` ledger preserves window-level concurrency and
+recovery.
 
-All three build from the shared `infra/cron-ingest/Dockerfile`; the verb in `startCommand` is
-what distinguishes them. `COPY services/agri-data-service/src/ src/` already carries the `jobs`
-package, so no build change was needed.
+The handoff also surfaced two pre-existing runtime failures. `jobs-matview-refresh` sees 200
+standing dead letters and current attempts report `matview_refresh_failed` because
+`geo.mv_feature_observation_day_axis` and `geo.mv_signal_cell_daily` are absent.
+`postgres-fire-perimeters` entered retry backoff with `UpstreamPayloadError: upstream response
+exceeded the byte limit`. Repair each root cause before requeueing; do not erase dead letters or
+force retries merely to make executor health green.
+
+### Retired three-service proposal (historical; do not execute)
+
+The following table records a superseded design. None of these services should be created or
+enabled; their responsibilities are executor lanes.
 
 | Service | `cronSchedule` | `startCommand` |
 | --- | --- | --- |
@@ -472,7 +483,7 @@ every existing forward cron clusters (`cron-evacuation-zones` at `*/15`, `cron-s
 loads have settled. It also falls in none of `{:05, :20, :35, :50}`, so the report never starts
 while an archive slice is starting.
 
-### Railway dashboard settings — per new service
+### Historical Railway dashboard settings (do not apply)
 
 These are **dashboard changes**, not repo changes. `railway.json` cannot set them.
 
@@ -486,7 +497,7 @@ These are **dashboard changes**, not repo changes. `railway.json` cannot set the
 `RAILWAY_DOCKERFILE_PATH` as a service variable **cannot** substitute for the config path; that
 is a known dead end recorded for the existing `cron-ingest` service.
 
-### Environment variables — per new service
+### Historical environment-variable split
 
 | Variable | `cron-archive-firms` | `cron-archive-streamflow` | `cron-validate` | Notes |
 | --- | --- | --- | --- | --- |
@@ -518,13 +529,13 @@ agri-service ops jobs-reconcile-lane --lane streamflow-archive --apply
 # 4. Confirm the ledger reads the way you expect.
 agri-service ops jobs-status
 
-# 5. Only now enable the two cron services.
+# 5. Do not enable cron services; verify the corresponding executor lanes instead.
 ```
 
 Re-run `jobs-plan-lane` whenever a lane's `window_days` boundary passes — or simply let a
 scheduled invocation do it; it is a no-op on every other day.
 
-## The cutover from the bash drivers
+## Historical cutover from the bash drivers
 
 **At the time of writing the two bash drivers are still on disk and still running.** Stopping them
 is a deliberate operator step, not something this change did:
@@ -571,8 +582,8 @@ Get-ScheduledTask -TaskName 'PlantGeo-FIRMS-archive-backfill','PlantGeoStreamflo
   Unregister-ScheduledTask -Confirm:$false
 ```
 
-Order matters only in one direction: **unregister the tasks and let any in-flight walk finish or
-be killed before enabling the two cron services**, so the two mechanisms are never walking the
+Order mattered only in one direction: **the tasks had to stop and any in-flight walk had to finish
+before enabling their replacement**, so the two mechanisms were never walking the
 same archive at once. They would not corrupt each other — the feature writer refreshes by
 `properties->>'id'` and its diff rejects an unchanged payload — but they would double the request
 rate against FIRMS, which is the exact condition that produced the original failures.
@@ -589,8 +600,8 @@ rate against FIRMS, which is the exact condition that produced the original fail
 information: the cursor said where the walk *reached*, and the 169-window divergence between that
 and what *landed* is the entire bug. The logs are worth keeping as evidence; nothing reads them.
 
-The two `.sh` files themselves can be deleted once the tasks are unregistered and the cron
-services have completed a full pass. Deleting them earlier can corrupt a running bash process.
+The two `.sh` files themselves were removable only after the tasks stopped and the replacement
+completed a full pass. Do not recover these scripts as a scheduler mechanism.
 
 ## Still to unify
 

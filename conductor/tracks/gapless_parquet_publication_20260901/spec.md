@@ -13,8 +13,12 @@ stateful job-executor service owns durable schedules; each product still has thr
 forward refresh, gap repair that authors work, and coverage status.
 
 The 2026-09-01 production browser assessment found 27-day climate/NASA tails, 31-day ERA5 tails and
-a 94-day shortwave-radiation tail. Railway showed a healthy executor leader with 38 configured lanes
-but `active_lane_count=0`. Historical manifests therefore cannot be treated as forward ownership.
+a 94-day shortwave-radiation tail. At that preflight Railway showed a healthy executor leader with
+38 configured responsibilities but `active_lane_count=0`; historical manifests therefore could not
+be treated as forward ownership. The 2026-09-02 handoff activated 37 executable lanes at exact
+`main` release `e4490c3c2f2e23f75cc9d6e297f4be646e0e00a1`, with the snapshot-only soil-moisture
+responsibility intentionally terminal. This establishes invocation ownership, not completion of the
+observed tails or repair of the current matview/fire-perimeter runtime blockers.
 
 ## Terminal-day contract
 

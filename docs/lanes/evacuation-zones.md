@@ -16,9 +16,8 @@ establish is marked **UNVERIFIED** with what would confirm it.
 
 **Headline finding, because it is the one this lane most needed answered:** this
 is a **real, working, single-jurisdiction ingest lane**, not a seeded or manual
-import. It polls Oregon's own emergency-management ArcGIS feed on an hourly
-Railway cron through the same `ingest-all` orchestrator every other forward
-layer uses (§1–§2). It is **not** an aggregation across "many separate
+import. The executor's hourly `postgres-evacuation-zones` lane polls Oregon's own
+emergency-management ArcGIS feed independently (§1–§2). It is **not** an aggregation across "many separate
 jurisdictions" — it is one state agency's feed, and the code says outright that
 no equivalent exists for the rest of this project's coverage area (§5).
 
@@ -62,32 +61,23 @@ no equivalent exists for the rest of this project's coverage area (§5).
 
 ## 2. Cadence
 
-- **The real mechanism, confirmed live in the tree**: `evacuation-zones` is one
-  of the sources `run_all_ingestion_jobs` runs every tick
-  (`services/agri-data-service/src/agri_data_service/ingest/runner.py:8,51`,
-  docstring `:1` — "The `ingest-all` orchestrator: eight sources then the
-  geometry repair, isolated per job"). That orchestrator is invoked by the
-  `ingest-all` CLI command (`ingest/commands.py:248-259,484-497,1304`) and
-  deployed as the entrypoint of the single `plantgeo-ingest-cron` Railway
-  service: `infra/cron-ingest/Dockerfile:74` runs
-  `agri-service data ingest-all; agri-service ops jobs-pulse ...`, and
-  `infra/cron-ingest/railway.json:7` sets `"cronSchedule": "0 * * * *"` —
-  **hourly, on the hour**, `restartPolicyType: NEVER`.
+- **The real mechanism, confirmed live in the tree**: executor lane
+  `postgres-evacuation-zones` invokes `agri-service data ingest-evacuation-zones` hourly. The
+  continuous `plantgeo-job-executor` owns its schedule, lease, retry and dead-letter state; there
+  is no Railway `cronSchedule`. The old composite `ingest-all` path remains useful command
+  provenance but is not the production scheduler.
 - **A stale citation exists in the validation catalogue and should not be
   trusted.** `ingest/validation/models.py:135-141` declares
   `StreamDefinition(stream="evacuation-zones", kind="time_series",
   publication_cadence_days=1, cadence_basis="infra/cron-evacuation-zones/
   railway.json runs \`*/15 * * * *\`")`. **No `infra/cron-evacuation-zones/`
-  directory exists in this repo** — `infra/` holds only `cron-ingest/`,
-  `cron-mtbs/` and `cron-soilgrids/`. The same file makes the identical claim
+  directory exists in this repo**. The same file makes the identical claim
   for `fire-detections`, `water-gauges`, `weather-observations`, `vegetation`
   and `fire-perimeters`, citing `infra/cron-firms`, `infra/cron-streamflow`,
   `infra/cron-weather`, `infra/cron-ndvi` and `infra/cron-fire-perimeters`
   respectively — **none of those directories exist either**. This is a
-  systemic leftover from the "ONE SERVICE, ONE PULSE (2026-08-14)"
-  consolidation documented at `infra/cron-ingest/Dockerfile:5-13`, which
-  deleted the per-source cron services and folded them into one hourly run,
-  without anyone updating `validation/models.py`'s `cadence_basis` strings.
+  systemic leftover from superseded scheduler topologies; tracked cron configs have now been
+  retired without anyone updating `validation/models.py`'s `cadence_basis` strings.
   **The real cadence is hourly, not every 15 minutes.** Whoever writes the
   Parquet lane's cadence documentation should not copy the `*/15` figure
   forward.

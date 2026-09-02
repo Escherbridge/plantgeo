@@ -54,14 +54,14 @@ would confirm it.
 
 - **Nominal upstream revisit**: declared in the registered `data_source.refresh_policy` as
   `{"cadence": "sentinel2_revisit", "nominalRevisitDays": 5}` (`vegetation_ndvi_plane.py:323`).
-- **Raw-ingest cron**: `plantgeo-ingest-ndvi`, `infra/cron-ndvi/`, `0 5 * * *` — daily check, because
-  *"Sentinel-2 L2A revisits the Pacific Northwest every 2-5 days and a scene needs cloud-free daylight
-  to be usable; a daily check at 05:00 UTC was enough to catch each new clear scene"*
-  (`docs/deployment.md:595`).
+- **Raw-ingest owner**: executor lane `postgres-vegetation` runs
+  `agri-service data ingest-ndvi` hourly. The source still revisits the Pacific Northwest about
+  every 2-5 days, so most turns are expected no-ops; the cadence is an executor registry value, not
+  a Railway `cronSchedule`.
 - **Declared gap-detection cadence** for the raw plane (`store="features"`, i.e. `geo.features`):
-  `publication_cadence_days=5`, basis *"infra/cron-ndvi/railway.json runs `0 5 * * *`, but Sentinel-2
-  L2A revisits mid-latitudes about every five days, so five days is the shortest cadence the upstream
-  can actually honour"* (`src/agri_data_service/ingest/validation/models.py:118-127`).
+  `publication_cadence_days=5`. Its historical `cadence_basis` still names the deleted
+  `infra/cron-ndvi/railway.json`; treat that string as source-cadence provenance, not deployment
+  configuration (`src/agri_data_service/ingest/validation/models.py:118-127`).
 - **Measured observed lag is worse than the nominal 5 days**, because cloud screening removes usable
   scenes: the governed corpus has a **median 7-day gap between observation days**, and **1,411 of
   1,568 cells have zero consecutive-calendar-day observation pairs** — this is *why* the shipped
@@ -145,34 +145,15 @@ would confirm it.
 
 ## 5. Known gaps and traps
 
-### 5.1 The promotion step is still unarmed — verified against the current tree, not just memory
+### 5.1 Production promotion and publication are executor-owned
 
-The step that promotes raw NDVI samples into the governed `agri.forecast_observation` plane the
-forecaster reads is `agri-service forecast vegetation-register`, a manual Click command
-(`services/agri-data-service/src/agri_data_service/interface/cli/commands.py:942`, calling
-`_forecast_vegetation_register` → `register_governed_plane`,
-`execution/vegetation_ndvi_plane.py:588-663`). Checked this session:
-
-- `jobs/registry.py` has **zero** matches for `vegetation` or `ndvi` (only `jobs/matview_refresh.py`
-  mentions vegetation, unrelated). No Railway cron references `agri-service forecast vegetation-register` either.
-- `sql/routes/ops_unarmed_sources.sql:47-54` and `sql/routes/ops_forecast_state.sql:38-44` both
-  describe it, in the present tense, as *"a manual CLI verb in interface/cli/commands.py with no launcher and no entry
-  in jobs/registry.py"* — dated 2026-08-09, and it is still true today.
-- The governed corpus (2022-08-05 → 2026-08-04, §3) was therefore built by **manual/operator
-  invocations of this command**; nothing keeps it current going forward. Raw ingest into
-  `geo.features` is scheduled and healthy (§2); the promotion step sitting on top of it is not — a
-  promotion step can be unarmed while the ingest beneath it is fine, and that is exactly this lane's
-  state.
-- The task brief's phrase **"blocked on a checksum-scoping decision"** does not appear verbatim
-  anywhere in the repo (`grep -i "checksum.scoping"` across `services/`, `conductor/`, `docs/`
-  returns zero matches). What is grounded is the unarmed CLI verb itself; treat the "checksum-scoping"
-  framing as an informal gloss, not a documented decision record, until someone points to where it
-  was actually discussed.
-- Registration is also **bounded per invocation**: `select_candidate_cell_keys` requires
-  `MIN_CANDIDATE_OBSERVED_DAYS = 24` observed days and honours `--cell-limit` (default 24, max 2000)
-  or an explicit `--cell-key` list (`vegetation_ndvi_plane.py:54,294-305`, `interface/cli/commands.py:938-942`). Nothing
-  in the current design registers the full 1,568-cell lattice in one pass by default; the 1,568-series
-  corpus reflects accumulated manual runs, not one comprehensive sweep.
+The old `vegetation-register`-only description is historical. Production now has two explicit
+executor duties: `postgres-vegetation` acquires Sentinel-2 observations, and
+`vegetation-catch-up` runs `agri-service data parquet-catch-up-vegetation`. The catch-up lane
+revalidates the 45-day fingerprint window and drains the durable pending-day queue behind the shared
+publication barrier. Its schedule, lease, retry and dead-letter state live in the stateful executor;
+there is no Railway cron service to arm. The original registration command remains an operator tool
+for the governed forecast plane, not the production Parquet scheduler.
 
 ### 5.2 Two near-duplicate copies of the Monte Carlo method module exist — only one is wired in
 

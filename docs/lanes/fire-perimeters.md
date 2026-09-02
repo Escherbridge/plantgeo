@@ -44,15 +44,16 @@ confirm it.
 
 ## 2. Cadence
 
-- **Cron**: hourly at minute 0, via the **shared** `infra/cron-ingest/railway.json`
-  (`"cronSchedule": "0 * * * *"`) running `run_all_ingestion_jobs`.
+- **Executor schedule**: hourly at minute 0. Lane `postgres-fire-perimeters` runs
+  `agri-service data ingest-fire-perimeters` as an independent command. Railway carries no cron
+  schedule for this source.
   **CORRECTED 2026-08-22 at the wave-1 join.** This doc originally cited
   `infra/cron-fire-perimeters/railway.json` at `20 * * * *`, quoting
   `ingest/validation/models.py:133`'s `cadence_basis` string. **That directory does not exist.**
   Only three `infra/cron-*` directories are real — `cron-ingest`, `cron-mtbs`, `cron-soilgrids`.
   `models.py` carries **six** such phantom citations (`cron-firms`, `cron-streamflow`,
   `cron-weather`, `cron-ndvi`, `cron-fire-perimeters`, `cron-evacuation-zones`), all stale since the
-  2026-08-14 cron consolidation. **Never treat a `cadence_basis` string as a file reference.** The
+  superseded cron topologies. **Never treat a `cadence_basis` string as a file reference.** The
   stream's declared `publication_cadence_days` is `1` (`models.py:132`), i.e. the completeness
   report expects at least one landed observation per calendar day.
 - **Observed lag / reliability, both from documented production incidents**:
@@ -62,12 +63,12 @@ confirm it.
     (`services/agri-data-service/src/agri_data_service/ingest/AGENTS.md:273`).
   - **2026-08-10 22:21 UTC →**: ArcGIS began throttling with "Too many requests"; the retry budget
     (2 attempts, ~0.5s/2.5s apart) was too thin to survive it, and because
-    `restartPolicyType: NEVER` on the cron, **that hour's fetch was lost outright, not retried until
+    `restartPolicyType: NEVER` on the former cron, **that hour's fetch was lost outright, not retried until
     the next scheduled tick** (`ingest/AGENTS.md:269`). Fixed by widening to 6 attempts with a
     doubling 1s/2s/4s/8s/16s backoff under a wall-clock ceiling.
-  - Net: nominal cadence is hourly, but a sustained upstream throttle can still cost a lane up to
-    one missed tick even after the 2026-08-10 fix, bounded by `RETRY_WALL_CLOCK_CEILING_SECONDS`
-    rather than unbounded.
+  - **Current production blocker, 2026-09-02:** the first executor turn entered retry backoff with
+    `UpstreamPayloadError: upstream response exceeded the byte limit`. The executor preserves the
+    failure; fix the WFIGS response bound/paging before forcing a retry.
 - The upstream feed itself is described (in the separate, unwired catalogue entry noted in §1) as
   `refresh_cadence="updated daily; historical products downloadable"`
   (`source_manifests.py:400`) — **UNVERIFIED** as authoritative for this exact `_Current` service,
