@@ -158,10 +158,8 @@ MATVIEW_REFRESH_LEASE_SECONDS: Final = 2_700
 MATVIEW_REFRESH_TIME_BUDGET_SECONDS: Final = 2_100
 
 # Documentary only, exactly as strategy_mv_refresh.py's own schedule constant is: nothing in this
-# runtime parses cron syntax (job_definition.schedule is written and never read). This lane has no
-# in-process periodic driver of its own -- it runs from jobs-pulse's dispatchable-lane pass and from
-# a manual POST /api/v1/jobs/trigger -- so this cadence is a hint for an operator reading the row,
-# not a knob anything obeys.
+# durable handler parses cron syntax. The unified job executor owns the schedule; the value here also
+# documents the intended cadence for an operator reading the row.
 MATVIEW_REFRESH_SCHEDULE_CRON: Final = "0 * * * *"
 MATVIEW_REFRESH_SCHEDULE_TIMEZONE: Final = "UTC"
 

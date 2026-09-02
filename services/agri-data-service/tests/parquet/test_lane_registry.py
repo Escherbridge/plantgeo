@@ -19,6 +19,7 @@ from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes import soil_survey as soil_survey_lane
 from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.lanes.soil_survey import POLYGON_KEY_BATCH_SIZE
+from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.parquet.gap_fill import GapFillContractError, lane_window
 from agri_data_service.pipeline.parquet.lane_registry import (
     LANE_REGISTRATIONS,
@@ -311,6 +312,14 @@ def test_fire_generic_writer_stops_exactly_before_the_direct_cutover() -> None:
     assert date(2026, 8, 25) == FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
     assert fire.writer_ceiling == FIRE_DETECTIONS_DIRECT_WRITER_START_DAY - timedelta(days=1)
     assert lane_window(fire, today=date(2026, 9, 1)) == (fire.history_floor, date(2026, 8, 24))
+
+
+def test_water_generic_writer_stops_exactly_before_the_direct_cutover() -> None:
+    water = LANE_REGISTRY["water-gauges"]
+
+    assert date(2026, 9, 2) == WATER_GAUGES_DIRECT_WRITER_START_DAY
+    assert water.writer_ceiling == WATER_GAUGES_DIRECT_WRITER_START_DAY - timedelta(days=1)
+    assert lane_window(water, today=date(2026, 9, 8)) == (water.history_floor, date(2026, 9, 1))
 
 
 def test_writer_ceiling_requires_a_time_axis_and_cannot_precede_the_floor() -> None:

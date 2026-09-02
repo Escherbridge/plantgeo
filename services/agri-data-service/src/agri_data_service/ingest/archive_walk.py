@@ -359,9 +359,7 @@ def archive_lane_definition_spec(lane: BackfillLane) -> JobDefinitionSpec:
         version=ARCHIVE_WALK_DEFINITION_VERSION,
         handler=ARCHIVE_WALK_HANDLER_TOKEN,
         queue_name=ARCHIVE_WALK_QUEUE_NAME,
-        # No `schedule`: Railway's `cronSchedule` is the only thing that fires a tick, and nothing in
-        # this service reads `job_definition.schedule`. A string here would be a second, unenforced
-        # source of truth that drifts from `infra/cron-*/railway.json` without anything noticing.
+        # No inner schedule: the unified executor owns cadence for this durable slice.
         schedule=None,
         # The bash held a per-lane `mkdir` lock so a scheduled tick landing on a running walk exited
         # rather than starting a second one. This is the declarative form of that lock. Note it is

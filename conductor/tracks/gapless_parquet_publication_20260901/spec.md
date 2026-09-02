@@ -51,11 +51,16 @@ author repair work, but it is never a slider dependency.
 - build source-family direct writers and all-rung publication;
 - author missing-day work and bounded tail repairs;
 - register schedules, leases, checkpoints, retries and dead-letter visibility in one executor;
-- after a separate explicit production authorization under `conductor/release-governance.md`, activate
-  one source/product owner at a time and observe recovery plus multi-schedule advancement.
+- remove every tracked Railway `cronSchedule` and cron-only image/config after registry parity tests;
+- after the explicit post-deployment follow-up required by `conductor/release-governance.md`, activate
+  the complete atomic responsibility set, observe every source/product owner, and remove the legacy
+  service objects without overlap.
 
-Creating or approving this track is not production activation approval. Slices `p5` and `p6` remain
-blocked until that separate operator decision is recorded with the exact candidate and rollback.
+The owner directive dated 2026-09-02 authorizes the executor-only repository release and the
+eventual controlled retirement of legacy Railway writer objects. It does not activate a feature
+branch. `p5` remains operationally gated until its reviewed commit is merged to `main`, the exact
+executor deployment reaches `SUCCESS`, the orchestration task supplies an explicit follow-up, and
+the no-in-flight/no-overlap check passes. `p6` remains the production burn-in gate.
 
 ## Out of scope
 

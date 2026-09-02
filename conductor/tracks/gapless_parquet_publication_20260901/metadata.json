@@ -18,7 +18,7 @@
     "postgres_shrink_ingest_repoint_20260825:s2b-s4-forward-scope": "Direct forward publication, gap authoring and executor activation move here. PostgreSQL P5/P6 retirement stays in the older track."
   },
   "note": "Give every time-bearing product one durable source owner for forward refresh, repair and coverage status under the stateful executor. Historical completeness does not satisfy this track.",
-  "production_authorization": "Creating this track does not authorize scheduler activation. p5 and p6 require a separate explicit operator authorization under conductor/release-governance.md after code, no-overlap and rollback gates pass.",
+  "production_authorization": "Owner directive 2026-09-02 authorizes an executor-only repository release and eventual controlled removal of the six inventoried Railway writer objects. Feature-branch activation/removal remains forbidden. After merge, the exact main executor deployment must reach SUCCESS and the orchestration task must explicitly resume the production handoff before any fencing, activation, or service deletion.",
   "partitions": {
     "computed_at": "2026-09-01T00:00:00-06:00",
     "computed_at_commit": "269cc4224ff419c273bed5b660837c5b7f66caa3",
@@ -34,7 +34,8 @@
       "A governed absence is not zero rows, a failed job, an unsettled source or an unrun day.",
       "Every required rung closes before the product-day is terminal.",
       "A source handoff pauses and proves the old owner inactive before activating the new owner.",
-      "No executor lane is activated without a separate explicit production authorization; this track is planning authority only.",
+      "The 2026-09-02 owner directive rejects Railway cron scheduling. Activation/removal waits for merge, exact main executor SUCCESS, an explicit orchestration follow-up, and no-in-flight proof.",
+      "Rollback disables an executor lane and preserves data/manifests/checkpoints; it never restores cronSchedule, reconnects, redeploys, or recreates a Railway cron service.",
       "Tail repair is bounded, checkpointed and idempotent; it never rewrites a valid immutable day.",
       "Availability bootstrap may scan verified history once; API and slider requests may never list historical lane objects or invoke that census.",
       "A terminal day becomes selectable only after the immutable availability generation is verified and its checksum-bound pointer advances last."
@@ -196,18 +197,46 @@
       },
       {
         "id": "p5",
-        "task": "Register schedules in the stateful job executor and perform source-by-source no-overlap handoffs with leases, checkpoints, retry/dead-letter state and rollback instructions.",
+        "task": "Make the stateful job executor the sole scheduler and durable invocation owner; prove the six-service responsibility matrix, cadence/source-ceiling parity, restart/catch-up, no-overlap, leases/checkpoints/retries/dead letters, retire tracked cron configs, and stage the controlled post-main service-object removal.",
         "owns": [
           "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+          "services/agri-data-service/src/agri_data_service/execution/jobs_pulse_command.py",
+          "services/agri-data-service/src/agri_data_service/ingest/commands.py",
+          "services/agri-data-service/src/agri_data_service/ingest/validation/models.py",
           "services/agri-data-service/src/agri_data_service/jobs/registry.py",
+          "services/agri-data-service/src/agri_data_service/jobs/dispatch.py",
+          "services/agri-data-service/src/agri_data_service/jobs/matview_refresh.py",
           "services/agri-data-service/railway.job-executor.json",
-          "services/agri-data-service/tests/test_job_executor*.py"
+          "services/agri-data-service/tests/test_job_executor*.py",
+          "services/agri-data-service/tests/test_jobs_pulse_command.py",
+          "services/agri-data-service/tests/test_cli_contract.py",
+          "services/agri-data-service/tests/test_strategy_mv_refresh.py",
+          "services/agri-data-service/src/agri_data_service/jobs/scheduler.py",
+          "services/agri-data-service/src/agri_data_service/jobs/strategy_mv_refresh.py",
+          "services/agri-data-service/src/agri_data_service/jobs/worker.py",
+          "services/agri-data-service/src/agri_data_service/routes/__init__.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/lanes/water_gauges.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/water_gauges_forward.py",
+          "services/agri-data-service/tests/parquet/test_direct_writers.py",
+          "services/agri-data-service/tests/parquet/test_lane_registry.py",
+          "scripts/warm-soilgrids.mjs",
+          "infra/job-executor/",
+          "infra/cron-ingest/railway.json",
+          "infra/cron-ingest/Dockerfile",
+          "infra/cron-mtbs/railway.json",
+          "infra/cron-soilgrids/railway.json",
+          "infra/cron-soilgrids/Dockerfile",
+          "infra/parquet-drain/railway.json",
+          "services/agri-data-service/railway.fire-detections-forward.json",
+          "services/agri-data-service/railway.water-gauges-forward.json",
+          "conductor/tracks/gapless_parquet_publication_20260901/evidence/scheduler-handoff-20260902.md"
         ],
         "depends_on": [
           "p0a",
           "p4"
         ],
-        "status": "blocked_owner_authorization"
+        "status": "implementation_authorized_activation_gated"
       },
       {
         "id": "p6",

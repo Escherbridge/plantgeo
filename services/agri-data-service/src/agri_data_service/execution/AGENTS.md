@@ -1559,12 +1559,13 @@ CLI verbs, registered by `recommendation_commands.register_recommendation_comman
 `recommendation-covariate-coverage`. Every one prints a single JSON line and writes
 nothing without `--persist`.
 
-## `jobs_pulse_command.py` -- one cron tick for the whole job runner
+## `jobs_pulse_command.py` -- one bounded maintenance pulse for the job runner
 
-`agri-service ops jobs-pulse` is the single hourly tick that replaced a fan-out of eleven Railway cron
-services on 2026-08-14 (owner directive: *"we should not need all the individual crons, maybe just one
-to keep a pulse on the job runner."*). It visits three namespaces per tick and reports one row per
-lane; `docs/deployment.md` § "Cron consolidation, 2026-08-14" is the deployment-side record.
+`agri-service ops jobs-pulse` is the bounded maintenance command that replaced a fan-out of eleven
+Railway cron services on 2026-08-14. The sole `plantgeo-job-executor` now invokes its component
+responsibilities as separately recoverable lanes. The command remains available for deliberate
+operator repair, not as another scheduler. It visits three namespaces and reports one row per lane;
+`docs/deployment.md` records the historical consolidation.
 
 1. **Dispatchable lanes** — `jobs/dispatch.py`'s `LANE_DISPATCH` registry, through the same
    `dispatch_lane` call `POST /api/v1/jobs/trigger` makes.
@@ -1650,10 +1651,9 @@ the verdict line: `no_claimable_work` is a truthful answer even when everything 
 repeating it beside a verdict would re-import the ambiguity the line exists to remove.
 
 **Why a non-zero exit is safe here, and what would make it unsafe.**
-`infra/cron-ingest/railway.json` sets `restartPolicyType: NEVER` alongside `cronSchedule: 0 * * * *`,
-and that image's `ENTRYPOINT` already propagates this verb's status
-(`... ; pulse_status=$?; [ $ingest_status -eq 0 ] && [ $pulse_status -eq 0 ]`). A non-zero exit therefore
-turns **one** hourly run red and Railway starts nothing in its place. That matters most for
+The retired `infra/cron-ingest` image propagated this verb's status into one failed Railway run.
+The executor preserves the important part of that contract: a non-zero bounded subprocess result
+becomes a durable failed work item, retry, and eventually a visible dead letter. That matters most for
 `standing_dead_letters`, which is a *standing* condition that repeats every hour until an operator
 requeues or cancels the buried work items — one red run per hour is the intended signal. If that restart
 policy is ever changed to `ON_FAILURE`, it becomes an unbounded loop of back-to-back 600-second ticks and
@@ -1665,8 +1665,10 @@ work that will not run, reported as though nothing needed to run. It lives in `_
 `PulseLaneOutcome` and its own member of `FAILING_PULSE_OUTCOMES`. Nothing else has to change:
 `PulseSummary.failed`, `_log_tick_verdict` and the exit rule all read that one frozenset.
 
-`--skip-maintenance` runs only the two lane passes, for an operator draining lane work by hand; the
-scheduled tick must never use it. `--dry-run` lists all three namespaces and applies nothing.
+`--skip-maintenance` runs only the two lane passes. The retired composite cron was forbidden from
+using it because that would silently drop its only maintenance pass; the unified executor uses it
+only together with one explicit `--lane`, because every maintenance verb is now a separate outer
+definition and failure domain. `--dry-run` lists all three namespaces and applies nothing.
 
 ### No census telemetry, deliberately
 
@@ -1711,24 +1713,57 @@ not claim source parity. A selected lane may write only when:
 Acknowledgements are explicit operator assertions, not machine-enforced evidence of Railway parity,
 service retirement, or absence of an in-flight run. The parser rejects malformed, missing, extra,
 duplicate, unknown, and inactive-lane tokens, but cannot detect that an externally valid assertion later
-became stale; retaining or removing it is operator change control. A lane may require several
-acknowledgements. The generic water Parquet lane requires both
-`plantgeo-ingest-cron` and `plantgeo-water-gauges-forward`; the direct water migration input remains
-non-executable, and both paths also declare a mutual conflict. Fire keeps a separate direct-forward lane,
+became stale; removal is controlled operator change. A lane may require several acknowledgements.
+Generic water gap repair belongs to the retired ingest macro and is clamped to `2026-09-01`, while the
+direct NWIS publisher belongs to `plantgeo-water-gauges-forward` and filters to `2026-09-02` onward;
+both are executable, independently acknowledged duties and the single elected executor runs subprocesses serially. Fire likewise keeps a separate direct-forward lane,
 while its generic historical lane carries the registry's writer ceiling so their date windows cannot
 overlap.
 
 The roles actually chained by `plantgeo-ingest-cron` form one atomic cutover group: every executable
 replacement for its per-source PostgreSQL ingestion, maintenance, durable job, and per-stream Parquet
 publication must activate together. The previously unscheduled watershed source is visible and safely
-activatable outside that legacy-owner group. SoilGrids and the one-shot soil-moisture load stay visible
-but non-executable; activation refuses them instead of inventing a substitute runtime.
+activatable outside that legacy-owner group. SoilGrids is executable in the combined Python/Node image
+at its original hourly `:25` phase; its database cache census is the domain checkpoint. The completed
+soil-moisture one-shot remains visible but non-executable with an explicit terminal disposition, so the
+executor never invents a recurrence or recreates its service.
 
-Active registration is insert-only: `ON CONFLICT (name, version) DO NOTHING`, followed by a read of the
-exact row. An existing `enabled=false` row is reported paused and is never upserted. This avoids
-`ensure_job_definition`, whose reconciliation of `enabled` would otherwise silently undo an operator
-pause on every restart (or in a race between the initial read and an operator's pause). Shadow ticks do
-not register definitions at all.
+Restart catch-up is explicit per lane. Source polls and maintenance checks coalesce to the latest due
+bucket because their bounded commands inspect current source or ledger state. Durable archive workers
+and Parquet backlog lanes replay the oldest missed bucket first. The logical key is stable by lane and
+scheduled bucket, and an open work item
+is resumed after restart, and failed/partial work blocks a later bucket until retry or dead-letter
+remediation. Rollback removes only the affected lane from `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES`; it never
+restores a Railway cron schedule or service.
+
+Active registration is insert-only: definition version `2` carries the executor-only cadence,
+catch-up and ownership-boundary contract. Before a missing version is inserted, the executor reads the
+same lane-wide pause state as manual dispatch. A lane's first-ever definition starts enabled; every
+later version starts disabled and requires an explicit lane-wide resume after the upgrade is reviewed.
+That conservative rule makes pause/registration races fail closed: they may leave an enabled lane paused,
+but can never silently activate a new version. `ON CONFLICT (name, version) DO NOTHING` is followed by
+an exact-row read, and either a lane-wide pause or an exact-row pause refuses new-version scheduling.
+This avoids `ensure_job_definition`, whose reconciliation of `enabled` would otherwise silently undo an
+operator pause on every restart. Shadow ticks do not register definitions at all.
+
+A version bump is also a durable-work boundary, not permission to abandon the prior ledger. The scheduler
+selects run state by stable definition name across every version: prior-version `queued`/`running` runs
+win before current-version runs, oldest bucket first; only when no open run exists does the newest
+terminal run become the cadence checkpoint. An enabled prior version's retry, defer, or expired-lease
+work resumes through that exact stored definition and version before current work can open. A live lease
+waits; a disabled or handler-incompatible prior definition fails the tick with the exact run/version for
+operator reconciliation. This preserves both unfinished work and missed-tick continuity across upgrades
+without letting versions overlap.
+
+That lane-wide lookup never window-sorts the complete run lifetime. It selects at most one prior open,
+one current open and one terminal checkpoint, using the existing status/schedule and
+definition/creation indexes, then chooses among those candidates. The terminal candidate is found from
+the newest-created terminal run per definition version; executor buckets are created monotonically and
+never while that lane has an open run, so this is also the version's newest schedule checkpoint. Work
+items are inspected only for the selected run. If every child is terminal but its parent remains
+`queued`/`running` because the process died between the child commit and parent-rollup commit, the state
+is explicitly marked as needing rollup and driven once through the exact stored version. A nonterminal
+parent with zero children fails with an operator repair/cancel instruction instead of pretending to wait.
 
 Each cadence bucket is a `logical_run_key`; opening it and its single command shard is idempotent. An open
 older run resumes before a newer bucket opens when it has work claimable now; retry/defer waits and live
@@ -1742,7 +1777,7 @@ operator clears its dead-lettered item. `jobs-pulse` is never invoked as an unfi
 refresh, strategy-MV refresh, both archive workers, reconciliation, gap planning, and validation are
 distinct scheduler definitions, so a known matview dead letter cannot consume another lane's retries.
 PostgreSQL `ingest-all` is likewise split into one source or geometry command per definition. The former
-vegetation catch-up remains an independent incremental `vegetation-catch-up` command, which drains and
+vegetation catch-up is an independent replayable backlog `vegetation-catch-up` command, which drains and
 acknowledges the fingerprinted pending queue under its publication barrier. It sits beside raw
 `postgres-vegetation`/`ingest-ndvi`; generic `parquet-vegetation` remains responsible for history and
 does not pretend to satisfy the pending-queue contract. Drought forward ingestion polls daily at 12Z:

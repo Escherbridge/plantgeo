@@ -35,12 +35,15 @@ from agri_data_service.jobs import (
     job_handler,
     load_job_definition,
     open_job_run,
+    read_lane_pause_state,
     run_job_slice,
     shutdown_signal,
 )
 from agri_data_service.jobs.lease import apply_statement_timeout, canonical_json, fetch_row, required_column
 from agri_data_service.jobs.matview_refresh import MATVIEW_REFRESH_TIME_BUDGET_SECONDS
 from agri_data_service.jobs.strategy_mv_refresh import STRATEGY_MV_REFRESH_TIME_BUDGET_SECONDS
+from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS, LANE_REGISTRY
 
 if TYPE_CHECKING:
@@ -49,7 +52,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 EXECUTOR_DEFINITION_PREFIX: Final = "plantgeo.executor."
-EXECUTOR_DEFINITION_VERSION: Final = "1"
+EXECUTOR_DEFINITION_VERSION: Final = "2"
 EXECUTOR_HANDLER_TOKEN: Final = "plantgeo.executor.command.v1"
 EXECUTOR_WORK_ITEM_KIND: Final = "scheduled-command"
 EXECUTOR_LEADER_LOCK_KEY: Final = "plantgeo:unified-job-executor:v1"
@@ -71,8 +74,9 @@ COMMAND_TERMINATE_GRACE_SECONDS: Final = 30
 COMMAND_KILL_WAIT_SECONDS: Final = 10
 WORKER_ID_MAX_LENGTH: Final = 255
 
-LaneWorkClass = Literal["incremental", "backlog", "source-specific"]
+LaneWorkClass = Literal["incremental", "backlog"]
 MigrationDisposition = Literal["consolidatable", "source-specific", "snapshot-only"]
+CatchUpPolicy = Literal["coalesce_latest", "replay_oldest"]
 LaneTickState = Literal[
     "shadow",
     "source_specific",
@@ -110,9 +114,11 @@ class LaneExecutionSpec:
     publication_cadence_days: int | None
     publication_lag_source: str
     selection_policy: str
+    catch_up_policy: CatchUpPolicy
     command: tuple[str, ...] | None
     command_timeout_seconds: int
     description: str
+    writer_floor: str | None = None
     writer_ceiling: str | None = None
 
     def __post_init__(self) -> None:
@@ -122,6 +128,10 @@ class LaneExecutionSpec:
             raise ExecutorConfigurationError(f"{self.lane_id}: cadence_seconds must be positive")
         if self.phase_offset_seconds < 0:
             raise ExecutorConfigurationError(f"{self.lane_id}: phase_offset_seconds must not be negative")
+        if self.cadence_seconds is not None and self.phase_offset_seconds >= self.cadence_seconds:
+            raise ExecutorConfigurationError(
+                f"{self.lane_id}: phase_offset_seconds must be smaller than cadence_seconds"
+            )
         if self.command is not None and not self.command:
             raise ExecutorConfigurationError(f"{self.lane_id}: command must not be empty")
         if self.command_timeout_seconds <= 0:
@@ -157,11 +167,16 @@ class LaneExecutionSpec:
                 "lane_id": self.lane_id,
                 "legacy_owners": list(self.legacy_owners),
                 "required_handoff_acknowledgements": list(self.required_handoff_acknowledgements),
+                "work_class": self.work_class,
+                "migration_disposition": self.migration_disposition,
                 "cadence_seconds": self.cadence_seconds,
+                "phase_offset_seconds": self.phase_offset_seconds,
                 "publication_lag_days": self.publication_lag_days,
                 "publication_cadence_days": self.publication_cadence_days,
                 "publication_lag_source": self.publication_lag_source,
                 "selection_policy": self.selection_policy,
+                "catch_up_policy": self.catch_up_policy,
+                "writer_floor": self.writer_floor,
                 "writer_ceiling": self.writer_ceiling,
             },
         )
@@ -176,13 +191,28 @@ class LaneExecutionSpec:
             "work_class": self.work_class,
             "migration_disposition": self.migration_disposition,
             "cadence_seconds": self.cadence_seconds,
+            "phase_offset_seconds": self.phase_offset_seconds,
             "schedule": self.schedule,
             "publication_lag_days": self.publication_lag_days,
             "publication_cadence_days": self.publication_cadence_days,
             "publication_lag_source": self.publication_lag_source,
             "selection_policy": self.selection_policy,
+            "catch_up_policy": self.catch_up_policy,
+            "command": None if self.command is None else list(self.command),
+            "command_timeout_seconds": self.command_timeout_seconds,
+            "checkpoint": "agri.job_work_item.cursor",
+            "lease_seconds": self.command_timeout_seconds + 120,
+            "max_attempts": 5,
+            "retry_policy": {
+                "initial_backoff_seconds": 30,
+                "backoff_multiplier": 2,
+                "maximum_backoff_seconds": 3600,
+            },
+            "dead_letter_visibility": "agri.job_work_item status=dead_letter and agri.job_event",
+            "rollback": f"remove lane from {ACTIVE_LANES_VARIABLE}",
             "executable": self.executable,
             "description": self.description,
+            "writer_floor": self.writer_floor,
             "writer_ceiling": self.writer_ceiling,
             "source_watermark_parity": "not_evaluated",
         }
@@ -191,6 +221,9 @@ class LaneExecutionSpec:
 INGEST_CRON_OWNER: Final = "plantgeo-ingest-cron"
 DIRECT_FIRE_OWNER: Final = "plantgeo-fire-detections-forward"
 DIRECT_WATER_OWNER: Final = "plantgeo-water-gauges-forward"
+MTBS_OWNER: Final = "plantgeo-cron-mtbs"
+SOILGRIDS_OWNER: Final = "plantgeo-cron-soilgrids"
+SOIL_MOISTURE_SNAPSHOT_OWNER: Final = "plantgeo-soil-moisture-parquet-load"
 
 
 def _disabled(owner: str) -> str:
@@ -219,8 +252,10 @@ def _spec(  # noqa: PLR0913 - this is the declarative constructor for the code-o
     publication_cadence_days: int | None = None,
     publication_lag_source: str = "source command contract",
     selection_policy: str = "newest available source receipt first",
+    catch_up_policy: CatchUpPolicy | None = None,
     timeout_seconds: int = 900,
     description: str,
+    writer_floor: str | None = None,
     writer_ceiling: str | None = None,
 ) -> LaneExecutionSpec:
     acknowledgements = (
@@ -240,9 +275,13 @@ def _spec(  # noqa: PLR0913 - this is the declarative constructor for the code-o
         publication_cadence_days=publication_cadence_days,
         publication_lag_source=publication_lag_source,
         selection_policy=selection_policy,
+        catch_up_policy=("replay_oldest" if work_class == "backlog" else "coalesce_latest")
+        if catch_up_policy is None
+        else catch_up_policy,
         command=command,
         command_timeout_seconds=timeout_seconds,
         description=description,
+        writer_floor=writer_floor,
         writer_ceiling=writer_ceiling,
     )
 
@@ -274,11 +313,6 @@ def _parquet_spec(slug: str) -> LaneExecutionSpec:
     lag, publication_cadence, writer_ceiling = _registration(slug)
     handoffs: tuple[str, ...] = (_disabled(INGEST_CRON_OWNER),)
     legacy_owners: tuple[str, ...] = (INGEST_CRON_OWNER,)
-    conflicts: tuple[str, ...] = ()
-    if slug == "water-gauges":
-        handoffs = (_disabled(INGEST_CRON_OWNER), _disabled(DIRECT_WATER_OWNER))
-        legacy_owners = (INGEST_CRON_OWNER, DIRECT_WATER_OWNER)
-        conflicts = ("water-gauges-direct-forward",)
     return _spec(
         f"parquet-{slug}",
         command=(
@@ -294,14 +328,13 @@ def _parquet_spec(slug: str) -> LaneExecutionSpec:
         ),
         legacy_owners=legacy_owners,
         required_handoffs=handoffs,
-        conflicts_with=conflicts,
         work_class="backlog",
         publication_lag_days=lag,
         publication_cadence_days=publication_cadence,
         publication_lag_source=f"pipeline/parquet/lane_registry.py {slug} contract",
         selection_policy="newest missing day first; at most one day per scheduler turn",
         timeout_seconds=1200,
-        description=f"Bounded incremental and historical Parquet ownership for {slug}.",
+        description=f"Bounded incremental and historical Parquet gap ownership for {slug}.",
         writer_ceiling=writer_ceiling,
     )
 
@@ -323,7 +356,7 @@ _POSTGRES_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         "vegetation-catch-up",
         command=("agri-service", "data", "parquet-catch-up-vegetation"),
-        work_class="incremental",
+        work_class="backlog",
         publication_lag_days=_registration("vegetation")[0],
         publication_cadence_days=_registration("vegetation")[1],
         publication_lag_source="pipeline/parquet/lane_registry.py vegetation contract",
@@ -354,6 +387,42 @@ _POSTGRES_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     ),
 )
 
+_DURABLE_JOB_SCHEDULES: Final[tuple[tuple[str, int, int, int, str, CatchUpPolicy], ...]] = (
+    (
+        "matview-refresh",
+        MATVIEW_REFRESH_TIME_BUDGET_SECONDS,
+        3600,
+        0,
+        "0 * * * *",
+        "coalesce_latest",
+    ),
+    (
+        "strategy-mv-refresh",
+        STRATEGY_MV_REFRESH_TIME_BUDGET_SECONDS,
+        900,
+        0,
+        "*/15 * * * *",
+        "coalesce_latest",
+    ),
+    (
+        "firms-archive",
+        ARCHIVE_WALK_TIME_BUDGET_SECONDS,
+        3600,
+        0,
+        "0 * * * *",
+        "replay_oldest",
+    ),
+    (
+        "streamflow-archive",
+        ARCHIVE_WALK_TIME_BUDGET_SECONDS,
+        3600,
+        0,
+        "0 * * * *",
+        "replay_oldest",
+    ),
+)
+
+
 _JOBS_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     *(
         _spec(
@@ -369,16 +438,17 @@ _JOBS_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
                 "600",
             ),
             work_class="backlog",
+            cadence_seconds=cadence_seconds,
+            phase_offset_seconds=phase_offset_seconds,
+            schedule=schedule,
+            catch_up_policy=catch_up_policy,
             publication_lag_source=f"durable definition {lane}",
             selection_policy="one isolated durable slice per turn",
             timeout_seconds=inner_budget + COMMAND_CLEANUP_MARGIN_SECONDS,
             description=f"Independent durable failure domain for {lane}.",
         )
-        for lane, inner_budget in (
-            ("matview-refresh", MATVIEW_REFRESH_TIME_BUDGET_SECONDS),
-            ("strategy-mv-refresh", STRATEGY_MV_REFRESH_TIME_BUDGET_SECONDS),
-            ("firms-archive", ARCHIVE_WALK_TIME_BUDGET_SECONDS),
-            ("streamflow-archive", ARCHIVE_WALK_TIME_BUDGET_SECONDS),
+        for lane, inner_budget, cadence_seconds, phase_offset_seconds, schedule, catch_up_policy in (
+            _DURABLE_JOB_SCHEDULES
         )
     ),
     *(
@@ -386,6 +456,7 @@ _JOBS_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
             f"maintenance-{lane}-{verb}",
             command=("agri-service", "ops", command_name, "--lane", lane, "--apply"),
             work_class="backlog",
+            catch_up_policy="coalesce_latest",
             publication_lag_source=f"archive lane {lane}",
             selection_policy="bounded maintenance after independent archive execution",
             description=f"Independent {verb} maintenance for {lane}.",
@@ -400,6 +471,7 @@ _JOBS_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         "maintenance-validate-streams",
         command=("agri-service", "ops", "validate-streams"),
         work_class="backlog",
+        catch_up_policy="coalesce_latest",
         publication_lag_source="cross-stream validation contracts",
         selection_policy="one isolated validation pass",
         description="Cross-stream validation isolated from every durable worker lane.",
@@ -421,23 +493,26 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         publication_cadence_days=_registration("fire-detections")[1],
         publication_lag_source="pipeline/parquet/lane_registry.py fire-detections contract",
         description="Direct FIRMS forward writer; safe beside generic history only because of its writer ceiling.",
+        writer_floor=FIRE_DETECTIONS_DIRECT_WRITER_START_DAY.isoformat(),
     ),
     _spec(
         "water-gauges-direct-forward",
-        command=None,
-        legacy_owners=(DIRECT_WATER_OWNER, INGEST_CRON_OWNER),
-        required_handoffs=(_disabled(DIRECT_WATER_OWNER), _disabled(INGEST_CRON_OWNER)),
-        conflicts_with=("parquet-water-gauges",),
+        command=("python", "-m", "agri_data_service.pipeline.parquet.water_gauges_forward"),
+        legacy_owners=(DIRECT_WATER_OWNER,),
         disposition="source-specific",
+        phase_offset_seconds=900,
+        schedule="15 * * * *",
         publication_lag_days=_registration("water-gauges")[0],
         publication_cadence_days=_registration("water-gauges")[1],
         publication_lag_source="pipeline/parquet/lane_registry.py water-gauges contract",
-        description="Direct water writer blocked until a non-overlapping ceiling/cutover contract exists.",
+        timeout_seconds=1800,
+        description="Bounded direct water forward writer above the fixed generic-repair ceiling.",
+        writer_floor=WATER_GAUGES_DIRECT_WRITER_START_DAY.isoformat(),
     ),
     _spec(
         "mtbs-forward",
         command=("agri-service", "data", "ingest-mtbs"),
-        legacy_owners=("plantgeo-cron-mtbs",),
+        legacy_owners=(MTBS_OWNER,),
         cadence_seconds=604800,
         phase_offset_seconds=460500,
         schedule="55 7 * * 2",
@@ -449,18 +524,19 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     ),
     _spec(
         "soilgrids-cache-warm",
-        command=None,
-        legacy_owners=("plantgeo-cron-soilgrids",),
+        command=("node", "/app/plantgeo/scripts/warm-soilgrids.mjs", "120"),
+        legacy_owners=(SOILGRIDS_OWNER,),
         disposition="source-specific",
         phase_offset_seconds=1500,
         schedule="25 * * * *",
         publication_lag_source="static lookup; no temporal publication lag",
-        description="Node-only finite SoilGrids cache warmer, unavailable in this Python image.",
+        timeout_seconds=3000,
+        description="Finite SoilGrids cache warmer with database-backed cached-cell checkpoints.",
     ),
     _spec(
         "soil-moisture-parquet-backfill",
         command=None,
-        legacy_owners=("plantgeo-soil-moisture-parquet-load",),
+        legacy_owners=(SOIL_MOISTURE_SNAPSHOT_OWNER,),
         disposition="snapshot-only",
         cadence_seconds=None,
         schedule=None,
@@ -478,6 +554,56 @@ _LANE_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
 )
 
 LANE_SPECS: Final[Mapping[str, LaneExecutionSpec]] = MappingProxyType({spec.lane_id: spec for spec in _LANE_SPECS})
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyRailwayResponsibility:
+    """One observed legacy Railway writer and its executor-only disposition."""
+
+    service_name: str
+    service_id: str
+    replacement_lanes: tuple[str, ...]
+    terminal_disposition: str | None = None
+
+    def inventory_row(self) -> dict[str, object]:
+        return {
+            "service_name": self.service_name,
+            "service_id": self.service_id,
+            "replacement_lanes": list(self.replacement_lanes),
+            "terminal_disposition": self.terminal_disposition,
+        }
+
+
+def _lanes_owned_by(owner: str) -> tuple[str, ...]:
+    return tuple(spec.lane_id for spec in _LANE_SPECS if owner in spec.legacy_owners)
+
+
+LEGACY_RAILWAY_SERVICE_IDS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        INGEST_CRON_OWNER: "3ae3cc37-c398-43fe-b74c-83e4da130423",
+        MTBS_OWNER: "a683cc83-2b49-4276-a136-941e1b2cbe24",
+        SOILGRIDS_OWNER: "0960aa81-4499-4cb1-9daa-3350eed4d654",
+        DIRECT_FIRE_OWNER: "f4ad61fe-e71a-4776-b9d5-0b153c9ee5b7",
+        DIRECT_WATER_OWNER: "40cb252b-e21c-4140-8d94-5db77eb2398d",
+        SOIL_MOISTURE_SNAPSHOT_OWNER: "4a1413f1-5f96-44ea-853c-6a379c7673c4",
+    }
+)
+
+LEGACY_RAILWAY_RESPONSIBILITIES: Final[Mapping[str, LegacyRailwayResponsibility]] = MappingProxyType(
+    {
+        owner: LegacyRailwayResponsibility(owner, service_id, _lanes_owned_by(owner))
+        for owner, service_id in LEGACY_RAILWAY_SERVICE_IDS.items()
+        if owner != SOIL_MOISTURE_SNAPSHOT_OWNER
+    }
+    | {
+        SOIL_MOISTURE_SNAPSHOT_OWNER: LegacyRailwayResponsibility(
+            SOIL_MOISTURE_SNAPSHOT_OWNER,
+            LEGACY_RAILWAY_SERVICE_IDS[SOIL_MOISTURE_SNAPSHOT_OWNER],
+            ("soil-moisture-parquet-backfill",),
+            terminal_disposition="completed immutable snapshot; never schedule or recreate",
+        )
+    }
+)
 
 _TRY_LEADER_LOCK: Final = text("SELECT pg_try_advisory_lock(hashtextextended(:lock_key, 0)) AS acquired")
 _RELEASE_LEADER_LOCK: Final = text("SELECT pg_advisory_unlock(hashtextextended(:lock_key, 0)) AS released")
@@ -588,12 +714,36 @@ def scheduled_bucket(spec: LaneExecutionSpec, now: datetime) -> datetime:
     return datetime.fromtimestamp(bucket, tz=UTC)
 
 
+def next_scheduled_bucket(
+    spec: LaneExecutionSpec,
+    now: datetime,
+    latest_scheduled_for: datetime | None,
+) -> datetime:
+    """Choose the next logical bucket under the lane's restart catch-up contract."""
+    current = scheduled_bucket(spec, now)
+    if latest_scheduled_for is None or latest_scheduled_for >= current:
+        return current
+    if spec.catch_up_policy == "coalesce_latest":
+        return current
+    assert spec.cadence_seconds is not None
+    next_oldest = datetime.fromtimestamp(
+        int(latest_scheduled_for.timestamp()) + spec.cadence_seconds,
+        tz=UTC,
+    )
+    return min(next_oldest, current)
+
+
 @dataclass(frozen=True, slots=True)
 class LatestRun:
     run_id: uuid.UUID
     scheduled_for: datetime
     status: str
     work_claimable: bool
+    has_work_items: bool = True
+    terminal_items_need_rollup: bool = False
+    definition_id: uuid.UUID | None = None
+    definition_version: str = EXECUTOR_DEFINITION_VERSION
+    definition_enabled: bool = True
 
     @property
     def open(self) -> bool:
@@ -742,7 +892,8 @@ async def _load_or_register_definition(
     session: AsyncSession,
     spec: LaneExecutionSpec,
 ) -> JobDefinitionRecord | None:
-    """Create a missing definition once, but never overwrite a stored operator pause."""
+    """Register a missing version fail-closed and preserve the lane-wide operator pause."""
+    pause_state = await read_lane_pause_state(session, spec.definition_name)
     state = await _definition_state(session, spec)
     if state is None:
         definition_spec = spec.definition_spec()
@@ -756,6 +907,7 @@ async def _load_or_register_definition(
                 "queue_name": definition_spec.queue_name,
                 "schedule": definition_spec.schedule,
                 "schedule_timezone": definition_spec.schedule_timezone,
+                "enabled": not pause_state.registered,
                 "concurrency_key": definition_spec.concurrency_key,
                 "max_attempts": definition_spec.max_attempts,
                 "lease_seconds": definition_spec.lease_seconds,
@@ -769,7 +921,7 @@ async def _load_or_register_definition(
         if state is None:
             raise RuntimeError(f"executor definition {spec.definition_name!r} was neither inserted nor readable")
     _, enabled = state
-    if not enabled:
+    if pause_state.paused or not enabled:
         await _rollback_planning_transaction(session)
         return None
     definition = await load_job_definition(
@@ -781,8 +933,12 @@ async def _load_or_register_definition(
     return definition
 
 
-async def _latest_run(session: AsyncSession, definition_id: uuid.UUID) -> LatestRun | None:
-    row = await fetch_row(session, _SELECT_LATEST_RUN, {"job_definition_id": definition_id})
+async def _latest_run(session: AsyncSession, spec: LaneExecutionSpec) -> LatestRun | None:
+    row = await fetch_row(
+        session,
+        _SELECT_LATEST_RUN,
+        {"name": spec.definition_name, "current_version": EXECUTOR_DEFINITION_VERSION},
+    )
     if row is None:
         return None
     return LatestRun(
@@ -790,6 +946,11 @@ async def _latest_run(session: AsyncSession, definition_id: uuid.UUID) -> Latest
         scheduled_for=required_column(row, "scheduled_for", datetime),
         status=required_column(row, "status", str),
         work_claimable=required_column(row, "work_claimable", bool),
+        has_work_items=required_column(row, "has_work_items", bool),
+        terminal_items_need_rollup=required_column(row, "terminal_items_need_rollup", bool),
+        definition_id=required_column(row, "job_definition_id", uuid.UUID),
+        definition_version=required_column(row, "definition_version", str),
+        definition_enabled=required_column(row, "definition_enabled", bool),
     )
 
 
@@ -841,13 +1002,18 @@ async def _execute_due_lane(
     summary = await run_job_slice(
         session,
         definition_name=candidate.spec.definition_name,
-        version=EXECUTOR_DEFINITION_VERSION,
+        version=candidate.definition.version,
         job_run_id=run_id,
         worker_id=_worker_id(candidate.spec),
-        budget_seconds=float(candidate.spec.command_timeout_seconds + 30),
+        budget_seconds=float(candidate.definition.time_budget_seconds),
         stop=stop,
     )
-    failed = summary.retried > 0 or summary.dead_lettered > 0 or summary.abandoned > 0
+    failed = (
+        summary.retried > 0
+        or summary.dead_lettered > 0
+        or summary.abandoned > 0
+        or summary.run_status in {"failed", "partial"}
+    )
     return LaneTickResult(
         lane_id=candidate.spec.lane_id,
         state="failed" if failed else "ran",
@@ -874,6 +1040,94 @@ def _deferred_shutdown_result(candidate: DueLane) -> LaneTickResult:
         scheduled_for=candidate.scheduled_for,
         run_id=candidate.existing_run_id,
         detail="shutdown requested before this lane was opened",
+    )
+
+
+def _blocked_open_run_result(
+    spec: LaneExecutionSpec,
+    latest: LatestRun,
+    *,
+    prior_version: bool,
+) -> LaneTickResult | None:
+    version_detail = (
+        f"prior definition version {latest.definition_version!r}" if prior_version else "current definition"
+    )
+    if not latest.has_work_items:
+        return LaneTickResult(
+            lane_id=spec.lane_id,
+            state="failed",
+            scheduled_for=latest.scheduled_for,
+            run_id=latest.run_id,
+            run_status=latest.status,
+            detail=f"{version_detail} has a nonterminal run with no work items; explicitly repair or cancel it",
+        )
+    if latest.work_claimable or latest.terminal_items_need_rollup:
+        return None
+    return LaneTickResult(
+        lane_id=spec.lane_id,
+        state="not_due",
+        scheduled_for=latest.scheduled_for,
+        run_id=latest.run_id,
+        run_status=latest.status,
+        detail=f"{version_detail} has no currently claimable work; retry, defer, or live lease wait remains",
+    )
+
+
+async def _plan_prior_version_run(
+    session: AsyncSession,
+    spec: LaneExecutionSpec,
+    latest: LatestRun | None,
+) -> tuple[LaneTickResult | None, DueLane | None]:
+    """Resume or refuse prior-version work before current-version scheduling."""
+    if latest is None or not latest.open or latest.definition_version == EXECUTOR_DEFINITION_VERSION:
+        return None, None
+    if not latest.definition_enabled:
+        return (
+            LaneTickResult(
+                lane_id=spec.lane_id,
+                state="failed",
+                scheduled_for=latest.scheduled_for,
+                run_id=latest.run_id,
+                run_status=latest.status,
+                detail=(
+                    f"prior definition version {latest.definition_version!r} has nonterminal work but is "
+                    "disabled; explicitly resume or cancel that durable run before current-version work"
+                ),
+            ),
+            None,
+        )
+    blocked = _blocked_open_run_result(spec, latest, prior_version=True)
+    if blocked is not None:
+        return blocked, None
+    definition = await load_job_definition(
+        session,
+        spec.definition_name,
+        version=latest.definition_version,
+    )
+    if definition.handler != EXECUTOR_HANDLER_TOKEN:
+        return (
+            LaneTickResult(
+                lane_id=spec.lane_id,
+                state="failed",
+                scheduled_for=latest.scheduled_for,
+                run_id=latest.run_id,
+                run_status=latest.status,
+                detail=(
+                    f"prior definition version {latest.definition_version!r} uses incompatible handler "
+                    f"{definition.handler!r}; reconcile it before current-version work"
+                ),
+            ),
+            None,
+        )
+    return (
+        None,
+        DueLane(
+            spec=spec,
+            definition=definition,
+            scheduled_for=latest.scheduled_for,
+            existing_run_id=latest.run_id,
+            last_scheduled_for=latest.scheduled_for,
+        ),
     )
 
 
@@ -919,14 +1173,25 @@ async def _plan_active_lanes(
             continue
 
         definition = await _load_or_register_definition(session, spec)
+        latest = await _latest_run(session, spec)
+        prior_result, prior_due = await _plan_prior_version_run(session, spec, latest)
+        await _rollback_planning_transaction(session)
+        if prior_result is not None:
+            results.append(prior_result)
+            continue
+        if prior_due is not None:
+            due.append(prior_due)
+            continue
         if definition is None:
             results.append(
-                LaneTickResult(lane_id=spec.lane_id, state="paused", detail="job_definition.enabled is false")
+                LaneTickResult(
+                    lane_id=spec.lane_id,
+                    state="paused",
+                    detail="the lane-wide job_definition pause or current-version pause is active",
+                )
             )
             continue
-        latest = await _latest_run(session, definition.id)
-        await _rollback_planning_transaction(session)
-        bucket = scheduled_bucket(spec, now)
+        current_bucket = scheduled_bucket(spec, now)
         if latest is not None and latest.status in {"failed", "partial"}:
             results.append(
                 LaneTickResult(
@@ -940,17 +1205,9 @@ async def _plan_active_lanes(
             )
             continue
         if latest is not None and latest.open:
-            if not latest.work_claimable:
-                results.append(
-                    LaneTickResult(
-                        lane_id=spec.lane_id,
-                        state="not_due",
-                        scheduled_for=latest.scheduled_for,
-                        run_id=latest.run_id,
-                        run_status=latest.status,
-                        detail="open run has no currently claimable work; retry, defer, or lease wait remains",
-                    )
-                )
+            blocked = _blocked_open_run_result(spec, latest, prior_version=False)
+            if blocked is not None:
+                results.append(blocked)
                 continue
             due.append(
                 DueLane(
@@ -962,7 +1219,7 @@ async def _plan_active_lanes(
                 )
             )
             continue
-        if latest is not None and latest.scheduled_for >= bucket:
+        if latest is not None and latest.scheduled_for >= current_bucket:
             detail = f"current bucket already settled with status {latest.status}"
             results.append(
                 LaneTickResult(
@@ -975,6 +1232,11 @@ async def _plan_active_lanes(
                 )
             )
             continue
+        bucket = next_scheduled_bucket(
+            spec,
+            now,
+            None if latest is None else latest.scheduled_for,
+        )
         due.append(
             DueLane(
                 spec=spec,
@@ -1234,6 +1496,9 @@ def executor_inventory(activation: ActivationConfig) -> dict[str, object]:
         "event": "plantgeo_job_executor_inventory",
         "mode": "active" if activation.active_lanes else "shadow",
         "activation_variables": [ACTIVE_LANES_VARIABLE, HANDOFF_ACKNOWLEDGEMENTS_VARIABLE],
+        "legacy_railway_responsibilities": [
+            responsibility.inventory_row() for responsibility in LEGACY_RAILWAY_RESPONSIBILITIES.values()
+        ],
         "lanes": [spec.inventory_row(active=activation.is_active(spec.lane_id)) for spec in LANE_SPECS.values()],
     }
 
@@ -1369,6 +1634,8 @@ __all__ = [
     "ACTIVE_LANES_VARIABLE",
     "HANDOFF_ACKNOWLEDGEMENTS_VARIABLE",
     "LANE_SPECS",
+    "LEGACY_RAILWAY_RESPONSIBILITIES",
+    "LEGACY_RAILWAY_SERVICE_IDS",
     "ActivationConfig",
     "DueLane",
     "ExecutorConfigurationError",
@@ -1376,9 +1643,11 @@ __all__ = [
     "ExecutorTickSummary",
     "LaneExecutionSpec",
     "LaneTickResult",
+    "LegacyRailwayResponsibility",
     "executor_inventory",
     "fair_due_order",
     "jobs_executor",
+    "next_scheduled_bucket",
     "parse_activation",
     "run_executor_tick",
     "run_scheduled_command",

@@ -14,6 +14,12 @@ resource: ./spec.md
 > remain blocked until `parquet_production_acceptance_20260901` returns an exact GREEN handoff.
 > Creating either successor track is not scheduler-activation or retirement authorization.
 
+> **OWNER DIRECTIVE — 2026-09-02:** `s0` is
+> `superseded_owner_directive_20260902`. Do not execute Phase 0 or any later instruction to restore,
+> retain, redeploy, reconnect or recreate a Railway cron/drain service. Gapless p5 owns the
+> executor-only release and controlled legacy-service removal. Rollback disables an executor lane;
+> it never restores a cron. The Phase 0 checklist below is historical provenance only.
+
 ## Overview
 
 Seven phases. **P0 is the only one with a calendar deadline** — the NWS rolling

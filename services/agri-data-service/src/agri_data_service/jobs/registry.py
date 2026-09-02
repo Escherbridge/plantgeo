@@ -22,8 +22,8 @@ DEFAULT_MAX_ATTEMPTS: Final = 5
 DEFAULT_LEASE_SECONDS: Final = 300
 DEFAULT_TIME_BUDGET_SECONDS: Final = 240
 
-# 30s doubling to a one-hour ceiling. The densest cron cadence in infra/cron-*/railway.json is
-# every 15 minutes, so the first retry lands inside the same tick and costs nothing; the ceiling stops
+# 30s doubling to a one-hour ceiling. The densest executor cadence is every 15 minutes, so the first
+# retry lands inside the same bucket and costs nothing; the ceiling stops
 # a source that is down for a day from waking on every tick and spending its whole attempt budget
 # before the outage ends. There is deliberately no jitter -- see jobs/AGENTS.md "Backoff has no jitter".
 DEFAULT_INITIAL_BACKOFF_SECONDS: Final = 30.0

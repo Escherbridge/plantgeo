@@ -1,6 +1,6 @@
-"""The HTTP trigger route and the in-process periodic drivers for durable job lanes.
+"""The manual HTTP trigger route for durable job lanes.
 
-Both surfaces here are thin: they open a session and hand a `lane_id` to `jobs/dispatch.py`, which
+The route is thin: it opens a session and hands a `lane_id` to `jobs/dispatch.py`, which
 owns lane resolution, the pause switch and the slice itself. Nothing in this module knows the name
 of any particular lane.
 
@@ -14,13 +14,10 @@ repointed, and the pause toggle the admin panel needs now rides `agri.job_defini
 column the real ledger has had since `20260719_0001`.
 """
 
-import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
-from typing import Any
+from contextlib import asynccontextmanager
 
-import structlog
-from sanic import Blueprint, Request, Sanic, json
+from sanic import Blueprint, Request, json
 from sanic.response import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,17 +33,10 @@ from agri_data_service.jobs import (
 )
 from agri_data_service.jobs.dispatch import (
     LANE_DISPATCH,
-    DispatchOutcome,
     LaneHandlerMissingError,
     UnknownDispatchableLaneError,
     dispatch_lane,
 )
-from agri_data_service.jobs.strategy_mv_refresh import (
-    STRATEGY_MV_REFRESH_DEFINITION_NAME,
-    STRATEGY_MV_REFRESH_POLL_INTERVAL_SECONDS,
-)
-
-logger = structlog.get_logger(__name__)
 
 # Relative, like every other blueprint in `routes/__init__.py`: `app.py` mounts this group under
 # `/api/v1`, so an absolute prefix here produced `/api/v1/api/v1/jobs/trigger` and the documented
@@ -150,80 +140,3 @@ async def trigger_job(request: Request) -> JSONResponse:
             status=409,
         )
     return json({"message": f"Triggered execution for lane {lane_id!r}", **outcome.to_payload()})
-
-
-class StrategyMvRefreshScheduler:
-    """The periodic, in-process driver for the strategy-recommendation matview refresh lane.
-
-    One lane, one plain asyncio interval -- not a general cron engine. Nothing in this service parses
-    cron syntax (`job_definition.schedule` is written and never read), so a "cadence" column would be
-    a second source of truth with no consumer.
-
-    Concurrent replicas are safe by construction, not by coordination: `trigger_strategy_mv_refresh`
-    buckets its run key to this class's own poll interval, and `claim_work_item`'s
-    `FOR UPDATE SKIP LOCKED` fencing means two Sanic workers ticking the same window race for one
-    work item and exactly one of them refreshes anything -- the loser's `run_job_slice` observes
-    `no_claimable_work` and exits cleanly.
-
-    Every tick goes through `dispatch_lane`, so the pause an operator sets in the admin panel stops
-    the schedule as well as the manual button, in one place rather than two.
-    """
-
-    def __init__(self, poll_interval_seconds: int = STRATEGY_MV_REFRESH_POLL_INTERVAL_SECONDS) -> None:
-        """Bind the tick interval; nothing starts until `start()` is awaited."""
-        self.poll_interval_seconds = poll_interval_seconds
-        self._running = False
-        self._task: asyncio.Task[None] | None = None
-
-    async def start(self) -> None:
-        """Begin ticking, unless this driver is already running."""
-        if self._running:
-            return
-        self._running = True
-        self._task = asyncio.create_task(self._loop())
-        logger.info("strategy_mv_refresh_scheduler_started", interval=self.poll_interval_seconds)
-
-    async def stop(self) -> None:
-        """Cancel the loop and wait for it to unwind."""
-        if not self._running:
-            return
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
-        logger.info("strategy_mv_refresh_scheduler_stopped")
-
-    async def _loop(self) -> None:
-        """Tick forever, never letting one failed tick end the loop."""
-        while self._running:
-            try:
-                await self.run_once()
-            except Exception as exc:
-                logger.error("strategy_mv_refresh_scheduler_tick_error", error=str(exc))
-            await asyncio.sleep(self.poll_interval_seconds)
-
-    async def run_once(self) -> DispatchOutcome:
-        """Run exactly one tick, outside the loop too, so a test or an operator can drive one by hand."""
-        async with get_scheduler_session() as session:
-            return await dispatch_lane(
-                session,
-                STRATEGY_MV_REFRESH_DEFINITION_NAME,
-                requested_by="strategy-mv-refresh-scheduler",
-            )
-
-
-strategy_mv_refresh_scheduler = StrategyMvRefreshScheduler()
-
-
-@jobs_bp.before_server_start
-async def _start_strategy_mv_refresh_scheduler(_app: Sanic[Any, Any], _loop: object) -> None:
-    """Start the periodic driver when this blueprint's app boots. No app.py change needed:
-    Sanic invokes a blueprint's own listeners exactly as it invokes the app's."""
-    await strategy_mv_refresh_scheduler.start()
-
-
-@jobs_bp.after_server_stop
-async def _stop_strategy_mv_refresh_scheduler(_app: Sanic[Any, Any], _loop: object) -> None:
-    """Stop the periodic driver cleanly on shutdown."""
-    await strategy_mv_refresh_scheduler.stop()

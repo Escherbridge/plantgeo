@@ -69,8 +69,8 @@
         ],
         "model": "sonnet",
         "depends_on": [],
-        "status": "code_landed_runtime_unverified",
-        "note": "Forward cron configuration is present on integrated main. Scheduled cadence and ledger advancement still require production observation before this bridge can authorize retirement."
+        "status": "superseded_owner_directive_20260902",
+        "note": "The 2026-09-02 owner directive rejects Railway cron scheduling. Gapless p5 owns controlled cron-config/service retirement and executor-only activation. This historical bridge must never restore, redeploy, reconnect, or recreate a cron."
       },
       {
         "id": "s1",
@@ -298,8 +298,8 @@
     "shared_writes": [
       {
         "path": "infra/cron-ingest/Dockerfile",
-        "owner": "s0",
-        "reason": "s5 rewrites the ENTRYPOINT verb list as lanes retire; sequence after s0"
+        "owner": "gapless_parquet_publication_20260901:p5",
+        "reason": "Owner directive 2026-09-02: gapless p5 retires the cron-only image/config after executor parity; shrink must not restore or rewrite it"
       },
       {
         "path": "services/agri-data-service/alembic/versions/",
@@ -328,7 +328,7 @@
       }
     ],
     "tripwires": [
-      "s0: never restart plantgeo-parquet-drain or continuous-warehouse-loop.sh; every push auto-deploys the cron and runs one pass immediately; restartPolicyType NEVER stays as the concurrency guard",
+      "s0 is superseded_owner_directive_20260902: Railway cron scheduling is rejected; gapless p5 owns cron config/service removal and executor-only activation; rollback disables the executor lane and never resurrects a cron or the parquet drain",
       "s1: the baseline is agri-ONLY (drizzle owns geo and tracking, src/lib/server/db/schema.ts:22-23); never edit src/lib/server/db/migration-contract.ts (/api/ready pins the DRIZZLE migration); production moves with `alembic stamp`, never `upgrade`; gate the stamp on an empty `pg_dump --schema-only --schema=agri` diff; tests/test_migration_runtime_contract.py:30-34 asserts the literal 'timescaledb'::text in 20260719_0001 -- rewrite it in the same change; the two alembic pins move in the SAME commit as the revision",
       "s2: direct writers import nothing from agri_data_service.db; days are opaque YYYY-MM-DD strings (PUBLISHER_NAMED_DAY_RULE); source-served-nothing -> write_absence, unreachable -> raise, never a zero-row partition; write_partition refuses a day with absent.json (signal 2026-08-08..16 are pivot d1's to retract); never edit objectstore.py/gap_fill.py (d0) or drain.py (d1)",
       "s3: soil-survey has NO Python producer (rows are warmed by src/lib/server/services/usda-soil.ts) -- decide and record, never silently skip; a static_lookup day is a source VERSION STAMP; burn-severity cadence stays 1; fire-perimeters 2025-08-02..09-30 is a real gap, not an absence",

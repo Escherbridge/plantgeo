@@ -15,6 +15,16 @@ resource: ./metadata.json
 
 # Postgres shrink via ingest repoint to Parquet
 
+## Owner directive supersession — 2026-09-02
+
+The bridge instruction to restore or retain Railway cron scheduling is superseded. Gapless track
+`p5` now owns removal of `infra/cron-ingest/railway.json`, its cron-only Dockerfile and every other
+legacy scheduler config after executor parity tests. `plantgeo-job-executor` is the only approved
+future scheduler. No task in this shrink track may restore a `cronSchedule`, un-crash/redeploy/arm a
+cron, reconnect `plantgeo-parquet-drain`, keep a cron as rollback, or recreate a deleted writer
+service. Rollback disables the affected executor lane and leaves PostgreSQL/R2 data, manifests and
+checkpoints intact. The dated material below is retained solely as historical evidence.
+
 ## Historical premise at charter
 
 The statements in this section describe the verified 2026-08-25 starting point. The 2026-08-27

@@ -1,12 +1,8 @@
 """Route blueprints for the Agri Data Service API."""
 
-# `jobs.scheduler` already imports `jobs.strategy_mv_refresh` (for its own periodic driver), which is
-# what registers that lane in THIS process at import time -- see jobs/dispatch.py's own docstring on
-# why a lane must register itself rather than being discovered generically. `jobs.matview_refresh`
-# has no periodic driver of its own to import it as a side effect, so it is imported here directly:
-# without this line, POST /api/v1/jobs/trigger with lane_id="matview-refresh" 404s as an unknown
-# lane even though the module exists, because nothing ever ran it.
+# Import both durable handlers explicitly so the manual trigger registry has no scheduler side effect.
 from agri_data_service.jobs import matview_refresh as _matview_refresh_registers_on_import  # noqa: F401
+from agri_data_service.jobs import strategy_mv_refresh as _strategy_mv_refresh_registers_on_import  # noqa: F401
 from agri_data_service.jobs.scheduler import jobs_bp
 from agri_data_service.routes.agent_analysis import agent_bp
 from agri_data_service.routes.forecasts import forecasts_bp

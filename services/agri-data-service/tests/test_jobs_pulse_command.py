@@ -837,9 +837,8 @@ def test_exit_code_1_when_a_lane_is_carrying_buried_work_from_an_earlier_tick(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Nothing dead-lettered THIS tick, so the `dead_lettered > 0` trigger cannot fire -- the standing
-    # count is the only evidence, and it must be enough on its own. Safe under Railway's
-    # `restartPolicyType: NEVER` (infra/cron-ingest/railway.json): one hourly run turns red until an
-    # operator acts, never a restart loop. See the exit-code note in `jobs_pulse`'s own docstring.
+    # count is the only evidence, and it must be enough on its own. The outer executor turns this
+    # into bounded retry/dead-letter state rather than a process restart loop.
     async def _fake_run_jobs_pulse(**kwargs: object) -> PulseSummary:
         return PulseSummary(
             lanes=(

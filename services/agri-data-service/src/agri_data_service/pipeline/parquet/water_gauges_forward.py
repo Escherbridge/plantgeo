@@ -26,6 +26,7 @@ from agri_data_service.pipeline.direct.water_gauges import (
     DirectWaterGaugesForwardAdapter,
     tables_by_publisher_day,
 )
+from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, postgres_lane_day_lock
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend, ObjectStore, conform_to_stream_schema
@@ -88,6 +89,15 @@ class ForwardDayResult:
 def emit(event: str, **fields: object) -> None:
     """Write one stable JSON progress record without exposing credentials."""
     print(json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True), flush=True)
+
+
+def _owned_publisher_tables(tables: Mapping[date, pa.Table]) -> dict[date, pa.Table]:
+    """Keep only publisher days assigned to the direct writer."""
+    return {
+        publisher_day: table
+        for publisher_day, table in tables.items()
+        if publisher_day >= WATER_GAUGES_DIRECT_WRITER_START_DAY
+    }
 
 
 def parser() -> argparse.ArgumentParser:
@@ -398,7 +408,8 @@ async def run(args: argparse.Namespace) -> int:
         gauge for gauge in publisher_timestamped if build_gauge_write(gauge, WATER_GAUGES_STREAM) is not None
     ]
     rejected = len(publisher_timestamped) - len(valid_records)
-    tables = tables_by_publisher_day(valid_records, ingested_at=fetched_at)
+    publisher_tables = tables_by_publisher_day(valid_records, ingested_at=fetched_at)
+    tables = _owned_publisher_tables(publisher_tables)
     emit(
         "water_gauges_forward_fetch",
         run_id=run_id,
@@ -408,13 +419,15 @@ async def run(args: argparse.Namespace) -> int:
         rejected=rejected,
         sentinel_sites=fetched.sentinel_sites,
         wall_clock_records_dropped=wall_clock_dropped,
-        publisher_days=[day.isoformat() for day in tables],
+        ownership_start_day=WATER_GAUGES_DIRECT_WRITER_START_DAY.isoformat(),
+        publisher_days_seen=[day.isoformat() for day in publisher_tables],
+        publisher_days_owned=[day.isoformat() for day in tables],
     )
     if not tables:
         emit(
             "water_gauges_forward_complete",
             run_id=run_id,
-            outcome="no_writable_records",
+            outcome=("no_writable_records" if not publisher_tables else "outside_owned_window"),
             days=0,
             rows_added=0,
             rows_updated=0,

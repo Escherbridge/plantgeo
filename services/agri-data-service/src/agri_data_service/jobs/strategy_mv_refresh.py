@@ -4,8 +4,8 @@
 not this service's Alembic one) defines three geo-schema matviews --
 `geo.mv_strategy_recommendations_{coarse,regional,detail}` -- each with a UNIQUE index, and nothing
 in this service ever refreshed them. This module is the refresh: one bounded job, registered the
-same way `execution/covariate_wind_lane.py` registers its training lane, driven by
-`jobs/scheduler.py`'s periodic in-process driver and its manual `/trigger` route.
+same way `execution/covariate_wind_lane.py` registers its training lane. Scheduled ownership belongs
+only to `execution/job_executor_service.py`; `jobs/scheduler.py` retains the manual `/trigger` route.
 
 Registration mirrors the runtime contract `jobs/AGENTS.md` describes: a `JobDefinitionSpec` filled
 in once, a `JobHandler` bound to a handler token with `@job_handler` at import time, and a
@@ -23,8 +23,8 @@ OBSERVABILITY PARITY, added alongside `jobs/matview_refresh.py`: every outcome t
 also written to `agri.matview_refresh_state`, the same table that lane's eleven views report through,
 so an operator reading that table sees all fourteen matviews' last-refresh state in one place rather
 than needing to know this lane's rows live somewhere else. This does NOT adopt that lane's
-watermark gate -- this lane still refreshes all three views unconditionally on every
-`STRATEGY_MV_REFRESH_POLL_INTERVAL_SECONDS` tick, exactly as before; `source_watermark` here is a
+watermark gate -- this lane still refreshes all three views unconditionally for every executor-owned
+`STRATEGY_MV_REFRESH_POLL_INTERVAL_SECONDS` bucket; `source_watermark` here is a
 constant sentinel rather than a real measurement, because there is nothing to gate.
 """
 
@@ -88,11 +88,8 @@ STRATEGY_MV_REFRESH_MAX_ATTEMPTS: Final = 3
 STRATEGY_MV_REFRESH_LEASE_SECONDS: Final = 900
 STRATEGY_MV_REFRESH_TIME_BUDGET_SECONDS: Final = 600
 
-# --- Cadence: documentary only. Nothing in this runtime parses cron syntax -- `job_definition.schedule`
-# is written and never read anywhere in this service (confirmed: it carries no consumer). It is stored
-# here so an operator reading `agri.job_definition` sees the intended cadence next to the row, and
-# `STRATEGY_MV_REFRESH_POLL_INTERVAL_SECONDS` is the actual mechanism: `jobs/scheduler.py`'s
-# `StrategyMvRefreshScheduler` fires this lane on a plain asyncio interval, not a cron expression.
+# --- Cadence: the job executor owns the timer; this definition retains its documentary schedule and
+# uses the same interval to make manual and scheduled trigger keys converge.
 STRATEGY_MV_REFRESH_SCHEDULE_CRON: Final = "*/15 * * * *"
 STRATEGY_MV_REFRESH_SCHEDULE_TIMEZONE: Final = "UTC"
 STRATEGY_MV_REFRESH_POLL_INTERVAL_SECONDS: Final = 900

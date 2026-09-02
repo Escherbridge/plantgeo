@@ -982,8 +982,8 @@ async def run_job_slice(  # noqa: PLR0913 - one parameter per operator-tunable k
 ) -> JobSliceSummary:
     """Claim and drive shards until the work, the time budget or the container runs out, then report the tick.
 
-    This is the whole durability model for a one-shot Railway cron container: do as much as fits inside
-    `budget_seconds`, checkpoint every step, park whatever did not finish, exit 0. The next tick claims
+    This is the durability model for every bounded executor lane: do as much as fits inside
+    `budget_seconds`, checkpoint every step, and park whatever did not finish. The next tick claims
     the same shards straight out of the ledger and resumes each from its last cursor. Nothing is kept
     on the container's filesystem, so a killed container loses only the work since its last checkpoint.
 

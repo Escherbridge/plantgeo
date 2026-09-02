@@ -103,11 +103,10 @@ writes no status.
 
 ## Why the time budget is the durability primitive
 
-A Railway cron container is a one-shot process. It starts, it is given no promise about how long it may
-live, and `restartPolicyType: NEVER` means nothing brings it back if it dies mid-work. The only
-execution model that is honest about that is: **do as much as fits in a bounded budget, checkpoint
-every step, park what is unfinished, exit 0.** The next tick claims the same shards straight out of the
-ledger and resumes each from its last cursor.
+The continuous executor's subprocess can be interrupted by a deploy, lease loss, or host failure. The
+only execution model that is honest about that is: **do as much as fits in a bounded budget, checkpoint
+every step, park what is unfinished, and return an exact result.** The next executor turn claims the same
+shards straight out of the ledger and resumes each from its last cursor.
 
 `run_job_slice` makes this explicit rather than implied. The budget is checked *before* claiming another
 item, so a slice never starts a shard it has no time to make progress on. When the budget runs out with
@@ -872,5 +871,5 @@ drives the real protocol against a disposable database is the outstanding follow
 ## The lane contract this ledger serves
 
 This package is the durable runtime; `docs/layer-lane-standard.md` is the contract every lane built on it
-must satisfy end to end (horizon, gap-to-work loop, governed absences, three crons, slider, agent tools).
+must satisfy end to end (horizon, gap-to-work loop, governed absences, three executor duties, slider, agent tools).
 Read it before registering a new lane -- the ledger is only the middle third of what a finished layer needs.

@@ -1,6 +1,6 @@
 """Lane dispatch: turn one operator-supplied `lane_id` into one real slice on the `agri.job_*` ledger.
 
-This is what `POST /api/v1/jobs/trigger` and the in-process periodic drivers both call, so a manual
+This is what `POST /api/v1/jobs/trigger` and executor-owned durable commands call, so a manual
 trigger and a scheduled tick take the same code path, honour the same pause switch, and write the
 same rows. See `jobs/AGENTS.md` for the runtime this sits on top of.
 

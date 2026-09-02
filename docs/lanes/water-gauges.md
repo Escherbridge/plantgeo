@@ -51,11 +51,10 @@ genuine append-only time series, not a latest-value cache. See §4.
 
 ## 2. Cadence
 
-- **Both production forward paths are hourly.** `infra/cron-ingest/railway.json` sets
-  `cronSchedule: "0 * * * *"`, and `ingest-streamflow` runs as one step inside the consolidated
-  `ingest-all` on `plantgeo-ingest-cron` to preserve the PostgreSQL source log. The direct Parquet
-  publisher is the separate `plantgeo-water-gauges-forward` service, configured from
-  `railway.water-gauges-forward.json` at `15 * * * *`; it fetches NWIS itself and merges the same
+- **Both legacy production forward paths were hourly at the 2026-09-02 preflight.** The retired
+  ingest cron ran `ingest-streamflow` inside `ingest-all` at the top of the hour to preserve the
+  PostgreSQL source log. The direct `plantgeo-water-gauges-forward` service ran at `:15`, fetched
+  NWIS itself and merged the same
   publisher-timestamped readings into all four Parquet rungs. The **30-minute figure is stale**: it is
   the *former*, pre-2026-08-14
   per-source schedule (`docs/deployment.md:590`, "Former `cronSchedule`" column), and it survives
@@ -63,11 +62,17 @@ genuine append-only time series, not a latest-value cache. See §4.
   ... against a 30-minute cadence") and in
   `services/agri-data-service/src/agri_data_service/ingest/validation/models.py:108`
   (`cadence_basis="infra/cron-streamflow/railway.json runs */30 * * * *"` — that directory no longer
-  exists, per `docs/deployment.md:670-676`). **Treat both of those in-code cadence claims as
-  superseded by the hourly `cron-ingest` schedule, not as current fact.**
-- **The PostgreSQL archive/backfill is also hourly**, via a different mechanism: `jobs-pulse`'s durable-archive
-  namespace, folded into the same `plantgeo-ingest-cron` tick since the same 2026-08-14
-  consolidation (`docs/deployment.md:604-620`). It walks `STREAMFLOW_ARCHIVE_LANE`
+  exists, per `docs/deployment.md:670-676`). **Treat both in-code cadence claims as superseded by
+  the executor registry's hourly `postgres-streamflow` and exact `:15`
+  `water-gauges-direct-forward` lanes. Railway cron scheduling is prohibited; rollback disables an
+  executor lane and never recreates either old service.**
+- **The executor ownership partition is fixed at `2026-09-02`.** The direct NWIS publisher filters
+  out every publisher day before `WATER_GAUGES_DIRECT_WRITER_START_DAY`; the generic PostgreSQL-backed
+  gap lane declares `writer_ceiling=2026-09-01`. Existing R2 partitions on either side are retained.
+  This date partition, the executor's serial invocation, and the shared lane-day advisory lock are all
+  required: a lock alone prevents simultaneous writes but would still permit alternating owners.
+- **The PostgreSQL archive/backfill remains hourly inside the executor**, through the durable
+  `jobs-streamflow-archive` lane. It walks `STREAMFLOW_ARCHIVE_LANE`
   (`ingest/lanes.py:214-226`) in `chunk_days=10` / `window_days=30` steps toward the floor in §3.
   A read-only production inspection on 2026-08-29 found `streamflow-archive` idle with zero new
   records, zero missing planned days, and no reopened gaps. That proves the source-to-PostgreSQL walk

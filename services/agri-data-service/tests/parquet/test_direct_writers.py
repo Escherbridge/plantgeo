@@ -16,6 +16,8 @@ from agri_data_service.pipeline.direct.water_gauges import (
     merge_water_gauges_day,
 )
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.parquet import water_gauges_forward
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_STREAM
 from agri_data_service.warehouse.schemas.water_gauges import (
@@ -60,6 +62,17 @@ def _table(rows: list[dict[str, object]]) -> pa.Table:
 def test_direct_package_imports_both_source_writers() -> None:
     assert water_gauges.WATER_GAUGES_STREAM == WATER_GAUGES_STREAM
     assert fire_detections.FIRE_DETECTIONS_STREAM == FIRE_DETECTIONS_STREAM
+
+
+def test_direct_water_writer_refuses_days_owned_by_generic_gap_repair() -> None:
+    before = WATER_GAUGES_DIRECT_WRITER_START_DAY - timedelta(days=1)
+    at_boundary = WATER_GAUGES_DIRECT_WRITER_START_DAY
+    after = WATER_GAUGES_DIRECT_WRITER_START_DAY + timedelta(days=1)
+    sentinel = pa.table({"value": [1]})
+
+    owned = water_gauges_forward._owned_publisher_tables({before: sentinel, at_boundary: sentinel, after: sentinel})
+
+    assert list(owned) == [at_boundary, after]
 
 
 def test_fire_adapter_explicitly_retracts_a_disproven_absence_before_writing_data() -> None:

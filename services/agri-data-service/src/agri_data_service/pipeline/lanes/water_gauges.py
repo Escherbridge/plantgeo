@@ -7,6 +7,7 @@ takes care to avoid.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa  # type: ignore[import-untyped]
@@ -17,8 +18,6 @@ from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.water_gauges import WATER_GAUGES_SCHEMA, WATER_GAUGES_STREAM
 
 if TYPE_CHECKING:
-    from datetime import date
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore, ParquetWriteReceipt
@@ -35,6 +34,9 @@ SOURCE_DAY_COUNTS_SQL: Final = text(load_query_sql("pipeline/water_gauges_day_ce
 # daily-values rows landing in the same window. Reaching it is treated as a truncated day, never
 # a real answer -- see read_water_gauges_day below.
 MAX_ROWS_PER_DAY: Final = 200_000
+
+# See docs/lanes/water-gauges.md §2 for the executor ownership partition.
+WATER_GAUGES_DIRECT_WRITER_START_DAY: Final = date(2026, 9, 2)
 
 
 class WaterGaugesExportError(RuntimeError):

@@ -1,5 +1,13 @@
 # Runbook: Durable archive backfill lanes (`agri.job_*` ledger)
 
+> **Scheduler owner directive, 2026-09-02:** `plantgeo-job-executor` is the sole approved scheduler
+> and durable invocation owner. Every instruction below to create, enable, repair, restore, retain or
+> configure a Railway cron service is superseded historical evidence and must not be executed. The
+> durable lane definitions, work items, leases, checkpoints, retries and dead letters remain
+> current; only their launcher changes. Rollback disables the affected executor lane and never
+> recreates a cron. See the Conductor
+> [`scheduler-handoff-20260902.md`](../../conductor/tracks/gapless_parquet_publication_20260901/evidence/scheduler-handoff-20260902.md).
+
 > New operator? Start at
 > [`services/agri-data-service/README.md`](../../services/agri-data-service/README.md).
 

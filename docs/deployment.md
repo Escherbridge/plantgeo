@@ -11,12 +11,20 @@ Railway project ID: `6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`
 The Railway dashboard calls the containing project `Aevani`, but service names
 define the security boundary:
 
+**Scheduler owner directive, 2026-09-02:** `plantgeo-job-executor` is the only approved future
+scheduler and durable invocation owner. Railway cron scheduling is rejected. The legacy writer
+rows below describe the production pre-handoff inventory, not a topology to recreate. Their tracked
+scheduler configs are retired by gapless p5; their service objects remain present only until the
+reviewed commit is merged to `main`, the exact executor deployment is `SUCCESS`, and the explicit
+post-deployment no-overlap handoff removes them. Rollback disables an executor lane and never
+restores a cron service or schedule. See the Conductor
+[`scheduler-handoff-20260902.md`](../conductor/tracks/gapless_parquet_publication_20260901/evidence/scheduler-handoff-20260902.md).
+
 | Service | PlantGeo responsibility | Current gate |
 | --- | --- | --- |
 | `plantgeo-main` | Next.js application | Running; Railway's GitHub integration deploys it from `main`, and no other service is deployed by a web release. |
-| `plantgeo-ingest-cron` | Hourly `agri-service data ingest-all`, vegetation catch-up, `agri-service ops jobs-pulse --time-budget-seconds 600`, and `agri-service data parquet-gap-fill --time-budget-seconds 900` — all four run unconditionally from one `ENTRYPOINT` | Running; config-as-code in `infra/cron-ingest/`, `deploy.cronSchedule: "0 * * * *"`. Consolidated back onto this one hourly service 2026-08-14 — see "Cron consolidation, 2026-08-14" below — from a fan-out of one Railway cron service per source and per lane. |
-| `plantgeo-cron-mtbs` | `agri-service data ingest-mtbs` weekly, Tuesdays at 07:55 UTC | Running; config-as-code in `infra/cron-mtbs/`, overriding the shared `infra/cron-ingest/Dockerfile` via `deploy.startCommand`. Deliberately excluded from `ingest-all` — see "Cron consolidation, 2026-08-14" below. |
-| `plantgeo-cron-soilgrids` | `node scripts/warm-soilgrids.mjs 120` hourly at `:25` | Running; config-as-code in `infra/cron-soilgrids/`, building from its own `infra/cron-soilgrids/Dockerfile` (Node, not the Python `agri-service` image). A finite, resumable warm walk, not a recurring ingestion lane — see "Cron consolidation, 2026-08-14" below. |
+| `plantgeo-job-executor` | Sole continuous scheduler for independently registered source, maintenance, gap-repair, MTBS, SoilGrids, fire and water lanes | Dedicated `railway.job-executor.json`; continuous `agri-service ops jobs-executor`, `ON_FAILURE`, no Railway schedule. It remains inactive until the exact post-merge handoff gate passes. |
+| six legacy scheduled/one-shot writers | `plantgeo-ingest-cron`, MTBS, SoilGrids, direct fire, direct water and completed soil-moisture load | Present in the 2026-09-02 production preflight and all blocked from immediate removal. Never recreate them from the historical instructions below; remove them only through the controlled executor handoff. |
 | `plantgeo-dataservice` | Bounded Python API and publication receiver | Running; Alembic owns only the `agri` schema. |
 | `plantgeo-Redis` | Cache, pub/sub, and non-durable wake-up transport | Running; never use it as the durable job ledger. |
 | `Plantgeo` | Legacy PlantGeo PostgreSQL 18.3 database | Running, but the last audit found no required geospatial/time-series extensions. |
@@ -485,6 +493,11 @@ curl https://<martin-domain>/fire_risk_tiles,sensor_tiles,evacuation_zone_tiles,
 
 ### `plantgeo-ingest-cron`
 
+> **Historical operational detail only.** The 2026-09-02 owner directive supersedes every action in
+> this section that would configure, restore, deploy or retain this Railway cron. The executor
+> registry preserves the commands and source cadences. Do not follow the dashboard/config steps
+> below; rollback disables executor lanes and never rebuilds this service.
+
 - Repository root: **must move to `/`** (currently `/infra/cron-ingest`) — see "Required
   dashboard change" below. The image cannot build until this lands.
 - Dockerfile: `/infra/cron-ingest/Dockerfile`
@@ -578,6 +591,10 @@ schedule from `plantgeo-cron-mtbs` rather than from here (see below). Do not run
 locks in the same order, but the second one to arrive simply waits.
 
 ### Cron consolidation, 2026-08-14
+
+> **Historical topology.** This consolidation was superseded by the 2026-09-02 executor-only owner
+> directive. It explains command provenance but is not deployment guidance. No service or schedule
+> in this section may be recreated.
 
 The nine-service, one-cron-per-source split documented above (and, separately, two per-lane
 archive services) was itself reversed on 2026-08-14. Owner directive, quoted verbatim from

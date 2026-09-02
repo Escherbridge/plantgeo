@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -20,10 +21,13 @@ from agri_data_service.execution.job_executor_service import (
     ACTIVE_LANES_VARIABLE,
     HANDOFF_ACKNOWLEDGEMENTS_VARIABLE,
     LANE_SPECS,
+    LEGACY_RAILWAY_RESPONSIBILITIES,
+    LEGACY_RAILWAY_SERVICE_IDS,
     ActivationConfig,
     DueLane,
     ExecutorConfigurationError,
     fair_due_order,
+    next_scheduled_bucket,
     parse_activation,
     run_executor_tick,
     run_scheduled_command,
@@ -61,12 +65,18 @@ def _owned_executable_lanes(owner: str) -> tuple[str, ...]:
     return tuple(lane_id for lane_id, spec in LANE_SPECS.items() if spec.executable and owner in spec.legacy_owners)
 
 
-def _definition(name: str, *, identifier: uuid.UUID = _DEFINITION_ID) -> JobDefinitionRecord:
+def _definition(
+    name: str,
+    *,
+    identifier: uuid.UUID = _DEFINITION_ID,
+    version: str = job_executor_service.EXECUTOR_DEFINITION_VERSION,
+    handler: str = job_executor_service.EXECUTOR_HANDLER_TOKEN,
+) -> JobDefinitionRecord:
     return JobDefinitionRecord(
         id=identifier,
         name=name,
-        version="1",
-        handler="plantgeo.executor.command.v1",
+        version=version,
+        handler=handler,
         queue_name="default",
         concurrency_key=None,
         max_attempts=5,
@@ -149,13 +159,65 @@ def test_jobs_pulse_lanes_and_maintenance_are_independent_failure_domains() -> N
     }
     assert maintenance <= LANE_SPECS.keys()
     assert len({LANE_SPECS[lane_id].definition_name for lane_id in maintenance}) == len(maintenance)
+    strategy = LANE_SPECS["jobs-strategy-mv-refresh"]
+    assert (strategy.cadence_seconds, strategy.phase_offset_seconds, strategy.schedule) == (
+        900,
+        0,
+        "*/15 * * * *",
+    )
+    assert strategy.catch_up_policy == "coalesce_latest"
 
 
-def test_non_python_and_snapshot_inputs_stay_visible_but_non_executable() -> None:
+def test_source_specific_runtime_and_completed_snapshot_dispositions_are_explicit() -> None:
     assert LANE_SPECS["soilgrids-cache-warm"].migration_disposition == "source-specific"
-    assert LANE_SPECS["soilgrids-cache-warm"].command is None
+    assert LANE_SPECS["soilgrids-cache-warm"].command == (
+        "node",
+        "/app/plantgeo/scripts/warm-soilgrids.mjs",
+        "120",
+    )
+    assert LANE_SPECS["soilgrids-cache-warm"].executable
     assert LANE_SPECS["soil-moisture-parquet-backfill"].migration_disposition == "snapshot-only"
     assert LANE_SPECS["soil-moisture-parquet-backfill"].command is None
+    assert not LANE_SPECS["soil-moisture-parquet-backfill"].executable
+
+
+def test_every_observed_legacy_railway_writer_has_a_complete_terminal_mapping() -> None:
+    expected_ids = {
+        _INGEST_OWNER: "3ae3cc37-c398-43fe-b74c-83e4da130423",
+        "plantgeo-cron-mtbs": "a683cc83-2b49-4276-a136-941e1b2cbe24",
+        "plantgeo-cron-soilgrids": "0960aa81-4499-4cb1-9daa-3350eed4d654",
+        _DIRECT_FIRE_OWNER: "f4ad61fe-e71a-4776-b9d5-0b153c9ee5b7",
+        _DIRECT_WATER_OWNER: "40cb252b-e21c-4140-8d94-5db77eb2398d",
+        "plantgeo-soil-moisture-parquet-load": "4a1413f1-5f96-44ea-853c-6a379c7673c4",
+    }
+    expected = set(expected_ids)
+    assert expected_ids == LEGACY_RAILWAY_SERVICE_IDS
+    assert set(LEGACY_RAILWAY_RESPONSIBILITIES) == expected
+
+    mapped_lanes: set[str] = set()
+    for owner, responsibility in LEGACY_RAILWAY_RESPONSIBILITIES.items():
+        assert responsibility.service_name == owner
+        assert responsibility.service_id == expected_ids[owner]
+        assert responsibility.replacement_lanes
+        mapped_lanes.update(responsibility.replacement_lanes)
+        for lane_id in responsibility.replacement_lanes:
+            assert owner in LANE_SPECS[lane_id].legacy_owners
+        if responsibility.terminal_disposition is None:
+            assert all(LANE_SPECS[lane_id].executable for lane_id in responsibility.replacement_lanes)
+        else:
+            assert responsibility.replacement_lanes == ("soil-moisture-parquet-backfill",)
+            assert "never schedule" in responsibility.terminal_disposition
+
+    owned_lanes = {spec.lane_id for spec in LANE_SPECS.values() if set(spec.legacy_owners) & expected}
+    assert mapped_lanes == owned_lanes
+
+    inventory = job_executor_service.executor_inventory(ActivationConfig(frozenset()))
+    responsibility_rows = cast("list[dict[str, object]]", inventory["legacy_railway_responsibilities"])
+    assert {row["service_name"] for row in responsibility_rows} == expected
+    assert {row["service_name"]: row["service_id"] for row in responsibility_rows} == expected_ids
+    lane_rows = cast("list[dict[str, object]]", inventory["lanes"])
+    assert all(row["catch_up_policy"] in {"coalesce_latest", "replay_oldest"} for row in lane_rows)
+    assert all("checkpoint" in row and "retry_policy" in row for row in lane_rows)
 
 
 def test_drought_poll_runs_daily_after_each_publication_lag_day() -> None:
@@ -177,7 +239,7 @@ def test_empty_activation_is_shadow() -> None:
     [
         ({ACTIVE_LANES_VARIABLE: "not-a-lane"}, "unknown active lane"),
         ({ACTIVE_LANES_VARIABLE: "fire-detections-direct-forward"}, "missing="),
-        (_activation_environment("soilgrids-cache-warm"), "has no executor command"),
+        (_activation_environment("soil-moisture-parquet-backfill"), "has no executor command"),
         (
             {
                 **_activation_environment("fire-detections-direct-forward"),
@@ -228,32 +290,50 @@ def test_direct_fire_cutover_is_accepted_and_generic_history_keeps_ceiling() -> 
     assert LANE_SPECS["parquet-fire-detections"].writer_ceiling == ceiling.isoformat()
 
 
-def test_water_parquet_refuses_cutover_without_both_operator_acknowledgements() -> None:
+def test_water_parquet_requires_only_the_ingest_owner_acknowledgement() -> None:
     lane_id = "parquet-water-gauges"
     environment = {
         ACTIVE_LANES_VARIABLE: lane_id,
-        HANDOFF_ACKNOWLEDGEMENTS_VARIABLE: (f"{lane_id}={_INGEST_OWNER}:disabled-and-no-run-in-flight"),
+        HANDOFF_ACKNOWLEDGEMENTS_VARIABLE: (f"{lane_id}={_DIRECT_WATER_OWNER}:disabled-and-no-run-in-flight"),
     }
-    with pytest.raises(ExecutorConfigurationError, match=_DIRECT_WATER_OWNER):
+    with pytest.raises(ExecutorConfigurationError, match=_INGEST_OWNER):
         parse_activation(environment)
 
     spec = LANE_SPECS[lane_id]
-    assert spec.legacy_owners == (_INGEST_OWNER, _DIRECT_WATER_OWNER)
-    assert set(spec.required_handoff_acknowledgements) == {
-        f"{_INGEST_OWNER}:disabled-and-no-run-in-flight",
-        f"{_DIRECT_WATER_OWNER}:disabled-and-no-run-in-flight",
-    }
+    assert spec.legacy_owners == (_INGEST_OWNER,)
+    assert spec.required_handoff_acknowledgements == (f"{_INGEST_OWNER}:disabled-and-no-run-in-flight",)
 
 
-def test_direct_water_is_non_executable_and_conflicts_with_generic_water() -> None:
+def test_direct_water_and_generic_gap_repair_are_distinct_serialized_duties() -> None:
     lanes = ("parquet-water-gauges", "water-gauges-direct-forward")
-    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
-        parse_activation(_activation_environment(*lanes))
-    assert LANE_SPECS[lanes[0]].conflicts_with == (lanes[1],)
-    assert LANE_SPECS[lanes[1]].conflicts_with == (lanes[0],)
-    assert LANE_SPECS[lanes[1]].command is None
+    assert LANE_SPECS[lanes[0]].conflicts_with == ()
+    assert LANE_SPECS[lanes[1]].conflicts_with == ()
+    assert LANE_SPECS[lanes[1]].command == (
+        "python",
+        "-m",
+        "agri_data_service.pipeline.parquet.water_gauges_forward",
+    )
+    assert LANE_SPECS[lanes[1]].executable
     assert LANE_SPECS[lanes[1]].migration_disposition == "source-specific"
-    assert set(LANE_SPECS[lanes[1]].legacy_owners) == {_INGEST_OWNER, _DIRECT_WATER_OWNER}
+    assert LANE_SPECS[lanes[1]].legacy_owners == (_DIRECT_WATER_OWNER,)
+    assert LANE_SPECS[lanes[1]].phase_offset_seconds == 900
+    assert LANE_SPECS[lanes[1]].schedule == "15 * * * *"
+    assert LANE_SPECS[lanes[0]].writer_ceiling == "2026-09-01"
+    assert LANE_SPECS[lanes[1]].writer_floor == "2026-09-02"
+
+
+def test_complete_recurring_railway_responsibility_set_can_activate_together() -> None:
+    lanes = tuple(
+        dict.fromkeys(
+            lane_id
+            for responsibility in LEGACY_RAILWAY_RESPONSIBILITIES.values()
+            if responsibility.terminal_disposition is None
+            for lane_id in responsibility.replacement_lanes
+        )
+    )
+    activation = parse_activation(_activation_environment(*lanes))
+    assert activation.active_lanes == frozenset(lanes)
+    assert "soil-moisture-parquet-backfill" not in activation.active_lanes
 
 
 def test_multi_role_ingest_owner_must_cut_over_atomically() -> None:
@@ -279,6 +359,50 @@ def test_schedule_bucket_honours_lane_phase() -> None:
     assert scheduled_bucket(fire, datetime(2026, 8, 28, 18, 15, tzinfo=UTC)) == datetime(
         2026, 8, 28, 18, 15, tzinfo=UTC
     )
+
+
+def test_mtbs_weekly_and_soilgrids_hourly_phases_are_exact() -> None:
+    mtbs = LANE_SPECS["mtbs-forward"]
+    soilgrids = LANE_SPECS["soilgrids-cache-warm"]
+    assert (mtbs.cadence_seconds, mtbs.phase_offset_seconds, mtbs.schedule) == (
+        604800,
+        460500,
+        "55 7 * * 2",
+    )
+    assert scheduled_bucket(mtbs, datetime(2026, 9, 2, 12, tzinfo=UTC)) == datetime(2026, 9, 1, 7, 55, tzinfo=UTC)
+    assert (soilgrids.cadence_seconds, soilgrids.phase_offset_seconds, soilgrids.schedule) == (
+        3600,
+        1500,
+        "25 * * * *",
+    )
+    assert scheduled_bucket(soilgrids, datetime(2026, 9, 2, 12, 24, 59, tzinfo=UTC)) == datetime(
+        2026, 9, 2, 11, 25, tzinfo=UTC
+    )
+
+
+def test_restart_catch_up_coalesces_source_polls_and_replays_oldest_durable_bucket() -> None:
+    now = datetime(2026, 8, 28, 18, 30, tzinfo=UTC)
+    previous = datetime(2026, 8, 28, 12, tzinfo=UTC)
+    source = LANE_SPECS["postgres-weather"]
+    durable = LANE_SPECS["parquet-weather-observations"]
+    assert source.catch_up_policy == "coalesce_latest"
+    assert next_scheduled_bucket(source, now, previous) == datetime(2026, 8, 28, 18, tzinfo=UTC)
+    assert durable.catch_up_policy == "replay_oldest"
+    assert next_scheduled_bucket(durable, now, previous) == datetime(2026, 8, 28, 13, tzinfo=UTC)
+    assert LANE_SPECS["jobs-firms-archive"].catch_up_policy == "replay_oldest"
+    assert LANE_SPECS["maintenance-firms-archive-reconcile"].catch_up_policy == "coalesce_latest"
+
+
+def test_durable_definition_records_exact_schedule_and_catch_up_metadata() -> None:
+    mtbs = LANE_SPECS["mtbs-forward"]
+    definition = mtbs.definition_spec()
+    assert definition.version == job_executor_service.EXECUTOR_DEFINITION_VERSION
+    assert definition.schedule == "55 7 * * 2"
+    assert definition.parameters["cadence_seconds"] == 604800
+    assert definition.parameters["phase_offset_seconds"] == 460500
+    assert definition.parameters["catch_up_policy"] == "coalesce_latest"
+    assert definition.parameters["work_class"] == "incremental"
+    assert definition.parameters["migration_disposition"] == "consolidatable"
 
 
 def test_fair_order_interleaves_incremental_and_backlog_and_rotates_oldest() -> None:
@@ -314,19 +438,19 @@ async def test_retry_backoff_lane_cannot_starve_same_class_peer(
     }
     prior_bucket = datetime(2026, 8, 27, 12, tzinfo=UTC)
     latest = {
-        identifiers[incremental_id]: job_executor_service.LatestRun(
+        incremental_id: job_executor_service.LatestRun(
             run_id=uuid.uuid4(),
             scheduled_for=prior_bucket,
             status="succeeded",
             work_claimable=False,
         ),
-        identifiers[backoff_id]: job_executor_service.LatestRun(
+        backoff_id: job_executor_service.LatestRun(
             run_id=uuid.uuid4(),
             scheduled_for=datetime(2026, 8, 26, 12, tzinfo=UTC),
             status="running",
             work_claimable=False,
         ),
-        identifiers[backlog_peer_id]: job_executor_service.LatestRun(
+        backlog_peer_id: job_executor_service.LatestRun(
             run_id=uuid.uuid4(),
             scheduled_for=prior_bucket,
             status="succeeded",
@@ -348,8 +472,11 @@ async def test_retry_backoff_lane_cannot_starve_same_class_peer(
     async def _load(_session: object, spec: job_executor_service.LaneExecutionSpec) -> JobDefinitionRecord:
         return definitions[spec.lane_id]
 
-    async def _latest(_session: object, definition_id: uuid.UUID) -> job_executor_service.LatestRun:
-        return latest[definition_id]
+    async def _latest(
+        _session: object,
+        lane_spec: job_executor_service.LaneExecutionSpec,
+    ) -> job_executor_service.LatestRun:
+        return latest[lane_spec.lane_id]
 
     async def _execute(
         _session: object,
@@ -460,6 +587,459 @@ class _ShadowSession:
     async def rollback(self) -> None:
         self.rollbacks += 1
 
+    async def execute(self, _statement: object) -> None:
+        return None
+
+
+async def test_restart_resumes_the_exact_open_logical_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane_id = "jobs-firms-archive"
+    spec = LANE_SPECS[lane_id]
+    definition = _definition(spec.definition_name)
+    open_bucket = datetime(2026, 8, 28, 12, tzinfo=UTC)
+    run_id = uuid.uuid4()
+    session = _ShadowSession()
+
+    async def _load(_session: object, _spec: object) -> JobDefinitionRecord:
+        return definition
+
+    async def _latest(_session: object, _definition_id: uuid.UUID) -> job_executor_service.LatestRun:
+        return job_executor_service.LatestRun(
+            run_id=run_id,
+            scheduled_for=open_bucket,
+            status="running",
+            work_claimable=True,
+        )
+
+    monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
+    monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load)
+    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+
+    results, due = await job_executor_service._plan_active_lanes(
+        session,  # type: ignore[arg-type]
+        ActivationConfig(frozenset({lane_id})),
+        datetime(2026, 8, 28, 18, 30, tzinfo=UTC),
+    )
+
+    assert results == []
+    assert len(due) == 1
+    assert due[0].scheduled_for == open_bucket
+    assert due[0].existing_run_id == run_id
+
+
+@pytest.mark.parametrize(
+    ("lane_id", "expected_bucket"),
+    [
+        ("postgres-weather", datetime(2026, 8, 28, 18, tzinfo=UTC)),
+        ("parquet-weather-observations", datetime(2026, 8, 28, 13, tzinfo=UTC)),
+    ],
+)
+async def test_missed_tick_policy_is_applied_when_the_latest_run_settled(
+    monkeypatch: pytest.MonkeyPatch,
+    lane_id: str,
+    expected_bucket: datetime,
+) -> None:
+    spec = LANE_SPECS[lane_id]
+    definition = _definition(spec.definition_name)
+    session = _ShadowSession()
+
+    async def _load(_session: object, _spec: object) -> JobDefinitionRecord:
+        return definition
+
+    async def _latest(_session: object, _definition_id: uuid.UUID) -> job_executor_service.LatestRun:
+        return job_executor_service.LatestRun(
+            run_id=uuid.uuid4(),
+            scheduled_for=datetime(2026, 8, 28, 12, tzinfo=UTC),
+            status="succeeded",
+            work_claimable=False,
+        )
+
+    monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
+    monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load)
+    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+
+    results, due = await job_executor_service._plan_active_lanes(
+        session,  # type: ignore[arg-type]
+        ActivationConfig(frozenset({lane_id})),
+        datetime(2026, 8, 28, 18, 30, tzinfo=UTC),
+    )
+
+    assert results == []
+    assert [candidate.scheduled_for for candidate in due] == [expected_bucket]
+
+
+async def test_nonterminal_prior_version_run_resumes_through_its_exact_definition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane_id = "jobs-firms-archive"
+    spec = LANE_SPECS[lane_id]
+    prior_definition = _definition(spec.definition_name, version="1")
+    prior_run_id = uuid.uuid4()
+    session = _ShadowSession()
+
+    async def _load_current(_session: object, _spec: object) -> None:
+        return None
+
+    async def _latest(_session: object, _spec: object) -> job_executor_service.LatestRun:
+        return job_executor_service.LatestRun(
+            run_id=prior_run_id,
+            scheduled_for=datetime(2026, 8, 28, 12, tzinfo=UTC),
+            status="running",
+            work_claimable=True,
+            definition_id=prior_definition.id,
+            definition_version="1",
+            definition_enabled=True,
+        )
+
+    async def _load_prior(_session: object, name: str, *, version: str) -> JobDefinitionRecord:
+        assert name == spec.definition_name
+        assert version == "1"
+        return prior_definition
+
+    monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
+    monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load_current)
+    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "load_job_definition", _load_prior)
+
+    results, due = await job_executor_service._plan_active_lanes(
+        session,  # type: ignore[arg-type]
+        ActivationConfig(frozenset({lane_id})),
+        datetime(2026, 8, 28, 18, 30, tzinfo=UTC),
+    )
+
+    assert results == []
+    assert session.rollbacks == 1
+    assert len(due) == 1
+    assert due[0].definition == prior_definition
+    assert due[0].existing_run_id == prior_run_id
+    assert due[0].scheduled_for == datetime(2026, 8, 28, 12, tzinfo=UTC)
+
+
+async def test_prior_version_terminal_child_crash_repairs_the_parent_rollup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane_id = "jobs-firms-archive"
+    spec = LANE_SPECS[lane_id]
+    prior_definition = _definition(spec.definition_name, version="1")
+    prior_run_id = uuid.uuid4()
+    session = _ShadowSession()
+    captured: dict[str, object] = {}
+
+    async def _load_current(_session: object, _spec: object) -> None:
+        return None
+
+    async def _latest(_session: object, _spec: object) -> job_executor_service.LatestRun:
+        return job_executor_service.LatestRun(
+            run_id=prior_run_id,
+            scheduled_for=datetime(2026, 8, 28, 12, tzinfo=UTC),
+            status="running",
+            work_claimable=False,
+            terminal_items_need_rollup=True,
+            definition_id=prior_definition.id,
+            definition_version="1",
+            definition_enabled=True,
+        )
+
+    async def _load_prior(_session: object, _name: str, *, version: str) -> JobDefinitionRecord:
+        assert version == "1"
+        return prior_definition
+
+    async def _run_slice(*_args: object, **kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            retried=0,
+            dead_lettered=0,
+            abandoned=0,
+            run_status="succeeded",
+            stop_reason="no_claimable_work",
+            to_summary=dict,
+        )
+
+    monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
+    monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load_current)
+    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "load_job_definition", _load_prior)
+    monkeypatch.setattr(job_executor_service, "run_job_slice", _run_slice)
+
+    results, due = await job_executor_service._plan_active_lanes(
+        session,  # type: ignore[arg-type]
+        ActivationConfig(frozenset({lane_id})),
+        datetime(2026, 8, 28, 18, 30, tzinfo=UTC),
+    )
+    assert results == []
+    assert len(due) == 1
+    assert due[0].definition == prior_definition
+    assert due[0].existing_run_id == prior_run_id
+
+    repaired = await job_executor_service._execute_due_lane(
+        session,  # type: ignore[arg-type]
+        due[0],
+        stop=None,
+    )
+    assert repaired.state == "ran"
+    assert repaired.run_status == "succeeded"
+    assert captured["version"] == "1"
+    assert captured["job_run_id"] == prior_run_id
+
+
+async def test_current_version_terminal_child_crash_is_due_for_parent_rollup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane_id = "jobs-firms-archive"
+    spec = LANE_SPECS[lane_id]
+    current_definition = _definition(spec.definition_name)
+    run_id = uuid.uuid4()
+    session = _ShadowSession()
+
+    async def _load_current(_session: object, _spec: object) -> JobDefinitionRecord:
+        return current_definition
+
+    async def _latest(_session: object, _spec: object) -> job_executor_service.LatestRun:
+        return job_executor_service.LatestRun(
+            run_id=run_id,
+            scheduled_for=datetime(2026, 8, 28, 12, tzinfo=UTC),
+            status="running",
+            work_claimable=False,
+            terminal_items_need_rollup=True,
+        )
+
+    monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
+    monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load_current)
+    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+
+    results, due = await job_executor_service._plan_active_lanes(
+        session,  # type: ignore[arg-type]
+        ActivationConfig(frozenset({lane_id})),
+        datetime(2026, 8, 28, 18, 30, tzinfo=UTC),
+    )
+
+    assert results == []
+    assert len(due) == 1
+    assert due[0].definition == current_definition
+    assert due[0].existing_run_id == run_id
+
+
+def test_nonterminal_run_without_work_items_refuses_instead_of_waiting_forever() -> None:
+    spec = LANE_SPECS["jobs-firms-archive"]
+    run_id = uuid.uuid4()
+    result = job_executor_service._blocked_open_run_result(
+        spec,
+        job_executor_service.LatestRun(
+            run_id=run_id,
+            scheduled_for=datetime(2026, 8, 28, 12, tzinfo=UTC),
+            status="queued",
+            work_claimable=False,
+            has_work_items=False,
+        ),
+        prior_version=False,
+    )
+
+    assert result is not None
+    assert result.state == "failed"
+    assert result.run_id == run_id
+    assert result.detail is not None
+    assert "no work items" in result.detail
+    assert "repair or cancel" in result.detail
+
+
+async def test_live_prior_version_lease_blocks_current_version_without_overlap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane_id = "jobs-firms-archive"
+    spec = LANE_SPECS[lane_id]
+    prior_run_id = uuid.uuid4()
+    session = _ShadowSession()
+
+    async def _load_current(_session: object, _spec: object) -> JobDefinitionRecord:
+        return _definition(spec.definition_name)
+
+    async def _latest(_session: object, _spec: object) -> job_executor_service.LatestRun:
+        return job_executor_service.LatestRun(
+            run_id=prior_run_id,
+            scheduled_for=datetime(2026, 8, 28, 12, tzinfo=UTC),
+            status="running",
+            work_claimable=False,
+            definition_version="1",
+            definition_enabled=True,
+        )
+
+    async def _unexpected(*_args: object, **_kwargs: object) -> Any:
+        raise AssertionError("a live prior-version lease loaded or opened current-version work")
+
+    monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
+    monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load_current)
+    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "load_job_definition", _unexpected)
+    monkeypatch.setattr(job_executor_service, "open_job_run", _unexpected)
+
+    results, due = await job_executor_service._plan_active_lanes(
+        session,  # type: ignore[arg-type]
+        ActivationConfig(frozenset({lane_id})),
+        datetime(2026, 8, 28, 18, 30, tzinfo=UTC),
+    )
+
+    assert due == []
+    assert len(results) == 1
+    assert results[0].state == "not_due"
+    assert results[0].run_id == prior_run_id
+    assert results[0].detail is not None
+    assert "prior definition version '1'" in results[0].detail
+    assert "live lease" in results[0].detail
+
+
+async def test_disabled_prior_version_open_run_refuses_current_version_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane_id = "jobs-firms-archive"
+    spec = LANE_SPECS[lane_id]
+    prior_run_id = uuid.uuid4()
+    session = _ShadowSession()
+
+    async def _load_current(_session: object, _spec: object) -> JobDefinitionRecord:
+        return _definition(spec.definition_name)
+
+    async def _latest(_session: object, _spec: object) -> job_executor_service.LatestRun:
+        return job_executor_service.LatestRun(
+            run_id=prior_run_id,
+            scheduled_for=datetime(2026, 8, 28, 12, tzinfo=UTC),
+            status="queued",
+            work_claimable=True,
+            definition_version="1",
+            definition_enabled=False,
+        )
+
+    async def _unexpected(*_args: object, **_kwargs: object) -> Any:
+        raise AssertionError("a disabled prior version loaded or opened current-version work")
+
+    monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
+    monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load_current)
+    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "load_job_definition", _unexpected)
+    monkeypatch.setattr(job_executor_service, "open_job_run", _unexpected)
+
+    results, due = await job_executor_service._plan_active_lanes(
+        session,  # type: ignore[arg-type]
+        ActivationConfig(frozenset({lane_id})),
+        datetime(2026, 8, 28, 18, 30, tzinfo=UTC),
+    )
+
+    assert due == []
+    assert len(results) == 1
+    assert results[0].state == "failed"
+    assert results[0].run_id == prior_run_id
+    assert results[0].detail is not None
+    assert "disabled" in results[0].detail
+    assert "resume or cancel" in results[0].detail
+
+
+async def test_terminal_prior_version_run_remains_the_catch_up_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane_id = "parquet-weather-observations"
+    spec = LANE_SPECS[lane_id]
+    current_definition = _definition(spec.definition_name)
+    session = _ShadowSession()
+
+    async def _load_current(_session: object, _spec: object) -> JobDefinitionRecord:
+        return current_definition
+
+    async def _latest(_session: object, _spec: object) -> job_executor_service.LatestRun:
+        return job_executor_service.LatestRun(
+            run_id=uuid.uuid4(),
+            scheduled_for=datetime(2026, 8, 28, 12, tzinfo=UTC),
+            status="succeeded",
+            work_claimable=False,
+            definition_version="1",
+            definition_enabled=True,
+        )
+
+    monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
+    monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load_current)
+    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+
+    results, due = await job_executor_service._plan_active_lanes(
+        session,  # type: ignore[arg-type]
+        ActivationConfig(frozenset({lane_id})),
+        datetime(2026, 8, 28, 18, 30, tzinfo=UTC),
+    )
+
+    assert results == []
+    assert len(due) == 1
+    assert due[0].definition == current_definition
+    assert due[0].existing_run_id is None
+    assert due[0].last_scheduled_for == datetime(2026, 8, 28, 12, tzinfo=UTC)
+    assert due[0].scheduled_for == datetime(2026, 8, 28, 13, tzinfo=UTC)
+
+    query = str(job_executor_service._SELECT_LATEST_RUN)
+    assert "definition.name = :name" in query
+    assert "WITH prior_version_open AS" in query
+    assert "current_version_open AS" in query
+    assert "latest_terminal_per_definition AS" in query
+    assert "SELECT 0 AS selection_rank" in query
+    assert "SELECT 1 AS selection_rank" in query
+    assert "SELECT 2 AS selection_rank" in query
+    assert query.count("LIMIT 1") == 5
+    assert "row_number()" not in query.lower()
+    assert "terminal_items_need_rollup" in query
+
+
+async def test_prior_version_candidate_executes_with_stored_version_and_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane_id = "jobs-firms-archive"
+    spec = LANE_SPECS[lane_id]
+    prior_definition = _definition(spec.definition_name, version="1")
+    prior_run_id = uuid.uuid4()
+    candidate = DueLane(
+        spec=spec,
+        definition=prior_definition,
+        scheduled_for=datetime(2026, 8, 28, 12, tzinfo=UTC),
+        existing_run_id=prior_run_id,
+        last_scheduled_for=datetime(2026, 8, 28, 12, tzinfo=UTC),
+    )
+    captured: dict[str, object] = {}
+
+    async def _unexpected_open(*_args: object, **_kwargs: object) -> Any:
+        raise AssertionError("resuming a prior-version run attempted to open a new run")
+
+    async def _run_slice(*_args: object, **kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            retried=0,
+            dead_lettered=0,
+            abandoned=0,
+            run_status="succeeded",
+            stop_reason="completed",
+            to_summary=dict,
+        )
+
+    monkeypatch.setattr(job_executor_service, "open_job_run", _unexpected_open)
+    monkeypatch.setattr(job_executor_service, "run_job_slice", _run_slice)
+
+    result = await job_executor_service._execute_due_lane(object(), candidate, stop=None)  # type: ignore[arg-type]
+
+    assert result.state == "ran"
+    assert captured["version"] == "1"
+    assert captured["job_run_id"] == prior_run_id
+    assert captured["budget_seconds"] == float(prior_definition.time_budget_seconds)
+
+
+def test_lane_wide_latest_run_query_keeps_expired_prior_leases_reapable() -> None:
+    query = str(job_executor_service._SELECT_LATEST_RUN)
+    assert "item.status IN ('leased', 'running')" in query
+    assert "item.lease_expires_at <= now()" in query
+    expired_arm = query.index("item.status IN ('leased', 'running')")
+    assert "attempt_count" not in query[expired_arm:]
+
+
+def test_logical_bucket_is_stable_throughout_one_cadence_window() -> None:
+    spec = LANE_SPECS["soilgrids-cache-warm"]
+    previous = datetime(2026, 9, 2, 10, 25, tzinfo=UTC)
+    expected = datetime(2026, 9, 2, 12, 25, tzinfo=UTC)
+    assert next_scheduled_bucket(spec, datetime(2026, 9, 2, 12, 25, tzinfo=UTC), previous) == expected
+    assert next_scheduled_bucket(spec, datetime(2026, 9, 2, 13, 24, 59, tzinfo=UTC), previous) == expected
+
 
 async def test_shadow_tick_emits_due_predictions_without_ledger_or_layer_writes(
     monkeypatch: pytest.MonkeyPatch,
@@ -552,6 +1132,10 @@ async def test_planning_reapplies_statement_timeout_after_every_transaction_boun
         _assert_armed("leader")
         return True
 
+    async def _pause_state(_session: object, _name: str) -> SimpleNamespace:
+        _assert_armed("pause_state")
+        return SimpleNamespace(registered=False, paused=False)
+
     async def _definition_state(
         _session: object,
         _spec: object,
@@ -584,6 +1168,7 @@ async def test_planning_reapplies_statement_timeout_after_every_transaction_boun
     monkeypatch.setattr(job_executor_service, "LANE_SPECS", specs)
     monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _timeout)
     monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
+    monkeypatch.setattr(job_executor_service, "read_lane_pause_state", _pause_state)
     monkeypatch.setattr(job_executor_service, "_definition_state", _definition_state)
     monkeypatch.setattr(job_executor_service, "fetch_row", _insert)
     monkeypatch.setattr(job_executor_service, "load_job_definition", _load_definition)
@@ -602,6 +1187,7 @@ async def test_planning_reapplies_statement_timeout_after_every_transaction_boun
     assert events == [
         "timeout",
         "leader",
+        "pause_state",
         "definition_state",
         "insert_definition",
         "commit",
@@ -969,6 +1555,63 @@ async def test_sigterm_between_candidates_does_not_open_second_candidate(
     assert deferred.state == "deferred_shutdown"
 
 
+async def test_one_executor_tick_never_overlaps_source_writer_processes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _ShadowSession()
+    candidates = [_due("postgres-weather", None), _due("fire-detections-direct-forward", None)]
+    active = 0
+    maximum_active = 0
+    order: list[str] = []
+
+    async def _noop_timeout(_session: object) -> None:
+        return None
+
+    async def _leader(_session: object) -> bool:
+        return True
+
+    async def _plan(*_args: object, **_kwargs: object) -> tuple[list[object], list[DueLane]]:
+        return [], candidates
+
+    async def _execute(
+        _session: object,
+        candidate: DueLane,
+        **_kwargs: object,
+    ) -> job_executor_service.LaneTickResult:
+        nonlocal active, maximum_active
+        active += 1
+        maximum_active = max(maximum_active, active)
+        order.append(f"start:{candidate.spec.lane_id}")
+        await asyncio.sleep(0)
+        order.append(f"stop:{candidate.spec.lane_id}")
+        active -= 1
+        return job_executor_service.LaneTickResult(lane_id=candidate.spec.lane_id, state="ran")
+
+    async def _unlock(_session: object) -> None:
+        return None
+
+    monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _noop_timeout)
+    monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
+    monkeypatch.setattr(job_executor_service, "_plan_active_lanes", _plan)
+    monkeypatch.setattr(job_executor_service, "_execute_due_lane", _execute)
+    monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock)
+
+    await run_executor_tick(
+        session,  # type: ignore[arg-type]
+        activation=ActivationConfig(frozenset()),
+        now=datetime(2026, 8, 28, 18, tzinfo=UTC),
+        max_lanes_per_tick=2,
+    )
+
+    assert maximum_active == 1
+    assert order == [
+        "start:fire-detections-direct-forward",
+        "stop:fire-detections-direct-forward",
+        "start:postgres-weather",
+        "stop:postgres-weather",
+    ]
+
+
 async def test_existing_pause_is_not_overwritten(monkeypatch: pytest.MonkeyPatch) -> None:
     session = _ShadowSession()
     spec = LANE_SPECS["fire-detections-direct-forward"]
@@ -979,15 +1622,74 @@ async def test_existing_pause_is_not_overwritten(monkeypatch: pytest.MonkeyPatch
     async def _paused(_session: object, _spec: object) -> tuple[uuid.UUID, bool]:
         return _DEFINITION_ID, False
 
+    async def _lane_pause(_session: object, _name: str) -> SimpleNamespace:
+        return SimpleNamespace(registered=True, paused=True)
+
     async def _unexpected(*_args: object, **_kwargs: object) -> Any:
         raise AssertionError("an existing paused definition was upserted")
 
     monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _noop_timeout)
+    monkeypatch.setattr(job_executor_service, "read_lane_pause_state", _lane_pause)
     monkeypatch.setattr(job_executor_service, "_definition_state", _paused)
     monkeypatch.setattr(job_executor_service, "fetch_row", _unexpected)
 
     definition = await job_executor_service._load_or_register_definition(session, spec)  # type: ignore[arg-type]
     assert definition is None
+    assert session.rollbacks == 1
+
+
+async def test_new_definition_version_inherits_a_lane_wide_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = LANE_SPECS["fire-detections-direct-forward"]
+    inserted: dict[str, object] = {}
+    definition_state_calls = 0
+
+    class _RegistrationSession(_ShadowSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self.commits = 0
+
+        async def commit(self) -> None:
+            self.commits += 1
+
+    session = _RegistrationSession()
+
+    async def _noop_timeout(_session: object) -> None:
+        return None
+
+    async def _lane_pause(_session: object, _name: str) -> SimpleNamespace:
+        return SimpleNamespace(registered=True, paused=True)
+
+    async def _definition_state(
+        _session: object,
+        _spec: object,
+    ) -> tuple[uuid.UUID, bool] | None:
+        nonlocal definition_state_calls
+        definition_state_calls += 1
+        return None if definition_state_calls == 1 else (_DEFINITION_ID, False)
+
+    async def _insert(
+        _session: object,
+        statement: object,
+        parameters: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        assert statement is job_executor_service._INSERT_DEFINITION
+        inserted.update(parameters)
+        return {"id": _DEFINITION_ID}
+
+    async def _unexpected(*_args: object, **_kwargs: object) -> Any:
+        raise AssertionError("a paused newly registered version was loaded for execution")
+
+    monkeypatch.setattr(job_executor_service, "apply_statement_timeout", _noop_timeout)
+    monkeypatch.setattr(job_executor_service, "read_lane_pause_state", _lane_pause)
+    monkeypatch.setattr(job_executor_service, "_definition_state", _definition_state)
+    monkeypatch.setattr(job_executor_service, "fetch_row", _insert)
+    monkeypatch.setattr(job_executor_service, "load_job_definition", _unexpected)
+
+    definition = await job_executor_service._load_or_register_definition(session, spec)  # type: ignore[arg-type]
+
+    assert definition is None
+    assert inserted["enabled"] is False
+    assert session.commits == 1
     assert session.rollbacks == 1
 
 
@@ -1089,9 +1791,48 @@ async def test_running_subprocess_terminates_and_yields_on_shutdown(
 def test_railway_service_is_continuous_and_shadow_by_default() -> None:
     service_root = Path(__file__).resolve().parents[1]
     config = json.loads((service_root / "railway.job-executor.json").read_text(encoding="utf-8"))
+    assert config["build"]["dockerfilePath"] == "infra/job-executor/Dockerfile"
     deploy = config["deploy"]
     assert deploy["startCommand"] == "agri-service ops jobs-executor"
     assert deploy["restartPolicyType"] == "ON_FAILURE"
     assert "cronSchedule" not in deploy
     assert ACTIVE_LANES_VARIABLE not in json.dumps(config)
     assert HANDOFF_ACKNOWLEDGEMENTS_VARIABLE not in json.dumps(config)
+
+    repo_root = service_root.parents[1]
+    dockerfile = (repo_root / "infra" / "job-executor" / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY package.json package-lock.json ./" in dockerfile
+    assert "services/agri-data-service/pyproject.toml" in dockerfile
+    assert "scripts/warm-soilgrids.mjs" in dockerfile
+    assert "alembic" not in dockerfile.lower()
+
+
+def test_tracked_railway_configs_cannot_resurrect_cron_scheduling() -> None:
+    service_root = Path(__file__).resolve().parents[1]
+    repo_root = service_root.parents[1]
+    tracked = subprocess.run(
+        ["git", "ls-files", "*railway*.json"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert tracked
+    for relative in tracked:
+        path = repo_root / relative
+        if not path.exists():
+            continue
+        config = json.loads(path.read_text(encoding="utf-8"))
+        assert "cronSchedule" not in config.get("deploy", {}), relative
+
+    obsolete = (
+        "infra/cron-ingest/railway.json",
+        "infra/cron-ingest/Dockerfile",
+        "infra/cron-mtbs/railway.json",
+        "infra/cron-soilgrids/railway.json",
+        "infra/cron-soilgrids/Dockerfile",
+        "infra/parquet-drain/railway.json",
+        "services/agri-data-service/railway.fire-detections-forward.json",
+        "services/agri-data-service/railway.water-gauges-forward.json",
+    )
+    assert all(not (repo_root / relative).exists() for relative in obsolete)

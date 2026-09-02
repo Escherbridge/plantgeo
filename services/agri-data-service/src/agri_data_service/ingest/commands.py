@@ -659,9 +659,9 @@ def _definition_filter(definition_name: str | None, lane_name: str | None) -> st
     """Turn `--definition`/`--lane` into the one definition name to act on, refusing two answers at once.
 
     `--lane` is the spelling a deployment should use. `archive_lane_definition_name` is the ONLY producer
-    of a `job_definition.name`, so resolving the token here means an `infra/cron-*/railway.json` never
-    carries a second hard-coded copy of it -- and a second copy is not a cosmetic duplicate, it joins to
-    nothing the day the naming changes, and a slice that joins to nothing silently claims no work.
+    of a `job_definition.name`, so resolving the token here means the executor registry never carries a
+    second hard-coded copy of it -- and a second copy is not a cosmetic duplicate, it joins to nothing
+    the day the naming changes, and a slice that joins to nothing silently claims no work.
     """
     if definition_name is not None and lane_name is not None:
         raise click.BadParameter("pass --definition or --lane, not both; a lane names exactly one definition")

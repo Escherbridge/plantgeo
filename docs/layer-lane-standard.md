@@ -33,6 +33,12 @@
 > Read `conductor/RUNBOOK.md` §0.23 (the pivot decision) and §0.24 (the stream
 > plan) before treating either document as a complete contract on its own.
 
+> **Scheduler correction, 2026-09-02:** §8's three-Railway-cron prescription is superseded.
+> A layer still owes the three logical duties—forward refresh, gap authoring/reconciliation and
+> coverage status—but they are registered durable lanes inside the single continuous
+> `plantgeo-job-executor` service. No tracked `cronSchedule`, Railway cron service, or reconnectable
+> drain is permitted. Rollback disables the affected executor lane and never recreates a cron.
+
 One contract per layer, seven planes deep. A layer is **not done** until every
 section below is satisfied — the recurring failure in this repo is a layer that
 is finished at one plane and silently absent at the next.
@@ -169,29 +175,26 @@ being re-walked forever. Record it as a governed absence in
 **This table already exists and is populated. Build on it; do not add another.**
 A day both observed and marked `no_data` resolves to covered.
 
-## 8. Schedule all three, not just the walker
+## 8. Register all three duties in the sole executor
 
-Every lane family needs **three** cron services, not one:
+Every lane family needs **three durable executor duties**, not three service objects:
 
-| service | cadence | purpose |
+| registered duty | cadence | purpose |
 |---|---|---|
 | forward refresh | the lane's own | keep the live edge current |
 | gap-fill | daily | plan gaps, then reconcile-apply |
 | coverage-status | daily | report; the only liveness signal |
 
-Railway specifics that cost real hours when missed:
+Executor requirements that cost real hours when missed:
 
-- **Two settings must change together**: Root Directory `/` **and** the
-  config-as-code path. Changing one fails. `RAILWAY_DOCKERFILE_PATH` can never
-  work, because the repo-root `railway.json` overrides the env var.
-- After a config fix, **deploy from source**. A plain redeploy replays the prior
-  failed build snapshot and the fix never takes effect.
-- `restartPolicyType: NEVER` means a failed tick is never retried — it waits for
-  the next one. That is why the work must be ledger-driven and idempotent.
-- Pick a cron minute no other `infra/cron-*/railway.json` uses.
-- Railway is a **trigger, not a scheduler with guarantees**: no missed-tick
-  backfill and no failure alerting. One service failed six builds across two days
-  unnoticed. The ledger is what makes it durable; the cron only starts it.
+- Register the source cadence and phase in `job_executor_service.py`; do not add a
+  `cronSchedule` or another continuously looping writer.
+- Select an explicit catch-up policy: source polls normally coalesce to the latest
+  due bucket because the source command owns its settlement window, while ledger-backed
+  backlog duties replay the oldest missed bucket first.
+- Each invocation must use the `agri.job_*` ledger, fenced lease, resumable checkpoint,
+  bounded retry/dead-letter policy and idempotent domain publication. The continuous
+  executor is the trigger; the ledger is the durable schedule and recovery record.
 
 ## 9. Serve it — and register it in the catalogue
 
@@ -304,8 +307,8 @@ same class of bug as a lane reporting success having written nothing.
 - **Terse one-line doc-comments only.** Rationale, contracts and measurements go
   in the directory `AGENTS.md`, with a one-line pointer from code.
 - Every constant carries a **measurement or citation, with a date**.
-- Env vars read at call time, never at import — a cron env change must need no
-  restart.
+- Env vars read at call time, never at import — an executor configuration change must
+  need no image rebuild.
 - SQL lives in `sql/<package>/<name>.sql`, loaded at import. Line 1 is a bare
   `-- <marker>` the tests dispatch on. Header: Purpose / Loaded by / Params, then
   a **clause-by-clause plain-English walkthrough written for someone who does not
@@ -323,8 +326,8 @@ A layer is finished when all of these are true:
 
 - [ ] lane declared once, with `source_key`/`grid_name` **verified against the DB**
 - [ ] `HistoryCapability` declared — a horizon, or a typed refusal with a reason
-- [ ] forward refresh runs on a Railway cron
-- [ ] gap detection runs on a Railway cron and **authors work**, not just a report
+- [ ] forward refresh is a registered, bounded `plantgeo-job-executor` lane
+- [ ] gap detection is a registered executor lane and **authors work**, not just a report
 - [ ] unfillable days recorded as governed absences, not re-walked forever
 - [ ] coverage-status reports completeness, missing-day count and collapsed ranges
 - [ ] serving reader exists **and the stream is in the slider capability catalogue**

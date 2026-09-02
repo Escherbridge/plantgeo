@@ -13,6 +13,7 @@ extracted `.sql` files).
 
 from __future__ import annotations
 
+import inspect
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -31,7 +32,6 @@ from agri_data_service.jobs.dispatch import (
     register_dispatchable_lane,
 )
 from agri_data_service.jobs.registry import JOB_HANDLERS, JobInvocation
-from agri_data_service.jobs.scheduler import StrategyMvRefreshScheduler
 from agri_data_service.jobs.strategy_mv_refresh import (
     STRATEGY_MV_REFRESH_DEFINITION_NAME,
     STRATEGY_MV_REFRESH_HANDLER_TOKEN,
@@ -343,47 +343,14 @@ def test_run_bucket_key_groups_moments_inside_one_poll_interval() -> None:
     assert _run_bucket_key(second) != _run_bucket_key(third)
 
 
-# --- the periodic in-process driver ---
-
-
-@pytest.mark.asyncio
-async def test_strategy_mv_refresh_scheduler_lifecycle() -> None:
-    scheduler = StrategyMvRefreshScheduler(poll_interval_seconds=60)
-    assert scheduler._running is False
-
-    await scheduler.start()
-    assert scheduler._running is True
-    assert scheduler._task is not None
-
-    await scheduler.stop()
-    assert scheduler._running is False
-
-
-@pytest.mark.asyncio
-async def test_the_periodic_driver_ticks_through_dispatch_so_a_pause_stops_the_schedule_too(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The manual button and the timer must share one pause switch, not carry one each."""
-    calls: list[tuple[object, str, str]] = []
-
-    @asynccontextmanager
-    async def _fake_get_scheduler_session() -> AsyncIterator[str]:
-        yield "fake-session"
-
-    async def _fake_dispatch(session: object, lane_id: str, *, requested_by: str) -> str:
-        calls.append((session, lane_id, requested_by))
-        return "paused-outcome"
-
-    monkeypatch.setattr(scheduler_module, "get_scheduler_session", _fake_get_scheduler_session)
-    monkeypatch.setattr(scheduler_module, "dispatch_lane", _fake_dispatch)
-
-    outcome = await StrategyMvRefreshScheduler(poll_interval_seconds=60).run_once()
-
-    assert outcome == "paused-outcome"
-    assert calls == [("fake-session", STRATEGY_MV_REFRESH_DEFINITION_NAME, "strategy-mv-refresh-scheduler")]
-
-
 # --- the manual-trigger route: one general path, dispatching this lane by name like any other ---
+
+
+def test_http_trigger_module_has_no_in_process_scheduler_or_lifecycle_listener() -> None:
+    source = inspect.getsource(scheduler_module)
+    assert "StrategyMvRefreshScheduler" not in source
+    assert "before_server_start" not in source
+    assert "after_server_stop" not in source
 
 
 def test_this_lane_publishes_itself_to_the_dispatcher_so_the_route_needs_no_branch_for_it() -> None:

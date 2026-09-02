@@ -82,22 +82,21 @@ class StreamDefinition:
         return self.publication_cadence_days is not None
 
 
-# Cadence basis strings name a measurement, never an intention. A cron schedule is read from the service's own
-# `infra/cron-<name>/railway.json`; an upstream cadence is the publisher's stated release rhythm.
+# Cadence basis strings name a measurement, never an intention. Scheduled acquisition cadence comes from
+# the sole executor registry; an upstream cadence is the publisher's stated release rhythm.
 #
 # `lane_names` is DERIVED from the archive-walk naming function over a registered lane object, so the catalog
 # and the ledger cannot spell the same lane two ways. Only the two lanes `lanes.BACKFILL_LANES` registers have
-# a durable ledger behind them today; every other stream is filled by a cron tick that keeps no work-item
-# record, so it carries NO lane rather than a plausible-looking name that would match nothing. A stream with no
-# lane says so in the report ("No lane in the job ledger claims this stream"), which is the honest reading --
-# the previous invented names said the opposite in a way nothing could detect.
+# an inner archive ledger behind them; every scheduled source command also receives an outer executor work-item
+# record, but that outer definition does not claim archive coverage. Streams without an inner archive lane keep
+# NO `lane_names` entry rather than a plausible-looking archive name that would match nothing.
 DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
     StreamDefinition(
         stream="fire-detections",
         kind="time_series",
         store="features",
         publication_cadence_days=1,
-        cadence_basis="infra/cron-firms/railway.json runs `30 */3 * * *`, so a day with no detection row is a gap",
+        cadence_basis="job-executor lane postgres-firms runs hourly, so a day with no detection row is a gap",
         lane_names=(archive_lane_definition_name(FIRMS_ARCHIVE_LANE),),
     ),
     StreamDefinition(
@@ -105,7 +104,7 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
         kind="time_series",
         store="features",
         publication_cadence_days=1,
-        cadence_basis="infra/cron-streamflow/railway.json runs `*/30 * * * *`",
+        cadence_basis="job-executor lane postgres-streamflow runs hourly",
         lane_names=(archive_lane_definition_name(STREAMFLOW_ARCHIVE_LANE),),
     ),
     StreamDefinition(
@@ -113,7 +112,7 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
         kind="time_series",
         store="features",
         publication_cadence_days=1,
-        cadence_basis="infra/cron-weather/railway.json runs `10 * * * *`",
+        cadence_basis="job-executor lane postgres-weather runs hourly",
     ),
     StreamDefinition(
         stream="vegetation",
@@ -121,7 +120,7 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
         store="features",
         publication_cadence_days=5,
         cadence_basis=(
-            "infra/cron-ndvi/railway.json runs `0 5 * * *`, but Sentinel-2 L2A revisits mid-latitudes about "
+            "job-executor lane postgres-vegetation runs hourly, but Sentinel-2 L2A revisits mid-latitudes about "
             "every five days, so five days is the shortest cadence the upstream can actually honour"
         ),
     ),
@@ -130,14 +129,14 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
         kind="time_series",
         store="features",
         publication_cadence_days=1,
-        cadence_basis="infra/cron-fire-perimeters/railway.json runs `20 * * * *`",
+        cadence_basis="job-executor lane postgres-fire-perimeters runs hourly",
     ),
     StreamDefinition(
         stream="evacuation-zones",
         kind="time_series",
         store="features",
         publication_cadence_days=1,
-        cadence_basis="infra/cron-evacuation-zones/railway.json runs `*/15 * * * *`",
+        cadence_basis="job-executor lane postgres-evacuation-zones runs hourly",
     ),
     StreamDefinition(stream="sensors", kind="snapshot", store="features", cadence_basis=None),
     StreamDefinition(stream="soil-survey", kind="reference", store="features"),

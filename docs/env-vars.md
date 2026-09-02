@@ -60,15 +60,15 @@ does not update the client.
 | Variable | Policy |
 | --- | --- |
 | `INGEST_SECRET` | Dedicated bearer secret for authenticated ingestion routes. Required in production for those routes. |
-| `INGEST_BBOX` | Required for scheduled acquisition; `west,south,east,north`, capped at 30° longitude by 20° latitude. Read by the authenticated `/api/ingest/*` routes and by every ingestion cron container — `plantgeo-ingest-cron`'s `agri-service data ingest-all` and each per-layer service's single verb. Start with one reviewed region and set it identically on every cron service; a mismatched bbox across services silently narrows one source's coverage relative to the others. |
-| `NASA_FIRMS_KEY` | Server-only; required only when running the FIRMS acquisition path — the web routes, `plantgeo-ingest-cron`'s `ingest-all`, and `plantgeo-ingest-firms`'s `ingest-firms` all read it. No other per-layer service needs it. |
+| `INGEST_BBOX` | Required for scheduled acquisition; `west,south,east,north`, capped at 30° longitude by 20° latitude. Set once on `plantgeo-job-executor`; its registered source commands read the same reviewed region. A mismatched manual/operator value can silently narrow one source's coverage. Railway cron services are retired and must not be recreated. |
+| `NASA_FIRMS_KEY` | Server-only; required when the executor invokes a FIRMS acquisition lane or an operator runs the same source command manually. |
 | `CDSAPI_URL` / `CDSAPI_KEY` | Server-only; required only by `agri-service data historical-era5-backfill` (ERA5-Land volumetric soil moisture). Resolved environment-first, then `Settings`/`.env` — since 2026-08-08 a `.env` entry is enough and the old export-only requirement is gone; a blank export is treated as unset. Needs a free Copernicus CDS account with the ERA5-Land dataset licence accepted in a browser; no API retry clears an unaccepted licence. |
 | `OPEN_METEO_API_KEY` | **Optional.** Server-only; read only by `agri-service data historical-open-meteo-backfill` (the ERA5-Land archive lane). Absent is fully supported and is the default: the lane calls the keyless free host `archive-api.open-meteo.com`, which is what the published repo and the existing 16-cell probe use. Present switches the real request to the Professional host `customer-archive-api.open-meteo.com` and appends `apikey=<key>`. Read from `os.environ` directly, not through pydantic-settings, so a `.env` entry does NOT reach it — export it into the shell running the command. It is not part of any plan and does not change `plan_checksum`, so setting or clearing it never orphans a checkpoint or the local raw cache. The key is never written to a plan, checkpoint, cache receipt, log line, or the warehouse; the persisted `source_release.query_parameters.request_url` records the host that answered and nothing else. |
-| `FIRMS_DAY_RANGE` | Optional, cron container only. FIRMS lookback window in days; must be a plain non-negative integer string or it silently falls back to the default. Clamped to 1-5 (the API answers 400 above 5), default 2. |
-| `INGEST_MAX_SOURCE_RECORDS` | Optional, cron container only. Caps the number of records accepted from a single ingestion source per run. Clamped to 1,000-50,000, default 10,000. |
-| `WEATHER_SAMPLE_SPACING_DEGREES` | Optional, cron container only. Starting grid spacing (degrees) for the Open-Meteo sampling sweep. Clamped to 0.25-5.0, default 1.0; the sweep coarsens spacing until `columns * rows <= 150`, it never slices the grid. |
+| `FIRMS_DAY_RANGE` | Optional executor source-lane setting. FIRMS lookback window in days; must be a plain non-negative integer string or it silently falls back to the default. Clamped to 1-5 (the API answers 400 above 5), default 2. |
+| `INGEST_MAX_SOURCE_RECORDS` | Optional executor source-lane setting. Caps the number of records accepted from a single ingestion source per run. Clamped to 1,000-50,000, default 10,000. |
+| `WEATHER_SAMPLE_SPACING_DEGREES` | Optional executor source-lane setting. Starting grid spacing (degrees) for the Open-Meteo sampling sweep. Clamped to 0.25-5.0, default 1.0; the sweep coarsens spacing until `columns * rows <= 150`, it never slices the grid. |
 | `MAPILLARY_ACCESS_TOKEN` | Server-only imagery proxy token. Mapillary remains a licensed imagery exception, not a warehouse bypass. |
-| `FIRES_LAYER_ID` | **Web routes only** (`POST /api/ingest/fires`). Existing layer name/UUID for submitted fire perimeters; default `fire-perimeters`. The cron container's WFIGS producer reads `FIRE_PERIMETERS_LAYER_ID` instead — both default to `fire-perimeters`, so nothing breaks until someone repoints one of them. |
+| `FIRES_LAYER_ID` | **Web routes only** (`POST /api/ingest/fires`). Existing layer name/UUID for submitted fire perimeters; default `fire-perimeters`. The executor's WFIGS source lane reads `FIRE_PERIMETERS_LAYER_ID` instead — both default to `fire-perimeters`, so nothing breaks until someone repoints one of them. |
 | `FIRMS_LAYER_ID` | Existing layer name/UUID for persisted detections; default `fire-detections`. |
 | `SENSORS_LAYER_ID` | Existing layer name/UUID for sensor writes; default `sensors`. |
 | `WATER_GAUGES_LAYER_ID` | Existing layer name/UUID for gauge observations; default `water-gauges`. |
@@ -78,16 +78,12 @@ Layer references must exist before ingestion. A missing key, source, or layer
 must fail closed and preserve the last valid publication; it must not generate a
 sample observation.
 
-`CRON_SECRET` is retired: every ingestion cron container — `plantgeo-ingest-cron` (`agri-service data ingest-all`) and, once created, each of the eight per-layer services in `docs/deployment.md`'s
-"Per-layer ingestion cron services" (`plantgeo-ingest-streamflow`, `-weather`, `-fire-perimeters`,
-`-firms`, `-drought`, `-ndvi`, `-sensors`, `-evacuation-zones`) — is a Python container that reaches
-Postgres and Redis directly, instead of calling an HTTP route with an `x-cron-secret` header. There
-is no cron ingress secret left to configure once `src/app/api/cron/ingest/route.ts` is removed, on
-any of them.
+`CRON_SECRET` is retired. Registered executor lanes invoke the Python and Node source commands
+directly against their reviewed database and object-store targets; there is no scheduled HTTP
+ingress and no `x-cron-secret` to configure. Railway cron service objects must not be recreated.
 
-**Every ingestion cron container needs a database DSN in either
-`LOCAL_SOURCE_LOADER_DATABASE_URL` or `DATABASE_URL`.** This applies identically whether the
-container runs `ingest-all` or a single per-layer verb: every `ingest-*` verb opens
+**`plantgeo-job-executor` needs a database DSN in either
+`LOCAL_SOURCE_LOADER_DATABASE_URL` or `DATABASE_URL`.** Every registered `ingest-*` verb opens
 `ingest_session()`, which calls `settings.require_local_source_loader_database_url()`. Since the
 2026-08-08 role teardown that reader returns the loader variable when set and `DATABASE_URL`
 otherwise — the host/port allowlist, the database-name rule, the login assertion, and the "must
@@ -107,15 +103,15 @@ still required, for the realtime publisher. See
 
 | Variable | Policy |
 | --- | --- |
-| `LOCAL_SOURCE_LOADER_DATABASE_URL` | Optional override for `agri-service data ingest-*`/`agri-service ops jobs-*`/`agri-service data source-ingest`; defaults to `DATABASE_URL`. Nothing about it is validated since the 2026-08-08 role teardown (`20260808_0019`) — any host, port, database name, and login are accepted, as is a value identical to `DATABASE_URL`. Set it on the ingestion cron services (which is what they do today) or set `DATABASE_URL` instead; one of the two must exist. |
-| `FIRE_PERIMETERS_LAYER_ID` | Optional, cron container only. Existing layer name/UUID for WFIGS perimeters; default `fire-perimeters`. This is the variable the Python `wfigs` module reads — `FIRES_LAYER_ID` below is read only by the web route `POST /api/ingest/fires`. Set both if you repoint the layer, or the two writers silently diverge. |
-| `VEGETATION_LAYER_ID` | Optional, cron container only. Layer for Sentinel-2 NDVI grid samples; default `vegetation`. |
-| `EVACUATION_ZONES_LAYER_ID` | Optional, cron container only. Layer for Oregon OEM evacuation areas; default `evacuation-zones`. |
-| `NWS_API_USER_AGENT` | Optional, cron container only. Contact string the NWS API requires of API clients; has a default, but set a real contact before running at volume. |
-| `SENSOR_STATION_STATES` | Optional, cron container only. Comma-separated US state codes the NWS station sweep covers. |
-| `SENSOR_STATION_NETWORKS` | Optional, cron container only. Comma-separated NWS observation networks to accept. |
-| `SENSOR_MAX_STATIONS` | Optional, cron container only. Caps stations polled per run. |
-| `DROUGHT_RETAINED_RELEASES` | Optional, cron container only. How many USDM weekly releases survive the post-run prune. Raise it before running `ingest-drought-history`, or the next ordinary tick deletes the history you just walked. |
+| `LOCAL_SOURCE_LOADER_DATABASE_URL` | Optional override for `agri-service data ingest-*`/`agri-service ops jobs-*`/`agri-service data source-ingest`; defaults to `DATABASE_URL`. Nothing about it is validated since the 2026-08-08 role teardown (`20260808_0019`) — any host, port, database name, and login are accepted, as is a value identical to `DATABASE_URL`. Set it once on `plantgeo-job-executor`, or set `DATABASE_URL` instead; one of the two must exist. |
+| `FIRE_PERIMETERS_LAYER_ID` | Optional executor source-lane setting. Existing layer name/UUID for WFIGS perimeters; default `fire-perimeters`. This is the variable the Python `wfigs` module reads — `FIRES_LAYER_ID` below is read only by the web route `POST /api/ingest/fires`. Set both if you repoint the layer, or the two writers silently diverge. |
+| `VEGETATION_LAYER_ID` | Optional executor source-lane setting. Layer for Sentinel-2 NDVI grid samples; default `vegetation`. |
+| `EVACUATION_ZONES_LAYER_ID` | Optional executor source-lane setting. Layer for Oregon OEM evacuation areas; default `evacuation-zones`. |
+| `NWS_API_USER_AGENT` | Optional executor source-lane setting. Contact string the NWS API requires of API clients; has a default, but set a real contact before running at volume. |
+| `SENSOR_STATION_STATES` | Optional executor source-lane setting. Comma-separated US state codes the NWS station sweep covers. |
+| `SENSOR_STATION_NETWORKS` | Optional executor source-lane setting. Comma-separated NWS observation networks to accept. |
+| `SENSOR_MAX_STATIONS` | Optional executor source-lane setting. Caps stations polled per run. |
+| `DROUGHT_RETAINED_RELEASES` | Optional executor source-lane setting. How many USDM weekly releases survive the post-run prune. Raise it before running `ingest-drought-history`, or the next ordinary tick deletes the history you just walked. |
 
 ### AI, email, commerce, and administration
 

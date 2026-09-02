@@ -45,16 +45,29 @@ resource: ./spec.md
 - [ ] Author missing-day work and bounded idempotent repair.
 - [ ] Require every required rung before terminal publication.
 - [ ] Extend availability for published and governed-absence outcomes without rescanning history.
-- [ ] Register executor schedules, leases, checkpoints, retries and dead-letter visibility.
-- [ ] Document source-by-source pause, lease-expiry, activation and rollback procedures.
+- [x] Register executor schedules, leases, checkpoints, retries and dead-letter visibility.
+- [x] Document source-by-source pause, lease-expiry, activation and rollback procedures.
+- [x] Inventory every live Railway scheduled/one-shot writer and bind its exact command, cadence,
+      source settlement, checkpoint, lease, retry/dead-letter and rollback to the executor registry.
+- [x] Retire `infra/cron-ingest/railway.json` and its cron-only Dockerfile,
+      `infra/cron-mtbs/railway.json`, `infra/cron-soilgrids/railway.json` and its cron-only
+      Dockerfile, `infra/parquet-drain/railway.json`, both direct-forward Railway configs, and add a
+      guard that rejects any tracked `cronSchedule` resurrection.
+- [x] Preserve the dedicated continuous `railway.job-executor.json`; record the scheduler handoff in
+      `evidence/scheduler-handoff-20260902.md`.
 
 ## Wave P3 — controlled production handoff
 
-- [ ] Obtain separate explicit production authorization for the exact executor candidate and rollback.
-- [ ] Prove the legacy owner inactive before activating one executor lane.
+- [x] Record the 2026-09-02 owner authorization for executor-only scheduling and cron-object removal.
+- [ ] Merge the reviewed release to `main` and prove the exact executor deployment is `SUCCESS`.
+- [ ] Receive the explicit orchestration follow-up, then prove all legacy owners and executor leases
+      inactive before activation.
 - [ ] Close the bounded observed tails without rewriting valid immutable days.
 - [ ] Publish governed absences only with source receipts.
 - [ ] Observe retry, restart and expired-lease recovery.
+- [ ] Remove all six legacy scheduled/one-shot writer service objects, capture one removal receipt per
+      service, and re-read the complete production service/deployment matrix.
+- [ ] Exercise rollback by disabling an executor lane; never restore a Railway cron schedule/service.
 
 ## Wave P4 — burn-in and handoff
 

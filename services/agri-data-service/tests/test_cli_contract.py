@@ -24,21 +24,6 @@ def test_console_script_is_a_single_hard_cutover_entrypoint() -> None:
     assert not (service_root / "src" / "agri_data_service" / "cli.py").exists()
 
 
-def test_deployment_commands_use_the_grouped_surface() -> None:
-    service_root = Path(__file__).resolve().parents[1]
-    repo_root = service_root.parents[1]
-    cron = (repo_root / "infra" / "cron-ingest" / "Dockerfile").read_text(encoding="utf-8")
-    mtbs = (repo_root / "infra" / "cron-mtbs" / "railway.json").read_text(encoding="utf-8")
-    drain = (repo_root / "infra" / "parquet-drain" / "railway.json").read_text(encoding="utf-8")
-
-    assert "agri-service data ingest-all" in cron
-    assert "agri-service data parquet-catch-up-vegetation" in cron
-    assert "agri-service ops jobs-pulse" in cron
-    assert "agri-service data parquet-gap-fill" in cron
-    assert "agri-service data ingest-mtbs" in mtbs
-    assert "agri-service data parquet-drain" in drain
-
-
 def _write_plan(path: Path, **extra: object) -> None:
     plan = {
         "partitions": ["colorado-west"],

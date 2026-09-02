@@ -1,5 +1,17 @@
 # `plantgeo-parquet-drain`
 
+## Current owner directive — 2026-09-02
+
+This service is retired scheduler history. It was not present in the authoritative 14-service
+production inventory, while its tracked `railway.json` still encoded an `ALWAYS` infinite writer.
+Gapless p5 removes that config and permanently rejects reconnection or recreation. All older text
+below describing how to reconnect it, restore a cron, keep it as an in-region candidate, or use it
+for rollback is superseded and retained only as incident evidence.
+
+`plantgeo-job-executor` owns bounded Parquet repair through registered `parquet-<slug>` lanes. A
+failed repair is rolled back by disabling the affected executor lane; PostgreSQL/R2 data, manifests
+and checkpoints remain intact. Never reconnect this drain or reintroduce its infinite loop.
+
 The historical Parquet backlog, drained from inside Railway instead of from a laptop.
 
 ## Why this service exists

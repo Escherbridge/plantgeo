@@ -41,8 +41,7 @@ const MAX_CONSECUTIVE_THROTTLES = 3;
 // budget above, so a sustained *partial* throttle (roughly one admission in three) is not
 // bounded by it: every point could cost two backoffs before landing, ~260 s each, which is
 // ~8.7 h across 120 points -- close to what the run-scoped budget exists to prevent. This
-// deadline is the backstop for that shape. Sized to leave headroom inside the hourly
-// cronSchedule this driver runs under (infra/cron-soilgrids/railway.json).
+// deadline is the backstop for that shape and leaves headroom inside its hourly executor lane.
 const RUN_DEADLINE_MS = 45 * 60 * 1000;
 
 // Matches CACHE_CELL_DEGREES in soilgrids.ts. The cache row a centroid resolves to is the

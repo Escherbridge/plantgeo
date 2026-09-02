@@ -35,3 +35,27 @@ separate operator authorization. The Drizzle `preDeployCommand` is the one
 automatic migration the operator has authorized; do not enable a forecast
 publication, scheduler, or `effect_candidate` finalization as part of Conductor
 maintenance.
+
+## Scheduler-owner directive — 2026-09-02
+
+The owner has explicitly authorized the repository release that makes
+`plantgeo-job-executor` the sole scheduler and durable invocation owner for PlantGeo data work.
+That authorization rejects Railway cron scheduling and authorizes controlled retirement of the
+six inventoried legacy scheduled/one-shot writer service objects after, and only after, all of the
+following gates are satisfied:
+
+1. the reviewed scheduler release is merged to `main`;
+2. the exact `plantgeo-job-executor` deployment for that `main` commit reaches `SUCCESS`;
+3. the executor registry, schedules, source ceilings, leases, checkpoints, retries/dead letters,
+   idempotent publication, restart/catch-up behavior and no-overlap tests are green;
+4. a fresh production read proves no legacy writer invocation or executor lease is in flight;
+5. the orchestration task gives the explicit post-deployment follow-up to perform the handoff; and
+6. every replacement lane is observed running successfully before its former service object is
+   removed.
+
+The authorization is directional, not an immediate production mutation. A feature-branch build,
+review, or green deployment of another commit does not satisfy it. Rollback disables the affected
+executor lane and preserves its PostgreSQL/R2 data, manifests and checkpoints. Rollback must never
+restore a `cronSchedule`, reconnect an old writer, or recreate a Railway cron/one-shot writer
+service. The scheduler handoff evidence and exact production order live in
+`tracks/gapless_parquet_publication_20260901/evidence/scheduler-handoff-20260902.md`.

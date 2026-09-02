@@ -119,8 +119,8 @@ that same lane barrier exclusively, so no writer can mutate a receipt between ve
 conditional `_LATEST` update.
 
 ## This path is synchronous, deliberately
-`python.md` calls for async I/O, and this module is sync. It runs from the ingestion CLI and the
-Railway cron, never on the Sanic event loop; boto3 has no async client, and wrapping it would add
+`python.md` calls for async I/O, and this module is sync. It runs as a bounded subprocess from the
+ingestion CLI or `plantgeo-job-executor`, never on the Sanic event loop; boto3 has no async client, and wrapping it would add
 a thread pool for no caller that exists. **If a route ever needs it, run it in an executor rather
 than making this async.**
 
@@ -217,7 +217,7 @@ the registry's `_fill_calendar` absorbs the uniform adapter shape so the lie sta
 place. Its watermark comes from the clock and its own listing: a version covers 800 days forward
 and must reach `today + 400`, so it regenerates roughly annually instead of daily.
 
-## `gap_fill.py` — the driver a Railway cron runs
+## `gap_fill.py` — the bounded driver the executor invokes
 A time-axis lane may declare `writer_ceiling`; `lane_window` clamps to it so generic gap-fill and
 the missing-data drain cannot cross into a dedicated writer's ownership. Ladder derivation is
 still allowed there because it reads the published base rung and never invokes the old writer.
@@ -325,7 +325,7 @@ a strictly weaker claim: a completion marker whose parts were deleted underneath
 parts with no marker are `incomplete`, and **no reader serves either**. Classifying those as
 superseded deletes the only readable copy of the day while reporting the deletion as safe.
 
-This stops being theoretical the moment the hourly cron runs beside the sweep: `write_partition`
+This stops being theoretical the moment an hourly forward lane runs beside the sweep: `write_partition`
 clears the completion marker as it uploads `part-0`, so any day mid-re-export reads `incomplete`
 inside the sweep's window — and the sweep lists once, at the start of the layer. Everything else is
 `orphaned`, reported, and kept unless asked for by name.

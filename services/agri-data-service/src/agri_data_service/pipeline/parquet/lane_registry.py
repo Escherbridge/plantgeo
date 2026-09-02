@@ -53,7 +53,10 @@ from agri_data_service.pipeline.lanes.sensors import export_sensors_day
 from agri_data_service.pipeline.lanes.signal import export_signal_day
 from agri_data_service.pipeline.lanes.soil_survey import POLYGON_KEY_BATCH_SIZE, export_soil_survey_release
 from agri_data_service.pipeline.lanes.vegetation import export_vegetation_day
-from agri_data_service.pipeline.lanes.water_gauges import export_water_gauges_day
+from agri_data_service.pipeline.lanes.water_gauges import (
+    WATER_GAUGES_DIRECT_WRITER_START_DAY,
+    export_water_gauges_day,
+)
 from agri_data_service.pipeline.lanes.watersheds import export_watersheds_release
 from agri_data_service.pipeline.lanes.weather_observations import export_weather_observations_day
 from agri_data_service.pipeline.parquet.objectstore import (
@@ -722,7 +725,7 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
             "answered here: there is no honest number to give it. "
             "docs/lanes/burn-severity.md section 3: the published rows' own observedAt span is "
             "2020-11-24 to 2024-08-22, the five release dates of the five ingested fire-year cohorts. "
-            "Lag 7 from section 2's weekly ingest cron (infra/cron-mtbs, Tuesdays 07:55 UTC). Most days "
+            "Lag 7 from section 2's weekly executor lane (Tuesdays 07:55 UTC). Most days "
             "in this window are correctly a governed absence -- MTBS publishes quarterly, and the lane's "
             "own export already records a non-release day as one."
         ),
@@ -867,13 +870,15 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         publication_lag_days=2,
         nature="daily_series",
         forecast_module="water_gauges",
+        writer_ceiling=WATER_GAUGES_DIRECT_WRITER_START_DAY - timedelta(days=1),
         floor_basis=(
             "NATURE daily_series, forecastable (method/monte_carlo/water_gauges.py, horizon 30d). "
             "docs/lanes/water-gauges.md section 3: the DENSE record starts 2026-05-24. The code floor "
             "USGS_DAILY_VALUES_EARLIEST = 2022-08-05 is explicitly BORROWED from the vegetation layer, not "
             "source-imposed, and nothing confirms the archive walk has reached it -- using it would invent "
             "~1,400 phantom gap-days. The bare min(observed_day) of 1990-10-01 is documented there as a trap. "
-            "Lag 2: USGS daily values are provisional same-day-to-next-day (UNVERIFIED for this bbox)."
+            "Lag 2: USGS daily values are provisional same-day-to-next-day (UNVERIFIED for this bbox). "
+            "The generic exporter stops before the 2026-09-02 direct-writer ownership floor."
         ),
     ),
     LaneRegistration(

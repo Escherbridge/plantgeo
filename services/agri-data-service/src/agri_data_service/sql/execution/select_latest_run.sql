@@ -1,37 +1,116 @@
--- Purpose: find the most recent durable cadence run for one executor definition.
+-- Purpose: select the bounded lane-wide run candidate a versioned executor must settle or continue.
 -- Loaded by: agri_data_service.execution.job_executor_service
--- Params: job_definition_id (uuid)
+-- Params: name/current_version (text)
 --
--- How this query works, clause by clause:
+-- The three candidate branches are deliberately index-bounded instead of ranking the complete run
+-- lifetime on every scheduler poll:
 --
---   SELECT id, scheduled_for, status, work_claimable
---     Returns the identity, cadence bucket, lifecycle state, and whether this run can claim work now.
---     An open run waiting on retry/defer time or a live lease must not consume its work class's turn.
+--   prior_version_open / current_version_open
+--     Each reads at most one queued/running candidate in scheduled order. The existing
+--     ix_job_run_status_scheduled index supplies the small open-run set; the definition join limits
+--     it to this stable lane name and separates prior versions from the current version. A prior open
+--     run has selection rank 0, so current-version work can never hide unfinished upgrade work.
 --
---   FROM latest_run
---     Selects the durable scheduler checkpoint first; work items participate only in the claimability
---     predicate below, while command and layer tables do not participate in scheduling.
+--   latest_terminal_per_definition / latest_terminal
+--     ix_job_run_definition_created supplies the newest-created terminal candidate for each stored
+--     definition version with one backward index probe. Executor buckets are opened monotonically and
+--     never while that lane already has an open run, so that candidate is the version's latest cadence
+--     checkpoint. The outer LIMIT chooses the greatest schedule across the few definition versions,
+--     never across the lane's complete run history.
 --
---   WHERE job_definition_id = ...
---     Restricts candidates to the one exact executor definition supplied as a bound parameter.
+--   candidate_runs / selected_run
+--     At most three rows survive: one prior open, one current open and one terminal checkpoint. The
+--     fixed selection rank chooses in exactly that order and LIMIT returns a single scheduler state.
 --
---   ORDER BY scheduled_for DESC, created_at DESC
---     Puts the newest cadence bucket first. created_at is the deterministic tie-breaker if repaired or
---     legacy data contains more than one row with the same schedule time.
---
---   EXISTS (... FROM agri.job_work_item)
---     Mirrors claim_work_item's fresh eligibility, while expired leases remain scheduler-eligible even
---     after the final attempt so run_job_slice's definition-scoped reaper can dead-letter and roll them up.
-WITH latest_run AS (
-    SELECT id, scheduled_for, status
-    FROM agri.job_run
-    WHERE job_definition_id = :job_definition_id
-    ORDER BY scheduled_for DESC, created_at DESC
+-- The final EXISTS predicates inspect work items only for that one run. work_claimable mirrors the
+-- worker's claim/reaper contract. terminal_items_need_rollup identifies the crash boundary where the
+-- child reached succeeded/dead_letter/cancelled but the process died before refreshing its parent run;
+-- the planner must drive the exact definition once more so run_job_slice repairs the authoritative rollup.
+WITH prior_version_open AS (
+    SELECT run.id,
+           run.job_definition_id,
+           definition.version AS definition_version,
+           definition.enabled AS definition_enabled,
+           run.scheduled_for,
+           run.status,
+           run.created_at
+    FROM agri.job_run AS run
+    JOIN agri.job_definition AS definition ON definition.id = run.job_definition_id
+    WHERE definition.name = :name
+      AND definition.version <> CAST(:current_version AS text)
+      AND run.status IN ('queued', 'running')
+    ORDER BY run.scheduled_for, run.created_at, run.id
+    LIMIT 1
+),
+current_version_open AS (
+    SELECT run.id,
+           run.job_definition_id,
+           definition.version AS definition_version,
+           definition.enabled AS definition_enabled,
+           run.scheduled_for,
+           run.status,
+           run.created_at
+    FROM agri.job_run AS run
+    JOIN agri.job_definition AS definition ON definition.id = run.job_definition_id
+    WHERE definition.name = :name
+      AND definition.version = CAST(:current_version AS text)
+      AND run.status IN ('queued', 'running')
+    ORDER BY run.scheduled_for, run.created_at, run.id
+    LIMIT 1
+),
+latest_terminal_per_definition AS (
+    SELECT terminal.id,
+           terminal.job_definition_id,
+           definition.version AS definition_version,
+           definition.enabled AS definition_enabled,
+           terminal.scheduled_for,
+           terminal.status,
+           terminal.created_at
+    FROM agri.job_definition AS definition
+    JOIN LATERAL (
+        SELECT run.id,
+               run.job_definition_id,
+               run.scheduled_for,
+               run.status,
+               run.created_at
+        FROM agri.job_run AS run
+        WHERE run.job_definition_id = definition.id
+          AND run.status NOT IN ('queued', 'running')
+        ORDER BY run.created_at DESC, run.id DESC
+        LIMIT 1
+    ) AS terminal ON true
+    WHERE definition.name = :name
+),
+latest_terminal AS (
+    SELECT terminal.*
+    FROM latest_terminal_per_definition AS terminal
+    ORDER BY terminal.scheduled_for DESC, terminal.created_at DESC, terminal.id DESC
+    LIMIT 1
+),
+candidate_runs AS (
+    SELECT 0 AS selection_rank, run.* FROM prior_version_open AS run
+    UNION ALL
+    SELECT 1 AS selection_rank, run.* FROM current_version_open AS run
+    UNION ALL
+    SELECT 2 AS selection_rank, run.* FROM latest_terminal AS run
+),
+selected_run AS (
+    SELECT candidate.*
+    FROM candidate_runs AS candidate
+    ORDER BY candidate.selection_rank
     LIMIT 1
 )
 SELECT run.id,
+       run.job_definition_id,
+       run.definition_version,
+       run.definition_enabled,
        run.scheduled_for,
        run.status,
+       EXISTS (
+           SELECT 1
+           FROM agri.job_work_item AS item
+           WHERE item.job_run_id = run.id
+       ) AS has_work_items,
        EXISTS (
            SELECT 1
            FROM agri.job_work_item AS item
@@ -49,5 +128,17 @@ SELECT run.id,
                        AND item.lease_expires_at <= now()
                    )
              )
-       ) AS work_claimable
-FROM latest_run AS run
+       ) AS work_claimable,
+       run.status IN ('queued', 'running')
+       AND EXISTS (
+           SELECT 1
+           FROM agri.job_work_item AS item
+           WHERE item.job_run_id = run.id
+       )
+       AND NOT EXISTS (
+           SELECT 1
+           FROM agri.job_work_item AS item
+           WHERE item.job_run_id = run.id
+             AND item.status NOT IN ('succeeded', 'dead_letter', 'cancelled')
+       ) AS terminal_items_need_rollup
+FROM selected_run AS run

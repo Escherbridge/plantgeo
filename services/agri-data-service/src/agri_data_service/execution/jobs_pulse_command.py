@@ -1,4 +1,4 @@
-"""`agri-service ops jobs-pulse`: one Railway cron tick that keeps the whole in-app job runner alive.
+"""`agri-service ops jobs-pulse`: one bounded executor slice over the in-app job runner.
 
 Owner directive, 2026-08-14: "we should not need all the individual crons, maybe just one to keep a
 pulse on the job runner." Before this, each durable lane -- `jobs-run --lane firms-archive`,
@@ -97,9 +97,7 @@ from agri_data_service.jobs import matview_refresh as _matview_refresh_registers
 
 # Importing this module is also what REGISTERS the strategy-mv-refresh dispatchable lane in THIS
 # process: `register_dispatchable_lane` runs at the bottom of `jobs.strategy_mv_refresh` at import
-# time, the same mechanism `jobs/scheduler.py` relies on so the HTTP trigger route can reach it. This
-# CLI never imports `jobs/scheduler.py` (that module also wires a Sanic blueprint and an in-process
-# asyncio loop this one-shot verb has no use for), so it imports the one module that actually calls
+# time. This CLI never imports `jobs/scheduler.py`, so it imports the module that actually calls
 # `register_dispatchable_lane` instead. A future dispatchable lane must be imported here too, exactly
 # as it must be added wherever `routes/__init__.py`'s import chain already reaches it for HTTP.
 from agri_data_service.jobs import strategy_mv_refresh as _strategy_mv_refresh_registers_on_import  # noqa: F401
@@ -1013,7 +1011,7 @@ def jobs_pulse(
     dry_run: bool,
     skip_maintenance: bool,
 ) -> None:
-    """Keep the whole in-app job runner alive from ONE Railway cron, replacing a per-lane cron service.
+    """Run one bounded, executor-owned pulse over the whole in-app job runner.
 
     Three ordered passes over ONE tick: every dispatchable lane in `jobs/dispatch.py`'s `LANE_DISPATCH`
     registry (the same path `POST /api/v1/jobs/trigger` runs), then one bounded slice of every durable
@@ -1047,14 +1045,9 @@ def jobs_pulse(
     the standing-signal note beside `_COUNT_DEAD_LETTERED_WORK_ITEMS` for why reading that rollup made
     cancelling a lane an unclearable hourly failure.
 
-    WHY A NON-ZERO EXIT IS SAFE HERE, and what would make it unsafe. `infra/cron-ingest/railway.json` sets
-    `restartPolicyType: NEVER` alongside `cronSchedule: 0 * * * *`, and `infra/cron-ingest/Dockerfile`'s
-    ENTRYPOINT already propagates this verb's status. So a non-zero exit marks ONE hourly run red and
-    Railway starts nothing in its place; the next attempt is the next hour's tick. `standing_dead_letters`
-    in particular is a STANDING condition that will repeat every hour until an operator requeues or cancels
-    the buried items, and that is the intended behaviour -- one red run per hour, not a restart storm. If
-    that restart policy is ever changed to `ON_FAILURE`, it becomes an unbounded loop of back-to-back
-    600-second ticks and must be demoted to an ERROR log with a zero exit before the policy is flipped.
+    A non-zero exit is consumed by the outer job-executor work item. Its bounded retry policy and
+    dead-letter state make the failure visible without turning the continuous service into an
+    unbounded process restart loop.
     """
     lane_filter = _parse_lane_filter(lane_names)
     include_maintenance = not skip_maintenance
