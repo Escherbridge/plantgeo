@@ -1,0 +1,155 @@
+{
+  "slug": "repository_conformity_hardening_20260901",
+  "title": "Repository conformity, reuse, and dead-code hardening",
+  "type": "refactor",
+  "status": "planned",
+  "created_on": "2026-09-01",
+  "depends_on": [],
+  "runbook_section": "LIVE / Repository conformity and removal audit",
+  "note": "Close evidence, safety, architecture, quality-gate, dependency, and dead-code drift without racing the active Parquet production tracks or deleting historical/migration evidence by static scan.",
+  "external_dependencies": [
+    {
+      "track": "postgres_shrink_ingest_repoint_20260825",
+      "slice": "s2",
+      "status": "s2a_code_complete_s2b_delegated",
+      "for": "CLI, parquet_ops, and pyproject ownership may pass to conformity only after the completed s2a tree is frozen; the delegated direct-writer scope remains outside this track."
+    },
+    {
+      "track": "parquet_reader_cutover_acceptance_20260901",
+      "slice": "r2",
+      "status": "planned",
+      "for": "useViewportProxiedLayers.ts and the coverage/snapshot reader subset of parquet_ops may pass to conformity only after the production zoom, availability and request contracts are frozen."
+    },
+    {
+      "track": "postgres_shrink_ingest_repoint_20260825",
+      "slice": "s6",
+      "status": "planned",
+      "for": "All Drizzle edits remain owned by shrink s6; conformity records dormant-migration evidence without editing migration files."
+    }
+  ],
+  "partitions": {
+    "computed_at": "2026-09-01T00:00:00-06:00",
+    "confidence": "verified",
+    "shared_writes": [
+      "Reader, capability, climate-rung and fire-route files remain owned by parquet_reader_cutover_acceptance_20260901 and multiscale_polygon_surface_20260901.",
+      "Writer-service and scheduler handoff configuration remains owned by gapless_parquet_publication_20260901.",
+      "This track may inventory those surfaces but may edit them only through an explicit handoff from the owning track.",
+      "src/hooks/useViewportProxiedLayers.ts and coverage/snapshot reader files pass from reader r2 to conformity c2 only after the production zoom/availability/request contract is frozen.",
+      "The availability schema/publisher remains owned by gapless p0a until its artifact contract and bootstrap are complete.",
+      "interface/cli/, parquet_ops/, and pyproject.toml pass from shrink s2a only after its completed tree is frozen; conformity must not touch delegated s2b direct-writer work.",
+      "Drizzle remains owned by shrink s6; conformity c4 may write only its own dormant-migration evidence manifest."
+    ],
+    "tripwires": [
+      "Remove the fabricated moderation score before any broader cosmetic cleanup.",
+      "No file or dependency is deleted from a static reference scan alone.",
+      "No legacy writer or Railway service is disabled before the existing no-overlap handoff gate passes.",
+      "Drizzle and Alembic migration/history evidence is never treated as ordinary dead code.",
+      "Apply all accepted fixes before one integrated final sweep and independent review."
+    ],
+    "slices": [
+      {
+        "id": "c0",
+        "task": "Remove the fabricated causal-effect scorecard from consequential moderation controls; add a refusal/absence presentation until a provenance-carrying evaluated result exists.",
+        "owns": [
+          "src/components/panels/ModerationPanel.tsx",
+          {
+            "path": "src/__tests__/components/ModerationPanel.test.tsx",
+            "status": "future"
+          }
+        ],
+        "depends_on": [],
+        "status": "planned"
+      },
+      {
+        "id": "c1",
+        "task": "Make conformity executable: add TypeScript unused-symbol coverage, extend Python typing to operator scripts, add thin-adapter/import-lattice checks, and require a locked Python format/lint/type/test receipt before deploy.",
+        "owns": [
+          "tsconfig.json",
+          "eslint.config.mjs",
+          "services/agri-data-service/mypy.ini",
+          "services/agri-data-service/ruff.toml",
+          "services/agri-data-service/Makefile",
+          "services/agri-data-service/scripts/check.py",
+          "services/agri-data-service/tests/test_layer_import_contract.py",
+          "services/agri-data-service/Dockerfile"
+        ],
+        "depends_on": [],
+        "status": "planned"
+      },
+      {
+        "id": "c2",
+        "task": "Restore canonical boundaries: extract CLI workflow/framework logic, consolidate governed snapshot-builder receipt/finalization machinery, split snapshot product validation/read responsibilities, and derive wire/schema columns from one descriptor.",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/interface/cli/",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/",
+          "services/agri-data-service/src/agri_data_service/warehouse/parquet/",
+          "services/agri-data-service/scripts/build_precipitation_from_canonical_snapshot.py",
+          "services/agri-data-service/scripts/build_relative_humidity_from_canonical_snapshot.py",
+          "services/agri-data-service/scripts/build_shortwave_radiation_from_canonical_snapshot.py",
+          "services/agri-data-service/scripts/build_soil_moisture_from_canonical_snapshot.py",
+          "src/components/map/MapView.tsx",
+          "src/hooks/useRegionalIntelligence.ts",
+          "src/hooks/useViewportProxiedLayers.ts",
+          "src/lib/server/services/hydrosheds.ts"
+        ],
+        "depends_on": [
+          "c1"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "c3",
+        "task": "Remove only proven orphans and dependencies; quarantine contingent candidates behind route/import/build/runtime proof, and leave migration files under shrink-track authority.",
+        "owns": [
+          "src/lib/map/webgpu-accelerator.ts",
+          "src/workers/layer-processor.worker.ts",
+          "src/components/ui/coordinate-display.tsx",
+          "src/components/ui/dropdown-menu.tsx",
+          "src/components/ui/floating-toolbar.tsx",
+          "src/components/ui/loading-overlay.tsx",
+          "src/components/ui/theme-toggle.tsx",
+          "src/components/ui/zoom-indicator.tsx",
+          "package.json",
+          "package-lock.json",
+          "services/agri-data-service/whichnull.py",
+          "services/agri-data-service/pyproject.toml",
+          "services/agri-data-service/uv.lock",
+          "services/agri-data-service/src/agri_data_service/planes/",
+          "services/agri-data-service/src/agri_data_service/execution/hot_projection.py",
+          "services/agri-data-service/src/agri_data_service/execution/public_evaluation_lineage.py",
+          "services/agri-data-service/tests/test_hot_projection_contract.py",
+          "services/agri-data-service/tests/test_public_evaluation_lineage.py",
+          "services/agri-data-service/tests/parquet/test_fire_detections_serving.py",
+          "services/agri-data-service/tests/parquet/test_signal_serving.py",
+          "services/agri-data-service/tests/parquet/test_water_gauges_serving.py",
+          "services/agri-data-service/tests/parquet/test_weather_observations_serving.py",
+          "src/lib/server/trpc/routers/teams.ts",
+          "src/__tests__/security/org-invitations.test.ts",
+          "docker-compose.yml",
+          "services/agri-data-service/docker-compose.yml"
+        ],
+        "depends_on": [
+          "c1"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "c4",
+        "task": "Reconcile topology documentation and tracked TODO/deprecation state, record dormant-migration state without editing Drizzle, run the single integrated frontend/Python/build sweep, obtain independent review, and publish exact removal and retained-candidate evidence.",
+        "owns": [
+          "infra/railway/README.md",
+          "docs/deployment.md",
+          "conductor/code_styleguides/python.md",
+          "conductor/tracks/repository_conformity_hardening_20260901/evidence/"
+        ],
+        "depends_on": [
+          "c0",
+          "c2",
+          "c3"
+        ],
+        "status": "planned"
+      }
+    ],
+    "integration_slice": "c4"
+  }
+}

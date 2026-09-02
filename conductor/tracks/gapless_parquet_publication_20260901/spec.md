@@ -1,0 +1,76 @@
+---
+type: track-spec
+slug: gapless_parquet_publication_20260901
+status: planned
+---
+
+# Gapless Parquet forward publication and scheduler ownership
+
+## Purpose
+
+Turn the independently verified historical archives into continuously maintained products. One
+stateful job-executor service owns durable schedules; each product still has three logical duties:
+forward refresh, gap repair that authors work, and coverage status.
+
+The 2026-09-01 production browser assessment found 27-day climate/NASA tails, 31-day ERA5 tails and
+a 94-day shortwave-radiation tail. Railway showed a healthy executor leader with 38 configured lanes
+but `active_lane_count=0`. Historical manifests therefore cannot be treated as forward ownership.
+
+## Terminal-day contract
+
+For every owed day from the product floor through its source-specific ceiling, every required rung
+must close as exactly one of:
+
+1. immutable published data, receipts and completion markers; or
+2. an immutable governed absence with source receipt and reason.
+
+Missing, failed, unsettled, truncated and exhausted-source states remain explicit. A closed window
+returns one ordered envelope per requested calendar day and never carries data from another day.
+
+## Availability publication contract
+
+Each time-bearing physical lane publishes an immutable generational `availability.parquet` with one
+row per `(day, rung)` and a checksum-bound `_LATEST.json` pointer. Rows bind source and terminal
+receipts, data/completion receipts and a nullable governed-absence reason. File metadata and pointer
+bind the authoritative ordered required-rung set. Historical bootstrap is performed once from
+verified manifests/checkpoints and writes an immutable receipt containing their keys/SHAs, source
+inventory root and required rungs; generation zero and all successors bind that receipt's key/SHA.
+Thereafter every forward, repair, backfill or governed-absence outcome extends the prior generation
+only after all required data parts and completion markers are durable. The new index is re-read and
+verified before the pointer advances last with a conditional write. Corrections create a new
+generation; prior generations remain rollback evidence.
+
+The request path may read the pointer and its one Parquet object. It may not list historical lane
+objects, open historical data parts, query PostgreSQL or silently invoke the bootstrap census.
+Invalid or absent availability fails closed. A separate scheduled audit may re-list history and
+author repair work, but it is never a slider dependency.
+
+## Scope
+
+- freeze provider ceilings, lags and owner handoffs for every time-bearing product;
+- build source-family direct writers and all-rung publication;
+- author missing-day work and bounded tail repairs;
+- register schedules, leases, checkpoints, retries and dead-letter visibility in one executor;
+- after a separate explicit production authorization under `conductor/release-governance.md`, activate
+  one source/product owner at a time and observe recovery plus multi-schedule advancement.
+
+Creating or approving this track is not production activation approval. Slices `p5` and `p6` remain
+blocked until that separate operator decision is recorded with the exact candidate and rollback.
+
+## Out of scope
+
+- reader or renderer cutover;
+- PostgreSQL data deletion, writer retirement or storage shrink;
+- unbounded historical rewrites or overlapping replacement writers.
+
+## Completion gates
+
+- Every product has an explicit provider, floor, ceiling, lag, cadence and single active owner.
+- Every owed day/rung is published or governed absent; no unexplained tail exceeds declared lag.
+- Coverage status creates idempotent repair work rather than only reporting.
+- Availability is bootstrapped once, extended transactionally by ingestion and readable without a
+  historical LIST/data scan.
+- Each activated lane advances over at least three schedules and survives retry/restart/lease expiry.
+- Capability ceilings never extend beyond the provider ceiling.
+- Exact inventory and aggregation conservation remain clean after advancement.
+- Rollback preserves all immutable output and never overlaps old and new owners.

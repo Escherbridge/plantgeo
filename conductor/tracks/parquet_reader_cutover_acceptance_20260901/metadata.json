@@ -1,0 +1,130 @@
+{
+  "slug": "parquet_reader_cutover_acceptance_20260901",
+  "title": "Parquet reader hard cut and temporal acceptance",
+  "type": "feature",
+  "status": "planned",
+  "created_on": "2026-09-01",
+  "depends_on": [],
+  "runbook_section": "LIVE / Repair order and production gates",
+  "external_dependencies": [
+    {
+      "track": "parquet_duckdb_pivot_20260823",
+      "slice": "d3",
+      "status": "resolved",
+      "for": "The private Parquet API and bounded client are already integrated; this track receives only the unfinished d4 reader/capability scope."
+    },
+    {
+      "track": "gapless_parquet_publication_20260901",
+      "slice": "p0a",
+      "status": "planned",
+      "for": "The reader may cut coverage to availability only after the canonical schema, immutable-generation publisher and bootstrap receipt contract are frozen."
+    }
+  ],
+  "supersedes": {
+    "parquet_duckdb_pivot_20260823:d4": "The d4 reader/capability/browser scope is delegated here; the pivot keeps the private API and historical warehouse authority."
+  },
+  "note": "Hard-cut every eligible live map and tRPC reader to bounded day+bbox+zoom Parquet reads with explicit terminal states. Fire is first because production currently advertises Parquet capability while drawing through the legacy global PostgreSQL route.",
+  "partitions": {
+    "computed_at": "2026-09-01T00:00:00-06:00",
+    "computed_at_commit": "269cc4224ff419c273bed5b660837c5b7f66caa3",
+    "confidence": "verified",
+    "shared_writes": [
+      "src/lib/server/services/parquet-plane-client.ts and capability registries are serialized owners; no other track edits them until r2 lands.",
+      "gapless p0a owns the availability schema, publisher and bootstrap. Reader r2 receives the frozen artifact contract and owns only request-path consumption.",
+      "multiscale_polygon_surface_20260901 may consume the frozen support-geometry contract but may not race its reader implementation."
+    ],
+    "tripwires": [
+      "No request-time PostgreSQL fallback.",
+      "Every time-bearing request includes settled day, viewport bbox and zoom/rung.",
+      "Published, governed_absence, day_not_written, lane_never_written and truncated remain distinct.",
+      "A browser abort must stop downstream work rather than only free the browser queue.",
+      "Legacy route removal requires parity evidence and an exact deployment rollback.",
+      "Capability reads may not list historical lane prefixes, open historical data parts, query PostgreSQL or invoke the one-time availability bootstrap."
+    ],
+    "slices": [
+      {
+        "id": "r0",
+        "task": "Freeze production request ownership and cold/warm timing evidence for every repointed surface; record fire route, TTFB, request-to-paint, response bytes, selected versus painted day, cache and cancellation behavior.",
+        "owns": [
+          {
+            "path": "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/",
+            "status": "future"
+          }
+        ],
+        "depends_on": [],
+        "status": "planned"
+      },
+      {
+        "id": "r1",
+        "task": "Hard-cut the fire map from useFireData and /api/fires to wildfire.getFireDetections with day, bbox and zoom; preserve explicit refusal/empty/truncation states.",
+        "owns": [
+          "src/components/map/LayerManager.tsx",
+          "src/components/panels/FireDetails.tsx",
+          "src/lib/server/trpc/routers/wildfire.ts",
+          "src/lib/server/AGENTS.md",
+          "src/__tests__/services/parquet-trpc-readers.test.ts"
+        ],
+        "depends_on": [
+          "r0"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "r2",
+        "task": "Reconcile all tRPC reader and slider-capability ownership, latest/source-ceiling semantics and explicit Parquet response states without silent fallback. Replace request-time coverage listings with checksum-bound availability Parquet reads and fail closed when the artifact is absent or invalid.",
+        "owns": [
+          "src/lib/server/trpc/routers/environmental.ts",
+          "src/lib/server/services/parquet-slider-capabilities.ts",
+          "src/lib/server/services/parquet-plane-client.ts",
+          "src/lib/server/services/parquet-climate-field.ts",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/coverage.py",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/snapshot_products.py",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/wire.py",
+          "services/agri-data-service/src/agri_data_service/interface/http/parquet_routes.py",
+          "services/agri-data-service/tests/parquet_ops/test_coverage_census.py",
+          "services/agri-data-service/tests/parquet_ops/test_snapshot_products.py",
+          "services/agri-data-service/tests/interface/test_parquet_routes.py",
+          "src/hooks/useViewportProxiedLayers.ts",
+          "src/__tests__/services/parquet-slider-capabilities.test.ts",
+          "src/__tests__/services/parquet-plane-client.test.ts",
+          "src/__tests__/services/parquet-climate-field.test.ts"
+        ],
+        "depends_on": [
+          "r0"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "r3",
+        "task": "Delete or quarantine the obsolete fire REST hook/route only after r1 parity, no-live-request evidence and rollback are recorded.",
+        "owns": [
+          "src/hooks/useFireData.ts",
+          "src/app/api/fires/route.ts",
+          "src/__tests__/api/fires-route.test.ts"
+        ],
+        "depends_on": [
+          "r1",
+          "r2"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "r4",
+        "task": "Run the focused reader/capability sweep, independent review and a deployment-safe evidence packet; do not perform the final production verdict owned by the fan-in acceptance track.",
+        "owns": [
+          {
+            "path": "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/reader-cutover-verdict.md",
+            "status": "future"
+          }
+        ],
+        "depends_on": [
+          "r1",
+          "r2",
+          "r3"
+        ],
+        "status": "planned"
+      }
+    ],
+    "integration_slice": "r4"
+  }
+}

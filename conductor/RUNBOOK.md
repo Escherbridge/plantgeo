@@ -4,11 +4,13 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Current status (2026-08-29): the snapshot-product API/client cutover is authored, independently
-approved and fully swept in the shared working tree, but remains uncommitted and undeployed. Start with
-the LIVE section immediately below.** The older 2026-08-25 header and session notes are retained as
-historical evidence; where they describe missing Parquet data, an unbuilt serving API, or
-unintegrated lane artifacts, the 2026-08-28 LIVE section supersedes them.
+**Current status (2026-09-01): production is serving the new timeline catalogue, but browser
+acceptance is RED. Fire still renders through the legacy PostgreSQL `/api/fires` path; several
+climate and soil products have contiguous unpublished tails; the stateful executor is healthy but
+has zero active lanes; and coarse continuous fields render with visible holes or block seams. Start
+with the LIVE section immediately below.** The 2026-08-29 cutover checkpoint and all older session
+notes are retained as historical evidence. They do not authorize PostgreSQL retirement or claim a
+successful browser cutover.
 
 **Historical header last updated:** 2026-08-25. **§0.41 IS THE FIRST ANALYTICAL USE OF THE DRAINED WAREHOUSE (2026-08-24) — it makes NO infrastructure claims and supersedes nothing, but read §0.41.6 before running any local DuckDB: a cross-join against CONUS-wide USDM polygons CONSUMED THE HOST, and spilling is now disabled by guard, not by tuning. §0.41.4 records THREE claims refuted by their own evidence, and §0.41.9 names the one blocker — the 23-year `fire-detections` hole, which is already chartered as pivot item B, not new work.** **READ §0.42 FIRST — the orchestration packet: three concurrent lanes (data/ingestion, API, UI) behind a contract freeze, a per-layer hard cutover to Parquet, the four layers that are NOT Parquet lanes at all, and the correction that §0.41.9's blocker (the `fire-detections` hole) CLEARED at 19:42 UTC on 2026-08-24 — that track is runnable, not blocked.** **READ §0.40 FIRST — it corrects §0.39: the runners were NOT stopped (every push redeploys them; taken down 02:05 UTC), "backlog 0" was z13 only with no coarse rung anywhere, the pivot verified on cold-path and resource grounds, and the four repoint decisions are recorded there.** **THE PARQUET BACKLOG IS DRAINED (12,365 -> 0 lane-days) - READ §0.39 NEXT; it supersedes §0.38 and records why the DB shrink is now gated on an unbuilt read API, and why nothing is ingesting.** **ARCHITECTURE PIVOT — READ §0.23 FIRST: Postgres becomes a community-features database; every data plane moves to day-partitioned Parquet read by DuckDB+Polars, with Martin serving PMTiles. §0.16–§0.22 optimise a Postgres this project is leaving.** **§0.25 is the CURRENT HEAD OF THE PROGRAMME — wave 1 shipped green, the by-domain layering question is answered, and it retires `agri_sdk_layering` phases 4–8.** **§0.24 is the concurrent stream plan that executes it — 21 streams in 5 waves, each with a disjoint file boundary, governed by the new `conductor/code_styleguides/layer-lanes.md`.** **THE PARQUET PATH HAS STARTED — §0.22 carries the signal-plane grain decision and the traps for the export job.** **THE MAP IS FIXED — READ §0.21 FIRST; IT SUPERSEDES §0.17 AND §0.16.7.** **Branch:** `main` · **Last commit:** `2b38c66 layers` · **Working tree clean, level with origin.** **§0.21 records the three changes that fixed the map (composite split, cache-first service worker, and `sensor_tiles` DISTINCT ON — 14.26 MB → 745 KB, applied to production); the correction that `EXPLAIN` cost is MEANINGLESS for these tile functions, since it prices a 0-row layer identically to a 186,904-row one, which invalidates every cost-based conclusion above it; the seven migrations applied-but-unregistered (§0.21.6); and the owner directive to STOP RUNNING WORKFLOWS and work in small steps (§0.21.8).**
 
@@ -22,97 +24,281 @@ unintegrated lane artifacts, the 2026-08-28 LIVE section supersedes them.
 
 ---
 
-## LIVE — snapshot-product cutover approved and swept, awaiting deployment, 2026-08-29. START HERE.
+## LIVE — production temporal freshness and coarse aggregation incident, 2026-09-01. START HERE.
 
-This is the current operational handoff. It supersedes the previous session-12 LIVE entry below,
-which is retained as a historical checkpoint.
+This is the current operational handoff. It supersedes the 2026-08-29 cutover checkpoint below,
+which is now historical. The assessment used a fresh anonymous production browser session at
+`https://plantgeo.aevani.com/`, the default Pacific Northwest camera, and progressively coarser
+zooms. No browser console error explained the failures.
+
+### Browser acceptance verdict: RED
+
+- Representative warm timeline controls mounted in `0.61-0.66 s`. The control itself is not the
+  main warm-path bottleneck. Cold catalogue time, day-row TTFB, and request-to-paint still require
+  separate network timings; the user-visible fire delay remains an incident until those phases are
+  measured independently.
+- Fire Detections selected `2026-08-30`, while its catalogue advertised coverage through
+  `2026-09-02` and listed 448 gaps. On the local assessment date (`2026-09-01`), the catalogue
+  therefore advertised a future ceiling while `Latest` resolved two days behind. A two-day source
+  lag may match the old contract, but it is not acceptable as an implicit active-fire SLO.
+- The live fire map still calls `useFireData` -> `/api/fires` -> the PostgreSQL environmental read
+  model. That route is global rather than bbox-bound, caps the answer at 2,000 rows without an
+  explicit truncation envelope, and returns raw points. The zoom/bbox-aware Parquet procedure
+  `wildfire.getFireDetections` exists but is not used by the map. Fire reader cutover is incomplete.
+- Scrubbing aborts superseded browser requests, but the REST route does not propagate request
+  cancellation into the database query. Multiple abandoned whole-day PostgreSQL scans may continue
+  after the browser has moved to another day. ETag evaluation also occurs after the query, GeoJSON
+  construction, serialization and hashing, so an origin `304` does not prove a cheap read.
+- At coarse zoom, fire remained individual circles; air temperature rendered separated rectangular
+  blocks; and ERA5 soil moisture rendered nested cell blocks with visible seams and map-background
+  gaps. Burn History/MTBS rendered coherent irregular polygons and is the production reference for
+  polygon continuity, not a claim that detection points are physical fire perimeters.
+
+### Production timeline evidence
+
+The catalogue ceiling shown by the client was `2026-09-02`. A tail length below is inclusive of the
+first missing day and that advertised ceiling. Future-relative catalogue days are themselves a
+capability defect and must not be hidden inside the tail count.
+
+| Product | latest selectable day | reported missing tail | production assessment |
+|---|---:|---:|---|
+| Fire detections | `2026-08-30` | catalogue listed 448 non-data days | route ownership and latest-day semantics RED |
+| Burn History (MTBS) | `2024-08-22` | none reported | cumulative release; polygon render visually coherent |
+| Water gauges | `2026-09-01` | `2026-09-02` only | current-day freshness good; future ceiling invalid |
+| Air temperature | `2026-08-06` | `2026-08-07..09-02` (27 days) | contiguous unpublished tail |
+| Dew point | `2026-08-06` | `2026-08-07..09-02` (27 days) | contiguous unpublished tail |
+| Precipitation | `2026-08-06` | `2026-08-07..09-02` (27 days) | contiguous unpublished tail |
+| Relative humidity | `2026-08-06` | `2026-08-07..09-02` (27 days) | contiguous unpublished tail |
+| Wind speed | `2026-08-06` | `2026-08-07..09-02` (27 days) | contiguous unpublished tail |
+| NASA soil wetness, all three depths | `2026-08-06` | `2026-08-07..09-02` (27 days) | contiguous unpublished tail |
+| Shortwave solar radiation | `2026-05-31` | `2026-06-01..09-02` (94 days) | severe contiguous unpublished tail |
+| ERA5 soil moisture | `2026-08-02` | `2026-08-03..09-02` (31 days) | contiguous unpublished tail and coarse seams |
+| ERA5 soil temperature | `2026-08-02` | `2026-08-03..09-02` (31 days) | contiguous unpublished tail |
+| ERA5 VPD | `2026-08-02` | `2026-08-03..09-02` (31 days) | contiguous unpublished tail |
+
+The immutable historical baselines remain valid: fire has 9,428 reconciled calendar days (8,359
+data days, 1,069 governed absences, 3,039,749 detections); water has 1,521 exact days and 1,448,754
+z13 rows; the canonical signal snapshot has 46,146,568 physical facts. Those baselines prove the
+archive, not a working forward publication loop.
+
+### Scheduler and writer ownership
+
+- Railway logs show `plantgeo-job-executor` healthy and leader across 38 configured lanes, but every
+  sampled tick reports `active_lane_count=0`. It is shadow-only and cannot close the tails above.
+- Legacy `plantgeo-ingest-cron`, fire-forward, water-forward and MTBS services still exist. Do not
+  disable them and do not activate overlapping executor lanes without a source-by-source handoff.
+- A product is not self-healing merely because a historical snapshot is complete. Each production
+  product needs an observed owner for forward refresh, gap authoring and coverage status, with
+  leases, immutable checkpoints, retries and reconciliation.
+
+### Gapless publication and pull contract
+
+For every scheduled day from a product's declared floor through its source-specific allowed ceiling,
+exactly one durable terminal state must exist:
+
+1. **Published:** immutable data parts plus completion markers for every required `z13/z9/z5/z0`
+   rung, with checksums, counts, lineage and manifest/`_COMPLETE` written last.
+2. **Governed absence:** an immutable empty-day marker with source receipt, reason and all required
+   rung states. Zero observations is not the same as an unrun or failed day.
+
+`day_not_written`, `lane_never_written`, truncation and source-unsettled remain explicit nonterminal
+or refusal states; they must never be converted to an empty feature collection, a neighboring day,
+or a silent PostgreSQL fallback. A closed `/window` request returns one ordered envelope per calendar
+day. Missing owed days create idempotent repair work automatically. The capability response must not
+extend past the product's source ceiling, and `Latest` must equal the newest published or governed-
+absence day on the selected physical rung. A contiguous tail beyond the declared product lag is an
+incident.
+
+#### Availability artifact contract — no request-time history discovery
+
+Every time-bearing physical lane owns a compact availability index. Slider and capability reads
+must never discover history by listing every day prefix, opening historical data parts or scanning
+PostgreSQL. The steady-state path is exactly one tiny pointer GET plus one bounded Parquet GET:
+
+```text
+<lane-root>/availability/_LATEST.json
+<lane-root>/availability/generation=<content-sha>/availability.parquet
+```
+
+`availability.parquet` contains one row per `(day, rung)` with lane/product identity, temporal
+nature, terminal state (`published` or `governed_absence`), row count, source receipt SHA, terminal
+receipt key/SHA, data/completion receipt SHA, nullable governed-absence reason, source ceiling and
+publication timestamp. All authoritative required rungs must agree before a day is selectable. The
+file metadata and pointer bind the ordered `required_rungs` set. The pointer also binds schema
+version, generation key, bytes, rows, SHA-256, earliest/latest terminal day, source ceiling, prior
+generation, creation time, bootstrap receipt key/SHA and verified source inventory root. A writer
+publishes immutable data and completion receipts first, writes and re-reads a new immutable
+availability generation, then conditionally advances `_LATEST.json` last. A failed pointer update
+leaves the prior generation valid and makes the new day non-selectable until an idempotent retry.
+
+Historical bootstrap is a one-time exact operation from already verified manifests/checkpoints. It
+writes an immutable receipt carrying the source inventory root, required-rung set and manifest/
+checkpoint inputs; generation zero and every successor bind its key and SHA. It is not a permitted
+reader fallback. Forward ingestion, bounded backfill and governed-absence publication extend the
+prior index rather than rediscovering earlier days. Corrections create a new generation and retain
+the old generation for rollback. A periodic independent audit may re-list the lane, but the API and
+browser request path may not. Missing, stale, malformed or checksum-invalid availability artifacts
+fail closed with an explicit state and never fall through to PostgreSQL or the old census scan.
+
+### Spatial aggregation and polygon contract
+
+- **Continuous climate and soil fields:** at coarse and middle zooms, serve a complete tessellating
+  grid, dissolved isoband polygons, or a rasterized surface. Adjacent cells must share bit-identical
+  boundaries; one zoom request selects exactly one rung; map background must not show through cracks;
+  and tile/batch boundaries must not appear as nested blocks. Fill the polygons rather than drawing
+  only contour strokes.
+- **Event and sensor points:** fire detections, gauges and sensors must not be buffered into shapes
+  that imply authoritative physical perimeters. At coarse zoom, render declared H3/quadkey/canonical
+  cell polygons, heatmaps or clusters carrying count/intensity/provenance; at detail zoom, render raw
+  points. Fire perimeter polygons remain a separate product.
+- **Native polygons:** MTBS, incident perimeters, drought, evacuation, watersheds and SSURGO retain
+  their source geometry, with zoom-appropriate generalization/dissolve only.
+- Every serving envelope must declare its render form and cell resolution/extent. An aggregate
+  centroid is allowed only when explicitly labeled and visually distinguished; it cannot masquerade
+  as either a raw observation or a polygon footprint.
+
+### Long-horizon Conductor execution tracks
+
+`tracks.md` plus each track's `metadata.json` is the task-status authority. This LIVE section records
+the production incident and gates; do not maintain execution status in two places.
+
+| execution lane | status at charter | scope and dependency |
+|---|---|---|
+| [Parquet reader hard cut and temporal acceptance](./tracks/parquet_reader_cutover_acceptance_20260901/spec.md) | planned | Reader/capability ownership, fire first; receives pivot `d4`. Can start immediately in parallel with forward publication. |
+| [Gapless Parquet forward publication](./tracks/gapless_parquet_publication_20260901/spec.md) | planned; activation blocked | Direct source writers, repair work, governed absences and executor schedule authoring; production lane activation requires a separate explicit authorization after no-overlap and rollback gates. Receives shrink `s2b-s4` forward scope. |
+| [Multiscale polygon and continuous-surface rendering](./tracks/multiscale_polygon_surface_20260901/spec.md) | planned | Support geometry, tessellated/isoband fields, event aggregate cells and native polygon regression. Begins after the reader support contract freezes; implementation lanes then parallelize by renderer ownership. |
+| [Production Parquet temporal and spatial acceptance](./tracks/parquet_production_acceptance_20260901/spec.md) | blocked | Evidence-only fan-in after the other three: private R2 probes, browser timing/pixels, rung conservation, scheduler burn-in and final go/no-go. |
+| [Repository conformity, reuse and dead-code hardening](./tracks/repository_conformity_hardening_20260901/spec.md) | planned | Immediate evidence-safety repair, executable style gates, canonical CLI/snapshot/schema ownership and proof-driven removals. It inventories shared surfaces but does not race the four production tracks. |
+
+Dependency order:
+
+```text
+reader hard cut ───────────────────────────────┐
+        └─ support contract -> polygon surfaces ├─> production acceptance
+gapless forward publication ───────────────────┘              |
+                                                              v
+                                           existing shrink P5/P6 review
+```
+
+Reader cutover and forward publication may execute concurrently. Spatial contract work can begin in
+parallel, but shared reader files wait for the reader track's contract freeze. The acceptance track
+never fixes defects in place; a RED finding returns to its owning track. PostgreSQL retirement stays
+exclusively in `postgres_shrink_ingest_repoint_20260825` after a GREEN acceptance handoff.
+
+### Repair order and production gates
+
+1. Repoint `LayerManager` fire reads from `/api/fires` to `wildfire.getFireDetections` with settled
+   day, viewport bbox and zoom. Surface `truncated`, `published`, `governed_absence`,
+   `day_not_written` and `lane_never_written`; do not silently fall back to PostgreSQL. Retire the
+   legacy REST reader only after parity and rollback evidence.
+2. Give every climate and soil snapshot product a durable forward and repair owner. Activate
+   executor lanes only after proving the corresponding legacy writer handoff cannot overlap. Close
+   the observed 27/31/94-day tails and publish governed absences where the source is legitimately
+   empty.
+3. Correct capability ceilings and `Latest`: no future-relative advertised day, no selectable gap,
+   and no conflation of a governed absence with missing work. Serve this from the checksum-bound
+   availability artifact; after the one-time bootstrap, capability requests perform no historical
+   object listing or data-file scan.
+4. Return cell geometry/resolution from coarse readers and render filled, dissolved/tessellated
+   polygons or surfaces. Use MTBS as the polygon-continuity visual reference while keeping event
+   aggregates semantically distinct from fire perimeters.
+5. Run private production R2 probes for every product/rung, then repeat browser acceptance in a fresh
+   anonymous session at default PNW, coarse, middle and detail zooms on both latest and historical
+   days. Record cold and warm catalogue time, day-row TTFB, request-to-paint, requested versus painted
+   day, response bytes, cache status, terminal state and console errors.
+6. Acceptance requires: warm slider mount under 2 s; latest day within its declared lag; no future
+   capability ceiling; no unexplained tail; one bounded bbox/zoom request per settled selection;
+   `truncated=false`; correct aggregate conservation across rungs; no background cracks or block
+   seams; no PostgreSQL reader fallback; and exactly one pointer plus one availability-Parquet read
+   for a cold capability request, with zero lane-history LIST calls.
+7. PostgreSQL reader/writer retirement remains **UNAUTHORIZED** until all preceding gates are green,
+   forward advancement has been observed across multiple schedules, rollback is proven and the
+   retirement track is updated with exact evidence.
+
+### Repository conformity and removal audit — 2026-09-01
+
+This was a read-only audit against `conductor/code_styleguides/engineering-principles.md`, the
+language guides and the nearest directory `AGENTS.md` contracts. A reference scan creates a
+candidate, not deletion authority. The execution ledger is
+[`repository_conformity_hardening_20260901`](./tracks/repository_conformity_hardening_20260901/spec.md);
+production reader, writer and spatial defects stay with their existing tracks.
+
+#### Findings, ordered by risk
+
+| priority / class | evidence-backed deviation | required action and owner |
+|---|---|---|
+| **P0 immediate safety repair** | `src/components/panels/ModerationPanel.tsx:75-80` hard-codes `tau=0.18` and `[0.11,0.25]`, labels them a causal benefit score, then places approve/publish and activation controls beside them at `:107-168`. No evaluated result or provenance supports the numbers. | Conformity `c0`: remove the scorecard now and present evidence as unavailable. Do not replace it with another placeholder. A future score requires a typed, provenance-carrying, time-honest evaluation contract. |
+| **P1 existing production owner** | Fire has two governed readers. `LayerManager.tsx:250` and `FireDetails.tsx:79` instantiate `useFireData`, whose per-instance cache/poll calls PostgreSQL `/api/fires`; `wildfire.getFireDetections` already accepts date+bbox+zoom Parquet. | Reader track `r1/r3`: move both consumers to one React Query/tRPC contract, prove parity/no live route requests, then delete the hook/REST route and their tests. Conformity does not race this work. |
+| **P1 existing production owner** | Climate publishes `z13/z9/z5/z0`, but `useViewportProxiedLayers.ts:239-280` and `environmental.ts:524-565` omit zoom and `parquet-trpc-readers.ts:812-840` hard-codes `zoomTier: 13`. Coarse artifacts are unreachable. | Reader `r2` freezes the zoom/support wire; multiscale rendering selects one physical rung and returns support geometry. This is a correctness defect, not optional cleanup. |
+| **P1 enforcement gap** | The normal TypeScript config has neither `noUnusedLocals` nor `noUnusedParameters`, and ESLint has no equivalent unused-symbol rule. An extra strict compiler pass found definite production dead imports/locals. | Conformity `c1`: clear the proven symbols, enable `noUnusedLocals`, choose an intentional unused-parameter convention, and make it part of the normal gate. |
+| **P1 enforcement gap** | The Python guide applies to all service Python, but `Makefile:13-14` and `scripts/check.py:36-40` type only `src/`; operator artifact builders retain broad untyped JSON surfaces. `Dockerfile:12` keeps Ruff/Mypy/Pytest ad hoc, so a production image can deploy without that sweep. | Conformity `c1`: type operator scripts, extend the import lattice/thin-adapter tests, converge the check entrypoint and require a locked quality receipt before deployment. DB tests remain controlled disposable-DB integration. |
+| **P1 boundary/refactor** | `interface/cli/AGENTS.md` promises thin Click adapters, but `interface/cli/commands.py` is about 4,900 lines: it seeds DB state (`:421-425`), owns transactions (`:604-615`), defines a lane execution framework (`:2178-2230`) and orchestrates gap fill/drain (`:3827`, `:3961`). | Conformity `c2`: extract one command group at a time into `execution/` or `pipeline/`; preserve exact CLI names, help, output and exit codes. Delete the monolith only at zero imports. |
+| **P1 canonical-reuse refactor** | Precipitation, relative humidity, solar and soil-moisture snapshot scripts independently implement the same hashing, immutable reads, ledger/receipt verification, audit and manifest finalization machinery. `parquet_ops/snapshot_products.py` also mixes registry, cache, daily/monthly validation, coverage and DuckDB reads in about 2,000 lines. | Conformity `c2`: extract a typed product-spec/core and focused validators/readers. Golden fixtures must prove byte, SHA, checkpoint, manifest and `_COMPLETE` equivalence before deleting forks. |
+| **P1 contingent removal** | `agri_data_service/planes/` is imported only by plane-specific tests while `app.py` mounts `interface.http` and active routes use `parquet_ops`. | Reader/conformity handoff: compare all unique behavior with `parquet_ops`, check dynamic/external consumers, pass every private production route, then remove the package and plane-only tests together or record the remaining owner. |
+| **P1 infrastructure authority** | Repository configs still encode legacy hourly/weekly/direct writers beside `railway.job-executor.json`. `infra/parquet-drain/railway.json` retains `ALWAYS` plus an infinite loop that its own `AGENTS.md` calls wrong. Railway/database docs also contradict themselves about `Plantgeo` versus `plantgeo-spatiotemporal-db`. | Gapless publication owns writer handoff and drain retirement. Conformity `c4` produces one dated read-only topology manifest and repairs docs only after service/variable/database identity proof. Never reconnect the drain as written. |
+| **P2 canonical contract drift** | `ParquetReaderResult` is manually weakened into browser `ParquetBrowserReaderResult` (`fault.kind: string`) with duplicated water/drought/vegetation/weather rows. Snapshot Arrow fields are also restated as independent ordered column tuples. The client separately duplicates the watershed bbox ceiling. | Multiscale `m1` owns the browser-safe response contract after reader `r2` freezes the wire. Conformity `c2` owns the Python snapshot descriptor and receives the watershed client/server ceiling only after the reader hook handoff. Derive types/columns/constants and retain artifact-contract tests. |
+| **P2 render performance** | `MapView.tsx:40-52` subscribes to whole Zustand stores; `useRegionalIntelligence.ts:93-95,330-335` also subscribes to and spreads a whole store. Streaming events can rerender the MapLibre shell. | Conformity `c2`: use narrow selectors/shallow tuples and action-only controllers; verify stable map lifecycle and render counts. |
+| **P2 confirmed source cleanup** | `webgpu-accelerator.ts` and `layer-processor.worker.ts` have no production caller; only their test imports remain. `LayerManager.tsx:735-743` explicitly forbids the discarded main-thread pipeline. `whichnull.py` is an unreferenced hard-coded debug print script and is not copied into the image. | Conformity `c3`: delete the source and tests after exact import/dynamic-worker search and the integrated map/build sweep. |
+| **P2 dependency candidates** | Exact code-import scans found no direct users of `@deck.gl/mapbox`, `@deck.gl/react`, `jotai` or `preact`. Python `redis` is direct while realtime intentionally uses bounded raw RESP; `s3fs` is also import-free. | Conformity `c3`: remove one dependency class at a time, regenerate locks, inspect peer/dynamic loading, build images/bundles and run operator smoke. `rasterio` is retained because operator scripts and the carbon track use it. |
+| **P2 deprecated/unowned surface** | `teams.ts:916-917` exposes deprecated `inviteMember`; its only repository caller is a compatibility test. `teams.ts:902-904` contains the only unowned source `TODO`, contrary to the no-untracked-TODO rule. | Conformity `c3/c4`: obtain production consumer telemetry, migrate callers to `createInvitation`, then delete the shim/test or record a sunset. Give `returnLink` an owned slice and acceptance test or resolve it. |
+| **P2 contingent source cleanup** | Six UI modules have no external static reference: `coordinate-display`, `dropdown-menu`, `floating-toolbar`, `loading-overlay`, `theme-toggle`, `zoom-indicator`. `hot_projection.py` and `public_evaluation_lineage.py` also look one-shot/test-only. | Conformity `c3`: require dynamic-import/string, route/export and external operator checks plus Next/Python build evidence. Delete or record a concrete retained owner; do not leave an indefinite candidate. |
+| **P2 documentation drift** | `wildfire.ts:74-77` and `src/lib/server/AGENTS.md:846-848` say `/api/fires` is dateless, while the hook sends and the route forwards `?date=`. Several runtime files also hold multi-paragraph rationale contrary to the directory-doc convention. | Repair the false fire statements in reader `r1`; move rationale to the nearest `AGENTS.md` opportunistically as touched. Do not bulk-churn comments before correctness work. |
+| **P2 guide self-contradiction** | `code_styleguides/python.md` retires DSN custody and least-privilege credential separation in its baseline, but review-checklist item 2 still asks whether every component uses its own least-privilege DSN. Both cannot be enforced. | Conformity `c4`: reconcile the checklist to the recorded owner ruling and add a guide-consistency review whenever an exception reverses an earlier standard. Do not reintroduce retired credential rules through review wording. |
+| **P3 protected evidence / local stack** | Drizzle `0030-0038` are unjournaled, hand-applied, shelved or dormant evidence, not ordinary unused code. Root Compose also retains fully commented Valhalla/Photon/nginx blocks, while the second service Compose pins a stale Martin and likely-obsolete Redis wiring. | Conformity `c3` deletes commented blocks and verifies one supported local topology. Conformity `c4` records a typed dormant-migration evidence manifest; every Drizzle edit or movement remains owned by shrink `s6`. Never silently journal or delete migration evidence. |
+
+Positive conformity evidence: the executable rename is clean (`agri-service` is the only console
+script); `parquet_ops` does not import HTTP/CLI surfaces; non-trivial CLI SQL already uses the query
+loader; and broad TypeScript/Python type and lint gates exist. The backlog above closes the places
+where those rules are not encoded or where code ownership drifted after the cutover.
+
+#### Removal proof and integrated gate
+
+Before deleting a module, dependency, route, service or config, record: static and dynamic references;
+entrypoint/route/command ownership; external operator or production telemetry; the canonical
+replacement and parity where superseded; locked dependency and image/bundle results; rollback; and
+the exact tests that would fail if the candidate were still needed. A zero-result `rg` is necessary,
+not sufficient. Migrations, ledgers, manifests and retrospectives use provenance/archive rules rather
+than import reachability.
+
+Apply all accepted fixes first, then run one integrated final sweep: data-boundary, TypeScript,
+ESLint, Vitest, Next build and focused browser smoke; Python format, Ruff, Mypy across source and
+operator scripts, Pytest and runtime/cron image builds; Compose/config validation where touched; then
+independent review. The evidence packet lists both removals and retained candidates with blockers.
+
+---
+
+## HISTORICAL — snapshot-product cutover approved and swept, awaiting deployment, 2026-08-29.
+
+This was the operational handoff before the September 1 production browser assessment. Its data
+reconciliation evidence remains valid; its deployment and browser-status claims are superseded.
 
 ### Current cutover checkpoint
 
-- The current TypeScript/client and private-API changes are **uncommitted**. A separate adversarial
-  integrated review returned **APPROVE** with no unresolved HIGH/MEDIUM correctness, security or
-  production-readiness findings. The final repository-wide sweep passed: data-boundary, TypeScript
-  typecheck, ESLint with zero errors, Python format, Ruff, Mypy over 303 source files, 1,477 frontend
-  tests and 4,432 Python tests. Thirteen frontend and 136 Python tests were environment-gated. No
-  production deployment or production private-route probe has run for this cutover tree.
+- The TypeScript/client and private-API changes were independently approved and fully swept in the
+  shared working tree at this checkpoint. The repository-wide sweep passed data-boundary,
+  TypeScript typecheck, ESLint, Python format, Ruff, Mypy, 1,477 frontend tests and 4,432 Python
+  tests. Thirteen frontend and 136 Python tests were environment-gated.
 - The private snapshot-product registry binds every allowed product to an immutable root, manifest,
   schema and physical layout. Exact `/day` and `/window` reads do not carry data across a missing
   day; `/release` refuses snapshot products rather than pretending a monthly part is a release
-  series. Coverage verifies immutable metadata without reading every Parquet payload; selected
-  day/window parts are checksum-verified before DuckDB reads them. Cold metadata work is
-  single-flight before DuckDB admission, and windows share one row budget.
-- Climate and soil reader ownership is explicit in the working tree. Air temperature mean/max/min,
-  dew point, precipitation, relative humidity, shortwave radiation, wind, NASA wetness, ERA5 soil
-  moisture, soil temperature and VPD are Parquet-owned and have no silent PostgreSQL fallback.
-  Burn History/MTBS remains deliberately owned by its existing Martin/PostgreSQL cumulative reader;
-  its Parquet archive is not used as a fallback capability.
-- The water-gauge slider's selectable dense history begins `2022-08-05`. Older sparse physical
-  observations remain recorded and auditable, but are not advertised as a continuous selectable
   series.
-- Dew point published manifest SHA-256
-  `c2972ea61ebfb66a86fa1e834625fae163e5d0a0abfd39f8c701edca3e59b71a`. Its first full read-only
-  audit and hardened inventory/receipt audit are terminal CLEAN; the latter verified the exact
-  691-object inventory. This is data evidence only and does not imply deployment.
-- Forward source ownership is not complete. The stateful job-executor service remains inactive for
-  production scheduling; do not disable legacy writers or retire PostgreSQL until its lane
-  schedules, leases, checkpoints, parity and failure recovery are activated and observed.
+- Climate and soil reader ownership was explicit in the cutover tree. Burn History/MTBS remained
+  deliberately owned by its existing cumulative reader.
+- Forward source ownership was not complete, and the stateful job executor was not active for
+  production scheduling.
 
 ### Stable data baseline
 
-- `main` and `origin/main` are integrated through
-  `949e20ee38405781a3e2a8978b2fc769bb7659d6`. The integration recovered and normalized the
-  completed canonical snapshot, climate, soil, fire, water, weather, soil-wetness, and vegetation
-  artifacts. No API/client/browser cutover was performed by that integration.
 - The canonical signal snapshot is immutable at
   `raw-canonical/signal-observation/snapshot=prod-20260826-full-signal-v1/`: 46,146,568 physical
   facts, 8,364 fact parts, zero rejects, and manifest SHA-256
   `465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f` bound by `_COMPLETE`.
-- Snapshot-derived lanes are complete for precipitation, wind speed, relative humidity, air
-  temperature (mean/max/min), shortwave radiation, VPD, ERA5-Land soil moisture (three depths),
-  soil temperature (four depths), and NASA soil wetness (surface/root-zone/profile). Each published
-  lane completed exact source reconciliation and wrote manifest/`_COMPLETE` last.
-- Fire detections are exact across 9,428 calendar days: 8,359 data days, 1,069 governed absences,
-  and 3,039,749 detections. Water gauges are exact across 1,521 days and 1,448,754 z13 rows.
-- Weather's independent 2026-08-01..25 audit reported zero findings. Vegetation repaired exactly
-  five stale days, then independently reconciled 1,208 days and 185,245 source/Parquet rows with
-  matching SHA-256 `0f13a768816db63a2640277f361de3681b193b7624365af444ede5267e7c9e64`.
-- NASA soil wetness independently recomputed all 159 lane-months. Bundle reconciliation is
-  1,776,330 physical = 1,742,418 selected + 33,912 superseded + 0 rejected; bundle manifest
-  SHA-256 is `75b9e825816369d7ffcca943f45a66fb411acbeaa0f0af983f50df443e33c78c`.
-- The single consolidated validation sweep on exact commit `949e20e` passed data-boundary,
-  TypeScript typecheck, frontend lint, Python format, Ruff, Mypy, 1,384 frontend tests, and 4,334
-  Python tests. Thirteen frontend tests and 136 Python tests remained environment-gated; the
-  independent integrated-tree review approved the result.
-
-### Production state
-
-- PostgreSQL data and ingestion remain intact. No table/row deletion, writer disablement, or
-  retirement migration was performed. Keep that fallback until each forward writer and reader
-  cutover passes its own gate.
-- The private Parquet surface and bounded TypeScript client exist. The shared working tree now
-  contains explicit tRPC/capability ownership and exact-day readers, but those edits are not on a
-  deployed production commit and no browser acceptance pass has run.
-- Vegetation's production publication deployment succeeded, and the forward cron configuration is
-  present. Its scheduled runtime cadence still needs observation before retirement. Separately, the
-  stateful job executor still requires a separately authorized production activation and observed
-  forward cadence.
-
-### Outstanding work, in order
-
-1. Commit and push the exact independently approved and fully swept cutover tree.
-2. Deploy that cutover and directly probe the private `/api/v1/parquet` day, window,
-   release and coverage routes against production R2. Verify exact-day/window behavior and that
-   snapshot `/release` requests are refused rather than carried.
-3. Run production browser acceptance at the default camera and z10 for every repointed layer,
-   including day changes, zoom-rung routing, empty/governed-absence states, and stale-cache checks.
-4. Activate the stateful job-executor only under its production authorization, assign every forward
-   lane an explicit owner, and observe scheduled advancement, leases, checkpoints, parity and
-   recovery. Historical completeness alone does not authorize writer retirement.
-5. Complete any remaining agent/MCP repoint off obsolete Postgres views onto the shared Parquet core,
-   following §0.42.30's exact keep/rewrite/delete census.
-6. Run the environment-gated PostGIS/reader tests against disposable DSNs on the exact cutover tree.
-7. Only after steps 1-6: retire PostgreSQL producers/readers per lane, then author reviewed migrations
-   for index/table/data removal and record before/after storage plus rollback evidence.
+- Snapshot-derived lanes completed exact source reconciliation for the climate and soil products.
+- Fire detections reconcile 9,428 calendar days, 8,359 data days, 1,069 governed absences and
+  3,039,749 detections. Water gauges reconcile 1,521 days and 1,448,754 z13 rows.
+- NASA soil wetness reconciles 1,776,330 physical = 1,742,418 selected + 33,912 superseded + 0
+  rejected; bundle manifest SHA-256 is
+  `75b9e825816369d7ffcca943f45a66fb411acbeaa0f0af983f50df443e33c78c`.
 
 ---
 

@@ -1,0 +1,138 @@
+{
+  "slug": "multiscale_polygon_surface_20260901",
+  "title": "Multiscale polygon and continuous-surface rendering",
+  "type": "feature",
+  "status": "planned",
+  "created_on": "2026-09-01",
+  "depends_on": [],
+  "runbook_section": "LIVE / Spatial aggregation and polygon contract",
+  "external_dependencies": [
+    {
+      "track": "parquet_reader_cutover_acceptance_20260901",
+      "slice": "r0",
+      "status": "planned",
+      "for": "m0 consumes the frozen support-geometry and temporal envelope contract."
+    },
+    {
+      "track": "parquet_reader_cutover_acceptance_20260901",
+      "slice": "r2",
+      "status": "planned",
+      "for": "m1 waits for the shared reader/capability implementation to land before editing shared response files."
+    }
+  ],
+  "note": "Replace coarse raw dots and disconnected blocks with semantically honest support geometry: continuous tessellations/isobands, event aggregate cells or heatmaps, and topology-preserving native polygons.",
+  "partitions": {
+    "computed_at": "2026-09-01T00:00:00-06:00",
+    "computed_at_commit": "269cc4224ff419c273bed5b660837c5b7f66caa3",
+    "confidence": "verified_design_surface",
+    "shared_writes": [
+      "The reader track freezes supportKind, zoomTier and cell extent/resolution before m1 edits shared response types.",
+      "Climate and soil renderers are one lane; event renderers are another; native polygon validation owns no shared renderer file.",
+      "No simultaneous edit of parquet-climate-field.ts with the reader track."
+    ],
+    "tripwires": [
+      "Fire detection-density cells must never be labeled as physical fire perimeters.",
+      "No interpolation or polygon is invented for a source that does not support it.",
+      "Exactly one physical rung renders for a zoom; raw and aggregate forms never overlap.",
+      "Adjacent cells use bit-identical boundaries and aggregate counts conserve the detail rung.",
+      "Renderer rollback cannot change reader ownership or substitute another day."
+    ],
+    "slices": [
+      {
+        "id": "m0",
+        "task": "Freeze the product-to-render-class registry and permitted zoom forms: continuous_field, event_point, native_polygon or explicit unavailable/reference.",
+        "owns": [
+          {
+            "path": "src/lib/map/layer-render-contract.ts",
+            "status": "future"
+          },
+          {
+            "path": "src/__tests__/lib/map/layer-render-contract.test.ts",
+            "status": "future"
+          }
+        ],
+        "depends_on": [],
+        "status": "planned"
+      },
+      {
+        "id": "m1",
+        "task": "Return exact support kind, stable cell identity, rung, origin/center semantics and cell width/height or native geometry in serving envelopes.",
+        "owns": [
+          "src/lib/server/services/parquet-trpc-readers.ts",
+          "src/lib/server/services/parquet-climate-field.ts",
+          "src/lib/environmental/parquet-presentation.ts",
+          "src/__tests__/services/parquet-trpc-readers.test.ts",
+          "src/__tests__/lib/environmental/parquet-presentation.test.ts"
+        ],
+        "depends_on": [
+          "m0"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "m2",
+        "task": "Render continuous climate and soil products as complete tessellating polygons, filled dissolved isobands or governed raster surfaces with no batch/tile seams.",
+        "owns": [
+          "src/components/map/layers/ClimateFieldLayer.tsx",
+          "src/components/map/layers/SoilFieldLayer.tsx",
+          "src/lib/geo/isobands.ts",
+          "src/__tests__/components/ClimateFieldLayers.test.tsx",
+          "src/__tests__/lib/geo/isobands.test.ts"
+        ],
+        "depends_on": [
+          "m1"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "m3",
+        "task": "Render coarse event/sensor aggregates as declared cell polygons, heatmaps or clusters while retaining raw points at detail zoom; implement fire density cells first.",
+        "owns": [
+          "src/components/map/layers/FireLayer.tsx",
+          "src/components/map/layers/WaterLayer.tsx",
+          "src/components/map/layers/VegetationLayer.tsx",
+          {
+            "path": "src/__tests__/components/event-aggregation-rendering.test.tsx",
+            "status": "future"
+          }
+        ],
+        "depends_on": [
+          "m1"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "m4",
+        "task": "Validate native polygon generalization/dissolve without changing source meaning; keep MTBS as the production continuity reference.",
+        "owns": [
+          {
+            "path": "src/__tests__/components/native-polygon-regression.test.tsx",
+            "status": "future"
+          },
+          {
+            "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/native-polygon-baseline.md",
+            "status": "future"
+          }
+        ],
+        "depends_on": [
+          "m0"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "m5",
+        "task": "Run conservation, topology, feature-budget and screenshot/canvas-pixel checks across default PNW coarse/middle/detail zooms; publish the renderer handoff packet.",
+        "owns": [
+          "conductor/tracks/multiscale_polygon_surface_20260901/evidence/renderer-verdict.md"
+        ],
+        "depends_on": [
+          "m2",
+          "m3",
+          "m4"
+        ],
+        "status": "planned"
+      }
+    ],
+    "integration_slice": "m5"
+  }
+}

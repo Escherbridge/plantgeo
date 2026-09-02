@@ -1,0 +1,179 @@
+{
+  "slug": "gapless_parquet_publication_20260901",
+  "title": "Gapless Parquet forward publication and scheduler ownership",
+  "type": "infrastructure",
+  "status": "planned",
+  "created_on": "2026-09-01",
+  "depends_on": [],
+  "runbook_section": "LIVE / Gapless publication and pull contract",
+  "external_dependencies": [
+    {
+      "track": "postgres_shrink_ingest_repoint_20260825",
+      "slice": "s2a",
+      "status": "resolved",
+      "for": "The shared parquet_ops core, CLI split and job-executor foundation are integrated. This track receives unfinished forward execution; P5/P6 remain downstream in the old track."
+    }
+  ],
+  "supersedes": {
+    "postgres_shrink_ingest_repoint_20260825:s2b-s4-forward-scope": "Direct forward publication, gap authoring and executor activation move here. PostgreSQL P5/P6 retirement stays in the older track."
+  },
+  "note": "Give every time-bearing product one durable source owner for forward refresh, repair and coverage status under the stateful executor. Historical completeness does not satisfy this track.",
+  "production_authorization": "Creating this track does not authorize scheduler activation. p5 and p6 require a separate explicit operator authorization under conductor/release-governance.md after code, no-overlap and rollback gates pass.",
+  "partitions": {
+    "computed_at": "2026-09-01T00:00:00-06:00",
+    "computed_at_commit": "269cc4224ff419c273bed5b660837c5b7f66caa3",
+    "confidence": "planned_from_production_evidence",
+    "shared_writes": [
+      "pipeline/direct/ and pipeline/parquet/lane_registry.py are serialized registries with one owner at a time; p0a is the sole interface/cli/data.py owner for the availability bootstrap, and p5 depends transitively on p0a without editing that file.",
+      "gapless p0a owns the availability schema/publisher/bootstrap; reader r2 may consume the frozen artifact only after p0a lands.",
+      "Job-executor registry and schedule changes land only after all source-family writers are registered and reviewed.",
+      "Legacy and executor writers for the same source/product may never overlap."
+    ],
+    "tripwires": [
+      "No PostgreSQL or R2 data deletion and no retirement migration.",
+      "A governed absence is not zero rows, a failed job, an unsettled source or an unrun day.",
+      "Every required rung closes before the product-day is terminal.",
+      "A source handoff pauses and proves the old owner inactive before activating the new owner.",
+      "No executor lane is activated without a separate explicit production authorization; this track is planning authority only.",
+      "Tail repair is bounded, checkpointed and idempotent; it never rewrites a valid immutable day.",
+      "Availability bootstrap may scan verified history once; API and slider requests may never list historical lane objects or invoke that census.",
+      "A terminal day becomes selectable only after the immutable availability generation is verified and its checksum-bound pointer advances last."
+    ],
+    "slices": [
+      {
+        "id": "p0",
+        "task": "Inventory every time-bearing product: provider, floor, ceiling, lag, cadence, rungs, current/legacy owner, terminal states and observed tail. Freeze the source-ceiling and governed-absence contract.",
+        "owns": [
+          "conductor/tracks/gapless_parquet_publication_20260901/evidence/product-ownership-census.md",
+          "docs/reports/data-lane-execution-ownership-2026-08-28.md"
+        ],
+        "depends_on": [],
+        "status": "planned"
+      },
+      {
+        "id": "p0a",
+        "task": "Implement the canonical availability Parquet schema/publisher and idempotent one-time bootstrap. Bind the immutable bootstrap receipt, source inventory root and authoritative required-rung set; publish immutable content-addressed generations and advance a checksum-bound pointer last; prove pointer races, corrections, governed absences, all-rung intersection and fail-closed reads.",
+        "owns": [
+          {
+            "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/availability_index.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/availability_index.py",
+            "status": "future"
+          },
+          "services/agri-data-service/src/agri_data_service/interface/cli/data.py",
+          {
+            "path": "services/agri-data-service/tests/parquet/test_availability_index.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_availability_publication.py",
+            "status": "future"
+          }
+        ],
+        "depends_on": [
+          "p0"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "p1",
+        "task": "Implement durable forward writers for climate products, prioritizing the 94-day solar tail and the 27-day temperature/dew/precipitation/humidity/wind tails.",
+        "owns": [
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/climate/",
+            "status": "future"
+          }
+        ],
+        "depends_on": [
+          "p0a"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "p2",
+        "task": "Implement durable forward writers for NASA POWER wetness and ERA5-Land moisture/temperature/VPD products, preserving product-specific precedence and all-rung publication.",
+        "owns": [
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/soil/",
+            "status": "future"
+          }
+        ],
+        "depends_on": [
+          "p0a"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "p3",
+        "task": "Reconcile event/observation forward owners for fire, water, vegetation, weather, sensors and other active lanes; eliminate ownership ambiguity without stopping a healthy writer prematurely.",
+        "owns": [
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/events/",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/events/",
+            "status": "future"
+          }
+        ],
+        "depends_on": [
+          "p0a"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "p4",
+        "task": "Author idempotent missing-day work and bounded tail repair; close every owed day as published or governed absent at every required rung.",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/gap_fill.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+          "services/agri-data-service/tests/parquet/test_gap_fill.py",
+          "services/agri-data-service/tests/parquet/test_lane_registry.py"
+        ],
+        "depends_on": [
+          "p1",
+          "p2",
+          "p3"
+        ],
+        "status": "planned"
+      },
+      {
+        "id": "p5",
+        "task": "Register schedules in the stateful job executor and perform source-by-source no-overlap handoffs with leases, checkpoints, retry/dead-letter state and rollback instructions.",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+          "services/agri-data-service/src/agri_data_service/jobs/registry.py",
+          "services/agri-data-service/railway.job-executor.json",
+          "services/agri-data-service/tests/test_job_executor*.py"
+        ],
+        "depends_on": [
+          "p0a",
+          "p4"
+        ],
+        "status": "blocked_owner_authorization"
+      },
+      {
+        "id": "p6",
+        "task": "Observe at least three consecutive scheduled advancements per activated product, exercise retry/restart/expired-lease recovery, and publish exact coverage/inventory reconciliation.",
+        "owns": [
+          "conductor/tracks/gapless_parquet_publication_20260901/evidence/forward-burn-in.md"
+        ],
+        "depends_on": [
+          "p5"
+        ],
+        "status": "blocked"
+      }
+    ],
+    "integration_slice": "p6"
+  }
+}

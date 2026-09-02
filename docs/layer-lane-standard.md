@@ -259,6 +259,25 @@ request — never a frozen constant. A constant cannot track a growing lane: a
 hard-coded "4 of 397 cells" rendered directly above a live "267 cells drawn"
 in the same card.
 
+### 10.1 Persist slider availability; never rediscover history per request
+
+Every time-bearing Parquet lane publishes an immutable generational
+`availability.parquet` plus a checksum-bound `_LATEST.json` pointer. The index has one row per
+`(day, rung)` and carries terminal state, row count, source/terminal/data/completion receipts and a
+nullable governed-absence reason. The file metadata and pointer bind the authoritative ordered
+`required_rungs`, so an omitted rung cannot redefine the contract. The slider reads the pointer and
+the named Parquet object; it does not list day prefixes, open historical data parts or query
+PostgreSQL.
+
+Bootstrap may perform one exact historical inventory against already verified manifests. It writes
+an immutable receipt with the source inventory root, required rungs and manifest/checkpoint inputs;
+the pointer binds that receipt's key and SHA forever. After that, forward ingestion, backfill and
+governed-absence publication extend the previous generation only after their data and completion
+markers are durable. Publish the new immutable index, verify its bytes and SHA, then advance the
+pointer last with a conditional write. Corrections make another generation; old generations remain
+rollback evidence. A missing or invalid index is an explicit refusal, never permission to run the
+historical census in a request path.
+
 ## 11. Expose it to the agent
 
 A layer is not finished when it renders. The agent must be able to ask:
@@ -309,6 +328,8 @@ A layer is finished when all of these are true:
 - [ ] unfillable days recorded as governed absences, not re-walked forever
 - [ ] coverage-status reports completeness, missing-day count and collapsed ranges
 - [ ] serving reader exists **and the stream is in the slider capability catalogue**
+- [ ] availability index is bootstrapped once and extended by every terminal ingestion/backfill
+      outcome; slider reads require no historical listing or data scan
 - [ ] time slider mounts, with a real axis or an honest snapshot/reference declaration
 - [ ] agent tools answer at the selected day, with temporal and spatial neighbours
       carrying their distances

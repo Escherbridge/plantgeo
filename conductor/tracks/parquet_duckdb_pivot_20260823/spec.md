@@ -24,12 +24,12 @@ complete: the production serving and client cutover are still open.
 |---|---|
 | `d0` | Complete. Immutable parts, completion markers, bounded readers, and exact inventory checks are established. |
 | `d1` | Superseded-complete. The old shared Postgres drain was replaced by the immutable 46,146,568-row canonical signal snapshot and snapshot-only product breakdowns. Do not restart the old drain or rescan PostgreSQL. |
-| `d3` | Code-complete, production-blocked. The four private Sanic Parquet routes and bounded TypeScript client exist and passed the consolidated sweep. The API service's pre-existing `/ready` timeout must be fixed before production route verification. |
-| `d4` | Pending. Eligible tRPC readers and slider capabilities still read their existing paths; no client/browser cutover was performed. |
+| `d3` | Complete and production-healthy. The private routes and bounded client are integrated, the `/ready` repair landed, and the production catalogue/serving surface is live. Comprehensive cross-product probing remains in `parquet_production_acceptance_20260901`, not d3. |
+| `d4` | Delegated. `parquet_reader_cutover_acceptance_20260901` owns the reader/capability hard cut; `parquet_production_acceptance_20260901` owns the final cross-product browser verdict. Production currently exposes a split fire path, so this is not complete. |
 | `d5` | Superseded-complete. Dedicated product lanes replaced the proposed generic `soil_field.py`; climate and soil schemas/builders are integrated, including VPD, three ERA5 soil-moisture depths, four soil-temperature depths, and the climate lanes listed in the runbook LIVE section. |
 
-The track remains **active** until `d3` is production-healthy, `d4` is repointed and browser-verified,
-and the no-fallback cutover proves all four response states at every required zoom rung. PostgreSQL
+The track remains **active** until `d3` is production-healthy and the two delegated successor tracks
+return a GREEN no-fallback verdict for all response states and required zoom rungs. PostgreSQL
 data and ingestion remain intact until the successor repoint track clears each lane independently.
 
 Canonical source evidence: snapshot prefix

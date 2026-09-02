@@ -17,14 +17,24 @@
     {
       "track": "parquet_duckdb_pivot_20260823",
       "slice": "d3",
-      "status": "code_complete_prod_blocked",
-      "for": "Private Parquet routes and bounded client are integrated; production probing is blocked by the API /ready timeout."
+      "status": "resolved_production_healthy",
+      "for": "Private Parquet routes, bounded client and /ready repair are deployed. Comprehensive cross-product probing is owned by parquet_production_acceptance_20260901."
     },
     {
       "track": "parquet_duckdb_pivot_20260823",
       "slice": "d4",
-      "status": "pending",
-      "for": "tRPC and slider-capability repoint plus browser acceptance; blocks retirement."
+      "status": "delegated",
+      "for": "Reader/capability hard cut moved to parquet_reader_cutover_acceptance_20260901; final browser evidence moved to parquet_production_acceptance_20260901."
+    },
+    {
+      "track": "gapless_parquet_publication_20260901",
+      "status": "planned",
+      "for": "Owns unfinished direct forward publication, gap authoring, executor activation and multi-schedule burn-in. Blocks P5/P6 retirement."
+    },
+    {
+      "track": "parquet_production_acceptance_20260901",
+      "status": "blocked",
+      "for": "Evidence-only final gate for reader, temporal and spatial production correctness. A GREEN handoff is required before P5/P6 review."
     }
   ],
   "checkpoint_20260827": {
@@ -111,15 +121,6 @@
           "infra/cron-mtbs/railway.json",
           "infra/parquet-drain/railway.json",
           "infra/local-warehouse/README.md",
-          {
-            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/",
-            "status": "future"
-          },
-          {
-            "path": "services/agri-data-service/tests/direct/",
-            "status": "future"
-          },
-          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
           "services/agri-data-service/src/agri_data_service/parquet_ops/",
           "services/agri-data-service/src/agri_data_service/interface/http/",
           "services/agri-data-service/tests/interface/"
@@ -128,13 +129,18 @@
         "depends_on": [
           "s0"
         ],
-        "status": "s2a_code_complete_s2b_pending",
-        "note": "HARD CUTOVER HAZARDS move atomically with the rename: cron-ingest ENTRYPOINT, cron-mtbs startCommand, source-disconnected parquet-drain startCommand, and any dashboard override. s2a extracted the seven framework-free Parquet modules to the recorded final top-level parquet_ops/ home, including bounded admission and typed refusals; HTTP and CLI are adapters over it. The agent/MCP adapter remains the sequenced s7 consumer. Railway evidence found no startCommand override on the two connected cron services and no current production parquet-drain service object to compare."
+        "status": "s2a_code_complete_s2b_delegated",
+        "note": "s2a extracted the framework-free Parquet core and completed the CLI split. The unfinished s2b direct-writer registry and forward execution scope is delegated to gapless_parquet_publication_20260901. This track retains P5/P6 retirement authority and may not execute the delegated writer work in parallel.",
+        "delegated_owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/",
+          "services/agri-data-service/tests/direct/",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py"
+        ]
       },
       {
         "id": "s3",
         "task": "P3 wave 2 direct writers: drought, water-gauges, fire-perimeters, burn-severity, watersheds, evacuation-zones, and the soil-survey decision; replace the three Postgres-backed static-lookup watermark resolvers with an upstream vintage or record that a lane keeps its Postgres watermark.",
-        "owns": [
+        "delegated_owns": [
           {
             "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/drought.py",
             "status": "future"
@@ -191,12 +197,14 @@
         "model": "sonnet",
         "depends_on": [
           "s2"
-        ]
+        ],
+        "status": "delegated",
+        "note": "Forward-writer implementation and activation delegated to gapless_parquet_publication_20260901. Historical ownership is retained here only as provenance for the eventual P5 retirement review."
       },
       {
         "id": "s4",
         "task": "P4 wave 3 direct writers for the governance-heavy lanes: signal (governed contract table + release dedup + centroid), vegetation (eight lineage refs), fire-detections (cell-day aggregate + FIRMS cap surfaced).",
-        "owns": [
+        "delegated_owns": [
           {
             "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/signal.py",
             "status": "future"
@@ -237,7 +245,9 @@
         "model": "opus",
         "depends_on": [
           "s2"
-        ]
+        ],
+        "status": "delegated",
+        "note": "Forward-writer implementation and activation delegated to gapless_parquet_publication_20260901. Historical ownership is retained here only as provenance for the eventual P5 retirement review."
       },
       {
         "id": "s5",
@@ -298,18 +308,18 @@
       },
       {
         "path": "services/agri-data-service/src/agri_data_service/interface/cli/data.py",
-        "owner": "s2",
-        "reason": "shared data-command registry; s2b adds parquet-ingest here while s3/s4/s5 add no verbs"
+        "owner": "gapless_parquet_publication_20260901:p0a",
+        "reason": "s2a is complete; p0a is the sole owner for availability bootstrap registration, and p5 depends transitively on p0a without editing this file before P5 retirement"
       },
       {
         "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
-        "owner": "s2",
-        "reason": "shared lane registry; s3/s4 append lane-state entries, s5 removes retired adapters; strictly sequential"
+        "owner": "gapless_parquet_publication_20260901:p4",
+        "reason": "forward/gap ownership is delegated; this track may remove retired adapters only after GREEN acceptance and a later P5 review"
       },
       {
         "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/registry.py",
-        "owner": "s2",
-        "reason": "s3 and s4 append their lanes"
+        "owner": "gapless_parquet_publication_20260901:p5",
+        "reason": "direct-writer and executor registration is delegated; P5 consumes the final registry but does not author it"
       },
       {
         "path": "drizzle/",

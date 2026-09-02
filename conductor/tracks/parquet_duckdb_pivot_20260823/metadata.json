@@ -5,7 +5,7 @@
   "created_on": "2026-08-23",
   "depends_on": [],
   "runbook_section": "0.35",
-  "note": "Updated 2026-08-27 at integrated main 949e20ee38405781a3e2a8978b2fc769bb7659d6. Historical Parquet construction and reusable artifacts are complete; the track remains active for production API health, d4 tRPC/client repoint, and browser acceptance. PostgreSQL remains intact until the successor repoint track clears each lane.",
+  "note": "Updated 2026-09-01. Historical Parquet construction and reusable artifacts are complete. Production reader/capability/browser slice d4 is delegated to parquet_reader_cutover_acceptance_20260901; final cross-product evidence is delegated to parquet_production_acceptance_20260901. PostgreSQL remains intact until the successor repoint track clears each lane.",
   "shipped_before_this_track": [
     "Twelve lanes with validation, serving and forecasters (abf777f)",
     "Lane natures, watermark-driven static lanes, conformed calendar dimension (b794e98)",
@@ -18,8 +18,8 @@
     "DONE ceeb2c9/3b7ecfb/fe32aef/68da7af/83b322f: sub-day fix, orphan-part blocker, zoom axis, soil-survey streaming, docs",
     "DONE d0 (2026-08-23, uncommitted at write time): completion marker on every multi-part lane, reader sweep, lane-day advisory lock, missing-lane audit. Gate 3,948/3. RUNBOOK 0.35.",
     "DONE/SUPERSEDED d1: the shared drain was replaced by the immutable canonical signal snapshot and snapshot-only product breakdowns; do not rescan PostgreSQL or restart the old drain.",
-    "CODE COMPLETE / PROD BLOCKED d3: four private Sanic routes and the bounded TypeScript client exist and pass the integrated sweep; fix the API /ready timeout and probe production before cutover.",
-    "PENDING d4: repoint eligible Next.js tRPC procedures and slider coverage, then perform browser acceptance with no silent PostgreSQL fallback.",
+    "DONE d3: the private Sanic routes, bounded TypeScript client and /ready repair are deployed; production browser/catalogue reads confirm the serving surface is live. Exact cross-product probes remain in parquet_production_acceptance_20260901.",
+    "DELEGATED d4: parquet_reader_cutover_acceptance_20260901 owns eligible Next.js tRPC/capability hard cuts; parquet_production_acceptance_20260901 owns the final browser verdict.",
     "DONE d5 for governed signal products: dedicated climate and soil product schemas/builders are integrated and their production data is independently reconciled.",
     "E. Forward path per lane: upstream API -> Parquet, deprecate that lane's Postgres source",
     "F. Open-Meteo ensemble/flood/CAMS + fire-risk feature plane",
@@ -85,8 +85,8 @@
         "depends_on": [
           "d1"
         ],
-        "status": "code_complete_prod_blocked",
-        "note": "The private Sanic routes and bounded TypeScript client are built and passed the 949e20e consolidated sweep. Production route verification is blocked on the existing API /ready timeout."
+        "status": "complete_production_healthy",
+        "note": "The private routes and bounded client are integrated, the /ready repair landed, and the production serving/catalogue surface is live. The new acceptance track owns the comprehensive cross-product production probe rather than reopening d3."
       },
       {
         "id": "d4",
@@ -99,8 +99,8 @@
         "depends_on": [
           "d3"
         ],
-        "status": "pending",
-        "note": "No API/client/browser cutover was performed by the 2026-08-27 integration. Repoint per lane only after d3 is healthy and directly verified."
+        "status": "delegated",
+        "note": "Delegated 2026-09-01 to parquet_reader_cutover_acceptance_20260901. That track owns the hard cut and focused temporal acceptance; parquet_production_acceptance_20260901 owns the evidence-only cross-product browser verdict."
       },
       {
         "id": "d5",

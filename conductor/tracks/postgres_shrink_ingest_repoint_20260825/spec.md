@@ -40,6 +40,10 @@ Postgres.
 
 ## Execution checkpoint — 2026-08-29
 
+**Historical checkpoint.** Its uncommitted/deployment/probe statements describe August 29 and are
+superseded by the 2026-09-01 delegation block below plus the current LIVE section of
+`conductor/RUNBOOK.md`. Do not schedule work from those stale statements.
+
 The premise that historical data still needs a shared Postgres drain is superseded. Production now
 has an immutable canonical signal snapshot plus independently reconciled product lanes, and all
 reusable artifacts are integrated on `main` at
@@ -54,7 +58,7 @@ tests and 4,432 Python tests. Deployment and the production R2 probe have not ru
 |---|---|
 | P0 bridge | Forward configuration and PostgreSQL ingestion/data remain intact. The stateful job-executor has not been activated as the production owner; its schedules, leases, checkpoints and recovery still need observation. |
 | P1 baseline | Migration contracts through `20260827_0027` are integrated. The live migration head and production parity must be verified through the repaired readiness path; the immutable baseline was not rewritten. |
-| P2-P4 writers | Partial. Historical climate/soil/fire/water/weather/vegetation products are reconciled and the working tree has explicit Parquet reader ownership. A historical builder or reader is not proof of a durable scheduled forward-source owner. |
+| P2-P4 writers | Delegated for execution to `gapless_parquet_publication_20260901`. This track retains the historical ownership map and the later P5/P6 retirement authority, but it must not run a competing forward-writer implementation. |
 | P5 retirement | Not started. No PostgreSQL producer, reader, table, row, or ingestion registration was removed. |
 | P6 shrink | Blocked on deployment and private-route probes, browser acceptance, job-executor activation, and per-lane forward-writer evidence. |
 
@@ -68,6 +72,11 @@ auditable. Dew manifest
 `c2972ea61ebfb66a86fa1e834625fae163e5d0a0abfd39f8c701edca3e59b71a` passed its first full audit,
 and its hardened inventory/receipt audit verified the exact 691-object prefix. The next safe action
 is deployment and serving verification, not a drop migration.
+
+**2026-09-01 delegation:** `parquet_reader_cutover_acceptance_20260901` owns the remaining hard
+reader/capability cut, `gapless_parquet_publication_20260901` owns forward writers, repair and
+executor handoff, and `parquet_production_acceptance_20260901` owns the evidence-only fan-in verdict.
+P5/P6 stay here and remain blocked until those tracks hand back exact GREEN evidence.
 
 ### Current retirement gates
 

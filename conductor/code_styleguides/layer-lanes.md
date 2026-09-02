@@ -174,6 +174,32 @@ proves the code agrees with itself.
 - **Failures name the day, the lane, and the source response.** "N rows
   mismatched" is not actionable.
 
+### 4a. Availability is a lane artifact, not a query-time census
+
+Every `daily_series` and `release_series` publishes a compact immutable
+`availability/generation=<content-sha>/availability.parquet` and advances a checksum-bound
+`availability/_LATEST.json` last. The Parquet schema has one row per `(day, rung)` with lane and
+product identity, temporal nature, `published|governed_absence`, row count, source receipt,
+terminal receipt key/SHA, data/completion receipts, nullable absence reason, source ceiling and
+publication timestamp. File metadata and pointer bind the authoritative ordered `required_rungs`;
+a selectable day is their intersection, not the observed union.
+
+- A one-time bootstrap may enumerate verified manifests/checkpoints. It writes an immutable receipt
+  containing their keys/SHAs, the source inventory root and required rungs; generation zero and all
+  successors bind the receipt key/SHA in file metadata and `_LATEST.json`.
+- Normal ingestion reads the previous generation, adds or replaces only terminal outcomes, writes
+  and verifies a new generation, then conditionally advances the pointer.
+- A pointer race is retried from the winning generation; it never overwrites another writer's
+  advancement or makes partially published data selectable.
+- Request paths do one pointer GET and one Parquet GET. They never list historical prefixes, scan
+  data parts, query PostgreSQL or silently invoke the bootstrap census.
+- Missing, stale, malformed or checksum-invalid availability fails closed. Independent audit jobs
+  may re-list history; browser/API requests may not.
+
+This index is publication state, not a substitute for per-request served-row coverage. The slider
+axis comes from availability; the rendered collection still reports its own rows and spatial
+coverage.
+
 ## 5. ML stays where it already is, and the lattice does not yet separate it
 
 **ML is at `method/ml/` (10 modules) and does not move.** An earlier draft of

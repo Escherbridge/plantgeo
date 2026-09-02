@@ -7,6 +7,13 @@ resource: ./spec.md
 
 # Implementation Plan: Postgres shrink via ingest repoint to Parquet
 
+> **CURRENT EXECUTION AUTHORITY — 2026-09-01:** P2-P4 tasks, dependency arrows and file ownership
+> below are historical provenance and **MUST NOT be executed from this plan**. Forward writers, gap
+> authoring, governed absences and executor handoff are solely owned by
+> `gapless_parquet_publication_20260901`. This track retains only P5/P6 retirement and shrink, which
+> remain blocked until `parquet_production_acceptance_20260901` returns an exact GREEN handoff.
+> Creating either successor track is not scheduler-activation or retirement authorization.
+
 ## Overview
 
 Seven phases. **P0 is the only one with a calendar deadline** — the NWS rolling

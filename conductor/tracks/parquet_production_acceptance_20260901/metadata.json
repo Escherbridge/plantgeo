@@ -1,0 +1,103 @@
+{
+  "slug": "parquet_production_acceptance_20260901",
+  "title": "Production Parquet temporal and spatial acceptance",
+  "type": "verification",
+  "status": "blocked",
+  "created_on": "2026-09-01",
+  "depends_on": [
+    "parquet_reader_cutover_acceptance_20260901",
+    "gapless_parquet_publication_20260901",
+    "multiscale_polygon_surface_20260901"
+  ],
+  "runbook_section": "LIVE / Repair order and production gates",
+  "note": "Evidence-only fan-in gate. It performs no repair. A RED finding returns to the owning track and PostgreSQL retirement remains blocked.",
+  "partitions": {
+    "computed_at": "2026-09-01T00:00:00-06:00",
+    "computed_at_commit": "269cc4224ff419c273bed5b660837c5b7f66caa3",
+    "confidence": "planned_from_production_evidence",
+    "shared_writes": [
+      "This track owns only conductor/tracks/parquet_production_acceptance_20260901/evidence/ and its own documentation.",
+      "Authoring tracks provide immutable candidate commits and evidence packets; acceptance never patches their code during a verdict run.",
+      "One exact deployed commit and service matrix is used for the final sweep and browser/R2 evidence."
+    ],
+    "tripwires": [
+      "Any silent PostgreSQL fallback, future ceiling, unexplained tail, truncation or cross-day carry is RED.",
+      "Any request-time historical object listing, data-part scan or bootstrap-census fallback for slider availability is RED.",
+      "Any overlapping writer, unowned product, failed lease recovery or fewer than three scheduled advances is RED.",
+      "Any geometry seam, support mislabel, simultaneous rung or conservation failure is RED.",
+      "Acceptance does not redeploy, restart, mutate variables, repair data or delete storage while gathering evidence.",
+      "A green verdict may unblock retirement review; it never performs retirement itself."
+    ],
+    "slices": [
+      {
+        "id": "a0",
+        "task": "Freeze the product x terminal-day x zoom x cold/warm acceptance matrix and evidence schema before authoring tracks finish.",
+        "owns": [
+          "conductor/tracks/parquet_production_acceptance_20260901/evidence/acceptance-matrix.md"
+        ],
+        "depends_on": [],
+        "status": "planned"
+      },
+      {
+        "id": "a1",
+        "task": "Probe private production coverage/day/window/release routes against R2; verify availability pointer/generation/bootstrap-receipt bindings, source inventory root, authoritative required rungs, terminal/source receipts, absence reasons, manifests, bounds, refusal states, no cross-day carry and zero request-time historical LIST/data-part reads.",
+        "owns": [
+          "conductor/tracks/parquet_production_acceptance_20260901/evidence/private-r2-route-probes.md"
+        ],
+        "depends_on": [
+          "parquet_reader_cutover_acceptance_20260901"
+        ],
+        "status": "blocked"
+      },
+      {
+        "id": "a2",
+        "task": "Run fresh anonymous browser acceptance on latest, historical and governed-empty days at default PNW coarse/middle/detail zooms; record cold/warm catalogue, TTFB and request-to-paint.",
+        "owns": [
+          "conductor/tracks/parquet_production_acceptance_20260901/evidence/browser-matrix.md"
+        ],
+        "depends_on": [
+          "parquet_reader_cutover_acceptance_20260901",
+          "multiscale_polygon_surface_20260901"
+        ],
+        "status": "blocked"
+      },
+      {
+        "id": "a3",
+        "task": "Verify exact rung conservation, support geometry and screenshot/canvas-pixel continuity; compare native polygons, event aggregates and continuous fields independently.",
+        "owns": [
+          "conductor/tracks/parquet_production_acceptance_20260901/evidence/spatial-verdict.md"
+        ],
+        "depends_on": [
+          "multiscale_polygon_surface_20260901"
+        ],
+        "status": "blocked"
+      },
+      {
+        "id": "a4",
+        "task": "Observe at least three scheduled advancements plus retry/restart/lease recovery for every activated product owner and reconcile capability ceilings after each interval.",
+        "owns": [
+          "conductor/tracks/parquet_production_acceptance_20260901/evidence/scheduler-burn-in.md"
+        ],
+        "depends_on": [
+          "gapless_parquet_publication_20260901"
+        ],
+        "status": "blocked"
+      },
+      {
+        "id": "a5",
+        "task": "Run one consolidated lint/typecheck/test sweep on the exact deployed tree, obtain independent review, and publish the service/commit/product/rollback go-no-go matrix.",
+        "owns": [
+          "conductor/tracks/parquet_production_acceptance_20260901/evidence/final-verdict.md"
+        ],
+        "depends_on": [
+          "a1",
+          "a2",
+          "a3",
+          "a4"
+        ],
+        "status": "blocked"
+      }
+    ],
+    "integration_slice": "a5"
+  }
+}
