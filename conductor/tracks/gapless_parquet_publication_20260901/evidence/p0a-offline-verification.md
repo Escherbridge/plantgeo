@@ -93,6 +93,14 @@ landed. Only after old writers are gone may the guarded availability command acq
 lane barrier and perform receipt verification through pointer CAS. This is a deployment prerequisite,
 not authorization to mutate R2, PostgreSQL, Railway, schedules or reader state.
 
+## Commit reconciliation
+
+The reviewed implementation replaces rejected commit
+`3e6a7089fc14f49076475aec0aad28c5bb833846` with
+`2a3ff8894a1186b1c60d3ed7f27deaa71af42516`. This evidence-only follow-up records that immutable
+implementation identity; it does not change the reviewed Python contract or test tree. The pushed
+branch-tip SHA is reported separately because a commit cannot embed its own SHA.
+
 ## Contract proof covered
 
 - Exact Arrow field order, physical types and nullability, including a non-null list of non-null
