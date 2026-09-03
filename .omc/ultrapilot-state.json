@@ -1,19 +1,158 @@
 {
-  "active": true,
+  "active": false,
   "mode": "ultrapilot",
-  "goal": "Solidify auth layer + organization onboarding layer. Teams ARE organizations. Email invites + shareable join links. Auth pages + credential lifecycle + org context in JWT session.",
-  "constraints": [
-    "NEVER touch src/components/map/**, src/app/api/tiles/**, martin/service-worker/layer-style files - another session owns them and will push mid-flight",
-    "NEVER run git commit/push/rebase/checkout - orchestrator handles integration",
-    "No test->fix->test loops; single sweep at the end"
-  ],
-  "phase": "parallel_execution",
+  "task": "Finish the 2026-09-01 repair order: observe deploy (RED: both Python images failed to build), fix, re-push, continue the continuation plan",
+  "phase": "handed_off: steps 1-3 done (executor half of step 1 blocked on owner config); steps 4-12 next",
   "workers": [
-    { "id": "w1", "model": "sonnet", "status": "running", "scope": "db schema + drizzle migration", "files": ["src/lib/server/db/schema.ts", "drizzle/**", "src/__tests__/security/org-schema-contract.test.ts"] },
-    { "id": "w2", "model": "opus", "status": "running", "scope": "auth server flows, tokens, transactional email, session org context, middleware", "files": ["src/lib/server/security/tokens.ts", "src/lib/server/security/registration.ts", "src/lib/server/services/transactional-email.ts", "src/lib/server/services/email.ts", "src/lib/server/auth-options.ts", "src/lib/server/auth.ts", "src/middleware.ts", "src/types/next-auth.d.ts", "src/app/api/auth/**", "src/__tests__/security/auth-credential-lifecycle.test.ts"] },
-    { "id": "w3", "model": "sonnet", "status": "running", "scope": "auth UI pages + SessionProvider", "files": ["src/app/(auth)/**", "src/components/auth/**", "src/lib/providers.tsx"] },
-    { "id": "w4", "model": "opus", "status": "running", "scope": "org invitations, join links, authz hardening, trpc", "files": ["src/lib/server/trpc/routers/teams.ts", "src/lib/server/trpc/router.ts", "src/lib/server/trpc/init.ts", "src/lib/server/security/access-control.ts", "src/lib/server/security/org-slug.ts", "src/lib/server/security/invitations.ts", "src/app/api/invitations/**", "src/app/api/join/**", "src/__tests__/security/org-invitations.test.ts"] },
-    { "id": "w5", "model": "sonnet", "status": "running", "scope": "onboarding + org management UI", "files": ["src/app/onboarding/**", "src/app/dashboard/org/**", "src/app/invite/**", "src/app/join/**", "src/components/onboarding/**", "src/components/teams/**"] }
+    {
+      "id": "w1",
+      "role": "executor/sonnet",
+      "status": "complete",
+      "task": "CRLF digest fix -> 1da1a28 pushed; parquet-api 3a3430bf SUCCESS"
+    },
+    {
+      "id": "w2",
+      "role": "code-reviewer/opus",
+      "status": "complete",
+      "task": "wave-3 review: CHANGES-REQUIRED 2 BLOCKER (B1 places.ts not orphan + ignores spatial args; B2 docs certify executor config prod lacks), 8 MAJOR (M1 mypy.ini/ruff.toml not digested; M2 digest after sweep; M3 opaque refusal; M4 untracked inputs; M5 gate untested; M6 stale AGENTS.md; M7 MapView viewport subscription; M8 render-count test overclaims), 4 MINOR (m1 count pin; m2 alembic/db undigested; m3 executor gate never ran; m4 compose comment), 3 NOTE"
+    },
+    {
+      "id": "w3",
+      "role": "explore/haiku",
+      "status": "complete",
+      "task": "Playwright recipe delivered"
+    },
+    {
+      "id": "w4",
+      "role": "code-reviewer/opus",
+      "status": "complete",
+      "task": "digest-fix review: CHANGES-REQUIRED 0 BLOCKER 1 MAJOR (committed-bytes property unenforced) 4 MINOR 4 NOTE; forwarded to lane P"
+    },
+    {
+      "id": "P",
+      "role": "executor-high/opus",
+      "status": "complete",
+      "files": [
+        "services/agri-data-service/scripts/{quality_receipt,check,verify_quality_receipt}.py",
+        "scripts/AGENTS.md",
+        "tests/scripts/**",
+        "tests/test_layer_import_contract.py",
+        "services/agri-data-service/Dockerfile",
+        "infra/job-executor/Dockerfile",
+        ".dockerignore"
+      ],
+      "task": "M1 m2 M2 M4 M3 M5 m1 M6 -> done: schema v2 + digest_domain, alembic/db/mypy.ini/ruff.toml/alembic.ini digested, drift guard, git index guard (refuses untracked/unstaged/ignored), 30 new tests, 26-violation list pinned"
+    },
+    {
+      "id": "T",
+      "role": "executor-high/opus",
+      "status": "complete",
+      "files": [
+        "src/lib/server/services/places.ts",
+        "src/lib/server/trpc/routers/places.ts",
+        "src/components/map/MapView.tsx",
+        "src/__tests__/components/map-view-render-count.test.tsx",
+        "new places tests"
+      ],
+      "task": "B1 M7 M8 -> done: ST_DWithin/&& envelope, zod bounds, viewport getState, AgentAnalysisPrompt wrapper, 2 new test files"
+    },
+    {
+      "id": "D",
+      "role": "executor/sonnet",
+      "status": "complete",
+      "files": [
+        "docs/deployment.md",
+        "infra/railway/README.md",
+        "scheduler-handoff-20260902.md",
+        "removal-proof-packet.md",
+        "docker-compose.yml (comments)"
+      ],
+      "task": "B2 docs, B1 packet retraction, m4"
+    },
+    {
+      "id": "B",
+      "role": "bash/background",
+      "status": "complete",
+      "task": "browser check GREEN on all four gates; captures under multiscale evidence screenshots-2026-09-03"
+    },
+    {
+      "id": "S1",
+      "role": "bash/background",
+      "status": "complete",
+      "task": "TS sweep #1 green: tsc clean, eslint 0 errors/542 warnings (baseline), vitest 1778 passed"
+    },
+    {
+      "id": "R1",
+      "role": "code-reviewer/opus",
+      "status": "complete",
+      "task": "TS closure review: CHANGES-REQUIRED 0 BLOCKER 3 MAJOR (geo.poi unpopulated; nearby not index-backed; bbox extent unbounded) 5 MINOR 6 NOTE"
+    },
+    {
+      "id": "T2",
+      "role": "executor-high/opus",
+      "status": "complete",
+      "files": [
+        "places.ts",
+        "routers/places.ts",
+        "places tests",
+        "MapView.tsx",
+        "render-count test",
+        "src/hooks/AGENTS.md",
+        "src/lib/server/AGENTS.md",
+        "docs/api-reference.md (places)"
+      ],
+      "task": "close TS closure-review findings -> done; TS sweep #3 green (tsc clean, 0 lint errors, vitest 1783)"
+    },
+    {
+      "id": "S2",
+      "role": "bash/background",
+      "status": "complete",
+      "task": "Python sweep green after 2 lint fixes + test scope fix; receipt schema 2 domain v2 c7071071 over 1123 files"
+    },
+    {
+      "id": "R2",
+      "role": "code-reviewer/opus",
+      "status": "complete",
+      "task": "Python closure review (sonnet): CHANGES-REQUIRED 1 MAJOR (git plumbing untested) 2 MINOR (stale census; unmerged stages collapse) -> P3"
+    },
+    {
+      "id": "P3",
+      "role": "executor/sonnet",
+      "status": "complete",
+      "task": "real-git plumbing test, unmerged-stage refusal, census refresh"
+    },
+    {
+      "id": "R3",
+      "role": "code-reviewer/sonnet",
+      "status": "complete",
+      "task": "re-review of TS closure pass 2"
+    }
   ],
-  "shared_files_deferred_to_orchestrator": ["src/app/dashboard/page.tsx", "package.json"]
+  "shared_files": [
+    "services/agri-data-service/QUALITY_RECEIPT.json (rewritten by the sweep only)"
+  ],
+  "blocked_actions": [
+    {
+      "action": "railway update-service plantgeo-job-executor railwayConfigFile=services/agri-data-service/railway.job-executor.json",
+      "reason": "permission classifier denied the MCP mutation; Railway CLI 5.45.2 has no service-update verb",
+      "owner": "user",
+      "status": "still blocked; every executor deploy (push or --from-source redeploy) builds the root Dockerfile until the owner sets railwayConfigFile"
+    }
+  ],
+  "findings": [
+    "plantgeo-parquet-api build 56fa0804 @e4a101f FAILED at quality-receipt: receipt digest 3824cf2c (Windows CRLF worktree) != Linux context b0ec4347; 181/842 files differ only by CRLF",
+    "plantgeo-job-executor build fbc4cbb7 @e4a101f FAILED: root railway.json discovered on push -> built Next.js Dockerfile -> NEXT_PUBLIC_PMTILES_URL check; same at e4490c3 (003bfc6e); only manual redeploy b1f35a20 built infra/job-executor/Dockerfile",
+    "production is mixed: plantgeo-main @821a830 (new), parquet-api and executor @e4490c3 (old)"
+  ],
+  "deploy": {
+    "commit": "1da1a28",
+    "parquet_api": "3a3430bf BUILDING",
+    "executor_push": "9fa4c8a8 FAILED (root Dockerfile, expected)",
+    "executor_redeploy_from_source": "triggered 12:40 UTC via railway CLI"
+  },
+  "join_plan": "after P3: git add + Python sweep -> receipt -> index-tree verify; after R3 verdict: commit all, git-archive verify, push, observe parquet-api build, RUNBOOK ledger + handoff",
+  "commits": [
+    "1da1a28 receipt CRLF fix (pushed 12:39 UTC)",
+    "4a679d2 wave-3 closure + gate hardening (pushed ~14:15 UTC)"
+  ]
 }

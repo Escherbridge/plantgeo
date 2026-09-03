@@ -34,10 +34,11 @@ zooms. No browser console error explained the failures.
 
 ### HANDOFF — 2026-09-03 03:10 MDT, for continued execution. START HERE.
 
-**Branch** `main` · **Last commit** `e4a101f docs: dedupe the wave-2/3 runbook section` · tree clean, level
-with `origin/main` · six commits pushed 2026-09-03 (`2b4cfef..e4a101f`), so production has redeployed
-`plantgeo-main`, the agri service and `plantgeo-job-executor` from this range. Nothing in this section
-has been observed in production yet.
+**Branch** `main` · **Last commit** `4a679d2 fix: close the wave-3 review and harden the quality-receipt gate` · tree clean, level with
+`origin/main` · pushed 2026-09-03 (after `e4a101f`: `1da1a28` receipt CRLF fix, `4a679d2` wave-3 closure).
+Production: `plantgeo-main` and `plantgeo-parquet-api` redeploy from every push (the API first succeeded at
+`1da1a28`, deployment `3a3430bf`, 12:41 UTC); **`plantgeo-job-executor` still runs `e4490c3`** and cannot
+deploy until its Config-as-code path is set (see "Progress 2026-09-03" below).
 
 #### Goal
 Finish the 2026-09-01 repair order (this LIVE section, "Repair order and production gates") through a
@@ -47,6 +48,51 @@ so the climate/soil tails close, then run the remaining code lanes (acceptance e
 conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED until that verdict.
 
 #### State
+##### Progress 2026-09-03 (continuation session, steps 1-3 executed)
+- **Step 1 - observed, RED, half repaired.** Both Python images failed to build from `e4a101f`. (a) The agri
+  service died at the `quality-receipt` stage: the receipt was written on this Windows checkout, where 181 of
+  842 digest inputs carry CRLF that git normalizes away on commit, so the Linux context digested differently
+  (`b0ec4347...` vs recorded `3824cf2c...`). Fixed in `1da1a28` (digest over CRLF-normalized bytes, domain v2),
+  verified against a `git archive` extraction before the push; Railway then printed `quality receipt verified
+  ... over 844 files` and `plantgeo-parquet-api` went live (`3a3430bf`). (b) The executor died in 11 s building
+  the **root Next.js Dockerfile**: the service has NO config-as-code path, so a push discovers root
+  `railway.json`; `railway service redeploy --from-source` fails the same way (`5523d2e8`). Every executor
+  deploy since `e4490c3` has failed this way except the manual `b1f35a20`. **Owner action required:** set
+  Config-as-code on `plantgeo-job-executor` to `services/agri-data-service/railway.job-executor.json`
+  (dashboard, or the Railway MCP `update-service` `railwayConfigFile`; the MCP mutation was denied by this
+  session's permission classifier and CLI 5.45.2 has no service-update verb). Until then no new-code executor
+  tick exists; the old executor logs `tick_unhealthy` for the matview/WFIGS/parquet lanes every 30 s.
+  Evidence: `tracks/gapless_parquet_publication_20260901/evidence/post-deploy-tick-2026-09-03.md`.
+- **Mixed-version lesson.** While the web app was new and the API old, every Parquet layer read "upstream
+  unavailable": the client refuses a coverage body without `coverage_schema_version: 2`. Deploy the API
+  before or with the app.
+- **Pre-bootstrap coverage is slow by design.** The first census after an API deploy took ~28 s (whole-stream
+  listings for every un-bootstrapped lane plus snapshot forward listings) against the app's 8 s coverage
+  timeout, so the first request withheld everything; the API memoizes the census 120 s and the app caches a
+  good answer 300 s (then 0.4-0.7 s). `climate-field-dew-point` and `climate-field-relative-humidity` hit
+  `census_budget_exhausted` and are withheld; the app relabels that `lane_not_registered` (reader-track
+  contract note). Steps 4-5 remove all of this; do not tune the census.
+- **Step 2 - GREEN on all four gates** (headless Chromium, anonymous, `1da1a28`): fire density cells at the
+  default camera (`state: ready`, 0.2 degree `aggregate_cell`, no `/api/fires`), climate air temperature z8
+  filled one-rung tessellation (cell lines are the deliberate `fill-outline-color` stroke), vegetation and
+  water z5 cells, soil moisture z5 0.25 degree tessellation (latest 2026-08-02; the 31-day tail is step 7's).
+  Captures: `tracks/multiscale_polygon_surface_20260901/evidence/screenshots-2026-09-03/`. Not captured: the
+  fire hover caption (automation surfaced no tooltip) and pixel seam checks (acceptance A2).
+- **Step 3 - wave 3 reviewed and closed** (ledger below). Blockers: `places.ts` was NOT an orphan (mounted
+  public router; its readers ignored lat/lon/radius/bbox, latent because `geo.poi` has no producer) and the
+  docs certified an executor config production never had. Closure in `4a679d2`: PostGIS filtering with an
+  index-backed `&&` envelope pre-filter, exact `ST_DWithin`, area-bounded (4 square degrees) required bbox,
+  zod bounds; `MapView` no longer subscribes to `viewport`; `useRegionalIntelligence` moved below `MapView`
+  (it subscribes its caller to `activeLayers`); the receipt gate digests `mypy.ini`, `ruff.toml`,
+  `alembic.ini`, `alembic/`, `db/` (schema 2, `digest_domain` recorded, 1,124 files), digests before AND
+  after the sweep, and `--write-receipt` **refuses untracked, unstaged or ignored inputs** (stage the service
+  tree first); the 26 c2 violations are pinned as an exact list; docs corrected (`docs/deployment.md`,
+  `infra/railway/README.md`, `docs/api-reference.md`, evidence addenda). Sweeps: tsc clean, eslint 0 errors,
+  vitest 1,783; ruff, mypy, pytest green, receipt verified on a `git archive` of the staged tree.
+- **Left open from the reviews (small):** `src/hooks/useRegionalIntelligence.ts:93-99` header still claims
+  the hook subscribes to nothing; `RegionalIntelligencePanel` still re-renders on a layer toggle while open;
+  `MapView.tsx` commits as an LF rewrite (it was CRLF in HEAD).
+
 - **Verified (code, tests, reviews):** waves 1–3 as described in "Waves 2 and 3 landed" and "Wave 1
   landed" below. Final sweeps on `12fa189`: tsc clean, eslint 0 errors, vitest 1,743; ruff/mypy/format
   clean, pytest 4,941, `QUALITY_RECEIPT.json` verified over 842 files.
@@ -66,8 +112,11 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
 | wave 1 PY (p1, p5) | adversarial, separate | 1 blocker (climate writer could not publish), 3 major | CHANGES-REQUIRED → fixed → verified |
 | wave 2 TS (A–D) | adversarial, separate | 2 blockers (inverted 0.25° phase; test pinned it), 2 major | CHANGES-REQUIRED → fixed, swept green |
 | wave 2 PY (E, F) | adversarial, separate | 1 blocker (repair never re-indexed), 3 major | CHANGES-REQUIRED → fixed, swept green (1 live defect found in the fix: reused source ceiling → fixed) |
-| wave 3 (c1/c3/c4, both sides) | none — no separate review | — | **UNREVIEWED**: the unused-symbol clearance, orphan deletions, quality receipt, MapView selectors and topology docs have only their own sweeps |
-| production after the push | none | — | **UNOBSERVED** |
+| wave 3 (c1/c3/c4, both sides) | adversarial, separate (opus) | 2 blockers (`places.ts` not an orphan and its spatial args ignored; docs certify an executor config production lacks), 8 major, 4 minor | CHANGES-REQUIRED -> fixed in three lanes -> closure reviews below |
+| receipt CRLF fix `1da1a28` | adversarial, separate (opus) | 0 blockers, 1 major (committed-bytes property unenforced), minors | APPROVED after re-verification; findings folded into the gate closure |
+| wave-3 closure, TypeScript | adversarial, separate (opus, then sonnet re-review) | 3 major (`geo.poi` unpopulated; `nearby` not index-backed; bbox extent unbounded), 5 minor | CHANGES-REQUIRED -> fixed -> re-review: all closed; one test-walker defect fixed before the green sweep |
+| wave-3 closure, Python gate | adversarial, separate (sonnet, after two opus 529 terminations) | 1 major (git plumbing untested), 2 minor | CHANGES-REQUIRED -> fixed (real-git tests, unmerged-stage refusal, census) -> swept green |
+| production after the push | observed (Railway API, logs, browser) | agri build RED (receipt) -> fixed `1da1a28` -> live; executor RED (config) -> **owner action**; browser gates GREEN | recorded in `post-deploy-tick-2026-09-03.md` |
 
 #### Decisions (owner, 2026-09-03)
 - Verify the deployment before any further code work, because the push changed production behaviour
@@ -104,8 +153,11 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
   `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` and `PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS`
   (executor). Values live only in Railway; never paste them here.
 - Python: every command is `UV_NO_SYNC=1 uv run --no-sync …`; a bare `uv sync`/`uv run` strips pytest.
-  After ANY Python change: `scripts/check.py` green, then `scripts/check.py --write-receipt`, or both
-  images fail at the `quality-receipt` stage. `uv.lock` is a digest input.
+  After ANY Python change: `git add services/agri-data-service` FIRST (the writer refuses untracked,
+  unstaged or ignored digest inputs), then `scripts/check.py --write-receipt` (runs the sweep, writes only
+  if green), then verify like the image will: `git archive $(git write-tree) services/agri-data-service |
+  tar -x -C <tmp>` and `python scripts/verify_quality_receipt.py` there. Digest inputs: `src tests scripts
+  alembic db`, `pyproject.toml uv.lock mypy.ini ruff.toml alembic.ini`, CRLF-normalized (domain v2).
 - TypeScript: `npm run type-check`, `npm run lint`, `npm test` — run vitest alone (overlapping runs
   fail with "No test suite found"). Never run PlantGeo locally (`next dev`/`build`, docker).
 - No background processes were left running by this session.
@@ -121,7 +173,11 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
 - `conductor/tracks/parquet_production_acceptance_20260901/{spec,plan}.md` — the evidence matrix the tooling must feed.
 
 #### Continuation plan
-1. **Observe the deploy.** With the Railway MCP: confirm the active deployments of `plantgeo-main`, the
+1. **Observe the deploy** - DONE for the web app and the API (see Progress). For the executor: FIRST set the
+   Config-as-code path (owner), then push any commit or run `railway service redeploy --service
+   plantgeo-job-executor --environment production --from-source --yes`, confirm the build log says `load
+   build definition from infra/job-executor/Dockerfile` and `quality receipt verified ... over 1124 files`,
+   then read one tick as specified here. Original text: With the Railway MCP: confirm the active deployments of `plantgeo-main`, the
    agri service and `plantgeo-job-executor` are at `e4a101f` and `SUCCESS`; if a build failed at the
    `quality-receipt` stage, the receipt is stale — do not bypass the stage; re-run the sweep and
    `--write-receipt`. Then read one full executor tick: `jobs-matview-refresh` must close `succeeded`
@@ -129,11 +185,11 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
    `oversized_records`/`bytes_read`; a `parquet-*` lane must print `repaired` and `availability_*`
    counters (expect `availability_not_bootstrapped` everywhere). Record the tick in
    `conductor/tracks/gapless_parquet_publication_20260901/evidence/post-deploy-tick-2026-09-03.md`.
-2. **Browser check** in a fresh anonymous session at the default PNW camera: fire (cells above z13 with
+2. **Browser check** - DONE, GREEN (see Progress). Original text: in a fresh anonymous session at the default PNW camera: fire (cells above z13 with
    the not-a-perimeter caption; no `/api/fires` request), climate air temperature at z8 (filled
    tessellation, one rung, no cracks), vegetation and water at z5 (cells), soil moisture at z5 (no
    nested blocks). Any RED → its track (reader / multiscale), fix, re-push, back to step 1.
-3. **Review wave 3** while ticks are observed: `/code-review high` scoped to the wave-3 files in
+3. **Review wave 3** - DONE (ledger above). Original text: while ticks are observed: `/code-review high` scoped to the wave-3 files in
    `12fa189` (tsconfig/eslint policy clearance, orphan deletions, `MapView`/`useRegionalIntelligence`
    selectors, `scripts/check.py`, `quality_receipt.py`, both Dockerfiles, `docs/deployment.md`).
    Record the verdict in the ledger above.

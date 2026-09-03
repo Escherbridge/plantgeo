@@ -187,3 +187,15 @@ sampling mouse positions over the canvas did not surface a tooltip element under
 remains verified in code only. Step 2 verdict: **GREEN on all four gates** (fire cells + no
 `/api/fires`; climate z8 filled one-rung tessellation; vegetation and water z5 cells; soil moisture z5
 without nested blocks). Captures: `conductor/tracks/multiscale_polygon_surface_20260901/evidence/screenshots-2026-09-03/`.
+
+## Closure push `4a679d2` — 14:13 UTC
+
+| service | deployment | result |
+|---|---|---|
+| `plantgeo-parquet-api` | `36e86e9c` (push) | `quality receipt verified: sha256:5ad493c5… over 1124 files` at 14:13:54 UTC (the hardened gate: schema 2, digest domain v2, `alembic/`, `db/`, `mypy.ini`, `ruff.toml`, `alembic.ini` now covered); `DEPLOYING` at 14:14. |
+| `plantgeo-job-executor` | `b4c11f50` (push) | FAILED in 9 s, root Dockerfile — unchanged until the owner sets the Config-as-code path. |
+| `plantgeo-main` | push | redeploys as usual. |
+
+Wave-3 closure contents and the review ledger are in `conductor/RUNBOOK.md` (HANDOFF 2026-09-03, "Progress
+2026-09-03"). Step 1 stands at: web app and API observed at the new code; executor observation blocked on
+the owner's one setting. Steps 4–12 of the continuation plan are unchanged and next.
