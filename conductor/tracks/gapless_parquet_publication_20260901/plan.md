@@ -41,7 +41,8 @@ resource: ./spec.md
 - [x] Build climate direct writers, solar first, within one bounded source-family owner
   (2026-09-02, `2b4cfef`: NASA POWER point-per-cell writer for all six products, SHADOW, never run live;
   ERA5-Land products remain CDS-credential-blocked).
-- [ ] Build NASA POWER and ERA5-Land soil/product writers in disjoint ownership lanes.
+- [x] Build NASA POWER and ERA5-Land soil/product writers in disjoint ownership lanes
+  (2026-09-02, `12fa189`: `pipeline/direct/soil` on the Open-Meteo archive, keyless; soil-wetness in the climate writer; shadow).
 - [x] Reconcile existing fire, water, vegetation, weather and sensor writer ownership — done by the
   2026-09-02 executor-only scheduler handoff, not by new work in this wave; see its "Authoritative
   responsibility matrix" for the full existing-Railway-writer-to-executor-lane mapping:
@@ -55,8 +56,8 @@ resource: ./spec.md
 
 ## Wave P2 — repair and scheduler integration
 
-- [ ] Author missing-day work and bounded idempotent repair.
-- [ ] Require every required rung before terminal publication.
+- [x] Author missing-day work and bounded idempotent repair (2026-09-02, `12fa189`: ladder-aware census, `repair_one_lane_day`, re-index claim).
+- [x] Require every required rung before terminal publication (2026-09-02: `derived_empty` receipt closes emptied rungs; ladder census).
 - [x] Extend availability for published and governed-absence outcomes without rescanning history
   (2026-09-02: claim-first extension after the completion marker in `fill_one_lane_day`; the
   `derived_to_zero_rows` ladder hole is open, see `pipeline/parquet/AGENTS.md`).

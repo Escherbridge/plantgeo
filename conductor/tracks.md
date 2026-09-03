@@ -7,7 +7,7 @@ type: work-registry
 Per [`README.md`](./README.md), this file is the sole current work registry.
 Material under `retros/` contains completed tracks and retrospectives. Status vocabulary: active, planned, blocked, complete, historical.
 
-Registry updated 2026-09-02 (wave 1 at `2b4cfef`, unpushed).
+Registry updated 2026-09-02 (waves 1–3 through `12fa189`, pushed).
 
 **2026-08-22 — reconciled against the architecture pivot.** `conductor/RUNBOOK.md`
 §0.23 (Postgres becomes a community-features-only database; every data plane
