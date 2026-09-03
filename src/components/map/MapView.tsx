@@ -29,6 +29,50 @@ const RegionalIntelligencePanel = dynamic(
   { ssr: false }
 );
 
+/**
+ * The confirm-before-analyse popup, with the analysis controller it needs.
+ *
+ * Held here rather than in MapView so its layer-toggle subscription costs this popup's renders,
+ * not the map's -- see "useRegionalIntelligence" in `src/hooks/AGENTS.md`.
+ */
+function AgentAnalysisPrompt({
+  coordinates,
+  onClose,
+}: {
+  coordinates: [number, number];
+  onClose: () => void;
+}) {
+  const { queryLocation } = useRegionalIntelligence();
+
+  const handleAnalyze = useCallback(
+    (precision: "approximate" | "exact") => {
+      const [lon, lat] = coordinates;
+      const coordinateDigits = precision === "approximate" ? 2 : 6;
+      const requestedLat = Number(lat.toFixed(coordinateDigits));
+      const requestedLon = Number(lon.toFixed(coordinateDigits));
+      useRegionalIntelligenceStore.getState().openPanel(
+        requestedLat,
+        requestedLon,
+        precision
+      );
+      // Dispatched before the close that unmounts this component: `queryLocation` reads the
+      // viewed-layer ref synchronously and then owns its own request, so the unmount cannot
+      // strand it.
+      void queryLocation(requestedLat, requestedLon, undefined, precision);
+      onClose();
+    },
+    [coordinates, onClose, queryLocation]
+  );
+
+  return (
+    <AgentInteraction
+      coordinates={coordinates}
+      onAnalyze={handleAnalyze}
+      onClose={onClose}
+    />
+  );
+}
+
 export default function MapView() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -42,7 +86,11 @@ export default function MapView() {
   // the store object re-rendered it on every unrelated write -- a feature selection, a layer
   // toggle, a query-point pin. See conductor/code_styleguides/typescript.md, "Subscribe to the
   // narrowest Zustand/Jotai state slice".
-  const viewport = useMapStore((state) => state.viewport);
+  //
+  // `viewport` is deliberately absent from this list. It is read once, to seed the camera, by a
+  // `[]`-dependency callback -- and `setViewport` mints a new object on every moveend, resize
+  // and load, so subscribing to it re-rendered this whole subtree on every pan. `initMap` reads
+  // it through `getState()` instead.
   const is3DEnabled = useMapStore((state) => state.is3DEnabled);
   const isGlobeView = useMapStore((state) => state.isGlobeView);
   const terrainExaggeration = useMapStore((state) => state.terrainExaggeration);
@@ -53,27 +101,10 @@ export default function MapView() {
   const prevStyleRef = useRef(currentStyle);
   // Only the open flag: every streaming token of an analysis writes this store.
   const isAIOpen = useRegionalIntelligenceStore((state) => state.isOpen);
-  const { queryLocation } = useRegionalIntelligence();
 
   const handleCloseAgentInteraction = useCallback(() => {
     setAgentCoords(null);
   }, []);
-
-  const handleAnalyzeLocation = useCallback((precision: "approximate" | "exact") => {
-    if (!agentCoords) return;
-
-    const [lon, lat] = agentCoords;
-    const coordinateDigits = precision === "approximate" ? 2 : 6;
-    const requestedLat = Number(lat.toFixed(coordinateDigits));
-    const requestedLon = Number(lon.toFixed(coordinateDigits));
-    useRegionalIntelligenceStore.getState().openPanel(
-      requestedLat,
-      requestedLon,
-      precision
-    );
-    setAgentCoords(null);
-    void queryLocation(requestedLat, requestedLon, undefined, precision);
-  }, [agentCoords, queryLocation]);
 
   const initMap = useCallback(() => {
     if (mapRef.current || !mapContainer.current) return;
@@ -81,6 +112,9 @@ export default function MapView() {
     const protocol = new Protocol();
     maplibregl.addProtocol("pmtiles", protocol.tile);
 
+    // The seed camera, read once. This callback runs once per mount and never re-runs, so a
+    // subscription would only cost renders -- see the note above the selectors.
+    const viewport = useMapStore.getState().viewport;
     const m = new maplibregl.Map({
       container: mapContainer.current,
       style: getStyle(currentStyle),
@@ -377,9 +411,8 @@ export default function MapView() {
             </div>
             {isAIOpen && <RegionalIntelligencePanel />}
             {agentCoords && (
-              <AgentInteraction
+              <AgentAnalysisPrompt
                 coordinates={agentCoords}
-                onAnalyze={handleAnalyzeLocation}
                 onClose={handleCloseAgentInteraction}
               />
             )}

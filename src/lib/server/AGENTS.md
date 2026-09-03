@@ -1280,3 +1280,22 @@ Adjudicating them (and any backfill or migration) belongs to
 `conductor/tracks/repository_conformity_hardening_20260901`, not here. No migration ships with
 this change on purpose: rewriting the rows would destroy the only signal that tells the suspect
 population apart from later, honestly-absent ones.
+
+## §places
+
+`services/places.ts` and `trpc/routers/places.ts` are correct, bounded readers over a table
+nothing writes to yet. `geo.poi` exists only as schema: `drizzle/0001_handy_riptide.sql:108` adds
+its `geom` column and `:279` its GiST index (`idx_poi_geom`), but no importer, ingest job or
+migration ever inserts a row into it. The table the OSM import actually populates is
+`geo.osm_pois` (`drizzle/0001_handy_riptide.sql:357`, indexes `idx_osm_pois_geom` and
+`idx_osm_pois_amenity` at `:372-373`, loaded by `scripts/import-osm.sh:84,94`), and its schema is
+a different shape -- `amenity`/`shop`/`tourism` columns and a `bigint` id, against `geo.poi`'s
+`category`/`subcategory`/`phone`/`website`/`hours` and `uuid` id.
+
+**Deliberately not repointed.** `placesRouter` has zero client consumers today (grepped
+2026-09-03: only its own test files import it), so swapping the read target is a data-model
+decision with nothing depending on it either way, and out of scope for a readers-only pass. A
+future POI feature has exactly two honest options: load `geo.poi` from OSM (or another source)
+in its own shape, or repoint every reader here at `geo.osm_pois` and rewrite `placeColumns`,
+`Place` and the category taxonomy (`POI_CATEGORIES`) to match its columns. Either is a real
+change; treating the two tables as interchangeable is not.

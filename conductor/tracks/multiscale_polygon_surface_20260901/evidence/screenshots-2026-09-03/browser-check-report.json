@@ -1,0 +1,441 @@
+[
+ {
+  "scenario": "fire-default-pnw",
+  "url": "https://plantgeo.aevani.com/",
+  "toggles": {
+   "fire": {
+    "rowsMatched": [
+     "layer-row-fire",
+     "layer-row-fire-perimeters"
+    ],
+    "ariaLabel": "Show Fire Detections on map",
+    "disabledBefore": false,
+    "checkedAfter": "true"
+   }
+  },
+  "sliders": {
+   "wildfire.getFireDetections": {
+    "status": 200,
+    "bytes": 91251,
+    "head": "[{\"result\":{\"data\":{\"json\":{\"state\":\"ready\",\"requestedDay\":\"2026-09-01\",\"servedDay\":\"2026-09-01\",\"data\":{\"firstDay\":\"2026-09-01\",\"lastDay\":\"2026-09-01\",\"cells\":[{\"longitude\":-123.2,\"latitude\":45.2,\"observedDay\":\"2026-09-01\",\"detectionCount\":4,\"frpSum\":12.23,\"frpObservationCount\":4,\"highConfidenceDetectionCount\":0,\"newestObservedAt\":\"2026-09-01T10:26:00Z\",\"support\":{\"zoomTier\":5,\"supportKind\":\"aggregate_cell\",\"supportId\":\"5:-123.2:45.2\",\"origin\":\"cell_origin\",\"cellWidthDegrees\":0.2,\"cellHeightDegrees\":0.2,\"cellOriginDegrees\":[-123.2,45.2],\"aggregationMethod\":\"count\",\"contributorCount\":4,\"provenance\":{\"sourceLayer\":\"fire-detections\",\"observedDay\":\"2026-09-01\",\"newestObservedAt\":\"2026-09-01T10:"
+   },
+   "fire": {
+    "unavailable": false,
+    "date": "2026-09-01"
+   }
+  },
+  "errors": [],
+  "mapLoadMs": 3210,
+  "buttonLabels": [
+   "Zoom in",
+   "Zoom out",
+   "Drag to rotate map, click to reset north",
+   "Find my location",
+   "Enter fullscreen",
+   "Map manager",
+   "Dismiss"
+  ],
+  "panelVisible": true,
+  "testIds": [
+   "layer-panel",
+   "dock-section-search",
+   "dock-section-body-search",
+   "dock-section-view",
+   "layer-group-fire",
+   "layer-row-fire",
+   "layer-swatch",
+   "layer-row-fire-perimeters",
+   "layer-row-evacuation-zones",
+   "layer-row-burn-severity",
+   "dock-section-fire",
+   "layer-group-water",
+   "layer-row-water",
+   "layer-row-drought",
+   "layer-row-weather",
+   "layer-row-sensors",
+   "layer-row-watersheds",
+   "dock-section-water",
+   "layer-group-vegetation",
+   "layer-row-vegetation",
+   "dock-section-vegetation",
+   "layer-group-soil",
+   "layer-row-soil",
+   "layer-row-soil-survey",
+   "layer-row-soil-moisture",
+   "layer-row-soil-temperature",
+   "layer-row-soil-vpd",
+   "dock-section-soil",
+   "layer-group-climate",
+   "layer-row-climate-air-temperature",
+   "layer-row-climate-dew-point",
+   "layer-row-climate-precipitation",
+   "layer-row-climate-relative-humidity",
+   "layer-row-climate-shortwave-radiation",
+   "layer-row-climate-wind-speed",
+   "layer-row-climate-soil-wetness-surface",
+   "layer-row-climate-soil-wetness-root-zone",
+   "layer-row-climate-soil-wetness-profile",
+   "dock-section-climate",
+   "layer-group-community",
+   "layer-row-demand-heatmap",
+   "layer-row-interventions",
+   "layer-row-strategy-recommendations",
+   "dock-section-community",
+   "dock-section-team",
+   "dock-section-offline"
+  ],
+  "rowText": {
+   "fire": "Fire Detections\n100%\nFire Detections date, YYYY-MM-DD\nLatest\n\nCoverage from 2000-11-01 to 2026-09-03. 448 gaps with no data: 2000-11-13; 2000-11-26; 2000-11-29, and 445 more. Page Up and Page Down move 30 days; hold Shift to move 365.\n\nNothing saved on this device yet.\n\nClear saved days"
+  },
+  "loadingBanner": 0,
+  "hoverCaptions": [],
+  "trpc": [
+   {
+    "proc": "layers.getIngestionCoverage,environmental.getSliderCapabilities",
+    "status": 200,
+    "ms": 155
+   },
+   {
+    "proc": "wildfire.getFireDetections",
+    "status": 200,
+    "ms": 601
+   }
+  ],
+  "legacyFiresRequests": 0,
+  "consoleErrors": [],
+  "requestCount": 181
+ },
+ {
+  "scenario": "climate-air-temp-z8",
+  "url": "https://plantgeo.aevani.com/?focusLng=-120.5&focusLat=45.5&focusZoom=8",
+  "toggles": {
+   "climate-air-temperature": {
+    "rowsMatched": [
+     "layer-row-climate-air-temperature"
+    ],
+    "ariaLabel": "Show Air temperature on map",
+    "disabledBefore": false,
+    "checkedAfter": "true"
+   }
+  },
+  "sliders": {
+   "environmental.getClimateField": {
+    "status": 200,
+    "bytes": 109027,
+    "head": "[{\"result\":{\"data\":{\"json\":{\"type\":\"FeatureCollection\",\"features\":[{\"type\":\"Feature\",\"id\":\"5:-125:51\",\"geometry\":{\"type\":\"Polygon\",\"coordinates\":[[[-125.5,50.5],[-124.5,50.5],[-124.5,51.5],[-125.5,51.5],[-125.5,50.5]]]},\"properties\":{\"value\":15.2,\"unit\":\"C\",\"bandIndex\":6,\"bandLabel\":\"15 to 20\",\"observedDay\":\"2026-08-06\",\"aggregated\":true,\"cellKey\":null,\"coverageFraction\":1}},{\"type\":\"Feature\",\"id\":\"5:-124:40\",\"geometry\":{\"type\":\"Polygon\",\"coordinates\":[[[-124.5,39.5],[-123.5,39.5],[-123.5,40.5],[-124.5,40.5],[-124.5,39.5]]]},\"properties\":{\"value\":21.52,\"unit\":\"C\",\"bandIndex\":7,\"bandLabel\":\"20 to 25\",\"observedDay\":\"2026-08-06\",\"aggregated\":true,\"cellKey\":null,\"coverageFraction\":1}},{\"type\":\"F"
+   },
+   "climate-air-temperature": {
+    "unavailable": false,
+    "date": "2026-08-06"
+   }
+  },
+  "errors": [],
+  "mapLoadMs": 3288,
+  "buttonLabels": [
+   "Zoom in",
+   "Zoom out",
+   "Drag to rotate map, click to reset north",
+   "Find my location",
+   "Enter fullscreen",
+   "Map manager",
+   "Dismiss"
+  ],
+  "panelVisible": true,
+  "testIds": [
+   "layer-panel",
+   "dock-section-search",
+   "dock-section-body-search",
+   "dock-section-view",
+   "layer-group-fire",
+   "layer-row-fire",
+   "layer-swatch",
+   "layer-row-fire-perimeters",
+   "layer-row-evacuation-zones",
+   "layer-row-burn-severity",
+   "dock-section-fire",
+   "layer-group-water",
+   "layer-row-water",
+   "layer-row-drought",
+   "layer-row-weather",
+   "layer-row-sensors",
+   "layer-row-watersheds",
+   "dock-section-water",
+   "layer-group-vegetation",
+   "layer-row-vegetation",
+   "dock-section-vegetation",
+   "layer-group-soil",
+   "layer-row-soil",
+   "layer-row-soil-survey",
+   "layer-row-soil-moisture",
+   "layer-row-soil-temperature",
+   "layer-row-soil-vpd",
+   "dock-section-soil",
+   "layer-group-climate",
+   "layer-row-climate-air-temperature",
+   "layer-row-climate-dew-point",
+   "layer-row-climate-precipitation",
+   "layer-row-climate-relative-humidity",
+   "layer-row-climate-shortwave-radiation",
+   "layer-row-climate-wind-speed",
+   "layer-row-climate-soil-wetness-surface",
+   "layer-row-climate-soil-wetness-root-zone",
+   "layer-row-climate-soil-wetness-profile",
+   "dock-section-climate",
+   "layer-group-community",
+   "layer-row-demand-heatmap",
+   "layer-row-interventions",
+   "layer-row-strategy-recommendations",
+   "dock-section-community",
+   "dock-section-team",
+   "dock-section-offline"
+  ],
+  "rowText": {
+   "climate-air-temperature": "Air temperature\n100%\nAir temperature date, YYYY-MM-DD\nLatest\n\nCoverage from 2022-04-30 to 2026-09-03. Not described before 2026-09-04. No gaps and no sparse days after that. Page Up and Page Down move 30 days; hold Shift to move 365.\n\n1 day saved on this device; this day is one of them.\n\nClear saved days (1)"
+  },
+  "loadingBanner": 0,
+  "trpc": [
+   {
+    "proc": "layers.getIngestionCoverage,environmental.getSliderCapabilities",
+    "status": 200,
+    "ms": 267
+   },
+   {
+    "proc": "environmental.getClimateField",
+    "status": 200,
+    "ms": 1662
+   }
+  ],
+  "legacyFiresRequests": 0,
+  "consoleErrors": [],
+  "requestCount": 179
+ },
+ {
+  "scenario": "vegetation-water-z5",
+  "url": "https://plantgeo.aevani.com/?focusLng=-118&focusLat=45.5&focusZoom=5",
+  "toggles": {
+   "vegetation": {
+    "rowsMatched": [
+     "layer-row-vegetation"
+    ],
+    "ariaLabel": "Show Vegetation (NDVI) on map",
+    "disabledBefore": false,
+    "checkedAfter": "true"
+   },
+   "water": {
+    "rowsMatched": [
+     "layer-row-water",
+     "layer-row-watersheds"
+    ],
+    "ariaLabel": "Show Water Gauges on map",
+    "disabledBefore": false,
+    "checkedAfter": "true"
+   }
+  },
+  "sliders": {
+   "environmental.getVegetationField": "no response within 45s",
+   "environmental.getWaterGauges": "no response within 45s",
+   "vegetation": {
+    "unavailable": false,
+    "date": "2026-09-01"
+   },
+   "water": {
+    "unavailable": false,
+    "date": "2026-09-03"
+   }
+  },
+  "errors": [],
+  "mapLoadMs": 3106,
+  "buttonLabels": [
+   "Zoom in",
+   "Zoom out",
+   "Drag to rotate map, click to reset north",
+   "Find my location",
+   "Enter fullscreen",
+   "Map manager",
+   "Dismiss"
+  ],
+  "panelVisible": true,
+  "testIds": [
+   "layer-panel",
+   "dock-section-search",
+   "dock-section-body-search",
+   "dock-section-view",
+   "layer-group-fire",
+   "layer-row-fire",
+   "layer-swatch",
+   "layer-row-fire-perimeters",
+   "layer-row-evacuation-zones",
+   "layer-row-burn-severity",
+   "dock-section-fire",
+   "layer-group-water",
+   "layer-row-water",
+   "layer-row-drought",
+   "layer-row-weather",
+   "layer-row-sensors",
+   "layer-row-watersheds",
+   "dock-section-water",
+   "layer-group-vegetation",
+   "layer-row-vegetation",
+   "dock-section-vegetation",
+   "layer-group-soil",
+   "layer-row-soil",
+   "layer-row-soil-survey",
+   "layer-row-soil-moisture",
+   "layer-row-soil-temperature",
+   "layer-row-soil-vpd",
+   "dock-section-soil",
+   "layer-group-climate",
+   "layer-row-climate-air-temperature",
+   "layer-row-climate-dew-point",
+   "layer-row-climate-precipitation",
+   "layer-row-climate-relative-humidity",
+   "layer-row-climate-shortwave-radiation",
+   "layer-row-climate-wind-speed",
+   "layer-row-climate-soil-wetness-surface",
+   "layer-row-climate-soil-wetness-root-zone",
+   "layer-row-climate-soil-wetness-profile",
+   "dock-section-climate",
+   "layer-group-community",
+   "layer-row-demand-heatmap",
+   "layer-row-interventions",
+   "layer-row-strategy-recommendations",
+   "dock-section-community",
+   "dock-section-team",
+   "dock-section-offline"
+  ],
+  "rowText": {
+   "vegetation": "Vegetation (NDVI)\n100%\nVegetation (NDVI) date, YYYY-MM-DD\nLatest\n\nCoverage from 2022-08-05 to 2026-09-03. 3 gaps with no data: 2026-08-21 to 2026-08-22; 2026-08-26 to 2026-08-27; 2026-09-02 to 2026-09-03. 165 governed-absence ranges: 2022-09-17 to 2022-09-18; 2022-09-30; 2022-10-23 to 2022-10-24, and 162 more. Page Up and Page Down move 30 days; hold Shift to move 365.\n\n1 day saved on this device;",
+   "water": "Water Gauges\n100%\nWater Gauges date, YYYY-MM-DD\nLatest\n\nCoverage from 2022-08-05 to 2026-09-03. No gaps and no sparse days. Page Up and Page Down move 30 days; hold Shift to move 365.\n\nNothing saved on this device yet.\n\nClear saved days"
+  },
+  "loadingBanner": 0,
+  "trpc": [
+   {
+    "proc": "layers.getIngestionCoverage,environmental.getSliderCapabilities",
+    "status": 200,
+    "ms": 182
+   },
+   {
+    "proc": "environmental.getVegetationIndex",
+    "status": 200,
+    "ms": 5069
+   },
+   {
+    "proc": "environmental.getStreamflow",
+    "status": 200,
+    "ms": 991
+   },
+   {
+    "proc": "environmental.getGroundwater",
+    "status": 200,
+    "ms": 106
+   }
+  ],
+  "legacyFiresRequests": 0,
+  "consoleErrors": [],
+  "requestCount": 183
+ },
+ {
+  "scenario": "soil-moisture-z5",
+  "url": "https://plantgeo.aevani.com/?focusLng=-118&focusLat=45.5&focusZoom=5",
+  "toggles": {
+   "soil-moisture": {
+    "rowsMatched": [
+     "layer-row-soil-moisture"
+    ],
+    "ariaLabel": "Show Soil Moisture (ERA5-Land) on map",
+    "disabledBefore": false,
+    "checkedAfter": "true"
+   }
+  },
+  "sliders": {
+   "environmental.getSoilField": {
+    "status": 200,
+    "bytes": 474462,
+    "head": "[{\"result\":{\"data\":{\"json\":{\"type\":\"FeatureCollection\",\"features\":[{\"type\":\"Feature\",\"id\":\"soil-field-moisture-0-7cm:2026-08-02:-125:48.800000000000004\",\"geometry\":{\"type\":\"Polygon\",\"coordinates\":[[[-125,48.75],[-124.75,48.75],[-124.75,49],[-125,49],[-125,48.75]]]},\"properties\":{\"value\":0.284,\"bandIndex\":5,\"bandLabel\":\"0.25 to 0.30\",\"aggregated\":true,\"cellKey\":null,\"coverageFraction\":1}},{\"type\":\"Feature\",\"id\":\"soil-field-moisture-0-7cm:2026-08-02:-124.80000000000001:48\",\"geometry\":{\"type\":\"Polygon\",\"coordinates\":[[[-124.75,48],[-124.5,48],[-124.5,48.25],[-124.75,48.25],[-124.75,48]]]},\"properties\":{\"value\":0.275,\"bandIndex\":5,\"bandLabel\":\"0.25 to 0.30\",\"aggregated\":true,\"cellKey\":null,\"cove"
+   },
+   "soil-moisture": {
+    "unavailable": false,
+    "date": "2026-08-02"
+   }
+  },
+  "errors": [],
+  "mapLoadMs": 7480,
+  "buttonLabels": [
+   "Zoom in",
+   "Zoom out",
+   "Drag to rotate map, click to reset north",
+   "Find my location",
+   "Enter fullscreen",
+   "Map manager",
+   "Dismiss"
+  ],
+  "panelVisible": true,
+  "testIds": [
+   "layer-panel",
+   "dock-section-search",
+   "dock-section-body-search",
+   "dock-section-view",
+   "layer-group-fire",
+   "layer-row-fire",
+   "layer-swatch",
+   "layer-row-fire-perimeters",
+   "layer-row-evacuation-zones",
+   "layer-row-burn-severity",
+   "dock-section-fire",
+   "layer-group-water",
+   "layer-row-water",
+   "layer-row-drought",
+   "layer-row-weather",
+   "layer-row-sensors",
+   "layer-row-watersheds",
+   "dock-section-water",
+   "layer-group-vegetation",
+   "layer-row-vegetation",
+   "dock-section-vegetation",
+   "layer-group-soil",
+   "layer-row-soil",
+   "layer-row-soil-survey",
+   "layer-row-soil-moisture",
+   "layer-row-soil-temperature",
+   "layer-row-soil-vpd",
+   "dock-section-soil",
+   "layer-group-climate",
+   "layer-row-climate-air-temperature",
+   "layer-row-climate-dew-point",
+   "layer-row-climate-precipitation",
+   "layer-row-climate-relative-humidity",
+   "layer-row-climate-shortwave-radiation",
+   "layer-row-climate-wind-speed",
+   "layer-row-climate-soil-wetness-surface",
+   "layer-row-climate-soil-wetness-root-zone",
+   "layer-row-climate-soil-wetness-profile",
+   "dock-section-climate",
+   "layer-group-community",
+   "layer-row-demand-heatmap",
+   "layer-row-interventions",
+   "layer-row-strategy-recommendations",
+   "dock-section-community",
+   "dock-section-team",
+   "dock-section-offline"
+  ],
+  "rowText": {
+   "soil-moisture": "Soil Moisture (ERA5-Land)\n100%\nSoil Moisture (ERA5-Land) date, YYYY-MM-DD\nLatest\n\nCoverage from 2022-04-30 to 2026-09-03. 1 gap with no data: 2026-08-03 to 2026-09-03. Page Up and Page Down move 30 days; hold Shift to move 365.\n\n1 day saved on this device; this day is one of them.\n\nClear saved days (1)"
+  },
+  "loadingBanner": 0,
+  "trpc": [
+   {
+    "proc": "layers.getIngestionCoverage,environmental.getSliderCapabilities",
+    "status": 200,
+    "ms": 735
+   },
+   {
+    "proc": "environmental.getSoilField",
+    "status": 200,
+    "ms": 760
+   }
+  ],
+  "legacyFiresRequests": 0,
+  "consoleErrors": [],
+  "requestCount": 181
+ }
+]

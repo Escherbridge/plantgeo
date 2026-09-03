@@ -28,7 +28,7 @@ anything it does not establish is marked **unproven by this inventory** rather t
 | Service | Service ID | PlantGeo responsibility | State on 2026-09-02 |
 | --- | --- | --- | --- |
 | `plantgeo-main` | `fa08a3aa-6d1d-43eb-846b-15dbfd887d61` | Next.js application | Active deployment `f232fb54` `SUCCESS`. Railway's GitHub integration deploys it from `main`, and no other service is deployed by a web release. |
-| `plantgeo-job-executor` | `565ecaad-9946-48f1-8a0b-28fa60494a16` | Sole continuous scheduler for independently registered source, maintenance, gap-repair, MTBS, SoilGrids, fire and water lanes | Dedicated `railway.job-executor.json`; continuous `agri-service ops jobs-executor`, `ON_FAILURE`, no Railway schedule. Deployment `b1f35a20` `SUCCESS` at exact `main` release `e4490c3`, 37 active executable lanes plus one terminal snapshot-only responsibility. Environment `scheduled == []`. |
+| `plantgeo-job-executor` | `565ecaad-9946-48f1-8a0b-28fa60494a16` | Sole continuous scheduler for independently registered source, maintenance, gap-repair, MTBS, SoilGrids, fire and water lanes | Dedicated `railway.job-executor.json`; continuous `agri-service ops jobs-executor`, `ON_FAILURE`, no Railway schedule. Deployment `b1f35a20` `SUCCESS` at exact `main` release `e4490c3`, 37 active executable lanes plus one terminal snapshot-only responsibility. Environment `scheduled == []`. **Correction — 2026-09-03:** `b1f35a20` was reached by a manual redeploy, not the push. The push-triggered build at the same commit, deployment `003bfc6e`, FAILED — Railway discovered the repository-root `railway.json` and built the Next.js image instead of `infra/job-executor/Dockerfile`. See "Current mechanics" below for the full failure list and remedy. |
 | `plantgeo-parquet-api` | `33aed861-af76-4fdd-a95e-784bdcc95e55` | Private published-reader Parquet API on port `8080`; no public domain | Active deployment `91b791ab` `SUCCESS`. Classified serving, not a scheduler target. |
 | `plantgeo-martin` | `fe6ef46e-7b4c-41ef-8b64-5100a344c526` | Vector-tile service | Active deployment `dc48f11a` `SUCCESS`, classified **serving**. This supersedes the older "provisioned but stopped/crashed" note. Whether a public domain is attached is **unproven by this inventory**, which records status and classification only. |
 | `plantgeo-spatiotemporal-db` | `1e166530-9c8a-4d4a-b685-a70c801fc449` | The production database (PostgreSQL 18 + PostGIS 3.6) | Active deployment `1f33637e` `SUCCESS`, classified data-bearing, never removed by a cleanup. TimescaleDB was dropped 2026-08-25 after holding only an empty hypertable with no continuous aggregate. Extensions measured that day: btree_gist, hypopg, pg_buffercache, pgcrypto, plpgsql, postgis (3.6), vector. |
@@ -693,6 +693,27 @@ eleven services.
 root `/` with config `/services/agri-data-service/railway.job-executor.json`. Its image contains the
 Python service and the Node SoilGrids driver. A guard test rejects every tracked Railway JSON that
 reintroduces `cronSchedule` or a retired cron-only path.
+
+**Correction — 2026-09-03: that config path is REQUIRED, and production does not have it set.**
+Observed via the Railway API (project `6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`, environment
+`b7cfa813-8a5c-4fcd-80f2-cab736d840a7`) on 2026-09-03: `plantgeo-job-executor`'s config-as-code field
+is absent from its service configuration entirely — by contrast, `plantgeo-parquet-api` shows
+`configFile: /services/agri-data-service/railway.json`. Without a config-as-code path, Railway falls
+back to discovering the repository-root `railway.json` (`build.dockerfilePath: "Dockerfile"`, the
+Next.js app) on every GitHub push, which overrides the dashboard's Dockerfile path and builds the
+Next.js image instead of `infra/job-executor/Dockerfile`. That image dies at
+`Error: NEXT_PUBLIC_PMTILES_URL must be a reviewed production URL` ([build 4/9]). Four deployments
+have failed this way: `003bfc6e` at `e4490c3` (2026-09-02 17:51 UTC), `fbc4cbb7` at `e4a101f`
+(2026-09-03 06:28), `9fa4c8a8` at `1da1a28` (2026-09-03 12:39), and `5523d2e8`
+(2026-09-03 12:40, `railway service redeploy --from-source` — a from-source redeploy does not bypass
+root discovery either). The only successful executor build, `b1f35a20` (2026-09-02 18:03, reason
+"redeploy"), loaded `infra/job-executor/Dockerfile`; whatever setting made that possible no longer
+exists on the service. **Remedy:** set the service's config-as-code path to
+`services/agri-data-service/railway.job-executor.json` (dashboard Settings → Config-as-code, or the
+Railway MCP `update-service` `railwayConfigFile` — Railway CLI 5.45.2 has no service-update verb).
+**Interim consequence:** the executor is pinned at `e4490c3` while `plantgeo-main` and
+`plantgeo-parquet-api` have already advanced to `1da1a28`; every push redeploys those two services
+but not the executor until the config-as-code path is set.
 
 **Nine more directories deleted with no live service behind them.** `cron-era5-land-continue`,
 `cron-era5-land-coverage-fill`, `cron-era5-land-coverage-status`, `cron-nasa-power-continue`,

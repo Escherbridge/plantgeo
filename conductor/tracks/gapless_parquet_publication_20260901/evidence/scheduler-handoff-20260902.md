@@ -188,3 +188,31 @@ after each removal. Stop before removal if any mapping, lease, source ceiling, c
 publication receipt or successful run is missing. There is no rollback command that creates or
 schedules a Railway cron; the only rollback state is the affected executor lane disabled with all
 data retained.
+
+## Correction — 2026-09-03
+
+The line above reading `plantgeo-job-executor.configFile == /services/agri-data-service/railway.job-executor.json`
+is retracted, not extended: it is not deleted here because this file is append-only, but it no longer
+describes production state. Re-read via the Railway API on 2026-09-03 (project
+`6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`, environment `b7cfa813-8a5c-4fcd-80f2-cab736d840a7`) shows the
+service's config-as-code field absent entirely — by contrast, `plantgeo-parquet-api` shows
+`configFile: /services/agri-data-service/railway.json`. Without a config-as-code path, Railway
+discovers the repository-root `railway.json` (`build.dockerfilePath: "Dockerfile"`, the Next.js app)
+on every GitHub push, overriding the dashboard's Dockerfile setting and building the Next.js image
+instead of `infra/job-executor/Dockerfile`; that image dies at
+`Error: NEXT_PUBLIC_PMTILES_URL must be a reviewed production URL` ([build 4/9]).
+
+Four deployments have failed this way since this handoff was recorded: `003bfc6e` at `e4490c3`
+(2026-09-02 17:51 UTC, the push immediately following this handoff), `fbc4cbb7` at `e4a101f`
+(2026-09-03 06:28), `9fa4c8a8` at `1da1a28` (2026-09-03 12:39), and `5523d2e8`
+(2026-09-03 12:40, `railway service redeploy --from-source` — a from-source redeploy does not bypass
+root discovery either). The `b1f35a20` deployment this handoff verified was reached by a manual
+redeploy that loaded `infra/job-executor/Dockerfile` correctly; whatever setting made that possible
+no longer exists on the service. The executor has been running `e4490c3` — the exact commit this
+handoff certified — ever since, while `plantgeo-main` and `plantgeo-parquet-api` have advanced to
+`1da1a28`.
+
+**Remedy:** set the service's config-as-code path to
+`services/agri-data-service/railway.job-executor.json` (dashboard Settings → Config-as-code, or the
+Railway MCP `update-service` `railwayConfigFile` field — Railway CLI 5.45.2 has no service-update
+verb). See `docs/deployment.md`, "Current mechanics" for the full deployment census.

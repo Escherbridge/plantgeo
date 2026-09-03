@@ -412,11 +412,43 @@ CLI_FRAMEWORK_CLASS_SUFFIXES: tuple[str, ...] = ("Framework", "Runner", "Lane", 
 CLI_TRANSACTION_METHOD = "begin"
 
 #: What `c2` still owes, counted at HEAD `ad4e015`: 24 transaction boundaries and 2 framework
-#: classes, all in `commands.py`. Pinned rather than left open-ended so that a PARTIAL extraction is
-#: also loud -- an unpinned xfail would silently accept 25 of 26 moved. `test_cli_is_a_thin_click_
-#: adapter` is `xfail(strict=True)`, so it fails as XPASS the moment the last one lands and the
-#: whole block flips to an enforced rule.
-CLI_ADAPTER_VIOLATION_COUNT = 26
+#: classes, all in `commands.py`. The exact sites are pinned rather than only how many there are,
+#: so a PARTIAL extraction and a one-for-one SWAP -- one site extracted, a new one grown elsewhere
+#: -- are both loud; a count alone silently accepts either. `test_cli_is_a_thin_click_adapter` is
+#: `xfail(strict=True)`, so it fails as XPASS the moment the last one lands and the whole block
+#: flips to an enforced rule. The line numbers move whenever `commands.py` does: regenerate this
+#: list from the assertion message below, never by editing entries until the test passes again.
+CLI_ADAPTER_VIOLATIONS: tuple[str, ...] = (
+    "interface/cli/commands.py:610 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:724 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:795 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:970 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:1053 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:1164 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:1570 owns a transaction boundary 'combined_local_engine().begin()'",
+    "interface/cli/commands.py:1846 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:1940 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:1949 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2037 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2155 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2159 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2218 defines execution machinery 'class LaneChunkRunner'",
+    "interface/cli/commands.py:2231 defines execution machinery 'class ChunkedLane'",
+    "interface/cli/commands.py:2490 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2530 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2616 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2628 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2730 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2743 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2927 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2929 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2984 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2991 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:3035 owns a transaction boundary 'session.begin()'",
+)
+
+#: Quoted by the xfail reason below; `CLI_ADAPTER_VIOLATIONS` is the source of truth.
+CLI_ADAPTER_VIOLATION_COUNT = len(CLI_ADAPTER_VIOLATIONS)
 
 
 def _cli_adapter_violations(pkg_root: Path) -> list[str]:
@@ -458,14 +490,16 @@ def test_cli_is_a_thin_click_adapter() -> None:
 
 
 def test_cli_adapter_violations_stay_pinned() -> None:
-    """The xfail above only proves 'more than zero'. This pins WHICH number, in both directions."""
+    """The xfail above only proves 'more than zero'. This pins WHICH sites, in both directions."""
     pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
     violations = _cli_adapter_violations(pkg_root)
 
-    assert len(violations) == CLI_ADAPTER_VIOLATION_COUNT, (
-        f"the CLI adapter debt moved from {CLI_ADAPTER_VIOLATION_COUNT} to {len(violations)}. "
-        "If c2 extracted work, lower the pin; if a command grew a new transaction or framework, "
-        "put it in a domain package instead.\n" + "\n".join(violations)
+    assert violations == list(CLI_ADAPTER_VIOLATIONS), (
+        f"the CLI adapter debt moved from {CLI_ADAPTER_VIOLATION_COUNT} sites to {len(violations)}, "
+        "or moved sideways. If c2 extracted work, delete the extracted entries from "
+        "CLI_ADAPTER_VIOLATIONS; if a command grew a new transaction or framework class, put it in a "
+        "domain package instead. A one-for-one swap keeps the count and still fails here, which is "
+        "the point.\nCurrent:\n" + "\n".join(violations)
     )
 
 

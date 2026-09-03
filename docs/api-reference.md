@@ -806,22 +806,107 @@ await trpc.visualization.getStyles.query({
 
 ### Places Router
 
-Place search and geocoding.
+Point-of-interest search and browse. `geo.poi`, the table every procedure below queries,
+currently has no producer -- nothing imports or ingests a row into it yet, so every response is
+an empty page until it does. See `src/lib/server/AGENTS.md` §places.
 
 **Route**: `trpc.places.*`
 
 #### search
 
-Search for places.
+Search POIs by name inside a viewport.
 
 ```typescript
 await trpc.places.search.query({
-  query: string;
-  limit?: number;
-  bbox?: string;  // Bias results to bounding box
+  query: string;   // 1-200 chars, trimmed; blank after trimming is rejected
+  bbox: {          // required -- an unbounded ILIKE scan is not offered
+    west: number; south: number; east: number; north: number;
+  };               // ordered west < east, south < north; area <= 4 square degrees
 });
 
-// Response: GeoJSON FeatureCollection
+// Response
+{
+  places: Array<{
+    id: string;
+    name: string;
+    longitude: number | null;
+    latitude: number | null;
+    category: string | null;
+    subcategory: string | null;
+    address: string | null;
+    phone: string | null;
+    website: string | null;
+    hours: unknown;
+    tags: unknown;
+  }>;
+  truncated: boolean;  // true when the match exceeded the 50-row page cap
+}
+```
+
+**Auth**: `publicProcedure`
+
+#### byCategory
+
+List POIs of one category inside a viewport.
+
+```typescript
+await trpc.places.byCategory.query({
+  category: string;  // 1-50 chars; not limited to the `categories` list -- geo.poi.category
+                      // may carry whatever an importer wrote
+  bbox: { west: number; south: number; east: number; north: number };  // required, same rules as search
+});
+
+// Response: same shape as `search`
+```
+
+**Auth**: `publicProcedure`
+
+#### nearby
+
+List POIs within a radius of a point, nearest first.
+
+```typescript
+await trpc.places.nearby.query({
+  lat: number;       // -90 to 90
+  lon: number;       // -180 to 180
+  radius?: number;   // metres, 1-50000, default 1000; fractional values are accepted
+  limit?: number;    // 1-100, default 20
+});
+
+// Response
+{
+  places: Array<{
+    // every field `search` returns, plus:
+    distanceMeters: number;
+  }>;
+  truncated: boolean;
+}
+```
+
+**Auth**: `publicProcedure`
+
+#### categories
+
+List the browsable POI categories (a fixed constant, not a `geo.poi` query).
+
+```typescript
+await trpc.places.categories.query();
+
+// Response: Array<{ id: string; label: string; icon: string }>
+```
+
+**Auth**: `publicProcedure`
+
+#### getById
+
+Get one POI by id.
+
+```typescript
+await trpc.places.getById.query({
+  id: string;  // uuid
+});
+
+// Response: a place object shaped like `search`'s rows, or null
 ```
 
 **Auth**: `publicProcedure`

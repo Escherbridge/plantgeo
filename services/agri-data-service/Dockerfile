@@ -15,27 +15,36 @@ WORKDIR /app
 #
 # The 2026-08-07 owner ruling dropped the in-image `checks` STAGE (a Docker build has no disposable
 # PostgreSQL, so pytest could never run here). This is the newer 2026-09-01 audit directive and a
-# different thing: it does not RE-RUN the checks, it verifies that the sha256 over
-# `src/**`, `tests/**`, `scripts/**`, `pyproject.toml` and `uv.lock` still equals the digest
-# `scripts/check.py --write-receipt` recorded after its last all-green run. Editing source without
-# re-running the sweep therefore fails the BUILD instead of shipping unjudged code.
+# different thing: it does not RE-RUN the checks, it verifies that the sha256 over `src/**`,
+# `tests/**`, `scripts/**`, `alembic/**`, `db/**`, `pyproject.toml`, `uv.lock`, `mypy.ini`,
+# `ruff.toml` and `alembic.ini` still equals the digest `scripts/check.py --write-receipt` recorded
+# after its last all-green run. Editing source without re-running the sweep therefore fails the
+# BUILD instead of shipping unjudged code. The migration machinery is in the digest because this
+# image SHIPS it (see `runtime` below), and the two tool configurations are in it because they
+# decide what "mypy pass" and "lint pass" mean at all.
 #
-# The digest is computed over CRLF-normalized (LF) content, not raw disk bytes, so a receipt written
-# on a Windows checkout still verifies here against this Linux build context.
+# The digest is computed over CRLF-normalized (LF) content, not raw disk bytes: git materializes the
+# committed bytes on checkout, and the normalization is what makes a receipt written on any platform
+# agree with the bytes seen here.
 #
 # `tests/` and `scripts/` are digest inputs, so they are copied HERE and never into `runtime` --
 # a deleting `RUN` would not shrink an already-written layer, so the only way to keep tests out of
-# the production image is to keep them out of its stage. `runtime` copies the verified receipt back
-# out, and that COPY is what forces this stage to build at all: BuildKit prunes an unreferenced
-# stage, and a pruned gate is not a gate.
+# the production image is to keep them out of its stage. `alembic/` and `db/` are copied twice on
+# purpose: this stage needs them to reproduce the digest, `runtime` needs them to migrate. `runtime`
+# copies the verified receipt back out, and that COPY is what forces this stage to build at all:
+# BuildKit prunes an unreferenced stage, and a pruned gate is not a gate.
 #
-# The verifier is deliberately stdlib-only, so it runs on the base interpreter with no virtualenv.
+# The verifier is deliberately stdlib-only and never calls git, so it runs on the base interpreter
+# with no virtualenv.
 FROM base AS quality-receipt
 
 COPY pyproject.toml uv.lock QUALITY_RECEIPT.json ./
+COPY mypy.ini ruff.toml alembic.ini ./
 COPY src/ src/
 COPY tests/ tests/
 COPY scripts/ scripts/
+COPY alembic/ alembic/
+COPY db/ db/
 RUN python scripts/verify_quality_receipt.py
 
 # --- runtime stage: lean, --no-dev, unchanged from before the gates were added. ---

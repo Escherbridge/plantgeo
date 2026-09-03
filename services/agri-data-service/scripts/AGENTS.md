@@ -82,68 +82,135 @@ receipts, so a restructure that satisfied a `TypedDict` would change the emitted
 
 `uv run --no-sync python scripts/check.py --write-receipt` writes
 `services/agri-data-service/QUALITY_RECEIPT.json` **after** a green run of all four gates. It
-refuses to write from `--only` or from a red sweep. The receipt records:
+refuses to write in four situations, one test apiece in `tests/scripts/test_check_receipt_guards.py`:
 
-- `tree_digest` -- one sha256 over every file under `src/**`, `tests/**`, `scripts/**` plus
-  `pyproject.toml` and `uv.lock`, sorted by POSIX-relative path, with the path and the content each
-  length-prefixed so a rename can never digest the same as an edit. `__pycache__`, `*.pyc/pyo/pyd`
-  and the tool cache directories are excluded because they differ between a developer tree and a
-  Docker build context. Domain-separated by a constant prefix (`DIGEST_DOMAIN`, currently `v2`).
+1. **`--only`.** A partial sweep judged part of the tree, so it may not certify all of it. Refused
+   before the sweep starts, not after three minutes of it.
+2. **A red sweep.** The receipt's entire claim is that every gate passed.
+3. **A tree that moved while the sweep ran.** The digest is taken *before* the checks and again
+   after; differing digests mean a file was written during those minutes and no gate read it.
+4. **A tree that disagrees with git.** See "The receipt is a claim about committed bytes" below.
+
+The receipt records:
+
+- `tree_digest` -- one sha256 over every file under `src/**`, `tests/**`, `scripts/**`,
+  `alembic/**` and `db/**`, plus `pyproject.toml`, `uv.lock`, `mypy.ini`, `ruff.toml` and
+  `alembic.ini`, sorted by POSIX-relative path, with the path and the content each length-prefixed
+  so a rename can never digest the same as an edit. `__pycache__`, `*.pyc/pyo/pyd` and the tool
+  cache directories are excluded because they differ between a developer tree and a Docker build
+  context. Domain-separated by a constant prefix (`DIGEST_DOMAIN`, currently `v2`). Measured
+  2026-09-03: **1,124** files (561 `src`, 257 `tests`, 241 `db`, 33 `alembic`, 27 `scripts`, 5 root
+  files); `digest_file_count` in the receipt is always the authoritative number.
+
+  Why those roots. `src` and `tests` are what pytest and mypy judge, and `scripts` is the operator
+  surface the extended mypy scope covers. `alembic/` and `db/` are inputs because the runtime image
+  **ships** them (`Dockerfile:49-51`): while they sat outside the digest, a migration edit shipped
+  under a receipt that still verified. `mypy.ini` and `ruff.toml` are inputs because they define
+  what "mypy pass" and "lint pass" mean -- loosening a rule there silently redefines the judgement
+  the receipt records. `alembic.ini` names the script location those migrations run from.
 
   Content is CRLF-normalized to LF before it is length-prefixed and hashed. A Windows working tree
-  may carry CRLF that `.gitattributes`' `* text=auto eol=lf` only normalizes away *on commit*; the
-  Linux Docker build context is always LF. Hashing raw disk bytes therefore made a receipt written on
-  a Windows checkout un-verifiable inside the Railway build, which reads a fresh Linux checkout of the
-  same commit -- measured 2026-09-03: 181 of 842 digest-input files differed only by line ending, and
-  the two trees' digests disagreed even though `git diff` showed no changes. Normalizing means the
-  digest describes the bytes as committed, not the bytes a given checkout's line endings happen to
-  carry. The trade-off: two files differing only in CR bytes now digest equal -- but git already
-  refuses to store that difference for a `text=auto` file, so no real file pair can exercise it.
-  A receipt written before this change was domain-separated as `v1` and can never verify against the
-  `v2` digest function; it must be rewritten by a green sweep (`--write-receipt`), not hand-edited.
+  may carry CRLF: `.gitattributes`' `* text=auto eol=lf` governs what git writes on `add` and on
+  checkout, **not** the bytes already sitting on disk, so the normalization -- not the attribute --
+  is what makes the digest reproducible across platforms. Hashing raw disk bytes made a receipt
+  written on a Windows checkout un-verifiable inside the Railway build, which reads a fresh checkout
+  of the same commit: measured 2026-09-03, 181 of 842 digest inputs differed only by line ending and
+  the two digests disagreed while `git diff` showed no changes. The trade-off is that two files
+  differing only in CR bytes now digest equal. For an input git detects as text that is unreachable,
+  because git refuses to store the difference; it becomes reachable the day a `binary`-attributed
+  file lands under a digest directory (the root `.gitattributes` marks `*.parquet`, `*.png`, `*.zip`,
+  `*.gz`, `*.pbf` and `*.woff*` binary). None of today's 1,124 inputs is one: they are 629 `.py`,
+  440 `.sql`, 33 `.md`, 12 `.json`, 2 `.ini`, 2 `.toml`, 1 `.lock`, 1 `.mako`, 1 `.typed`, 1 `.js`
+  and 2 extensionless. A lone `\r` is deliberately left alone, which is what git does too.
+
+  A receipt written before the normalization landed was domain-separated as `v1` and can never
+  verify against the `v2` digest function; it must be rewritten by a green sweep, never hand-edited.
+- `digest_domain` -- the digest function's own name, copied from `DIGEST_DOMAIN`. A receipt written
+  by an older algorithm then fails as "written with digest domain X, this verifier computes Y",
+  which names its own remedy, rather than as "source changed", which sends an operator to re-run a
+  sweep that cannot help. `schema_version` is **2** because that key is required.
 - `digest_file_count`, `generated_at`, the `python`/`uv`/`ruff`/`mypy`/`pytest` versions that
   produced the judgement, and each gate's command, status and duration.
 
-Measured 2026-09-02: the digest covers **842** files and `git ls-files` over the same roots returns
-**840** -- the two extra are `quality_receipt.py` and `verify_quality_receipt.py`, still uncommitted
-at that moment. Once they are tracked the two sets are identical, which is what makes a receipt
-written on a developer machine verify inside a Railway build from a fresh checkout. The hazard that
-follows: an **untracked** file left under `src/`, `tests/` or `scripts/` is in your digest and not in
-the checkout, so your green receipt fails the image build. `git status` before `--write-receipt`.
+### The receipt is a claim about committed bytes
+
+A receipt describes a tree no one else can see unless git has it. So before writing, `check.py`
+reads git's index for the digest inputs -- `git ls-files -s -z` for the staged blob ids, one
+`git cat-file --batch` for their bytes (one batch, not a thousand processes), and two
+`git ls-files --others` listings -- and digests those blobs with the same function it ran over the
+disk. It refuses, naming every offending path, when a digest input is:
+
+| state | why a fresh checkout would differ | fix |
+| --- | --- | --- |
+| untracked | your digest has a file no checkout will have | `git add <path>` |
+| edited since staging | your digest has bytes git does not have | `git add <path>` |
+| staged but deleted on disk | the checkout still carries the file | `git add <path>` |
+| ignored | no commit can ever carry it | un-ignore it, or delete it |
+
+**Consequence for the workflow: stage new files before `--write-receipt`.** A new test module left
+untracked used to produce a green receipt that then failed every image build with an unexplained
+digest mismatch; it now produces a refusal that names the file. Committing is not required, staging
+is -- the index is what the digest is compared against. Paths the digest does not cover are filtered
+out by name first, so the hundreds of ignored `__pycache__` entries under `db/` and `alembic/` say
+nothing.
+
+The verifier stays git-free, because a Docker build stage has no repository. Proving the receipt
+describes committed bytes is therefore the writer's job alone, and only the writer can do it.
+
+### What the verifier says when it refuses
 
 `scripts/verify_quality_receipt.py` recomputes the digest, checks every recorded gate passed, and
-exits non-zero on any mismatch. It is stdlib-only on purpose: the image build runs it on a bare
-interpreter with no virtualenv. Both `services/agri-data-service/Dockerfile` and
-`infra/job-executor/Dockerfile` run it in a dedicated `quality-receipt` stage and then
-`COPY --from=quality-receipt` the verified receipt into the runtime image -- **the copy is what
-forces the stage to build**, because BuildKit prunes an unreferenced stage and a pruned gate is not
-a gate. `tests/` and `scripts/` are digest inputs and stay in that stage; they never reach a runtime
-image, since a deleting `RUN` would not shrink an already-written layer.
+exits non-zero on any mismatch. Its digest-mismatch message lists the three causes in the order they
+occur -- (1) an input edited after the sweep, (2) a receipt committed without a new or changed input,
+(3) an input excluded by `.gitignore` or `.dockerignore` -- each with its own fix, because only the
+first is repaired by re-running the sweep. A differing file count points at 2 or 3; an equal count
+points at 1. Stale `schema_version` and stale `digest_domain` are separate messages, so a receipt
+from an older algorithm never masquerades as changed source.
+
+It is stdlib-only on purpose: the image build runs it on a bare interpreter with no virtualenv. Both
+`services/agri-data-service/Dockerfile` and `infra/job-executor/Dockerfile` run it in a dedicated
+`quality-receipt` stage and then `COPY --from=quality-receipt` the verified receipt into the runtime
+image -- **the copy is what forces the stage to build**, because BuildKit prunes an unreferenced
+stage and a pruned gate is not a gate. Every digest input must be COPYed into that stage or the
+digest cannot reproduce; `tests/` and `scripts/` stay there and never reach a runtime image, since a
+deleting `RUN` would not shrink an already-written layer. `alembic/` and `db/` are copied into both
+the gate stage and the agri runtime stage on purpose -- the executor image copies them into its gate
+stage only, and its runtime deliberately ships no migration machinery.
 
 Editing source without re-running the sweep therefore fails the **build**, not the first request.
-The practical consequence: any change to `pyproject.toml` or `uv.lock` -- a dependency removal, for
-instance -- must be followed by `--write-receipt` or both images stop building.
+The practical consequence: any change to `pyproject.toml`, `uv.lock`, `mypy.ini`, `ruff.toml`,
+`alembic/**` or `db/**` -- a dependency removal or a new migration, for instance -- must be followed
+by `--write-receipt` or both images stop building.
 
 This is the 2026-09-01 audit's "locked quality receipt before deployment" row. It is deliberately
 NOT the in-image `checks` stage that the 2026-08-07 owner ruling dropped: it re-runs nothing (a
 Docker build has no disposable PostgreSQL, so `pytest` could never run there), it only proves the
 tree still equals the one a green sweep judged.
 
-### State at the 2026-09-02 handoff -- READ THIS BEFORE THE NEXT IMAGE BUILD
+### Current state and the one command that refreshes it
 
-`QUALITY_RECEIPT.json` **does not exist yet**, so both Docker builds fail at the `quality-receipt`
-stage on a missing COPY source. That is the gate working, not a bug: the tree it would have to
-describe was not green when the gate landed. The `c1` sweep on 2026-09-02 recorded
-`mypy src scripts` PASS over 354 files, and `format`/`lint`/`pytest` FAIL entirely inside the
-concurrently-edited `pipeline/direct/**` and `pipeline/parquet/**` surface (2 unformatted files,
-`PLR0912`/`F541`, and 20 failures under `tests/direct/**`, `tests/parquet/**`,
-`tests/parquet_ops/**`). Whoever closes those runs the one command that unblocks every image:
+`QUALITY_RECEIPT.json` **exists** and is written by a green sweep; the 2026-09-03 sweep recorded all
+four gates passing (`pytest -q` in 174s) over the then-current inputs. Any change to a digest input
+-- including the ones that just joined it -- invalidates it, and both images stop building until it
+is rewritten:
 
 ```bash
 cd services/agri-data-service
+git add <every new or edited digest input>                 # the writer refuses an unstaged tree
 uv run --no-sync python scripts/check.py --write-receipt   # refuses unless all four gates are green
 uv run --no-sync python scripts/verify_quality_receipt.py  # must exit 0
 ```
+
+### 2026-09-03: a Windows receipt that could not verify on Linux
+
+Both Python images failed to build from the `e4a101f` push at the `quality-receipt` stage. The
+receipt had been written on a Windows checkout where 181 of 842 digest inputs carried CRLF, so the
+Linux build context could never reproduce the recorded digest (`3824cf2c` recorded, `b0ec4347`
+computed by Railway; reproduced locally with `git archive HEAD`). `1da1a28` moved the digest to
+CRLF-normalized bytes and the domain to `v2`, and an independent review then reproduced the fixed
+digest from a Linux clone. The follow-up wave added what would have caught it before the push: the
+index comparison above refuses a receipt whose inputs git does not hold, and `digest_domain` turns a
+future algorithm change into its own message instead of a false "source changed".
 
 **The TypeScript side has no equivalent yet.** There is no receipt over the root `src/**`,
 `package.json` or `package-lock.json`, and the root `Dockerfile` verifies nothing about whether its

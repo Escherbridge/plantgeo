@@ -1900,6 +1900,13 @@ async def test_running_subprocess_terminates_and_yields_on_shutdown(
     assert not process.killed
 
 
+def _final_stage(dockerfile_text: str) -> str:
+    """Return the Dockerfile text starting at its last top-level FROM line (the shipped runtime stage)."""
+    lines = dockerfile_text.splitlines()
+    from_line_indices = [index for index, line in enumerate(lines) if line.startswith("FROM ")]
+    return "\n".join(lines[from_line_indices[-1] :])
+
+
 def test_railway_service_is_continuous_and_shadow_by_default() -> None:
     service_root = Path(__file__).resolve().parents[1]
     config = json.loads((service_root / "railway.job-executor.json").read_text(encoding="utf-8"))
@@ -1916,7 +1923,15 @@ def test_railway_service_is_continuous_and_shadow_by_default() -> None:
     assert "COPY package.json package-lock.json ./" in dockerfile
     assert "services/agri-data-service/pyproject.toml" in dockerfile
     assert "scripts/warm-soilgrids.mjs" in dockerfile
-    assert "alembic" not in dockerfile.lower()
+
+    # The locked quality-receipt gate stage copies alembic/db as digest inputs; the shipped
+    # runtime stage must still carry none of it. Scope the "no alembic" assertion to the final
+    # stage only, and pin that the gate stage keeps copying the digest inputs it needs.
+    final_stage = _final_stage(dockerfile)
+    assert "alembic" not in final_stage.lower()
+    copy_lines = [line for line in final_stage.splitlines() if line.strip().startswith("COPY")]
+    assert not any("alembic" in line.lower() or "db/" in line.lower() for line in copy_lines)
+    assert "services/agri-data-service/alembic/" in dockerfile
 
 
 def test_tracked_railway_configs_cannot_resurrect_cron_scheduling() -> None:

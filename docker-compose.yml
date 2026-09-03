@@ -69,8 +69,12 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Valhalla (routing), Photon (geocoding) and the nginx tile cache are not started here;
-  # their configuration lives under infra/ (infra/nginx/nginx.conf, infra/martin/).
+  # The nginx tile cache is not started here; its configuration lives under infra/nginx/nginx.conf,
+  # and Martin's under infra/martin/. Correction (2026-09-03): Valhalla and Photon have no service
+  # definitions to point to any more -- both were removed from this file in commit 12fa189, and
+  # there is no infra/valhalla or infra/photon directory. Their pinned images, ports, volumes and
+  # env (tile_urls, use_tiles_ignore_pbf, build_elevation, JAVA_OPTS, etc.) are recoverable with
+  # `git show 12fa189^:docker-compose.yml` if either service is ever reintroduced.
 
 volumes:
   postgis_data:

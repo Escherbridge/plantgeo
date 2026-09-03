@@ -9,21 +9,27 @@ RUN npm ci --omit=dev --ignore-scripts \
 
 # Same locked quality receipt gate as services/agri-data-service/Dockerfile, because this image
 # copies the same Python source. It verifies that the sha256 over `src/**`, `tests/**`,
-# `scripts/**`, `pyproject.toml` and `uv.lock` still equals the digest the last all-green
-# `scripts/check.py --write-receipt` sweep recorded, so an image cannot be built from an unjudged
-# tree. `tests/` and `scripts/` are digest inputs and stay in THIS stage; the final stage copies the
-# verified receipt out, which is also what stops BuildKit pruning the gate as unreferenced. The
-# digest hashes CRLF-normalized (LF) content, not raw disk bytes, so a receipt written on a Windows
-# checkout still verifies against this Linux build context.
+# `scripts/**`, `alembic/**`, `db/**`, `pyproject.toml`, `uv.lock`, `mypy.ini`, `ruff.toml` and
+# `alembic.ini` still equals the digest the last all-green `scripts/check.py --write-receipt` sweep
+# recorded, so an image cannot be built from an unjudged tree. Every digest input has to be copied
+# in for the digest to reproduce, which is why the migration machinery appears HERE -- the executor
+# runtime stage below deliberately ships none of it, and must keep shipping none of it. `tests/`
+# and `scripts/` are digest inputs and stay in THIS stage too; the final stage copies the verified
+# receipt out, which is also what stops BuildKit pruning the gate as unreferenced. The digest hashes
+# CRLF-normalized (LF) content, not raw disk bytes: git materializes the committed bytes on
+# checkout, and the normalization is what makes a receipt written on any platform agree here.
 FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS quality-receipt
 
 WORKDIR /app/agri-service
 
 COPY services/agri-data-service/pyproject.toml services/agri-data-service/uv.lock ./
 COPY services/agri-data-service/QUALITY_RECEIPT.json ./
+COPY services/agri-data-service/mypy.ini services/agri-data-service/ruff.toml services/agri-data-service/alembic.ini ./
 COPY services/agri-data-service/src/ src/
 COPY services/agri-data-service/tests/ tests/
 COPY services/agri-data-service/scripts/ scripts/
+COPY services/agri-data-service/alembic/ alembic/
+COPY services/agri-data-service/db/ db/
 RUN python scripts/verify_quality_receipt.py
 
 

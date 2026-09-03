@@ -49,8 +49,13 @@ so git commits LF, but this checkout (`core.autocrlf=true`, files rewritten by t
 this machine describes bytes the build context never contains. This is a defect in the wave-3 gate
 itself, not a stale receipt; re-running `--write-receipt` cannot fix it.
 
-Fix in flight: normalize `\r\n`→`\n` before hashing (digest domain bumped to v2), regression test,
-docs; then one green sweep, `--write-receipt`, commit, `git archive` re-verification, push.
+Fix landed as `1da1a28`: `compute_tree_digest` normalizes CRLF to LF before hashing (digest domain
+v2), regression test, docs; one green sweep rewrote the receipt (`55d40b35…`, 844 files); the receipt was
+re-verified on a `git archive 1da1a28` extraction before the push (see below). An independent review of
+the fix reproduced the digest three ways (Windows-normalized, Linux-raw, Linux-normalized, all
+`55d40b35…`) and confirmed the CRLF replacement equals git's clean filter for all 844 inputs; it asked
+for the committed-bytes property to be enforced by the writer rather than by hand, which the same-day
+closure adds to `check.py --write-receipt`.
 
 ## Failure 2 — executor: a GitHub push builds the wrong Dockerfile
 
@@ -101,3 +106,84 @@ Parquet-backed layer and its slider has been reporting "upstream unavailable" si
 went live at 12:17 UTC on `821a830`. `/api/ready` still answers 200 (0.66 s). Nothing is lost, but
 the site is worse than before the push until `plantgeo-parquet-api` builds. This is why the digest
 fix is pushed ahead of the wave-3 review verdict.
+
+## Fix push `1da1a28` — 12:39 UTC
+
+| service | deployment | result |
+|---|---|---|
+| `plantgeo-parquet-api` | `3a3430bf` (push) | `[quality-receipt 5/5]` printed `quality receipt verified: sha256:55d40b35… over 844 files` at 12:39:59 UTC; runtime stage continued (`COPY --from=quality-receipt` at 12:40:08). Final status recorded below. |
+| `plantgeo-job-executor` | `9fa4c8a8` (push) | FAILED in 11 s, root Dockerfile again (`[build 4/9] … NEXT_PUBLIC_PMTILES_URL`). |
+| `plantgeo-job-executor` | `5523d2e8` (`railway service redeploy --from-source`, 12:40:28) | FAILED in 11 s, **same root-Dockerfile failure** — so a from-source redeploy does NOT bypass root config discovery either. The `b1f35a20` success on 2026-09-02 must have run under a config-file setting that no longer exists. The executor cannot deploy by any repository-side or CLI action; the config-as-code path must be set on the service. |
+
+The digest fix was verified before the push by extracting `git archive 1da1a28 services/agri-data-service`
+and running `python scripts/verify_quality_receipt.py` on it: `verified: sha256:55d40b35… over 844
+files` — identical to what Railway then computed.
+
+## Parquet API live at `1da1a28` — deployment `3a3430bf`, SUCCESS 12:41:27 UTC
+
+Container up 12:41:25 (`service_profile: published_reader`). Verified through the public web app
+procedure `environmental.getSliderCapabilities`:
+
+| probe (UTC) | latency | result |
+|---|---|---|
+| 12:42:3x (first after deploy) | 8.4 s at the edge; the app's own upstream call **timed out** (`Parquet slider coverage unavailable; withholding every Parquet-owned row { error: 'Upstream request timed out' }`, app log 12:42:39) | `parquetCoverageUnavailable: true`, 22 Parquet capabilities withheld with `coverage_unavailable` |
+| 12:43+ (second, third) | 0.64 s / 0.44 s | `parquetCoverageUnavailable: false`, `parquetCoverageGeneratedAt 12:42:26.9`, 17 layers listed, 7 withheld |
+
+API-side timeline of that first census (its logs): 12:42:27 `availability_census_fallback` for every
+un-bootstrapped observed lane ("no bootstrap receipt and no pointer, so this lane still costs a
+whole-stream listing"), 12:42:45–54 `snapshot_forward_census_listing` for each snapshot-rooted
+climate/soil product, 12:42:55 `snapshot_coverage_withheld` with `census_budget_exhausted` ("exceeded
+its 30000-key aggregate listing budget; a partial census would report lanes it never reached as
+absent, so nothing is claimed at all") for at least `climate-field-relative-humidity` and
+`climate-field-dew-point`. So under `census_until_bootstrap` a cold coverage census takes ~28 s,
+longer than the app's coverage timeout, and the snapshot products can exhaust the listing budget.
+This is the designed pre-bootstrap behaviour, not a regression to route back: it is exactly what
+step 4 (per-lane availability bootstrap → one pointer GET + one generation GET) and step 5 (the
+authority flip) remove, and it is why "zero LIST on the request path" is the step-5 tripwire.
+Coverage schema v2 is confirmed live: the app no longer reports a contract fault.
+
+## Step 2 — browser check at `1da1a28` (web) + `3a3430bf` (API), 2026-09-03 ~12:50 UTC
+
+Headless Chromium (Playwright 1.62.1, `--use-gl=angle`), fresh anonymous context per scenario,
+1440×900, camera set through `?focusLng&focusLat&focusZoom`, layers toggled through the Map manager
+rows (`data-testid="layer-row-<toggle>"`). Script and raw report: session scratchpad
+`browser-check.cjs` / `shots/report.json`; captures sent to the owner and copied under the multiscale
+track evidence.
+
+| scenario | reader call | slider day | drawn | verdict |
+|---|---|---|---|---|
+| fire, default PNW camera (~z6) | `wildfire.getFireDetections` 200, 91 KB, 946 ms | 2026-09-01 (settled, lag 2) | density cells (yellow→red squares), no perimeters | GREEN — cells; the not-a-perimeter line is a hover caption (`src/lib/map/fire-cell-caption.ts`), verified separately below |
+| climate air temperature, z8 | `environmental.getClimateField` 200, 109 KB, 683 ms | 2026-08-06 (the known ~27-day tail; step 6 closes it) | filled 1° tessellation, one rung, cell outlines are the deliberate `fill-outline-color` stroke from `src/lib/map/layer-styles.ts:21-23`, not cracks | GREEN (pixel seam check still owed to acceptance A2) |
+| vegetation + water gauges, z5 | `environmental.getVegetationIndex` 200 (2,993 ms), `environmental.getStreamflow` 200 (610 ms), `getGroundwater` 200 | 2026-09-01 / 2026-09-03 ("Mixed dates" banner) | vegetation 0.25° cells; water gauges as cells | GREEN |
+| soil moisture (ERA5-Land), z5 | `environmental.getSoilField` 200, **1.9 KB**, 1,261 ms | none — the row mounted no date input | nothing drawn after 4 s; "Loading map data…" banner still up | **INCONCLUSIVE at first pass** — re-run with a longer settle and the response body recorded below |
+
+No request to `/api/fires` in any scenario (0 of ~170 requests each); zero console or page errors;
+map load 2.7–3.4 s after the first (cold) 5.8 s. The batched
+`layers.getIngestionCoverage,environmental.getSliderCapabilities` call took 8,183 ms cold and
+165–737 ms afterwards (the census memo).
+
+Capability roster the app resolved (`environmental.getSliderCapabilities`): 17 layers listed under
+`coverage_authority: census`; withheld — `fire-perimeters`, `sensors`, `watersheds`,
+`evacuation-zones` as `reader_not_parquet` (the four non-Parquet layers, expected), `soil-survey` as
+`lane_never_written` (expected, key cap), and `climate-field-dew-point` and
+`climate-field-relative-humidity` as **`lane_not_registered`** — but the API withheld those two with
+`census_budget_exhausted`, so the app is relabelling an API withholding as a registration gap.
+Contract note for the reader-cutover track: a lane absent from the coverage answer because the API
+withheld it should surface the API's `withheld_reason`, not `lane_not_registered`. Ceilings as served:
+soil-field-* through 2026-08-02, climate-field-* through 2026-08-06 (shortwave 2026-05-31),
+fire/vegetation/weather/drought 2026-09-01, water 2026-09-03.
+
+**Second pass (longer settle, response bodies recorded).** Soil moisture at z5 is GREEN: the first
+pass had caught the row before its capability resolved (the 1.9 KB answer was the pre-day read); with
+a 15 s settle `environmental.getSoilField` answered 474 KB of 0.25° polygons for
+`soil-field-moisture-0-7cm` on 2026-08-02 (the slider's latest; "1 gap with no data: 2026-08-03 to
+2026-09-03" is the 31-day tail step 7 closes) and the map drew a uniform 0.25° tessellation with no
+nested blocks. Fire's reader body confirms the contract: `state: "ready"`, `requestedDay ==
+servedDay == 2026-09-01`, every cell carrying `support.supportKind: "aggregate_cell"`, `zoomTier 5`,
+`cellWidthDegrees 0.2`, `origin: "cell_origin"`, `aggregationMethod: "count"`. The climate body is a
+FeatureCollection of 1° polygons with `aggregated: true` and `coverageFraction: 1`. The fire
+not-a-perimeter caption is rendered in the hover tooltip (`src/lib/map/fire-cell-caption.ts`) and
+sampling mouse positions over the canvas did not surface a tooltip element under automation, so it
+remains verified in code only. Step 2 verdict: **GREEN on all four gates** (fire cells + no
+`/api/fires`; climate z8 filled one-rung tessellation; vegetation and water z5 cells; soil moisture z5
+without nested blocks). Captures: `conductor/tracks/multiscale_polygon_surface_20260901/evidence/screenshots-2026-09-03/`.

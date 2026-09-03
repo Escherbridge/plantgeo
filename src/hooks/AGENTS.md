@@ -77,16 +77,30 @@ see the section above. The one reader still calling PostgreSQL for fire is
 
 ## useRegionalIntelligence
 
-**It is a controller, not a view model.** It returns exactly three stable callbacks --
-`queryLocation`, `sendFollowUp`, `retryLastRequest` -- and subscribes to no analysis state at
-all. Everything it needs at send time is read through
-`useRegionalIntelligenceStore.getState()` inside the callbacks, which is also what keeps
-`queryLocation` referentially stable: `MapView` carries it in a `useCallback` dependency list.
+**It is a controller, but not a subscription-free one.** It returns exactly three stable
+callbacks -- `queryLocation`, `sendFollowUp`, `retryLastRequest` -- and reads
+`useRegionalIntelligenceStore.getState()` inside them rather than subscribing to it, which is
+what keeps `queryLocation` referentially stable across renders. But the hook body also calls
+`useViewedLayerDays()` -> `useLayerVisibility()` -> `useActiveLayerToggles()`
+(`useRegionalIntelligence.ts:101-102`), which subscribes its caller to `useMapStore.activeLayers`
+and `useTimeSliderStore.capabilities` -- every layer toggle and slider-capability write
+re-renders whoever calls this hook. (The hook's own header comment, `useRegionalIntelligence.ts`
+lines ~93-99, still claims it "subscribes to no analysis state at all" and is stale; that file is
+not owned by this pass and was left as found.)
+
+Because of that subscription, since 2026-09-03 `MapView` no longer calls this hook directly:
+doing so re-rendered the whole map subtree -- the component that owns the MapLibre instance and
+every layer under it -- on every layer toggle. The call now lives only in components that are
+mounted just while the subscription is worth paying for: `AgentAnalysisPrompt` (`MapView.tsx`),
+mounted only while a location is selected and carrying `queryLocation` in its own `useCallback`
+dependency list, and `RegionalIntelligencePanel`, mounted only while the analysis panel is open.
+A layer toggle now re-renders one or both of those -- never the closed map --
+`src/__tests__/components/map-view-render-count.test.tsx` pins this.
 
 Until 2026-09-02 it did `const store = useRegionalIntelligenceStore()` and returned
 `{ ...store, ... }`. That subscribed every consumer to the whole store, and the store is written
 on **every streaming token** (`updateLastMessage`), so an in-flight analysis re-rendered
-`MapView` -- the component that owns the MapLibre instance and every layer under it -- once per
-delta. No consumer ever read the spread state: `RegionalIntelligencePanel` already selects its
-eleven fields individually from the store, and `MapView` only ever destructured
-`queryLocation`. A consumer that needs analysis state selects it from the store directly.
+`MapView` once per delta. No consumer ever read the spread state: `RegionalIntelligencePanel`
+already selects its eleven fields individually from the store, and `MapView` only ever
+destructured `queryLocation`. A consumer that needs analysis state selects it from the store
+directly.

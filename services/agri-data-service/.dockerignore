@@ -25,6 +25,12 @@ htmlcov
 # QUALITY_RECEIPT.json tree digest, which the "quality-receipt" Dockerfile stage
 # recomputes. That stage is the only place they land; neither reaches the runtime
 # image, which copies just the verified receipt out of it.
+#
+# NEVER exclude a digest input. The full set is src/, tests/, scripts/, alembic/,
+# db/, pyproject.toml, uv.lock, mypy.ini, ruff.toml and alembic.ini (see
+# scripts/quality_receipt.py). Excluding one here does not fail loudly: the gate
+# stage recomputes a digest over fewer files and reports "the tree does not match
+# its receipt", which reads like a stale receipt and is not one.
 *.log
 logs
 *.pid

@@ -170,6 +170,34 @@ MARTIN_URL=http://${{plantgeo-martin.RAILWAY_PRIVATE_DOMAIN}}:3000
 NEXT_PUBLIC_DYNAMIC_TILES_URL=https://${{plantgeo-martin.RAILWAY_PUBLIC_DOMAIN}}
 ```
 
+### `plantgeo-job-executor`
+
+- Root Directory: `/`
+- Config-as-code: `/services/agri-data-service/railway.job-executor.json` (**REQUIRED** — without a
+  config-as-code path set on the service, Railway falls back to discovering the repository-root
+  `railway.json` on every GitHub push, and its `build.dockerfilePath: "Dockerfile"` wins over the
+  dashboard's Dockerfile path, building the Next.js image instead of this service's own)
+- Dockerfile: `infra/job-executor/Dockerfile`
+- Start command: `agri-service ops jobs-executor`
+- Watch patterns: `infra/job-executor/**`, `services/agri-data-service/**`,
+  `scripts/warm-soilgrids.mjs`, `package.json`, `package-lock.json`
+- Restart policy (from `railway.job-executor.json`): `ON_FAILURE`, 10 retries
+
+**Divergence — 2026-09-03:** observed via the Railway API (project
+`6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`, environment `b7cfa813-8a5c-4fcd-80f2-cab736d840a7`) that the
+service's config-as-code field is absent from production entirely -- by contrast,
+`plantgeo-parquet-api` shows `configFile: /services/agri-data-service/railway.json`. As a result, four
+push/redeploy attempts built the wrong image and failed: `003bfc6e` at `e4490c3` (2026-09-02
+17:51 UTC), `fbc4cbb7` at `e4a101f` (2026-09-03 06:28), `9fa4c8a8` at `1da1a28` (2026-09-03 12:39),
+and `5523d2e8` (2026-09-03 12:40, `railway service redeploy --from-source`, which does not bypass
+root discovery). The only successful executor build, `b1f35a20` (2026-09-02 18:03), predates this
+observation; whatever setting made it possible no longer exists on the service. Remedy: set the
+Config-as-code path above via dashboard Settings, or the Railway MCP `update-service`
+`railwayConfigFile` field (Railway CLI 5.45.2 has no service-update verb). Until fixed, the executor
+stays pinned at `e4490c3` while every other service advances on push. See
+[`docs/deployment.md`, "Current mechanics"](../../docs/deployment.md) for the full deployment
+census.
+
 ## Future PostgreSQL 18 pre-deploy and cutover checklist
 
 This checklist is a future operator-controlled change gate. It does not
@@ -370,7 +398,11 @@ background forecast worker for this operation.
 `plantgeo-job-executor` is deliberately absent from this order: it is the sole scheduler, it is
 already at the exact `main` release, and it is redeployed by its own config
 (`/services/agri-data-service/railway.job-executor.json`, Dockerfile `infra/job-executor/Dockerfile`,
-root directory `/`) rather than by any step above.
+root directory `/`) rather than by any step above. **Caveat — 2026-09-03:** that config-as-code path
+is not currently set on the production service (see the `plantgeo-job-executor` subsection above), so
+"redeployed by its own config" describes the required target, not observed 2026-09-03 state; until
+the path is set, pushes redeploy every other service in this order but silently skip the executor,
+which stays pinned at its last manually-redeployed commit.
 
 Railway has no `depends_on` equivalent. Services must retry transient startup
 connections, and readiness checks should cover critical dependencies without

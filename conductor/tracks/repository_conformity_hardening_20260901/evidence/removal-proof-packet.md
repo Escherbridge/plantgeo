@@ -180,6 +180,19 @@ parameters `_` and adding a three-line module note that says so out loud; the pa
 before trusting a signature. Treat the module as a removal candidate or a build item, not as
 working code.
 
+**Correction — 2026-09-03: the zero-consumers claim above is retracted.** It is not deleted here
+because this file is append-only, but it is wrong and must not be acted on. `places.ts` is
+imported by `src/lib/server/trpc/routers/places.ts:3-9`, which pulls in `searchByCategory`,
+`searchNearby`, `searchByText`, `getById`, and `POI_CATEGORIES` by name; that router is mounted as
+`places: placesRouter` at `src/lib/server/trpc/router.ts:29`, and every procedure on it is a
+`publicProcedure`. The `c1` unused-symbol pass evidently did not follow the tRPC router mount, so
+the module read as orphaned when it is in fact wired to a public API surface. The underscore-prefix
+workaround this packet applied did not just paper over dead code — it hid a real wrong-answer bug
+on live endpoints: `searchNearby` ignored `lat`/`lon`/`radius` and `searchByCategory`/`searchByText`
+ignored `bbox`, so spatial filtering silently did nothing for any caller of those tRPC procedures.
+A TypeScript fix implementing real PostGIS spatial filtering for all three readers is landing in the
+same commit as this correction (2026-09-03). Do not treat this module as a removal candidate.
+
 ### `src/lib/server/services/geofence.ts` — orphan module
 
 `checkGeofences` has zero consumers. It carries a hand-written ray-casting `pointInPolygon` and
@@ -187,3 +200,12 @@ writes `alerts` rows on geofence enter/exit — real logic, no caller, and it du
 JavaScript a containment test PostGIS already answers. Only the unused `sql` import was removed.
 Candidate for either deletion or wiring into the tracking ingest path; that is a decision, not a
 cleanup.
+
+**Addendum — 2026-09-03 (closure review of the fix).** `geo.poi` has no producer in the repository:
+only `drizzle/0001_handy_riptide.sql:108` (its `geom` column) and `:279` (its GiST index) reference
+it, and the OSM import (`scripts/import-osm.sh`) loads `geo.osm_pois`, not `geo.poi`. So the
+underscore-prefixed readers ignored their spatial arguments over a table that is empty in every known
+environment: the defect was real in code and latent in effect. The 2026-09-03 fix keeps the readers on
+`geo.poi` as correct build-ahead code (index-backed envelope pre-filter, exact `ST_DWithin`,
+area-bounded required bbox) and records in `src/lib/server/AGENTS.md` §places that a future POI feature
+must either populate `geo.poi` or repoint at `geo.osm_pois`.
