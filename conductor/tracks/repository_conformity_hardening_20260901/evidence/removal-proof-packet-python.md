@@ -220,6 +220,28 @@ Note the ordering trap: `scripts/check.py --write-receipt` must run **after** `u
 because `uv.lock` is a digest input. A dependency removal that does not refresh
 `QUALITY_RECEIPT.json` will fail both image builds at the `quality-receipt` stage.
 
+**Removed 2026-09-03.** Re-confirmed zero `import s3fs`/`from s3fs`/`import redis`/`from redis`
+in `src/`, `tests/`, `scripts/`, and zero direct `fsspec` usage. Checked the s3fs caveat above by
+reading `polars_storage_options()` (`pipeline/parquet/objectstore.py:1048-1055`): it returns
+`aws_endpoint_url`/`aws_region`/`aws_access_key_id`/`aws_secret_access_key`, the key set Polars'
+native Rust `object_store` cloud reader consumes directly — the function's own docstring says
+"Polars/object_store connection options", not fsspec. Every `pl.scan_parquet(uris,
+storage_options=...)` call site (`planes/burn_severity.py:126`, `planes/water_gauges.py:90,119,127`,
+`planes/fire_perimeters.py:83`, `planes/drought.py:163`) goes through that same native path; reads
+also go through DuckDB's own `httpfs` extension via `SET s3_*` pragmas
+(`parquet_ops/duckdb_session.py:239-243`), and writes go through `boto3` directly
+(`pipeline/parquet/objectstore.py:421-426`). The caveat does not block removal — `s3fs` is
+genuinely dead weight, confirmed by what came out with it: `uv remove --no-sync s3fs redis` (from
+`services/agri-data-service/`, resolved in 5.25s) dropped `s3fs` and `redis` themselves plus
+`s3fs`'s exclusive transitive closure — `aiobotocore`, `aiohappyeyeballs`, `aiohttp`,
+`aioitertools`, `aiosignal`, `frozenlist`, `fsspec`, `propcache`, `pyjwt`, `wrapt`, `yarl` — 526
+lines removed from `uv.lock` and zero lines added, so no other pinned version moved. `pyproject.toml`
+lost only the two `redis>=5.0,<6` and `s3fs>=2024.6` dependency lines. Per the environment's
+mandatory contract, `uv sync`/bare `uv run` were **not** run (would have stripped `pytest`), and
+`scripts/check.py --write-receipt`, `mypy`, `ruff`, `pytest`, and both `docker build`s were
+deliberately **not** run here — those belong to the separate sweep that must run after `uv.lock`
+changes and will refresh `QUALITY_RECEIPT.json`.
+
 ---
 
 ## 7. Defect surfaced by the c1 gate extension (not a removal)

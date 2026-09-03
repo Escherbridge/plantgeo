@@ -15,7 +15,7 @@ PlantGeo is an enterprise-grade open-source 3D mapping platform built to provide
 - **Database**: PostgreSQL 16 + PostGIS 3.4
 - **ORM**: Drizzle ORM
 - **API**: tRPC v11
-- **State**: Zustand (global) + Jotai (per-layer atoms)
+- **State**: Zustand (global)
 - **Caching**: Redis 7 (cache + pub/sub)
 - **Styling**: Tailwind CSS v4
 - **Deployment**: Railway Pro (multi-service) + Cloudflare R2 (tiles)

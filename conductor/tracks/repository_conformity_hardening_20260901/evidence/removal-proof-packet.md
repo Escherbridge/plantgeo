@@ -161,6 +161,22 @@ Jotai has zero imports; the per-layer state is Zustand (`src/stores/*.ts`) plus 
 that were never built. Fix the line in the same commit that uninstalls the package, so the doc
 and the manifest stop disagreeing in opposite directions.
 
+**Removed 2026-09-03.** Re-ran the three import scans (`@deck.gl/mapbox`, `@deck.gl/react`,
+`jotai`, plus `useAtom`/`atom(`) over `src/` and `scripts/` — still zero. Ran
+`npm uninstall @deck.gl/mapbox @deck.gl/react jotai` from the repo root; `package.json` and
+`package-lock.json` regenerated together (155 lines removed from the lock, no lines added — no
+unrelated package was bumped). The transitive-only `@deck.gl/widgets` and its private nested
+`preact` copy also dropped out of the lock with them; `@deck.gl/widgets` was never a direct
+import (`npm ls @deck.gl/widgets` now resolves empty). `preact` is confirmed still present and
+still pinned at the exact `10.11.3` the root `dependencies` block declares (`npm ls preact`
+shows `@auth/core@0.34.3` and its `preact-render-to-string@5.2.6` dedup onto that pin); `preact`
+was correctly left untouched per the blocker above. `npm ls @deck.gl/core` still resolves
+(`@deck.gl/core@9.2.11`, `@deck.gl/geo-layers@9.2.11`, `@deck.gl/layers@9.2.11`) — deck.gl proper
+is unaffected. The doc reconciliation landed in the same pass: `AGENTS.md:18` and
+`.claude/CLAUDE.md:18` now both read `- **State**: Zustand (global)`. `npm run type-check`,
+`npm run lint`, and `npm test` were deliberately **not** run here — that is a separate sweep
+per the owning task's boundary.
+
 ---
 
 ## Findings recorded, NOT acted on (out of this track's authorized candidate list)
